@@ -474,12 +474,13 @@ def test_the_opener_itself_refuses_a_redirect():
 
 
 def test_a_client_cannot_be_built_around_the_kill_switch(monkeypatch):
-    """The switch must not be a field a caller can set.
+    """The switch, the redirect rule and the projection must not rest on a field.
 
-    Three ways a caller could previously reach a paid endpoint without the
-    deployment's approval: declare `is_remote=False` on an Alibaba config, set
-    `allow_live_requests=True` directly, or assemble a "local" client whose
-    `base_url` points at Model Studio. None of them touches settings.
+    `is_remote` and `allow_live_requests` used to be settable dataclass fields.
+    A caller could hand the client a VALID Alibaba config — correct URL, correct
+    key, passing every validator — with `is_remote=False`, and the transport
+    would then follow redirects and consider egress approved. Both are derived
+    properties now, so the lie is not expressible.
     """
     monkeypatch.setattr(llm_backend, "_http_open", _never_called())
 
@@ -491,17 +492,103 @@ def test_a_client_cannot_be_built_around_the_kill_switch(monkeypatch):
     with override_settings(**OFF):
         base = endpoint_config("alibaba").__dict__
 
-        # 1. an Alibaba config that lies about being remote, with the switch off
-        lying = LLMEndpointConfig(**{**base, "is_remote": False, "allow_live_requests": True})
-        with pytest.raises(LLMConfigError, match="disabled"):
-            OpenAICompatibleLLMClient(lying).chat([{"role": "user", "content": "hi"}])
+        # 1. the fields are gone; a caller cannot even ASK for the old lie.
+        for forged in ("is_remote", "allow_live_requests"):
+            with pytest.raises(TypeError):
+                LLMEndpointConfig(**{**base, forged: False})
 
-        # 2. a "local" client pointed at a provider host
-        with pytest.raises(LLMConfigError, match="external provider"):
-            OpenAICompatibleLLMClient(LLMEndpointConfig(**{**base, "backend": "local"}))
+        # 2. and the derived values follow the backend, not the caller.
+        config = LLMEndpointConfig(**base)
+        assert config.is_remote is True
+        assert config.allow_live_requests is False  # OFF, read from settings
+        with pytest.raises(LLMConfigError, match="disabled"):
+            OpenAICompatibleLLMClient(config).chat([{"role": "user", "content": "hi"}])
 
         # 3. an Alibaba backend whose URL never passed validation
         with pytest.raises(LLMConfigError):
             OpenAICompatibleLLMClient(
                 LLMEndpointConfig(**{**base, "base_url": "https://evil.test/v1"})
             )
+
+
+def test_a_valid_alibaba_config_cannot_opt_back_into_following_redirects(monkeypatch):
+    """P0-A as a regression.
+
+    The kill switch was moved off `config.is_remote` and the redirect rule was
+    not, so a valid Alibaba client that declared itself local followed redirects
+    again — and once live requests are approved that is the bearer token going to
+    whatever host the provider names.
+    """
+    seen: list[str] = []
+
+    def transport(request, *args, follow_redirects=True, **kwargs):  # noqa: ARG001
+        seen.append(request.full_url)
+        assert follow_redirects is False, "an Alibaba request was allowed to redirect"
+        raise URLError("stopped")
+
+    monkeypatch.setattr(llm_backend, "_http_open", transport)
+    monkeypatch.setattr(llm_backend.time, "sleep", lambda _: None)
+    with override_settings(**ALIBABA):
+        config = endpoint_config("alibaba")
+        assert config.is_remote is True, "a valid Alibaba config is remote, always"
+        client = OpenAICompatibleLLMClient(config)
+        with pytest.raises(LLMUnavailable):
+            client.chat([{"role": "user", "content": "hi"}])
+    assert seen, "the transport was never reached"
+
+
+# ── what `backend=local` is allowed to mean ──────────────────────
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://external-openai-compatible.example/v1",
+        "https://evil.example/v1",
+        "http://10.0.0.5:1234/v1",
+        "http://inference.campus.example/v1",
+    ],
+)
+def test_a_local_client_may_not_address_a_non_loopback_host(monkeypatch, url):
+    """P0-B.
+
+    The first guard refused a local-labelled client only when the hostname ended
+    in `.aliyuncs.com` — it blocked one provider and accepted every other. Such a
+    client reports `backend="local"`, is handed `LocalToolBoundary`, and would
+    therefore receive the complete unprojected student record.
+
+    The LAN case is included deliberately: an institution-managed inference
+    server is a real future need and a real trust decision, and it should arrive
+    as its own backend with its own validation rather than through a
+    compatibility argument no privacy layer inspects.
+    """
+    monkeypatch.setattr(llm_backend, "_http_open", _never_called())
+    with pytest.raises(LLMConfigError, match="loopback"):
+        OpenAICompatibleLLMClient(base_url=url)
+
+
+@pytest.mark.parametrize(
+    "url",
+    ["http://localhost:1234/v1", "http://127.0.0.1:1234/v1", "http://127.0.0.2:8080/v1"],
+)
+def test_a_loopback_local_client_is_accepted(url):
+    assert OpenAICompatibleLLMClient(base_url=url).base_url == url
+
+
+def test_the_tracked_example_env_never_carries_an_instruction_to_paste_a_key():
+    """P0-C. `.env.example` is TRACKED, and it said "PASTE THE KEY HERE. This
+    file is gitignored" — advice that is false about the file containing it, and
+    the file a new contributor opens first."""
+    import pathlib as _pathlib
+
+    text = _pathlib.Path(".env.example").read_text(encoding="utf-8")
+    for phrase in ("PASTE THE KEY HERE", "This file is gitignored"):
+        assert phrase not in text, f"{phrase!r} is in a tracked example file"
+    assert "ALIBABA_LLM_ALLOW_LIVE_REQUESTS=false" in text, "the kill switch is undocumented"
+    # The validator accepts only the workspace endpoint shape, so recommending a
+    # public DashScope HOST sends a reader to a URL that cannot start. The word
+    # itself is allowed — the file now explains why those hosts do not work, and
+    # a reader arriving with the old configuration needs to be told.
+    assert "dashscope.aliyuncs.com" not in text
+    assert "dashscope-intl.aliyuncs.com" not in text
+    assert "maas.aliyuncs.com" in text

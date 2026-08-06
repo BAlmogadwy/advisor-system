@@ -244,16 +244,37 @@ class LLMEndpointConfig:
     supports_assistant_prefill: bool = True
     #: Remote backends never discover a model; see the module docstring.
     allow_model_discovery: bool = True
-    #: Remote backends get the explicit privacy projection.
-    is_remote: bool = False
-    #: Egress kill switch. A remote client with this false refuses to open a
-    #: connection at all — see `_request`.
-    allow_live_requests: bool = True
     #: Sent as top-level fields on remote requests.
     provider_options: dict[str, Any] = field(default_factory=dict)
 
     #: Diagnostics report this instead of a hostname.
     region: str = ""
+
+    @property
+    def is_remote(self) -> bool:
+        """DERIVED, never supplied.
+
+        This was a settable field, and a settable field is a field a caller can
+        lie about. A valid Alibaba config with `is_remote=False` passed URL and
+        key validation, then chose to FOLLOW REDIRECTS — reopening the
+        bearer-token exposure the redirect work had just closed, from a value the
+        security decision was reading straight off the caller.
+
+        Anything that protects the institution must key on the backend NAME,
+        which `endpoint_config` sets and nothing else can redefine into something
+        harmless: redirects, privacy projection, live-request approval,
+        diagnostics, prefill.
+        """
+        return str(self.backend or "").strip().lower() != BACKEND_LOCAL
+
+    @property
+    def allow_live_requests(self) -> bool:
+        """Also derived, and read from settings at ACCESS time.
+
+        A captured boolean goes stale, and a constructor argument is one more
+        thing a caller can set. The deployment's answer is the only answer.
+        """
+        return not _requires_deployment_approval(self.backend)
 
     @property
     def endpoint_host(self) -> str:
@@ -387,7 +408,6 @@ def _local_config() -> LLMEndpointConfig:
         max_retries=0,
         supports_assistant_prefill=True,
         allow_model_discovery=True,
-        is_remote=False,
     )
 
 
@@ -425,8 +445,6 @@ def _alibaba_config() -> LLMEndpointConfig:
         # here, so it is off until one does.
         supports_assistant_prefill=False,
         allow_model_discovery=False,
-        is_remote=True,
-        allow_live_requests=_flag("ALIBABA_LLM_ALLOW_LIVE_REQUESTS", False),
         provider_options={
             # Non-thinking for the first comparison: the local model has already
             # spent whole tool turns on hidden reasoning, and a provider
@@ -442,16 +460,34 @@ def _alibaba_config() -> LLMEndpointConfig:
     )
 
 
-def _looks_like_a_remote_provider(base_url: str) -> bool:
-    """Is this URL an external provider wearing a local label?
+#: What `backend=local` is allowed to mean. Loopback only.
+_LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1", "[::1]"})
 
-    The compatibility escape hatch — an arbitrary `base_url` on a client the
-    caller assembles — is the one way to reach a paid endpoint without passing
-    any provider validation. A local client may point anywhere on the machine or
-    the campus network; it may not point at a Model Studio host.
+
+def _validate_local_url(base_url: str) -> None:
+    """A local backend must actually be local.
+
+    The first version of this guard refused a local-labelled client only when the
+    hostname ended in `.aliyuncs.com` — it blocked ONE provider masquerading as
+    local and accepted every other. `LocalLLMClient(base_url="https://some-api.example/v1")`
+    was accepted, reported `backend="local"`, received `LocalToolBoundary`, and
+    would therefore have been handed the complete unprojected student record.
+    Naming the provider you happen to know about is a blacklist, and this module
+    argues at length against blacklists everywhere else.
+
+    So the contract is positive: loopback, or nothing. An institution-managed
+    inference server on the LAN is a real future need and a real trust decision —
+    it gets its own backend with its own validation, rather than arriving through
+    a compatibility argument that no privacy layer inspects.
     """
-    host = (urlparse(str(base_url or "")).hostname or "").lower()
-    return host.endswith(".aliyuncs.com")
+    parsed = urlparse(str(base_url or ""))
+    host = (parsed.hostname or "").lower()
+    if host in _LOOPBACK_HOSTS or host.startswith("127."):
+        return
+    raise LLMConfigError(
+        "a local backend may only address a loopback host; "
+        "an external endpoint must be configured as its own backend."
+    )
 
 
 class _RefuseRedirect(HTTPRedirectHandler):
@@ -561,11 +597,8 @@ class OpenAICompatibleLLMClient:
         if str(config.backend or "").strip().lower() == BACKEND_ALIBABA:
             _validate_alibaba_url(config.base_url)
             _validate_api_key(config.api_key)
-        elif _looks_like_a_remote_provider(config.base_url):
-            raise LLMConfigError(
-                "a non-remote backend may not be configured with an external provider "
-                "endpoint; build it through endpoint_config()."
-            )
+        else:
+            _validate_local_url(config.base_url)
         self.config = config
 
     # Compatibility surface: callers and tests read `.base_url`/`.timeout_seconds`.
@@ -639,6 +672,9 @@ class OpenAICompatibleLLMClient:
                 with _http_open(
                     request,
                     timeout=effective_timeout,
+                    # From the BACKEND, like every other security decision
+                    # here. Reading `config.is_remote` was the residual hole: the
+                    # kill switch had been moved off that field and this had not.
                     follow_redirects=not self.config.is_remote,
                 ) as response:  # noqa: S310  # nosec B310
                     # Belt and braces. For a remote provider the opener refuses
