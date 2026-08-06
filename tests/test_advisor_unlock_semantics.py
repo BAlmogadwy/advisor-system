@@ -481,7 +481,11 @@ def test_the_remote_projection_of_my_progress_is_not_three_empty_lists(plan):
         ("وش أهم مقرر عندي؟", "my_progress"),
         # The forward direction in its other Arabic surfaces.
         ("كم مقرر ينتظر AI331 وحده، وما هي هذه المقررات؟", "why_course_locked"),
-        ("أي مقرر عندي يفتح أكبر عدد من المقررات مباشرة؟", "why_course_locked"),
+        # CP02. The unlock verb is in the sentence, but the QUESTION is which course
+        # wins across the plan — «أكبر عدد» — and `why_course_locked` answers about
+        # one named course. Routing it by the verb sent a ranking question to a tool
+        # that cannot rank; the owner classified that a router defect, not an alias.
+        ("أي مقرر عندي يفتح أكبر عدد من المقررات مباشرة؟", "my_progress"),
         ("كم مقرر يعتمد على AI331؟", "why_course_locked"),
         # English, which the dependency-verb class was added for: both of these
         # classified GENERAL_AGENT before it existed.

@@ -663,7 +663,7 @@ def test_the_labelled_rows_are_the_ones_this_test_thinks_they_are() -> None:
     passes by having nothing to check — the shape of vacuous test this repository
     has shipped before.
     """
-    assert {qid for qid, _, _ in _labelled_intents()} == {"TT02", "TT24", "TT26"}
+    assert {qid for qid, _, _ in _labelled_intents()} == {"TT02", "TT10", "TT24", "TT26"}
 
 
 def test_the_third_routed_row_is_labelled_like_the_other_two() -> None:

@@ -144,10 +144,6 @@ MUST_FALL_THROUGH: tuple[tuple[str, str], ...] = (
         "the system holds no seat counts; every family would answer the wrong half",
     ),
     (
-        "لا تغيّر الشعب التي اخترتها يدويًا، لكن غيّر باقي المقررات",
-        "an imperative «غيّر» is a build constraint, not an edit of a saved draft",
-    ),
-    (
         "Does the lab room unlock at 448?",
         "'at 448' is not a course code — a code is closed up in this catalogue, "
         "and letting a space in makes 'at 448', 'in 141' and 'term 447' codes",
@@ -157,6 +153,45 @@ MUST_FALL_THROUGH: tuple[tuple[str, str], ...] = (
         "«المعتمد» is the APPROVED course, not a course waiting on a prerequisite",
     ),
 )
+
+
+#: TT10 USED to sit in MUST_FALL_THROUGH, on the reading that the imperative
+#: «غيّر» makes it a build constraint rather than an edit. That reading was wrong,
+#: and the reversal is recorded here rather than deleted: the sentence also contains
+#: «الشعب التي اخترتها» — PAST tense — which asserts that a selection already
+#: happened, so a draft exists. Left as an abstention the question reached
+#: GENERAL_AGENT, which advertises `build_my_timetable`; that tool cannot see a draft
+#: and would have answered with alternatives from the system's own course list,
+#: presented as "based on the sections you chose". The deterministic EDIT_DRAFT route
+#: already existed and simply never fired.
+REVERSED_FROM_FALL_THROUGH: tuple[tuple[str, IntentFamily], ...] = (
+    ("لا تغيّر الشعب التي اخترتها يدويًا، لكن غيّر باقي المقررات", IntentFamily.PLANNER_EDIT_DRAFT),
+)
+
+
+@pytest.mark.parametrize(("question", "expected"), REVERSED_FROM_FALL_THROUGH)
+def test_a_past_tense_selection_is_an_edit_not_a_build(
+    question: str, expected: IntentFamily
+) -> None:
+    assert classify_intent(question) is expected
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        # The tense is the whole signal, so the tense is what gets tested. Each of
+        # these puts a section noun in front of a choose-verb — the exact word order
+        # the EDIT_DRAFT marker matches — and every one asks the adviser to help
+        # choose, which is a build or a clash question, not an edit of a draft that
+        # does not exist.
+        "Which sections should I choose for AI352?",
+        "Which sections do you recommend I choose?",
+        "ما الشعب التي تنصحني أن أختارها؟",
+        "اختر لي الشعب المناسبة وابنِ الجدول",
+    ],
+)
+def test_asking_which_sections_to_choose_is_not_an_edit_of_a_draft(question: str) -> None:
+    assert classify_intent(question) is not IntentFamily.PLANNER_EDIT_DRAFT
 
 
 @pytest.mark.parametrize(("question", "why"), MUST_FALL_THROUGH)
@@ -318,7 +353,7 @@ BATCH_ROUTES: dict[str, IntentFamily] = {
     "TT07": IntentFamily.PLANNER_BUILD,
     "TT08": IntentFamily.MIXED,
     "TT09": IntentFamily.PLANNER_BUILD,
-    "TT10": IntentFamily.GENERAL_AGENT,
+    "TT10": IntentFamily.PLANNER_EDIT_DRAFT,
     "TT11": IntentFamily.CURRENT_TIMETABLE,
     "TT12": IntentFamily.GENERAL_AGENT,
     "TT13": IntentFamily.GENERAL_AGENT,
@@ -340,7 +375,7 @@ BATCH_ROUTES: dict[str, IntentFamily] = {
     "TT29": IntentFamily.PLANNER_REBUILD,
     "TT30": IntentFamily.GENERAL_AGENT,
     "CP01": IntentFamily.COURSE_PRIORITY,
-    "CP02": IntentFamily.COURSE_UNLOCKS,
+    "CP02": IntentFamily.COURSE_PRIORITY,
     "CP03": IntentFamily.COURSE_PRIORITY,
     "CP04": IntentFamily.COURSE_UNLOCKS,
     "CP05": IntentFamily.COURSE_UNLOCKS,
@@ -352,13 +387,13 @@ BATCH_ROUTES: dict[str, IntentFamily] = {
     "CP11": IntentFamily.COURSE_PRIORITY,
     "CP12": IntentFamily.COURSE_PRIORITY,
     "CP13": IntentFamily.COURSE_LOCK_REASON,
-    "CP14": IntentFamily.GENERAL_AGENT,
+    "CP14": IntentFamily.COURSE_PRIORITY,
     "CP15": IntentFamily.COURSE_PRIORITY,
-    "CP16": IntentFamily.GENERAL_AGENT,
+    "CP16": IntentFamily.COURSE_PRIORITY,
     "CP17": IntentFamily.COURSE_PRIORITY,
     "CP18": IntentFamily.GENERAL_AGENT,
-    "CP19": IntentFamily.GENERAL_AGENT,
-    "CP20": IntentFamily.COURSE_UNLOCKS,
+    "CP19": IntentFamily.COURSE_PRIORITY,
+    "CP20": IntentFamily.COURSE_PRIORITY,
 }
 
 
@@ -403,22 +438,42 @@ def test_no_batch_question_is_routed_outside_its_domain() -> None:
         assert family in expected, f"{qid} routed to {family}"
 
 
-def test_the_router_abstains_on_eighteen_of_the_fifty() -> None:
+def test_the_router_abstains_on_fourteen_of_the_fifty() -> None:
     """Pinned deliberately. Loosening a pattern to raise coverage moves this
     number, and the review that follows should be about which question stopped
     falling through and whether the family can actually answer it.
 
-    It moved once, 19 -> 18, and the review is recorded here rather than in a commit
-    message nobody reads at the next change. CP11 «وش المقررات المقفلة عندي وما
-    يفصلني عنها إلا مقرر واحد؟» stopped falling through, and COURSE_PRIORITY can
-    answer it outright: `my_progress` returns `counts.one_step`, which is that number
-    exactly. It was closed because abstention is not free downstream — the policy
-    gate keys on the family, so GENERAL_AGENT kept a citation obligation the question
-    could not discharge and the student was refused their own prerequisite data.
+    It has moved twice, and both reviews are recorded here rather than in commit
+    messages nobody re-reads at the next change.
+
+    19 -> 18, commit 6A. CP11 «وش المقررات المقفلة عندي وما يفصلني عنها إلا مقرر
+    واحد؟». COURSE_PRIORITY answers it outright — `my_progress` returns
+    `counts.one_step`, which is that number exactly. Closed because abstention is not
+    free downstream: the policy gate keys on the family, so GENERAL_AGENT kept a
+    citation obligation the question could not discharge.
+
+    18 -> 14, commit 6A.2. Four more, each classified a router defect by the audit in
+    `docs/ADVISOR-ROUTING-AUDIT.md` before anything was changed:
+
+        TT10  «الشعب التي اخترتها يدويًا»  a draft already exists; EDIT_DRAFT
+        CP14  «ترتيب الأولوية»              names the ranking and no course
+        CP16  «هل يظل مهمًا أكاديميًا؟»      where it sits among everything else
+        CP19  «أكبر عدد من المقررات»        shares CP02's superlative-over-count
+
+    CP19 was not on the fix list; it moved with CP02 because they share one marker,
+    and it is kept because the audit had already allowed COURSE_PRIORITY for it. Its
+    own risk is scope — an adviser-voice question in a student session — which is a
+    different control from routing.
+
+    Two cases that CHANGED family without changing this count are the point of the
+    whole commit: CP02 and CP20 moved COURSE_UNLOCKS -> COURSE_PRIORITY. Both ask
+    which course wins across the plan, and `why_course_locked` analyses one named
+    course and cannot rank.
     """
     fell_through = [q for q, f in BATCH_ROUTES.items() if f is IntentFamily.GENERAL_AGENT]
-    assert len(fell_through) == 18
-    assert "CP11" not in fell_through
+    assert len(fell_through) == 14
+    for closed in ("CP11", "TT10", "CP14", "CP16", "CP19"):
+        assert closed not in fell_through
 
 
 def test_every_family_is_reachable() -> None:

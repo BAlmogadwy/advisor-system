@@ -299,6 +299,16 @@ _EDIT_WORD = _words(
     "changed",
 )
 
+#: A SECTION, the thing a student picks inside a course. Needed because TT10 names
+#: «الشعب» and no course noun at all, so every existing edit marker misses it.
+_SECTION_NOUN = _words("الشعب", "شعب", "شعبه", "الشعبه", "section", "sections")
+
+#: PAST TENSE. «اخترتها» — "the ones I chose" — asserts that a selection already
+#: happened, which is exactly what distinguishes an edit of an existing draft from a
+#: build constraint. The imperative «اختر» is deliberately absent: "choose sections
+#: for me" is a build.
+_CHOSE_VERB = _words("اخترت", "اخترتها", "اخترناها", "chose", "picked", "selected")
+
 _COURSE_NOUN = _words(
     "مقرر",
     "المقرر",
@@ -334,10 +344,28 @@ _WAIT_VERB = _words("ينتظر", "تنتظر", "waiting", "awaiting")
 #: also already belongs to `_FORMAL_REQUIREMENT`, where it means a regulation.
 _DEPEND_VERB = _words("يعتمد", "تعتمد", "يعتمدون", "depend", "depends", "dependent")
 
-#: «مهم» is deliberately absent. «هل يظل مهمًا أكاديميًا؟» (CP16) is a question
-#: about a course with no section on file, and «لا تقل لي فقط إن المقرر مهم» (CP20)
-#: is a demand for an audit trail; neither is answered by the priority ranking.
 _PRIORITY_WORD = _words("اهم", "الاهم", "اولويه", "الاولويه", "priority", "priorities")
+
+#: «مهم» USED to be excluded here, on the reading that «هل يظل مهمًا أكاديميًا؟»
+#: (CP16) and «لا تقل لي فقط إن المقرر مهم» (CP20) are not priority-ranking
+#: questions. The owner ruled otherwise, and the ruling is right: both ask where a
+#: course sits among everything else the student could take, which is what
+#: `my_progress` computes. Routed to COURSE_UNLOCKS instead, they reach
+#: `why_course_locked`, which analyses ONE named course and cannot rank a plan.
+_IMPORTANT = _words("مهم", "مهمه", "المهم", "اهميه", "important", "importance")
+
+#: A superlative over a COUNT — «أكبر عدد من المقررات» (CP02). Three words in order,
+#: because the superlative alone is a comparison of anything and the count alone is
+#: arithmetic. Together with a course noun they name a cross-plan ranking, and that
+#: ranking is why CP02 must not go to COURSE_UNLOCKS: the unlock verb is present in
+#: the same sentence, but `why_course_locked` answers about one course and the
+#: question asks which course wins.
+_LARGEST = _words("اكبر", "اعلي", "اكثر", "largest", "most", "highest", "greatest")
+_COUNT_WORD = _words("عدد", "number", "count")
+
+#: Explicit ordering. CP14 «كيف يؤثر هذا على ترتيب الأولوية؟» names the ranking
+#: itself and no course at all, so the noun-plus-priority markers cannot fire.
+_ORDER_WORD = _words("ترتيب", "الترتيب", "ranking", "rank", "ordering")
 
 #: The one-step question, named by DISTANCE rather than by the course:
 #: «وش المقررات المقفلة عندي وما يفصلني عنها إلا مقرر واحد؟» (CP11). It classified
@@ -470,6 +498,9 @@ _MARKERS: dict[IntentFamily, tuple[_Marker, ...]] = {
         _m(_COURSE_NOUN, _EDIT_WORD),
         _m(_EDIT_WORD, _OPTION),
         _m(_OPTION, _EDIT_WORD),
+        # TT10 «لا تغيّر الشعب التي اخترتها يدويًا». The past tense is the whole
+        # signal: sections were already picked, so a draft exists.
+        _m(_SECTION_NOUN, _CHOSE_VERB),
     ),
     #: "Show me the alternatives" is deliberately NOT a marker. TT11 is «اعرض لي
     #: جدولي المسجل حاليًا قبل ما تبني أي بدائل» — a read of the registered
@@ -497,6 +528,10 @@ _MARKERS: dict[IntentFamily, tuple[_Marker, ...]] = {
         _m(_PRIORITY_WORD, _COURSE_NOUN),
         _m(_COURSE_NOUN, _PRIORITY_WORD),
         _m(_SEPARATES, _COURSE_NOUN, _ONE_WORD),
+        _m(_LARGEST, _COUNT_WORD, _COURSE_NOUN),  # CP02
+        _m(_ORDER_WORD, _PRIORITY_WORD),  # CP14
+        _m(_COURSE_NOUN, _IMPORTANT),  # CP16, CP20
+        _m(_IMPORTANT, _COURSE_NOUN),
     ),
     IntentFamily.COURSE_UNLOCKS: (
         _m(_UNLOCK_VERB, _COURSE_NOUN),

@@ -151,14 +151,17 @@ questions:
 - id: TT10
   ar: لا تغيّر الشعب التي اخترتها يدويًا، لكن غيّر باقي المقررات.
   intent: pin_manual_regenerate_rest
-  expected_family: GENERAL_AGENT
-  expected_action: null
-  required_tools:
-  - build_my_timetable
+  expected_family: PLANNER_EDIT_DRAFT
+  expected_action: OPEN_STUDENT_PLANNER
+  required_tools: []
   allowed_tools: []
-  forbidden_tools: []
-  expected_facts: []
-  must_not_claim: []
+  forbidden_tools:
+  - build_my_timetable
+  expected_facts:
+  - intent is EDIT_DRAFT
+  must_not_claim:
+  - that a rebuild from the system's course list reflects the sections the student
+    chose by hand
   clarification_allowed: false
 - id: TT11
   ar: اعرض لي جدولي المسجل حاليًا قبل ما تبني أي بدائل.
@@ -431,7 +434,7 @@ questions:
 - id: CP02
   ar: أي مقرر عندي يفتح أكبر عدد من المقررات مباشرة؟
   intent: sole_remaining_prerequisite
-  expected_family: COURSE_UNLOCKS
+  expected_family: COURSE_PRIORITY
   expected_action: null
   required_tools:
   - my_progress
@@ -586,7 +589,7 @@ questions:
 - id: CP14
   ar: النظام يقول إن أحد المتطلبات غير معروف في الخطة؛ كيف يؤثر هذا على ترتيب الأولوية؟
   intent: unknown_prereq
-  expected_family: GENERAL_AGENT
+  expected_family: COURSE_PRIORITY
   expected_action: null
   required_tools:
   - why_course_locked
@@ -611,7 +614,7 @@ questions:
 - id: CP16
   ar: مقرر متطلباته مكتملة لكنه ما له شعبة في بيانات النظام؛ هل يظل مهمًا أكاديميًا؟
   intent: importance_vs_section_presence
-  expected_family: GENERAL_AGENT
+  expected_family: COURSE_PRIORITY
   must_not_claim:
   - that absence of a section means the course is not offered
   expected_action: null
@@ -650,7 +653,7 @@ questions:
 - id: CP19
   ar: بصفتي المرشد، ما المقرر الذي يحرر أكبر عدد من المقررات للطالب؟ اذكر السبب والأثر المباشر.
   intent: adviser_voice_priority
-  expected_family: GENERAL_AGENT
+  expected_family: COURSE_PRIORITY
   must_not_claim:
   - answering an adviser-scoped question from a student session
   expected_action: null
@@ -667,7 +670,7 @@ questions:
   ar: لا تقل لي فقط إن المقرر مهم؛ أعطني سبب ترتيبه، والمقررات التي يفتحها مباشرة، وما إذا كانت التوصية
     تثبت وجود شعبة أو مقعد.
   intent: auditable_explanation
-  expected_family: COURSE_UNLOCKS
+  expected_family: COURSE_PRIORITY
   must_not_claim:
   - that a recommendation proves a section or a seat exists
   expected_action: null
