@@ -63,7 +63,20 @@ class ScriptedClient:
     place for a leak to hide.
     """
 
-    def __init__(self, turns: list[ToolChatResult], final: str = "الإجابة النهائية.") -> None:
+    #: DECLARED, not inferred. The boundary is derived from the client that will
+    #: actually receive the payload, so a fake standing in for a remote provider
+    #: has to say so — `@override_settings(LLM_BACKEND=...)` alone no longer
+    #: decides privacy behaviour, and that is the point of the rule.
+    backend = "local"
+    supports_assistant_prefill = True
+
+    def __init__(
+        self,
+        turns: list[ToolChatResult],
+        final: str = "الإجابة النهائية.",
+        backend: str = "local",
+    ) -> None:
+        self.backend = backend
         self.turns = list(turns)
         self.final = final
         self.requests: list[list[dict]] = []
@@ -558,6 +571,7 @@ def test_full_entry_no_path_ever_sends_the_students_identity(roster, monkeypatch
         # `MINE` would not: it is in the local context, which is exactly what
         # the grounding check reads.
         final="الطالب 8887771 يمكنه التسجيل.",
+        backend="alibaba",
     )
 
     payload = va.answer_virtual_advisor(
@@ -610,7 +624,7 @@ def test_the_single_shot_fallback_rebuilds_its_context_from_projections(
     class NoToolsClient(ScriptedClient):
         chat_with_tools = None  # the loop is skipped entirely
 
-    client = NoToolsClient([])
+    client = NoToolsClient([], backend="alibaba")
     payload = va.answer_virtual_advisor(
         question=f"رقمي {MINE}، وش عندي بكرة؟",
         principal=_principal(),
@@ -677,7 +691,7 @@ def test_the_grounding_correction_does_not_quote_the_identifiers_back(roster, mo
         chat_with_tools = None
 
     invented = "8887771"
-    client = NoToolsClient([], final=f"الطالب {invented} مؤهل.")
+    client = NoToolsClient([], final=f"الطالب {invented} مؤهل.", backend="alibaba")
     payload = va.answer_virtual_advisor(
         question="وش عندي بكرة الأحد؟",
         principal=_principal(),
@@ -709,9 +723,10 @@ class _ScriptedAnswers(ScriptedClient):
 
     chat_with_tools = None
 
-    def __init__(self, answers: list[str]) -> None:
+    def __init__(self, answers: list[str], backend: str = "local") -> None:
         super().__init__([], final=answers[-1])
         self.answers = list(answers)
+        self.backend = backend
 
     def chat(self, messages, **kwargs):
         import json as _json
@@ -848,7 +863,7 @@ def test_a_real_id_is_refused_remotely_even_though_it_is_in_the_local_evidence(
     was reconstructed, and local authorisation does not make that a fact.
     """
     _seed_courses()
-    client = _ScriptedAnswers([f"رقمك هو {MINE} وأنت مؤهل."])
+    client = _ScriptedAnswers([f"رقمك هو {MINE} وأنت مؤهل."], backend="alibaba")
     payload = va.answer_virtual_advisor(
         question=f"رقمي {MINE}، وش عندي بكرة؟",
         principal=_principal(),
@@ -868,7 +883,7 @@ def test_an_arabic_indic_identifier_does_not_slip_past_the_gate(roster) -> None:
     """`_STUDENT_ID_RE` knows only Western digits. On an Arabic-first adviser,
     writing «٤٥٠٢١٥٦» would otherwise be a way round the whole check."""
     _seed_courses()
-    client = _ScriptedAnswers(["رقمك هو ٤٥٠٢١٥٦ وأنت مؤهل."])
+    client = _ScriptedAnswers(["رقمك هو ٤٥٠٢١٥٦ وأنت مؤهل."], backend="alibaba")
     payload = va.answer_virtual_advisor(
         question="وش عندي بكرة الأحد؟",
         principal=_principal(),
@@ -927,3 +942,97 @@ def test_a_forged_argument_on_an_UNADVERTISED_tool_is_also_scrubbed(roster, monk
     assert local == [] and provider == []
     assert telemetry["boundary_refusals"][0]["stage"] == "pre_execution"
     assert str(OUTSIDE) not in client.sent_text, "the forged id survived in the transcript"
+
+
+# ── 8. the backend actually in use ───────────────────────────────
+
+
+def test_the_boundary_follows_the_CLIENT_not_the_settings(roster) -> None:
+    """Two sources for one fact is how a remote client gets full records.
+
+    A caller can inject a client the settings do not describe — a test, a
+    management command, a queue worker — and deriving privacy behaviour from
+    `settings.LLM_BACKEND` would then hand a remote provider `LocalToolBoundary`
+    and every identifier in the record. The client is what will receive the
+    payload, so it decides what may be in it.
+    """
+    remote_client = ScriptedClient([], backend="alibaba")
+    with override_settings(LLM_BACKEND="local"):
+        boundary = boundary_for_scope(STUDENT_SCOPE, backend=remote_client.backend)
+    assert isinstance(boundary, RemoteToolBoundary)
+
+    local_client = ScriptedClient([], backend="local")
+    with override_settings(LLM_BACKEND="alibaba"):
+        boundary = boundary_for_scope(STUDENT_SCOPE, backend=local_client.backend)
+    assert isinstance(boundary, LocalToolBoundary)
+
+
+@override_settings(LLM_BACKEND="alibaba")
+def test_production_refuses_when_the_factory_disagrees_with_the_settings(
+    roster, monkeypatch
+) -> None:
+    """Only on the production path. An injected client may disagree — that is
+    what makes it injectable — but the factory building something the deployment
+    did not ask for is a configuration fault, and answering anyway would answer
+    through the wrong provider."""
+    from core.services.llm_backend import LLMConfigError
+
+    monkeypatch.setattr(va, "get_llm_client", lambda: ScriptedClient([], backend="local"))
+    with pytest.raises(LLMConfigError, match="unintended provider"):
+        va.answer_virtual_advisor(
+            question="وش عندي بكرة؟",
+            principal=AdvisorPrincipal(role=ROLE_STUDENT, student_id=MINE),
+            academic_year=1448,
+            term=1,
+        )
+
+
+def test_no_prefill_is_sent_to_a_provider_that_refuses_one(roster) -> None:
+    """Model Studio rejects a trailing assistant turn, and the client raises
+    rather than discarding it — so deciding the prefill from the model NAME
+    breaks every plain-chat path the moment the backend is switched: single
+    shot, forced final, and all three retries, each as a 500."""
+    _seed_courses()
+
+    class NoPrefill(ScriptedClient):
+        chat_with_tools = None
+        supports_assistant_prefill = False
+
+        def chat(self, messages, **kwargs):
+            assert kwargs.get("assistant_prefill") is None, "a prefill reached the provider"
+            return super().chat(messages, **kwargs)
+
+    payload = va.answer_virtual_advisor(
+        question="وش عندي بكرة الأحد؟",
+        principal=AdvisorPrincipal(role=ROLE_STUDENT, student_id=MINE),
+        academic_year=1448,
+        term=1,
+        client=NoPrefill([], backend="alibaba"),
+    )
+    assert payload["ok"] is True
+
+
+def test_a_prefill_IS_sent_to_a_provider_that_accepts_one(roster) -> None:
+    """The other half: the local Qwen build still gets its `<think>` suppression,
+    so a provider-aware helper cannot be a blanket removal."""
+    _seed_courses()
+    seen: list[object] = []
+
+    class Recording(ScriptedClient):
+        chat_with_tools = None
+
+        def resolve_model(self, model=None):
+            return "qwen3.6-35b-a3b"
+
+        def chat(self, messages, **kwargs):
+            seen.append(kwargs.get("assistant_prefill"))
+            return super().chat(messages, **kwargs)
+
+    va.answer_virtual_advisor(
+        question="وش عندي بكرة الأحد؟",
+        principal=AdvisorPrincipal(role=ROLE_STUDENT, student_id=MINE),
+        academic_year=1448,
+        term=1,
+        client=Recording([], backend="local"),
+    )
+    assert seen and seen[0] is not None

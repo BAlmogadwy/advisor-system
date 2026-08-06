@@ -24,6 +24,7 @@ from core.services.llm_backend import (
     LLMAuthenticationError,
     LLMBadRequest,
     LLMConfigError,
+    LLMEndpointConfig,
     LLMRateLimited,
     LLMTimeout,
     LLMUnavailable,
@@ -68,7 +69,7 @@ def _ok(payload: dict, url: str = GOOD_URL):
         def read(self):
             return json.dumps(payload).encode("utf-8")
 
-    def fake(request, timeout=None):  # noqa: ARG001
+    def fake(request, *args, **kwargs):  # noqa: ARG001
         return Response()
 
     return fake
@@ -175,7 +176,7 @@ def test_a_redirect_to_another_host_is_refused(monkeypatch):
     urllib follows redirects by default, and a 30x to another host would carry
     the bearer token there and hand back a response we would have parsed."""
     monkeypatch.setattr(
-        llm_backend, "urlopen", _ok(ANSWER, url="https://evil.test/compatible-mode/v1")
+        llm_backend, "_http_open", _ok(ANSWER, url="https://evil.test/compatible-mode/v1")
     )
     with override_settings(**ALIBABA):
         client = OpenAICompatibleLLMClient(endpoint_config("alibaba"))
@@ -185,7 +186,9 @@ def test_a_redirect_to_another_host_is_refused(monkeypatch):
 
 def test_a_redirect_within_the_same_host_is_fine(monkeypatch):
     """The check is on the destination, not on whether a redirect happened."""
-    monkeypatch.setattr(llm_backend, "urlopen", _ok(ANSWER, url=GOOD_URL + "/chat/completions?x=1"))
+    monkeypatch.setattr(
+        llm_backend, "_http_open", _ok(ANSWER, url=GOOD_URL + "/chat/completions?x=1")
+    )
     with override_settings(**ALIBABA):
         client = OpenAICompatibleLLMClient(endpoint_config("alibaba"))
         assert client.chat([{"role": "user", "content": "hi"}]).content == "نعم"
@@ -198,7 +201,7 @@ def _failing(status: int, *, headers: dict | None = None, then: dict | None = No
     """Fail with `status` until the attempts run out, or succeed on the 2nd try."""
     state = {"calls": 0}
 
-    def fake(request, timeout=None):  # noqa: ARG001
+    def fake(request, *args, **kwargs):  # noqa: ARG001
         state["calls"] += 1
         if then is not None and state["calls"] > 1:
             return _ok(then)(request)
@@ -226,7 +229,7 @@ def test_the_retry_matrix(monkeypatch, status, expected, attempts):
     """400 and 401/403 are decisions, not weather: retrying them wastes a
     student's wait and, for a 429, deepens the hole. 5xx and 429 are bounded."""
     fake = _failing(status)
-    monkeypatch.setattr(llm_backend, "urlopen", fake)
+    monkeypatch.setattr(llm_backend, "_http_open", fake)
     monkeypatch.setattr(llm_backend.time, "sleep", lambda _: None)
     with override_settings(**ALIBABA):
         client = OpenAICompatibleLLMClient(endpoint_config("alibaba"))
@@ -238,11 +241,11 @@ def test_the_retry_matrix(monkeypatch, status, expected, attempts):
 def test_a_timeout_is_retried_then_typed(monkeypatch):
     state = {"calls": 0}
 
-    def fake(request, timeout=None):  # noqa: ARG001
+    def fake(request, *args, **kwargs):  # noqa: ARG001
         state["calls"] += 1
         raise TimeoutError
 
-    monkeypatch.setattr(llm_backend, "urlopen", fake)
+    monkeypatch.setattr(llm_backend, "_http_open", fake)
     monkeypatch.setattr(llm_backend.time, "sleep", lambda _: None)
     with override_settings(**ALIBABA):
         client = OpenAICompatibleLLMClient(endpoint_config("alibaba"))
@@ -253,7 +256,7 @@ def test_a_timeout_is_retried_then_typed(monkeypatch):
 
 def test_a_retry_that_succeeds_returns_the_answer(monkeypatch):
     fake = _failing(503, then=ANSWER)
-    monkeypatch.setattr(llm_backend, "urlopen", fake)
+    monkeypatch.setattr(llm_backend, "_http_open", fake)
     monkeypatch.setattr(llm_backend.time, "sleep", lambda _: None)
     with override_settings(**ALIBABA):
         client = OpenAICompatibleLLMClient(endpoint_config("alibaba"))
@@ -264,7 +267,7 @@ def test_a_retry_that_succeeds_returns_the_answer(monkeypatch):
 def test_a_sane_retry_after_is_honoured(monkeypatch):
     slept: list[float] = []
     fake = _failing(429, headers={"Retry-After": "2"}, then=ANSWER)
-    monkeypatch.setattr(llm_backend, "urlopen", fake)
+    monkeypatch.setattr(llm_backend, "_http_open", fake)
     monkeypatch.setattr(llm_backend.time, "sleep", slept.append)
     with override_settings(**ALIBABA):
         OpenAICompatibleLLMClient(endpoint_config("alibaba")).chat(
@@ -279,7 +282,7 @@ def test_an_unusable_retry_after_falls_back_to_the_bounded_schedule(monkeypatch,
     string is unparseable. Honour it only when it is a small sane number."""
     slept: list[float] = []
     fake = _failing(429, headers={"Retry-After": value}, then=ANSWER)
-    monkeypatch.setattr(llm_backend, "urlopen", fake)
+    monkeypatch.setattr(llm_backend, "_http_open", fake)
     monkeypatch.setattr(llm_backend.time, "sleep", slept.append)
     with override_settings(**ALIBABA):
         OpenAICompatibleLLMClient(endpoint_config("alibaba")).chat(
@@ -293,11 +296,11 @@ def test_the_local_backend_does_not_retry(monkeypatch):
     behaviour change smuggled in under a provider addition."""
     state = {"calls": 0}
 
-    def fake(request, timeout=None):  # noqa: ARG001
+    def fake(request, *args, **kwargs):  # noqa: ARG001
         state["calls"] += 1
         raise URLError("refused")
 
-    monkeypatch.setattr(llm_backend, "urlopen", fake)
+    monkeypatch.setattr(llm_backend, "_http_open", fake)
     with override_settings(LLM_BACKEND="local"):
         client = OpenAICompatibleLLMClient(endpoint_config("local"))
         with pytest.raises(LLMUnavailable):
@@ -332,7 +335,7 @@ def test_a_retry_log_names_the_region_not_the_host(monkeypatch, caplog):
     import logging
 
     fake = _failing(503)
-    monkeypatch.setattr(llm_backend, "urlopen", fake)
+    monkeypatch.setattr(llm_backend, "_http_open", fake)
     monkeypatch.setattr(llm_backend.time, "sleep", lambda _: None)
     with override_settings(**ALIBABA), caplog.at_level(logging.WARNING):
         client = OpenAICompatibleLLMClient(endpoint_config("alibaba"))
@@ -374,7 +377,7 @@ def _never_called():
     ],
 )
 def test_the_kill_switch_stops_every_remote_entry_point(monkeypatch, method, extra, because):
-    monkeypatch.setattr(llm_backend, "urlopen", _never_called())
+    monkeypatch.setattr(llm_backend, "_http_open", _never_called())
     with override_settings(**OFF):
         client = OpenAICompatibleLLMClient(endpoint_config("alibaba"))
         with pytest.raises(LLMConfigError, match=because):
@@ -399,7 +402,7 @@ def test_the_kill_switch_refuses_before_the_request_body_exists(monkeypatch):
     exception traceback away from a log."""
     built: list[object] = []
     monkeypatch.setattr(llm_backend, "Request", lambda *a, **k: built.append(a) or object())
-    monkeypatch.setattr(llm_backend, "urlopen", _never_called())
+    monkeypatch.setattr(llm_backend, "_http_open", _never_called())
     with override_settings(**OFF):
         client = OpenAICompatibleLLMClient(endpoint_config("alibaba"))
         with pytest.raises(LLMConfigError):
@@ -412,8 +415,96 @@ def test_the_kill_switch_does_not_apply_to_the_local_backend(monkeypatch):
     to a model on localhost would make the default configuration unusable."""
     with override_settings(LLM_BACKEND="local", ALIBABA_LLM_ALLOW_LIVE_REQUESTS=False):
         config = endpoint_config("local")
-        monkeypatch.setattr(llm_backend, "urlopen", _ok(ANSWER, url=config.base_url))
+        monkeypatch.setattr(llm_backend, "_http_open", _ok(ANSWER, url=config.base_url))
         answer = OpenAICompatibleLLMClient(config).chat(
             [{"role": "user", "content": "hi"}], model="qwen3.6-35b-a3b"
         )
         assert answer.content
+
+
+# ── redirects are refused, not detected ──────────────────────────
+
+
+def test_a_remote_redirect_target_receives_zero_requests(monkeypatch):
+    """The check that was too late, made early.
+
+    Reading `response.geturl()` afterwards catches the RESPONSE. It cannot unsend
+    the request: `urlopen` follows redirects itself, so the second host has
+    already received the call — with `Authorization: Bearer` attached, because
+    urllib strips auth only on a same-host downgrade, not across hosts. The old
+    test simulated a response whose final URL differed and proved nothing about
+    what the redirect target saw.
+
+    Here a real `HTTPRedirectHandler` chain runs against a 302, and the assertion
+    is on the SECOND host's request count.
+    """
+    from urllib.error import HTTPError
+
+    seen: list[str] = []
+
+    def transport(request, *args, **kwargs):  # noqa: ARG001
+        seen.append(request.full_url)
+        if len(seen) == 1:
+            raise HTTPError(
+                request.full_url,
+                302,
+                "Found",
+                {"Location": "https://evil.test/compatible-mode/v1/chat/completions"},
+                io.BytesIO(b""),
+            )
+        return _ok(ANSWER)(request)
+
+    # Patch the raw seam, so the opener's redirect handling is what is exercised.
+    monkeypatch.setattr(llm_backend, "_http_open", transport)
+    with override_settings(**ALIBABA):
+        client = OpenAICompatibleLLMClient(endpoint_config("alibaba"))
+        with pytest.raises(Exception):  # noqa: B017 - any refusal is acceptable
+            client.chat([{"role": "user", "content": "hi"}])
+
+    assert len(seen) == 1, "the redirect was followed"
+    assert not any("evil.test" in url for url in seen), "the redirect target was contacted"
+
+
+def test_the_opener_itself_refuses_a_redirect():
+    """The handler, unit-tested, because the seam above is patched in every other
+    test in this file — so nothing else exercises the real refusal."""
+    handler = llm_backend._RefuseRedirect()
+    with pytest.raises(LLMConfigError, match="redirect"):
+        handler.redirect_request(None, None, 302, "Found", {}, "https://evil.test/x")
+
+
+def test_a_client_cannot_be_built_around_the_kill_switch(monkeypatch):
+    """The switch must not be a field a caller can set.
+
+    Three ways a caller could previously reach a paid endpoint without the
+    deployment's approval: declare `is_remote=False` on an Alibaba config, set
+    `allow_live_requests=True` directly, or assemble a "local" client whose
+    `base_url` points at Model Studio. None of them touches settings.
+    """
+    monkeypatch.setattr(llm_backend, "_http_open", _never_called())
+
+    # 1. an Alibaba config that lies about being remote, with the switch off
+    with override_settings(**OFF):
+        lying = LLMEndpointConfig(
+            **{
+                **endpoint_config("alibaba").__dict__,
+                "is_remote": False,
+                "allow_live_requests": True,
+            }
+        )
+        with pytest.raises(LLMConfigError, match="disabled"):
+            OpenAICompatibleLLMClient(lying).chat([{"role": "user", "content": "hi"}])
+
+    # 2. a "local" client pointed at a provider host
+    with pytest.raises(LLMConfigError, match="external provider"):
+        OpenAICompatibleLLMClient(
+            LLMEndpointConfig(**{**endpoint_config("alibaba").__dict__, "backend": "local"})
+        )
+
+    # 3. an Alibaba backend whose URL never passed validation
+    with pytest.raises(LLMConfigError):
+        OpenAICompatibleLLMClient(
+            LLMEndpointConfig(
+                **{**endpoint_config("alibaba").__dict__, "base_url": "https://evil.test/v1"}
+            )
+        )

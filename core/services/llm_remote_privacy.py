@@ -732,9 +732,20 @@ def project_verified_context_for_remote(
             if isinstance(entry, dict)
         ]
 
-    policy_evidence = context.get("policy_evidence")
-    if isinstance(policy_evidence, dict):
-        projected["policy_evidence"] = _project_policy_lookup(policy_evidence, identities)
+    for key in ("policy_evidence", "credit_policy_evidence"):
+        evidence = context.get(key)
+        if not isinstance(evidence, dict):
+            continue
+        # Projected ALREADY, when the caller collapsed the buckets for the prompt.
+        # Running the projector a second time would re-derive directness from the
+        # bucket a row now sits in and mark the governing records
+        # `is_direct_evidence: false` — the projector is not idempotent about
+        # classification, and it cannot be: the bucket IS the classification.
+        already = (
+            not ("direct_policy_evidence" in evidence or "background_policy_evidence" in evidence)
+            and "policies" in evidence
+        )
+        projected[key] = dict(evidence) if already else _project_policy_lookup(evidence, identities)
 
     return projected
 

@@ -53,7 +53,7 @@ def _no_real_network(monkeypatch):
             "install a stub over llm_backend.urlopen"
         )
 
-    monkeypatch.setattr(llm_backend, "urlopen", refuse)
+    monkeypatch.setattr(llm_backend, "_http_open", refuse)
 
 
 SENTINEL_KEY = "sk-SENTINELdoNOTleak0000000000000000"
@@ -112,7 +112,7 @@ def test_the_key_is_absent_from_a_401_error_and_its_logs(caplog, monkeypatch):
     a wrong key — so it is the path most likely to print one."""
     client = OpenAICompatibleLLMClient(endpoint_config("alibaba"))
 
-    def fail_401(request, timeout=None):  # noqa: ARG001
+    def fail_401(request, *args, **kwargs):  # noqa: ARG001
         raise HTTPError(
             GOOD_URL,
             401,
@@ -129,7 +129,7 @@ def test_the_key_is_absent_from_a_401_error_and_its_logs(caplog, monkeypatch):
             ),
         )
 
-    monkeypatch.setattr(llm_backend, "urlopen", fail_401)
+    monkeypatch.setattr(llm_backend, "_http_open", fail_401)
 
     with caplog.at_level(logging.DEBUG):
         with pytest.raises(LLMAuthenticationError) as caught:

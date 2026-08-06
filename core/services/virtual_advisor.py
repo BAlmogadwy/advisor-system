@@ -25,7 +25,12 @@ from core.services.advisor_remote_boundary import (
     boundary_for_scope,
 )
 from core.services.credit_policy import credit_policy_evidence
-from core.services.llm_backend import BACKEND_LOCAL, LLMPrivacyError
+from core.services.llm_backend import (
+    BACKEND_LOCAL,
+    LLMConfigError,
+    LLMPrivacyError,
+    get_llm_client,
+)
 from core.services.llm_remote_privacy import (
     EMAIL_PLACEHOLDER,
     NAME_PLACEHOLDER,
@@ -1217,6 +1222,22 @@ def _context_summary(context: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _assistant_prefill_for_client(llm: Any, model: str) -> str | None:
+    """The prefill, or None when the provider will not accept one.
+
+    The model name is not enough. `qwen3.7-max` on Model Studio is the same
+    family as the local build and takes the same `<think>` suppression, but the
+    OpenAI-compatible endpoint does not accept a trailing assistant turn at all
+    and the client raises rather than silently discarding it. Deciding from the
+    name alone therefore breaks every plain-chat path the moment the backend is
+    switched — single-shot, forced final, and all three retries — and each one
+    fails as a 500 rather than as a degraded answer.
+    """
+    if not getattr(llm, "supports_assistant_prefill", True):
+        return None
+    return _assistant_prefill_for_model(model)
+
+
 def _assistant_prefill_for_model(model: str) -> str | None:
     model_l = model.lower()
     if "qwen3" in model_l or "qwen3.6" in model_l or "qwen3.5" in model_l:
@@ -1634,10 +1655,19 @@ def _policy_evidence_for_prompt(result: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(result, dict):
         return {}
     reduced = {k: result[k] for k in _PROMPT_POLICY_KEYS if k in result}
-    # `policies` is what the existing prompt contract names, and an empty list is
-    # load-bearing: the prompt tells the model that an absent or empty `policies`
-    # means it may not state a rule. Present it as the governing subset.
-    reduced["policies"] = result.get("direct_policy_evidence") or []
+    # ONE BUCKET PER RECORD. The first version set `policies` to the governing
+    # rows and left `direct_policy_evidence` in place beside it — so the same
+    # record reached the model twice, and after `_project_policy_lookup` ran it
+    # carried `is_direct_evidence: false` under one key and `true` under the
+    # other. A record whose directness depends on which list you read cannot be
+    # the basis of a contract that turns on exactly that.
+    #
+    # `policies` is the name the prompt contract uses, and an empty list is
+    # load-bearing — the prompt says an absent or empty `policies` means no rule
+    # may be stated — so the governing rows live there and `direct_policy_evidence`
+    # is dropped rather than duplicated.
+    reduced["policies"] = list(result.get("direct_policy_evidence") or [])
+    reduced.pop("direct_policy_evidence", None)
     reduced["background_policy_count"] = len(result.get("background_policy_evidence") or [])
     return reduced
 
@@ -2123,7 +2153,7 @@ def _run_agent_loop(
         messages,
         model=resolved_model,
         max_tokens=_loop_max_tokens(),
-        assistant_prefill=_assistant_prefill_for_model(resolved_model),
+        assistant_prefill=_assistant_prefill_for_client(llm, resolved_model),
     )
     telemetry["forced_final"] = True
     return final.content, final.usage or usage, agent_tool_results, provider_tool_results
@@ -2168,7 +2198,11 @@ def answer_virtual_advisor(
         term=term,
     )
 
-    llm = client or LocalLLMClient()
+    # THE FACTORY, not `LocalLLMClient()`. Until this line `LLM_BACKEND=alibaba`
+    # selected a remote privacy boundary while generation still went to the local
+    # model — the most misleading state the feature could be in, because every
+    # privacy test would pass against a provider that was never contacted.
+    llm = client or get_llm_client()
     resolved_model = llm.resolve_model(model)
 
     telemetry: dict[str, Any] = {
@@ -2190,9 +2224,30 @@ def answer_virtual_advisor(
     # The student's own name is handed over as a redaction target: it is the one
     # personal string that reliably appears in a question ("أنا محمد، كم ساعة…")
     # and the sanitiser works from an exact set rather than a name pattern.
+    # Derived from the CLIENT, never from settings independently. Two sources for
+    # one fact is how a remote client ends up holding `LocalToolBoundary` and full
+    # records: a caller injects a client the settings do not describe — a test, a
+    # management command, a future queue worker — and the privacy behaviour
+    # silently follows the wrong one. The client is the thing that will actually
+    # receive the payload, so it is the thing that decides what may be in it.
+    client_backend = str(getattr(llm, "backend", BACKEND_LOCAL) or BACKEND_LOCAL)
+    configured_backend = (
+        str(getattr(settings, "LLM_BACKEND", BACKEND_LOCAL) or BACKEND_LOCAL).strip().lower()
+    )
+    if client is None and client_backend != configured_backend:
+        # Only for the production construction path. An injected client is
+        # allowed to disagree with settings — that is what makes it injectable —
+        # but the factory building something the deployment did not ask for is a
+        # configuration fault, and answering anyway would answer through the
+        # wrong provider.
+        raise LLMConfigError(
+            f"the configured backend is {configured_backend!r} but the client "
+            f"reports {client_backend!r}; refusing to answer through an "
+            "unintended provider."
+        )
     boundary = boundary_for_scope(
         scope,
-        backend=str(getattr(settings, "LLM_BACKEND", BACKEND_LOCAL) or BACKEND_LOCAL),
+        backend=client_backend,
         known_names=_known_names_from_context(context),
     )
 
@@ -2224,7 +2279,14 @@ def answer_virtual_advisor(
     # aliased or redacted rendering of it.
     policy_evidence, grounding = _seed_policy_evidence(question, scope)
     telemetry["policy_grounding"] = grounding
-    context["policy_evidence"] = _policy_evidence_for_prompt(policy_evidence)
+    # PROJECT FIRST, then shape. The other order runs the prompt trim over a raw
+    # local result and hands the projector something that no longer matches the
+    # shape it was written against — which is how the duplicate-bucket defect
+    # above became invisible. The projector decides what may leave; the trim only
+    # decides how much of that is worth the prompt.
+    context["policy_evidence"] = _policy_evidence_for_prompt(
+        boundary.project_tool_result("policy_lookup", policy_evidence)
+    )
     agent_tool_results = [policy_evidence]
 
     # The credit range reaches the model through `recommendation_policy`, which is
@@ -2241,7 +2303,9 @@ def answer_virtual_advisor(
             json.dumps(_find_credit_block(context), sort_keys=True, default=str)[:400]
         )
         agent_tool_results = [*agent_tool_results, seeded_credit]
-        context["credit_policy_evidence"] = _policy_evidence_for_prompt(seeded_credit)
+        context["credit_policy_evidence"] = _policy_evidence_for_prompt(
+            boundary.project_tool_result("policy_lookup", seeded_credit)
+        )
 
     provider_tool_results = [
         boundary.project_tool_result("policy_lookup", r) for r in agent_tool_results
@@ -2351,7 +2415,7 @@ def answer_virtual_advisor(
         result: ChatResult = llm.chat(
             messages,
             model=resolved_model,
-            assistant_prefill=_assistant_prefill_for_model(resolved_model),
+            assistant_prefill=_assistant_prefill_for_client(llm, resolved_model),
         )
         answer = result.content
         usage = result.usage
@@ -2430,7 +2494,7 @@ def answer_virtual_advisor(
             corrected_cite: ChatResult = llm.chat(
                 retry_messages,
                 model=resolved_model,
-                assistant_prefill=_assistant_prefill_for_model(resolved_model),
+                assistant_prefill=_assistant_prefill_for_client(llm, resolved_model),
             )
             if corrected_cite.content:
                 still_bad = _bad_citations(corrected_cite.content, citations)
@@ -2529,7 +2593,7 @@ def answer_virtual_advisor(
             corrected_policy: ChatResult = llm.chat(
                 retry_messages,
                 model=resolved_model,
-                assistant_prefill=_assistant_prefill_for_model(resolved_model),
+                assistant_prefill=_assistant_prefill_for_client(llm, resolved_model),
             )
             candidate = corrected_policy.content or ""
         except Exception:
@@ -2602,7 +2666,7 @@ def answer_virtual_advisor(
             corrected: ChatResult = llm.chat(
                 retry_messages,
                 model=resolved_model,
-                assistant_prefill=_assistant_prefill_for_model(resolved_model),
+                assistant_prefill=_assistant_prefill_for_client(llm, resolved_model),
             )
             corrected_answer = corrected.content or None
         except Exception:

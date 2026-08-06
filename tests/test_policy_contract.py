@@ -15,6 +15,8 @@ Two claims, tested separately because they fail separately:
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from core.services.advisor_outcome import ReasonCode, derive_outcome
@@ -329,3 +331,40 @@ def test_the_model_sees_the_credit_policy_before_it_states_a_limit() -> None:
     assert any(pid in seeded for pid in BACKING_POLICY_IDS.values()), (
         "the seeded credit evidence names no backing policy id"
     )
+
+
+def test_a_governing_policy_is_never_shown_twice_with_opposite_directness() -> None:
+    """One record, one classification.
+
+    The prompt trim set `policies` to the governing rows and left
+    `direct_policy_evidence` beside it, so after projection the same record
+    carried `is_direct_evidence: false` under one key and `true` under the other.
+    A contract that turns on directness cannot be built on a record whose
+    directness depends on which list you read.
+    """
+    from core.services.advisor_remote_boundary import RemoteToolBoundary
+    from core.services.llm_remote_privacy import RemoteIdentityMap
+    from core.services.virtual_advisor import _policy_evidence_for_prompt
+
+    raw = {
+        "tool": "policy_lookup",
+        "ok": True,
+        "direct_policy_evidence": [
+            {"policy_id": "TU.GOVERNS", "statement_ar": "نص", "decision_use": "PERMITTED"}
+        ],
+        "background_policy_evidence": [{"policy_id": "TU.BACKGROUND"}],
+        "citable": [{"policy_id": "TU.GOVERNS", "page": 24}],
+    }
+    boundary = RemoteToolBoundary(
+        scope={"role": "STUDENT", "student_id": 1}, identities=RemoteIdentityMap()
+    )
+    shaped = _policy_evidence_for_prompt(boundary.project_tool_result("policy_lookup", raw))
+
+    assert "direct_policy_evidence" not in shaped, "the governing rows are in one bucket only"
+    assert [r["policy_id"] for r in shaped["policies"]] == ["TU.GOVERNS"]
+    assert all(r["is_direct_evidence"] is True for r in shaped["policies"])
+    assert "TU.BACKGROUND" not in json.dumps(shaped, ensure_ascii=False)
+
+    # …and putting it through the context projector does not re-classify it.
+    twice = boundary.project_context({"policy_evidence": shaped})
+    assert all(r["is_direct_evidence"] is True for r in twice["policy_evidence"]["policies"])

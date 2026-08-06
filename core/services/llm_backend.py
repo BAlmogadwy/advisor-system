@@ -40,7 +40,7 @@ from dataclasses import dataclass, field
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
-from urllib.request import Request, urlopen
+from urllib.request import HTTPRedirectHandler, Request, build_opener, urlopen
 
 from django.conf import settings
 
@@ -442,6 +442,68 @@ def _alibaba_config() -> LLMEndpointConfig:
     )
 
 
+def _looks_like_a_remote_provider(base_url: str) -> bool:
+    """Is this URL an external provider wearing a local label?
+
+    The compatibility escape hatch — an arbitrary `base_url` on a client the
+    caller assembles — is the one way to reach a paid endpoint without passing
+    any provider validation. A local client may point anywhere on the machine or
+    the campus network; it may not point at a Model Studio host.
+    """
+    host = (urlparse(str(base_url or "")).hostname or "").lower()
+    return host.endswith(".aliyuncs.com")
+
+
+class _RefuseRedirect(HTTPRedirectHandler):
+    """Refuse every 30x rather than following it.
+
+    Checking `response.geturl()` afterwards is too late, and that is what the
+    first version did. `urlopen` follows redirects itself, so by the time the
+    final hostname is available the second host has ALREADY received the request
+    — with the `Authorization: Bearer` header attached, because urllib strips
+    auth headers only on a same-host downgrade, not on a cross-host redirect.
+    The check caught the response; it could not unsend the credential.
+
+    A fixed API endpoint has no operational need for redirects at all, so
+    refusing every one — including same-host — is the honest rule.
+    """
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: ARG002
+        raise LLMConfigError(
+            f"the provider answered with a {code} redirect; refusing to follow it "
+            "rather than present the API key to another destination."
+        )
+
+
+_NO_REDIRECT_OPENER = build_opener(_RefuseRedirect)
+
+
+def _http_open(request: Request, *, timeout: float, follow_redirects: bool):
+    """The ONE seam every HTTP request passes through.
+
+    One function so the repository-wide network guard has a single thing to
+    block, and so "which requests may be redirected" is a decision made here
+    rather than per call site.
+    """
+    if follow_redirects:
+        return urlopen(request, timeout=timeout)  # noqa: S310  # nosec B310
+    return _NO_REDIRECT_OPENER.open(request, timeout=timeout)  # noqa: S310  # nosec B310
+
+
+def _requires_deployment_approval(backend: str) -> bool:
+    """Whether this backend may only talk to the network with explicit approval.
+
+    Keyed on the BACKEND NAME and read from settings at call time. Both halves
+    matter: a caller can hand the client any `LLMEndpointConfig` it likes, so a
+    switch that consults `config.allow_live_requests` is a switch the caller can
+    turn off by constructing a config; and reading settings at call time means
+    the flag cannot be captured at import and go stale.
+    """
+    if str(backend or "").strip().lower() != BACKEND_ALIBABA:
+        return False
+    return not bool(getattr(settings, "ALIBABA_LLM_ALLOW_LIVE_REQUESTS", False))
+
+
 def endpoint_config(backend: str | None = None) -> LLMEndpointConfig:
     resolved = (backend or configured_backend()).strip().lower()
     if resolved == BACKEND_LOCAL:
@@ -490,6 +552,20 @@ class OpenAICompatibleLLMClient:
                         ),
                     }
                 )
+        # REVALIDATED here, not trusted. `LLMEndpointConfig` is a public dataclass:
+        # a caller can point `base_url` at a Model Studio workspace while declaring
+        # `backend="local"`, or declare `backend="alibaba"` with a URL that never
+        # went through `_validate_alibaba_url`. Neither should produce a usable
+        # client, and neither is caught by a check that reads `config.is_remote` —
+        # that field is caller-supplied too.
+        if str(config.backend or "").strip().lower() == BACKEND_ALIBABA:
+            _validate_alibaba_url(config.base_url)
+            _validate_api_key(config.api_key)
+        elif _looks_like_a_remote_provider(config.base_url):
+            raise LLMConfigError(
+                "a non-remote backend may not be configured with an external provider "
+                "endpoint; build it through endpoint_config()."
+            )
         self.config = config
 
     # Compatibility surface: callers and tests read `.base_url`/`.timeout_seconds`.
@@ -533,7 +609,12 @@ class OpenAICompatibleLLMClient:
         the provider's reply into the error string, which is how a student
         record echoed back by a provider would land in a log line.
         """
-        if self.config.is_remote and not self.config.allow_live_requests:
+        # Re-derived from the BACKEND, not read off the config. `is_remote` and
+        # `allow_live_requests` are public fields on a dataclass any caller can
+        # build, so a client constructed outside `endpoint_config()` could
+        # declare itself local and walk straight through. The backend name is
+        # the one thing a caller cannot redefine into something harmless.
+        if _requires_deployment_approval(self.config.backend):
             # BEFORE the body is built, before a socket exists. Not a policy the
             # caller may talk past: no argument, no keyword, no backend selector
             # reaches around it. The only way through is the environment.
@@ -555,10 +636,16 @@ class OpenAICompatibleLLMClient:
                 headers=self._headers(),
             )
             try:
-                with urlopen(request, timeout=effective_timeout) as response:  # noqa: S310  # nosec B310
-                    # Validating the URL we ASKED for does not constrain where we
-                    # ended up. A 30x to another host would carry the bearer
-                    # token there, and urllib follows redirects by default.
+                with _http_open(
+                    request,
+                    timeout=effective_timeout,
+                    follow_redirects=not self.config.is_remote,
+                ) as response:  # noqa: S310  # nosec B310
+                    # Belt and braces. For a remote provider the opener refuses
+                    # the redirect BEFORE following it, so this can only fire on
+                    # the local backend — but checking where we ended up costs
+                    # nothing and a future opener change should not silently
+                    # remove the check.
                     final_host = (urlparse(response.geturl()).hostname or "").lower()
                     if final_host != expected_host:
                         raise LLMConfigError(

@@ -893,7 +893,7 @@ def test_chat_with_tools_raises_on_empty_turn(monkeypatch) -> None:
 
 
 def test_http_400_raises_bad_request(monkeypatch) -> None:
-    def fake_urlopen(request, timeout=0):
+    def fake_urlopen(request, *args, **kwargs):
         raise HTTPError(
             "http://localhost:1234/v1/chat/completions",
             400,
@@ -902,7 +902,7 @@ def test_http_400_raises_bad_request(monkeypatch) -> None:
             io.BytesIO(b'{"error": "tools not supported"}'),
         )
 
-    monkeypatch.setattr("core.services.llm_backend.urlopen", fake_urlopen)
+    monkeypatch.setattr("core.services.llm_backend._http_open", fake_urlopen)
     client = LocalLLMClient(base_url="http://localhost:1234/v1")
 
     with pytest.raises(LocalLLMBadRequest):

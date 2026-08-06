@@ -38,7 +38,12 @@ def forbid_llm_network(monkeypatch) -> None:  # noqa: PT004
         url = getattr(request, "full_url", request)
         raise AssertionError(
             f"a test attempted a real LLM network request to {url!r}. "
-            "Install a fake over core.services.llm_backend.urlopen in the test."
+            "Install a fake over core.services.llm_backend._http_open in the test."
         )
 
+    # BOTH seams. `_http_open` is what the transport calls; `urlopen` is what it
+    # delegates to for a redirect-following (local) request. Blocking only the
+    # outer one would leave a direct `urlopen` added later uncovered, and the
+    # whole point of this fixture is that it cannot be forgotten.
+    monkeypatch.setattr(llm_backend, "_http_open", blocked)
     monkeypatch.setattr(llm_backend, "urlopen", blocked)
