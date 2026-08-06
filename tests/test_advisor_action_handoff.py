@@ -663,27 +663,55 @@ def test_the_labelled_rows_are_the_ones_this_test_thinks_they_are() -> None:
     passes by having nothing to check — the shape of vacuous test this repository
     has shipped before.
     """
-    assert {qid for qid, _, _ in _labelled_intents()} == {"TT02", "TT24"}
+    assert {qid for qid, _, _ in _labelled_intents()} == {"TT02", "TT24", "TT26"}
 
 
-def test_tt26_is_routed_although_its_batch_label_says_it_should_not_be() -> None:
-    """A disagreement with the labels, stated rather than hidden.
+def test_the_third_routed_row_is_labelled_like_the_other_two() -> None:
+    """TT26's label used to disagree with the route, and the disagreement was pinned.
 
-    TT26 is «عدّلت قائمة المقررات؛ أعد بناء البدائل بناءً على التعديل الجديد» and
-    its label reads `expected_action: null`, `required_tools: [build_my_timetable]`.
-    That label describes a system that cannot answer it. The edit happened in the
-    planner, on a draft; `_exec_build_my_timetable` builds from `must_include`
-    plus `recommend_next_courses` and has no access to a draft, so a build here
-    returns alternatives from the SYSTEM's course list and presents them as
-    "based on your edit" — a fabrication with a tool call behind it.
+    It read `expected_action: null`, `required_tools: [build_my_timetable]` — a label
+    describing a system that cannot answer «عدّلت قائمة المقررات؛ أعد بناء البدائل
+    بناءً على التعديل الجديد». The edit happened in the planner, on a draft;
+    `_exec_build_my_timetable` builds from `must_include` plus
+    `recommend_next_courses` and has no access to a draft, so a build here returns
+    alternatives from the SYSTEM's course list and presents them as "based on your
+    edit" — a fabrication with a tool call behind it.
 
-    The label is wrong and the route is right. Pinned so the disagreement is
-    visible to whoever reconciles the two.
+    The label is now corrected, so this row is an ordinary member of the
+    parametrisation above. What remains worth pinning is that the tool it used to
+    REQUIRE is now merely allowed: requiring it would score the fabrication as
+    correct behaviour.
     """
     row = next(r for r in _batch_rows() if r["id"] == "TT26")
-    assert row["expected_action"] is None, "the batch label was corrected; re-check this test"
-    assert row["required_tools"] == ["build_my_timetable"]
+    assert row["expected_action"] == OPEN_STUDENT_PLANNER
+    assert row["required_tools"] == []
+    assert row["allowed_tools"] == ["build_my_timetable"]
 
     handoff = handoff_for_question(row["ar"])
     assert handoff is not None
     assert handoff.intent == INTENT_EDIT_DRAFT
+
+
+def test_a_routed_question_never_reaches_a_provider(monkeypatch) -> None:
+    """The hand-off is decided before generation, so no provider is contacted.
+
+    `ScriptedClient([])` raises if asked for a completion, so a route that fell
+    through to the model fails here rather than costing a paid call and returning
+    prose where a structured action belongs.
+    """
+    # Filtered on the FAMILY, not on `expected_action`. TT27-TT29 also expect
+    # OPEN_STUDENT_PLANNER, and they reach it the other way — through
+    # `build_my_timetable` refusing, which needs a model call to request the tool.
+    # Selecting on the action alone would assert "no provider" about the three
+    # cases whose route depends on one.
+    routed = {str(f) for f in ROUTED_INTENTS}
+    for row in _batch_rows():
+        if row["expected_family"] not in routed:
+            continue
+        assert row.get("expected_action"), f"{row['id']} is routed but labels no action"
+        ExecutionSpy(monkeypatch)
+        payload = _ask(ScriptedClient([]), question=row["ar"])
+        assert payload["action"], row["id"]
+        assert payload["action"]["type"] == row["expected_action"], row["id"]
+        assert payload["model"] == "", f"{row['id']} named a provider that never saw it"
+        assert payload["usage"] == {}, f"{row['id']} recorded provider usage"

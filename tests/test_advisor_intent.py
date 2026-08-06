@@ -349,7 +349,7 @@ BATCH_ROUTES: dict[str, IntentFamily] = {
     "CP08": IntentFamily.GENERAL_AGENT,
     "CP09": IntentFamily.GENERAL_AGENT,
     "CP10": IntentFamily.COURSE_PRIORITY,
-    "CP11": IntentFamily.GENERAL_AGENT,
+    "CP11": IntentFamily.COURSE_PRIORITY,
     "CP12": IntentFamily.COURSE_PRIORITY,
     "CP13": IntentFamily.COURSE_LOCK_REASON,
     "CP14": IntentFamily.GENERAL_AGENT,
@@ -403,12 +403,22 @@ def test_no_batch_question_is_routed_outside_its_domain() -> None:
         assert family in expected, f"{qid} routed to {family}"
 
 
-def test_the_router_abstains_on_nineteen_of_the_fifty() -> None:
+def test_the_router_abstains_on_eighteen_of_the_fifty() -> None:
     """Pinned deliberately. Loosening a pattern to raise coverage moves this
     number, and the review that follows should be about which question stopped
-    falling through and whether the family can actually answer it."""
+    falling through and whether the family can actually answer it.
+
+    It moved once, 19 -> 18, and the review is recorded here rather than in a commit
+    message nobody reads at the next change. CP11 «وش المقررات المقفلة عندي وما
+    يفصلني عنها إلا مقرر واحد؟» stopped falling through, and COURSE_PRIORITY can
+    answer it outright: `my_progress` returns `counts.one_step`, which is that number
+    exactly. It was closed because abstention is not free downstream — the policy
+    gate keys on the family, so GENERAL_AGENT kept a citation obligation the question
+    could not discharge and the student was refused their own prerequisite data.
+    """
     fell_through = [q for q, f in BATCH_ROUTES.items() if f is IntentFamily.GENERAL_AGENT]
-    assert len(fell_through) == 19
+    assert len(fell_through) == 18
+    assert "CP11" not in fell_through
 
 
 def test_every_family_is_reachable() -> None:
@@ -516,3 +526,53 @@ def test_the_narrow_check_is_strictly_narrower_over_the_whole_batch() -> None:
     assert narrow < broad
     assert len(narrow) == 1
     assert len(broad) == 13
+
+
+def test_the_code_table_and_the_batch_file_agree() -> None:
+    """Two tables naming the same 50 routes is two sources of truth, which is none.
+
+    `BATCH_ROUTES` above is the executable one; `expected_family` in the batch YAML
+    is the one a scorer and a reviewer read. They were written at different times for
+    different readers, so this asserts they say the same thing rather than trusting
+    that they do — the divergence would otherwise surface as an eval report scoring
+    a route the tests say is correct.
+    """
+    import pathlib
+
+    import yaml as _yaml
+
+    path = pathlib.Path(__file__).resolve().parents[1] / "evals" / "advisor"
+    rows = _yaml.safe_load(path.joinpath("planner_priority_batch.yaml").read_text(encoding="utf-8"))
+    declared = {r["id"]: r["expected_family"] for r in rows["questions"]}
+
+    assert set(declared) == set(BATCH_ROUTES), "the two tables cover different questions"
+    mismatched = {
+        q: (declared[q], str(BATCH_ROUTES[q]))
+        for q in declared
+        if declared[q] != str(BATCH_ROUTES[q])
+    }
+    assert not mismatched, f"batch file and code table disagree: {mismatched}"
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        # «يفصل» is "separates" in any sense at all. These are the sentences that
+        # make the one-step marker a THREE-word ordered sequence rather than a
+        # keyword: each contains the verb and none is a priority question.
+        "كم يوم يفصلني عن بداية الفصل الدراسي؟",
+        "وش يفصل بين الفصل الأول والفصل الثاني؟",
+        "المبنى اللي يفصل بين القاعتين وين؟",
+        "how many weeks separate me from the exam period?",
+    ],
+)
+def test_the_separator_verb_alone_does_not_claim_a_priority_question(question: str) -> None:
+    """A marker written for one question must not become a pattern.
+
+    Dropping the course noun and the count from `_m(_SEPARATES, _COURSE_NOUN,
+    _ONE_WORD)` leaves every one of these classified COURSE_PRIORITY and routed at
+    `my_progress`, which would answer a calendar question with a prerequisite
+    ranking — the exact "wrong confident route" this module's docstring argues is
+    worse than no route at all.
+    """
+    assert classify_intent(question) is IntentFamily.GENERAL_AGENT

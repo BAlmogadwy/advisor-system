@@ -25,11 +25,22 @@ a surface that structurally cannot answer it — «هل الشعب فيها مق
 the planner returns a timetable and no seat count, and the answer that comes back
 is a fabrication with a tool call behind it. So every family here fires on an
 explicit, enumerated marker, and anything else falls through. Measured on the 50
-batch questions this classifies 31 and abstains on 19; every one of the 31 lands
-in the domain its curated label names. The 19 abstentions are the point, not a
+batch questions this classifies 32 and abstains on 18; every one of the 32 lands
+in the domain its curated label names. The 18 abstentions are the point, not a
 gap to close by loosening a pattern — «هل الشعب فيها مقاعد؟» (TT22) and «بصفتي
 المرشد، ما المقرر الذي يحرر أكبر عدد من المقررات؟» (CP19) are both better served
 by the agent loop than by a family that would answer the wrong half.
+
+AN ABSTENTION IS NOT ALWAYS FREE, WHICH IS WHY ONE WAS CLOSED
+
+CP11 «وش المقررات المقفلة عندي وما يفصلني عنها إلا مقرر واحد؟» read as
+GENERAL_AGENT — defensible on its own terms, and a live defect anyway, because the
+POLICY gate keys on the family: an unrouted question kept the broad obligation and
+the student was refused their own prerequisite data over a rule that does not
+exist. So the cost of abstaining is paid downstream, and a family whose data the
+system holds outright is worth an enumerated marker. The whole table is now pinned
+row by row in `tests/test_advisor_action_handoff.py`, GENERAL_AGENT rows included,
+so the next marker cannot move one silently.
 
 WHY IT REUSES `policy_store`'S MATCHER RATHER THAN A REGEX SET
 
@@ -328,6 +339,22 @@ _DEPEND_VERB = _words("يعتمد", "تعتمد", "يعتمدون", "depend", "d
 #: is a demand for an audit trail; neither is answered by the priority ranking.
 _PRIORITY_WORD = _words("اهم", "الاهم", "اولويه", "الاولويه", "priority", "priorities")
 
+#: The one-step question, named by DISTANCE rather than by the course:
+#: «وش المقررات المقفلة عندي وما يفصلني عنها إلا مقرر واحد؟» (CP11). It classified
+#: GENERAL_AGENT, which mattered beyond routing — the broad policy gate keys on the
+#: family, so an unrouted question kept a citation obligation it could not discharge
+#: and a student was refused their own prerequisite data. `my_progress` answers it
+#: outright: `counts.one_step` is exactly this number.
+#:
+#: Three words IN ORDER, not one. «يفصل» alone is "separates" in any sense and
+#: «واحد» alone is the numeral; it is the sequence separator -> course -> one that
+#: names the relation. Measured against the 284-question corpus this fires on zero
+#: of them, which is the check that a marker written for one question has not
+#: quietly become a pattern.
+_SEPARATES = _words("يفصلني", "يفصل", "يفصلها", "يفصلنا", "away", "separates", "separate")
+
+_ONE_WORD = _words("واحد", "واحده", "one", "single")
+
 _WHY_WORD = _words("ليش", "لماذا", "ليه", "السبب", "why")
 
 _LOCKED_WORD = _words("مقفل", "مقفله", "المقفل", "المقفله", "مغلق", "مغلقه", "locked", "blocked")
@@ -469,6 +496,7 @@ _MARKERS: dict[IntentFamily, tuple[_Marker, ...]] = {
     IntentFamily.COURSE_PRIORITY: (
         _m(_PRIORITY_WORD, _COURSE_NOUN),
         _m(_COURSE_NOUN, _PRIORITY_WORD),
+        _m(_SEPARATES, _COURSE_NOUN, _ONE_WORD),
     ),
     IntentFamily.COURSE_UNLOCKS: (
         _m(_UNLOCK_VERB, _COURSE_NOUN),
