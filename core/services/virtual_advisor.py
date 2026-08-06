@@ -16,6 +16,7 @@ from core.models import (
     StudentTermSection,
     TermSection,
 )
+from core.services.advisor_actions import handoff_for
 from core.services.advisor_principal import AdvisorPrincipal
 from core.services.advisor_remote_boundary import (
     DUPLICATE_NOTE,
@@ -1810,6 +1811,14 @@ def _summarise_tool_args(args: dict[str, Any]) -> dict[str, Any]:
     return summary
 
 
+#: Returned by the loop when a capability produced a route. Not an answer —
+#: `answer_virtual_advisor` replaces it with the handoff's own text, in the
+#: student's language. A sentinel rather than the text itself so the loop does
+#: not need to know about answer language, and so a bug that leaks it is
+#: unmistakable rather than plausible.
+_ACTION_HANDOFF_SENTINEL = "\x00action-handoff\x00"
+
+
 def _tool_message(call_id: str, payload: dict[str, Any]) -> dict[str, Any]:
     """The one place a tool result becomes text bound for the model.
 
@@ -2102,6 +2111,23 @@ def _run_agent_loop(
                     )
                     messages.append(_tool_message(call.id, boundary.refusal_result(call.name)))
                     continue
+                # A ROUTE, not data. The server has already decided where
+                # this request goes; handing that to the model to paraphrase is
+                # how a confirmation requirement became «the feature does not
+                # exist», with advice to delete real registrations attached.
+                # Short-circuit before the provider sees anything.
+                handoff = handoff_for(local_result)
+                if handoff is not None:
+                    telemetry["action_handoff"] = handoff.action
+                    agent_tool_results.append(local_result)
+                    provider_tool_results.append(provider_result)
+                    return (
+                        _ACTION_HANDOFF_SENTINEL,
+                        usage,
+                        agent_tool_results,
+                        provider_tool_results,
+                    )
+
                 seen_calls[dedup_key] = CachedToolExecution(local_result, provider_result)
                 agent_tool_results.append(local_result)
                 provider_tool_results.append(provider_result)
@@ -2364,6 +2390,26 @@ def answer_virtual_advisor(
                 credit_blocks_seeded=credit_blocks_seeded,
             )
             telemetry["loop_used"] = True
+            if answer == _ACTION_HANDOFF_SENTINEL:
+                # Every downstream check is skipped ON PURPOSE. There is nothing
+                # to ground, cite or sanitise: no model wrote this, and the text
+                # is a constant in this repository. Running the contracts over it
+                # would only create ways for them to reject it.
+                handoff = handoff_for(agent_tool_results[-1])
+                assert handoff is not None
+                return {
+                    "ok": True,
+                    "answer": handoff.answer(_answer_language(question)),
+                    "action": handoff.as_payload(),
+                    "model": answer_model,
+                    "usage": usage,
+                    "context_summary": _context_summary(context),
+                    "tool_results": agent_tool_results,
+                    "verified_context": context,
+                    "citations": [],
+                    "cited_policy_ids": [],
+                    "agent": {**telemetry, "tool_results": agent_tool_results},
+                }
             # `policy_grounding` is NOT recomputed here. It was set by the
             # server-side prefetch, from the retrieval that actually happened, and
             # deriving it a second time from what the model chose to call is the
@@ -2702,6 +2748,9 @@ def answer_virtual_advisor(
     return {
         "ok": True,
         "answer": answer,
+        #: Present on every response so a caller can test one key rather than
+        #: two shapes. `None` means "no route was offered".
+        "action": None,
         "model": answer_model,
         "usage": usage,
         "context_summary": _context_summary(context),
