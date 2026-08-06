@@ -832,3 +832,20 @@ def test_an_ordinary_answer_reports_both_halves_answered(monkeypatch) -> None:
     )
     assert payload["policy_part"]["status"] == "ANSWERED"
     assert payload["data_part"]["status"] == "ANSWERED"
+
+
+def test_a_consistency_violation_never_ships_to_the_student(monkeypatch) -> None:
+    """The postconditions are wired into the SAME gate, not computed beside it.
+
+    A module that returns violation codes nobody applies is worse than no module: the
+    trace says the answer was checked. Here the model claims a registration the
+    adviser never performs — the live failure this branch opened with — and the
+    sentence must not reach the student.
+    """
+    ExecutionSpy(monkeypatch, result={"tool": "my_progress", "ok": True})
+    payload = _ask(
+        ScriptedClient([_call("my_progress", {})], final="سجلت لك المقررات في البوابة."),
+        question="وش المقررات المقفلة عندي وما يفصلني عنها إلا مقرر واحد؟",
+    )
+    assert "سجلت لك" not in payload["answer"]
+    assert "claimed_registration_mutation" in (payload["agent"].get("output_violations") or [])

@@ -26,6 +26,7 @@ from core.services.advisor_remote_boundary import (
     ToolBoundary,
     boundary_for_scope,
 )
+from core.services.answer_consistency import check_answer
 from core.services.credit_policy import credit_policy_evidence
 from core.services.llm_backend import (
     BACKEND_LOCAL,
@@ -1307,6 +1308,8 @@ def _output_contract_violations(
     evidence_texts: list[str],
     boundary: ToolBoundary,
     is_student: bool,
+    tool_results: list[dict[str, Any]] | None = None,
+    action: dict[str, Any] | None = None,
 ) -> list[str]:
     """What is wrong with this answer, as a list of codes. Empty means shippable.
 
@@ -1353,6 +1356,12 @@ def _output_contract_violations(
             violations.append(VIOLATION_IDENTIFIER_ON_REMOTE)
     elif _unverified_student_ids(text, evidence_texts):
         violations.append(VIOLATION_UNVERIFIED_ID)
+
+    # THE SAME GATE, not a second one. These ask a different question — does the
+    # answer agree with the facts it was given — but they share the retry, the
+    # re-validation and the refusal below, because a turn with two gates has two
+    # places for a violation to be handled differently.
+    violations.extend(check_answer(text, tool_results=tool_results, action=action))
 
     return violations
 
@@ -2754,7 +2763,11 @@ def answer_virtual_advisor(
     ]
     is_student = principal.role == ROLE_STUDENT
     violations = _output_contract_violations(
-        answer, evidence_texts=evidence_texts, boundary=boundary, is_student=is_student
+        answer,
+        evidence_texts=evidence_texts,
+        boundary=boundary,
+        is_student=is_student,
+        tool_results=tool_results,
     )
     if violations:
         # `grounding_retry` keeps its name: stored turns, the eval battery and the
@@ -2800,6 +2813,10 @@ def answer_virtual_advisor(
                 evidence_texts=evidence_texts,
                 boundary=boundary,
                 is_student=is_student,
+                # The SAME evidence. Re-validating without it would check the
+                # corrected answer against nothing, and the retry would launder
+                # every consistency violation away.
+                tool_results=tool_results,
             )
             if corrected_answer
             else violations
