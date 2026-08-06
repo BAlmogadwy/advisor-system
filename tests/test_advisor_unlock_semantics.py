@@ -125,6 +125,27 @@ def _progress() -> dict:
     )
 
 
+def _add(code: str, level: int, credits: int, prereqs: tuple[str, ...], kind: str) -> None:
+    """One extra plan row, added by a test rather than by the fixture.
+
+    The headline counts are 5 / 3 / 6 and several tests assert them literally, so
+    anything that would change AI331's neighbourhood is created inside the test that
+    needs it.
+    """
+    Course.objects.update_or_create(
+        course_code=code, defaults={"description": f"{code} NAME", "credit_hours": credits}
+    )
+    ProgrammeRequirement.objects.update_or_create(
+        program=PROG,
+        course_code=code,
+        defaults={"programme_term": level, "credit_hours": credits, "type": kind},
+    )
+    for p in prereqs:
+        Prerequisite.objects.update_or_create(
+            program=PROG, course_code=code, prerequisite_course_code=p
+        )
+
+
 # ── (b) the two relations are different numbers ──────────────────
 
 
@@ -512,7 +533,20 @@ def test_the_forward_direction_is_advertised_where_the_model_reads_it():
     assert "listed_as_prerequisite_for" in forward
     assert "sole_remaining_prerequisite_for" in forward
     assert "on_prerequisite_chain_of_count" in forward
+    # Naming the displaced tool is not enough — «use X, not Y» leaves Y looking like
+    # a second way to the same answer. The description has to say Y answers the
+    # OTHER relation, which is why calling it on a forward question is not a
+    # near-miss but a category error.
     assert "course_prerequisites" in forward, "it must name the tool it is displacing"
+    # In ONE sentence, not two. "Use this, not that" plus a separate remark about a
+    # reverse relation leaves the reader to join them, and joining them is the step
+    # that was getting skipped. Asserted as co-occurrence rather than as an exact
+    # string so the sentence can be rewritten without breaking the contract.
+    assert any(
+        "course_prerequisites" in sentence and "REVERSE" in sentence
+        for sentence in forward.split(". ")
+    ), "the reverse relation must be attributed to that tool by name"
+    assert "what this course" in forward and "itself requires" in forward
 
     progress = by_name["my_progress"].description
     assert "unlock_impact_ranking" in progress
@@ -520,3 +554,152 @@ def test_the_forward_direction_is_advertised_where_the_model_reads_it():
     # Neither may advertise a permission either of them says it cannot establish.
     for text in (forward, progress):
         assert "open to register" not in text
+
+
+# ── the holes a 34-mutant run found in the tests above ───────────
+
+
+def test_an_elective_placeholder_is_never_waiting_on_a_course(plan):
+    """A slot is a choice, not a course. Nothing about passing AI331 opens one.
+
+    `Program Elective` rows carry prerequisites in the data, so the reverse relation
+    finds them and a rule that only checked "not taken" would report the student's
+    elective slot as one of the courses AI331 unlocks — the placeholder confusion
+    `student_unlock` refuses everywhere else, arriving through a new door.
+    """
+    _add("AI1", 7, 3, ("AI331",), "Program Elective")
+    out = _why("AI331")
+
+    listed = [r["code"] for r in out["listed_as_prerequisite_for"]]
+    sole = [r["code"] for r in out["sole_remaining_prerequisite_for"]]
+
+    assert "AI1" in listed, "the prerequisite record is real and is not hidden"
+    assert "AI1" not in sole
+    assert out["listed_as_prerequisite_count"] == 6
+    assert out["sole_remaining_prerequisite_count"] == 3
+
+
+def test_an_elective_placeholder_is_never_a_course_to_pass(plan):
+    """`open` does not exclude placeholders — «PROGRAM ELECTIVE COURSE I» is "not
+    taken with nothing missing" — so the ranking offered six of them as candidates.
+
+    Given a dependent, an unfiltered ranking puts a slot the student cannot register
+    at the top of a list headed "pass this next".
+    """
+    _add("AI1", 7, 3, (), "Program Elective")
+    _add("AI777", 8, 3, ("AI1",), "Mandatory")
+
+    report = build_unlock_report(SID, YEAR, TERM)
+    assert report["dependents"]["AI1"]["waiting_only_on_this"] == ["AI777"], (
+        "the slot really does have a dependent, so exclusion is doing the work"
+    )
+    assert "AI1" not in [r["code"] for r in report["blockers"]]
+    assert "AI1" not in [r["code"] for r in _progress()["unlock_impact_ranking"]]
+
+
+def test_the_ranking_omits_courses_that_would_free_nothing(plan):
+    """A ranked list of zeroes is not a ranking.
+
+    Seven of this student's open courses free nothing at all. Listing them under
+    "which course opens the most" invites the model to name one.
+    """
+    _add("GS101", 1, 2, (), "Mandatory")
+    ranking = _progress()["unlock_impact_ranking"]
+
+    assert "GS101" not in [r["code"] for r in ranking]
+    assert [r["code"] for r in ranking] == ["AI331", "CS323", "CS289"]
+    assert all(
+        r["sole_remaining_prerequisite_count"] or r["on_prerequisite_chain_of_count"]
+        for r in ranking
+    )
+
+
+def test_my_plan_by_term_does_not_write_into_the_payload_it_was_handed(plan):
+    """The rows it decorates are the ones `report_views` serves to two screens.
+
+    `_build_student_plan_payload` is shared with `page-dashboard.js` and
+    `page-planner.js`; writing `prerequisites_satisfied` into those dicts would leak
+    a field into the browser's JSON from a change made for a language model.
+    """
+    from core.report_views import _build_student_plan_payload
+    from core.services.virtual_advisor_capabilities import _plan_terms_with_canonical_readiness
+
+    payload, _err = _build_student_plan_payload(SID)
+    original = payload["terms"]
+    decorated = _plan_terms_with_canonical_readiness(original)
+
+    assert any("prerequisites_satisfied" in c for level in decorated for c in level["courses"]), (
+        "the decoration happened"
+    )
+    assert not any(
+        "prerequisites_satisfied" in c for level in original for c in level["courses"]
+    ), "and it did not happen to the caller's rows"
+
+
+def test_the_impact_rows_are_allowlisted_not_copied(plan):
+    """`_keep` field by field, like every other row in the module.
+
+    The two impact structures are dicts, and `_keep(result, "most_useful_...")`
+    copies a dict WHOLESALE — the one thing this module's docstring says none of its
+    projectors do. A field added to the row upstream would travel to the provider
+    without anyone deciding it should.
+    """
+    from core.services.llm_remote_privacy import PROJECTORS, RemoteIdentityMap
+
+    poisoned = _progress()
+    poisoned["most_useful_course_to_pass"]["adviser_note"] = "CANARY_INTERNAL"
+    poisoned["unlock_impact_ranking"][0]["adviser_note"] = "CANARY_INTERNAL"
+
+    projected = PROJECTORS["my_progress"](poisoned, RemoteIdentityMap())
+
+    assert "adviser_note" not in projected["most_useful_course_to_pass"]
+    assert "adviser_note" not in projected["unlock_impact_ranking"][0]
+    assert projected["most_useful_course_to_pass"]["code"] == "AI331"
+
+
+def test_the_course_screen_separates_the_two_relations(plan):
+    """The student screen carried the same false claim as the tool.
+
+    Its heading read «اجتيازه يفتح لك» / "Passing this opens" over every course that
+    NAMES this one — five, when three open. The rows now say which is which, and
+    they come from the report rather than from a fourth local count.
+    """
+    from core.services.course_detail import build_course_detail
+
+    detail = build_course_detail(SID, "AI331", academic_year=str(YEAR), term=str(TERM), report=None)
+    rows = {r["course_code"]: r for r in detail["unlocks"]}
+
+    assert set(rows) == {"AI352", "AI371", "AI433", "AI482", "AI491"}
+    assert rows["AI352"]["waiting_only_on_this"] is True
+    assert rows["AI482"]["waiting_only_on_this"] is False
+    assert rows["AI482"]["also_waiting_on"] == ["COE332"]
+    assert rows["AI491"]["also_waiting_on"] == ["CS289"]
+    assert sum(1 for r in rows.values() if r["waiting_only_on_this"]) == 3
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        # No course NOUN — only the code marker can carry these.
+        "what depends on AI331?",
+        "ما الذي يعتمد على AI331؟",
+    ],
+)
+def test_the_dependency_verb_routes_without_a_course_noun(question):
+    from core.services.advisor_intent import owning_capability
+
+    assert owning_capability(question) == "why_course_locked"
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        # No course CODE — only the noun markers can carry these.
+        "كم مقرر يعتمد على هذا المقرر؟",
+        "أي المقررات تعتمد على هذا المقرر؟",
+    ],
+)
+def test_the_dependency_verb_routes_without_a_course_code(question):
+    from core.services.advisor_intent import owning_capability
+
+    assert owning_capability(question) == "why_course_locked"
