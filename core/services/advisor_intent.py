@@ -303,6 +303,16 @@ _EDIT_WORD = _words(
 #: «الشعب» and no course noun at all, so every existing edit marker misses it.
 _SECTION_NOUN = _words("الشعب", "شعب", "شعبه", "الشعبه", "section", "sections")
 
+#: «ثبّت لي شعبة M2» — pin this section and build around it. A REQUEST about a
+#: specific section, which is why it belongs to the draft family rather than to the
+#: build: `build_my_timetable` accepts `must_include` (course codes) and has no
+#: section parameter at all, so routed as a build the «M2» is silently dropped and
+#: the student is told their pin was honoured when only the course was.
+#:
+#: "keep" and "fix" are absent. «keep» is the build's own `keep_current_sections`
+#: vocabulary and "fix" means repair as often as it means pin.
+_PIN_VERB = _words("ثبت", "ثبتي", "ثبتها", "pin", "pinned")
+
 #: PAST TENSE. «اخترتها» — "the ones I chose" — asserts that a selection already
 #: happened, which is exactly what distinguishes an edit of an existing draft from a
 #: build constraint. The imperative «اختر» is deliberately absent: "choose sections
@@ -501,6 +511,10 @@ _MARKERS: dict[IntentFamily, tuple[_Marker, ...]] = {
         # TT10 «لا تغيّر الشعب التي اخترتها يدويًا». The past tense is the whole
         # signal: sections were already picked, so a draft exists.
         _m(_SECTION_NOUN, _CHOSE_VERB),
+        # TT09 «ثبّت لي شعبة M2 في مقرر AI331». EDIT_DRAFT outranks PLANNER_BUILD in
+        # `_PRECEDENCE`, which is what stops the build reading from winning and
+        # dropping the section.
+        _m(_PIN_VERB, _SECTION_NOUN),
     ),
     #: "Show me the alternatives" is deliberately NOT a marker. TT11 is «اعرض لي
     #: جدولي المسجل حاليًا قبل ما تبني أي بدائل» — a read of the registered

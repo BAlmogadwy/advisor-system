@@ -51,6 +51,7 @@ from core.services.advisor_actions import (
     alternative_ref_in,
     handoff_for,
     handoff_for_question,
+    pinned_section_in,
 )
 from core.services.advisor_intent import IntentFamily
 from core.services.advisor_outcome import derive_outcome
@@ -692,26 +693,82 @@ def test_the_third_routed_row_is_labelled_like_the_other_two() -> None:
     assert handoff.intent == INTENT_EDIT_DRAFT
 
 
+def _contract_cases() -> list[dict]:
+    path = BATCH.parent / "planner_priority_eval_v1.yaml"
+    return yaml.safe_load(path.read_text(encoding="utf-8"))["cases"]
+
+
 def test_a_routed_question_never_reaches_a_provider(monkeypatch) -> None:
     """The hand-off is decided before generation, so no provider is contacted.
 
     `ScriptedClient([])` raises if asked for a completion, so a route that fell
     through to the model fails here rather than costing a paid call and returning
     prose where a structured action belongs.
+
+    Filtered on the FAMILY, not on `expected_action`. TT27-TT29 also expect
+    OPEN_STUDENT_PLANNER and reach it the other way — through `build_my_timetable`
+    refusing, which needs a model call to request the tool. Selecting on the action
+    alone would assert "no provider" about the three cases whose route depends on one.
     """
-    # Filtered on the FAMILY, not on `expected_action`. TT27-TT29 also expect
-    # OPEN_STUDENT_PLANNER, and they reach it the other way — through
-    # `build_my_timetable` refusing, which needs a model call to request the tool.
-    # Selecting on the action alone would assert "no provider" about the three
-    # cases whose route depends on one.
     routed = {str(f) for f in ROUTED_INTENTS}
-    for row in _batch_rows():
-        if row["expected_family"] not in routed:
+    checked = 0
+    for case in _contract_cases():
+        family = case["routing"]["expected_family"]
+        if family not in routed:
             continue
-        assert row.get("expected_action"), f"{row['id']} is routed but labels no action"
+        action = case["expected_action"]
+        assert action, f"{case['id']} is routed but labels no action"
         ExecutionSpy(monkeypatch)
-        payload = _ask(ScriptedClient([]), question=row["ar"])
-        assert payload["action"], row["id"]
-        assert payload["action"]["type"] == row["expected_action"], row["id"]
-        assert payload["model"] == "", f"{row['id']} named a provider that never saw it"
-        assert payload["usage"] == {}, f"{row['id']} recorded provider usage"
+        payload = _ask(ScriptedClient([]), question=case["question_ar"])
+        assert payload["action"], case["id"]
+        assert payload["action"]["type"] == action["type"], case["id"]
+        assert payload["action"]["intent"] == action["intent"], case["id"]
+        assert payload["action"]["registration_modified"] is False, case["id"]
+        # The pin is the one route that carries a payload of its own, and dropping
+        # it is silent: the answer still names the course.
+        if action.get("requested_edit"):
+            assert payload["action"]["requested_edit"] == action["requested_edit"], case["id"]
+        assert payload["model"] == "", f"{case['id']} named a provider that never saw it"
+        assert payload["usage"] == {}, f"{case['id']} recorded provider usage"
+        checked += 1
+    assert checked >= 5, f"only {checked} routed cases were exercised"
+
+
+# ==========================================================================
+# The pin, and the three sentences it must refuse to guess at.
+# ==========================================================================
+
+
+def test_a_pin_carries_both_halves_to_the_planner() -> None:
+    """TT09. `build_my_timetable` takes course codes and has no section parameter,
+    so routed as a build «شعبة M2» is dropped and the answer still names AI331 —
+    the student is told the pin was honoured when only the course was."""
+    handoff = handoff_for_question("ثبّت لي شعبة M2 في مقرر AI331، وابنِ بقية الجدول حولها.")
+    assert handoff is not None
+    assert handoff.as_payload()["requested_edit"] == {
+        "operation": "PIN_SECTION_AND_REGENERATE",
+        "course_code": "AI331",
+        "section_label": "M2",
+    }
+
+
+@pytest.mark.parametrize(
+    ("question", "why"),
+    [
+        ("ثبّت لي شعبة M2", "a section label with no course means nothing — M2 exists in dozens"),
+        ("ثبّت لي AI331", "a course with no section is an ordinary must_include, not a pin"),
+        ("ثبّت M2 في AI331 و CS323", "one label and two courses: picking either is a guess"),
+        ("ثبّت M1 و M2 في AI331", "two labels and one course: the first would win by position"),
+    ],
+)
+def test_an_ambiguous_pin_is_left_to_the_planner_to_ask_about(question: str, why: str) -> None:
+    """None, not a best guess.
+
+    The route still stands — the student asked to edit a draft — and the EDIT is
+    simply absent, which is the honest state. The planner then asks. A server that
+    guessed here would pin a section the student never named and report it as theirs.
+    """
+    assert pinned_section_in(question) is None, why
+    handoff = handoff_for_question(question)
+    if handoff is not None:
+        assert "requested_edit" not in handoff.as_payload(), why

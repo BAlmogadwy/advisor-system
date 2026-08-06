@@ -340,67 +340,51 @@ def test_asking_which_sections_do_not_clash_is_still_a_clash_question() -> None:
 # The 50 live-batch questions, as a routing table.
 # --------------------------------------------------------------------------
 
+
 #: Measured, not aspirational. 31 of 50 classify and 19 fall through; each
 #: `GENERAL_AGENT` below is a question no family can serve without answering
 #: something the student did not ask.
+#: The routing expectations, READ from the canonical contract rather than restated.
+#: There used to be three copies of this table — here, `expected_family` in the
+#: executable batch, and `routing.expected_family` in the v1.0 file — and a test
+#: whose whole job was to notice when they disagreed. A contract nobody can
+#: contradict needs no such test.
+#:
+#: Only `exact` rows are a family equality. `one_of` is checked against its allowed
+#: set, and `clarify` / `contextual` / `none` name no family at all: asserting one
+#: for them would re-introduce the over-specification the audit was written to
+#: remove.
+def _contract_rows() -> list[dict]:
+    path = (
+        Path(__file__).resolve().parents[1] / "evals" / "advisor" / "planner_priority_eval_v1.yaml"
+    )
+    return yaml.safe_load(path.read_text(encoding="utf-8"))["cases"]
+
+
+CONTRACT = {row["id"]: row for row in _contract_rows()}
+
 BATCH_ROUTES: dict[str, IntentFamily] = {
-    "TT01": IntentFamily.PLANNER_BUILD,
-    "TT02": IntentFamily.PLANNER_VIEW_ALTERNATIVES,
-    "TT03": IntentFamily.PLANNER_BUILD,
-    "TT04": IntentFamily.PLANNER_BUILD,
-    "TT05": IntentFamily.PLANNER_BUILD,
-    "TT06": IntentFamily.PLANNER_BUILD,
-    "TT07": IntentFamily.PLANNER_BUILD,
-    "TT08": IntentFamily.MIXED,
-    "TT09": IntentFamily.PLANNER_BUILD,
-    "TT10": IntentFamily.PLANNER_EDIT_DRAFT,
-    "TT11": IntentFamily.CURRENT_TIMETABLE,
-    "TT12": IntentFamily.GENERAL_AGENT,
-    "TT13": IntentFamily.GENERAL_AGENT,
-    "TT14": IntentFamily.TIMETABLE_CLASH,
-    "TT15": IntentFamily.TIMETABLE_CLASH,
-    "TT16": IntentFamily.PLANNER_BUILD,
-    "TT17": IntentFamily.GENERAL_AGENT,
-    "TT18": IntentFamily.TIMETABLE_CLASH,
-    "TT19": IntentFamily.GENERAL_AGENT,
-    "TT20": IntentFamily.GENERAL_AGENT,
-    "TT21": IntentFamily.GENERAL_AGENT,
-    "TT22": IntentFamily.GENERAL_AGENT,
-    "TT23": IntentFamily.GENERAL_AGENT,
-    "TT24": IntentFamily.PLANNER_SELECT_PREFERRED,
-    "TT25": IntentFamily.GENERAL_AGENT,
-    "TT26": IntentFamily.PLANNER_EDIT_DRAFT,
-    "TT27": IntentFamily.PLANNER_REBUILD,
-    "TT28": IntentFamily.PLANNER_REBUILD,
-    "TT29": IntentFamily.PLANNER_REBUILD,
-    "TT30": IntentFamily.GENERAL_AGENT,
-    "CP01": IntentFamily.COURSE_PRIORITY,
-    "CP02": IntentFamily.COURSE_PRIORITY,
-    "CP03": IntentFamily.COURSE_PRIORITY,
-    "CP04": IntentFamily.COURSE_UNLOCKS,
-    "CP05": IntentFamily.COURSE_UNLOCKS,
-    "CP06": IntentFamily.COURSE_UNLOCKS,
-    "CP07": IntentFamily.GENERAL_AGENT,
-    "CP08": IntentFamily.GENERAL_AGENT,
-    "CP09": IntentFamily.GENERAL_AGENT,
-    "CP10": IntentFamily.COURSE_PRIORITY,
-    "CP11": IntentFamily.COURSE_PRIORITY,
-    "CP12": IntentFamily.COURSE_PRIORITY,
-    "CP13": IntentFamily.COURSE_LOCK_REASON,
-    "CP14": IntentFamily.COURSE_PRIORITY,
-    "CP15": IntentFamily.COURSE_PRIORITY,
-    "CP16": IntentFamily.COURSE_PRIORITY,
-    "CP17": IntentFamily.COURSE_PRIORITY,
-    "CP18": IntentFamily.GENERAL_AGENT,
-    "CP19": IntentFamily.COURSE_PRIORITY,
-    "CP20": IntentFamily.COURSE_PRIORITY,
+    cid: IntentFamily(row["routing"]["expected_family"])
+    for cid, row in CONTRACT.items()
+    if row["routing"]["mode"] == "exact" and row["routing"]["expected_family"]
 }
 
 
-def test_the_routing_table_covers_the_batch_exactly() -> None:
-    """A question added to the YAML without a route here is a failure, not a skip."""
-    assert set(BATCH_ROUTES) == set(QUESTIONS)
+def test_the_contract_covers_the_batch_exactly() -> None:
+    """A question added without a routing block is a failure, not a skip."""
+    assert set(CONTRACT) == set(QUESTIONS)
     assert len(QUESTIONS) == 50
+    for cid, row in CONTRACT.items():
+        routing = row.get("routing")
+        assert routing, f"{cid} carries no routing block"
+        assert routing["mode"] in {"exact", "one_of", "clarify", "contextual", "none"}
+        assert routing["domain"] in {
+            "PLANNER_DATA",
+            "TIMETABLE_DATA",
+            "COURSE_DATA",
+            "POLICY",
+            "GENERAL",
+        }, cid
 
 
 @pytest.mark.parametrize(("qid", "expected"), sorted(BATCH_ROUTES.items()))
@@ -470,8 +454,16 @@ def test_the_router_abstains_on_fourteen_of_the_fifty() -> None:
     which course wins across the plan, and `why_course_locked` analyses one named
     course and cannot rank.
     """
-    fell_through = [q for q, f in BATCH_ROUTES.items() if f is IntentFamily.GENERAL_AGENT]
-    assert len(fell_through) == 14
+    # Measured over the ROUTER against all 50, not over the expectation table:
+    # `BATCH_ROUTES` now holds only the `exact` rows, and counting abstentions in it
+    # would answer a question about the contract's shape rather than the router's
+    # behaviour.
+    fell_through = [
+        qid
+        for qid, text in QUESTIONS.items()
+        if classify_intent(text) is IntentFamily.GENERAL_AGENT
+    ]
+    assert len(fell_through) == 14, sorted(fell_through)
     for closed in ("CP11", "TT10", "CP14", "CP16", "CP19"):
         assert closed not in fell_through
 
@@ -583,32 +575,6 @@ def test_the_narrow_check_is_strictly_narrower_over_the_whole_batch() -> None:
     assert len(broad) == 13
 
 
-def test_the_code_table_and_the_batch_file_agree() -> None:
-    """Two tables naming the same 50 routes is two sources of truth, which is none.
-
-    `BATCH_ROUTES` above is the executable one; `expected_family` in the batch YAML
-    is the one a scorer and a reviewer read. They were written at different times for
-    different readers, so this asserts they say the same thing rather than trusting
-    that they do — the divergence would otherwise surface as an eval report scoring
-    a route the tests say is correct.
-    """
-    import pathlib
-
-    import yaml as _yaml
-
-    path = pathlib.Path(__file__).resolve().parents[1] / "evals" / "advisor"
-    rows = _yaml.safe_load(path.joinpath("planner_priority_batch.yaml").read_text(encoding="utf-8"))
-    declared = {r["id"]: r["expected_family"] for r in rows["questions"]}
-
-    assert set(declared) == set(BATCH_ROUTES), "the two tables cover different questions"
-    mismatched = {
-        q: (declared[q], str(BATCH_ROUTES[q]))
-        for q in declared
-        if declared[q] != str(BATCH_ROUTES[q])
-    }
-    assert not mismatched, f"batch file and code table disagree: {mismatched}"
-
-
 @pytest.mark.parametrize(
     "question",
     [
@@ -631,3 +597,37 @@ def test_the_separator_verb_alone_does_not_claim_a_priority_question(question: s
     worse than no route at all.
     """
     assert classify_intent(question) is IntentFamily.GENERAL_AGENT
+
+
+@pytest.mark.parametrize(
+    "cid", sorted(c for c, r in CONTRACT.items() if r["routing"]["mode"] == "one_of")
+)
+def test_a_one_of_case_lands_inside_its_allowed_families(cid: str) -> None:
+    """Several questions are genuinely answerable under more than one family.
+
+    TT09 «ثبّت لي شعبة M2 في مقرر AI331، وابنِ بقية الجدول حولها» is the clearest:
+    it establishes no existing draft, so reading it as a build is defensible — and
+    reading it as an edit is what preserves the section label. Demanding one exact
+    family for it would score a defensible route as a defect.
+    """
+    allowed = CONTRACT[cid]["routing"]["allowed_families"]
+    assert allowed, f"{cid} is one_of and names no allowed families"
+    assert str(classify_intent(CONTRACT[cid]["question_ar"])) in allowed
+
+
+@pytest.mark.parametrize(
+    "cid",
+    sorted(c for c, r in CONTRACT.items() if r["routing"]["mode"] in {"clarify", "none"}),
+)
+def test_a_clarify_or_none_case_names_no_family(cid: str) -> None:
+    """The over-specification the audit exists to remove.
+
+    With no course code and no antecedent, neither COURSE_LOCK_REASON nor
+    COURSE_PRIORITY should execute a data tool — so the contract must not name
+    either. `expected_family: null` is the assertion that the right answer is a
+    question, not a lookup.
+    """
+    routing = CONTRACT[cid]["routing"]
+    assert routing["expected_family"] is None, cid
+    if routing["mode"] == "clarify":
+        assert routing["clarification_reason"], f"{cid} clarifies for no stated reason"

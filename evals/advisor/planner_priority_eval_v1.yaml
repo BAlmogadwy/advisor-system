@@ -49,12 +49,22 @@ cases:
   - Do not place a retained course in a second section.
   expected_arguments:
     keep_current_sections: true
+  routing:
+    mode: exact
+    domain: PLANNER_DATA
+    expected_family: PLANNER_BUILD
+    allowed_families:
+    - PLANNER_BUILD
+    secondary_families: []
+    clarification_reason: null
+    requires_prior_context: false
 - id: TT02
   category: planner_alternatives
   role: student
   question_ar: سوِّ لي أكثر من خيار للجدول، مو خيار واحد بس.
   intent: PLANNER_VIEW_ALTERNATIVES
-  expected_behavior: Route to the planner where persisted alternatives can be compared; do not deny the feature.
+  expected_behavior: Route to the planner where persisted alternatives can be compared; do not deny the
+    feature.
   tool_contract:
     required_all: []
     required_any: []
@@ -73,12 +83,22 @@ cases:
   must_not_claim:
   - Do not claim only one option can be generated.
   - Do not claim the feature is unavailable.
+  routing:
+    mode: exact
+    domain: PLANNER_DATA
+    expected_family: PLANNER_VIEW_ALTERNATIVES
+    allowed_families:
+    - PLANNER_VIEW_ALTERNATIVES
+    secondary_families: []
+    clarification_reason: null
+    requires_prior_context: false
 - id: TT03
   category: planner_build
   role: student
   question_ar: أبغى جدول يشمل AI352 وAI371 بشكل ضروري.
   intent: PLANNER_BUILD
-  expected_behavior: Build with AI352 and AI371 as explicit must-include courses and report any unplaced result honestly.
+  expected_behavior: Build with AI352 and AI371 as explicit must-include courses and report any unplaced
+    result honestly.
   tool_contract:
     required_all:
     - build_my_timetable
@@ -100,12 +120,22 @@ cases:
     - AI352
     - AI371
     keep_current_sections: true
+  routing:
+    mode: exact
+    domain: PLANNER_DATA
+    expected_family: PLANNER_BUILD
+    allowed_families:
+    - PLANNER_BUILD
+    secondary_families: []
+    clarification_reason: null
+    requires_prior_context: false
 - id: TT04
   category: planner_build
   role: student
   question_ar: أضف AI352 للجدول، وكمل باقي الساعات من المقررات التي يقترحها النظام.
   intent: PLANNER_BUILD
-  expected_behavior: Use AI352 as student-requested and fill the rest from server-derived recommendations, preserving provenance.
+  expected_behavior: Use AI352 as student-requested and fill the rest from server-derived recommendations,
+    preserving provenance.
   tool_contract:
     required_all:
     - build_my_timetable
@@ -126,6 +156,15 @@ cases:
     must_include:
     - AI352
     keep_current_sections: true
+  routing:
+    mode: exact
+    domain: PLANNER_DATA
+    expected_family: PLANNER_BUILD
+    allowed_families:
+    - PLANNER_BUILD
+    secondary_families: []
+    clarification_reason: null
+    requires_prior_context: false
 - id: TT05
   category: planner_build
   role: student
@@ -151,6 +190,15 @@ cases:
   expected_arguments:
     must_include: []
     keep_current_sections: true
+  routing:
+    mode: exact
+    domain: PLANNER_DATA
+    expected_family: PLANNER_BUILD
+    allowed_families:
+    - PLANNER_BUILD
+    secondary_families: []
+    clarification_reason: null
+    requires_prior_context: false
 - id: TT06
   category: planner_credit_cap
   role: student
@@ -176,12 +224,22 @@ cases:
   expected_arguments:
     max_credits: 15
     keep_current_sections: true
+  routing:
+    mode: exact
+    domain: PLANNER_DATA
+    expected_family: PLANNER_BUILD
+    allowed_families:
+    - PLANNER_BUILD
+    secondary_families: []
+    clarification_reason: null
+    requires_prior_context: false
 - id: TT07
   category: planner_credit_cap
   role: student
   question_ar: ابنِ لي أخف جدول ممكن، بحد أقصى 12 ساعة.
   intent: PLANNER_BUILD
-  expected_behavior: Build under 12 credits or explain that retaining the current baseline prevents meeting that cap.
+  expected_behavior: Build under 12 credits or explain that retaining the current baseline prevents meeting
+    that cap.
   tool_contract:
     required_all:
     - build_my_timetable
@@ -202,13 +260,22 @@ cases:
   expected_arguments:
     max_credits: 12
     keep_current_sections: true
+  routing:
+    mode: exact
+    domain: PLANNER_DATA
+    expected_family: PLANNER_BUILD
+    allowed_families:
+    - PLANNER_BUILD
+    secondary_families: []
+    clarification_reason: null
+    requires_prior_context: false
 - id: TT08
   category: planner_policy_mixed
   role: student
   question_ar: أريد تسجيل 19 ساعة، هل تستطيع بناء جدول كامل بهذا الحد؟
   intent: MIXED
-  expected_behavior: Build within the requested planning cap and answer the formal registration-limit part only from governing
-    policy.
+  expected_behavior: Build within the requested planning cap and answer the formal registration-limit
+    part only from governing policy.
   tool_contract:
     required_all:
     - build_my_timetable
@@ -231,6 +298,15 @@ cases:
   expected_arguments:
     max_credits: 19
     keep_current_sections: true
+  routing:
+    mode: exact
+    domain: POLICY
+    expected_family: MIXED
+    allowed_families:
+    - MIXED
+    secondary_families: []
+    clarification_reason: null
+    requires_prior_context: false
 - id: TT09
   category: planner_edit
   role: student
@@ -259,6 +335,16 @@ cases:
   must_not_claim:
   - Do not claim the pin was saved in chat.
   - Do not expose a database section id.
+  routing:
+    mode: one_of
+    domain: PLANNER_DATA
+    expected_family: PLANNER_EDIT_DRAFT
+    allowed_families:
+    - PLANNER_BUILD
+    - PLANNER_EDIT_DRAFT
+    secondary_families: []
+    clarification_reason: null
+    requires_prior_context: false
 - id: TT10
   category: planner_edit
   role: student
@@ -275,8 +361,6 @@ cases:
     type: OPEN_STUDENT_PLANNER
     intent: EDIT_DRAFT
     registration_modified: false
-    requested_edit:
-      operation: PRESERVE_FIXED_AND_REGENERATE
   policy_contract:
     mode: data_only
   must_assert:
@@ -285,6 +369,15 @@ cases:
   must_not_claim:
   - Do not guess which sections were manually fixed.
   - Do not show one course as both retained and newly added.
+  routing:
+    mode: exact
+    domain: PLANNER_DATA
+    expected_family: PLANNER_EDIT_DRAFT
+    allowed_families:
+    - PLANNER_EDIT_DRAFT
+    secondary_families: []
+    clarification_reason: null
+    requires_prior_context: true
 - id: TT11
   category: current_timetable
   role: student
@@ -308,13 +401,22 @@ cases:
   must_not_claim:
   - Do not generate a new timetable.
   - Do not use plan-status studying as the registration list.
+  routing:
+    mode: exact
+    domain: TIMETABLE_DATA
+    expected_family: CURRENT_TIMETABLE
+    allowed_families:
+    - CURRENT_TIMETABLE
+    secondary_families: []
+    clarification_reason: null
+    requires_prior_context: false
 - id: TT12
   category: current_registration
   role: student
   question_ar: كم مقرر وكم ساعة مسجلة عندي حاليًا؟
   intent: CURRENT_TIMETABLE
-  expected_behavior: Answer from authoritative current-term registration evidence; a new call is optional when context already
-    contains it.
+  expected_behavior: Answer from authoritative current-term registration evidence; a new call is optional
+    when context already contains it.
   tool_contract:
     required_all: []
     required_any: []
@@ -333,12 +435,23 @@ cases:
   - Do not substitute plan-status studying rows.
   evidence_required:
   - current_term_registrations
+  routing:
+    mode: one_of
+    domain: TIMETABLE_DATA
+    expected_family: CURRENT_TIMETABLE
+    allowed_families:
+    - CURRENT_TIMETABLE
+    - GENERAL_AGENT
+    secondary_families: []
+    clarification_reason: null
+    requires_prior_context: false
 - id: TT13
   category: current_timetable
   role: student
   question_ar: هل عندي مقرر مسجل لكن ما له وقت محاضرة في النظام؟
   intent: CURRENT_TIMETABLE
-  expected_behavior: Identify registered courses with missing meeting data without saying that no lecture exists.
+  expected_behavior: Identify registered courses with missing meeting data without saying that no lecture
+    exists.
   tool_contract:
     required_all:
     - my_timetable
@@ -354,6 +467,16 @@ cases:
   must_not_claim:
   - Do not claim the course has no lecture.
   - Do not invent time or room data.
+  routing:
+    mode: one_of
+    domain: TIMETABLE_DATA
+    expected_family: CURRENT_TIMETABLE
+    allowed_families:
+    - CURRENT_TIMETABLE
+    - GENERAL_AGENT
+    secondary_families: []
+    clarification_reason: null
+    requires_prior_context: false
 - id: TT14
   category: timetable_clash
   role: student
@@ -378,6 +501,15 @@ cases:
   - Do not infer a seat from clash-free status.
   expected_arguments:
     course_code: AI352
+  routing:
+    mode: exact
+    domain: TIMETABLE_DATA
+    expected_family: TIMETABLE_CLASH
+    allowed_families:
+    - TIMETABLE_CLASH
+    secondary_families: []
+    clarification_reason: null
+    requires_prior_context: false
 - id: TT15
   category: timetable_clash
   role: student
@@ -402,6 +534,15 @@ cases:
   - Do not convert a missing section into not offered.
   expected_arguments:
     course_code: AI352
+  routing:
+    mode: exact
+    domain: TIMETABLE_DATA
+    expected_family: TIMETABLE_CLASH
+    allowed_families:
+    - TIMETABLE_CLASH
+    secondary_families: []
+    clarification_reason: null
+    requires_prior_context: false
 - id: TT16
   category: planner_partial_result
   role: student
@@ -424,12 +565,22 @@ cases:
   must_not_claim:
   - Do not call a partial result total failure.
   - Do not use one reason for every unplaced course.
+  routing:
+    mode: exact
+    domain: PLANNER_DATA
+    expected_family: PLANNER_BUILD
+    allowed_families:
+    - PLANNER_BUILD
+    secondary_families: []
+    clarification_reason: null
+    requires_prior_context: false
 - id: TT17
   category: data_semantics
   role: student
   question_ar: النظام كتب أن CS372 غير موجود في البيانات؛ هل هذا يعني أن الجامعة ما طرحته؟
   intent: TIMETABLE_CLASH
-  expected_behavior: Explain that absence from the section catalogue does not prove the university did not offer CS372.
+  expected_behavior: Explain that absence from the section catalogue does not prove the university did
+    not offer CS372.
   tool_contract:
     required_all: []
     required_any:
@@ -450,6 +601,15 @@ cases:
   must_not_claim:
   - Do not claim the university did not offer CS372.
   - Do not automatically call the warning a technical error.
+  routing:
+    mode: exact
+    domain: TIMETABLE_DATA
+    expected_family: GENERAL_AGENT
+    allowed_families:
+    - GENERAL_AGENT
+    secondary_families: []
+    clarification_reason: null
+    requires_prior_context: false
 - id: TT18
   category: timetable_clash
   role: student
@@ -473,12 +633,22 @@ cases:
   - Do not infer seat availability.
   expected_arguments:
     course_code: AI371
+  routing:
+    mode: exact
+    domain: TIMETABLE_DATA
+    expected_family: TIMETABLE_CLASH
+    allowed_families:
+    - TIMETABLE_CLASH
+    secondary_families: []
+    clarification_reason: null
+    requires_prior_context: false
 - id: TT19
   category: planner_explanation
   role: student
   question_ar: المقرر موجود وله شعب، لكن ما دخل في أفضل جدول. ليش؟
   intent: PLANNER_BUILD
-  expected_behavior: Ask one short clarification for the course code because no prior result identifies it.
+  expected_behavior: Ask one short clarification for the course code because no prior result identifies
+    it.
   tool_contract:
     required_all: []
     required_any: []
@@ -494,6 +664,15 @@ cases:
   - Do not rebuild before identifying the course.
   setup: No previous planner result or course antecedent exists.
   clarification_allowed: true
+  routing:
+    mode: clarify
+    domain: PLANNER_DATA
+    expected_family: null
+    allowed_families:
+    - GENERAL_AGENT
+    secondary_families: []
+    clarification_reason: MISSING_COURSE
+    requires_prior_context: false
 - id: TT20
   category: planner_prerequisite_diagnosis
   role: student
@@ -520,6 +699,16 @@ cases:
   - Do not equate prerequisites satisfied with registration permission.
   expected_arguments:
     course_code: AI491
+  routing:
+    mode: one_of
+    domain: COURSE_DATA
+    expected_family: GENERAL_AGENT
+    allowed_families:
+    - GENERAL_AGENT
+    - MIXED
+    secondary_families: []
+    clarification_reason: null
+    requires_prior_context: false
 - id: TT21
   category: planner_provenance
   role: student
@@ -544,6 +733,15 @@ cases:
   evidence_required:
   - student_requested_courses
   - system_recommended_courses
+  routing:
+    mode: contextual
+    domain: PLANNER_DATA
+    expected_family: GENERAL_AGENT
+    allowed_families:
+    - GENERAL_AGENT
+    secondary_families: []
+    clarification_reason: null
+    requires_prior_context: true
 - id: TT22
   category: planner_data_limits
   role: student
@@ -564,6 +762,15 @@ cases:
   must_not_claim:
   - Do not turn recorded capacity into guaranteed availability.
   - Do not infer space from clash-free status.
+  routing:
+    mode: exact
+    domain: PLANNER_DATA
+    expected_family: GENERAL_AGENT
+    allowed_families:
+    - GENERAL_AGENT
+    secondary_families: []
+    clarification_reason: null
+    requires_prior_context: false
 - id: TT23
   category: registration_safety
   role: student
@@ -586,12 +793,22 @@ cases:
   - Do not claim option one was registered.
   - Do not invent its courses or claim it is conflict-free.
   setup: No authoritative persisted option payload is supplied to answer generation.
+  routing:
+    mode: exact
+    domain: PLANNER_DATA
+    expected_family: GENERAL_AGENT
+    allowed_families:
+    - GENERAL_AGENT
+    secondary_families: []
+    clarification_reason: null
+    requires_prior_context: false
 - id: TT24
   category: planner_preference
   role: student
   question_ar: احفظ الخيار الثاني كجدولي المفضل.
   intent: PLANNER_SELECT_PREFERRED
-  expected_behavior: Open the planner to select the second persisted alternative; chat must not perform the mutation.
+  expected_behavior: Open the planner to select the second persisted alternative; chat must not perform
+    the mutation.
   tool_contract:
     required_all: []
     required_any: []
@@ -602,7 +819,6 @@ cases:
     type: OPEN_STUDENT_PLANNER
     intent: SELECT_PREFERRED_ALTERNATIVE
     registration_modified: false
-    alternative_ref: ALT_2
   policy_contract:
     mode: data_only
   must_assert:
@@ -611,6 +827,15 @@ cases:
   must_not_claim:
   - Do not claim the feature is unavailable.
   - Do not claim chat saved the preference.
+  routing:
+    mode: exact
+    domain: PLANNER_DATA
+    expected_family: PLANNER_SELECT_PREFERRED
+    allowed_families:
+    - PLANNER_SELECT_PREFERRED
+    secondary_families: []
+    clarification_reason: null
+    requires_prior_context: false
 - id: TT25
   category: planner_preference
   role: student
@@ -630,12 +855,22 @@ cases:
   - Say official registration remains unchanged.
   must_not_claim:
   - Do not claim automatic registration, seat reservation, or deletion of current sections.
+  routing:
+    mode: none
+    domain: PLANNER_DATA
+    expected_family: null
+    allowed_families:
+    - GENERAL_AGENT
+    secondary_families: []
+    clarification_reason: null
+    requires_prior_context: false
 - id: TT26
   category: planner_edit
   role: student
   question_ar: عدّلت قائمة المقررات؛ أعد بناء البدائل بناءً على التعديل الجديد.
   intent: PLANNER_EDIT_DRAFT
-  expected_behavior: Open the owned draft, invalidate stale generation/confirmation state, and regenerate the new version.
+  expected_behavior: Open the owned draft, invalidate stale generation/confirmation state, and regenerate
+    the new version.
   tool_contract:
     required_all: []
     required_any: []
@@ -646,8 +881,6 @@ cases:
     type: OPEN_STUDENT_PLANNER
     intent: EDIT_DRAFT
     registration_modified: false
-    requested_edit:
-      operation: REGENERATE_AFTER_COURSE_EDIT
   policy_contract:
     mode: data_only
   must_assert:
@@ -656,6 +889,15 @@ cases:
   must_not_claim:
   - Do not claim chat mutated the draft.
   - Do not change official registration.
+  routing:
+    mode: exact
+    domain: PLANNER_DATA
+    expected_family: PLANNER_EDIT_DRAFT
+    allowed_families:
+    - PLANNER_EDIT_DRAFT
+    secondary_families: []
+    clarification_reason: null
+    requires_prior_context: true
 - id: TT27
   category: planner_rebuild
   role: student
@@ -672,7 +914,6 @@ cases:
     type: OPEN_STUDENT_PLANNER
     intent: REBUILD_WITHOUT_CURRENT_SECTIONS
     registration_modified: false
-    requires_confirmation: true
   policy_contract:
     mode: data_only
   must_assert:
@@ -682,6 +923,15 @@ cases:
   must_not_claim:
   - Do not call the feature impossible.
   - Do not tell the student to delete current registrations.
+  routing:
+    mode: exact
+    domain: PLANNER_DATA
+    expected_family: PLANNER_REBUILD
+    allowed_families:
+    - PLANNER_REBUILD
+    secondary_families: []
+    clarification_reason: null
+    requires_prior_context: false
 - id: TT28
   category: planner_rebuild
   role: student
@@ -698,7 +948,6 @@ cases:
     type: OPEN_STUDENT_PLANNER
     intent: REBUILD_WITHOUT_CURRENT_SECTIONS
     registration_modified: false
-    requires_confirmation: true
   policy_contract:
     mode: data_only
   must_assert:
@@ -706,6 +955,15 @@ cases:
   - Treat the chat message as insufficient authorisation.
   must_not_claim:
   - Do not claim the rebuild ran or current registrations were discarded.
+  routing:
+    mode: exact
+    domain: PLANNER_DATA
+    expected_family: PLANNER_REBUILD
+    allowed_families:
+    - PLANNER_REBUILD
+    secondary_families: []
+    clarification_reason: null
+    requires_prior_context: false
 - id: TT29
   category: planner_rebuild
   role: student
@@ -722,7 +980,6 @@ cases:
     type: OPEN_STUDENT_PLANNER
     intent: REBUILD_WITHOUT_CURRENT_SECTIONS
     registration_modified: false
-    requires_confirmation: true
   policy_contract:
     mode: data_only
   must_assert:
@@ -730,12 +987,22 @@ cases:
   - State opening it does not modify registration.
   must_not_claim:
   - Do not claim the rebuild already completed.
+  routing:
+    mode: exact
+    domain: PLANNER_DATA
+    expected_family: PLANNER_REBUILD
+    allowed_families:
+    - PLANNER_REBUILD
+    secondary_families: []
+    clarification_reason: null
+    requires_prior_context: false
 - id: TT30
   category: planner_data_limits
   role: student
   question_ar: أبغى في كل بديل أسماء المدرسين والقاعات ونوع المعمل وعدد المقاعد المتبقية.
   intent: PLANNER_VIEW_ALTERNATIVES
-  expected_behavior: Explain which requested fields are absent from the authoritative planner-alternative contract.
+  expected_behavior: Explain which requested fields are absent from the authoritative planner-alternative
+    contract.
   tool_contract:
     required_all: []
     required_any: []
@@ -748,6 +1015,15 @@ cases:
   - State that absent instructor, room, lab-type, and remaining-seat fields cannot be promised.
   must_not_claim:
   - Do not infer live seats, room distance, lab type, or delivery mode.
+  routing:
+    mode: exact
+    domain: PLANNER_DATA
+    expected_family: GENERAL_AGENT
+    allowed_families:
+    - GENERAL_AGENT
+    secondary_families: []
+    clarification_reason: null
+    requires_prior_context: false
 - id: CP01
   category: course_priority
   role: student
@@ -769,6 +1045,15 @@ cases:
   - Explain the ranking basis.
   must_not_claim:
   - Do not claim offering, formal registration permission, or seat availability.
+  routing:
+    mode: exact
+    domain: COURSE_DATA
+    expected_family: COURSE_PRIORITY
+    allowed_families:
+    - COURSE_PRIORITY
+    secondary_families: []
+    clarification_reason: null
+    requires_prior_context: false
 - id: CP02
   category: course_priority
   role: student
@@ -794,6 +1079,15 @@ cases:
   - Do not count downstream courses as direct.
   evidence_required:
   - sole_remaining_prerequisite_count
+  routing:
+    mode: exact
+    domain: COURSE_DATA
+    expected_family: COURSE_PRIORITY
+    allowed_families:
+    - COURSE_PRIORITY
+    secondary_families: []
+    clarification_reason: null
+    requires_prior_context: false
 - id: CP03
   category: course_priority
   role: student
@@ -820,6 +1114,15 @@ cases:
   - Do not imply section or seat availability.
   expected_arguments:
     course_code: AI331
+  routing:
+    mode: exact
+    domain: COURSE_DATA
+    expected_family: COURSE_PRIORITY
+    allowed_families:
+    - COURSE_PRIORITY
+    secondary_families: []
+    clarification_reason: null
+    requires_prior_context: false
 - id: CP04
   category: course_unlocks
   role: student
@@ -847,6 +1150,15 @@ cases:
   evidence_required:
   - sole_remaining_prerequisite_for
   - sole_remaining_prerequisite_count
+  routing:
+    mode: exact
+    domain: COURSE_DATA
+    expected_family: COURSE_UNLOCKS
+    allowed_families:
+    - COURSE_UNLOCKS
+    secondary_families: []
+    clarification_reason: null
+    requires_prior_context: false
 - id: CP05
   category: course_unlocks
   role: student
@@ -873,6 +1185,15 @@ cases:
   evidence_required:
   - listed_as_prerequisite_for
   - sole_remaining_prerequisite_for
+  routing:
+    mode: exact
+    domain: COURSE_DATA
+    expected_family: COURSE_UNLOCKS
+    allowed_families:
+    - COURSE_UNLOCKS
+    secondary_families: []
+    clarification_reason: null
+    requires_prior_context: false
 - id: CP06
   category: course_unlocks
   role: student
@@ -898,6 +1219,15 @@ cases:
   - Do not turn this into a policy abstention.
   expected_arguments:
     course_code: AI331
+  routing:
+    mode: exact
+    domain: COURSE_DATA
+    expected_family: COURSE_UNLOCKS
+    allowed_families:
+    - COURSE_UNLOCKS
+    secondary_families: []
+    clarification_reason: null
+    requires_prior_context: false
 - id: CP07
   category: course_priority_comparison
   role: student
@@ -926,6 +1256,17 @@ cases:
     - AI331
     - CS372
     - AI352
+  routing:
+    mode: one_of
+    domain: COURSE_DATA
+    expected_family: COURSE_PRIORITY
+    allowed_families:
+    - COURSE_PRIORITY
+    - COURSE_UNLOCKS
+    - GENERAL_AGENT
+    secondary_families: []
+    clarification_reason: null
+    requires_prior_context: false
 - id: CP08
   category: course_priority_impact
   role: student
@@ -952,12 +1293,24 @@ cases:
   - Do not claim the courses are offered next term.
   expected_arguments:
     course_code: AI331
+  routing:
+    mode: one_of
+    domain: COURSE_DATA
+    expected_family: COURSE_UNLOCKS
+    allowed_families:
+    - COURSE_UNLOCKS
+    - COURSE_PRIORITY
+    - GENERAL_AGENT
+    secondary_families: []
+    clarification_reason: null
+    requires_prior_context: false
 - id: CP09
   category: recommendation_vs_status
   role: student
   question_ar: أنا أدرس AI331 حاليًا؛ هل يبقى ضمن المقررات التي توصي أن أسجلها؟
   intent: COURSE_PRIORITY
-  expected_behavior: Check current status and the actual recommendation output; do not infer recommender behaviour.
+  expected_behavior: Check current status and the actual recommendation output; do not infer recommender
+    behaviour.
   tool_contract:
     required_all:
     - recommend_courses
@@ -978,6 +1331,15 @@ cases:
   - Do not advise duplicate registration.
   expected_arguments:
     course_code: AI331
+  routing:
+    mode: exact
+    domain: COURSE_DATA
+    expected_family: GENERAL_AGENT
+    allowed_families:
+    - GENERAL_AGENT
+    secondary_families: []
+    clarification_reason: null
+    requires_prior_context: false
 - id: CP10
   category: course_priority_recompute
   role: student
@@ -999,6 +1361,15 @@ cases:
   must_not_claim:
   - Do not reuse the old top result from history.
   setup: The previously highest-priority course is now recorded as passed.
+  routing:
+    mode: exact
+    domain: COURSE_DATA
+    expected_family: COURSE_PRIORITY
+    allowed_families:
+    - COURSE_PRIORITY
+    secondary_families: []
+    clarification_reason: null
+    requires_prior_context: false
 - id: CP11
   category: one_step_courses
   role: student
@@ -1023,6 +1394,15 @@ cases:
   - Do not claim registration eligibility or seats.
   evidence_required:
   - blocked.steps_away
+  routing:
+    mode: exact
+    domain: COURSE_DATA
+    expected_family: COURSE_PRIORITY
+    allowed_families:
+    - COURSE_PRIORITY
+    secondary_families: []
+    clarification_reason: null
+    requires_prior_context: false
 - id: CP12
   category: clarification
   role: student
@@ -1044,12 +1424,21 @@ cases:
   - Do not require policy grounding.
   setup: No course antecedent exists.
   clarification_allowed: true
+  routing:
+    mode: clarify
+    domain: COURSE_DATA
+    expected_family: null
+    allowed_families: []
+    secondary_families: []
+    clarification_reason: MISSING_COURSE
+    requires_prior_context: true
 - id: CP13
   category: clarification
   role: student
   question_ar: ليش المقرر مقفل مع أني مجتاز كل المقررات السابقة؟ هل عنده شرط ساعات مجتازة؟
   intent: COURSE_LOCK_REASON
-  expected_behavior: Ask for the course code, then distinguish course prerequisites from a credit-hour gate.
+  expected_behavior: Ask for the course code, then distinguish course prerequisites from a credit-hour
+    gate.
   tool_contract:
     required_all: []
     required_any: []
@@ -1064,12 +1453,22 @@ cases:
   - Do not assert MISSING_HOURS without identifying the course.
   setup: No course antecedent exists.
   clarification_allowed: true
+  routing:
+    mode: clarify
+    domain: COURSE_DATA
+    expected_family: null
+    allowed_families:
+    - GENERAL_AGENT
+    secondary_families: []
+    clarification_reason: MISSING_COURSE
+    requires_prior_context: false
 - id: CP14
   category: unknown_prerequisite
   role: student
   question_ar: النظام يقول إن أحد المتطلبات غير معروف في الخطة؛ كيف يؤثر هذا على ترتيب الأولوية؟
   intent: COURSE_PRIORITY
-  expected_behavior: Explain that UNKNOWN_PREREQ makes automated readiness/priority uncertain and needs adviser confirmation.
+  expected_behavior: Explain that UNKNOWN_PREREQ makes automated readiness/priority uncertain and needs
+    adviser confirmation.
   tool_contract:
     required_all:
     - my_progress
@@ -1087,13 +1486,22 @@ cases:
   - Do not assign definite high/low priority or waive the prerequisite.
   evidence_required:
   - UNKNOWN_PREREQ
+  routing:
+    mode: exact
+    domain: COURSE_DATA
+    expected_family: COURSE_PRIORITY
+    allowed_families:
+    - COURSE_PRIORITY
+    secondary_families: []
+    clarification_reason: null
+    requires_prior_context: false
 - id: CP15
   category: elective_placeholder
   role: student
   question_ar: هل المتطلب الاختياري مثل AI1 يعتبر مقررًا عالي الأولوية، أو لازم نحدد المقرر الفعلي أولًا؟
   intent: COURSE_PRIORITY
-  expected_behavior: Determine whether AI1 is a placeholder and explain that a concrete permitted elective is needed for course-level
-    priority.
+  expected_behavior: Determine whether AI1 is a placeholder and explain that a concrete permitted elective
+    is needed for course-level priority.
   tool_contract:
     required_all: []
     required_any:
@@ -1112,12 +1520,22 @@ cases:
   must_not_claim:
   - Do not treat AI1 automatically as a concrete course.
   - Do not refuse for lack of policy.
+  routing:
+    mode: exact
+    domain: COURSE_DATA
+    expected_family: COURSE_PRIORITY
+    allowed_families:
+    - COURSE_PRIORITY
+    secondary_families: []
+    clarification_reason: null
+    requires_prior_context: false
 - id: CP16
   category: importance_vs_sections
   role: student
   question_ar: مقرر متطلباته مكتملة لكنه ما له شعبة في بيانات النظام؛ هل يظل مهمًا أكاديميًا؟
   intent: COURSE_PRIORITY
-  expected_behavior: Separate academic-plan importance and prerequisite readiness from section-catalogue presence.
+  expected_behavior: Separate academic-plan importance and prerequisite readiness from section-catalogue
+    presence.
   tool_contract:
     required_all: []
     required_any:
@@ -1140,6 +1558,16 @@ cases:
   must_not_claim:
   - Do not equate prerequisites satisfied with registration permission.
   - Do not infer a seat.
+  routing:
+    mode: one_of
+    domain: COURSE_DATA
+    expected_family: COURSE_PRIORITY
+    allowed_families:
+    - COURSE_PRIORITY
+    - COURSE_UNLOCKS
+    secondary_families: []
+    clarification_reason: null
+    requires_prior_context: false
 - id: CP17
   category: priority_vs_recommendation
   role: student
@@ -1162,6 +1590,15 @@ cases:
   - Explain that structural priority and term recommendation may differ.
   must_not_claim:
   - Do not equate recommendation with official approval or seat availability.
+  routing:
+    mode: exact
+    domain: COURSE_DATA
+    expected_family: COURSE_PRIORITY
+    allowed_families:
+    - COURSE_PRIORITY
+    secondary_families: []
+    clarification_reason: null
+    requires_prior_context: false
 - id: CP18
   category: priority_under_cap
   role: student
@@ -1187,12 +1624,24 @@ cases:
   - Explain each selection basis.
   must_not_claim:
   - Do not guarantee offering, registration, or seats.
+  routing:
+    mode: one_of
+    domain: COURSE_DATA
+    expected_family: COURSE_PRIORITY
+    allowed_families:
+    - COURSE_PRIORITY
+    - GENERAL_AGENT
+    secondary_families: []
+    clarification_reason: null
+    requires_prior_context: false
 - id: CP19
   category: advisor_course_priority
   role: advisor
-  question_ar: بصفتي المرشد، ما المقرر الذي يحرر أكبر عدد من المقررات للطالب [رقم الطالب]؟ اذكر السبب والأثر المباشر.
+  question_ar: بصفتي المرشد، ما المقرر الذي يحرر أكبر عدد من المقررات للطالب [رقم الطالب]؟ اذكر السبب
+    والأثر المباشر.
   intent: COURSE_PRIORITY
-  expected_behavior: Within portfolio scope, return the highest sole-remaining-prerequisite course and its direct effect.
+  expected_behavior: Within portfolio scope, return the highest sole-remaining-prerequisite course and
+    its direct effect.
   tool_contract:
     required_all:
     - my_progress
@@ -1211,11 +1660,21 @@ cases:
   - Do not expose or transmit the real student id remotely.
   - Do not access an out-of-scope student.
   setup: The student exists within the authenticated adviser's portfolio; remote mode uses an opaque student_ref.
+  routing:
+    mode: one_of
+    domain: COURSE_DATA
+    expected_family: COURSE_PRIORITY
+    allowed_families:
+    - COURSE_PRIORITY
+    - GENERAL_AGENT
+    secondary_families: []
+    clarification_reason: null
+    requires_prior_context: true
 - id: CP20
   category: auditable_priority
   role: student
-  question_ar: لا تقل لي فقط إن المقرر مهم؛ أعطني سبب ترتيبه، والمقررات التي يفتحها مباشرة، وما إذا كانت التوصية تثبت وجود
-    شعبة أو مقعد.
+  question_ar: لا تقل لي فقط إن المقرر مهم؛ أعطني سبب ترتيبه، والمقررات التي يفتحها مباشرة، وما إذا كانت
+    التوصية تثبت وجود شعبة أو مقعد.
   intent: COURSE_PRIORITY
   expected_behavior: Give an auditable priority explanation and state recommendation limits.
   tool_contract:
@@ -1239,3 +1698,14 @@ cases:
   - Do not invent a dependency graph.
   - Do not state inconsistent recommendation caps.
   - Do not claim recommendation proves permission or seats.
+  routing:
+    mode: contextual
+    domain: COURSE_DATA
+    expected_family: COURSE_PRIORITY
+    allowed_families:
+    - COURSE_PRIORITY
+    secondary_families: []
+    clarification_reason: null
+    requires_prior_context: true
+  setup:
+    prior_course_code: AI331

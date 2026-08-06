@@ -92,10 +92,11 @@ word naming an option.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, replace
 from typing import Any
 
-from core.services.advisor_intent import IntentFamily, classify_intent
+from core.services.advisor_intent import _COURSE_CODE, IntentFamily, classify_intent
 from core.services.arabic_text import normalise
 
 #: The one action any handoff emits today. Adding another means adding an
@@ -151,6 +152,16 @@ class ActionHandoff:
     #: Set per request by `handoff_for_question`, never at definition — it comes
     #: from the student's sentence, not from the route.
     alternative_ref: str = ""
+    #: The concrete edit the sentence asked for, when it named one. Today that is
+    #: only PIN_SECTION_AND_REGENERATE, from «ثبّت لي شعبة M2 في مقرر AI331».
+    #:
+    #: It exists because the alternative was to drop the section silently.
+    #: `build_my_timetable` takes course codes and has no section parameter, so a
+    #: pin routed as a build honours «AI331» and loses «M2» — and the answer then
+    #: tells the student their pin was applied. Carrying it to the planner is not a
+    #: claim that it WAS applied: the planner holds the sections and validates the
+    #: label, and chat says only what was asked for.
+    requested_edit: dict[str, Any] | None = None
 
     def __post_init__(self) -> None:
         if self.action not in KNOWN_ACTIONS:
@@ -175,6 +186,16 @@ class ActionHandoff:
             return self
         return replace(self, alternative_ref=ref)
 
+    def with_requested_edit(self, edit: dict[str, Any] | None) -> ActionHandoff:
+        """A copy naming the concrete edit the sentence asked for.
+
+        Same contract as the ref above: `None` returns `self`, so an absent edit is
+        an absent KEY rather than a null a client has to test for separately.
+        """
+        if not edit:
+            return self
+        return replace(self, requested_edit=dict(edit))
+
     def as_payload(self) -> dict[str, Any]:
         payload: dict[str, Any] = {
             "type": self.action,
@@ -184,6 +205,8 @@ class ActionHandoff:
         }
         if self.alternative_ref:
             payload["alternative_ref"] = self.alternative_ref
+        if self.requested_edit:
+            payload["requested_edit"] = dict(self.requested_edit)
         return payload
 
 
@@ -432,6 +455,52 @@ def handoff_for(result: Any) -> ActionHandoff | None:
     return HANDOFFS.get(str(result.get("reason") or ""))
 
 
+#: A section LABEL — "M2", "F11", "M1L". Deliberately not the course-code pattern:
+#: a code in this catalogue is 2-4 letters closed up against exactly 3 digits, and a
+#: section is 1-2 letters against 1-2 digits with an optional trailing letter. The
+#: two cannot be told apart by "looks like an identifier", and a section rule wide
+#: enough to catch «AI331» would pin the course to itself.
+_SECTION_LABEL = re.compile(r"\b[A-Za-z]{1,2}\d{1,2}[A-Za-z]?\b")
+
+#: The one edit a question can currently name.
+PIN_SECTION_AND_REGENERATE = "PIN_SECTION_AND_REGENERATE"
+
+
+def pinned_section_in(question: str) -> dict[str, Any] | None:
+    """The section a sentence asks to pin, as a structured edit, or None.
+
+    BOTH halves are required. «ثبّت لي شعبة M2» with no course code names a section
+    label that means nothing on its own — M2 exists in dozens of courses — and
+    «ثبّت AI331» names no section, which is an ordinary `must_include`. Returning
+    None for either leaves the route intact and the edit absent, which is the honest
+    state: the planner then asks, instead of the server guessing which course the
+    label belonged to.
+
+    The course code is read from the RAW text because a code is the one token whose
+    case is data, and the section label is taken from the candidates that are not
+    themselves course codes.
+    """
+    text = str(question or "")
+    codes = _COURSE_CODE.findall(text)
+    if len(codes) != 1:
+        # Two codes and a single label is ambiguous — «ثبّت M2 في AI331 و CS323»
+        # names one section and two courses, and picking either is a guess.
+        return None
+    course = codes[0].upper()
+    labels = [
+        m.group(0).upper()
+        for m in _SECTION_LABEL.finditer(text)
+        if m.group(0).upper() != course and not _COURSE_CODE.fullmatch(m.group(0))
+    ]
+    if len(labels) != 1:
+        return None
+    return {
+        "operation": PIN_SECTION_AND_REGENERATE,
+        "course_code": course,
+        "section_label": labels[0],
+    }
+
+
 def handoff_for_question(question: str) -> ActionHandoff | None:
     """The route this QUESTION demands, before any tool runs or any token is generated.
 
@@ -444,6 +513,8 @@ def handoff_for_question(question: str) -> ActionHandoff | None:
     handoff = ROUTED_INTENTS.get(classify_intent(question))
     if handoff is None:
         return None
+    if handoff.intent == INTENT_EDIT_DRAFT:
+        handoff = handoff.with_requested_edit(pinned_section_in(question))
     if not handoff.accepts_alternative_ref:
         return handoff
     return handoff.with_alternative_ref(alternative_ref_in(question))
@@ -459,9 +530,11 @@ __all__ = [
     "KNOWN_INTENTS",
     "MAX_ALTERNATIVES",
     "OPEN_STUDENT_PLANNER",
+    "PIN_SECTION_AND_REGENERATE",
     "ROUTED_INTENTS",
     "ActionHandoff",
     "alternative_ref_in",
     "handoff_for",
+    "pinned_section_in",
     "handoff_for_question",
 ]

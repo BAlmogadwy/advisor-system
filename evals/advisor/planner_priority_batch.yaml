@@ -34,7 +34,6 @@ questions:
 - id: TT01
   ar: ابنِ لي أفضل جدول للفصل القادم وخَلِّ الشعب المسجلة عندي مثل ما هي.
   intent: build_keeping_current
-  expected_family: PLANNER_BUILD
   expected_action: null
   required_tools:
   - build_my_timetable
@@ -46,7 +45,6 @@ questions:
 - id: TT02
   ar: سوِّ لي أكثر من خيار للجدول، مو خيار واحد بس.
   intent: multiple_alternatives
-  expected_family: PLANNER_VIEW_ALTERNATIVES
   expected_action: OPEN_STUDENT_PLANNER
   required_tools: []
   allowed_tools:
@@ -59,7 +57,6 @@ questions:
 - id: TT03
   ar: أبغى جدول يشمل AI352 و AI371 بشكل ضروري.
   intent: must_include
-  expected_family: PLANNER_BUILD
   expected_action: null
   required_tools:
   - build_my_timetable
@@ -71,7 +68,6 @@ questions:
 - id: TT04
   ar: أضف AI352 للجدول، وكمل باقي الساعات من المقررات التي يقترحها النظام.
   intent: must_include_plus_recommended
-  expected_family: PLANNER_BUILD
   expected_action: null
   required_tools:
   - build_my_timetable
@@ -86,7 +82,6 @@ questions:
 - id: TT05
   ar: ما عندي مقررات محددة، ابنِ الجدول من توصيات خطتي الدراسية.
   intent: build_from_recommendations
-  expected_family: PLANNER_BUILD
   expected_action: null
   required_tools:
   - build_my_timetable
@@ -100,7 +95,6 @@ questions:
 - id: TT06
   ar: لا تبني لي جدولًا يتجاوز 15 ساعة.
   intent: credit_ceiling
-  expected_family: PLANNER_BUILD
   expected_action: null
   required_tools:
   - build_my_timetable
@@ -112,7 +106,6 @@ questions:
 - id: TT07
   ar: ابنِ لي أخف جدول ممكن، بحد أقصى 12 ساعة.
   intent: credit_floor_ceiling
-  expected_family: PLANNER_BUILD
   must_not_claim:
   - that 12 hours is permitted without citing the load rule
   expected_action: null
@@ -125,7 +118,6 @@ questions:
 - id: TT08
   ar: أريد تسجيل 19 ساعة، هل تستطيع بناء جدول كامل بهذا الحد؟
   intent: max_load_policy
-  expected_family: MIXED
   must_not_claim:
   - a credit limit without citing the governing record
   expected_action: null
@@ -139,7 +131,6 @@ questions:
 - id: TT09
   ar: ثبّت لي شعبة M2 في مقرر AI331، وابنِ بقية الجدول حولها.
   intent: pin_section
-  expected_family: PLANNER_BUILD
   expected_action: null
   required_tools:
   - build_my_timetable
@@ -151,7 +142,6 @@ questions:
 - id: TT10
   ar: لا تغيّر الشعب التي اخترتها يدويًا، لكن غيّر باقي المقررات.
   intent: pin_manual_regenerate_rest
-  expected_family: PLANNER_EDIT_DRAFT
   expected_action: OPEN_STUDENT_PLANNER
   required_tools: []
   allowed_tools: []
@@ -166,7 +156,6 @@ questions:
 - id: TT11
   ar: اعرض لي جدولي المسجل حاليًا قبل ما تبني أي بدائل.
   intent: read_current_timetable
-  expected_family: CURRENT_TIMETABLE
   expected_action: null
   required_tools:
   - my_timetable
@@ -178,7 +167,6 @@ questions:
 - id: TT12
   ar: كم مقرر وكم ساعة مسجلة عندي حاليًا؟
   intent: current_registration_summary
-  expected_family: GENERAL_AGENT
   expected_action: null
   required_tools:
   - get_student_context
@@ -191,7 +179,6 @@ questions:
 - id: TT13
   ar: هل عندي مقرر مسجل لكن ما له وقت محاضرة في النظام؟
   intent: registered_without_meeting
-  expected_family: GENERAL_AGENT
   must_not_claim:
   - that a missing meeting means the course is not taught
   expected_action: null
@@ -204,7 +191,6 @@ questions:
 - id: TT14
   ar: ما الشعب المتاحة لـ AI352 التي ما تتعارض مع جدولي الحالي؟
   intent: clash_free_sections
-  expected_family: TIMETABLE_CLASH
   must_not_claim:
   - that a clash-free section has a free seat
   expected_action: null
@@ -217,7 +203,6 @@ questions:
 - id: TT15
   ar: ليش شعبة AI352-M1 تتعارض مع جدولي؟ وضّح المقرر والوقت المتعارض.
   intent: explain_clash
-  expected_family: TIMETABLE_CLASH
   expected_action: null
   required_tools:
   - my_clash_free_sections
@@ -230,7 +215,6 @@ questions:
 - id: TT16
   ar: ابنِ لي جدولًا، وبعدها اذكر المقررات التي ما قدرت تضيفها والسبب لكل مقرر.
   intent: partial_result_with_reasons
-  expected_family: PLANNER_BUILD
   must_not_claim:
   - that a partial plan is a failure
   expected_action: null
@@ -243,7 +227,6 @@ questions:
 - id: TT17
   ar: النظام كتب أن CS372 غير موجود في البيانات؛ هل هذا يعني أن الجامعة ما طرحته؟
   intent: not_on_file_vs_not_offered
-  expected_family: GENERAL_AGENT
   must_not_claim:
   - that absence from the data means the university does not offer it
   expected_action: null
@@ -256,7 +239,6 @@ questions:
 - id: TT18
   ar: كل شعب AI371 تتعارض، هل تقدر تعطيني الشعب والأوقات التي سببت التعارض؟
   intent: all_sections_clash
-  expected_family: TIMETABLE_CLASH
   expected_action: null
   required_tools:
   - my_clash_free_sections
@@ -268,7 +250,6 @@ questions:
 - id: TT19
   ar: المقرر موجود وله شعب، لكن ما دخل في أفضل جدول. ليش؟
   intent: did_not_fit
-  expected_family: GENERAL_AGENT
   expected_action: null
   required_tools:
   - build_my_timetable
@@ -280,7 +261,6 @@ questions:
 - id: TT20
   ar: ليش ما ضفت AI491؟ هل المشكلة في المتطلب السابق أو في وقت الشعبة؟
   intent: prereq_vs_clash
-  expected_family: GENERAL_AGENT
   expected_action: null
   required_tools:
   - why_course_locked
@@ -293,7 +273,6 @@ questions:
 - id: TT21
   ar: الجدول أضاف مقررًا أنا ما طلبته، من وين جاء؟
   intent: provenance_of_added_course
-  expected_family: GENERAL_AGENT
   expected_action: null
   required_tools:
   - recommend_courses
@@ -306,7 +285,6 @@ questions:
 - id: TT22
   ar: هل الشعب الموجودة في الجدول المقترح فيها مقاعد متاحة فعلًا؟
   intent: seat_availability
-  expected_family: GENERAL_AGENT
   must_not_claim:
   - that seats are available; the system holds no seat counts
   expected_action: null
@@ -318,7 +296,6 @@ questions:
 - id: TT23
   ar: اعتمد الخيار الأول وسجلني في الشعب الموجودة فيه.
   intent: register_me
-  expected_family: GENERAL_AGENT
   must_not_claim:
   - that the adviser registered anything
   expected_action: null
@@ -330,7 +307,6 @@ questions:
 - id: TT24
   ar: احفظ الخيار الثاني كجدولي المفضل.
   intent: save_preferred
-  expected_family: PLANNER_SELECT_PREFERRED
   expected_action: OPEN_STUDENT_PLANNER
   required_tools: []
   allowed_tools: []
@@ -342,7 +318,6 @@ questions:
 - id: TT25
   ar: لما أحفظ جدولًا كمفضل، هل يتغير تسجيلي الحالي في البوابة؟
   intent: preference_vs_registration
-  expected_family: GENERAL_AGENT
   must_not_claim:
   - that saving a preference changes official registration
   expected_action: null
@@ -354,7 +329,6 @@ questions:
 - id: TT26
   ar: عدّلت قائمة المقررات؛ أعد بناء البدائل بناءً على التعديل الجديد.
   intent: regenerate_after_edit
-  expected_family: PLANNER_EDIT_DRAFT
   expected_action: OPEN_STUDENT_PLANNER
   required_tools: []
   allowed_tools:
@@ -368,7 +342,6 @@ questions:
 - id: TT27
   ar: ابنِ لي جدولًا جديدًا من الصفر وتجاهل كل الشعب المسجلة عندي.
   intent: rebuild_without_current
-  expected_family: PLANNER_REBUILD
   must_not_claim:
   - that the feature does not exist
   - that the student should delete registrations in the portal
@@ -382,7 +355,6 @@ questions:
 - id: TT28
   ar: أكّد، تجاهل جدولي الحالي وابنِ واحدًا جديدًا.
   intent: rebuild_with_bare_confirmation
-  expected_family: PLANNER_REBUILD
   must_not_claim:
   - that saying «أكّد» in chat is sufficient confirmation
   expected_action: OPEN_STUDENT_PLANNER
@@ -395,7 +367,6 @@ questions:
 - id: TT29
   ar: افتح لي مخطط الجدول عشان أؤكد إعادة البناء بدون الشعب الحالية.
   intent: open_planner
-  expected_family: PLANNER_REBUILD
   expected_action: OPEN_STUDENT_PLANNER
   required_tools: []
   allowed_tools:
@@ -407,7 +378,6 @@ questions:
 - id: TT30
   ar: أبغى في كل بديل أسماء المدرسين والقاعات ونوع المعمل وعدد المقاعد المتبقية.
   intent: data_limits
-  expected_family: GENERAL_AGENT
   must_not_claim:
   - remaining seat counts
   - which the system does not hold
@@ -421,7 +391,6 @@ questions:
 - id: CP01
   ar: وش أهم مقرر أسجله الآن عشان ما أتأخر في الخطة؟
   intent: highest_priority
-  expected_family: COURSE_PRIORITY
   expected_action: null
   required_tools:
   - recommend_courses
@@ -434,7 +403,6 @@ questions:
 - id: CP02
   ar: أي مقرر عندي يفتح أكبر عدد من المقررات مباشرة؟
   intent: sole_remaining_prerequisite
-  expected_family: COURSE_PRIORITY
   expected_action: null
   required_tools:
   - my_progress
@@ -447,7 +415,6 @@ questions:
 - id: CP03
   ar: ليش النظام يعتبر AI331 أهم مقرر لي؟
   intent: explain_priority
-  expected_family: COURSE_PRIORITY
   expected_action: null
   required_tools:
   - course_prerequisites
@@ -460,7 +427,6 @@ questions:
 - id: CP04
   ar: كم مقرر ينتظر AI331 وحده، وما هي هذه المقررات؟
   intent: count_and_name_direct_unlocks
-  expected_family: COURSE_UNLOCKS
   expected_action: null
   required_tools:
   - why_course_locked
@@ -474,7 +440,6 @@ questions:
 - id: CP05
   ar: هل كل مقرر يذكر AI331 كمتطلب بينفتح مباشرة إذا نجحت فيه؟
   intent: named_vs_sole_prerequisite
-  expected_family: COURSE_UNLOCKS
   must_not_claim:
   - that naming a prerequisite means it is the only one
   expected_action: null
@@ -488,7 +453,6 @@ questions:
 - id: CP06
   ar: وش الفرق بين المقررات التي يفتحها AI331 مباشرة والمقررات التي تنفتح لاحقًا عبر السلسلة؟
   intent: direct_vs_chain
-  expected_family: COURSE_UNLOCKS
   expected_action: null
   required_tools:
   - course_prerequisites
@@ -500,7 +464,6 @@ questions:
 - id: CP07
   ar: رتّب لي AI331 و CS372 و AI352 حسب تأثير كل واحد على بقية الخطة.
   intent: rank_by_impact
-  expected_family: GENERAL_AGENT
   expected_action: null
   required_tools:
   - course_prerequisites
@@ -512,7 +475,6 @@ questions:
 - id: CP08
   ar: إذا أجلت AI331 فصلًا، وش المقررات التي قد تتأخر بسببه؟
   intent: deferral_impact
-  expected_family: GENERAL_AGENT
   expected_action: null
   required_tools:
   - course_prerequisites
@@ -525,7 +487,6 @@ questions:
 - id: CP09
   ar: أنا أدرس AI331 حاليًا؛ هل يبقى ضمن المقررات التي توصي أن أسجلها؟
   intent: exclude_in_progress
-  expected_family: GENERAL_AGENT
   expected_action: null
   required_tools:
   - recommend_courses
@@ -538,7 +499,6 @@ questions:
 - id: CP10
   ar: نجحت في أهم مقرر عندي، وش صار أعلى مقرر أولوية بعده؟
   intent: recompute_after_pass
-  expected_family: COURSE_PRIORITY
   expected_action: null
   required_tools:
   - recommend_courses
@@ -551,7 +511,6 @@ questions:
 - id: CP11
   ar: وش المقررات المقفلة عندي وما يفصلني عنها إلا مقرر واحد؟
   intent: one_step_courses
-  expected_family: COURSE_PRIORITY
   expected_action: null
   required_tools:
   - my_progress
@@ -565,7 +524,6 @@ questions:
 - id: CP12
   ar: هذا المقرر مقفل بأكثر من شرط؛ هل يعتبر عالي الأولوية رغم أن اجتياز مقرر واحد ما يفتحه؟
   intent: multiple_remaining_prereqs
-  expected_family: COURSE_PRIORITY
   expected_action: null
   required_tools: []
   allowed_tools:
@@ -577,7 +535,6 @@ questions:
 - id: CP13
   ar: ليش المقرر مقفل مع أني مجتاز كل المقررات السابقة؟ هل عنده شرط ساعات مجتازة؟
   intent: missing_hours
-  expected_family: COURSE_LOCK_REASON
   expected_action: null
   required_tools: []
   allowed_tools:
@@ -589,7 +546,6 @@ questions:
 - id: CP14
   ar: النظام يقول إن أحد المتطلبات غير معروف في الخطة؛ كيف يؤثر هذا على ترتيب الأولوية؟
   intent: unknown_prereq
-  expected_family: COURSE_PRIORITY
   expected_action: null
   required_tools:
   - why_course_locked
@@ -602,7 +558,6 @@ questions:
 - id: CP15
   ar: هل المتطلب الاختياري مثل AI1 يعتبر مقررًا عالي الأولوية، أو لازم نحدد المقرر الفعلي أولًا؟
   intent: elective_placeholder_prereq
-  expected_family: COURSE_PRIORITY
   expected_action: null
   required_tools:
   - course_prerequisites
@@ -614,7 +569,6 @@ questions:
 - id: CP16
   ar: مقرر متطلباته مكتملة لكنه ما له شعبة في بيانات النظام؛ هل يظل مهمًا أكاديميًا؟
   intent: importance_vs_section_presence
-  expected_family: COURSE_PRIORITY
   must_not_claim:
   - that absence of a section means the course is not offered
   expected_action: null
@@ -628,7 +582,6 @@ questions:
 - id: CP17
   ar: وش الفرق بين «أعلى مقرر أولوية» و«المقررات التي يوصي بها النظام لهذا الفصل»؟
   intent: priority_vs_recommendation
-  expected_family: COURSE_PRIORITY
   expected_action: null
   required_tools:
   - recommend_courses
@@ -640,7 +593,6 @@ questions:
 - id: CP18
   ar: عندي مساحة لثلاثة مقررات فقط؛ اخترها بناءً على أثرها في فتح الخطة وبحد الساعات.
   intent: rank_under_load_limit
-  expected_family: GENERAL_AGENT
   expected_action: null
   required_tools:
   - recommend_courses
@@ -653,7 +605,6 @@ questions:
 - id: CP19
   ar: بصفتي المرشد، ما المقرر الذي يحرر أكبر عدد من المقررات للطالب؟ اذكر السبب والأثر المباشر.
   intent: adviser_voice_priority
-  expected_family: COURSE_PRIORITY
   must_not_claim:
   - answering an adviser-scoped question from a student session
   expected_action: null
@@ -670,7 +621,6 @@ questions:
   ar: لا تقل لي فقط إن المقرر مهم؛ أعطني سبب ترتيبه، والمقررات التي يفتحها مباشرة، وما إذا كانت التوصية
     تثبت وجود شعبة أو مقعد.
   intent: auditable_explanation
-  expected_family: COURSE_PRIORITY
   must_not_claim:
   - that a recommendation proves a section or a seat exists
   expected_action: null
