@@ -1022,6 +1022,28 @@ def _as_western(digits: str) -> str:
     return digits.translate(_ARABIC_INDIC)
 
 
+def fold_digits(text: str) -> str:
+    """Arabic-Indic and Extended Arabic-Indic digits to Western.
+
+    Public because the OUTPUT contract needs the same folding the transport
+    boundary uses. A second table somewhere else drifts: this one already covers
+    both Unicode ranges, and the checker that misses `U+06F0..U+06F9` is the one
+    an Arabic answer walks straight past.
+    """
+    return str(text or "").translate(_ARABIC_INDIC)
+
+
+def reference_tokens_in(text: str) -> list[str]:
+    """Every token SHAPED like a student reference, issued or not.
+
+    Public for the same reason as `fold_digits`. The output gate must ask "did
+    this answer name a reference nobody issued", and it must ask with the exact
+    pattern that mints them — a second pattern is how the forgery detector and
+    the reference format got out of step once already.
+    """
+    return _ALIAS_SHAPE.findall(str(text or ""))
+
+
 def sanitise_text_for_remote(
     text: str,
     identities: RemoteIdentityMap,
@@ -1286,8 +1308,10 @@ __all__ = [
     "assert_remote_capability_allowed",
     "authorise_resolved_arguments",
     "authoriser_for_scope",
+    "fold_digits",
     "project_tool_result_for_remote",
     "project_verified_context_for_remote",
+    "reference_tokens_in",
     "reject_identity_arguments",
     "remote_exposure_for",
     "remote_tool_schemas",

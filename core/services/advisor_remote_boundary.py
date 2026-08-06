@@ -112,6 +112,8 @@ class ToolBoundary(Protocol):
 
     def refusal_result(self, tool_name: str) -> dict[str, Any]: ...
 
+    def reference_is_issued(self, reference: str) -> bool: ...
+
 
 class LocalToolBoundary:
     """No boundary, because there is none to cross.
@@ -158,6 +160,12 @@ class LocalToolBoundary:
 
     def refusal_result(self, tool_name: str) -> dict[str, Any]:  # pragma: no cover - unreachable
         return dict(privacy.REFUSED_RESULT)
+
+    def reference_is_issued(self, reference: str) -> bool:
+        """FALSE, always. No reference is ever issued on a local backend, so a
+        `STUDENT_REF_…` token in a locally produced answer was fabricated by the
+        model — there is nothing it could legitimately be echoing."""
+        return False
 
 
 class RemoteToolBoundary:
@@ -248,6 +256,11 @@ class RemoteToolBoundary:
         if privacy.remote_exposure_for(tool_name) is privacy.RemoteExposure.DENY:
             return dict(privacy.DENIED_RESULT)
         return dict(privacy.REFUSED_RESULT)
+
+    def reference_is_issued(self, reference: str) -> bool:
+        """Only this answer's map counts. A reference from the previous answer,
+        or one whose nonce is a guess, is as fabricated as an invented id."""
+        return self.identities.issued(reference)
 
 
 def boundary_for_scope(

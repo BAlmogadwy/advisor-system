@@ -561,7 +561,7 @@ def test_full_entry_no_path_ever_sends_the_students_identity(roster, monkeypatch
     )
 
     payload = va.answer_virtual_advisor(
-        question=f"أنا {NAME}، رقمي {MINE}. كم ساعة أستطيع تسجيلها؟",
+        question=f"أنا {NAME}، رقمي {MINE}. وش عندي بكرة الأحد؟",
         principal=_principal(),
         academic_year=1448,
         term=1,
@@ -612,7 +612,7 @@ def test_the_single_shot_fallback_rebuilds_its_context_from_projections(
 
     client = NoToolsClient([])
     payload = va.answer_virtual_advisor(
-        question=f"رقمي {MINE}، كم ساعة؟",
+        question=f"رقمي {MINE}، وش عندي بكرة؟",
         principal=_principal(),
         academic_year=1448,
         term=1,
@@ -655,6 +655,17 @@ def test_the_local_backend_still_sends_the_verified_context_unchanged(roster, mo
     assert "STUDENT_REF_" not in client.sent_text
 
 
+def _corrections(client) -> list[str]:
+    return [
+        m["content"]
+        for req in client.requests
+        for m in req
+        if isinstance(m, dict)
+        and m.get("role") == "user"
+        and "output contract" in str(m.get("content"))
+    ]
+
+
 @override_settings(LLM_BACKEND="alibaba")
 def test_the_grounding_correction_does_not_quote_the_identifiers_back(roster, monkeypatch) -> None:
     """The remote correction must not list what it is objecting to. Every id in
@@ -667,19 +678,223 @@ def test_the_grounding_correction_does_not_quote_the_identifiers_back(roster, mo
 
     invented = "8887771"
     client = NoToolsClient([], final=f"الطالب {invented} مؤهل.")
-    va.answer_virtual_advisor(
-        question="كم ساعة؟", principal=_principal(), academic_year=1448, term=1, client=client
+    payload = va.answer_virtual_advisor(
+        question="وش عندي بكرة الأحد؟",
+        principal=_principal(),
+        academic_year=1448,
+        term=1,
+        client=client,
     )
-    corrections = [
-        m["content"]
-        for req in client.requests
-        for m in req
-        if isinstance(m, dict)
-        and m.get("role") == "user"
-        and "Rewrite the answer" in str(m.get("content"))
-    ]
-    assert corrections, "the grounding retry should have fired"
+    corrections = _corrections(client)
+    assert corrections, "the output-contract retry should have fired"
     assert invented not in corrections[0]
+    assert invented not in client.sent_text
+    # …and the retry returned the same bad draft, so the answer is the refusal,
+    # never the draft that was already proven to breach the contract.
+    assert payload["answer"] == va._GROUNDING_REFUSAL_AR
+    assert payload["agent"]["grounding_refused"] is True
+
+
+# ── 7. the output contract ───────────────────────────────────────
+#
+# The gate is about what a PERSON may be shown, which is a different question
+# from what a PROVIDER may be sent. These tests exercise it through the entry
+# point, because the failure it replaces was a control-flow inversion — detect,
+# then ship anyway — and a unit test of the checker would not have seen it.
+
+
+class _ScriptedAnswers(ScriptedClient):
+    """A client with no tools whose successive `chat` calls return a script, so a
+    draft and its correction can differ."""
+
+    chat_with_tools = None
+
+    def __init__(self, answers: list[str]) -> None:
+        super().__init__([], final=answers[-1])
+        self.answers = list(answers)
+
+    def chat(self, messages, **kwargs):
+        import json as _json
+
+        self.requests.append(_json.loads(_json.dumps(messages, default=str)))
+        text = self.answers.pop(0) if len(self.answers) > 1 else self.answers[0]
+        return ChatResult(content=text, model="test-model", usage={})
+
+
+@override_settings(LLM_BACKEND="local")
+def test_a_clean_rewrite_is_accepted(roster) -> None:
+    """The retry is not decorative: a corrected answer that passes is returned."""
+    _seed_courses()
+    client = _ScriptedAnswers(["الطالب 8887771 مؤهل.", "أنت مؤهل للتسجيل هذا الفصل."])
+    payload = va.answer_virtual_advisor(
+        question="وش عندي بكرة الأحد؟",
+        principal=_principal(),
+        academic_year=1448,
+        term=1,
+        client=client,
+    )
+    assert payload["answer"] == "أنت مؤهل للتسجيل هذا الفصل."
+    assert payload["agent"]["grounding_retry"] is True
+    assert payload["agent"].get("grounding_refused") is None
+
+
+@override_settings(LLM_BACKEND="local")
+def test_a_retry_that_invents_a_DIFFERENT_identifier_is_refused(roster) -> None:
+    """The corrected answer is re-validated, not trusted. Accepting it unchecked
+    let a retry swap one invented identifier for another and ship it."""
+    _seed_courses()
+    client = _ScriptedAnswers(["الطالب 8887771 مؤهل.", "بل الطالب 7776663 هو المؤهل."])
+    payload = va.answer_virtual_advisor(
+        question="وش عندي بكرة الأحد؟",
+        principal=_principal(),
+        academic_year=1448,
+        term=1,
+        client=client,
+    )
+    assert payload["answer"] == va._GROUNDING_REFUSAL_AR
+    assert payload["agent"]["output_violations_after_retry"] == ["unverified_student_id"]
+
+
+@override_settings(LLM_BACKEND="local")
+def test_a_retry_that_raises_refuses_rather_than_keeping_the_draft(roster, monkeypatch) -> None:
+    """THE regression this gate exists for. The old code logged the failure and
+    returned the original draft — the one the system had just proved contains an
+    unverified identifier."""
+    _seed_courses()
+    draft = "الطالب 8887771 مؤهل."
+
+    class ExplodingRetry(_ScriptedAnswers):
+        def chat(self, messages, **kwargs):
+            if self.requests:  # the first call is the draft; the second is the retry
+                self.requests.append([])
+                raise RuntimeError("provider fell over during the retry")
+            return super().chat(messages, **kwargs)
+
+    payload = va.answer_virtual_advisor(
+        question="وش عندي بكرة الأحد؟",
+        principal=_principal(),
+        academic_year=1448,
+        term=1,
+        client=ExplodingRetry([draft]),
+    )
+    assert payload["answer"] != draft
+    assert payload["answer"] == va._GROUNDING_REFUSAL_AR
+    assert payload["agent"]["grounding_retry_failed"] is True
+    assert payload["agent"]["grounding_refused"] is True
+
+
+@override_settings(LLM_BACKEND="local")
+def test_an_english_question_gets_the_english_refusal(roster) -> None:
+    _seed_courses()
+    client = _ScriptedAnswers(["Student 8887771 is eligible."])
+    payload = va.answer_virtual_advisor(
+        question="What is on my timetable tomorrow?",
+        principal=_principal(),
+        academic_year=1448,
+        term=1,
+        client=client,
+    )
+    assert payload["answer"] == va._GROUNDING_REFUSAL_EN
+
+
+@override_settings(LLM_BACKEND="local")
+def test_a_redaction_marker_never_reaches_a_student(roster) -> None:
+    """«راسل [EMAIL_REDACTED]» is not a safe answer that lost a detail — it is an
+    instruction that cannot be followed, and it announces that something was
+    removed."""
+    _seed_courses()
+    client = _ScriptedAnswers(["راسل [EMAIL_REDACTED] للاستفسار."])
+    payload = va.answer_virtual_advisor(
+        question="وش عندي بكرة الأحد؟",
+        principal=_principal(),
+        academic_year=1448,
+        term=1,
+        client=client,
+    )
+    assert payload["answer"] == va._GROUNDING_REFUSAL_AR
+    assert payload["agent"]["output_violations"] == ["redaction_marker_in_answer"]
+
+
+@override_settings(LLM_BACKEND="local")
+def test_a_fabricated_reference_in_a_local_answer_is_refused(roster) -> None:
+    """No reference is ever issued locally, so a STUDENT_REF token in a locally
+    produced answer was invented — and would read to a student as a real handle."""
+    _seed_courses()
+    client = _ScriptedAnswers(["الطالب STUDENT_REF_ABCD1234_1 مؤهل."])
+    payload = va.answer_virtual_advisor(
+        question="وش عندي بكرة الأحد؟",
+        principal=_principal(),
+        academic_year=1448,
+        term=1,
+        client=client,
+    )
+    assert payload["answer"] == va._GROUNDING_REFUSAL_AR
+    assert set(payload["agent"]["output_violations"]) == {
+        "unissued_student_reference",
+        "reference_shown_to_a_student",
+    }
+
+
+@override_settings(LLM_BACKEND="alibaba")
+def test_a_real_id_is_refused_remotely_even_though_it_is_in_the_local_evidence(
+    roster,
+) -> None:
+    """The distinction the transport sanitiser cannot make.
+
+    `MINE` is in the local evidence — it is the asking student's own id, it is in
+    the question and in the verified context — so `_unverified_student_ids`
+    considers it grounded. But the PROVIDER was never given it: the question was
+    aliased before it left. An answer stating it was not read from anywhere; it
+    was reconstructed, and local authorisation does not make that a fact.
+    """
+    _seed_courses()
+    client = _ScriptedAnswers([f"رقمك هو {MINE} وأنت مؤهل."])
+    payload = va.answer_virtual_advisor(
+        question=f"رقمي {MINE}، وش عندي بكرة؟",
+        principal=_principal(),
+        academic_year=1448,
+        term=1,
+        client=client,
+    )
+    assert va._unverified_student_ids(f"رقمك هو {MINE}", [f"رقمي {MINE}"]) == [], (
+        "the local grounding rule alone would have cleared this answer"
+    )
+    assert payload["answer"] == va._GROUNDING_REFUSAL_AR
+    assert payload["agent"]["output_violations"] == ["identifier_the_provider_never_saw"]
+
+
+@override_settings(LLM_BACKEND="alibaba")
+def test_an_arabic_indic_identifier_does_not_slip_past_the_gate(roster) -> None:
+    """`_STUDENT_ID_RE` knows only Western digits. On an Arabic-first adviser,
+    writing «٤٥٠٢١٥٦» would otherwise be a way round the whole check."""
+    _seed_courses()
+    client = _ScriptedAnswers(["رقمك هو ٤٥٠٢١٥٦ وأنت مؤهل."])
+    payload = va.answer_virtual_advisor(
+        question="وش عندي بكرة الأحد؟",
+        principal=_principal(),
+        academic_year=1448,
+        term=1,
+        client=client,
+    )
+    assert payload["answer"] == va._GROUNDING_REFUSAL_AR
+
+
+@override_settings(LLM_BACKEND="local")
+def test_a_clean_answer_is_never_touched(roster) -> None:
+    """The gate must not fire on ordinary prose. Course codes, credit hours,
+    times, pages and academic years all contain digits and none is an identity."""
+    _seed_courses()
+    clean = "مقرر AI221 بثلاث ساعات، الأحد 09:00، والحد 19 ساعة معتمدة، صفحة 28."
+    client = _ScriptedAnswers([clean])
+    payload = va.answer_virtual_advisor(
+        question="وش عندي بكرة الأحد؟",
+        principal=_principal(),
+        academic_year=1448,
+        term=1,
+        client=client,
+    )
+    assert payload["answer"] == clean
+    assert payload["agent"].get("output_violations") is None
 
 
 # ── 6. the factory ───────────────────────────────────────────────
@@ -694,3 +909,21 @@ def test_the_backend_alone_decides_whether_a_boundary_exists() -> None:
     assert isinstance(
         boundary_for_scope(STUDENT_SCOPE, backend="something-new"), RemoteToolBoundary
     )
+
+
+def test_a_forged_argument_on_an_UNADVERTISED_tool_is_also_scrubbed(roster, monkeypatch) -> None:
+    """The second refusal branch, which had no coverage of its own.
+
+    Three places scrub a refused call's arguments — withheld, never-offered, and
+    failed-the-execution-order — and a test that only drives the third leaves the
+    other two free to regress. This drives the never-offered branch: a DENY
+    capability, requested by name, carrying a real student id it invented.
+    """
+    spy = ExecutionSpy(monkeypatch)
+    client = ScriptedClient([_call("portfolio_triage", {"student_id": OUTSIDE})])
+    _, local, provider, telemetry = _run_loop(client, _remote(ADVISER_SCOPE), ADVISER_SCOPE)
+
+    assert spy.count == 0
+    assert local == [] and provider == []
+    assert telemetry["boundary_refusals"][0]["stage"] == "pre_execution"
+    assert str(OUTSIDE) not in client.sent_text, "the forged id survived in the transcript"

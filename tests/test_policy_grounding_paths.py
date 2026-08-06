@@ -29,6 +29,7 @@ from core.services.virtual_advisor import (
     SYSTEM_PROMPT_AGENT,
     answer_virtual_advisor,
 )
+from core.services.virtual_advisor_capabilities import AdvisorCapabilityRegistry
 from tests.test_virtual_advisor_agent_loop import FakeToolClient, _tool_call, _tool_turn
 
 pytestmark = pytest.mark.django_db
@@ -272,20 +273,67 @@ def test_a_malformed_store_response_is_treated_as_unavailable(monkeypatch):
 # ── failure mode 6: the agent path, for comparison ───────────────
 
 
-def test_agent_path_records_when_the_model_never_consulted_the_store():
-    """On the agent path the MODEL decides. That choice must be visible.
+def test_the_model_can_no_longer_decide_not_to_consult_the_store():
+    """The residual gap this file was written around, now closed.
 
-    This is the residual gap the fallback fix does not close: a model that answers a
-    regulation question without calling the tool leaves nothing for the citation
-    check to catch, because it never saw an id to misuse. Recording it is what makes
-    it measurable, and catching the resulting claim is the semantic judge's job.
+    It used to be that on the agent path the MODEL decided, so a regulation
+    question answered without calling the tool produced `not_consulted` — a state
+    that read downstream almost exactly like a grounded one and left the citation
+    check nothing to catch, because a model that never saw an id will not emit one.
+
+    Retrieval is now server-side and unconditional, so a model that calls no tool
+    at all still answers against evidence the server fetched. `not_consulted` is
+    unreachable through this path; `PolicyContractState` treats it as a
+    programming failure rather than as an outcome.
     """
     fake = FakeToolClient(turns=[_tool_turn(content="خمس مرات، بالتأكيد.")])
     result = answer_virtual_advisor(question=POLICY_QUESTION, principal=PRINCIPAL, client=fake)
 
     assert result["agent"]["loop_used"] is True
-    assert result["agent"]["policy_grounding"] == "not_consulted"
+    assert result["agent"]["policy_grounding"] != "not_consulted"
+    assert result["agent"]["policy_required"] is True
+    # …and the tool was never offered, so the model could not have called it.
+    offered = {s["function"]["name"] for s in fake.tools_seen[0]}
+    assert "policy_lookup" not in offered
+    # The unsourced claim is still refused — by the contract now, not by luck.
     assert result["cited_policy_ids"] == []
+
+
+def test_a_withheld_tool_requested_anyway_is_refused_without_executing():
+    """A shorter schema list is a description, not enforcement. Nothing in the
+    loop previously compared a requested tool against the advertised set, so a
+    model that asked for the withheld tool would simply get it — retrieving a
+    second time and widening the citation set past the contract computed before
+    the loop began."""
+    calls: list[str] = []
+    real = AdvisorCapabilityRegistry.execute
+
+    def counted(self, name, args, *, scope=None, ctx=None):
+        calls.append(name)
+        return real(self, name, args, scope=scope, ctx=ctx)
+
+    fake = FakeToolClient(
+        turns=[
+            _tool_turn(tool_calls=(_tool_call("policy_lookup", {"query": POLICY_QUESTION}),)),
+            _tool_turn(content="لا أستطيع تأكيد ذلك."),
+        ]
+    )
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(AdvisorCapabilityRegistry, "execute", counted)
+        result = answer_virtual_advisor(question=POLICY_QUESTION, principal=PRINCIPAL, client=fake)
+
+    # ONCE, not never: the server-side prefetch legitimately executes it before
+    # the first model call. What must not happen is a SECOND execution driven by
+    # the model asking for a tool it was not offered.
+    assert calls.count("policy_lookup") == 1, f"retrieval ran {calls.count('policy_lookup')}x"
+    assert result["agent"]["withheld_tool_calls"] == ["policy_lookup"]
+    # …and the model was told, rather than silently given an empty result.
+    refusal = next(
+        m
+        for m in fake.tool_messages_seen[-1]
+        if m.get("role") == "tool" and "not available" in str(m.get("content"))
+    )
+    assert "already in verified_context" in refusal["content"]
 
 
 def test_agent_path_records_a_successful_consultation():
