@@ -80,7 +80,25 @@ class Command(BaseCommand):
             ),
         )
 
+    def _force_utf8_output(self) -> None:
+        """Windows consoles default to cp1252, which cannot encode Arabic.
+
+        This command prints the model's Arabic answer, so on the platform the
+        project is developed on it crashed AFTER the paid call had been made and
+        billed — the request succeeded, the report died, and the operator was
+        left with a traceback instead of a result. A diagnostic that cannot
+        print its own output costs a real request every time it runs.
+        """
+        for stream in (self.stdout, self.stderr):
+            reconfigure = getattr(getattr(stream, "_out", None), "reconfigure", None)
+            if callable(reconfigure):
+                try:
+                    reconfigure(encoding="utf-8", errors="replace")
+                except (ValueError, OSError):  # pragma: no cover - not reconfigurable
+                    pass
+
     def handle(self, *args: Any, **options: Any) -> None:
+        self._force_utf8_output()
         backend = options["backend"]
         try:
             config = endpoint_config(backend)
