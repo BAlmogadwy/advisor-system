@@ -311,6 +311,18 @@ _UNLOCK_VERB = _words("يفتح", "تفتح", "ينفتح", "تنفتح", "بي�
 #: `_LOCKED_WORD`, where a lock question needs a «ليش» in front of it.
 _WAIT_VERB = _words("ينتظر", "تنتظر", "waiting", "awaiting")
 
+#: The same question with the dependency named from the other end: «كم مقرر يعتمد
+#: على AI331؟» / "how many courses depend on AI331?". Both classified GENERAL_AGENT
+#: until now, which left the phrasing the task brief names verbatim with no owning
+#: capability at all.
+#:
+#: «يشترط» and "requires" are deliberately ABSENT. They read as dependency words but
+#: point the OTHER way — «AI352 يشترط AI331» is a statement about AI352's own
+#: prerequisites, which is `course_prerequisites`' question, and folding it in here
+#: would recreate the direction confusion this family exists to resolve. «يشترط»
+#: also already belongs to `_FORMAL_REQUIREMENT`, where it means a regulation.
+_DEPEND_VERB = _words("يعتمد", "تعتمد", "يعتمدون", "depend", "depends", "dependent")
+
 #: «مهم» is deliberately absent. «هل يظل مهمًا أكاديميًا؟» (CP16) is a question
 #: about a course with no section on file, and «لا تقل لي فقط إن المقرر مهم» (CP20)
 #: is a demand for an audit trail; neither is answered by the priority ranking.
@@ -463,8 +475,11 @@ _MARKERS: dict[IntentFamily, tuple[_Marker, ...]] = {
         _m(_COURSE_NOUN, _UNLOCK_VERB),
         _m(_COURSE_NOUN, _WAIT_VERB),
         _m(_WAIT_VERB, _COURSE_NOUN),
+        _m(_COURSE_NOUN, _DEPEND_VERB),
+        _m(_DEPEND_VERB, _COURSE_NOUN),
         _m_code(_UNLOCK_VERB),
         _m_code(_WAIT_VERB),
+        _m_code(_DEPEND_VERB),
     ),
     IntentFamily.COURSE_LOCK_REASON: (
         _m(_WHY_WORD, _LOCKED_WORD),
@@ -521,6 +536,48 @@ _PRECEDENCE: tuple[IntentFamily, ...] = (
     IntentFamily.COURSE_LOCK_REASON,
     IntentFamily.POLICY,
 )
+
+
+#: The capability that OWNS each family's answer. Declared here so "which tool
+#: answers this question" is a fact the server states and a test can read, instead
+#: of a hope about how a model reads a description.
+#:
+#: The three course families were the ones getting it wrong live: a forward-unlock
+#: question was answered with `course_prerequisites`, which returns what a course
+#: REQUIRES — the reverse relation — and structurally cannot express "what is
+#: waiting on it". `why_course_locked` owns both directions for a named course.
+#:
+#: NOT USED TO WITHHOLD THE OTHER TOOL, and that is a measured decision rather than
+#: caution. `course_prerequisites` is REQUIRED by the owner's own batch on CP03
+#: («ليش النظام يعتبر AI331 أهم مقرر لي؟», which classifies COURSE_PRIORITY), CP05
+#: («هل كل مقرر يذكر AI331 كمتطلب…», COURSE_UNLOCKS) and CP06 (COURSE_UNLOCKS) —
+#: the same two families that get it wrong on CP04. A family is too coarse to
+#: separate CP04, which FORBIDS the tool, from CP05, which REQUIRES it, so
+#: withholding by family would break three questions to fix one. Routing here is
+#: therefore advisory and recorded; the forcing mechanism is the description.
+#:
+#: Families with no entry are absent on purpose: a planner family is answered by a
+#: hand-off (`advisor_actions.ROUTED_INTENTS`), not by a capability, and MIXED
+#: spans two domains by definition.
+CAPABILITY_FOR_FAMILY: dict[IntentFamily, str] = {
+    IntentFamily.COURSE_UNLOCKS: "why_course_locked",
+    IntentFamily.COURSE_LOCK_REASON: "why_course_locked",
+    IntentFamily.COURSE_PRIORITY: "my_progress",
+    IntentFamily.CURRENT_TIMETABLE: "my_timetable",
+    IntentFamily.TIMETABLE_CLASH: "my_clash_free_sections",
+    IntentFamily.PLANNER_BUILD: "build_my_timetable",
+    IntentFamily.POLICY: "policy_lookup",
+}
+
+
+def owning_capability(question: str) -> str | None:
+    """The capability that should answer this question, or None if no family owns it.
+
+    Side-effect free and offline, like `classify_intent`: the route is a property of
+    the string, so it is testable as a table rather than only observable in a live
+    batch against a provider.
+    """
+    return CAPABILITY_FOR_FAMILY.get(classify_intent(question))
 
 
 def _streams(question: str) -> tuple[list[set[str]], list[str]]:
@@ -609,4 +666,10 @@ def explicit_normative_claim_present(question: str) -> bool:
     return False
 
 
-__all__ = ["IntentFamily", "classify_intent", "explicit_normative_claim_present"]
+__all__ = [
+    "CAPABILITY_FOR_FAMILY",
+    "IntentFamily",
+    "classify_intent",
+    "explicit_normative_claim_present",
+    "owning_capability",
+]

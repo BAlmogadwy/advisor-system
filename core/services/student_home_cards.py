@@ -128,37 +128,23 @@ def unlock_leaders(report: dict[str, Any], limit: int = 3) -> list[dict[str, Any
     waiting on."
 
     THREE different numbers are available and they disagree — for AI331: 5 courses
-    name it as a prerequisite, 4 become takeable at once, 6 open eventually
-    through the chain. This uses the middle one, because it is the only one a
-    student can check for themselves the term after they pass it.
+    name it as a prerequisite, 3 are waiting on it and nothing else, 6 open
+    eventually through the chain. This uses the middle one, because it is the only
+    one a student can check for themselves the term after they pass it.
+
+    The rule itself now lives in `student_unlock.build_unlock_report`, which is
+    where the prerequisite records, the satisfied set and the credit-hour gates all
+    already are. Recomputing it from `graph.items` here compared course codes only,
+    so a course also short on credit hours counted as "waiting on this one alone"
+    — and this screen's whole claim is that the count is checkable.
     """
-    graph = report.get("graph") or {}
-    edges = graph.get("items") or []
-    names = graph.get("nameOf") or {}
+    names = (report.get("graph") or {}).get("nameOf") or {}
+    dependents = report.get("dependents") or {}
 
-    passed = {c["code"] for c in (report.get("done") or [])}
-    passed |= {c["code"] for c in (report.get("in_progress") or [])}
-
-    prereqs_of: dict[str, set[str]] = {}
-    for edge in edges:
-        course = str(edge.get("course_code") or "")
-        prereq = str(edge.get("prerequisite_course_code") or "")
-        if course and prereq:
-            prereqs_of.setdefault(course, set()).add(prereq)
-
-    blocked = {c["code"] for c in (report.get("locked_courses") or [])}
     leaders: list[dict[str, Any]] = []
     for candidate in report.get("open_courses") or []:
         code = candidate["code"]
-        # A blocked course is freed by `code` when `code` is its ONLY outstanding
-        # prerequisite. Counting every dependent instead would promise a student
-        # something passing one course cannot deliver.
-        freed = [
-            other
-            for other in blocked
-            if code in prereqs_of.get(other, set())
-            and not (prereqs_of.get(other, set()) - passed - {code})
-        ]
+        freed = list((dependents.get(code) or {}).get("waiting_only_on_this") or [])
         if freed:
             leaders.append(
                 {

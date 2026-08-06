@@ -516,9 +516,15 @@ def test_why_course_locked_answers_the_forward_direction():
         scope={"role": ROLE_SUPER_ADMIN},
         ctx={"academic_year": 1448, "term": 1},
     )
-    assert "unlocks_directly" in out
-    assert "unlocks_directly_count" in out
-    assert out["unlocks_directly_count"] == len(out["unlocks_directly"])
+    # Both forward relations, not one number under a name that promised the
+    # other. AI305 has no dependents in this fixture, so the assertion that
+    # carries weight is that the two fields EXIST and agree with their lists —
+    # the sharp version, on data where the counts differ, is in
+    # `tests/test_advisor_unlock_semantics.py`.
+    assert out["listed_as_prerequisite_count"] == len(out["listed_as_prerequisite_for"])
+    assert out["sole_remaining_prerequisite_count"] == len(out["sole_remaining_prerequisite_for"])
+    assert out["sole_remaining_prerequisite_count"] <= out["listed_as_prerequisite_count"]
+    assert "unlocks_directly" not in out, "the name that carried the false claim"
 
 
 def test_elective_placeholder_is_not_reported_as_a_course_without_prerequisites():
@@ -658,8 +664,11 @@ def test_my_plan_by_term_is_student_scoped_and_level_filtered():
     assert "own records" in other["error"]
 
     # can_register is about prerequisites, never about a section existing. The note
-    # has to say so or the model will read it as "a seat is waiting".
-    assert "prerequisites ONLY" in full["note"]
+    # has to say so or the model will read it as "a seat is waiting" — and it now
+    # says it in the words the whole payload surface uses, beside the canonical
+    # field name that replaced it.
+    assert "is NOT a registration permission" in full["note"]
+    assert "does not confirm that a section is offered" in full["note"]
 
 
 def test_my_advisor_never_hands_out_the_placeholder_email():

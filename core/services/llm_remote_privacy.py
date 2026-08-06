@@ -298,15 +298,70 @@ def _project_course_prerequisites(result: dict[str, Any], _: RemoteIdentityMap) 
     return out
 
 
+#: The impact row's four keys, named once because `most_useful_course_to_pass`
+#: and every row of `unlock_impact_ranking` are the same shape.
+_IMPACT_FIELDS = (
+    "code",
+    "course_name",
+    "sole_remaining_prerequisite_count",
+    "on_prerequisite_chain_of_count",
+)
+
+
 def _project_my_progress(result: dict[str, Any], _: RemoteIdentityMap) -> dict[str, Any]:
+    """WRITTEN AGAINST A PAYLOAD `_exec_my_progress` HAS NEVER EMITTED.
+
+    It kept `totals`, `programme_totals`, `passed`, `studying` and `remaining`. The
+    executor emits none of those five: it emits `counts`, `most_useful_course_to_pass`,
+    the two readiness lists, `elective_slots` and `note`. `_keep` is silent about a
+    name that is not there and `_course_rows` returns `[]` for a list that is not
+    there, so the projection did not fail — it produced `{ok, counts, passed: [],
+    studying: [], remaining: []}` and looked like a filled payload.
+
+    That is why the live batch's priority questions were answered without the
+    evidence: on the remote backend the model received a bucket of five numbers and
+    three empty lists, and every course name, count and ranking in the answer had to
+    come from somewhere other than this tool.
+
+    None of the added fields carries identity. They are course codes, course names,
+    plan levels and counts over the student's own plan — the same class of data the
+    `counts` bucket already carried, and the student is the caller.
+    """
     out = _envelope(result)
-    out.update(_keep(result, "counts", "totals", "programme_totals"))
-    out["passed"] = _course_rows(result.get("passed"), "course_code", "course_name", "credit_hours")
-    out["studying"] = _course_rows(
-        result.get("studying"), "course_code", "course_name", "credit_hours"
+    out.update(
+        _keep(
+            result,
+            "program",
+            "academic_year",
+            "term",
+            "counts",
+            "elective_slots",
+            "renamed_fields",
+            "note",
+        )
     )
-    out["remaining"] = _course_rows(
-        result.get("remaining"), "course_code", "course_name", "credit_hours", "type"
+    top = result.get("most_useful_course_to_pass")
+    out["most_useful_course_to_pass"] = (
+        _keep(top, *_IMPACT_FIELDS) if isinstance(top, dict) else None
+    )
+    out["unlock_impact_ranking"] = _course_rows(
+        result.get("unlock_impact_ranking"), *_IMPACT_FIELDS
+    )
+    out["prerequisites_satisfied"] = _course_rows(
+        result.get("prerequisites_satisfied"),
+        "code",
+        "course_name",
+        "credits",
+        "fits_this_term",
+    )
+    out["prerequisite_blocked"] = _course_rows(
+        result.get("prerequisite_blocked"),
+        "code",
+        "course_name",
+        "steps_away",
+        "on_prerequisite_chain_of_count",
+        "nearest_course_you_can_take_now",
+        "why",
     )
     return out
 
@@ -332,8 +387,50 @@ def _project_graduation_progress(result: dict[str, Any], _: RemoteIdentityMap) -
 
 
 def _project_why_course_locked(result: dict[str, Any], _: RemoteIdentityMap) -> dict[str, Any]:
+    """Also written against a payload that never existed — see `_project_my_progress`.
+
+    It kept `locked`, `reason`, `missing_prerequisites` and `unlocks`. The executor
+    emits `status`, `explanation`, `blocked_by`, `steps_away` and the forward-relation
+    fields, and has never emitted any of those four names. So a remote answer about
+    one named course received `{ok, course_code}` — the code the student had just
+    said out loud — and nothing else. The tool that owns the forward direction was
+    contributing no evidence at all on the backend the batch was run against, which
+    is a better explanation for reaching to `course_prerequisites` than any missing
+    sentence in a description.
+
+    `blocked_by` carries `build_unlock_report`'s reason dicts: a closed `kind`
+    vocabulary plus course codes, names and credit-hour figures. No person.
+    """
     out = _envelope(result)
-    out.update(_keep(result, "course_code", "locked", "reason", "missing_prerequisites", "unlocks"))
+    out.update(
+        _keep(
+            result,
+            "course_code",
+            "course_name",
+            "status",
+            "prerequisites_satisfied",
+            "explanation",
+            "fits_this_term",
+            "steps_away",
+            "nearest_course_you_can_take_now",
+            "blocked_by",
+            "listed_as_prerequisite_count",
+            "sole_remaining_prerequisite_count",
+            "on_prerequisite_chain_of_count",
+            "forward_relations_note",
+        )
+    )
+    out["listed_as_prerequisite_for"] = _course_rows(
+        result.get("listed_as_prerequisite_for"),
+        "code",
+        "course_name",
+        "current_status",
+        "still_also_waiting_on",
+        "also_short_on_credit_hours",
+    )
+    out["sole_remaining_prerequisite_for"] = _course_rows(
+        result.get("sole_remaining_prerequisite_for"), "code", "course_name"
+    )
     return out
 
 

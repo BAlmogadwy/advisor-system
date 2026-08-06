@@ -900,6 +900,37 @@ def _explain_reason(reason: dict[str, Any]) -> str:
     return "the adviser must confirm why this course is blocked"
 
 
+#: THE sentence for "the prerequisite records are met", written once so the two
+#: capabilities that report it cannot drift apart again. The old wording was "Every
+#: prerequisite is satisfied; it can be registered." — and `_exec_my_progress` said,
+#: three fields below it, that it does "not know which courses actually run this
+#: term or seat availability". One payload asserted a registration permission and
+#: denied having the evidence for it, and the model was left to pick which half to
+#: believe. It picked the permission.
+_PREREQS_SATISFIED_EXPLANATION = (
+    "All recorded prerequisite conditions are satisfied. This does not confirm that "
+    "a section is offered, that registration is permitted, or that a seat is available."
+)
+
+
+def _impact_row(blocker: dict[str, Any] | None) -> dict[str, Any] | None:
+    """One open course with BOTH forward counts, under names that say which is which.
+
+    `build_unlock_report` calls them `frees_now` and `frees_eventually`, and a
+    reader who has not opened that module cannot tell that the second frees nothing
+    — it is the number of courses with this one somewhere in their chain. The
+    student screen rendered it as «يفتح لك 6 من مقرراتك المتبقية» when three open.
+    """
+    if not blocker:
+        return None
+    return {
+        "code": blocker["code"],
+        "course_name": blocker["name"],
+        "sole_remaining_prerequisite_count": blocker["frees_now"],
+        "on_prerequisite_chain_of_count": blocker["frees_eventually"],
+    }
+
+
 def _exec_my_progress(
     args: dict[str, Any], scope: dict[str, Any], ctx: dict[str, Any]
 ) -> dict[str, Any]:
@@ -926,23 +957,32 @@ def _exec_my_progress(
         "academic_year": year,
         "term": term,
         "counts": r["counts"],
-        "most_useful_course_to_pass": r["top_blocker"],
-        "open_now": [
+        "most_useful_course_to_pass": _impact_row(r["top_blocker"]),
+        # Ranked, not just the winner. «رتّب لي AI331 و CS372 و AI352 حسب تأثير كل
+        # واحد» and «أي مقرر يفتح أكبر عدد مباشرة» both need an ORDER over several
+        # courses, and the payload carried a single `max()`. Ranking three named
+        # courses from one winner is not possible, so the answer was composed.
+        "unlock_impact_ranking": [_impact_row(b) for b in r["blockers"][:_MAX_LIST_ROWS]],
+        "prerequisites_satisfied": [
             {
                 "code": c["code"],
-                "name": c["name"],
+                "course_name": c["name"],
                 "credits": c["credits"],
                 "fits_this_term": c["fits_this_term"],
             }
             for c in r["open_courses"][:_MAX_LIST_ROWS]
         ],
         "elective_slots": [c["code"] for c in r["elective_slots"]],
-        "blocked": [
+        "prerequisite_blocked": [
             {
                 "code": c["code"],
-                "name": c["name"],
+                "course_name": c["name"],
                 "steps_away": c["steps"],
-                "opens_n_courses": c["frees_eventually"],
+                # Was `opens_n_courses`, which is the count of courses with this one
+                # ANYWHERE in their remaining chain. Passing it removes one link from
+                # each; it opens none of them by itself, and for a course two steps
+                # down it may open none of them ever on its own.
+                "on_prerequisite_chain_of_count": c["frees_eventually"],
                 "nearest_course_you_can_take_now": (c["nearest_open"] or {}).get("code"),
                 "why": why(c),
             }
@@ -950,8 +990,17 @@ def _exec_my_progress(
         ],
         "note": (
             "A course being studied satisfies a prerequisite but must still be passed. "
-            "This does not know which courses actually run this term or seat availability."
+            + _PREREQS_SATISFIED_EXPLANATION
         ),
+        # `open_now` and `blocked` are GONE rather than aliased. Every consumer was
+        # checked: the privacy projector kept neither, no template or script reads
+        # this payload, and the only other reader is the model. Carrying both names
+        # would put two lists with one meaning into the same prompt — which is the
+        # defect class this commit exists to remove, not a mitigation of it.
+        "renamed_fields": {
+            "open_now": "prerequisites_satisfied",
+            "blocked": "prerequisite_blocked",
+        },
     }
 
 
@@ -975,57 +1024,97 @@ def _exec_why_course_locked(
     if not r:
         return {"ok": False, "error": f"No degree plan found for student {student_id}."}
 
-    # The forward direction — "if I pass this, what opens?" — is already computed:
-    # build_unlock_report returns a `graph` of prerequisite edges that every caller
-    # so far has thrown away. It costs nothing to answer, and it is the question a
-    # student actually asks after being told a course is blocked.
-    graph = r.get("graph") or {}
-    unlocks = sorted(
-        {
-            edge["course_code"]
-            for edge in (graph.get("items") or [])
-            if edge.get("prerequisite_course_code") == code
-        }
-    )
-    status_of = graph.get("statusOf") or {}
-    name_of = graph.get("nameOf") or {}
+    # THE FORWARD DIRECTION, IN TWO FIELDS THAT ARE NOT THE SAME NUMBER.
+    #
+    # This used to emit one list, `unlocks_directly`, built from every graph edge
+    # whose `prerequisite_course_code` was this course. That is "X names this course
+    # among its prerequisites" — and the name promised "X opens when you pass this".
+    # For student 4400251, AI331 is named by five courses and only three of them are
+    # waiting on it alone; the other two also need CS289 and COE332. So the answer to
+    # «كم مقرر ينتظر AI331 وحده» was 5, and the true answer is 3.
+    #
+    # The field is not kept as an alias. Both readings are useful and both are
+    # published, but `unlocks_directly` is the name that carried the false one, and
+    # an alias would preserve exactly the claim this exists to withdraw.
+    deps = (r.get("dependents") or {}).get(code) or {}
+    listed_rows = deps.get("listed") or []
+    waiting_only = set(deps.get("waiting_only_on_this") or [])
     base = {
         "student_id": int(student_id),
         "course_code": code,
-        "unlocks_directly": [
-            {"code": u, "name": name_of.get(u, ""), "current_status": status_of.get(u, "")}
-            for u in unlocks
+        # Catalogue direction: true of the programme, whatever this student passed.
+        "listed_as_prerequisite_for": [
+            {
+                "code": row["code"],
+                "course_name": row["name"],
+                "current_status": row["status"],
+                "still_also_waiting_on": row["also_waiting_on"],
+                "also_short_on_credit_hours": row["also_waiting_on_credit_hours"],
+            }
+            for row in listed_rows
         ],
-        "unlocks_directly_count": len(unlocks),
+        "listed_as_prerequisite_count": len(listed_rows),
+        # Student direction: what actually changes the day this course is passed.
+        "sole_remaining_prerequisite_for": [
+            {"code": row["code"], "course_name": row["name"]}
+            for row in listed_rows
+            if row["code"] in waiting_only
+        ],
+        "sole_remaining_prerequisite_count": len(waiting_only),
+        # Transitive, and moved into `base` from the blocked branch. AI331 is OPEN
+        # for this student, so «وش الفرق بين ما يفتحه مباشرة وما ينفتح عبر السلسلة»
+        # was asked of a payload that carried no chain number at all — the count
+        # existed only on the branch taken by courses that are themselves blocked.
+        "on_prerequisite_chain_of_count": deps.get("on_chain_of_count", 0),
+        "forward_relations_note": (
+            "listed_as_prerequisite_count counts courses that NAME this one as a "
+            "prerequisite. sole_remaining_prerequisite_count counts those for which "
+            "it is the last unmet condition — the ones that become "
+            "prerequisite-satisfied when it is passed. "
+            "on_prerequisite_chain_of_count counts courses with it anywhere in their "
+            "remaining chain; passing it removes one link and does not make them "
+            "takeable. The three are usually different numbers."
+        ),
     }
     for c in r["open_courses"]:
         if c["code"] == code:
             return {
                 **base,
-                "status": "open_now",
-                "name": c["name"],
+                # Was "open_now", explained as "it can be registered" — a
+                # registration-permission claim this module says two fields later it
+                # cannot make. The status names the only thing that was checked.
+                "status": "PREREQUISITES_SATISFIED",
+                "prerequisites_satisfied": True,
+                "course_name": c["name"],
                 "fits_this_term": c["fits_this_term"],
-                "explanation": "Every prerequisite is satisfied; it can be registered.",
+                "explanation": _PREREQS_SATISFIED_EXPLANATION,
             }
     for c in r["done"]:
         if c["code"] == code:
-            return {**base, "status": "passed", "name": c["name"], "explanation": "Already passed."}
+            return {
+                **base,
+                "status": "passed",
+                "prerequisites_satisfied": True,
+                "course_name": c["name"],
+                "explanation": "Already passed.",
+            }
     for c in r["in_progress"]:
         if c["code"] == code:
             return {
                 **base,
                 "status": "studying",
-                "name": c["name"],
+                "prerequisites_satisfied": True,
+                "course_name": c["name"],
                 "explanation": "Being studied now; must still be passed.",
             }
     for c in r["locked_courses"]:
         if c["code"] == code:
             return {
                 **base,
-                "status": "blocked",
-                "name": c["name"],
+                "status": "PREREQUISITE_BLOCKED",
+                "prerequisites_satisfied": False,
+                "course_name": c["name"],
                 "steps_away": c["steps"],
-                "opens_n_courses": c["frees_eventually"],
                 "nearest_course_you_can_take_now": (c["nearest_open"] or {}).get("code"),
                 "blocked_by": c["reasons"],
                 "explanation": (
@@ -1178,6 +1267,39 @@ def _exec_my_timetable(
     }
 
 
+def _plan_terms_with_canonical_readiness(terms: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Add `prerequisites_satisfied` beside `can_register`, without renaming it.
+
+    `can_register` is `report_views._build_student_plan_payload`'s field and it is
+    read by name in fifteen places across `page-dashboard.js` and `page-planner.js`,
+    plus `report_views` itself, which filters and counts on it. Renaming it there to
+    fix a description the MODEL reads would break two screens for no gain to either.
+
+    So the canonical name is added here, at the boundary where a language model is
+    the reader, and the legacy name travels beside it. Copied, not mutated: the same
+    payload objects are cached and served to those screens, and writing into them
+    would leak a field into the JSON the browser gets.
+    """
+    out = []
+    for level in terms:
+        courses = level.get("courses")
+        if not isinstance(courses, list):
+            out.append(level)
+            continue
+        out.append(
+            {
+                **level,
+                "courses": [
+                    {**c, "prerequisites_satisfied": bool(c.get("can_register", False))}
+                    if isinstance(c, dict)
+                    else c
+                    for c in courses
+                ],
+            }
+        )
+    return out
+
+
 def _exec_my_plan_by_term(
     args: dict[str, Any], scope: dict[str, Any], ctx: dict[str, Any]
 ) -> dict[str, Any]:
@@ -1221,13 +1343,14 @@ def _exec_my_plan_by_term(
         "student_id": int(student_id),
         "program": payload.get("program", ""),
         "summary": payload.get("summary", {}),
-        "terms": terms,
+        "terms": _plan_terms_with_canonical_readiness(terms),
         "blocker_hints": payload.get("blocker_hints") or [],
         "note": (
             "Plan LEVELS, not calendar terms - programme_term is where a course sits in "
             "the degree plan, not when it is taught. status is passed / studying / "
-            "not_taken, and can_register reflects prerequisites ONLY, never whether a "
-            "section is being offered."
+            "not_taken. prerequisites_satisfied is the canonical field; can_register is "
+            "the same boolean under its old name and is NOT a registration permission. "
+            + _PREREQS_SATISFIED_EXPLANATION
         ),
         "tool": "my_plan_by_term",
     }
@@ -2110,13 +2233,21 @@ def build_default_registry() -> AdvisorCapabilityRegistry:
         AdvisorCapability(
             name="my_progress",
             description=(
-                "The student's full standing in their degree plan: how many courses are "
-                "open to register NOW (all prerequisites satisfied), how many are blocked, "
-                "which single course would unlock the most, and for every blocked course "
-                "why it is blocked, how many passes away it is, and the nearest course on "
-                "that chain they can take today. Use for 'what can I take', 'what is "
-                "blocking me', 'what should I do next'. Broader than recommend_courses, "
-                "which returns only the credit-capped suggestion for the coming term."
+                "The student's full standing in their degree plan, and the ONLY tool that "
+                "ranks courses by unlock impact. Returns: how many courses have every "
+                "recorded prerequisite satisfied (prerequisites_satisfied) and how many do "
+                "not (prerequisite_blocked); most_useful_course_to_pass; and "
+                "unlock_impact_ranking - every course they could pass now, ordered, each "
+                "with sole_remaining_prerequisite_count (courses waiting on it alone) and "
+                "on_prerequisite_chain_of_count (courses with it anywhere in their chain). "
+                "For every blocked course: why, how many passes away, and the nearest "
+                "course on that chain they can take today. Use for 'what can I take', "
+                "'what is blocking me', 'what should I do next', 'which course is most "
+                "important / highest priority', 'which course opens the most', and to rank "
+                "or compare several courses by impact. Broader than recommend_courses, "
+                "which returns only the credit-capped suggestion for the coming term. "
+                "Prerequisite state only: it never establishes that a section is offered, "
+                "that registration is permitted, or that a seat is available."
             ),
             parameters={
                 "type": "object",
@@ -2139,11 +2270,24 @@ def build_default_registry() -> AdvisorCapabilityRegistry:
         AdvisorCapability(
             name="why_course_locked",
             description=(
-                "Explain ONE named course for this student: whether it is already passed, "
-                "being studied, open to register now, or blocked - and if blocked, exactly "
-                "which prerequisite courses are missing or how many credit hours are short, "
-                "how many passes away it is, and the nearest course on the chain they can "
-                "take now. Use whenever a student asks about a specific course code."
+                "ONE named course, in BOTH directions. Backward: whether the student has "
+                "passed it, is studying it, has satisfied every recorded prerequisite "
+                "(PREREQUISITES_SATISFIED) or has not (PREREQUISITE_BLOCKED) - and if "
+                "blocked, exactly which prerequisite courses are missing or how many credit "
+                "hours are short, how many passes away it is, and the nearest course on the "
+                "chain they can take now. FORWARD - use this tool, not course_prerequisites, "
+                "for 'what does AI331 unlock', 'how many courses depend on AI331', 'which "
+                "courses are waiting on AI331', 'what opens if I pass it': it returns "
+                "listed_as_prerequisite_for / _count (courses that NAME it as a "
+                "prerequisite), sole_remaining_prerequisite_for / _count (those for which it "
+                "is the LAST unmet condition, so they become prerequisite-satisfied when it "
+                "is passed) and on_prerequisite_chain_of_count (courses with it anywhere in "
+                "their remaining chain). Those three are usually different numbers. "
+                "course_prerequisites answers the REVERSE relation - what this course "
+                "itself requires - and cannot answer a forward-unlock question. Use whenever "
+                "a student asks about a specific course code. Prerequisite state only: it "
+                "never establishes that a section is offered, that registration is "
+                "permitted, or that a seat is available."
             ),
             parameters={
                 "type": "object",
@@ -2226,8 +2370,9 @@ def build_default_registry() -> AdvisorCapabilityRegistry:
                 "registering it now. Use for 'show me my plan', 'what is left in level "
                 "6', 'how much of the plan have I finished'. Broader than my_progress, "
                 "which returns only what is open now. Pass `term` to narrow to one plan "
-                "level. can_register reflects prerequisites ONLY - it says nothing about "
-                "whether a section is being taught."
+                "level. prerequisites_satisfied (legacy name: can_register) reflects the "
+                "recorded prerequisite conditions ONLY - it is not permission to register "
+                "and says nothing about whether a section is being taught."
             ),
             parameters={
                 "type": "object",

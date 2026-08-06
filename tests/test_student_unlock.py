@@ -613,7 +613,7 @@ def test_the_chat_capability_explains_an_unknown_prerequisite(plan):
     out = _exec_my_progress(
         {}, {"role": ROLE_STUDENT, "student_id": SID}, {"academic_year": 1448, "term": 1}
     )
-    whys = [w for b in out["blocked"] for w in b["why"]]
+    whys = [w for b in out["prerequisite_blocked"] for w in b["why"]]
     assert whys, "nothing was blocked, so this proved nothing"
     for w in whys:
         assert "_" not in w, f"an internal token reached the answer: {w!r}"
