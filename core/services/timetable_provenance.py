@@ -22,7 +22,8 @@ evidence of, beside a ``placed`` list that reads as the whole week.
 
 MEASURED, WITH NO MODEL IN THE LOOP
 
-Student 4400251, 1448/1, registered in AI1-M1, AI331-M1, CS323-M1, CS372-M1::
+The controlled evaluation record, 1448/1, registered in AI1-M1, AI331-M1,
+CS323-M1, CS372-M1::
 
     requested            ['AI331', 'CS323', 'CS372', 'GSE1']   # the student named none of them
     placed               [('CS323', 'M2', 4)]                  # a DIFFERENT section of a held course
@@ -161,7 +162,8 @@ def baseline_sections(baseline: list[dict[str, Any]] | None) -> list[dict[str, A
     """The student's current registration, one row per SECTION.
 
     ``get_student_term_baseline`` returns one row per MEETING — for student
-    4400251 that is 11 rows for 4 sections, each row repeating the section's full
+    the controlled evaluation record that is 11 rows for 4 sections, each row
+    repeating the section's full
     credit hours. Summing credits over it charges a 4-credit course 12 hours.
 
     Keyed on ``(course_code, section)`` rather than on the course alone. A student

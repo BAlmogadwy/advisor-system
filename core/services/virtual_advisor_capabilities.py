@@ -1029,7 +1029,7 @@ def _exec_why_course_locked(
     # This used to emit one list, `unlocks_directly`, built from every graph edge
     # whose `prerequisite_course_code` was this course. That is "X names this course
     # among its prerequisites" — and the name promised "X opens when you pass this".
-    # For student 4400251, AI331 is named by five courses and only three of them are
+    # On the controlled evaluation record, AI331 is named by five courses and only three of them are
     # waiting on it alone; the other two also need CS289 and COE332. So the answer to
     # «كم مقرر ينتظر AI331 وحده» was 5, and the true answer is 3.
     #
@@ -1284,7 +1284,8 @@ def _plan_terms_with_canonical_readiness(terms: list[dict[str, Any]]) -> list[di
     copied it, and a bit-for-bit copy gives the new name a predicate that is not the
     one it names: `can_register` is `status == "not_taken" and prereqs_ok`, so every
     course the student has already PASSED came back as
-    `prerequisites_satisfied: false` — 32 of 32 for student 4400251. A field renamed
+    `prerequisites_satisfied: false` — 32 of 32 on the controlled evaluation
+    record. A field renamed
     to say what it means has to mean it; otherwise the rename moves the defect
     instead of removing it, and this one told the model that a course the student
     passed still has prerequisites outstanding.

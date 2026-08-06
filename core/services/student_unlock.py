@@ -23,7 +23,7 @@ a different one and called it the same thing:
     on_chain_of_count      `code` is somewhere in X's remaining chain. Passing it
                            removes one link; it does not make X takeable.
 
-For student 4400251, AI331 scores 5, 3 and 6 on those three. Reporting any one of
+On the controlled evaluation record, AI331 scores 5, 3 and 6 on those three. Reporting any one of
 them as "what AI331 unlocks" is wrong two times out of three, and the reverse-edge
 count — the easiest to compute — is the one every caller was reporting.
 

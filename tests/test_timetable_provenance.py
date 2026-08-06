@@ -71,7 +71,7 @@ def _facts(**kwargs):
 def test_one_row_per_section_not_one_row_per_meeting() -> None:
     """The baseline repeats a section once per meeting, credits and all.
 
-    Measured on student 4400251: 11 rows for 4 sections, every row carrying the
+    Measured on the controlled evaluation record: 11 rows for 4 sections, every row carrying the
     section's full credit hours. Summing credits over the raw rows charges a
     4-credit course 12 hours, which is how a 15-hour week becomes 42.
     """

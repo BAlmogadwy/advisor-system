@@ -7,7 +7,7 @@ Two defects, both found in the 50-question live batch against Alibaba
      naming the course, under the name `unlocks_directly`. That counts courses that
      LIST it as a prerequisite. The name promised the other thing — courses that
      open when it is passed — and the two are different numbers. Measured on the
-     live database for student 4400251 (programme AI), AI331 scores:
+     live database for the controlled evaluation record (programme AI), AI331 scores:
 
          listed as a prerequisite for          5   AI352 AI371 AI433 AI482 AI491
          sole remaining prerequisite for       3   AI352 AI371 AI433
@@ -38,13 +38,16 @@ from core.services.student_unlock import build_unlock_report
 
 pytestmark = pytest.mark.django_db
 
-SID = 4400251
+#: A synthetic fixture id. Deliberately NOT the controlled evaluation record's real
+#: number: this file builds its own plan rows, so the identifier carries no meaning
+#: here, and a real student id in tracked source is a disclosure with no purpose.
+SID = 9900001
 PROG = "AIT"
 YEAR, TERM = 1447, 2
 
 #: (code, plan level, credit hours, prerequisites)
 #
-# A faithful replica of student 4400251's AI331 neighbourhood on the live database.
+# A faithful replica of the controlled evaluation record's AI331 neighbourhood.
 # The two courses that make the whole distinction — AI482 (also waiting on COE332)
 # and AI491 (also waiting on CS289) — are the reason `listed` and `sole_remaining`
 # differ; drop either and the two numbers collapse and this file stops testing
