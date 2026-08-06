@@ -135,18 +135,17 @@ def test_an_ordinary_result_is_not_intercepted() -> None:
         assert handoff_for(result) is None
 
 
-def test_a_chat_rebuild_request_never_places_a_section() -> None:
-    """The handoff explains a refusal; it must not become the refusal.
+def test_a_chat_rebuild_request_is_routed_before_any_work_happens() -> None:
+    """The guard is the FIRST thing in the executor, and it has to be.
 
-    Asserted as the outcome rather than as the guard, because the guard is not
-    the only thing standing here: `build_my_timetable` returns early when the
-    recommender has nothing to schedule, BEFORE the `keep_current_sections`
-    check. A student with an empty plan therefore gets an ordinary empty result
-    rather than the routed refusal — safe, since nothing is rebuilt either way,
-    but it means a test aimed at the guard can pass while never reaching it.
+    It used to sit after an early return for "nothing to schedule", so a student
+    with an empty plan asking for a rebuild got an ordinary empty result and no
+    route. That was harmless while the model was told never to call — and became
+    the likely path the moment the description told it to. Whether a rebuild is
+    refused must not depend on how much the recommender happened to find first.
 
-    What must hold for every shape of student is the outcome: a chat request
-    that asks to drop current sections never produces a placement.
+    This student has no courses at all, which is exactly the shape that used to
+    slip past.
     """
     result = caps.get_default_registry().execute(
         "build_my_timetable",
@@ -155,8 +154,9 @@ def test_a_chat_rebuild_request_never_places_a_section() -> None:
         ctx={"academic_year": 1448, "term": 1},
     )
     assert not result.get("placed"), "chat rebuilt a timetable without the current sections"
-    if result.get("ok") is False:
-        assert result["reason"] == "REBUILD_REQUIRES_PLANNER_CONFIRMATION"
+    assert result["ok"] is False
+    assert result["reason"] == "REBUILD_REQUIRES_PLANNER_CONFIRMATION"
+    assert result["action"] == "OPEN_STUDENT_PLANNER"
 
 
 def test_the_handoff_text_names_no_student_and_no_identifier() -> None:
@@ -168,3 +168,28 @@ def test_the_handoff_text_names_no_student_and_no_identifier() -> None:
         assert not any(ch.isdigit() for ch in body), "a digit in a fixed referral is suspect"
         assert "STUDENT_REF" not in body
         assert "REDACTED" not in body
+
+
+def test_the_tool_description_tells_the_model_to_call_not_to_answer() -> None:
+    """The live failure, at its actual root.
+
+    The description read "Discarding those sections and rebuilding the whole week
+    is not available here at all: if the student asks for that, tell them to open
+    the planner". The model obeyed it exactly — it never called, so the server
+    never saw the request, and the model wrote the routing prose itself. The
+    deterministic handoff was downstream of a call the description forbade.
+
+    Two things must therefore stay true: the model is told to CALL, and the
+    parameter that expresses the intent is actually advertised. Without the
+    second, the intent is inexpressible and the route is unreachable.
+    """
+    capability = caps.get_default_registry().capabilities["build_my_timetable"]
+    description = capability.description
+
+    assert "keep_current_sections=false" in description, "the model is not told to call"
+    assert "Do not answer that request yourself" in description
+    assert "not available here at all" not in description, "the denial wording is back"
+
+    properties = capability.parameters.get("properties") or {}
+    assert "keep_current_sections" in properties, "the intent cannot be expressed"
+    assert properties["keep_current_sections"]["type"] == "boolean"

@@ -1505,6 +1505,47 @@ def _exec_build_my_timetable(
     some not. So ``unplaced`` and its reasons are returned as first-class output rather
     than being hidden behind a "no plan found".
     """
+    # FIRST, before any import, query or recommendation. The check used to sit
+    # after an early return for "nothing to schedule", so a student with an empty
+    # plan asking for a rebuild got an ordinary empty result and no route — and
+    # now that the model is told to CALL for this, that silent path is the one it
+    # would hit. Refusing a rebuild must never depend on how much work the
+    # recommender happened to find first.
+    # REBUILDING IS NOT AVAILABLE FROM CHAT. It is refused here, in the executor,
+    # not merely undocumented in the schema.
+    #
+    # This used to be `bool(args.get("keep_current_sections", True))`, and the
+    # requirement to confirm first lived in the tool's JSON description — a
+    # sentence addressed to the model, not a gate. Given the single Arabic word
+    # «أكد» with no prior turn establishing what was being confirmed, the model
+    # reasoned "this implies they want a full rebuild" and called this capability
+    # with `keep_current_sections=false`. Nothing stopped it.
+    #
+    # The real control already exists on the planner draft path:
+    # `planner_drafts.issue_rebuild_token` — hashed, one-use, bound to student +
+    # draft + version, fifteen-minute expiry — built precisely because a review of
+    # PR #53 found a valid token authorising content the student had never seen.
+    # A second confirmation mechanism in chat would not be that control; it would
+    # be a way around it. Chat hands the student to the planner instead.
+    #
+    # `is not True`, not `is False`: a caller that supplies the string "false", 0
+    # or None is malformed, and inferring "keep" from a value we could not parse
+    # is how the safe default stops being safe. Only an explicit True — or the
+    # absence of the argument — means keep.
+    requested_keep = args.get("keep_current_sections", True)
+    if requested_keep is not True:
+        return {
+            "ok": False,
+            "reason": REBUILD_REQUIRES_PLANNER_CONFIRMATION,
+            "error": (
+                "Rebuilding without the student's current sections requires "
+                "confirmation through the planner draft workflow."
+            ),
+            "action": "OPEN_STUDENT_PLANNER",
+            "tool": "build_my_timetable",
+        }
+    keep_current_sections = True
+
     from core.models import ProgrammeRequirement, Student
     from core.services.recommender import recommend_next_courses
     from core.services.student_sections import (
@@ -1565,41 +1606,6 @@ def _exec_build_my_timetable(
         cap = int(max_credits) if max_credits not in (None, "") else 0
     except (TypeError, ValueError):
         return {"ok": False, "error": "max_credits must be an integer."}
-
-    # REBUILDING IS NOT AVAILABLE FROM CHAT. It is refused here, in the executor,
-    # not merely undocumented in the schema.
-    #
-    # This used to be `bool(args.get("keep_current_sections", True))`, and the
-    # requirement to confirm first lived in the tool's JSON description — a
-    # sentence addressed to the model, not a gate. Given the single Arabic word
-    # «أكد» with no prior turn establishing what was being confirmed, the model
-    # reasoned "this implies they want a full rebuild" and called this capability
-    # with `keep_current_sections=false`. Nothing stopped it.
-    #
-    # The real control already exists on the planner draft path:
-    # `planner_drafts.issue_rebuild_token` — hashed, one-use, bound to student +
-    # draft + version, fifteen-minute expiry — built precisely because a review of
-    # PR #53 found a valid token authorising content the student had never seen.
-    # A second confirmation mechanism in chat would not be that control; it would
-    # be a way around it. Chat hands the student to the planner instead.
-    #
-    # `is not True`, not `is False`: a caller that supplies the string "false", 0
-    # or None is malformed, and inferring "keep" from a value we could not parse
-    # is how the safe default stops being safe. Only an explicit True — or the
-    # absence of the argument — means keep.
-    requested_keep = args.get("keep_current_sections", True)
-    if requested_keep is not True:
-        return {
-            "ok": False,
-            "reason": REBUILD_REQUIRES_PLANNER_CONFIRMATION,
-            "error": (
-                "Rebuilding without the student's current sections requires "
-                "confirmation through the planner draft workflow."
-            ),
-            "action": "OPEN_STUDENT_PLANNER",
-            "tool": "build_my_timetable",
-        }
-    keep_current_sections = True
 
     baseline = get_student_term_baseline(int(student_id), str(year), str(term))
 
@@ -2274,10 +2280,20 @@ def build_default_registry() -> AdvisorCapabilityRegistry:
                 "outcome and must be reported as such, never as a failure. It is a "
                 "SUGGESTION: it does not register anything and cannot promise a seat. "
                 "It ALWAYS keeps the sections the student is already registered in and "
-                "fits the new courses around them. Discarding those sections and "
-                "rebuilding the whole week is not available here at all: if the student "
-                "asks for that, tell them to open the planner and confirm it there. "
-                "Saying they confirm it to you is not confirmation."
+                "fits the new courses around them. "
+                # The model must CALL for a rebuild request, not answer it. This
+                # used to read "not available here at all: tell them to open the
+                # planner", and the model obeyed — it never called, so the server
+                # never saw the request and the model authored the routing prose
+                # itself. Live, that became «لا يمكنني» plus advice to delete real
+                # registrations. Rebuilding IS available, through the planner's
+                # confirmed workflow; what is unavailable is doing it from chat.
+                "If the student asks to DISCARD their current sections and rebuild "
+                "the week from scratch, call this with keep_current_sections=false. "
+                "Do not answer that request yourself and do not tell the student it "
+                "is impossible — it is not. The server will route them to the "
+                "planner, where the rebuild is confirmed. Saying they confirm it to "
+                "you is not confirmation."
             ),
             parameters={
                 "type": "object",
@@ -2294,6 +2310,16 @@ def build_default_registry() -> AdvisorCapabilityRegistry:
                     "max_credits": {
                         "type": "integer",
                         "description": "Credit ceiling for the plan. Omit for no cap.",
+                    },
+                    "keep_current_sections": {
+                        "type": "boolean",
+                        "description": (
+                            "Omit, or true, for the normal case. Pass false ONLY when "
+                            "the student asks to discard their current registration and "
+                            "rebuild from scratch — the server refuses the rebuild here "
+                            "and routes them to the planner. It never changes a "
+                            "registration."
+                        ),
                     },
                     "academic_year": {"type": "integer"},
                     "term": {"type": "integer"},
