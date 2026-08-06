@@ -1279,6 +1279,19 @@ def _plan_terms_with_canonical_readiness(terms: list[dict[str, Any]]) -> list[di
     the reader, and the legacy name travels beside it. Copied, not mutated: the same
     payload objects are cached and served to those screens, and writing into them
     would leak a field into the JSON the browser gets.
+
+    DERIVED FROM `missing_prereqs`, NOT COPIED FROM `can_register`. The first version
+    copied it, and a bit-for-bit copy gives the new name a predicate that is not the
+    one it names: `can_register` is `status == "not_taken" and prereqs_ok`, so every
+    course the student has already PASSED came back as
+    `prerequisites_satisfied: false` — 32 of 32 for student 4400251. A field renamed
+    to say what it means has to mean it; otherwise the rename moves the defect
+    instead of removing it, and this one told the model that a course the student
+    passed still has prerequisites outstanding.
+
+    `missing_prereqs` already carries the hour gate: `report_views` appends
+    "146(HOURS)" to it when the gate is unmet, so a capstone short on credit hours is
+    not satisfied here either.
     """
     out = []
     for level in terms:
@@ -1290,7 +1303,7 @@ def _plan_terms_with_canonical_readiness(terms: list[dict[str, Any]]) -> list[di
             {
                 **level,
                 "courses": [
-                    {**c, "prerequisites_satisfied": bool(c.get("can_register", False))}
+                    {**c, "prerequisites_satisfied": not (c.get("missing_prereqs") or [])}
                     if isinstance(c, dict)
                     else c
                     for c in courses
@@ -1348,8 +1361,12 @@ def _exec_my_plan_by_term(
         "note": (
             "Plan LEVELS, not calendar terms - programme_term is where a course sits in "
             "the degree plan, not when it is taught. status is passed / studying / "
-            "not_taken. prerequisites_satisfied is the canonical field; can_register is "
-            "the same boolean under its old name and is NOT a registration permission. "
+            "not_taken. prerequisites_satisfied is the canonical field and is the ONE "
+            "to read: it says the recorded prerequisite conditions are met, whatever "
+            "the student has already done, so a PASSED course is satisfied. "
+            "can_register is a different, older boolean kept for the screens - it is "
+            "false for every passed and studying course, and it is NOT a registration "
+            "permission. Never read can_register as prerequisite state. "
             + _PREREQS_SATISFIED_EXPLANATION
         ),
         "tool": "my_plan_by_term",

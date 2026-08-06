@@ -366,9 +366,15 @@ def test_my_progress_ranks_by_impact_and_names_which_number_is_which(plan):
 def test_my_plan_by_term_carries_the_canonical_field_beside_the_legacy_one(plan):
     """`can_register` STAYS: fifteen JS call sites and `report_views` read it.
 
-    The canonical name is added at the boundary a model reads, and the two must be
-    the same boolean — a second, drifting definition of readiness is the defect this
-    commit is removing, not one to introduce.
+    The canonical name is added at the boundary a model reads, and it must MEAN what
+    it says. The first version copied `can_register` bit-for-bit, which is
+    `status == "not_taken" and prereqs_ok` — so every course the student had already
+    PASSED came back as `prerequisites_satisfied: false`, 32 of 32 on the live
+    student. A rename that carries the old predicate under the new word moves the
+    defect instead of removing it, and this one told the model that a course the
+    student passed still has prerequisites outstanding.
+
+    So the two are DELIBERATELY different booleans now, and the note has to say so.
     """
     from core.services.virtual_advisor_capabilities import get_default_registry
 
@@ -382,10 +388,21 @@ def test_my_plan_by_term_carries_the_canonical_field_beside_the_legacy_one(plan)
     rows = [c for level in out["terms"] for c in level["courses"]]
     assert rows, "the fixture plan has courses"
     for row in rows:
-        assert row["prerequisites_satisfied"] == row["can_register"], row["course_code"]
-    assert any(r["prerequisites_satisfied"] for r in rows)
+        # The predicate the NAME states: nothing outstanding, whatever the student
+        # has done about it.
+        assert row["prerequisites_satisfied"] == (not row["missing_prereqs"]), row["course_code"]
+
+    passed = [r for r in rows if r["status"] == "passed"]
+    assert passed, "the fixture has passed courses"
+    assert all(r["prerequisites_satisfied"] for r in passed), (
+        "a course the student has PASSED cannot have prerequisites outstanding"
+    )
+    assert all(not r["can_register"] for r in passed), (
+        "and the legacy field still says false for them — which is why it is not the "
+        "same boolean and must not be read as prerequisite state"
+    )
     assert any(not r["prerequisites_satisfied"] for r in rows)
-    assert "is NOT a registration permission" in out["note"]
+    assert "Never read can_register as prerequisite state" in out["note"]
     assert "does not confirm that a section is offered" in out["note"]
 
 

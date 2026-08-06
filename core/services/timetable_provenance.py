@@ -72,6 +72,13 @@ SOURCE_SYSTEM_RECOMMENDATION = "SYSTEM_RECOMMENDATION"
 #: the two course lists describe what was asked of the builder this turn, and a
 #: standing registration was asked for by neither.
 SOURCE_CURRENT_REGISTRATION = "CURRENT_REGISTRATION"
+#: The solver returned a course that is in neither input list. Unreachable today —
+#: the shortlist is built from those two lists — and named rather than defaulted,
+#: because the fallback used to be SYSTEM_RECOMMENDATION and that is a provenance
+#: CLAIM. Asserting "the system recommended this" about a course nothing recommended
+#: is the same defect as the `requested` field this module replaced, one layer down:
+#: an unattributable row saying it knows where it came from.
+SOURCE_UNATTRIBUTED = "UNATTRIBUTED"
 
 #: Kept from the student's current registration; the build did not touch it.
 CHANGE_RETAIN = "RETAIN"
@@ -324,7 +331,7 @@ def build_timetable_facts(
             (h for h in held_by_course.get(code, []) if not _same_section(h, row)),
             None,
         )
-        source = source_of.get(code, SOURCE_SYSTEM_RECOMMENDATION)
+        source = source_of.get(code, SOURCE_UNATTRIBUTED)
         if superseded is not None:
             replaced_keys.add((code, superseded.get("section", "")))
             section_replacements.append(
@@ -352,7 +359,7 @@ def build_timetable_facts(
         row = {
             "course_code": code,
             "credit_hours": hours,
-            "source": source_of.get(code, SOURCE_SYSTEM_RECOMMENDATION),
+            "source": source_of.get(code, SOURCE_UNATTRIBUTED),
             "outcome": OUTCOME_NOT_PLACED,
             "reason_code": u.get("reason_code"),
             "reason": u.get("reason"),
@@ -416,6 +423,7 @@ __all__ = [
     "SOURCE_CURRENT_REGISTRATION",
     "SOURCE_STUDENT_REQUEST",
     "SOURCE_SYSTEM_RECOMMENDATION",
+    "SOURCE_UNATTRIBUTED",
     "TIMETABLE_FACT_KEYS",
     "TimetableAnswerFacts",
     "baseline_sections",

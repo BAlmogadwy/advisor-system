@@ -389,3 +389,20 @@ def test_mutating_the_payload_cannot_change_the_facts() -> None:
     payload["credit_summary"]["total"] = 999
     assert len(facts.as_payload()["student_requested_courses"]) == 1
     assert facts.as_payload()["credit_summary"]["total"] == 0
+
+
+def test_an_unattributable_course_does_not_claim_the_system_recommended_it() -> None:
+    """The fallback used to be SYSTEM_RECOMMENDATION, and that is a provenance CLAIM.
+
+    A course the solver returned that appears in neither input list cannot be
+    attributed, and saying the system recommended it is the same defect as the
+    `requested` field this module replaced, one layer down — a row asserting it knows
+    where it came from. Unreachable today, because the shortlist is built from those
+    two lists; named so that it stays unreachable rather than silently mislabelled.
+    """
+    facts = _facts(
+        mappings=[{"course_code": "ZZ999", "section": "M1", "term_section_id": 9, "meetings": []}],
+        unscheduled=[{"course_code": "YY888", "reason_code": "NOT_ON_FILE", "reason": "…"}],
+    )
+    assert facts.new_sections[0]["source"] == "UNATTRIBUTED"
+    assert facts.unplaced_courses[0]["source"] == "UNATTRIBUTED"
