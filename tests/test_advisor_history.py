@@ -410,10 +410,17 @@ def test_the_tool_no_longer_offers_the_model_a_way_to_replace():
     schemas = get_default_registry().tool_schemas_for_scope({"role": ROLE_STUDENT})
     schema = next(s for s in schemas if s.get("function", s).get("name") == "build_my_timetable")
     fn = schema.get("function", schema)
-    assert "keep_current_sections" not in fn["parameters"]["properties"]
+    # The parameter is back as an INTENT SIGNAL — see
+    # `test_advisor_rebuild_gate.test_the_parameter_is_an_intent_signal_that_can_never_rebuild`.
+    # What must never return is a description that reads as permission.
+    properties = fn["parameters"]["properties"]
+    assert "keep_current_sections" in properties
+    description = properties["keep_current_sections"]["description"].lower()
+    assert "after the student has confirmed" not in description, "the instruction is back"
+    assert "never changes a registration" in description
 
     # And the model is told where the decision does live, so it does not invent a
     # substitute — re-calling with must_include and the current courses left out.
     described = fn["description"].lower()
     assert "planner" in described
-    assert "not available here" in described
+    assert "not available here at all" not in described, "the denial wording is back"

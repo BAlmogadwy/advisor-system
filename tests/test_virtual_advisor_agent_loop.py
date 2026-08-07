@@ -116,7 +116,6 @@ def _tool_turn(
         tool_calls=tool_calls,
         model="fake-tools",
         usage={"total_tokens": 10},
-        raw={},
         assistant_message=assistant,
     )
 
@@ -174,7 +173,7 @@ class FakeToolClient:
         self.chat_calls.append([dict(m) for m in messages])
         answer = self.plain_answers[min(self._plain_idx, len(self.plain_answers) - 1)]
         self._plain_idx += 1
-        return ChatResult(content=answer, model="fake-tools", usage={}, raw={})
+        return ChatResult(content=answer, model="fake-tools", usage={})
 
 
 # ── Capability registry: scope filtering ────────────────────────
@@ -374,6 +373,19 @@ def test_get_student_context_tool_respects_scope() -> None:
 # ── Agent loop ───────────────────────────────────────────────────
 
 
+def _tool_result(agent: dict, name: str) -> dict:
+    """The result for one capability.
+
+    By NAME, not by index. `tool_results` is seeded with the server-side policy
+    prefetch before the first model call, so position 0 is no longer whatever the
+    model happened to call first — and an index-based assertion silently starts
+    measuring the seed instead.
+    """
+    matches = [r for r in agent["tool_results"] if isinstance(r, dict) and r.get("tool") == name]
+    assert matches, f"no {name} result in {[r.get('tool') for r in agent['tool_results']]}"
+    return matches[0]
+
+
 def test_agent_loop_executes_tool_then_answers() -> None:
     _make_students()
     fake = FakeToolClient(
@@ -395,7 +407,7 @@ def test_agent_loop_executes_tool_then_answers() -> None:
     assert agent["iterations"] == 2
     assert [t["name"] for t in agent["tools_called"]] == ["find_students"]
     assert agent["tools_called"][0]["ok"] is True
-    assert agent["tool_results"][0]["count"] == 1
+    assert _tool_result(agent, "find_students")["count"] == 1
 
     # The second model turn must have seen the tool result message.
     second_turn_messages = fake.tool_messages_seen[1]
@@ -425,7 +437,7 @@ def test_agent_loop_deduplicates_identical_calls() -> None:
     agent = result["agent"]
     # Only ONE real execution; the duplicate reused the cached result.
     assert len(agent["tools_called"]) == 1
-    assert len(agent["tool_results"]) == 1
+    assert len([r for r in agent["tool_results"] if r.get("tool") == "find_students"]) == 1
     assert result["answer"] == "done"
 
 
@@ -554,7 +566,7 @@ def test_agent_loop_survives_mid_loop_turn_failure() -> None:
     assert "timed out" in agent["turn_error"]
     assert result["answer"] == "Recovered answer from evidence gathered before the timeout."
     # Evidence from the successful first turn is preserved.
-    assert agent["tool_results"][0]["count"] == 1
+    assert _tool_result(agent, "find_students")["count"] == 1
 
 
 def test_loop_mode_skips_regex_seed_and_mirrors_agent_evidence() -> None:
@@ -580,7 +592,7 @@ def test_loop_mode_skips_regex_seed_and_mirrors_agent_evidence() -> None:
     assert '"tool_results"' not in first_turn_user
     # Response evidence mirrors what the agent actually fetched.
     assert result["tool_results"] == result["agent"]["tool_results"]
-    assert result["tool_results"][0]["tool"] == "find_students"
+    assert any(r.get("tool") == "find_students" for r in result["tool_results"])
 
 
 def test_year_term_default_when_caller_omits_them() -> None:
@@ -881,7 +893,7 @@ def test_chat_with_tools_raises_on_empty_turn(monkeypatch) -> None:
 
 
 def test_http_400_raises_bad_request(monkeypatch) -> None:
-    def fake_urlopen(request, timeout=0):
+    def fake_urlopen(request, *args, **kwargs):
         raise HTTPError(
             "http://localhost:1234/v1/chat/completions",
             400,
@@ -890,7 +902,7 @@ def test_http_400_raises_bad_request(monkeypatch) -> None:
             io.BytesIO(b'{"error": "tools not supported"}'),
         )
 
-    monkeypatch.setattr("core.services.local_llm.urlopen", fake_urlopen)
+    monkeypatch.setattr("core.services.llm_backend._http_open", fake_urlopen)
     client = LocalLLMClient(base_url="http://localhost:1234/v1")
 
     with pytest.raises(LocalLLMBadRequest):

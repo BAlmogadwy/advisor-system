@@ -96,10 +96,9 @@ def test_virtual_advisor_chat_uses_verified_student_context(
                 content="The student has verified AI context and passed AI331.",
                 model="fake-qwen",
                 usage={},
-                raw={},
             )
 
-    monkeypatch.setattr("core.services.virtual_advisor.LocalLLMClient", lambda: FakeClient())
+    monkeypatch.setattr("core.services.virtual_advisor.get_llm_client", lambda: FakeClient())
 
     response = client.post(
         "/ops/virtual-advisor/chat/",
@@ -135,7 +134,7 @@ def test_virtual_advisor_chat_respects_student_scope(
     Student.objects.create(student_id=501002, program="AI", advisor_id="A999")
 
     monkeypatch.setattr(
-        "core.services.virtual_advisor.LocalLLMClient",
+        "core.services.virtual_advisor.get_llm_client",
         lambda: object(),
     )
 
@@ -204,10 +203,10 @@ def test_virtual_advisor_agent_finds_students_by_credits_and_passed_course(
         ):
             captured["messages"] = messages
             return ChatResult(
-                content="Verified one matching student.", model="fake-local", usage={}, raw={}
+                content="Verified one matching student.", model="fake-local", usage={}
             )
 
-    monkeypatch.setattr("core.services.virtual_advisor.LocalLLMClient", lambda: FakeClient())
+    monkeypatch.setattr("core.services.virtual_advisor.get_llm_client", lambda: FakeClient())
 
     result = answer_virtual_advisor(
         question="Find the students who completed 90 hours or more and have CS323 passed. Show top 5.",
@@ -269,11 +268,9 @@ def test_virtual_advisor_dataset_query_respects_advisor_scope(
         def chat(
             self, messages, *, model=None, temperature=0.2, max_tokens=None, assistant_prefill=None
         ):
-            return ChatResult(
-                content="Scoped verified result.", model="fake-local", usage={}, raw={}
-            )
+            return ChatResult(content="Scoped verified result.", model="fake-local", usage={})
 
-    monkeypatch.setattr("core.services.virtual_advisor.LocalLLMClient", lambda: FakeClient())
+    monkeypatch.setattr("core.services.virtual_advisor.get_llm_client", lambda: FakeClient())
 
     response = client.post(
         "/ops/virtual-advisor/chat/",
@@ -636,10 +633,9 @@ def test_student_like_vague_question_uses_verified_context_without_dataset_tool(
                 content="Use verified context, not a canned answer.",
                 model="fake-local",
                 usage={},
-                raw={},
             )
 
-    monkeypatch.setattr("core.services.virtual_advisor.LocalLLMClient", lambda: FakeClient())
+    monkeypatch.setattr("core.services.virtual_advisor.get_llm_client", lambda: FakeClient())
 
     result = answer_virtual_advisor(
         question="I finished the AI thing, what should I do next?",

@@ -900,6 +900,37 @@ def _explain_reason(reason: dict[str, Any]) -> str:
     return "the adviser must confirm why this course is blocked"
 
 
+#: THE sentence for "the prerequisite records are met", written once so the two
+#: capabilities that report it cannot drift apart again. The old wording was "Every
+#: prerequisite is satisfied; it can be registered." — and `_exec_my_progress` said,
+#: three fields below it, that it does "not know which courses actually run this
+#: term or seat availability". One payload asserted a registration permission and
+#: denied having the evidence for it, and the model was left to pick which half to
+#: believe. It picked the permission.
+_PREREQS_SATISFIED_EXPLANATION = (
+    "All recorded prerequisite conditions are satisfied. This does not confirm that "
+    "a section is offered, that registration is permitted, or that a seat is available."
+)
+
+
+def _impact_row(blocker: dict[str, Any] | None) -> dict[str, Any] | None:
+    """One open course with BOTH forward counts, under names that say which is which.
+
+    `build_unlock_report` calls them `frees_now` and `frees_eventually`, and a
+    reader who has not opened that module cannot tell that the second frees nothing
+    — it is the number of courses with this one somewhere in their chain. The
+    student screen rendered it as «يفتح لك 6 من مقرراتك المتبقية» when three open.
+    """
+    if not blocker:
+        return None
+    return {
+        "code": blocker["code"],
+        "course_name": blocker["name"],
+        "sole_remaining_prerequisite_count": blocker["frees_now"],
+        "on_prerequisite_chain_of_count": blocker["frees_eventually"],
+    }
+
+
 def _exec_my_progress(
     args: dict[str, Any], scope: dict[str, Any], ctx: dict[str, Any]
 ) -> dict[str, Any]:
@@ -926,23 +957,42 @@ def _exec_my_progress(
         "academic_year": year,
         "term": term,
         "counts": r["counts"],
-        "most_useful_course_to_pass": r["top_blocker"],
-        "open_now": [
+        "most_useful_course_to_pass": _impact_row(r["top_blocker"]),
+        # Ranked, not just the winner. «رتّب لي AI331 و CS372 و AI352 حسب تأثير كل
+        # واحد» and «أي مقرر يفتح أكبر عدد مباشرة» both need an ORDER over several
+        # courses, and the payload carried a single `max()`. Ranking three named
+        # courses from one winner is not possible, so the answer was composed.
+        "unlock_impact_ranking": [_impact_row(b) for b in r["blockers"][:_MAX_LIST_ROWS]],
+        # The basis, stated. A ranking whose criterion is unnamed is read as "these
+        # are the courses that matter", and this one measures exactly one thing.
+        "unlock_impact_ranking_basis": "SOLE_REMAINING_UNLOCK_COUNT_THEN_DOWNSTREAM_COUNT",
+        "unlock_impact_ranking_note": (
+            "Every course whose prerequisites are satisfied appears here, including "
+            "those that unlock nothing - a zero is a real answer, not a reason to omit "
+            "the course. Unlock impact is one criterion among several: a course may "
+            "still be required for graduation, be in this term's recommendation, or be "
+            "needed to reach a reasonable load, and none of those is measured here."
+        ),
+        "prerequisites_satisfied": [
             {
                 "code": c["code"],
-                "name": c["name"],
+                "course_name": c["name"],
                 "credits": c["credits"],
                 "fits_this_term": c["fits_this_term"],
             }
             for c in r["open_courses"][:_MAX_LIST_ROWS]
         ],
         "elective_slots": [c["code"] for c in r["elective_slots"]],
-        "blocked": [
+        "prerequisite_blocked": [
             {
                 "code": c["code"],
-                "name": c["name"],
+                "course_name": c["name"],
                 "steps_away": c["steps"],
-                "opens_n_courses": c["frees_eventually"],
+                # Was `opens_n_courses`, which is the count of courses with this one
+                # ANYWHERE in their remaining chain. Passing it removes one link from
+                # each; it opens none of them by itself, and for a course two steps
+                # down it may open none of them ever on its own.
+                "on_prerequisite_chain_of_count": c["frees_eventually"],
                 "nearest_course_you_can_take_now": (c["nearest_open"] or {}).get("code"),
                 "why": why(c),
             }
@@ -950,8 +1000,17 @@ def _exec_my_progress(
         ],
         "note": (
             "A course being studied satisfies a prerequisite but must still be passed. "
-            "This does not know which courses actually run this term or seat availability."
+            + _PREREQS_SATISFIED_EXPLANATION
         ),
+        # `open_now` and `blocked` are GONE rather than aliased. Every consumer was
+        # checked: the privacy projector kept neither, no template or script reads
+        # this payload, and the only other reader is the model. Carrying both names
+        # would put two lists with one meaning into the same prompt — which is the
+        # defect class this commit exists to remove, not a mitigation of it.
+        "renamed_fields": {
+            "open_now": "prerequisites_satisfied",
+            "blocked": "prerequisite_blocked",
+        },
     }
 
 
@@ -975,57 +1034,97 @@ def _exec_why_course_locked(
     if not r:
         return {"ok": False, "error": f"No degree plan found for student {student_id}."}
 
-    # The forward direction — "if I pass this, what opens?" — is already computed:
-    # build_unlock_report returns a `graph` of prerequisite edges that every caller
-    # so far has thrown away. It costs nothing to answer, and it is the question a
-    # student actually asks after being told a course is blocked.
-    graph = r.get("graph") or {}
-    unlocks = sorted(
-        {
-            edge["course_code"]
-            for edge in (graph.get("items") or [])
-            if edge.get("prerequisite_course_code") == code
-        }
-    )
-    status_of = graph.get("statusOf") or {}
-    name_of = graph.get("nameOf") or {}
+    # THE FORWARD DIRECTION, IN TWO FIELDS THAT ARE NOT THE SAME NUMBER.
+    #
+    # This used to emit one list, `unlocks_directly`, built from every graph edge
+    # whose `prerequisite_course_code` was this course. That is "X names this course
+    # among its prerequisites" — and the name promised "X opens when you pass this".
+    # On the controlled evaluation record, AI331 is named by five courses and only three of them are
+    # waiting on it alone; the other two also need CS289 and COE332. So the answer to
+    # «كم مقرر ينتظر AI331 وحده» was 5, and the true answer is 3.
+    #
+    # The field is not kept as an alias. Both readings are useful and both are
+    # published, but `unlocks_directly` is the name that carried the false one, and
+    # an alias would preserve exactly the claim this exists to withdraw.
+    deps = (r.get("dependents") or {}).get(code) or {}
+    listed_rows = deps.get("listed") or []
+    waiting_only = set(deps.get("waiting_only_on_this") or [])
     base = {
         "student_id": int(student_id),
         "course_code": code,
-        "unlocks_directly": [
-            {"code": u, "name": name_of.get(u, ""), "current_status": status_of.get(u, "")}
-            for u in unlocks
+        # Catalogue direction: true of the programme, whatever this student passed.
+        "listed_as_prerequisite_for": [
+            {
+                "code": row["code"],
+                "course_name": row["name"],
+                "current_status": row["status"],
+                "still_also_waiting_on": row["also_waiting_on"],
+                "also_short_on_credit_hours": row["also_waiting_on_credit_hours"],
+            }
+            for row in listed_rows
         ],
-        "unlocks_directly_count": len(unlocks),
+        "listed_as_prerequisite_count": len(listed_rows),
+        # Student direction: what actually changes the day this course is passed.
+        "sole_remaining_prerequisite_for": [
+            {"code": row["code"], "course_name": row["name"]}
+            for row in listed_rows
+            if row["code"] in waiting_only
+        ],
+        "sole_remaining_prerequisite_count": len(waiting_only),
+        # Transitive, and moved into `base` from the blocked branch. AI331 is OPEN
+        # for this student, so «وش الفرق بين ما يفتحه مباشرة وما ينفتح عبر السلسلة»
+        # was asked of a payload that carried no chain number at all — the count
+        # existed only on the branch taken by courses that are themselves blocked.
+        "on_prerequisite_chain_of_count": deps.get("on_chain_of_count", 0),
+        "forward_relations_note": (
+            "listed_as_prerequisite_count counts courses that NAME this one as a "
+            "prerequisite. sole_remaining_prerequisite_count counts those for which "
+            "it is the last unmet condition — the ones that become "
+            "prerequisite-satisfied when it is passed. "
+            "on_prerequisite_chain_of_count counts courses with it anywhere in their "
+            "remaining chain; passing it removes one link and does not make them "
+            "takeable. The three are usually different numbers."
+        ),
     }
     for c in r["open_courses"]:
         if c["code"] == code:
             return {
                 **base,
-                "status": "open_now",
-                "name": c["name"],
+                # Was "open_now", explained as "it can be registered" — a
+                # registration-permission claim this module says two fields later it
+                # cannot make. The status names the only thing that was checked.
+                "status": "PREREQUISITES_SATISFIED",
+                "prerequisites_satisfied": True,
+                "course_name": c["name"],
                 "fits_this_term": c["fits_this_term"],
-                "explanation": "Every prerequisite is satisfied; it can be registered.",
+                "explanation": _PREREQS_SATISFIED_EXPLANATION,
             }
     for c in r["done"]:
         if c["code"] == code:
-            return {**base, "status": "passed", "name": c["name"], "explanation": "Already passed."}
+            return {
+                **base,
+                "status": "passed",
+                "prerequisites_satisfied": True,
+                "course_name": c["name"],
+                "explanation": "Already passed.",
+            }
     for c in r["in_progress"]:
         if c["code"] == code:
             return {
                 **base,
                 "status": "studying",
-                "name": c["name"],
+                "prerequisites_satisfied": True,
+                "course_name": c["name"],
                 "explanation": "Being studied now; must still be passed.",
             }
     for c in r["locked_courses"]:
         if c["code"] == code:
             return {
                 **base,
-                "status": "blocked",
-                "name": c["name"],
+                "status": "PREREQUISITE_BLOCKED",
+                "prerequisites_satisfied": False,
+                "course_name": c["name"],
                 "steps_away": c["steps"],
-                "opens_n_courses": c["frees_eventually"],
                 "nearest_course_you_can_take_now": (c["nearest_open"] or {}).get("code"),
                 "blocked_by": c["reasons"],
                 "explanation": (
@@ -1178,6 +1277,53 @@ def _exec_my_timetable(
     }
 
 
+def _plan_terms_with_canonical_readiness(terms: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Add `prerequisites_satisfied` beside `can_register`, without renaming it.
+
+    `can_register` is `report_views._build_student_plan_payload`'s field and it is
+    read by name in fifteen places across `page-dashboard.js` and `page-planner.js`,
+    plus `report_views` itself, which filters and counts on it. Renaming it there to
+    fix a description the MODEL reads would break two screens for no gain to either.
+
+    So the canonical name is added here, at the boundary where a language model is
+    the reader, and the legacy name travels beside it. Copied, not mutated: the same
+    payload objects are cached and served to those screens, and writing into them
+    would leak a field into the JSON the browser gets.
+
+    DERIVED FROM `missing_prereqs`, NOT COPIED FROM `can_register`. The first version
+    copied it, and a bit-for-bit copy gives the new name a predicate that is not the
+    one it names: `can_register` is `status == "not_taken" and prereqs_ok`, so every
+    course the student has already PASSED came back as
+    `prerequisites_satisfied: false` — 32 of 32 on the controlled evaluation
+    record. A field renamed
+    to say what it means has to mean it; otherwise the rename moves the defect
+    instead of removing it, and this one told the model that a course the student
+    passed still has prerequisites outstanding.
+
+    `missing_prereqs` already carries the hour gate: `report_views` appends
+    "146(HOURS)" to it when the gate is unmet, so a capstone short on credit hours is
+    not satisfied here either.
+    """
+    out = []
+    for level in terms:
+        courses = level.get("courses")
+        if not isinstance(courses, list):
+            out.append(level)
+            continue
+        out.append(
+            {
+                **level,
+                "courses": [
+                    {**c, "prerequisites_satisfied": not (c.get("missing_prereqs") or [])}
+                    if isinstance(c, dict)
+                    else c
+                    for c in courses
+                ],
+            }
+        )
+    return out
+
+
 def _exec_my_plan_by_term(
     args: dict[str, Any], scope: dict[str, Any], ctx: dict[str, Any]
 ) -> dict[str, Any]:
@@ -1221,13 +1367,18 @@ def _exec_my_plan_by_term(
         "student_id": int(student_id),
         "program": payload.get("program", ""),
         "summary": payload.get("summary", {}),
-        "terms": terms,
+        "terms": _plan_terms_with_canonical_readiness(terms),
         "blocker_hints": payload.get("blocker_hints") or [],
         "note": (
             "Plan LEVELS, not calendar terms - programme_term is where a course sits in "
             "the degree plan, not when it is taught. status is passed / studying / "
-            "not_taken, and can_register reflects prerequisites ONLY, never whether a "
-            "section is being offered."
+            "not_taken. prerequisites_satisfied is the canonical field and is the ONE "
+            "to read: it says the recorded prerequisite conditions are met, whatever "
+            "the student has already done, so a PASSED course is satisfied. "
+            "can_register is a different, older boolean kept for the screens - it is "
+            "false for every passed and studying course, and it is NOT a registration "
+            "permission. Never read can_register as prerequisite state. "
+            + _PREREQS_SATISFIED_EXPLANATION
         ),
         "tool": "my_plan_by_term",
     }
@@ -1505,67 +1656,12 @@ def _exec_build_my_timetable(
     some not. So ``unplaced`` and its reasons are returned as first-class output rather
     than being hidden behind a "no plan found".
     """
-    from core.models import ProgrammeRequirement, Student
-    from core.services.recommender import recommend_next_courses
-    from core.services.student_sections import (
-        UnknownStudentGender,
-        get_student_term_baseline,
-        student_gender_strict,
-    )
-
-    student_id, error = _resolve_scoped_student_id(args, scope)
-    if error:
-        return {"ok": False, "error": error}
-    year, term, error = _ctx_year_term(args, ctx)
-    if error:
-        return {"ok": False, "error": error}
-
-    try:
-        gender = student_gender_strict(int(student_id))
-    except UnknownStudentGender as exc:
-        return {"ok": False, "error": str(exc), "reason": "COHORT_UNRESOLVED"}
-
-    program = str(
-        Student.objects.filter(student_id=student_id).values_list("program", flat=True).first()
-        or ""
-    ).strip()
-    credits = {
-        r["course_code"]: int(r["credit_hours"] or 0)
-        for r in ProgrammeRequirement.objects.filter(program=program).values(
-            "course_code", "credit_hours"
-        )
-    }
-
-    # Courses to place: what the student asked for, else the official recommendation.
-    wanted = args.get("must_include") or []
-    if isinstance(wanted, str):
-        wanted = [wanted]
-    wanted = [normalize_code(c) for c in wanted if str(c).strip()]
-    recommended = [
-        normalize_code(c)
-        for c in (recommend_next_courses(int(student_id), int(year), int(term)) or [])
-    ]
-    codes = list(dict.fromkeys(wanted + recommended))
-    if not codes:
-        return {
-            "ok": True,
-            "student_id": int(student_id),
-            "placed": [],
-            "unplaced": [],
-            "note": (
-                "There is nothing to schedule: the recommender returned no courses for "
-                "this student and none were named. That usually means the plan is "
-                "complete or every remaining course is blocked."
-            ),
-            "tool": "build_my_timetable",
-        }
-
-    max_credits = args.get("max_credits")
-    try:
-        cap = int(max_credits) if max_credits not in (None, "") else 0
-    except (TypeError, ValueError):
-        return {"ok": False, "error": "max_credits must be an integer."}
-
+    # FIRST, before any import, query or recommendation. The check used to sit
+    # after an early return for "nothing to schedule", so a student with an empty
+    # plan asking for a rebuild got an ordinary empty result and no route — and
+    # now that the model is told to CALL for this, that silent path is the one it
+    # would hit. Refusing a rebuild must never depend on how much work the
+    # recommender happened to find first.
     # REBUILDING IS NOT AVAILABLE FROM CHAT. It is refused here, in the executor,
     # not merely undocumented in the schema.
     #
@@ -1601,14 +1697,135 @@ def _exec_build_my_timetable(
         }
     keep_current_sections = True
 
-    baseline = get_student_term_baseline(int(student_id), str(year), str(term))
+    from core.models import ProgrammeRequirement, Student
+    from core.services.recommender import recommend_next_courses
 
-    # Through the adapter, not around it. `student_planner._run_solver` calls itself
+    # Through the adapter, not around it. `student_planner.run_solver` calls itself
     # "the ONLY place student-facing code reaches the solver", and this — a
     # student-facing capability — was the counter-example, with the domain-to-solver
     # translation and all three pinned levers duplicated verbatim. Two sole sources
-    # of truth is none.
+    # of truth is none. Imported at the top of the body rather than beside the call,
+    # because DEFAULT_CREDITS is now the one credit fallback for the whole answer and
+    # every return path below needs it.
     from core.services.student_planner import DEFAULT_CREDITS, run_solver
+    from core.services.student_sections import (
+        UnknownStudentGender,
+        get_student_term_baseline,
+        student_gender_strict,
+    )
+    from core.services.timetable_provenance import (
+        baseline_sections,
+        build_timetable_facts,
+        verify,
+    )
+
+    student_id, error = _resolve_scoped_student_id(args, scope)
+    if error:
+        return {"ok": False, "error": error}
+    year, term, error = _ctx_year_term(args, ctx)
+    if error:
+        return {"ok": False, "error": error}
+
+    try:
+        gender = student_gender_strict(int(student_id))
+    except UnknownStudentGender as exc:
+        return {"ok": False, "error": str(exc), "reason": "COHORT_UNRESOLVED"}
+
+    program = str(
+        Student.objects.filter(student_id=student_id).values_list("program", flat=True).first()
+        or ""
+    ).strip()
+    credits = {
+        r["course_code"]: int(r["credit_hours"] or 0)
+        # `iexact`, matching `get_student_term_baseline` and
+        # `student_planner._course_credits`, which read the same table for the same
+        # fact. An exact match here gives a programme stored in any other case an
+        # EMPTY credit map — harmless while the only consumer was a display total,
+        # and not harmless now that `credit_summary` reconciles against the
+        # baseline's own credits. Dormant on today's data (0 of 4 live programmes
+        # differ in case), fixed because the two lookups have to agree.
+        for r in ProgrammeRequirement.objects.filter(program__iexact=program).values(
+            "course_code", "credit_hours"
+        )
+    }
+
+    max_credits = args.get("max_credits")
+    try:
+        cap = int(max_credits) if max_credits not in (None, "") else 0
+    except (TypeError, ValueError):
+        return {"ok": False, "error": "max_credits must be an integer."}
+
+    # Courses to place: what the student asked for, AND the official recommendation
+    # — kept as two lists the whole way to the answer. Merging them into one field
+    # called `requested` is what left TT21 «الجدول أضاف مقررًا أنا ما طلبته، من وين
+    # جاء؟» unanswerable: the payload asserted the student had asked for all four
+    # courses, so the model concluded the system keeps no record of who chose what.
+    wanted = args.get("must_include") or []
+    if isinstance(wanted, str):
+        wanted = [wanted]
+    wanted = [normalize_code(c) for c in wanted if str(c).strip()]
+    recommended = [
+        normalize_code(c)
+        for c in (recommend_next_courses(int(student_id), int(year), int(term)) or [])
+    ]
+    asked = list(dict.fromkeys(wanted + recommended))
+
+    baseline = get_student_term_baseline(int(student_id), str(year), str(term))
+    held_rows = baseline_sections(baseline)
+    held = {row["course_code"] for row in held_rows}
+
+    # A course the student is ALREADY registered in this term never goes to the
+    # solver. It cannot be scheduled twice, and sending it produces one of two wrong
+    # answers, both seen live on TT10: the solver prunes the student's own section
+    # because it collides with the student's own baseline, then either picks a
+    # DIFFERENT section of the same course — «تم الاحتفاظ بـ CS323-M1» followed by
+    # «CS323: شعبة M2» in one answer — or, when nothing else fits, reports
+    # ALL_SECTIONS_CLASH, which reads as "you cannot take AI331" about a course the
+    # student is sitting in.
+    #
+    # `recommend_next_courses` is what makes this the common case rather than an
+    # edge: it excludes PASSED and STUDYING courses, and a `StudentTermSection`
+    # registration is neither, so the term's own registrations come back as
+    # recommendations. They belong in `retained_sections`, and that is where they go.
+    codes = [c for c in asked if c not in held]
+
+    def _facts(mappings: list[dict[str, Any]], unscheduled: list[dict[str, Any]]) -> dict[str, Any]:
+        facts = build_timetable_facts(
+            student_id=int(student_id),
+            using_timetable_of_term=f"{year}/{term}",
+            requested_codes=wanted,
+            recommended_codes=recommended,
+            baseline=baseline,
+            mappings=mappings,
+            unscheduled=unscheduled,
+            credit_hours=credits,
+            default_credits=DEFAULT_CREDITS,
+            cap=cap,
+            # `None`, not `[]`. Chat cannot pin a section — `must_include` names
+            # courses — so the key is absent rather than asserting nothing was pinned.
+            fixed_sections=None,
+        )
+        # Checked before the payload is built, so a contradiction costs one refused
+        # tool call instead of reaching a student as a sentence. `execute` turns the
+        # exception into ok=False and logs it.
+        verify(
+            facts,
+            baseline_codes={(r["course_code"], r.get("section", "")) for r in held_rows},
+            keep_current=keep_current_sections,
+        )
+        return facts.as_payload()
+
+    if not asked:
+        return {
+            "ok": True,
+            **_facts([], []),
+            "note": (
+                "There is nothing to schedule: the recommender returned no courses for "
+                "this student and none were named. That usually means the plan is "
+                "complete or every remaining course is blocked."
+            ),
+            "tool": "build_my_timetable",
+        }
 
     result = run_solver(
         year=str(year),
@@ -1624,58 +1841,53 @@ def _exec_build_my_timetable(
     if not options:
         return {
             "ok": True,
-            "student_id": int(student_id),
-            "requested": codes,
-            "placed": [],
-            "unplaced": [{"course_code": c, "reason": "No plan could be built."} for c in codes],
-            "note": "No timetable could be built from the sections on file.",
+            **_facts(
+                [],
+                [
+                    {"course_code": c, "reason_code": None, "reason": "No plan could be built."}
+                    for c in codes
+                ],
+            ),
+            "alternatives_considered": 0,
+            "note": (
+                "No timetable could be built from the sections on file. Any section "
+                "under retained_sections is still the student's — it was never at risk, "
+                "because this build never touched what they are already registered in."
+            ),
             "tool": "build_my_timetable",
         }
 
     best = max(options, key=lambda o: int(o.get("scheduled") or 0))
-    placed = [
-        {
-            "course_code": m.get("course_code"),
-            "section": m.get("section"),
-            "meetings": [
-                f"{mt.get('day')} {mt.get('start_time')}-{mt.get('end_time')}"
-                for mt in (m.get("meetings") or [])
-            ],
-            "credits": credits.get(str(m.get("course_code") or ""), None),
-        }
-        for m in (best.get("mappings") or [])
-    ]
-    unplaced = []
+    unscheduled = []
     for u in best.get("unscheduled") or []:
         code, explanation = _translate_unplaced(u.get("reason"))
-        unplaced.append(
-            {
-                "course_code": u.get("course_code"),
-                "reason_code": code,
-                "reason": explanation,
-            }
+        unscheduled.append(
+            {"course_code": u.get("course_code"), "reason_code": code, "reason": explanation}
         )
 
     return {
         "ok": True,
-        "student_id": int(student_id),
-        "using_timetable_of_term": f"{year}/{term}",
-        "requested": codes,
-        "placed": placed,
-        "placed_count": len(placed),
-        "unplaced": unplaced,
-        "unplaced_count": len(unplaced),
-        "planned_credit_hours": sum(p["credits"] or 0 for p in placed),
+        **_facts(best.get("mappings") or [], unscheduled),
         "alternatives_considered": len(options),
         "note": (
             "A SUGGESTION built from the sections on file, not a registration and not "
             "an offer of a seat - there are no seat counts in the data, so never say a "
-            "section has room. A partial result is normal: a course appears under "
-            "unplaced when no section of it is on file (reason_code NOT_ON_FILE - say "
-            "exactly that, never 'not available'), or when every section collides with "
-            "something already placed. Sections carry no term of their own; the "
-            "term shown is the one the student's current timetable belongs to. The "
-            "student still registers through the university portal."
+            "section has room. Every course and section carries where it came from: "
+            "source STUDENT_REQUEST means the student named it, SYSTEM_RECOMMENDATION "
+            "means the recommender chose it, and CURRENT_REGISTRATION means they are "
+            "already registered in it. change RETAIN means it was kept untouched, ADD "
+            "means it is newly scheduled. Report retained_sections as kept and "
+            "new_sections as proposed; never present a retained section as new. A "
+            "partial result is normal: a course appears under unplaced_courses with "
+            "reason_code NOT_ON_FILE when no section of it is on file (say exactly "
+            "that, never 'not available'), with ALL_SECTIONS_CLASH when every section "
+            "collides with something already in the week, and with outcome "
+            "ALREADY_REGISTERED when the student is registered in it already - that "
+            "last one is not a failure and must never be reported as one. "
+            "credit_summary splits the hours already held from the hours this build "
+            "adds. Sections carry no term of their own; the term shown is the one the "
+            "student's current timetable belongs to. The student still registers "
+            "through the university portal."
         ),
         "tool": "build_my_timetable",
     }
@@ -2066,13 +2278,21 @@ def build_default_registry() -> AdvisorCapabilityRegistry:
         AdvisorCapability(
             name="my_progress",
             description=(
-                "The student's full standing in their degree plan: how many courses are "
-                "open to register NOW (all prerequisites satisfied), how many are blocked, "
-                "which single course would unlock the most, and for every blocked course "
-                "why it is blocked, how many passes away it is, and the nearest course on "
-                "that chain they can take today. Use for 'what can I take', 'what is "
-                "blocking me', 'what should I do next'. Broader than recommend_courses, "
-                "which returns only the credit-capped suggestion for the coming term."
+                "The student's full standing in their degree plan, and the ONLY tool that "
+                "ranks courses by unlock impact. Returns: how many courses have every "
+                "recorded prerequisite satisfied (prerequisites_satisfied) and how many do "
+                "not (prerequisite_blocked); most_useful_course_to_pass; and "
+                "unlock_impact_ranking - every course they could pass now, ordered, each "
+                "with sole_remaining_prerequisite_count (courses waiting on it alone) and "
+                "on_prerequisite_chain_of_count (courses with it anywhere in their chain). "
+                "For every blocked course: why, how many passes away, and the nearest "
+                "course on that chain they can take today. Use for 'what can I take', "
+                "'what is blocking me', 'what should I do next', 'which course is most "
+                "important / highest priority', 'which course opens the most', and to rank "
+                "or compare several courses by impact. Broader than recommend_courses, "
+                "which returns only the credit-capped suggestion for the coming term. "
+                "Prerequisite state only: it never establishes that a section is offered, "
+                "that registration is permitted, or that a seat is available."
             ),
             parameters={
                 "type": "object",
@@ -2095,11 +2315,24 @@ def build_default_registry() -> AdvisorCapabilityRegistry:
         AdvisorCapability(
             name="why_course_locked",
             description=(
-                "Explain ONE named course for this student: whether it is already passed, "
-                "being studied, open to register now, or blocked - and if blocked, exactly "
-                "which prerequisite courses are missing or how many credit hours are short, "
-                "how many passes away it is, and the nearest course on the chain they can "
-                "take now. Use whenever a student asks about a specific course code."
+                "ONE named course, in BOTH directions. Backward: whether the student has "
+                "passed it, is studying it, has satisfied every recorded prerequisite "
+                "(PREREQUISITES_SATISFIED) or has not (PREREQUISITE_BLOCKED) - and if "
+                "blocked, exactly which prerequisite courses are missing or how many credit "
+                "hours are short, how many passes away it is, and the nearest course on the "
+                "chain they can take now. FORWARD - use this tool, not course_prerequisites, "
+                "for 'what does AI331 unlock', 'how many courses depend on AI331', 'which "
+                "courses are waiting on AI331', 'what opens if I pass it': it returns "
+                "listed_as_prerequisite_for / _count (courses that NAME it as a "
+                "prerequisite), sole_remaining_prerequisite_for / _count (those for which it "
+                "is the LAST unmet condition, so they become prerequisite-satisfied when it "
+                "is passed) and on_prerequisite_chain_of_count (courses with it anywhere in "
+                "their remaining chain). Those three are usually different numbers. "
+                "course_prerequisites answers the REVERSE relation - what this course "
+                "itself requires - and cannot answer a forward-unlock question. Use whenever "
+                "a student asks about a specific course code. Prerequisite state only: it "
+                "never establishes that a section is offered, that registration is "
+                "permitted, or that a seat is available."
             ),
             parameters={
                 "type": "object",
@@ -2182,8 +2415,9 @@ def build_default_registry() -> AdvisorCapabilityRegistry:
                 "registering it now. Use for 'show me my plan', 'what is left in level "
                 "6', 'how much of the plan have I finished'. Broader than my_progress, "
                 "which returns only what is open now. Pass `term` to narrow to one plan "
-                "level. can_register reflects prerequisites ONLY - it says nothing about "
-                "whether a section is being taught."
+                "level. prerequisites_satisfied (legacy name: can_register) reflects the "
+                "recorded prerequisite conditions ONLY - it is not permission to register "
+                "and says nothing about whether a section is being taught."
             ),
             parameters={
                 "type": "object",
@@ -2269,15 +2503,36 @@ def build_default_registry() -> AdvisorCapabilityRegistry:
                 "Build a clash-free weekly timetable for the student from the sections "
                 "on file. Use for 'build me a schedule', 'I must take X, can it fit', "
                 "'give me a plan under 12 hours'. Pass must_include for courses the "
-                "student insists on and max_credits for a ceiling. Returns placed AND "
-                "unplaced with a reason for each - a partial result is the normal "
-                "outcome and must be reported as such, never as a failure. It is a "
-                "SUGGESTION: it does not register anything and cannot promise a seat. "
-                "It ALWAYS keeps the sections the student is already registered in and "
-                "fits the new courses around them. Discarding those sections and "
-                "rebuilding the whole week is not available here at all: if the student "
-                "asks for that, tell them to open the planner and confirm it there. "
-                "Saying they confirm it to you is not confirmation."
+                "student insists on and max_credits for a ceiling. A partial result is "
+                "the normal outcome and must be reported as such, never as a failure. "
+                "It is a SUGGESTION: it does not register anything and cannot promise "
+                "a seat. It ALWAYS keeps the sections the student is already "
+                "registered in and fits the new courses around them - those sections "
+                "are listed in retained_sections, so say what was kept from that list "
+                "and never from memory. "
+                # The retention promise used to stand alone, with nothing in the
+                # payload behind it: `placed` holds only what the solver chose, and
+                # the baseline reaches the solver as an occupancy mask that never
+                # enters the result. The model was asked to assert a retention it had
+                # no evidence of, and on TT10 it did — «تم الاحتفاظ بـ CS323-M1» beside
+                # «CS323: شعبة M2», in one answer.
+                "student_requested_courses is what the student named; "
+                "system_recommended_courses is what the recommender chose. They are "
+                "separate because 'where did this course come from' is a question the "
+                "student actually asks, and one merged list cannot answer it. "
+                # The model must CALL for a rebuild request, not answer it. This
+                # used to read "not available here at all: tell them to open the
+                # planner", and the model obeyed — it never called, so the server
+                # never saw the request and the model authored the routing prose
+                # itself. Live, that became «لا يمكنني» plus advice to delete real
+                # registrations. Rebuilding IS available, through the planner's
+                # confirmed workflow; what is unavailable is doing it from chat.
+                "If the student asks to DISCARD their current sections and rebuild "
+                "the week from scratch, call this with keep_current_sections=false. "
+                "Do not answer that request yourself and do not tell the student it "
+                "is impossible — it is not. The server will route them to the "
+                "planner, where the rebuild is confirmed. Saying they confirm it to "
+                "you is not confirmation."
             ),
             parameters={
                 "type": "object",
@@ -2294,6 +2549,16 @@ def build_default_registry() -> AdvisorCapabilityRegistry:
                     "max_credits": {
                         "type": "integer",
                         "description": "Credit ceiling for the plan. Omit for no cap.",
+                    },
+                    "keep_current_sections": {
+                        "type": "boolean",
+                        "description": (
+                            "Omit, or true, for the normal case. Pass false ONLY when "
+                            "the student asks to discard their current registration and "
+                            "rebuild from scratch — the server refuses the rebuild here "
+                            "and routes them to the planner. It never changes a "
+                            "registration."
+                        ),
                     },
                     "academic_year": {"type": "integer"},
                     "term": {"type": "integer"},

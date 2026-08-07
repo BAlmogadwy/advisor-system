@@ -9,6 +9,26 @@ second definition of eligibility. One rule, stated once:
 
 Everything else on the screen (steps, nearest reachable course, how many courses a
 blocker frees) is derived from that, over THIS student's own remaining plan.
+
+THREE forward relations, and they are not interchangeable. `dependents[code]`
+carries all three because every consumer that computed one of them locally picked
+a different one and called it the same thing:
+
+    listed                 X names `code` among its prerequisites. A catalogue
+                           fact; true whatever the student has passed.
+    waiting_only_on_this   X is not taken, and `code` is the ONLY prerequisite
+                           condition it still fails — course or credit hours.
+                           This is the set that becomes prerequisite-satisfied the
+                           day `code` is passed.
+    on_chain_of_count      `code` is somewhere in X's remaining chain. Passing it
+                           removes one link; it does not make X takeable.
+
+On the controlled evaluation record, AI331 scores 5, 3 and 6 on those three. Reporting any one of
+them as "what AI331 unlocks" is wrong two times out of three, and the reverse-edge
+count — the easiest to compute — is the one every caller was reporting.
+
+None of the three is a statement that X can be REGISTERED. This module knows the
+prerequisite records and nothing about offerings, permissions or seats.
 """
 
 from __future__ import annotations
@@ -194,26 +214,71 @@ def build_unlock_report(student_id: int, year: int, term: int) -> dict:
             }
         )
 
-    # how many of HER remaining courses each blocker would free
-    def frees_now(code: str) -> int:
-        return sum(
-            1
-            for c, cl in closures.items()
-            if c in info and not info[c]["open"] and cl and cl <= {code}
-        )
+    # ── the three forward relations, computed once for every course in the plan ──
+    #
+    # This is the FOURTH place the reverse relation was written down: the advisor
+    # capability, `course_detail`, `student_home_cards.unlock_leaders` and here.
+    # Three of them derived a different answer from the same graph and published it
+    # under the same word. See the module docstring for what each one means.
+    dependents: dict[str, dict] = {}
+    for code in info:
+        rows = []
+        for other, oi in info.items():
+            if code not in oi["course_prereqs"]:
+                continue
+            # `missing` is already "prerequisites not passed and not being studied",
+            # so subtracting `code` leaves exactly what would STILL be outstanding
+            # the day this course is passed.
+            outstanding = sorted(set(oi["missing"]) - {code})
+            # A credit-hour gate is outstanding too. `unlock_leaders` compared course
+            # codes only, so a capstone gated on 146 hours counted as "waiting on this
+            # one alone" while the hours it is actually waiting for went unmentioned.
+            hours_short = oi["gate"] is not None and not oi["gate"]["met"]
+            rows.append(
+                {
+                    "code": other,
+                    "name": oi["name"],
+                    "status": oi["status"],
+                    "also_waiting_on": outstanding,
+                    "also_waiting_on_credit_hours": hours_short,
+                    # NOT "unlocked by": the claim is about what this course is
+                    # waiting for, which is a fact about the prerequisite records.
+                    # Whether it is then offered, permitted or seated is not knowable
+                    # here and is not claimed anywhere downstream of this flag.
+                    "waiting_only_on_this": (
+                        oi["status"] == "not_taken"
+                        and not oi["placeholder"]
+                        and code in oi["missing"]
+                        and not outstanding
+                        and not hours_short
+                    ),
+                }
+            )
+        rows.sort(key=lambda r: (not r["waiting_only_on_this"], r["code"]))
+        dependents[code] = {
+            "listed": rows,
+            "waiting_only_on_this": [r["code"] for r in rows if r["waiting_only_on_this"]],
+            "on_chain_of_count": sum(1 for c, cl in closures.items() if code in cl),
+        }
 
     for row in locked_courses:
-        row["frees_eventually"] = sum(1 for c, cl in closures.items() if row["code"] in cl)
+        row["frees_eventually"] = dependents[row["code"]]["on_chain_of_count"]
 
     blockers = [
         {
             "code": c,
             "name": info[c]["name"],
-            "frees_now": frees_now(c),
-            "frees_eventually": sum(1 for x, cl in closures.items() if c in cl),
+            "frees_now": len(dependents[c]["waiting_only_on_this"]),
+            "frees_eventually": dependents[c]["on_chain_of_count"],
         }
         for c, i in info.items()
-        if i["open"]
+        # Placeholders excluded. `open` does not exclude them — «PROGRAM ELECTIVE
+        # COURSE I» satisfies "not taken, nothing missing" — so the ranked list came
+        # out with six choose-one-with-your-adviser slots sitting at zero impact
+        # among the real courses. They cannot be passed, so they cannot free
+        # anything, and offering them as candidates is the elective-placeholder
+        # confusion this module already refuses everywhere else.
+        if i["open"] and not i["placeholder"]
     ]
     top_blocker = max(
         blockers, key=lambda b: (b["frees_eventually"], b["frees_now"], b["code"]), default=None
@@ -252,6 +317,20 @@ def build_unlock_report(student_id: int, year: int, term: int) -> dict:
 
     return {
         "graph": graph,
+        "dependents": dependents,
+        # Every open course with its two forward counts, not just the winner.
+        # `top_blocker` is a `max()` over this list and answers only "which one
+        # course", so a question that ranks three named courses, or asks which opens
+        # the most DIRECTLY rather than over the whole chain, had nothing to read.
+        # EVERY open course, including the ones that unlock nothing. The filter
+        # that used to sit here dropped 4 of one student's 7, and a ranking that
+        # silently omits candidates is read as the complete set of things worth
+        # taking. A course opening nothing may still be required for graduation, in
+        # this term's recommendation, or the only way to reach a sane load — none of
+        # which this ranking measures, and none of which it may quietly decide.
+        "blockers": sorted(
+            blockers, key=lambda b: (-b["frees_now"], -b["frees_eventually"], b["code"])
+        ),
         "program": program,
         "counts": {
             "open": len(open_courses),

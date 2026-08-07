@@ -161,15 +161,25 @@ def test_anything_that_is_not_exactly_true_is_refused(student, solver_calls, val
 # ── the model is no longer told the lever exists ─────────────────
 
 
-def test_the_parameter_is_not_advertised_to_the_model():
-    """It was documented as "pass false ONLY after the student has confirmed".
+def test_the_parameter_is_an_intent_signal_that_can_never_rebuild():
+    """This test used to assert the parameter was ABSENT. It is back, and the
+    invariant it defends is now stronger.
 
-    That is an instruction, and instructions are what the model got wrong. The
-    schema no longer names it, so a compliant model has no way to ask for it —
-    and the executor refuses regardless, because non-compliant callers exist.
+    Removing it was the right call at the time: it had been documented as "pass
+    false ONLY after the student has confirmed", an instruction, and instructions
+    are what the model got wrong when a single «أكد» triggered a rebuild. But
+    hiding it also meant the model could not tell the SERVER that a rebuild was
+    being asked for — so it answered the request itself, and live that produced a
+    denial of a feature that exists plus advice to delete real registrations.
+
+    The parameter is therefore an intent signal and nothing else. Supplying false
+    can never rebuild: the executor forces keep=True and returns a route. What
+    protects the student is the executor, which is where it always was — not the
+    absence of a field, which only ever protected against a COMPLIANT caller.
     """
     properties = _schema()["parameters"]["properties"]
-    assert "keep_current_sections" not in properties, sorted(properties)
+    assert "keep_current_sections" in properties
+    assert properties["keep_current_sections"]["type"] == "boolean"
     assert "must_include" in properties, "the schema lost more than the one parameter"
 
 

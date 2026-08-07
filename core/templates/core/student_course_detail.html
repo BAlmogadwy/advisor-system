@@ -131,12 +131,25 @@
 
   {% if detail.unlocks %}
     <section class="card p-3 mb-3" aria-labelledby="cdUnlocksHeading">
-      <h2 class="h6 mb-2" id="cdUnlocksHeading">{% if LANGUAGE_CODE == 'ar' %}اجتيازه يفتح لك{% else %}Passing this opens{% endif %}</h2>
+      {% comment %}
+        The heading used to read «اجتيازه يفتح لك» / "Passing this opens" over
+        EVERY course that names this one. For AI331 that is five courses and the
+        sentence is true of three — the other two are also waiting on a course each.
+        The heading now states the relation it actually lists, and each row says
+        whether passing this one is enough.
+      {% endcomment %}
+      <h2 class="h6 mb-2" id="cdUnlocksHeading">{% if LANGUAGE_CODE == 'ar' %}مقررات تذكره ضمن متطلباتها{% else %}Courses that list this as a prerequisite{% endif %}</h2>
       <ul class="cd-prereqs">
         {% for course in detail.unlocks %}
           <li class="cd-prereq">
             <a class="cd-code" dir="ltr" href="{% url 'student_course_detail_page' course.course_code %}">{{ course.course_code }}</a>
             <span class="cd-name" dir="auto">{{ course.course_name }}</span>
+            {% if course.waiting_only_on_this %}
+              <span class="cd-muted" dir="auto">{% if LANGUAGE_CODE == 'ar' %}— ينتظر هذا المقرر وحده{% else %}— waiting on this course alone{% endif %}</span>
+            {% else %}
+              <span class="cd-muted" dir="auto">{% if LANGUAGE_CODE == 'ar' %}— ينتظر أيضًا{% else %}— also waiting on{% endif %}
+                {% for other in course.also_waiting_on %}<span dir="ltr">{{ other }}</span>{% if not forloop.last %}، {% endif %}{% endfor %}{% if course.also_short_on_credit_hours %}{% if course.also_waiting_on %}، {% endif %}{% if LANGUAGE_CODE == 'ar' %}ساعات معتمدة{% else %}credit hours{% endif %}{% endif %}</span>
+            {% endif %}
           </li>
         {% endfor %}
       </ul>

@@ -1846,6 +1846,10 @@ class AdvisorEscalation(models.Model):
         JUDGE_REJECTED = ("JUDGE_REJECTED", "The answer did not survive review")
         MODEL_UNAVAILABLE = ("MODEL_UNAVAILABLE", "No answer could be produced")
         STUDENT_REQUESTED = ("STUDENT_REQUESTED", "The student asked for a human adviser")
+        OUTPUT_NOT_GROUNDED = (
+            "OUTPUT_NOT_GROUNDED",
+            "The answer named identifiers the evidence does not support",
+        )
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
 

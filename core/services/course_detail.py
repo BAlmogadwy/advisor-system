@@ -307,15 +307,17 @@ def _course_detail(
     graph = report.get("graph") or {}
     status_of = graph.get("statusOf") or {}
 
-    # Already computed by the report and thrown away by every caller: "if I pass
-    # this, what opens?" is the question a student asks next.
-    unlocks = sorted(
-        {
-            e["course_code"]
-            for e in (graph.get("items") or [])
-            if e.get("prerequisite_course_code") == code
-        }
-    )
+    # "If I pass this, what opens?" — read from the report's own `dependents`
+    # rather than recounted from `graph.items` here.
+    #
+    # The local count was every edge naming this course, rendered under the heading
+    # «اجتيازه يفتح لك» / "Passing this opens". For AI331 that puts five courses
+    # under a sentence that is true of three: AI482 is also waiting on COE332 and
+    # AI491 on CS289, and neither opens the day AI331 is passed.
+    # `waiting_only_on_this` is the flag that separates them, and the template now
+    # renders the difference instead of hiding it behind one heading.
+    unlock_rows = ((report.get("dependents") or {}).get(code) or {}).get("listed") or []
+    unlocks = [r["code"] for r in unlock_rows]
 
     # AFTER `unlocks`, and including it. Looking the names up first meant every
     # downstream course rendered with an empty name — the list showed codes and
@@ -347,7 +349,16 @@ def _course_detail(
         "reasons": [
             {"kind": str(r.get("kind") or ""), "text_ar": _reason_ar(r, names)} for r in reasons
         ],
-        "unlocks": [{"course_code": u, "course_name": names.get(u, "")} for u in unlocks],
+        "unlocks": [
+            {
+                "course_code": r["code"],
+                "course_name": names.get(r["code"], "") or r["name"],
+                "waiting_only_on_this": r["waiting_only_on_this"],
+                "also_waiting_on": r["also_waiting_on"],
+                "also_short_on_credit_hours": r["also_waiting_on_credit_hours"],
+            }
+            for r in unlock_rows
+        ],
     }
 
 

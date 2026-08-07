@@ -135,6 +135,51 @@ LOCAL_LLM_TIMEOUT_SECONDS = float(os.getenv("LOCAL_LLM_TIMEOUT_SECONDS", "120"))
 LOCAL_LLM_MAX_TOKENS = int(os.getenv("LOCAL_LLM_MAX_TOKENS", "1400"))
 LOCAL_LLM_ALLOW_REMOTE = os.getenv("LOCAL_LLM_ALLOW_REMOTE", "false").lower() == "true"
 
+# ── which LLM backend the adviser speaks to ──────────────────────
+# "local"   — the OpenAI-compatible server above (LM Studio &c.)
+# "alibaba" — Alibaba Cloud Model Studio, OpenAI-compatible endpoint
+#
+# Returning to local is this one variable and a restart. There is no prompt fork,
+# no tool-registry fork and no branch to change. An unknown value fails at
+# configuration time rather than silently falling back, because "the backend I
+# did not intend" is worse than "the adviser refused to start".
+LLM_BACKEND = os.getenv("LLM_BACKEND", "local").strip().lower()
+
+# Alibaba Cloud Model Studio. Empty by default: the adviser is local until
+# somebody deliberately configures otherwise, and every one of these is REQUIRED
+# before the alibaba backend will start. The model is never discovered from the
+# workspace — a silent choice of model is a silent choice of price.
+ALIBABA_LLM_BASE_URL = os.getenv("ALIBABA_LLM_BASE_URL", "")
+ALIBABA_LLM_API_KEY = os.getenv("ALIBABA_LLM_API_KEY", "")
+ALIBABA_LLM_MODEL = os.getenv("ALIBABA_LLM_MODEL", "")
+# Non-thinking for the first provider comparison: the local model has already
+# spent whole tool turns on hidden reasoning, and comparing two providers while
+# also changing reasoning mode measures neither.
+ALIBABA_LLM_ENABLE_THINKING = os.getenv("ALIBABA_LLM_ENABLE_THINKING", "false").lower() == "true"
+ALIBABA_LLM_TIMEOUT_SECONDS = float(os.getenv("ALIBABA_LLM_TIMEOUT_SECONDS", "75"))
+ALIBABA_LLM_MAX_TOKENS = int(os.getenv("ALIBABA_LLM_MAX_TOKENS", "3000"))
+ALIBABA_LLM_MAX_RETRIES = int(os.getenv("ALIBABA_LLM_MAX_RETRIES", "2"))
+
+# THE EGRESS KILL SWITCH. The transport refuses every Alibaba network request
+# unless this is explicitly true — regardless of LLM_BACKEND, regardless of which
+# code path constructed the client.
+#
+# It exists because selecting a backend turned out not to be a strong enough
+# control. Two live calls happened on this branch that should not have: one from
+# a test whose HTTP stub was written and never installed, and one from acting on
+# an ambiguous instruction. Neither was prevented by anything structural.
+#
+# Tests use a mocked transport and never need this. Keep it false until a review
+# authorises the next call.
+ALIBABA_LLM_ALLOW_LIVE_REQUESTS = (
+    os.getenv("ALIBABA_LLM_ALLOW_LIVE_REQUESTS", "false").lower() == "true"
+)
+
+# The evaluation JUDGE is configured separately and defaults to local, ON PURPOSE.
+# Judging Alibaba-generated answers with Alibaba confounds the comparison: a
+# provider marking its own homework is not a measurement.
+EVAL_JUDGE_LLM_BACKEND = os.getenv("EVAL_JUDGE_LLM_BACKEND", "local").strip().lower()
+
 # Virtual advisor agent loop (native LLM tool calling over the capability
 # registry). Env-overridable kill-switch: set to "false" to revert to the
 # single-shot regex-planned behaviour with no redeploy.

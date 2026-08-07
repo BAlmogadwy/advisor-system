@@ -516,9 +516,15 @@ def test_why_course_locked_answers_the_forward_direction():
         scope={"role": ROLE_SUPER_ADMIN},
         ctx={"academic_year": 1448, "term": 1},
     )
-    assert "unlocks_directly" in out
-    assert "unlocks_directly_count" in out
-    assert out["unlocks_directly_count"] == len(out["unlocks_directly"])
+    # Both forward relations, not one number under a name that promised the
+    # other. AI305 has no dependents in this fixture, so the assertion that
+    # carries weight is that the two fields EXIST and agree with their lists —
+    # the sharp version, on data where the counts differ, is in
+    # `tests/test_advisor_unlock_semantics.py`.
+    assert out["listed_as_prerequisite_count"] == len(out["listed_as_prerequisite_for"])
+    assert out["sole_remaining_prerequisite_count"] == len(out["sole_remaining_prerequisite_for"])
+    assert out["sole_remaining_prerequisite_count"] <= out["listed_as_prerequisite_count"]
+    assert "unlocks_directly" not in out, "the name that carried the false claim"
 
 
 def test_elective_placeholder_is_not_reported_as_a_course_without_prerequisites():
@@ -658,8 +664,11 @@ def test_my_plan_by_term_is_student_scoped_and_level_filtered():
     assert "own records" in other["error"]
 
     # can_register is about prerequisites, never about a section existing. The note
-    # has to say so or the model will read it as "a seat is waiting".
-    assert "prerequisites ONLY" in full["note"]
+    # has to say so or the model will read it as "a seat is waiting" — and it now
+    # says it in the words the whole payload surface uses, beside the canonical
+    # field name that replaced it.
+    assert "is NOT a registration permission" in full["note"]
+    assert "does not confirm that a section is offered" in full["note"]
 
 
 def test_my_advisor_never_hands_out_the_placeholder_email():
@@ -864,11 +873,17 @@ def test_build_my_timetable_places_what_it_can_and_explains_the_rest():
         ctx={"academic_year": 1448, "term": 1},
     )
     assert out["ok"] is True
-    assert [p["course_code"] for p in out["placed"]] == ["ZZ310"]
-    assert out["placed"][0]["meetings"] == ["SUN 08:00-09:15"]
+    # `new_sections`, not `placed`. The rename is not cosmetic: `placed` held only
+    # what the solver chose and was read as the whole week, which is how an answer
+    # claimed to keep a section it had just replaced.
+    assert [p["course_code"] for p in out["new_sections"]] == ["ZZ310"]
+    assert out["new_sections"][0]["meetings"] == ["SUN 08:00-09:15"]
+    assert out["new_sections"][0]["source"] == "STUDENT_REQUEST"
+    assert out["new_sections"][0]["change"] == "ADD"
 
-    gap = next(u for u in out["unplaced"] if u["course_code"] == "ZZ320")
+    gap = next(u for u in out["unplaced_courses"] if u["course_code"] == "ZZ320")
     assert gap["reason_code"] == "NOT_ON_FILE"
+    assert gap["source"] == "STUDENT_REQUEST"
 
 
 def test_build_my_timetable_never_says_a_course_is_unavailable():
@@ -907,7 +922,15 @@ def test_build_my_timetable_respects_a_credit_ceiling():
         scope={"role": ROLE_SUPER_ADMIN},
         ctx={"academic_year": 1448, "term": 1},
     )
-    assert capped["planned_credit_hours"] <= 6, "the ceiling is a hard constraint, not a hint"
+    # `credit_summary.new`, because the cap governs what this build ADDS. The old
+    # `planned_credit_hours` conflated that with the student's whole load, and read
+    # the credits through a second lookup whose fallback was None — so a course the
+    # solver charged 3 hours against this very ceiling was reported as contributing
+    # nothing, and the ceiling could be exceeded by a sum that said it was not.
+    assert capped["credit_summary"]["new_credit_hours"] <= 6, (
+        "the ceiling is a hard constraint, not a hint"
+    )
+    assert capped["credit_summary"]["new_courses_credit_cap"] == 6
 
 
 def test_build_my_timetable_promises_nothing_it_cannot_deliver():
@@ -968,9 +991,15 @@ def test_must_include_beats_the_recommendation():
         scope={"role": ROLE_SUPER_ADMIN},
         ctx={"academic_year": 1448, "term": 1},
     )
-    assert "ZZ610" in out["requested"], "must_include never reached the builder"
-    handled = [p["course_code"] for p in out["placed"]] + [
-        u["course_code"] for u in out["unplaced"]
+    # In the STUDENT'S list specifically. The old `requested` held the student's
+    # courses and the recommender's in one array, so this assertion passed whichever
+    # of the two had put the code there — which is the confusion the split removes.
+    assert "ZZ610" in [c["course_code"] for c in out["student_requested_courses"]], (
+        "must_include never reached the builder"
+    )
+    assert "ZZ610" not in [c["course_code"] for c in out["system_recommended_courses"]]
+    handled = [p["course_code"] for p in out["new_sections"]] + [
+        u["course_code"] for u in out["unplaced_courses"]
     ]
     assert "ZZ610" in handled
 
