@@ -1469,7 +1469,11 @@ def _safe_excerpt(boundary: ToolBoundary, answer: str) -> str:
         text = str((sanitised or [{}])[0].get("content") or "")
     except Exception:  # noqa: BLE001 - a diagnostic must never break the refusal path
         return "<excerpt withheld: sanitiser failed>"
-    return text[:400]
+    # 1500, not 400. The first cap was a guess and it was too small: a timetable
+    # answer spends its opening paragraph on caveats, so the first 400 characters
+    # held no claim at all and the draft could not say which figure it had objected
+    # to. A diagnostic that cannot diagnose is only a cost.
+    return text[:1500]
 
 
 def _output_correction(

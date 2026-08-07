@@ -242,6 +242,14 @@ _COURSE_TOKEN = re.compile(r"(?<![A-Za-z0-9])[A-Za-z]{2,4}-?\d{1,3}(?![A-Za-z0-9
 #: the same clause would otherwise claim a current load of 9.
 _CLOCK = re.compile(r"\d{1,2}\s*:\s*\d{2}")
 
+#: A number stated AS CREDIT HOURS. Preferred over any bare number in the clause,
+#: because a correct citation puts other numbers in the way: «الحد الأعلى … الدليل
+#: الإرشادي … ص 23 … يتراوح بين 12 و19 ساعة» made the check read a regulatory cap of
+#: 23 — the page it was citing. The unit is what distinguishes a load figure from a
+#: page, an edition, a year or a section number, and an adviser that cites its source
+#: will always have those nearby.
+_UNIT_FIGURE = re.compile(r"(?<![A-Za-z0-9])(\d{1,2})(?![0-9])\s*(?:ساع|hour|credit)")
+
 #: Where one provenance assertion ends and the next begins. Finer than a clause,
 #: because «المقررات التي طلبتها AI352، واقترح النظام CS323» is two attributions in one
 #: sentence and a rule that gave each of them both codes would refuse it twice.
@@ -318,9 +326,9 @@ def _cap_claims(text: str) -> list[tuple[str, int]]:
     and refused a correct TT16 answer for contradicting the true 15.
     """
     clauses = [_fold(_CLOCK.sub(" ", c)) for c in _clauses(text)]
-    out: list[tuple[str, int]] = []
+    out: list[tuple[str, tuple[int, ...]]] = []
     for kind, phrases in _CAP_CLAIMS:
-        figure = None
+        figures: tuple[int, ...] = ()
         # EVERY clause, not the first match. An answer commonly names the courses it
         # retained before it names how many hours they are — stopping at the first
         # mention reads the list, not the claim.
@@ -330,25 +338,39 @@ def _cap_claims(text: str) -> list[tuple[str, int]]:
                 hit = clause.find(folded_phrase)
                 if hit < 0:
                     continue
-                tail = clause[hit + len(folded_phrase) :]
-                match = _STANDALONE_NUMBER.search(tail)
-                if not match:
-                    continue
-                # A NUMBER ALREADY SPOKEN FOR. If a course is named between the claim
-                # and the figure, the figure is that course's — «لديك حاليًا: AI1 (3
-                # ساعات)، AI331 (4 ساعات)» states no current load at all. Enumerating
-                # separators could not settle this: the same list arrives bulleted, on
-                # separate lines, comma-joined or in parentheses, and each new
-                # punctuation mark would be one more refusal found in production.
-                if _COURSE_TOKEN.search(tail[: match.start()]):
-                    continue
-                figure = int(match.group(1))
+                figures = _figures_in(clause[hit + len(folded_phrase) :])
+                if figures:
+                    break
+            if figures:
                 break
-            if figure is not None:
-                break
-        if figure is not None:
-            out.append((kind, figure))
+        if figures:
+            out.append((kind, figures))
     return out
+
+
+def _figures_in(tail: str) -> tuple[int, ...]:
+    """The credit figures a claim's clause states, most trustworthy first.
+
+    Numbers stated AS HOURS win, and all of them are returned: «يتراوح بين 12 و19
+    ساعة» states a range and both ends are true. Only when the clause names no figure
+    in hours at all does the first bare number stand in — that fallback is what keeps
+    a terse «the regulatory maximum is 18» checkable.
+    """
+
+    def unclaimed(match: re.Match[str]) -> bool:
+        # A NUMBER ALREADY SPOKEN FOR. If a course is named between the claim and the
+        # figure, the figure is that course's — «لديك حاليًا: AI1 (3 ساعات)، AI331 (4
+        # ساعات)» states no current load at all. Enumerating separators could not
+        # settle this: the same list arrives bulleted, on separate lines, comma-joined
+        # or in parentheses, and each new mark would be one more refusal found in
+        # production.
+        return not _COURSE_TOKEN.search(tail[: match.start()])
+
+    in_hours = tuple(int(m.group(1)) for m in _UNIT_FIGURE.finditer(tail) if unclaimed(m))
+    if in_hours:
+        return in_hours
+    bare = _STANDALONE_NUMBER.search(tail)
+    return (int(bare.group(1)),) if bare and unclaimed(bare) else ()
 
 
 def _credit_sources(
@@ -483,9 +505,12 @@ def check_answer(
     #    ASSERT a cap or a total, and compares each to the one source entitled to say
     #    it. Adding every course's credits to the allowed set would have passed TT08
     #    and made the check meaningless — «الحد الأعلى 3 ساعات» would sail through.
-    for claim, figure in _cap_claims(text):
+    for claim, figures in _cap_claims(text):
         expected = _credit_sources(timetable, context, tool_results).get(claim)
-        if expected and figure not in expected:
+        # ANY of the clause's figures may satisfy the claim. A range is two true
+        # numbers about one limit, and requiring the first to match would refuse the
+        # more informative answer.
+        if expected and not (set(figures) & expected):
             found.append(CREDIT_CAP_CONTRADICTION)
             break
 

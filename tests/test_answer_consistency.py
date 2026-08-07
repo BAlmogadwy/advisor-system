@@ -458,7 +458,7 @@ def test_a_rejected_draft_excerpt_goes_through_the_boundarys_own_sanitiser() -> 
     assert (
         _safe_excerpt(_Boundary(), "الرقم 4012345 والمجموع 19") == "الرقم STUDENT_REF_1 والمجموع 19"
     )
-    assert len(_safe_excerpt(_Boundary(), "x" * 900)) == 400
+    assert len(_safe_excerpt(_Boundary(), "x" * 2000)) == 1500
 
 
 def test_a_sanitiser_failure_withholds_the_excerpt_rather_than_the_refusal() -> None:
@@ -645,3 +645,42 @@ def test_two_attributions_in_one_sentence_own_different_courses() -> None:
     swapped = "المقررات التي طلبتها CS323، واقترح النظام AI352."
     assert UNSUPPORTED_STUDENT_REQUEST in check_answer(swapped, tool_results=[facts])
     assert UNSUPPORTED_RECOMMENDATION in check_answer(swapped, tool_results=[facts])
+
+
+def test_a_citations_page_number_is_not_a_credit_cap() -> None:
+    """The live TT16 refusal, found only because the rejected draft was captured.
+
+    «الحد الأعلى … الدليل الإرشادي … ص 23 … يتراوح بين 12 و19 ساعة» is a correct answer
+    that cites its source, and the first number after the phrase was the PAGE. The
+    unit is what separates a load figure from a page, an edition, a year or a section
+    — and an adviser that cites the لائحة properly will always have those nearby.
+    """
+    cited = "الحد الأعلى المسموح به وفق الدليل الإرشادي، الإصدار الثالث 1447هـ، ص 23 يتراوح بين 12 و19 ساعة."
+    assert CREDIT_CAP_CONTRADICTION not in _credit(cited)
+    # A range states two true numbers about one limit; either may satisfy the claim.
+    assert CREDIT_CAP_CONTRADICTION not in _credit("الحد الأعلى يتراوح بين 12 و19 ساعة.")
+    # A wrong figure stated in hours is still caught, page number or no page number.
+    assert CREDIT_CAP_CONTRADICTION in _credit("الحد الأعلى وفق الدليل ص 23 هو 18 ساعة.")
+    # And the bare-number fallback survives, for claims that name no unit at all.
+    assert CREDIT_CAP_CONTRADICTION in _credit("the regulatory maximum is 18")
+    assert CREDIT_CAP_CONTRADICTION not in _credit("the regulatory maximum is 19")
+
+
+def test_every_figure_stated_in_hours_is_a_candidate_not_just_the_first() -> None:
+    """A clause can correct itself, and the correction is the claim.
+
+    «ليس 8 ساعات بل 19 ساعة» states the true cap second. Reading only the first
+    hour-stated number refuses an answer for the figure it explicitly denied.
+    """
+    assert CREDIT_CAP_CONTRADICTION not in _credit("الحد الأعلى ليس 8 ساعات بل 19 ساعة.")
+    assert CREDIT_CAP_CONTRADICTION not in _credit("الحد الأعلى بين 12 ساعة و19 ساعة.")
+
+
+def test_a_stray_number_that_happens_to_be_valid_cannot_launder_a_wrong_claim() -> None:
+    """Why the unit requirement carries weight even though any candidate may match.
+
+    «ص 19» is a page. If bare numbers were candidates, that 19 would satisfy the
+    regulatory set and the answer's actual claim — 18 hours — would never be
+    compared. Requiring the unit means only the figure stated AS HOURS is judged.
+    """
+    assert CREDIT_CAP_CONTRADICTION in _credit("الحد الأعلى وفق الدليل ص 19 هو 18 ساعة.")
