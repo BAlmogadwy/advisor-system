@@ -309,9 +309,9 @@ cases:
   routing:
     mode: exact
     domain: POLICY
-    expected_family: MIXED
+    expected_family: PLANNER_BUILD
     allowed_families:
-    - MIXED
+    - PLANNER_BUILD
     secondary_families:
     - POLICY
     clarification_reason: null
@@ -725,10 +725,11 @@ cases:
   routing:
     mode: one_of
     domain: PLANNER_DATA
-    expected_family: GENERAL_AGENT
+    expected_family: PLANNER_BUILD
     allowed_families:
     - GENERAL_AGENT
     - MIXED
+    - PLANNER_BUILD
     secondary_families:
     - COURSE_LOCK_REASON
     clarification_reason: null

@@ -389,7 +389,17 @@ def test_the_contract_covers_the_batch_exactly() -> None:
 
 @pytest.mark.parametrize(("qid", "expected"), sorted(BATCH_ROUTES.items()))
 def test_the_fifty_live_batch_questions(qid: str, expected: IntentFamily) -> None:
-    assert classify_intent(QUESTIONS[qid]) is expected
+    """Compared against the ROUTE, not against `classify_intent`.
+
+    `MIXED` is a precedence outcome that no capability owns, and `route_intent`
+    resolves it to the family that does. The contract records the resolved answer —
+    it is what the tool surface, the policy domain and the action are all keyed on —
+    so comparing the raw classification here would fail TT08 for using a vocabulary
+    the rest of the system stopped speaking in 6C.
+    """
+    from core.services.advisor_intent import route_intent
+
+    assert route_intent(QUESTIONS[qid]).primary_family is expected
 
 
 def test_no_batch_question_is_routed_outside_its_domain() -> None:

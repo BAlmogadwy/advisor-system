@@ -2342,6 +2342,12 @@ def answer_virtual_advisor(
     # and the policy contract all key on it. `route_intent` is offline and side-effect
     # free, so this costs a string scan and nothing else.
     route = route_intent(question)
+    # Set HERE, before the hand-off short-circuits below. Recorded on every path or
+    # the evaluator cannot tell "routed correctly and answered deterministically"
+    # from "never routed at all" — and those are the two outcomes it exists to
+    # separate.
+    telemetry["primary_family"] = str(route.primary_family)
+    telemetry["composition"] = str(route.composition)
 
     # ── the rebuild, whose refusal must not depend on the model choosing to ask ──
     #
@@ -2424,6 +2430,24 @@ def answer_virtual_advisor(
     answer = ""
     usage: dict[str, Any] = {}
     answer_model = resolved_model
+
+    # Recorded, not recomputed by the evaluator. "Which tools did the server offer"
+    # and "which did the model call" are different questions, and an evaluation that
+    # derives the first from its own copy of the routing table cannot tell an
+    # orchestration failure from a model failure — it would agree with itself.
+    # Recorded so an evaluation can attribute a failure to a LAYER. Without the
+    # family in the trace, "the answer was wrong" cannot be told apart from "the
+    # router sent it to the wrong surface", which is what made the first live batch
+    # an expensive debugging exercise rather than a measurement.
+    withheld = _withheld_for(route, scope)
+    telemetry["exposed_tools"] = sorted(
+        name
+        for name in (
+            (schema.get("function") or {}).get("name")
+            for schema in get_default_registry().tool_schemas_for_scope(scope)
+        )
+        if name and name not in withheld
+    )
 
     loop_supported = callable(getattr(llm, "chat_with_tools", None))
     if telemetry["enabled"] and not loop_supported:
@@ -2521,7 +2545,7 @@ def answer_virtual_advisor(
                 # Already retrieved, server-side, above. Advertising it now would
                 # invite a second lookup whose records were never in the contract
                 # computed before generation.
-                withheld_tools=_withheld_for(route, scope),
+                withheld_tools=withheld,
                 seeded_local_results=agent_tool_results,
                 seeded_provider_results=provider_tool_results,
                 credit_blocks_seeded=credit_blocks_seeded,
@@ -2731,7 +2755,6 @@ def answer_virtual_advisor(
         intent=route,
     )
     telemetry.update(contract.as_telemetry())
-    telemetry["composition"] = str(route.composition)
     telemetry["secondary_families"] = [str(f) for f in route.secondary_families]
     answer_language = _answer_language(question)
     policy_abstained = False

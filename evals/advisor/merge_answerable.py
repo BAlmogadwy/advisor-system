@@ -42,7 +42,9 @@ FATAL = {"DUPLICATE", "NOT_ANSWERABLE"}
 
 #: Applied to every timetable-derived question, because the field is empty on every
 #: meeting a student can actually reach.
-NO_INSTRUCTOR_GUARD = "any instructor or faculty name for a class, which no student-linked meeting records"
+NO_INSTRUCTOR_GUARD = (
+    "any instructor or faculty name for a class, which no student-linked meeting records"
+)
 
 
 def norm(text: str) -> str:
@@ -52,18 +54,24 @@ def norm(text: str) -> str:
 def load_store_ids() -> set[str]:
     ids: set[str] = set()
     for path in (ROOT / "policies").rglob("*.yaml"):
-        if path.name in ("sources.yaml", "evidence_map.yaml") or {"evidence", "tools"} & set(path.parts):
+        if path.name in ("sources.yaml", "evidence_map.yaml") or {"evidence", "tools"} & set(
+            path.parts
+        ):
             continue
         data = yaml.safe_load(path.read_text(encoding="utf-8"))
         if isinstance(data, list):
-            ids.update(str(r["policy_id"]) for r in data if isinstance(r, dict) and "policy_id" in r)
+            ids.update(
+                str(r["policy_id"]) for r in data if isinstance(r, dict) and "policy_id" in r
+            )
     return ids
 
 
 def load_prohibited() -> set[str]:
     out: set[str] = set()
     for path in (ROOT / "policies").rglob("*.yaml"):
-        if path.name in ("sources.yaml", "evidence_map.yaml") or {"evidence", "tools"} & set(path.parts):
+        if path.name in ("sources.yaml", "evidence_map.yaml") or {"evidence", "tools"} & set(
+            path.parts
+        ):
             continue
         data = yaml.safe_load(path.read_text(encoding="utf-8"))
         if isinstance(data, list):
@@ -146,15 +154,21 @@ def main() -> int:
         if "WRONG_MODE" in problems and e["answer_mode"] == "FULL":
             e["answer_mode"] = "EXPLAIN_ONLY"
             e["capabilities"] = []
-            log.append(f"{key[:34]}: FULL -> EXPLAIN_ONLY (verifier: nothing student-specific graded)")
+            log.append(
+                f"{key[:34]}: FULL -> EXPLAIN_ONLY (verifier: nothing student-specific graded)"
+            )
 
         if slice_name == "timetable-sections" or "my_timetable" in e.get("capabilities", []):
             if NO_INSTRUCTOR_GUARD not in e.get("must_not_contain", []):
                 e.setdefault("must_not_contain", []).append(NO_INSTRUCTOR_GUARD)
 
         if problems & {"UNGRADEABLE", "WEAK_GUARD"}:
-            detail = next(r["detail"] for r in by_q[key] if r["problem"] in {"UNGRADEABLE", "WEAK_GUARD"})
-            e["review_flag"] = f"{sorted(problems & {'UNGRADEABLE', 'WEAK_GUARD'})[0]}: {detail[:220]}"
+            detail = next(
+                r["detail"] for r in by_q[key] if r["problem"] in {"UNGRADEABLE", "WEAK_GUARD"}
+            )
+            e["review_flag"] = (
+                f"{sorted(problems & {'UNGRADEABLE', 'WEAK_GUARD'})[0]}: {detail[:220]}"
+            )
 
         e["reason_code"] = "NONE" if e["answer_mode"] == "FULL" else "NO_STUDENT_DATA"
         e["must_abstain"] = False  # by construction: refusing any of these is a failure
@@ -167,8 +181,11 @@ def main() -> int:
     questions_path = HERE / "questions.yaml"
     qdoc = yaml.safe_load(questions_path.read_text(encoding="utf-8"))
     qdoc["categories"].append(
-        {"id": "C16", "ar": "أسئلة قابلة للإجابة (مولّدة ومُتحقَّق منها)",
-         "range": [ID_BASE + 1, ID_BASE + len(kept)]}
+        {
+            "id": "C16",
+            "ar": "أسئلة قابلة للإجابة (مولّدة ومُتحقَّق منها)",
+            "range": [ID_BASE + 1, ID_BASE + len(kept)],
+        }
     )
     for e in kept:
         qdoc["questions"].append({"id": e["id"], "c": "C16", "ar": e["ar"]})
