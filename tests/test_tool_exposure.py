@@ -117,18 +117,34 @@ def test_a_question_routed_handoff_advertises_no_tools_at_all(question: str) -> 
     assert schemas_for(question) == set()
 
 
-def test_the_rebuild_keeps_the_tool_that_produces_its_refusal() -> None:
-    """The one planner family that is NOT a zero-tool route, and the reason matters.
+def test_a_recognised_rebuild_is_decided_before_the_model_is_asked() -> None:
+    """Zero tools, and the refusal still comes from the one place that owns it.
 
-    `ROUTED_INTENTS` excludes PLANNER_REBUILD on purpose, so that "a rebuild needs
-    confirmation" has one implementation and it lives in the executor. The hand-off
-    therefore arrives BY `build_my_timetable` refusing — which requires the model to
-    call it. Withholding it leaves the loop nothing to call, the executor never runs,
-    and «تجاهل جدولي الحالي» gets an ordinary answer instead of the confirmed planner
-    workflow: the «أكد» incident, rebuilt from the other end.
+    Exposing `build_my_timetable` and hoping the model called it was the first
+    attempt at this, and it left a hole: with `tool_choice` free, a model that simply
+    did not call it produced «سأبني لك جدولًا جديدًا يتجاهل تسجيلك الحالي» with
+    `action: None` — a promise to discard a registration the system would not have
+    touched. `answer_virtual_advisor` now executes that capability itself when the
+    route says rebuild, so the rule is still written once and the model cannot skip
+    it. With the turn decided before generation, zero tools is the honest surface.
     """
     question = "ابنِ لي جدولًا جديدًا من الصفر وتجاهل كل الشعب المسجلة عندي."
     assert route_intent(question).primary_family is IntentFamily.PLANNER_REBUILD
+    assert capabilities_for_route(route_intent(question)) == ()
+    assert schemas_for(question) == set()
+
+
+def test_an_unrecognised_rebuild_phrasing_keeps_the_tool_that_refuses_it() -> None:
+    """The second path, and the reason the first is not enough.
+
+    «Build me a timetable ignoring what I am registered in» is not recognised as a
+    rebuild — «ignoring» is not the ignore verb — so it classifies PLANNER_BUILD and
+    the short-circuit does not fire. It still reaches `build_my_timetable`, which
+    refuses on the arguments and emits the same typed route. The two paths cover each
+    other: the router catches the phrasings it knows, the executor catches the rest.
+    """
+    question = "Build me a timetable ignoring what I am registered in"
+    assert route_intent(question).primary_family is IntentFamily.PLANNER_BUILD
     assert schemas_for(question) == {"build_my_timetable"}
 
 
@@ -220,3 +236,18 @@ def test_the_data_plus_policy_route_does_not_name_the_lookup_at_all() -> None:
     route = route_intent("أريد تسجيل 19 ساعة، هل تستطيع بناء جدول كامل بهذا الحد؟")
     assert route.composition is CompositionKind.DATA_PLUS_POLICY
     assert capabilities_for_route(route) == ("build_my_timetable",)
+
+
+def test_the_rebuild_is_a_declared_handoff_family() -> None:
+    """Asserted on the MEMBERSHIP, not only on the empty result.
+
+    `capabilities_for_route` returns `()` for PLANNER_REBUILD two ways — because it
+    is a hand-off family, and because the capability map does not name it — so the
+    behaviour is the same with either removed. Today that makes them interchangeable;
+    the day a tool is added back to the map, the membership is the only thing still
+    holding the surface at zero.
+    """
+    from core.services.advisor_intent import CAPABILITY_FOR_FAMILY, _HANDOFF_FAMILIES
+
+    assert IntentFamily.PLANNER_REBUILD in _HANDOFF_FAMILIES
+    assert IntentFamily.PLANNER_REBUILD not in CAPABILITY_FOR_FAMILY

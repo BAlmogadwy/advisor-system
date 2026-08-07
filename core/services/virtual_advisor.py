@@ -17,7 +17,7 @@ from core.models import (
     TermSection,
 )
 from core.services.advisor_actions import handoff_for, handoff_for_question
-from core.services.advisor_intent import route_intent
+from core.services.advisor_intent import IntentFamily, route_intent
 from core.services.advisor_principal import AdvisorPrincipal
 from core.services.advisor_remote_boundary import (
     DUPLICATE_NOTE,
@@ -2338,6 +2338,54 @@ def answer_virtual_advisor(
     # `PLANNER_REBUILD` is not routed here — see `ROUTED_INTENTS`. It is refused
     # inside `build_my_timetable`, where the arguments are known, and answering it
     # from the question as well would leave one rule with two implementations.
+    # Computed BEFORE anything reads it — the rebuild check below, the tool schemas,
+    # and the policy contract all key on it. `route_intent` is offline and side-effect
+    # free, so this costs a string scan and nothing else.
+    route = route_intent(question)
+
+    # ── the rebuild, whose refusal must not depend on the model choosing to ask ──
+    #
+    # `PLANNER_REBUILD` is deliberately absent from `ROUTED_INTENTS`: the rule that a
+    # destructive rebuild needs confirmation lives in `build_my_timetable`, once, and
+    # a second copy here is how the audited one stops running. So the route does not
+    # answer the question — it EXECUTES that one implementation.
+    #
+    # Measured before this existed: with `tool_choice` free, a model that simply did
+    # not call the tool got «سأبني لك جدولًا جديدًا يتجاهل تسجيلك الحالي» through with
+    # `action: None` — a promise to discard the student's registration, from a system
+    # that would not have done it. Narrowing the surface to one tool in 7B made that
+    # path both easier to see and the only thing left to close.
+    #
+    # STUDENTS ONLY, for the same reason the other routes are: every planner-draft
+    # endpoint answers 403 to anyone else.
+    if principal.role == ROLE_STUDENT and route.primary_family is IntentFamily.PLANNER_REBUILD:
+        refusal = get_default_registry().execute(
+            "build_my_timetable",
+            {"keep_current_sections": False},
+            scope=scope,
+            ctx={"academic_year": academic_year, "term": term},
+        )
+        rebuilt = handoff_for(refusal)
+        if rebuilt is not None:
+            telemetry["action_handoff"] = rebuilt.action
+            telemetry["intent_route"] = rebuilt.intent
+            telemetry["rebuild_forced_server_side"] = True
+            return {
+                "ok": True,
+                "answer": rebuilt.answer(_answer_language(question)),
+                "action": rebuilt.as_payload(),
+                "model": "",
+                "usage": {},
+                "context_summary": _context_summary(context),
+                "tool_results": [refusal],
+                "verified_context": context,
+                "citations": [],
+                "cited_policy_ids": [],
+                "data_part": {"status": "NOT_ATTEMPTED", "facts": {}},
+                "policy_part": {"status": "ANSWERED", "evidence": []},
+                "agent": {**telemetry, "tool_results": [refusal]},
+            }
+
     if principal.role == ROLE_STUDENT:
         routed = handoff_for_question(question)
         if routed is not None:
@@ -2359,11 +2407,6 @@ def answer_virtual_advisor(
                 "cited_policy_ids": [],
                 "agent": {**telemetry, "tool_results": []},
             }
-
-    # Computed BEFORE the tool schemas are assembled, because the schemas are what
-    # it decides. `route_intent` is offline and side-effect free, so this costs a
-    # string scan and nothing else.
-    route = route_intent(question)
 
     boundary = boundary_for_scope(
         scope,

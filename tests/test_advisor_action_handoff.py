@@ -100,19 +100,27 @@ def _ask(client, question: str = "ابني لي جدول وتجاهل المسج
 
 
 def test_the_model_never_sees_the_route_and_never_writes_the_answer(monkeypatch) -> None:
-    """THE test. The provider is not asked a second time, and the answer is a
-    constant from this repository rather than anything a model produced."""
+    """THE test, and it got stronger.
+
+    It used to allow ONE provider call — the turn in which the model requested
+    `build_my_timetable`, whose refusal produced the route. That left the refusal
+    depending on the model choosing to ask: measured with `tool_choice` free, a model
+    that simply did not call the tool got «سأبني لك جدولًا جديدًا يتجاهل تسجيلك
+    الحالي» through with `action: None`, promising to discard a registration the
+    system would not have touched.
+
+    The server now executes that one implementation itself when the route says
+    rebuild, so the provider is not contacted at all. The rule still lives in exactly
+    one place — `build_my_timetable` — and nothing here reimplements it.
+    """
     ExecutionSpy(monkeypatch, result=REFUSAL)
-    client = ScriptedClient(
-        [_call("build_my_timetable", {"keep_current_sections": False})],
-        final="لا يمكن للنظام بناء جدول يتجاهل تسجيلك الحالي.",  # what it said live
-    )
+    client = ScriptedClient([], final="لا يمكن للنظام بناء جدول يتجاهل تسجيلك الحالي.")
     payload = _ask(client)
 
-    # ONE provider call: the turn that requested the tool. No continuation.
-    assert len(client.requests) == 1, "the model was asked to interpret the route"
+    assert client.requests == [], "the provider was contacted for a decided route"
     assert payload["answer"] != client.final
     assert payload["agent"]["action_handoff"] == OPEN_STUDENT_PLANNER
+    assert payload["agent"]["rebuild_forced_server_side"] is True
 
 
 def test_the_answer_says_the_feature_exists_and_registration_is_untouched() -> None:
@@ -136,7 +144,7 @@ def test_the_interface_gets_a_structured_action_not_prose(monkeypatch) -> None:
     """A button cannot be rendered from a sentence, and a sentence is what the
     UI would have had to parse."""
     ExecutionSpy(monkeypatch, result=REFUSAL)
-    payload = _ask(ScriptedClient([_call("build_my_timetable", {"keep_current_sections": False})]))
+    payload = _ask(ScriptedClient([]))
 
     assert payload["action"] == {
         "type": "OPEN_STUDENT_PLANNER",
@@ -154,6 +162,15 @@ def test_every_response_carries_the_action_key(monkeypatch) -> None:
 
 
 def test_an_english_question_gets_the_english_handoff(monkeypatch) -> None:
+    """And it covers the OTHER path, which is why it keeps its tool call.
+
+    The router does not recognise this phrasing — «ignoring» is not the ignore verb,
+    so it classifies PLANNER_BUILD and the server-side short-circuit does not fire.
+    That is the arrangement working, not a gap: an unrecognised rebuild still reaches
+    `build_my_timetable`, which is exposed for that family, and the executor refuses
+    exactly as it always did. The two paths cover each other, and this test is the
+    only one that exercises the second.
+    """
     ExecutionSpy(monkeypatch, result=REFUSAL)
     payload = _ask(
         ScriptedClient([_call("build_my_timetable", {"keep_current_sections": False})]),
@@ -486,14 +503,17 @@ def test_a_rebuild_is_not_routed_from_the_question(monkeypatch) -> None:
     assert handoff_for_question(REBUILD) is None
 
     spy = ExecutionSpy(monkeypatch, result=REFUSAL)
-    payload = _ask(
-        ScriptedClient([_call("build_my_timetable", {"keep_current_sections": False})]),
-        question=REBUILD,
-    )
-    # Two executions, and both matter: the server-side policy prefetch runs
-    # through the same registry, which is why `spy.count == 0` on a routed turn
-    # proves retrieval was skipped as well as the tool.
-    assert [name for name, _ in spy.calls] == ["policy_lookup", "build_my_timetable"], (
+    payload = _ask(ScriptedClient([]), question=REBUILD)
+
+    # ONE execution, and it is the capability that owns the rule. The server calls
+    # it rather than waiting for the model to — the refusal used to depend on the
+    # model choosing to ask, and a model that did not left «سأبني لك جدولًا جديدًا
+    # يتجاهل تسجيلك الحالي» to reach the student with no route at all.
+    #
+    # `policy_lookup` is ABSENT because the turn ends before the prefetch: a decided
+    # route carries no policy claim, and seeding eight records beside a fixed
+    # referral would put authority next to a sentence that cites none of them.
+    assert [name for name, _ in spy.calls] == ["build_my_timetable"], (
         "the rebuild bypassed the executor that refuses it"
     )
     assert payload["action"]["intent"] == INTENT_REBUILD_WITHOUT_CURRENT_SECTIONS
@@ -856,3 +876,40 @@ def test_a_consistency_violation_never_ships_to_the_student(monkeypatch) -> None
     )
     assert "سجلت لك" not in payload["answer"]
     assert "claimed_registration_mutation" in (payload["agent"].get("output_violations") or [])
+
+
+def test_the_server_asks_the_executor_the_DESTRUCTIVE_question(monkeypatch) -> None:
+    """The arguments matter, not just that the capability ran.
+
+    `build_my_timetable` refuses only when asked to DROP the current sections. Called
+    with `keep_current_sections=True` it builds an ordinary timetable and returns no
+    route — so a server-side call with the wrong argument reinstates the whole hole
+    while still showing an execution in the trace.
+    """
+    spy = ExecutionSpy(monkeypatch, result=REFUSAL)
+    _ask(ScriptedClient([]), question=REBUILD)
+
+    name, args = spy.calls[0]
+    assert name == "build_my_timetable"
+    assert args.get("keep_current_sections") is False
+
+
+def test_an_adviser_asking_about_a_rebuild_is_not_routed_to_the_students_planner(
+    monkeypatch,
+) -> None:
+    """The same gate the question-routed hand-offs have, on the new path.
+
+    Every planner-draft endpoint builds its principal with
+    `AdvisorPrincipal.for_student` and answers 403 to anyone else, so offering an
+    adviser that screen names a door locked against them. Without the role check the
+    server-side rebuild would do exactly that.
+    """
+    ExecutionSpy(monkeypatch, result=REFUSAL)
+    payload = va.answer_virtual_advisor(
+        question=REBUILD,
+        principal=AdvisorPrincipal(role=ROLE_ADVISOR, advisor_id=1),
+        academic_year=1448,
+        term=1,
+        client=ScriptedClient([], final="الإجابة."),
+    )
+    assert payload["agent"].get("rebuild_forced_server_side") is not True

@@ -811,9 +811,6 @@ CAPABILITY_FOR_FAMILY: dict[IntentFamily, tuple[str, ...]] = {
     IntentFamily.CURRENT_TIMETABLE: ("my_timetable",),
     IntentFamily.TIMETABLE_CLASH: ("my_clash_free_sections",),
     IntentFamily.PLANNER_BUILD: ("build_my_timetable",),
-    # The rebuild reaches its hand-off THROUGH this tool refusing. See
-    # `_HANDOFF_FAMILIES` for why it is not a zero-tool route.
-    IntentFamily.PLANNER_REBUILD: ("build_my_timetable",),
     # POLICY is deliberately ABSENT. Retrieval is server-side and unconditional,
     # and advertising `policy_lookup` again would hand the model back the decision
     # this branch took away from it — a second lookup whose records were not in the
@@ -824,18 +821,23 @@ CAPABILITY_FOR_FAMILY: dict[IntentFamily, tuple[str, ...]] = {
 #: QUESTION. Zero tools, and the provider is never contacted, so the empty tuple is
 #: the answer rather than a gap to fall through.
 #:
-#: PLANNER_REBUILD IS DELIBERATELY ABSENT, and the omission is load-bearing. Its
-#: hand-off is not produced from the question — `ROUTED_INTENTS` excludes it on
-#: purpose, so that the confirmation rule has ONE implementation — it is produced by
-#: `build_my_timetable` REFUSING, which requires the model to call the tool. Withhold
-#: it and the refusal never happens: the loop has nothing to call, the executor never
-#: runs, and «تجاهل جدولي الحالي» gets an ordinary answer instead of the confirmed
-#: planner workflow. That is the «أكد» incident, rebuilt from the other end.
+#: PLANNER_REBUILD belongs here TOO, but it took a measurement to get right. Its
+#: refusal is not written in this module — `ROUTED_INTENTS` excludes it so that the
+#: confirmation rule has ONE implementation, inside `build_my_timetable`. Exposing
+#: the tool and hoping the model called it was the first attempt, and it left a hole:
+#: with `tool_choice` free, a model that simply did not call it produced «سأبني لك
+#: جدولًا جديدًا يتجاهل تسجيلك الحالي» with `action: None` — a promise to discard a
+#: student's registration from a system that would not have done it.
+#:
+#: `answer_virtual_advisor` now EXECUTES that one implementation when the route says
+#: rebuild, so the refusal no longer depends on a model's choice and the provider is
+#: not contacted at all. Zero tools is then the honest answer.
 _HANDOFF_FAMILIES = frozenset(
     {
         IntentFamily.PLANNER_VIEW_ALTERNATIVES,
         IntentFamily.PLANNER_EDIT_DRAFT,
         IntentFamily.PLANNER_SELECT_PREFERRED,
+        IntentFamily.PLANNER_REBUILD,
     }
 )
 
