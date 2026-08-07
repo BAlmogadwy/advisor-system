@@ -237,10 +237,21 @@ _INLINE_BULLET = re.compile(r"(?=\s[-*•–—]\s)")
 #: «AI1 3 ساعات» is a statement about AI1 no matter how the catalogue spells it.
 _COURSE_TOKEN = re.compile(r"(?<![A-Za-z0-9])[A-Za-z]{2,4}-?\d{1,3}(?![A-Za-z0-9])")
 
-#: A clock time. Removed before any figure is read, because `_fold` turns «09:00»
-#: into «09 00» and a timetable answer is full of them — a load phrase anywhere in
-#: the same clause would otherwise claim a current load of 9.
-_CLOCK = re.compile(r"\d{1,2}\s*:\s*\d{2}")
+#: Numbers that are already something else, removed before any figure is read.
+#: `_fold` erases the punctuation that makes them recognisable — «09:00» becomes
+#: «09 00» and «1448/1» becomes «1448 1» — so this runs on the raw clause.
+#:
+#: Each entry was a live refusal, not a precaution: a clock time made a load phrase
+#: claim 9 hours, a citation's «ص 23» became a regulatory cap, and the TERM the
+#: answer was planning for — «في الفصل 1448/1» — became a retained load of 1. They
+#: are the same defect three times: a course adviser's sentences are full of numbers,
+#: and almost none of them are credit hours.
+_NOT_A_FIGURE = re.compile(
+    r"\d{1,2}\s*:\s*\d{2}"  # clock time
+    r"|\d{3,4}\s*/\s*\d{1,2}"  # academic term, 1448/1
+    r"|(?:ص|صفحة|p\.|page)\s*\d{1,3}",  # cited page
+    re.IGNORECASE,
+)
 
 #: A number stated AS CREDIT HOURS. Preferred over any bare number in the clause,
 #: because a correct citation puts other numbers in the way: «الحد الأعلى … الدليل
@@ -325,7 +336,7 @@ def _cap_claims(text: str) -> list[tuple[str, int]]:
     reading past the line break turned the first course's 3 into a claimed load of 3,
     and refused a correct TT16 answer for contradicting the true 15.
     """
-    clauses = [_fold(_CLOCK.sub(" ", c)) for c in _clauses(text)]
+    clauses = [_fold(_NOT_A_FIGURE.sub(" ", c)) for c in _clauses(text)]
     out: list[tuple[str, tuple[int, ...]]] = []
     for kind, phrases in _CAP_CLAIMS:
         figures: tuple[int, ...] = ()

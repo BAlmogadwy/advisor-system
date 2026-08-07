@@ -684,3 +684,21 @@ def test_a_stray_number_that_happens_to_be_valid_cannot_launder_a_wrong_claim() 
     compared. Requiring the unit means only the figure stated AS HOURS is judged.
     """
     assert CREDIT_CAP_CONTRADICTION in _credit("الحد الأعلى وفق الدليل ص 19 هو 18 ساعة.")
+    # And when the page is the ONLY number, the bare-number fallback would reach it —
+    # so the page marker is stripped before any figure is read, not merely outranked.
+    assert CREDIT_CAP_CONTRADICTION not in _credit("الحد الأعلى مذكور في الدليل ص 23.")
+
+
+def test_the_term_being_planned_is_not_a_retained_load() -> None:
+    """The last failure of the final live batch, and the third of its kind.
+
+    «وهي مقررات مسجلة لديك حاليًا في الفصل 1448/1» names the TERM. Folding turns
+    «1448/1» into «1448 1», the four-digit year is skipped, and the standalone «1»
+    became a claimed current load against a true 15. A clock time, a cited page and
+    an academic term are one defect three times: an adviser's sentences are full of
+    numbers and almost none of them are credit hours.
+    """
+    assert CREDIT_CAP_CONTRADICTION not in _credit("وهي مقررات مسجلة لديك حاليًا في الفصل 1448/1:")
+    # The term does not shield a real claim sharing the clause.
+    assert CREDIT_CAP_CONTRADICTION in _credit("لديك حاليًا 12 ساعة في الفصل 1448/1.")
+    assert CREDIT_CAP_CONTRADICTION not in _credit("لديك حاليًا 15 ساعة في الفصل 1448/1.")
