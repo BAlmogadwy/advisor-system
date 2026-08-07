@@ -58,12 +58,52 @@ _MAX_TOOLS = 3
 
 #: What a sentence is ABOUT, in the crude way a model reading it would notice. Keyed
 #: on words, so the mock can rank a broad registry without being told the answer.
+#: Ordered most-specific first. A general word like «مقرر» appears in almost every
+#: question, so a table that puts it early ranks `lookup_course` above the capability
+#: the sentence is actually about — which is how a broad surface produced three
+#: irrelevant calls on TT13.
 _AFFINITY: tuple[tuple[tuple[str, ...], tuple[str, ...]], ...] = (
+    # "registered but has no lecture time" — a registered-timetable read, not a
+    # prerequisite question, even though it says «مقرر».
+    (("وقت محاضرة", "ما له وقت", "بدون وقت", "no meeting", "lecture time"), ("my_timetable",)),
+    # "am I still recommended to take it" — the recommendation and the record.
+    (
+        ("توصي", "يوصى", "ضمن المقررات التي", "recommend"),
+        ("recommend_courses", "get_student_context"),
+    ),
+    # "if I defer X, what falls behind" — the chain, then the ranking.
+    (("اجلت", "أجلت", "تاخر", "تتأخر", "defer", "delay"), ("why_course_locked", "my_progress")),
+    # "choose three by impact, within the load limit" — ranking plus the term's
+    # recommendation.
+    (
+        ("اخترها", "مساحة", "بحد الساعات", "choose", "capacity"),
+        ("my_progress", "recommend_courses"),
+    ),
     (
         ("متطلب", "المتطلبات", "مقفل", "يفتح", "ينتظر", "prerequisite", "locked", "unlock"),
         ("why_course_locked", "course_prerequisites"),
     ),
-    (("اولوي", "الأولوية", "اهم", "ترتيب", "priority", "rank"), ("my_progress",)),
+    # «رتّب … حسب تأثير كل واحد» is a ranking question that never says «أولوية», and
+    # it mentions «الخطة» — so without this it matched the plan rule and fetched the
+    # degree plan instead of the impact ranking.
+    (
+        (
+            "رتب",
+            "رتّب",
+            "تاثير",
+            "تأثير",
+            "اثرها",
+            "أثرها",
+            "اولوي",
+            "الأولوية",
+            "اهم",
+            "ترتيب",
+            "priority",
+            "rank",
+            "impact",
+        ),
+        ("my_progress", "why_course_locked"),
+    ),
     (("تعارض", "شعب", "clash", "section"), ("my_clash_free_sections",)),
     (("جدولي", "المسجل", "registered", "my timetable"), ("my_timetable",)),
     (("ابن", "جدول", "بناء", "build", "timetable"), ("build_my_timetable",)),
@@ -71,6 +111,23 @@ _AFFINITY: tuple[tuple[tuple[str, ...], tuple[str, ...]], ...] = (
     (("يوصي", "توصي", "recommend"), ("recommend_courses",)),
     (("مقرر", "course"), ("lookup_course",)),
 )
+
+
+def _latest_question(messages: list[dict]) -> str:
+    """The student's sentence, not the whole prompt.
+
+    The user message carries `verified_context` as JSON before the question, and that
+    JSON mentions recommendations, timetables and prerequisites for every student. A
+    fake that ranks tools over the whole message is matching the CONTEXT, not the
+    question — which is how «إذا أجلت AI331 فصلًا» came out as a recommendation
+    lookup. A real model reads the question; so does this.
+    """
+    for message in reversed(messages or []):
+        content = str(message.get("content") or "")
+        marker = "latest_question:"
+        if marker in content:
+            return content.split(marker, 1)[1].strip()
+    return str((messages[-1] or {}).get("content") or "") if messages else ""
 
 
 def _relevant_tools(question: str, exposed: list[str]) -> list[str]:
@@ -173,7 +230,7 @@ class MockProvider:
     def chat_with_tools(self, messages, *, tools=None, **kwargs) -> ToolChatResult:
         offered = [(t.get("function") or {}).get("name") for t in (tools or [])]
         self.exposed_tools = [name for name in offered if name]
-        question = str((messages[-1] or {}).get("content") or "")
+        question = _latest_question(messages)
 
         # A real turn calls what the QUESTION needs and stops. Walking the whole
         # advertised list would call twelve tools on a GENERAL_AGENT question and
@@ -236,7 +293,7 @@ class MockProvider:
         )
 
     def chat(self, messages, **kwargs) -> ChatResult:
-        question = str((messages[-1] or {}).get("content") or "")
+        question = _latest_question(messages)
         final = self.unsafe_final or _render([], question)
         self._account(messages, final)
         return ChatResult(content=final, model=self.resolve_model(), usage={})

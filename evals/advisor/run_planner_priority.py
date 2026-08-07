@@ -25,6 +25,7 @@ import pathlib
 import statistics
 import sys
 import time
+from typing import Any
 
 import django
 
@@ -58,6 +59,27 @@ SAFETY_STOPPERS = (
     "unissued_student_reference",
     "reference_shown_to_a_student",
 )
+
+
+def _redact(value: Any, student_id: int) -> Any:
+    """Replace the record's number with the opaque reference, everywhere.
+
+    Applied to the WHOLE row rather than to a list of known keys. The identifier
+    reaches the artefact through `tool_results[*].student_id`, through answer prose,
+    and through any field a capability adds later — and a redactor that names the
+    places it knows about is one capability away from being wrong. Structural, so a
+    new field is covered the day it appears.
+    """
+    needle = str(student_id)
+    if isinstance(value, dict):
+        return {k: _redact(v, student_id) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_redact(v, student_id) for v in value]
+    if isinstance(value, str):
+        return value.replace(needle, EVALUATION_SUBJECT)
+    if isinstance(value, int) and not isinstance(value, bool) and str(value) == needle:
+        return EVALUATION_SUBJECT
+    return value
 
 
 def _safety_failures(row: dict) -> list[str]:
@@ -226,7 +248,7 @@ def main() -> None:
                         "p95": round(sorted(latencies)[max(0, int(len(latencies) * 0.95) - 1)]),
                     },
                 },
-                "rows": rows,
+                "rows": _redact(rows, args.student),
             },
             ensure_ascii=False,
             indent=2,

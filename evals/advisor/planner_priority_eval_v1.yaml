@@ -1170,7 +1170,6 @@ cases:
   tool_contract:
     required_all:
     - my_progress
-    - why_course_locked
     required_any: []
     allowed:
     - my_progress
@@ -1282,11 +1281,10 @@ cases:
   tool_contract:
     required_all:
     - why_course_locked
-    - my_progress
     required_any: []
     allowed:
-    - why_course_locked
     - my_progress
+    - why_course_locked
     forbidden: []
     surface_mode: narrowed
   expected_action: null
@@ -1601,24 +1599,26 @@ cases:
   expected_behavior: Determine whether AI1 is a placeholder and explain that a concrete permitted elective
     is needed for course-level priority.
   tool_contract:
-    required_all: []
-    required_any:
-    - - my_plan_by_term
-      - course_prerequisites
+    required_all:
+    - my_progress
+    required_any: []
     allowed:
-    - my_plan_by_term
     - course_prerequisites
     - lookup_course
+    - my_plan_by_term
+    - my_progress
     forbidden: []
     surface_mode: narrowed
   expected_action: null
   policy_contract:
     mode: data_only
   must_assert:
-  - Distinguish a placeholder requirement from a concrete course.
+  - AI1 is a plan placeholder, not a concrete course.
+  - Course-level priority requires a concrete elective selection first.
   must_not_claim:
   - Do not treat AI1 automatically as a concrete course.
   - Do not refuse for lack of policy.
+  - listing specific elective alternatives without calling a capability that supplies them
   routing:
     mode: exact
     domain: COURSE_DATA
@@ -1637,25 +1637,22 @@ cases:
   expected_behavior: Separate academic-plan importance and prerequisite readiness from section-catalogue
     presence.
   tool_contract:
-    required_all: []
-    required_any:
-    - - my_progress
-      - why_course_locked
-    - - my_clash_free_sections
-      - build_my_timetable
+    required_all:
+    - my_progress
+    required_any: []
     allowed:
+    - build_my_timetable
+    - my_clash_free_sections
     - my_progress
     - why_course_locked
-    - my_clash_free_sections
-    - build_my_timetable
     forbidden: []
     surface_mode: narrowed
   expected_action: null
   policy_contract:
     mode: data_only
   must_assert:
-  - Say academic importance may remain even when no section is recorded.
-  - Keep NOT_ON_FILE distinct from not offered.
+  - Academic importance is established from the prerequisite/priority evidence.
+  - If the catalogue reports no section, that alone does not mean the university did not offer the course.
   must_not_claim:
   - Do not equate prerequisites satisfied with registration permission.
   - Do not infer a seat.
@@ -1679,7 +1676,6 @@ cases:
   tool_contract:
     required_all:
     - my_progress
-    - recommend_courses
     required_any: []
     allowed:
     - my_progress
@@ -1703,6 +1699,9 @@ cases:
     clarification_reason: null
     requires_prior_context: false
     composition: SINGLE
+  evidence_required:
+  - verified_context.recommendations
+  - verified_context.recommendation_policy
 - id: CP18
   category: priority_under_cap
   role: student
@@ -1792,8 +1791,8 @@ cases:
     required_any: []
     allowed:
     - my_progress
-    - why_course_locked
     - recommend_courses
+    - why_course_locked
     forbidden: []
     surface_mode: narrowed
   expected_action: null
@@ -1817,6 +1816,6 @@ cases:
     - COURSE_UNLOCKS
     clarification_reason: null
     requires_prior_context: true
-    composition: SINGLE
+    composition: MULTI_CAPABILITY
   setup:
     prior_course_code: AI331

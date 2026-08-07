@@ -686,6 +686,24 @@ class AdvisorRoute:
         return (self.primary_family, *self.secondary_families)
 
 
+#: "Name them", as opposed to "which one". A ranking question answered by one course
+#: needs one tool; a question that also asks for the list needs the capability that
+#: holds the names.
+_ENUMERATE = ("اعطني", "أعطني", "اذكر", "ما هي", "وما هي", "اسرد", "list them", "name them")
+
+
+def _asks_for_two_kinds_of_evidence(question: str, hits: list[IntentFamily]) -> bool:
+    """Is this a same-domain question that genuinely needs two capabilities?
+
+    Narrow by construction: both course families must fire AND the sentence must ask
+    for an enumeration. Widening it to "two families" would recreate CP02.
+    """
+    if not ({IntentFamily.COURSE_PRIORITY, IntentFamily.COURSE_UNLOCKS} <= set(hits)):
+        return False
+    folded = _fold(question)
+    return any(_fold(phrase) in folded for phrase in _ENUMERATE)
+
+
 def route_intent(question: str) -> AdvisorRoute:
     """The whole routing decision for one question.
 
@@ -701,6 +719,23 @@ def route_intent(question: str) -> AdvisorRoute:
     domains = {_DOMAIN[h] for h in hits}
     if "policy" in domains and len(domains) > 1:
         composition = CompositionKind.DATA_PLUS_POLICY
+    elif _asks_for_two_kinds_of_evidence(question, hits):
+        # SAME DOMAIN, TWO FAMILIES, AND STILL MULTI — the one explicit exception,
+        # and it is not "two families fired".
+        #
+        # CP02 «أي مقرر عندي يفتح أكبر عدد من المقررات مباشرة؟» fires COURSE_PRIORITY
+        # and COURSE_UNLOCKS and wants ONE answer: which course wins. It stays SINGLE,
+        # because handing it `why_course_locked` is the reverse-direction defect 6A.2
+        # removed from that exact question.
+        #
+        # CP20 «لا تقل لي فقط إن المقرر مهم؛ أعطني سبب ترتيبه، والمقررات التي يفتحها
+        # مباشرة» asks for the ranking AND the named list. `my_progress` has the
+        # ranking and the counts; only `why_course_locked` has the NAMES. Two pieces
+        # of evidence, so two tools.
+        #
+        # The trigger is the enumerate verb — «أعطني», «اذكر», «ما هي» — which is what
+        # distinguishes "which one" from "and list them".
+        composition = CompositionKind.MULTI_CAPABILITY
     elif len(domains) > 1:
         # DOMAINS, not families. Two markers of the same domain firing is what
         # precedence exists to resolve — CP02 «أي مقرر عندي يفتح أكبر عدد من المقررات
