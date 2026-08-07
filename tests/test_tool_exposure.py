@@ -247,7 +247,7 @@ def test_the_rebuild_is_a_declared_handoff_family() -> None:
     the day a tool is added back to the map, the membership is the only thing still
     holding the surface at zero.
     """
-    from core.services.advisor_intent import CAPABILITY_FOR_FAMILY, _HANDOFF_FAMILIES
+    from core.services.advisor_intent import _HANDOFF_FAMILIES, CAPABILITY_FOR_FAMILY
 
     assert IntentFamily.PLANNER_REBUILD in _HANDOFF_FAMILIES
     assert IntentFamily.PLANNER_REBUILD not in CAPABILITY_FOR_FAMILY

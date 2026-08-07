@@ -907,7 +907,7 @@ def test_an_adviser_asking_about_a_rebuild_is_not_routed_to_the_students_planner
     ExecutionSpy(monkeypatch, result=REFUSAL)
     payload = va.answer_virtual_advisor(
         question=REBUILD,
-        principal=AdvisorPrincipal(role=ROLE_ADVISOR, advisor_id=1),
+        principal=AdvisorPrincipal(role=ROLE_ADVISOR, student_id=MINE),
         academic_year=1448,
         term=1,
         client=ScriptedClient([], final="الإجابة."),
