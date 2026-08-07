@@ -619,10 +619,7 @@ cases:
     not offer CS372.
   tool_contract:
     required_all: []
-    required_any:
-    - - lookup_course
-      - my_timetable
-      - get_student_context
+    required_any: []
     allowed:
     - lookup_course
     - my_timetable
@@ -633,11 +630,11 @@ cases:
   policy_contract:
     mode: data_only
   must_assert:
-  - Limit NOT_ON_FILE to this system's section data.
-  - Use current registration evidence when present.
+  - No section recorded in this system does not prove the university did not offer the course.
   must_not_claim:
   - Do not claim the university did not offer CS372.
   - Do not automatically call the warning a technical error.
+  - any student-specific registration fact without student-record evidence
   routing:
     mode: exact
     domain: GENERAL
@@ -648,6 +645,8 @@ cases:
     clarification_reason: null
     requires_prior_context: false
     composition: SINGLE
+  evidence_required:
+  - NOT_ON_FILE_semantics
 - id: TT18
   category: timetable_clash
   role: student

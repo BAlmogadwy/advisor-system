@@ -625,6 +625,12 @@ class OpenAICompatibleLLMClient:
             headers["Authorization"] = f"Bearer {self.config.api_key}"
         return headers
 
+    #: Outbound inference attempts and the ones that came back. Instance state
+    #: rather than a global: two clients in one process are two budgets, and a
+    #: module-level counter would make a test's calls count against a live run.
+    http_calls: int = 0
+    http_responses: int = 0
+
     def _request(
         self,
         method: str,
@@ -662,6 +668,14 @@ class OpenAICompatibleLLMClient:
         last: LLMError | None = None
 
         for attempt in range(attempts):
+            # COUNTED HERE, at the transport, and counted per ATTEMPT. The runner
+            # used to add one per question, which was not a cost measurement: a
+            # tool-driven answer is two to four outbound calls, and a retried one is
+            # more. A retry that ultimately fails still cost a request, so it is
+            # counted before the socket is opened rather than after a response
+            # arrives — the alternative undercounts exactly the failures a budget
+            # exists to stop.
+            self.http_calls += 1
             request = Request(
                 f"{self.config.base_url}{path}",
                 data=body,
@@ -689,6 +703,7 @@ class OpenAICompatibleLLMClient:
                             "to read a response from an unconfigured destination."
                         )
                     text = response.read().decode("utf-8")
+                    self.http_responses += 1
             except HTTPError as exc:
                 last, retryable, wait = self._classify_http(exc)
             except URLError as exc:

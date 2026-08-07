@@ -170,7 +170,7 @@ def main() -> None:
             calls = client.provider_calls
             prompt, completion = client.prompt_tokens, client.completion_tokens
         else:
-            calls = int(agent.get("provider_calls") or usage.get("provider_calls") or 0)
+            calls = int(agent.get("provider_http_calls") or 0)
             prompt = int(usage.get("prompt_tokens") or 0)
             completion = int(usage.get("completion_tokens") or 0)
         totals["prompt_tokens"] += prompt

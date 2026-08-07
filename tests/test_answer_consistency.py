@@ -191,3 +191,86 @@ def test_naming_a_recommended_course_without_a_provenance_claim_is_not_flagged()
     assert UNSUPPORTED_STUDENT_REQUEST not in _check(answer)
     assert UNSUPPORTED_RECOMMENDATION not in _check(answer)
     assert _check(answer) == []
+
+
+# ── 8, rewritten: credit figures are checked against the source that owns them ──
+
+_POLICY = {
+    "tool": "policy_lookup",
+    "ok": True,
+    "direct_policy_evidence": [
+        {"policy_id": "TU.LOAD.SEMESTER_RANGE", "text": "الحد الأعلى 19 ساعة والحد الأدنى 12 ساعة."}
+    ],
+}
+_CONTEXT = {"recommendation_policy": {"max_recommended_credit_hours": 18}}
+
+
+def test_the_three_credit_authorities_may_all_appear_in_one_answer() -> None:
+    """TT08, the case this check refused on the live canary.
+
+    «أريد تسجيل 19 ساعة» deserves an answer that states three true numbers from three
+    different places: 19 requested and permitted, 18 advised by the recommender, 15
+    already held. Only one of those is in `credit_summary`, and comparing them all
+    against it called the other two contradictions — refusing the question this whole
+    branch exists for.
+    """
+    facts = {
+        **TIMETABLE,
+        "credit_summary": {
+            "retained_credit_hours": 15,
+            "new_credit_hours": 0,
+            "total_plan_credit_hours": 15,
+            "new_courses_credit_cap": 19,
+        },
+    }
+    answer = "طلبت 19 ساعة، والموصى به 18 ساعة، ولديك حاليًا 15 ساعة."
+    assert CREDIT_CAP_CONTRADICTION not in check_answer(
+        answer, tool_results=[facts, _POLICY], context=_CONTEXT
+    )
+
+
+def test_a_figure_from_no_source_at_all_is_still_a_contradiction() -> None:
+    """Source-aware is not the same as permissive."""
+    facts = {
+        **TIMETABLE,
+        "credit_summary": {
+            "retained_credit_hours": 15,
+            "new_credit_hours": 0,
+            "total_plan_credit_hours": 15,
+            "new_courses_credit_cap": 19,
+        },
+    }
+    assert CREDIT_CAP_CONTRADICTION in check_answer(
+        "الجدول يحتوي 7 ساعات.", tool_results=[facts, _POLICY], context=_CONTEXT
+    )
+
+
+def test_attributing_the_advisory_number_to_the_regulation_still_fails() -> None:
+    """The reason "exempt anything with a citation" was the wrong repair.
+
+    18 is a real number from a real source — it is the recommender's advice. Calling
+    it «الحد الأعلى» attributes it to the لائحة, which says 19. The figure exists;
+    the attribution is false, and misattribution is precisely what the citation
+    contract exists to stop.
+    """
+    facts = {
+        **TIMETABLE,
+        "credit_summary": {
+            "retained_credit_hours": 0,
+            "new_credit_hours": 0,
+            "total_plan_credit_hours": 0,
+            "new_courses_credit_cap": 19,
+        },
+    }
+    assert CREDIT_CAP_CONTRADICTION in check_answer(
+        "الحد الأعلى 18 ساعة معتمدة.", tool_results=[facts, _POLICY], context=_CONTEXT
+    )
+    assert CREDIT_CAP_CONTRADICTION not in check_answer(
+        "الحد الأعلى 19 ساعة معتمدة.", tool_results=[facts, _POLICY], context=_CONTEXT
+    )
+
+
+def test_credit_numbers_in_prose_with_no_timetable_are_not_checked() -> None:
+    """«وش عندي بكرة الأحد؟» builds nothing, so nothing can contradict it."""
+    answer = "مقرر AI221 بثلاث ساعات، والحد 19 ساعة معتمدة، صفحة 28."
+    assert check_answer(answer, tool_results=[_POLICY], context=_CONTEXT) == []

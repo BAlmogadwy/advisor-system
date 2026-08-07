@@ -167,11 +167,88 @@ def _codes(rows: Any, key: str = "course_code") -> set[str]:
     return {str(r.get(key) or "").upper() for r in rows if isinstance(r, dict) and r.get(key)}
 
 
+#: «الحد الأعلى» / «الحد الأقصى» — a claim about what the REGULATION permits, as
+#: opposed to what the student asked for or what the recommender advises. All three
+#: are different numbers and one answer may state them all; what it may not do is
+#: attribute one to the wrong authority.
+_REGULATORY_MAX = (
+    "الحد الاعلي",
+    "الحد الاقصي",
+    "الحد الأعلى",
+    "الحد الأقصى",
+    "الحد النظامي",
+    "regulatory maximum",
+    "maximum permitted",
+)
+
+
+def _regulatory_claim(text: str) -> int | None:
+    """The number this sentence presents as the REGULATION's ceiling, if any."""
+    folded = _fold(text)
+    for phrase in _REGULATORY_MAX:
+        index = folded.find(_fold(phrase))
+        if index < 0:
+            continue
+        match = re.search(r"(\d{1,2})", folded[index : index + 80])
+        if match:
+            return int(match.group(1))
+    return None
+
+
+def _credit_figures(
+    timetable: dict[str, Any],
+    context: dict[str, Any] | None,
+    tool_results: list[dict[str, Any]] | None,
+) -> dict[str, set[int]]:
+    """Every credit number the answer may state, grouped by the source that owns it."""
+    summary = timetable.get("credit_summary") or {}
+    planning = {
+        int(v)
+        for v in (
+            summary.get("new_courses_credit_cap"),
+            summary.get("new_credit_hours"),
+            summary.get("retained_credit_hours"),
+            summary.get("total_plan_credit_hours"),
+        )
+        if isinstance(v, int)
+    }
+
+    policy = (context or {}).get("recommendation_policy") or {}
+    advisory = {
+        int(v)
+        for v in (
+            policy.get("max_recommended_credit_hours"),
+            policy.get("min_recommended_credit_hours"),
+        )
+        if isinstance(v, int)
+    }
+
+    # Regulated figures come from the records actually retrieved this turn: a number
+    # is only "the regulation's" if a governing record says so.
+    regulatory: set[int] = set()
+    for row in tool_results or []:
+        if not isinstance(row, dict) or row.get("tool") != "policy_lookup":
+            continue
+        for bucket in ("direct_policy_evidence", "citable", "policies"):
+            for record in row.get(bucket) or []:
+                if isinstance(record, dict):
+                    blob = " ".join(str(record.get(k) or "") for k in ("text", "statement", "rule"))
+                    regulatory |= {int(m.group(1)) for m in re.finditer(r"\b(\d{1,2})\b", blob)}
+
+    return {
+        "planning": planning,
+        "advisory": advisory,
+        "regulatory": regulatory,
+        "any": planning | advisory | regulatory,
+    }
+
+
 def check_answer(
     answer: str,
     *,
     tool_results: list[dict[str, Any]] | None = None,
     action: dict[str, Any] | None = None,
+    context: dict[str, Any] | None = None,
 ) -> list[str]:
     """Every consistency violation in this answer, as codes. Empty means shippable.
 
@@ -247,26 +324,34 @@ def check_answer(
     if phrase and _affirmative(text, phrase):
         found.append(SEAT_CLAIM)
 
-    # 8. A cap the payload did not state. Only checked when the payload HAS one, and
-    #    only against the digits beside a credit word, so an unrelated number cannot
-    #    contradict it.
-    summary = timetable.get("credit_summary") or {}
-    cap = summary.get("new_courses_credit_cap")
-    if cap:
-        stated = {
-            int(m.group(1)) for m in re.finditer(r"(\d{1,2})\s*(?:ساع|hour|credit)", _fold(text))
-        }
-        allowed = {
-            int(v)
-            for v in (
-                cap,
-                summary.get("new_credit_hours"),
-                summary.get("retained_credit_hours"),
-                summary.get("total_plan_credit_hours"),
-            )
-            if isinstance(v, int)
-        }
-        if stated and not stated <= allowed:
+    # 8. Credit figures, checked against the source that OWNS each kind.
+    #
+    #    The first version compared every number beside a credit word against the
+    #    timetable payload alone, and it refused TT08 on the live canary — the
+    #    question this whole branch exists for. A correct answer to «أريد تسجيل 19
+    #    ساعة» states three true numbers from three places: 19 requested, 18 advised
+    #    by `recommendation_policy`, 19 permitted by the لائحة, beside 15 already
+    #    held. Only one of those is in `credit_summary`, so the check called the rest
+    #    contradictions.
+    #
+    #    Exempting "numbers with a citation" would be the easy repair and the wrong
+    #    one: it lets «الحد الأعلى 18 ساعة» through, which is false, and misattributing
+    #    a figure to the regulation is exactly what the citation contract exists to
+    #    stop. So a figure must come from SOME source, and a figure presented as the
+    #    REGULATORY ceiling must come from the regulatory one.
+    figures = _credit_figures(timetable, context, tool_results)
+    stated = {int(m.group(1)) for m in re.finditer(r"(\d{1,2})\s*(?:ساع|hour|credit)", _fold(text))}
+    #    THE TIMETABLE GUARD IS LOAD-BEARING, and dropping it while making the check
+    #    source-aware was a second false positive, caught by the suite rather than
+    #    live: «مقرر AI221 بثلاث ساعات، والحد 19 ساعة معتمدة، صفحة 28» is a correct
+    #    answer to «وش عندي بكرة الأحد؟», and that turn built no timetable for its
+    #    figures to contradict. A credit number in ordinary prose is not a claim
+    #    about a plan the turn never produced.
+    if timetable and stated and figures["any"] and not stated <= figures["any"]:
+        found.append(CREDIT_CAP_CONTRADICTION)
+    else:
+        claimed = _regulatory_claim(text)
+        if claimed is not None and figures["regulatory"] and claimed not in figures["regulatory"]:
             found.append(CREDIT_CAP_CONTRADICTION)
 
     # 9/10. The adviser mutates nothing. A hand-off is an OFFER, so an answer that

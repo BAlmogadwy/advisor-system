@@ -18,7 +18,12 @@ from core.models import (
 )
 from core.services.advisor_actions import handoff_for, handoff_for_question
 from core.services.advisor_clarification import clarification_for
-from core.services.advisor_intent import IntentFamily, route_intent
+from core.services.advisor_intent import (
+    CompositionKind,
+    IntentFamily,
+    capabilities_for_route,
+    route_intent,
+)
 from core.services.advisor_principal import AdvisorPrincipal
 from core.services.advisor_remote_boundary import (
     DUPLICATE_NOTE,
@@ -1341,6 +1346,7 @@ def _output_contract_violations(
     is_student: bool,
     tool_results: list[dict[str, Any]] | None = None,
     action: dict[str, Any] | None = None,
+    context: dict[str, Any] | None = None,
 ) -> list[str]:
     """What is wrong with this answer, as a list of codes. Empty means shippable.
 
@@ -1392,7 +1398,7 @@ def _output_contract_violations(
     # answer agree with the facts it was given — but they share the retry, the
     # re-validation and the refusal below, because a turn with two gates has two
     # places for a violation to be handled differently.
-    violations.extend(check_answer(text, tool_results=tool_results, action=action))
+    violations.extend(check_answer(text, tool_results=tool_results, action=action, context=context))
 
     return violations
 
@@ -2465,6 +2471,40 @@ def answer_virtual_advisor(
     # and "which did the model call" are different questions, and an evaluation that
     # derives the first from its own copy of the routing table cannot tell an
     # orchestration failure from a model failure — it would agree with itself.
+    # ── a MULTI_CAPABILITY route's evidence is the SERVER'S obligation ──
+    #
+    # Measured on the live canary: TT20 «ليش ما ضفت AI491؟ هل المشكلة في المتطلب
+    # السابق أو في وقت الشعبة؟» asks two independent questions, was advertised both
+    # tools, and the provider called one — then answered the prerequisite half and
+    # left the timetable half unaddressed. `why_course_locked` structurally cannot
+    # say whether the course was excluded for a section-fit reason.
+    #
+    # Retrying and asking the model to please call the other tool is the weaker fix:
+    # it costs another paid turn and still depends on the same choice. When the ROUTE
+    # declares two capabilities, the server fetches whichever the model did not, and
+    # the provider writes the answer over complete evidence.
+    #
+    # SINGLE and GENERAL_AGENT are untouched — there the model's selection IS the
+    # decision, and completing it would be the server answering a question it did not
+    # route.
+    def _complete_required_evidence(
+        results: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        if route.composition is not CompositionKind.MULTI_CAPABILITY:
+            return results
+        obtained = {r.get("tool") for r in results if isinstance(r, dict)}
+        missing = [t for t in (capabilities_for_route(route) or ()) if t not in obtained]
+        for tool in missing:
+            logger.info("Completing required evidence for %s: %s", route.composition, tool)
+            results = [
+                *results,
+                get_default_registry().execute(
+                    tool, {}, scope=scope, ctx={"academic_year": academic_year, "term": term}
+                ),
+            ]
+            telemetry.setdefault("server_completed_tools", []).append(tool)
+        return results
+
     # Recorded so an evaluation can attribute a failure to a LAYER. Without the
     # family in the trace, "the answer was wrong" cannot be told apart from "the
     # router sent it to the wrong surface", which is what made the first live batch
@@ -2581,6 +2621,7 @@ def answer_virtual_advisor(
                 credit_blocks_seeded=credit_blocks_seeded,
             )
             telemetry["loop_used"] = True
+            agent_tool_results = _complete_required_evidence(agent_tool_results)
             if answer == _ACTION_HANDOFF_SENTINEL:
                 # Every downstream check is skipped ON PURPOSE. There is nothing
                 # to ground, cite or sanitise: no model wrote this, and the text
@@ -2898,6 +2939,9 @@ def answer_virtual_advisor(
         boundary=boundary,
         is_student=is_student,
         tool_results=tool_results,
+        # `recommendation_policy` lives here, not in the tool results, and the credit
+        # check needs it to tell an advisory cap from a contradiction.
+        context=context,
     )
     if violations:
         # `grounding_retry` keeps its name: stored turns, the eval battery and the
@@ -2947,6 +2991,7 @@ def answer_virtual_advisor(
                 # corrected answer against nothing, and the retry would launder
                 # every consistency violation away.
                 tool_results=tool_results,
+                context=context,
             )
             if corrected_answer
             else violations
@@ -3004,5 +3049,14 @@ def answer_virtual_advisor(
             "status": "ABSTAINED" if policy_abstained else "ANSWERED",
             "evidence": citations,
         },
-        "agent": {**telemetry, "tool_results": agent_tool_results},
+        "agent": {
+            **telemetry,
+            "tool_results": agent_tool_results,
+            # Read off the CLIENT, which counted them at the socket. The runner used
+            # to add one per question; a tool-driven answer is two to four outbound
+            # calls and a retried one is more, so a per-question count made every
+            # cost and budget figure wrong in the same direction.
+            "provider_http_calls": int(getattr(llm, "http_calls", 0) or 0),
+            "successful_provider_responses": int(getattr(llm, "http_responses", 0) or 0),
+        },
     }
