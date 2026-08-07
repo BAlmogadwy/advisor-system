@@ -134,6 +134,12 @@ def test_a_deterministic_action_must_cost_no_inference() -> None:
     paid = {**free, "usage": {"provider_calls": 1}}
     assert score_row(case, paid)["scores"]["action_correct"] is False
 
+    # And no evidence may have run either, whoever ran it. A hand-off the server
+    # decided before generation has nothing to retrieve; a row that shows a tool
+    # result is not the deterministic path, it is the loop wearing its name.
+    for key in ("model_tools_called", "executed_evidence_tools"):
+        assert score_row(case, {**free, key: ["my_progress"]})["scores"]["action_correct"] is False
+
 
 def test_a_data_only_case_refused_on_policy_fails_policy_compliance() -> None:
     """The exact defect 6B removed, kept as a scored dimension so it cannot return."""
@@ -196,3 +202,48 @@ def test_the_mock_renders_from_tool_results_and_never_from_the_contract() -> Non
         [{"tool": "my_progress", "ok": True, "counts": {"open": 1, "locked": 2}}], "س"
     )
     assert rendered != other
+
+
+def test_evidence_the_server_completed_still_satisfies_the_contract() -> None:
+    """TT20, the second failure the live canary reported.
+
+    The route required two capabilities; the provider called one and the server
+    completed the other, so the answer WAS built on both. Scoring the model's request
+    list alone marked a correctly served answer wrong — and would have rewarded
+    removing the completion step, which is the opposite of the intent. The contract
+    says which evidence the answer must rest on, not who had to fetch it.
+    """
+    scored = score_row(
+        _case(),
+        _row(model_tools_called=[], executed_evidence_tools=["my_progress"]),
+    )
+    assert scored["scores"]["tool_calls_correct"] is True
+    # And the gap is REPORTED, not buried: a model that stops choosing tools must be
+    # visible even while the turn keeps passing.
+    assert scored["tools"]["server_completed"] == ["my_progress"]
+    assert scored["tools"]["model_called"] == []
+
+
+def test_evidence_that_never_ran_at_all_still_fails() -> None:
+    """The narrowing above is not a waiver — nothing fetched it, so nothing grounds it."""
+    scored = score_row(_case(), _row(model_tools_called=[], executed_evidence_tools=[]))
+    assert scored["scores"]["tool_calls_correct"] is False
+
+
+def test_a_forbidden_tool_fails_even_when_only_the_server_ran_it() -> None:
+    """The required half is satisfied here on purpose.
+
+    A first version of this test left the required tool out as well, so the row failed
+    for the wrong reason and a mutant that checked `forbidden` against the model's
+    list alone survived it. The evidence a turn rests on is forbidden or it is not,
+    whoever fetched it — a contract that forbids a capability the router then
+    completes is a disagreement worth failing, not one worth hiding.
+    """
+    scored = score_row(
+        _case(),
+        _row(
+            model_tools_called=["my_progress"],
+            executed_evidence_tools=["my_progress", "why_course_locked"],
+        ),
+    )
+    assert scored["scores"]["tool_calls_correct"] is False

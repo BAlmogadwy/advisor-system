@@ -167,64 +167,88 @@ def _codes(rows: Any, key: str = "course_code") -> set[str]:
     return {str(r.get(key) or "").upper() for r in rows if isinstance(r, dict) and r.get(key)}
 
 
-#: «الحد الأعلى» / «الحد الأقصى» — a claim about what the REGULATION permits, as
-#: opposed to what the student asked for or what the recommender advises. All three
-#: are different numbers and one answer may state them all; what it may not do is
-#: attribute one to the wrong authority.
-_REGULATORY_MAX = (
-    "الحد الاعلي",
-    "الحد الاقصي",
-    "الحد الأعلى",
-    "الحد الأقصى",
-    "الحد النظامي",
-    "regulatory maximum",
-    "maximum permitted",
+#: Each kind of cap-or-load claim, and the words that make a sentence one. A number
+#: is only checked when the sentence CLAIMS something about a limit or a total —
+#: «AI352 مقرر بثلاث ساعات» states a course's credits and asserts no cap at all.
+_CAP_CLAIMS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    (
+        "regulatory",
+        (
+            "الحد الاعلي",
+            "الحد الاقصي",
+            "الحد النظامي",
+            "اللائحه تسمح",
+            "regulatory maximum",
+            "maximum permitted",
+        ),
+    ),
+    (
+        "advisory",
+        (
+            "الموصي به",
+            "الحد الموصي",
+            "ينصح",
+            "advisory limit",
+            "recommended limit",
+            "recommended maximum",
+        ),
+    ),
+    ("requested_cap", ("طلبت", "الحد المطلوب", "بحد اقصي", "requested", "you asked for")),
+    (
+        "retained",
+        ("مسجل حاليا", "الحاليه", "لديك حاليا", "المحتفظ بها", "currently registered", "retained"),
+    ),
+    ("new", ("المضافه", "الجديده", "newly added", "new courses total")),
+    # Bare stems, so «المجموع» and «مجموع الخطة» are both the same claim.
+    ("total", ("مجموع", "اجمالي", "proposed total", "total load")),
 )
 
+#: How far after the phrase a number still belongs to it.
+_CLAIM_WINDOW = 60
 
-def _regulatory_claim(text: str) -> int | None:
-    """The number this sentence presents as the REGULATION's ceiling, if any."""
+#: A number standing on its own — NOT the digits inside a course code. The offline
+#: gate caught this the moment rejected drafts became visible: «والمحتفظ بها: AI1،
+#: AI331، CS323» made the check read a retained load of "1", because the first digit
+#: after the phrase was the 1 in AI1. Eleven of fifty answers were refused over it.
+_STANDALONE_NUMBER = re.compile(r"(?<![A-Za-z0-9])(\d{1,2})(?![0-9])")
+
+
+def _cap_claims(text: str) -> list[tuple[str, int]]:
+    """Every (kind, number) this answer asserts about a cap or a load."""
     folded = _fold(text)
-    for phrase in _REGULATORY_MAX:
-        index = folded.find(_fold(phrase))
-        if index < 0:
-            continue
-        match = re.search(r"(\d{1,2})", folded[index : index + 80])
-        if match:
-            return int(match.group(1))
-    return None
+    out: list[tuple[str, int]] = []
+    for kind, phrases in _CAP_CLAIMS:
+        figure = None
+        # EVERY occurrence, not the first. An answer commonly names the courses it
+        # retained before it names how many hours they are — stopping at the first
+        # mention reads the list, not the claim.
+        for phrase in phrases:
+            for hit in re.finditer(re.escape(_fold(phrase)), folded):
+                window = folded[hit.end() : hit.end() + _CLAIM_WINDOW]
+                match = _STANDALONE_NUMBER.search(window)
+                if match:
+                    figure = int(match.group(1))
+                    break
+            if figure is not None:
+                break
+        if figure is not None:
+            out.append((kind, figure))
+    return out
 
 
-def _credit_figures(
+def _credit_sources(
     timetable: dict[str, Any],
     context: dict[str, Any] | None,
     tool_results: list[dict[str, Any]] | None,
 ) -> dict[str, set[int]]:
-    """Every credit number the answer may state, grouped by the source that owns it."""
+    """The numbers each authority is entitled to state. Empty means "not established".
+
+    An empty set means the check stays silent for that kind: an answer may not be
+    refused for citing a limit the turn never retrieved evidence about.
+    """
     summary = timetable.get("credit_summary") or {}
-    planning = {
-        int(v)
-        for v in (
-            summary.get("new_courses_credit_cap"),
-            summary.get("new_credit_hours"),
-            summary.get("retained_credit_hours"),
-            summary.get("total_plan_credit_hours"),
-        )
-        if isinstance(v, int)
-    }
-
     policy = (context or {}).get("recommendation_policy") or {}
-    advisory = {
-        int(v)
-        for v in (
-            policy.get("max_recommended_credit_hours"),
-            policy.get("min_recommended_credit_hours"),
-        )
-        if isinstance(v, int)
-    }
 
-    # Regulated figures come from the records actually retrieved this turn: a number
-    # is only "the regulation's" if a governing record says so.
     regulatory: set[int] = set()
     for row in tool_results or []:
         if not isinstance(row, dict) or row.get("tool") != "policy_lookup":
@@ -235,11 +259,17 @@ def _credit_figures(
                     blob = " ".join(str(record.get(k) or "") for k in ("text", "statement", "rule"))
                     regulatory |= {int(m.group(1)) for m in re.finditer(r"\b(\d{1,2})\b", blob)}
 
+    def one(value: Any) -> set[int]:
+        return {int(value)} if isinstance(value, int) else set()
+
     return {
-        "planning": planning,
-        "advisory": advisory,
         "regulatory": regulatory,
-        "any": planning | advisory | regulatory,
+        "advisory": one(policy.get("max_recommended_credit_hours"))
+        | one(policy.get("min_recommended_credit_hours")),
+        "requested_cap": one(summary.get("new_courses_credit_cap")),
+        "retained": one(summary.get("retained_credit_hours")),
+        "new": one(summary.get("new_credit_hours")),
+        "total": one(summary.get("total_plan_credit_hours")),
     }
 
 
@@ -324,35 +354,24 @@ def check_answer(
     if phrase and _affirmative(text, phrase):
         found.append(SEAT_CLAIM)
 
-    # 8. Credit figures, checked against the source that OWNS each kind.
+    # 8. CAP AND LOAD claims only, each against the source that owns it.
     #
-    #    The first version compared every number beside a credit word against the
-    #    timetable payload alone, and it refused TT08 on the live canary — the
-    #    question this whole branch exists for. A correct answer to «أريد تسجيل 19
-    #    ساعة» states three true numbers from three places: 19 requested, 18 advised
-    #    by `recommendation_policy`, 19 permitted by the لائحة, beside 15 already
-    #    held. Only one of those is in `credit_summary`, so the check called the rest
-    #    contradictions.
+    #    Two live refusals of TT08 taught this. The first version compared every
+    #    number beside a credit word against `credit_summary`; source-awareness fixed
+    #    the authorities but not the SCOPE, so «AI352 مقرر بثلاث ساعات» — an ordinary
+    #    true sentence about a course — was still a "cap contradiction", because 3 is
+    #    not 15, 18 or 19.
     #
-    #    Exempting "numbers with a citation" would be the easy repair and the wrong
-    #    one: it lets «الحد الأعلى 18 ساعة» through, which is false, and misattributing
-    #    a figure to the regulation is exactly what the citation contract exists to
-    #    stop. So a figure must come from SOME source, and a figure presented as the
-    #    REGULATORY ceiling must come from the regulatory one.
-    figures = _credit_figures(timetable, context, tool_results)
-    stated = {int(m.group(1)) for m in re.finditer(r"(\d{1,2})\s*(?:ساع|hour|credit)", _fold(text))}
-    #    THE TIMETABLE GUARD IS LOAD-BEARING, and dropping it while making the check
-    #    source-aware was a second false positive, caught by the suite rather than
-    #    live: «مقرر AI221 بثلاث ساعات، والحد 19 ساعة معتمدة، صفحة 28» is a correct
-    #    answer to «وش عندي بكرة الأحد؟», and that turn built no timetable for its
-    #    figures to contradict. A credit number in ordinary prose is not a claim
-    #    about a plan the turn never produced.
-    if timetable and stated and figures["any"] and not stated <= figures["any"]:
-        found.append(CREDIT_CAP_CONTRADICTION)
-    else:
-        claimed = _regulatory_claim(text)
-        if claimed is not None and figures["regulatory"] and claimed not in figures["regulatory"]:
+    #    A course's own credit hours are not a claim about a limit or a load, and this
+    #    check has no business reading them. It now looks only for sentences that
+    #    ASSERT a cap or a total, and compares each to the one source entitled to say
+    #    it. Adding every course's credits to the allowed set would have passed TT08
+    #    and made the check meaningless — «الحد الأعلى 3 ساعات» would sail through.
+    for claim, figure in _cap_claims(text):
+        expected = _credit_sources(timetable, context, tool_results).get(claim)
+        if expected and figure not in expected:
             found.append(CREDIT_CAP_CONTRADICTION)
+            break
 
     # 9/10. The adviser mutates nothing. A hand-off is an OFFER, so an answer that
     #       carries one may not also report the thing as done.

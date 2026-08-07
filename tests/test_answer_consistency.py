@@ -138,8 +138,10 @@ def test_the_correct_seat_disclaimer_is_not_a_seat_claim() -> None:
 # ── 8: credits ───────────────────────────────────────────────────────────────
 
 
-def test_a_credit_figure_the_payload_never_stated_is_caught() -> None:
-    assert CREDIT_CAP_CONTRADICTION in _check("الجدول يحتوي 12 ساعة.")
+def test_a_load_figure_the_payload_never_stated_is_caught() -> None:
+    # A CLAIMED load, not any number beside a credit word — see the narrowing at the
+    # foot of this file for why the difference is the whole check.
+    assert CREDIT_CAP_CONTRADICTION in _check("المجموع 12 ساعة.")
 
 
 def test_the_payloads_own_figures_are_not_flagged() -> None:
@@ -229,8 +231,8 @@ def test_the_three_credit_authorities_may_all_appear_in_one_answer() -> None:
     )
 
 
-def test_a_figure_from_no_source_at_all_is_still_a_contradiction() -> None:
-    """Source-aware is not the same as permissive."""
+def test_a_total_from_no_source_at_all_is_still_a_contradiction() -> None:
+    """Source-aware is not the same as permissive: a CLAIMED total is still checked."""
     facts = {
         **TIMETABLE,
         "credit_summary": {
@@ -241,7 +243,7 @@ def test_a_figure_from_no_source_at_all_is_still_a_contradiction() -> None:
         },
     }
     assert CREDIT_CAP_CONTRADICTION in check_answer(
-        "الجدول يحتوي 7 ساعات.", tool_results=[facts, _POLICY], context=_CONTEXT
+        "مجموع الخطة 7 ساعات.", tool_results=[facts, _POLICY], context=_CONTEXT
     )
 
 
@@ -381,3 +383,120 @@ def test_a_nested_structure_is_projected_all_the_way_down(tool: str, payload: di
 
     # …and it still carries what the answer actually needs.
     assert "course_code" in keys
+
+
+# ── 8, narrowed: only CAP AND LOAD claims are figures this check owns ──
+
+_FACTS = {
+    **TIMETABLE,
+    "credit_summary": {
+        "retained_credit_hours": 15,
+        "new_credit_hours": 0,
+        "total_plan_credit_hours": 15,
+        "new_courses_credit_cap": 19,
+    },
+}
+
+
+def _credit(answer: str) -> list[str]:
+    return check_answer(answer, tool_results=[_FACTS, _POLICY], context=_CONTEXT)
+
+
+def test_a_courses_own_credit_hours_are_not_a_cap_claim() -> None:
+    """The second live TT08 refusal, and the reason the first fix was incomplete.
+
+    Source-awareness fixed WHICH authority each number was compared against, but not
+    WHICH numbers were claims at all — so «AI352 مقرر بثلاث ساعات», an ordinary true
+    sentence, was a "cap contradiction" because 3 is not 15, 18 or 19. A course's
+    credit hours assert nothing about a limit or a load, and this check has no
+    business reading them.
+    """
+    assert CREDIT_CAP_CONTRADICTION not in _credit("مقرر AI352 بثلاث ساعات، أي 3 ساعات معتمدة.")
+    assert CREDIT_CAP_CONTRADICTION not in _credit(
+        "AI352 is 3 credit hours; your retained load is 15, the advisory limit is 18, "
+        "and the regulatory maximum is 19."
+    )
+
+
+def test_each_cap_claim_is_still_checked_against_its_own_owner() -> None:
+    """And the narrowing did not weaken any of them.
+
+    Adding every course's credits to the allowed set would have passed the test above
+    and made the check meaningless — «الحد الأعلى 3 ساعات» would then sail through.
+    Each of these states a limit or a total, so each is compared to the one source
+    entitled to state it.
+    """
+    assert CREDIT_CAP_CONTRADICTION in _credit("the regulatory maximum is 18")
+    assert CREDIT_CAP_CONTRADICTION in _credit("the advisory limit is 19")
+    assert CREDIT_CAP_CONTRADICTION in _credit("your proposed total is 19")
+    assert CREDIT_CAP_CONTRADICTION in _credit("الحد الأعلى 3 ساعات معتمدة.")
+    assert CREDIT_CAP_CONTRADICTION not in _credit("the regulatory maximum is 19")
+    assert CREDIT_CAP_CONTRADICTION not in _credit("the advisory limit is 18")
+    assert CREDIT_CAP_CONTRADICTION not in _credit("your proposed total is 15")
+
+
+# ── the rejected draft, as a diagnostic that cannot become a leak ─────────────
+
+
+def test_a_rejected_draft_excerpt_goes_through_the_boundarys_own_sanitiser() -> None:
+    """Why the diagnostic reuses `sanitise_messages` instead of its own regex.
+
+    Two paid canary runs were spent guessing which number tripped the credit check,
+    because the refusal replaced the text that contained it. Writing the draft to the
+    trace fixes that — but a draft is model output, so it is exactly the material the
+    remote boundary exists to filter. Routing it through the boundary means anything
+    the transport learns to protect, the trace protects on the same day.
+    """
+    from core.services.virtual_advisor import _safe_excerpt
+
+    class _Boundary:
+        def sanitise_messages(self, messages):
+            return [
+                {**m, "content": m["content"].replace("4012345", "STUDENT_REF_1")} for m in messages
+            ]
+
+    assert (
+        _safe_excerpt(_Boundary(), "الرقم 4012345 والمجموع 19") == "الرقم STUDENT_REF_1 والمجموع 19"
+    )
+    assert len(_safe_excerpt(_Boundary(), "x" * 900)) == 400
+
+
+def test_a_sanitiser_failure_withholds_the_excerpt_rather_than_the_refusal() -> None:
+    """A diagnostic must never be able to break the path it is diagnosing."""
+    from core.services.virtual_advisor import _safe_excerpt
+
+    class _Broken:
+        def sanitise_messages(self, messages):
+            raise RuntimeError("boom")
+
+    assert _safe_excerpt(_Broken(), "الرقم 4012345") == "<excerpt withheld: sanitiser failed>"
+
+
+def test_the_digits_inside_a_course_code_are_not_a_load_figure() -> None:
+    """What the first rejected-draft capture showed, on its first run.
+
+    «الشعب المسجلة والمحتفظ بها: AI1، AI331، CS323، CS372 … الساعات المحتفظ بها 15»
+    names the retained courses before it names the retained hours. Reading the first
+    digit after the phrase read the 1 in AI1, and eleven of the fifty offline answers
+    were refused for a load figure no one had claimed. A claim's number is a number,
+    not a character inside an identifier — and it can come after the list, so every
+    occurrence of the phrase is considered, not just the first.
+    """
+    answer = (
+        "الشعب المسجلة حاليًا والمحتفظ بها: AI1، AI331، CS323، CS372. "
+        "الساعات المحتفظ بها 15 والمضافة 0."
+    )
+    assert CREDIT_CAP_CONTRADICTION not in _credit(answer)
+    # A longer retained list pushes the real figure past the window of the FIRST
+    # mention. Reading only that mention would not merely miss the claim — it would
+    # stop CHECKING it, so a wrong figure would pass silently. Asserted on a wrong
+    # figure for exactly that reason: absence proves nothing here.
+    long_list = (
+        "الشعب المحتفظ بها: AI1، AI331، CS323، CS372، AI221، CS111، GSE1، FE1، MATH201، STAT305. "
+    )
+    assert CREDIT_CAP_CONTRADICTION not in _credit(long_list + "الساعات المحتفظ بها 15.")
+    assert CREDIT_CAP_CONTRADICTION in _credit(long_list + "الساعات المحتفظ بها 12.")
+    # And a genuinely wrong figure in the same shape is still caught.
+    assert CREDIT_CAP_CONTRADICTION in _credit(
+        "الشعب المحتفظ بها: AI1، CS323. الساعات المحتفظ بها 12."
+    )

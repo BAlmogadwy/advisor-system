@@ -193,9 +193,24 @@ def main() -> None:
             "policy_contract_failure": agent.get("policy_contract_failure"),
             "cited_policy_ids": payload.get("cited_policy_ids") or [],
             "exposed_tools": agent.get("exposed_tools") or [],
-            "tools_called": [t.get("name") for t in (agent.get("tools_called") or [])],
+            # THREE FIELDS, NOT ONE. The old single `tools_called` recorded only what
+            # the MODEL asked for, and TT20 was scored a failure for it: the route
+            # required two capabilities, the provider called one, the server completed
+            # the other — evidence the answer was correctly built on. Merging them
+            # would have credited the model with the server's work; keeping only the
+            # model's list marks a well-served answer wrong. Both are facts; the
+            # scorer needs to be able to tell them apart.
+            "model_tools_called": agent.get("model_tools_called") or [],
+            "server_completed_tools": agent.get("server_completed_tools") or [],
+            "executed_evidence_tools": agent.get("executed_evidence_tools") or [],
             "tool_results": agent.get("tool_results") or [],
             "output_violations": agent.get("output_violations") or [],
+            # The text that TRIPPED the postconditions, sanitised at the boundary and
+            # capped. Without it a violation is a code with no evidence: two paid
+            # canary runs were spent guessing which number `inconsistent_credit_cap`
+            # objected to, because the refusal had already replaced the draft. The
+            # student never sees this; the trace is gitignored.
+            "rejected_drafts": agent.get("rejected_drafts") or [],
             "grounding_refused": agent.get("grounding_refused"),
             "citation_refused": agent.get("citation_refused"),
             "boundary_refusals": agent.get("boundary_refusals"),
@@ -217,7 +232,7 @@ def main() -> None:
         flag = "ERR" if error else ("!!" if failures else ("ACT" if row["action"] else "   "))
         print(
             f"[{index:2}/{len(cases)}] {row['id']} {flag} {elapsed:>6}ms "
-            f"exposed={len(row['exposed_tools']):<2} called={','.join(row['tools_called']) or '-':<28} "
+            f"exposed={len(row['exposed_tools']):<2} called={','.join(row['model_tools_called']) or '-':<20} ev={','.join(row['executed_evidence_tools']) or '-':<24} "
             f"{(row['answer'] or error or '')[:44]}"
         )
         if failures and args.stop_on_safety_failure:

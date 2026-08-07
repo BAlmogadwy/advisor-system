@@ -66,10 +66,34 @@ def _routing(case: dict, row: dict) -> tuple[dict, bool]:
     return detail, ok
 
 
+def _executed_names(row: dict) -> list[str]:
+    """Everything this turn ran, whoever asked for it — model or server."""
+    model = list(
+        row["model_tools_called"] if "model_tools_called" in row else row.get("tools_called") or []
+    )
+    executed = list(row["executed_evidence_tools"] if "executed_evidence_tools" in row else model)
+    return sorted(set(model) | set(executed))
+
+
 def _tools(case: dict, row: dict) -> tuple[dict, bool, bool]:
     contract = case["tool_contract"]
     exposed = list(row.get("exposed_tools") or [])
-    called = list(row.get("tools_called") or [])
+    # WHAT THE MODEL ASKED FOR versus WHAT THE TURN ACTUALLY RAN. The contract says
+    # which evidence the answer must rest on; it does not say who had to fetch it.
+    # When the server completes a required capability the model skipped, the evidence
+    # IS present and the answer IS grounded — TT20 was marked wrong on live Alibaba
+    # for precisely that, which measures the wrong thing twice over: it fails a good
+    # answer, and it would reward a router that stopped completing evidence.
+    # Fallback on ABSENCE, not on emptiness. A trace written before the split has no
+    # such key; one written after may legitimately say the model called nothing, and
+    # `or` would quietly rewrite that into the old field's contents — scoring a row
+    # against evidence it never claimed.
+    model_called = list(
+        row["model_tools_called"] if "model_tools_called" in row else row.get("tools_called") or []
+    )
+    executed = list(
+        row["executed_evidence_tools"] if "executed_evidence_tools" in row else model_called
+    )
     allowed = set(contract.get("allowed") or [])
     required_all = set(contract.get("required_all") or [])
     forbidden = set(contract.get("forbidden") or [])
@@ -96,14 +120,26 @@ def _tools(case: dict, row: dict) -> tuple[dict, bool, bool]:
     elif case["routing"].get("composition") == "SINGLE" and required_all:
         surface_ok = set(exposed) <= required_all
 
-    # CALLS: the contract's own semantics, literally.
-    calls_ok = required_all <= set(called)
+    # CALLS: required evidence against what RAN, forbidden against what the model
+    # ASKED FOR. The two halves have different owners. A forbidden tool can only
+    # reach the loop if the model requested it, so that half stays the model's
+    # record; a required one is satisfied by whoever ran it.
+    calls_ok = required_all <= set(executed)
     for group in contract.get("required_any") or []:
-        calls_ok = calls_ok and bool(set(group) & set(called))
-    calls_ok = calls_ok and not (set(called) & forbidden)
+        calls_ok = calls_ok and bool(set(group) & set(executed))
+    calls_ok = calls_ok and not ((set(model_called) | set(executed)) & forbidden)
 
     return (
-        {"expected_surface": sorted(allowed | required_all), "exposed": exposed, "called": called},
+        {
+            "expected_surface": sorted(allowed | required_all),
+            "exposed": exposed,
+            "model_called": model_called,
+            "executed": executed,
+            # Kept as a REPORTED metric, not a scored one: how much of the required
+            # evidence the server had to fetch is the number that says whether the
+            # model is improving, and burying it inside a pass would lose it.
+            "server_completed": sorted(set(executed) - set(model_called)),
+        },
         surface_ok,
         calls_ok,
     )
@@ -128,7 +164,10 @@ def _action(case: dict, row: dict) -> tuple[dict, bool]:
     # A decided route costs no inference. That is a product contract now, not an
     # optimisation, so it is scored rather than noted.
     ok = ok and int((row.get("usage") or {}).get("provider_calls") or 0) == 0
-    ok = ok and not row.get("exposed_tools") and not row.get("tools_called")
+    # Both lists, and by helper rather than by key: reading the pre-split name here
+    # would have been a silent no-op the day the field was renamed — the check would
+    # pass because the key was missing, not because no tool ran.
+    ok = ok and not row.get("exposed_tools") and not _executed_names(row)
     return detail, ok
 
 
@@ -157,7 +196,7 @@ def _clarification(case: dict, row: dict) -> bool:
     """A clarify case must ASK, not execute. Wording is not scored."""
     if case["routing"]["mode"] != "clarify":
         return True
-    return not (row.get("tools_called") or [])
+    return not _executed_names(row)
 
 
 def score_row(case: dict, row: dict) -> dict:

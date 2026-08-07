@@ -1436,6 +1436,22 @@ _POLICY_ABSTENTION_EN = (
 )
 
 
+def _safe_excerpt(boundary: ToolBoundary, answer: str) -> str:
+    """A rejected draft, safe to write to a trace file.
+
+    Through the boundary's OWN sanitiser rather than a private regex, so the
+    diagnostic can never leak by the back door what the transport refuses at the
+    front — if a new identifier shape becomes protected, this becomes protected with
+    it. Capped, because a diagnostic that carries the whole answer is the answer.
+    """
+    try:
+        sanitised = boundary.sanitise_messages([{"role": "assistant", "content": answer}])
+        text = str((sanitised or [{}])[0].get("content") or "")
+    except Exception:  # noqa: BLE001 - a diagnostic must never break the refusal path
+        return "<excerpt withheld: sanitiser failed>"
+    return text[:400]
+
+
 def _output_correction(
     violations: list[str], boundary: ToolBoundary, offending_ids: list[str]
 ) -> str:
@@ -2948,6 +2964,21 @@ def answer_virtual_advisor(
         # conversation UI already read it.
         telemetry["grounding_retry"] = True
         telemetry["output_violations"] = violations
+        # THE REJECTED DRAFT, sanitised, as diagnostic telemetry only. Two paid runs
+        # were spent guessing which number tripped the credit check, because the
+        # refusal replaced the text that contained it. The student still receives the
+        # refusal; this rides on the trace, which is gitignored.
+        #
+        # It goes through the SAME sanitiser the transport uses, so a draft cannot
+        # leak by the diagnostic door what the boundary refuses at the front — and it
+        # is capped, because a diagnostic that carries the whole answer is the answer.
+        telemetry.setdefault("rejected_drafts", []).append(
+            {
+                "attempt": len(telemetry.get("rejected_drafts") or []) + 1,
+                "violations": violations,
+                "safe_excerpt": _safe_excerpt(boundary, answer),
+            }
+        )
         corrected_answer: str | None = None
         try:
             retry_messages = boundary.sanitise_messages(
@@ -3058,5 +3089,18 @@ def answer_virtual_advisor(
             # cost and budget figure wrong in the same direction.
             "provider_http_calls": int(getattr(llm, "http_calls", 0) or 0),
             "successful_provider_responses": int(getattr(llm, "http_responses", 0) or 0),
+            # THREE LISTS, because they mean three different things and conflating
+            # them would report the server's work as the model's. TT20's provider
+            # called one capability; the route required two, so the server fetched
+            # the second. `executed_evidence_tools` is what the answer actually rests
+            # on; `model_tools_called` is what the model chose. Reporting one number
+            # would either fail a well-served answer or hide a model that stopped
+            # choosing — and the gap between them is the metric worth watching.
+            "model_tools_called": [
+                t.get("name") for t in (telemetry.get("tools_called") or []) if isinstance(t, dict)
+            ],
+            "executed_evidence_tools": sorted(
+                {r.get("tool") for r in agent_tool_results if isinstance(r, dict) and r.get("tool")}
+            ),
         },
     }
