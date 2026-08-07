@@ -17,6 +17,7 @@ from core.models import (
     TermSection,
 )
 from core.services.advisor_actions import handoff_for, handoff_for_question
+from core.services.advisor_clarification import clarification_for
 from core.services.advisor_intent import IntentFamily, route_intent
 from core.services.advisor_principal import AdvisorPrincipal
 from core.services.advisor_remote_boundary import (
@@ -2391,6 +2392,35 @@ def answer_virtual_advisor(
                 "policy_part": {"status": "ANSWERED", "evidence": []},
                 "agent": {**telemetry, "tool_results": [refusal]},
             }
+
+    # ── the question that cannot be answered because it names nothing ──
+    #
+    # Before the provider, for the same reason the hand-offs are: "ask which course
+    # they mean" written in a system prompt competes with twelve other instructions
+    # and with a tool that looks answerable, and a model that skips it invents the
+    # subject. Measured on the contract, three questions are in this shape and all
+    # three executed a data tool about a course nobody named.
+    #
+    # HISTORY FIRST. «هذا المقرر» after a turn about AI331 has a referent, and asking
+    # again is worse than guessing because the student already told us.
+    asked = clarification_for(question, history=history)
+    if asked is not None:
+        telemetry["clarification_reason"] = asked.reason
+        return {
+            "ok": True,
+            "answer": asked.answer(_answer_language(question)),
+            "action": None,
+            "model": "",
+            "usage": {},
+            "context_summary": _context_summary(context),
+            "tool_results": [],
+            "verified_context": context,
+            "citations": [],
+            "cited_policy_ids": [],
+            "data_part": {"status": "NOT_ATTEMPTED", "facts": {}},
+            "policy_part": {"status": "ANSWERED", "evidence": []},
+            "agent": {**telemetry, "tool_results": []},
+        }
 
     if principal.role == ROLE_STUDENT:
         routed = handoff_for_question(question)

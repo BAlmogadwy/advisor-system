@@ -36,6 +36,7 @@ cases:
     allowed:
     - build_my_timetable
     forbidden: []
+    surface_mode: narrowed
   expected_action: null
   policy_contract:
     mode: data_only
@@ -72,6 +73,7 @@ cases:
     allowed: []
     forbidden:
     - build_my_timetable
+    surface_mode: narrowed
   expected_action:
     type: OPEN_STUDENT_PLANNER
     intent: VIEW_ALTERNATIVES
@@ -109,6 +111,7 @@ cases:
     allowed:
     - build_my_timetable
     forbidden: []
+    surface_mode: narrowed
   expected_action: null
   policy_contract:
     mode: data_only
@@ -147,6 +150,7 @@ cases:
     allowed:
     - build_my_timetable
     forbidden: []
+    surface_mode: narrowed
   expected_action: null
   policy_contract:
     mode: data_only
@@ -183,6 +187,7 @@ cases:
     allowed:
     - build_my_timetable
     forbidden: []
+    surface_mode: narrowed
   expected_action: null
   policy_contract:
     mode: data_only
@@ -218,6 +223,7 @@ cases:
     allowed:
     - build_my_timetable
     forbidden: []
+    surface_mode: narrowed
   expected_action: null
   policy_contract:
     mode: data_only
@@ -254,6 +260,7 @@ cases:
     allowed:
     - build_my_timetable
     forbidden: []
+    surface_mode: narrowed
   expected_action: null
   policy_contract:
     mode: data_only
@@ -291,6 +298,7 @@ cases:
     allowed:
     - build_my_timetable
     forbidden: []
+    surface_mode: narrowed
   expected_action: null
   policy_contract:
     mode: required
@@ -329,6 +337,7 @@ cases:
     allowed: []
     forbidden:
     - build_my_timetable
+    surface_mode: narrowed
   expected_action:
     type: OPEN_STUDENT_PLANNER
     intent: EDIT_DRAFT
@@ -369,6 +378,7 @@ cases:
     allowed: []
     forbidden:
     - build_my_timetable
+    surface_mode: narrowed
   expected_action:
     type: OPEN_STUDENT_PLANNER
     intent: EDIT_DRAFT
@@ -405,6 +415,7 @@ cases:
     - my_timetable
     forbidden:
     - build_my_timetable
+    surface_mode: narrowed
   expected_action: null
   policy_contract:
     mode: data_only
@@ -439,6 +450,7 @@ cases:
     - my_timetable
     forbidden:
     - build_my_timetable
+    surface_mode: general_registry
   expected_action: null
   policy_contract:
     mode: data_only
@@ -474,6 +486,7 @@ cases:
     allowed:
     - my_timetable
     forbidden: []
+    surface_mode: general_registry
   expected_action: null
   policy_contract:
     mode: data_only
@@ -506,6 +519,7 @@ cases:
     allowed:
     - my_clash_free_sections
     forbidden: []
+    surface_mode: narrowed
   expected_action: null
   policy_contract:
     mode: data_only
@@ -542,6 +556,7 @@ cases:
     - my_clash_free_sections
     - my_timetable
     forbidden: []
+    surface_mode: narrowed
   expected_action: null
   policy_contract:
     mode: data_only
@@ -575,6 +590,7 @@ cases:
     allowed:
     - build_my_timetable
     forbidden: []
+    surface_mode: narrowed
   expected_action: null
   policy_contract:
     mode: data_only
@@ -612,6 +628,7 @@ cases:
     - my_timetable
     - get_student_context
     forbidden: []
+    surface_mode: general_registry
   expected_action: null
   policy_contract:
     mode: data_only
@@ -644,6 +661,7 @@ cases:
     allowed:
     - my_clash_free_sections
     forbidden: []
+    surface_mode: narrowed
   expected_action: null
   policy_contract:
     mode: data_only
@@ -676,6 +694,7 @@ cases:
     required_any: []
     allowed: []
     forbidden: []
+    surface_mode: general_registry
   expected_action: null
   policy_contract:
     mode: data_only
@@ -712,6 +731,7 @@ cases:
     - build_my_timetable
     - my_clash_free_sections
     forbidden: []
+    surface_mode: narrowed
   expected_action: null
   policy_contract:
     mode: data_only
@@ -746,6 +766,7 @@ cases:
     required_any: []
     allowed: []
     forbidden: []
+    surface_mode: general_registry
   expected_action: null
   policy_contract:
     mode: data_only
@@ -780,6 +801,7 @@ cases:
     required_any: []
     allowed: []
     forbidden: []
+    surface_mode: general_registry
   expected_action: null
   policy_contract:
     mode: data_only
@@ -811,6 +833,7 @@ cases:
     allowed: []
     forbidden:
     - build_my_timetable
+    surface_mode: general_registry
   expected_action: null
   policy_contract:
     mode: data_only
@@ -844,6 +867,7 @@ cases:
     allowed: []
     forbidden:
     - build_my_timetable
+    surface_mode: narrowed
   expected_action:
     type: OPEN_STUDENT_PLANNER
     intent: SELECT_PREFERRED_ALTERNATIVE
@@ -877,6 +901,7 @@ cases:
     required_any: []
     allowed: []
     forbidden: []
+    surface_mode: general_registry
   expected_action: null
   policy_contract:
     mode: data_only
@@ -908,6 +933,7 @@ cases:
     allowed: []
     forbidden:
     - build_my_timetable
+    surface_mode: narrowed
   expected_action:
     type: OPEN_STUDENT_PLANNER
     intent: EDIT_DRAFT
@@ -942,6 +968,7 @@ cases:
     allowed: []
     forbidden:
     - build_my_timetable
+    surface_mode: narrowed
   expected_action:
     type: OPEN_STUDENT_PLANNER
     intent: REBUILD_WITHOUT_CURRENT_SECTIONS
@@ -978,6 +1005,7 @@ cases:
     allowed: []
     forbidden:
     - build_my_timetable
+    surface_mode: narrowed
   expected_action:
     type: OPEN_STUDENT_PLANNER
     intent: REBUILD_WITHOUT_CURRENT_SECTIONS
@@ -1012,6 +1040,7 @@ cases:
     allowed: []
     forbidden:
     - build_my_timetable
+    surface_mode: narrowed
   expected_action:
     type: OPEN_STUDENT_PLANNER
     intent: REBUILD_WITHOUT_CURRENT_SECTIONS
@@ -1045,6 +1074,7 @@ cases:
     required_any: []
     allowed: []
     forbidden: []
+    surface_mode: general_registry
   expected_action: null
   policy_contract:
     mode: data_only
@@ -1075,6 +1105,7 @@ cases:
     allowed:
     - my_progress
     forbidden: []
+    surface_mode: narrowed
   expected_action: null
   policy_contract:
     mode: data_only
@@ -1107,6 +1138,7 @@ cases:
     - my_progress
     - why_course_locked
     forbidden: []
+    surface_mode: narrowed
   expected_action: null
   policy_contract:
     mode: data_only
@@ -1144,6 +1176,7 @@ cases:
     - my_progress
     - why_course_locked
     forbidden: []
+    surface_mode: narrowed
   expected_action: null
   policy_contract:
     mode: data_only
@@ -1178,6 +1211,7 @@ cases:
     allowed:
     - why_course_locked
     forbidden: []
+    surface_mode: narrowed
   expected_action: null
   policy_contract:
     mode: data_only
@@ -1215,6 +1249,7 @@ cases:
     allowed:
     - why_course_locked
     forbidden: []
+    surface_mode: narrowed
   expected_action: null
   policy_contract:
     mode: data_only
@@ -1253,6 +1288,7 @@ cases:
     - why_course_locked
     - my_progress
     forbidden: []
+    surface_mode: narrowed
   expected_action: null
   policy_contract:
     mode: data_only
@@ -1288,6 +1324,7 @@ cases:
     - my_progress
     - why_course_locked
     forbidden: []
+    surface_mode: general_registry
   expected_action: null
   policy_contract:
     mode: data_only
@@ -1328,6 +1365,7 @@ cases:
     - why_course_locked
     - my_progress
     forbidden: []
+    surface_mode: general_registry
   expected_action: null
   policy_contract:
     mode: data_only
@@ -1367,6 +1405,7 @@ cases:
     - recommend_courses
     - get_student_context
     forbidden: []
+    surface_mode: general_registry
   expected_action: null
   policy_contract:
     mode: data_only
@@ -1401,6 +1440,7 @@ cases:
     allowed:
     - my_progress
     forbidden: []
+    surface_mode: narrowed
   expected_action: null
   policy_contract:
     mode: data_only
@@ -1432,6 +1472,7 @@ cases:
     allowed:
     - my_progress
     forbidden: []
+    surface_mode: narrowed
   expected_action: null
   policy_contract:
     mode: data_only
@@ -1464,6 +1505,7 @@ cases:
     required_any: []
     allowed: []
     forbidden: []
+    surface_mode: narrowed
   expected_action: null
   policy_contract:
     mode: data_only
@@ -1496,6 +1538,7 @@ cases:
     required_any: []
     allowed: []
     forbidden: []
+    surface_mode: narrowed
   expected_action: null
   policy_contract:
     mode: data_only
@@ -1529,6 +1572,7 @@ cases:
     allowed:
     - my_progress
     forbidden: []
+    surface_mode: narrowed
   expected_action: null
   policy_contract:
     mode: data_only
@@ -1566,6 +1610,7 @@ cases:
     - course_prerequisites
     - lookup_course
     forbidden: []
+    surface_mode: narrowed
   expected_action: null
   policy_contract:
     mode: data_only
@@ -1604,6 +1649,7 @@ cases:
     - my_clash_free_sections
     - build_my_timetable
     forbidden: []
+    surface_mode: narrowed
   expected_action: null
   policy_contract:
     mode: data_only
@@ -1639,6 +1685,7 @@ cases:
     - my_progress
     - recommend_courses
     forbidden: []
+    surface_mode: narrowed
   expected_action: null
   policy_contract:
     mode: data_only
@@ -1672,6 +1719,7 @@ cases:
     - recommend_courses
     - why_course_locked
     forbidden: []
+    surface_mode: general_registry
   expected_action: null
   policy_contract:
     mode: conditional
@@ -1708,6 +1756,7 @@ cases:
     - my_progress
     - why_course_locked
     forbidden: []
+    surface_mode: narrowed
   expected_action: null
   policy_contract:
     mode: data_only
@@ -1746,6 +1795,7 @@ cases:
     - why_course_locked
     - recommend_courses
     forbidden: []
+    surface_mode: narrowed
   expected_action: null
   policy_contract:
     mode: data_only

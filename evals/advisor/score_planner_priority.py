@@ -74,15 +74,27 @@ def _tools(case: dict, row: dict) -> tuple[dict, bool, bool]:
     required_all = set(contract.get("required_all") or [])
     forbidden = set(contract.get("forbidden") or [])
 
-    # SURFACE: did the server offer only what this case permits? Scored only when the
-    # case declares a closed set — an empty `allowed` means "unspecified", not
-    # "nothing", and treating it as the latter would fail every case that never
-    # bothered to list one.
+    # SURFACE. `general_registry` is a PASS by design, not a waiver: GENERAL_AGENT is
+    # the escape hatch for questions the server has no precise route for, and the
+    # broad authorised registry is the correct surface there. Scoring it against a
+    # small case-specific list would push the router to grow a pattern per evaluation
+    # sentence, which is exactly the overfitting the hatch exists to avoid.
+    #
+    # The CALL contract is untouched for those cases — the model still has to select
+    # the right subset from the wider surface, which is the harder test.
+    surface_mode = contract.get("surface_mode", "narrowed")
     surface_ok = True
-    if allowed:
+    if case["routing"]["mode"] == "clarify":
+        # A clarification is decided before generation, so there is no surface at
+        # all. `general_registry` would demand a wide one and fail the very
+        # behaviour the case exists to require.
+        surface_ok = not exposed
+    elif surface_mode == "general_registry":
+        surface_ok = len(exposed) > 1
+    elif allowed:
         surface_ok = set(exposed) <= (allowed | required_all)
-    if case["routing"].get("composition") == "SINGLE" and not allowed and required_all:
-        surface_ok = surface_ok and set(exposed) <= required_all
+    elif case["routing"].get("composition") == "SINGLE" and required_all:
+        surface_ok = set(exposed) <= required_all
 
     # CALLS: the contract's own semantics, literally.
     calls_ok = required_all <= set(called)

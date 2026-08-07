@@ -52,6 +52,42 @@ def _arguments_for(tool: str, question: str) -> dict[str, Any]:
     return {}
 
 
+#: How many tools one answer may draw on. Two is what the widest case in the
+#: contract asks for; the cap stops a broad surface turning into twelve calls.
+_MAX_TOOLS = 3
+
+#: What a sentence is ABOUT, in the crude way a model reading it would notice. Keyed
+#: on words, so the mock can rank a broad registry without being told the answer.
+_AFFINITY: tuple[tuple[tuple[str, ...], tuple[str, ...]], ...] = (
+    (
+        ("متطلب", "المتطلبات", "مقفل", "يفتح", "ينتظر", "prerequisite", "locked", "unlock"),
+        ("why_course_locked", "course_prerequisites"),
+    ),
+    (("اولوي", "الأولوية", "اهم", "ترتيب", "priority", "rank"), ("my_progress",)),
+    (("تعارض", "شعب", "clash", "section"), ("my_clash_free_sections",)),
+    (("جدولي", "المسجل", "registered", "my timetable"), ("my_timetable",)),
+    (("ابن", "جدول", "بناء", "build", "timetable"), ("build_my_timetable",)),
+    (("خطة", "الخطة", "plan", "level"), ("my_plan_by_term",)),
+    (("يوصي", "توصي", "recommend"), ("recommend_courses",)),
+    (("مقرر", "course"), ("lookup_course",)),
+)
+
+
+def _relevant_tools(question: str, exposed: list[str]) -> list[str]:
+    """The offered tools this sentence plausibly needs, most relevant first.
+
+    Falls back to the advertised ORDER when nothing matches, which is what a narrowed
+    route already is: the server put the right tool first.
+    """
+    text = str(question or "")
+    ranked: list[str] = []
+    for words, tools in _AFFINITY:
+        if any(w in text for w in words):
+            ranked.extend(t for t in tools if t in exposed and t not in ranked)
+    ranked.extend(t for t in exposed if t not in ranked)
+    return ranked
+
+
 def _render(results: list[dict[str, Any]], question: str) -> str:
     """A plain statement of what the tools returned. No claims beyond them."""
     if not results:
@@ -139,9 +175,21 @@ class MockProvider:
         self.exposed_tools = [name for name in offered if name]
         question = str((messages[-1] or {}).get("content") or "")
 
-        # One tool at most, and only one that was actually offered — the whole point
-        # of 7B is that this list is the model's entire choice.
-        candidate = next((n for n in self.exposed_tools if n not in self._called), None)
+        # A real turn calls what the QUESTION needs and stops. Walking the whole
+        # advertised list would call twelve tools on a GENERAL_AGENT question and
+        # none of the right ones on a narrowed route, which measured the fake rather
+        # than the product. So: rank the offered tools by what the sentence is about,
+        # take at most `_MAX_TOOLS`, and answer.
+        #
+        # The affinity table is keyed on QUESTION WORDS, never on the contract — the
+        # mock has no idea which tools a case requires, and finding out would make
+        # the report a statement about itself.
+        wanted = _relevant_tools(question, self.exposed_tools)
+        candidate = (
+            next((n for n in wanted if n not in self._called), None)
+            if len(self._called) < _MAX_TOOLS
+            else None
+        )
         if candidate:
             self._called.add(candidate)
             self._account(messages, candidate)
