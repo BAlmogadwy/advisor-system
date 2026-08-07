@@ -435,8 +435,36 @@ def _project_why_course_locked(result: dict[str, Any], _: RemoteIdentityMap) -> 
 
 
 def _project_my_plan_by_term(result: dict[str, Any], _: RemoteIdentityMap) -> dict[str, Any]:
+    """Every level, and every COURSE inside it, named field by field.
+
+    `terms` and `plan` used to pass through whole. The module's argument against a
+    key blacklist applies just as hard one level down: an allowlist that stops at the
+    container passes anything a capability adds inside it, and this container holds a
+    row per course built by `report_views` — which is where `importance_score` and
+    `missing_prereqs` already live and where the next operator-facing field will.
+    """
     out = _envelope(result)
-    out.update(_keep(result, "program", "terms", "plan"))
+    out.update(_keep(result, "program"))
+    terms = result.get("terms")
+    if isinstance(terms, list):
+        out["terms"] = [
+            {
+                **_keep(level, "term"),
+                "courses": _course_rows(
+                    level.get("courses"),
+                    "course_code",
+                    "type",
+                    "programme_term",
+                    "credit_hours",
+                    "status",
+                    "prerequisites",
+                    "missing_prereqs",
+                    "prerequisites_satisfied",
+                ),
+            }
+            for level in terms
+            if isinstance(level, dict)
+        ]
     return out
 
 
@@ -450,8 +478,42 @@ def _project_recommend_courses(result: dict[str, Any], _: RemoteIdentityMap) -> 
 
 
 def _project_my_clash_free_sections(result: dict[str, Any], _: RemoteIdentityMap) -> dict[str, Any]:
+    """Sections and their collisions, named field by field.
+
+    `sections` carried `instructor` and `room` straight through — the same staff
+    names `_project_my_timetable` drops two functions below, arriving by a different
+    door. A collision needs the course, the day and both time ranges; who teaches it
+    does not have to leave the institution to say two lectures overlap.
+    """
     out = _envelope(result)
-    out.update(_keep(result, "academic_year", "term", "course_code", "sections", "note"))
+    out.update(_keep(result, "academic_year", "term", "course_code", "note"))
+    sections = result.get("sections")
+    if isinstance(sections, list):
+        out["sections"] = [
+            {
+                **_keep(row, "course_code", "course_name", "section", "status", "reason"),
+                "meetings": [
+                    _keep(m, "day", "start_time", "end_time")
+                    for m in (row.get("meetings") or [])
+                    if isinstance(m, dict)
+                ],
+                "collisions": [
+                    _keep(
+                        c,
+                        "course_code",
+                        "day",
+                        "start_time",
+                        "end_time",
+                        "other_start_time",
+                        "other_end_time",
+                    )
+                    for c in (row.get("collisions") or [])
+                    if isinstance(c, dict)
+                ],
+            }
+            for row in sections
+            if isinstance(row, dict)
+        ]
     return out
 
 

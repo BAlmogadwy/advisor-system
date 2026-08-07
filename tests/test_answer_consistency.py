@@ -274,3 +274,110 @@ def test_credit_numbers_in_prose_with_no_timetable_are_not_checked() -> None:
     """«وش عندي بكرة الأحد؟» builds nothing, so nothing can contradict it."""
     answer = "مقرر AI221 بثلاث ساعات، والحد 19 ساعة معتمدة، صفحة 28."
     assert check_answer(answer, tool_results=[_POLICY], context=_CONTEXT) == []
+
+
+# ── the nested projectors, with sentinels at every depth ────────────────────
+
+
+def _all_keys(value) -> set:
+    """Every key at every depth. A projection is only fail-closed if it is closed
+    all the way down, and a top-level assertion cannot see that."""
+    found = set()
+    if isinstance(value, dict):
+        for key, inner in value.items():
+            found.add(key)
+            found |= _all_keys(inner)
+    elif isinstance(value, list):
+        for item in value:
+            found |= _all_keys(item)
+    return found
+
+
+def _all_strings(value) -> str:
+    if isinstance(value, dict):
+        return " ".join(_all_strings(v) for v in value.values())
+    if isinstance(value, list):
+        return " ".join(_all_strings(v) for v in value)
+    return str(value)
+
+
+SENTINELS = {
+    "instructor_email": "must-not-leave@example.com",
+    "internal_operator_note": "SECRET",
+    "instructor": "Dr Someone",
+    "room": "B101",
+    "runtime_use_note": "operator only",
+}
+
+
+@pytest.mark.parametrize(
+    ("tool", "payload"),
+    [
+        (
+            "my_plan_by_term",
+            {
+                "tool": "my_plan_by_term",
+                "ok": True,
+                "student_id": 4400251,
+                "program": "AI",
+                "terms": [
+                    {
+                        "term": 6,
+                        "courses": [
+                            {
+                                "course_code": "AI331",
+                                "credit_hours": 4,
+                                "status": "passed",
+                                "student_id": 4400251,
+                                **SENTINELS,
+                            }
+                        ],
+                    }
+                ],
+            },
+        ),
+        (
+            "my_clash_free_sections",
+            {
+                "tool": "my_clash_free_sections",
+                "ok": True,
+                "student_id": 4400251,
+                "sections": [
+                    {
+                        "course_code": "AI352",
+                        "section": "M1",
+                        "meetings": [
+                            {"day": "MON", "start_time": "09:00", "end_time": "10:15", **SENTINELS}
+                        ],
+                        "collisions": [{"course_code": "AI331", "day": "MON", **SENTINELS}],
+                        **SENTINELS,
+                    }
+                ],
+            },
+        ),
+    ],
+)
+def test_a_nested_structure_is_projected_all_the_way_down(tool: str, payload: dict) -> None:
+    """The allowlist used to stop at the container.
+
+    `terms`, `plan` and `sections` passed through whole, so the fail-closed design
+    held at the top level and let anything through one level below it — including the
+    staff names `_project_my_timetable` deliberately drops, arriving by another door.
+    Sentinels are planted at EVERY depth because an assertion on the outer keys
+    cannot see the inner ones.
+    """
+    from core.services.llm_remote_privacy import RemoteIdentityMap, project_tool_result_for_remote
+
+    projected = project_tool_result_for_remote(tool, payload, RemoteIdentityMap())
+    keys = _all_keys(projected)
+    blob = _all_strings(projected)
+
+    for sentinel in SENTINELS:
+        assert sentinel not in keys, f"{tool} leaked {sentinel}"
+    for value in SENTINELS.values():
+        assert value not in blob, f"{tool} leaked the value of {value!r}"
+    assert "student_id" not in keys, f"{tool} leaked an identity"
+    assert "4400251" not in blob
+
+    # …and it still carries what the answer actually needs.
+    assert "course_code" in keys

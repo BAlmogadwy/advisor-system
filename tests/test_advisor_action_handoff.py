@@ -913,3 +913,33 @@ def test_an_adviser_asking_about_a_rebuild_is_not_routed_to_the_students_planner
         client=ScriptedClient([], final="الإجابة."),
     )
     assert payload["agent"].get("rebuild_forced_server_side") is not True
+
+
+def test_a_multi_capability_route_gets_its_evidence_even_when_the_model_stops_early(
+    monkeypatch,
+) -> None:
+    """TT20 on the live canary: both tools offered, one called, half the question
+    answered.
+
+    «ليش ما ضفت AI491؟ هل المشكلة في المتطلب السابق أو في وقت الشعبة؟» asks two
+    independent things, and `why_course_locked` structurally cannot say whether a
+    course was excluded on section fit. Retrying and asking the provider to please
+    call the other tool costs a paid turn and still depends on the same choice, so
+    the server fetches what is missing and the model writes over complete evidence.
+    """
+    seen: list[str] = []
+
+    def _spy(self, name, args, *, scope=None, ctx=None):
+        seen.append(name)
+        return {"tool": name, "ok": True}
+
+    monkeypatch.setattr(caps.AdvisorCapabilityRegistry, "execute", _spy)
+    payload = _ask(
+        ScriptedClient([_call("why_course_locked", {"course_code": "AI491"})], final="جواب."),
+        question="ليش ما ضفت AI491؟ هل المشكلة في المتطلب السابق أو في وقت الشعبة؟",
+    )
+
+    assert "build_my_timetable" in seen, "the missing half was never fetched"
+    assert payload["agent"].get("server_completed_tools") == ["build_my_timetable"]
+    tools = {r.get("tool") for r in payload["agent"]["tool_results"] if isinstance(r, dict)}
+    assert {"why_course_locked", "build_my_timetable"} <= tools
