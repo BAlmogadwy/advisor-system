@@ -803,15 +803,22 @@ def test_a_missing_rule_suppresses_the_rule_and_not_the_students_record(monkeypa
     never in the prose: they are the structured tool results the server already
     holds. Destroying them with the sentence was the defect.
 
-    So: the answer is the abstention, `policy_part` says ABSTAINED, and `data_part`
-    still carries what the tool returned, keyed by tool name so a consumer reads it
-    without indexing a position.
+    The empty retrieval is FORCED rather than found. Picking a question the store
+    happens to hold nothing for makes the test a statement about today's policy
+    corpus, and it would start passing for the wrong reason the day a record is
+    added — which is how a test stops testing without anyone noticing.
     """
+    monkeypatch.setattr(
+        va, "_seed_policy_evidence", lambda *a, **k: ({"tool": "policy_lookup"}, "none_governing")
+    )
     progress = {"tool": "my_progress", "ok": True, "counts": {"open": 7, "one_step": 6}}
     ExecutionSpy(monkeypatch, result=progress)
     payload = _ask(
         ScriptedClient([_call("my_progress", {})], final="القاعدة تسمح بذلك."),
-        question="هل يجوز لي تسجيل 21 ساعة هذا الفصل؟",
+        # GENERAL_AGENT: unrouted, so it keeps both the broad citation obligation and
+        # the full permitted registry — the only shape where a turn can owe a rule
+        # AND have data to lose.
+        question="ما الإجراء المتبع إذا تغيّبت عن الاختبار النهائي بعذر؟",
     )
 
     assert payload["agent"].get("policy_contract_failure") == "no_governing_evidence"

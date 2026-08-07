@@ -1302,6 +1302,36 @@ _REDACTION_MARKERS = (
 )
 
 
+def _withheld_for(route: Any, scope: dict[str, Any]) -> frozenset[str]:
+    """Everything this turn must NOT advertise, expressed as the existing withhold set.
+
+    Reuses `withheld_tools` rather than adding a second narrowing mechanism: the loop
+    already removes withheld names from the schemas and refuses a call to one, so a
+    parallel allow-list would be a second gate with its own bugs.
+
+    `policy_lookup` is withheld on every path, unchanged: retrieval already ran
+    server-side, and advertising it would invite a second lookup whose records were
+    not in the contract computed before generation.
+
+    ROLE FILTERING IS UNTOUCHED. This subtracts from the registry's role-filtered
+    list, so narrowing can only ever remove — a route naming a tool the principal may
+    not use does not gain it.
+    """
+    from core.services.advisor_intent import capabilities_for_route
+
+    permitted = {
+        (schema.get("function") or {}).get("name")
+        for schema in get_default_registry().tool_schemas_for_scope(scope)
+    }
+    allowed = capabilities_for_route(route)
+    if allowed is None:
+        # GENERAL_AGENT: the router was not certain, so the turn keeps the surface it
+        # has today. Narrowing an unrecognised question to nothing would be a
+        # regression dressed as a safety improvement.
+        return frozenset({"policy_lookup"})
+    return frozenset({"policy_lookup", *(permitted - set(allowed))})
+
+
 def _output_contract_violations(
     answer: str,
     *,
@@ -2330,6 +2360,11 @@ def answer_virtual_advisor(
                 "agent": {**telemetry, "tool_results": []},
             }
 
+    # Computed BEFORE the tool schemas are assembled, because the schemas are what
+    # it decides. `route_intent` is offline and side-effect free, so this costs a
+    # string scan and nothing else.
+    route = route_intent(question)
+
     boundary = boundary_for_scope(
         scope,
         backend=client_backend,
@@ -2443,7 +2478,7 @@ def answer_virtual_advisor(
                 # Already retrieved, server-side, above. Advertising it now would
                 # invite a second lookup whose records were never in the contract
                 # computed before generation.
-                withheld_tools=frozenset({"policy_lookup"}),
+                withheld_tools=_withheld_for(route, scope),
                 seeded_local_results=agent_tool_results,
                 seeded_provider_results=provider_tool_results,
                 credit_blocks_seeded=credit_blocks_seeded,
@@ -2639,7 +2674,6 @@ def answer_virtual_advisor(
     # policy id, and before the output contract, because a deterministic
     # abstention contains no identifiers and would pass the identifier gate
     # trivially either way.
-    route = route_intent(question)
     contract = build_policy_contract_state(
         question,
         agent_tool_results,

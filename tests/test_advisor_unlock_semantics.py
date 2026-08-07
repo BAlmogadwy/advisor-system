@@ -537,8 +537,12 @@ def test_every_owned_capability_is_a_capability_that_exists():
     from core.services.virtual_advisor_capabilities import get_default_registry
 
     registered = set(get_default_registry().capabilities)
-    for family, name in CAPABILITY_FOR_FAMILY.items():
-        assert name in registered, f"{family} routes to unregistered {name}"
+    # The map holds a TUPLE per family since 7B — a multi-capability route needs an
+    # ordered set, not one name — so every entry is checked rather than the whole
+    # tuple compared against a name.
+    for family, names in CAPABILITY_FOR_FAMILY.items():
+        for name in names:
+            assert name in registered, f"{family} routes to unregistered {name}"
 
 
 def test_the_forward_direction_is_advertised_where_the_model_reads_it():

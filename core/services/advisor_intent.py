@@ -701,7 +701,17 @@ def route_intent(question: str) -> AdvisorRoute:
     domains = {_DOMAIN[h] for h in hits}
     if "policy" in domains and len(domains) > 1:
         composition = CompositionKind.DATA_PLUS_POLICY
-    elif len(hits) > 1:
+    elif len(domains) > 1:
+        # DOMAINS, not families. Two markers of the same domain firing is what
+        # precedence exists to resolve — CP02 «أي مقرر عندي يفتح أكبر عدد من المقررات
+        # مباشرة؟» fires COURSE_PRIORITY and COURSE_UNLOCKS, and the answer is the
+        # ranking, not both tools. Counting families instead would hand it
+        # `why_course_locked` alongside `my_progress`, which is the reverse-direction
+        # tool 6A.2 removed from that question in the first place.
+        #
+        # TT20 is the real multi-capability case: PLANNER_BUILD and
+        # COURSE_LOCK_REASON are different domains, and its two halves genuinely
+        # need two tools.
         composition = CompositionKind.MULTI_CAPABILITY
     else:
         composition = CompositionKind.SINGLE
@@ -794,25 +804,103 @@ def policy_domain_of(family: IntentFamily) -> PolicyDomain:
 #: Families with no entry are absent on purpose: a planner family is answered by a
 #: hand-off (`advisor_actions.ROUTED_INTENTS`), not by a capability, and MIXED
 #: spans two domains by definition.
-CAPABILITY_FOR_FAMILY: dict[IntentFamily, str] = {
-    IntentFamily.COURSE_UNLOCKS: "why_course_locked",
-    IntentFamily.COURSE_LOCK_REASON: "why_course_locked",
-    IntentFamily.COURSE_PRIORITY: "my_progress",
-    IntentFamily.CURRENT_TIMETABLE: "my_timetable",
-    IntentFamily.TIMETABLE_CLASH: "my_clash_free_sections",
-    IntentFamily.PLANNER_BUILD: "build_my_timetable",
-    IntentFamily.POLICY: "policy_lookup",
+CAPABILITY_FOR_FAMILY: dict[IntentFamily, tuple[str, ...]] = {
+    IntentFamily.COURSE_UNLOCKS: ("why_course_locked",),
+    IntentFamily.COURSE_LOCK_REASON: ("why_course_locked",),
+    IntentFamily.COURSE_PRIORITY: ("my_progress",),
+    IntentFamily.CURRENT_TIMETABLE: ("my_timetable",),
+    IntentFamily.TIMETABLE_CLASH: ("my_clash_free_sections",),
+    IntentFamily.PLANNER_BUILD: ("build_my_timetable",),
+    # The rebuild reaches its hand-off THROUGH this tool refusing. See
+    # `_HANDOFF_FAMILIES` for why it is not a zero-tool route.
+    IntentFamily.PLANNER_REBUILD: ("build_my_timetable",),
+    # POLICY is deliberately ABSENT. Retrieval is server-side and unconditional,
+    # and advertising `policy_lookup` again would hand the model back the decision
+    # this branch took away from it — a second lookup whose records were not in the
+    # contract computed before generation.
 }
+
+#: The families that END at a deterministic server hand-off decided from the
+#: QUESTION. Zero tools, and the provider is never contacted, so the empty tuple is
+#: the answer rather than a gap to fall through.
+#:
+#: PLANNER_REBUILD IS DELIBERATELY ABSENT, and the omission is load-bearing. Its
+#: hand-off is not produced from the question — `ROUTED_INTENTS` excludes it on
+#: purpose, so that the confirmation rule has ONE implementation — it is produced by
+#: `build_my_timetable` REFUSING, which requires the model to call the tool. Withhold
+#: it and the refusal never happens: the loop has nothing to call, the executor never
+#: runs, and «تجاهل جدولي الحالي» gets an ordinary answer instead of the confirmed
+#: planner workflow. That is the «أكد» incident, rebuilt from the other end.
+_HANDOFF_FAMILIES = frozenset(
+    {
+        IntentFamily.PLANNER_VIEW_ALTERNATIVES,
+        IntentFamily.PLANNER_EDIT_DRAFT,
+        IntentFamily.PLANNER_SELECT_PREFERRED,
+    }
+)
+
+
+def _ordered_union(*groups: tuple[str, ...]) -> tuple[str, ...]:
+    """Union that keeps first-seen order.
+
+    A `set` would be correct and unusable: tool ORDER changes what a model reaches
+    for, and a schema list that reorders between runs makes two evaluation traces
+    incomparable for a reason that has nothing to do with the answer.
+    """
+    seen: set[str] = set()
+    out: list[str] = []
+    for group in groups:
+        for item in group:
+            if item not in seen:
+                seen.add(item)
+                out.append(item)
+    return tuple(out)
+
+
+def capabilities_for_route(route: AdvisorRoute) -> tuple[str, ...] | None:
+    """The tools this route may advertise, or None meaning "the whole permitted set".
+
+    THE ROUTE IS THE ONLY INPUT. The question is not read again here — routing
+    already made that decision, and a second reading is a second router that can
+    disagree with the first.
+
+    `None` and `()` are different answers and both are needed. `()` is a hand-off:
+    zero tools, decided. `None` is GENERAL_AGENT: the router was not certain, so the
+    turn keeps the role-permitted registry it has today. Collapsing them would make
+    every unfamiliar question toolless, which is a worse failure than a wide surface.
+
+    NARROWING ONLY REMOVES. The result is intersected with what the caller's role
+    already permits, so nothing here can widen a surface past RBAC — a family that
+    named a tool the principal may not use simply loses it.
+    """
+    if route.primary_family in _HANDOFF_FAMILIES:
+        return ()
+    if route.primary_family is IntentFamily.GENERAL_AGENT:
+        return None
+
+    primary = CAPABILITY_FOR_FAMILY.get(route.primary_family, ())
+    if route.composition is CompositionKind.MULTI_CAPABILITY:
+        # The union comes from the ROUTE's own secondaries, not from a per-question
+        # exception list: an exception table is a second routing decision, kept
+        # somewhere the first one cannot see.
+        return _ordered_union(
+            primary, *(CAPABILITY_FOR_FAMILY.get(f, ()) for f in route.secondary_families)
+        )
+    # DATA_PLUS_POLICY exposes the DATA capability only. The policy half is answered
+    # from server-seeded evidence; turning it back into a model-selected lookup to
+    # "complete" the composition would undo the whole arrangement.
+    return primary
 
 
 def owning_capability(question: str) -> str | None:
-    """The capability that should answer this question, or None if no family owns it.
+    """The single capability that owns this question, or None if no family does.
 
-    Side-effect free and offline, like `classify_intent`: the route is a property of
-    the string, so it is testable as a table rather than only observable in a live
-    batch against a provider.
+    Kept as a scalar because that is what it means — "which tool answers this" — and
+    because the routing tests read it as one. The exposed SET is a different question
+    and `capabilities_for_route` answers it.
     """
-    return CAPABILITY_FOR_FAMILY.get(classify_intent(question))
+    tools = CAPABILITY_FOR_FAMILY.get(classify_intent(question))
+    return tools[0] if tools else None
 
 
 def _streams(question: str) -> tuple[list[set[str]], list[str]]:
@@ -905,6 +993,7 @@ __all__ = [
     "CAPABILITY_FOR_FAMILY",
     "IntentFamily",
     "classify_intent",
+    "capabilities_for_route",
     "route_intent",
     "explicit_normative_claim_present",
     "owning_capability",

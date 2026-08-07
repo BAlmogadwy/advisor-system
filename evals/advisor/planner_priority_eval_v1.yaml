@@ -94,7 +94,7 @@ cases:
     - PLANNER_BUILD
     clarification_reason: null
     requires_prior_context: false
-    composition: MULTI_CAPABILITY
+    composition: SINGLE
 - id: TT03
   category: planner_build
   role: student
@@ -356,7 +356,7 @@ cases:
     - PLANNER_BUILD
     clarification_reason: null
     requires_prior_context: false
-    composition: MULTI_CAPABILITY
+    composition: SINGLE
 - id: TT10
   category: planner_edit
   role: student
@@ -527,7 +527,7 @@ cases:
     - CURRENT_TIMETABLE
     clarification_reason: null
     requires_prior_context: false
-    composition: MULTI_CAPABILITY
+    composition: SINGLE
 - id: TT15
   category: timetable_clash
   role: student
@@ -964,7 +964,7 @@ cases:
     - PLANNER_BUILD
     clarification_reason: null
     requires_prior_context: false
-    composition: MULTI_CAPABILITY
+    composition: SINGLE
 - id: TT28
   category: planner_rebuild
   role: student
@@ -998,7 +998,7 @@ cases:
     - CURRENT_TIMETABLE
     clarification_reason: null
     requires_prior_context: false
-    composition: MULTI_CAPABILITY
+    composition: SINGLE
 - id: TT29
   category: planner_rebuild
   role: student
@@ -1127,7 +1127,7 @@ cases:
     - COURSE_UNLOCKS
     clarification_reason: null
     requires_prior_context: false
-    composition: MULTI_CAPABILITY
+    composition: SINGLE
 - id: CP03
   category: course_priority
   role: student
@@ -1482,7 +1482,7 @@ cases:
     - COURSE_UNLOCKS
     clarification_reason: MISSING_COURSE
     requires_prior_context: true
-    composition: MULTI_CAPABILITY
+    composition: SINGLE
 - id: CP13
   category: clarification
   role: student
@@ -1766,6 +1766,6 @@ cases:
     - COURSE_UNLOCKS
     clarification_reason: null
     requires_prior_context: true
-    composition: MULTI_CAPABILITY
+    composition: SINGLE
   setup:
     prior_course_code: AI331
