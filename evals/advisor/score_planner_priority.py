@@ -75,7 +75,7 @@ def _executed_names(row: dict) -> list[str]:
     return sorted(set(model) | set(executed))
 
 
-def _tools(case: dict, row: dict) -> tuple[dict, bool, bool]:
+def _tools(case: dict, row: dict) -> tuple[dict, bool, bool, bool]:
     contract = case["tool_contract"]
     exposed = list(row.get("exposed_tools") or [])
     # WHAT THE MODEL ASKED FOR versus WHAT THE TURN ACTUALLY RAN. The contract says
@@ -120,14 +120,36 @@ def _tools(case: dict, row: dict) -> tuple[dict, bool, bool]:
     elif case["routing"].get("composition") == "SINGLE" and required_all:
         surface_ok = set(exposed) <= required_all
 
-    # CALLS: required evidence against what RAN, forbidden against what the model
-    # ASKED FOR. The two halves have different owners. A forbidden tool can only
-    # reach the loop if the model requested it, so that half stays the model's
-    # record; a required one is satisfied by whoever ran it.
-    calls_ok = required_all <= set(executed)
+    # ACQUISITION: was the required evidence in front of the model when it answered?
+    # That is the correctness question, and it has three possible answers — the model
+    # fetched it, the server completed it, or the adviser seeded it before the turn
+    # began. Requiring the FIRST of the three marks a correct answer wrong and pushes
+    # the model to re-fetch what it has already been handed.
+    #
+    # Forbidden stays measured against what the model ASKED FOR plus what ran: a
+    # forbidden capability can only reach the loop if the model requested it, and a
+    # contract that forbids one the router then completes is a disagreement worth
+    # failing rather than hiding.
+    seeded = set(row.get("verified_context_evidence") or [])
+    acquired = required_all <= set(executed)
     for group in contract.get("required_any") or []:
-        calls_ok = calls_ok and bool(set(group) & set(executed))
-    calls_ok = calls_ok and not ((set(model_called) | set(executed)) & forbidden)
+        acquired = acquired and bool(set(group) & set(executed))
+    # Only the seeded-evidence form is gated. The bare payload-field entries are
+    # documentation the trace cannot confirm, and scoring against evidence nothing
+    # records would be a check that always passes or always fails — never a measure.
+    required_evidence = {
+        path for path in case.get("evidence_required") or [] if path.startswith("verified_context.")
+    }
+    missing_evidence = sorted(required_evidence - seeded)
+    acquired = acquired and not missing_evidence
+    acquired = acquired and not ((set(model_called) | set(executed)) & forbidden)
+
+    # BEHAVIOUR, reported and never gated. Recall of the tools the model itself chose,
+    # out of those the contract names. This is where a provider that stops selecting
+    # tools becomes visible — hiding it inside the gate above would be the actual
+    # goalpost move, and reporting it separately is what keeps the gate honest.
+    nameable = required_all | {t for group in contract.get("required_any") or [] for t in group}
+    choice_ok = not nameable or bool(nameable & set(model_called))
 
     return (
         {
@@ -135,13 +157,19 @@ def _tools(case: dict, row: dict) -> tuple[dict, bool, bool]:
             "exposed": exposed,
             "model_called": model_called,
             "executed": executed,
+            "seeded": sorted(seeded),
+            "missing_evidence": missing_evidence,
+            "model_tool_recall": f"{len(nameable & set(model_called))}/{len(nameable)}"
+            if nameable
+            else "n/a",
             # Kept as a REPORTED metric, not a scored one: how much of the required
             # evidence the server had to fetch is the number that says whether the
             # model is improving, and burying it inside a pass would lose it.
             "server_completed": sorted(set(executed) - set(model_called)),
         },
         surface_ok,
-        calls_ok,
+        acquired,
+        choice_ok,
     )
 
 
@@ -201,7 +229,7 @@ def _clarification(case: dict, row: dict) -> bool:
 
 def score_row(case: dict, row: dict) -> dict:
     routing_detail, intent_ok = _routing(case, row)
-    tools_detail, surface_ok, calls_ok = _tools(case, row)
+    tools_detail, surface_ok, acquired_ok, choice_ok = _tools(case, row)
     action_detail, action_ok = _action(case, row)
     policy_detail, policy_ok = _policy(case, row)
     violations = list(row.get("output_violations") or [])
@@ -224,13 +252,16 @@ def score_row(case: dict, row: dict) -> dict:
         "scores": {
             "intent_recognition": intent_ok,
             "tool_surface_correct": surface_ok,
-            "tool_calls_correct": calls_ok,
+            "evidence_acquisition_correct": acquired_ok,
             "action_correct": action_ok,
             "factual_grounding": grounding_ok,
             "policy_compliance": policy_ok,
             "safety": safety_ok,
             "final_answer_correctness": answer_ok,
         },
+        # Diagnostic, deliberately outside `scores`: a gate is a claim about whether
+        # the product is correct, and the model's tool-selection recall is not that.
+        "diagnostics": {"model_tool_choice": choice_ok},
     }
 
 
@@ -257,6 +288,21 @@ def main() -> int:
     for dimension in SCORE_DIMENSIONS:
         ids = failing[dimension]
         print(f"{dimension:<28}{len(scored) - len(ids):>3}/{len(scored)}  {' '.join(ids)}")
+
+    # REPORTED, never gated. A provider that stops choosing tools while the server
+    # completes them still passes every gate above — correctly, because the answers
+    # are grounded — and this is the only place that fact becomes visible. Computing
+    # it and not printing it would be the same as not measuring it.
+    scoreable = [e for e in scored if e["tools"]["model_tool_recall"] != "n/a"]
+    chose = [e for e in scoreable if e["diagnostics"]["model_tool_choice"]]
+    print()
+    print(
+        f"{'model_tool_choice (diagnostic)':<28}{len(chose):>3}/{len(scoreable)}  "
+        + " ".join(e["id"] for e in scoreable if not e["diagnostics"]["model_tool_choice"])
+    )
+    served = [e for e in scored if e["tools"]["server_completed"]]
+    if served:
+        print(f"{'server-completed evidence':<28}    {' '.join(e['id'] for e in served)}")
 
     totals = (data.get("meta") or {}).get("totals") or {}
     print(f"\nprovider calls: {totals.get('provider_calls')}  tokens: {totals.get('total_tokens')}")

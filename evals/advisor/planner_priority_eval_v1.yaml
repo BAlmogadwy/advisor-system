@@ -1356,7 +1356,6 @@ cases:
   tool_contract:
     required_all:
     - why_course_locked
-    - my_progress
     required_any: []
     allowed:
     - why_course_locked
@@ -1367,10 +1366,10 @@ cases:
   policy_contract:
     mode: data_only
   must_assert:
-  - Separate direct from downstream affected courses.
-  - Describe delay as possible, not guaranteed.
+  - Name the directly dependent or sole-remaining courses where the evidence gives them.
+  - Describe wider downstream-chain impact conditionally.
   must_not_claim:
-  - Do not promise an exact graduation delay.
+  - Do not promise an exact delay.
   - Do not claim the courses are offered next term.
   expected_arguments:
     course_code: AI331
@@ -1394,9 +1393,7 @@ cases:
   expected_behavior: Check current status and the actual recommendation output; do not infer recommender
     behaviour.
   tool_contract:
-    required_all:
-    - recommend_courses
-    - get_student_context
+    required_all: []
     required_any: []
     allowed:
     - recommend_courses
@@ -1410,7 +1407,7 @@ cases:
   - Verify AI331 is currently in progress/registered.
   - Report recommendation membership from actual evidence.
   must_not_claim:
-  - Do not claim it remains recommended without calling the recommender.
+  - Do not claim recommendation membership without verified recommendation evidence.
   - Do not advise duplicate registration.
   expected_arguments:
     course_code: AI331
@@ -1424,6 +1421,13 @@ cases:
     clarification_reason: null
     requires_prior_context: false
     composition: SINGLE
+  evidence_required:
+  # NOT course_evidence.studying. The system prompt designates that list as the wrong
+  # source for "what am I taking now" -- it omits a course the student passed before
+  # and is now retaking -- and it is empty for the evaluation subject, so requiring it
+  # would fail every run for a reason that has nothing to do with the answer.
+  - verified_context.course_evidence.current_term_registrations
+  - verified_context.recommendations
 - id: CP10
   category: course_priority_recompute
   role: student
@@ -1636,8 +1640,7 @@ cases:
   expected_behavior: Separate academic-plan importance and prerequisite readiness from section-catalogue
     presence.
   tool_contract:
-    required_all:
-    - my_progress
+    required_all: []
     required_any: []
     allowed:
     - build_my_timetable
@@ -1650,9 +1653,10 @@ cases:
   policy_contract:
     mode: data_only
   must_assert:
-  - Academic importance is established from the prerequisite/priority evidence.
-  - If the catalogue reports no section, that alone does not mean the university did not offer the course.
+  - Prerequisite/academic importance and section-catalogue presence are separate things.
+  - NOT_ON_FILE does not mean the course was not offered.
   must_not_claim:
+  - Do not give a specific course a particular priority rank; the question names none.
   - Do not equate prerequisites satisfied with registration permission.
   - Do not infer a seat.
   routing:
@@ -1666,6 +1670,12 @@ cases:
     clarification_reason: null
     requires_prior_context: false
     composition: SINGLE
+  evidence_required:
+  # Dropping `my_progress` without putting anything in its place left this case
+  # unable to fail: no tool required, no evidence named, so every dimension was true
+  # by construction. The answer does rest on the student's outstanding requirements
+  # to say prerequisites can be complete while no section exists.
+  - verified_context.course_evidence.remaining_requirements
 - id: CP17
   category: priority_vs_recommendation
   role: student
@@ -1673,8 +1683,7 @@ cases:
   intent: COURSE_PRIORITY
   expected_behavior: Explain structural unlock priority versus the current credit-capped term recommendation.
   tool_contract:
-    required_all:
-    - my_progress
+    required_all: []
     required_any: []
     allowed:
     - my_progress
@@ -1710,7 +1719,6 @@ cases:
   tool_contract:
     required_all:
     - my_progress
-    - recommend_courses
     required_any: []
     allowed:
     - my_progress
@@ -1738,6 +1746,9 @@ cases:
     clarification_reason: null
     requires_prior_context: false
     composition: SINGLE
+  evidence_required:
+  - verified_context.recommendations
+  - verified_context.recommendation_policy
 - id: CP19
   category: advisor_course_priority
   role: advisor

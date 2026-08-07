@@ -500,3 +500,148 @@ def test_the_digits_inside_a_course_code_are_not_a_load_figure() -> None:
     assert CREDIT_CAP_CONTRADICTION in _credit(
         "الشعب المحتفظ بها: AI1، CS323. الساعات المحتفظ بها 12."
     )
+
+
+# ── the locality rule, applied to both checks that read prose ─────────────────
+
+
+def test_a_load_phrase_does_not_reach_into_the_list_beneath_it() -> None:
+    """TT16, refused live on a correct answer.
+
+    «لديك حاليًا:» followed by a bulleted list, each item carrying its own credit
+    hours, asserts no current load at all. Reading past the line break turned the
+    first course's 3 into a claimed load and contradicted the true 15. A claim binds
+    to a number in its own clause; the answer's structure says where that ends.
+    """
+    listed = """لديك حاليًا:
+- **AI1** - PROGRAM ELECTIVE COURSE I (الشعبة M1): 3 ساعات
+- **AI331** - MACHINE LEARNING (الشعبة M1): 4 ساعات"""
+    assert CREDIT_CAP_CONTRADICTION not in _credit(listed)
+    # Run-together bullets are the same structure without the newlines, and models
+    # emit both. A boundary that only understood newlines would pass this one.
+    assert CREDIT_CAP_CONTRADICTION not in _credit("لديك حاليًا: - AI1 3 ساعات - AI331 4 ساعات")
+    # And a real load claim in its own clause is still read, and still checked.
+    assert CREDIT_CAP_CONTRADICTION not in _credit("لديك حاليًا 15 ساعة مسجلة.")
+    assert CREDIT_CAP_CONTRADICTION in _credit("لديك حاليًا 12 ساعة مسجلة.")
+
+
+def test_each_structural_boundary_stops_a_claim_on_its_own() -> None:
+    """All four boundaries, each proved separately.
+
+    The bulleted case alone does not prove them: a newline followed by "- " is also
+    matched by the bullet rule, so three of the four could be deleted and the TT16
+    test would still pass. Each shape below puts the phrase in a clause with no
+    number of its own and a number in the NEXT one — which is exactly the reading
+    error that refused TT16, in the four forms an answer can produce it.
+    """
+    unbulleted_list = """لديك حاليًا:
+3 ساعات لمقرر AI1"""
+    assert CREDIT_CAP_CONTRADICTION not in _credit(unbulleted_list)
+    assert CREDIT_CAP_CONTRADICTION not in _credit("هذه هي الساعات المحتفظ بها. 3 ساعات لمقرر AI1.")
+    assert CREDIT_CAP_CONTRADICTION not in _credit(
+        "الساعات المحتفظ بها موضحة أدناه؛ 3 ساعات لـ AI1."
+    )
+    assert CREDIT_CAP_CONTRADICTION not in _credit("الساعات المحتفظ بها - 3 ساعات لمقرر AI1")
+
+
+def test_provenance_binds_to_the_assertion_that_makes_it() -> None:
+    """TT03/TT07, refused live on correct answers.
+
+    The rule was global: once «طلبت» appeared anywhere, every course code anywhere in
+    the answer had to be a student request. A timetable answer names both kinds in
+    one breath — what the student asked for, and what was carried over from the
+    current registration — so naming the second kind was a provenance violation.
+    """
+    facts = {
+        **TIMETABLE,
+        "student_requested_courses": [{"course_code": "AI352"}, {"course_code": "AI371"}],
+        "retained_sections": [{"course_code": "AI331"}, {"course_code": "CS323"}],
+    }
+    both_kinds = """المقررات التي طلبتها:
+- AI352
+- AI371
+والشعب التي احتفظت بها من تسجيلك الحالي:
+- AI331 شعبة M1
+- CS323 شعبة M2"""
+    assert UNSUPPORTED_STUDENT_REQUEST not in check_answer(both_kinds, tool_results=[facts])
+    # A sentence that names its own courses owns those and does not adopt the list
+    # below it -- the shape TT03 actually produced.
+    inline = """المقررات التي طلبتها هي AI352 وAI371.
+الشعب المحفوظة:
+- AI331 شعبة M1"""
+    assert UNSUPPORTED_STUDENT_REQUEST not in check_answer(inline, tool_results=[facts])
+    # The sharpest form: the assertion names its courses AND ends in a colon that
+    # introduces a different list. It owns what it named, not what follows.
+    named_then_listed = """المقررات التي طلبتها هي AI352 وAI371، والشعب المحفوظة:
+- AI331 شعبة M1
+- CS323 شعبة M2"""
+    assert UNSUPPORTED_STUDENT_REQUEST not in check_answer(named_then_listed, tool_results=[facts])
+    # And the narrowing is not a waiver: a course attributed to the student that the
+    # student never requested is still caught, in either shape.
+    assert UNSUPPORTED_STUDENT_REQUEST in check_answer(
+        "المقررات التي طلبتها هي AI352 وAI331.", tool_results=[facts]
+    )
+    listed_wrong = """المقررات التي طلبتها:
+- AI352
+- AI331"""
+    assert UNSUPPORTED_STUDENT_REQUEST in check_answer(listed_wrong, tool_results=[facts])
+
+
+def test_an_arabic_conjunction_does_not_hide_a_course_code() -> None:
+    r"""A `\b` word boundary never fires between «و» and «A», because Arabic letters
+    are word characters. Every check in this module was blind to the second code in
+    «AI352 وAI371» — a provenance rule a model could walk past by writing a
+    conjunction."""
+    facts = {**TIMETABLE, "student_requested_courses": [{"course_code": "AI352"}]}
+    assert UNSUPPORTED_STUDENT_REQUEST in check_answer(
+        "المقررات التي طلبتها هي AI352 وAI331.", tool_results=[facts]
+    )
+
+
+# ── what the adversarial review found, after the first locality fix ───────────
+
+
+def test_a_number_a_course_already_owns_is_not_a_load_claim() -> None:
+    """The TT16 refusal, in the four shapes enumerating separators would have missed.
+
+    A first fix broke the claim at newlines, bullets, sentence ends and semicolons.
+    A review then wrote the same list comma-joined, in parentheses, on one line — and
+    it was refused again, because no separator rule can anticipate how a model will
+    punctuate a list. The principle is not punctuation: if a course is named between
+    the claim and the number, the number is that course's.
+    """
+    for listed in (
+        "لديك حاليًا: AI1 (3 ساعات)، AI331 (4 ساعات)",
+        "لديك حاليًا AI1 3 ساعات و AI331 4 ساعات",
+        "الساعات المحتفظ بها — AI1 بواقع 3 ساعات",
+    ):
+        assert CREDIT_CAP_CONTRADICTION not in _credit(listed), listed
+    # And a colon before the figure is NOT a boundary, because that is how a real cap
+    # is written. Breaking on the character would have silenced the check instead.
+    assert CREDIT_CAP_CONTRADICTION not in _credit("الحد الأعلى: 19 ساعة")
+    assert CREDIT_CAP_CONTRADICTION in _credit("الحد الأعلى: 18 ساعة")
+
+
+def test_a_clock_time_is_not_a_credit_figure() -> None:
+    """`_fold` strips the colon, so «09:00» becomes «09 00» and a timetable answer —
+    which is nothing but clock times — hands the check a load of 9."""
+    assert CREDIT_CAP_CONTRADICTION not in _credit("الساعات المحتفظ بها تبدأ 09:00 يوم الأحد.")
+    assert _credit("المحاضرة 10:15، والساعات المحتفظ بها 15.") == []
+
+
+def test_two_attributions_in_one_sentence_own_different_courses() -> None:
+    """A single sentence can carry both provenances. Binding each to the whole LINE
+    gave both codes to both, so the answer was refused twice — once for claiming the
+    student requested a recommended course, once for the reverse."""
+    facts = {
+        **TIMETABLE,
+        "student_requested_courses": [{"course_code": "AI352"}],
+        "system_recommended_courses": [{"course_code": "CS323"}],
+    }
+    correct = "المقررات التي طلبتها AI352، واقترح النظام CS323."
+    assert UNSUPPORTED_STUDENT_REQUEST not in check_answer(correct, tool_results=[facts])
+    assert UNSUPPORTED_RECOMMENDATION not in check_answer(correct, tool_results=[facts])
+    # Swapping them is still caught, in the same sentence shape.
+    swapped = "المقررات التي طلبتها CS323، واقترح النظام AI352."
+    assert UNSUPPORTED_STUDENT_REQUEST in check_answer(swapped, tool_results=[facts])
+    assert UNSUPPORTED_RECOMMENDATION in check_answer(swapped, tool_results=[facts])

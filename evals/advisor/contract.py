@@ -28,10 +28,50 @@ VALID_POLICY_MODES = frozenset({"data_only", "required", "conditional"})
 #: same list on purpose: `tool_surface_correct` and `tool_calls_correct` split what
 #: the contract calls "tool or action routing", because the whole point of the
 #: exercise is to tell an orchestration failure from a model failure.
+#: TWO VOCABULARIES, and only one of them is checkable.
+#:
+#: `evidence_required` began as documentation: bare payload FIELD names recording
+#: which part of a tool result an answer had to rest on. Nothing verifies those — no
+#: trace records which fields an answer read — so they stay prose, and are listed
+#: here only so a typo cannot pass the loader unnoticed.
+#:
+#: The `verified_context.*` form is different in kind: it names evidence the adviser
+#: SEEDED, the turn records exactly which paths it carried, and the scorer gates on
+#: it. When a contract names one of these instead of a tool, that is a real
+#: requirement, not a note.
+VALID_PAYLOAD_EVIDENCE = frozenset(
+    {
+        "NOT_ON_FILE_semantics",
+        "UNKNOWN_PREREQ",
+        "blocked.steps_away",
+        "current_term_registrations",
+        "listed_as_prerequisite_for",
+        "sole_remaining_prerequisite_count",
+        "sole_remaining_prerequisite_for",
+        "student_requested_courses",
+        "system_recommended_courses",
+    }
+)
+
+VALID_EVIDENCE_PATHS = frozenset(
+    {
+        "verified_context.course_evidence",
+        "verified_context.course_evidence.current_term_registrations",
+        "verified_context.course_evidence.passed",
+        "verified_context.course_evidence.remaining_requirements",
+        "verified_context.course_evidence.studying",
+        "verified_context.policy_evidence",
+        "verified_context.recommendation_policy",
+        "verified_context.recommendations",
+        "verified_context.student",
+        "verified_context.term_context",
+    }
+)
+
 SCORE_DIMENSIONS = (
     "intent_recognition",
     "tool_surface_correct",
-    "tool_calls_correct",
+    "evidence_acquisition_correct",
     "action_correct",
     "factual_grounding",
     "policy_compliance",
@@ -94,6 +134,20 @@ def load_contract(path: pathlib.Path | None = None) -> list[dict[str, Any]]:
         for group in tools["required_any"]:
             _require(isinstance(group, list) and group, f"{cid}: required_any holds an empty group")
 
+        # A contract may require SEEDED evidence instead of a tool call. Validated
+        # here because an unrecognised path would otherwise be satisfiable by nothing
+        # at all — the loader exists so a malformed contract fails before question 1,
+        # not so it measures something nobody wrote down.
+        evidence = case.get("evidence_required")
+        if evidence is not None:
+            _require(isinstance(evidence, list), f"{cid}: evidence_required is not a list")
+            for path in evidence:
+                _require(
+                    isinstance(path, str)
+                    and path in (VALID_EVIDENCE_PATHS | VALID_PAYLOAD_EVIDENCE),
+                    f"{cid}: unknown evidence path {path!r}",
+                )
+
         action = case.get("expected_action")
         if action is not None:
             _require(isinstance(action, dict), f"{cid}: expected_action is not the structured form")
@@ -122,6 +176,8 @@ def contract_by_id(path: pathlib.Path | None = None) -> dict[str, dict[str, Any]
 __all__ = [
     "CONTRACT_PATH",
     "SCORE_DIMENSIONS",
+    "VALID_EVIDENCE_PATHS",
+    "VALID_PAYLOAD_EVIDENCE",
     "VALID_COMPOSITIONS",
     "VALID_DOMAINS",
     "VALID_MODES",

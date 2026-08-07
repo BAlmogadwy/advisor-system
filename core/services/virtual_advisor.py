@@ -1436,6 +1436,26 @@ _POLICY_ABSTENTION_EN = (
 )
 
 
+def _evidence_paths(context: dict[str, Any] | None) -> list[str]:
+    """Which seeded evidence this turn actually carried, as dotted paths.
+
+    Populated only: an empty `recommendations` list is not recommendation evidence,
+    and a contract that requires it must fail rather than be satisfied by the key
+    existing. One level of nesting, because that is where the distinctions live —
+    `course_evidence.studying` is a different claim from `course_evidence.passed`.
+    """
+    out: list[str] = []
+    for key, value in sorted((context or {}).items()):
+        if not value:
+            continue
+        out.append(f"verified_context.{key}")
+        if isinstance(value, dict):
+            out.extend(
+                f"verified_context.{key}.{sub}" for sub, inner in sorted(value.items()) if inner
+            )
+    return out
+
+
 def _safe_excerpt(boundary: ToolBoundary, answer: str) -> str:
     """A rejected draft, safe to write to a trace file.
 
@@ -3102,5 +3122,11 @@ def answer_virtual_advisor(
             "executed_evidence_tools": sorted(
                 {r.get("tool") for r in agent_tool_results if isinstance(r, dict) and r.get("tool")}
             ),
+            # THE THIRD SOURCE. The adviser seeds the student's course state, the term
+            # recommendations and the credit policy before the model sees the
+            # question, so an answer can be fully grounded on evidence no tool call
+            # fetched. Requiring a call for those marked correct answers wrong and
+            # pushed the model to re-fetch what it had already been handed.
+            "verified_context_evidence": _evidence_paths(context),
         },
     }

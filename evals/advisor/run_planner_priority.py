@@ -203,6 +203,10 @@ def main() -> None:
             "model_tools_called": agent.get("model_tools_called") or [],
             "server_completed_tools": agent.get("server_completed_tools") or [],
             "executed_evidence_tools": agent.get("executed_evidence_tools") or [],
+            # The fourth: evidence the turn was HANDED. A contract that names it can
+            # be satisfied without any tool call at all, which is the architecture we
+            # actually ship — the adviser seeds it before the model sees the question.
+            "verified_context_evidence": agent.get("verified_context_evidence") or [],
             "tool_results": agent.get("tool_results") or [],
             "output_violations": agent.get("output_violations") or [],
             # The text that TRIPPED the postconditions, sanitised at the boundary and

@@ -61,7 +61,12 @@ ALL_CHECKS = (
 #: Same shape as `advisor_intent._COURSE_CODE`, and deliberately a separate constant:
 #: importing the router into a postcondition module would make a text check depend on
 #: a routing decision, and these two must be able to disagree.
-_COURSE_CODE = re.compile(r"\b[A-Za-z]{2,4}-?\d{3}\b")
+#:
+#: NOT `\b`. Arabic letters are word characters, so there is no word boundary between
+#: the conjunction and the code in «AI352 وAI371» — the second code was invisible to
+#: every check in this module, which is a provenance check a model could walk past by
+#: writing a conjunction. The boundary that matters here is a Latin letter or digit.
+_COURSE_CODE = re.compile(r"(?<![A-Za-z0-9])[A-Za-z]{2,4}-?\d{3}(?![0-9])")
 
 #: «شعبة M2» / "section M2" — a label only counts when a section word introduces it,
 #: because "M2" alone is two characters and appears inside ordinary words.
@@ -203,32 +208,142 @@ _CAP_CLAIMS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("total", ("مجموع", "اجمالي", "proposed total", "total load")),
 )
 
-#: How far after the phrase a number still belongs to it.
-_CLAIM_WINDOW = 60
-
 #: A number standing on its own — NOT the digits inside a course code. The offline
 #: gate caught this the moment rejected drafts became visible: «والمحتفظ بها: AI1،
 #: AI331، CS323» made the check read a retained load of "1", because the first digit
 #: after the phrase was the 1 in AI1. Eleven of fifty answers were refused over it.
 _STANDALONE_NUMBER = re.compile(r"(?<![A-Za-z0-9])(\d{1,2})(?![0-9])")
 
+#: Where one assertion ends and the next begins: a line break, a list bullet, a
+#: sentence terminator, a semicolon. The answer's own structure says this — which is
+#: why a character window was the wrong instrument. A window of any size is a guess
+#: about how far a claim reaches; a clause boundary is the author saying so.
+#:
+#: SPLIT ON THE RAW TEXT. `normalise` collapses every newline to a single space, so
+#: folding first destroys exactly the structure this depends on — «لديك حاليًا:» and
+#: the bulleted course list beneath it fold into one flat line.
+_CLAUSE_BREAK = re.compile(r"[\n\r]+|(?<=[.!?؟])\s+|[;؛]|\s+[-*•–—]\s+")
+
+#: A list item, in the bullet forms the models actually emit.
+_LIST_ITEM = re.compile(r"^\s*(?:[-*•–—]|\d{1,2}[.)])\s+")
+
+#: A bullet that never got its own line. Zero-width, so the marker survives the split
+#: and `_LIST_ITEM` can still recognise the piece as an item.
+_INLINE_BULLET = re.compile(r"(?=\s[-*•–—]\s)")
+
+#: Anything shaped like a course reference, INCLUDING the one- and two-digit forms
+#: `_COURSE_CODE` deliberately excludes (`AI1`, `GSE1`). Used only to decide whether a
+#: number has already been spoken for — for that question `AI1` counts, because
+#: «AI1 3 ساعات» is a statement about AI1 no matter how the catalogue spells it.
+_COURSE_TOKEN = re.compile(r"(?<![A-Za-z0-9])[A-Za-z]{2,4}-?\d{1,3}(?![A-Za-z0-9])")
+
+#: A clock time. Removed before any figure is read, because `_fold` turns «09:00»
+#: into «09 00» and a timetable answer is full of them — a load phrase anywhere in
+#: the same clause would otherwise claim a current load of 9.
+_CLOCK = re.compile(r"\d{1,2}\s*:\s*\d{2}")
+
+#: Where one provenance assertion ends and the next begins. Finer than a clause,
+#: because «المقررات التي طلبتها AI352، واقترح النظام CS323» is two attributions in one
+#: sentence and a rule that gave each of them both codes would refuse it twice.
+_PROVENANCE_BREAK = re.compile(r"[\n\r]+|(?<=[.!?؟])\s+|[;؛,،]|\s+[-*•–—]\s+")
+
+
+def _clauses(text: str) -> list[str]:
+    """The answer's assertions, one per clause, in order."""
+    return [c for c in _CLAUSE_BREAK.split(str(text or "")) if c and c.strip()]
+
+
+def _lines(text: str) -> list[str]:
+    """The answer's lines, with run-together bullets separated back out."""
+    out: list[str] = []
+    for raw in str(text or "").splitlines():
+        out.extend(part for part in _INLINE_BULLET.split(raw) if part.strip())
+    return out
+
+
+def _attributed(text: str, phrases: tuple[str, ...]) -> set[str]:
+    """The course codes an answer attributes to ONE provenance, and only those.
+
+    The old rule was global: if «طلبت» appeared anywhere, every course code anywhere
+    in the answer had to be a student request. A timetable answer legitimately names
+    both kinds in the same breath — the courses the student asked for, and the
+    sections carried over from the current registration — so a correct TT03/TT07
+    answer was refused for naming the second kind.
+
+    An assertion owns what it names. Concretely:
+
+      * the rest of its own line, when it names courses there;
+      * otherwise, if it is a heading (ends in a colon and names nothing itself), the
+        contiguous list beneath it, stopping at the first line that is not an item.
+
+    The second clause is what makes «المقررات التي طلبتها:» own its bullets without
+    reaching the «والشعب التي احتفظت بها» list further down. The first is what stops
+    a sentence that already names its courses from adopting an unrelated list below.
+    """
+    lines = _lines(text)
+    claimed: set[str] = set()
+    for index, line in enumerate(lines):
+        # Within the line, each attribution owns only up to the next one. A single
+        # sentence can carry two — «المقررات التي طلبتها AI352، واقترح النظام CS323» —
+        # and giving both codes to both provenances refuses a correct answer twice.
+        asserted_here = False
+        for segment in _PROVENANCE_BREAK.split(line):
+            if not segment or not segment.strip():
+                continue
+            folded = _fold(segment)
+            if not any(_fold(phrase) in folded for phrase in phrases):
+                continue
+            asserted_here = True
+            claimed |= {c.upper() for c in _COURSE_CODE.findall(segment)}
+        if not asserted_here:
+            continue
+        # A heading names nothing itself and ends in a colon. Only then does the
+        # contiguous list beneath belong to it; a sentence that already named its
+        # courses owns those and does not adopt an unrelated list below.
+        if _COURSE_CODE.search(line) or not line.rstrip().endswith((":", "：")):
+            continue
+        for following in lines[index + 1 :]:
+            if not _LIST_ITEM.match(following):
+                break
+            claimed |= {c.upper() for c in _COURSE_CODE.findall(following)}
+    return claimed
+
 
 def _cap_claims(text: str) -> list[tuple[str, int]]:
-    """Every (kind, number) this answer asserts about a cap or a load."""
-    folded = _fold(text)
+    """Every (kind, number) this answer asserts about a cap or a load.
+
+    A claim binds to a number in its OWN clause. «لديك حاليًا:» followed by a list of
+    courses that each carry their own credit hours asserts no current load at all —
+    reading past the line break turned the first course's 3 into a claimed load of 3,
+    and refused a correct TT16 answer for contradicting the true 15.
+    """
+    clauses = [_fold(_CLOCK.sub(" ", c)) for c in _clauses(text)]
     out: list[tuple[str, int]] = []
     for kind, phrases in _CAP_CLAIMS:
         figure = None
-        # EVERY occurrence, not the first. An answer commonly names the courses it
+        # EVERY clause, not the first match. An answer commonly names the courses it
         # retained before it names how many hours they are — stopping at the first
         # mention reads the list, not the claim.
         for phrase in phrases:
-            for hit in re.finditer(re.escape(_fold(phrase)), folded):
-                window = folded[hit.end() : hit.end() + _CLAIM_WINDOW]
-                match = _STANDALONE_NUMBER.search(window)
-                if match:
-                    figure = int(match.group(1))
-                    break
+            folded_phrase = _fold(phrase)
+            for clause in clauses:
+                hit = clause.find(folded_phrase)
+                if hit < 0:
+                    continue
+                tail = clause[hit + len(folded_phrase) :]
+                match = _STANDALONE_NUMBER.search(tail)
+                if not match:
+                    continue
+                # A NUMBER ALREADY SPOKEN FOR. If a course is named between the claim
+                # and the figure, the figure is that course's — «لديك حاليًا: AI1 (3
+                # ساعات)، AI331 (4 ساعات)» states no current load at all. Enumerating
+                # separators could not settle this: the same list arrives bulleted, on
+                # separate lines, comma-joined or in parentheses, and each new
+                # punctuation mark would be one more refusal found in production.
+                if _COURSE_TOKEN.search(tail[: match.start()]):
+                    continue
+                figure = int(match.group(1))
+                break
             if figure is not None:
                 break
         if figure is not None:
@@ -320,13 +435,14 @@ def check_answer(
         if named and payload_sections and not named <= payload_sections:
             found.append(INVENTED_OPTION_CONTENTS)
 
-    # 3/4. Provenance. Anchored on BOTH a provenance phrase and a course code the
-    #      answer names, so neither alone can trigger it.
+    # 3/4. Provenance, bound to the assertion that makes it — not to the answer.
+    #      Anchored on BOTH a provenance phrase and a course code, so neither alone
+    #      can trigger it.
     answer_codes = {c.upper() for c in _COURSE_CODE.findall(text)}
     if timetable and answer_codes:
-        if _phrases(text, _REQUEST_PROVENANCE) and (answer_codes & known_codes) - requested:
+        if (_attributed(text, _REQUEST_PROVENANCE) & known_codes) - requested:
             found.append(UNSUPPORTED_STUDENT_REQUEST)
-        if _phrases(text, _RECOMMEND_PROVENANCE) and (answer_codes & known_codes) - recommended:
+        if (_attributed(text, _RECOMMEND_PROVENANCE) & known_codes) - recommended:
             found.append(UNSUPPORTED_RECOMMENDATION)
 
     # 5. Prerequisite readiness is not permission, and the payloads say so themselves.
