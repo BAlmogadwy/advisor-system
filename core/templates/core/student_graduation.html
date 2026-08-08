@@ -59,21 +59,44 @@
   {% else %}
     <div class="row g-2">
       <div class="col-md-4"><div class="kpi"><div class="k">{% if LANGUAGE_CODE == 'ar' %}الحد الأدنى بحكم المتطلبات{% else %}Minimum by prerequisites{% endif %}</div><div class="v">{{ grad.chain_floor_terms }}</div></div></div>
-      <div class="col-md-4"><div class="kpi"><div class="k">{% if LANGUAGE_CODE == 'ar' %}بمعدل {{ grad.courses_per_term }} مقررات/فصل{% else %}At {{ grad.courses_per_term }} courses a term{% endif %}</div><div class="v">{{ grad.pace_terms }}</div></div></div>
-      <div class="col-md-4"><div class="kpi"><div class="k">{% if LANGUAGE_CODE == 'ar' %}التقدير{% else %}Estimate{% endif %}</div><div class="v">{{ grad.terms_estimate }}</div></div></div>
+      <div class="col-md-4"><div class="kpi"><div class="k">{% if LANGUAGE_CODE == 'ar' %}الحد الأقصى في المحاكاة{% else %}Simulation credit cap{% endif %}</div><div class="v">{{ grad.max_credits_per_term }}</div></div></div>
+      <div class="col-md-4"><div class="kpi"><div class="k">{% if LANGUAGE_CODE == 'ar' %}الفصول الإضافية المقدّرة{% else %}Estimated additional terms{% endif %}</div><div class="v">{{ grad.estimated_additional_terms|default_if_none:"—" }}</div></div></div>
     </div>
 
     <p class="mb-0 mt-2">
-      {% if LANGUAGE_CODE == 'ar' %}
-        تحتاج <strong>{{ grad.terms_estimate }}</strong> فصلًا تقريبًا. حتى لو سجّلت أكثر، لا يمكن أن يقل عن <strong>{{ grad.chain_floor_terms }}</strong> لأن بعض المقررات متطلب لبعضها ويجب اجتيازها بالترتيب.
+      {% if grad.simulation_completed %}
+        {% if LANGUAGE_CODE == 'ar' %}
+          تقدّر المحاكاة <strong>{{ grad.estimated_additional_terms }}</strong> فصلًا إضافيًا، أو <strong>{{ grad.estimated_terms_including_current }}</strong> باحتساب الفصل الحالي.
+        {% else %}
+          The scenario estimates <strong>{{ grad.estimated_additional_terms }}</strong> additional term{{ grad.estimated_additional_terms|pluralize }}, or <strong>{{ grad.estimated_terms_including_current }}</strong> including the current term.
+        {% endif %}
       {% else %}
-        You need about <strong>{{ grad.terms_estimate }}</strong> more term{{ grad.terms_estimate|pluralize }}. Even if you register more each term, it cannot be fewer than <strong>{{ grad.chain_floor_terms }}</strong>, because some of your remaining courses are prerequisites for the others and must be passed in order.
+        {% if LANGUAGE_CODE == 'ar' %}
+          الحد الأدنى هو <strong>{{ grad.lower_bound_additional_terms }}</strong> فصول إضافية، لكن لا يمكن تحديد فصل إكمال دقيق لأن المحاكاة توقفت عند متطلبات غير محسومة.
+        {% else %}
+          The lower bound is <strong>{{ grad.lower_bound_additional_terms }}</strong> additional term{{ grad.lower_bound_additional_terms|pluralize }}, but no exact completion term can be given because unresolved requirements stopped the scenario.
+        {% endif %}
       {% endif %}
     </p>
 
     <div class="meta-banner meta-info mt-2">
-      {% if LANGUAGE_CODE == 'ar' %}هذا تقدير: يفترض {{ grad.courses_per_term }} مقررات في الفصل، ولا يعرف ما سيُطرح فعليًا ولا سعة الشعب. اعتمد على مرشدك الأكاديمي.{% else %}This is an estimate. It assumes {{ grad.courses_per_term }} courses per term, and it does not know which courses will actually run or whether seats exist. Confirm with your academic advisor.{% endif %}
+      {% if LANGUAGE_CODE == 'ar' %}هذه محاكاة للقراءة فقط: تفترض اجتياز كل مقرر من أول محاولة، وتستخدم حدًا أقصى قدره {{ grad.max_credits_per_term }} ساعة في كل فصل رئيسي، ولا تضمن الطرح أو الشعب أو المقاعد أو صلاحية التسجيل.{% else %}This is a read-only scenario. It assumes every course is passed first time, uses at most {{ grad.max_credits_per_term }} credits in each main term, and cannot guarantee offerings, sections, seats, or registration permission.{% endif %}
     </div>
+
+    {% if grad.unresolved_requirements %}
+      <div class="mt-2">
+        <strong>{% if LANGUAGE_CODE == 'ar' %}متطلبات غير محسومة{% else %}Unresolved requirements{% endif %}</strong>
+        <ul class="mb-0 mt-1">
+          {% for requirement in grad.unresolved_requirements %}
+            <li>
+              <span dir="ltr">{{ requirement.code }}</span>
+              {% if requirement.missing_course_prerequisites %} — {% if LANGUAGE_CODE == 'ar' %}متطلبات سابقة مفقودة{% else %}missing prerequisites{% endif %}: {{ requirement.missing_course_prerequisites|join:", " }}{% endif %}
+              {% if requirement.credit_hour_gate %} — {{ requirement.credit_hour_gate.effective_in_scenario }}/{{ requirement.credit_hour_gate.required }} {% if LANGUAGE_CODE == 'ar' %}ساعة في المحاكاة{% else %}scenario credits{% endif %}{% endif %}
+            </li>
+          {% endfor %}
+        </ul>
+      </div>
+    {% endif %}
   {% endif %}
 
   {% if grad.in_progress %}

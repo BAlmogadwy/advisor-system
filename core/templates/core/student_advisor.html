@@ -2,6 +2,8 @@
 {% load static i18n %}{% get_current_language as LANGUAGE_CODE %}
 
 {% block title %}{% if LANGUAGE_CODE == 'ar' %}المرشد الذكي{% else %}AI Advisor{% endif %}{% endblock %}
+{% block main_padding %}sa-advisor-shell{% endblock %}
+{% block main_attrs %}data-page="student-advisor"{% endblock %}
 
 {% block page_heading %}{% if LANGUAGE_CODE == 'ar' %}المرشد الذكي{% else %}AI Advisor{% endif %}{% endblock %}
 
@@ -15,22 +17,61 @@
 {% endblock %}
 
 {% block content %}
-<div class="sa-layout">
+<div class="sa-layout" id="saAdvisorLayout">
+
+  <button type="button" class="sa-drawer-backdrop" id="saHistoryBackdrop"
+          aria-label="{% if LANGUAGE_CODE == 'ar' %}إغلاق سجل المحادثات{% else %}Close conversation history{% endif %}"
+          tabindex="-1"></button>
 
   {# ── conversations, newest activity first ── #}
-  <aside class="sa-sidebar card p-2" aria-label="{% if LANGUAGE_CODE == 'ar' %}المحادثات{% else %}Conversations{% endif %}">
-    <button type="button" class="btn btn-primary w-100 mb-2" id="saNewChat">
-      {% if LANGUAGE_CODE == 'ar' %}محادثة جديدة{% else %}New conversation{% endif %}
-    </button>
+  <aside class="sa-sidebar card" id="saConversationDrawer"
+         aria-label="{% if LANGUAGE_CODE == 'ar' %}المحادثات{% else %}Conversations{% endif %}"
+         aria-hidden="true">
+    <div class="sa-sidebar-head">
+      <h2>{% if LANGUAGE_CODE == 'ar' %}سجل المحادثات{% else %}Conversation history{% endif %}</h2>
+      <button type="button" class="sa-icon-btn" id="saHistoryClose"
+              aria-label="{% if LANGUAGE_CODE == 'ar' %}إغلاق سجل المحادثات{% else %}Close conversation history{% endif %}">
+        <span aria-hidden="true">×</span>
+      </button>
+    </div>
     <p class="sa-muted sa-empty" id="saConvEmpty" hidden>
       {% if LANGUAGE_CODE == 'ar' %}لا توجد محادثات بعد.{% else %}No conversations yet.{% endif %}
     </p>
     {# A real <ul>: the buttons keep their button role and the list keeps its list role. #}
     <ul id="saConvList" class="sa-conv-list"></ul>
+    <form method="post" action="/logout/" class="sa-drawer-logout">
+      {% csrf_token %}
+      <button type="submit" class="btn btn-sm btn-outline-secondary w-100">
+        {% if LANGUAGE_CODE == 'ar' %}تسجيل الخروج{% else %}Log out{% endif %}
+      </button>
+    </form>
   </aside>
 
   {# ── the open conversation ── #}
-  <section class="sa-main card p-3">
+  <section class="sa-main card">
+    <header class="sa-workspace-head">
+      <div class="sa-workspace-identity">
+        <span class="sa-workspace-mark" aria-hidden="true">AI</span>
+        <div>
+          <p class="sa-workspace-kicker">
+            {% if LANGUAGE_CODE == 'ar' %}المرشد الأكاديمي{% else %}Academic advisor{% endif %}
+            {% if student and student.program %}<span class="sa-workspace-program">{{ student.program }}</span>{% endif %}
+          </p>
+          <h2 id="saThreadTitle">{% if LANGUAGE_CODE == 'ar' %}محادثة جديدة{% else %}New conversation{% endif %}</h2>
+        </div>
+      </div>
+      <div class="sa-workspace-actions">
+        <button type="button" class="btn btn-sm sa-history-toggle" id="saHistoryToggle"
+                aria-controls="saConversationDrawer" aria-expanded="false">
+          <span aria-hidden="true">☰</span>
+          <span>{% if LANGUAGE_CODE == 'ar' %}المحادثات{% else %}History{% endif %}</span>
+        </button>
+        <button type="button" class="btn btn-sm btn-primary sa-new-chat" id="saNewChat">
+          <span aria-hidden="true">＋</span>
+          <span>{% if LANGUAGE_CODE == 'ar' %}محادثة جديدة{% else %}New conversation{% endif %}</span>
+        </button>
+      </div>
+    </header>
     <div class="va-chat">
       {% comment %}
         The thread is NOT the live region. renderMessages() empties and rebuilds it,
@@ -40,22 +81,30 @@
         multi-line one is not parsed as a comment at all: it renders to the student.)
       {% endcomment %}
       <div class="va-messages" id="saMessages" role="log" aria-busy="false">
-        <p class="sa-muted sa-empty" id="saWelcome">
-          {% if LANGUAGE_CODE == 'ar' %}مرحبًا {% if student %}{{ student.name }}{% endif %} — اسألني عن خطتك أو عن أنظمة الجامعة.{% else %}Hello{% if student %} {{ student.name }}{% endif %} — ask about your plan or the university regulations.{% endif %}
-        </p>
+        <div class="sa-empty-state" id="saEmptyState">
+          <span class="sa-empty-mark" aria-hidden="true">AI</span>
+          <h3>{% if LANGUAGE_CODE == 'ar' %}كيف أساعدك اليوم؟{% else %}How can I help today?{% endif %}</h3>
+          <p class="sa-muted" id="saWelcome">
+            {% if LANGUAGE_CODE == 'ar' %}اسألني عن خطتك، مقرراتك، أو الأنظمة المعتمدة. الإجابة مبنية على سجلك الأكاديمي.{% else %}Ask about your plan, courses, or approved regulations. Answers use your academic record.{% endif %}
+          </p>
+          <div class="va-examples" id="saExamples">
+            {% if LANGUAGE_CODE == 'ar' %}
+              <button type="button" data-sa-example="وش باقي لي وأتخرج؟"><span aria-hidden="true">◎</span><strong>وش باقي لي وأتخرج؟</strong></button>
+              <button type="button" data-sa-example="ما المقررات التي أستطيع تسجيلها هذا الفصل؟"><span aria-hidden="true">＋</span><strong>ما أستطيع تسجيله؟</strong></button>
+              <button type="button" data-sa-example="كم مرة أقدر أنسحب من مقرر؟"><span aria-hidden="true">↩</span><strong>كم مرة أنسحب؟</strong></button>
+            {% else %}
+              <button type="button" data-sa-example="How many credits do I have left to graduate?"><span aria-hidden="true">◎</span><strong>Credits to graduate</strong></button>
+              <button type="button" data-sa-example="Which courses can I register this term?"><span aria-hidden="true">＋</span><strong>What can I register?</strong></button>
+              <button type="button" data-sa-example="How many times may I withdraw from a course?"><span aria-hidden="true">↩</span><strong>Withdrawal limit</strong></button>
+            {% endif %}
+          </div>
+        </div>
       </div>
 
-      <div class="va-examples" id="saExamples">
-        {% if LANGUAGE_CODE == 'ar' %}
-          <button type="button" class="btn btn-sm" data-sa-example="وش باقي لي وأتخرج؟">وش باقي لي وأتخرج؟</button>
-          <button type="button" class="btn btn-sm" data-sa-example="ما المقررات التي أستطيع تسجيلها هذا الفصل؟">ما أستطيع تسجيله؟</button>
-          <button type="button" class="btn btn-sm" data-sa-example="كم مرة أقدر أنسحب من مقرر؟">كم مرة أنسحب؟</button>
-        {% else %}
-          <button type="button" class="btn btn-sm" data-sa-example="How many credits do I have left to graduate?">Credits to graduate</button>
-          <button type="button" class="btn btn-sm" data-sa-example="Which courses can I register this term?">What can I register?</button>
-          <button type="button" class="btn btn-sm" data-sa-example="How many times may I withdraw from a course?">Withdrawal limit</button>
-        {% endif %}
-      </div>
+      <button type="button" class="sa-jump-latest" id="saJumpLatest" hidden
+              aria-label="{% if LANGUAGE_CODE == 'ar' %}الانتقال إلى أحدث رسالة{% else %}Jump to latest message{% endif %}">
+        <span aria-hidden="true">↓</span>
+      </button>
 
       <p class="sa-status-region visually-hidden" id="saStatus" role="status" aria-live="polite"></p>
       <p class="sa-error" id="saComposerError" role="alert" hidden></p>
@@ -75,9 +124,14 @@
           screen has now been bitten by it five times, and this file already says
           so 30 lines above.)
         {% endcomment %}
-        <input class="va-input" id="saQuestion" type="text" maxlength="1000" dir="auto"
-               placeholder="{% if LANGUAGE_CODE == 'ar' %}اكتب سؤالك…{% else %}Type your question…{% endif %}" required>
-        <button class="btn btn-primary" id="saSend" type="submit">{% if LANGUAGE_CODE == 'ar' %}إرسال{% else %}Send{% endif %}</button>
+        <textarea class="va-input" id="saQuestion" maxlength="1000" dir="auto" rows="1"
+                  placeholder="{% if LANGUAGE_CODE == 'ar' %}اكتب سؤالك…{% else %}Ask about your academic plan…{% endif %}" required></textarea>
+        <button class="btn btn-primary" id="saSend" type="submit"
+                aria-label="{% if LANGUAGE_CODE == 'ar' %}إرسال السؤال{% else %}Send question{% endif %}"
+                title="{% if LANGUAGE_CODE == 'ar' %}إرسال السؤال{% else %}Send question{% endif %}">
+          <span class="sa-send-label">{% if LANGUAGE_CODE == 'ar' %}إرسال{% else %}Send{% endif %}</span>
+          <span class="sa-send-icon" aria-hidden="true">↑</span>
+        </button>
       </form>
     </div>
   </section>
@@ -99,5 +153,6 @@
     }
   };
 </script>
-<script src="{% static 'js/page-student-advisor.js' %}?v=14"></script>
+<script src="{% static 'js/prereq-graph.js' %}?v=1"></script>
+<script src="{% static 'js/page-student-advisor.js' %}?v=23"></script>
 {% endblock %}

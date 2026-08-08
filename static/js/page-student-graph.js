@@ -7,8 +7,8 @@
                carries the same information (which term, which course, what state)
                in a shape that actually reads on a narrow screen.
 
-   Renders lazily: the section is a collapsed <details>, and laying out ~50 nodes
-   before the student asks for it is wasted work. */
+   The dedicated map page renders immediately. A legacy <details> host is still
+   supported and renders lazily when opened. */
 (function () {
   'use strict';
   const payload = window.__STUDENT_GRAPH__;
@@ -16,6 +16,7 @@
   const host = document.getElementById('scGraph');
   const modes = document.querySelector('.pg-modes');
   if (!payload || !wrap || !host) return;
+  const disclosure = wrap.tagName === 'DETAILS';
 
   const AR = (document.documentElement.lang || '').startsWith('ar');
   const NARROW = '(max-width: 768px)';
@@ -59,14 +60,15 @@
     let html = '';
     terms.forEach(t => {
       const list = byTerm.get(t).sort();
-      html += `<div class="mb-2"><div class="card-heading">${esc(t ? T.term(t) : T.noTerm)}</div><div>`;
+      const headingId = `scGraphTerm${t || 'None'}`;
+      html += `<section class="mb-2" aria-labelledby="${headingId}"><div class="card-heading" id="${headingId}">${esc(t ? T.term(t) : T.noTerm)}</div><div role="list">`;
       list.forEach(c => {
         const st = statusOf[c] || 'locked';
         const title = nameOf[c] ? `${c} — ${nameOf[c]} (${T[st] || st})` : c;
-        html += `<span class="${PILL[st] || PILL.locked}" title="${esc(title)}" dir="ltr">`
+        html += `<span class="${PILL[st] || PILL.locked}" title="${esc(title)}" dir="ltr" role="listitem">`
           + `<span class="pill-dot" aria-hidden="true"></span>${esc(c)}</span> `;
       });
-      html += '</div></div>';
+      html += '</div></section>';
     });
 
     /* key, using the same pills so the colours are self-explanatory */
@@ -79,6 +81,7 @@
 
     host.removeAttribute('dir');
     host.classList.remove('overflow-x');
+    host.setAttribute('role', 'region');
     host.innerHTML = html;
   }
 
@@ -86,6 +89,7 @@
     if (!window.PrereqGraph) return;
     host.setAttribute('dir', 'ltr');
     host.classList.add('overflow-x');
+    host.setAttribute('role', 'img');
     host.innerHTML = '';
     window.PrereqGraph.render(payload.items || [], host, {
       termOf: payload.termOf || {},
@@ -108,14 +112,16 @@
     drawn = true;
   }
 
-  wrap.addEventListener('toggle', function () {
-    if (wrap.open && !drawn) draw();
-  });
+  if (disclosure) {
+    wrap.addEventListener('toggle', function () {
+      if (wrap.open && !drawn) draw();
+    });
+  }
 
   /* re-render when the phone rotates across the breakpoint */
   let t = null;
   window.addEventListener('resize', function () {
-    if (!drawn || !wrap.open) return;
+    if (!drawn || (disclosure && !wrap.open)) return;
     clearTimeout(t);
     t = setTimeout(function () { if (isNarrow() !== lastNarrow) draw(); }, 200);
   });
@@ -132,4 +138,6 @@
     bTerm.addEventListener('click', () => setMode('term', bTerm, bChain));
     bChain.addEventListener('click', () => setMode('depth', bChain, bTerm));
   }
+
+  if (!disclosure || wrap.open || wrap.dataset.autoRender === 'true') draw();
 })();

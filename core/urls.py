@@ -90,6 +90,7 @@ from .planner_draft_views import (
     draft_generate_view,
     draft_select_view,
     student_planner_page,
+    student_timetable_start_view,
 )
 from .planner_job_views import (
     planner_job_cancel,
@@ -160,6 +161,7 @@ from .student_auth_views import (
     student_home_view,
     student_login_view,
     student_otp_verify_view,
+    student_plan_map_view,
 )
 from .timetable_workspace_views import (
     timetable_workspace_graph_page,
@@ -267,6 +269,11 @@ urlpatterns = [
         login_required(student_courses_view, login_url="student_login"),
         name="student_courses",
     ),
+    path(
+        "student/plan-map/",
+        login_required(student_plan_map_view, login_url="student_login"),
+        name="student_plan_map",
+    ),
     # ONE surface over one course: a real course, an elective placeholder, or a code
     # that is in no plan of theirs. The URL names a COURSE — never a student, so
     # there is no ownership to check after the query.
@@ -368,6 +375,11 @@ urlpatterns = [
         "student/planner/drafts/<str:draft_id>/select/",
         login_required(draft_select_view, login_url="student_login"),
         name="planner_draft_select",
+    ),
+    path(
+        "student/timetable/",
+        login_required(student_timetable_start_view, login_url="student_login"),
+        name="student_timetable_start",
     ),
     # The screen. Declared after the `drafts/…` routes so the literal segment wins;
     # they differ in length anyway, but order makes that independent of the pattern.

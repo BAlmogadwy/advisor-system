@@ -439,6 +439,11 @@ def generate(draft: PlannerDraft, *, confirmation: Any = None) -> PlannerDraft:
                 keep_current_sections=locked.keep_current_sections,
                 fixed_sections=tuple(pins.items()),
                 max_credits=credit_ceiling(int(term)),
+                # The draft is the student's exact on-screen selection.  Its
+                # initial value already comes from the recommender when no
+                # explicit courses were supplied; silently adding removed
+                # recommendations back here made the picker impossible to use.
+                include_recommendations=False,
             )
         )
 

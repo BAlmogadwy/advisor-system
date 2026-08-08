@@ -19,10 +19,21 @@
   const convListEl = document.getElementById('saConvList');
   const convEmptyEl = document.getElementById('saConvEmpty');
   const newChatBtn = document.getElementById('saNewChat');
-  const welcomeEl = document.getElementById('saWelcome');
+  const emptyStateEl = document.getElementById('saEmptyState');
   const statusEl = document.getElementById('saStatus');
   const composerErrorEl = document.getElementById('saComposerError');
+  const layoutEl = document.getElementById('saAdvisorLayout');
+  const historyDrawerEl = document.getElementById('saConversationDrawer');
+  const historyToggleBtn = document.getElementById('saHistoryToggle');
+  const historyCloseBtn = document.getElementById('saHistoryClose');
+  const historyBackdropBtn = document.getElementById('saHistoryBackdrop');
+  const threadTitleEl = document.getElementById('saThreadTitle');
+  const jumpLatestBtn = document.getElementById('saJumpLatest');
   if (!formEl || !questionEl || !messagesEl || !sendBtn || !convListEl) return;
+
+  const newConversationTitle = newChatBtn
+    ? ((newChatBtn.querySelector('span:last-child') || newChatBtn).textContent || '').trim()
+    : '';
 
   const T = {
     thinking:  AR ? 'جارٍ تجهيز الإجابة…' : 'Preparing the answer…',
@@ -49,6 +60,50 @@
     offline:   AR ? 'لا يوجد اتصال. سؤالك محفوظ، حاول مرة أخرى.' : 'No connection. Your question is kept — try again.',
     why:       AR ? 'ما سبب عدم فائدة الإجابة؟' : 'Why was the answer not helpful?',
     convList:  AR ? 'المحادثات' : 'Conversations',
+
+    timetableTitle: AR ? 'خيارات الجدول' : 'Timetable alternatives',
+    planningOnly: AR
+      ? 'مقترحات للتخطيط فقط — لا يتم حفظ جدول أو تسجيل مقرر هنا.'
+      : 'Planning proposals only — nothing is saved and no course is registered here.',
+    currentSections: AR ? 'الشعب الحالية المثبتة' : 'Current retained sections',
+    plannerOption: AR ? 'خيار المخطط' : 'Planner option',
+    creditHours: AR ? 'ساعة' : 'credits',
+    meetings: AR ? 'المواعيد' : 'Meetings',
+    section: AR ? 'الشعبة' : 'section',
+    unplaced: AR ? 'لم تُدرج في هذا الخيار' : 'Not placed in this option',
+    noAdditions: AR ? 'لا توجد إضافات في هذا الخيار.' : 'This option has no additions.',
+    noAdditionalCourses: AR
+      ? 'تم الإبقاء على جدولك الحالي؛ لا يوجد مقرر إضافي مطلوب أو موصى به لبناء خيار جديد.'
+      : 'Your current timetable is retained; there is no requested or recommended additional course to build into a new option.',
+
+    graduationMapTitle: AR ? 'مسار السيناريو حتى إكمال الخطة' : 'Scenario path to plan completion',
+    graduationMapComplete: AR
+      ? 'وصلت المحاكاة إلى جميع متطلبات الخطة. هذا تقدير تخطيطي وليس موعد تخرج رسميًا.'
+      : 'The simulation reached every plan requirement. This is a planning estimate, not an official graduation date.',
+    graduationMapIncomplete: AR
+      ? 'تعرض الخريطة ما استطاعت المحاكاة ترتيبه فقط، ثم تتوقف عند المتطلبات غير المحسومة؛ لذلك لا تمثل موعدًا نهائيًا للتخرج.'
+      : 'The map shows only what the simulation could schedule, then stops at unresolved requirements; it is not a final graduation date.',
+    graduationReadOnly: AR
+      ? 'سيناريو للقراءة فقط — لا يغيّر جدولك أو يسجل مقررات في بوابة الجامعة.'
+      : 'Read-only scenario — it does not change your timetable or register courses in the university portal.',
+    scenarioTerms: AR ? 'حسب فصول السيناريو' : 'By scenario term',
+    prerequisiteChain: AR ? 'حسب سلسلة المتطلبات' : 'By prerequisite chain',
+    completedBefore: AR ? 'مجتاز قبل السيناريو' : 'Passed before scenario',
+    currentScenario: AR ? 'الفصل الحالي' : 'Current term',
+    projectedScenario: AR ? 'فصل متوقع' : 'Projected term',
+    assumedCurrent: AR ? 'مفترض اجتيازه هذا الفصل' : 'Assumed passed this term',
+    projectedCourse: AR ? 'مخطط في السيناريو' : 'Planned in scenario',
+    unresolvedCourse: AR ? 'غير محسوم' : 'Unresolved',
+    unresolvedRequirements: AR ? 'متطلبات لم تحسمها المحاكاة' : 'Requirements the simulation could not resolve',
+    missingPrerequisites: AR ? 'متطلبات سابقة ناقصة' : 'Missing prerequisites',
+    creditGate: AR ? 'شرط الساعات' : 'Credit requirement',
+    scenarioChange: AR ? 'تعديل الفصل الحالي في هذا السيناريو' : 'Current-term change in this scenario',
+    removed: AR ? 'حذف' : 'Removed',
+    added: AR ? 'إضافة' : 'Added',
+    maximumPerTerm: AR ? 'حد المحاكاة لكل فصل' : 'Simulation cap per term',
+    waitingTerm: AR ? 'لا مقررات مخططة' : 'no planned courses',
+    openFullMap: AR ? 'عرض الخريطة بحجم كامل' : 'Open full scenario map',
+    closeFullMap: AR ? 'إغلاق العرض الكامل' : 'Close full-screen map',
 
     askHuman:  AR ? 'مراجعة المرشد الأكاديمي' : 'Ask an academic adviser',
     sendCase:  AR ? 'إرسال الحالة للمرشد' : 'Send this case to an adviser',
@@ -109,6 +164,8 @@
 
   let currentId = null;
   let busy = false;
+  let activeExpandedMapCloser = null;
+  let answerRevealTimer = null;
   /* Keyed BY TURN, not one slot for the page. One slot breaks as soon as two
      questions fail: the second overwrites the key, so retrying the FIRST sends the
      second's key with the first's text. The server correctly refuses that as a
@@ -166,6 +223,96 @@
     if (text != null) node.textContent = text;
     return node;
   }
+
+  /* The conversation list is navigation, not part of the academic answer. Keeping
+     it in an off-canvas drawer gives structured results the full workspace width
+     while preserving every existing conversation action. */
+  function setHistoryOpen(open, restoreFocus) {
+    if (!layoutEl || !historyDrawerEl || !historyToggleBtn) return;
+    layoutEl.classList.toggle('history-open', !!open);
+    historyDrawerEl.setAttribute('aria-hidden', String(!open));
+    historyToggleBtn.setAttribute('aria-expanded', String(!!open));
+    if (open && historyCloseBtn) historyCloseBtn.focus();
+    if (!open && restoreFocus) historyToggleBtn.focus();
+  }
+
+  if (historyToggleBtn) {
+    historyToggleBtn.addEventListener('click', function () {
+      setHistoryOpen(historyToggleBtn.getAttribute('aria-expanded') !== 'true', false);
+    });
+  }
+  if (historyCloseBtn) historyCloseBtn.addEventListener('click', function () { setHistoryOpen(false, true); });
+  if (historyBackdropBtn) historyBackdropBtn.addEventListener('click', function () { setHistoryOpen(false, true); });
+  document.addEventListener('keydown', function (event) {
+    if (event.key === 'Escape' && activeExpandedMapCloser) {
+      activeExpandedMapCloser();
+      return;
+    }
+    if (event.key === 'Escape' && layoutEl && layoutEl.classList.contains('history-open')) {
+      setHistoryOpen(false, true);
+    }
+  });
+
+  /* A compact one-line composer that grows only when the question needs it. The
+     cap prevents a long draft from shrinking the conversation into a sliver. */
+  function resizeComposer() {
+    questionEl.style.height = 'auto';
+    const height = Math.min(Math.max(questionEl.scrollHeight, 46), 144);
+    questionEl.style.height = height + 'px';
+    formEl.classList.toggle('is-expanded', height > 58);
+  }
+
+  questionEl.addEventListener('input', resizeComposer);
+  questionEl.addEventListener('keydown', function (event) {
+    if (event.key !== 'Enter' || event.shiftKey || event.isComposing) return;
+    event.preventDefault();
+    if (!sendBtn.disabled) formEl.requestSubmit(sendBtn);
+  });
+  resizeComposer();
+
+  /* The advisor is a workspace, not a fixed dashboard card. Measure the visible
+     viewport below the page heading so the composer sits at its lower edge. The
+     visual viewport matters on phones: it shrinks when the software keyboard
+     opens, while 100vh does not reliably do so. */
+  let workspaceResizeFrame = null;
+  function fitWorkspaceToViewport() {
+    workspaceResizeFrame = null;
+    if (!layoutEl) return;
+    const viewport = window.visualViewport;
+    const viewportTop = viewport ? viewport.offsetTop : 0;
+    const viewportBottom = viewport
+      ? viewport.offsetTop + viewport.height
+      : window.innerHeight;
+    const layoutTop = Math.max(layoutEl.getBoundingClientRect().top, viewportTop);
+    const keyboardOpen = !!viewport && viewport.height < window.innerHeight - 100;
+    const minimum = keyboardOpen ? 240 : (window.innerWidth <= 768 ? 360 : 480);
+    const available = Math.floor(viewportBottom - layoutTop - 12);
+    layoutEl.style.setProperty('--sa-workspace-height', Math.max(minimum, available) + 'px');
+  }
+  function scheduleWorkspaceFit() {
+    if (workspaceResizeFrame !== null) cancelAnimationFrame(workspaceResizeFrame);
+    workspaceResizeFrame = requestAnimationFrame(fitWorkspaceToViewport);
+  }
+  window.addEventListener('resize', scheduleWorkspaceFit, { passive: true });
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener('resize', scheduleWorkspaceFit, { passive: true });
+    window.visualViewport.addEventListener('scroll', scheduleWorkspaceFit, { passive: true });
+  }
+  scheduleWorkspaceFit();
+
+  function syncJumpLatest() {
+    if (!jumpLatestBtn) return;
+    const remaining = messagesEl.scrollHeight - messagesEl.clientHeight - messagesEl.scrollTop;
+    jumpLatestBtn.hidden = remaining < 120;
+  }
+
+  function scrollToLatest() {
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+    syncJumpLatest();
+  }
+
+  messagesEl.addEventListener('scroll', syncJumpLatest, { passive: true });
+  if (jumpLatestBtn) jumpLatestBtn.addEventListener('click', scrollToLatest);
 
   /* ── direction ───────────────────────────────────────────────────
      Two separate bidi defects lived on this screen, and both of them changed
@@ -356,7 +503,7 @@
     const groups = [];
     const byRef = new Map();
     citations.forEach(function (c) {
-      const key = [c.document_title, c.edition, c.page].join(' ');
+      const key = [c.document_title, c.edition, c.page].join('\u0000');
       let g = byRef.get(key);
       if (!g) {
         g = { citation: c, ids: [] };
@@ -794,6 +941,508 @@
     return null;
   }
 
+  function renderThinkingMessage() {
+    const article = el('article', 'va-message sa-thinking-message');
+    article.id = 'saThinkingMessage';
+    article.setAttribute('aria-hidden', 'true');
+    article.appendChild(el('div', 'va-avatar', 'AI'));
+    const bubble = el('div', 'va-bubble');
+    const dots = el('span', 'sa-thinking-dots');
+    for (let i = 0; i < 3; i += 1) dots.appendChild(el('span'));
+    bubble.appendChild(dots);
+    bubble.appendChild(el('span', 'sa-thinking-label', T.thinking));
+    article.appendChild(bubble);
+    return article;
+  }
+
+  function showThinkingMessage() {
+    const existing = document.getElementById('saThinkingMessage');
+    if (existing) existing.remove();
+    messagesEl.appendChild(renderThinkingMessage());
+    scrollToLatest();
+  }
+
+  function cancelAnswerReveal() {
+    if (answerRevealTimer !== null) clearTimeout(answerRevealTimer);
+    answerRevealTimer = null;
+  }
+
+  function progressiveRevealEnabled() {
+    if (window.__SA_FORCE_PROGRESSIVE_REVEAL__ === true) return true;
+    if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      return false;
+    }
+    /* Browser automation reads completed DOM deterministically. The dedicated
+       animation test opts back in; real student browsers animate normally. */
+    return !navigator.webdriver;
+  }
+
+  function revealAssistantMessage(article) {
+    if (!article || !progressiveRevealEnabled()) return;
+    const body = article.querySelector('.sa-body');
+    const bubble = article.querySelector('.va-bubble');
+    if (!body || !bubble) return;
+
+    const walker = document.createTreeWalker(body, NodeFilter.SHOW_TEXT);
+    const textNodes = [];
+    let current = walker.nextNode();
+    while (current) {
+      if (current.nodeValue) textNodes.push(current);
+      current = walker.nextNode();
+    }
+    const queue = [];
+    textNodes.forEach(function (node) {
+      const parts = node.nodeValue.match(/\S+\s*|\s+/gu) || [];
+      node.nodeValue = '';
+      parts.forEach(function (part) { queue.push({ node: node, text: part }); });
+    });
+    if (!queue.length) return;
+
+    const deferred = Array.from(bubble.children)
+      .filter(function (node) { return node !== body; })
+      .map(function (node) {
+        const state = { node: node, hidden: node.hidden };
+        node.hidden = true;
+        return state;
+      });
+    const caret = el('span', 'sa-answer-caret');
+    caret.setAttribute('aria-hidden', 'true');
+    body.appendChild(caret);
+    article.classList.add('is-revealing');
+    article.setAttribute('aria-busy', 'true');
+
+    let index = 0;
+    let ticks = 0;
+    const perTick = Math.max(1, Math.ceil(queue.length / 180));
+    function finish() {
+      cancelAnswerReveal();
+      caret.remove();
+      deferred.forEach(function (state) { state.node.hidden = state.hidden; });
+      article.classList.remove('is-revealing');
+      article.removeAttribute('aria-busy');
+      scrollToLatest();
+    }
+    function writeNext() {
+      const stop = Math.min(queue.length, index + perTick);
+      while (index < stop) {
+        const item = queue[index];
+        item.node.nodeValue += item.text;
+        index += 1;
+      }
+      ticks += 1;
+      if (ticks % 4 === 0) scrollToLatest();
+      if (index >= queue.length) {
+        finish();
+        return;
+      }
+      answerRevealTimer = setTimeout(writeNext, 20);
+    }
+    writeNext();
+  }
+
+  const TIMETABLE_DAYS = {
+    SUN: AR ? 'الأحد' : 'Sun',
+    MON: AR ? 'الاثنين' : 'Mon',
+    TUE: AR ? 'الثلاثاء' : 'Tue',
+    WED: AR ? 'الأربعاء' : 'Wed',
+    THU: AR ? 'الخميس' : 'Thu',
+    FRI: AR ? 'الجمعة' : 'Fri',
+    SAT: AR ? 'السبت' : 'Sat',
+  };
+
+  function ltrNode(tag, className, text) {
+    const node = el(tag, className, text);
+    node.setAttribute('dir', 'ltr');
+    return node;
+  }
+
+  function timetableCourseKey(row) {
+    const node = el('strong', 'sa-tt-course-key');
+    node.appendChild(ltrNode('bdi', null, String(row.course_code || '')));
+    if (row.section) {
+      node.appendChild(document.createTextNode(' · ' + T.section + ' '));
+      node.appendChild(ltrNode('bdi', null, String(row.section)));
+    }
+    return node;
+  }
+
+  function renderTimetablePresentation(presentation, language) {
+    if (!presentation || presentation.kind !== 'timetable_proposals') return null;
+    const alternatives = Array.isArray(presentation.alternatives)
+      ? presentation.alternatives : [];
+    const current = Array.isArray(presentation.current_sections)
+      ? presentation.current_sections : [];
+    if (!alternatives.length && !current.length) return null;
+
+    const wrap = el('section', 'sa-timetable');
+    const dir = language === 'ar' ? 'rtl' : language === 'en' ? 'ltr' : (AR ? 'rtl' : 'ltr');
+    wrap.setAttribute('dir', dir);
+    wrap.setAttribute('aria-label', T.timetableTitle);
+
+    const heading = el('div', 'sa-tt-heading');
+    heading.appendChild(el('h4', 'sa-tt-title', T.timetableTitle));
+    if (presentation.planning_term) {
+      heading.appendChild(ltrNode('span', 'sa-tt-term', presentation.planning_term));
+    }
+    wrap.appendChild(heading);
+    wrap.appendChild(el('p', 'sa-tt-boundary', T.planningOnly));
+
+    if (current.length) {
+      const retained = el('details', 'sa-tt-current');
+      retained.appendChild(el('summary', null, T.currentSections + ' (' + current.length + ')'));
+      const list = el('div', 'sa-tt-current-list');
+      current.forEach(function (course) {
+        const row = el('div', 'sa-tt-current-row');
+        row.appendChild(timetableCourseKey(course));
+        if (course.course_name) row.appendChild(el('span', 'sa-tt-course-name', course.course_name));
+        (course.meetings || []).forEach(function (meeting) {
+          row.appendChild(ltrNode('span', 'sa-tt-current-meeting', meeting));
+        });
+        list.appendChild(row);
+      });
+      retained.appendChild(list);
+      wrap.appendChild(retained);
+    }
+
+    if (!alternatives.length && presentation.no_additional_courses === true) {
+      wrap.appendChild(el('p', 'sa-tt-empty sa-tt-no-additional-courses', T.noAdditionalCourses));
+    }
+
+    const optionList = el('div', 'sa-tt-options');
+    alternatives.forEach(function (option, index) {
+      const details = el('details', 'sa-tt-option');
+      details.open = index === 0;
+      const summary = el('summary', 'sa-tt-summary');
+      const names = (option.planner_options || []).filter(Boolean);
+      const title = names.length ? names.join(' / ') : String(index + 1);
+      const optionName = el('strong', 'sa-tt-option-name');
+      optionName.appendChild(document.createTextNode(T.plannerOption + ' '));
+      optionName.appendChild(ltrNode('bdi', null, title));
+      summary.appendChild(optionName);
+
+      const coverage = Number(option.scheduled_courses || 0) + '/' + Number(option.target_courses || 0);
+      const credits = Number(option.total_credit_hours || option.proposed_credit_hours || 0);
+      const meta = el('span', 'sa-tt-summary-meta');
+      meta.appendChild(ltrNode('span', 'sa-tt-coverage', coverage));
+      if (credits) meta.appendChild(el('span', 'sa-tt-credits', credits + ' ' + T.creditHours));
+      summary.appendChild(meta);
+      details.appendChild(summary);
+
+      const body = el('div', 'sa-tt-option-body');
+      const meetings = Array.isArray(option.meetings) ? option.meetings : [];
+      if (meetings.length) {
+        body.appendChild(el('h5', 'sa-tt-subtitle', T.meetings));
+        const meetingList = el('ul', 'sa-tt-meetings');
+        meetings.forEach(function (meeting) {
+          const item = el('li', 'sa-tt-meeting');
+          const course = el('span', 'sa-tt-meeting-course');
+          course.appendChild(timetableCourseKey(meeting));
+          if (meeting.course_name) course.appendChild(el('small', null, meeting.course_name));
+          item.appendChild(course);
+
+          const when = el('span', 'sa-tt-when');
+          when.appendChild(el('span', 'sa-tt-day', TIMETABLE_DAYS[meeting.day] || meeting.day || ''));
+          when.appendChild(
+            ltrNode('bdi', 'sa-tt-time', String(meeting.start || '') + '–' + String(meeting.end || ''))
+          );
+          item.appendChild(when);
+          meetingList.appendChild(item);
+        });
+        body.appendChild(meetingList);
+      } else {
+        body.appendChild(el('p', 'sa-tt-empty', T.noAdditions));
+      }
+
+      const unplaced = Array.isArray(option.unplaced_courses) ? option.unplaced_courses : [];
+      if (unplaced.length) {
+        body.appendChild(el('h5', 'sa-tt-subtitle sa-tt-unplaced-title', T.unplaced));
+        const unplacedList = el('ul', 'sa-tt-unplaced');
+        unplaced.forEach(function (course) {
+          const item = el('li');
+          item.appendChild(ltrNode('strong', 'sa-tt-course-key', course.course_code || ''));
+          if (course.course_name) item.appendChild(document.createTextNode(' — ' + course.course_name));
+          if (course.reason) item.appendChild(el('span', 'sa-tt-reason', course.reason));
+          unplacedList.appendChild(item);
+        });
+        body.appendChild(unplacedList);
+      }
+      details.appendChild(body);
+      optionList.appendChild(details);
+    });
+    wrap.appendChild(optionList);
+    return wrap;
+  }
+
+  function graduationBandLabel(value) {
+    const label = String(value || '');
+    if (label === 'Completed before the scenario') return T.completedBefore;
+    if (label.indexOf('Current ') === 0) {
+      return T.currentScenario + ' ' + label.slice('Current '.length);
+    }
+    if (label.indexOf('Projected ') === 0) {
+      return T.projectedScenario + ' ' + label.slice('Projected '.length);
+    }
+    return label;
+  }
+
+  function graduationGraphStrings(labels) {
+    const band = function (n) {
+      return graduationBandLabel(labels[String(n)] || String(n));
+    };
+    return {
+      termHeading: band,
+      pgNoTermBand: T.waitingTerm,
+      pgGateTip: function (h) { return T.creditGate + ': ' + h + ' ' + T.creditHours; },
+      pgInferredTip: AR ? 'موضع مستنتج خارج ترتيب السيناريو' : 'position inferred outside the scenario order',
+      pgTermTip: band,
+      pgGate: T.creditGate,
+      pgInferred: AR ? 'موضع مستنتج' : 'inferred position',
+      pgFoundation: AR ? 'بداية السلسلة' : 'chain start',
+      pgIntermediate: AR ? 'وسط السلسلة' : 'chain middle',
+      pgTerminal: AR ? 'نهاية السلسلة' : 'chain end',
+      pgHoverHint: AR ? 'مرّر لإبراز السلسلة' : 'hover to highlight a chain',
+      pgPassed: T.completedBefore,
+      pgStudying: T.assumedCurrent,
+      pgOpen: T.projectedCourse,
+      pgLocked: T.unresolvedCourse,
+      pgSameTermWarn: function (n) {
+        return AR ? n + ' علاقة متطلبات داخل الفصل نفسه' : n + ' prerequisite relation(s) within one term';
+      },
+      pgBackwardWarn: function (n) {
+        return AR ? n + ' علاقة متطلبات بعد مقررها' : n + ' prerequisite relation(s) after their course';
+      },
+    };
+  }
+
+  function renderGraduationMobileList(graph, labels) {
+    const host = el('div', 'sa-grad-mobile');
+    const byTerm = new Map();
+    (graph.extraNodes || []).forEach(function (code) {
+      const term = Number(graph.termOf && graph.termOf[code]);
+      const key = Number.isFinite(term) ? term : 0;
+      if (!byTerm.has(key)) byTerm.set(key, []);
+      byTerm.get(key).push(code);
+    });
+    const statusText = {
+      passed: T.completedBefore,
+      studying: T.assumedCurrent,
+      open: T.projectedCourse,
+      locked: T.unresolvedCourse,
+    };
+    const statusClass = {
+      passed: 'is-passed', studying: 'is-studying', open: 'is-open', locked: 'is-locked',
+    };
+    Array.from(byTerm.keys()).sort(function (a, b) { return a - b; }).forEach(function (term) {
+      const section = el('section', 'sa-grad-mobile-term');
+      section.appendChild(el('h5', 'sa-grad-band-title', graduationBandLabel(labels[String(term)] || term)));
+      const courses = el('div', 'sa-grad-mobile-courses');
+      byTerm.get(term).sort().forEach(function (code) {
+        const status = (graph.statusOf && graph.statusOf[code]) || 'locked';
+        const item = el('span', 'sa-grad-course ' + (statusClass[status] || 'is-locked'));
+        item.title = ((graph.nameOf && graph.nameOf[code]) || code) + ' — ' + (statusText[status] || status);
+        item.appendChild(ltrNode('bdi', null, code));
+        courses.appendChild(item);
+      });
+      section.appendChild(courses);
+      host.appendChild(section);
+    });
+    return host;
+  }
+
+  function renderGraduationPresentation(presentation, language) {
+    if (!presentation || presentation.kind !== 'graduation_scenario') return null;
+    const graph = presentation.graph || {};
+    if (!Array.isArray(graph.extraNodes) || !graph.extraNodes.length) return null;
+
+    const wrap = el('section', 'sa-graduation-map');
+    const dir = language === 'ar' ? 'rtl' : language === 'en' ? 'ltr' : (AR ? 'rtl' : 'ltr');
+    wrap.setAttribute('dir', dir);
+    wrap.setAttribute('aria-label', T.graduationMapTitle);
+
+    const heading = el('div', 'sa-tt-heading');
+    const title = presentation.program
+      ? T.graduationMapTitle + ' — ' + presentation.program : T.graduationMapTitle;
+    heading.appendChild(el('h4', 'sa-tt-title', title));
+    const headingActions = el('div', 'sa-grad-heading-actions');
+    if (presentation.planning_term) {
+      headingActions.appendChild(ltrNode('span', 'sa-tt-term', presentation.planning_term));
+    }
+    const expand = el('button', 'btn btn-sm sa-grad-expand', T.openFullMap);
+    expand.type = 'button';
+    expand.setAttribute('aria-expanded', 'false');
+    let mapPlaceholder = null;
+    function closeThisMap() { setMapExpanded(false); }
+    function setMapExpanded(state) {
+      if (state && activeExpandedMapCloser && activeExpandedMapCloser !== closeThisMap) {
+        activeExpandedMapCloser();
+      }
+      if (state && !mapPlaceholder && wrap.parentNode) {
+        mapPlaceholder = document.createComment('graduation-map-home');
+        wrap.parentNode.insertBefore(mapPlaceholder, wrap);
+        document.body.appendChild(wrap);
+      }
+      if (!state && mapPlaceholder && mapPlaceholder.parentNode) {
+        mapPlaceholder.parentNode.insertBefore(wrap, mapPlaceholder);
+        mapPlaceholder.remove();
+        mapPlaceholder = null;
+      }
+      wrap.classList.toggle('is-expanded', state);
+      document.documentElement.classList.toggle('sa-overlay-open', state);
+      expand.setAttribute('aria-expanded', String(state));
+      expand.textContent = state ? T.closeFullMap : T.openFullMap;
+      activeExpandedMapCloser = state ? closeThisMap
+        : (activeExpandedMapCloser === closeThisMap ? null : activeExpandedMapCloser);
+      if (state) {
+        wrap.setAttribute('role', 'dialog');
+        wrap.setAttribute('aria-modal', 'true');
+      } else {
+        wrap.removeAttribute('role');
+        wrap.removeAttribute('aria-modal');
+        if (document.contains(expand)) expand.focus();
+      }
+    }
+    expand.addEventListener('click', function () {
+      setMapExpanded(expand.getAttribute('aria-expanded') !== 'true');
+    });
+    wrap.addEventListener('keydown', function (event) {
+      if (event.key === 'Escape' && expand.getAttribute('aria-expanded') === 'true') {
+        setMapExpanded(false);
+        return;
+      }
+      if (event.key === 'Tab' && expand.getAttribute('aria-expanded') === 'true') {
+        const focusable = Array.from(wrap.querySelectorAll('button, summary, a[href]'))
+          .filter(function (node) { return !node.disabled && node.getClientRects().length; });
+        if (!focusable.length) return;
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+        if (event.shiftKey && document.activeElement === first) {
+          event.preventDefault();
+          last.focus();
+        } else if (!event.shiftKey && document.activeElement === last) {
+          event.preventDefault();
+          first.focus();
+        }
+      }
+    });
+    headingActions.appendChild(expand);
+    heading.appendChild(headingActions);
+    wrap.appendChild(heading);
+    wrap.appendChild(el(
+      'p',
+      'sa-grad-result ' + (presentation.simulation_completed ? 'is-complete' : 'is-incomplete'),
+      presentation.simulation_completed ? T.graduationMapComplete : T.graduationMapIncomplete
+    ));
+    wrap.appendChild(el('p', 'sa-tt-boundary', T.graduationReadOnly));
+
+    const removed = Array.isArray(presentation.removed_current_courses)
+      ? presentation.removed_current_courses : [];
+    const added = Array.isArray(presentation.added_current_courses)
+      ? presentation.added_current_courses : [];
+    if (removed.length || added.length) {
+      const change = el('div', 'sa-grad-change');
+      change.appendChild(el('strong', null, T.scenarioChange + ': '));
+      if (removed.length) {
+        change.appendChild(document.createTextNode(T.removed + ' '));
+        removed.forEach(function (course, index) {
+          if (index) change.appendChild(document.createTextNode(', '));
+          change.appendChild(ltrNode('bdi', null, course.code));
+        });
+      }
+      if (removed.length && added.length) change.appendChild(document.createTextNode(' · '));
+      if (added.length) {
+        change.appendChild(document.createTextNode(T.added + ' '));
+        added.forEach(function (course, index) {
+          if (index) change.appendChild(document.createTextNode(', '));
+          change.appendChild(ltrNode('bdi', null, course.code));
+        });
+      }
+      wrap.appendChild(change);
+    }
+
+    const panel = el('div', 'sa-grad-panel');
+    const toolbar = el('div', 'sa-grad-toolbar');
+    const modeGroup = el('div', 'pg-modes');
+    modeGroup.setAttribute('role', 'group');
+    const byTerm = el('button', 'pg-mode is-on', T.scenarioTerms);
+    byTerm.type = 'button'; byTerm.setAttribute('aria-pressed', 'true');
+    const byChain = el('button', 'pg-mode', T.prerequisiteChain);
+    byChain.type = 'button'; byChain.setAttribute('aria-pressed', 'false');
+    modeGroup.appendChild(byTerm); modeGroup.appendChild(byChain);
+    toolbar.appendChild(modeGroup);
+    if (presentation.max_credits_per_term) {
+      toolbar.appendChild(el(
+        'span', 'sa-tt-credits',
+        T.maximumPerTerm + ': ' + presentation.max_credits_per_term + ' ' + T.creditHours
+      ));
+    }
+    panel.appendChild(toolbar);
+
+    const desktop = el('div', 'sa-grad-desktop');
+    desktop.setAttribute('dir', 'ltr');
+    desktop.setAttribute('role', 'img');
+    desktop.setAttribute('aria-label', T.graduationMapTitle);
+    panel.appendChild(desktop);
+    panel.appendChild(renderGraduationMobileList(graph, presentation.band_labels || {}));
+    wrap.appendChild(panel);
+
+    const draw = function (mode) {
+      if (!window.PrereqGraph) return;
+      desktop.innerHTML = '';
+      window.PrereqGraph.render(graph.items || [], desktop, {
+        termOf: graph.termOf || {},
+        nameOf: graph.nameOf || {},
+        statusOf: graph.statusOf || {},
+        extraNodes: graph.extraNodes || [],
+        mode: mode,
+        t: graduationGraphStrings(presentation.band_labels || {}),
+      });
+    };
+    byTerm.addEventListener('click', function () {
+      byTerm.classList.add('is-on'); byTerm.setAttribute('aria-pressed', 'true');
+      byChain.classList.remove('is-on'); byChain.setAttribute('aria-pressed', 'false');
+      draw('term');
+    });
+    byChain.addEventListener('click', function () {
+      byChain.classList.add('is-on'); byChain.setAttribute('aria-pressed', 'true');
+      byTerm.classList.remove('is-on'); byTerm.setAttribute('aria-pressed', 'false');
+      draw('depth');
+    });
+    draw('term');
+
+    const unresolved = Array.isArray(presentation.unresolved_requirements)
+      ? presentation.unresolved_requirements : [];
+    if (unresolved.length) {
+      const blockers = el('details', 'sa-grad-blockers');
+      blockers.open = !presentation.simulation_completed;
+      blockers.appendChild(el('summary', null, T.unresolvedRequirements + ' (' + unresolved.length + ')'));
+      const list = el('ul', 'sa-grad-blocker-list');
+      unresolved.forEach(function (row) {
+        const item = el('li', 'sa-grad-blocker');
+        item.appendChild(ltrNode('strong', null, row.code));
+        if (row.name) item.appendChild(document.createTextNode(' — ' + row.name));
+        if (Array.isArray(row.missing_prerequisites) && row.missing_prerequisites.length) {
+          const missing = el('span', 'sa-grad-blocker-reason');
+          missing.appendChild(document.createTextNode(T.missingPrerequisites + ': '));
+          row.missing_prerequisites.forEach(function (code, index) {
+            if (index) missing.appendChild(document.createTextNode(', '));
+            missing.appendChild(ltrNode('bdi', null, code));
+          });
+          item.appendChild(missing);
+        }
+        if (row.credit_hour_gate && row.credit_hour_gate.required) {
+          item.appendChild(el(
+            'span', 'sa-grad-blocker-reason',
+            T.creditGate + ': ' + row.credit_hour_gate.required + ' ' + T.creditHours
+          ));
+        }
+        list.appendChild(item);
+      });
+      blockers.appendChild(list);
+      wrap.appendChild(blockers);
+    }
+    return wrap;
+  }
+
   function renderMessage(message) {
     const role = message.role === 'ASSISTANT' ? 'assistant' : 'user';
     const article = el('article', 'va-message va-message-' + role);
@@ -803,6 +1452,9 @@
     article.appendChild(el('div', 'va-avatar', role === 'assistant' ? 'AI' : T.me));
     const bubble = el('div', 'va-bubble');
     bubble.appendChild(renderBody(displayBody(message), message.language));
+    const presentation = renderGraduationPresentation(message.presentation, message.language)
+      || renderTimetablePresentation(message.presentation, message.language);
+    if (presentation) bubble.appendChild(presentation);
 
     const note = statusNote(message.status);
     if (note && message.status !== 'COMPLETED') {
@@ -849,16 +1501,30 @@
     if (statusEl) statusEl.textContent = text;
   }
 
-  function renderMessages(messages) {
+  function renderMessages(messages, options) {
+    cancelAnswerReveal();
+    if (activeExpandedMapCloser) activeExpandedMapCloser();
+    document.documentElement.classList.remove('sa-overlay-open');
     messagesEl.innerHTML = '';
     const chat = messagesEl.closest('.va-chat');
     if (chat) chat.classList.toggle('has-messages', !!(messages && messages.length));
+    if (emptyStateEl) {
+      emptyStateEl.hidden = !!(messages && messages.length);
+      messagesEl.appendChild(emptyStateEl);
+    }
     if (!messages || !messages.length) {
-      if (welcomeEl) messagesEl.appendChild(welcomeEl);
+      syncJumpLatest();
       return;
     }
-    messages.forEach(function (m) { messagesEl.appendChild(renderMessage(m)); });
-    messagesEl.scrollTop = messagesEl.scrollHeight;
+    const revealMessageId = options && options.revealMessageId;
+    messages.forEach(function (m) {
+      const article = renderMessage(m);
+      messagesEl.appendChild(article);
+      if (revealMessageId && String(m.id) === String(revealMessageId)) {
+        revealAssistantMessage(article);
+      }
+    });
+    scrollToLatest();
   }
 
   /* ── conversations ──────────────────────────────────────────── */
@@ -883,11 +1549,22 @@
          wrapper instead. */
       b.setAttribute('aria-current', c.id === currentId ? 'true' : 'false');
       b.title = title;  // the label is ellipsised; without this it is unrecoverable
-      b.addEventListener('click', function () { openConversation(c.id); });
+      b.addEventListener('click', function () {
+        setHistoryOpen(false, false);
+        openConversation(c.id);
+      });
       const li = el('li', 'sa-conv-item');
       li.appendChild(b);
       convListEl.appendChild(li);
     });
+    if (threadTitleEl) {
+      const active = conversations.find(function (c) { return c.id === currentId; });
+      const title = active
+        ? (active.title || T.untitled)
+        : (newConversationTitle || T.untitled);
+      threadTitleEl.textContent = '';
+      writeText(threadTitleEl, title);
+    }
   }
 
   async function loadConversations() {
@@ -900,7 +1577,7 @@
      highlight another. */
   let openToken = 0;
 
-  async function openConversation(id) {
+  async function openConversation(id, options) {
     const token = ++openToken;
     const res = await api(withId(cfg.urls.messages, 'CONVERSATION_ID', id), { method: 'GET' });
     if (token !== openToken) return;
@@ -920,7 +1597,7 @@
     }
     currentId = id;
     try { window.history.replaceState(null, '', '?c=' + encodeURIComponent(id)); } catch (e) { /* ignore */ }
-    renderMessages(res.body.messages || []);
+    renderMessages(res.body.messages || [], options || null);
     await loadConversations();
   }
 
@@ -977,8 +1654,11 @@
        the student a button the server is still refusing. */
     sendBtn.disabled = state || holdTimer !== null;
     questionEl.disabled = state;
+    formEl.classList.toggle('is-busy', state);
+    sendBtn.setAttribute('aria-busy', String(state));
     messagesEl.setAttribute('aria-busy', String(state));
     if (state) announce(T.thinking);
+    else if (!composerErrorEl || composerErrorEl.hidden) announce('');
   }
 
   function showComposerError(text) {
@@ -1020,10 +1700,10 @@
 
       if (!retryToken) {
         messagesEl.appendChild(renderMessage({
-          id: 'pending', role: 'STUDENT', content: question, status: 'PENDING',
+          id: 'pending', role: 'STUDENT', content: question, status: 'COMPLETED',
         }));
-        messagesEl.scrollTop = messagesEl.scrollHeight;
       }
+      showThinkingMessage();
 
       const res = await api(withId(cfg.urls.send, 'CONVERSATION_ID', id), {
         method: 'POST',
@@ -1032,6 +1712,7 @@
 
       if (res.ok) {
         questionEl.value = '';
+        resizeComposer();
         retryKeys.delete(slot);
         clearComposerError();
       } else if (res.status === 0) {
@@ -1048,7 +1729,9 @@
          happened: the stored rows are authoritative, including a failed turn.
          Skipped if the student moved to another conversation while waiting —
          yanking them back mid-read is worse than a late refresh. */
-      if (currentId === id) await openConversation(id);
+      const revealMessageId = res.ok && res.body && res.body.assistant_message
+        ? res.body.assistant_message.id : null;
+      if (currentId === id) await openConversation(id, { revealMessageId: revealMessageId });
       else await loadConversations();
     } finally {
       setBusy(false);
@@ -1073,15 +1756,22 @@
   if (newChatBtn) {
     newChatBtn.addEventListener('click', async function () {
       currentId = null;
+      setHistoryOpen(false, false);
       renderMessages([]);
+      if (threadTitleEl) {
+        threadTitleEl.textContent = '';
+        writeText(threadTitleEl, newConversationTitle || T.untitled);
+      }
       try { window.history.replaceState(null, '', window.location.pathname); } catch (e) { /* ignore */ }
       await loadConversations();
       questionEl.focus();
     });
   }
 
-  /* A reload should land back where the student was: the URL if it names a
-     conversation, otherwise their most recent one. */
+  /* A direct visit to the adviser is a fresh workspace. An existing conversation
+     opens only when its id is explicit in the URL (the History drawer writes that
+     id when a student selects a thread). This keeps history durable without making
+     yesterday's answer look like the starting point of every new visit. */
   (async function start() {
     const res = await api(cfg.urls.list, { method: 'GET' });
     if (!res.ok || !res.body) {
@@ -1093,9 +1783,6 @@
     const conversations = res.body.conversations || [];
     renderConversations(conversations);
     const wanted = new URLSearchParams(window.location.search).get('c');
-    /* Fall back to the most recent thread rather than an empty screen: the list is
-       already ordered by last activity, so [0] is where the student left off. */
-    const target = wanted || (conversations[0] && conversations[0].id);
-    if (target) await openConversation(target);
+    if (wanted) await openConversation(wanted);
   })();
 })();

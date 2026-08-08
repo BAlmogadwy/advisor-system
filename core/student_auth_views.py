@@ -248,6 +248,54 @@ def student_courses_view(request: HttpRequest) -> HttpResponse:
             "academic_year": year,
             "term": term,
             "report": report or None,
+            "open_this_term": [
+                course
+                for course in (report or {}).get("open_courses", [])
+                if course.get("fits_this_term")
+            ],
+            "open_later": [
+                course
+                for course in (report or {}).get("open_courses", [])
+                if not course.get("fits_this_term")
+            ],
+        },
+    )
+
+
+@never_cache
+@login_required
+def student_plan_map_view(request: HttpRequest) -> HttpResponse:
+    """Full-width view of the same prerequisite graph used by the unlock report."""
+    scope = get_user_scope(request.user)
+    if scope.get("role") != ROLE_STUDENT:
+        return redirect("dashboard")
+    student_id = scope.get("student_id")
+    if student_id is None:
+        return render(
+            request,
+            "core/student_home.html",
+            {**get_sidebar_context(request), "unlinked": True},
+            status=409,
+        )
+
+    defaults = load_defaults()
+    year, term = int(defaults["academic_year"]), int(defaults["term"])
+    try:
+        report = build_unlock_report(student_id, year, term)
+    except Exception:  # noqa: BLE001 — the page must degrade, never 500
+        logger.exception("student plan map failed for %s", student_id)
+        report = None
+
+    return render(
+        request,
+        "core/student_plan_map.html",
+        {
+            **get_sidebar_context(request),
+            "student": Student.objects.filter(student_id=student_id).first(),
+            "student_id": student_id,
+            "academic_year": year,
+            "term": term,
+            "report": report or None,
         },
     )
 

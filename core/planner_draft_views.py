@@ -11,12 +11,9 @@ the request came through. These views parse, spend a budget, call it, and shape
 the reply.
 
 **What goes on the wire.** Course code and name, section label, day, start and
-end. Not rooms, not instructors, not registered counts, not term-section ids, not
-the baseline the solver saw, not the fingerprint — those sit in `generated_inputs`
-for the server's own use and describe the institution rather than the student's
-week. The only opaque handle that travels is an alternative's `key`, which the
-client sends back to say which timetable it chose and which resolves only against
-the alternatives stored on this student's own draft.
+end. Not rooms, not instructors, not registered counts, not the solver baseline,
+and not the fingerprint. Section ids cross only for the explicit pin control and
+are re-authorised against the signed-in student's cohort when posted back.
 """
 
 from __future__ import annotations
@@ -26,7 +23,7 @@ from typing import Any
 
 from django.core.exceptions import PermissionDenied
 from django.http import Http404, HttpRequest, JsonResponse
-from django.shortcuts import render
+from django.shortcuts import redirect, render
 from django.urls import reverse
 from django.views.decorators.http import require_GET, require_POST
 
@@ -41,16 +38,17 @@ from .services.planner_drafts import (
     DraftExpired,
     DraftRejected,
     create_draft,
+    credit_ceiling,
     edit_draft,
     generate,
     generation_is_stale,
     issue_rebuild_token,
     owned_draft,
-    select_alternative,
 )
 from .services.rate_limit import CONVERSATION, HISTORY, PLANNING
 from .services.rate_limit import release as _refund_budget
 from .services.student_planner import PlannerUnavailable
+from .sidebar_context import get_sidebar_context
 
 logger = logging.getLogger(__name__)
 
@@ -68,13 +66,180 @@ def _names(codes: set[str]) -> dict[str, str]:
     return _course_names(codes)
 
 
+def _workspace_json(draft: Any) -> dict[str, Any]:
+    """Student-safe facts needed to build a proposal on screen.
+
+    This is deliberately not the staff planner catalogue.  Identity and term come
+    from the owned draft; sections are cohort-filtered server-side; and rooms,
+    instructors, capacity, enrolment counts and internal source fields never cross
+    the HTTP boundary.
+    """
+    from core.models import Course, Prerequisite, ProgrammeRequirement, Student, TermSection
+    from core.services.student_helpers import get_student_passed_and_studying, normalize_code
+    from core.services.student_planner import DEFAULT_CREDITS, permitted_course_codes
+    from core.services.student_sections import (
+        gender_section_filter,
+        get_student_term_baseline,
+        student_gender_strict,
+    )
+
+    student = Student.objects.filter(student_id=draft.student_id).values("program").first() or {}
+    program = str(student.get("program") or "").strip()
+    permitted = permitted_course_codes(program) if program else set()
+    passed, studying = get_student_passed_and_studying(draft.student_id)
+    passed = {normalize_code(code) for code in passed}
+    studying = {normalize_code(code) for code in studying}
+
+    requirements = list(
+        ProgrammeRequirement.objects.filter(program__iexact=program).values(
+            "course_code", "course_name", "credit_hours"
+        )
+    )
+    requirement_by_code = {
+        normalize_code(row.get("course_code") or ""): row for row in requirements
+    }
+    course_by_code = {
+        normalize_code(row.course_code): row
+        for row in Course.objects.filter(course_code__in=permitted)
+    }
+
+    prerequisites: dict[str, list[str]] = {}
+    for row in Prerequisite.objects.filter(program__iexact=program).values(
+        "course_code", "prerequisite_course_code"
+    ):
+        code = normalize_code(row.get("course_code") or "")
+        for raw in str(row.get("prerequisite_course_code") or "").split(","):
+            prerequisite = normalize_code(raw)
+            if code and prerequisite:
+                prerequisites.setdefault(code, []).append(prerequisite)
+
+    gender = student_gender_strict(draft.student_id)
+    sections_by_code: dict[str, list[Any]] = {}
+    sections = list(
+        TermSection.objects.filter(scenario__isnull=True)
+        .filter(gender_section_filter(gender))
+        .prefetch_related("meetings")
+        .order_by("course_key", "section")
+    )
+    for section in sections:
+        code = normalize_code(
+            section.course_key or f"{section.course_code or ''}{section.course_number or ''}"
+        )
+        if code in permitted:
+            sections_by_code.setdefault(code, []).append(section)
+
+    try:
+        recommended = set(_recommended_codes(draft.student_id))
+    except Exception:
+        recommended = set()
+    requested = {normalize_code(code) for code in (draft.course_codes or [])}
+    names = _names(permitted | requested | recommended)
+
+    catalog: list[dict[str, Any]] = []
+    for code in permitted | requested | recommended:
+        code = normalize_code(code)
+        if not code or code in passed:
+            continue
+        requirement = requirement_by_code.get(code) or {}
+        course = course_by_code.get(code)
+        missing = sorted(
+            {
+                item
+                for item in prerequisites.get(code, [])
+                if item not in passed and item not in studying
+            }
+        )
+        safe_sections = []
+        for section in sections_by_code.get(code, []):
+            safe_sections.append(
+                {
+                    "id": int(section.id),
+                    "label": str(section.section or ""),
+                    "meetings": [
+                        {
+                            "day": str(meeting.day or ""),
+                            "start": str(meeting.start_time or ""),
+                            "end": str(meeting.end_time or ""),
+                        }
+                        for meeting in sorted(
+                            section.meetings.all(),
+                            key=lambda item: (item.day or "", item.start_time or ""),
+                        )
+                        if meeting.day or meeting.start_time or meeting.end_time
+                    ],
+                }
+            )
+        credits = int(
+            requirement.get("credit_hours")
+            or (getattr(course, "credit_hours", 0) if course else 0)
+            or DEFAULT_CREDITS
+        )
+        catalog.append(
+            {
+                "course_code": code,
+                "course_name": str(
+                    names.get(code)
+                    or requirement.get("course_name")
+                    or (getattr(course, "description", "") if course else "")
+                    or ""
+                ),
+                "credits": credits,
+                "recommended": code in recommended,
+                "studying": code in studying,
+                "status": "blocked"
+                if missing
+                else ("offering_unknown" if not safe_sections else "ready"),
+                "missing_prerequisites": missing,
+                "sections": safe_sections,
+            }
+        )
+    catalog.sort(
+        key=lambda row: (
+            not bool(row["recommended"]),
+            row["status"] != "ready",
+            str(row["course_code"]),
+        )
+    )
+
+    baseline = get_student_term_baseline(draft.student_id, draft.academic_year, draft.term)
+    current = [
+        {
+            "course_code": str(row.get("course_code") or row.get("course_key") or ""),
+            "course_name": str(row.get("course_name") or ""),
+            "section": str(row.get("section") or ""),
+            "credits": int(row.get("credits") or 0),
+            "day": str(row.get("day") or ""),
+            "start": str(row.get("start_time") or ""),
+            "end": str(row.get("end_time") or ""),
+        }
+        for row in baseline
+    ]
+    return {
+        "program": program,
+        "credit_ceiling": credit_ceiling(int(draft.term)),
+        "catalog": catalog,
+        "current_timetable": current,
+        "workspace_persistence": "temporary_draft",
+        "registration_action": "student_manual_portal_only",
+        "can_save_timetable": False,
+        "can_register_courses": False,
+    }
+
+
 def _alternative_json(
     alternative: dict[str, Any], names: dict[str, str], selected: str, requested: set[str]
 ) -> dict[str, Any]:
     return {
         "key": alternative.get("key", ""),
-        "selected": bool(selected) and alternative.get("key") == selected,
+        # A V2 timetable is an on-screen proposal, not a stored preference.
+        # Keep the field false for compatibility with the existing response shape.
+        "selected": False,
         "credit_hours": alternative.get("credit_hours", 0),
+        "course_count": alternative.get("course_count", 0),
+        "days_on_campus": alternative.get("days_on_campus", 0),
+        "days": list(alternative.get("days") or []),
+        "earliest_start": alternative.get("earliest_start"),
+        "latest_end": alternative.get("latest_end"),
         "courses": [
             {
                 "course_code": c.get("course_code", ""),
@@ -147,7 +312,7 @@ def _draft_json(draft: Any) -> dict[str, Any]:
             # the other thing that invalidates a timetable — their registrations
             # moving underneath it — which no amount of version bumping can see.
             "is_stale": generation_is_stale(draft),
-            "selected_alternative": draft.selected_alternative,
+            "selected_alternative": "",
         },
         "alternatives": (
             [
@@ -171,6 +336,7 @@ def _draft_json(draft: Any) -> dict[str, Any]:
             }
             for u in unplaced
         ],
+        "workspace": _workspace_json(draft),
     }
 
 
@@ -428,27 +594,50 @@ def draft_generate_view(request: HttpRequest, draft_id: str) -> JsonResponse:
 
 @require_POST
 def draft_select_view(request: HttpRequest, draft_id: str) -> JsonResponse:
-    """Record a preference. NOT a registration — nothing downstream writes one."""
+    """Legacy endpoint retained as an explicit refusal.
+
+    V2 proposals stay on screen.  There is intentionally no server-side notion of
+    a student's chosen timetable and no path from this endpoint to registration.
+    """
     principal = _principal(request)
     if principal is None:
         return _forbidden()
-    payload, err = _body(request)
-    if err:
-        return err
-    over = _over_budget(CONVERSATION, principal.student_id)
-    if over:
-        return over
+    owned_draft(principal.student_id, draft_id)
+    return JsonResponse(
+        {
+            "error": (
+                "لا يحفظ هذا المخطط الجداول. انسخ قائمة المقررات والشُعب ثم "
+                "أدخلها بنفسك في بوابة الجامعة الرئيسية."
+            ),
+            "code": "TIMETABLE_SAVE_DISABLED",
+        },
+        status=405,
+    )
 
-    draft = owned_draft(principal.student_id, draft_id)
+
+@require_GET
+def student_timetable_start_view(request: HttpRequest):
+    """Open a new, short-lived planning workspace for the signed-in student."""
+    principal = _principal(request)
+    if principal is None:
+        raise PermissionDenied("This page is for signed-in students.")
     try:
-        draft = select_alternative(draft, payload.get("key"))
-    except DraftExpired as exc:
-        return _refused(exc, status=410)
-    except DraftError as exc:
-        return _refused(exc, status=409)
-    data = _draft_json(draft)
-    data["message"] = "تم حفظ هذا الجدول كخيارك المفضل. لم يتم تسجيلك في أي مقرر."
-    return JsonResponse(data)
+        draft = create_draft(
+            student_id=principal.student_id,
+            course_codes=_recommended_codes(principal.student_id),
+            keep_current_sections=True,
+        )
+    except (DraftRejected, PlannerUnavailable) as exc:
+        return render(
+            request,
+            "core/student_planner_unavailable.html",
+            {
+                **get_sidebar_context(request),
+                "planner_error": str(exc),
+            },
+            status=409,
+        )
+    return redirect("student_planner_page", draft_id=str(draft.id))
 
 
 @require_GET
@@ -469,6 +658,7 @@ def student_planner_page(request: HttpRequest, draft_id: str):
         request,
         "core/student_planner.html",
         {
+            **get_sidebar_context(request),
             # The id only. Courses, sections and alternatives are fetched, so the
             # template cannot become a second, divergent serialiser of the same row.
             "draft_id": str(draft.id),
@@ -483,5 +673,6 @@ __all__ = [
     "draft_edit_view",
     "draft_generate_view",
     "draft_select_view",
+    "student_timetable_start_view",
     "student_planner_page",
 ]
