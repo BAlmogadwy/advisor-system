@@ -233,6 +233,33 @@ def test_recommend_capability_reports_credit_policy():
     assert result["recommendations"][0]["credit_hours"] == 3
 
 
+def test_recommend_capability_never_offers_a_current_course_as_a_new_addition(monkeypatch):
+    from core.services.rbac import ROLE_SUPER_ADMIN
+    from core.services.virtual_advisor_capabilities import get_default_registry
+
+    Student.objects.create(student_id=SID, name="S", program="AI", section="M")
+    _course("CS101", "Current", 3)
+    _course("CS201", "Next", 4)
+    _register(SID, "CS101", "M1", year="1448", term="1")
+    monkeypatch.setattr(
+        "core.services.recommender.recommend_next_courses",
+        lambda *_args, **_kwargs: ["CS101", "CS201"],
+    )
+
+    result = get_default_registry().execute(
+        "recommend_courses",
+        {"student_id": SID},
+        scope={"role": ROLE_SUPER_ADMIN},
+        ctx={"academic_year": 1448, "term": 1},
+    )
+
+    assert [row["course_code"] for row in result["recommendations"]] == ["CS201"]
+    assert [row["course_code"] for row in result["already_in_current_timetable"]] == ["CS101"]
+    assert result["recommendation_count"] == 1
+    assert result["current_registered_credit_hours"] == 3
+    assert result["credit_policy"]["recommended_credit_hours"] == 4
+
+
 def test_recommendation_cap_is_below_the_registration_ceiling():
     """18 is what we SUGGEST; 19 is what the university lets a student register.
 
@@ -804,6 +831,48 @@ def test_a_course_with_no_sections_is_not_on_file_not_unavailable():
     )
     assert out["courses"][0]["status"] == "NOT_ON_FILE"
     assert "NOT_ON_FILE" in out["note"] and "no sections available" in out["note"]
+
+
+def test_a_current_section_is_marked_and_does_not_clash_with_itself():
+    """Checking CS285-M3 must not collide with the CS285-M3 already on the grid."""
+    from core.models import Student
+    from core.services.rbac import ROLE_SUPER_ADMIN
+    from core.services.virtual_advisor_capabilities import get_default_registry
+
+    Student.objects.create(student_id=SID, name="S", program="AI", section="M")
+    busy = _section_with("ZZ100", "M1", [("SUN", "08:00", "09:15")])
+    other = _section_with("ZZ200", "M1", [("SUN", "08:30", "09:45")])
+    current = _section_with("ZZ200", "M3", [("TUE", "10:30", "11:45")])
+    StudentTermSection.objects.create(
+        student_id=SID,
+        academic_year="1448",
+        term="1",
+        term_section=busy,
+    )
+    StudentTermSection.objects.create(
+        student_id=SID,
+        academic_year="1448",
+        term="1",
+        term_section=current,
+    )
+
+    out = get_default_registry().execute(
+        "my_clash_free_sections",
+        {"student_id": SID, "course_code": "ZZ200"},
+        scope={"role": ROLE_SUPER_ADMIN},
+        ctx={"academic_year": 1448, "term": 1},
+    )
+    course = out["courses"][0]
+
+    assert course["currently_registered_sections"] == ["M3"]
+    assert [row["section"] for row in course["clashing"]] == [other.section]
+    current_row = next(row for row in course["clash_free"] if row["section"] == "M3")
+    assert current_row["is_current_section"] is True
+    assert all(
+        hit["conflicts_with"] != "ZZ200 M3"
+        for row in course["clashing"]
+        for hit in row["conflicts"]
+    )
 
 
 def test_clash_free_sections_refuses_when_the_cohort_cannot_be_resolved():

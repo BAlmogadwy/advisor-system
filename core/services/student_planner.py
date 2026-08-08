@@ -74,6 +74,12 @@ class PlannerRequest:
     must_include: tuple[str, ...] = ()
     keep_current_sections: bool = True
     max_credits: int = 0
+    # Draft-backed screens already materialise the recommendation into
+    # ``course_codes`` when the workspace is created.  They set this to False so
+    # removing a recommended course on screen really removes it; callers that ask
+    # the service to fill an otherwise partial request may keep the historical
+    # behaviour by leaving it True.
+    include_recommendations: bool = True
     #: {"AI221": 4213} — courses whose section the student pinned. A course absent
     #: from here is one the planner chooses freely, which is the default and the
     #: common case.
@@ -266,10 +272,14 @@ def build_student_options(request: PlannerRequest) -> dict[str, Any]:
     # What the student asked for, then whatever their own plan recommends. Ordered so
     # a named course is never dropped in favour of a recommended one.
     wanted = [normalize_code(c) for c in request.must_include if str(c).strip()]
-    recommended = [
-        normalize_code(c)
-        for c in (recommend_next_courses(student_id, request.year, request.term) or [])
-    ]
+    recommended = (
+        [
+            normalize_code(c)
+            for c in (recommend_next_courses(student_id, request.year, request.term) or [])
+        ]
+        if request.include_recommendations
+        else []
+    )
     codes = list(dict.fromkeys(wanted + recommended))
     if not codes:
         return {
@@ -304,14 +314,53 @@ def build_student_options(request: PlannerRequest) -> dict[str, Any]:
         gender=gender,
     )
 
+    raw_options = list(result.get("options") or [])
+    placed_in_any_option = {
+        normalize_code(mapping.get("course_code") or "")
+        for option in raw_options
+        for mapping in (option.get("mappings") or [])
+        if normalize_code(mapping.get("course_code") or "")
+    }
+
     alternatives: list[dict[str, Any]] = []
-    seen: set[tuple[int, ...]] = set()
-    for option in result.get("options") or []:
+    seen: dict[tuple[int, ...], int] = {}
+    for option in raw_options:
         signature = _option_signature(option)
+        planner_name = str(option.get("name") or "").strip().upper()
         if signature in seen:
+            # A, B and C are genuinely different search methods, but they can
+            # converge on the same section set. Keep that provenance instead of
+            # showing an identical timetable as several fake alternatives.
+            if planner_name:
+                planner_options = alternatives[seen[signature]]["planner_options"]
+                if planner_name not in planner_options:
+                    planner_options.append(planner_name)
             continue
-        seen.add(signature)
+        seen[signature] = len(alternatives)
         rows = _meeting_rows(option, credits)
+        option_unplaced: list[dict[str, Any]] = []
+        for entry in option.get("unscheduled") or []:
+            course_code = normalize_code(entry.get("course_code") or "")
+            if course_code in placed_in_any_option:
+                # Top-k generation obtains A2/A3 (and B/C equivalents) by
+                # temporarily excluding sections selected by a better variant.
+                # The rerun can consequently say NO_SECTION even though A1 just
+                # used that section. Translate that as a property of THIS variant,
+                # not as a false claim about the catalogue.
+                code = "OMITTED_IN_THIS_VARIANT"
+                explanation = (
+                    "This Planner variant did not place the course; another generated "
+                    "variant did. Compare the other options."
+                )
+            else:
+                code, explanation = _translate_unplaced(entry.get("reason"))
+            option_unplaced.append(
+                {
+                    "course_code": course_code,
+                    "reason_code": code,
+                    "reason": explanation,
+                }
+            )
         alternatives.append(
             {
                 # Stable, opaque, and the only thing a client sends back to say
@@ -336,6 +385,21 @@ def build_student_options(request: PlannerRequest) -> dict[str, Any]:
                     for m in (option.get("mappings") or [])
                 ],
                 "meetings": rows,
+                # These are the exact identities emitted by planner_builder:
+                # A1-A3, B1-B3 and C1-C3. More than one name means independent
+                # planner methods found the same section set.
+                "planner_options": [planner_name] if planner_name else [],
+                "scheduled_courses": int(
+                    option.get("scheduled")
+                    if option.get("scheduled") is not None
+                    else len(option.get("mappings") or [])
+                ),
+                "target_courses": int(
+                    option.get("target") if option.get("target") is not None else len(shortlist)
+                ),
+                # Unplaced courses belong to THIS generated option. A1 may place
+                # more courses than A2, so one global list cannot describe both.
+                "unplaced": option_unplaced,
                 "course_count": len(option.get("mappings") or []),
                 "credit_hours": sum(
                     credits.get(str(m.get("course_code") or ""), DEFAULT_CREDITS)
@@ -345,15 +409,18 @@ def build_student_options(request: PlannerRequest) -> dict[str, Any]:
             }
         )
 
-    # Reported from the first alternative: `unscheduled` is a property of the course
-    # set against the catalogue, not of one arrangement of it.
+    # Global unplaced means no generated option could place the course. Courses
+    # omitted only by A2/A3 belong to that alternative's `unplaced`, not here.
     unplaced: list[dict[str, Any]] = []
-    first = (result.get("options") or [{}])[0]
+    first = (raw_options or [{}])[0]
     for entry in first.get("unscheduled") or []:
+        course_code = normalize_code(entry.get("course_code") or "")
+        if course_code in placed_in_any_option:
+            continue
         code, explanation = _translate_unplaced(entry.get("reason"))
         unplaced.append(
             {
-                "course_code": entry.get("course_code"),
+                "course_code": course_code,
                 "reason_code": code,
                 "reason": explanation,
             }

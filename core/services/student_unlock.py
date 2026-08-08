@@ -62,7 +62,15 @@ def _is_placeholder(code: str, ctype: str) -> bool:
     return is_elective_slot(ctype)
 
 
-def build_unlock_report(student_id: int, year: int, term: int) -> dict:
+def build_unlock_report(
+    student_id: int,
+    year: int,
+    term: int,
+    *,
+    additional_studying_codes: set[str] | None = None,
+    excluded_studying_codes: set[str] | None = None,
+    registered_credits_override: int | None = None,
+) -> dict:
     """Return the full report. Pure read; raises nothing the caller must handle
     beyond the usual DB errors."""
     from core.report_views import _build_student_plan_payload
@@ -80,6 +88,14 @@ def build_unlock_report(student_id: int, year: int, term: int) -> dict:
         for t in payload["terms"]
         for c in t["courses"]
         if c["status"] == "studying"
+    }
+    studying |= {
+        normalize_code(code)
+        for code in (additional_studying_codes or set())
+        if normalize_code(code)
+    }
+    studying -= {
+        normalize_code(code) for code in (excluded_studying_codes or set()) if normalize_code(code)
     }
     satisfied = passed | studying
 
@@ -100,16 +116,30 @@ def build_unlock_report(student_id: int, year: int, term: int) -> dict:
         for c in tblock["courses"]:
             code = c["course_code"]
             course_prereqs, req_hours = split_hour_prereqs(get_prerequisites(code, program))
-            gate = hour_gate(student_id, req_hours) if req_hours else None
+            gate = (
+                hour_gate(
+                    student_id,
+                    req_hours,
+                    registered_credits_override=registered_credits_override,
+                )
+                if req_hours
+                else None
+            )
             missing = [p for p in course_prereqs if p not in satisfied]
-            is_open = c["status"] == "not_taken" and not missing and (gate is None or gate["met"])
+            raw_status = c["status"]
+            status = (
+                "passed"
+                if raw_status == "passed"
+                else ("studying" if code in studying else raw_status)
+            )
+            is_open = status == "not_taken" and not missing and (gate is None or gate["met"])
             info[code] = {
                 "code": code,
                 "name": names.get(code, ""),
                 "credits": c.get("credit_hours"),
                 "term": c.get("programme_term") or 0,
                 "type": str(c.get("type") or ""),
-                "status": c["status"],
+                "status": status,
                 "course_prereqs": course_prereqs,
                 "missing": missing,
                 "gate": gate,

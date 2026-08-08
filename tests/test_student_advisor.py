@@ -62,6 +62,7 @@ def test_students_get_only_self_scoped_tools():
         "my_advisor",
         "my_clash_free_sections",
         "build_my_timetable",
+        "build_timetable_proposal",
         # The written regulations. Carries no student data at all — the rules are the
         # same for everyone — so it widens what a student can READ, not what they can
         # reach ABOUT THEMSELVES or anyone else. Added deliberately when the policy

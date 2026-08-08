@@ -222,6 +222,78 @@ def test_no_canary_survives_the_projection(tool: str) -> None:
     assert CANARIES["name"] in json.dumps(local, ensure_ascii=False, default=str)
 
 
+def test_clash_projection_keeps_section_evidence_without_people_or_rooms() -> None:
+    """A safe projection must not become an empty projection.
+
+    The executor's real keys are ``compared_against_term`` and ``courses``. Keeping
+    obsolete singular keys made Alibaba see no M3 even while the local catalogue
+    contained it.
+    """
+    boundary = RemoteToolBoundary(
+        scope=STUDENT_SCOPE,
+        identities=RemoteIdentityMap(nonce=FIXED),
+        known_names=(CANARIES["name"],),
+    )
+    projected = boundary.project_tool_result(
+        "my_clash_free_sections",
+        {
+            "tool": "my_clash_free_sections",
+            "ok": True,
+            "student_id": MINE,
+            "compared_against_term": "1448/1",
+            "courses": [
+                {
+                    "course_code": "CS285",
+                    "sections_on_file": 3,
+                    "currently_registered_sections": ["M3"],
+                    "status": "OK",
+                    "clash_free": [
+                        {
+                            "section": "M3",
+                            "meetings": ["SUN 13:00-14:15"],
+                            "is_current_section": True,
+                            "instructor": CANARIES["name"],
+                            "room": "B-214",
+                        }
+                    ],
+                    "clashing": [
+                        {
+                            "section": "M1",
+                            "meetings": ["SUN 09:00-10:40"],
+                            "is_current_section": False,
+                            "conflicts": [
+                                {
+                                    "section_meeting": "SUN 09:00-10:40",
+                                    "conflicts_with": "CS113 M4",
+                                    "registered_meeting": "SUN 10:00-11:15",
+                                    "instructor": CANARIES["latin_name"],
+                                }
+                            ],
+                        }
+                    ],
+                }
+            ],
+        },
+    )
+
+    assert projected["compared_against_term"] == "1448/1"
+    course = projected["courses"][0]
+    assert course["course_code"] == "CS285"
+    assert course["sections_on_file"] == 3
+    assert course["currently_registered_sections"] == ["M3"]
+    assert course["clash_free"][0] == {
+        "section": "M3",
+        "meetings": ["SUN 13:00-14:15"],
+        "is_current_section": True,
+    }
+    assert course["clashing"][0]["conflicts"][0]["conflicts_with"] == "CS113 M4"
+    sent = json.dumps(projected, ensure_ascii=False)
+    assert CANARIES["name"] not in sent
+    assert CANARIES["latin_name"] not in sent
+    assert "B-214" not in sent
+    assert str(MINE) not in sent
+
+
 @pytest.mark.parametrize("tool", WITHHELD)
 def test_a_withheld_capability_neither_runs_nor_is_offered(tool: str) -> None:
     scope = _scope_for(tool)
