@@ -60,3 +60,6 @@ datadump.json
 
 # Ad-hoc data exports (student lists, etc.) — generated, may contain PII
 *.xlsx
+
+# Per-student advisor evaluation outputs are generated and may contain student IDs.
+evals/advisor/live_batch_results_*.json
