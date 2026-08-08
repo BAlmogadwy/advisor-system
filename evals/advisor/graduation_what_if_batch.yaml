@@ -1,0 +1,63 @@
+meta:
+  name: graduation-what-if
+  count: 4
+  built: '2026-08-08'
+  source: owner-supplied scenarios adapted to the active student fixture
+questions:
+- id: GP01
+  ar: كم فصل دراسي متبقٍ لي تقريبًا حتى أنهي متطلبات الخطة؟
+  intent: graduation_terms_remaining
+  expected_family: GRADUATION_PROGRESS
+  expected_action: null
+  required_tools:
+  - graduation_progress
+  allowed_tools: []
+  forbidden_tools: []
+  expected_facts:
+  - uses the 18-credit simulation cap
+  - distinguishes a plan estimate from an official graduation date
+  must_not_claim:
+  - a guaranteed graduation date
+  clarification_allowed: false
+- id: GP02
+  ar: إذا ما أخذت DS225 هذا الترم، هل يؤثر على مدة إنهاء خطتي؟
+  intent: graduation_remove_current_course
+  expected_family: GRADUATION_WHAT_IF
+  expected_action: null
+  required_tools:
+  - graduation_progress
+  allowed_tools: []
+  forbidden_tools: []
+  expected_facts:
+  - evaluates the current term after removing DS225
+  must_not_claim:
+  - a guaranteed graduation date
+  clarification_allowed: false
+- id: GP03
+  ar: إذا أخذت MATH204 بدل DS225 هذا الترم، هل تتحسن مدة إنهاء خطتي؟
+  intent: graduation_replace_current_course
+  expected_family: GRADUATION_WHAT_IF
+  expected_action: null
+  required_tools:
+  - graduation_progress
+  allowed_tools: []
+  forbidden_tools: []
+  expected_facts:
+  - evaluates removing DS225 and adding MATH204 in the same current-term scenario
+  must_not_claim:
+  - a guaranteed graduation date
+  clarification_allowed: false
+- id: GP04
+  ar: بناءً على جدولي الحالي، هل يوجد مقرر أستبدله حتى تتحسن خطة التخرج؟
+  intent: graduation_search_better_replacement
+  expected_family: GRADUATION_WHAT_IF
+  expected_action: null
+  required_tools:
+  - graduation_progress
+  allowed_tools: []
+  forbidden_tools: []
+  expected_facts:
+  - searches current-course replacements rather than inventing one
+  must_not_claim:
+  - a guaranteed graduation date
+  clarification_allowed: false

@@ -34,12 +34,17 @@ django.setup()
 from django.conf import settings  # noqa: E402
 
 from core.services.advisor_principal import AdvisorPrincipal  # noqa: E402
-from core.services.llm_backend import BACKEND_LOCAL  # noqa: E402
+from core.services.llm_backend import BACKEND_LOCAL, get_llm_client  # noqa: E402
 from core.services.rbac import ROLE_STUDENT  # noqa: E402
+from core.services.student_advisor_v2 import answer_student_advisor_v2  # noqa: E402
 from core.services.virtual_advisor import answer_virtual_advisor  # noqa: E402
 
 HERE = Path(__file__).resolve().parent
 OUT = Path(settings.BASE_DIR) / "runtime" / "evals"
+BATCHES = {
+    "planner_priority": HERE / "planner_priority_batch.yaml",
+    "graduation_what_if": HERE / "graduation_what_if_batch.yaml",
+}
 
 
 def main() -> None:
@@ -47,7 +52,24 @@ def main() -> None:
     parser.add_argument("--student", type=int, required=True)
     parser.add_argument("--year", type=int, default=1448)
     parser.add_argument("--term", type=int, default=1)
+    parser.add_argument(
+        "--batch",
+        choices=tuple(BATCHES),
+        default="planner_priority",
+        help="evaluation batch to run (default: %(default)s)",
+    )
     parser.add_argument("--only", default="", help="comma-separated ids, e.g. TT27,CP02")
+    parser.add_argument(
+        "--advisor-version",
+        choices=("legacy", "v2"),
+        default="legacy",
+        help="advisor implementation to exercise (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--model",
+        default="",
+        help="override the answer model for this run without changing production settings",
+    )
     parser.add_argument("--confirm", action="store_true")
     args = parser.parse_args()
 
@@ -58,25 +80,40 @@ def main() -> None:
     if paid and not getattr(settings, "ALIBABA_LLM_ALLOW_LIVE_REQUESTS", False):
         raise SystemExit("ALIBABA_LLM_ALLOW_LIVE_REQUESTS is not true; nothing was sent.")
 
-    batch = yaml.safe_load((HERE / "planner_priority_batch.yaml").read_text(encoding="utf-8"))
+    batch = yaml.safe_load(BATCHES[args.batch].read_text(encoding="utf-8"))
     questions = batch["questions"]
     if args.only:
         wanted = {q.strip() for q in args.only.split(",") if q.strip()}
         questions = [q for q in questions if q["id"] in wanted]
 
     principal = AdvisorPrincipal(role=ROLE_STUDENT, student_id=args.student)
+    client = get_llm_client()
+    answer_model = client.resolve_model(args.model or None)
     rows: list[dict] = []
     totals = {"prompt": 0, "completion": 0, "total": 0, "calls": 0}
 
-    print(f"backend={backend}  student={args.student}  questions={len(questions)}\n")
+    print(
+        f"backend={backend}  advisor={args.advisor_version}  model={answer_model}  "
+        f"student={args.student}  questions={len(questions)}\n"
+    )
     for index, item in enumerate(questions, start=1):
         started = time.perf_counter()
         try:
-            payload = answer_virtual_advisor(
+            answer = (
+                answer_student_advisor_v2
+                if args.advisor_version == "v2"
+                else answer_virtual_advisor
+            )
+            client_arg = (
+                {"llm_client": client} if args.advisor_version == "v2" else {"client": client}
+            )
+            payload = answer(
                 question=item["ar"],
                 principal=principal,
                 academic_year=args.year,
                 term=args.term,
+                model=answer_model,
+                **client_arg,
             )
             error = None
         except Exception as exc:  # noqa: BLE001 - one bad row must not end the batch
@@ -101,8 +138,9 @@ def main() -> None:
             "error": error,
             "action": payload.get("action"),
             "expected_action": item.get("expected_action"),
-            "expected_tools": item.get("expected_tools") or [],
+            "expected_tools": item.get("required_tools") or [],
             "tools_called": [t.get("name") for t in (agent.get("tools_called") or [])],
+            "tool_calls": agent.get("tools_called") or [],
             "must_not_claim": item.get("must_not_claim") or [],
             "citations": [c.get("policy_id") for c in (payload.get("citations") or [])],
             "cited_policy_ids": payload.get("cited_policy_ids") or [],
@@ -133,10 +171,19 @@ def main() -> None:
 
     OUT.mkdir(parents=True, exist_ok=True)
     stamp = time.strftime("%Y%m%d-%H%M%S")
-    base = OUT / f"planner_priority_{backend}_{stamp}"
+    base = OUT / f"{args.batch}_{backend}_{stamp}"
     base.with_suffix(".json").write_text(
         json.dumps(
-            {"meta": {"backend": backend, "student": args.student, "totals": totals}, "rows": rows},
+            {
+                "meta": {
+                    "backend": backend,
+                    "advisor_version": args.advisor_version,
+                    "model": answer_model,
+                    "student": args.student,
+                    "totals": totals,
+                },
+                "rows": rows,
+            },
             ensure_ascii=False,
             indent=2,
         ),
@@ -144,7 +191,7 @@ def main() -> None:
     )
 
     lines = [
-        f"# planner / priority batch — {backend}",
+        f"# planner / priority batch — {backend} / {args.advisor_version} / {answer_model}",
         "",
         f"student `{args.student}`, {len(rows)} questions, {totals['total']} tokens",
         "",
