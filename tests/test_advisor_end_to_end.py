@@ -156,7 +156,7 @@ class EndToEndTests(StaticLiveServerTestCase):
 
         # ── the student asks, and the adviser declines to decide ──
         with mock.patch(
-            "core.services.virtual_advisor.answer_virtual_advisor",
+            "core.services.student_advisor_v2.answer_student_advisor",
             return_value=_abstaining_answer(),
         ):
             page.goto(f"{self.live_server_url}{reverse('student_advisor')}")

@@ -1559,11 +1559,12 @@ class FinalDisposition(models.TextChoices):
 
 
 class AdvisorMessage(models.Model):
-    """One turn. The student-visible body ONLY.
+    """One turn: its student-visible body and an optional safe view model.
 
-    Tool results and judge traces are deliberately absent: they name database
+    Raw tool results and judge traces are deliberately absent: they name database
     tables, quote row counts and cohort statistics, and belong in an operator
-    audit record rather than in something rendered to the person who asked.
+    audit record rather than in something rendered to the person who asked. The
+    presentation field accepts only a server-whitelisted student display snapshot.
     """
 
     ROLE_STUDENT = "STUDENT"
@@ -1580,6 +1581,7 @@ class AdvisorMessage(models.Model):
     )
     role = models.CharField(max_length=16, choices=ROLE_CHOICES)
     content = models.TextField()
+    presentation = models.JSONField(default=dict, blank=True)
 
     # How the answer was reached. Per-message rather than per-conversation because a
     # single thread mixes grounded policy answers with pure student-data ones, and

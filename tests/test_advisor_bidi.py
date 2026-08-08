@@ -243,7 +243,7 @@ class AdvisorBidiTests(StaticLiveServerTestCase):
     def _seed(self, answer: str, question: str = "ما شعبتي؟") -> AdvisorConversation:
         conversation = AdvisorConversation.objects.create(student_id=MINE)
         with mock.patch(
-            "core.services.virtual_advisor.answer_virtual_advisor",
+            "core.services.student_advisor_v2.answer_student_advisor",
             return_value=_reply(answer),
         ):
             response = self._client().post(

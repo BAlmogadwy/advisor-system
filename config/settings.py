@@ -199,6 +199,19 @@ VIRTUAL_ADVISOR_TOOL_TURN_TIMEOUT_SECONDS = float(
     os.getenv("VIRTUAL_ADVISOR_TOOL_TURN_TIMEOUT_SECONDS", "75")
 )
 
+# Student Advisor V2: one read-only academic agent, with no timetable, section,
+# registration, save, apply, or university-portal mutation capability.  Off until
+# its focused evaluation wins against the current student adviser.
+STUDENT_ADVISOR_V2_ENABLED = os.getenv("STUDENT_ADVISOR_V2_ENABLED", "false").lower() == "true"
+STUDENT_ADVISOR_V2_MAX_TOOL_ITERATIONS = int(
+    os.getenv("STUDENT_ADVISOR_V2_MAX_TOOL_ITERATIONS", "4")
+)
+STUDENT_ADVISOR_V2_MAX_TOOL_CALLS = int(os.getenv("STUDENT_ADVISOR_V2_MAX_TOOL_CALLS", "8"))
+STUDENT_ADVISOR_V2_MAX_TOKENS = int(os.getenv("STUDENT_ADVISOR_V2_MAX_TOKENS", "1800"))
+STUDENT_ADVISOR_V2_TOOL_TIMEOUT_SECONDS = float(
+    os.getenv("STUDENT_ADVISOR_V2_TOOL_TIMEOUT_SECONDS", "75")
+)
+
 # WhatsApp Advisor Gateway. Keep credentials out of the repository.
 WHATSAPP_CLOUD_API_VERSION = os.getenv("WHATSAPP_CLOUD_API_VERSION", "v23.0")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "")

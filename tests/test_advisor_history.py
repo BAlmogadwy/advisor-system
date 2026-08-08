@@ -80,7 +80,7 @@ def test_a_follow_up_reaches_the_model_with_the_question_it_answers(client):
 
     seen = {}
     with mock.patch(
-        "core.services.virtual_advisor.answer_virtual_advisor",
+        "core.services.student_advisor_v2.answer_student_advisor",
         side_effect=lambda **kw: seen.update(kw) or _answer(),
     ):
         client.post(
@@ -102,7 +102,7 @@ def test_the_current_question_is_not_duplicated_into_its_own_history(client):
     conversation = AdvisorConversation.objects.create(student_id=MINE)
     seen = {}
     with mock.patch(
-        "core.services.virtual_advisor.answer_virtual_advisor",
+        "core.services.student_advisor_v2.answer_student_advisor",
         side_effect=lambda **kw: seen.update(kw) or _answer(),
     ):
         client.post(
@@ -126,14 +126,14 @@ def test_a_retried_turn_does_not_appear_twice(client):
     body = {"message": "سؤالي الجديد", "idempotency_key": "k1"}
 
     with mock.patch(
-        "core.services.virtual_advisor.answer_virtual_advisor",
+        "core.services.student_advisor_v2.answer_student_advisor",
         side_effect=RuntimeError("model down"),
     ):
         client.post(url, data=json.dumps(body), content_type="application/json")
 
     seen = {}
     with mock.patch(
-        "core.services.virtual_advisor.answer_virtual_advisor",
+        "core.services.student_advisor_v2.answer_student_advisor",
         side_effect=lambda **kw: seen.update(kw) or _answer(),
     ):
         client.post(url, data=json.dumps(body), content_type="application/json")

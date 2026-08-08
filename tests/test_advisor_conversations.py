@@ -139,7 +139,7 @@ def test_the_same_key_and_question_replays_instead_of_asking_again(client):
     body = {"message": "وش باقي لي وأتخرج؟", "idempotency_key": "k1"}
 
     with mock.patch(
-        "core.services.virtual_advisor.answer_virtual_advisor", return_value=_fake_answer()
+        "core.services.student_advisor_v2.answer_student_advisor", return_value=_fake_answer()
     ) as agent:
         first = _post(client, url, body)
         second = _post(client, url, body)
@@ -151,6 +151,65 @@ def test_the_same_key_and_question_replays_instead_of_asking_again(client):
     assert conversation.messages.filter(role=AdvisorMessage.ROLE_STUDENT).count() == 1
 
 
+def test_timetable_presentation_is_stored_replayed_and_rewhitelisted(client):
+    conversation = _conversation(MINE)
+    _student(client, MINE)
+    url = reverse("advisor_conversation_send", args=[str(conversation.id)])
+    body = {"message": "Build a timetable", "idempotency_key": "tt-1"}
+    presentation = {
+        "kind": "timetable_proposals",
+        "student_id": MINE,
+        "can_save": True,
+        "alternatives": [
+            {
+                "planner_options": ["A1", "B1", "C1"],
+                "scheduled_courses": 1,
+                "target_courses": 1,
+                "courses": [
+                    {
+                        "course_code": "CS211",
+                        "course_name": "Algorithms",
+                        "section": "M2",
+                        "term_section_id": 789,
+                    }
+                ],
+                "meetings": [
+                    {
+                        "course_code": "CS211",
+                        "section": "M2",
+                        "day": "MON",
+                        "start": "10:30",
+                        "end": "11:45",
+                    }
+                ],
+                "unplaced_courses": [],
+            }
+        ],
+    }
+    answer = _fake_answer("Planner A1/B1/C1")
+    answer["presentation"] = presentation
+
+    with mock.patch(
+        "core.services.student_advisor_v2.answer_student_advisor", return_value=answer
+    ) as agent:
+        first = _post(client, url, body)
+        replay = _post(client, url, body)
+
+    assert first.status_code == 201
+    assert replay.status_code == 200
+    assert agent.call_count == 1
+    shown = first.json()["assistant_message"]["presentation"]
+    assert replay.json()["assistant_message"]["presentation"] == shown
+    assert shown["alternatives"][0]["planner_options"] == ["A1", "B1", "C1"]
+    assert shown["can_save"] is False
+    assert shown["can_register"] is False
+    assert "student_id" not in json.dumps(shown)
+    assert "term_section_id" not in json.dumps(shown)
+
+    stored = AdvisorMessage.objects.get(role=AdvisorMessage.ROLE_ASSISTANT).presentation
+    assert stored == shown
+
+
 def test_the_same_key_with_a_different_question_is_refused(client):
     """Answering it would attach one question's answer to another's key."""
     conversation = _conversation(MINE)
@@ -158,7 +217,7 @@ def test_the_same_key_with_a_different_question_is_refused(client):
     url = reverse("advisor_conversation_send", args=[str(conversation.id)])
 
     with mock.patch(
-        "core.services.virtual_advisor.answer_virtual_advisor", return_value=_fake_answer()
+        "core.services.student_advisor_v2.answer_student_advisor", return_value=_fake_answer()
     ):
         _post(client, url, {"message": "سؤال أول", "idempotency_key": "k1"})
         clash = _post(client, url, {"message": "سؤال مختلف", "idempotency_key": "k1"})
@@ -172,7 +231,7 @@ def test_the_same_key_in_a_different_conversation_is_allowed(client):
     _student(client, MINE)
     body = {"message": "سؤال", "idempotency_key": "shared"}
     with mock.patch(
-        "core.services.virtual_advisor.answer_virtual_advisor", return_value=_fake_answer()
+        "core.services.student_advisor_v2.answer_student_advisor", return_value=_fake_answer()
     ):
         a = _post(client, reverse("advisor_conversation_send", args=[str(first.id)]), body)
         b = _post(client, reverse("advisor_conversation_send", args=[str(second.id)]), body)
@@ -187,7 +246,7 @@ def test_messages_survive_a_reload_in_order(client):
     _student(client, MINE)
     url = reverse("advisor_conversation_send", args=[str(conversation.id)])
     with mock.patch(
-        "core.services.virtual_advisor.answer_virtual_advisor",
+        "core.services.student_advisor_v2.answer_student_advisor",
         side_effect=[_fake_answer("جواب ١"), _fake_answer("جواب ٢")],
     ):
         _post(client, url, {"message": "سؤال ١"})
@@ -201,7 +260,7 @@ def test_a_conversation_gets_a_title_from_the_first_question(client):
     conversation = _conversation(MINE)
     _student(client, MINE)
     with mock.patch(
-        "core.services.virtual_advisor.answer_virtual_advisor", return_value=_fake_answer()
+        "core.services.student_advisor_v2.answer_student_advisor", return_value=_fake_answer()
     ):
         _post(
             client,
@@ -232,7 +291,7 @@ def test_the_returned_citation_equals_the_stored_snapshot(client):
     _student(client, MINE)
     answer = "خمسة انسحابات «الدليل الإرشادي للطالب، ص 24 [TU.WITHDRAWAL.MAXIMUM]»"
     with mock.patch(
-        "core.services.virtual_advisor.answer_virtual_advisor",
+        "core.services.student_advisor_v2.answer_student_advisor",
         return_value=_fake_answer(answer, citations=[_CITATION]),
     ):
         response = _post(
@@ -265,7 +324,7 @@ def test_only_citations_the_answer_actually_made_are_stored(client):
     other = {**_CITATION, "policy_id": "TU.WITHDRAWAL.PROCEDURE", "page": 24}
     answer = "خمسة انسحابات «الدليل الإرشادي للطالب، ص 24 [TU.WITHDRAWAL.MAXIMUM]»"
     with mock.patch(
-        "core.services.virtual_advisor.answer_virtual_advisor",
+        "core.services.student_advisor_v2.answer_student_advisor",
         return_value=_fake_answer(answer, citations=[_CITATION, other]),
     ):
         _post(
@@ -282,7 +341,7 @@ def test_a_citation_the_request_was_not_entitled_to_is_never_stored(client):
     _student(client, MINE)
     answer = "حسب «الدليل الإرشادي للطالب، ص 25 [TU.DISMISSAL.THREE_WARNINGS]»"
     with mock.patch(
-        "core.services.virtual_advisor.answer_virtual_advisor",
+        "core.services.student_advisor_v2.answer_student_advisor",
         return_value=_fake_answer(answer, citations=[_CITATION]),
     ):
         _post(
@@ -297,7 +356,7 @@ def test_a_student_data_answer_persists_with_no_citations(client):
     conversation = _conversation(MINE)
     _student(client, MINE)
     with mock.patch(
-        "core.services.virtual_advisor.answer_virtual_advisor",
+        "core.services.student_advisor_v2.answer_student_advisor",
         return_value=_fake_answer("لديك 3 مواد متبقية."),
     ):
         response = _post(
@@ -318,7 +377,7 @@ def test_a_generation_failure_saves_the_question_and_reports_it(client):
     conversation = _conversation(MINE)
     _student(client, MINE)
     with mock.patch(
-        "core.services.virtual_advisor.answer_virtual_advisor",
+        "core.services.student_advisor_v2.answer_student_advisor",
         side_effect=RuntimeError("model down"),
     ):
         response = _post(
@@ -346,13 +405,13 @@ def test_retrying_a_failed_turn_generates_the_answer_it_never_got(client):
     body = {"message": "سؤال", "idempotency_key": "k-1"}
 
     with mock.patch(
-        "core.services.virtual_advisor.answer_virtual_advisor",
+        "core.services.student_advisor_v2.answer_student_advisor",
         side_effect=RuntimeError("model down"),
     ):
         assert _post(client, url, body).status_code == 503
 
     with mock.patch(
-        "core.services.virtual_advisor.answer_virtual_advisor",
+        "core.services.student_advisor_v2.answer_student_advisor",
         return_value=_fake_answer("باقي لك ٣ مواد."),
     ):
         retried = _post(client, url, body)
@@ -373,7 +432,7 @@ def test_a_succeeded_turn_is_still_replayed_rather_than_regenerated(client):
     body = {"message": "سؤال", "idempotency_key": "k-2"}
 
     advisor = mock.Mock(return_value=_fake_answer("الأولى."))
-    with mock.patch("core.services.virtual_advisor.answer_virtual_advisor", advisor):
+    with mock.patch("core.services.student_advisor_v2.answer_student_advisor", advisor):
         assert _post(client, url, body).status_code == 201
         replay = _post(client, url, body)
 
@@ -410,7 +469,7 @@ def test_an_abandoned_pending_turn_becomes_answerable_again(client):
     )
 
     with mock.patch(
-        "core.services.virtual_advisor.answer_virtual_advisor",
+        "core.services.student_advisor_v2.answer_student_advisor",
         return_value=_fake_answer("أخيرًا."),
     ):
         response = _post(client, url, body)
@@ -437,7 +496,7 @@ def test_a_turn_still_generating_is_not_started_a_second_time(client):
         generation_started_at=timezone.now(),
     )
     advisor = mock.Mock(return_value=_fake_answer())
-    with mock.patch("core.services.virtual_advisor.answer_virtual_advisor", advisor):
+    with mock.patch("core.services.student_advisor_v2.answer_student_advisor", advisor):
         response = _post(
             client,
             reverse("advisor_conversation_send", args=[str(conversation.id)]),
@@ -456,19 +515,19 @@ def test_replay_returns_the_answer_to_that_question_not_a_later_one(client):
     url = reverse("advisor_conversation_send", args=[str(conversation.id)])
 
     with mock.patch(
-        "core.services.virtual_advisor.answer_virtual_advisor",
+        "core.services.student_advisor_v2.answer_student_advisor",
         side_effect=RuntimeError("model down"),
     ):
         _post(client, url, {"message": "السؤال الأول", "idempotency_key": "k-a"})
 
     with mock.patch(
-        "core.services.virtual_advisor.answer_virtual_advisor",
+        "core.services.student_advisor_v2.answer_student_advisor",
         return_value=_fake_answer("جواب الثاني"),
     ):
         _post(client, url, {"message": "السؤال الثاني", "idempotency_key": "k-b"})
 
     with mock.patch(
-        "core.services.virtual_advisor.answer_virtual_advisor",
+        "core.services.student_advisor_v2.answer_student_advisor",
         return_value=_fake_answer("جواب الأول"),
     ):
         resumed = _post(client, url, {"message": "السؤال الأول", "idempotency_key": "k-a"})
@@ -497,7 +556,7 @@ def test_a_multi_page_policy_cites_one_page_a_student_can_turn_to(client):
         }
     ]
     with mock.patch(
-        "core.services.virtual_advisor.answer_virtual_advisor",
+        "core.services.student_advisor_v2.answer_student_advisor",
         return_value=_fake_answer(
             "خمسة «الدليل، ص 24 [TU.WITHDRAWAL.MAXIMUM]».", citations=citations
         ),
@@ -593,7 +652,7 @@ def test_an_integrity_error_with_no_key_is_not_treated_as_a_retry(client):
     url = reverse("advisor_conversation_send", args=[str(conversation.id)])
 
     with mock.patch(
-        "core.services.virtual_advisor.answer_virtual_advisor",
+        "core.services.student_advisor_v2.answer_student_advisor",
         return_value=_fake_answer("جواب قديم"),
     ):
         _post(client, url, {"message": "سؤال"})
@@ -639,7 +698,7 @@ def test_a_refused_answer_is_stored_as_abstained(client):
     conversation = _conversation(MINE)
     _student(client, MINE)
     with mock.patch(
-        "core.services.virtual_advisor.answer_virtual_advisor",
+        "core.services.student_advisor_v2.answer_student_advisor",
         return_value=_fake_answer("لم أتمكن من التحقق.", agent={"citation_refused": True}),
     ):
         _post(
@@ -667,7 +726,7 @@ def test_internal_traces_never_reach_the_browser(client):
     leaky["verified_context"] = {"student": {"gpa": 2.76}}
     leaky["tool_results"] = leaky["agent"]["tool_results"]
 
-    with mock.patch("core.services.virtual_advisor.answer_virtual_advisor", return_value=leaky):
+    with mock.patch("core.services.student_advisor_v2.answer_student_advisor", return_value=leaky):
         response = _post(
             client,
             reverse("advisor_conversation_send", args=[str(conversation.id)]),
@@ -700,7 +759,7 @@ def test_the_browser_receives_exactly_these_fields_and_no_others(client):
     ]
     answer = "خمسة «الدليل، ص 24 [TU.WITHDRAWAL.MAXIMUM]»."
     with mock.patch(
-        "core.services.virtual_advisor.answer_virtual_advisor",
+        "core.services.student_advisor_v2.answer_student_advisor",
         return_value=_fake_answer(answer, citations=citations),
     ):
         _post(
@@ -766,7 +825,7 @@ def test_a_generation_failure_does_not_name_the_subsystem_that_broke(client):
     conversation = _conversation(MINE)
     _student(client, MINE)
     with mock.patch(
-        "core.services.virtual_advisor.answer_virtual_advisor",
+        "core.services.student_advisor_v2.answer_student_advisor",
         side_effect=ZeroDivisionError("secret internals"),
     ):
         response = _post(
@@ -793,7 +852,7 @@ def test_a_failed_turn_carries_the_token_that_retries_it(client):
     _student(client, MINE)
     url = reverse("advisor_conversation_send", args=[str(conversation.id)])
     with mock.patch(
-        "core.services.virtual_advisor.answer_virtual_advisor",
+        "core.services.student_advisor_v2.answer_student_advisor",
         side_effect=RuntimeError("model down"),
     ):
         _post(client, url, {"message": "سؤال", "idempotency_key": "k-9"})
@@ -805,7 +864,7 @@ def test_a_failed_turn_carries_the_token_that_retries_it(client):
 
     # And only there: a completed turn has nothing to resume.
     with mock.patch(
-        "core.services.virtual_advisor.answer_virtual_advisor",
+        "core.services.student_advisor_v2.answer_student_advisor",
         return_value=_fake_answer(),
     ):
         _post(client, url, {"message": "سؤال", "idempotency_key": "k-9"})
