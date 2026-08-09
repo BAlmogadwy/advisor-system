@@ -137,6 +137,40 @@ def test_passing_a_course_unlocks_the_next(plan):
     assert r["counts"]["passed"] == 1
 
 
+def test_excluding_a_studying_course_makes_it_not_taken_but_never_erases_a_pass(plan):
+    course = Course.objects.get(course_code="TA101")
+    StudentCourse.objects.update_or_create(
+        student_id=SID,
+        course=course,
+        defaults={"status": "studying", "programme_term": 1},
+    )
+
+    removed = build_unlock_report(
+        SID,
+        1448,
+        1,
+        additional_studying_codes={"TA101"},
+        excluded_studying_codes={"ta101"},
+    )
+
+    assert "TA101" in [row["code"] for row in removed["open_courses"]]
+    assert "TA101" not in [row["code"] for row in removed["in_progress"]]
+    beta = next(row for row in removed["locked_courses"] if row["code"] == "TB201")
+    assert beta["reasons"][0]["code"] == "TA101"
+
+    StudentCourse.objects.filter(student_id=SID, course=course).update(status="passed")
+    completed = build_unlock_report(
+        SID,
+        1448,
+        1,
+        additional_studying_codes={"TA101"},
+        excluded_studying_codes={"TA101"},
+    )
+
+    assert "TA101" in [row["code"] for row in completed["done"]]
+    assert "TB201" in [row["code"] for row in completed["open_courses"]]
+
+
 def test_top_blocker_is_the_course_that_frees_most(plan):
     r = _report()
     assert r["top_blocker"]["code"] == "TA101"  # frees B and C

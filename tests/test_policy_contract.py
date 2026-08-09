@@ -393,3 +393,229 @@ def test_a_governing_policy_is_never_shown_twice_with_opposite_directness() -> N
     # …and putting it through the context projector does not re-classify it.
     twice = boundary.project_context({"policy_evidence": shaped})
     assert all(r["is_direct_evidence"] is True for r in twice["policy_evidence"]["policies"])
+
+
+# ── 6B: the obligation follows the DOMAIN, not a word in the sentence ────────
+
+
+def _contract_cases() -> list[dict]:
+    import pathlib as _p
+
+    import yaml as _y
+
+    path = _p.Path(__file__).resolve().parents[1] / "evals/advisor/planner_priority_eval_v1.yaml"
+    return _y.safe_load(path.read_text(encoding="utf-8"))["cases"]
+
+
+def _batch_questions() -> dict[str, str]:
+    import pathlib as _p
+
+    import yaml as _y
+
+    path = _p.Path(__file__).resolve().parents[1] / "evals/advisor/planner_priority_eval_v1.yaml"
+    return {
+        c["id"]: c["question_ar"] for c in _y.safe_load(path.read_text(encoding="utf-8"))["cases"]
+    }
+
+
+def _domain_state(question: str, *, grounding: str = "none_governing"):
+    from core.services.advisor_intent import route_intent
+    from core.services.policy_contract import build_policy_contract_state
+
+    # The ROUTE, exactly as production passes it. Handing the family instead would
+    # test a path the server does not take, and would give a MULTI_CAPABILITY
+    # question the domain of a name rather than of what it is made of.
+    return build_policy_contract_state(
+        question, [], grounding_state=grounding, intent=route_intent(question)
+    )
+
+
+def test_a_student_is_not_refused_their_own_prerequisite_data() -> None:
+    """CP11 and CP15, the two the word-level gate refused.
+
+    Both ask about the student's own prerequisite graph. `policy_intent` read
+    «المقررات» and «مقفلة» as regulatory, retrieval found nothing governing — because
+    there is no rule about which course is one step away — and the contract turned
+    that into an abstention. The student was told no policy exists, about a question
+    no policy governs.
+    """
+    for question in (
+        "وش المقررات المقفلة عندي وما يفصلني عنها إلا مقرر واحد؟",
+        "عندي مقرر اختياري مقفل بسبب متطلب، هل أعتبره أولوية أو لازم نحدد المقرر الفعلي أولًا؟",
+    ):
+        state = _domain_state(question)
+        assert state.policy_domain == "COURSE_DATA", question
+        assert state.required is False, question
+        assert state.must_abstain is False, question
+
+
+def test_the_credit_limit_question_still_owes_its_citation() -> None:
+    """TT08 is the defect this whole branch exists for.
+
+    «أريد تسجيل 19 ساعة» names a regulated ceiling, so it must cite the record that
+    sets it. It classifies MIXED — a regulatory family fired beside a planner one —
+    and MIXED is deliberately absent from the data domains, so the broad gate holds.
+    """
+    state = _domain_state("أريد تسجيل 19 ساعة، هل تستطيع بناء جدول كامل بهذا الحد؟")
+    assert state.policy_domain != "COURSE_DATA"
+    assert state.required is True
+
+
+def test_an_unrouted_question_keeps_the_broad_obligation() -> None:
+    """GENERAL_AGENT is the router's "not certain", and a genuine policy question
+    whose phrasing the markers miss lands there. Treating it as data would remove the
+    contract from every question the router does not recognise — the corpus-wide
+    cost that makes this narrowing safe only for families that were actually routed.
+    """
+    from core.services.advisor_intent import IntentFamily, classify_intent
+
+    question = "هل يجوز لي تأجيل الفصل الدراسي؟"
+    assert classify_intent(question) in (IntentFamily.POLICY, IntentFamily.GENERAL_AGENT)
+    assert _domain_state(question).required is True
+
+
+def test_the_two_domain_maps_are_deliberately_different() -> None:
+    """`_DOMAIN` decides MIXED; this one decides what the answer owes.
+
+    Sharing one table would couple a citation rule to a precedence rule. Measured:
+    splitting TIMETABLE_DATA out of `_DOMAIN` changes exactly one classification —
+    TT28 «أكّد» stops being PLANNER_REBUILD — so the routing map keeps three domains
+    and the policy map has five.
+    """
+    from core.services.advisor_intent import _DOMAIN, POLICY_DOMAIN_FOR_FAMILY, IntentFamily
+
+    assert _DOMAIN[IntentFamily.CURRENT_TIMETABLE] == _DOMAIN[IntentFamily.PLANNER_BUILD]
+    assert (
+        POLICY_DOMAIN_FOR_FAMILY[IntentFamily.CURRENT_TIMETABLE]
+        != POLICY_DOMAIN_FOR_FAMILY[IntentFamily.PLANNER_BUILD]
+    )
+    # MIXED and GENERAL_AGENT must never become data domains.
+    assert IntentFamily.MIXED not in POLICY_DOMAIN_FOR_FAMILY
+    assert IntentFamily.GENERAL_AGENT not in POLICY_DOMAIN_FOR_FAMILY
+
+
+def test_the_two_data_halves_question_owes_nothing(monkeypatch=None) -> None:
+    """TT20, the case 6B could not close and 6C does.
+
+    «ليش ما ضفت AI491؟ هل المشكلة في المتطلب السابق أو في وقت الشعبة؟» is a data
+    question end to end: it asks about a build that ran and about a prerequisite. It
+    reached no family at all, so it fell to GENERAL_AGENT and kept the broad
+    obligation — a citation it could never earn, discharged live by quoting a
+    glossary entry, which looks like grounding and is not.
+
+    Two markers give it its two halves. The composition, not the winning family, is
+    what makes it data: PLANNER_BUILD wins on precedence and POLICY never fires.
+    """
+    from core.services.advisor_intent import CompositionKind, IntentFamily, route_intent
+
+    question = "ليش ما ضفت AI491؟ هل المشكلة في المتطلب السابق أو في وقت الشعبة؟"
+    route = route_intent(question)
+    assert route.primary_family is IntentFamily.PLANNER_BUILD
+    assert IntentFamily.COURSE_LOCK_REASON in route.secondary_families
+    assert route.composition is CompositionKind.MULTI_CAPABILITY
+    assert str(route.policy_domain) == "PLANNER_DATA"
+
+    state = _domain_state(question, grounding="retrieved")
+    assert state.required is False
+    assert state.must_abstain is False
+
+
+def test_an_unrouted_question_keeps_the_broad_obligation_v2() -> None:
+    """GENERAL_AGENT still means "not certain", and still owes the broad contract.
+
+    6C routed TT20 by giving it markers, NOT by declaring unrouted questions to be
+    data. A genuine rule question the markers miss lands in GENERAL_AGENT, and it has
+    to keep the obligation or the contract disappears for everything the router does
+    not recognise.
+    """
+    from core.services.advisor_intent import IntentFamily, route_intent
+
+    question = "ما الإجراء المتبع إذا تغيّبت عن الاختبار النهائي بعذر؟"
+    assert route_intent(question).primary_family is IntentFamily.GENERAL_AGENT
+    assert _domain_state(question, grounding="retrieved").required is True
+
+
+def test_a_data_domain_route_cannot_carry_a_normative_marker() -> None:
+    """Why the narrow check inside the data branch is a GUARD, not a live branch —
+    RETESTED after 6C, because the reason changed.
+
+    Before 6C the property was: a POLICY marker forces `IntentFamily.MIXED`, so a
+    data FAMILY could never carry one. 6C separated family from composition, which
+    breaks that particular coupling — TT08's primary family is now PLANNER_BUILD, a
+    data family, and it does carry a normative marker.
+
+    The equivalence survives for a different reason: `route_intent` sets the policy
+    domain from the COMPOSITION, so any question where POLICY fires alongside data is
+    DATA_PLUS_POLICY and its domain is POLICY, not a data domain. The narrow branch
+    is still unreachable — now guarded by composition rather than by precedence.
+
+    Written as the owner specified rather than as a bare `False`, because both
+    guards are properties of today's wiring. This test is what goes red first.
+    """
+    from core.services.advisor_intent import (
+        DATA_POLICY_DOMAINS,
+        explicit_normative_claim_present,
+        route_intent,
+    )
+
+    offenders = [
+        qid
+        for qid, text in _batch_questions().items()
+        if route_intent(text).policy_domain in DATA_POLICY_DOMAINS
+        and explicit_normative_claim_present(text)
+    ]
+    assert offenders == [], offenders
+
+    # And the specific case that broke the OLD reason, so the change is visible:
+    # TT08's family is a data family now, and its DOMAIN is still POLICY.
+    from core.services.advisor_intent import CompositionKind, IntentFamily
+
+    tt08 = route_intent("أريد تسجيل 19 ساعة، هل تستطيع بناء جدول كامل بهذا الحد؟")
+    assert tt08.primary_family is IntentFamily.PLANNER_BUILD
+    assert tt08.composition is CompositionKind.DATA_PLUS_POLICY
+    assert tt08.policy_domain not in DATA_POLICY_DOMAINS
+
+
+# ── 6C: the two halves fail independently ───────────────────────────────────
+
+
+def test_the_contract_pins_the_two_compositions_the_owner_named() -> None:
+    """`MIXED` was doing two jobs and they disagree.
+
+    TT08 «أريد تسجيل 19 ساعة» needs a timetable AND the load regulation. TT20
+    «ليش ما ضفت AI491؟ هل المشكلة في المتطلب السابق أو في وقت الشعبة؟» needs
+    prerequisite state AND timetable evidence — two DATA capabilities and no rule.
+    One enum controlling both tool choice and the citation obligation could not tell
+    those apart, so the second is a separate axis.
+
+    TT20 is pinned rather than derived because it is unrouted: no runtime signal can
+    see its two halves, and the contract is where that is stated.
+    """
+    cases = {c["id"]: c for c in _contract_cases()}
+    assert cases["TT08"]["routing"]["composition"] == "DATA_PLUS_POLICY"
+    assert cases["TT20"]["routing"]["composition"] == "MULTI_CAPABILITY"
+
+
+def test_every_case_declares_a_composition() -> None:
+    valid = {"SINGLE", "MULTI_CAPABILITY", "DATA_PLUS_POLICY"}
+    for cid, case in {c["id"]: c for c in _contract_cases()}.items():
+        assert case["routing"].get("composition") in valid, cid
+
+
+def test_the_runtime_derivation_agrees_with_the_contract_where_it_can_see() -> None:
+    """Derived from the families that FIRED, not from the winner — the winner is
+    what precedence throws the other halves away to produce.
+
+    Only checked for routed questions: an unrouted one has no families at all, and
+    the contract's pin is the only statement of its shape.
+    """
+    from core.services.advisor_intent import IntentFamily, route_intent
+
+    for cid, case in {c["id"]: c for c in _contract_cases()}.items():
+        route = route_intent(case["question_ar"])
+        if route.primary_family is IntentFamily.GENERAL_AGENT:
+            continue
+        assert str(route.composition) == case["routing"]["composition"], cid
+        assert [str(f) for f in route.secondary_families] == case["routing"][
+            "secondary_families"
+        ], cid

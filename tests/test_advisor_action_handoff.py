@@ -51,6 +51,7 @@ from core.services.advisor_actions import (
     alternative_ref_in,
     handoff_for,
     handoff_for_question,
+    pinned_section_in,
 )
 from core.services.advisor_intent import IntentFamily
 from core.services.advisor_outcome import derive_outcome
@@ -99,19 +100,27 @@ def _ask(client, question: str = "ابني لي جدول وتجاهل المسج
 
 
 def test_the_model_never_sees_the_route_and_never_writes_the_answer(monkeypatch) -> None:
-    """THE test. The provider is not asked a second time, and the answer is a
-    constant from this repository rather than anything a model produced."""
+    """THE test, and it got stronger.
+
+    It used to allow ONE provider call — the turn in which the model requested
+    `build_my_timetable`, whose refusal produced the route. That left the refusal
+    depending on the model choosing to ask: measured with `tool_choice` free, a model
+    that simply did not call the tool got «سأبني لك جدولًا جديدًا يتجاهل تسجيلك
+    الحالي» through with `action: None`, promising to discard a registration the
+    system would not have touched.
+
+    The server now executes that one implementation itself when the route says
+    rebuild, so the provider is not contacted at all. The rule still lives in exactly
+    one place — `build_my_timetable` — and nothing here reimplements it.
+    """
     ExecutionSpy(monkeypatch, result=REFUSAL)
-    client = ScriptedClient(
-        [_call("build_my_timetable", {"keep_current_sections": False})],
-        final="لا يمكن للنظام بناء جدول يتجاهل تسجيلك الحالي.",  # what it said live
-    )
+    client = ScriptedClient([], final="لا يمكن للنظام بناء جدول يتجاهل تسجيلك الحالي.")
     payload = _ask(client)
 
-    # ONE provider call: the turn that requested the tool. No continuation.
-    assert len(client.requests) == 1, "the model was asked to interpret the route"
+    assert client.requests == [], "the provider was contacted for a decided route"
     assert payload["answer"] != client.final
     assert payload["agent"]["action_handoff"] == OPEN_STUDENT_PLANNER
+    assert payload["agent"]["rebuild_forced_server_side"] is True
 
 
 def test_the_answer_says_the_feature_exists_and_registration_is_untouched() -> None:
@@ -135,7 +144,7 @@ def test_the_interface_gets_a_structured_action_not_prose(monkeypatch) -> None:
     """A button cannot be rendered from a sentence, and a sentence is what the
     UI would have had to parse."""
     ExecutionSpy(monkeypatch, result=REFUSAL)
-    payload = _ask(ScriptedClient([_call("build_my_timetable", {"keep_current_sections": False})]))
+    payload = _ask(ScriptedClient([]))
 
     assert payload["action"] == {
         "type": "OPEN_STUDENT_PLANNER",
@@ -153,6 +162,15 @@ def test_every_response_carries_the_action_key(monkeypatch) -> None:
 
 
 def test_an_english_question_gets_the_english_handoff(monkeypatch) -> None:
+    """And it covers the OTHER path, which is why it keeps its tool call.
+
+    The router does not recognise this phrasing — «ignoring» is not the ignore verb,
+    so it classifies PLANNER_BUILD and the server-side short-circuit does not fire.
+    That is the arrangement working, not a gap: an unrecognised rebuild still reaches
+    `build_my_timetable`, which is exposed for that family, and the executor refuses
+    exactly as it always did. The two paths cover each other, and this test is the
+    only one that exercises the second.
+    """
     ExecutionSpy(monkeypatch, result=REFUSAL)
     payload = _ask(
         ScriptedClient([_call("build_my_timetable", {"keep_current_sections": False})]),
@@ -485,14 +503,17 @@ def test_a_rebuild_is_not_routed_from_the_question(monkeypatch) -> None:
     assert handoff_for_question(REBUILD) is None
 
     spy = ExecutionSpy(monkeypatch, result=REFUSAL)
-    payload = _ask(
-        ScriptedClient([_call("build_my_timetable", {"keep_current_sections": False})]),
-        question=REBUILD,
-    )
-    # Two executions, and both matter: the server-side policy prefetch runs
-    # through the same registry, which is why `spy.count == 0` on a routed turn
-    # proves retrieval was skipped as well as the tool.
-    assert [name for name, _ in spy.calls] == ["policy_lookup", "build_my_timetable"], (
+    payload = _ask(ScriptedClient([]), question=REBUILD)
+
+    # ONE execution, and it is the capability that owns the rule. The server calls
+    # it rather than waiting for the model to — the refusal used to depend on the
+    # model choosing to ask, and a model that did not left «سأبني لك جدولًا جديدًا
+    # يتجاهل تسجيلك الحالي» to reach the student with no route at all.
+    #
+    # `policy_lookup` is ABSENT because the turn ends before the prefetch: a decided
+    # route carries no policy claim, and seeding eight records beside a fixed
+    # referral would put authority next to a sentence that cites none of them.
+    assert [name for name, _ in spy.calls] == ["build_my_timetable"], (
         "the rebuild bypassed the executor that refuses it"
     )
     assert payload["action"]["intent"] == INTENT_REBUILD_WITHOUT_CURRENT_SECTIONS
@@ -663,7 +684,7 @@ def test_the_labelled_rows_are_the_ones_this_test_thinks_they_are() -> None:
     passes by having nothing to check — the shape of vacuous test this repository
     has shipped before.
     """
-    assert {qid for qid, _, _ in _labelled_intents()} == {"TT02", "TT24", "TT26"}
+    assert {qid for qid, _, _ in _labelled_intents()} == {"TT02", "TT10", "TT24", "TT26"}
 
 
 def test_the_third_routed_row_is_labelled_like_the_other_two() -> None:
@@ -692,26 +713,233 @@ def test_the_third_routed_row_is_labelled_like_the_other_two() -> None:
     assert handoff.intent == INTENT_EDIT_DRAFT
 
 
+def _contract_cases() -> list[dict]:
+    path = BATCH.parent / "planner_priority_eval_v1.yaml"
+    return yaml.safe_load(path.read_text(encoding="utf-8"))["cases"]
+
+
 def test_a_routed_question_never_reaches_a_provider(monkeypatch) -> None:
     """The hand-off is decided before generation, so no provider is contacted.
 
     `ScriptedClient([])` raises if asked for a completion, so a route that fell
     through to the model fails here rather than costing a paid call and returning
     prose where a structured action belongs.
+
+    Filtered on the FAMILY, not on `expected_action`. TT27-TT29 also expect
+    OPEN_STUDENT_PLANNER and reach it the other way — through `build_my_timetable`
+    refusing, which needs a model call to request the tool. Selecting on the action
+    alone would assert "no provider" about the three cases whose route depends on one.
     """
-    # Filtered on the FAMILY, not on `expected_action`. TT27-TT29 also expect
-    # OPEN_STUDENT_PLANNER, and they reach it the other way — through
-    # `build_my_timetable` refusing, which needs a model call to request the tool.
-    # Selecting on the action alone would assert "no provider" about the three
-    # cases whose route depends on one.
     routed = {str(f) for f in ROUTED_INTENTS}
-    for row in _batch_rows():
-        if row["expected_family"] not in routed:
+    checked = 0
+    for case in _contract_cases():
+        family = case["routing"]["expected_family"]
+        if family not in routed:
             continue
-        assert row.get("expected_action"), f"{row['id']} is routed but labels no action"
+        action = case["expected_action"]
+        assert action, f"{case['id']} is routed but labels no action"
         ExecutionSpy(monkeypatch)
-        payload = _ask(ScriptedClient([]), question=row["ar"])
-        assert payload["action"], row["id"]
-        assert payload["action"]["type"] == row["expected_action"], row["id"]
-        assert payload["model"] == "", f"{row['id']} named a provider that never saw it"
-        assert payload["usage"] == {}, f"{row['id']} recorded provider usage"
+        payload = _ask(ScriptedClient([]), question=case["question_ar"])
+        assert payload["action"], case["id"]
+        assert payload["action"]["type"] == action["type"], case["id"]
+        assert payload["action"]["intent"] == action["intent"], case["id"]
+        assert payload["action"]["registration_modified"] is False, case["id"]
+        # The pin is the one route that carries a payload of its own, and dropping
+        # it is silent: the answer still names the course.
+        if action.get("requested_edit"):
+            assert payload["action"]["requested_edit"] == action["requested_edit"], case["id"]
+        assert payload["model"] == "", f"{case['id']} named a provider that never saw it"
+        assert payload["usage"] == {}, f"{case['id']} recorded provider usage"
+        checked += 1
+    assert checked >= 5, f"only {checked} routed cases were exercised"
+
+
+# ==========================================================================
+# The pin, and the three sentences it must refuse to guess at.
+# ==========================================================================
+
+
+def test_a_pin_carries_both_halves_to_the_planner() -> None:
+    """TT09. `build_my_timetable` takes course codes and has no section parameter,
+    so routed as a build «شعبة M2» is dropped and the answer still names AI331 —
+    the student is told the pin was honoured when only the course was."""
+    handoff = handoff_for_question("ثبّت لي شعبة M2 في مقرر AI331، وابنِ بقية الجدول حولها.")
+    assert handoff is not None
+    assert handoff.as_payload()["requested_edit"] == {
+        "operation": "PIN_SECTION_AND_REGENERATE",
+        "course_code": "AI331",
+        "section_label": "M2",
+    }
+
+
+@pytest.mark.parametrize(
+    ("question", "why"),
+    [
+        ("ثبّت لي شعبة M2", "a section label with no course means nothing — M2 exists in dozens"),
+        ("ثبّت لي AI331", "a course with no section is an ordinary must_include, not a pin"),
+        ("ثبّت M2 في AI331 و CS323", "one label and two courses: picking either is a guess"),
+        ("ثبّت M1 و M2 في AI331", "two labels and one course: the first would win by position"),
+    ],
+)
+def test_an_ambiguous_pin_is_left_to_the_planner_to_ask_about(question: str, why: str) -> None:
+    """None, not a best guess.
+
+    The route still stands — the student asked to edit a draft — and the EDIT is
+    simply absent, which is the honest state. The planner then asks. A server that
+    guessed here would pin a section the student never named and report it as theirs.
+    """
+    assert pinned_section_in(question) is None, why
+    handoff = handoff_for_question(question)
+    if handoff is not None:
+        assert "requested_edit" not in handoff.as_payload(), why
+
+
+def test_the_router_family_reaches_the_policy_gate(monkeypatch) -> None:
+    """The wiring, end to end, not the gate in isolation.
+
+    `build_policy_contract_state` can be handed the right family in a unit test and
+    still never receive one in production — the parameter defaults to None and falls
+    back to the broad gate, silently. CP11 is the case that proves the thread is
+    connected: routed COURSE_PRIORITY, it must reach the gate as a data domain and
+    owe nothing, where the word-level rule refused it its own prerequisite data.
+    """
+    ExecutionSpy(monkeypatch, result={"tool": "my_progress", "ok": True})
+    payload = _ask(
+        ScriptedClient([_call("my_progress", {})], final="حسب خطتك، هذه المقررات."),
+        question="وش المقررات المقفلة عندي وما يفصلني عنها إلا مقرر واحد؟",
+    )
+    agent = payload["agent"]
+    assert agent["policy_domain"] == "COURSE_DATA"
+    assert agent["policy_required"] is False
+    assert derive_outcome(payload).disposition != "ABSTAIN"
+
+
+def test_a_missing_rule_suppresses_the_rule_and_not_the_students_record(monkeypatch) -> None:
+    """The whole point of splitting the halves.
+
+    A turn that owes a rule the store does not hold still refuses the PROSE — text
+    surgery on free Arabic is a problem nobody has solved, and a half-edited answer
+    is one whose remaining sentences nobody has checked. But the verified facts were
+    never in the prose: they are the structured tool results the server already
+    holds. Destroying them with the sentence was the defect.
+
+    The empty retrieval is FORCED rather than found. Picking a question the store
+    happens to hold nothing for makes the test a statement about today's policy
+    corpus, and it would start passing for the wrong reason the day a record is
+    added — which is how a test stops testing without anyone noticing.
+    """
+    monkeypatch.setattr(
+        va, "_seed_policy_evidence", lambda *a, **k: ({"tool": "policy_lookup"}, "none_governing")
+    )
+    progress = {"tool": "my_progress", "ok": True, "counts": {"open": 7, "one_step": 6}}
+    ExecutionSpy(monkeypatch, result=progress)
+    payload = _ask(
+        ScriptedClient([_call("my_progress", {})], final="القاعدة تسمح بذلك."),
+        # GENERAL_AGENT: unrouted, so it keeps both the broad citation obligation and
+        # the full permitted registry — the only shape where a turn can owe a rule
+        # AND have data to lose.
+        question="ما الإجراء المتبع إذا تغيّبت عن الاختبار النهائي بعذر؟",
+    )
+
+    assert payload["agent"].get("policy_contract_failure") == "no_governing_evidence"
+    assert payload["policy_part"]["status"] == "ABSTAINED"
+    # The rule sentence the model wrote is gone…
+    assert "القاعدة تسمح" not in payload["answer"]
+    # …and the student's own record is not.
+    assert payload["data_part"]["status"] == "ANSWERED"
+    assert payload["data_part"]["facts"]["my_progress"]["counts"]["one_step"] == 6
+
+
+def test_an_ordinary_answer_reports_both_halves_answered(monkeypatch) -> None:
+    """`policy_part` is present on every response, so a caller tests one key."""
+    ExecutionSpy(monkeypatch, result={"tool": "my_progress", "ok": True})
+    payload = _ask(
+        ScriptedClient([_call("my_progress", {})], final="هذه مقرراتك."),
+        question="وش المقررات المقفلة عندي وما يفصلني عنها إلا مقرر واحد؟",
+    )
+    assert payload["policy_part"]["status"] == "ANSWERED"
+    assert payload["data_part"]["status"] == "ANSWERED"
+
+
+def test_a_consistency_violation_never_ships_to_the_student(monkeypatch) -> None:
+    """The postconditions are wired into the SAME gate, not computed beside it.
+
+    A module that returns violation codes nobody applies is worse than no module: the
+    trace says the answer was checked. Here the model claims a registration the
+    adviser never performs — the live failure this branch opened with — and the
+    sentence must not reach the student.
+    """
+    ExecutionSpy(monkeypatch, result={"tool": "my_progress", "ok": True})
+    payload = _ask(
+        ScriptedClient([_call("my_progress", {})], final="سجلت لك المقررات في البوابة."),
+        question="وش المقررات المقفلة عندي وما يفصلني عنها إلا مقرر واحد؟",
+    )
+    assert "سجلت لك" not in payload["answer"]
+    assert "claimed_registration_mutation" in (payload["agent"].get("output_violations") or [])
+
+
+def test_the_server_asks_the_executor_the_DESTRUCTIVE_question(monkeypatch) -> None:
+    """The arguments matter, not just that the capability ran.
+
+    `build_my_timetable` refuses only when asked to DROP the current sections. Called
+    with `keep_current_sections=True` it builds an ordinary timetable and returns no
+    route — so a server-side call with the wrong argument reinstates the whole hole
+    while still showing an execution in the trace.
+    """
+    spy = ExecutionSpy(monkeypatch, result=REFUSAL)
+    _ask(ScriptedClient([]), question=REBUILD)
+
+    name, args = spy.calls[0]
+    assert name == "build_my_timetable"
+    assert args.get("keep_current_sections") is False
+
+
+def test_an_adviser_asking_about_a_rebuild_is_not_routed_to_the_students_planner(
+    monkeypatch,
+) -> None:
+    """The same gate the question-routed hand-offs have, on the new path.
+
+    Every planner-draft endpoint builds its principal with
+    `AdvisorPrincipal.for_student` and answers 403 to anyone else, so offering an
+    adviser that screen names a door locked against them. Without the role check the
+    server-side rebuild would do exactly that.
+    """
+    ExecutionSpy(monkeypatch, result=REFUSAL)
+    payload = va.answer_virtual_advisor(
+        question=REBUILD,
+        principal=AdvisorPrincipal(role=ROLE_ADVISOR, student_id=MINE),
+        academic_year=1448,
+        term=1,
+        client=ScriptedClient([], final="الإجابة."),
+    )
+    assert payload["agent"].get("rebuild_forced_server_side") is not True
+
+
+def test_a_multi_capability_route_gets_its_evidence_even_when_the_model_stops_early(
+    monkeypatch,
+) -> None:
+    """TT20 on the live canary: both tools offered, one called, half the question
+    answered.
+
+    «ليش ما ضفت AI491؟ هل المشكلة في المتطلب السابق أو في وقت الشعبة؟» asks two
+    independent things, and `why_course_locked` structurally cannot say whether a
+    course was excluded on section fit. Retrying and asking the provider to please
+    call the other tool costs a paid turn and still depends on the same choice, so
+    the server fetches what is missing and the model writes over complete evidence.
+    """
+    seen: list[str] = []
+
+    def _spy(self, name, args, *, scope=None, ctx=None):
+        seen.append(name)
+        return {"tool": name, "ok": True}
+
+    monkeypatch.setattr(caps.AdvisorCapabilityRegistry, "execute", _spy)
+    payload = _ask(
+        ScriptedClient([_call("why_course_locked", {"course_code": "AI491"})], final="جواب."),
+        question="ليش ما ضفت AI491؟ هل المشكلة في المتطلب السابق أو في وقت الشعبة؟",
+    )
+
+    assert "build_my_timetable" in seen, "the missing half was never fetched"
+    assert payload["agent"].get("server_completed_tools") == ["build_my_timetable"]
+    tools = {r.get("tool") for r in payload["agent"]["tool_results"] if isinstance(r, dict)}
+    assert {"why_course_locked", "build_my_timetable"} <= tools

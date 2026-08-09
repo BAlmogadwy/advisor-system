@@ -998,7 +998,20 @@ def _exec_my_progress(
         # واحد» and «أي مقرر يفتح أكبر عدد مباشرة» both need an ORDER over several
         # courses, and the payload carried a single `max()`. Ranking three named
         # courses from one winner is not possible, so the answer was composed.
-        "unlock_impact_ranking": [_impact_row(b) for b in r["blockers"][:_MAX_LIST_ROWS]],
+        # This list is deliberately complete. The capability contract and note both
+        # say every academically open concrete course appears here; applying the
+        # generic 20-row display cap silently changed that claim for larger plans.
+        "unlock_impact_ranking": [_impact_row(b) for b in r["blockers"]],
+        # The basis, stated. A ranking whose criterion is unnamed is read as "these
+        # are the courses that matter", and this one measures exactly one thing.
+        "unlock_impact_ranking_basis": "SOLE_REMAINING_UNLOCK_COUNT_THEN_DOWNSTREAM_COUNT",
+        "unlock_impact_ranking_note": (
+            "Every course whose prerequisites are satisfied appears here, including "
+            "those that unlock nothing - a zero is a real answer, not a reason to omit "
+            "the course. Unlock impact is one criterion among several: a course may "
+            "still be required for graduation, be in this term's recommendation, or be "
+            "needed to reach a reasonable load, and none of those is measured here."
+        ),
         "prerequisites_satisfied": [
             {
                 "code": c["code"],
@@ -1796,7 +1809,11 @@ def _exec_build_my_timetable(
         get_student_term_baseline,
         student_gender_strict,
     )
-    from core.services.timetable_provenance import baseline_sections, build_timetable_facts
+    from core.services.timetable_provenance import (
+        baseline_sections,
+        build_timetable_facts,
+        verify,
+    )
 
     student_id, error = _resolve_scoped_student_id(args, scope)
     if error:
@@ -1850,7 +1867,8 @@ def _exec_build_my_timetable(
     asked = list(dict.fromkeys(wanted + recommended))
 
     baseline = get_student_term_baseline(int(student_id), str(year), str(term))
-    held = {row["course_code"] for row in baseline_sections(baseline)}
+    held_rows = baseline_sections(baseline)
+    held = {row["course_code"] for row in held_rows}
 
     # A course the student is ALREADY registered in this term never goes to the
     # solver. It cannot be scheduled twice, and sending it produces one of two wrong
@@ -1868,7 +1886,7 @@ def _exec_build_my_timetable(
     codes = [c for c in asked if c not in held]
 
     def _facts(mappings: list[dict[str, Any]], unscheduled: list[dict[str, Any]]) -> dict[str, Any]:
-        return build_timetable_facts(
+        facts = build_timetable_facts(
             student_id=int(student_id),
             using_timetable_of_term=f"{year}/{term}",
             requested_codes=wanted,
@@ -1879,7 +1897,19 @@ def _exec_build_my_timetable(
             credit_hours=credits,
             default_credits=DEFAULT_CREDITS,
             cap=cap,
-        ).as_payload()
+            # `None`, not `[]`. Chat cannot pin a section — `must_include` names
+            # courses — so the key is absent rather than asserting nothing was pinned.
+            fixed_sections=None,
+        )
+        # Checked before the payload is built, so a contradiction costs one refused
+        # tool call instead of reaching a student as a sentence. `execute` turns the
+        # exception into ok=False and logs it.
+        verify(
+            facts,
+            baseline_codes={(r["course_code"], r.get("section", "")) for r in held_rows},
+            keep_current=keep_current_sections,
+        )
+        return facts.as_payload()
 
     if not asked:
         return {

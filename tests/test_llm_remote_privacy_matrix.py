@@ -250,7 +250,16 @@ def test_clash_projection_keeps_section_evidence_without_people_or_rooms() -> No
                     "clash_free": [
                         {
                             "section": "M3",
-                            "meetings": ["SUN 13:00-14:15"],
+                            "meetings": [
+                                "SUN 13:00-14:15",
+                                {
+                                    "day": "MON",
+                                    "start_time": "13:00",
+                                    "end_time": "14:15",
+                                    "instructor": CANARIES["latin_name"],
+                                    "room": "B-214",
+                                },
+                            ],
                             "is_current_section": True,
                             "instructor": CANARIES["name"],
                             "room": "B-214",
@@ -283,7 +292,10 @@ def test_clash_projection_keeps_section_evidence_without_people_or_rooms() -> No
     assert course["currently_registered_sections"] == ["M3"]
     assert course["clash_free"][0] == {
         "section": "M3",
-        "meetings": ["SUN 13:00-14:15"],
+        "meetings": [
+            "SUN 13:00-14:15",
+            {"day": "MON", "start_time": "13:00", "end_time": "14:15"},
+        ],
         "is_current_section": True,
     }
     assert course["clashing"][0]["conflicts"][0]["conflicts_with"] == "CS113 M4"

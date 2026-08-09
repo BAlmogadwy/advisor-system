@@ -299,6 +299,26 @@ _EDIT_WORD = _words(
     "changed",
 )
 
+#: A SECTION, the thing a student picks inside a course. Needed because TT10 names
+#: «الشعب» and no course noun at all, so every existing edit marker misses it.
+_SECTION_NOUN = _words("الشعب", "شعب", "شعبه", "الشعبه", "section", "sections")
+
+#: «ثبّت لي شعبة M2» — pin this section and build around it. A REQUEST about a
+#: specific section, which is why it belongs to the draft family rather than to the
+#: build: `build_my_timetable` accepts `must_include` (course codes) and has no
+#: section parameter at all, so routed as a build the «M2» is silently dropped and
+#: the student is told their pin was honoured when only the course was.
+#:
+#: "keep" and "fix" are absent. «keep» is the build's own `keep_current_sections`
+#: vocabulary and "fix" means repair as often as it means pin.
+_PIN_VERB = _words("ثبت", "ثبتي", "ثبتها", "pin", "pinned")
+
+#: PAST TENSE. «اخترتها» — "the ones I chose" — asserts that a selection already
+#: happened, which is exactly what distinguishes an edit of an existing draft from a
+#: build constraint. The imperative «اختر» is deliberately absent: "choose sections
+#: for me" is a build.
+_CHOSE_VERB = _words("اخترت", "اخترتها", "اخترناها", "chose", "picked", "selected")
+
 _COURSE_NOUN = _words(
     "مقرر",
     "المقرر",
@@ -334,10 +354,28 @@ _WAIT_VERB = _words("ينتظر", "تنتظر", "waiting", "awaiting")
 #: also already belongs to `_FORMAL_REQUIREMENT`, where it means a regulation.
 _DEPEND_VERB = _words("يعتمد", "تعتمد", "يعتمدون", "depend", "depends", "dependent")
 
-#: «مهم» is deliberately absent. «هل يظل مهمًا أكاديميًا؟» (CP16) is a question
-#: about a course with no section on file, and «لا تقل لي فقط إن المقرر مهم» (CP20)
-#: is a demand for an audit trail; neither is answered by the priority ranking.
 _PRIORITY_WORD = _words("اهم", "الاهم", "اولويه", "الاولويه", "priority", "priorities")
+
+#: «مهم» USED to be excluded here, on the reading that «هل يظل مهمًا أكاديميًا؟»
+#: (CP16) and «لا تقل لي فقط إن المقرر مهم» (CP20) are not priority-ranking
+#: questions. The owner ruled otherwise, and the ruling is right: both ask where a
+#: course sits among everything else the student could take, which is what
+#: `my_progress` computes. Routed to COURSE_UNLOCKS instead, they reach
+#: `why_course_locked`, which analyses ONE named course and cannot rank a plan.
+_IMPORTANT = _words("مهم", "مهمه", "المهم", "اهميه", "important", "importance")
+
+#: A superlative over a COUNT — «أكبر عدد من المقررات» (CP02). Three words in order,
+#: because the superlative alone is a comparison of anything and the count alone is
+#: arithmetic. Together with a course noun they name a cross-plan ranking, and that
+#: ranking is why CP02 must not go to COURSE_UNLOCKS: the unlock verb is present in
+#: the same sentence, but `why_course_locked` answers about one course and the
+#: question asks which course wins.
+_LARGEST = _words("اكبر", "اعلي", "اكثر", "largest", "most", "highest", "greatest")
+_COUNT_WORD = _words("عدد", "number", "count")
+
+#: Explicit ordering. CP14 «كيف يؤثر هذا على ترتيب الأولوية؟» names the ranking
+#: itself and no course at all, so the noun-plus-priority markers cannot fire.
+_ORDER_WORD = _words("ترتيب", "الترتيب", "ranking", "rank", "ordering")
 
 #: The one-step question, named by DISTANCE rather than by the course:
 #: «وش المقررات المقفلة عندي وما يفصلني عنها إلا مقرر واحد؟» (CP11). It classified
@@ -356,6 +394,18 @@ _SEPARATES = _words("يفصلني", "يفصل", "يفصلها", "يفصلنا", 
 _ONE_WORD = _words("واحد", "واحده", "one", "single")
 
 _WHY_WORD = _words("ليش", "لماذا", "ليه", "السبب", "why")
+
+#: «المتطلب السابق» — the prerequisite, named as a noun rather than as a lock.
+#: TT20 «ليش ما ضفت AI491؟ هل المشكلة في المتطلب السابق أو في وقت الشعبة؟» asks why a
+#: course was left out and offers two candidate causes; the lock markers need a lock
+#: WORD («مقفل») and there is none, so the question reached no family at all — and an
+#: unrouted question kept the broad citation obligation it could never earn.
+_PREREQ_NOUN = _words("المتطلب", "متطلب", "المتطلبات", "prerequisite", "prerequisites")
+
+#: PAST TENSE again, and for the same reason as «اخترت»: «ما ضفت» asks about a build
+#: that already ran. The imperative «أضف» is the build request itself and is already
+#: `_ADD_VERB`, whose markers all require a schedule noun that TT20 does not have.
+_WAS_ADDED_VERB = _words("ضفت", "اضفت", "اضيفت", "added", "include")
 
 _LOCKED_WORD = _words("مقفل", "مقفله", "المقفل", "المقفله", "مغلق", "مغلقه", "locked", "blocked")
 
@@ -470,6 +520,13 @@ _MARKERS: dict[IntentFamily, tuple[_Marker, ...]] = {
         _m(_COURSE_NOUN, _EDIT_WORD),
         _m(_EDIT_WORD, _OPTION),
         _m(_OPTION, _EDIT_WORD),
+        # TT10 «لا تغيّر الشعب التي اخترتها يدويًا». The past tense is the whole
+        # signal: sections were already picked, so a draft exists.
+        _m(_SECTION_NOUN, _CHOSE_VERB),
+        # TT09 «ثبّت لي شعبة M2 في مقرر AI331». EDIT_DRAFT outranks PLANNER_BUILD in
+        # `_PRECEDENCE`, which is what stops the build reading from winning and
+        # dropping the section.
+        _m(_PIN_VERB, _SECTION_NOUN),
     ),
     #: "Show me the alternatives" is deliberately NOT a marker. TT11 is «اعرض لي
     #: جدولي المسجل حاليًا قبل ما تبني أي بدائل» — a read of the registered
@@ -485,6 +542,10 @@ _MARKERS: dict[IntentFamily, tuple[_Marker, ...]] = {
         _m(_BUILD_VERB, _SCHEDULE),
         _m(_WANT_VERB, _SCHEDULE),
         _m(_ADD_VERB, _SCHEDULE),
+        # TT20's planner half: "why was this not added", about a build that ran.
+        # Requires the course code, because «ليش ما ضفت شي؟» names no course and is
+        # not a question about a timetable result.
+        _m_code(_WHY_WORD, _WAS_ADDED_VERB),
     ),
     IntentFamily.CURRENT_TIMETABLE: (
         _m(_SHOW_VERB, _MY_SCHEDULE),
@@ -497,6 +558,10 @@ _MARKERS: dict[IntentFamily, tuple[_Marker, ...]] = {
         _m(_PRIORITY_WORD, _COURSE_NOUN),
         _m(_COURSE_NOUN, _PRIORITY_WORD),
         _m(_SEPARATES, _COURSE_NOUN, _ONE_WORD),
+        _m(_LARGEST, _COUNT_WORD, _COURSE_NOUN),  # CP02
+        _m(_ORDER_WORD, _PRIORITY_WORD),  # CP14
+        _m(_COURSE_NOUN, _IMPORTANT),  # CP16, CP20
+        _m(_IMPORTANT, _COURSE_NOUN),
     ),
     IntentFamily.COURSE_UNLOCKS: (
         _m(_UNLOCK_VERB, _COURSE_NOUN),
@@ -512,6 +577,8 @@ _MARKERS: dict[IntentFamily, tuple[_Marker, ...]] = {
     IntentFamily.COURSE_LOCK_REASON: (
         _m(_WHY_WORD, _LOCKED_WORD),
         _m(_LOCKED_WORD, _WHY_WORD),
+        # TT20's prerequisite half.
+        _m(_WHY_WORD, _PREREQ_NOUN),
     ),
     IntentFamily.POLICY: (
         _m(_PERMISSION),
@@ -566,6 +633,191 @@ _PRECEDENCE: tuple[IntentFamily, ...] = (
 )
 
 
+class CompositionKind(StrEnum):
+    """What a turn is MADE OF, which is a different question from who owns it.
+
+    `IntentFamily.MIXED` was answering both, and the two disagree. TT20 «ليش ما ضفت
+    AI491؟ هل المشكلة في المتطلب السابق أو في وقت الشعبة؟» needs a planner result AND
+    a lock reason — two DATA capabilities, no rule anywhere in it. TT08 «أريد تسجيل
+    19 ساعة» needs a timetable and the load REGULATION. One enum controlling both the
+    tool surface and the citation obligation could not express the second without
+    implying the first, so TT20 inherited a citation obligation it could never earn.
+    """
+
+    SINGLE = "SINGLE"
+    MULTI_CAPABILITY = "MULTI_CAPABILITY"
+    DATA_PLUS_POLICY = "DATA_PLUS_POLICY"
+
+
+class PolicyDomain(StrEnum):
+    """The coarse domain the POLICY GATE keys on. Never the routing domain."""
+
+    PLANNER_DATA = "PLANNER_DATA"
+    TIMETABLE_DATA = "TIMETABLE_DATA"
+    COURSE_DATA = "COURSE_DATA"
+    POLICY = "POLICY"
+    GENERAL = "GENERAL"
+
+
+#: The domains whose questions are about the student's OWN RECORD.
+DATA_POLICY_DOMAINS = frozenset(
+    {PolicyDomain.PLANNER_DATA, PolicyDomain.TIMETABLE_DATA, PolicyDomain.COURSE_DATA}
+)
+
+
+@dataclass(frozen=True)
+class AdvisorRoute:
+    """One decision, carrying every axis that used to be squeezed into a family.
+
+    `primary_family` still decides the owning capability and the action. What is new
+    is that the OTHER families that fired are kept — precedence exists to pick a
+    winner, and the halves it discards are exactly what a multi-capability question
+    needs — and that composition and policy domain are stated rather than inferred
+    from the winner's identity.
+    """
+
+    primary_family: IntentFamily
+    secondary_families: tuple[IntentFamily, ...] = ()
+    composition: CompositionKind = CompositionKind.SINGLE
+    policy_domain: PolicyDomain = PolicyDomain.GENERAL
+
+    @property
+    def families(self) -> tuple[IntentFamily, ...]:
+        return (self.primary_family, *self.secondary_families)
+
+
+#: "Name them", as opposed to "which one". A ranking question answered by one course
+#: needs one tool; a question that also asks for the list needs the capability that
+#: holds the names.
+_ENUMERATE = ("اعطني", "أعطني", "اذكر", "ما هي", "وما هي", "اسرد", "list them", "name them")
+
+
+def _asks_for_two_kinds_of_evidence(question: str, hits: list[IntentFamily]) -> bool:
+    """Is this a same-domain question that genuinely needs two capabilities?
+
+    Narrow by construction: both course families must fire AND the sentence must ask
+    for an enumeration. Widening it to "two families" would recreate CP02.
+    """
+    if not ({IntentFamily.COURSE_PRIORITY, IntentFamily.COURSE_UNLOCKS} <= set(hits)):
+        return False
+    folded = _fold(question)
+    return any(_fold(phrase) in folded for phrase in _ENUMERATE)
+
+
+def route_intent(question: str) -> AdvisorRoute:
+    """The whole routing decision for one question.
+
+    Reads the families that FIRED, not just the winner. `classify_intent` is left
+    exactly as it was — it is the precedence table that protects TT28, and nothing
+    here touches it — so the two agree on the primary family by construction.
+    """
+    hits = _families(question)
+    primary = classify_intent(question)
+    if not hits:
+        return AdvisorRoute(primary_family=primary)
+
+    domains = {_DOMAIN[h] for h in hits}
+    if "policy" in domains and len(domains) > 1:
+        composition = CompositionKind.DATA_PLUS_POLICY
+    elif _asks_for_two_kinds_of_evidence(question, hits):
+        # SAME DOMAIN, TWO FAMILIES, AND STILL MULTI — the one explicit exception,
+        # and it is not "two families fired".
+        #
+        # CP02 «أي مقرر عندي يفتح أكبر عدد من المقررات مباشرة؟» fires COURSE_PRIORITY
+        # and COURSE_UNLOCKS and wants ONE answer: which course wins. It stays SINGLE,
+        # because handing it `why_course_locked` is the reverse-direction defect 6A.2
+        # removed from that exact question.
+        #
+        # CP20 «لا تقل لي فقط إن المقرر مهم؛ أعطني سبب ترتيبه، والمقررات التي يفتحها
+        # مباشرة» asks for the ranking AND the named list. `my_progress` has the
+        # ranking and the counts; only `why_course_locked` has the NAMES. Two pieces
+        # of evidence, so two tools.
+        #
+        # The trigger is the enumerate verb — «أعطني», «اذكر», «ما هي» — which is what
+        # distinguishes "which one" from "and list them".
+        composition = CompositionKind.MULTI_CAPABILITY
+    elif len(domains) > 1:
+        # DOMAINS, not families. Two markers of the same domain firing is what
+        # precedence exists to resolve — CP02 «أي مقرر عندي يفتح أكبر عدد من المقررات
+        # مباشرة؟» fires COURSE_PRIORITY and COURSE_UNLOCKS, and the answer is the
+        # ranking, not both tools. Counting families instead would hand it
+        # `why_course_locked` alongside `my_progress`, which is the reverse-direction
+        # tool 6A.2 removed from that question in the first place.
+        #
+        # TT20 is the real multi-capability case: PLANNER_BUILD and
+        # COURSE_LOCK_REASON are different domains, and its two halves genuinely
+        # need two tools.
+        composition = CompositionKind.MULTI_CAPABILITY
+    else:
+        composition = CompositionKind.SINGLE
+
+    # MIXED is a precedence outcome, not a surface. Its policy domain comes from the
+    # composition: a data-plus-policy question owes its rule, a multi-capability one
+    # is data throughout and takes the domain of the family that owns it.
+    if composition is CompositionKind.DATA_PLUS_POLICY:
+        domain = PolicyDomain.POLICY
+    elif primary is IntentFamily.MIXED:
+        domain = policy_domain_of(hits[0])
+    else:
+        domain = policy_domain_of(primary)
+
+    # MIXED is a precedence OUTCOME, not a surface — no capability owns it — so the
+    # highest-precedence family that actually fired is the primary, and the rest are
+    # secondaries. Computed after that resolution, or the primary appears in its own
+    # secondary list.
+    resolved = hits[0] if primary is IntentFamily.MIXED else primary
+    return AdvisorRoute(
+        primary_family=resolved,
+        secondary_families=tuple(h for h in hits if h is not resolved),
+        composition=composition,
+        policy_domain=domain,
+    )
+
+
+#: The coarse domain a family's question belongs to, for the POLICY GATE only.
+#:
+#: DELIBERATELY NOT `_DOMAIN`. That map exists to decide MIXED — a question whose
+#: families span more than one domain — and its coarseness is load-bearing: measured
+#: over the 50-question batch, separating TIMETABLE_DATA from PLANNER_DATA inside it
+#: changes exactly one classification, and that one is TT28 «أكّد، تجاهل جدولي
+#: الحالي», which stops being PLANNER_REBUILD and loses the precedence that carries
+#: the confirmation requirement. The «أكّد» incident is the reason this branch
+#: exists, so the routing map keeps its three domains and the policy gate gets its
+#: own five.
+#:
+#: Two axes, two maps: `_DOMAIN` decides which FAMILY wins, this decides what the
+#: ANSWER owes. Sharing one table would have coupled a citation rule to a
+#: precedence rule, and neither would have been safe to change again.
+POLICY_DOMAIN_FOR_FAMILY: dict[IntentFamily, PolicyDomain] = {
+    IntentFamily.PLANNER_BUILD: PolicyDomain.PLANNER_DATA,
+    IntentFamily.PLANNER_REBUILD: PolicyDomain.PLANNER_DATA,
+    IntentFamily.PLANNER_EDIT_DRAFT: PolicyDomain.PLANNER_DATA,
+    IntentFamily.PLANNER_VIEW_ALTERNATIVES: PolicyDomain.PLANNER_DATA,
+    IntentFamily.PLANNER_SELECT_PREFERRED: PolicyDomain.PLANNER_DATA,
+    IntentFamily.CURRENT_TIMETABLE: PolicyDomain.TIMETABLE_DATA,
+    IntentFamily.TIMETABLE_CLASH: PolicyDomain.TIMETABLE_DATA,
+    IntentFamily.COURSE_PRIORITY: PolicyDomain.COURSE_DATA,
+    IntentFamily.COURSE_UNLOCKS: PolicyDomain.COURSE_DATA,
+    IntentFamily.COURSE_LOCK_REASON: PolicyDomain.COURSE_DATA,
+    IntentFamily.POLICY: PolicyDomain.POLICY,
+}
+
+#: The domains whose questions are about the student's OWN RECORD. A question here
+#: owes a citation only when it asks, in so many words, what the rules permit.
+#:
+#: MIXED and GENERAL_AGENT are absent, and that is the whole safety of this change.
+#: MIXED means a regulatory family fired alongside a data one, so the answer still
+#: owes its rule. GENERAL_AGENT means the router was not certain — and a genuine
+#: policy question whose phrasing the markers miss lands there, so it keeps the broad
+#: obligation. Narrowing the unrouted default would have removed the contract from
+#: every question the router does not recognise.
+
+
+def policy_domain_of(family: IntentFamily) -> PolicyDomain:
+    """The policy domain this family's questions belong to. GENERAL when unrouted."""
+    return POLICY_DOMAIN_FOR_FAMILY.get(family, PolicyDomain.GENERAL)
+
+
 #: The capability that OWNS each family's answer. Declared here so "which tool
 #: answers this question" is a fact the server states and a test can read, instead
 #: of a hope about how a model reads a description.
@@ -587,25 +839,105 @@ _PRECEDENCE: tuple[IntentFamily, ...] = (
 #: Families with no entry are absent on purpose: a planner family is answered by a
 #: hand-off (`advisor_actions.ROUTED_INTENTS`), not by a capability, and MIXED
 #: spans two domains by definition.
-CAPABILITY_FOR_FAMILY: dict[IntentFamily, str] = {
-    IntentFamily.COURSE_UNLOCKS: "why_course_locked",
-    IntentFamily.COURSE_LOCK_REASON: "why_course_locked",
-    IntentFamily.COURSE_PRIORITY: "my_progress",
-    IntentFamily.CURRENT_TIMETABLE: "my_timetable",
-    IntentFamily.TIMETABLE_CLASH: "my_clash_free_sections",
-    IntentFamily.PLANNER_BUILD: "build_my_timetable",
-    IntentFamily.POLICY: "policy_lookup",
+CAPABILITY_FOR_FAMILY: dict[IntentFamily, tuple[str, ...]] = {
+    IntentFamily.COURSE_UNLOCKS: ("why_course_locked",),
+    IntentFamily.COURSE_LOCK_REASON: ("why_course_locked",),
+    IntentFamily.COURSE_PRIORITY: ("my_progress",),
+    IntentFamily.CURRENT_TIMETABLE: ("my_timetable",),
+    IntentFamily.TIMETABLE_CLASH: ("my_clash_free_sections",),
+    IntentFamily.PLANNER_BUILD: ("build_my_timetable",),
+    # POLICY is deliberately ABSENT. Retrieval is server-side and unconditional,
+    # and advertising `policy_lookup` again would hand the model back the decision
+    # this branch took away from it — a second lookup whose records were not in the
+    # contract computed before generation.
 }
+
+#: The families that END at a deterministic server hand-off decided from the
+#: QUESTION. Zero tools, and the provider is never contacted, so the empty tuple is
+#: the answer rather than a gap to fall through.
+#:
+#: PLANNER_REBUILD belongs here TOO, but it took a measurement to get right. Its
+#: refusal is not written in this module — `ROUTED_INTENTS` excludes it so that the
+#: confirmation rule has ONE implementation, inside `build_my_timetable`. Exposing
+#: the tool and hoping the model called it was the first attempt, and it left a hole:
+#: with `tool_choice` free, a model that simply did not call it produced «سأبني لك
+#: جدولًا جديدًا يتجاهل تسجيلك الحالي» with `action: None` — a promise to discard a
+#: student's registration from a system that would not have done it.
+#:
+#: `answer_virtual_advisor` now EXECUTES that one implementation when the route says
+#: rebuild, so the refusal no longer depends on a model's choice and the provider is
+#: not contacted at all. Zero tools is then the honest answer.
+_HANDOFF_FAMILIES = frozenset(
+    {
+        IntentFamily.PLANNER_VIEW_ALTERNATIVES,
+        IntentFamily.PLANNER_EDIT_DRAFT,
+        IntentFamily.PLANNER_SELECT_PREFERRED,
+        IntentFamily.PLANNER_REBUILD,
+    }
+)
+
+
+def _ordered_union(*groups: tuple[str, ...]) -> tuple[str, ...]:
+    """Union that keeps first-seen order.
+
+    A `set` would be correct and unusable: tool ORDER changes what a model reaches
+    for, and a schema list that reorders between runs makes two evaluation traces
+    incomparable for a reason that has nothing to do with the answer.
+    """
+    seen: set[str] = set()
+    out: list[str] = []
+    for group in groups:
+        for item in group:
+            if item not in seen:
+                seen.add(item)
+                out.append(item)
+    return tuple(out)
+
+
+def capabilities_for_route(route: AdvisorRoute) -> tuple[str, ...] | None:
+    """The tools this route may advertise, or None meaning "the whole permitted set".
+
+    THE ROUTE IS THE ONLY INPUT. The question is not read again here — routing
+    already made that decision, and a second reading is a second router that can
+    disagree with the first.
+
+    `None` and `()` are different answers and both are needed. `()` is a hand-off:
+    zero tools, decided. `None` is GENERAL_AGENT: the router was not certain, so the
+    turn keeps the role-permitted registry it has today. Collapsing them would make
+    every unfamiliar question toolless, which is a worse failure than a wide surface.
+
+    NARROWING ONLY REMOVES. The result is intersected with what the caller's role
+    already permits, so nothing here can widen a surface past RBAC — a family that
+    named a tool the principal may not use simply loses it.
+    """
+    if route.primary_family in _HANDOFF_FAMILIES:
+        return ()
+    if route.primary_family is IntentFamily.GENERAL_AGENT:
+        return None
+
+    primary = CAPABILITY_FOR_FAMILY.get(route.primary_family, ())
+    if route.composition is CompositionKind.MULTI_CAPABILITY:
+        # The union comes from the ROUTE's own secondaries, not from a per-question
+        # exception list: an exception table is a second routing decision, kept
+        # somewhere the first one cannot see.
+        return _ordered_union(
+            primary, *(CAPABILITY_FOR_FAMILY.get(f, ()) for f in route.secondary_families)
+        )
+    # DATA_PLUS_POLICY exposes the DATA capability only. The policy half is answered
+    # from server-seeded evidence; turning it back into a model-selected lookup to
+    # "complete" the composition would undo the whole arrangement.
+    return primary
 
 
 def owning_capability(question: str) -> str | None:
-    """The capability that should answer this question, or None if no family owns it.
+    """The single capability that owns this question, or None if no family does.
 
-    Side-effect free and offline, like `classify_intent`: the route is a property of
-    the string, so it is testable as a table rather than only observable in a live
-    batch against a provider.
+    Kept as a scalar because that is what it means — "which tool answers this" — and
+    because the routing tests read it as one. The exposed SET is a different question
+    and `capabilities_for_route` answers it.
     """
-    return CAPABILITY_FOR_FAMILY.get(classify_intent(question))
+    tools = CAPABILITY_FOR_FAMILY.get(classify_intent(question))
+    return tools[0] if tools else None
 
 
 def _streams(question: str) -> tuple[list[set[str]], list[str]]:
@@ -698,6 +1030,8 @@ __all__ = [
     "CAPABILITY_FOR_FAMILY",
     "IntentFamily",
     "classify_intent",
+    "capabilities_for_route",
+    "route_intent",
     "explicit_normative_claim_present",
     "owning_capability",
 ]

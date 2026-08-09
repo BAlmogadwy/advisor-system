@@ -592,3 +592,43 @@ def test_the_tracked_example_env_never_carries_an_instruction_to_paste_a_key():
     assert "dashscope.aliyuncs.com" not in text
     assert "dashscope-intl.aliyuncs.com" not in text
     assert "maas.aliyuncs.com" in text
+
+
+def test_outbound_calls_are_counted_at_the_transport_and_a_refusal_is_not_spend() -> None:
+    """Per ATTEMPT, on the CLIENT — and only when a request is actually attempted.
+
+    The runner used to add one per question. A tool-driven answer is two to four
+    outbound calls and a retried one is more, so every cost and budget figure was
+    wrong in the same direction; a retry that ultimately fails still cost a request,
+    which is exactly the case a budget exists to stop.
+
+    The kill switch refuses BEFORE the counter, and that ordering is the point: a
+    request the switch never let out is not spend, and counting it would make a
+    closed switch look like consumed budget.
+    """
+    with override_settings(**OFF):
+        client = OpenAICompatibleLLMClient(endpoint_config("alibaba"))
+        assert client.http_calls == 0
+        with pytest.raises(LLMConfigError, match="disabled"):
+            client.chat([{"role": "user", "content": "hi"}])
+        assert client.http_calls == 0, "a request the switch refused was counted as spend"
+
+    with override_settings(**ALIBABA):
+        live = OpenAICompatibleLLMClient(endpoint_config("alibaba"))
+        original = llm_backend._http_open
+        llm_backend._http_open = _never_reached()
+        try:
+            with pytest.raises(LLMUnavailable):
+                live.chat([{"role": "user", "content": "hi"}])
+        finally:
+            llm_backend._http_open = original
+        # The attempt was made, so it counts — whatever the transport did next.
+        assert live.http_calls >= 1
+        assert live.http_responses == 0
+
+
+def _never_reached():
+    def _open(request, *args, **kwargs):
+        raise URLError("no network in tests")
+
+    return _open

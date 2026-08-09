@@ -94,9 +94,10 @@ def build_unlock_report(
         for code in (additional_studying_codes or set())
         if normalize_code(code)
     }
-    studying -= {
+    excluded_studying = {
         normalize_code(code) for code in (excluded_studying_codes or set()) if normalize_code(code)
     }
+    studying -= excluded_studying
     satisfied = passed | studying
 
     # The plan payload carries no course names; fetch them once for the whole plan.
@@ -127,11 +128,20 @@ def build_unlock_report(
             )
             missing = [p for p in course_prereqs if p not in satisfied]
             raw_status = c["status"]
-            status = (
-                "passed"
-                if raw_status == "passed"
-                else ("studying" if code in studying else raw_status)
-            )
+            # A what-if removal must override the persisted ``studying`` state. The
+            # old fallback to ``raw_status`` restored that state immediately after
+            # ``excluded_studying`` had removed it, so dropping a current
+            # prerequisite could still satisfy its dependants in the forecast.
+            # A completed course is different: removing a current retake cannot
+            # erase a pass already earned.
+            if raw_status == "passed":
+                status = "passed"
+            elif code in excluded_studying:
+                status = "not_taken"
+            elif code in studying:
+                status = "studying"
+            else:
+                status = raw_status
             is_open = status == "not_taken" and not missing and (gate is None or gate["met"])
             info[code] = {
                 "code": code,
@@ -310,9 +320,14 @@ def build_unlock_report(
         # confusion this module already refuses everywhere else.
         if i["open"] and not i["placeholder"]
     ]
-    top_blocker = max(
-        blockers, key=lambda b: (b["frees_eventually"], b["frees_now"], b["code"]), default=None
+    # One ordering for both the ranked list and its headline. Previously the
+    # headline maximised downstream-chain count first while the list ranked the
+    # sole-remaining count first, so two different courses could both be presented
+    # as the top priority in one payload.
+    ranked_blockers = sorted(
+        blockers, key=lambda b: (-b["frees_now"], -b["frees_eventually"], b["code"])
     )
+    top_blocker = ranked_blockers[0] if ranked_blockers else None
     if top_blocker and top_blocker["frees_eventually"] == 0:
         top_blocker = None
 
@@ -352,10 +367,13 @@ def build_unlock_report(
         # `top_blocker` is a `max()` over this list and answers only "which one
         # course", so a question that ranks three named courses, or asks which opens
         # the most DIRECTLY rather than over the whole chain, had nothing to read.
-        "blockers": sorted(
-            (b for b in blockers if b["frees_now"] or b["frees_eventually"]),
-            key=lambda b: (-b["frees_now"], -b["frees_eventually"], b["code"]),
-        ),
+        # EVERY open course, including the ones that unlock nothing. The filter
+        # that used to sit here dropped 4 of one student's 7, and a ranking that
+        # silently omits candidates is read as the complete set of things worth
+        # taking. A course opening nothing may still be required for graduation, in
+        # this term's recommendation, or the only way to reach a sane load — none of
+        # which this ranking measures, and none of which it may quietly decide.
+        "blockers": ranked_blockers,
         "program": program,
         "counts": {
             "open": len(open_courses),

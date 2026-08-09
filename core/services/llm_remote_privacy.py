@@ -636,8 +636,36 @@ def _project_why_course_locked(result: dict[str, Any], _: RemoteIdentityMap) -> 
 
 
 def _project_my_plan_by_term(result: dict[str, Any], _: RemoteIdentityMap) -> dict[str, Any]:
+    """Every level, and every COURSE inside it, named field by field.
+
+    `terms` and `plan` used to pass through whole. The module's argument against a
+    key blacklist applies just as hard one level down: an allowlist that stops at the
+    container passes anything a capability adds inside it, and this container holds a
+    row per course built by `report_views` — which is where `importance_score` and
+    `missing_prereqs` already live and where the next operator-facing field will.
+    """
     out = _envelope(result)
-    out.update(_keep(result, "program", "terms", "plan"))
+    out.update(_keep(result, "program"))
+    terms = result.get("terms")
+    if isinstance(terms, list):
+        out["terms"] = [
+            {
+                **_keep(level, "term"),
+                "courses": _course_rows(
+                    level.get("courses"),
+                    "course_code",
+                    "type",
+                    "programme_term",
+                    "credit_hours",
+                    "status",
+                    "prerequisites",
+                    "missing_prereqs",
+                    "prerequisites_satisfied",
+                ),
+            }
+            for level in terms
+            if isinstance(level, dict)
+        ]
     return out
 
 
@@ -651,16 +679,24 @@ def _project_recommend_courses(result: dict[str, Any], _: RemoteIdentityMap) -> 
 
 
 def _project_my_clash_free_sections(result: dict[str, Any], _: RemoteIdentityMap) -> dict[str, Any]:
-    """Keep the safe timetable evidence the remote model actually needs.
+    """Keep safe section evidence for both supported capability payloads.
 
-    The executor returns ``compared_against_term`` and a nested ``courses`` list.
-    The former projector allowed obsolete ``academic_year``/``course_code`` keys
-    instead, so a successful lookup reached a remote provider as an empty envelope
-    plus a note. The model then reasonably—but falsely—reported that no sections
-    were recorded. Build every nested row by allowlist: course codes, section labels,
-    and meeting ranges are project data; student identity, rooms, and instructors are
-    not transmitted.
+    The current executor returns ``compared_against_term`` and nested ``courses``;
+    older callers can still supply a flat ``sections`` list. Both shapes are built
+    field by field. Course codes, section labels, and meeting ranges may leave the
+    institution; student identity, rooms, and instructors may not.
     """
+
+    def meeting_rows(rows: Any) -> list[Any]:
+        if not isinstance(rows, list):
+            return []
+        projected: list[Any] = []
+        for raw in rows:
+            if isinstance(raw, str):
+                projected.append(raw)
+            elif isinstance(raw, dict):
+                projected.append(_keep(raw, "day", "start", "end", "start_time", "end_time"))
+        return projected
 
     def section_rows(rows: Any, *, include_conflicts: bool) -> list[dict[str, Any]]:
         if not isinstance(rows, list):
@@ -669,7 +705,8 @@ def _project_my_clash_free_sections(result: dict[str, Any], _: RemoteIdentityMap
         for raw in rows:
             if not isinstance(raw, dict):
                 continue
-            row = _keep(raw, "section", "meetings", "is_current_section")
+            row = _keep(raw, "section", "is_current_section")
+            row["meetings"] = meeting_rows(raw.get("meetings"))
             if include_conflicts:
                 row["conflicts"] = _course_rows(
                     raw.get("conflicts"),
@@ -681,7 +718,16 @@ def _project_my_clash_free_sections(result: dict[str, Any], _: RemoteIdentityMap
         return projected
 
     out = _envelope(result)
-    out.update(_keep(result, "compared_against_term", "note"))
+    out.update(
+        _keep(
+            result,
+            "academic_year",
+            "term",
+            "course_code",
+            "compared_against_term",
+            "note",
+        )
+    )
     out["courses"] = []
     for raw in result.get("courses") or []:
         if not isinstance(raw, dict):
@@ -696,6 +742,33 @@ def _project_my_clash_free_sections(result: dict[str, Any], _: RemoteIdentityMap
         course["clash_free"] = section_rows(raw.get("clash_free"), include_conflicts=False)
         course["clashing"] = section_rows(raw.get("clashing"), include_conflicts=True)
         out["courses"].append(course)
+    sections = result.get("sections")
+    if isinstance(sections, list):
+        out["sections"] = [
+            {
+                **_keep(row, "course_code", "course_name", "section", "status", "reason"),
+                "meetings": [
+                    _keep(m, "day", "start_time", "end_time")
+                    for m in (row.get("meetings") or [])
+                    if isinstance(m, dict)
+                ],
+                "collisions": [
+                    _keep(
+                        c,
+                        "course_code",
+                        "day",
+                        "start_time",
+                        "end_time",
+                        "other_start_time",
+                        "other_end_time",
+                    )
+                    for c in (row.get("collisions") or [])
+                    if isinstance(c, dict)
+                ],
+            }
+            for row in sections
+            if isinstance(row, dict)
+        ]
     return out
 
 

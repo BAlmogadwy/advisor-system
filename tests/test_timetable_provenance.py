@@ -176,7 +176,12 @@ def test_a_newly_scheduled_section_is_an_add_not_a_retain() -> None:
     )
     assert [r["change"] for r in facts.new_sections] == [CHANGE_ADD]
     assert facts.new_sections[0]["meetings"] == ["TUE 08:00-09:15"]
-    assert facts.credit_summary == {"retained": 0, "new": 3, "total": 3, "cap": None}
+    assert facts.credit_summary == {
+        "retained_credit_hours": 0,
+        "new_credit_hours": 3,
+        "total_plan_credit_hours": 3,
+        "new_courses_credit_cap": None,
+    }
 
 
 def test_a_different_section_of_a_held_course_is_a_replacement_with_both_ends_named() -> None:
@@ -303,7 +308,12 @@ def test_the_summary_separates_hours_already_held_from_hours_this_build_adds() -
         credit_hours={"AI331": 4, "MATH204": 3},
         cap=18,
     )
-    assert facts.credit_summary == {"retained": 4, "new": 3, "total": 7, "cap": 18}
+    assert facts.credit_summary == {
+        "retained_credit_hours": 4,
+        "new_credit_hours": 3,
+        "total_plan_credit_hours": 7,
+        "new_courses_credit_cap": 18,
+    }
 
 
 def test_a_credit_figure_that_came_from_the_fallback_says_so() -> None:
@@ -321,7 +331,7 @@ def test_a_credit_figure_that_came_from_the_fallback_says_so() -> None:
     )
     assert facts.new_sections[0]["credit_hours"] == 3
     assert facts.new_sections[0]["credits_estimated"] is True
-    assert facts.credit_summary["new"] == 3
+    assert facts.credit_summary["new_credit_hours"] == 3
 
 
 def test_a_known_credit_figure_is_not_marked_as_a_guess() -> None:
@@ -332,7 +342,7 @@ def test_a_known_credit_figure_is_not_marked_as_a_guess() -> None:
 def test_no_cap_is_null_rather_than_zero() -> None:
     """`max_credits` omitted reaches the solver as 0, meaning "no ceiling". Reporting
     that as `cap: 0` would read as a ceiling of zero hours."""
-    assert _facts(cap=0).credit_summary["cap"] is None
+    assert _facts(cap=0).credit_summary["new_courses_credit_cap"] is None
 
 
 # ── the payload is a copy ────────────────────────────────────────────────────
@@ -368,7 +378,6 @@ def test_the_provenance_survives_the_remote_projection() -> None:
         "system_recommended_courses",
         "retained_sections",
         "new_sections",
-        "fixed_sections",
         "section_replacements",
         "unplaced_courses",
         "credit_summary",
@@ -377,6 +386,11 @@ def test_the_provenance_survives_the_remote_projection() -> None:
     ):
         assert key in remote, f"{key} is dropped on the remote backend and nowhere else"
     assert remote["retained_sections"][0]["course_code"] == "AI331"
+    # `fixed_sections` is ABSENT here on purpose. The chat path cannot pin a section,
+    # so an empty list would be a claim it has no basis for; the projector carries the
+    # key only when a caller supplied one.
+    assert "fixed_sections" not in local
+    assert "fixed_sections" not in remote
     # And the identity rule still holds: no student id, no staff name.
     assert "student_id" not in remote
     assert "Dr Someone" not in str(remote)
@@ -386,9 +400,9 @@ def test_mutating_the_payload_cannot_change_the_facts() -> None:
     facts = _facts(requested_codes=["AI331"], credit_hours={"AI331": 4})
     payload = facts.as_payload()
     payload["student_requested_courses"].clear()
-    payload["credit_summary"]["total"] = 999
+    payload["credit_summary"]["total_plan_credit_hours"] = 999
     assert len(facts.as_payload()["student_requested_courses"]) == 1
-    assert facts.as_payload()["credit_summary"]["total"] == 0
+    assert facts.as_payload()["credit_summary"]["total_plan_credit_hours"] == 0
 
 
 def test_an_unattributable_course_does_not_claim_the_system_recommended_it() -> None:
@@ -406,3 +420,171 @@ def test_an_unattributable_course_does_not_claim_the_system_recommended_it() -> 
     )
     assert facts.new_sections[0]["source"] == "UNATTRIBUTED"
     assert facts.unplaced_courses[0]["source"] == "UNATTRIBUTED"
+
+
+# ── the four invariants, executable ──────────────────────────────────────────
+
+
+def _verified(**kwargs):
+    from core.services.timetable_provenance import verify
+
+    baseline = kwargs.pop("baseline", [])
+    keep = kwargs.pop("keep_current", True)
+    facts = _facts(baseline=baseline, **kwargs)
+    verify(
+        facts,
+        baseline_codes={
+            (r["course_code"], r.get("section", "")) for r in baseline_sections(baseline)
+        },
+        keep_current=keep,
+    )
+    return facts
+
+
+def test_an_unattributable_course_is_refused_rather_than_explained() -> None:
+    """UNATTRIBUTED is an internal contract failure, not a value a student may read.
+
+    It means the solver returned a course that was in neither input list, so the
+    payload cannot say where it came from. Shipping it would put "the system
+    recommended this" one paraphrase away from an answer that knows nothing of the
+    kind — the `requested` defect this module replaced, one layer down.
+    """
+    from core.services.timetable_provenance import TimetableProvenanceError
+
+    with pytest.raises(TimetableProvenanceError, match="UNATTRIBUTED"):
+        _verified(
+            mappings=[
+                {"course_code": "ZZ999", "section": "M1", "term_section_id": 9, "meetings": []}
+            ]
+        )
+
+
+def test_keeping_the_current_sections_cannot_produce_a_replacement() -> None:
+    """The mode's whole promise. A replacement here is the TT10 contradiction."""
+    from core.services.timetable_provenance import TimetableProvenanceError
+
+    base = [_baseline_row("CS323", "M1", "MON", "13:00", "14:15", term_section_id=11)]
+    with pytest.raises(TimetableProvenanceError, match="keep-current"):
+        _verified(
+            recommended_codes=["CS323"],
+            baseline=base,
+            mappings=[
+                {"course_code": "CS323", "section": "M2", "term_section_id": 22, "meetings": []}
+            ],
+            credit_hours={"CS323": 4},
+            keep_current=True,
+        )
+
+
+def test_a_retained_section_must_come_from_the_baseline() -> None:
+    from core.services.timetable_provenance import TimetableProvenanceError, verify
+
+    facts = _facts(
+        baseline=[_baseline_row("AI331", "M1", "MON", "09:00", "10:15")],
+        credit_hours={"AI331": 4},
+    )
+    with pytest.raises(TimetableProvenanceError, match="baseline"):
+        verify(facts, baseline_codes=set(), keep_current=True)
+
+
+def test_a_baseline_section_cannot_disappear_from_both_dispositions() -> None:
+    """A subset check accepted this: every reported row was genuine, but one genuine
+    baseline row had silently vanished from both retained and replaced sections."""
+    from dataclasses import replace
+
+    from core.services.timetable_provenance import TimetableProvenanceError, verify
+
+    baseline = [
+        _baseline_row("AI331", "M1", "MON", "09:00", "10:15"),
+        _baseline_row("CS323", "M1", "TUE", "11:00", "12:15"),
+    ]
+    facts = _facts(baseline=baseline, credit_hours={"AI331": 4, "CS323": 4})
+    surviving = facts.retained_sections[:1]
+    surviving_hours = sum(int(row["credit_hours"]) for row in surviving)
+    tampered = replace(
+        facts,
+        retained_sections=surviving,
+        credit_summary={
+            **facts.credit_summary,
+            "retained_credit_hours": surviving_hours,
+            "total_plan_credit_hours": surviving_hours,
+        },
+    )
+    baseline_pairs = {
+        (row["course_code"], row.get("section", "")) for row in baseline_sections(baseline)
+    }
+
+    with pytest.raises(TimetableProvenanceError, match="exactly cover.*missing"):
+        verify(tampered, baseline_codes=baseline_pairs, keep_current=True)
+
+
+def test_retained_and_replaced_sections_together_cover_the_baseline() -> None:
+    baseline = [
+        _baseline_row("AI331", "M1", "MON", "09:00", "10:15", term_section_id=10),
+        _baseline_row("CS323", "M1", "TUE", "11:00", "12:15", term_section_id=11),
+    ]
+    facts = _verified(
+        recommended_codes=["CS323"],
+        baseline=baseline,
+        mappings=[{"course_code": "CS323", "section": "M2", "term_section_id": 22, "meetings": []}],
+        credit_hours={"AI331": 4, "CS323": 4},
+        keep_current=False,
+    )
+
+    assert {(row["course_code"], row["section"]) for row in facts.retained_sections} == {
+        ("AI331", "M1")
+    }
+    assert {(row["course_code"], row["from_section"]) for row in facts.section_replacements} == {
+        ("CS323", "M1")
+    }
+
+
+def test_a_baseline_section_cannot_be_both_retained_and_replaced() -> None:
+    from dataclasses import replace
+
+    from core.services.timetable_provenance import TimetableProvenanceError, verify
+
+    baseline = [_baseline_row("AI331", "M1", "MON", "09:00", "10:15")]
+    facts = _facts(baseline=baseline, credit_hours={"AI331": 4})
+    contradictory = replace(
+        facts,
+        section_replacements=[
+            {
+                "course_code": "AI331",
+                "from_section": "M1",
+                "to_section": "M2",
+            }
+        ],
+    )
+
+    with pytest.raises(TimetableProvenanceError, match="both retained and replaced"):
+        verify(contradictory, baseline_codes={("AI331", "M1")}, keep_current=False)
+
+
+def test_verify_contract_is_a_set_of_course_and_section_pairs() -> None:
+    from typing import get_type_hints
+
+    from core.services.timetable_provenance import TimetableProvenanceError, verify
+
+    assert get_type_hints(verify)["baseline_codes"] == set[tuple[str, str]]
+    with pytest.raises(TimetableProvenanceError, match="course_code, section"):
+        verify(_facts(), baseline_codes={"AI331"}, keep_current=True)  # type: ignore[arg-type]
+
+
+def test_the_credit_totals_must_reconcile_with_the_rows() -> None:
+    from dataclasses import replace
+
+    from core.services.timetable_provenance import TimetableProvenanceError, verify
+
+    facts = _facts(
+        recommended_codes=["MATH204"],
+        mappings=[
+            {"course_code": "MATH204", "section": "M1", "term_section_id": 5, "meetings": []}
+        ],
+        credit_hours={"MATH204": 3},
+    )
+    tampered = replace(
+        facts, credit_summary={**facts.credit_summary, "total_plan_credit_hours": 99}
+    )
+    with pytest.raises(TimetableProvenanceError, match="total"):
+        verify(tampered, baseline_codes=set(), keep_current=True)

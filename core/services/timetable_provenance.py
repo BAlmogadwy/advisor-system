@@ -110,7 +110,6 @@ TIMETABLE_FACT_KEYS = frozenset(
         "system_recommended_courses",
         "retained_sections",
         "new_sections",
-        "fixed_sections",
         "section_replacements",
         "unplaced_courses",
         "credit_summary",
@@ -220,24 +219,30 @@ class TimetableAnswerFacts:
     system_recommended_courses: tuple[dict[str, Any], ...]
     retained_sections: tuple[dict[str, Any], ...]
     new_sections: tuple[dict[str, Any], ...]
-    fixed_sections: tuple[dict[str, Any], ...]
     section_replacements: tuple[dict[str, Any], ...]
     unplaced_courses: tuple[dict[str, Any], ...]
     credit_summary: dict[str, Any]
+    #: `None` means THIS CALLER CANNOT KNOW, and the key is then absent from the
+    #: payload. An empty list would be a claim — "nothing was pinned" — and chat has
+    #: no way to establish that: `must_include` names courses, never sections, so a
+    #: hardcoded `[]` was evidence of an absence the code had never checked.
+    fixed_sections: tuple[dict[str, Any], ...] | None = None
 
     def as_payload(self) -> dict[str, Any]:
-        return {
+        payload: dict[str, Any] = {
             "student_id": self.student_id,
             "using_timetable_of_term": self.using_timetable_of_term,
             "student_requested_courses": [dict(r) for r in self.student_requested_courses],
             "system_recommended_courses": [dict(r) for r in self.system_recommended_courses],
             "retained_sections": [dict(r) for r in self.retained_sections],
             "new_sections": [dict(r) for r in self.new_sections],
-            "fixed_sections": [dict(r) for r in self.fixed_sections],
             "section_replacements": [dict(r) for r in self.section_replacements],
             "unplaced_courses": [dict(r) for r in self.unplaced_courses],
             "credit_summary": dict(self.credit_summary),
         }
+        if self.fixed_sections is not None:
+            payload["fixed_sections"] = [dict(r) for r in self.fixed_sections]
+        return payload
 
 
 def build_timetable_facts(
@@ -252,6 +257,7 @@ def build_timetable_facts(
     credit_hours: dict[str, int],
     default_credits: int,
     cap: int,
+    fixed_sections: list[dict[str, Any]] | None = None,
 ) -> TimetableAnswerFacts:
     """Assemble the provenance from the four inputs that actually know it.
 
@@ -397,22 +403,105 @@ def build_timetable_facts(
         system_recommended_courses=tuple(course_row(c) for c in recommended),
         retained_sections=tuple(retained_sections),
         new_sections=tuple(new_sections),
-        # EMPTY BY CONSTRUCTION, and named anyway. A fixed section is one the
-        # builder was not free to choose because the REQUEST pinned it, and chat has
-        # no way to pin one: `must_include` names courses, never sections. The field
-        # exists so that the day a pinning path is added, the shape it must fill is
-        # already agreed — and so that "empty" reads as "nothing was pinned" rather
-        # than as "this build ignored your pins".
-        fixed_sections=(),
+        # Passed through, and `None` when the caller could not know. See the field.
+        fixed_sections=None if fixed_sections is None else tuple(fixed_sections),
         section_replacements=tuple(section_replacements),
         unplaced_courses=tuple(unplaced_courses),
+        # NAMED FOR WHAT THEY MEASURE. `cap` sat beside `total` and bounded only
+        # `new`, so {retained: 15, new: 6, total: 21, cap: 6} read as a plan breaching
+        # its own ceiling. `run_solver` charges `max_credits` against the shortlist —
+        # the courses this build ADDS — and the baseline never reaches it, so the
+        # honest name says which half it governs.
         credit_summary={
-            "retained": retained_hours,
-            "new": new_hours,
-            "total": retained_hours + new_hours,
-            "cap": int(cap) if cap else None,
+            "retained_credit_hours": retained_hours,
+            "new_credit_hours": new_hours,
+            "total_plan_credit_hours": retained_hours + new_hours,
+            "new_courses_credit_cap": int(cap) if cap else None,
         },
     )
+
+
+class TimetableProvenanceError(Exception):
+    """A contradiction the answer must not be built on.
+
+    Raised rather than logged. `AdvisorCapabilityRegistry.execute` wraps every
+    executor and turns an exception into `ok=False`, so a violation costs the student
+    one refused tool call — against an answer that states they both keep and replace
+    the same course, which is the defect this module exists to remove.
+    """
+
+
+def verify(
+    facts: TimetableAnswerFacts,
+    *,
+    baseline_codes: set[tuple[str, str]],
+    keep_current: bool,
+) -> None:
+    """The four invariants, checked rather than commented.
+
+    Each was previously a property the code happened to have. "Holds by
+    construction" is only true until the construction changes, and three of these
+    were exactly the kind of property a refactor removes without any test noticing.
+    """
+    invalid_baseline = [
+        pair
+        for pair in baseline_codes
+        if not (
+            isinstance(pair, tuple)
+            and len(pair) == 2
+            and all(isinstance(value, str) for value in pair)
+        )
+    ]
+    if invalid_baseline:
+        raise TimetableProvenanceError(
+            "baseline_codes must contain (course_code, section) string pairs"
+        )
+    retained = {(r["course_code"], r.get("section", "")) for r in facts.retained_sections}
+    replaced = {(r["course_code"], r["from_section"]) for r in facts.section_replacements}
+    # 1. Every baseline section has exactly one disposition: retained, or named as
+    #    the source of a replacement. A subset check catches invented sections but
+    #    lets a real baseline section disappear from both lists without a trace.
+    duplicated = retained & replaced
+    if duplicated:
+        raise TimetableProvenanceError(
+            "a baseline section cannot be both retained and replaced; "
+            f"duplicated={sorted(duplicated)!r}"
+        )
+    covered_baseline = retained | replaced
+    if covered_baseline != baseline_codes:
+        missing = sorted(baseline_codes - covered_baseline)
+        unexpected = sorted(covered_baseline - baseline_codes)
+        raise TimetableProvenanceError(
+            "retained and replaced sections must exactly cover the baseline; "
+            f"missing={missing!r}, unexpected={unexpected!r}"
+        )
+    # 2. every newly proposed course carries real provenance. UNATTRIBUTED is an
+    #    internal contract failure, not a value a student may be shown: it means the
+    #    solver returned a course that was in neither input list.
+    for row in facts.new_sections:
+        if row.get("source") not in (SOURCE_STUDENT_REQUEST, SOURCE_SYSTEM_RECOMMENDATION):
+            raise TimetableProvenanceError(
+                f"{row.get('course_code')} is proposed with source {row.get('source')!r}"
+            )
+    # 3. the totals reconcile with the rows they summarise.
+    summary = facts.credit_summary
+    retained_hours = sum(int(r["credit_hours"]) for r in facts.retained_sections)
+    new_hours = sum(int(r["credit_hours"]) for r in facts.new_sections)
+    if (
+        summary["retained_credit_hours"] != retained_hours
+        or summary["new_credit_hours"] != new_hours
+    ):
+        raise TimetableProvenanceError("credit summary does not match the section rows")
+    if summary["total_plan_credit_hours"] != retained_hours + new_hours:
+        raise TimetableProvenanceError("total is not retained plus new")
+    cap = summary["new_courses_credit_cap"]
+    if cap is not None and new_hours > cap:
+        raise TimetableProvenanceError(f"new hours {new_hours} exceed the cap {cap}")
+    # 4. keeping the current sections means none of them was swapped.
+    if keep_current and facts.section_replacements:
+        raise TimetableProvenanceError(
+            "keep-current mode produced a section replacement, which it cannot"
+        )
 
 
 __all__ = [
@@ -428,6 +517,8 @@ __all__ = [
     "SOURCE_UNATTRIBUTED",
     "TIMETABLE_FACT_KEYS",
     "TimetableAnswerFacts",
+    "TimetableProvenanceError",
     "baseline_sections",
     "build_timetable_facts",
+    "verify",
 ]

@@ -481,7 +481,11 @@ def test_the_remote_projection_of_my_progress_is_not_three_empty_lists(plan):
         ("وش أهم مقرر عندي؟", "my_progress"),
         # The forward direction in its other Arabic surfaces.
         ("كم مقرر ينتظر AI331 وحده، وما هي هذه المقررات؟", "why_course_locked"),
-        ("أي مقرر عندي يفتح أكبر عدد من المقررات مباشرة؟", "why_course_locked"),
+        # CP02. The unlock verb is in the sentence, but the QUESTION is which course
+        # wins across the plan — «أكبر عدد» — and `why_course_locked` answers about
+        # one named course. Routing it by the verb sent a ranking question to a tool
+        # that cannot rank; the owner classified that a router defect, not an alias.
+        ("أي مقرر عندي يفتح أكبر عدد من المقررات مباشرة؟", "my_progress"),
         ("كم مقرر يعتمد على AI331؟", "why_course_locked"),
         # English, which the dependency-verb class was added for: both of these
         # classified GENERAL_AGENT before it existed.
@@ -533,8 +537,12 @@ def test_every_owned_capability_is_a_capability_that_exists():
     from core.services.virtual_advisor_capabilities import get_default_registry
 
     registered = set(get_default_registry().capabilities)
-    for family, name in CAPABILITY_FOR_FAMILY.items():
-        assert name in registered, f"{family} routes to unregistered {name}"
+    # The map holds a TUPLE per family since 7B — a multi-capability route needs an
+    # ordered set, not one name — so every entry is checked rather than the whole
+    # tuple compared against a name.
+    for family, names in CAPABILITY_FOR_FAMILY.items():
+        for name in names:
+            assert name in registered, f"{family} routes to unregistered {name}"
 
 
 def test_the_forward_direction_is_advertised_where_the_model_reads_it():
@@ -617,21 +625,64 @@ def test_an_elective_placeholder_is_never_a_course_to_pass(plan):
     assert "AI1" not in [r["code"] for r in _progress()["unlock_impact_ranking"]]
 
 
-def test_the_ranking_omits_courses_that_would_free_nothing(plan):
-    """A ranked list of zeroes is not a ranking.
+def test_the_ranking_keeps_courses_that_would_free_nothing(plan):
+    """A zero is a real answer, and dropping it is a silent claim.
 
-    Seven of this student's open courses free nothing at all. Listing them under
-    "which course opens the most" invites the model to name one.
+    This asserted the OPPOSITE — that a course freeing nothing is omitted, because
+    "a ranked list of zeroes is not a ranking". The reading was wrong in the way that
+    matters: the ranking measures ONE criterion, and a course that unlocks nothing
+    may still be required for graduation, be in this term's recommendation, or be the
+    only way to a sane load. Omitting it turned "ranked lowest by unlock impact" into
+    "not worth taking", which is a judgement this computation cannot make. Measured on
+    the live record it removed 4 of 7 open courses.
+
+    The ranking is still a ranking: the order is unchanged and the basis is named in
+    the payload. What changed is that the candidate set is complete.
     """
     _add("GS101", 1, 2, (), "Mandatory")
-    ranking = _progress()["unlock_impact_ranking"]
+    progress = _progress()
+    ranking = progress["unlock_impact_ranking"]
 
-    assert "GS101" not in [r["code"] for r in ranking]
-    assert [r["code"] for r in ranking] == ["AI331", "CS323", "CS289"]
-    assert all(
-        r["sole_remaining_prerequisite_count"] or r["on_prerequisite_chain_of_count"]
-        for r in ranking
+    assert "GS101" in [r["code"] for r in ranking]
+    # Order preserved, zeroes last.
+    assert [r["code"] for r in ranking][:3] == ["AI331", "CS323", "CS289"]
+    assert [r["code"] for r in ranking][-1] == "GS101"
+    # Every course whose prerequisites are satisfied is a candidate.
+    assert {r["code"] for r in ranking} == {c["code"] for c in progress["prerequisites_satisfied"]}
+    # And the basis is stated, so "ranked last" cannot be read as "not important".
+    assert progress["unlock_impact_ranking_basis"] == (
+        "SOLE_REMAINING_UNLOCK_COUNT_THEN_DOWNSTREAM_COUNT"
     )
+    assert "zero is a real answer" in progress["unlock_impact_ranking_note"]
+
+
+def test_the_headline_uses_the_same_ordering_as_the_ranked_list(plan):
+    _add("ZZ100", 4, 3, (), "Mandatory")
+    previous = "ZZ100"
+    for index in range(1, 8):
+        code = f"ZZ{index + 100}"
+        _add(code, 5 + index, 3, (previous,), "Mandatory")
+        previous = code
+
+    progress = _progress()
+
+    # ZZ100 sits on a longer downstream chain (7) than AI331 (6), but only one
+    # course is waiting on it alone while three are waiting on AI331. The declared
+    # ranking basis puts the sole-remaining count first, and the headline must agree.
+    assert progress["unlock_impact_ranking"][0]["code"] == "AI331"
+    assert progress["most_useful_course_to_pass"] == progress["unlock_impact_ranking"][0]
+
+
+def test_the_unlock_ranking_is_not_silently_cut_off_at_the_generic_row_limit(plan):
+    added = {f"GX{index:03d}" for index in range(25)}
+    for code in sorted(added):
+        _add(code, 9, 3, (), "Mandatory")
+
+    progress = _progress()
+    ranked_codes = {row["code"] for row in progress["unlock_impact_ranking"]}
+
+    assert added <= ranked_codes
+    assert len(progress["unlock_impact_ranking"]) == progress["counts"]["open"]
 
 
 def test_my_plan_by_term_does_not_write_into_the_payload_it_was_handed(plan):

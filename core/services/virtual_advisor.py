@@ -17,6 +17,13 @@ from core.models import (
     TermSection,
 )
 from core.services.advisor_actions import handoff_for, handoff_for_question
+from core.services.advisor_clarification import clarification_for
+from core.services.advisor_intent import (
+    CompositionKind,
+    IntentFamily,
+    capabilities_for_route,
+    route_intent,
+)
 from core.services.advisor_principal import AdvisorPrincipal
 from core.services.advisor_remote_boundary import (
     DUPLICATE_NOTE,
@@ -25,6 +32,7 @@ from core.services.advisor_remote_boundary import (
     ToolBoundary,
     boundary_for_scope,
 )
+from core.services.answer_consistency import check_answer
 from core.services.credit_policy import credit_policy_evidence
 from core.services.llm_backend import (
     BACKEND_LOCAL,
@@ -1300,12 +1308,45 @@ _REDACTION_MARKERS = (
 )
 
 
+def _withheld_for(route: Any, scope: dict[str, Any]) -> frozenset[str]:
+    """Everything this turn must NOT advertise, expressed as the existing withhold set.
+
+    Reuses `withheld_tools` rather than adding a second narrowing mechanism: the loop
+    already removes withheld names from the schemas and refuses a call to one, so a
+    parallel allow-list would be a second gate with its own bugs.
+
+    `policy_lookup` is withheld on every path, unchanged: retrieval already ran
+    server-side, and advertising it would invite a second lookup whose records were
+    not in the contract computed before generation.
+
+    ROLE FILTERING IS UNTOUCHED. This subtracts from the registry's role-filtered
+    list, so narrowing can only ever remove — a route naming a tool the principal may
+    not use does not gain it.
+    """
+    from core.services.advisor_intent import capabilities_for_route
+
+    permitted = {
+        (schema.get("function") or {}).get("name")
+        for schema in get_default_registry().tool_schemas_for_scope(scope)
+    }
+    allowed = capabilities_for_route(route)
+    if allowed is None:
+        # GENERAL_AGENT: the router was not certain, so the turn keeps the surface it
+        # has today. Narrowing an unrecognised question to nothing would be a
+        # regression dressed as a safety improvement.
+        return frozenset({"policy_lookup"})
+    return frozenset({"policy_lookup", *(permitted - set(allowed))})
+
+
 def _output_contract_violations(
     answer: str,
     *,
     evidence_texts: list[str],
     boundary: ToolBoundary,
     is_student: bool,
+    tool_results: list[dict[str, Any]] | None = None,
+    action: dict[str, Any] | None = None,
+    context: dict[str, Any] | None = None,
 ) -> list[str]:
     """What is wrong with this answer, as a list of codes. Empty means shippable.
 
@@ -1353,6 +1394,12 @@ def _output_contract_violations(
     elif _unverified_student_ids(text, evidence_texts):
         violations.append(VIOLATION_UNVERIFIED_ID)
 
+    # THE SAME GATE, not a second one. These ask a different question — does the
+    # answer agree with the facts it was given — but they share the retry, the
+    # re-validation and the refusal below, because a turn with two gates has two
+    # places for a violation to be handled differently.
+    violations.extend(check_answer(text, tool_results=tool_results, action=action, context=context))
+
     return violations
 
 
@@ -1387,6 +1434,46 @@ _POLICY_ABSTENTION_EN = (
     "Please check with your academic adviser or the Deanship of Admission and "
     "Registration for the official answer."
 )
+
+
+def _evidence_paths(context: dict[str, Any] | None) -> list[str]:
+    """Which seeded evidence this turn actually carried, as dotted paths.
+
+    Populated only: an empty `recommendations` list is not recommendation evidence,
+    and a contract that requires it must fail rather than be satisfied by the key
+    existing. One level of nesting, because that is where the distinctions live —
+    `course_evidence.studying` is a different claim from `course_evidence.passed`.
+    """
+    out: list[str] = []
+    for key, value in sorted((context or {}).items()):
+        if not value:
+            continue
+        out.append(f"verified_context.{key}")
+        if isinstance(value, dict):
+            out.extend(
+                f"verified_context.{key}.{sub}" for sub, inner in sorted(value.items()) if inner
+            )
+    return out
+
+
+def _safe_excerpt(boundary: ToolBoundary, answer: str) -> str:
+    """A rejected draft, safe to write to a trace file.
+
+    Through the boundary's OWN sanitiser rather than a private regex, so the
+    diagnostic can never leak by the back door what the transport refuses at the
+    front — if a new identifier shape becomes protected, this becomes protected with
+    it. Capped, because a diagnostic that carries the whole answer is the answer.
+    """
+    try:
+        sanitised = boundary.sanitise_messages([{"role": "assistant", "content": answer}])
+        text = str((sanitised or [{}])[0].get("content") or "")
+    except Exception:  # noqa: BLE001 - a diagnostic must never break the refusal path
+        return "<excerpt withheld: sanitiser failed>"
+    # 1500, not 400. The first cap was a guess and it was too small: a timetable
+    # answer spends its opening paragraph on caveats, so the first 400 characters
+    # held no claim at all and the draft could not say which figure it had objected
+    # to. A diagnostic that cannot diagnose is only a cost.
+    return text[:1500]
 
 
 def _output_correction(
@@ -2298,6 +2385,89 @@ def answer_virtual_advisor(
     # `PLANNER_REBUILD` is not routed here — see `ROUTED_INTENTS`. It is refused
     # inside `build_my_timetable`, where the arguments are known, and answering it
     # from the question as well would leave one rule with two implementations.
+    # Computed BEFORE anything reads it — the rebuild check below, the tool schemas,
+    # and the policy contract all key on it. `route_intent` is offline and side-effect
+    # free, so this costs a string scan and nothing else.
+    route = route_intent(question)
+    # Set HERE, before the hand-off short-circuits below. Recorded on every path or
+    # the evaluator cannot tell "routed correctly and answered deterministically"
+    # from "never routed at all" — and those are the two outcomes it exists to
+    # separate.
+    telemetry["primary_family"] = str(route.primary_family)
+    telemetry["composition"] = str(route.composition)
+
+    # ── the rebuild, whose refusal must not depend on the model choosing to ask ──
+    #
+    # `PLANNER_REBUILD` is deliberately absent from `ROUTED_INTENTS`: the rule that a
+    # destructive rebuild needs confirmation lives in `build_my_timetable`, once, and
+    # a second copy here is how the audited one stops running. So the route does not
+    # answer the question — it EXECUTES that one implementation.
+    #
+    # Measured before this existed: with `tool_choice` free, a model that simply did
+    # not call the tool got «سأبني لك جدولًا جديدًا يتجاهل تسجيلك الحالي» through with
+    # `action: None` — a promise to discard the student's registration, from a system
+    # that would not have done it. Narrowing the surface to one tool in 7B made that
+    # path both easier to see and the only thing left to close.
+    #
+    # STUDENTS ONLY, for the same reason the other routes are: every planner-draft
+    # endpoint answers 403 to anyone else.
+    if principal.role == ROLE_STUDENT and route.primary_family is IntentFamily.PLANNER_REBUILD:
+        refusal = get_default_registry().execute(
+            "build_my_timetable",
+            {"keep_current_sections": False},
+            scope=scope,
+            ctx={"academic_year": academic_year, "term": term},
+        )
+        rebuilt = handoff_for(refusal)
+        if rebuilt is not None:
+            telemetry["action_handoff"] = rebuilt.action
+            telemetry["intent_route"] = rebuilt.intent
+            telemetry["rebuild_forced_server_side"] = True
+            return {
+                "ok": True,
+                "answer": rebuilt.answer(_answer_language(question)),
+                "action": rebuilt.as_payload(),
+                "model": "",
+                "usage": {},
+                "context_summary": _context_summary(context),
+                "tool_results": [refusal],
+                "verified_context": context,
+                "citations": [],
+                "cited_policy_ids": [],
+                "data_part": {"status": "NOT_ATTEMPTED", "facts": {}},
+                "policy_part": {"status": "ANSWERED", "evidence": []},
+                "agent": {**telemetry, "tool_results": [refusal]},
+            }
+
+    # ── the question that cannot be answered because it names nothing ──
+    #
+    # Before the provider, for the same reason the hand-offs are: "ask which course
+    # they mean" written in a system prompt competes with twelve other instructions
+    # and with a tool that looks answerable, and a model that skips it invents the
+    # subject. Measured on the contract, three questions are in this shape and all
+    # three executed a data tool about a course nobody named.
+    #
+    # HISTORY FIRST. «هذا المقرر» after a turn about AI331 has a referent, and asking
+    # again is worse than guessing because the student already told us.
+    asked = clarification_for(question, history=history)
+    if asked is not None:
+        telemetry["clarification_reason"] = asked.reason
+        return {
+            "ok": True,
+            "answer": asked.answer(_answer_language(question)),
+            "action": None,
+            "model": "",
+            "usage": {},
+            "context_summary": _context_summary(context),
+            "tool_results": [],
+            "verified_context": context,
+            "citations": [],
+            "cited_policy_ids": [],
+            "data_part": {"status": "NOT_ATTEMPTED", "facts": {}},
+            "policy_part": {"status": "ANSWERED", "evidence": []},
+            "agent": {**telemetry, "tool_results": []},
+        }
+
     if principal.role == ROLE_STUDENT:
         routed = handoff_for_question(question)
         if routed is not None:
@@ -2336,6 +2506,58 @@ def answer_virtual_advisor(
     answer = ""
     usage: dict[str, Any] = {}
     answer_model = resolved_model
+
+    # Recorded, not recomputed by the evaluator. "Which tools did the server offer"
+    # and "which did the model call" are different questions, and an evaluation that
+    # derives the first from its own copy of the routing table cannot tell an
+    # orchestration failure from a model failure — it would agree with itself.
+    # ── a MULTI_CAPABILITY route's evidence is the SERVER'S obligation ──
+    #
+    # Measured on the live canary: TT20 «ليش ما ضفت AI491؟ هل المشكلة في المتطلب
+    # السابق أو في وقت الشعبة؟» asks two independent questions, was advertised both
+    # tools, and the provider called one — then answered the prerequisite half and
+    # left the timetable half unaddressed. `why_course_locked` structurally cannot
+    # say whether the course was excluded for a section-fit reason.
+    #
+    # Retrying and asking the model to please call the other tool is the weaker fix:
+    # it costs another paid turn and still depends on the same choice. When the ROUTE
+    # declares two capabilities, the server fetches whichever the model did not, and
+    # the provider writes the answer over complete evidence.
+    #
+    # SINGLE and GENERAL_AGENT are untouched — there the model's selection IS the
+    # decision, and completing it would be the server answering a question it did not
+    # route.
+    def _complete_required_evidence(
+        results: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        if route.composition is not CompositionKind.MULTI_CAPABILITY:
+            return results
+        obtained = {r.get("tool") for r in results if isinstance(r, dict)}
+        missing = [t for t in (capabilities_for_route(route) or ()) if t not in obtained]
+        for tool in missing:
+            logger.info("Completing required evidence for %s: %s", route.composition, tool)
+            results = [
+                *results,
+                get_default_registry().execute(
+                    tool, {}, scope=scope, ctx={"academic_year": academic_year, "term": term}
+                ),
+            ]
+            telemetry.setdefault("server_completed_tools", []).append(tool)
+        return results
+
+    # Recorded so an evaluation can attribute a failure to a LAYER. Without the
+    # family in the trace, "the answer was wrong" cannot be told apart from "the
+    # router sent it to the wrong surface", which is what made the first live batch
+    # an expensive debugging exercise rather than a measurement.
+    withheld = _withheld_for(route, scope)
+    telemetry["exposed_tools"] = sorted(
+        name
+        for name in (
+            (schema.get("function") or {}).get("name")
+            for schema in get_default_registry().tool_schemas_for_scope(scope)
+        )
+        if name and name not in withheld
+    )
 
     loop_supported = callable(getattr(llm, "chat_with_tools", None))
     if telemetry["enabled"] and not loop_supported:
@@ -2433,12 +2655,13 @@ def answer_virtual_advisor(
                 # Already retrieved, server-side, above. Advertising it now would
                 # invite a second lookup whose records were never in the contract
                 # computed before generation.
-                withheld_tools=frozenset({"policy_lookup"}),
+                withheld_tools=withheld,
                 seeded_local_results=agent_tool_results,
                 seeded_provider_results=provider_tool_results,
                 credit_blocks_seeded=credit_blocks_seeded,
             )
             telemetry["loop_used"] = True
+            agent_tool_results = _complete_required_evidence(agent_tool_results)
             if answer == _ACTION_HANDOFF_SENTINEL:
                 # Every downstream check is skipped ON PURPOSE. There is nothing
                 # to ground, cite or sanitise: no model wrote this, and the text
@@ -2630,10 +2853,22 @@ def answer_virtual_advisor(
     # abstention contains no identifiers and would pass the identifier gate
     # trivially either way.
     contract = build_policy_contract_state(
-        question, agent_tool_results, grounding_state=telemetry["policy_grounding"]
+        question,
+        agent_tool_results,
+        grounding_state=telemetry["policy_grounding"],
+        # The family the router already decided, so the obligation is keyed on the
+        # DOMAIN of the question rather than on whether a regulated-sounding word
+        # appeared in it.
+        # The whole route, not the family: a MULTI_CAPABILITY question's domain is a
+        # property of what it is made of. TT20 wins PLANNER_BUILD on precedence and is
+        # planner DATA throughout; asking the family alone would have said the same
+        # thing for a question that also fired POLICY.
+        intent=route,
     )
     telemetry.update(contract.as_telemetry())
+    telemetry["secondary_families"] = [str(f) for f in route.secondary_families]
     answer_language = _answer_language(question)
+    policy_abstained = False
 
     if contract.retrieval_missing:
         # Unreachable through any normal path now that retrieval is server-side
@@ -2650,13 +2885,20 @@ def answer_virtual_advisor(
         # corpus this is 53 questions, none of which the curated labels call
         # answerable without a policy.
         #
-        # It refuses the WHOLE turn, including any student-data part. That is the
-        # owner's explicit choice, and the alternative is worse: removing
-        # unsupported rule sentences from free prose is a text-surgery problem
-        # nobody has solved, and a half-edited answer is one whose remaining
-        # sentences nobody has checked.
+        # The ANSWER PROSE is still replaced wholesale, and that has not changed:
+        # removing unsupported rule sentences from free text is a surgery nobody has
+        # solved, and a half-edited answer is one whose remaining sentences nobody
+        # has checked.
+        #
+        # What changed is that the verified student data is no longer DESTROYED with
+        # it. The facts were never in the prose — they are the structured tool
+        # results the server already holds — so `data_part` carries them out beside
+        # the abstention, and the interface renders the timetable or the prerequisite
+        # list it always could have. Only the regulatory CLAIM is suppressed, which
+        # is the half that had no evidence.
         telemetry["policy_contract_failure"] = "no_governing_evidence"
         answer = _POLICY_ABSTENTION_AR if answer_language == "Arabic" else _POLICY_ABSTENTION_EN
+        policy_abstained = True
     elif contract.missing_governing_citation(
         _policy_ids_in_text(answer) & contract.citable_policy_ids
     ):
@@ -2732,13 +2974,35 @@ def answer_virtual_advisor(
     ]
     is_student = principal.role == ROLE_STUDENT
     violations = _output_contract_violations(
-        answer, evidence_texts=evidence_texts, boundary=boundary, is_student=is_student
+        answer,
+        evidence_texts=evidence_texts,
+        boundary=boundary,
+        is_student=is_student,
+        tool_results=tool_results,
+        # `recommendation_policy` lives here, not in the tool results, and the credit
+        # check needs it to tell an advisory cap from a contradiction.
+        context=context,
     )
     if violations:
         # `grounding_retry` keeps its name: stored turns, the eval battery and the
         # conversation UI already read it.
         telemetry["grounding_retry"] = True
         telemetry["output_violations"] = violations
+        # THE REJECTED DRAFT, sanitised, as diagnostic telemetry only. Two paid runs
+        # were spent guessing which number tripped the credit check, because the
+        # refusal replaced the text that contained it. The student still receives the
+        # refusal; this rides on the trace, which is gitignored.
+        #
+        # It goes through the SAME sanitiser the transport uses, so a draft cannot
+        # leak by the diagnostic door what the boundary refuses at the front — and it
+        # is capped, because a diagnostic that carries the whole answer is the answer.
+        telemetry.setdefault("rejected_drafts", []).append(
+            {
+                "attempt": len(telemetry.get("rejected_drafts") or []) + 1,
+                "violations": violations,
+                "safe_excerpt": _safe_excerpt(boundary, answer),
+            }
+        )
         corrected_answer: str | None = None
         try:
             retry_messages = boundary.sanitise_messages(
@@ -2778,6 +3042,11 @@ def answer_virtual_advisor(
                 evidence_texts=evidence_texts,
                 boundary=boundary,
                 is_student=is_student,
+                # The SAME evidence. Re-validating without it would check the
+                # corrected answer against nothing, and the retry would launder
+                # every consistency violation away.
+                tool_results=tool_results,
+                context=context,
             )
             if corrected_answer
             else violations
@@ -2812,5 +3081,56 @@ def answer_virtual_advisor(
         "cited_policy_ids": sorted(
             _policy_ids_in_text(answer) & {c["policy_id"] for c in citations}
         ),
-        "agent": {**telemetry, "tool_results": agent_tool_results},
+        # ── the two halves, kept apart ──────────────────────────────────────
+        #
+        # A turn can owe a rule AND report the student's own record, and those two
+        # obligations fail independently. When the store holds nothing governing,
+        # the regulatory CLAIM is suppressed — the prose above is the abstention —
+        # but the verified facts are not destroyed with it: they were never in the
+        # prose to begin with, they are the structured tool results, and the
+        # interface can render the timetable or the prerequisite list unchanged.
+        #
+        # `data_part.facts` is the tool results by NAME, not the raw list, so a
+        # consumer reads `facts["my_progress"]` instead of indexing a position.
+        "data_part": {
+            "status": "ANSWERED" if tool_results else "NOT_ATTEMPTED",
+            "facts": {
+                str(r.get("tool") or f"result_{i}"): r
+                for i, r in enumerate(tool_results)
+                if isinstance(r, dict)
+            },
+        },
+        "policy_part": {
+            "status": "ABSTAINED" if policy_abstained else "ANSWERED",
+            "evidence": citations,
+        },
+        "agent": {
+            **telemetry,
+            "tool_results": agent_tool_results,
+            # Read off the CLIENT, which counted them at the socket. The runner used
+            # to add one per question; a tool-driven answer is two to four outbound
+            # calls and a retried one is more, so a per-question count made every
+            # cost and budget figure wrong in the same direction.
+            "provider_http_calls": int(getattr(llm, "http_calls", 0) or 0),
+            "successful_provider_responses": int(getattr(llm, "http_responses", 0) or 0),
+            # THREE LISTS, because they mean three different things and conflating
+            # them would report the server's work as the model's. TT20's provider
+            # called one capability; the route required two, so the server fetched
+            # the second. `executed_evidence_tools` is what the answer actually rests
+            # on; `model_tools_called` is what the model chose. Reporting one number
+            # would either fail a well-served answer or hide a model that stopped
+            # choosing — and the gap between them is the metric worth watching.
+            "model_tools_called": [
+                t.get("name") for t in (telemetry.get("tools_called") or []) if isinstance(t, dict)
+            ],
+            "executed_evidence_tools": sorted(
+                {r.get("tool") for r in agent_tool_results if isinstance(r, dict) and r.get("tool")}
+            ),
+            # THE THIRD SOURCE. The adviser seeds the student's course state, the term
+            # recommendations and the credit policy before the model sees the
+            # question, so an answer can be fully grounded on evidence no tool call
+            # fetched. Requiring a call for those marked correct answers wrong and
+            # pushed the model to re-fetch what it had already been handed.
+            "verified_context_evidence": _evidence_paths(context),
+        },
     }
