@@ -23,6 +23,7 @@ from core.models import (
     Student,
     TermSection,
     TermSectionMeeting,
+    TermSectionProgram,
 )
 from core.planner_draft_views import UNPLACED_AR, UNPLACED_AR_DEFAULT
 from core.services import planner_drafts as svc
@@ -59,6 +60,7 @@ def world():
             section = TermSection.objects.create(
                 course_code=code, course_key=code, course_name=name, section=label
             )
+            TermSectionProgram.objects.create(term_section=section, program="AI")
             TermSectionMeeting.objects.create(
                 term_section=section, day=day, start_time=start, end_time="10:15"
             )
@@ -67,6 +69,7 @@ def world():
     made[("CS113", "F1")] = TermSection.objects.create(
         course_code="CS113", course_key="CS113", course_name="PROGRAMMING II", section="F1"
     )
+    TermSectionProgram.objects.create(term_section=made[("CS113", "F1")], program="AI")
     return made
 
 

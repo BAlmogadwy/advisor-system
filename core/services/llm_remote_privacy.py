@@ -1084,9 +1084,21 @@ def _project_get_student_context(
         if isinstance(evidence.get("current_term_registrations"), dict)
         else {}
     )
+    failed = evidence.get("failed") if isinstance(evidence, dict) else None
+    failed_results = evidence.get("failed_results") if isinstance(evidence, dict) else None
     projected_evidence: dict[str, Any] = {
         "passed": evidence.get("passed") if isinstance(evidence.get("passed"), list) else [],
         "studying": evidence.get("studying") if isinstance(evidence.get("studying"), list) else [],
+        "failed": [code for code in failed if isinstance(code, str)]
+        if isinstance(failed, list)
+        else [],
+        "failed_results": _course_rows(
+            failed_results,
+            "course_code",
+            "course_name",
+            "grade",
+            "mark",
+        ),
         "remaining_requirement_count": evidence.get("remaining_requirement_count"),
         "remaining_requirements": _course_rows(
             evidence.get("remaining_requirements"),

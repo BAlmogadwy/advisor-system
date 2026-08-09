@@ -95,6 +95,7 @@ def run_solver(
     keep_current_sections: bool,
     max_credits: int,
     gender: str,
+    program: str | None = None,
 ) -> dict[str, Any]:
     """THE one place student-facing code reaches the solver.
 
@@ -132,6 +133,7 @@ def run_solver(
         consider_capacity=False,
         max_credits=int(max_credits or 0),
         gender=gender,
+        program=program,
     )
 
 
@@ -416,6 +418,7 @@ def build_student_options(request: PlannerRequest) -> dict[str, Any]:
             keep_current_sections=request.keep_current_sections,
             max_credits=solver_cap,
             gender=gender,
+            program=program,
         )
         solver_options = list(result.get("options") or [])
         generated = len(solver_options)

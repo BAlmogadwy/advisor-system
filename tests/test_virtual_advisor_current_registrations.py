@@ -20,6 +20,7 @@ from core.models import (
     StudentCourse,
     StudentTermSection,
     TermSection,
+    TimetableScenario,
 )
 from core.services.virtual_advisor import build_verified_student_context
 
@@ -136,6 +137,39 @@ def test_latest_term_wins_over_older_registrations():
     ]
     assert block["academic_year"] == "1447"
     assert block["term"] == "1"
+    assert {row["course_code"] for row in block["registrations"]} == {"CS201"}
+
+
+def test_future_scenario_assignment_is_not_current_registration_evidence() -> None:
+    Student.objects.create(student_id=SID, name="S", program="AI", section="M")
+    _course("CS201", "Current course", 3)
+    _register(SID, "CS201", "M3", year="1448", term="1")
+    scenario = TimetableScenario.objects.create(
+        academic_year="1450",
+        term="1",
+        name="Future scenario",
+    )
+    planned = TermSection.objects.create(
+        scenario=scenario,
+        course_code="CS",
+        course_number="999",
+        course_key="CS999",
+        course_name="Scenario-only course",
+        section="M9",
+    )
+    StudentTermSection.objects.create(
+        student_id=SID,
+        academic_year="1450",
+        term="1",
+        term_section=planned,
+        source="scenario_assignment",
+    )
+
+    block = build_verified_student_context(student_id=SID)["course_evidence"][
+        "current_term_registrations"
+    ]
+
+    assert (block["academic_year"], block["term"]) == ("1448", "1")
     assert {row["course_code"] for row in block["registrations"]} == {"CS201"}
 
 
@@ -754,7 +788,7 @@ def test_new_capabilities_are_student_reachable():
 
 
 def _section_with(course_key: str, section: str, meetings: list[tuple[str, str, str]]):
-    from core.models import TermSection, TermSectionMeeting
+    from core.models import TermSection, TermSectionMeeting, TermSectionProgram
 
     ts = TermSection.objects.create(
         course_code=course_key,
@@ -763,6 +797,7 @@ def _section_with(course_key: str, section: str, meetings: list[tuple[str, str, 
         section=section,
         available_capacity=25,
     )
+    TermSectionProgram.objects.create(term_section=ts, program="AI")
     for day, start, end in meetings:
         TermSectionMeeting.objects.create(
             term_section=ts,

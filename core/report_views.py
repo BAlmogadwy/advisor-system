@@ -25,7 +25,7 @@ from core.services.recommender import recommend_next_courses
 from core.services.reporting import build_aggregate_counts
 from core.services.student_helpers import (
     get_prerequisites,
-    get_student_passed_and_studying,
+    get_student_course_status_sets,
     get_student_program,
     normalize_code,
 )
@@ -235,7 +235,7 @@ def _build_student_plan_payload(student_id: int) -> tuple[dict | None, JsonRespo
             {"error": f"Student not found or has no program: {student_id}"}, status=404
         )
 
-    passed, studying = get_student_passed_and_studying(student_id)
+    passed, studying, failed = get_student_course_status_sets(student_id)
     satisfied_pool = passed | studying
     importance_scores = _program_importance_scores(program)
 
@@ -262,6 +262,8 @@ def _build_student_plan_payload(student_id: int) -> tuple[dict | None, JsonRespo
             status = "passed"
         elif code in studying:
             status = "studying"
+        elif code in failed:
+            status = "failed"
         else:
             status = "not_taken"
 
@@ -274,7 +276,7 @@ def _build_student_plan_payload(student_id: int) -> tuple[dict | None, JsonRespo
         if gate is not None and not gate["met"]:
             missing_prereqs = [*missing_prereqs, f"{required_hours}(HOURS)"]
         prereqs_ok = len(missing_prereqs) == 0
-        can_register = status == "not_taken" and prereqs_ok
+        can_register = status in {"not_taken", "failed"} and prereqs_ok
 
         item = {
             "course_code": code,
@@ -296,7 +298,7 @@ def _build_student_plan_payload(student_id: int) -> tuple[dict | None, JsonRespo
         for c in courses:
             status_val = str(c.get("status", ""))
             can_register_val = bool(c.get("can_register", False))
-            if status_val != "not_taken" or can_register_val:
+            if status_val not in {"not_taken", "failed"} or can_register_val:
                 continue
 
             missing_raw = c.get("missing_prereqs", [])
@@ -334,6 +336,7 @@ def _build_student_plan_payload(student_id: int) -> tuple[dict | None, JsonRespo
         "summary": {
             "passed": len(passed),
             "studying": len(studying),
+            "failed": len(failed),
             "not_taken_can_register": sum(
                 1
                 for t in terms.values()
@@ -345,6 +348,18 @@ def _build_student_plan_payload(student_id: int) -> tuple[dict | None, JsonRespo
                 for t in terms.values()
                 for c in t
                 if c["status"] == "not_taken" and not c["can_register"]
+            ),
+            "failed_can_register": sum(
+                1
+                for t in terms.values()
+                for c in t
+                if c["status"] == "failed" and c["can_register"]
+            ),
+            "failed_locked": sum(
+                1
+                for t in terms.values()
+                for c in t
+                if c["status"] == "failed" and not c["can_register"]
             ),
         },
         "blocker_hints": blocker_hints,

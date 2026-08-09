@@ -16,6 +16,7 @@ import logging
 from collections import defaultdict
 
 from django.conf import settings
+from django.db.models import Q
 
 from core.models import (
     CourseInstructor,
@@ -27,6 +28,7 @@ from core.models import (
     TermSection,
     TimetableScenario,
 )
+from core.services.course_classifier import FAILING_LETTER_GRADES
 from core.services.student_helpers import normalize_code
 from core.services.timetable_assignment_models import (
     RiskTier,
@@ -76,7 +78,7 @@ def build_student_profiles_for_scenario(
     """Read canonical scenario demand + student metadata → StudentProfile dict.
 
     Risk tiers:
-      A (highest) — student has ≥1 retake course (grade F/D/W in history)
+      A (highest) — student has at least one confirmed failed/retake course
       B           — graduating soon (earned ≥ 100 credits)
       C (lowest)  — everyone else
 
@@ -100,13 +102,15 @@ def build_student_profiles_for_scenario(
     )
     student_meta: dict[int, dict] = {s["student_id"]: s for s in students_qs}
 
-    # Identify retake courses (grade F, D, or W in student history)
+    # A failed status is authoritative. A currently studied course with a
+    # failing historical symbol is a retake; D/D+ and W are deliberately absent
+    # because they are pass/withdrawal outcomes, not failed attempts.
     retake_courses: dict[int, set[str]] = defaultdict(set)
     retake_records = (
         StudentCourse.objects.filter(
             student_id__in=student_ids,
-            grade__in=["F", "D", "W", "D+"],
         )
+        .filter(Q(status="failed") | Q(status="studying", grade__in=tuple(FAILING_LETTER_GRADES)))
         .select_related("course")
         .values_list("student_id", "course__course_code")
     )

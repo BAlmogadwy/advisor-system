@@ -1446,7 +1446,7 @@ def _exec_my_plan_by_term(
         "note": (
             "Plan LEVELS, not calendar terms - programme_term is where a course sits in "
             "the degree plan, not when it is taught. status is passed / studying / "
-            "not_taken. prerequisites_satisfied is the canonical field and is the ONE "
+            "failed / not_taken. prerequisites_satisfied is the canonical field and is the ONE "
             "to read: it says the recorded prerequisite conditions are met, whatever "
             "the student has already done, so a PASSED course is satisfied. "
             "can_register is a different, older boolean kept for the screens - it is "
@@ -1553,6 +1553,8 @@ def _student_sections_context(
     student_id, error = _resolve_scoped_student_id(args, scope)
     if error:
         return {"ok": False, "error": error}, {}
+    if student_id is None:
+        return {"ok": False, "error": "student_id is required."}, {}
     year, term, error = _ctx_year_term(args, ctx)
     if error:
         return {"ok": False, "error": error}, {}
@@ -1574,7 +1576,19 @@ def _student_sections_context(
     if not codes:
         return {"ok": False, "error": "course_code (or course_codes) is required."}, {}
 
-    catalog = _catalog_for_courses(str(year), str(term), codes, gender)
+    from core.models import Student
+
+    program = str(
+        Student.objects.filter(student_id=student_id).values_list("program", flat=True).first()
+        or ""
+    ).strip()
+    if not program:
+        return {
+            "ok": False,
+            "error": "Student programme is not recorded.",
+            "reason": "PROGRAMME_UNRESOLVED",
+        }, {}
+    catalog = _catalog_for_courses(str(year), str(term), codes, gender, program)
     baseline = get_student_term_baseline(int(student_id), str(year), str(term))
     return None, {
         "student_id": int(student_id),
@@ -1831,6 +1845,13 @@ def _exec_build_my_timetable(
         Student.objects.filter(student_id=student_id).values_list("program", flat=True).first()
         or ""
     ).strip()
+    if not program:
+        return {
+            "ok": False,
+            "error": "Student programme is not recorded.",
+            "reason": "PROGRAMME_UNRESOLVED",
+            "tool": "build_my_timetable",
+        }
     credits = {
         r["course_code"]: int(r["credit_hours"] or 0)
         # `iexact`, matching `get_student_term_baseline` and
@@ -1931,6 +1952,7 @@ def _exec_build_my_timetable(
         keep_current_sections=keep_current_sections,
         max_credits=cap,
         gender=gender,
+        program=program,
     )
 
     options = result.get("options") or []
@@ -2381,7 +2403,7 @@ def build_default_registry() -> AdvisorCapabilityRegistry:
             description=(
                 "Find students in verified university records using filters: name "
                 "fragment, earned credits, GPA range, program, gender section "
-                "(M/F), advisor, and course status (passed / studying / missing). "
+                "(M/F), advisor, and course status (passed / studying / failed / missing). "
                 "Use for any cohort question ('list AI students who passed "
                 "AI331') and for finding students by name. The result includes "
                 "summary_stats over the matched rows for overview questions."
@@ -2427,7 +2449,8 @@ def build_default_registry() -> AdvisorCapabilityRegistry:
             name="get_student_context",
             description=(
                 "Full verified academic context for ONE student: profile, GPA, "
-                "earned credits, passed and studying courses, current-term "
+                "earned credits, passed/studying/failed courses, recorded failed-result "
+                "grades or marks when present, current-term "
                 "section registrations (authoritative for what the student is "
                 "registered in now — includes retakes and section labels), "
                 "remaining programme requirements, and next-term "
@@ -2797,7 +2820,7 @@ def build_default_registry() -> AdvisorCapabilityRegistry:
             name="my_plan_by_term",
             description=(
                 "The student's whole degree plan laid out level by level: every course "
-                "marked passed / studying / not taken, and whether prerequisites allow "
+                "marked passed / studying / failed / not taken, and whether prerequisites allow "
                 "registering it now. Use for 'show me my plan', 'what is left in level "
                 "6', 'how much of the plan have I finished'. Broader than my_progress, "
                 "which returns only what is open now. Pass `term` to narrow to one plan "

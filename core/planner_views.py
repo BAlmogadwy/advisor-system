@@ -27,6 +27,7 @@ from core.services.planner_builder import build_plans
 from core.services.policy import require_student_scope
 from core.services.rbac import ROLE_ADVISOR, ROLE_GENERAL_ADVISOR, ROLE_SUPER_ADMIN, get_user_role
 from core.services.recommender import recommend_next_courses
+from core.services.section_programmes import filter_sections_for_program
 from core.services.student_helpers import get_student_passed_and_studying, normalize_code
 from core.services.student_sections import (
     UnknownStudentGender,
@@ -35,6 +36,7 @@ from core.services.student_sections import (
     gender_section_filter,
     get_student_term_baseline,
     replace_student_term_sections,
+    section_is_available_to_student,
     student_gender,
     student_gender_strict,
 )
@@ -198,6 +200,8 @@ def _planner_context_inner(
         "credit_cap": RECOMMENDED_MAX_CREDITS,
         "regulatory_max_credits": REGULATORY_MAX_CREDITS,
     }
+    program = str(student_summary["program"] or "").strip()
+    gender = student_gender(student_id_int)
 
     baseline = get_student_term_baseline(student_id, year, term)
     if not baseline:
@@ -216,14 +220,18 @@ def _planner_context_inner(
         if wanted:
             from django.db.models import Min
 
-            mapped_qs = (
+            mapped_qs = filter_sections_for_program(
                 TermSection.objects.filter(
                     scenario__isnull=True,
                     course_key__in=wanted,
-                )
-                .values("course_key")
-                .annotate(sid=Min("id"))
+                ),
+                program,
             )
+            if gender:
+                mapped_qs = mapped_qs.filter(gender_section_filter(gender))
+            else:
+                mapped_qs = mapped_qs.none()
+            mapped_qs = mapped_qs.values("course_key").annotate(sid=Min("id"))
             mapped_ids = [int(x["sid"]) for x in mapped_qs if x["sid"] is not None]
             if mapped_ids:
                 try:
@@ -246,8 +254,6 @@ def _planner_context_inner(
         recommendation_warning = f"Recommendation engine fallback: {type(exc).__name__}"
 
     passed, studying = get_student_passed_and_studying(student_id)
-    program = str(student_summary["program"] or "").strip()
-
     recommendations: list[dict[str, object]] = []
     # Build credit map for the program
     pr_credit_map: dict[str, int] = {}
@@ -383,7 +389,13 @@ def planner_save_student_sections_view(request: HttpRequest) -> JsonResponse:
 
     try:
         if cleaned:
-            valid_ids = set(TermSection.objects.filter(id__in=cleaned).values_list("id", flat=True))
+            selected_sections = list(
+                TermSection.objects.filter(
+                    id__in=cleaned,
+                    scenario__isnull=True,
+                )
+            )
+            valid_ids = {int(section.id) for section in selected_sections}
             invalid = [sid for sid in cleaned if sid not in valid_ids]
             if invalid:
                 return _err(
@@ -391,6 +403,18 @@ def planner_save_student_sections_view(request: HttpRequest) -> JsonResponse:
                     code="VALIDATION_SECTION_IDS",
                     status=400,
                     details={"invalid_section_ids": invalid},
+                )
+            unavailable = [
+                int(section.id)
+                for section in selected_sections
+                if not section_is_available_to_student(section, student_id=student_id_int)
+            ]
+            if unavailable:
+                return _err(
+                    "Some sections are outside the student's programme or cohort",
+                    code="SECTION_NOT_AVAILABLE_TO_STUDENT",
+                    status=409,
+                    details={"section_ids": unavailable},
                 )
 
         result = replace_student_term_sections(student_id, year, term, cleaned, source="planner")
@@ -439,6 +463,18 @@ def planner_sections_catalog_view(request: HttpRequest) -> JsonResponse:
             except UnknownStudentGender as exc:
                 return _err(str(exc), code="STUDENT_COHORT_UNRESOLVED", status=409)
             ts_qs = ts_qs.filter(gender_section_filter(gender))
+            student_program = (
+                Student.objects.filter(student_id=student_id)
+                .values_list("program", flat=True)
+                .first()
+            )
+            if not str(student_program or "").strip():
+                return _err(
+                    "Student programme is not recorded",
+                    code="STUDENT_PROGRAM_UNRESOLVED",
+                    status=409,
+                )
+            ts_qs = filter_sections_for_program(ts_qs, student_program)
         if isinstance(course_codes, list) and course_codes:
             normalized = [
                 str(c).replace(" ", "").strip().upper() for c in course_codes if str(c).strip()
@@ -446,7 +482,9 @@ def planner_sections_catalog_view(request: HttpRequest) -> JsonResponse:
             if normalized:
                 ts_qs = ts_qs.filter(course_key__in=normalized)
 
-        ts_qs = ts_qs.order_by("course_code", "course_number", "section")
+        ts_qs = ts_qs.prefetch_related("program_links").order_by(
+            "course_code", "course_number", "section"
+        )
 
         grouped: dict[int, dict[str, object]] = {}
         for ts in ts_qs:
@@ -460,6 +498,7 @@ def planner_sections_catalog_view(request: HttpRequest) -> JsonResponse:
                 "course_name": ts.course_name or "",
                 "available_capacity": ts.available_capacity,
                 "registered_count": ts.registered_count,
+                "programs": sorted(link.program for link in ts.program_links.all()),
                 "meetings": [],
             }
 
@@ -520,14 +559,33 @@ def planner_build_view(request: HttpRequest) -> JsonResponse:
     # student_id is supplied the build only schedules that student's own cohort
     # sections, and the request is gated by the caller's student scope.
     gender = ""
+    program: str | None = None
     if student_id:
         student_id_int, sid_err = _parse_student_id(student_id)
         if sid_err:
             return sid_err
+        if student_id_int is None:
+            return _err(
+                "student_id must be numeric",
+                code="VALIDATION_STUDENT_ID",
+                status=400,
+            )
         scope_deny = require_student_scope(request, student_id_int)
         if scope_deny:
             return scope_deny
         gender = student_gender(student_id_int)
+        program = str(
+            Student.objects.filter(student_id=student_id_int)
+            .values_list("program", flat=True)
+            .first()
+            or ""
+        ).strip()
+        if not program:
+            return _err(
+                "Student programme is not recorded",
+                code="STUDENT_PROGRAM_UNRESOLVED",
+                status=409,
+            )
 
     normalized_shortlist: list[dict[str, object]] = []
     for item in shortlist:
@@ -584,6 +642,7 @@ def planner_build_view(request: HttpRequest) -> JsonResponse:
             consider_capacity=consider_capacity,
             max_credits=max_credits,
             gender=gender,
+            program=program,
         )
         result["mode"] = mode
         return _ok(result)

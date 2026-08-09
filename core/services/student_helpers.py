@@ -104,7 +104,10 @@ def get_prerequisites_visualizer_style(course_code: str, program: str) -> list[s
     return prereqs
 
 
-def get_student_passed_and_studying(student_id: int | str) -> tuple[set[str], set[str]]:
+def get_student_course_status_sets(
+    student_id: int | str,
+) -> tuple[set[str], set[str], set[str]]:
+    """Return canonical passed, studying, and failed course-code sets."""
     rows = (
         StudentCourse.objects.filter(
             student_id=student_id,
@@ -115,10 +118,18 @@ def get_student_passed_and_studying(student_id: int | str) -> tuple[set[str], se
 
     passed: set[str] = set()
     studying: set[str] = set()
+    failed: set[str] = set()
     for code, status in rows:
         c = normalize_code(code)
         if status == "passed":
             passed.add(c)
         elif status == "studying":
             studying.add(c)
+        elif status == "failed":
+            failed.add(c)
+    return passed, studying, failed
+
+
+def get_student_passed_and_studying(student_id: int | str) -> tuple[set[str], set[str]]:
+    passed, studying, _failed = get_student_course_status_sets(student_id)
     return passed, studying

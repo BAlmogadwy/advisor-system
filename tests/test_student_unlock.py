@@ -137,6 +137,27 @@ def test_passing_a_course_unlocks_the_next(plan):
     assert r["counts"]["passed"] == 1
 
 
+def test_failed_course_remains_open_for_retake_without_satisfying_dependants(
+    plan: None,
+) -> None:
+    StudentCourse.objects.update_or_create(
+        student_id=SID,
+        course=Course.objects.get(course_code="TA101"),
+        defaults={"status": "failed", "grade": "F", "mark": 55},
+    )
+
+    report = _report()
+
+    failed = next(row for row in report["open_courses"] if row["code"] == "TA101")
+    assert failed["attempt_status"] == "failed"
+    assert report["counts"]["failed"] == 1
+    assert "TB201" in {row["code"] for row in report["locked_courses"]}
+    assert "TA101" not in {row["code"] for row in report["done"]}
+
+    body = _render()
+    assert "Retake" in body or "إعادة مقرر" in body
+
+
 def test_excluding_a_studying_course_makes_it_not_taken_but_never_erases_a_pass(plan):
     course = Course.objects.get(course_code="TA101")
     StudentCourse.objects.update_or_create(

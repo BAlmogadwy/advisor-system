@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from core.models import TermSection, TermSectionMeeting
+from core.services.section_programmes import filter_sections_for_program
 from core.services.student_sections import gender_section_filter
 
 try:
@@ -194,12 +195,20 @@ def _section_meetings(term_section_id: int) -> list[Meeting]:
 
 
 def _catalog_for_courses(
-    year: str, term: str, course_codes: list[str], gender: str = ""
+    year: str,
+    term: str,
+    course_codes: list[str],
+    gender: str = "",
+    program: str | None = None,
 ) -> dict[str, list[dict[str, Any]]]:  # year/term kept for API compatibility
     if not course_codes:
         return {}
     wanted = {str(c).replace(" ", "").upper() for c in course_codes}
     qs = TermSection.objects.filter(scenario__isnull=True, course_key__in=wanted)
+    # ``None`` means an intentionally unscoped staff build. A supplied blank
+    # value came from a student profile and must fail closed.
+    if program is not None:
+        qs = filter_sections_for_program(qs, program)
     if gender:
         # Gender-segregated: only schedule the student into their own cohort's
         # sections (plus any ungendered section).
@@ -1146,6 +1155,7 @@ def build_plans(
     consider_capacity: bool = True,
     max_credits: int = 0,
     gender: str = "",
+    program: str | None = None,
 ) -> dict[str, Any]:
     codes = sorted(
         {
@@ -1154,7 +1164,7 @@ def build_plans(
             if str(x.get("course_code", "")).strip()
         }
     )
-    catalog = _catalog_for_courses(year, term, codes, gender)
+    catalog = _catalog_for_courses(year, term, codes, gender, program)
 
     # Filter catalog for courses with pinned (advisor-selected) sections.
     # When pinned_sections is present, the builder only considers those

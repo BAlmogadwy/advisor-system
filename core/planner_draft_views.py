@@ -115,9 +115,14 @@ def _workspace_json(draft: Any) -> dict[str, Any]:
 
     gender = student_gender_strict(draft.student_id)
     sections_by_code: dict[str, list[Any]] = {}
+    from .services.section_programmes import filter_sections_for_program
+
+    section_qs = filter_sections_for_program(
+        TermSection.objects.filter(scenario__isnull=True),
+        program,
+    )
     sections = list(
-        TermSection.objects.filter(scenario__isnull=True)
-        .filter(gender_section_filter(gender))
+        section_qs.filter(gender_section_filter(gender))
         .prefetch_related("meetings")
         .order_by("course_key", "section")
     )

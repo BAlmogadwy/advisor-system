@@ -219,6 +219,58 @@ def test_local_result_is_complete_and_provider_result_is_projected(roster, monke
     assert NAME not in client.sent_text
 
 
+def test_failed_course_evidence_reaches_remote_llm_without_identity_leakage(
+    roster: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    operator_note = "INTERNAL-FAILED-RESULT-NOTE"
+    failed_result = {
+        "course_code": "CS289",
+        "course_name": "Data Structures",
+        "grade": "F",
+        "mark": 49.0,
+        "student_id": MINE,
+        "student_name": NAME,
+        "advisor_id": "ADV-1",
+        "verification_status": "operator-confirmed",
+        "operator_note": operator_note,
+    }
+    ExecutionSpy(
+        monkeypatch,
+        result={
+            "ok": True,
+            "student_context": {
+                "student": {"student_id": MINE, "name": NAME, "program": "AI"},
+                "course_evidence": {
+                    "failed": ["CS289"],
+                    "failed_results": [failed_result],
+                },
+            },
+        },
+    )
+    client = ScriptedClient([_call("get_student_context", {})])
+    _, local, provider, _ = _run_loop(client, _remote())
+
+    assert local[0]["student_context"]["course_evidence"]["failed_results"] == [failed_result]
+    projected_evidence = provider[0]["student_context"]["course_evidence"]
+    assert projected_evidence["failed"] == ["CS289"]
+    assert projected_evidence["failed_results"] == [
+        {
+            "course_code": "CS289",
+            "course_name": "Data Structures",
+            "grade": "F",
+            "mark": 49.0,
+        }
+    ]
+    tool_messages = [message for message in client.requests[-1] if message.get("role") == "tool"]
+    assert json.loads(tool_messages[-1]["content"])["student_context"]["course_evidence"] == (
+        projected_evidence
+    )
+    assert str(MINE) not in client.sent_text
+    assert NAME not in client.sent_text
+    assert operator_note not in client.sent_text
+
+
 def test_the_two_lists_are_the_same_objects_on_a_local_backend(roster, monkeypatch) -> None:
     """Reversibility, asserted rather than assumed: with `LLM_BACKEND=local` the
     loop hands the same object to both readers, exactly as it did before the

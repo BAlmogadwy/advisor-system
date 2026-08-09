@@ -72,7 +72,10 @@
               <span class="student-course-code" dir="ltr">{{ c.code }}</span>
               <span class="student-course-name" dir="auto">{{ c.name|default:"—" }}</span>
               <div class="student-course-credits"><strong dir="ltr">{{ c.credits|default_if_none:"—" }}</strong> {% if LANGUAGE_CODE == 'ar' %}ساعات{% else %}credits{% endif %}</div>
-              <span class="badge text-bg-primary student-course-status">{% if LANGUAGE_CODE == 'ar' %}الفصل القادم{% else %}Next term{% endif %}</span>
+              <span class="badge {% if c.attempt_status == 'failed' %}text-bg-danger{% else %}text-bg-primary{% endif %} student-course-status">
+                {% if c.attempt_status == 'failed' %}{% if LANGUAGE_CODE == 'ar' %}إعادة مقرر · الفصل القادم{% else %}Retake · next term{% endif %}
+                {% elif LANGUAGE_CODE == 'ar' %}الفصل القادم{% else %}Next term{% endif %}
+              </span>
             </a>
           {% endfor %}
         </div>
@@ -92,7 +95,11 @@
               <span class="student-course-code" dir="ltr">{{ c.code }}</span>
               <span class="student-course-name" dir="auto">{{ c.name|default:"—" }}</span>
               <div class="student-course-credits"><strong dir="ltr">{{ c.credits|default_if_none:"—" }}</strong> {% if LANGUAGE_CODE == 'ar' %}ساعات{% else %}credits{% endif %}</div>
-              <span class="student-course-status small text-secondary">{% if LANGUAGE_CODE == 'ar' %}عادةً فصل لاحق{% else %}Usually later{% endif %}</span>
+              {% if c.attempt_status == 'failed' %}
+                <span class="badge text-bg-danger student-course-status">{% if LANGUAGE_CODE == 'ar' %}إعادة مقرر{% else %}Retake{% endif %}</span>
+              {% else %}
+                <span class="student-course-status small text-secondary">{% if LANGUAGE_CODE == 'ar' %}عادةً فصل لاحق{% else %}Usually later{% endif %}</span>
+              {% endif %}
             </a>
           {% endfor %}
         </div>
@@ -126,6 +133,7 @@
         <summary>
           <span class="student-blocker-course"><strong dir="ltr">{{ c.code }}</strong> <span dir="auto">{{ c.name }}</span></span>
           <span class="student-blocker-badges">
+            {% if c.attempt_status == 'failed' %}<span class="badge text-bg-danger">{% if LANGUAGE_CODE == 'ar' %}إعادة مقرر{% else %}Retake{% endif %}</span>{% endif %}
             {% if c.steps %}<span class="badge text-bg-secondary">{% if LANGUAGE_CODE == 'ar' %}{{ c.steps }} خطوة{% else %}{{ c.steps }} step{{ c.steps|pluralize }}{% endif %}</span>{% endif %}
             {% if c.frees_eventually %}<span class="badge text-bg-primary">{% if LANGUAGE_CODE == 'ar' %}يفتح {{ c.frees_eventually }}{% else %}opens {{ c.frees_eventually }}{% endif %}</span>{% endif %}
           </span>

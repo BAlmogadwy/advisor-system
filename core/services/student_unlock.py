@@ -42,6 +42,7 @@ from core.services.student_helpers import (
 )
 
 _MAX_DEPTH = 12  # cycle/pathological-chain guard
+_REMAINING_STATUSES = frozenset({"not_taken", "failed"})
 
 # Elective placeholders are not registrable courses; they are "choose one with your
 # advisor" slots, so they are listed apart and never counted as open. Which makes
@@ -142,7 +143,9 @@ def build_unlock_report(
                 status = "studying"
             else:
                 status = raw_status
-            is_open = status == "not_taken" and not missing and (gate is None or gate["met"])
+            is_open = (
+                status in _REMAINING_STATUSES and not missing and (gate is None or gate["met"])
+            )
             info[code] = {
                 "code": code,
                 "name": names.get(code, ""),
@@ -180,7 +183,9 @@ def build_unlock_report(
                     stack.append((p, depth + 1))
         return out
 
-    closures = {c: unsatisfied_closure(c) for c, i in info.items() if i["status"] == "not_taken"}
+    closures = {
+        c: unsatisfied_closure(c) for c, i in info.items() if i["status"] in _REMAINING_STATUSES
+    }
 
     def steps_to(code: str) -> int | None:
         """How many passes away this course is: layered by dependency distance."""
@@ -199,6 +204,7 @@ def build_unlock_report(
     open_courses, locked_courses, elective_slots, done, in_progress = [], [], [], [], []
     for code, i in sorted(info.items(), key=lambda kv: (kv[1]["term"], kv[0])):
         row = {k: i[k] for k in ("code", "name", "credits", "term", "type")}
+        row["attempt_status"] = i["status"]
         if i["status"] == "passed":
             done.append(row)
             continue
@@ -223,7 +229,7 @@ def build_unlock_report(
                     "open"
                     if sub["open"]
                     else sub["status"]
-                    if sub["status"] != "not_taken"
+                    if sub["status"] not in _REMAINING_STATUSES
                     else "locked"
                 )
                 reasons.append(
@@ -286,7 +292,7 @@ def build_unlock_report(
                     # Whether it is then offered, permitted or seated is not knowable
                     # here and is not claimed anywhere downstream of this flag.
                     "waiting_only_on_this": (
-                        oi["status"] == "not_taken"
+                        oi["status"] in _REMAINING_STATUSES
                         and not oi["placeholder"]
                         and code in oi["missing"]
                         and not outstanding
@@ -381,6 +387,7 @@ def build_unlock_report(
             "locked": len(locked_courses),
             "passed": len(done),
             "studying": len(in_progress),
+            "failed": sum(1 for item in info.values() if item["status"] == "failed"),
         },
         "top_blocker": top_blocker,
         "open_courses": open_courses,

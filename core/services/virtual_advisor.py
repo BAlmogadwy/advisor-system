@@ -13,6 +13,7 @@ from core.models import (
     Prerequisite,
     ProgrammeRequirement,
     Student,
+    StudentCourse,
     StudentTermSection,
     TermSection,
 )
@@ -33,6 +34,7 @@ from core.services.advisor_remote_boundary import (
     boundary_for_scope,
 )
 from core.services.answer_consistency import check_answer
+from core.services.course_classifier import parse_course_result
 from core.services.credit_policy import credit_policy_evidence
 from core.services.llm_backend import (
     BACKEND_LOCAL,
@@ -63,7 +65,7 @@ from core.services.rbac import (
     ROLE_SUPER_ADMIN,
 )
 from core.services.recommender import recommend_next_courses
-from core.services.student_helpers import get_student_passed_and_studying, normalize_code
+from core.services.student_helpers import get_student_course_status_sets, normalize_code
 from core.services.student_sections import (
     append_unmapped_studying_courses,
     get_student_term_baseline,
@@ -106,6 +108,7 @@ Rules:
 - When verified_context includes tool_results, treat them as authoritative query results.
 - If a requested fact is missing from verified_context, say that the system data does not show it.
 - current_term_registrations (when present) is the authoritative list of courses the student is registered in this term, with section labels and retake flags; the "studying" list is plan-status only and omits courses the student passed before and is now retaking.
+- course_evidence.failed and failed_results are recorded unsuccessful outcomes. A failed course may still appear in current_term_registrations when it is being retaken; describe the current registration separately from the historical result.
 - Terms are independent: never subtract the current term's registered credits from another term's capacity. current_term_registrations belongs to its own academic_year/term; recommendations target the planning term in term_context.
 - TWO credit limits, never conflate them. max_recommended_credit_hours is where THIS SYSTEM stops suggesting courses; regulatory_max_credit_hours is what the university lets the student REGISTER, and it is higher. The recommendation list is capped at the first — present it as a suggestion, never as the registration ceiling. If asked how many hours they may register, answer with the regulatory range, not the suggestion cap.
 - If regulatory_max_credit_hours is ABSENT from the evidence, no registration limit is known for that term (this happens for the summer term). Say the system does not define one and refer the student to the registrar. Never substitute the recommendation cap, and never assume a standard such as 21.
@@ -131,6 +134,7 @@ Rules:
 - If the question is ambiguous (which student, which course, which term), ask ONE short clarifying question instead of guessing.
 - Academic years are Hijri (e.g. 1448), never Gregorian. Tools default to the configured current year/term — omit academic_year/term arguments unless the user explicitly names a different term.
 - For what a student is registered in or taking NOW, read course_evidence.current_term_registrations from get_student_context — it is section-level and includes retakes. The plan-status "studying" list omits courses the student passed before and is now retaking; never present it as the registration list.
+- course_evidence.failed and failed_results are recorded unsuccessful outcomes. A failed course may still appear in current_term_registrations when it is being retaken; describe the current registration separately from the historical result.
 - Terms are independent: never subtract the current term's registered credits from another term's capacity or limit. current_term_registrations belongs to its own academic_year/term; recommendations target the planning term.
 - TWO credit limits, never conflate them. max_recommended_credit_hours is where THIS SYSTEM stops suggesting courses; regulatory_max_credit_hours is what the university lets the student REGISTER, and it is higher. The recommendation list is capped at the first — present it as a suggestion, never as the registration ceiling. If asked how many hours they may register, answer with the regulatory range, not the suggestion cap.
 - If regulatory_max_credit_hours is ABSENT from the evidence, no registration limit is known for that term (this happens for the summer term). Say the system does not define one and refer the student to the registrar. Never substitute the recommendation cap, and never assume a standard such as 21.
@@ -360,7 +364,7 @@ def _clean_status_list(value: Any) -> list[str]:
         return []
     raw_items = value if isinstance(value, list) else re.split(r"[,;/\s]+", str(value))
     statuses: list[str] = []
-    allowed = {"passed", "studying", "not_taken"}
+    allowed = {"passed", "studying", "failed", "not_taken"}
     for item in raw_items:
         status = str(item or "").strip().lower().replace("-", "_")
         if status in allowed and status not in statuses:
@@ -978,7 +982,10 @@ def _current_term_registrations(student_id: int, passed: set[str]) -> dict[str, 
     term being planned FOR and may differ from the term being studied.
     """
     latest = (
-        StudentTermSection.objects.filter(student_id=student_id)
+        StudentTermSection.objects.filter(
+            student_id=student_id,
+            term_section__scenario__isnull=True,
+        )
         .order_by("-academic_year", "-term")
         .values_list("academic_year", "term")
         .first()
@@ -1036,7 +1043,7 @@ def build_verified_student_context(
             "available_tools": [
                 "find students by earned credits, GPA, advisor, program, and course status",
                 "student profile lookup",
-                "passed/studying course evidence",
+                "passed/studying/failed course evidence",
                 "programme requirement gap summary",
                 "next-course recommender when year/term are provided",
             ],
@@ -1062,9 +1069,34 @@ def build_verified_student_context(
         raise ValueError(f"Student not found: {student_id}")
 
     program = str(student.get("program") or "").strip().upper()
-    passed, studying = get_student_passed_and_studying(student_id)
+    passed, studying, failed = get_student_course_status_sets(student_id)
     completed_or_current = passed | studying
     current_registrations = _current_term_registrations(int(student_id), passed)
+    failed_result_candidates = list(
+        StudentCourse.objects.filter(student_id=student_id, status__in=("failed", "studying"))
+        .select_related("course")
+        .order_by("course__course_code")
+        .values("course__course_code", "status", "grade", "mark")
+    )
+    failed_result_rows = []
+    for row in failed_result_candidates:
+        is_failed = row.get("status") == "failed"
+        if not is_failed:
+            try:
+                is_failed = (
+                    parse_course_result({"letter": row.get("grade"), "marks": row.get("mark")})[
+                        "outcome"
+                    ]
+                    == "failed"
+                )
+            except ValueError:
+                # Old free-text values are not verified failure evidence.
+                is_failed = False
+        if is_failed:
+            failed_result_rows.append(row)
+    failed_evidence = failed | {
+        normalize_code(row.get("course__course_code")) for row in failed_result_rows
+    }
 
     requirement_rows = list(
         ProgrammeRequirement.objects.filter(program=program)
@@ -1089,6 +1121,7 @@ def build_verified_student_context(
     }
     all_codes.update(passed)
     all_codes.update(studying)
+    all_codes.update(failed_evidence)
     all_codes.update(recommendations)
     names = _course_names(all_codes)
 
@@ -1151,6 +1184,16 @@ def build_verified_student_context(
         "course_evidence": {
             "passed": sorted(passed)[:_MAX_CONTEXT_COURSES],
             "studying": sorted(studying)[:_MAX_CONTEXT_COURSES],
+            "failed": sorted(failed_evidence)[:_MAX_CONTEXT_COURSES],
+            "failed_results": [
+                {
+                    "course_code": normalize_code(row.get("course__course_code")),
+                    "course_name": names.get(normalize_code(row.get("course__course_code")), ""),
+                    "grade": str(row.get("grade") or ""),
+                    "mark": row.get("mark"),
+                }
+                for row in failed_result_rows[:_MAX_CONTEXT_COURSES]
+            ],
             "current_term_registrations": current_registrations,
             "remaining_requirements": _compact_course_rows(remaining_rows, names),
             "remaining_requirement_count": len(remaining_rows),
@@ -1187,6 +1230,7 @@ def build_verified_student_context(
         "limits": {
             "passed_courses_truncated": len(passed) > _MAX_CONTEXT_COURSES,
             "studying_courses_truncated": len(studying) > _MAX_CONTEXT_COURSES,
+            "failed_courses_truncated": len(failed_evidence) > _MAX_CONTEXT_COURSES,
             "remaining_requirements_truncated": len(remaining_rows) > _MAX_CONTEXT_COURSES,
         },
     }
@@ -1214,6 +1258,7 @@ def _context_summary(context: dict[str, Any]) -> dict[str, Any]:
     evidence = (
         context.get("course_evidence") if isinstance(context.get("course_evidence"), dict) else {}
     )
+    failed_items = evidence.get("failed") if isinstance(evidence, dict) else None
     return {
         "mode": "student",
         "student_id": student.get("student_id"),
@@ -1223,6 +1268,7 @@ def _context_summary(context: dict[str, Any]) -> dict[str, Any]:
         "total_earned_credits": student.get("total_earned_credits"),
         "passed_count": len(evidence.get("passed") or []),
         "studying_count": len(evidence.get("studying") or []),
+        "failed_count": len(failed_items or []),
         "current_registration_count": (evidence.get("current_term_registrations") or {}).get(
             "registered_course_count"
         ),
