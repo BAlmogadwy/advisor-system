@@ -23,4 +23,5 @@ types-requests==2.32.4.20250809
 # core/ or config/ imports it, so it belongs here and not in requirements.txt — but
 # it was undeclared entirely, which is how the Pillow-shaped bug happens: the tool
 # runs on the machine that wrote it and nowhere else.
-pypdf==6.14.2
+# pypdf 6.15.0 resolves GHSA-fwg2-594c-jp42 and GHSA-fp3f-mc75-235c.
+pypdf==6.15.0
