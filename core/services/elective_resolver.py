@@ -85,11 +85,11 @@ def _get_plan_course_codes(program: str) -> set[str]:
 def _get_unfulfilled_placeholders(
     student_id: int,
     program: str,
-) -> list[tuple[str, str, int]]:
+) -> list[tuple[str, str, int | None]]:
     """Return unfulfilled placeholders sorted by term (ascending).
 
     Returns list of (code, placeholder_type, programme_term).
-    Only returns placeholders that are 'not_taken' in StudentCourse.
+    Only returns placeholders that remain unfulfilled in StudentCourse.
     """
     # Get all placeholders in this plan
     placeholders = []
@@ -102,7 +102,7 @@ def _get_unfulfilled_placeholders(
     if not placeholders:
         return []
 
-    # Check which are not_taken (or missing from StudentCourse entirely)
+    # Check which are not taken/failed (or missing from StudentCourse entirely).
     taken_statuses = {}
     for sc in StudentCourse.objects.filter(
         student_id=student_id,
@@ -113,33 +113,126 @@ def _get_unfulfilled_placeholders(
     unfulfilled = []
     for code, ptype, term in placeholders:
         status = taken_statuses.get(code)
-        if status in (None, "not_taken"):
+        if status in (None, "not_taken", "failed"):
             unfulfilled.append((code, ptype, term))
 
     return unfulfilled
 
 
-def _get_timetable_courses(student_id: int) -> set[str]:
-    """Return course codes from the student's current timetable."""
+def _get_timetable_courses(
+    student_id: int,
+    *,
+    academic_year: str | None = None,
+    term: str | None = None,
+) -> set[str]:
+    """Return course codes from a verified global scraper snapshot only."""
+    snapshots = StudentTermSection.objects.filter(
+        student_id=student_id,
+        source="scraper_timetable",
+        term_section__scenario__isnull=True,
+    )
+    if academic_year is None or term is None:
+        latest = (
+            snapshots.order_by("-academic_year", "-term")
+            .values_list("academic_year", "term")
+            .first()
+        )
+        if latest is None:
+            return set()
+        academic_year, term = latest
     return set(
-        StudentTermSection.objects.filter(student_id=student_id)
+        snapshots.filter(
+            academic_year=academic_year,
+            term=term,
+        )
         .select_related("term_section")
         .values_list("term_section__course_key", flat=True)
     )
 
 
-def _get_elective_mapped_courses(program: str) -> dict[str, set[str]]:
-    """Return {placeholder_code: {elective_course_codes}} from ElectiveTermMapping."""
+def _get_elective_mapped_courses(
+    program: str,
+    *,
+    academic_year: str,
+    term: str,
+) -> dict[str, set[str]]:
+    """Return authoritative placeholder mappings for one verified term."""
+    normalized_program = str(program or "").strip().upper()
+    mapping_programs = {normalized_program}
+    if normalized_program.endswith("2"):
+        # Curriculum-version programme codes (CS2/DS2/AI2) share the
+        # department catalogue when mappings use the base programme code.
+        mapping_programs.add(normalized_program[:-1])
+    try:
+        term_number = int(term)
+    except (TypeError, ValueError):
+        return {}
+
     result: dict[str, set[str]] = defaultdict(set)
-    for m in ElectiveTermMapping.objects.filter(programme=program).select_related("elective"):
+    mappings = ElectiveTermMapping.objects.filter(
+        programme__in=mapping_programs,
+        academic_year=str(academic_year),
+        term=term_number,
+    ).select_related("elective")
+    for m in mappings:
         result[m.placeholder_code].add(m.elective.course_code)
     return dict(result)
+
+
+def _reconcile_unmapped_studying_placeholders(
+    student_id: int,
+    program: str,
+    *,
+    timetable_codes: set[str],
+    mapped_courses: dict[str, set[str]],
+    dry_run: bool,
+) -> list[dict]:
+    """Undo placeholder statuses unsupported by the verified term snapshot."""
+    from core.services.course_classifier import parse_course_result
+
+    placeholder_codes = {
+        code
+        for code in ProgrammeRequirement.objects.filter(program=program).values_list(
+            "course_code", flat=True
+        )
+        if _classify_placeholder(code) is not None
+    }
+    rows = StudentCourse.objects.filter(
+        student_id=student_id,
+        course__course_code__in=placeholder_codes,
+        status="studying",
+    ).select_related("course")
+
+    reconciliations: list[dict] = []
+    for row in rows:
+        placeholder = row.course.course_code
+        backed_by_timetable = placeholder in timetable_codes or bool(
+            timetable_codes & mapped_courses.get(placeholder, set())
+        )
+        if backed_by_timetable:
+            continue
+
+        result = parse_course_result({"letter": row.grade, "marks": row.mark})
+        restored_status = result["outcome"] or "not_taken"
+        reconciliations.append(
+            {
+                "student_id": student_id,
+                "placeholder": placeholder,
+                "restored_status": restored_status,
+            }
+        )
+        if not dry_run:
+            row.status = restored_status
+            row.save(update_fields=["status"])
+
+    return reconciliations
 
 
 def resolve_elective_placeholders(
     program: str,
     section: str | None = None,
     student_ids: list[int] | None = None,
+    student_snapshots: dict[int, tuple[str, str]] | None = None,
     dry_run: bool = False,
 ) -> dict:
     """Resolve elective placeholders by cross-referencing timetables.
@@ -151,9 +244,8 @@ def resolve_elective_placeholders(
       4. Update StudentCourse status to "studying"
 
     Matching rules:
-      - Program electives (IS1, CS1): matched via ElectiveTermMapping
-      - Free electives (FE1, FE2): any timetable course not in plan
-      - University electives (GSE1): any timetable course not in plan
+      - Every placeholder requires an exact ElectiveTermMapping for the
+        verified academic year and term
       - Fill in ascending term order (lowest unfulfilled first)
 
     Parameters
@@ -164,6 +256,10 @@ def resolve_elective_placeholders(
         Optional section filter ("M" or "F").
     student_ids : list[int] | None
         Specific students to process. If None, processes all in program/section.
+    student_snapshots : dict[int, tuple[str, str]] | None
+        Optional exact verified scraper term per student. Students absent from
+        this mapping are skipped. Batch scraping supplies this so planner or
+        scenario rows can never become current-registration evidence.
     dry_run : bool
         If True, don't update DB — just report what would change.
 
@@ -174,27 +270,62 @@ def resolve_elective_placeholders(
     if student_ids is None:
         student_ids = get_student_ids(program=program, section=section)
 
-    # Regular plan courses (excluding placeholders) — anything in the
-    # timetable NOT in this set must be fulfilling a placeholder.
+    # Timetable codes outside the regular plan remain candidates until an
+    # authoritative term mapping proves which placeholder they fulfil.
     plan_codes = _get_plan_course_codes(program)
     regular_plan_codes = plan_codes - ALL_PLACEHOLDER_CODES
 
     updates: list[dict] = []
+    reconciliations: list[dict] = []
     resolved_count = 0
 
     for sid in student_ids:
+        if student_snapshots is not None:
+            snapshot = student_snapshots.get(sid)
+            if snapshot is None:
+                continue
+        else:
+            snapshot = (
+                StudentTermSection.objects.filter(
+                    student_id=sid,
+                    source="scraper_timetable",
+                    term_section__scenario__isnull=True,
+                )
+                .order_by("-academic_year", "-term")
+                .values_list("academic_year", "term")
+                .first()
+            )
+            if snapshot is None:
+                continue
+
+        timetable_codes = _get_timetable_courses(
+            sid,
+            academic_year=snapshot[0],
+            term=snapshot[1],
+        )
+        if not timetable_codes:
+            continue
+        mapped_courses = _get_elective_mapped_courses(
+            program,
+            academic_year=snapshot[0],
+            term=snapshot[1],
+        )
+        reconciliations.extend(
+            _reconcile_unmapped_studying_placeholders(
+                sid,
+                program,
+                timetable_codes=timetable_codes,
+                mapped_courses=mapped_courses,
+                dry_run=dry_run,
+            )
+        )
+
         unfulfilled = _get_unfulfilled_placeholders(sid, program)
         if not unfulfilled:
             continue
 
-        timetable_codes = _get_timetable_courses(sid)
-        if not timetable_codes:
-            continue
-
-        # Any course in the timetable that isn't a regular plan course
-        # MUST be fulfilling one of the elective placeholders. The
-        # university already controls registration — if the student is
-        # studying it, it's valid for their plan.
+        # Registration proves only that a course is being studied; it does not
+        # prove which degree-plan requirement the course fulfils.
         extra_courses = timetable_codes - regular_plan_codes
 
         if not extra_courses:
@@ -215,14 +346,9 @@ def resolve_elective_placeholders(
         assigned_courses: set[str] = set()
         student_updates: list[dict] = []
 
-        # Fill placeholders in ascending term order, matching by type:
-        # - Program electives (IS1, CS1): only courses from the same
-        #   department (IS*, CS*, etc.)
-        # - Free electives (FE1, FE2): any course NOT from the programme
-        #   department (education, arts, other faculties)
-        # - University electives (GSE1): general university courses (GS*)
-        #   or any remaining unmatched course
-        dept_prefix = program.rstrip("2")  # IS2 -> IS, CS2 -> CS, AI2 -> AI
+        # Fill placeholders in ascending term order. Registration proves that
+        # the student is taking a course, but only the term mapping proves
+        # which degree-plan placeholder that course fulfils.
 
         for placeholder_code, ptype, term in unfulfilled:
             available = extra_courses - assigned_courses - passed_only
@@ -230,20 +356,7 @@ def resolve_elective_placeholders(
             if not available:
                 break
 
-            if ptype == "program_elective":
-                # Only courses from the same department
-                candidates = {c for c in available if c.startswith(dept_prefix)}
-            elif ptype == "free_elective":
-                # Courses NOT from this department and NOT general (GS*)
-                candidates = {
-                    c for c in available if not c.startswith(dept_prefix) and not c.startswith("GS")
-                }
-            else:  # university_elective
-                # General courses (GS*) first, then anything remaining
-                candidates = {c for c in available if c.startswith("GS")}
-                if not candidates:
-                    # Fallback: any remaining course
-                    candidates = available
+            candidates = available & mapped_courses.get(placeholder_code, set())
 
             if not candidates:
                 continue
@@ -269,7 +382,7 @@ def resolve_elective_placeholders(
                 StudentCourse.objects.filter(
                     student_id=sid,
                     course__course_code=upd["placeholder"],
-                    status="not_taken",
+                    status__in=("not_taken", "failed"),
                 ).update(status="studying")
 
         if student_updates:
@@ -290,6 +403,8 @@ def resolve_elective_placeholders(
         "total_students": len(student_ids),
         "resolved_count": resolved_count,
         "total_updates": len(updates),
+        "reconciled_count": len(reconciliations),
         "dry_run": dry_run,
         "updates": updates,
+        "reconciliations": reconciliations,
     }

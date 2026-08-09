@@ -137,7 +137,7 @@ def parse_study_plan(html_content):
 def parse_student_profile(html_content):
     """Extract student profile info from the study plan header table.
 
-    Returns dict with keys: name, nationality, status, gpa,
+    Returns dict with keys: registration_no, name, nationality, status, gpa,
     total_registered_credits, total_earned_credits.
     """
     if _is_logout_or_service_page(html_content):
@@ -152,6 +152,10 @@ def parse_student_profile(html_content):
     result = {}
 
     field_map = {
+        # The portal itself spells this label ``Registeration``. Keep the
+        # correctly-spelled variant too in case the upstream typo is fixed.
+        "Registeration No": ("registration_no", str),
+        "Registration No": ("registration_no", str),
         "Student Name": ("name", str),
         "Nationality": ("nationality", str),
         "Student Status": ("status", str),
@@ -171,6 +175,20 @@ def parse_student_profile(html_content):
                         continue
                     raw = td.get_text(" ", strip=True)
                     if not raw:
+                        continue
+                    if key in {"total_registered_credits", "total_earned_credits"}:
+                        # New students with no earned/registered aggregate are
+                        # rendered by the portal as the literal sentinel
+                        # ``null``. It means zero here; arbitrary text still
+                        # survives as text and is rejected by the validator.
+                        if raw.casefold() == "null":
+                            result[key] = 0
+                            continue
+                    if key == "gpa" and raw.casefold() == "null":
+                        # The portal uses ``null`` for a student who does not
+                        # yet have a cumulative GPA. Preserve that distinction
+                        # instead of inventing a numeric value.
+                        result[key] = None
                         continue
                     try:
                         result[key] = converter(raw)

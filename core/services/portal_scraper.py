@@ -73,6 +73,7 @@ async def is_logged_out(page: Page) -> bool:
 def is_logged_out_html(html: str) -> bool:
     if not html:
         return False
+    lowered = html.casefold()
     if "<title>نظام الخدمات الالكترونية</title>" in html:
         return True
     if (
@@ -81,18 +82,27 @@ def is_logged_out_html(html: str) -> bool:
         and "services4GraduatedStudent.do" in html
     ):
         return True
+    if any(
+        marker in lowered
+        for marker in (
+            "<title>service unavailable",
+            "<title>internal server error",
+            "<title>http status 500",
+            "<title>http status 503",
+            "<title>error 500",
+            "<title>error 503",
+        )
+    ):
+        return True
     return False
 
 
 def is_staff_login_success_html(html: str) -> bool:
     if not html:
         return False
-    return (
-        "staffWelcomePage.do" in html
-        or "signOut.do" in html
-        or "البيانات الشخصية" in html
-        or "الخدمات الالكترونية لعمادة القبول والتسجيل" in html
-    )
+    # Public/login pages contain much of the same Arabic navigation text as the
+    # staff landing page. These authenticated links are the reliable boundary.
+    return "staffWelcomePage.do" in html or "signOut.do" in html
 
 
 # ------------------------------------------------------------------
@@ -186,31 +196,75 @@ async def _wait_for_stable_rowcount(
 
 async def _wait_for_plan_results(page: Page, timeout_ms: int = 60000) -> None:
     tables = page.locator('table[dir="rtl"]')
-    await tables.first.wait_for(state="attached", timeout=timeout_ms)
-    await _wait_for_stable_count(tables, min_count=1, timeout_ms=timeout_ms)
+    deadline = _mono_ms() + timeout_ms
+    last = -1
+    stable = 0
+
+    while _mono_ms() < deadline:
+        html = await safe_page_content(page, retries=1)
+        if is_logged_out_html(html):
+            raise RuntimeError("SESSION_LOGGED_OUT_HTML")
+        try:
+            count = await tables.count()
+        except Exception:
+            count = 0
+        if count >= 1 and count == last:
+            stable += 1
+            if stable >= 3:
+                return
+        else:
+            stable = 0
+            last = count
+        await asyncio.sleep(0.35)
+
+    raise PlaywrightTimeoutError(f"Stable study-plan table count not reached within {timeout_ms}ms")
 
 
 async def _pick_course_table_from_forumline(page: Page) -> Locator:
-    tables = page.locator("table.forumline")
-    await tables.first.wait_for(state="attached", timeout=60000)
-
-    candidate = page.locator("table.forumline", has_text="المادة").first
-    if await candidate.count() > 0:
-        return candidate
-
-    return tables.first
+    # Never fall back to the first forumline table: the portal's navigation
+    # menu uses that class and has dozens of stable rows, which previously made
+    # an error page look like a completed timetable response.
+    return (
+        page.locator("table.forumline", has_text="المادة")
+        .filter(has_text="شعبة")
+        .filter(has_text="قاعة")
+        .first
+    )
 
 
 async def _wait_for_timetable_results(page: Page, timeout_ms: int = 60000) -> None:
-    tables = page.locator("table.forumline")
-    await tables.first.wait_for(state="attached", timeout=timeout_ms)
-
+    deadline = _mono_ms() + timeout_ms
     course_table = await _pick_course_table_from_forumline(page)
-    await _wait_for_stable_rowcount(
-        page,
-        course_table,
-        min_rows=2,
-        timeout_ms=timeout_ms,
+    no_timetable_marker = page.get_by_text("رقم الطالب به خطأ", exact=True)
+
+    while _mono_ms() < deadline:
+        html = await safe_page_content(page, retries=1)
+        if is_logged_out_html(html):
+            raise RuntimeError("SESSION_LOGGED_OUT_HTML")
+        try:
+            if await no_timetable_marker.count() and await no_timetable_marker.first.is_visible():
+                return
+        except Exception:
+            pass
+        try:
+            if await course_table.count() > 0:
+                remaining = max(1000, deadline - _mono_ms())
+                await _wait_for_stable_rowcount(
+                    page,
+                    course_table,
+                    min_rows=2,
+                    timeout_ms=remaining,
+                )
+                return
+        except PlaywrightTimeoutError:
+            raise
+        except Exception:
+            pass
+        await asyncio.sleep(0.35)
+
+    raise PlaywrightTimeoutError(
+        "Neither a timetable result nor the portal's no-current-timetable marker appeared "
+        f"within {timeout_ms}ms"
     )
 
 
@@ -262,9 +316,11 @@ async def navigate_to_student_study_plan(
     page: Page, student_id: str | int, verbose: bool = True
 ) -> str:
     if await is_logged_out(page):
-        raise RuntimeError("Page logged out before navigation.")
+        raise RuntimeError("SESSION_LOGGED_OUT_HTML")
 
     await _safe_goto(page, settings.STUDENT_PLAN_URL)
+    if is_logged_out_html(await safe_page_content(page)):
+        raise RuntimeError("SESSION_LOGGED_OUT_HTML")
     await page.locator('input[name="StudentNumber"]').wait_for(state="visible", timeout=30000)
     await page.fill('input[name="StudentNumber"]', str(student_id))
     await page.click('input[name="send"]')
@@ -283,9 +339,11 @@ async def navigate_to_student_timetable(
     page: Page, student_id: str | int, verbose: bool = True
 ) -> str:
     if await is_logged_out(page):
-        raise RuntimeError("Page logged out before navigation.")
+        raise RuntimeError("SESSION_LOGGED_OUT_HTML")
 
     await _safe_goto(page, settings.STUDENT_TIMETABLE_URL)
+    if is_logged_out_html(await safe_page_content(page)):
+        raise RuntimeError("SESSION_LOGGED_OUT_HTML")
     await page.locator('input[name="StudentNumber"]').wait_for(state="visible", timeout=30000)
     await page.fill('input[name="StudentNumber"]', str(student_id))
     await page.click('input[name="send"]')

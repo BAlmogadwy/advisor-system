@@ -2,7 +2,17 @@ from __future__ import annotations
 
 from django.db.models import Q
 
-from core.models import ProgrammeRequirement, Student, StudentCourse, StudentTermSection
+from core.models import (
+    ProgrammeRequirement,
+    Student,
+    StudentCourse,
+    StudentTermSection,
+    TermSection,
+)
+from core.services.section_programmes import (
+    normalize_section_program,
+    reconcile_observed_section_programs,
+)
 from core.services.student_helpers import normalize_code
 
 # Sections are gender-segregated and labelled with a leading gender tag, e.g.
@@ -74,7 +84,27 @@ def section_is_available_to_student(section: object, *, student_id: int | str) -
     required = student_gender_strict(student_id)
     label = getattr(section, "section", "") or ""
     allowed = section_gender(label)
-    return not allowed or allowed == required
+    if allowed and allowed != required:
+        return False
+
+    # Scenario-owned sections belong to the planner scenario. Programme links
+    # describe only the shared, current global section snapshot.
+    if getattr(section, "scenario_id", None) is not None:
+        return True
+
+    student_program = (
+        Student.objects.filter(student_id=student_id).values_list("program", flat=True).first()
+    )
+    program = normalize_section_program(student_program)
+    if not program:
+        # A student-scoped request must never degrade to an all-programme
+        # catalogue merely because the profile is incomplete.
+        return False
+
+    # Known-programme students fail closed: an unassigned global section must
+    # not leak into their choices merely because its course code is familiar.
+    program_links = getattr(section, "program_links", None)
+    return bool(program_links and program_links.filter(program=program).exists())
 
 
 def student_gender_strict(student_id: int | str) -> str:
@@ -99,7 +129,7 @@ def student_gender_strict(student_id: int | str) -> str:
     return g
 
 
-def _section_course_key(term_section) -> str:
+def _section_course_key(term_section: TermSection) -> str:
     key = normalize_code(getattr(term_section, "course_key", "") or "")
     if key:
         return key
@@ -316,7 +346,9 @@ def get_student_term_registration_summary(
         code = str(row.get("course_key") or row.get("course_code") or "").strip().upper()
         if not code:
             continue
-        credits_by_course.setdefault(code, int(row.get("credits") or 0))
+        raw_credits = row.get("credits")
+        credits = int(raw_credits) if isinstance(raw_credits, int | float | str) else 0
+        credits_by_course.setdefault(code, credits)
 
     return {
         "value": sum(credits_by_course.values()),
@@ -334,15 +366,26 @@ def replace_student_term_sections(
     term: str,
     term_section_ids: list[int],
     source: str = "manual",
+    *,
+    replace_all_global: bool = False,
 ) -> dict[str, int]:
     from django.db import transaction
 
     with transaction.atomic():
-        StudentTermSection.objects.filter(
+        current_rows = StudentTermSection.objects.filter(
             student_id=student_id,
-            academic_year=str(academic_year),
-            term=str(term),
-        ).delete()
+            term_section__scenario__isnull=True,
+        )
+        if not replace_all_global:
+            # Planner calls remain term-scoped: planning another term must not
+            # erase the student's actual current registration snapshot.
+            current_rows = current_rows.filter(
+                academic_year=str(academic_year),
+                term=str(term),
+            )
+        affected_section_ids = set(current_rows.values_list("term_section_id", flat=True))
+        affected_section_ids.update(int(section_id) for section_id in term_section_ids)
+        current_rows.delete()
 
         objs = [
             StudentTermSection(
@@ -355,5 +398,28 @@ def replace_student_term_sections(
             for sid in term_section_ids
         ]
         StudentTermSection.objects.bulk_create(objs, ignore_conflicts=True)
+        reconcile_observed_section_programs(affected_section_ids)
 
     return {"inserted": len(term_section_ids)}
+
+
+def clear_student_section_snapshot(student_id: int | str) -> dict[str, int]:
+    """Clear one student's current registration snapshot, not shared sections.
+
+    The timetable service supplies no year/term metadata when a verified student
+    has no summer timetable. Student-facing readers treat the latest link as
+    current, so retaining any old links would falsely present a prior schedule
+    as today's registration. Shared ``TermSection`` rows, meetings, and any
+    scenario-owned student assignments remain.
+    """
+    from django.db import transaction
+
+    with transaction.atomic():
+        rows = StudentTermSection.objects.filter(
+            student_id=student_id,
+            term_section__scenario__isnull=True,
+        )
+        affected_section_ids = set(rows.values_list("term_section_id", flat=True))
+        deleted = rows.delete()[0]
+        reconcile_observed_section_programs(affected_section_ids)
+    return {"deleted": deleted}

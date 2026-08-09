@@ -69,7 +69,7 @@ def _is_pid_running(pid: int) -> bool:
                 WAIT_TIMEOUT = 258
                 ret = kernel32.WaitForSingleObject(handle, 0)
                 kernel32.CloseHandle(handle)
-                return ret == WAIT_TIMEOUT  # Still running if WAIT_TIMEOUT
+                return bool(ret == WAIT_TIMEOUT)  # Still running if WAIT_TIMEOUT
             return False
         except Exception:
             return False
@@ -122,60 +122,71 @@ def get_scrape_status() -> dict[str, Any]:
 
 
 def start_batch_scrape(concurrency: int = 2, students_csv: str | None = None) -> dict[str, Any]:
-    status = get_scrape_status()
-    if status["running"]:
-        return {"ok": False, "error": "batch scraper already running", **status}
+    from core.services.section_snapshot_guard import section_snapshot_operation_guard
 
-    csv_path = students_csv or str(DEFAULT_STUDENTS_CSV)
-    _ensure_runtime_dir()
+    # Serialize the status-check + process-start transition with snapshot clears.
+    # Once the PID is written, clear operations can safely rely on get_scrape_status().
+    with section_snapshot_operation_guard(blocking=False) as acquired:
+        if not acquired:
+            return {
+                "ok": False,
+                "error": "section snapshot maintenance is in progress; retry shortly",
+            }
 
-    cmd = [
-        sys.executable,
-        str(BASE_DIR / "manage.py"),
-        "scrape_students",
-        "--csv",
-        csv_path,
-        "--concurrency",
-        str(concurrency),
-        "--debug-dir",
-        str(BASE_DIR / "data" / "debug_failures"),
-    ]
+        status = get_scrape_status()
+        if status["running"]:
+            return {"ok": False, "error": "batch scraper already running", **status}
 
-    with LOG_PATH.open("w", encoding="utf-8") as logf:
-        # bandit: argv is fixed and derived from trusted local config; shell is not used.
-        proc = subprocess.Popen(  # nosec
-            cmd,
-            cwd=str(BASE_DIR),
-            stdout=logf,
-            stderr=subprocess.STDOUT,
-            creationflags=getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0),
+        csv_path = students_csv or str(DEFAULT_STUDENTS_CSV)
+        _ensure_runtime_dir()
+
+        cmd = [
+            sys.executable,
+            str(BASE_DIR / "manage.py"),
+            "scrape_students",
+            "--csv",
+            csv_path,
+            "--concurrency",
+            str(concurrency),
+            "--debug-dir",
+            str(BASE_DIR / "data" / "debug_failures"),
+        ]
+
+        with LOG_PATH.open("w", encoding="utf-8") as logf:
+            # bandit: argv is fixed and derived from trusted local config; shell is not used.
+            proc = subprocess.Popen(  # nosec
+                cmd,
+                cwd=str(BASE_DIR),
+                stdout=logf,
+                stderr=subprocess.STDOUT,
+                creationflags=getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0),
+            )
+
+        started_at = _now_local_str()
+        old_state = _read_state()
+        history_raw = old_state.get("history", [])
+        history = history_raw if isinstance(history_raw, list) else []
+
+        state = {
+            "pid": proc.pid,
+            "started_at": started_at,
+            "stopped_at": None,
+            "last_action": "started",
+            "params": {"concurrency": concurrency, "students_csv": csv_path},
+            "history": history,
+        }
+        _write_state(state)
+        _append_run_event(
+            {
+                "event": "started",
+                "at": started_at,
+                "pid": proc.pid,
+                "concurrency": concurrency,
+                "students_csv": csv_path,
+            }
         )
 
-    started_at = _now_local_str()
-    old_state = _read_state()
-    history_raw = old_state.get("history", [])
-    history = history_raw if isinstance(history_raw, list) else []
-
-    state = {
-        "pid": proc.pid,
-        "started_at": started_at,
-        "stopped_at": None,
-        "last_action": "started",
-        "params": {"concurrency": concurrency, "students_csv": csv_path},
-        "history": history,
-    }
-    _write_state(state)
-    _append_run_event(
-        {
-            "event": "started",
-            "at": started_at,
-            "pid": proc.pid,
-            "concurrency": concurrency,
-            "students_csv": csv_path,
-        }
-    )
-
-    return {"ok": True, "pid": proc.pid, "params": state["params"]}
+        return {"ok": True, "pid": proc.pid, "params": state["params"]}
 
 
 def stop_batch_scrape() -> dict[str, Any]:
