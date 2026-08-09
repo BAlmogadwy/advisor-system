@@ -125,7 +125,21 @@ async def _safe_wait_network(page: Page, timeout_ms: int = 20000) -> None:
         logger.debug("networkidle wait timed out", exc_info=True)
 
 
-async def _safe_goto(page: Page, url: str, timeout_ms: int = 30000) -> None:
+async def _safe_goto(
+    page: Page,
+    url: str,
+    timeout_ms: int = 30000,
+    *,
+    referer: str | None = None,
+) -> None:
+    if referer:
+        await page.goto(
+            url,
+            wait_until="domcontentloaded",
+            timeout=timeout_ms,
+            referer=referer,
+        )
+        return
     await page.goto(url, wait_until="domcontentloaded", timeout=timeout_ms)
 
 
@@ -303,11 +317,21 @@ async def login_to_portal(
 
 
 async def create_fresh_page_from_context(
-    context: BrowserContext, entry_url: str | None = None
+    context: BrowserContext,
+    entry_url: str | None = None,
+    *,
+    referer_url: str | None = None,
 ) -> Page:
+    """Open a worker page through the authenticated staff navigation path.
+
+    The portal does not treat its session cookie as sufficient when a protected
+    enquiry URL is opened from ``about:blank``.  Supplying the authenticated
+    staff page as the HTTP referrer preserves the same navigation provenance as
+    clicking the enquiry link in the portal UI.
+    """
     entry_url = entry_url or settings.STUDENT_PLAN_URL
     page = await context.new_page()
-    await _safe_goto(page, entry_url)
+    await _safe_goto(page, entry_url, referer=referer_url)
     await _safe_wait_network(page, timeout_ms=30000)
     return page
 

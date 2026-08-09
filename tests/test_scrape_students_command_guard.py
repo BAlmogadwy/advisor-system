@@ -4,6 +4,7 @@ import asyncio
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
+from typing import cast
 from unittest.mock import AsyncMock
 
 import pytest
@@ -203,11 +204,19 @@ def test_worker_attributes_failure_when_its_page_cannot_be_created(
     monkeypatch: MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    async def fail_page_creation(context: object) -> None:
+    async def fail_page_creation(
+        context: object,
+        *,
+        referer_url: str | None = None,
+    ) -> None:
+        assert referer_url == "https://portal.example/staffLogin.do"
         raise RuntimeError("browser context unavailable")
 
+    class Anchor:
+        url = "https://portal.example/staffLogin.do"
+
     command = scrape_students.Command()
-    command._shared = {"context": object()}
+    command._shared = {"context": object(), "page": Anchor()}
     save_debug = AsyncMock()
     monkeypatch.setattr(scrape_students, "create_fresh_page_from_context", fail_page_creation)
     monkeypatch.setattr(command, "_save_debug", save_debug)
@@ -338,3 +347,65 @@ def test_relogin_is_coalesced_without_closing_unrelated_workers(
     assert context.login_page.closed is False
     safe_goto.assert_awaited_once()
     safe_wait_network.assert_awaited_once()
+
+
+def test_failed_relogin_is_attempted_once_and_closes_candidate_page(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    class FakePage:
+        def __init__(self, context: object) -> None:
+            self.context = context
+            self.closed = False
+
+        async def wait_for_selector(self, selector: str, timeout: int) -> None:
+            assert selector == 'input[name="userName"]'
+            assert timeout == 60000
+
+        async def fill(self, selector: str, value: str) -> None:
+            assert selector in {'input[name="userName"]', 'input[name="password"]'}
+            assert isinstance(value, str)
+
+        async def click(self, selector: str) -> None:
+            assert selector == 'input[name="submit"]'
+
+        async def content(self) -> str:
+            return "<html><body>Public portal landing page</body></html>"
+
+        async def close(self) -> None:
+            self.closed = True
+
+    class FakeContext:
+        def __init__(self) -> None:
+            self.created = 0
+            self.login_page = FakePage(self)
+
+        async def new_page(self) -> FakePage:
+            self.created += 1
+            return self.login_page
+
+    context = FakeContext()
+    command = scrape_students.Command()
+    command._shared = {
+        "context": context,
+        "page": FakePage(context),
+        "session_generation": 0,
+    }
+    monkeypatch.setattr(portal_scraper, "_safe_goto", AsyncMock())
+    monkeypatch.setattr(portal_scraper, "_safe_wait_network", AsyncMock())
+
+    async def relogin_twice() -> tuple[object, object]:
+        lock = asyncio.Lock()
+        return cast(
+            tuple[object, object],
+            await asyncio.gather(
+                command._force_relogin(lock, observed_generation=0),
+                command._force_relogin(lock, observed_generation=0),
+                return_exceptions=True,
+            ),
+        )
+
+    results = asyncio.run(relogin_twice())
+
+    assert context.created == 1
+    assert context.login_page.closed is True
+    assert all(isinstance(result, scrape_students.PortalSessionRecoveryError) for result in results)

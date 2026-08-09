@@ -9,6 +9,7 @@ import pytest
 from core.services import portal_scraper
 from core.services.portal_scraper import (
     _wait_for_plan_results,
+    create_fresh_page_from_context,
     is_logged_out_html,
     is_staff_login_success_html,
 )
@@ -53,6 +54,36 @@ def test_staff_login_success_requires_an_authenticated_link() -> None:
 
     assert is_staff_login_success_html(public_page) is False
     assert is_staff_login_success_html('<a href="signOut.do">Logout</a>') is True
+
+
+def test_fresh_worker_page_uses_authenticated_referrer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    worker_page = object()
+
+    class FakeContext:
+        async def new_page(self) -> object:
+            return worker_page
+
+    safe_goto = AsyncMock()
+    safe_wait_network = AsyncMock()
+    monkeypatch.setattr(portal_scraper, "_safe_goto", safe_goto)
+    monkeypatch.setattr(portal_scraper, "_safe_wait_network", safe_wait_network)
+
+    async def run() -> object:
+        return await create_fresh_page_from_context(
+            FakeContext(),  # type: ignore[arg-type]
+            "https://portal.example/student-plan",
+            referer_url="https://portal.example/staffLogin.do",
+        )
+
+    assert asyncio.run(run()) is worker_page
+    safe_goto.assert_awaited_once_with(
+        worker_page,
+        "https://portal.example/student-plan",
+        referer="https://portal.example/staffLogin.do",
+    )
+    safe_wait_network.assert_awaited_once_with(worker_page, timeout_ms=30000)
 
 
 def test_study_plan_wait_surfaces_service_page_for_relogin_immediately() -> None:

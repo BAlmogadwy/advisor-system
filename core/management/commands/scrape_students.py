@@ -58,6 +58,10 @@ class StudentScrapeOutcome(TypedDict):
     error: str
 
 
+class PortalSessionRecoveryError(RuntimeError):
+    """A shared portal session could not be restored for the batch."""
+
+
 # ------------------------------------------------------------------
 # Utilities
 # ------------------------------------------------------------------
@@ -608,6 +612,14 @@ class Command(BaseCommand):
             except Exception as exc:
                 logger.error("Task failed: %s", exc)
                 infrastructure_errors.append(str(exc))
+                # A worker exception that escapes attribution is a shared
+                # infrastructure failure. Continuing could write a mixture of
+                # pre- and post-recovery snapshots, so stop the batch once.
+                for task in tasks:
+                    if not task.done():
+                        task.cancel()
+                await asyncio.gather(*tasks, return_exceptions=True)
+                break
 
         # This file represents the latest run, not cumulative history. Always
         # rewrite it so a successful retry cannot leave stale failure IDs.
@@ -713,7 +725,10 @@ class Command(BaseCommand):
             session_generation = int(self._shared.get("session_generation", 0))
 
             try:
-                worker_page = await create_fresh_page_from_context(self._shared["context"])  # type: ignore[arg-type]
+                worker_page = await create_fresh_page_from_context(
+                    self._shared["context"],  # type: ignore[arg-type]
+                    referer_url=self._worker_referer_url(),
+                )
                 for attempt in range(1, max_retries + 1):
                     try:
                         async with plan_sem:
@@ -779,6 +794,7 @@ class Command(BaseCommand):
                                     )
                             worker_page = await create_fresh_page_from_context(
                                 self._shared["context"],  # type: ignore[arg-type]
+                                referer_url=self._worker_referer_url(),
                             )
                             continue
                         raise
@@ -798,8 +814,14 @@ class Command(BaseCommand):
                                 )
                         worker_page = await create_fresh_page_from_context(
                             self._shared["context"],  # type: ignore[arg-type]
+                            referer_url=self._worker_referer_url(),
                         )
 
+            except PortalSessionRecoveryError:
+                # Session recovery is shared by every worker. Let the
+                # orchestrator stop the batch instead of recording the same
+                # infrastructure outage against every student.
+                raise
             except Exception as exc:
                 logger.error("Student %s failed: %s", student_id, exc)
                 await self._save_debug(
@@ -840,6 +862,13 @@ class Command(BaseCommand):
     # ──────────────────────────────────────────────────────────
     # Helpers
     # ──────────────────────────────────────────────────────────
+
+    def _worker_referer_url(self) -> str:
+        anchor = self._shared.get("page")
+        anchor_url = str(getattr(anchor, "url", "") or "").strip()
+        if anchor_url and anchor_url != "about:blank":
+            return anchor_url
+        return str(settings.PORTAL_LOGIN_URL)
 
     def _read_csv(self, csv_path: str) -> list[dict]:
         with open(csv_path, encoding="utf-8-sig", newline="") as f:
@@ -909,9 +938,17 @@ class Command(BaseCommand):
             if current_generation != observed_generation:
                 return current_generation
 
+            failed_generation = self._shared.get("session_recovery_failed_generation")
+            if failed_generation == current_generation:
+                failure = str(
+                    self._shared.get("session_recovery_error")
+                    or "Portal session recovery previously failed"
+                )
+                raise PortalSessionRecoveryError(failure)
+
             logger.warning("Session expired — performing re-login")
             previous_anchor = self._shared.get("page")
-            page = await self._shared["context"].new_page()  # type: ignore[attr-defined]
+            page = None
             from core.services.portal_scraper import (
                 _safe_goto,
                 _safe_wait_network,
@@ -919,20 +956,37 @@ class Command(BaseCommand):
                 is_staff_login_success_html,
             )
 
-            await _safe_goto(page, settings.PORTAL_LOGIN_URL)
-            await page.wait_for_selector('input[name="userName"]', timeout=60000)
-            await page.fill('input[name="userName"]', settings.PORTAL_ADMIN_USERNAME)
-            await page.fill('input[name="password"]', settings.PORTAL_ADMIN_PASSWORD)
-            await page.click('input[name="submit"]')
-            await _safe_wait_network(page, timeout_ms=30000)
-            login_html = await safe_page_content(page)
-            if is_logged_out_html(login_html) or not is_staff_login_success_html(login_html):
-                raise RuntimeError("Portal re-login failed: authenticated staff markers missing")
+            try:
+                page = await self._shared["context"].new_page()  # type: ignore[attr-defined]
+                await _safe_goto(page, settings.PORTAL_LOGIN_URL)
+                await page.wait_for_selector('input[name="userName"]', timeout=60000)
+                await page.fill('input[name="userName"]', settings.PORTAL_ADMIN_USERNAME)
+                await page.fill('input[name="password"]', settings.PORTAL_ADMIN_PASSWORD)
+                await page.click('input[name="submit"]')
+                await _safe_wait_network(page, timeout_ms=30000)
+                login_html = await safe_page_content(page)
+                if is_logged_out_html(login_html) or not is_staff_login_success_html(login_html):
+                    raise RuntimeError(
+                        "Portal re-login failed: authenticated staff markers missing"
+                    )
+            except Exception as exc:
+                failure = str(exc) or exc.__class__.__name__
+                self._shared["session_recovery_failed_generation"] = current_generation
+                self._shared["session_recovery_error"] = failure
+                if page is not None:
+                    try:
+                        await page.close()
+                    except Exception:
+                        logger.debug("Failed re-login page close failed", exc_info=True)
+                raise PortalSessionRecoveryError(failure) from exc
 
+            assert page is not None
             self._shared["page"] = page
             self._shared["context"] = page.context
             new_generation = current_generation + 1
             self._shared["session_generation"] = new_generation
+            self._shared.pop("session_recovery_failed_generation", None)
+            self._shared.pop("session_recovery_error", None)
             if previous_anchor is not None and previous_anchor is not page:
                 try:
                     await previous_anchor.close()
