@@ -1,71 +1,110 @@
-/* The student's timetable planner.
+/* Student timetable proposal workspace.
  *
- * This file renders and posts. It decides NOTHING: not whether a course may be
- * taken, not which sections are open to this student, not whether a rebuild has
- * been approved, not which timetables are still current. Every one of those is a
- * server answer, because a rule that also exists in JavaScript is a rule with two
- * implementations and one of them ships to whoever wants to edit it.
- *
- * The rebuild confirmation is the clearest case. The dialog below asks the
- * question; it does not grant the permission. The answer to "yes, rebuild" is a
- * token the server issued, and generate/ refuses without one — so a client that
- * posts `{"confirmed": true}`, or skips the dialog entirely, gets 428.
+ * The scheduling engine is the existing planner_builder through the shared
+ * student_planner adapter.  This file only manages the signed-in student's
+ * temporary draft and renders the answer.  There is deliberately no save,
+ * apply, registration, capacity override, or student-id control.
  */
 (function () {
   'use strict';
 
   const root = document.querySelector('.sp-layout');
-  if (!root) return;
+  if (!root || !window.StudentTimetable) return;
 
+  const AR = String(root.dataset.language || '').toLowerCase().startsWith('ar');
   const draftId = root.dataset.draftId;
   const base = '/student/planner/drafts/' + encodeURIComponent(draftId) + '/';
-
-  const el = {
-    requested: document.getElementById('spRequested'),
-    requestedEmpty: document.getElementById('spRequestedEmpty'),
-    unplaced: document.getElementById('spUnplaced'),
-    unplacedNote: document.getElementById('spUnplacedNote'),
-    keep: document.getElementById('spKeep'),
-    rebuild: document.getElementById('spRebuild'),
-    confirm: document.getElementById('spConfirm'),
-    confirmText: document.getElementById('spConfirmText'),
-    confirmBtn: document.getElementById('spConfirmBtn'),
-    confirmCancel: document.getElementById('spConfirmCancel'),
-    generate: document.getElementById('spGenerate'),
-    options: document.getElementById('spOptions'),
-    optionsEmpty: document.getElementById('spOptionsEmpty'),
-    status: document.getElementById('spStatus'),
+  const q = (id) => document.getElementById(id);
+  const els = {
+    term: q('spTerm'), courseCount: q('spCourseCount'), creditCount: q('spCreditCount'),
+    creditCeiling: q('spCreditCeiling'), currentEmpty: q('spCurrentEmpty'),
+    currentSummary: q('spCurrentSummary'), currentDetails: q('spCurrentDetails'),
+    currentGrid: q('spCurrentGrid'), search: q('spCourseSearch'), catalog: q('spCatalog'),
+    catalogEmpty: q('spCatalogEmpty'), requested: q('spRequested'),
+    requestedEmpty: q('spRequestedEmpty'), keep: q('spKeep'), rebuild: q('spRebuild'),
+    confirm: q('spConfirm'), confirmText: q('spConfirmText'), confirmBtn: q('spConfirmBtn'),
+    confirmCancel: q('spConfirmCancel'), generate: q('spGenerate'), options: q('spOptions'),
+    optionPreview: q('spOptionPreview'),
+    optionsEmpty: q('spOptionsEmpty'), unplacedBox: q('spUnplacedBox'),
+    unplaced: q('spUnplaced'), status: q('spStatus'),
   };
 
-  /* Held in page memory only, never in storage: it authorises one destructive
-     action, and a token that survives the tab survives the intent behind it. */
+  const T = {
+    loading: AR ? 'جارٍ تحميل مساحة التخطيط…' : 'Loading your planning workspace…',
+    loadFail: AR ? 'تعذّر تحميل مساحة التخطيط.' : 'Could not load the planning workspace.',
+    editFail: AR ? 'تعذّر تحديث الاختيار.' : 'Could not update the selection.',
+    building: AR ? 'جارٍ بناء خيارات الجدول…' : 'Building timetable options…',
+    buildFail: AR ? 'تعذّر بناء خيارات الجدول.' : 'Could not build timetable options.',
+    chooseOne: AR ? 'اختر مقررًا واحدًا على الأقل أولًا.' : 'Choose at least one course first.',
+    anySection: AR ? 'أي شعبة مناسبة' : 'Any suitable section',
+    remove: AR ? 'إزالة' : 'Remove',
+    add: AR ? 'إضافة' : 'Add',
+    selected: AR ? 'مختار' : 'Selected',
+    inCurrent: AR ? 'في جدولك' : 'In your timetable',
+    fixedCurrent: AR ? 'شعبة حالية مثبتة' : 'Current section fixed',
+    proposed: AR ? 'مقترح' : 'Proposed',
+    recommended: AR ? 'موصى به' : 'Recommended',
+    ready: AR ? 'جاهز للتخطيط' : 'Ready to plan',
+    blocked: AR ? 'متطلب سابق ناقص' : 'Missing prerequisite',
+    notOffered: AR ? 'لا توجد شُعب في البيانات الحالية' : 'No sections in current data',
+    missing: AR ? 'الناقص' : 'Missing',
+    days: AR ? 'أيام حضور' : 'Campus days',
+    earliest: AR ? 'أول محاضرة' : 'Earliest class',
+    latest: AR ? 'آخر محاضرة' : 'Latest class',
+    credits: AR ? 'ساعة' : 'credits',
+    details: AR ? 'تفاصيل المقررات والأوقات' : 'Course and time details',
+    copy: AR ? 'نسخ قائمة البوابة' : 'Copy portal checklist',
+    copied: AR ? 'نُسخت القائمة. لم يتم حفظ أو تسجيل أي شيء.' : 'Checklist copied. Nothing was saved or registered.',
+    copyFail: AR ? 'تعذّر النسخ تلقائيًا. حدّد القائمة وانسخها يدويًا.' : 'Automatic copy failed. Select and copy the checklist manually.',
+    option: AR ? 'الخيار' : 'Option',
+    coverage: AR ? 'تمت الجدولة' : 'Scheduled',
+    unscheduled: AR ? 'غير مجدول' : 'not scheduled',
+    complete: AR ? 'مكتمل' : 'Complete',
+    partial: AR ? 'جزئي' : 'Partial',
+    recordedTimesClear: AR ? 'لا تداخل بين الأوقات المسجّلة' : 'No overlap among recorded times',
+    optionMissing: AR ? 'لم يدخل في هذا الخيار' : 'Not placed in this option',
+    source: AR ? 'النوع' : 'Type',
+    hourUnit: AR ? 'ساعة' : 'credits',
+    course: AR ? 'المقرر' : 'Course',
+    section: AR ? 'الشعبة' : 'Section',
+    day: AR ? 'اليوم' : 'Day',
+    from: AR ? 'من' : 'From',
+    to: AR ? 'إلى' : 'To',
+    time: AR ? 'الوقت' : 'Time',
+    generated: AR ? 'تم إعداد خيارات مؤقتة على الشاشة.' : 'Temporary on-screen options are ready.',
+    none: AR ? 'لم يجد المخطط جدولًا كاملًا بهذه الاختيارات.' : 'The planner could not find a complete timetable for this selection.',
+    stale: AR ? 'تغيّر جدولك الحالي منذ بناء هذه الخيارات. أعد البناء لتحديثها.' : 'Your current timetable changed after these options were built. Build again to refresh them.',
+    expired: AR ? 'انتهت صلاحية مساحة التخطيط. افتح مخططًا جديدًا.' : 'This planning workspace expired. Open a new planner.',
+    freshWarning: AR
+      ? 'سيعرض النظام اقتراحًا قد يستخدم شُعبًا مختلفة عن شُعبك الحالية. لن يتغيّر تسجيلك الحقيقي.'
+      : 'The system may propose sections different from your current ones. Your real registration will not change.',
+    confirmReady: AR ? 'تم التأكيد. يمكنك الآن بناء الخيارات.' : 'Confirmed. You can now build the options.',
+    refreshPrompt: AR ? 'غيّرت اختيارك. اضغط «بناء خيارات الجدول» لعرض اقتراح جديد.' : 'Your selection changed. Build timetable options to see a new proposal.',
+    sun: AR ? 'الأحد' : 'Sun', mon: AR ? 'الاثنين' : 'Mon', tue: AR ? 'الثلاثاء' : 'Tue',
+    wed: AR ? 'الأربعاء' : 'Wed', thu: AR ? 'الخميس' : 'Thu', fri: AR ? 'الجمعة' : 'Fri', sat: AR ? 'السبت' : 'Sat',
+  };
+  const DAY_LABELS = { SUN: T.sun, MON: T.mon, TUE: T.tue, WED: T.wed, THU: T.thu, FRI: T.fri, SAT: T.sat };
+  let data = null;
+  let selectedCodes = [];
+  let fixedSections = {};
+  let filter = 'recommended';
+  let activeOptionIndex = 0;
   let confirmation = null;
   let busy = false;
-  let needsConfirmation = false;
-
-  /* Used only until the server has spoken. Kept identical to the server's wording
-     on purpose, and never preferred over it. */
-  const FALLBACK_WARNING =
-    'سيقترح النظام جدولًا جديدًا قد يتضمّن شُعبًا غير التي سجّلت فيها. لن يتغيّر تسجيلك الفعلي.';
 
   function csrf() {
-    const input = document.querySelector('[name=csrfmiddlewaretoken]');
-    if (input) return input.value;
-    const m = document.cookie.match(/(?:^|;\s*)csrftoken=([^;]+)/);
-    return m ? decodeURIComponent(m[1]) : '';
+    const token = document.querySelector('[name=csrfmiddlewaretoken]');
+    if (token) return token.value;
+    const match = document.cookie.match(/(?:^|;\s*)csrftoken=([^;]+)/);
+    return match ? decodeURIComponent(match[1]) : '';
   }
 
-  /* Never throws. `fetch` REJECTS on a dropped connection rather than resolving,
-     so an unguarded await would propagate out and skip the line that clears
-     `busy` — leaving the page permanently unable to do anything. */
   async function api(path, options) {
     try {
-      const res = await fetch(path, options);
+      const response = await fetch(path, Object.assign({ credentials: 'same-origin' }, options || {}));
       let body = null;
-      try { body = await res.json(); } catch (_) { body = null; }
-      /* A 200 with no body is a failure, not an empty success: it means something
-         between here and the view answered instead of the view. */
-      return { ok: res.ok && body !== null, status: res.status, body: body || {} };
+      try { body = await response.json(); } catch (_) { body = null; }
+      return { ok: response.ok && body !== null, status: response.status, body: body || {} };
     } catch (_) {
       return { ok: false, status: 0, body: {} };
     }
@@ -79,307 +118,505 @@
     });
   }
 
-  function say(text) { el.status.textContent = text || ''; }
-
+  function say(message) { els.status.textContent = message || ''; }
   function setBusy(state) {
     busy = state;
-    el.generate.disabled = state;
-    el.generate.setAttribute('aria-busy', state ? 'true' : 'false');
+    root.classList.toggle('is-busy', state);
+    els.generate.disabled = state || effectiveCodes().length === 0;
+    els.generate.setAttribute('aria-busy', state ? 'true' : 'false');
   }
-
-  /* Arabic counts three ways, not two: one, a pair, then 3-10, then 11+ reverts to
-     the singular. "6 ساعة معتمدة" and "تم إعداد 6 جدول" are both wrong. */
-  function plural(n, one, two, few) {
-    const count = Number(n) || 0;
-    if (count === 1) return one;
-    if (count === 2) return two;
-    if (count >= 3 && count <= 10) return count + ' ' + few;
-    return count + ' ' + one;
+  function node(tag, className, text) {
+    const item = document.createElement(tag);
+    if (className) item.className = className;
+    if (text != null) item.textContent = String(text);
+    return item;
   }
-
-  function text(tag, value, cls) {
-    const node = document.createElement(tag);
-    node.textContent = value == null ? '' : String(value);
-    if (cls) node.className = cls;
-    return node;
+  function ltr(value) { return '\u2066' + String(value == null ? '' : value) + '\u2069'; }
+  function bdi(value, className) {
+    const item = node('bdi', className, value);
+    item.dir = 'ltr';
+    return item;
   }
-
-  /* ── rendering ─────────────────────────────────────────────── */
-
-  function renderRequested(draft) {
-    el.requested.replaceChildren();
-    const rows = draft.requested || [];
-    el.requestedEmpty.hidden = rows.length > 0;
-    rows.forEach(function (row) {
-      const li = document.createElement('li');
-      li.className = 'sp-requested-item';
-      li.appendChild(text('span', row.course_code, 'sp-code'));
-      if (row.course_name) li.appendChild(text('span', row.course_name, 'sp-name'));
-      /* The distinction the student actually needs: which of these did I fix in
-         place, and which is the planner free to move? */
-      li.appendChild(text(
-        'span',
-        row.fixed_section_id ? 'شعبة محدَّدة' : 'يختارها المخطط',
-        row.fixed_section_id ? 'sp-tag sp-tag-fixed' : 'sp-tag sp-tag-auto'
-      ));
-      el.requested.appendChild(li);
+  function catalogByCode(code) {
+    return ((data && data.workspace && data.workspace.catalog) || [])
+      .find((row) => row.course_code === code);
+  }
+  function currentCourseMap() {
+    const map = new Map();
+    (((data || {}).workspace || {}).current_timetable || []).forEach((row) => {
+      const code = String(row.course_code || '').replace(/\s+/g, '').toUpperCase();
+      if (!code) return;
+      const existing = map.get(code) || { course_code: code, course_name: row.course_name || '', section: row.section || '', credits: Number(row.credits || 0) };
+      if (!existing.section && row.section) existing.section = row.section;
+      if (!existing.credits && row.credits) existing.credits = Number(row.credits || 0);
+      map.set(code, existing);
     });
+    return map;
+  }
+  function effectiveCodes() {
+    if (!els.keep.checked) return selectedCodes.slice();
+    return Array.from(new Set(selectedCodes.concat(Array.from(currentCourseMap().keys()))));
+  }
+  function selectedCredits() {
+    return effectiveCodes().reduce((sum, code) => {
+      const current = currentCourseMap().get(code);
+      return sum + Number((catalogByCode(code) || current || {}).credits || 0);
+    }, 0);
+  }
+  function renderWeek(host, meetings, emptyMessage) {
+    const blocks = (meetings || []).filter((meeting) => meeting.day && meeting.start && meeting.end);
+    const hasCurrent = blocks.some((meeting) => meeting.source === 'current');
+    const hasProposed = blocks.some((meeting) => meeting.source !== 'current');
+    window.StudentTimetable.render(host, blocks, {
+      lang: AR ? 'ar' : 'en',
+      dir: AR ? 'rtl' : 'ltr',
+      dayLabels: DAY_LABELS,
+      timeLabel: T.time,
+      emptyText: emptyMessage || '',
+      currentLabel: T.fixedCurrent,
+      proposedLabel: T.proposed,
+      showCourseName: true,
+      showSource: hasCurrent && hasProposed,
+    });
+  }
+
+  function renderCurrent(workspace) {
+    const rows = workspace.current_timetable || [];
+    const meetings = rows.filter((row) => row.day && row.start && row.end)
+      .map((row) => Object.assign({}, row, { source: 'current' }));
+    const courses = Array.from(currentCourseMap().values());
+    els.currentEmpty.hidden = courses.length > 0;
+    els.currentSummary.replaceChildren();
+    courses.forEach((course) => {
+      const chip = node('div', 'sp-current-chip');
+      chip.appendChild(bdi(course.course_code, 'sp-code'));
+      chip.appendChild(bdi(course.section || '—', 'sp-current-section'));
+      els.currentSummary.appendChild(chip);
+    });
+    els.currentDetails.hidden = meetings.length === 0;
+    if (meetings.length) renderWeek(els.currentGrid, meetings, '');
+  }
+
+  function statusLabel(course) {
+    if (course.status === 'blocked') return T.blocked;
+    if (course.status === 'offering_unknown') return T.notOffered;
+    return T.ready;
+  }
+
+  function renderCatalog() {
+    const search = String(els.search.value || '').trim().toLowerCase();
+    const catalog = ((data && data.workspace && data.workspace.catalog) || []).filter((course) => {
+      const haystack = (course.course_code + ' ' + course.course_name).toLowerCase();
+      if (search && !haystack.includes(search)) return false;
+      if (!search && filter === 'recommended' && !course.recommended) return false;
+      if (!search && filter === 'ready' && course.status !== 'ready') return false;
+      return true;
+    });
+    els.catalog.replaceChildren();
+    els.catalogEmpty.hidden = catalog.length > 0;
+    catalog.forEach((course) => {
+      const selected = effectiveCodes().includes(course.course_code);
+      const fixedCurrent = els.keep.checked && currentCourseMap().has(course.course_code);
+      const unavailable = course.status !== 'ready' && !selected;
+      const card = node('article', 'sp-course-card' + (selected ? ' is-selected' : '') + (unavailable ? ' is-disabled' : ''));
+      const main = node('div', 'sp-course-main');
+      const title = node('div', 'sp-course-title');
+      title.appendChild(bdi(course.course_code, 'sp-code'));
+      if (course.recommended) title.appendChild(node('span', 'sp-tag sp-tag-rec', T.recommended));
+      if (fixedCurrent) title.appendChild(node('span', 'sp-tag sp-tag-current', T.inCurrent));
+      main.appendChild(title);
+      main.appendChild(node('span', 'sp-name', course.course_name || ''));
+      const meta = node('div', 'sp-course-meta');
+      meta.appendChild(node('span', 'sp-tag ' + (course.status === 'ready' ? 'sp-tag-ready' : 'sp-tag-blocked'), statusLabel(course)));
+      meta.appendChild(node('span', 'sp-muted', String(course.credits || 0) + ' ' + T.credits));
+      if ((course.missing_prerequisites || []).length) {
+        meta.appendChild(node('span', 'sp-muted', T.missing + ': ' + course.missing_prerequisites.join(', ')));
+      }
+      main.appendChild(meta);
+      card.appendChild(main);
+      if (!fixedCurrent) {
+        const button = node('button', selected ? 'btn btn-sm btn-outline-danger' : 'btn btn-sm btn-outline-primary', selected ? T.remove : T.add);
+        button.type = 'button';
+        button.disabled = busy || unavailable;
+        button.addEventListener('click', () => toggleCourse(course.course_code));
+        card.appendChild(button);
+      }
+      els.catalog.appendChild(card);
+    });
+  }
+
+  function renderRequested() {
+    els.requested.replaceChildren();
+    const codes = effectiveCodes();
+    const current = currentCourseMap();
+    els.requestedEmpty.hidden = codes.length > 0;
+    codes.forEach((code) => {
+      const course = catalogByCode(code) || { course_code: code, course_name: '', sections: [] };
+      const fixedCurrent = els.keep.checked && current.has(code);
+      const currentSection = fixedCurrent ? String((current.get(code) || {}).section || '') : '';
+      const item = node('li', 'sp-requested-item');
+      const label = node('div', 'sp-requested-label');
+      const labelLine = node('div', 'sp-requested-title');
+      labelLine.appendChild(bdi(code, 'sp-code'));
+      if (fixedCurrent) labelLine.appendChild(node('span', 'sp-tag sp-tag-current', T.fixedCurrent));
+      label.appendChild(labelLine);
+      if (course.course_name) label.appendChild(node('span', 'sp-name', course.course_name));
+      item.appendChild(label);
+
+      const select = document.createElement('select');
+      select.className = 'form-select form-select-sm sp-section-select';
+      select.setAttribute('aria-label', (AR ? 'الشعبة المفضلة لمقرر ' : 'Preferred section for ') + code);
+      const any = document.createElement('option');
+      any.value = '';
+      any.textContent = T.anySection;
+      select.appendChild(any);
+      (course.sections || []).forEach((section) => {
+        const option = document.createElement('option');
+        option.value = String(section.id);
+        const times = (section.meetings || []).map((meeting) =>
+          (DAY_LABELS[meeting.day] || meeting.day) + ' ' + ltr(meeting.start + '–' + meeting.end)
+        ).join(' · ');
+        option.textContent = ltr(section.label) + (times ? ' — ' + times : '');
+        option.selected = fixedCurrent
+          ? String(section.label || '') === currentSection
+          : Number(fixedSections[code]) === Number(section.id);
+        select.appendChild(option);
+      });
+      select.disabled = busy || fixedCurrent || !(course.sections || []).length;
+      select.addEventListener('change', () => pinSection(code, select.value));
+      item.appendChild(select);
+
+      if (!fixedCurrent) {
+        const remove = node('button', 'btn btn-sm btn-link text-danger', T.remove);
+        remove.type = 'button';
+        remove.disabled = busy;
+        remove.addEventListener('click', () => toggleCourse(code));
+        item.appendChild(remove);
+      }
+      els.requested.appendChild(item);
+    });
+    els.courseCount.textContent = String(codes.length);
+    els.creditCount.textContent = String(selectedCredits());
+    els.generate.disabled = busy || codes.length === 0;
   }
 
   function renderUnplaced(unplaced) {
-    el.unplaced.replaceChildren();
-    el.unplacedNote.hidden = !unplaced.length;
-    unplaced.forEach(function (row) {
-      const li = document.createElement('li');
-      li.appendChild(text('span', row.course_code + (row.course_name ? ' — ' + row.course_name : ''), 'sp-code'));
-      if (row.reason) li.appendChild(text('span', row.reason, 'sp-reason'));
-      el.unplaced.appendChild(li);
+    els.unplaced.replaceChildren();
+    els.unplacedBox.hidden = !(unplaced || []).length;
+    (unplaced || []).forEach((row) => {
+      const item = node('li');
+      item.appendChild(bdi(row.course_code, 'sp-code'));
+      item.appendChild(node('span', 'sp-reason', (row.course_name ? ' — ' + row.course_name + ': ' : ': ') + (row.reason || '')));
+      els.unplaced.appendChild(item);
     });
   }
 
-  function renderOption(option, index) {
-    const card = document.createElement('article');
-    card.className = 'sp-option' + (option.selected ? ' sp-option-selected' : '');
+  function renderDetails(option, index) {
+    const details = document.createElement('details');
+    details.className = 'sp-option-details';
+    details.appendChild(node('summary', '', T.details));
+    const wrap = node('div', 'sp-grid-wrap');
+    wrap.tabIndex = 0;
+    const table = node('table', 'sp-grid');
+    const caption = node('caption', 'sp-visually-hidden', optionLabel(option, index));
+    table.appendChild(caption);
+    const head = document.createElement('thead');
+    const row = document.createElement('tr');
+    [T.course, T.section, T.day, T.from, T.to, T.source].forEach((label) => {
+      const th = node('th', '', label); th.scope = 'col'; row.appendChild(th);
+    });
+    head.appendChild(row); table.appendChild(head);
+    const body = document.createElement('tbody');
+    (option.meetings || []).forEach((meeting) => {
+      const tr = document.createElement('tr');
+      const courseCell = node('td');
+      courseCell.appendChild(bdi(meeting.course_code, 'sp-code'));
+      if (meeting.course_name) courseCell.appendChild(node('span', '', ' — ' + meeting.course_name));
+      tr.appendChild(courseCell);
+      tr.appendChild(bdiCell(meeting.section));
+      tr.appendChild(node('td', '', DAY_LABELS[meeting.day] || meeting.day));
+      tr.appendChild(bdiCell(meeting.start));
+      tr.appendChild(bdiCell(meeting.end));
+      tr.appendChild(node('td', '', meeting.source === 'current' ? T.inCurrent : T.proposed));
+      body.appendChild(tr);
+    });
+    table.appendChild(body); wrap.appendChild(table); details.appendChild(wrap);
+    return details;
+  }
 
-    const head = document.createElement('header');
-    const heading = text('h3', 'الخيار ' + (index + 1), 'h6');
+  function bdiCell(value) {
+    const cell = node('td');
+    cell.appendChild(bdi(value));
+    return cell;
+  }
+
+  function optionLabel(option, index) {
+    const names = (option.planner_options || []).filter(Boolean);
+    return names.length ? T.option + ' ' + names.join(' · ') : T.option + ' ' + (index + 1);
+  }
+
+  function coverage(option) {
+    const scheduled = Number(option.scheduled_courses != null ? option.scheduled_courses : (option.courses || []).length);
+    const target = Number(option.target_courses != null && option.target_courses > 0 ? option.target_courses : effectiveCodes().length);
+    return { scheduled: scheduled, target: target, complete: target > 0 && scheduled >= target };
+  }
+
+  function checklist(option) {
+    const lines = (option.courses || []).map((course) => course.course_code + ' — ' + course.section);
+    const heading = AR
+      ? 'قائمة نقل يدوية إلى بوابة الجامعة (ليست تسجيلًا):'
+      : 'Manual university-portal checklist (not a registration):';
+    return heading + '\n' + lines.join('\n');
+  }
+
+  async function copyChecklist(option, button) {
+    const value = checklist(option);
+    const originalLabel = button.textContent;
+    try {
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(value);
+      } else {
+        const area = document.createElement('textarea');
+        area.value = value; area.setAttribute('readonly', ''); area.className = 'sp-copy-buffer';
+        document.body.appendChild(area); area.select();
+        if (!document.execCommand('copy')) throw new Error('copy refused');
+        area.remove();
+      }
+      button.textContent = AR ? 'تم النسخ' : 'Copied';
+      say(T.copied);
+      setTimeout(() => { button.textContent = originalLabel; }, 1800);
+    } catch (_) {
+      say(T.copyFail + '\n' + value);
+    }
+  }
+
+  function appendOptionMissing(card, option) {
+    if (!(option.unplaced || []).length) return;
+    const box = node('div', 'sp-option-missing');
+    box.appendChild(node('strong', '', T.optionMissing));
+    const list = node('ul', 'sp-unplaced');
+    (option.unplaced || []).forEach((row) => {
+      const item = node('li');
+      item.appendChild(bdi(row.course_code, 'sp-code'));
+      item.appendChild(node('span', 'sp-reason', (row.course_name ? ' — ' + row.course_name + ': ' : ': ') + (row.reason || '')));
+      list.appendChild(item);
+    });
+    box.appendChild(list);
+    card.appendChild(box);
+  }
+
+  function renderOptionPreview(option, index) {
+    const card = node('article', 'sp-option sp-option-preview-card');
+    const header = node('header', 'sp-option-head');
+    const title = node('div');
+    const heading = node('h3', 'h6 mb-1', optionLabel(option, index));
     heading.id = 'spOption' + index;
     card.setAttribute('aria-labelledby', heading.id);
-    head.appendChild(heading);
-    head.appendChild(text('span', plural(option.credit_hours, 'ساعة معتمدة', 'ساعتان معتمدتان', 'ساعات معتمدة'), 'sp-muted'));
-    card.appendChild(head);
+    title.appendChild(heading);
+    const resultCoverage = coverage(option);
+    const coverageLine = node('div', 'sp-option-coverage');
+    coverageLine.appendChild(node('span', resultCoverage.complete ? 'sp-tag sp-tag-ready' : 'sp-tag sp-tag-warning', resultCoverage.complete ? T.complete : T.partial));
+    coverageLine.appendChild(node('span', 'sp-muted', T.coverage + ' ' + resultCoverage.scheduled + '/' + resultCoverage.target + ' · ' + String(option.credit_hours || 0) + ' ' + T.hourUnit));
+    title.appendChild(coverageLine);
+    header.appendChild(title);
+    const copy = node('button', 'btn btn-sm btn-outline-primary', T.copy + ' (' + resultCoverage.scheduled + '/' + resultCoverage.target + ')');
+    copy.type = 'button';
+    copy.addEventListener('click', () => copyChecklist(option, copy));
+    header.appendChild(copy);
+    card.appendChild(header);
 
-    /* The builder fills the term from the student's own plan, so an alternative
-       routinely holds courses they never named. Said out loud — a list that mixes
-       "what I asked for" with "what was added" and marks neither is a list the
-       student has to reverse-engineer. */
-    const added = (option.courses || []).filter(function (c) { return !c.requested; });
-    if (added.length) {
-      card.appendChild(text(
-        'p',
-        'أُضيفت من خطتك: ' + added.map(function (c) { return c.course_code; }).join('، '),
-        'sp-added'
-      ));
+    const facts = node('div', 'sp-option-facts');
+    [[T.days, option.days_on_campus], [T.earliest, ltr(option.earliest_start || '—')], [T.latest, ltr(option.latest_end || '—')]]
+      .forEach(([label, value]) => {
+        const fact = node('div'); fact.appendChild(node('span', '', label)); fact.appendChild(node('strong', '', value)); facts.appendChild(fact);
+      });
+    card.appendChild(facts);
+    const legend = node('div', 'sp-option-legend');
+    if ((option.meetings || []).some((meeting) => meeting.source === 'current')) {
+      legend.appendChild(node('span', 'sp-legend-current', T.fixedCurrent));
     }
-
-    /* Course, section, day, start, end. Nothing else: rooms, instructors and
-       enrolment counts are the institution's business, not this student's week. */
-    /* The scroll container is a WRAPPER, never the table. `display:block` on a
-       <table> drops its implicit table role, so the thead/th/td structure below is
-       announced as a flat run of text — no row or column navigation, no header
-       association. `tabindex` because a scrollable region a keyboard cannot reach
-       is content a keyboard cannot read. */
-    const wrap = document.createElement('div');
-    wrap.className = 'sp-grid-wrap';
-    wrap.tabIndex = 0;
-    wrap.setAttribute('role', 'group');
-    wrap.setAttribute('aria-label', 'جدول الخيار ' + (index + 1));
-
-    const table = document.createElement('table');
-    table.className = 'sp-grid';
-    const caption = text('caption', 'الخيار ' + (index + 1));
-    caption.className = 'sp-visually-hidden';
-    table.appendChild(caption);
-    const thead = document.createElement('thead');
-    const hrow = document.createElement('tr');
-    ['المقرر', 'الشعبة', 'اليوم', 'من', 'إلى'].forEach(function (label) {
-      const th = text('th', label);
-      th.setAttribute('scope', 'col');
-      hrow.appendChild(th);
-    });
-    thead.appendChild(hrow);
-    table.appendChild(thead);
-
-    const tbody = document.createElement('tbody');
-    (option.meetings || []).forEach(function (m) {
-      const tr = document.createElement('tr');
-      tr.appendChild(text('td', m.course_code + (m.course_name ? ' — ' + m.course_name : '')));
-      tr.appendChild(text('td', m.section));
-      tr.appendChild(text('td', m.day));
-      tr.appendChild(text('td', m.start));
-      tr.appendChild(text('td', m.end));
-      tbody.appendChild(tr);
-    });
-    table.appendChild(tbody);
-    wrap.appendChild(table);
-    card.appendChild(wrap);
-
-    const choose = document.createElement('button');
-    choose.type = 'button';
-    choose.className = option.selected ? 'btn btn-success btn-sm' : 'btn btn-outline-primary btn-sm';
-    choose.textContent = option.selected ? 'هذا خيارك المحفوظ' : 'احفظ هذا الجدول';
-    choose.disabled = !!option.selected;
-    choose.addEventListener('click', function () { select(option.key); });
-    card.appendChild(choose);
+    if ((option.meetings || []).some((meeting) => meeting.source !== 'current')) {
+      legend.appendChild(node('span', 'sp-legend-proposed', T.proposed));
+    }
+    legend.appendChild(node('span', 'sp-recorded-clear', T.recordedTimesClear));
+    card.appendChild(legend);
+    appendOptionMissing(card, option);
+    const grid = node('div', 'sp-week sp-option-week');
+    grid.tabIndex = 0;
+    renderWeek(grid, option.meetings || [], AR ? 'لا توجد أوقات لعرضها.' : 'No meeting times to show.');
+    card.appendChild(grid);
+    card.appendChild(node('p', 'sp-scroll-hint', AR ? 'مرّر أفقيًا لعرض بقية الأيام عند الحاجة.' : 'Scroll horizontally to see the remaining days when needed.'));
+    card.appendChild(renderDetails(option, index));
     return card;
   }
 
-  function render(data) {
-    const draft = data.draft || {};
-    renderRequested(draft);
-    renderUnplaced(data.unplaced || []);
-
-    /* Reflect the SERVER's toggle, not whatever the radio happened to be set to:
-       a failed edit must not leave the page claiming a choice the draft rejected. */
-    el.keep.checked = draft.keep_current_sections;
-    el.rebuild.checked = !draft.keep_current_sections;
-    needsConfirmation = !!draft.needs_confirmation;
-
-    const options = data.alternatives || [];
-    el.options.replaceChildren();
-    el.optionsEmpty.hidden = options.length > 0;
-    /* Three different nothings, and telling the student to press the button they
-       just pressed is only right for one of them. */
-    if (!options.length) {
-      el.optionsEmpty.textContent = !draft.has_current_generation
-        ? 'اضغط «اعرض الجداول الممكنة» لعرض الخيارات.'
-        : 'لا يوجد جدول ممكن بهذه المقررات. جرّب تعديل اختيارك.';
-    }
-    options.forEach(function (option, i) { el.options.appendChild(renderOption(option, i)); });
-
-    if (!draft.is_live) {
-      say('انتهت صلاحية هذا المخطط. ابدأ من جديد من قائمة مقرراتك.');
-      el.generate.disabled = true;
-    } else if (draft.is_stale) {
-      /* The timetables are still ON SCREEN — they were valid when built and the
-         student may still want to read them. What changes is that they are labelled
-         instead of quietly presented as current. */
-      say('تغيّرت شُعبك المسجّلة منذ إعداد هذه الجداول. اضغط «اعرض الجداول الممكنة» لتحديثها.');
-    }
+  function renderOptionChoice(option, index, options) {
+    const resultCoverage = coverage(option);
+    const button = node('button', 'sp-option-choice' + (index === activeOptionIndex ? ' is-active' : ''));
+    button.type = 'button';
+    button.setAttribute('aria-pressed', index === activeOptionIndex ? 'true' : 'false');
+    button.appendChild(node('strong', 'sp-option-choice-title', optionLabel(option, index)));
+    button.appendChild(node('span', resultCoverage.complete ? 'sp-tag sp-tag-ready' : 'sp-tag sp-tag-warning', resultCoverage.complete ? T.complete : T.partial));
+    button.appendChild(node('span', 'sp-option-choice-coverage', T.coverage + ' ' + resultCoverage.scheduled + '/' + resultCoverage.target));
+    button.appendChild(node('span', 'sp-muted', String(option.credit_hours || 0) + ' ' + T.hourUnit + ' · ' + String(option.days_on_campus || 0) + ' ' + T.days));
+    if ((option.unplaced || []).length) button.appendChild(node('span', 'sp-option-choice-missing', T.unscheduled + ' ' + option.unplaced.length));
+    button.addEventListener('click', () => {
+      activeOptionIndex = index;
+      renderOptions(options, false);
+    });
+    return button;
   }
 
-  /* ── actions ───────────────────────────────────────────────── */
-
-  async function load() {
-    /* Said while it is in flight. Without it the first paint is a heading over an
-       empty list with its own empty-state hidden — indistinguishable from a draft
-       with nothing in it. */
-    say('جارٍ تحميل مخططك…');
-    const res = await api(base, { headers: { Accept: 'application/json' } });
-    if (!res.ok) {
-      say((res.body.error || 'تعذّر تحميل المخطط.') + ' أعد تحميل الصفحة للمحاولة مرة أخرى.');
+  function renderOptions(options, resetActive) {
+    const rows = options || [];
+    if (resetActive !== false) activeOptionIndex = 0;
+    if (activeOptionIndex >= rows.length) activeOptionIndex = 0;
+    els.options.replaceChildren();
+    els.optionPreview.replaceChildren();
+    els.optionsEmpty.hidden = rows.length > 0;
+    if (!rows.length) {
+      els.optionsEmpty.textContent = data && data.draft && data.draft.has_current_generation
+        ? T.none
+        : (AR ? 'ابنِ الخيارات لعرض الجداول الممكنة هنا.' : 'Build options to see possible timetables here.');
       return;
     }
-    say('');
-    render(res.body);
+    rows.forEach((option, index) => els.options.appendChild(renderOptionChoice(option, index, rows)));
+    els.optionPreview.appendChild(renderOptionPreview(rows[activeOptionIndex], activeOptionIndex));
   }
 
-  /* Settled before it is sent. The two radios are one arrow-key group, so holding
-     ← or → auto-repeats through them — and every change used to POST `edit/`, which
-     spends the CONVERSATION budget the ADVISER CHAT also draws on. Thirty in ten
-     minutes, gone in two seconds of arrow-key, and the student's next question to
-     the adviser answers «لقد أرسلت طلبات كثيرة». */
-  let modeTimer = null;
-  let modeInFlight = false;
+  function render(payload) {
+    data = payload;
+    const draft = payload.draft || {};
+    const workspace = payload.workspace || {};
+    selectedCodes = (draft.requested || []).map((row) => row.course_code);
+    fixedSections = {};
+    (draft.requested || []).forEach((row) => { if (row.fixed_section_id) fixedSections[row.course_code] = row.fixed_section_id; });
+    els.term.textContent = draft.academic_year + '/' + draft.term;
+    els.term.dir = 'ltr';
+    els.creditCeiling.textContent = String(workspace.credit_ceiling || '—') + (workspace.credit_ceiling ? ' ' + T.hourUnit : '');
+    els.keep.checked = !!draft.keep_current_sections;
+    els.rebuild.checked = !draft.keep_current_sections;
+    renderCurrent(workspace);
+    renderCatalog();
+    renderRequested();
+    renderOptions(payload.alternatives || []);
+    renderUnplaced(payload.unplaced || []);
+    if (!draft.is_live) say(T.expired);
+    else if (draft.is_stale) say(T.stale);
+  }
 
-  function requestMode(keep) {
+  async function load() {
+    say(T.loading);
+    const result = await api(base, { headers: { Accept: 'application/json' } });
+    if (!result.ok) { say(result.body.error || T.loadFail); return; }
+    render(result.body); say('');
+  }
+
+  async function saveSelection(nextCodes, nextPins) {
+    if (busy) return false;
+    setBusy(true);
     confirmation = null;
-    el.confirm.hidden = true;
-    if (modeTimer) clearTimeout(modeTimer);
-    modeTimer = setTimeout(function () { modeTimer = null; setMode(keep); }, 400);
+    els.confirm.hidden = true;
+    const codes = Array.from(new Set(nextCodes || []));
+    const pins = Object.assign({}, nextPins || {});
+    if (els.keep.checked) {
+      currentCourseMap().forEach((_course, code) => {
+        if (!codes.includes(code)) codes.push(code);
+        delete pins[code];
+      });
+    }
+    const result = await post(base + 'edit/', {
+      course_codes: codes,
+      fixed_sections: pins,
+      keep_current_sections: els.keep.checked,
+    });
+    setBusy(false);
+    if (!result.ok) { say(result.body.error || T.editFail); await load(); return false; }
+    render(result.body); say(T.refreshPrompt); return true;
   }
 
-  async function setMode(keep) {
-    /* Any edit kills a confirmation the server has already invalidated. Holding on
-       to it here would only produce a 428 the student cannot explain. */
-    if (modeInFlight) return;
-    modeInFlight = true;
-    confirmation = null;
-    el.confirm.hidden = true;
-    const res = await post(base + 'edit/', { keep_current_sections: keep });
-    modeInFlight = false;
-    if (!res.ok) { say(res.body.error || 'تعذّر حفظ التغيير.'); await load(); return; }
-    render(res.body);
-    if (!keep) askConfirmation();
+  function toggleCourse(code) {
+    if (els.keep.checked && currentCourseMap().has(code)) return;
+    const next = selectedCodes.includes(code)
+      ? selectedCodes.filter((item) => item !== code)
+      : selectedCodes.concat([code]);
+    const pins = Object.assign({}, fixedSections);
+    if (!next.includes(code)) delete pins[code];
+    saveSelection(next, pins);
   }
 
-  function askConfirmation(serverWarning) {
-    /* The SERVER's sentence when there is one. It was being written into the box and
-       hidden in the same tick, so the wording the student agreed to was this file's
-       copy — which means changing the registrar's wording server-side would have
-       changed nothing on screen. */
-    el.confirmText.textContent = serverWarning || FALLBACK_WARNING;
-    el.confirm.hidden = false;
-    /* Announced and focused. Choosing the destructive option used to reveal a box
-       silently: a screen-reader user heard the radio change and nothing else, and
-       found out a confirmation was needed only by pressing the button and being
-       refused. */
-    say(el.confirmText.textContent);
-    el.confirmBtn.focus();
+  function pinSection(code, rawId) {
+    const pins = Object.assign({}, fixedSections);
+    if (rawId) pins[code] = Number(rawId); else delete pins[code];
+    saveSelection(selectedCodes.slice(), pins);
   }
 
-  async function confirmRebuild() {
-    const res = await post(base + 'confirm-rebuild/', {});
-    if (!res.ok) { say(res.body.error || 'تعذّر تأكيد إعادة البناء.'); return; }
-    confirmation = res.body.confirmation;
-    el.confirm.hidden = true;
-    el.generate.focus();
-    say('تم التأكيد. اضغط «اعرض الجداول الممكنة».');
+  async function changeMode(keep) {
+    if (busy) return;
+    setBusy(true); confirmation = null; els.confirm.hidden = true;
+    const codes = selectedCodes.slice();
+    const pins = Object.assign({}, fixedSections);
+    if (keep) {
+      currentCourseMap().forEach((_course, code) => {
+        if (!codes.includes(code)) codes.push(code);
+        delete pins[code];
+      });
+    }
+    const result = await post(base + 'edit/', {
+      course_codes: codes,
+      fixed_sections: pins,
+      keep_current_sections: keep,
+    });
+    setBusy(false);
+    if (!result.ok) { say(result.body.error || T.editFail); await load(); return; }
+    render(result.body);
+    if (!keep) askConfirmation(); else say(T.refreshPrompt);
+  }
+
+  function askConfirmation(serverText) {
+    els.confirmText.textContent = serverText || T.freshWarning;
+    els.confirm.hidden = false;
+    say(els.confirmText.textContent);
+    els.confirmBtn.focus();
+  }
+
+  async function confirmFresh() {
+    const result = await post(base + 'confirm-rebuild/', {});
+    if (!result.ok) { say(result.body.error || T.editFail); return; }
+    confirmation = result.body.confirmation;
+    els.confirm.hidden = true;
+    els.generate.focus();
+    say(T.confirmReady);
   }
 
   async function generate() {
     if (busy) return;
-    /* Ask BEFORE spending a generation. Posting first to discover the 428 worked,
-       but it billed a unit of the expensive budget for a request that never
-       reached the solver — two of the six a student gets in ten minutes, for one
-       rebuild. The server still refuses without a real token; this only avoids
-       walking into the refusal on purpose. */
-    /* The SERVER already said whether a confirmation is needed. Re-deriving it
-       from the radio would be a second implementation of a rule that arrived in
-       the response. */
-    if (needsConfirmation && !confirmation) { askConfirmation(); return; }
-
-    setBusy(true);
-    say('جارٍ إعداد الجداول…');
-    const res = await post(base + 'generate/', confirmation ? { confirmation: confirmation } : {});
-
-    if (res.status === 429) {
-      /* The server already worked out how long. Re-enabling the button and letting
-         the student hammer it would only spend the wait again. */
-      const wait = Number(res.body.retry_after) || 60;
-      say((res.body.error || 'لقد أرسلت طلبات كثيرة.') + ' حاول بعد ' + wait + ' ثانية.');
-      setTimeout(function () { setBusy(false); say(''); }, wait * 1000);
-      return;
-    }
+    if (!effectiveCodes().length) { say(T.chooseOne); return; }
+    if (els.rebuild.checked && !confirmation) { askConfirmation(); return; }
+    setBusy(true); say(T.building);
+    const result = await post(base + 'generate/', confirmation ? { confirmation: confirmation } : {});
     setBusy(false);
-
-    if (res.status === 428) {
-      /* The server, not this file, decided the confirmation was missing, stale or
-         spent. Ask again rather than guessing which. */
-      confirmation = null;
-      askConfirmation(res.body.error);
-      return;
-    }
-    if (!res.ok) { say(res.body.error || 'تعذّر إعداد الجداول.'); return; }
-
-    /* Single-use, and the server has now spent it. */
+    if (result.status === 428) { confirmation = null; askConfirmation(result.body.error); return; }
+    if (!result.ok) { say(result.body.error || T.buildFail); return; }
     confirmation = null;
-    render(res.body);
-    const count = (res.body.alternatives || []).length;
-    say(count
-      ? 'تم إعداد ' + plural(count, 'جدول واحد', 'جدولين', 'جداول') + '.'
-      : 'لا يوجد جدول ممكن بهذه المقررات. راجع أسباب التعذّر أعلاه.');
+    render(result.body);
+    say((result.body.alternatives || []).length ? T.generated : T.none);
   }
 
-  async function select(key) {
-    const res = await post(base + 'select/', { key: key });
-    if (!res.ok) { say(res.body.error || 'تعذّر حفظ اختيارك.'); return; }
-    render(res.body);
-    /* Said explicitly, every time. "Saved" beside a timetable reads as "registered"
-       unless the sentence says otherwise, and it is not. */
-    say(res.body.message || 'تم حفظ هذا الجدول كخيارك المفضل. لم يتم تسجيلك في أي مقرر.');
-  }
-
-  el.keep.addEventListener('change', function () { if (el.keep.checked) requestMode(true); });
-  el.rebuild.addEventListener('change', function () { if (el.rebuild.checked) requestMode(false); });
-  el.confirmBtn.addEventListener('click', confirmRebuild);
-  el.confirmCancel.addEventListener('click', function () {
-    el.confirm.hidden = true;
-    el.keep.checked = true;
-    el.keep.focus();
-    requestMode(true);
+  els.search.addEventListener('input', renderCatalog);
+  document.querySelectorAll('[data-sp-filter]').forEach((button) => {
+    button.addEventListener('click', () => {
+      filter = button.dataset.spFilter || 'all';
+      document.querySelectorAll('[data-sp-filter]').forEach((item) => item.classList.toggle('is-active', item === button));
+      renderCatalog();
+    });
   });
-  el.generate.addEventListener('click', generate);
-
+  els.keep.addEventListener('change', () => { if (els.keep.checked) changeMode(true); });
+  els.rebuild.addEventListener('change', () => { if (els.rebuild.checked) changeMode(false); });
+  els.confirmBtn.addEventListener('click', confirmFresh);
+  els.confirmCancel.addEventListener('click', () => {
+    els.confirm.hidden = true; els.keep.checked = true; els.keep.focus(); changeMode(true);
+  });
+  els.generate.addEventListener('click', generate);
   load();
 })();

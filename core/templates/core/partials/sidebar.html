@@ -2,7 +2,7 @@
 {% load i18n %}
 {% get_current_language as LANGUAGE_CODE %}
 
-<aside class="sidebar" aria-label="{% if LANGUAGE_CODE == 'ar' %}شريط التنقل الجانبي{% else %}Sidebar navigation{% endif %}">
+<aside class="sidebar" id="appSidebar" aria-label="{% if LANGUAGE_CODE == 'ar' %}شريط التنقل الجانبي{% else %}Sidebar navigation{% endif %}">
   <div class="side-decor side-decor-l" aria-hidden="true"></div>
   <!-- Logo area -->
   <div class="logo-area">
@@ -167,11 +167,15 @@
     </a>
     <a class="nav-a nav-link" href="{% url 'student_courses' %}" tabindex="0">
       <span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></span>
-      {% if LANGUAGE_CODE == 'ar' %}ماذا أستطيع أن أسجّل؟{% else %}What can I take?{% endif %}
+      {% if LANGUAGE_CODE == 'ar' %}ماذا أستطيع أن أدرس؟{% else %}What can I take?{% endif %}
     </a>
     <a class="nav-a nav-link" href="{% url 'student_graduation' %}" tabindex="0">
       <span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M22 10L12 5 2 10l10 5 10-5z"/><path d="M6 12v5c0 1 2.7 2.5 6 2.5s6-1.5 6-2.5v-5"/></svg></span>
       {% if LANGUAGE_CODE == 'ar' %}كم تبقّى للتخرج؟{% else %}How close to graduating?{% endif %}
+    </a>
+    <a class="nav-a nav-link" href="{% url 'student_timetable_start' %}" tabindex="0">
+      <span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="17" rx="2"/><path d="M8 2v4M16 2v4M3 10h18M8 14h3M13 14h3M8 18h3"/></svg></span>
+      {% if LANGUAGE_CODE == 'ar' %}ابنِ جدولًا مقترحًا{% else %}Build a timetable{% endif %}
     </a>
     <a class="nav-a nav-link" href="{% url 'student_advisor' %}" tabindex="0">
       <span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z"/><path d="M8 9h8M8 13h5"/></svg></span>
@@ -239,7 +243,11 @@
     const href = a.getAttribute('href');
     // Only match path-based links, skip hash links
     if (!href || href.startsWith('/#')) return;
-    if (path === href || path === href.replace(/\/$/, '')) {
+    const isStudentPlanner = path.startsWith('/student/planner/') && href === '/student/timetable/';
+    const isStudentCoursesSubpage = (
+      path === '/student/plan-map/' || path.startsWith('/student/courses/')
+    ) && href === '/student/courses/';
+    if (path === href || path === href.replace(/\/$/, '') || isStudentPlanner || isStudentCoursesSubpage) {
       a.classList.add('active');
     }
   });
@@ -259,7 +267,8 @@
   /* Create hamburger button */
   const toggle = document.createElement('button');
   toggle.className    = 'sidebar-toggle';
-  toggle.setAttribute('aria-label', 'Toggle navigation');
+  toggle.setAttribute('aria-label', '{% if LANGUAGE_CODE == "ar" %}فتح قائمة التنقل{% else %}Open navigation{% endif %}');
+  toggle.setAttribute('aria-controls', 'appSidebar');
   toggle.setAttribute('aria-expanded', 'false');
   toggle.innerHTML = `<span class="sidebar-toggle-icon">
     <span></span><span></span><span></span>
@@ -269,6 +278,7 @@
     sidebar.classList.add('sidebar-open');
     backdrop.classList.add('active');
     toggle.setAttribute('aria-expanded', 'true');
+    toggle.setAttribute('aria-label', '{% if LANGUAGE_CODE == "ar" %}إغلاق قائمة التنقل{% else %}Close navigation{% endif %}');
     document.body.style.overflow = 'hidden';
   }
 
@@ -276,6 +286,7 @@
     sidebar.classList.remove('sidebar-open');
     backdrop.classList.remove('active');
     toggle.setAttribute('aria-expanded', 'false');
+    toggle.setAttribute('aria-label', '{% if LANGUAGE_CODE == "ar" %}فتح قائمة التنقل{% else %}Open navigation{% endif %}');
     document.body.style.overflow = '';
   }
 

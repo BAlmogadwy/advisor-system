@@ -1,5 +1,7 @@
 """Student "what can I take / why is it locked" report + screen."""
 
+import re
+
 import pytest
 from django.contrib.auth.models import User
 from django.test import Client, override_settings
@@ -135,6 +137,40 @@ def test_passing_a_course_unlocks_the_next(plan):
     assert r["counts"]["passed"] == 1
 
 
+def test_excluding_a_studying_course_makes_it_not_taken_but_never_erases_a_pass(plan):
+    course = Course.objects.get(course_code="TA101")
+    StudentCourse.objects.update_or_create(
+        student_id=SID,
+        course=course,
+        defaults={"status": "studying", "programme_term": 1},
+    )
+
+    removed = build_unlock_report(
+        SID,
+        1448,
+        1,
+        additional_studying_codes={"TA101"},
+        excluded_studying_codes={"ta101"},
+    )
+
+    assert "TA101" in [row["code"] for row in removed["open_courses"]]
+    assert "TA101" not in [row["code"] for row in removed["in_progress"]]
+    beta = next(row for row in removed["locked_courses"] if row["code"] == "TB201")
+    assert beta["reasons"][0]["code"] == "TA101"
+
+    StudentCourse.objects.filter(student_id=SID, course=course).update(status="passed")
+    completed = build_unlock_report(
+        SID,
+        1448,
+        1,
+        additional_studying_codes={"TA101"},
+        excluded_studying_codes={"TA101"},
+    )
+
+    assert "TA101" in [row["code"] for row in completed["done"]]
+    assert "TB201" in [row["code"] for row in completed["open_courses"]]
+
+
 def test_top_blocker_is_the_course_that_frees_most(plan):
     r = _report()
     assert r["top_blocker"]["code"] == "TA101"  # frees B and C
@@ -168,12 +204,99 @@ def test_screen_renders_from_session_identity_only(plan):
 
 
 @override_settings(ALLOWED_HOSTS=["testserver"])
+def test_course_summary_renders_disjoint_progress_states(plan):
+    """The one-step count is part of locked, so peer tiles must use its remainder."""
+    u = student_otp.provision_student_user(SID)
+    c = Client()
+    c.force_login(u)
+
+    response = c.get("/student/courses/")
+    progress = response.context["progress"]
+    counts = response.context["report"]["counts"]
+    assert progress["one_step"] + progress["blocked_deeper"] == counts["locked"]
+
+    body = response.content.decode()
+    for state in ("passed", "open", "one-step", "blocked-deeper"):
+        assert f'data-course-state="{state}"' in body
+    assert 'data-course-state="locked"' not in body
+
+
+@override_settings(ALLOWED_HOSTS=["testserver"])
+def test_unlock_callout_distinguishes_direct_and_chain_impact(plan):
+    u = student_otp.provision_student_user(SID)
+    c = Client()
+    c.force_login(u)
+
+    body = c.get(reverse("student_courses"), headers={"accept-language": "ar"}).content.decode()
+    assert "أعلى أثر في سلسلة المتطلبات" in body
+    assert "يفتح مباشرةً <strong>1</strong>" in body
+    assert "سلسلة تضم <strong>2</strong>" in body
+    assert "أفضل خطوة تالية" not in body
+
+
+@override_settings(ALLOWED_HOSTS=["testserver"])
+def test_recommender_candidates_are_labelled_for_next_term(plan, monkeypatch):
+    real_builder = build_unlock_report
+
+    def with_a_next_term_candidate(*args, **kwargs):
+        report = real_builder(*args, **kwargs)
+        report["open_courses"][0]["fits_this_term"] = True
+        return report
+
+    monkeypatch.setattr("core.student_auth_views.build_unlock_report", with_a_next_term_candidate)
+    u = student_otp.provision_student_user(SID)
+    c = Client()
+    c.force_login(u)
+
+    body = c.get(reverse("student_courses"), headers={"accept-language": "ar"}).content.decode()
+    assert "مرشحة لخطة الفصل القادم" in body
+    assert "هذا الفصل" not in body
+
+
+@override_settings(ALLOWED_HOSTS=["testserver"])
 def test_staff_are_redirected_off_the_student_screen(plan):
     staff = User.objects.create_user(username="adv77", password="x", is_staff=True)
     set_user_scope(staff.id, advisor_id="A1")
     c = Client()
     c.force_login(staff)
     assert c.get("/student/courses/").status_code == 302
+
+
+@override_settings(ALLOWED_HOSTS=["testserver"])
+def test_course_screen_links_to_a_dedicated_plan_map(plan):
+    u = student_otp.provision_student_user(SID)
+    c = Client()
+    c.force_login(u)
+
+    body = c.get(reverse("student_courses")).content.decode()
+    assert reverse("student_plan_map") in body
+    assert 'id="scGraph"' not in body
+    assert "page-student-graph.js" not in body
+
+
+@override_settings(ALLOWED_HOSTS=["testserver"])
+def test_plan_map_uses_the_same_session_scoped_unlock_report(plan):
+    u = student_otp.provision_student_user(SID)
+    c = Client()
+    c.force_login(u)
+
+    r = c.get(f"{reverse('student_plan_map')}?student_id=4930002")
+    assert r.status_code == 200
+    assert r.context["student_id"] == SID
+    assert r.context["report"]["graph"] == build_unlock_report(SID, 1448, 1)["graph"]
+    body = r.content.decode()
+    assert 'id="scGraph"' in body
+    assert 'data-auto-render="true"' in body
+    assert "page-student-graph.js" in body
+
+
+@override_settings(ALLOWED_HOSTS=["testserver"])
+def test_staff_are_redirected_off_the_student_plan_map(plan):
+    staff = User.objects.create_user(username="map-staff", password="x", is_staff=True)
+    set_user_scope(staff.id, advisor_id="A1")
+    c = Client()
+    c.force_login(staff)
+    assert c.get(reverse("student_plan_map")).status_code == 302
 
 
 @override_settings(ALLOWED_HOSTS=["testserver"])
@@ -187,6 +310,20 @@ def test_screen_survives_a_builder_failure(plan, monkeypatch):
     c.force_login(u)
     r = c.get("/student/courses/")
     assert r.status_code == 200  # degrades, never 500s
+    assert r.context["report"] is None
+
+
+@override_settings(ALLOWED_HOSTS=["testserver"])
+def test_plan_map_survives_a_builder_failure(plan, monkeypatch):
+    monkeypatch.setattr(
+        "core.student_auth_views.build_unlock_report",
+        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")),
+    )
+    u = student_otp.provision_student_user(SID)
+    c = Client()
+    c.force_login(u)
+    r = c.get(reverse("student_plan_map"))
+    assert r.status_code == 200
     assert r.context["report"] is None
 
 
@@ -241,24 +378,324 @@ def test_graduation_progress_uses_the_plan_not_the_registrar_total(plan):
     assert g["remaining_courses"] == 4
 
 
-def test_graduation_floor_is_the_prerequisite_chain(plan):
+def test_graduation_lower_bound_keeps_the_prerequisite_chain(plan):
     """A -> B -> C cannot be done in fewer than 3 terms however many she takes."""
     from core.services.student_graduation import build_graduation_report
 
-    g = build_graduation_report(SID, 1448, 1, courses_per_term=99)
-    assert g["pace_terms"] == 1  # load alone would say one term
+    g = build_graduation_report(SID, 1448, 1, max_credits_per_term=99)
+    assert g["capacity_floor_terms_after_current"] == 1
     assert g["chain_floor_terms"] == 3  # but the chain forbids it
-    assert g["terms_estimate"] == 3  # the floor wins
+    assert g["lower_bound_additional_terms"] == 3
 
 
-def test_graduation_pace_wins_when_there_is_no_chain(plan):
+def test_graduation_credit_capacity_wins_when_there_is_no_chain(plan):
     from core.services.student_graduation import build_graduation_report
 
     Prerequisite.objects.filter(program=PROG).delete()  # everything independent
-    g = build_graduation_report(SID, 1448, 1, courses_per_term=2)
+    g = build_graduation_report(SID, 1448, 1, max_credits_per_term=6)
     assert g["chain_floor_terms"] == 1
-    assert g["pace_terms"] == 2  # 4 courses at 2 a term
-    assert g["terms_estimate"] == 2
+    assert g["capacity_floor_terms_after_current"] == 2
+    assert g["lower_bound_additional_terms"] == 2
+
+
+def test_stateful_recommender_rolls_passes_forward_without_writing(plan):
+    from core.services.recommender import recommend_next_courses_for_state
+
+    before = StudentCourse.objects.filter(student_id=SID).count()
+    first = recommend_next_courses_for_state(
+        SID, 1451, 1, passed=set(), effective_credits=100, max_credits=18
+    )
+    assert first == ["TA101"]
+
+    second = recommend_next_courses_for_state(
+        SID, 1452, 1, passed=set(first), effective_credits=103, max_credits=18
+    )
+    assert second == ["TB201"]
+
+    third = recommend_next_courses_for_state(
+        SID,
+        1453,
+        1,
+        passed=set(first + second),
+        effective_credits=106,
+        max_credits=18,
+    )
+    assert third == ["TC301", "TCAP"]
+    assert StudentCourse.objects.filter(student_id=SID).count() == before
+
+
+def test_stateful_recommender_respects_simulated_credit_hour_gate(plan):
+    from core.services.recommender import recommend_next_courses_for_state
+
+    passed = {"TA101", "TB201", "TC301"}
+    below = recommend_next_courses_for_state(
+        SID, 1453, 1, passed=passed, effective_credits=99, max_credits=18
+    )
+    at_gate = recommend_next_courses_for_state(
+        SID, 1453, 1, passed=passed, effective_credits=100, max_credits=18
+    )
+    assert "TCAP" not in below
+    assert "TCAP" in at_gate
+
+
+def test_graduation_uses_planner_courses_as_current_without_persisting_passes(plan):
+    from core.models import StudentTermSection, TermSection
+    from core.services.student_graduation import build_graduation_report
+
+    section = TermSection.objects.create(course_code="TA101", course_name="Alpha", section="M1")
+    StudentTermSection.objects.create(
+        student_id=SID,
+        academic_year="1448",
+        term="1",
+        term_section=section,
+    )
+    before_courses = StudentCourse.objects.filter(student_id=SID).count()
+    before_sections = StudentTermSection.objects.filter(student_id=SID).count()
+
+    g = build_graduation_report(SID, 1448, 1)
+
+    assert [course["code"] for course in g["current_courses_assumed_passed"]] == ["TA101"]
+    assert "TA101" in {course["code"] for course in g["in_progress"]}
+    assert all("TA101" not in planned_term["course_codes"] for planned_term in g["term_plan"])
+    assert g["registered_credits_now"] == 3
+    assert StudentCourse.objects.filter(student_id=SID).count() == before_courses
+    assert StudentTermSection.objects.filter(student_id=SID).count() == before_sections
+
+
+def test_every_simulated_term_respects_the_18_credit_cap(plan):
+    from core.services.student_graduation import build_graduation_report
+
+    g = build_graduation_report(SID, 1448, 1)
+    assert g["max_credits_per_term"] == 18
+    assert g["term_plan"]
+    assert all(planned_term["credits"] <= 18 for planned_term in g["term_plan"])
+
+
+def test_incomplete_simulation_returns_a_lower_bound_and_exact_blockers(plan):
+    from core.services.student_graduation import build_graduation_report
+
+    Prerequisite.objects.filter(program=PROG, course_code="TB201").update(
+        prerequisite_course_code="ZZ999"
+    )
+    g = build_graduation_report(SID, 1448, 1)
+
+    assert g["simulation_completed"] is False
+    assert g["estimated_additional_terms"] is None
+    assert g["estimated_terms_including_current"] is None
+    assert g["lower_bound_additional_terms"] >= 1
+    blocked = {row["code"]: row for row in g["unresolved_requirements"]}
+    assert blocked["TB201"]["missing_course_prerequisites"] == ["ZZ999"]
+    assert blocked["TB201"]["missing_prerequisites_outside_plan"] == ["ZZ999"]
+
+
+def _add_what_if_fixture_courses():
+    Course.objects.update_or_create(
+        course_code="TFILL",
+        defaults={"description": "Current Plan Course", "credit_hours": 3},
+    )
+    ProgrammeRequirement.objects.update_or_create(
+        program=PROG,
+        course_code="TFILL",
+        defaults={
+            "course_name": "Current Plan Course",
+            "programme_term": 1,
+            "credit_hours": 3,
+            "type": "Mandatory",
+        },
+    )
+    Course.objects.update_or_create(
+        course_code="TX999",
+        defaults={"description": "Outside Prerequisite", "credit_hours": 3},
+    )
+    Prerequisite.objects.filter(program=PROG, course_code="TC301").update(
+        prerequisite_course_code="TB201,TX999"
+    )
+
+
+def _map_current_courses(*codes: str):
+    from core.models import StudentTermSection, TermSection
+
+    for index, code in enumerate(codes, start=1):
+        section = TermSection.objects.create(
+            course_code=code,
+            course_name=Course.objects.get(course_code=code).description,
+            section=f"M{index}",
+        )
+        StudentTermSection.objects.create(
+            student_id=SID,
+            academic_year="1448",
+            term="1",
+            term_section=section,
+        )
+
+
+def test_current_term_replacement_rolls_into_graduation_without_database_writes(plan):
+    from core.models import StudentTermSection
+    from core.services.student_graduation import build_graduation_what_if
+
+    _add_what_if_fixture_courses()
+    _map_current_courses("TA101", "TFILL")
+    before_courses = list(
+        StudentCourse.objects.filter(student_id=SID).values_list("course__course_code", "status")
+    )
+    before_sections = StudentTermSection.objects.filter(student_id=SID).count()
+
+    g = build_graduation_what_if(
+        SID,
+        1448,
+        1,
+        remove_current_courses=["TFILL"],
+        add_current_courses=["TX999"],
+    )
+    what_if = g["what_if"]
+
+    assert what_if["valid"] is True
+    assert [row["code"] for row in what_if["removed_current_courses"]] == ["TFILL"]
+    assert [row["code"] for row in what_if["added_current_courses"]] == ["TX999"]
+    assert [row["code"] for row in what_if["outside_plan_additions"]] == ["TX999"]
+    assert what_if["comparison"]["timing_effect"] == "FORECAST_COMPLETED"
+    assert [row["code"] for row in what_if["comparison"]["blockers_resolved"]] == ["TC301"]
+    assert what_if["comparison"]["deferred_courses"][0]["code"] == "TFILL"
+    assert g["plan_courses_total"] == 5  # TX999 is not falsely counted as a plan course
+    assert g["registered_credits_now"] == 6
+    assert (
+        list(
+            StudentCourse.objects.filter(student_id=SID).values_list(
+                "course__course_code", "status"
+            )
+        )
+        == before_courses
+    )
+    assert StudentTermSection.objects.filter(student_id=SID).count() == before_sections
+
+
+def test_current_term_what_if_rejects_unknown_removals_and_credit_overload(plan):
+    from core.services.student_graduation import build_graduation_what_if
+
+    _map_current_courses("TA101")
+    Course.objects.update_or_create(
+        course_code="TBIG",
+        defaults={"description": "Too Large", "credit_hours": 19},
+    )
+    g = build_graduation_what_if(
+        SID,
+        1448,
+        1,
+        remove_current_courses=["NOTCURRENT"],
+        add_current_courses=["TBIG"],
+    )
+
+    assert g["what_if"]["valid"] is False
+    kinds = {error["kind"] for error in g["what_if"]["validation_errors"]}
+    assert "NOT_IN_CURRENT_TIMETABLE" in kinds
+    assert "SCENARIO_EXCEEDS_CREDIT_CAP" in kinds
+    assert g["what_if"]["scenario"] is None
+
+
+def test_replacement_search_finds_only_proven_academic_improvements(plan):
+    from core.services.student_graduation import build_graduation_what_if
+
+    _add_what_if_fixture_courses()
+    _map_current_courses("TA101", "TFILL")
+    g = build_graduation_what_if(
+        SID,
+        1448,
+        1,
+        search_better_replacements=True,
+    )
+    search = g["what_if"]
+
+    assert search["valid"] is True
+    assert "TX999" in search["candidate_courses_considered"]
+    assert search["pairs_evaluated"] > 0
+    assert search["search_truncated"] is False
+    assert search["improving_replacements"]
+    assert all(row["comparison"]["proven_improvement"] for row in search["improving_replacements"])
+    assert all(
+        row["comparison"]["timing_effect"] in {"EARLIER", "FORECAST_COMPLETED"}
+        for row in search["improving_replacements"]
+    )
+    assert any(
+        row["add_course"]["code"] == "TX999"
+        and row["comparison"]["timing_effect"] == "FORECAST_COMPLETED"
+        for row in search["improving_replacements"]
+    )
+
+
+def test_partial_blocker_progress_is_not_a_proven_replacement_improvement():
+    from core.services.student_graduation import _compare_reports
+
+    baseline = {
+        "simulation_completed": False,
+        "estimated_additional_terms": None,
+        "lower_bound_additional_terms": 5,
+        "registered_credits_now": 13,
+        "term_plan": [],
+        "unresolved_requirements": [
+            {
+                "code": "MATH471",
+                "missing_course_prerequisites": ["MATH204"],
+                "credit_hour_gate": None,
+            },
+            {
+                "code": "DS492",
+                "missing_course_prerequisites": [],
+                "credit_hour_gate": {"remaining": 7},
+            },
+        ],
+    }
+    scenario = {
+        "simulation_completed": False,
+        "estimated_additional_terms": None,
+        "lower_bound_additional_terms": 5,
+        "registered_credits_now": 13,
+        "term_plan": [],
+        "unresolved_requirements": [
+            {
+                "code": "DS492",
+                "missing_course_prerequisites": [],
+                "credit_hour_gate": {"remaining": 4},
+            }
+        ],
+    }
+
+    comparison = _compare_reports(baseline, scenario, ["DS225"])
+
+    assert comparison["timing_effect"] == "UNRESOLVED_IMPROVEMENT"
+    assert comparison["blocker_progress_only"] is True
+    assert comparison["proven_improvement"] is False
+    assert comparison["complete_forecast_improved"] is False
+    assert comparison["improvement_basis"] == "BLOCKER_PROGRESS_ONLY"
+
+
+def test_earlier_complete_forecast_is_a_proven_replacement_improvement():
+    from core.services.student_graduation import _compare_reports
+
+    baseline = {
+        "simulation_completed": True,
+        "estimated_additional_terms": 5,
+        "lower_bound_additional_terms": 5,
+        "registered_credits_now": 13,
+        "term_plan": [],
+        "unresolved_requirements": [],
+    }
+    scenario = {
+        "simulation_completed": True,
+        "estimated_additional_terms": 4,
+        "lower_bound_additional_terms": 4,
+        "registered_credits_now": 13,
+        "term_plan": [],
+        "unresolved_requirements": [],
+    }
+
+    comparison = _compare_reports(baseline, scenario, ["DS225"])
+
+    assert comparison["timing_effect"] == "EARLIER"
+    assert comparison["terms_saved"] == 1
+    assert comparison["blocker_progress_only"] is False
+    assert comparison["proven_improvement"] is True
+    assert comparison["complete_forecast_improved"] is True
+    assert comparison["improvement_basis"] == "COMPLETE_FORECAST"
 
 
 def test_graduation_surfaces_the_credit_hour_gate(plan):
@@ -284,6 +721,77 @@ def test_studying_courses_are_not_counted_as_finished(plan):
     assert g["plan_courses_passed"] == 0  # still has to pass it
     assert g["remaining_courses"] == 4
     assert len(g["in_progress"]) == 1
+
+
+def _render_arabic_graduation_page():
+    """Render the real student page through the session-scoped route."""
+    user = student_otp.provision_student_user(SID)
+    client = Client()
+    client.force_login(user)
+    response = client.get(
+        reverse("student_graduation"),
+        headers={"accept-language": "ar"},
+    )
+    assert response.status_code == 200
+    body = response.content.decode()
+    assert 'lang="ar"' in body, "Arabic assertions require the Arabic template branch"
+    return response, body
+
+
+@override_settings(ALLOWED_HOSTS=["testserver"])
+def test_incomplete_graduation_screen_promotes_the_verified_lower_bound(plan):
+    """An unresolved forecast has no estimate; its useful result is the lower bound.
+
+    The old screen gave the prerequisite-only floor a KPI, rendered the actual
+    lower bound in prose, and left the estimate as a dash. That made the weaker
+    number look like the answer to "how many terms?".
+    """
+    Prerequisite.objects.filter(program=PROG, course_code="TB201").update(
+        prerequisite_course_code="ZZ999"
+    )
+
+    response, body = _render_arabic_graduation_page()
+    grad = response.context["grad"]
+    assert grad["simulation_completed"] is False
+    assert grad["estimated_additional_terms"] is None
+    lower_bound = grad["lower_bound_additional_terms"]
+
+    assert 'data-grad-result="lower-bound"' in body
+    assert re.search(
+        rf'data-grad-result="lower-bound"[\s\S]{{0,800}}>\s*{lower_bound}\s*<',
+        body,
+    ), "the verified lower bound must be the promoted result, not buried in prose"
+
+
+@override_settings(ALLOWED_HOSTS=["testserver"])
+def test_graduation_screen_names_the_scenario_and_does_not_promise_registration(plan):
+    _response, body = _render_arabic_graduation_page()
+
+    assert "محاكاة لإكمال متطلبات الخطة" in body
+    assert "ليست موعدًا رسميًا للتخرج" in body
+    assert "18 ساعة/فصل رئيسي" in body
+    assert "ماذا أستطيع أن أسجّل الآن؟" not in body
+
+
+@override_settings(ALLOWED_HOSTS=["testserver"])
+def test_graduation_screen_lists_every_current_course_assumed_passed(plan):
+    _map_current_courses("TA101", "TCAP")
+
+    response, body = _render_arabic_graduation_page()
+    assumed = response.context["grad"]["current_courses_assumed_passed"]
+    assert {course["code"] for course in assumed} == {"TA101", "TCAP"}
+    for course in assumed:
+        assert course["code"] in body, (
+            f"{course['code']} affects the forecast but is absent from its visible assumptions"
+        )
+
+
+@override_settings(ALLOWED_HOSTS=["testserver"])
+def test_graduation_view_prepares_a_presentation_when_the_scenario_has_terms(plan):
+    response, _body = _render_arabic_graduation_page()
+
+    assert response.context["grad"]["term_plan"]
+    assert response.context["graduation_presentation"]
 
 
 @override_settings(ALLOWED_HOSTS=["testserver"])
@@ -347,42 +855,6 @@ def test_no_fallback_when_two_timetables_are_loaded(plan):
     assert r.context["timetable"] == []
     for ts in made:
         ts.delete()
-
-
-def test_weekly_grid_places_meetings_in_the_right_cells():
-    """Days down, time slots across — the timetable-workspace layout."""
-    from core.student_auth_views import _weekly_grid
-
-    days = [
-        {
-            "code": "MON",
-            "meetings": [
-                {"course_code": "A", "start_time": "09:00", "end_time": "10:15"},
-                {"course_code": "B", "start_time": "13:00", "end_time": "14:15"},
-            ],
-        },
-        {
-            "code": "WED",
-            "meetings": [
-                {"course_code": "C", "start_time": "13:00", "end_time": "14:15"},
-            ],
-        },
-    ]
-    g = _weekly_grid(days)
-    assert g["columns"] == 2  # two distinct slots only
-    assert [(s["start"], s["end"]) for s in g["slots"]] == [("09:00", "10:15"), ("13:00", "14:15")]
-    mon, wed = g["rows"]
-    assert [m["course_code"] for m in mon["cells"][0]] == ["A"]
-    assert [m["course_code"] for m in mon["cells"][1]] == ["B"]
-    assert wed["cells"][0] == []  # nothing at 09:00 on Wed
-    assert [m["course_code"] for m in wed["cells"][1]] == ["C"]
-
-
-def test_weekly_grid_is_empty_for_an_empty_week():
-    from core.student_auth_views import _weekly_grid
-
-    g = _weekly_grid([])
-    assert g == {"slots": [], "rows": [], "columns": 0}
 
 
 # ── the declared type decides what is an elective slot (issue #55) ──
@@ -613,7 +1085,7 @@ def test_the_chat_capability_explains_an_unknown_prerequisite(plan):
     out = _exec_my_progress(
         {}, {"role": ROLE_STUDENT, "student_id": SID}, {"academic_year": 1448, "term": 1}
     )
-    whys = [w for b in out["blocked"] for w in b["why"]]
+    whys = [w for b in out["prerequisite_blocked"] for w in b["why"]]
     assert whys, "nothing was blocked, so this proved nothing"
     for w in whys:
         assert "_" not in w, f"an internal token reached the answer: {w!r}"
@@ -671,13 +1143,12 @@ def test_the_open_list_does_not_tell_the_student_they_may_register(gs_plan):
         "the Arabic page rendered in English, so every Arabic assertion below is vacuous"
     )
     assert "تستطيع تسجيلها الآن" not in ar_body, "the registration-permission heading is back"
-    assert "مقررات متاحة لك" in ar_body
-    # The footnote is what carries the meaning; the heading must not outrun it.
-    assert "«متاحة» تعني أنك أنهيت كل ما يتطلبه المقرر" in ar_body
+    assert "مقررات مستوفية المتطلبات أكاديميًا" in ar_body
+    assert "هذه أهلية أكاديمية وليست إتاحة للتسجيل" in ar_body
 
     en_body = client.get(
         reverse("student_courses"), headers={"accept-language": "en"}
     ).content.decode()
     assert "You can take these now" not in en_body, "the English claim is still there"
-    assert "Open to you" in en_body
-    assert "“Open” means you have finished everything the course requires" in en_body
+    assert "Courses with requirements met" in en_body
+    assert "This is academic eligibility, not registration availability" in en_body

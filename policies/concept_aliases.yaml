@@ -35,11 +35,14 @@ concepts:
     # «يفصلوني على المدة» is a dismissal question AND a duration question; both
     # concepts must resolve so each record can be direct for the part it entails.
     aliases_ar: [المدة النظامية, تجاوزت المدة, مدة التخرج, كم سنة أدرس, ضعف المدة,
-                 المدة المسموحة للتخرج, على المدة, كم فصل أقعد, أقصى مدة]
+                 المدة المسموحة للتخرج, على المدة, كم فصل أقعد, أقصى مدة,
+                 تمديد مدة الدراسة, تمديد الدراسة, أحتاج تمديد, أتأخر عن المدة النظامية,
+                 التأخر عن المدة النظامية, كم ترم أتأخر]
 
   - topic: attendance
     concept_id: course_deprivation
-    aliases_ar: [الحرمان, محروم, حرموني, حرمان من الاختبار, منعوني من دخول الاختبار]
+    aliases_ar: [الحرمان, محروم, حرموني, حرمان من الاختبار, منعوني من دخول الاختبار,
+                 نسبة الغياب المسموح, كم نسبة الغياب المسموح]
 
   - topic: attendance
     concept_id: attendance_requirement
@@ -67,7 +70,8 @@ concepts:
 
   - topic: registration_process
     concept_id: registration_process
-    aliases_ar: [التسجيل, التسجيل المبكر, الحذف والإضافة, تعديل الجدول, الرغبات, متى يقفل التسجيل]
+    aliases_ar: [التسجيل, التسجيل المبكر, الحذف والإضافة, تعديل الجدول, الرغبات, متى يقفل التسجيل,
+                 أغير شعبة, تغيير شعبة, تعديل الشعبة, شعبة العملي]
 
   - topic: registration_process
     concept_id: advising_relationship

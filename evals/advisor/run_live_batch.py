@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 """Run real questions through the real adviser, then audit every answer.
 
-    python evals/advisor/run_live_batch.py [--n 24] [--seed 0] [--fallback]
+    python evals/advisor/run_live_batch.py [--n 24] [--seed 0] [--model MODEL] [--fallback]
 
 The six-question smoke test showed the runtime contract is operational. It is not
 evidence for any rate. This samples the eval set STRATIFIED and deliberately
@@ -44,15 +44,17 @@ django.setup()
 
 from django.conf import settings  # noqa: E402
 
+from core.models import Student  # noqa: E402
 from core.services.advisor_judge import (  # noqa: E402
     _DIMENSIONS,
     FAIL,
     judge_answer,
 )
 from core.services.advisor_principal import AdvisorPrincipal  # noqa: E402
-from core.services.local_llm import LocalLLMClient  # noqa: E402
+from core.services.llm_backend import get_llm_client  # noqa: E402
 from core.services.policy_store import get_policy_store  # noqa: E402
 from core.services.rbac import ROLE_STUDENT  # noqa: E402
+from core.services.student_advisor_v2 import answer_student_advisor_v2  # noqa: E402
 from core.services.virtual_advisor import (  # noqa: E402
     _bad_citations,
     _claimed_citations,
@@ -60,7 +62,8 @@ from core.services.virtual_advisor import (  # noqa: E402
 )
 
 HERE = pathlib.Path(__file__).resolve().parent
-STUDENT_ID = 3456782
+ROOT = pathlib.Path(__file__).resolve().parents[2]
+DEFAULT_STUDENT_ID = 4405019
 
 #: How many of each stratum. Oversampled toward risk, not toward volume.
 QUOTA = {
@@ -71,6 +74,9 @@ QUOTA = {
     "full": 3,
     "no_policy": 2,
 }
+AUTHORISATION_DIMENSIONS = frozenset(
+    {"policy_decision_authorisation", "personalised_conclusion_evidence"}
+)
 
 
 def stratify(store):
@@ -127,8 +133,27 @@ def student_evidence(result, agent):
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--n", type=int, default=None, help="cap the total (default: the quotas)")
+    ap.add_argument(
+        "--ids",
+        default="",
+        help="comma-separated question ids for an exact targeted run (overrides --n)",
+    )
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument(
+        "--model",
+        default="",
+        help=(
+            "override the answer model for this run without changing production settings; "
+            "the semantic judge continues to use the configured default model"
+        ),
+    )
     ap.add_argument("--fallback", action="store_true", help="force the single-shot path")
+    ap.add_argument(
+        "--student-id",
+        type=int,
+        default=int(os.environ.get("ADVISOR_EVAL_STUDENT_ID", DEFAULT_STUDENT_ID)),
+        help="real student fixture to evaluate (default: %(default)s)",
+    )
     ap.add_argument("--out", default=None)
     args = ap.parse_args()
 
@@ -141,33 +166,77 @@ def main() -> int:
 
     chosen: dict[int, tuple] = {}
     strata: dict[int, str] = {}
-    for name, quota in QUOTA.items():
-        pool = [x for x in buckets.get(name, []) if x[0] not in chosen]
-        for item in rng.sample(pool, min(quota, len(pool))):
-            chosen[item[0]] = item
-            strata[item[0]] = name
-    items = list(chosen.values())
-    if args.n:
-        items = items[: args.n]
+    if args.ids.strip():
+        try:
+            requested_ids = list(dict.fromkeys(int(value) for value in args.ids.split(",")))
+        except ValueError:
+            print("--ids must be comma-separated integers", file=sys.stderr)
+            return 2
+        by_id = {item[0]: item for bucket in buckets.values() for item in bucket}
+        missing_ids = [qid for qid in requested_ids if qid not in by_id]
+        if missing_ids:
+            print(f"unknown question ids: {missing_ids}", file=sys.stderr)
+            return 2
+        for qid in requested_ids:
+            chosen[qid] = by_id[qid]
+            strata[qid] = next(
+                name for name in QUOTA if any(item[0] == qid for item in buckets.get(name, []))
+            )
+        items = list(chosen.values())
+    else:
+        for name, quota in QUOTA.items():
+            pool = [x for x in buckets.get(name, []) if x[0] not in chosen]
+            for item in rng.sample(pool, min(quota, len(pool))):
+                chosen[item[0]] = item
+                strata[item[0]] = name
+        items = list(chosen.values())
+        if args.n:
+            items = items[: args.n]
 
-    print(f"path: {'single-shot fallback' if args.fallback else 'agent loop'}")
+    print(f"path: {'legacy single-shot fallback' if args.fallback else 'student adviser V2'}")
     print(
         f"{len(items)} questions: "
         + ", ".join(f"{k}={sum(1 for i in items if strata[i[0]] == k)}" for k in QUOTA)
     )
     print()
 
-    client = LocalLLMClient()
+    # Follow the configured backend. Production V2 currently uses Alibaba; the old
+    # LocalLLMClient was pinned to localhost and silently evaluated a different model.
+    client = get_llm_client()
+    answer_model = client.resolve_model(args.model or None)
+    judge_model = client.resolve_model()
     # The same identity object the runtime uses. The battery previously passed a
     # hand-built scope and no student id, reproducing exactly the defect being
     # measured — so every live number to date was produced with the student's own
     # record absent from the prompt. Re-baseline before comparing to older runs.
-    principal = AdvisorPrincipal(role=ROLE_STUDENT, student_id=STUDENT_ID)
+    if not Student.objects.filter(student_id=args.student_id).exists():
+        print(
+            f"student fixture {args.student_id} does not exist; pass --student-id for a real fixture",
+            file=sys.stderr,
+        )
+        return 2
+    print(f"student fixture: {args.student_id}")
+    print(f"answer model: {answer_model}")
+    print(f"judge model: {judge_model}")
+    principal = AdvisorPrincipal(role=ROLE_STUDENT, student_id=args.student_id)
     rows = []
     for n, (qid, text, entry) in enumerate(items, 1):
         started = time.perf_counter()
         try:
-            result = answer_virtual_advisor(question=text, principal=principal, client=client)
+            if args.fallback:
+                result = answer_virtual_advisor(
+                    question=text,
+                    principal=principal,
+                    model=answer_model,
+                    client=client,
+                )
+            else:
+                result = answer_student_advisor_v2(
+                    question=text,
+                    principal=principal,
+                    model=answer_model,
+                    llm_client=client,
+                )
         except Exception as exc:  # noqa: BLE001
             print(f"[{n:2d}/{len(items)}] q{qid} EXCEPTION {type(exc).__name__}: {exc}")
             continue
@@ -175,19 +244,17 @@ def main() -> int:
         answer = result.get("answer") or ""
         citations = result.get("citations") or []
         agent = result.get("agent") or {}
-        policies = [
-            p
-            for r in (agent.get("tool_results") or [])
-            if isinstance(r, dict) and r.get("tool") == "policy_lookup"
-            for p in (r.get("policies") or [])
-        ]
+        policies = []
+        for tool_result in agent.get("tool_results") or []:
+            if not isinstance(tool_result, dict) or tool_result.get("tool") != "policy_lookup":
+                continue
+            # Judge only evidence the applicability boundary allowed the adviser
+            # to see. ``policies`` is deliberately broad and includes adjacent
+            # or background records V2 must not use. The fallback preserves
+            # synthetic policy results that do not have applicability buckets.
+            direct = tool_result.get("direct_policy_evidence")
+            policies.extend(direct if direct is not None else (tool_result.get("policies") or []))
         facts = student_evidence(result, agent)
-        if not facts and len(answer) > 200:
-            # Loud, because a silently empty evidence set does not fail — it fails
-            # every student-fact claim in the answer and looks like a finding.
-            print(
-                f"  !! q{qid}: NO student evidence collected; judge verdicts unreliable", flush=True
-            )
         bad = _bad_citations(answer, citations)
         verdict = judge_answer(
             question=text,
@@ -197,11 +264,23 @@ def main() -> int:
             student_facts=facts,
             grounding_state=agent.get("policy_grounding"),
             client=client,
+            force=bool(entry.get("must_abstain")),
         )
+        if (
+            entry.get("capabilities")
+            and not facts
+            and verdict.get("student_fact_accuracy") not in {"N/A", None}
+        ):
+            # Loud only when the judge saw a student-fact claim. A policy-only
+            # explanation can correctly need no student tool evidence.
+            print(f"  !! q{qid}: student fact asserted with NO student evidence", flush=True)
         failed = [d for d in _DIMENSIONS if verdict.get(d) == FAIL]
         # Enough to reproduce the decision without re-running the model.
         row = {
             "question_id": qid,
+            "student_id": args.student_id,
+            "answer_model": answer_model,
+            "judge_model": judge_model,
             "stratum": strata[qid],
             "question": text,
             "answer_mode": entry["answer_mode"],
@@ -214,6 +293,7 @@ def main() -> int:
             "student_facts": facts,
             "citations_available": citations,
             "citations_emitted": _claimed_citations(answer),
+            "bad_citations": bad,
             "citation_validation": "PASS" if not bad else "FAIL",
             "deterministic_checks": verdict.get("deterministic_findings") or [],
             "judge_triggered": bool(verdict.get("semantic_review_triggered")),
@@ -222,6 +302,7 @@ def main() -> int:
             "initial_disposition": (
                 "CITATION_REFUSED" if agent.get("citation_refused") else "ANSWERED"
             ),
+            "citation_refused": bool(agent.get("citation_refused")),
             "retry_performed": bool(agent.get("citation_retry")),
             "retry_feedback": (agent.get("bad_citations") or [None])[0],
             "final_disposition": verdict.get("required_action"),
@@ -252,7 +333,14 @@ def main() -> int:
             flush=True,
         )
 
-    out = pathlib.Path(args.out or (HERE / "live_batch_results.json"))
+    default_out = (
+        ROOT
+        / "runtime"
+        / "evals"
+        / f"advisor_v2_{settings.LLM_BACKEND}_{time.strftime('%Y%m%d-%H%M%S')}.json"
+    )
+    out = pathlib.Path(args.out or default_out)
+    out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(rows, ensure_ascii=False, indent=2), encoding="utf-8")
 
     print("\n" + "=" * 78)
@@ -285,8 +373,10 @@ def main() -> int:
 
     abstain = [r for r in rows if r["must_abstain"]]
     if abstain:
-        spoke = [r for r in abstain if r["citations_emitted"]]
-        print(f"  must_abstain questions that cited a policy anyway: {len(spoke)}/{len(abstain)}")
+        unsafe = [r for r in abstain if AUTHORISATION_DIMENSIONS & set(r["failed_dimensions"])]
+        print(
+            f"  must_abstain questions with an unsafe personal decision: {len(unsafe)}/{len(abstain)}"
+        )
 
     # ── hard gates ────────────────────────────────────────────────
     #
@@ -315,16 +405,14 @@ def main() -> int:
     )
 
     abstain_rows = [r for r in rows if r["must_abstain"]]
-    spoke_anyway = [
-        r
-        for r in abstain_rows
-        if r["citations_emitted"] and r["final_disposition"] not in {"ABSTAIN", "ESCALATE"}
+    unsafe_abstentions = [
+        r for r in abstain_rows if AUTHORISATION_DIMENSIONS & set(r["failed_dimensions"])
     ]
     gates.append(
         (
-            "must_abstain: abstained or escalated",
-            f"{len(abstain_rows) - len(spoke_anyway)}/{len(abstain_rows)}",
-            not spoke_anyway,
+            "must_abstain: no unsupported personal decision",
+            f"{len(abstain_rows) - len(unsafe_abstentions)}/{len(abstain_rows)}",
+            not unsafe_abstentions,
         )
     )
 

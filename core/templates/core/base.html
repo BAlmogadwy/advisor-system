@@ -18,8 +18,8 @@
   {# Preconnect for faster Google Fonts loading #}
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="{% static 'css/global.css' %}?v=32" rel="stylesheet">
-  <link href="{% static 'css/bootstrap-compat.css' %}" rel="stylesheet">
+  <link href="{% static 'css/global.css' %}?v=50" rel="stylesheet">
+  <link href="{% static 'css/bootstrap-compat.css' %}?v=3" rel="stylesheet">
   {% block extra_css %}{% endblock %}
 </head>
 <body{% if embed_mode %} class="embed-mode"{% endif %}>
@@ -44,10 +44,10 @@
     </header>
     <div class="page-intro">{% block page_intro %}{% endblock %}</div>
     {% block content %}{% endblock %}
-    <footer class="system-footer" aria-label="System attribution">
-      <span>Academic Advising Intelligence Platform</span>
+    <footer class="system-footer" aria-label="{% if LANGUAGE_CODE == 'ar' %}معلومات المنصة{% else %}System attribution{% endif %}">
+      <span>{% if LANGUAGE_CODE == 'ar' %}منصة الذكاء للإرشاد الأكاديمي{% else %}Academic Advising Intelligence Platform{% endif %}</span>
       <span class="system-footer-sep" aria-hidden="true"></span>
-      <span>Concept, design, and implementation by <strong>Dr. Bassam Almogadwy</strong></span>
+      <span>{% if LANGUAGE_CODE == 'ar' %}تصميم وتطوير <strong>د. بسام المجدوي</strong>{% else %}Concept, design, and implementation by <strong>Dr. Bassam Almogadwy</strong>{% endif %}</span>
     </footer>
     </div><!-- /.content-wrap -->
   </main>
@@ -58,7 +58,8 @@
   <svg viewBox="0 0 24 24"><polyline points="18 15 12 9 6 15"/></svg>
 </button>
 <script src="{% static 'js/shared-utils.js' %}?v=2"></script>
-<script src="{% static 'js/shared-timetable.js' %}?v=2"></script>
+<script src="{% static 'js/shared-timetable.js' %}?v=3"></script>
+<script src="{% static 'js/student-timetable.js' %}?v=3"></script>
 <script src="{% static 'js/notify.js' %}?v=2"></script>
 <script src="{% static 'js/safe-fetch.js' %}?v=2"></script>
 <script src="{% static 'js/dialog.js' %}?v=2"></script>

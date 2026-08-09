@@ -234,7 +234,7 @@ def test_a_replayed_turn_costs_nothing_because_nothing_was_generated(client):
     limit, _ = rate_limit.LIMITS[GENERATION]
 
     advisor = mock.Mock(return_value=_fake_answer())
-    with mock.patch("core.services.virtual_advisor.answer_virtual_advisor", advisor):
+    with mock.patch("core.services.student_advisor_v2.answer_student_advisor", advisor):
         assert _post(client, url, body).status_code == 201
         for _ in range(limit * 2):
             assert _post(client, url, body).status_code == 200
@@ -269,7 +269,7 @@ def test_asking_too_many_questions_is_refused_with_a_wait(client):
     limit, _ = rate_limit.LIMITS[GENERATION]
 
     with mock.patch(
-        "core.services.virtual_advisor.answer_virtual_advisor", return_value=_fake_answer()
+        "core.services.student_advisor_v2.answer_student_advisor", return_value=_fake_answer()
     ):
         for i in range(limit):
             assert _post(client, url, {"message": f"سؤال {i}"}).status_code == 201
@@ -292,14 +292,14 @@ def test_retrying_draws_on_the_same_budget_as_asking(client):
     limit, _ = rate_limit.LIMITS[GENERATION]
 
     with mock.patch(
-        "core.services.virtual_advisor.answer_virtual_advisor",
+        "core.services.student_advisor_v2.answer_student_advisor",
         side_effect=RuntimeError("model down"),
     ):
         assert _post(client, url, {"message": "سؤال", "idempotency_key": "k"}).status_code == 503
 
     # Every retry of that one failed turn spends from the same allowance.
     with mock.patch(
-        "core.services.virtual_advisor.answer_virtual_advisor",
+        "core.services.student_advisor_v2.answer_student_advisor",
         side_effect=RuntimeError("model down"),
     ):
         for _ in range(limit - 1):
@@ -322,7 +322,7 @@ def test_creating_a_conversation_does_not_spend_the_budget_for_asking(client):
 
     statuses = []
     with mock.patch(
-        "core.services.virtual_advisor.answer_virtual_advisor", return_value=_fake_answer()
+        "core.services.student_advisor_v2.answer_student_advisor", return_value=_fake_answer()
     ):
         for i in range(limit):
             created = _post(client, create_url, {})

@@ -18,6 +18,7 @@ import hashlib
 import json
 import os
 import re
+import time
 from datetime import timedelta
 from unittest import mock
 
@@ -89,8 +90,8 @@ CITATION_OTHER_PAGE = {
 TWO_PAGE_ANSWER = WITHDRAWAL_ANSWER + " والحد الأدنى للعبء «ص 23 [TU.LOAD.SEMESTER_RANGE]»."
 
 
-def _reply(answer: str, citations: list[dict]) -> dict:
-    return {
+def _reply(answer: str, citations: list[dict], presentation=None) -> dict:
+    result = {
         "ok": True,
         "answer": answer,
         "model": "stub",
@@ -98,6 +99,9 @@ def _reply(answer: str, citations: list[dict]) -> dict:
         "cited_policy_ids": [c["policy_id"] for c in citations],
         "agent": {"loop_used": True, "policy_grounding": "retrieved"},
     }
+    if presentation is not None:
+        result["presentation"] = presentation
+    return result
 
 
 class AdvisorBrowserTests(StaticLiveServerTestCase):
@@ -166,11 +170,16 @@ class AdvisorBrowserTests(StaticLiveServerTestCase):
         answer: str = WITHDRAWAL_ANSWER,
         citations=None,
         question: str = "كم مرة؟",
+        presentation=None,
     ) -> None:
         """One completed turn, through the real endpoint."""
         with mock.patch(
-            "core.services.virtual_advisor.answer_virtual_advisor",
-            return_value=_reply(answer, citations if citations is not None else CITATIONS),
+            "core.services.student_advisor_v2.answer_student_advisor",
+            return_value=_reply(
+                answer,
+                citations if citations is not None else CITATIONS,
+                presentation=presentation,
+            ),
         ):
             response = self._client().post(
                 reverse("advisor_conversation_send", args=[conversation.id]),
@@ -191,19 +200,22 @@ class AdvisorBrowserTests(StaticLiveServerTestCase):
         self._turn(conversation, answer=answer, citations=citations)
         return conversation
 
-    # ── 1. a reload must not lose the conversation ──────────────
-    def test_reload_restores_the_conversation_from_the_database(self):
+    # ── 1. an explicit conversation URL survives a reload ──────
+    def test_conversation_url_reload_restores_the_conversation_from_the_database(self):
         page = self._page()
         with mock.patch(
-            "core.services.virtual_advisor.answer_virtual_advisor",
+            "core.services.student_advisor_v2.answer_student_advisor",
             return_value=_reply(WITHDRAWAL_ANSWER, CITATIONS),
         ):
             self._open(page)
             self._ask(page, "كم مرة أقدر أنسحب من مقرر؟")
+            page.wait_for_function("document.getElementById('saStatus').textContent === ''")
 
-        # Reload with NO query string: the bare URL is what a student types, and it
-        # used to render an empty thread beside a populated sidebar.
-        self._open(page)
+        # Sending writes ?c=<id> into the URL. A browser reload must retain that
+        # explicit thread even though a fresh visit to the bare adviser URL does not.
+        assert "?c=" in page.url
+        page.reload()
+        page.wait_for_load_state("networkidle")
         page.wait_for_selector(".va-message-assistant")
         assert page.locator(".va-message-user").count() == 1
         shown = page.locator(".va-message-assistant .sa-body").inner_text()
@@ -220,7 +232,7 @@ class AdvisorBrowserTests(StaticLiveServerTestCase):
     def test_retry_after_failure_does_not_create_a_second_question(self):
         page = self._page()
         with mock.patch(
-            "core.services.virtual_advisor.answer_virtual_advisor",
+            "core.services.student_advisor_v2.answer_student_advisor",
             side_effect=RuntimeError("model down"),
         ):
             self._open(page)
@@ -229,7 +241,7 @@ class AdvisorBrowserTests(StaticLiveServerTestCase):
             page.wait_for_selector(".sa-retry", timeout=15_000)
 
         with mock.patch(
-            "core.services.virtual_advisor.answer_virtual_advisor",
+            "core.services.student_advisor_v2.answer_student_advisor",
             return_value=_reply(WITHDRAWAL_ANSWER, CITATIONS),
         ):
             page.click(".sa-retry")
@@ -286,9 +298,11 @@ class AdvisorBrowserTests(StaticLiveServerTestCase):
 
     # ── 5. distinct references each get their own entry ─────────
     def test_multiple_distinct_citations_all_render(self):
-        self._seed(answer=TWO_PAGE_ANSWER, citations=[*CITATIONS, CITATION_OTHER_PAGE])
+        conversation = self._seed(
+            answer=TWO_PAGE_ANSWER, citations=[*CITATIONS, CITATION_OTHER_PAGE]
+        )
         page = self._page()
-        self._open(page)
+        self._open(page, f"?c={conversation.id}")
         page.wait_for_selector(".sa-citation")
         lines = page.locator(".sa-citation-text").all_inner_texts()
         assert len(lines) == 2, lines
@@ -299,7 +313,7 @@ class AdvisorBrowserTests(StaticLiveServerTestCase):
     def test_failed_turn_is_marked_and_offers_retry(self):
         page = self._page()
         with mock.patch(
-            "core.services.virtual_advisor.answer_virtual_advisor",
+            "core.services.student_advisor_v2.answer_student_advisor",
             side_effect=RuntimeError("model down"),
         ):
             self._open(page)
@@ -314,15 +328,16 @@ class AdvisorBrowserTests(StaticLiveServerTestCase):
 
         # And it survives a reload — a failure the student cannot come back to is a
         # lost question.
-        self._open(page)
+        page.reload()
+        page.wait_for_load_state("networkidle")
         page.wait_for_selector(".sa-retry")
         assert page.locator('.va-message-user[data-status="FAILED"]').count() == 1
 
     # ── 7. feedback survives a reload ───────────────────────────
     def test_feedback_persists_across_reload(self):
-        self._seed()
+        conversation = self._seed()
         page = self._page()
-        self._open(page)
+        self._open(page, f"?c={conversation.id}")
         page.wait_for_selector(".sa-feedback")
 
         # Asking why an answer was unhelpful before the student has said it was is
@@ -346,7 +361,8 @@ class AdvisorBrowserTests(StaticLiveServerTestCase):
         assert feedback.rating == AdvisorFeedback.NOT_HELPFUL
         assert feedback.reason_codes == ["answer_incorrect"]
 
-        self._open(page)
+        page.reload()
+        page.wait_for_load_state("networkidle")
         page.wait_for_selector(".sa-feedback")
         assert page.locator(".sa-fb-btn").nth(1).get_attribute("aria-pressed") == "true"
         # The negative half: marking BOTH buttons pressed would satisfy the line above.
@@ -376,7 +392,253 @@ class AdvisorBrowserTests(StaticLiveServerTestCase):
         assert "سؤال خاص" not in body
         assert page.locator(".va-message-user").count() == 0
 
-    # ── 9. Arabic reads right-to-left and fits a phone ──────────
+    # ── 9. timetable evidence is a visual, read-only chat artifact ──
+    def test_timetable_alternatives_render_as_responsive_read_only_cards(self):
+        presentation = {
+            "kind": "timetable_proposals",
+            "planning_term": "1448/1",
+            "mode": "from_scratch",
+            "can_save": True,  # the server normaliser must force this off
+            "current_sections": [
+                {
+                    "course_code": "AI221",
+                    "course_name": "Artificial Intelligence Programming",
+                    "section": "M1",
+                    "credits": 4,
+                    "meetings": ["SUN 16:00–17:40"],
+                }
+            ],
+            "alternatives": [
+                {
+                    "planner_options": ["A1", "B1", "C1"],
+                    "scheduled_courses": 1,
+                    "target_courses": 1,
+                    "total_credit_hours": 4,
+                    "courses": [
+                        {
+                            "course_code": "CS211",
+                            "course_name": "Algorithms and Data Structures",
+                            "section": "M2",
+                            "credits": 4,
+                        }
+                    ],
+                    "meetings": [
+                        {
+                            "course_code": "CS211",
+                            "course_name": "Algorithms and Data Structures",
+                            "section": "M2",
+                            "day": "MON",
+                            "start": "10:30",
+                            "end": "11:45",
+                        }
+                    ],
+                    "unplaced_courses": [],
+                },
+                {
+                    "planner_options": ["A2", "B2", "C2"],
+                    "scheduled_courses": 0,
+                    "target_courses": 1,
+                    "total_credit_hours": 0,
+                    "courses": [],
+                    "meetings": [],
+                    "unplaced_courses": [
+                        {
+                            "course_code": "CS211",
+                            "course_name": "Algorithms and Data Structures",
+                            "reason": "This variant did not place the course.",
+                        }
+                    ],
+                },
+            ],
+        }
+        conversation = AdvisorConversation.objects.create(student_id=MINE)
+        self._turn(
+            conversation,
+            answer="I found two Planner alternatives.",
+            citations=[],
+            question="Build a timetable from scratch",
+            presentation=presentation,
+        )
+        page = self._page(viewport={"width": 375, "height": 812})
+        self._open(page, f"?c={conversation.id}")
+        page.wait_for_selector(".sa-timetable")
+
+        card = page.locator(".sa-timetable")
+        assert card.get_attribute("aria-label") == "Timetable alternatives"
+        assert page.locator(".sa-tt-option").count() == 2
+        assert page.locator(".sa-tt-option").nth(0).get_attribute("open") is not None
+        assert "A1 / B1 / C1" in page.locator(".sa-tt-option-name").nth(0).inner_text()
+        assert "10:30–11:45" in page.locator(".sa-tt-option").nth(0).inner_text()
+        assert page.locator(".sa-timetable button").count() == 0
+        assert "Apply" not in card.inner_text()
+        assert "Save" not in card.inner_text()
+
+        page.locator(".sa-tt-option").nth(1).locator("summary").click()
+        assert (
+            "This variant did not place the course."
+            in page.locator(".sa-tt-option").nth(1).inner_text()
+        )
+
+        overflow = card.evaluate("node => node.scrollWidth - node.clientWidth")
+        assert overflow <= 1, f"the timetable card overflows by {overflow}px"
+
+    def test_current_only_timetable_explains_that_there_was_no_course_to_add(self):
+        conversation = AdvisorConversation.objects.create(student_id=MINE)
+        self._turn(
+            conversation,
+            answer="Your current timetable is retained.",
+            citations=[],
+            question="Build around my current sections",
+            presentation={
+                "kind": "timetable_proposals",
+                "planning_term": "1448/1",
+                "mode": "around_current",
+                "current_sections": [{"course_code": "AI113", "section": "M1"}],
+                "alternatives": [],
+                "no_additional_courses": True,
+            },
+        )
+        page = self._page()
+        self._open(page, f"?c={conversation.id}")
+        page.wait_for_selector(".sa-tt-no-additional-courses")
+
+        notice = page.locator(".sa-tt-no-additional-courses").inner_text()
+        assert "no requested or recommended additional course" in notice
+        assert page.locator(".sa-tt-option").count() == 0
+
+    def test_arabic_timetable_card_keeps_codes_and_times_left_to_right(self):
+        presentation = {
+            "kind": "timetable_proposals",
+            "planning_term": "1448/1",
+            "alternatives": [
+                {
+                    "planner_options": ["A1", "B1", "C1"],
+                    "scheduled_courses": 1,
+                    "target_courses": 1,
+                    "total_credit_hours": 4,
+                    "courses": [{"course_code": "CS211", "section": "M2", "credits": 4}],
+                    "meetings": [
+                        {
+                            "course_code": "CS211",
+                            "section": "M2",
+                            "day": "MON",
+                            "start": "10:30",
+                            "end": "11:45",
+                        }
+                    ],
+                    "unplaced_courses": [],
+                }
+            ],
+        }
+        conversation = AdvisorConversation.objects.create(student_id=MINE)
+        self._turn(
+            conversation,
+            answer="هذه خيارات المخطط.",
+            citations=[],
+            question="ابنِ لي جدولًا جديدًا من البداية",
+            presentation=presentation,
+        )
+        page = self._page(
+            viewport={"width": 375, "height": 812},
+            locale="ar",
+            extra_http_headers={"Accept-Language": "ar"},
+        )
+        page.context.add_cookies(
+            [{"name": "django_language", "value": "ar", "url": self.live_server_url}]
+        )
+        self._open(page, f"?c={conversation.id}")
+        page.wait_for_selector(".sa-timetable")
+
+        card = page.locator(".sa-timetable")
+        assert card.get_attribute("dir") == "rtl"
+        assert "خيار المخطط" in page.locator(".sa-tt-option-name").inner_text()
+        assert page.locator(".sa-tt-option-name bdi").get_attribute("dir") == "ltr"
+        assert page.locator(".sa-tt-time").get_attribute("dir") == "ltr"
+        assert page.locator(".sa-tt-time").inner_text() == "10:30–11:45"
+        assert card.evaluate("node => node.scrollWidth - node.clientWidth") <= 1
+
+    def test_graduation_scenario_renders_the_shared_tree_and_mobile_term_list(self):
+        conversation = AdvisorConversation.objects.create(student_id=MINE)
+        self._turn(
+            conversation,
+            answer="The scenario needs at least three terms and still has one unresolved requirement.",
+            citations=[],
+            question="How many terms until graduation?",
+            presentation={
+                "kind": "graduation_scenario",
+                "program": "DS2",
+                "planning_term": "1448/1",
+                "simulation_completed": False,
+                "lower_bound_terms_including_current": 3,
+                "max_credits_per_term": 18,
+                "band_labels": {
+                    "0": "Completed before the scenario",
+                    "1": "Current 1448/1",
+                    "2": "Projected 1448/2",
+                },
+                "graph": {
+                    "items": [
+                        {
+                            "course_code": "DS225",
+                            "prerequisite_course_code": "CS113",
+                        },
+                        {
+                            "course_code": "DS341",
+                            "prerequisite_course_code": "DS225",
+                        },
+                    ],
+                    "termOf": {"CS113": 0, "DS225": 1, "DS341": 2},
+                    "nameOf": {"DS341": "Data Governance"},
+                    "statusOf": {
+                        "CS113": "passed",
+                        "DS225": "studying",
+                        "DS341": "open",
+                    },
+                    "extraNodes": ["CS113", "DS225", "DS341"],
+                },
+                "unresolved_requirements": [
+                    {
+                        "code": "DS492",
+                        "name": "Graduation Project",
+                        "missing_prerequisites": ["MATH204"],
+                        "credit_hour_gate": {"required": 147, "remaining": 7},
+                    }
+                ],
+                "read_only": False,
+            },
+        )
+        page = self._page(viewport={"width": 1280, "height": 900})
+        self._open(page, f"?c={conversation.id}")
+        page.wait_for_selector(".sa-graduation-map .prereq-svg")
+
+        card = page.locator(".sa-graduation-map")
+        assert "Scenario path to plan completion" in card.inner_text()
+        assert "not a final graduation date" in card.inner_text()
+        assert page.locator(".sa-grad-toolbar .pg-mode").count() == 2
+        svg_text = page.locator(".prereq-svg").text_content()
+        assert "Current term 1448/1" in svg_text
+        assert "Projected term 1448/2" in svg_text
+        assert "DS492" in page.locator(".sa-grad-blockers").inner_text()
+        assert "MATH204" in page.locator(".sa-grad-blockers").inner_text()
+        assert "register courses" in card.inner_text()
+        assert page.locator(".sa-graduation-map button").count() == 3
+
+        expand = page.locator(".sa-grad-expand")
+        assert expand.get_attribute("aria-expanded") == "false"
+        expand.click()
+        assert card.evaluate("node => node.classList.contains('is-expanded')")
+        assert page.get_attribute("html", "class").find("sa-overlay-open") >= 0
+        page.keyboard.press("Escape")
+        assert expand.get_attribute("aria-expanded") == "false"
+        assert not card.evaluate("node => node.classList.contains('is-expanded')")
+
+        page.set_viewport_size({"width": 375, "height": 812})
+        assert page.locator(".sa-grad-mobile").is_visible()
+        assert not page.locator(".sa-grad-desktop").is_visible()
+        assert "DS341" in page.locator(".sa-grad-mobile").inner_text()
+        assert card.evaluate("node => node.scrollWidth - node.clientWidth") <= 1
+
+    # ── 10. Arabic reads right-to-left and fits a phone ─────────
     def test_arabic_rtl_layout_fits_a_phone_without_horizontal_scroll(self):
         conversation = self._seed()
         for _ in range(4):
@@ -389,7 +651,7 @@ class AdvisorBrowserTests(StaticLiveServerTestCase):
         page.context.add_cookies(
             [{"name": "django_language", "value": "ar", "url": self.live_server_url}]
         )
-        self._open(page)
+        self._open(page, f"?c={conversation.id}")
         page.wait_for_selector(".va-message-assistant")
 
         assert page.get_attribute("html", "dir") == "rtl"
@@ -430,6 +692,7 @@ class AdvisorBrowserTests(StaticLiveServerTestCase):
         assert metrics["scrolls"], "the message thread cannot scroll"
         assert metrics["thread"] > metrics["examples"], metrics
         assert metrics["composerBottom"] <= 812 + 1, metrics
+        assert 0 <= 812 - metrics["composerBottom"] <= 40, metrics
 
     # ── 15. the desktop thread scrolls inside itself ──
     def test_desktop_thread_scrolls_internally_with_the_composer_in_view(self):
@@ -446,7 +709,7 @@ class AdvisorBrowserTests(StaticLiveServerTestCase):
             self._turn(conversation)
 
         page = self._page(viewport={"width": 1280, "height": 800})
-        self._open(page)
+        self._open(page, f"?c={conversation.id}")
         page.wait_for_selector(".va-message-assistant")
 
         metrics = page.evaluate(
@@ -469,9 +732,106 @@ class AdvisorBrowserTests(StaticLiveServerTestCase):
         # handed a third of the screen and the thread is starved of it.
         assert metrics["composerHeight"] < 120, metrics
         assert metrics["composerBottom"] <= 801, metrics
+        assert 0 <= 800 - metrics["composerBottom"] <= 40, metrics
         # The suggestion chips are onboarding; once there is a conversation they are
         # clutter between the thread and the input.
         assert metrics["examplesShown"] is False
+
+        messages = page.locator(".va-messages")
+        messages.evaluate(
+            "node => { node.style.scrollBehavior = 'auto'; node.scrollTop = 0; "
+            "node.dispatchEvent(new Event('scroll')); }"
+        )
+        page.wait_for_function("() => !document.querySelector('#saJumpLatest').hidden")
+        assert page.locator("#saJumpLatest").is_visible()
+        page.locator("#saJumpLatest").click()
+        remaining = messages.evaluate(
+            "node => node.scrollHeight - node.clientHeight - node.scrollTop"
+        )
+        assert remaining <= 1
+
+    def test_bare_url_starts_new_and_keeps_history_in_the_drawer(self):
+        conversation = self._seed()
+        page = self._page(viewport={"width": 1280, "height": 800})
+        self._open(page)
+
+        assert page.locator("#main-content").get_attribute("data-page") == "student-advisor"
+        assert not page.locator(".page-header").is_visible()
+        assert not page.locator(".page-intro").is_visible()
+        assert page.locator("#saEmptyState").is_visible()
+        assert page.locator(".va-message-user").count() == 0
+        assert page.locator(".va-message-assistant").count() == 0
+        assert "?c=" not in page.url
+
+        drawer = page.locator("#saConversationDrawer")
+        toggle = page.locator("#saHistoryToggle")
+        assert drawer.get_attribute("aria-hidden") == "true"
+        assert toggle.get_attribute("aria-expanded") == "false"
+        toggle.click()
+        drawer.wait_for(state="visible")
+        assert drawer.locator(".sa-drawer-logout").is_visible()
+        assert drawer.locator(".sa-conv").count() == 1
+        assert drawer.locator(".sa-conv").get_attribute("aria-current") == "false"
+
+        drawer.locator(".sa-conv").click()
+        page.wait_for_selector(".va-message-assistant")
+        assert f"?c={conversation.id}" in page.url
+
+        page.locator("#saNewChat").click()
+        assert page.locator("#saEmptyState").is_visible()
+        examples = page.locator("#saExamples [data-sa-example]")
+        assert examples.count() == 6
+        prompts = examples.evaluate_all("nodes => nodes.map(node => node.dataset.saExample)")
+        assert prompts == [
+            "Approximately how many terms remain until I complete my degree plan?",
+            "Which courses can I take this term?",
+            "Build a proposed timetable around my current sections without clashes.",
+            "Does my current timetable have any clashes?",
+            "Can replacing a current course improve my graduation plan?",
+            "How many times may I withdraw from a course?",
+        ]
+        assert "?c=" not in page.url
+
+        composer = page.locator("#saQuestion")
+        assert composer.evaluate("node => node.tagName") == "TEXTAREA"
+        examples.nth(2).click()
+        assert composer.input_value() == prompts[2]
+        initial_height = composer.bounding_box()["height"]
+        composer.fill("First line\nSecond line\nThird line")
+        assert composer.bounding_box()["height"] > initial_height
+
+    def test_new_answer_thinks_then_reveals_prose_before_evidence(self):
+        page = self._page(viewport={"width": 1280, "height": 800})
+        page.add_init_script("window.__SA_FORCE_PROGRESSIVE_REVEAL__ = true")
+        long_answer = "\n\n".join([WITHDRAWAL_ANSWER] * 8)
+
+        def slow_answer(*args, **kwargs):
+            time.sleep(0.35)
+            return _reply(long_answer, CITATIONS)
+
+        with mock.patch(
+            "core.services.student_advisor_v2.answer_student_advisor",
+            side_effect=slow_answer,
+        ):
+            self._open(page)
+            page.fill("#saQuestion", "How many times may I withdraw from a course?")
+            page.click("#saSend")
+
+            thinking = page.locator("#saThinkingMessage")
+            thinking.wait_for(state="visible")
+            assert thinking.locator(".sa-thinking-dots > span").count() == 3
+
+            page.wait_for_selector(".va-message-assistant.is-revealing", timeout=15_000)
+            answer = page.locator(".va-message-assistant.is-revealing")
+            partial = answer.locator(".sa-body").inner_text()
+            assert partial.strip()
+            assert len(partial) < len(long_answer)
+            assert not answer.locator(".sa-citations").is_visible()
+
+            page.wait_for_function("() => !document.querySelector('.is-revealing')")
+            completed = page.locator(".va-message-assistant")
+            assert len(completed.locator(".sa-body").inner_text()) > len(partial)
+            assert completed.locator(".sa-citations").is_visible()
 
     # ── 16. a turn abandoned mid-generation is recoverable ──
     def test_an_abandoned_turn_can_be_retried_from_the_screen(self):
@@ -500,7 +860,7 @@ class AdvisorBrowserTests(StaticLiveServerTestCase):
         page.wait_for_selector(".sa-retry")
 
         with mock.patch(
-            "core.services.virtual_advisor.answer_virtual_advisor",
+            "core.services.student_advisor_v2.answer_student_advisor",
             return_value=_reply(WITHDRAWAL_ANSWER, CITATIONS),
         ):
             page.click(".sa-retry")
@@ -568,9 +928,9 @@ class AdvisorBrowserTests(StaticLiveServerTestCase):
         A multi-line one is not parsed as a comment at all — it renders into the
         student's conversation thread as literal template source.
         """
-        self._seed()
+        conversation = self._seed()
         page = self._page()
-        self._open(page)
+        self._open(page, f"?c={conversation.id}")
         page.wait_for_selector(".va-message-assistant")
         body = page.locator("body").inner_text()
         for token in ("{#", "#}", "{%", "%}"):
@@ -589,9 +949,9 @@ class AdvisorBrowserTests(StaticLiveServerTestCase):
             "ويمكنك إعادة [CS101] لاحقًا «الدليل الإرشادي للطالب والطالبة، ص 24 "
             "[TU.WITHDRAWAL.MAXIMUM]»."
         )
-        self._seed(answer=answer, citations=CITATIONS[:1])
+        conversation = self._seed(answer=answer, citations=CITATIONS[:1])
         page = self._page()
-        self._open(page)
+        self._open(page, f"?c={conversation.id}")
         page.wait_for_selector(".va-message-assistant")
 
         shown = page.locator(".va-message-assistant .sa-body").inner_text()
@@ -610,7 +970,7 @@ class AdvisorBrowserTests(StaticLiveServerTestCase):
         """
         page = self._page()
         with mock.patch(
-            "core.services.virtual_advisor.answer_virtual_advisor",
+            "core.services.student_advisor_v2.answer_student_advisor",
             side_effect=RuntimeError("model down"),
         ):
             self._open(page)
@@ -625,11 +985,12 @@ class AdvisorBrowserTests(StaticLiveServerTestCase):
         # Reload first. A key remembered only in page memory does not survive one,
         # so this is where a client-invented key mints a fresh one and asks the
         # question a second time instead of resuming it.
-        self._open(page)
+        page.reload()
+        page.wait_for_load_state("networkidle")
         page.wait_for_selector(".sa-retry")
 
         with mock.patch(
-            "core.services.virtual_advisor.answer_virtual_advisor",
+            "core.services.student_advisor_v2.answer_student_advisor",
             return_value=_reply(WITHDRAWAL_ANSWER, CITATIONS),
         ):
             page.locator(".sa-retry").first.click()  # the OLDER turn
@@ -675,9 +1036,9 @@ class AdvisorBrowserTests(StaticLiveServerTestCase):
         sentence is not misaligned, it is unreadable. And only for students who
         chose the English interface, which is why it survived.
         """
-        self._seed()
+        conversation = self._seed()
         page = self._page()
-        self._open(page)
+        self._open(page, f"?c={conversation.id}")
         page.wait_for_selector(".va-message-assistant")
 
         # The page really is LTR: without that, this test proves nothing.
@@ -696,7 +1057,7 @@ class AdvisorBrowserTests(StaticLiveServerTestCase):
 
     def test_the_models_markdown_is_rendered_not_printed(self):
         """`**bold**` and `* item` were reaching the student as literal asterisks."""
-        self._seed(
+        conversation = self._seed(
             answer=(
                 "بناءً على البيانات المتاحة:\n"
                 "* **المقرر:** DS341\n"
@@ -707,7 +1068,7 @@ class AdvisorBrowserTests(StaticLiveServerTestCase):
             citations=[],
         )
         page = self._page()
-        self._open(page)
+        self._open(page, f"?c={conversation.id}")
         page.wait_for_selector(".va-message-assistant")
 
         body = page.locator(".va-message-assistant .sa-body")
@@ -727,12 +1088,12 @@ class AdvisorBrowserTests(StaticLiveServerTestCase):
 
     def test_an_answer_cannot_smuggle_markup_into_the_page(self):
         """Rendered with createElement/createTextNode only — never innerHTML."""
-        self._seed(
+        conversation = self._seed(
             answer="<img src=x onerror=alert(1)> **<b>bold</b>**",
             citations=[],
         )
         page = self._page()
-        self._open(page)
+        self._open(page, f"?c={conversation.id}")
         page.wait_for_selector(".va-message-assistant")
 
         body = page.locator(".va-message-assistant .sa-body")
@@ -742,9 +1103,9 @@ class AdvisorBrowserTests(StaticLiveServerTestCase):
 
     # ── 10. reachable by keyboard, describable by a screen reader ──
     def test_keyboard_and_screen_reader_affordances(self):
-        self._seed()
+        conversation = self._seed()
         page = self._page()
-        self._open(page)
+        self._open(page, f"?c={conversation.id}")
         page.wait_for_selector(".sa-feedback")
 
         assert page.locator("label[for='saQuestion']").count() == 1

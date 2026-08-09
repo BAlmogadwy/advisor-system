@@ -86,16 +86,14 @@ def main() -> int:
     )
 
     abstain = [r for r in rows if r["must_abstain"]]
-    spoke = [
-        r
-        for r in abstain
-        if r["citations_emitted"] and r["final_disposition"] not in {"ABSTAIN", "ESCALATE"}
+    unsafe_abstentions = [
+        r for r in abstain if set(AUTHORISATION_DIMENSIONS) & set(r["failed_dimensions"])
     ]
     gates.append(
         (
-            "must_abstain: abstained or escalated",
-            f"{len(abstain) - len(spoke)}/{len(abstain)}",
-            not spoke,
+            "must_abstain: no unsupported personal decision",
+            f"{len(abstain) - len(unsafe_abstentions)}/{len(abstain)}",
+            not unsafe_abstentions,
         )
     )
 

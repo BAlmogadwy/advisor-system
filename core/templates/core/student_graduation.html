@@ -1,5 +1,5 @@
 {% extends "core/base.html" %}
-{% load i18n %}{% get_current_language as LANGUAGE_CODE %}
+{% load static i18n %}{% get_current_language as LANGUAGE_CODE %}
 
 {% block title %}{% if LANGUAGE_CODE == 'ar' %}كم تبقّى للتخرج؟{% else %}How close am I to graduating?{% endif %}{% endblock %}
 
@@ -12,104 +12,264 @@
 {% endblock %}
 
 {% block page_intro %}
-  <p class="mb-0">{% if LANGUAGE_CODE == 'ar' %}تقدّمك في الخطة، وكم يتبقّى — وما المؤكّد منه وما هو تقدير.{% else %}Your progress through the plan, and how much is left — separating what is certain from what is an estimate.{% endif %}</p>
+  <p class="mb-0">{% if LANGUAGE_CODE == 'ar' %}تقدّمك في متطلبات الخطة، والمسار الذي تستطيع المحاكاة بناءه انطلاقًا من جدولك الحالي.{% else %}Your degree-plan progress and the path the simulation can build from your current timetable.{% endif %}</p>
 {% endblock %}
 
 {% block content %}
 {% if grad %}
 
-{# ── progress through the plan ── #}
-<div class="card p-3 mb-3">
-  <h6 class="mb-2">{% if LANGUAGE_CODE == 'ar' %}تقدّمك في الخطة{% else %}Your progress{% endif %}</h6>
+<section class="card p-3 mb-3 student-grad-progress" aria-labelledby="student-grad-progress-title">
+  <h2 class="student-section-title" id="student-grad-progress-title">{% if LANGUAGE_CODE == 'ar' %}نسبة مقررات الخطة المجتازة{% else %}Plan courses passed{% endif %}</h2>
 
-  <div class="d-flex align-items-center gap-2 mb-2">
-    <strong dir="ltr" style="font-size:1.6rem">{{ grad.percent_courses }}%</strong>
-    <div class="cr-bar flex-grow-1">
-      <div class="cr-track">
-        <div class="cr-fill" style="width:{{ grad.percent_courses }}%"></div>
-      </div>
+  <div class="student-grad-progress-head">
+    <div class="student-grad-progress-value">
+      <strong dir="ltr">{{ grad.percent_courses }}%</strong>
+      <span>{% if LANGUAGE_CODE == 'ar' %}بحسب عدد مقررات الخطة{% else %}by plan-course count{% endif %}</span>
     </div>
-  </div>
-  <p class="mb-2">
-    {% if LANGUAGE_CODE == 'ar' %}
-      أنهيت <strong>{{ grad.plan_courses_passed }}</strong> من <strong>{{ grad.plan_courses_total }}</strong> مقررًا في خطتك.
-    {% else %}
-      You have finished <strong>{{ grad.plan_courses_passed }}</strong> of the <strong>{{ grad.plan_courses_total }}</strong> courses in your plan.
-    {% endif %}
-  </p>
-
-  <div class="row g-2">
-    <div class="col-md-3"><div class="kpi"><div class="k">{% if LANGUAGE_CODE == 'ar' %}مقررات متبقية{% else %}Courses left{% endif %}</div><div class="v">{{ grad.remaining_courses }}</div></div></div>
-    <div class="col-md-3"><div class="kpi"><div class="k">{% if LANGUAGE_CODE == 'ar' %}ساعات متبقية (الخطة){% else %}Credits left (plan){% endif %}</div><div class="v">{{ grad.remaining_credits }}</div></div></div>
-    <div class="col-md-3"><div class="kpi"><div class="k">{% if LANGUAGE_CODE == 'ar' %}ساعات مكتسبة (السجل){% else %}Credits earned (registrar){% endif %}</div><div class="v">{{ grad.earned_credits_registrar }}</div></div></div>
-    <div class="col-md-3"><div class="kpi"><div class="k">{% if LANGUAGE_CODE == 'ar' %}المعدل{% else %}GPA{% endif %}</div><div class="v">{{ grad.gpa|default_if_none:"—" }}</div></div></div>
-  </div>
-
-  <p class="small text-secondary mb-0 mt-2">
-    {% if LANGUAGE_CODE == 'ar' %}«الساعات المكتسبة» رقم القبول والتسجيل ويشمل كل ما اجتزته (بما في ذلك خارج الخطة)، لذلك لا يُقسم على ساعات الخطة.{% else %}“Credits earned” is the registrar's own figure and includes everything you have passed — including courses outside your plan — so it is not divided into the plan total.{% endif %}
-  </p>
-</div>
-
-{# ── how long ── #}
-<div class="card p-3 mb-3">
-  <h6 class="mb-2">{% if LANGUAGE_CODE == 'ar' %}كم يستغرق؟{% else %}How long will it take?{% endif %}</h6>
-
-  {% if grad.remaining_courses == 0 %}
-    <p class="mb-0">{% if LANGUAGE_CODE == 'ar' %}لم يتبقَّ أي مقرر في خطتك. راجع القبول والتسجيل لإجراءات التخرج.{% else %}No courses remain in your plan. Contact the registrar about graduation.{% endif %}</p>
-  {% else %}
-    <div class="row g-2">
-      <div class="col-md-4"><div class="kpi"><div class="k">{% if LANGUAGE_CODE == 'ar' %}الحد الأدنى بحكم المتطلبات{% else %}Minimum by prerequisites{% endif %}</div><div class="v">{{ grad.chain_floor_terms }}</div></div></div>
-      <div class="col-md-4"><div class="kpi"><div class="k">{% if LANGUAGE_CODE == 'ar' %}بمعدل {{ grad.courses_per_term }} مقررات/فصل{% else %}At {{ grad.courses_per_term }} courses a term{% endif %}</div><div class="v">{{ grad.pace_terms }}</div></div></div>
-      <div class="col-md-4"><div class="kpi"><div class="k">{% if LANGUAGE_CODE == 'ar' %}التقدير{% else %}Estimate{% endif %}</div><div class="v">{{ grad.terms_estimate }}</div></div></div>
-    </div>
-
-    <p class="mb-0 mt-2">
+    <p class="mb-0">
       {% if LANGUAGE_CODE == 'ar' %}
-        تحتاج <strong>{{ grad.terms_estimate }}</strong> فصلًا تقريبًا. حتى لو سجّلت أكثر، لا يمكن أن يقل عن <strong>{{ grad.chain_floor_terms }}</strong> لأن بعض المقررات متطلب لبعضها ويجب اجتيازها بالترتيب.
+        اجتزت <strong>{{ grad.plan_courses_passed }}</strong> من <strong>{{ grad.plan_courses_total }}</strong> متطلبًا دراسيًا في الخطة.
       {% else %}
-        You need about <strong>{{ grad.terms_estimate }}</strong> more term{{ grad.terms_estimate|pluralize }}. Even if you register more each term, it cannot be fewer than <strong>{{ grad.chain_floor_terms }}</strong>, because some of your remaining courses are prerequisites for the others and must be passed in order.
+        You have passed <strong>{{ grad.plan_courses_passed }}</strong> of <strong>{{ grad.plan_courses_total }}</strong> course requirements in the plan.
       {% endif %}
     </p>
+  </div>
 
-    <div class="meta-banner meta-info mt-2">
-      {% if LANGUAGE_CODE == 'ar' %}هذا تقدير: يفترض {{ grad.courses_per_term }} مقررات في الفصل، ولا يعرف ما سيُطرح فعليًا ولا سعة الشعب. اعتمد على مرشدك الأكاديمي.{% else %}This is an estimate. It assumes {{ grad.courses_per_term }} courses per term, and it does not know which courses will actually run or whether seats exist. Confirm with your academic advisor.{% endif %}
-    </div>
-  {% endif %}
+  <div class="student-grad-progress-track" role="progressbar"
+       aria-label="{% if LANGUAGE_CODE == 'ar' %}نسبة مقررات الخطة المجتازة{% else %}Percentage of plan courses passed{% endif %}"
+       aria-valuemin="0" aria-valuemax="100" aria-valuenow="{{ grad.percent_courses }}">
+    <span style="width:{{ grad.percent_courses }}%"></span>
+  </div>
 
-  {% if grad.in_progress %}
-    <p class="small text-secondary mb-0 mt-2">
-      {% if LANGUAGE_CODE == 'ar' %}تدرس الآن {{ grad.in_progress|length }} مقررًا — لم تُحتسب ضمن المنجز لأنك لم تجتزها بعد.{% else %}You are studying {{ grad.in_progress|length }} course{{ grad.in_progress|length|pluralize }} now — not counted as finished until you pass{% if grad.in_progress|length == 1 %} it{% else %} them{% endif %}.{% endif %}
+  <div class="student-grad-kpis mt-3">
+    <div class="kpi"><div class="k">{% if LANGUAGE_CODE == 'ar' %}متطلبات مجتازة{% else %}Passed requirements{% endif %}</div><div class="v">{{ grad.plan_courses_passed }}</div></div>
+    <div class="kpi"><div class="k">{% if LANGUAGE_CODE == 'ar' %}متطلبات متبقية{% else %}Requirements left{% endif %}</div><div class="v">{{ grad.remaining_courses }}</div></div>
+    <div class="kpi"><div class="k">{% if LANGUAGE_CODE == 'ar' %}ساعات متبقية في الخطة{% else %}Plan credits left{% endif %}</div><div class="v">{{ grad.remaining_credits }}</div></div>
+  </div>
+
+  <details class="student-grad-record-note mt-2">
+    <summary>{% if LANGUAGE_CODE == 'ar' %}تفصيل رقم الساعات في السجل الأكاديمي{% else %}Registrar credit detail{% endif %}</summary>
+    <p class="small text-secondary mb-0 mt-1">
+      {% if LANGUAGE_CODE == 'ar' %}
+        يسجّل القبول والتسجيل <strong>{{ grad.earned_credits_registrar }}</strong> ساعة مكتسبة. قد يشمل هذا الرقم مقررات خارج الخطة؛ لذلك لا يُستخدم مقامًا لنسبة التقدّم أعلاه.
+      {% else %}
+        The registrar records <strong>{{ grad.earned_credits_registrar }}</strong> earned credits. This may include courses outside the plan, so it is not used as the denominator for the progress percentage above.
+      {% endif %}
     </p>
-  {% endif %}
-</div>
+  </details>
+</section>
 
-{# ── credit-hour gates: the classic late surprise ── #}
-{% if grad.hour_gates %}
-<div class="card p-3 mb-3">
-  <h6 class="mb-2">{% if LANGUAGE_CODE == 'ar' %}شرط الساعات المعتمدة{% else %}Credit-hour requirement{% endif %}</h6>
-  {% for g in grad.hour_gates %}
-    <div class="mb-2">
-      <div><strong dir="ltr">{{ g.code }}</strong> <span class="small text-secondary">{{ g.name }}</span></div>
-      <div class="cr-bar">
-        <div class="cr-track">
-          <div class="cr-fill" style="width:{% widthratio g.effective g.required 100 %}%"></div>
-        </div>
-      </div>
-      <div class="small text-secondary" dir="ltr">{{ g.effective }} / {{ g.required }} — {{ g.remaining }} {% if LANGUAGE_CODE == 'ar' %}متبقية{% else %}to go{% endif %}</div>
+<section class="card p-3 mb-3 student-grad-forecast" aria-labelledby="student-grad-forecast-title">
+  <h2 class="student-section-title" id="student-grad-forecast-title">{% if LANGUAGE_CODE == 'ar' %}محاكاة إكمال الخطة{% else %}Degree-plan completion simulation{% endif %}</h2>
+
+  {% if grad.remaining_courses == 0 %}
+    <div class="student-grad-result is-complete" data-grad-result="complete" data-value="0">
+      <span class="student-grad-result-status">{% if LANGUAGE_CODE == 'ar' %}اكتملت متطلبات الخطة في السجل{% else %}Plan requirements complete on record{% endif %}</span>
+      <p class="mb-0">{% if LANGUAGE_CODE == 'ar' %}راجع القبول والتسجيل للتحقق من بقية شروط وإجراءات التخرج الرسمية.{% else %}Check with the registrar for all other official graduation conditions and procedures.{% endif %}</p>
     </div>
-  {% endfor %}
-  <p class="small text-secondary mb-0">{% if LANGUAGE_CODE == 'ar' %}هذا المقرر لا يفتح بمقرر سابق بل بعدد الساعات المعتمدة التي أنهيتها.{% else %}This course is not unlocked by another course — it opens once you have earned enough credit hours.{% endif %}</p>
-</div>
+  {% else %}
+    {% if grad.simulation_completed %}
+      <div class="student-grad-result is-complete" data-grad-result="estimate" data-value="{{ grad.estimated_additional_terms }}">
+        <span class="student-grad-result-status">{% if LANGUAGE_CODE == 'ar' %}اكتمل مسار المحاكاة{% else %}Simulation path completed{% endif %}</span>
+        <div class="student-grad-result-answer">
+          <strong dir="ltr">{{ grad.estimated_additional_terms }}</strong>
+          <span>{% if LANGUAGE_CODE == 'ar' %}عدد الفصول الإضافية المقدّر{% else %}estimated additional terms{% endif %}</span>
+        </div>
+        <p class="mb-0">{% if LANGUAGE_CODE == 'ar' %}عدد الفصول المقدّر باحتساب الفصل الحالي: <strong>{{ grad.estimated_terms_including_current }}</strong>.{% else %}Estimated terms including the current term: <strong>{{ grad.estimated_terms_including_current }}</strong>.{% endif %}</p>
+      </div>
+    {% else %}
+      <div class="student-grad-result is-incomplete" data-grad-result="lower-bound" data-value="{{ grad.lower_bound_additional_terms }}">
+        <span class="student-grad-result-status">{% if LANGUAGE_CODE == 'ar' %}تعذّر تحديد موعد أدق{% else %}No exact completion term available{% endif %}</span>
+        <div class="student-grad-result-answer">
+          <strong dir="ltr">{{ grad.lower_bound_additional_terms }}</strong>
+          <span>{% if LANGUAGE_CODE == 'ar' %}الحد الأدنى المثبت للفصول الإضافية{% else %}verified minimum additional terms{% endif %}</span>
+        </div>
+        <p class="mb-0">{% if LANGUAGE_CODE == 'ar' %}الحد الأدنى باحتساب الفصل الحالي: <strong>{{ grad.lower_bound_terms_including_current }}</strong> فصول. قد يزيد العدد بعد حسم المتطلبات الموضحة أدناه.{% else %}The minimum including the current term is <strong>{{ grad.lower_bound_terms_including_current }}</strong> terms. The total may increase after the unresolved requirements below are settled.{% endif %}</p>
+      </div>
+    {% endif %}
+
+    <div class="student-grad-support-grid mt-3">
+      <div class="student-grad-support">
+        <span>{% if LANGUAGE_CODE == 'ar' %}الحد بسبب عبء الساعات{% else %}Credit-load floor{% endif %}</span>
+        <strong dir="ltr">{{ grad.capacity_floor_terms_after_current }}</strong>
+        <small>{% if LANGUAGE_CODE == 'ar' %}عند 18 ساعة/فصل رئيسي{% else %}at 18 credits/main term{% endif %}</small>
+      </div>
+      <div class="student-grad-support">
+        <span>{% if LANGUAGE_CODE == 'ar' %}أطول سلسلة متطلبات{% else %}Longest prerequisite chain{% endif %}</span>
+        <strong dir="ltr">{{ grad.chain_floor_terms }}</strong>
+        <small>{% if LANGUAGE_CODE == 'ar' %}فصول لا يمكن اختصار ترتيبها{% else %}terms whose order cannot be compressed{% endif %}</small>
+      </div>
+      <div class="student-grad-support">
+        <span>{% if LANGUAGE_CODE == 'ar' %}مقررات الفصل الحالي المفترضة{% else %}Assumed current courses{% endif %}</span>
+        <strong dir="ltr">{{ grad.current_courses_assumed_passed|length }}</strong>
+        <small>{% if LANGUAGE_CODE == 'ar' %}{{ grad.registered_credits_now }} ساعة؛ لا تُعد منجزة بعد{% else %}{{ grad.registered_credits_now }} credits; not passed yet{% endif %}</small>
+      </div>
+    </div>
+
+    <div class="student-grad-assumptions mt-2" aria-label="{% if LANGUAGE_CODE == 'ar' %}افتراضات المحاكاة{% else %}Simulation assumptions{% endif %}">
+      <span>{% if LANGUAGE_CODE == 'ar' %}18 ساعة/فصل رئيسي{% else %}18 credits/main term{% endif %}</span>
+      <span>{% if LANGUAGE_CODE == 'ar' %}اجتياز كل مقرر من أول محاولة{% else %}Every course passed first time{% endif %}</span>
+      <span>{% if LANGUAGE_CODE == 'ar' %}للقراءة فقط{% else %}Read-only{% endif %}</span>
+    </div>
+
+    {% if grad.current_courses_assumed_passed %}
+      <div class="student-grad-current-assumption mt-2">
+        <strong>{% if LANGUAGE_CODE == 'ar' %}افتراض الفصل الحالي:{% else %}Current-term assumption:{% endif %}</strong>
+        <span>{% if LANGUAGE_CODE == 'ar' %}تبقى هذه المقررات غير منجزة في نسبة التقدم، لكن المسار المستقبلي يفترض اجتيازها بنهاية الفصل:{% else %}These courses remain unfinished in the progress figure, while the future path assumes they are passed by the end of this term:{% endif %}</span>
+        <span class="student-grad-code-list">
+          {% for course in grad.current_courses_assumed_passed %}<bdi dir="ltr">{{ course.code }}</bdi>{% endfor %}
+        </span>
+      </div>
+    {% endif %}
+
+    <p class="student-guidance-note mb-0 mt-2">
+      {% if LANGUAGE_CODE == 'ar' %}هذه محاكاة لإكمال متطلبات الخطة وليست موعدًا رسميًا للتخرج أو قرار أهلية للتخرج. لا تضمن طرح المقررات أو الشعب أو المقاعد أو صلاحية التسجيل.{% else %}This simulates completion of degree-plan requirements; it is not an official graduation date or graduation-eligibility decision. It does not guarantee course offerings, sections, seats, or registration permission.{% endif %}
+    </p>
+
+    {% if grad.unresolved_requirements %}
+      <details class="student-grad-blockers mt-2" open>
+        <summary>
+          <span>{% if LANGUAGE_CODE == 'ar' %}ما الذي يمنع إكمال التقدير؟{% else %}What prevents an exact estimate?{% endif %}</span>
+          <span class="badge text-bg-secondary">{{ grad.unresolved_requirements|length }}</span>
+        </summary>
+        <div class="student-grad-blocker-list">
+          {% for requirement in grad.unresolved_requirements %}
+            <article class="student-grad-blocker">
+              <div class="student-grad-blocker-title">
+                <bdi dir="ltr">{{ requirement.code }}</bdi>
+                <span dir="auto">{{ requirement.name }}</span>
+              </div>
+              {% if requirement.missing_course_prerequisites %}
+                <p class="mb-0">{% if LANGUAGE_CODE == 'ar' %}متطلبات سابقة غير محسومة:{% else %}Unresolved prerequisites:{% endif %}
+                  {% for code in requirement.missing_course_prerequisites %}<bdi dir="ltr">{{ code }}</bdi>{% if not forloop.last %}، {% endif %}{% endfor %}
+                </p>
+              {% endif %}
+              {% if requirement.credit_hour_gate %}
+                <p class="mb-0">{% if LANGUAGE_CODE == 'ar' %}بعد المسار المبني تصل المحاكاة إلى{% else %}After the built path, the simulation reaches{% endif %}
+                  <bdi dir="ltr">{{ requirement.credit_hour_gate.effective_in_scenario }}/{{ requirement.credit_hour_gate.required }}</bdi>
+                  {% if LANGUAGE_CODE == 'ar' %}ساعة؛ المتبقي <strong>{{ requirement.credit_hour_gate.remaining }}</strong>.{% else %}credits; <strong>{{ requirement.credit_hour_gate.remaining }}</strong> remain.{% endif %}
+                </p>
+              {% endif %}
+            </article>
+          {% endfor %}
+        </div>
+      </details>
+    {% elif grad.hour_gates %}
+      <details class="student-grad-blockers mt-2">
+        <summary><span>{% if LANGUAGE_CODE == 'ar' %}شروط ساعات حالية في الخطة{% else %}Current credit-hour gates{% endif %}</span><span class="badge text-bg-secondary">{{ grad.hour_gates|length }}</span></summary>
+        <div class="student-grad-blocker-list">
+          {% for gate in grad.hour_gates %}
+            <article class="student-grad-blocker">
+              <div class="student-grad-blocker-title"><bdi dir="ltr">{{ gate.code }}</bdi><span dir="auto">{{ gate.name }}</span></div>
+              <p class="mb-0"><bdi dir="ltr">{{ gate.effective }}/{{ gate.required }}</bdi> — {% if LANGUAGE_CODE == 'ar' %}<strong>{{ gate.remaining }}</strong> ساعة متبقية حاليًا{% else %}<strong>{{ gate.remaining }}</strong> credits currently remain{% endif %}</p>
+            </article>
+          {% endfor %}
+        </div>
+      </details>
+    {% endif %}
+  {% endif %}
+</section>
+
+{% if grad.current_courses_assumed_passed or grad.term_plan %}
+<section class="card p-3 mb-3 student-grad-path" aria-labelledby="student-grad-path-title">
+  <div class="student-grad-path-heading">
+    <div>
+      <h2 class="student-section-title mb-1" id="student-grad-path-title">
+        {% if grad.simulation_completed %}
+          {% if LANGUAGE_CODE == 'ar' %}المسار المقترح لإكمال الخطة{% else %}Proposed path to complete the plan{% endif %}
+        {% else %}
+          {% if LANGUAGE_CODE == 'ar' %}المسار الذي أمكن للمحاكاة بناؤه{% else %}The path the simulation could build{% endif %}
+        {% endif %}
+      </h2>
+      <p class="small text-secondary mb-0">{% if LANGUAGE_CODE == 'ar' %}ترتيب إرشادي مبني على المتطلبات وحد 18 ساعة؛ لا يغيّر جدولك أو يسجّل مقررات.{% else %}A guidance sequence based on prerequisites and the 18-credit cap; it does not change your timetable or register courses.{% endif %}</p>
+    </div>
+    <span class="badge {% if grad.simulation_completed %}text-bg-success{% else %}text-bg-secondary{% endif %}">
+      {% if grad.simulation_completed %}{% if LANGUAGE_CODE == 'ar' %}مسار كامل{% else %}Complete path{% endif %}{% else %}{% if LANGUAGE_CODE == 'ar' %}مسار جزئي{% else %}Partial path{% endif %}{% endif %}
+    </span>
+  </div>
+
+  <div class="student-grad-timeline mt-3" role="list">
+    {% if grad.current_courses_assumed_passed %}
+      <article class="student-grad-term is-current" role="listitem">
+        <div class="student-grad-term-head">
+          <div><span>{% if LANGUAGE_CODE == 'ar' %}الفصل الحالي{% else %}Current term{% endif %}</span><strong dir="ltr">{{ academic_year }}/{{ term }}</strong></div>
+          <span>{{ grad.registered_credits_now }} {% if LANGUAGE_CODE == 'ar' %}ساعة{% else %}credits{% endif %}</span>
+        </div>
+        <ul class="student-grad-term-courses">
+          {% for course in grad.current_courses_assumed_passed %}
+            <li><bdi dir="ltr">{{ course.code }}</bdi><span dir="auto">{{ course.name }}</span></li>
+          {% endfor %}
+        </ul>
+      </article>
+    {% endif %}
+
+    {% for planned in grad.term_plan %}
+      {% if not planned.waiting_term %}
+        <article class="student-grad-term" role="listitem">
+          <div class="student-grad-term-head">
+            <div><span>{% if LANGUAGE_CODE == 'ar' %}الفصل الإضافي {{ planned.sequence }}{% else %}Additional term {{ planned.sequence }}{% endif %}</span><strong dir="ltr">{{ planned.academic_year }}/{{ planned.term }}</strong></div>
+            <span>{{ planned.credits }} {% if LANGUAGE_CODE == 'ar' %}ساعة{% else %}credits{% endif %}</span>
+          </div>
+          <ul class="student-grad-term-courses">
+            {% for course in planned.courses %}
+              <li><bdi dir="ltr">{{ course.code }}</bdi><span dir="auto">{{ course.name }}</span>{% if course.elective_slot %}<small>{% if LANGUAGE_CODE == 'ar' %}خانة اختيارية{% else %}elective slot{% endif %}</small>{% endif %}</li>
+            {% endfor %}
+          </ul>
+        </article>
+      {% endif %}
+    {% endfor %}
+
+    {% if grad.unresolved_requirements %}
+      <article class="student-grad-term is-blocked" role="listitem">
+        <div class="student-grad-term-head">
+          <div><span>{% if LANGUAGE_CODE == 'ar' %}توقفت المحاكاة هنا{% else %}Simulation stopped here{% endif %}</span></div>
+          <span>{{ grad.unresolved_requirements|length }} {% if LANGUAGE_CODE == 'ar' %}غير محسوم{% else %}unresolved{% endif %}</span>
+        </div>
+        <ul class="student-grad-term-courses">
+          {% for requirement in grad.unresolved_requirements %}
+            <li><bdi dir="ltr">{{ requirement.code }}</bdi><span dir="auto">{{ requirement.name }}</span></li>
+          {% endfor %}
+        </ul>
+      </article>
+    {% endif %}
+  </div>
+
+  {% if graduation_presentation.graph.extraNodes %}
+    <details class="student-grad-map-details mt-3" id="sgMapDetails">
+      <summary>{% if LANGUAGE_CODE == 'ar' %}عرض خريطة المسار وعلاقات المتطلبات{% else %}Show path and prerequisite map{% endif %}</summary>
+      <div class="student-grad-map-visual mt-2">
+        <div class="student-map-toolbar">
+          <p class="small text-secondary mb-0">{% if LANGUAGE_CODE == 'ar' %}تُقرأ الخريطة من اليسار إلى اليمين. مرّر فوق مقرر لإبراز سلسلته.{% else %}Read the map from left to right. Hover over a course to highlight its chain.{% endif %}</p>
+          <div class="pg-modes" role="group" aria-label="{% if LANGUAGE_CODE == 'ar' %}نمط عرض الخريطة{% else %}Map layout{% endif %}">
+            <button type="button" id="sgPgTerm" class="pg-mode is-on" aria-pressed="true">{% if LANGUAGE_CODE == 'ar' %}حسب الفصل{% else %}By term{% endif %}</button>
+            <button type="button" id="sgPgChain" class="pg-mode" aria-pressed="false">{% if LANGUAGE_CODE == 'ar' %}حسب السلسلة{% else %}By chain{% endif %}</button>
+          </div>
+        </div>
+        <div class="student-grad-map-host overflow-x mt-2" id="sgGraph" dir="ltr" role="img"
+             aria-label="{% if LANGUAGE_CODE == 'ar' %}خريطة المسار الذي بنته محاكاة إكمال الخطة{% else %}Map of the path built by the plan-completion simulation{% endif %}"></div>
+      </div>
+    </details>
+  {% endif %}
+</section>
 {% endif %}
 
-<div class="card p-3">
-  <a class="btn btn-sm btn-primary" href="{% url 'student_courses' %}">{% if LANGUAGE_CODE == 'ar' %}ماذا أستطيع أن أسجّل الآن؟{% else %}What can I take now?{% endif %}</a>
-  <a class="btn btn-sm" href="{% url 'student_advisor' %}">{% if LANGUAGE_CODE == 'ar' %}اسأل المرشد الذكي{% else %}Ask the AI advisor{% endif %}</a>
+<div class="card p-3 student-page-actions">
+  <a class="btn btn-sm btn-primary" href="{% url 'student_courses' %}">{% if LANGUAGE_CODE == 'ar' %}عرض المقررات المستوفية أكاديميًا{% else %}View academically eligible courses{% endif %}</a>
+  <a class="btn btn-sm" href="{% url 'student_advisor' %}">{% if LANGUAGE_CODE == 'ar' %}اسأل المرشد الذكي عن هذه النتيجة{% else %}Ask the AI advisor about this result{% endif %}</a>
 </div>
 
 {% else %}
 <div class="card p-3">
-  <p class="mb-0">{% if LANGUAGE_CODE == 'ar' %}تعذّر إعداد بيانات التخرج الآن. حاول لاحقًا أو راجع مرشدك الأكاديمي.{% else %}We could not build your graduation summary right now. Please try again later or contact your academic advisor.{% endif %}</p>
+  <p class="mb-0">{% if LANGUAGE_CODE == 'ar' %}تعذّر إعداد بيانات إكمال الخطة الآن. قد تكون بيانات الخطة غير مكتملة أو حدث عطل مؤقت؛ حاول لاحقًا أو راجع مرشدك الأكاديمي.{% else %}We could not build the plan-completion data. The plan data may be incomplete or a temporary error may have occurred; try again later or contact your academic advisor.{% endif %}</p>
 </div>
+{% endif %}
+{% endblock %}
+
+{% block extra_js %}
+{% if graduation_presentation.graph.extraNodes %}
+  {{ graduation_presentation|json_script:"studentGraduationPresentation" }}
+  <script>window.__STUDENT_GRADUATION_PRESENTATION__ = JSON.parse(document.getElementById('studentGraduationPresentation').textContent);</script>
+  <script src="{% static 'js/prereq-graph.js' %}?v=1"></script>
+  <script src="{% static 'js/page-student-graduation.js' %}?v=1"></script>
 {% endif %}
 {% endblock %}

@@ -304,7 +304,7 @@ def _send(client, conversation, result, message="سؤال", key=None):
     body = {"message": message}
     if key:
         body["idempotency_key"] = key
-    with mock.patch("core.services.virtual_advisor.answer_virtual_advisor", return_value=result):
+    with mock.patch("core.services.student_advisor_v2.answer_student_advisor", return_value=result):
         return client.post(
             reverse("advisor_conversation_send", args=[str(conversation.id)]),
             data=json.dumps(body),
@@ -335,7 +335,7 @@ def test_a_retry_persists_only_the_final_outcome(client):
     conversation = AdvisorConversation.objects.create(student_id=MINE)
 
     with mock.patch(
-        "core.services.virtual_advisor.answer_virtual_advisor",
+        "core.services.student_advisor_v2.answer_student_advisor",
         side_effect=RuntimeError("model down"),
     ):
         client.post(

@@ -74,6 +74,12 @@ class PlannerRequest:
     must_include: tuple[str, ...] = ()
     keep_current_sections: bool = True
     max_credits: int = 0
+    # Draft-backed screens already materialise the recommendation into
+    # ``course_codes`` when the workspace is created.  They set this to False so
+    # removing a recommended course on screen really removes it; callers that ask
+    # the service to fill an otherwise partial request may keep the historical
+    # behaviour by leaving it True.
+    include_recommendations: bool = True
     #: {"AI221": 4213} — courses whose section the student pinned. A course absent
     #: from here is one the planner chooses freely, which is the default and the
     #: common case.
@@ -169,11 +175,88 @@ def permitted_course_codes(program: str) -> set[str]:
 
 def _course_credits(program: str) -> dict[str, int]:
     return {
-        r["course_code"]: int(r["credit_hours"] or 0)
+        normalize_code(r["course_code"]): int(r["credit_hours"] or 0)
         for r in ProgrammeRequirement.objects.filter(program__iexact=program).values(
             "course_code", "credit_hours"
         )
+        if normalize_code(r["course_code"])
     }
+
+
+def _credit_for(code: str, credits: dict[str, int]) -> int:
+    """Return the same non-zero course weight everywhere in the adapter."""
+    recorded = int(credits.get(normalize_code(code), 0) or 0)
+    return recorded if recorded > 0 else DEFAULT_CREDITS
+
+
+def _baseline_mappings(baseline: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Collapse the baseline's one-row-per-meeting shape into exact sections.
+
+    ``planner_builder`` deliberately treats the baseline only as occupied time.  A
+    student-facing alternative, however, must show the sections that make those
+    times occupied.  Group by the real section id (with a defensive course/label
+    fallback for old imported rows) and retain only timetable facts; room,
+    instructor and registration metadata do not belong in an alternative.
+    """
+    grouped: dict[tuple[Any, ...], dict[str, Any]] = {}
+    meeting_keys: dict[tuple[Any, ...], set[tuple[str, str, str]]] = {}
+
+    for row in baseline:
+        code = normalize_code(row.get("course_code") or row.get("course_key") or "")
+        if not code:
+            continue
+        section = str(row.get("section") or "").strip()
+        section_id = row.get("term_section_id")
+        identity = (
+            ("id", int(section_id))
+            if section_id not in (None, "")
+            else ("label", code, section.casefold())
+        )
+        if identity not in grouped:
+            grouped[identity] = {
+                "course_code": code,
+                "course_key": code,
+                "course_number": str(row.get("course_number") or ""),
+                "section": section,
+                "term_section_id": int(section_id) if section_id not in (None, "") else None,
+                "meetings": [],
+                "source": "current",
+            }
+            meeting_keys[identity] = set()
+
+        day = str(row.get("day") or "").strip()
+        start = str(row.get("start_time") or "").strip()
+        end = str(row.get("end_time") or "").strip()
+        # A baseline row with blank time fields represents a section for which no
+        # meeting is recorded; it is not itself a blank meeting.
+        if not (day and start and end):
+            continue
+        meeting_key = (day, start, end)
+        if meeting_key in meeting_keys[identity]:
+            continue
+        meeting_keys[identity].add(meeting_key)
+        grouped[identity]["meetings"].append({"day": day, "start_time": start, "end_time": end})
+
+    return list(grouped.values())
+
+
+def _distinct_course_count(mappings: list[dict[str, Any]]) -> int:
+    return len(
+        {
+            normalize_code(mapping.get("course_code") or mapping.get("course_key") or "")
+            for mapping in mappings
+            if normalize_code(mapping.get("course_code") or mapping.get("course_key") or "")
+        }
+    )
+
+
+def _distinct_credit_hours(mappings: list[dict[str, Any]], credits: dict[str, int]) -> int:
+    codes = {
+        normalize_code(mapping.get("course_code") or mapping.get("course_key") or "")
+        for mapping in mappings
+        if normalize_code(mapping.get("course_code") or mapping.get("course_key") or "")
+    }
+    return sum(_credit_for(code, credits) for code in codes)
 
 
 def _option_signature(option: dict[str, Any]) -> tuple[int, ...]:
@@ -201,10 +284,11 @@ def _meeting_rows(option: dict[str, Any], credits: dict[str, int]) -> list[dict[
                 {
                     "course_code": code,
                     "section": mapping.get("section"),
-                    "credits": credits.get(code, DEFAULT_CREDITS),
+                    "credits": _credit_for(code, credits),
                     "day": str(meeting.get("day") or "").strip().upper()[:3],
                     "start": str(meeting.get("start_time") or ""),
                     "end": str(meeting.get("end_time") or ""),
+                    "source": ("current" if mapping.get("source") == "current" else "proposed"),
                 }
             )
     rows.sort(key=lambda r: (DAY_ORDER.index(r["day"]) if r["day"] in DAY_ORDER else 9, r["start"]))
@@ -266,52 +350,155 @@ def build_student_options(request: PlannerRequest) -> dict[str, Any]:
     # What the student asked for, then whatever their own plan recommends. Ordered so
     # a named course is never dropped in favour of a recommended one.
     wanted = [normalize_code(c) for c in request.must_include if str(c).strip()]
-    recommended = [
-        normalize_code(c)
-        for c in (recommend_next_courses(student_id, request.year, request.term) or [])
-    ]
+    recommended = (
+        [
+            normalize_code(c)
+            for c in (recommend_next_courses(student_id, request.year, request.term) or [])
+        ]
+        if request.include_recommendations
+        else []
+    )
     codes = list(dict.fromkeys(wanted + recommended))
-    if not codes:
+    baseline = get_student_term_baseline(student_id, str(request.year), str(request.term))
+    current_mappings = _baseline_mappings(baseline) if request.keep_current_sections else []
+    current_codes = {
+        normalize_code(mapping.get("course_code") or "")
+        for mapping in current_mappings
+        if normalize_code(mapping.get("course_code") or "")
+    }
+
+    # The builder uses the baseline as an occupancy mask; it does not emit those
+    # sections as selected mappings.  Asking it to schedule a held course therefore
+    # makes the course collide with itself.  In keep mode the exact current section
+    # is already the answer for that course, so only genuine additions go to the
+    # solver.
+    addition_codes = (
+        [code for code in codes if code not in current_codes]
+        if request.keep_current_sections
+        else list(codes)
+    )
+    if not addition_codes and not current_mappings:
         return {
             "student_id": student_id,
             "term": f"{request.year}/{request.term}",
-            "requested": [],
+            "requested": codes,
             "alternatives": [],
             "unplaced": [],
+            "generated": 0,
             "reason": "NOTHING_TO_SCHEDULE",
         }
-
-    baseline = get_student_term_baseline(student_id, str(request.year), str(request.term))
 
     # A pin is a filter on one course's options; every other course keeps its full
     # list. The builder honours this before any solver runs, so mixing pinned and
     # free courses in one request needs nothing special here.
     pinned = dict(request.fixed_sections)
     shortlist: list[dict[str, Any]] = []
-    for code in codes:
-        item: dict[str, Any] = {"course_code": code, "credits": credits.get(code, DEFAULT_CREDITS)}
+    for code in addition_codes:
+        item: dict[str, Any] = {"course_code": code, "credits": _credit_for(code, credits)}
         if code in pinned:
             item["pinned_sections"] = [{"term_section_id": int(pinned[code])}]
         shortlist.append(item)
 
-    result = run_solver(
-        year=str(request.year),
-        term=str(request.term),
-        shortlist=shortlist,
-        baseline=baseline,
-        keep_current_sections=request.keep_current_sections,
-        max_credits=request.max_credits,
-        gender=gender,
-    )
+    current_credit_hours = _distinct_credit_hours(current_mappings, credits)
+    requested_cap = int(request.max_credits or 0)
+    solver_cap = requested_cap
+    if request.keep_current_sections and requested_cap > 0:
+        solver_cap = max(0, requested_cap - current_credit_hours)
+
+    generated = 0
+    solver_options: list[dict[str, Any]] = []
+    if shortlist and not (request.keep_current_sections and requested_cap > 0 and solver_cap <= 0):
+        result = run_solver(
+            year=str(request.year),
+            term=str(request.term),
+            shortlist=shortlist,
+            baseline=baseline,
+            keep_current_sections=request.keep_current_sections,
+            max_credits=solver_cap,
+            gender=gender,
+        )
+        solver_options = list(result.get("options") or [])
+        generated = len(solver_options)
+
+    # Keeping a real baseline is itself a useful alternative.  This also covers a
+    # solver that found no addition and a cap already consumed by current courses.
+    # The synthetic row has no A/B/C label because no Planner method produced it.
+    if current_mappings and not solver_options:
+        reason = (
+            "Could not fit with chosen constraints/objective"
+            if shortlist and requested_cap > 0 and solver_cap <= 0
+            else "No plan could be built."
+        )
+        solver_options = [
+            {
+                "name": "",
+                "scheduled": 0,
+                "target": len(shortlist),
+                "mappings": [],
+                "unscheduled": [
+                    {"course_code": item["course_code"], "reason": reason} for item in shortlist
+                ],
+            }
+        ]
+
+    # An empty solver mapping is not a timetable in rebuild mode.  Keep the raw
+    # list separately because its unscheduled reasons still explain a global miss.
+    raw_options = [
+        option
+        for option in solver_options
+        if (option.get("mappings") or []) or bool(current_mappings)
+    ]
+    placed_in_any_option = {
+        normalize_code(mapping.get("course_code") or "")
+        for option in solver_options
+        for mapping in (option.get("mappings") or [])
+        if normalize_code(mapping.get("course_code") or "")
+    } | current_codes
 
     alternatives: list[dict[str, Any]] = []
-    seen: set[tuple[int, ...]] = set()
-    for option in result.get("options") or []:
-        signature = _option_signature(option)
+    seen: dict[tuple[int, ...], int] = {}
+    for option in raw_options:
+        proposed_mappings = [
+            {**mapping, "source": "proposed"} for mapping in (option.get("mappings") or [])
+        ]
+        combined_mappings = [*current_mappings, *proposed_mappings]
+        combined_option = {**option, "mappings": combined_mappings}
+        signature = _option_signature(combined_option)
+        planner_name = str(option.get("name") or "").strip().upper()
         if signature in seen:
+            # A, B and C are genuinely different search methods, but they can
+            # converge on the same section set. Keep that provenance instead of
+            # showing an identical timetable as several fake alternatives.
+            if planner_name:
+                planner_options = alternatives[seen[signature]]["planner_options"]
+                if planner_name not in planner_options:
+                    planner_options.append(planner_name)
             continue
-        seen.add(signature)
-        rows = _meeting_rows(option, credits)
+        seen[signature] = len(alternatives)
+        rows = _meeting_rows(combined_option, credits)
+        option_unplaced: list[dict[str, Any]] = []
+        for entry in option.get("unscheduled") or []:
+            course_code = normalize_code(entry.get("course_code") or "")
+            if course_code in placed_in_any_option:
+                # Top-k generation obtains A2/A3 (and B/C equivalents) by
+                # temporarily excluding sections selected by a better variant.
+                # The rerun can consequently say NO_SECTION even though A1 just
+                # used that section. Translate that as a property of THIS variant,
+                # not as a false claim about the catalogue.
+                code = "OMITTED_IN_THIS_VARIANT"
+                explanation = (
+                    "This Planner variant did not place the course; another generated "
+                    "variant did. Compare the other options."
+                )
+            else:
+                code, explanation = _translate_unplaced(entry.get("reason"))
+            option_unplaced.append(
+                {
+                    "course_code": course_code,
+                    "reason_code": code,
+                    "reason": explanation,
+                }
+            )
         alternatives.append(
             {
                 # Stable, opaque, and the only thing a client sends back to say
@@ -327,33 +514,54 @@ def build_student_options(request: PlannerRequest) -> dict[str, Any]:
                     {
                         "course_code": m.get("course_code"),
                         "section": m.get("section"),
-                        "credits": credits.get(str(m.get("course_code") or ""), DEFAULT_CREDITS),
+                        "credits": _credit_for(str(m.get("course_code") or ""), credits),
+                        "source": "current" if m.get("source") == "current" else "proposed",
                         # Kept for the SERVER's own use — the draft stores this whole
                         # structure, and a pin is expressed as a section id. The view
                         # strips it before anything reaches the browser.
                         "term_section_id": m.get("term_section_id"),
                     }
-                    for m in (option.get("mappings") or [])
+                    for m in combined_mappings
                 ],
                 "meetings": rows,
-                "course_count": len(option.get("mappings") or []),
-                "credit_hours": sum(
-                    credits.get(str(m.get("course_code") or ""), DEFAULT_CREDITS)
-                    for m in (option.get("mappings") or [])
-                ),
+                # These are the exact identities emitted by planner_builder:
+                # A1-A3, B1-B3 and C1-C3. More than one name means independent
+                # planner methods found the same section set.
+                "planner_options": [planner_name] if planner_name else [],
+                "scheduled_courses": int(
+                    option.get("scheduled")
+                    if option.get("scheduled") is not None
+                    else _distinct_course_count(proposed_mappings)
+                )
+                + len(current_codes),
+                "target_courses": int(
+                    option.get("target") if option.get("target") is not None else len(shortlist)
+                )
+                + len(current_codes),
+                # Unplaced courses belong to THIS generated option. A1 may place
+                # more courses than A2, so one global list cannot describe both.
+                "unplaced": option_unplaced,
+                "course_count": _distinct_course_count(combined_mappings),
+                # The baseline repeats once per meeting. Count a course's credits
+                # once, not once per row (nor once per accidentally duplicated
+                # section mapping).
+                "credit_hours": _distinct_credit_hours(combined_mappings, credits),
                 **_comparison(rows),
             }
         )
 
-    # Reported from the first alternative: `unscheduled` is a property of the course
-    # set against the catalogue, not of one arrangement of it.
+    # Global unplaced means no generated option could place the course. Courses
+    # omitted only by A2/A3 belong to that alternative's `unplaced`, not here.
     unplaced: list[dict[str, Any]] = []
-    first = (result.get("options") or [{}])[0]
+    first = (solver_options or [{}])[0]
     for entry in first.get("unscheduled") or []:
+        course_code = normalize_code(entry.get("course_code") or "")
+        if course_code in placed_in_any_option:
+            continue
         code, explanation = _translate_unplaced(entry.get("reason"))
         unplaced.append(
             {
-                "course_code": entry.get("course_code"),
+                "course_code": course_code,
                 "reason_code": code,
                 "reason": explanation,
             }
@@ -367,7 +575,7 @@ def build_student_options(request: PlannerRequest) -> dict[str, Any]:
         "unplaced": unplaced,
         # How many the builder produced before duplicates were removed, so a caller
         # can see that "3 alternatives" came from nine attempts rather than three.
-        "generated": len(result.get("options") or []),
+        "generated": generated,
         "reason": "" if alternatives else "NO_VALID_TIMETABLE",
     }
 

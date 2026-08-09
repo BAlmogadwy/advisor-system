@@ -243,7 +243,7 @@ class AdvisorBidiTests(StaticLiveServerTestCase):
     def _seed(self, answer: str, question: str = "ما شعبتي؟") -> AdvisorConversation:
         conversation = AdvisorConversation.objects.create(student_id=MINE)
         with mock.patch(
-            "core.services.virtual_advisor.answer_virtual_advisor",
+            "core.services.student_advisor_v2.answer_student_advisor",
             return_value=_reply(answer),
         ):
             response = self._client().post(
@@ -752,6 +752,12 @@ class AdvisorBidiTests(StaticLiveServerTestCase):
         conversation = self._seed(TIMETABLE_ANSWER)
         page = self._page()
         self._open(page, conversation)
+        # Conversation history is now an intentionally closed drawer so the chat
+        # owns the viewport. Open it before inspecting a title's visual direction.
+        page.click("#saHistoryToggle")
+        page.wait_for_function(
+            "document.querySelector('#saHistoryToggle')?.getAttribute('aria-expanded') === 'true'"
+        )
         page.wait_for_selector(".sa-conv")
 
         assert page.eval_on_selector(".sa-conv", "n => getComputedStyle(n).direction") == "rtl", (

@@ -12,6 +12,7 @@ repos:
       - id: mypy
         additional_dependencies:
           - django-stubs==5.2.2
+          - dj-database-url
           - python-dotenv
 
   - repo: https://github.com/PyCQA/bandit

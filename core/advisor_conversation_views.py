@@ -50,6 +50,7 @@ from .services.advisor_escalation import (
 )
 from .services.advisor_history import load_visible_history
 from .services.advisor_outcome import derive_outcome
+from .services.advisor_presentations import normalise_presentation
 from .services.rate_limit import CONVERSATION, ESCALATION, FEEDBACK, GENERATION, HISTORY
 from .services.rate_limit import release as refund_budget
 
@@ -151,6 +152,9 @@ def _message_json(message: AdvisorMessage, *, language: str = "") -> dict[str, A
         # network tab and read "grounding_state: not_consulted" beside an answer
         # about withdrawal limits. `status` already carries what the UI needs.
         data["citations"] = [_citation_json(c) for c in message.citations.all()]
+        presentation = normalise_presentation(message.presentation)
+        if presentation:
+            data["presentation"] = presentation
         case = next(iter(message.escalations.all()), None)
         if case is not None:
             # Enough for the thread to show that a person has this, and no more:
@@ -278,7 +282,7 @@ def conversation_post_message_view(request: HttpRequest, conversation_id: str) -
     message without its citations would be an uncited answer that looks cited-by-
     omission rather than one that failed.
     """
-    from .services.virtual_advisor import answer_virtual_advisor
+    from .services.student_advisor_v2 import answer_student_advisor
 
     principal = _principal(request)
     if principal is None:
@@ -351,7 +355,7 @@ def conversation_post_message_view(request: HttpRequest, conversation_id: str) -
         # to. Excludes THIS question, which was written to the database before
         # generation and would otherwise arrive twice — and twice again on a retry,
         # which reuses the same row.
-        result = answer_virtual_advisor(
+        result = answer_student_advisor(
             question=question,
             principal=principal,
             history=load_visible_history(conversation, exclude_message_id=student_message.pk),
@@ -557,6 +561,7 @@ def _persist_answer(
             in_reply_to=student_message,
             role=AdvisorMessage.ROLE_ASSISTANT,
             content=answer,
+            presentation=normalise_presentation(result.get("presentation")),
             grounding_state=str(agent.get("policy_grounding") or ""),
             final_disposition=outcome.disposition,
             reason_codes=outcome.reason_codes,

@@ -16,8 +16,38 @@ from core.models import (
     StudentTermSection,
     TermSection,
 )
+from core.services.advisor_actions import handoff_for, handoff_for_question
+from core.services.advisor_clarification import clarification_for
+from core.services.advisor_intent import (
+    CompositionKind,
+    IntentFamily,
+    capabilities_for_route,
+    route_intent,
+)
 from core.services.advisor_principal import AdvisorPrincipal
+from core.services.advisor_remote_boundary import (
+    DUPLICATE_NOTE,
+    CachedToolExecution,
+    LocalToolBoundary,
+    ToolBoundary,
+    boundary_for_scope,
+)
+from core.services.answer_consistency import check_answer
 from core.services.credit_policy import credit_policy_evidence
+from core.services.llm_backend import (
+    BACKEND_LOCAL,
+    LLMConfigError,
+    LLMPrivacyError,
+    get_llm_client,
+)
+from core.services.llm_remote_privacy import (
+    EMAIL_PLACEHOLDER,
+    NAME_PLACEHOLDER,
+    PHONE_PLACEHOLDER,
+    UNVERIFIED_ID_PLACEHOLDER,
+    fold_digits,
+    reference_tokens_in,
+)
 from core.services.local_llm import (
     ChatResult,
     LocalLLMBadRequest,
@@ -25,6 +55,7 @@ from core.services.local_llm import (
     LocalLLMUnavailable,
     ToolChatResult,
 )
+from core.services.policy_contract import build_policy_contract_state
 from core.services.rbac import (
     ROLE_ADVISOR,
     ROLE_GENERAL_ADVISOR,
@@ -67,7 +98,7 @@ def _tool_turn_timeout() -> float:
     return max(10.0, float(getattr(settings, "VIRTUAL_ADVISOR_TOOL_TURN_TIMEOUT_SECONDS", 75)))
 
 
-SYSTEM_PROMPT_TEMPLATE = """You are a private local university virtual academic advisor.
+SYSTEM_PROMPT_TEMPLATE = """You are a university virtual academic advisor operating through verified university data tools.
 
 Rules:
 - Answer in the same language as the user's latest question. When the user message carries an answer_language field, write the final answer in that language.
@@ -89,7 +120,7 @@ Rules:
 {POLICY_RULES}
 """
 
-SYSTEM_PROMPT_AGENT_TEMPLATE = """You are a private local university virtual academic advisor with verified data tools.
+SYSTEM_PROMPT_AGENT_TEMPLATE = """You are a university virtual academic advisor operating through verified university data tools.
 
 Rules:
 - Write the final answer in the language named by the answer_language field of the user message. Never switch languages on your own.
@@ -139,11 +170,21 @@ _POLICY_RULES_TAIL = """- RETRIEVED IS NOT GOVERNING. Every result is sorted int
 - Rules and the student's own data are different claims. Keep them separate in the answer: what the regulation says (cited), then what the system knows about this student, then what follows. Never present a rule as a verdict about the student.
 """
 
-#: Agent path: the model fetches its own policies.
+#: Agent path. The model no longer fetches its own policies — the server does,
+#: before the first request — so this must not name a tool the turn does not
+#: advertise. Telling a model to "call policy_lookup FIRST" when that tool is
+#: absent from its schema list is the same defect the single-shot prompt had: a
+#: promise the path cannot keep, which invites the model to improvise instead.
 POLICY_RULES_AGENT = (
     f"{_POLICY_RULES_HEADER}\n"
-    "- Call policy_lookup FIRST for any such question, passing the student's question "
-    f"verbatim as query. {_NEVER_FROM_MEMORY}\n"
+    "- The approved policies for this question were ALREADY retrieved for you and "
+    "are in verified_context.policy_evidence. Do not request policy_lookup; it is "
+    "not available on this turn. Use ONLY policy_evidence.policies — those are the "
+    f"records that govern this question. {_NEVER_FROM_MEMORY}\n"
+    "- If policy_evidence.policies is empty, or the key is absent, then NO approved "
+    "policy governs this question and you must not state a rule at all — say the "
+    "system holds no written rule on this and refer the student to عمادة القبول "
+    "والتسجيل.\n"
     f"{_POLICY_RULES_TAIL}"
 )
 
@@ -1190,6 +1231,22 @@ def _context_summary(context: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _assistant_prefill_for_client(llm: Any, model: str) -> str | None:
+    """The prefill, or None when the provider will not accept one.
+
+    The model name is not enough. `qwen3.7-max` on Model Studio is the same
+    family as the local build and takes the same `<think>` suppression, but the
+    OpenAI-compatible endpoint does not accept a trailing assistant turn at all
+    and the client raises rather than silently discarding it. Deciding from the
+    name alone therefore breaks every plain-chat path the moment the backend is
+    switched — single-shot, forced final, and all three retries — and each one
+    fails as a 500 rather than as a degraded answer.
+    """
+    if not getattr(llm, "supports_assistant_prefill", True):
+        return None
+    return _assistant_prefill_for_model(model)
+
+
 def _assistant_prefill_for_model(model: str) -> str | None:
     model_l = model.lower()
     if "qwen3" in model_l or "qwen3.6" in model_l or "qwen3.5" in model_l:
@@ -1207,6 +1264,18 @@ def _answer_language(question: str) -> str:
     return "Arabic" if _ARABIC_SCRIPT_RE.search(question or "") else "English"
 
 
+def _mentioned_student_ids(answer: str) -> set[str]:
+    """Student-id-shaped runs in the answer, in either digit system.
+
+    `_STUDENT_ID_RE` knows only Western digits, and an answer written in Arabic
+    can legitimately carry «٤٥٠٢١٥٦». Folding first means the check cannot be
+    stepped around by the script the answer happens to be in — which on an
+    Arabic-first adviser is not an edge case.
+    """
+    folded = fold_digits(answer)
+    return set(_STUDENT_ID_RE.findall(folded))
+
+
 def _unverified_student_ids(answer: str, evidence_texts: list[str]) -> list[str]:
     """Student-id grounding check.
 
@@ -1215,11 +1284,238 @@ def _unverified_student_ids(answer: str, evidence_texts: list[str]) -> list[str]
     question). High-precision on purpose: only 6-9 digit runs are
     treated as student ids; course codes and credit numbers never match.
     """
-    mentioned = set(_STUDENT_ID_RE.findall(answer or ""))
+    mentioned = _mentioned_student_ids(answer)
     if not mentioned:
         return []
     evidence = "\n".join(evidence_texts)
     return sorted(sid for sid in mentioned if sid not in evidence)
+
+
+#: What the final answer may not contain, as codes rather than values. A
+#: violation is reported by NAME so it can be logged, stored and shown to an
+#: operator; the offending identifier itself never travels with it.
+VIOLATION_UNVERIFIED_ID = "unverified_student_id"
+VIOLATION_IDENTIFIER_ON_REMOTE = "identifier_the_provider_never_saw"
+VIOLATION_UNISSUED_REFERENCE = "unissued_student_reference"
+VIOLATION_REFERENCE_TO_A_STUDENT = "reference_shown_to_a_student"
+VIOLATION_REDACTION_MARKER = "redaction_marker_in_answer"
+
+_REDACTION_MARKERS = (
+    EMAIL_PLACEHOLDER,
+    PHONE_PLACEHOLDER,
+    NAME_PLACEHOLDER,
+    UNVERIFIED_ID_PLACEHOLDER,
+)
+
+
+def _withheld_for(route: Any, scope: dict[str, Any]) -> frozenset[str]:
+    """Everything this turn must NOT advertise, expressed as the existing withhold set.
+
+    Reuses `withheld_tools` rather than adding a second narrowing mechanism: the loop
+    already removes withheld names from the schemas and refuses a call to one, so a
+    parallel allow-list would be a second gate with its own bugs.
+
+    `policy_lookup` is withheld on every path, unchanged: retrieval already ran
+    server-side, and advertising it would invite a second lookup whose records were
+    not in the contract computed before generation.
+
+    ROLE FILTERING IS UNTOUCHED. This subtracts from the registry's role-filtered
+    list, so narrowing can only ever remove — a route naming a tool the principal may
+    not use does not gain it.
+    """
+    from core.services.advisor_intent import capabilities_for_route
+
+    permitted = {
+        (schema.get("function") or {}).get("name")
+        for schema in get_default_registry().tool_schemas_for_scope(scope)
+    }
+    allowed = capabilities_for_route(route)
+    if allowed is None:
+        # GENERAL_AGENT: the router was not certain, so the turn keeps the surface it
+        # has today. Narrowing an unrecognised question to nothing would be a
+        # regression dressed as a safety improvement.
+        return frozenset({"policy_lookup"})
+    return frozenset({"policy_lookup", *(permitted - set(allowed))})
+
+
+def _output_contract_violations(
+    answer: str,
+    *,
+    evidence_texts: list[str],
+    boundary: ToolBoundary,
+    is_student: bool,
+    tool_results: list[dict[str, Any]] | None = None,
+    action: dict[str, Any] | None = None,
+    context: dict[str, Any] | None = None,
+) -> list[str]:
+    """What is wrong with this answer, as a list of codes. Empty means shippable.
+
+    THE TRANSPORT SANITISER IS NOT AN OUTPUT AUTHORISER. It decides what may be
+    sent to a provider; this decides what may be shown to a person, and the two
+    answer different questions. An identifier can be perfectly safe to hold
+    locally and still be wrong in an answer, because the question is not "may
+    this reader see it" but "did the system that wrote this sentence have any
+    basis for it".
+
+    That is why the remote rule is stricter than the local one. Locally the model
+    reads the verified context, so an id it repeats is grounded if the evidence
+    contains it. Remotely the provider was NEVER given a real identifier — so a
+    real identifier in its output cannot have been read, only invented, and it
+    does not become grounded by happening to match a student the adviser is
+    authorised to see. `_unverified_student_ids` would clear exactly that case,
+    because it checks the answer against LOCAL evidence.
+
+    Redaction markers are a violation in their own right. «راسل [EMAIL_REDACTED]»
+    is not a safe answer that lost a detail; it is a sentence that reads as
+    instruction and cannot be followed, and it tells the reader that something
+    was removed.
+    """
+    text = answer or ""
+    violations: list[str] = []
+
+    if any(marker in text for marker in _REDACTION_MARKERS):
+        violations.append(VIOLATION_REDACTION_MARKER)
+
+    references = reference_tokens_in(text)
+    if references:
+        if any(not boundary.reference_is_issued(ref) for ref in references):
+            # Includes every reference on a local backend, where none was ever
+            # issued: a `STUDENT_REF_…` token there is fabricated by definition.
+            violations.append(VIOLATION_UNISSUED_REFERENCE)
+        if is_student:
+            # A student's session names one person. An opaque handle in their
+            # answer is meaningless to them, and it means the model is talking
+            # ABOUT a student rather than TO one.
+            violations.append(VIOLATION_REFERENCE_TO_A_STUDENT)
+
+    if boundary.is_remote:
+        if _mentioned_student_ids(text):
+            violations.append(VIOLATION_IDENTIFIER_ON_REMOTE)
+    elif _unverified_student_ids(text, evidence_texts):
+        violations.append(VIOLATION_UNVERIFIED_ID)
+
+    # THE SAME GATE, not a second one. These ask a different question — does the
+    # answer agree with the facts it was given — but they share the retry, the
+    # re-validation and the refusal below, because a turn with two gates has two
+    # places for a violation to be handled differently.
+    violations.extend(check_answer(text, tool_results=tool_results, action=action, context=context))
+
+    return violations
+
+
+#: The deterministic answer when the output contract cannot be met. Names where
+#: to go, for the same reason the citation refusal does: an abstention that
+#: leaves the student with nowhere to turn is not much better than a wrong answer.
+_GROUNDING_REFUSAL_AR = (
+    "لم أتمكن من التحقق من الأرقام والمعرّفات الواردة في هذه الإجابة مقابل السجلات "
+    "المعتمدة، ولذلك لن أعرضها حتى لا أنسب إليك بيانات غير مؤكدة. الرجاء مراجعة "
+    "مرشدك الأكاديمي أو عمادة القبول والتسجيل للحصول على الإجابة الرسمية."
+)
+_GROUNDING_REFUSAL_EN = (
+    "I could not verify the identifiers in this answer against the approved "
+    "records, so I will not show it rather than attribute unconfirmed data to "
+    "you. Please check with your academic adviser or the Deanship of Admission "
+    "and Registration."
+)
+
+
+#: The deterministic answer when a rule was asked for and none governs it. It
+#: does NOT say "the university has no such rule" — the store's silence is a fact
+#: about the store, not about the regulations — and it names where to go, because
+#: an abstention that leaves the student nowhere is barely better than a guess.
+_POLICY_ABSTENTION_AR = (
+    "سؤالك يتعلق بنظام أو لائحة، ولم أجد في الأنظمة المعتمدة لدي نصًّا يحكم هذه "
+    "الحالة تحديدًا. لن أذكر لك قاعدة غير موثّقة، والأصح أن تراجع مرشدك الأكاديمي "
+    "أو عمادة القبول والتسجيل للحصول على الإجابة الرسمية."
+)
+_POLICY_ABSTENTION_EN = (
+    "Your question is about a regulation, and I could not find an approved record "
+    "that governs this particular case. I will not state a rule I cannot source. "
+    "Please check with your academic adviser or the Deanship of Admission and "
+    "Registration for the official answer."
+)
+
+
+def _evidence_paths(context: dict[str, Any] | None) -> list[str]:
+    """Which seeded evidence this turn actually carried, as dotted paths.
+
+    Populated only: an empty `recommendations` list is not recommendation evidence,
+    and a contract that requires it must fail rather than be satisfied by the key
+    existing. One level of nesting, because that is where the distinctions live —
+    `course_evidence.studying` is a different claim from `course_evidence.passed`.
+    """
+    out: list[str] = []
+    for key, value in sorted((context or {}).items()):
+        if not value:
+            continue
+        out.append(f"verified_context.{key}")
+        if isinstance(value, dict):
+            out.extend(
+                f"verified_context.{key}.{sub}" for sub, inner in sorted(value.items()) if inner
+            )
+    return out
+
+
+def _safe_excerpt(boundary: ToolBoundary, answer: str) -> str:
+    """A rejected draft, safe to write to a trace file.
+
+    Through the boundary's OWN sanitiser rather than a private regex, so the
+    diagnostic can never leak by the back door what the transport refuses at the
+    front — if a new identifier shape becomes protected, this becomes protected with
+    it. Capped, because a diagnostic that carries the whole answer is the answer.
+    """
+    try:
+        sanitised = boundary.sanitise_messages([{"role": "assistant", "content": answer}])
+        text = str((sanitised or [{}])[0].get("content") or "")
+    except Exception:  # noqa: BLE001 - a diagnostic must never break the refusal path
+        return "<excerpt withheld: sanitiser failed>"
+    # 1500, not 400. The first cap was a guess and it was too small: a timetable
+    # answer spends its opening paragraph on caveats, so the first 400 characters
+    # held no claim at all and the draft could not say which figure it had objected
+    # to. A diagnostic that cannot diagnose is only a cost.
+    return text[:1500]
+
+
+def _output_correction(
+    violations: list[str], boundary: ToolBoundary, offending_ids: list[str]
+) -> str:
+    """What to tell the model, built from the violation CODES.
+
+    The identifiers themselves are quoted ONLY on a local backend, and the
+    asymmetry is the point. Locally they never left the institution and naming
+    them makes the correction actionable, which means fewer questions ending in a
+    refusal. Remotely, quoting them back would send precisely what the boundary
+    spent the whole request keeping out — and there the model invented them
+    anyway, so it has nothing to learn from seeing them again.
+    """
+    lines = [
+        "Your draft answer breaks the output contract and cannot be shown. "
+        "Rewrite it strictly from the verified evidence above."
+    ]
+    if VIOLATION_REDACTION_MARKER in violations:
+        lines.append(
+            "- It repeats a redaction placeholder. Never copy a bracketed "
+            "[..._REDACTED] token into the answer; omit the detail and say plainly "
+            "that it is not available here."
+        )
+    if VIOLATION_UNISSUED_REFERENCE in violations or VIOLATION_REFERENCE_TO_A_STUDENT in violations:
+        lines.append(
+            "- It names a student reference that is not valid in this answer. Do not "
+            "write STUDENT_REF tokens of your own, and do not address the reader by one."
+        )
+    if VIOLATION_IDENTIFIER_ON_REMOTE in violations or VIOLATION_UNVERIFIED_ID in violations:
+        named = f": {', '.join(offending_ids)}" if offending_ids and not boundary.is_remote else ""
+        lines.append(
+            f"- It states a student identifier that is not supported by the evidence{named}. "
+            "Remove it. Refer to the student by their situation, not by a number, and "
+            "never invent or reconstruct an identifier."
+        )
+    if boundary.is_remote:
+        lines.append(
+            "Do not attempt to restate the identifier in a different form — spelled "
+            "out, in Arabic-Indic digits, or split across words."
+        )
+    return "\n".join(lines)
 
 
 #: Policy ids are dotted upper-case runs (``TU.WITHDRAWAL.MAXIMUM``). Distinctive
@@ -1350,7 +1646,9 @@ def _credit_policy_evidence_citations(context: dict[str, Any]) -> dict[str, Any]
     return result
 
 
-def _seed_policy_evidence(question: str) -> tuple[dict[str, Any], str]:
+def _seed_policy_evidence(
+    question: str, scope: dict[str, Any] | None = None
+) -> tuple[dict[str, Any], str]:
     """Retrieve policies for a path that has no tools of its own.
 
     Returns the same shape ``policy_lookup`` produces, plus a grounding state for
@@ -1368,8 +1666,17 @@ def _seed_policy_evidence(question: str) -> tuple[dict[str, Any], str]:
     from core.services.virtual_advisor_capabilities import get_default_registry
 
     try:
+        # The CALLER'S scope, not a hardcoded student one. This function was
+        # written for the single-shot path, where the student scope was always
+        # right; reusing it on the agent path with that constant would silently
+        # drop `include_operator_notes` for staff, so an adviser console would
+        # lose `runtime_use_reason` — the field that says why a policy may be
+        # used — on every turn, with nothing to indicate it had been withheld.
         result = get_default_registry().execute(
-            "policy_lookup", {"query": question}, scope={"role": ROLE_STUDENT}, ctx={}
+            "policy_lookup",
+            {"query": question},
+            scope=scope or {"role": ROLE_STUDENT},
+            ctx={},
         )
     except Exception:  # pragma: no cover - never fail an answer on a store error
         logger.exception("Policy store unavailable while seeding the single-shot path")
@@ -1401,6 +1708,56 @@ def _seed_policy_evidence(question: str) -> tuple[dict[str, Any], str]:
     if not result.get("direct_policy_evidence"):
         return (result, "none_governing")
     return (result, "retrieved")
+
+
+#: Buckets the model must never reason FROM, and the ones that make a seeded
+#: policy result enormous. `background`, `irrelevant` and `conflicting` are the
+#: applicability layer's record of what it considered and set aside; putting them
+#: in the prompt invites the model to use exactly the records that were judged not
+#: to govern, and one seeded lookup measures ~30 KB with them and ~4 KB without —
+#: resent on every iteration of a loop that runs up to five.
+_PROMPT_POLICY_KEYS = (
+    "tool",
+    "ok",
+    "error",
+    "query",
+    "note",
+    "as_of",
+    "policy_count",
+    "matched_topics",
+    "grounding_state",
+    "direct_policy_evidence",
+    "citable",
+)
+
+
+def _policy_evidence_for_prompt(result: dict[str, Any]) -> dict[str, Any]:
+    """The seeded evidence, reduced to what an answer may actually be built from.
+
+    A prompt-shaping decision, not a privacy one — the remote projector still runs
+    over whatever this returns. The full result stays in `agent_tool_results`,
+    where the citation validator and the evidence panel read it, so nothing is
+    lost from the record; only the prompt gets smaller and more honest about which
+    records govern.
+    """
+    if not isinstance(result, dict):
+        return {}
+    reduced = {k: result[k] for k in _PROMPT_POLICY_KEYS if k in result}
+    # ONE BUCKET PER RECORD. The first version set `policies` to the governing
+    # rows and left `direct_policy_evidence` in place beside it — so the same
+    # record reached the model twice, and after `_project_policy_lookup` ran it
+    # carried `is_direct_evidence: false` under one key and `true` under the
+    # other. A record whose directness depends on which list you read cannot be
+    # the basis of a contract that turns on exactly that.
+    #
+    # `policies` is the name the prompt contract uses, and an empty list is
+    # load-bearing — the prompt says an absent or empty `policies` means no rule
+    # may be stated — so the governing rows live there and `direct_policy_evidence`
+    # is dropped rather than duplicated.
+    reduced["policies"] = list(result.get("direct_policy_evidence") or [])
+    reduced.pop("direct_policy_evidence", None)
+    reduced["background_policy_count"] = len(result.get("background_policy_evidence") or [])
+    return reduced
 
 
 def _retrieved_citations(tool_results: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -1439,13 +1796,30 @@ _CITATION_REFUSAL_EN = (
 )
 
 
-def _policy_evidence_block(tool_results: list[dict[str, Any]]) -> str:
-    """The retrieved policies as text, for the correction turn."""
+def _policy_evidence_block(
+    tool_results: list[dict[str, Any]], *, only: frozenset[str] | None = None
+) -> str:
+    """The retrieved policies as text, for the correction turn.
+
+    `only` narrows it to a named set — the governing records, when the correction
+    is about citing one. Showing the full retrieved list there would hand the
+    model the background records again and invite it to cite one of those, which
+    is the failure the correction exists to fix.
+    """
     lines: list[str] = []
     for result in tool_results or []:
         if not isinstance(result, dict) or result.get("tool") != "policy_lookup":
             continue
-        for policy in result.get("policies") or []:
+        rows = result.get("policies") or []
+        if only is not None:
+            rows = [
+                r for r in rows if isinstance(r, dict) and str(r.get("policy_id") or "") in only
+            ] or [
+                r
+                for r in (result.get("direct_policy_evidence") or [])
+                if isinstance(r, dict) and str(r.get("policy_id") or "") in only
+            ]
+        for policy in rows:
             citation = policy.get("citation") or {}
             statement = str(policy.get("statement_ar") or policy.get("title_ar") or "").strip()
             lines.append(
@@ -1497,6 +1871,20 @@ def _fabricated_policy_ids(answer: str, citations: list[dict[str, Any]]) -> list
     return sorted(pid for pid in _policy_ids_in_text(answer) if pid not in allowed)
 
 
+def _known_names_from_context(context: dict[str, Any]) -> tuple[str, ...]:
+    """The exact personal names this request already knows about.
+
+    An exact set, never a pattern. A proper-name detector would have to decide
+    whether «الرياضيات المتقطعة» or «الدليل الإرشادي للطالب» is a person, and every
+    wrong answer either mangles a course title or leaves a name in place. What the
+    request genuinely holds is the student's own name — which is also the name most
+    likely to be typed into a question — so that is what gets redacted.
+    """
+    student = (context or {}).get("student")
+    name = str((student or {}).get("name") or "").strip() if isinstance(student, dict) else ""
+    return (name,) if len(name) >= 3 else ()
+
+
 def _summarise_tool_args(args: dict[str, Any]) -> dict[str, Any]:
     """Telemetry-safe argument summary (caps long lists/strings)."""
     summary: dict[str, Any] = {}
@@ -1510,6 +1898,116 @@ def _summarise_tool_args(args: dict[str, Any]) -> dict[str, Any]:
     return summary
 
 
+#: Returned by the loop when a capability produced a route. Not an answer —
+#: `answer_virtual_advisor` replaces it with the handoff's own text, in the
+#: student's language. A sentinel rather than the text itself so the loop does
+#: not need to know about answer language, and so a bug that leaks it is
+#: unmistakable rather than plausible.
+_ACTION_HANDOFF_SENTINEL = "\x00action-handoff\x00"
+
+
+def _tool_message(call_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+    """The one place a tool result becomes text bound for the model.
+
+    Every `role: "tool"` message in the loop is built here, so "what did we
+    actually send" is a single line to audit rather than four `json.dumps` calls
+    that have to be checked individually for which object they were handed.
+    """
+    return {
+        "role": "tool",
+        "tool_call_id": call_id,
+        "content": json.dumps(payload, ensure_ascii=False, default=str),
+    }
+
+
+def _scrub_refused_call_arguments(messages: list[dict[str, Any]], call_id: str) -> None:
+    """Empty the arguments of a tool call the boundary refused.
+
+    The assistant message carrying the call has already been appended, and it
+    stays: the protocol requires every `role: "tool"` reply to answer an
+    assistant `tool_call_id`, so deleting it would make the conversation invalid.
+    Its ARGUMENTS, though, are not needed by anything — the call did not run.
+
+    Strictly this is not a leak: a forged `student_id` was written by the model,
+    so echoing it back tells the provider only what it just told us. It is
+    scrubbed anyway for two reasons. A fabricated identifier can collide with a
+    real student, and a number that was refused for naming somebody should not be
+    reinforced in the context for the next turn. And it keeps the invariant the
+    tests assert absolute — "a real id appears nowhere in what was sent" — rather
+    than an invariant with an exception that every later test has to remember.
+    """
+    for index in range(len(messages) - 1, -1, -1):
+        message = messages[index]
+        calls = message.get("tool_calls") if isinstance(message, dict) else None
+        if not isinstance(calls, list):
+            continue
+        if not any(isinstance(c, dict) and c.get("id") == call_id for c in calls):
+            continue
+        messages[index] = {
+            **message,
+            "tool_calls": [
+                {**c, "function": {**(c.get("function") or {}), "arguments": "{}"}}
+                if isinstance(c, dict) and c.get("id") == call_id
+                else c
+                for c in calls
+            ],
+        }
+        return
+
+
+def _inject_credit_evidence(
+    local_result: dict[str, Any],
+    *,
+    seen: set[str],
+    messages: list[dict[str, Any]],
+    boundary: ToolBoundary,
+    local_results: list[dict[str, Any]],
+    provider_results: list[dict[str, Any]],
+) -> bool:
+    """Retrieve and send the policies behind a credit block a tool just returned.
+
+    Returns True if anything was injected. Idempotent per distinct block: `seen`
+    keys on the figures themselves, so a tool called twice does not re-send the
+    same records, and two tools returning the same block cost one injection.
+
+    Appended as a `role: "user"` message, NOT a second `role: "tool"` one. The
+    protocol allows exactly one tool reply per `tool_call_id`, so a second would
+    be rejected by a strict provider — and folding it into the first is worse
+    anyway: it answers a different question, "where is that number written down",
+    and a model shown one merged object cannot tell which part it may cite.
+    """
+    block = _find_credit_block(local_result)
+    if block is None:
+        return False
+    key = json.dumps(block, sort_keys=True, default=str)[:400]
+    if key in seen:
+        return False
+    seen.add(key)
+    evidence = _credit_policy_evidence_citations({"context": local_result})
+    if not evidence:
+        return False
+    local_results.append(evidence)
+    try:
+        projected = boundary.project_tool_result("policy_lookup", evidence)
+    except LLMPrivacyError:
+        logger.error("Projection refused credit-policy evidence; nothing was sent.")
+        return False
+    provider_results.append(projected)
+    payload = json.dumps(_policy_evidence_for_prompt(projected), ensure_ascii=False, default=str)
+    messages.append(
+        {
+            "role": "user",
+            "content": (
+                "policy_evidence for the credit figures just returned — these are the "
+                "ONLY records behind them, with their ids and pages. Cite one of these "
+                "whenever you state a credit limit, and state no limit they do not "
+                "contain:\n" + payload
+            ),
+        }
+    )
+    return True
+
+
 def _run_agent_loop(
     *,
     llm: LocalLLMClient,
@@ -1518,17 +2016,57 @@ def _run_agent_loop(
     scope: dict[str, Any] | None,
     ctx: dict[str, Any],
     telemetry: dict[str, Any],
-) -> tuple[str, dict[str, Any], list[dict[str, Any]]]:
-    """Run the tool-calling loop. Returns (answer, usage, agent_tool_results).
+    boundary: ToolBoundary | None = None,
+    withheld_tools: frozenset[str] = frozenset(),
+    seeded_local_results: list[dict[str, Any]] | None = None,
+    seeded_provider_results: list[dict[str, Any]] | None = None,
+    credit_blocks_seeded: set[str] | None = None,
+) -> tuple[str, dict[str, Any], list[dict[str, Any]], list[dict[str, Any]]]:
+    """Run the tool-calling loop.
+
+    Returns (answer, usage, local_tool_results, provider_tool_results). The last
+    two are the same objects on a local backend and deliberately different ones on
+    a remote backend — see `advisor_remote_boundary`. Callers that build evidence,
+    citations or stored turns want the first; anything that will be serialised
+    towards a provider wants the second, and the two lists exist so that choice
+    has to be made explicitly at each site instead of defaulting to whatever
+    variable was nearest.
 
     Raises ``LocalLLMBadRequest`` only when the very first tools request is
     rejected (caller falls back to the single-shot path); later turns degrade
     to a forced no-tools answer instead.
     """
+    boundary = boundary or LocalToolBoundary()
     registry = get_default_registry()
-    tool_schemas = registry.tool_schemas_for_scope(scope)
-    agent_tool_results: list[dict[str, Any]] = []
-    seen_calls: dict[str, dict[str, Any]] = {}
+    # Withheld, not deregistered. `policy_lookup` stays in the registry — the CI
+    # safety gate executes it, the remote projector is keyed on its name, and five
+    # store tests call it — so what changes is only what THIS turn advertises.
+    tool_schemas = boundary.tool_schemas(
+        [
+            schema
+            for schema in registry.tool_schemas_for_scope(scope)
+            if (schema.get("function") or {}).get("name") not in withheld_tools
+        ]
+    )
+    # A shorter list is not enforcement. Nothing in this loop previously compared
+    # a requested tool against the advertised set: the registry checks roles, the
+    # local boundary checks nothing, and the remote boundary checks the exposure
+    # map — so a model that asked for a withheld tool anyway would simply get it,
+    # retrieve a second time, and widen the citation set past the contract that
+    # was computed before the loop started.
+    advertised = {(schema.get("function") or {}).get("name") for schema in tool_schemas}
+    # Seeded rather than empty: the server-side policy prefetch and any
+    # credit-policy backing evidence were retrieved BEFORE the first model call,
+    # and they are part of this turn's evidence exactly as a tool result is. The
+    # lists are copied so the caller's are not mutated from inside the loop.
+    agent_tool_results: list[dict[str, Any]] = list(seeded_local_results or [])
+    provider_tool_results: list[dict[str, Any]] = list(seeded_provider_results or [])
+    seen_calls: dict[str, CachedToolExecution] = {}
+    #: Which credit blocks have already had their backing evidence injected, so a
+    #: repeated tool does not re-send the same policies every iteration. Shared
+    #: with the caller: a block seeded before the loop must not be injected again
+    #: the moment a tool returns the same figures.
+    credit_blocks_seeded = credit_blocks_seeded if credit_blocks_seeded is not None else set()
     total_calls = 0
     usage: dict[str, Any] = {}
 
@@ -1560,7 +2098,7 @@ def _run_agent_loop(
 
         if not turn.tool_calls:
             if turn.content:
-                return turn.content, usage, agent_tool_results
+                return turn.content, usage, agent_tool_results, provider_tool_results
             break  # neither calls nor content — force a final answer below
 
         messages.append(turn.assistant_message)
@@ -1568,40 +2106,148 @@ def _run_agent_loop(
             total_calls += 1
             if total_calls > _max_tool_calls():
                 messages.append(
-                    {
-                        "role": "tool",
-                        "tool_call_id": call.id,
-                        "content": json.dumps(
-                            {"ok": False, "error": "Tool budget exhausted. Answer now."},
-                            ensure_ascii=False,
-                        ),
-                    }
+                    _tool_message(
+                        call.id, {"ok": False, "error": "Tool budget exhausted. Answer now."}
+                    )
                 )
                 continue
-            dedup_key = f"{call.name}:{json.dumps(call.arguments, sort_keys=True)}"
-            if dedup_key in seen_calls:
-                result = {**seen_calls[dedup_key], "note": "duplicate call; reusing prior result"}
+
+            if call.name in withheld_tools:
+                # DELIBERATELY withheld for this turn, and the model is told why.
+                # A bare "not available" would read as a capability gap and invite
+                # it to work around one; naming the evidence it already has is the
+                # instruction that actually stops the second retrieval.
+                telemetry.setdefault("withheld_tool_calls", []).append(call.name)
+                _scrub_refused_call_arguments(messages, call.id)
+                messages.append(
+                    _tool_message(
+                        call.id,
+                        {
+                            "ok": False,
+                            "error": (
+                                "This tool is not available on this turn. The evidence "
+                                "it would return is already in verified_context; use "
+                                "that and do not request it again."
+                            ),
+                        },
+                    )
+                )
+                continue
+            if call.name not in advertised:
+                # Not withheld — never offered. A capability the boundary or the
+                # role check keeps from this session, asked for by name anyway.
+                # It takes the BOUNDARY's refusal, not the withheld one, so a
+                # denied capability keeps saying the one thing it may safely say
+                # and does not get relabelled as "already retrieved".
+                logger.warning("Model requested an unadvertised tool: %s", call.name)
+                telemetry["boundary_refusals"].append({"name": call.name, "stage": "pre_execution"})
+                _scrub_refused_call_arguments(messages, call.id)
+                messages.append(_tool_message(call.id, boundary.refusal_result(call.name)))
+                continue
+
+            # ── the execution order ──────────────────────────────
+            #
+            # Written out step by step rather than delegated to one call,
+            # because the ORDER is the property being enforced and a reviewer
+            # has to be able to see it. Everything above `registry.execute`
+            # refuses before any database read; the projection below it refuses
+            # before any egress. On a local backend every step here is the
+            # identity function and the loop behaves exactly as it always did.
+            try:
+                boundary.assert_capability_allowed(call.name)
+                safe_args = boundary.reject_identity_arguments(call.name, call.arguments)
+                resolved_args = boundary.resolve_reference_arguments(call.name, safe_args)
+                boundary.authorise_resolved_arguments(call.name, resolved_args)
+            except LLMPrivacyError:
+                # Nothing ran: no executor, no query, no result to leak. The
+                # exception text names the guard and sometimes the student, so
+                # it is not logged and not shown to the model — the model gets
+                # one refusal that reads the same whichever guard fired.
+                logger.warning("Boundary refused %s before execution.", call.name)
+                telemetry["boundary_refusals"].append({"name": call.name, "stage": "pre_execution"})
+                _scrub_refused_call_arguments(messages, call.id)
+                messages.append(_tool_message(call.id, boundary.refusal_result(call.name)))
+                continue
+
+            # Keyed on the RESOLVED arguments, so two references to the same
+            # student hit the same entry. Never recorded in telemetry: after
+            # resolution this string contains a real student id.
+            dedup_key = f"{call.name}:{json.dumps(resolved_args, sort_keys=True, default=str)}"
+            cached = seen_calls.get(dedup_key)
+            if cached is not None:
+                # Both halves come from the pair. Re-projecting the cached local
+                # result here would read a map that has moved on, and reaching
+                # for `cached.local_result` on the provider side is the exact
+                # cross-boundary reconstruction the pair exists to prevent.
+                local_result = {**cached.local_result, "note": DUPLICATE_NOTE}
+                provider_result = {**cached.provider_result, "note": DUPLICATE_NOTE}
             else:
                 started = time.perf_counter()
-                result = registry.execute(call.name, call.arguments, scope=scope, ctx=ctx)
+                local_result = registry.execute(call.name, resolved_args, scope=scope, ctx=ctx)
                 elapsed_ms = int((time.perf_counter() - started) * 1000)
-                seen_calls[dedup_key] = result
-                agent_tool_results.append(result)
+                try:
+                    provider_result = boundary.project_tool_result(call.name, local_result)
+                except LLMPrivacyError:
+                    # A shape the projector will not accept. Execution has
+                    # already happened — that much could not be known in
+                    # advance — but egress has not, and the result stays out of
+                    # the log line and out of the re-raised exception.
+                    logger.error("Projection refused a %s result; nothing was sent.", call.name)
+                    telemetry["boundary_refusals"].append(
+                        {"name": call.name, "stage": "projection"}
+                    )
+                    messages.append(_tool_message(call.id, boundary.refusal_result(call.name)))
+                    continue
+                # A ROUTE, not data. The server has already decided where
+                # this request goes; handing that to the model to paraphrase is
+                # how a confirmation requirement became «the feature does not
+                # exist», with advice to delete real registrations attached.
+                # Short-circuit before the provider sees anything.
+                handoff = handoff_for(local_result)
+                if handoff is not None:
+                    telemetry["action_handoff"] = handoff.action
+                    agent_tool_results.append(local_result)
+                    provider_tool_results.append(provider_result)
+                    return (
+                        _ACTION_HANDOFF_SENTINEL,
+                        usage,
+                        agent_tool_results,
+                        provider_tool_results,
+                    )
+
+                seen_calls[dedup_key] = CachedToolExecution(local_result, provider_result)
+                agent_tool_results.append(local_result)
+                provider_tool_results.append(provider_result)
                 telemetry["tools_called"].append(
                     {
                         "name": call.name,
-                        "ok": bool(result.get("ok")),
+                        "ok": bool(local_result.get("ok")),
                         "ms": elapsed_ms,
+                        # The model's OWN arguments, before resolution. In remote
+                        # mode those carry `student_ref`; `resolved_args` carry
+                        # the real id, and telemetry is stored and shipped.
                         "args": _summarise_tool_args(call.arguments),
                     }
                 )
-            messages.append(
-                {
-                    "role": "tool",
-                    "tool_call_id": call.id,
-                    "content": json.dumps(result, ensure_ascii=False, default=str),
-                }
+            messages.append(_tool_message(call.id, provider_result))
+
+            # A tool result can introduce a credit block that the initial context
+            # did not have — `get_student_context` is the usual one. Its backing
+            # citations are retrieved and injected HERE, before the next model
+            # turn, rather than at final validation. Attaching them afterwards
+            # tells the validator which policies could have been cited while the
+            # model composed the answer without ever seeing them, which is exactly
+            # how a correct 19-hour limit arrives with no citation behind it.
+            injected = _inject_credit_evidence(
+                local_result,
+                seen=credit_blocks_seeded,
+                messages=messages,
+                boundary=boundary,
+                local_results=agent_tool_results,
+                provider_results=provider_tool_results,
             )
+            if injected:
+                telemetry.setdefault("credit_evidence_injected", []).append(call.name)
 
     # Iteration or budget limit reached: force a final answer from the
     # evidence gathered so far, with tools disabled.
@@ -1620,10 +2266,10 @@ def _run_agent_loop(
         messages,
         model=resolved_model,
         max_tokens=_loop_max_tokens(),
-        assistant_prefill=_assistant_prefill_for_model(resolved_model),
+        assistant_prefill=_assistant_prefill_for_client(llm, resolved_model),
     )
     telemetry["forced_final"] = True
-    return final.content, final.usage or usage, agent_tool_results
+    return final.content, final.usage or usage, agent_tool_results, provider_tool_results
 
 
 def answer_virtual_advisor(
@@ -1665,7 +2311,11 @@ def answer_virtual_advisor(
         term=term,
     )
 
-    llm = client or LocalLLMClient()
+    # THE FACTORY, not `LocalLLMClient()`. Until this line `LLM_BACKEND=alibaba`
+    # selected a remote privacy boundary while generation still went to the local
+    # model — the most misleading state the feature could be in, because every
+    # privacy test would pass against a provider that was never contacted.
+    llm = client or get_llm_client()
     resolved_model = llm.resolve_model(model)
 
     telemetry: dict[str, Any] = {
@@ -1677,8 +2327,174 @@ def answer_virtual_advisor(
         "forced_final": False,
         "grounding_retry": False,
         "turn_error": None,
+        "boundary_refusals": [],
     }
-    agent_tool_results: list[dict[str, Any]] = []
+    # Whether anything leaves the institution is decided here, from configuration
+    # alone, and once. `LLM_BACKEND=local` yields a boundary whose every step is
+    # the identity function, so the shipped default is byte-for-byte the previous
+    # behaviour rather than a new path that happens to agree with it.
+    #
+    # The student's own name is handed over as a redaction target: it is the one
+    # personal string that reliably appears in a question ("أنا محمد، كم ساعة…")
+    # and the sanitiser works from an exact set rather than a name pattern.
+    # Derived from the CLIENT, never from settings independently. Two sources for
+    # one fact is how a remote client ends up holding `LocalToolBoundary` and full
+    # records: a caller injects a client the settings do not describe — a test, a
+    # management command, a future queue worker — and the privacy behaviour
+    # silently follows the wrong one. The client is the thing that will actually
+    # receive the payload, so it is the thing that decides what may be in it.
+    client_backend = str(getattr(llm, "backend", BACKEND_LOCAL) or BACKEND_LOCAL)
+    configured_backend = (
+        str(getattr(settings, "LLM_BACKEND", BACKEND_LOCAL) or BACKEND_LOCAL).strip().lower()
+    )
+    if client is None and client_backend != configured_backend:
+        # Only for the production construction path. An injected client is
+        # allowed to disagree with settings — that is what makes it injectable —
+        # but the factory building something the deployment did not ask for is a
+        # configuration fault, and answering anyway would answer through the
+        # wrong provider.
+        raise LLMConfigError(
+            f"the configured backend is {configured_backend!r} but the client "
+            f"reports {client_backend!r}; refusing to answer through an "
+            "unintended provider."
+        )
+
+    # ── the route, decided from the question, before any evidence is gathered ──
+    #
+    # HERE and not later, for two reasons that are not about cost, both measured
+    # against the loaded store rather than reasoned about:
+    #
+    #   «سوِّ لي أكثر من خيار للجدول»  retrieved     8 policies, 2 citable
+    #   «احفظ الخيار الثاني…»          none_matched  0 policies
+    #   «عدّلت قائمة المقررات…»         retrieved     8 policies, 2 citable
+    #
+    # Retrieval seeds `tool_results`, which the UI renders as the evidence behind
+    # the answer — so two of the three would carry eight policy records beside a
+    # fixed referral that cites none of them. And `derive_outcome` reads
+    # `policy_grounding`: the preference question matches nothing, `none_matched`
+    # becomes POLICY_NOT_FOUND, and POLICY_NOT_FOUND with no citations is ABSTAIN,
+    # which stores a route the student can act on as one the adviser declined.
+    #
+    # STUDENTS ONLY, and that is a correctness gate rather than caution. Every
+    # planner-draft endpoint builds its principal with `AdvisorPrincipal.for_student`
+    # and refuses anything else, so «افتح المخطط الدراسي» offered to an adviser
+    # names a screen that will answer them 403. Routing someone to a door that is
+    # locked against them is the same defect as denying a feature that exists,
+    # pointed the other way.
+    #
+    # `PLANNER_REBUILD` is not routed here — see `ROUTED_INTENTS`. It is refused
+    # inside `build_my_timetable`, where the arguments are known, and answering it
+    # from the question as well would leave one rule with two implementations.
+    # Computed BEFORE anything reads it — the rebuild check below, the tool schemas,
+    # and the policy contract all key on it. `route_intent` is offline and side-effect
+    # free, so this costs a string scan and nothing else.
+    route = route_intent(question)
+    # Set HERE, before the hand-off short-circuits below. Recorded on every path or
+    # the evaluator cannot tell "routed correctly and answered deterministically"
+    # from "never routed at all" — and those are the two outcomes it exists to
+    # separate.
+    telemetry["primary_family"] = str(route.primary_family)
+    telemetry["composition"] = str(route.composition)
+
+    # ── the rebuild, whose refusal must not depend on the model choosing to ask ──
+    #
+    # `PLANNER_REBUILD` is deliberately absent from `ROUTED_INTENTS`: the rule that a
+    # destructive rebuild needs confirmation lives in `build_my_timetable`, once, and
+    # a second copy here is how the audited one stops running. So the route does not
+    # answer the question — it EXECUTES that one implementation.
+    #
+    # Measured before this existed: with `tool_choice` free, a model that simply did
+    # not call the tool got «سأبني لك جدولًا جديدًا يتجاهل تسجيلك الحالي» through with
+    # `action: None` — a promise to discard the student's registration, from a system
+    # that would not have done it. Narrowing the surface to one tool in 7B made that
+    # path both easier to see and the only thing left to close.
+    #
+    # STUDENTS ONLY, for the same reason the other routes are: every planner-draft
+    # endpoint answers 403 to anyone else.
+    if principal.role == ROLE_STUDENT and route.primary_family is IntentFamily.PLANNER_REBUILD:
+        refusal = get_default_registry().execute(
+            "build_my_timetable",
+            {"keep_current_sections": False},
+            scope=scope,
+            ctx={"academic_year": academic_year, "term": term},
+        )
+        rebuilt = handoff_for(refusal)
+        if rebuilt is not None:
+            telemetry["action_handoff"] = rebuilt.action
+            telemetry["intent_route"] = rebuilt.intent
+            telemetry["rebuild_forced_server_side"] = True
+            return {
+                "ok": True,
+                "answer": rebuilt.answer(_answer_language(question)),
+                "action": rebuilt.as_payload(),
+                "model": "",
+                "usage": {},
+                "context_summary": _context_summary(context),
+                "tool_results": [refusal],
+                "verified_context": context,
+                "citations": [],
+                "cited_policy_ids": [],
+                "data_part": {"status": "NOT_ATTEMPTED", "facts": {}},
+                "policy_part": {"status": "ANSWERED", "evidence": []},
+                "agent": {**telemetry, "tool_results": [refusal]},
+            }
+
+    # ── the question that cannot be answered because it names nothing ──
+    #
+    # Before the provider, for the same reason the hand-offs are: "ask which course
+    # they mean" written in a system prompt competes with twelve other instructions
+    # and with a tool that looks answerable, and a model that skips it invents the
+    # subject. Measured on the contract, three questions are in this shape and all
+    # three executed a data tool about a course nobody named.
+    #
+    # HISTORY FIRST. «هذا المقرر» after a turn about AI331 has a referent, and asking
+    # again is worse than guessing because the student already told us.
+    asked = clarification_for(question, history=history)
+    if asked is not None:
+        telemetry["clarification_reason"] = asked.reason
+        return {
+            "ok": True,
+            "answer": asked.answer(_answer_language(question)),
+            "action": None,
+            "model": "",
+            "usage": {},
+            "context_summary": _context_summary(context),
+            "tool_results": [],
+            "verified_context": context,
+            "citations": [],
+            "cited_policy_ids": [],
+            "data_part": {"status": "NOT_ATTEMPTED", "facts": {}},
+            "policy_part": {"status": "ANSWERED", "evidence": []},
+            "agent": {**telemetry, "tool_results": []},
+        }
+
+    if principal.role == ROLE_STUDENT:
+        routed = handoff_for_question(question)
+        if routed is not None:
+            telemetry["action_handoff"] = routed.action
+            telemetry["intent_route"] = routed.intent
+            return {
+                "ok": True,
+                "answer": routed.answer(_answer_language(question)),
+                "action": routed.as_payload(),
+                # No model was contacted, so naming one would attribute a constant
+                # in this repository to a provider that never saw the question —
+                # and `_persist_answer` stores this string on the turn.
+                "model": "",
+                "usage": {},
+                "context_summary": _context_summary(context),
+                "tool_results": [],
+                "verified_context": context,
+                "citations": [],
+                "cited_policy_ids": [],
+                "agent": {**telemetry, "tool_results": []},
+            }
+
+    boundary = boundary_for_scope(
+        scope,
+        backend=client_backend,
+        known_names=_known_names_from_context(context),
+    )
 
     # The credit range reaches the model through recommendation_policy, not through
     # policy_lookup — a second regulatory channel that was outside the citation
@@ -1691,15 +2507,118 @@ def answer_virtual_advisor(
     usage: dict[str, Any] = {}
     answer_model = resolved_model
 
+    # Recorded, not recomputed by the evaluator. "Which tools did the server offer"
+    # and "which did the model call" are different questions, and an evaluation that
+    # derives the first from its own copy of the routing table cannot tell an
+    # orchestration failure from a model failure — it would agree with itself.
+    # ── a MULTI_CAPABILITY route's evidence is the SERVER'S obligation ──
+    #
+    # Measured on the live canary: TT20 «ليش ما ضفت AI491؟ هل المشكلة في المتطلب
+    # السابق أو في وقت الشعبة؟» asks two independent questions, was advertised both
+    # tools, and the provider called one — then answered the prerequisite half and
+    # left the timetable half unaddressed. `why_course_locked` structurally cannot
+    # say whether the course was excluded for a section-fit reason.
+    #
+    # Retrying and asking the model to please call the other tool is the weaker fix:
+    # it costs another paid turn and still depends on the same choice. When the ROUTE
+    # declares two capabilities, the server fetches whichever the model did not, and
+    # the provider writes the answer over complete evidence.
+    #
+    # SINGLE and GENERAL_AGENT are untouched — there the model's selection IS the
+    # decision, and completing it would be the server answering a question it did not
+    # route.
+    def _complete_required_evidence(
+        results: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        if route.composition is not CompositionKind.MULTI_CAPABILITY:
+            return results
+        obtained = {r.get("tool") for r in results if isinstance(r, dict)}
+        missing = [t for t in (capabilities_for_route(route) or ()) if t not in obtained]
+        for tool in missing:
+            logger.info("Completing required evidence for %s: %s", route.composition, tool)
+            results = [
+                *results,
+                get_default_registry().execute(
+                    tool, {}, scope=scope, ctx={"academic_year": academic_year, "term": term}
+                ),
+            ]
+            telemetry.setdefault("server_completed_tools", []).append(tool)
+        return results
+
+    # Recorded so an evaluation can attribute a failure to a LAYER. Without the
+    # family in the trace, "the answer was wrong" cannot be told apart from "the
+    # router sent it to the wrong surface", which is what made the first live batch
+    # an expensive debugging exercise rather than a measurement.
+    withheld = _withheld_for(route, scope)
+    telemetry["exposed_tools"] = sorted(
+        name
+        for name in (
+            (schema.get("function") or {}).get("name")
+            for schema in get_default_registry().tool_schemas_for_scope(scope)
+        )
+        if name and name not in withheld
+    )
+
     loop_supported = callable(getattr(llm, "chat_with_tools", None))
     if telemetry["enabled"] and not loop_supported:
         telemetry["fallback_reason"] = "client_has_no_tool_support"
 
+    # ── policy retrieval, server-side, before anything is generated ──
+    #
+    # Retrieval is no longer the model's decision on either path. It used to be:
+    # the loop advertised `policy_lookup` and the prompt asked the model to call
+    # it first, so "was this answer grounded" depended on whether a model chose to
+    # look — and `not_consulted` was a real, common outcome that read downstream
+    # exactly like a grounded one.
+    #
+    # Run with the CALLER'S scope and the ORIGINAL question, locally, before any
+    # projection: the store must see what the student actually wrote, not an
+    # aliased or redacted rendering of it.
+    policy_evidence, grounding = _seed_policy_evidence(question, scope)
+    telemetry["policy_grounding"] = grounding
+    # PROJECT FIRST, then shape. The other order runs the prompt trim over a raw
+    # local result and hands the projector something that no longer matches the
+    # shape it was written against — which is how the duplicate-bucket defect
+    # above became invisible. The projector decides what may leave; the trim only
+    # decides how much of that is worth the prompt.
+    context["policy_evidence"] = _policy_evidence_for_prompt(
+        boundary.project_tool_result("policy_lookup", policy_evidence)
+    )
+    agent_tool_results = [policy_evidence]
+
+    # The credit range reaches the model through `recommendation_policy`, which is
+    # in the verified context from the start — so its backing records can be
+    # retrieved now rather than at final validation. Doing it afterwards told the
+    # validator which policies COULD have been cited while the model composed the
+    # answer having never seen them, which is how a correct 19-hour limit arrives
+    # attributed to nothing. Blocks that only appear later, when a tool returns
+    # them, are injected mid-loop by `_inject_credit_evidence`.
+    credit_blocks_seeded: set[str] = set()
+    seeded_credit = _credit_policy_evidence_citations({"context": context})
+    if seeded_credit:
+        credit_blocks_seeded.add(
+            json.dumps(_find_credit_block(context), sort_keys=True, default=str)[:400]
+        )
+        agent_tool_results = [*agent_tool_results, seeded_credit]
+        context["credit_policy_evidence"] = _policy_evidence_for_prompt(
+            boundary.project_tool_result("policy_lookup", seeded_credit)
+        )
+
+    provider_tool_results = [
+        boundary.project_tool_result("policy_lookup", r) for r in agent_tool_results
+    ]
+
+    # TWO SERIALISATIONS OF THE SAME CONTEXT, and they are not interchangeable.
+    # `context_json` is the complete local record: it is the evidence the
+    # grounding check reads, and shrinking it there would turn a check into a
+    # rubber stamp. `prompt_context_json` is what a model is allowed to see.
+    # Locally they are identical strings; remotely the second is the projection.
     context_json = json.dumps(context, ensure_ascii=False)
+    prompt_context_json = json.dumps(boundary.project_context(context), ensure_ascii=False)
     user_message = {
         "role": "user",
         "content": (
-            f"verified_context:\n{context_json}\n\n"
+            f"verified_context:\n{prompt_context_json}\n\n"
             f"answer_language: {_answer_language(question)}\n\n"
             f"latest_question:\n{question.strip()}"
         ),
@@ -1711,47 +2630,65 @@ def answer_virtual_advisor(
         # tokens), which slowed every turn and tempted the model to answer
         # from a misleading sample instead of calling find_students with
         # the right filters. The model fetches precisely what it needs.
-        loop_messages: list[dict[str, Any]] = [
-            {"role": "system", "content": SYSTEM_PROMPT_AGENT},
-            *_sanitize_history(history),
-            user_message,
-        ]
+        loop_messages: list[dict[str, Any]] = boundary.sanitise_messages(
+            [
+                {"role": "system", "content": SYSTEM_PROMPT_AGENT},
+                *_sanitize_history(history),
+                user_message,
+            ]
+        )
+        # Sanitised HERE, once, over the whole list rather than over the question
+        # alone. History is the part that gets forgotten: a stored turn carries
+        # last week's question back into this prompt verbatim, and a boundary that
+        # only inspects `question` would wave it through. Messages appended inside
+        # the loop need no second pass — they are the model's own words coming
+        # back, and tool results that were already projected.
         try:
-            answer, usage, agent_tool_results = _run_agent_loop(
+            answer, usage, agent_tool_results, provider_tool_results = _run_agent_loop(
                 llm=llm,
                 resolved_model=resolved_model,
                 messages=loop_messages,
                 scope=scope,
                 ctx={"academic_year": academic_year, "term": term},
                 telemetry=telemetry,
+                boundary=boundary,
+                # Already retrieved, server-side, above. Advertising it now would
+                # invite a second lookup whose records were never in the contract
+                # computed before generation.
+                withheld_tools=withheld,
+                seeded_local_results=agent_tool_results,
+                seeded_provider_results=provider_tool_results,
+                credit_blocks_seeded=credit_blocks_seeded,
             )
             telemetry["loop_used"] = True
-            # Whether this answer had a policy basis is recorded on BOTH paths, so an
-            # ungrounded rule answer is distinguishable after the fact instead of
-            # looking exactly like a grounded one. On this path the model chooses
-            # whether to call policy_lookup; "not_consulted" is therefore a real
-            # outcome, and catching a rule stated under it is the judge's job.
-            called = {t.get("name") for t in telemetry.get("tools_called") or []}
-            if "policy_lookup" not in called:
-                telemetry["policy_grounding"] = "not_consulted"
-            else:
-                consulted = [
-                    r
-                    for r in agent_tool_results
-                    if isinstance(r, dict) and r.get("tool") == "policy_lookup"
-                ]
-                # Three states, not two. "Records came back" and "a record
-                # governs this question" are different facts, and the applicability
-                # layer exists precisely because they diverge: a turn that
-                # retrieved four related rules and none that answers the question
-                # used to persist as "retrieved" and read downstream as grounded,
-                # so the one case most in need of a human looked like a success.
-                if not any(r.get("policies") for r in consulted):
-                    telemetry["policy_grounding"] = "none_matched"
-                elif not any(r.get("direct_policy_evidence") for r in consulted):
-                    telemetry["policy_grounding"] = "none_governing"
-                else:
-                    telemetry["policy_grounding"] = "retrieved"
+            agent_tool_results = _complete_required_evidence(agent_tool_results)
+            if answer == _ACTION_HANDOFF_SENTINEL:
+                # Every downstream check is skipped ON PURPOSE. There is nothing
+                # to ground, cite or sanitise: no model wrote this, and the text
+                # is a constant in this repository. Running the contracts over it
+                # would only create ways for them to reject it.
+                handoff = handoff_for(agent_tool_results[-1])
+                assert handoff is not None
+                return {
+                    "ok": True,
+                    "answer": handoff.answer(_answer_language(question)),
+                    "action": handoff.as_payload(),
+                    "model": answer_model,
+                    "usage": usage,
+                    "context_summary": _context_summary(context),
+                    "tool_results": agent_tool_results,
+                    "verified_context": context,
+                    "citations": [],
+                    "cited_policy_ids": [],
+                    "agent": {**telemetry, "tool_results": agent_tool_results},
+                }
+            # `policy_grounding` is NOT recomputed here. It was set by the
+            # server-side prefetch, from the retrieval that actually happened, and
+            # deriving it a second time from what the model chose to call is the
+            # arrangement this change removes. `not_consulted` is no longer a
+            # reachable outcome on this path; `PolicyContractState` treats it as a
+            # programming failure rather than as an answer.
+            #
             # The UI evidence panel reads ``tool_results``; in loop mode
             # the agent's tool results are that evidence.
             tool_results = agent_tool_results
@@ -1766,41 +2703,37 @@ def answer_virtual_advisor(
         if tool_results:
             context["tool_results"] = tool_results
 
-        # ...and the policy store is consulted for EVERY question on this path.
-        #
-        # This path has no tools, so the model cannot fetch a rule itself. Until this
-        # was added it simply answered regulation questions from parametric memory:
-        # no citation, no retrieval, and nothing for the citation check to object to,
-        # because a model that never saw a policy id will not emit one. A complete
-        # grounding bypass that looked identical to a grounded answer.
-        #
-        # Retrieval is attempted unconditionally rather than behind a "does this look
-        # like a policy question" guess: a classifier that says no is exactly how the
-        # bypass comes back, and the lookup is a local deterministic dict scan.
-        policy_evidence, grounding = _seed_policy_evidence(question)
-        telemetry["policy_grounding"] = grounding
-        context["policy_evidence"] = policy_evidence
-        if policy_evidence.get("policies"):
-            # Feed the same structure the agent loop produces, so the citation check
-            # and the response contract work identically on both paths.
-            agent_tool_results = [*agent_tool_results, policy_evidence]
+        # The policy store was already consulted, above, for BOTH paths. It used
+        # to be re-consulted here because this path had no tools and the loop had
+        # the model decide; now retrieval happens once, before either path starts,
+        # and the two share one result and one grounding state.
 
         context_json = json.dumps(context, ensure_ascii=False)
+        # Disabling tools does not relax the boundary. This path serialises the
+        # WHOLE context into one message — seeded tool results and policy evidence
+        # included — so it is the largest single payload the adviser ever sends,
+        # and reaching for the unprojected object here because "there are no tools
+        # to project" would be the most expensive shortcut in the feature.
+        prompt_context_json = json.dumps(boundary.project_context(context), ensure_ascii=False)
         user_message = {
             "role": "user",
             "content": (
-                f"verified_context:\n{context_json}\n\n"
+                f"verified_context:\n{prompt_context_json}\n\n"
                 f"answer_language: {_answer_language(question)}\n\n"
                 f"latest_question:\n{question.strip()}"
             ),
         }
-        messages = [{"role": "system", "content": SYSTEM_PROMPT}]
-        messages.extend(_sanitize_history(history))
-        messages.append(user_message)
+        messages = boundary.sanitise_messages(
+            [
+                {"role": "system", "content": SYSTEM_PROMPT},
+                *_sanitize_history(history),
+                user_message,
+            ]
+        )
         result: ChatResult = llm.chat(
             messages,
             model=resolved_model,
-            assistant_prefill=_assistant_prefill_for_model(resolved_model),
+            assistant_prefill=_assistant_prefill_for_client(llm, resolved_model),
         )
         answer = result.content
         usage = result.usage
@@ -1812,12 +2745,28 @@ def answer_virtual_advisor(
     # Attached here rather than up front: on the agent path the credit block only
     # exists once get_student_context has returned, so anything earlier finds nothing
     # on exactly the path that produced the uncited «حسب الدليل، الحد الأدنى 12 ساعة».
+    # A BACKSTOP now, not the mechanism. The credit records are seeded before
+    # generation and injected mid-loop when a tool introduces a new block; this
+    # catches a block that reached neither — a shape nobody anticipated — so the
+    # citation validator still knows what could have been cited. It runs after
+    # generation, so anything it finds was NOT visible to the model, and the
+    # answer that used those figures is uncited by construction.
     credit_citations = _credit_policy_evidence_citations(
         {"context": context, "tools": agent_tool_results}
     )
     if credit_citations:
+        telemetry["credit_evidence_late"] = True
+    if credit_citations:
         agent_tool_results = [*agent_tool_results, credit_citations]
+        provider_tool_results = [
+            *provider_tool_results,
+            boundary.project_tool_result("policy_lookup", credit_citations),
+        ]
 
+    # The citation contract is checked against the LOCAL evidence. What the answer
+    # was entitled to cite is a fact about what this request retrieved, not about
+    # what a provider was shown — and a check run against the projection would
+    # weaken with every field the projection drops.
     citations = _retrieved_citations(agent_tool_results)
     bad = _bad_citations(answer, citations)
     if bad:
@@ -1827,7 +2776,11 @@ def answer_virtual_advisor(
         # a model to rewrite a rule-bearing answer while showing it only a list of
         # ids leaves it nothing to rewrite FROM except its own memory — which is
         # the failure this whole feature exists to prevent.
-        evidence = _policy_evidence_block(agent_tool_results)
+        # The correction quotes policy TEXT back at the model, so it is outbound
+        # payload and takes the provider results. The DECISION to retry, and the
+        # list of what failed, came from the local check above — the boundary
+        # applies to what is sent, not to what is verified.
+        evidence = _policy_evidence_block(provider_tool_results)
         correction = (
             "Your draft's citations did not check out: "
             + "; ".join(
@@ -1841,17 +2794,25 @@ def answer_virtual_advisor(
             "remove the claim and say the system holds no written rule on that point. "
             "Do not substitute a different policy to keep the claim."
         )
-        retry_messages = [
-            {"role": "system", "content": SYSTEM_PROMPT_AGENT},
-            user_message,
-            {"role": "assistant", "content": answer},
-            {"role": "user", "content": correction},
-        ]
         try:
+            # Inside the try on purpose. The draft is the model's own text and may
+            # contain an identifier it invented — which is exactly what the
+            # grounding check below exists to catch. If the boundary refuses to
+            # send it back, that is the correct outcome and the cost is one lost
+            # retry: the draft stands, and a draft with bad citations is replaced
+            # by the refusal a few lines down rather than shipped.
+            retry_messages = boundary.sanitise_messages(
+                [
+                    {"role": "system", "content": SYSTEM_PROMPT_AGENT},
+                    user_message,
+                    {"role": "assistant", "content": answer},
+                    {"role": "user", "content": correction},
+                ]
+            )
             corrected_cite: ChatResult = llm.chat(
                 retry_messages,
                 model=resolved_model,
-                assistant_prefill=_assistant_prefill_for_model(resolved_model),
+                assistant_prefill=_assistant_prefill_for_client(llm, resolved_model),
             )
             if corrected_cite.content:
                 still_bad = _bad_citations(corrected_cite.content, citations)
@@ -1885,41 +2846,229 @@ def answer_virtual_advisor(
                 else _CITATION_REFUSAL_EN
             )
 
-    # Grounding check: any student id in the answer must exist in the
-    # evidence (context, seed tools, agent tools) or the question itself.
+    # ── the regulatory postcondition ─────────────────────────────
+    #
+    # Runs AFTER the citation retry, because that retry can introduce a fresh
+    # policy id, and before the output contract, because a deterministic
+    # abstention contains no identifiers and would pass the identifier gate
+    # trivially either way.
+    contract = build_policy_contract_state(
+        question,
+        agent_tool_results,
+        grounding_state=telemetry["policy_grounding"],
+        # The family the router already decided, so the obligation is keyed on the
+        # DOMAIN of the question rather than on whether a regulated-sounding word
+        # appeared in it.
+        # The whole route, not the family: a MULTI_CAPABILITY question's domain is a
+        # property of what it is made of. TT20 wins PLANNER_BUILD on precedence and is
+        # planner DATA throughout; asking the family alone would have said the same
+        # thing for a question that also fired POLICY.
+        intent=route,
+    )
+    telemetry.update(contract.as_telemetry())
+    telemetry["secondary_families"] = [str(f) for f in route.secondary_families]
+    answer_language = _answer_language(question)
+    policy_abstained = False
+
+    if contract.retrieval_missing:
+        # Unreachable through any normal path now that retrieval is server-side
+        # and unconditional. Kept because "we never looked" must never be able to
+        # become "here is the rule": if it ever happens it is a programming
+        # failure, and the honest response is to say nothing rather than to let
+        # the model fill the gap.
+        logger.error("Policy retrieval never ran on a policy-required question.")
+        telemetry["policy_contract_failure"] = "retrieval_missing"
+        answer = _POLICY_ABSTENTION_AR if answer_language == "Arabic" else _POLICY_ABSTENTION_EN
+    elif contract.must_abstain:
+        # A rule was asked for and the store holds nothing governing. Today the
+        # model answers such questions from memory; measured over the 284-question
+        # corpus this is 53 questions, none of which the curated labels call
+        # answerable without a policy.
+        #
+        # The ANSWER PROSE is still replaced wholesale, and that has not changed:
+        # removing unsupported rule sentences from free text is a surgery nobody has
+        # solved, and a half-edited answer is one whose remaining sentences nobody
+        # has checked.
+        #
+        # What changed is that the verified student data is no longer DESTROYED with
+        # it. The facts were never in the prose — they are the structured tool
+        # results the server already holds — so `data_part` carries them out beside
+        # the abstention, and the interface renders the timetable or the prerequisite
+        # list it always could have. Only the regulatory CLAIM is suppressed, which
+        # is the half that had no evidence.
+        telemetry["policy_contract_failure"] = "no_governing_evidence"
+        answer = _POLICY_ABSTENTION_AR if answer_language == "Arabic" else _POLICY_ABSTENTION_EN
+        policy_abstained = True
+    elif contract.missing_governing_citation(
+        _policy_ids_in_text(answer) & contract.citable_policy_ids
+    ):
+        # Governing evidence EXISTS and the answer cited none of it. Citing a
+        # background record does not satisfy this: the id is real, it was
+        # retrieved this request, and it passes every check the citation
+        # validator makes — which is exactly why the test is against
+        # `direct_policy_ids`.
+        telemetry["policy_contract_retry"] = True
+        direct_block = _policy_evidence_block(
+            provider_tool_results, only=contract.direct_policy_ids
+        )
+        correction = (
+            "Your answer states a university rule without citing the record that "
+            "governs it. These are the ONLY governing records retrieved for this "
+            "question:\n" + (direct_block or "(none)") + "\n\nRewrite the answer citing "
+            "at least one of them as «الدليل الإرشادي للطالب، ص NN [POLICY_ID]». Do not "
+            "cite any other id. If none of them supports the claim, remove the claim."
+        )
+        try:
+            retry_messages = boundary.sanitise_messages(
+                [
+                    {"role": "system", "content": SYSTEM_PROMPT_AGENT},
+                    user_message,
+                    {"role": "assistant", "content": answer},
+                    {"role": "user", "content": correction},
+                ]
+            )
+            corrected_policy: ChatResult = llm.chat(
+                retry_messages,
+                model=resolved_model,
+                assistant_prefill=_assistant_prefill_for_client(llm, resolved_model),
+            )
+            candidate = corrected_policy.content or ""
+        except Exception:
+            logger.exception("Policy-contract retry failed")
+            candidate = ""
+        still_missing = not candidate or contract.missing_governing_citation(
+            _policy_ids_in_text(candidate) & contract.citable_policy_ids
+        )
+        if still_missing:
+            telemetry["policy_contract_failure"] = "no_governing_citation"
+            answer = _CITATION_REFUSAL_AR if answer_language == "Arabic" else _CITATION_REFUSAL_EN
+        else:
+            answer = candidate
+            # The rewrite is a new answer, so the citations it makes are re-checked
+            # rather than inherited from the draft that was replaced.
+            late_bad = _bad_citations(answer, citations)
+            if late_bad:
+                telemetry["citation_refused"] = True
+                answer = (
+                    _CITATION_REFUSAL_AR if answer_language == "Arabic" else _CITATION_REFUSAL_EN
+                )
+
+    # ── the output contract ──────────────────────────────────────
+    #
+    # Detect -> retry -> RE-VALIDATE -> ship only if clean, refuse otherwise.
+    #
+    # The re-validation is the part that was missing, and its absence was not a
+    # gap in coverage but an inversion. The old sequence kept the original draft
+    # when the retry raised, and accepted the corrected draft without looking at
+    # it — so a request that had PROVEN its answer contained an unverified
+    # identifier could return that exact answer, or return a correction that
+    # invented a fresh one. The system detected the fault and then shipped it.
+    #
+    # There is no "degrade to the draft" outcome here. Once the contract has
+    # failed, the draft is known-bad; the only safe fallbacks are a clean rewrite
+    # or a deterministic refusal.
     evidence_texts = [
         context_json,
         question,
         *(json.dumps(item, ensure_ascii=False, default=str) for item in agent_tool_results),
     ]
-    unverified = _unverified_student_ids(answer, evidence_texts)
-    if unverified:
+    is_student = principal.role == ROLE_STUDENT
+    violations = _output_contract_violations(
+        answer,
+        evidence_texts=evidence_texts,
+        boundary=boundary,
+        is_student=is_student,
+        tool_results=tool_results,
+        # `recommendation_policy` lives here, not in the tool results, and the credit
+        # check needs it to tell an advisory cap from a contradiction.
+        context=context,
+    )
+    if violations:
+        # `grounding_retry` keeps its name: stored turns, the eval battery and the
+        # conversation UI already read it.
         telemetry["grounding_retry"] = True
-        correction = (
-            "Your draft answer mentioned student ids that do not appear in the verified "
-            f"evidence: {', '.join(unverified)}. Rewrite the answer strictly from the "
-            "evidence; never invent identifiers."
+        telemetry["output_violations"] = violations
+        # THE REJECTED DRAFT, sanitised, as diagnostic telemetry only. Two paid runs
+        # were spent guessing which number tripped the credit check, because the
+        # refusal replaced the text that contained it. The student still receives the
+        # refusal; this rides on the trace, which is gitignored.
+        #
+        # It goes through the SAME sanitiser the transport uses, so a draft cannot
+        # leak by the diagnostic door what the boundary refuses at the front — and it
+        # is capped, because a diagnostic that carries the whole answer is the answer.
+        telemetry.setdefault("rejected_drafts", []).append(
+            {
+                "attempt": len(telemetry.get("rejected_drafts") or []) + 1,
+                "violations": violations,
+                "safe_excerpt": _safe_excerpt(boundary, answer),
+            }
         )
-        retry_messages = [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            user_message,
-            {"role": "assistant", "content": answer},
-            {"role": "user", "content": correction},
-        ]
+        corrected_answer: str | None = None
         try:
+            retry_messages = boundary.sanitise_messages(
+                [
+                    {"role": "system", "content": SYSTEM_PROMPT},
+                    user_message,
+                    {"role": "assistant", "content": answer},
+                    {
+                        "role": "user",
+                        "content": _output_correction(
+                            violations,
+                            boundary,
+                            []
+                            if boundary.is_remote
+                            else _unverified_student_ids(answer, evidence_texts),
+                        ),
+                    },
+                ]
+            )
             corrected: ChatResult = llm.chat(
                 retry_messages,
                 model=resolved_model,
-                assistant_prefill=_assistant_prefill_for_model(resolved_model),
+                assistant_prefill=_assistant_prefill_for_client(llm, resolved_model),
             )
-            if corrected.content:
-                answer = corrected.content
-        except Exception:  # pragma: no cover - degrade to the draft answer
-            logger.exception("Grounding retry failed; keeping the original answer")
+            corrected_answer = corrected.content or None
+        except Exception:
+            # Broad on purpose. The fallback is a refusal, so an unexpected error
+            # costs a cautious answer rather than an unsafe one — and narrowing
+            # this to LLMError would let a serialisation bug propagate as a 500
+            # on a path whose whole job is to fail safely.
+            logger.exception("Output-contract retry failed")
+            telemetry["grounding_retry_failed"] = True
+
+        remaining = (
+            _output_contract_violations(
+                corrected_answer,
+                evidence_texts=evidence_texts,
+                boundary=boundary,
+                is_student=is_student,
+                # The SAME evidence. Re-validating without it would check the
+                # corrected answer against nothing, and the retry would launder
+                # every consistency violation away.
+                tool_results=tool_results,
+                context=context,
+            )
+            if corrected_answer
+            else violations
+        )
+        if remaining:
+            logger.error("Refusing an answer that failed the output contract: %s", remaining)
+            telemetry["grounding_refused"] = True
+            telemetry["output_violations_after_retry"] = remaining
+            answer = (
+                _GROUNDING_REFUSAL_AR
+                if _answer_language(question) == "Arabic"
+                else _GROUNDING_REFUSAL_EN
+            )
+        else:
+            answer = corrected_answer
 
     return {
         "ok": True,
         "answer": answer,
+        #: Present on every response so a caller can test one key rather than
+        #: two shapes. `None` means "no route was offered".
+        "action": None,
         "model": answer_model,
         "usage": usage,
         "context_summary": _context_summary(context),
@@ -1932,5 +3081,56 @@ def answer_virtual_advisor(
         "cited_policy_ids": sorted(
             _policy_ids_in_text(answer) & {c["policy_id"] for c in citations}
         ),
-        "agent": {**telemetry, "tool_results": agent_tool_results},
+        # ── the two halves, kept apart ──────────────────────────────────────
+        #
+        # A turn can owe a rule AND report the student's own record, and those two
+        # obligations fail independently. When the store holds nothing governing,
+        # the regulatory CLAIM is suppressed — the prose above is the abstention —
+        # but the verified facts are not destroyed with it: they were never in the
+        # prose to begin with, they are the structured tool results, and the
+        # interface can render the timetable or the prerequisite list unchanged.
+        #
+        # `data_part.facts` is the tool results by NAME, not the raw list, so a
+        # consumer reads `facts["my_progress"]` instead of indexing a position.
+        "data_part": {
+            "status": "ANSWERED" if tool_results else "NOT_ATTEMPTED",
+            "facts": {
+                str(r.get("tool") or f"result_{i}"): r
+                for i, r in enumerate(tool_results)
+                if isinstance(r, dict)
+            },
+        },
+        "policy_part": {
+            "status": "ABSTAINED" if policy_abstained else "ANSWERED",
+            "evidence": citations,
+        },
+        "agent": {
+            **telemetry,
+            "tool_results": agent_tool_results,
+            # Read off the CLIENT, which counted them at the socket. The runner used
+            # to add one per question; a tool-driven answer is two to four outbound
+            # calls and a retried one is more, so a per-question count made every
+            # cost and budget figure wrong in the same direction.
+            "provider_http_calls": int(getattr(llm, "http_calls", 0) or 0),
+            "successful_provider_responses": int(getattr(llm, "http_responses", 0) or 0),
+            # THREE LISTS, because they mean three different things and conflating
+            # them would report the server's work as the model's. TT20's provider
+            # called one capability; the route required two, so the server fetched
+            # the second. `executed_evidence_tools` is what the answer actually rests
+            # on; `model_tools_called` is what the model chose. Reporting one number
+            # would either fail a well-served answer or hide a model that stopped
+            # choosing — and the gap between them is the metric worth watching.
+            "model_tools_called": [
+                t.get("name") for t in (telemetry.get("tools_called") or []) if isinstance(t, dict)
+            ],
+            "executed_evidence_tools": sorted(
+                {r.get("tool") for r in agent_tool_results if isinstance(r, dict) and r.get("tool")}
+            ),
+            # THE THIRD SOURCE. The adviser seeds the student's course state, the term
+            # recommendations and the credit policy before the model sees the
+            # question, so an answer can be fully grounded on evidence no tool call
+            # fetched. Requiring a call for those marked correct answers wrong and
+            # pushed the model to re-fetch what it had already been handed.
+            "verified_context_evidence": _evidence_paths(context),
+        },
     }

@@ -25,6 +25,7 @@ from .services.course_detail import CourseDetailUnavailable, build_course_detail
 from .services.planner_drafts import DraftRejected
 from .services.rate_limit import CONVERSATION, HISTORY
 from .services.student_planner import PlannerUnavailable
+from .sidebar_context import get_sidebar_context
 
 logger = logging.getLogger(__name__)
 
@@ -89,7 +90,12 @@ def _throttled_page(
     response = render(
         request,
         "core/student_course_detail.html",
-        {"refusal": message, "refusal_heading": heading, "retry_after": over["Retry-After"]},
+        {
+            **get_sidebar_context(request),
+            "refusal": message,
+            "refusal_heading": heading,
+            "retry_after": over["Retry-After"],
+        },
         status=429,
     )
     response["Retry-After"] = over["Retry-After"]
@@ -124,10 +130,14 @@ def course_detail_page(request: HttpRequest, course_code: str):
         return render(
             request,
             "core/student_course_detail.html",
-            {"refusal": str(exc)},
+            {**get_sidebar_context(request), "refusal": str(exc)},
             status=409,
         )
-    return render(request, "core/student_course_detail.html", {"detail": detail})
+    return render(
+        request,
+        "core/student_course_detail.html",
+        {**get_sidebar_context(request), "detail": detail},
+    )
 
 
 @require_POST
@@ -167,7 +177,7 @@ def course_to_planner_view(request: HttpRequest, course_code: str):
         return render(
             request,
             "core/student_course_detail.html",
-            {"refusal": str(exc)},
+            {**get_sidebar_context(request), "refusal": str(exc)},
             status=409,
         )
     return redirect("student_planner_page", draft_id=str(draft.id))

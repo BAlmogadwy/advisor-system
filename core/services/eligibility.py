@@ -30,7 +30,11 @@ def split_hour_prereqs(prereqs: list[str]) -> tuple[list[str], int]:
 
 
 def hour_gate(
-    student_id: int | str, required_hours: int, *, strict_passed_only: bool = False
+    student_id: int | str,
+    required_hours: int,
+    *,
+    strict_passed_only: bool = False,
+    registered_credits_override: int | None = None,
 ) -> dict[str, object]:
     """Evaluate a credit-hour gate for one student.
 
@@ -43,6 +47,8 @@ def hour_gate(
         .first()
     )
     earned, current = (row[0] or 0, row[1] or 0) if row else (0, 0)
+    if registered_credits_override is not None:
+        current = max(0, int(registered_credits_override))
     effective = earned if strict_passed_only else earned + current
     return {
         "required": int(required_hours),

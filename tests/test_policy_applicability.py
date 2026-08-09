@@ -114,6 +114,68 @@ def test_the_repetition_question_still_gets_no_duration_record():
     assert direct == set(), "the store governs no course-repetition limit"
 
 
+def test_a_study_extension_question_reaches_the_programme_duration_record():
+    direct = _direct("هل أحتاج تمديد مدة الدراسة؟")
+
+    assert "TU.DISMISSAL.DURATION_EXCEEDED" in direct
+    assert "TU.DISMISSAL.THREE_WARNINGS" not in direct
+
+
+def test_a_dialectal_duration_delay_question_reaches_only_the_duration_record():
+    direct = _direct("كم ترم أقدر أتأخر عن المدة النظامية بدون ما يفصلوني؟")
+
+    assert "TU.DISMISSAL.DURATION_EXCEEDED" in direct
+    assert "TU.REENROLMENT.WINDOW" not in direct
+
+
+def test_a_deferral_count_question_reaches_the_deferral_maximum():
+    assert "TU.DEFERRAL.MAXIMUM" in _direct("كم مرة أقدر أوقف ترم أو أأجل؟")
+
+
+def test_delaying_one_course_is_not_whole_term_deferral():
+    assert "TU.DEFERRAL.MAXIMUM" not in _direct("هل أقدر أأجل مادة واحدة؟")
+
+
+def test_permitted_absence_percentage_reaches_deprivation_threshold():
+    direct = _direct("كم نسبة الغياب المسموح بها قبل الحرمان؟")
+
+    assert "TU.ATTENDANCE.DEPRIVATION_THRESHOLD" in direct
+
+
+def test_dialectal_exam_cheating_question_reaches_conduct_policy():
+    direct = _direct("طالب انمسك معه ورقة في اختبار النصفي، وش العقوبة؟")
+
+    assert "TU.CONDUCT.CHEATING" in direct
+
+
+def test_higher_level_course_question_reaches_registration_priority_rule():
+    direct = _direct("أقدر أنزل مادة من مستوى أعلى؟")
+
+    assert "TU.REGISTRATION.STRUGGLING_STUDENTS" in direct
+
+
+def test_semester_excuse_gpa_question_reaches_the_unresolved_symbol_table():
+    direct = _direct("هل الاعتذار عن الترم يأثر على المعدل؟")
+
+    assert "TU.EXCUSE.TRANSCRIPT_MARK" in direct
+    assert "TU.GRADE.SPECIAL_SYMBOLS" in direct
+
+
+def test_lab_section_change_question_reaches_registration_authority_rules():
+    direct = _direct("أقدر أغير شعبة العملي بدون ما أغير المحاضرة؟")
+
+    assert "TU.REG.STUDENT_CHOICES_FINAL" in direct
+    assert "TU.REG.ADVISER_CAN_REGISTER_DIRECTLY" in direct
+
+
+def test_past_tense_withdrawal_load_question_reaches_the_minimum_load_bar():
+    direct = _direct(
+        "أنا مسجل هالترم كم ساعة؟ ولو انسحبت من مادة وحدة بينزل عبئي عن الحد الأدنى ولا لا؟"
+    )
+
+    assert "TU.WITHDRAWAL.MINIMUM_LOAD_BAR" in direct
+
+
 # ── q271: documents vs the rest of graduation ────────────────────
 
 
