@@ -564,6 +564,7 @@ def apply_plan(plan: Plan, academic_year: str, term: str) -> dict[str, int]:
     from django.db import transaction
 
     from core.models import StudentTermSection
+    from core.services.section_programmes import reconcile_observed_section_programs
 
     if not plan.ok:
         raise ValueError("refusing to apply a plan that failed validation")
@@ -583,11 +584,14 @@ def apply_plan(plan: Plan, academic_year: str, term: str) -> dict[str, int]:
         )
 
     with transaction.atomic():
-        removed = StudentTermSection.objects.filter(
+        rows_to_replace = StudentTermSection.objects.filter(
             student_id__in=sorted(plan.students),
             academic_year=str(academic_year),
             term=str(term),
-        ).delete()[0]
+        )
+        affected_section_ids = set(rows_to_replace.values_list("term_section_id", flat=True))
+        affected_section_ids.update(int(link["term_section_id"]) for link in plan.links)
+        removed = rows_to_replace.delete()[0]
         # No `ignore_conflicts`: it turned a uniqueness violation into a silently
         # missing row while the caller was told the link had been written.
         # Cross-term collisions are detected in `build_plan`, so a violation here
@@ -625,6 +629,12 @@ def apply_plan(plan: Plan, academic_year: str, term: str) -> dict[str, int]:
             raise ValueError(
                 f"planned {len(plan.links)} links but {written} rows exist after the write"
             )
+
+        # ``apply_plan`` predates the central replacement helper and writes the
+        # link table directly. Keep the normalized programme membership snapshot
+        # in the same transaction so a successful plan can never leave stale
+        # ownership on removed sections or omit ownership on new sections.
+        reconcile_observed_section_programs(affected_section_ids)
 
     return {"removed": removed, "written": written, "students": len(plan.students)}
 

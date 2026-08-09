@@ -12,9 +12,18 @@ the whole design:
 
 from __future__ import annotations
 
+from collections.abc import Iterable
+from typing import Any
+
 import pytest
 
-from core.models import Student, StudentTermSection, TermSection, TermSectionMeeting
+from core.models import (
+    Student,
+    StudentTermSection,
+    TermSection,
+    TermSectionMeeting,
+    TermSectionProgram,
+)
 from core.services.registration_plan_import import (
     apply_plan,
     build_plan,
@@ -25,8 +34,16 @@ pytestmark = pytest.mark.django_db
 
 YEAR, TERM = "1448", "1"
 
+Meeting = tuple[str, str, str]
+WorkbookRow = tuple[object, ...]
+SectionWorld = dict[str, TermSection]
 
-def _section(course, meetings, section="M1"):
+
+def _section(
+    course: str,
+    meetings: Iterable[Meeting],
+    section: str = "M1",
+) -> TermSection:
     ts = TermSection.objects.create(
         course_code=course[:2],
         course_number=course[2:],
@@ -40,7 +57,7 @@ def _section(course, meetings, section="M1"):
 
 
 @pytest.fixture
-def world():
+def world() -> SectionWorld:
     """Two sections of one course at different times, plus a single-section course."""
     Student.objects.update_or_create(
         student_id=700001, defaults={"name": "A", "program": "AI", "section": "M"}
@@ -55,18 +72,18 @@ def world():
     }
 
 
-def _rosters(*rows):
+def _rosters(*rows: WorkbookRow) -> list[WorkbookRow]:
     return list(rows)
 
 
-def _detail(*rows):
+def _detail(*rows: WorkbookRow) -> list[WorkbookRow]:
     return list(rows)
 
 
 # ── sections resolve on times, one-to-one ────────────────────────
 
 
-def test_a_section_is_resolved_by_its_meeting_times(world):
+def test_a_section_is_resolved_by_its_meeting_times(world: SectionWorld) -> None:
     """The labels cannot be matched: the workbook says `AI:S1`, the database `M1`."""
     plan = build_plan(
         _rosters(("AI331", "AI:S1", "Mon 09:00-10:15; Wed 09:00-10:15", "", "-", 1, "")),
@@ -79,7 +96,9 @@ def test_a_section_is_resolved_by_its_meeting_times(world):
     assert plan.links[0]["term_section_id"] == world["s1"].id
 
 
-def test_the_other_section_of_the_same_course_resolves_to_the_other_row(world):
+def test_the_other_section_of_the_same_course_resolves_to_the_other_row(
+    world: SectionWorld,
+) -> None:
     """Proves the match is on times and not on 'first section of this course'."""
     plan = build_plan(
         _rosters(("AI331", "AI:S2", "Mon 10:30-11:45; Wed 10:30-11:45", "", "-", 1, "")),
@@ -90,7 +109,7 @@ def test_the_other_section_of_the_same_course_resolves_to_the_other_row(world):
     assert plan.links[0]["term_section_id"] == world["s2"].id
 
 
-def test_times_matching_two_sections_is_refused_not_guessed(world):
+def test_times_matching_two_sections_is_refused_not_guessed(world: SectionWorld) -> None:
     """A duplicate makes the resolution ambiguous. Seating the student in either
     would be a coin flip they cannot see."""
     _section("AI331", [("MON", "09:00", "10:15"), ("WED", "09:00", "10:15")], "M3")
@@ -104,7 +123,7 @@ def test_times_matching_two_sections_is_refused_not_guessed(world):
     assert any(p.code == "AMBIGUOUS_SECTION" for p in plan.problems), plan.problems
 
 
-def test_a_time_mismatch_on_a_multi_section_course_is_refused(world):
+def test_a_time_mismatch_on_a_multi_section_course_is_refused(world: SectionWorld) -> None:
     """The workbook moved some section times. Where the course has one section the
     fallback is unambiguous; where it has two, it is not."""
     plan = build_plan(
@@ -118,7 +137,9 @@ def test_a_time_mismatch_on_a_multi_section_course_is_refused(world):
     assert plan.time_disagreements, "the disagreement was not reported"
 
 
-def test_a_time_mismatch_is_refused_unless_the_operator_opts_in(world):
+def test_a_time_mismatch_is_refused_unless_the_operator_opts_in(
+    world: SectionWorld,
+) -> None:
     """The workbook moved some section times; a student seated on a mismatch is
     seated in a section matching nothing they were told.
 
@@ -146,7 +167,9 @@ def test_a_time_mismatch_is_refused_unless_the_operator_opts_in(world):
 # -- what a data-integrity review found the first version got wrong --------
 
 
-def test_a_duplicate_section_label_is_refused_not_silently_overwritten(world):
+def test_a_duplicate_section_label_is_refused_not_silently_overwritten(
+    world: SectionWorld,
+) -> None:
     """THE most severe defect the review found.
 
     Two roster rows sharing `(course, label)` each resolved cleanly and the second
@@ -167,7 +190,7 @@ def test_a_duplicate_section_label_is_refused_not_silently_overwritten(world):
     assert any(p.code == "DUPLICATE_SECTION_LABEL" for p in plan.problems), plan.problems
 
 
-def test_a_student_is_never_seated_in_the_other_cohorts_section(world):
+def test_a_student_is_never_seated_in_the_other_cohorts_section(world: SectionWorld) -> None:
     """Sections are gender-segregated and the gender is the leading letter of the
     LABEL, which time matching never sees. Nothing checked it, so a male student
     could be seated in the sole `F2` section — latent only because every section on
@@ -185,7 +208,7 @@ def test_a_student_is_never_seated_in_the_other_cohorts_section(world):
     assert not plan.links, "a student was seated across the cohort boundary"
 
 
-def test_an_unresolvable_cohort_is_refused_rather_than_guessed(world):
+def test_an_unresolvable_cohort_is_refused_rather_than_guessed(world: SectionWorld) -> None:
     """`student_gender_strict` refuses instead of falling back to all-pass, because
     every real section is gendered — so an unresolved cohort is a total failure and
     not a partial one. The importer follows the same rule."""
@@ -201,7 +224,7 @@ def test_an_unresolvable_cohort_is_refused_rather_than_guessed(world):
     assert any(p.code == "UNKNOWN_COHORT" for p in plan.problems), plan.problems
 
 
-def test_a_scenario_owned_section_is_never_a_match_target(world):
+def test_a_scenario_owned_section_is_never_a_match_target(world: SectionWorld) -> None:
     """`get_student_term_baseline` — the reader every screen goes through — filters
     scenario sections out. A draft timetable winning the time match would produce a
     row that is written and then invisible everywhere."""
@@ -221,7 +244,7 @@ def test_a_scenario_owned_section_is_never_a_match_target(world):
     assert any(p.code == "NO_SUCH_COURSE" for p in plan.problems), plan.problems
 
 
-def test_the_dry_run_reports_what_the_apply_would_delete(world):
+def test_the_dry_run_reports_what_the_apply_would_delete(world: SectionWorld) -> None:
     """The first version reported only what it would WRITE, so a dry run could say
     "1 link for 1 student, 0 problems" while the apply removed two rows — and
     against the real database it would have removed all 1081 with no number shown
@@ -244,7 +267,7 @@ def test_the_dry_run_reports_what_the_apply_would_delete(world):
     assert result["removed"] == plan.replaces
 
 
-def test_the_written_count_is_measured_not_promised(world):
+def test_the_written_count_is_measured_not_promised(world: SectionWorld) -> None:
     """`return len(plan.links)` was a promise. With `ignore_conflicts` a link the
     dry run printed could be dropped by the database while the caller was told it
     had been written."""
@@ -263,7 +286,7 @@ def test_the_written_count_is_measured_not_promised(world):
     )
 
 
-def test_a_cross_term_collision_is_refused_before_it_eats_a_row(world):
+def test_a_cross_term_collision_is_refused_before_it_eats_a_row(world: SectionWorld) -> None:
     """`StudentTermSection` is unique on `(student_id, term_section)` only, and
     `TermSection` has no year or term — the same section rows are shared by every
     term. Seeding term 2 for a student already in that section in term 1 collided,
@@ -281,7 +304,7 @@ def test_a_cross_term_collision_is_refused_before_it_eats_a_row(world):
     assert any(p.code == "CROSS_TERM_COLLISION" for p in plan.problems), plan.problems
 
 
-def test_a_registration_with_no_student_id_is_refused(world):
+def test_a_registration_with_no_student_id_is_refused(world: SectionWorld) -> None:
     """Counting it was not enough.
 
     openpyxl returns `None` for the continuation cells of a MERGED range, which is
@@ -304,7 +327,7 @@ def test_a_registration_with_no_student_id_is_refused(world):
     assert any(p.code == "BLANK_STUDENT_ID" for p in plan.problems), plan.problems
 
 
-def test_an_entirely_empty_row_is_counted_and_ignored(world):
+def test_an_entirely_empty_row_is_counted_and_ignored(world: SectionWorld) -> None:
     """The trailing rows a spreadsheet carries. They hold no registration, so there
     is nothing to refuse — but they are still counted, or conservation cannot
     prove every row was accounted for."""
@@ -324,7 +347,7 @@ def test_an_entirely_empty_row_is_counted_and_ignored(world):
     assert "2 blank" in plan.summary()
 
 
-def test_every_detail_row_is_accounted_for(world):
+def test_every_detail_row_is_accounted_for(world: SectionWorld) -> None:
     """A conservation check. Without one, any future branch that drops a row keeps
     the summary looking healthy."""
     plan = build_plan(
@@ -350,7 +373,7 @@ def test_every_detail_row_is_accounted_for(world):
     ) == plan.detail_rows_read
 
 
-def test_the_source_records_the_term_that_was_actually_written(world):
+def test_the_source_records_the_term_that_was_actually_written(world: SectionWorld) -> None:
     """`source` is a row only provenance marker — the field an operator uses to
     find and undo this import. It was a hardcoded literal, so a 1449/2 import
     claimed to be `registration_plan_1448_t1`."""
@@ -365,7 +388,9 @@ def test_the_source_records_the_term_that_was_actually_written(world):
     assert row.source == "registration_plan_1449_t2"
 
 
-def test_applying_to_a_different_term_than_the_plan_was_built_for_is_refused(world):
+def test_applying_to_a_different_term_than_the_plan_was_built_for_is_refused(
+    world: SectionWorld,
+) -> None:
     """The DELETE used the arguments passed to `apply_plan`; the INSERT used values
     baked into the links by `build_plan`. Nothing checked they agreed, so a
     mismatched pair emptied one term and wrote into another."""
@@ -379,7 +404,9 @@ def test_applying_to_a_different_term_than_the_plan_was_built_for_is_refused(wor
         apply_plan(plan, "1449", "2")
 
 
-def test_apply_plan_refuses_an_unknown_student_even_when_called_directly(world):
+def test_apply_plan_refuses_an_unknown_student_even_when_called_directly(
+    world: SectionWorld,
+) -> None:
     """`apply_plan` is exported and `StudentTermSection.student_id` is a plain
     integer with no foreign key, so a direct call could write an orphan link. This
     database already holds 722 orphans of that class.
@@ -403,7 +430,7 @@ def test_apply_plan_refuses_an_unknown_student_even_when_called_directly(world):
     assert StudentTermSection.objects.count() == 0, "a rejected plan still wrote rows"
 
 
-def test_a_second_apply_changes_nothing(world):
+def test_a_second_apply_changes_nothing(world: SectionWorld) -> None:
     """Idempotency, measured on the rows a student can see rather than on primary
     keys — a delete-and-insert churns the keys and changes nothing else."""
     args = (
@@ -423,7 +450,7 @@ def test_a_second_apply_changes_nothing(world):
 # ── the two kinds of "cannot place" ──────────────────────────────
 
 
-def test_rows_with_no_timeslot_are_skipped_not_failed(world):
+def test_rows_with_no_timeslot_are_skipped_not_failed(world: SectionWorld) -> None:
     """`Project` and `Foundation retake` carry section `—` and say so themselves."""
     plan = build_plan(
         _rosters(("AI331", "AI:S1", "Mon 09:00-10:15; Wed 09:00-10:15", "", "-", 1, "")),
@@ -440,7 +467,9 @@ def test_rows_with_no_timeslot_are_skipped_not_failed(world):
     assert len(plan.links) == 1
 
 
-def test_a_course_with_no_sections_is_a_reported_gap_not_a_failure(world):
+def test_a_course_with_no_sections_is_a_reported_gap_not_a_failure(
+    world: SectionWorld,
+) -> None:
     """`GSE1` and `FE2` have real times in the plan and no section anywhere. The
     term is still seedable; the gap is what the operator must be told."""
     plan = build_plan(
@@ -468,7 +497,9 @@ def test_a_course_with_no_sections_is_a_reported_gap_not_a_failure(world):
     assert len(plan.links) == 1
 
 
-def test_a_course_that_HAS_sections_but_did_not_resolve_still_fails(world):
+def test_a_course_that_HAS_sections_but_did_not_resolve_still_fails(
+    world: SectionWorld,
+) -> None:
     """The distinction that matters. `AI331` exists, so an unresolved label is a
     mapping fault — seeding around it would put a student somewhere arbitrary."""
     plan = build_plan(
@@ -485,7 +516,7 @@ def test_a_course_that_HAS_sections_but_did_not_resolve_still_fails(world):
 # ── writing ──────────────────────────────────────────────────────
 
 
-def test_applying_replaces_only_the_students_in_the_plan(world):
+def test_applying_replaces_only_the_students_in_the_plan(world: SectionWorld) -> None:
     """A student the plan could not place keeps what they have. Two were blocked in
     the real workbook; an import that never considered them must not empty them."""
     StudentTermSection.objects.create(
@@ -514,7 +545,58 @@ def test_applying_replaces_only_the_students_in_the_plan(world):
     )
 
 
-def test_an_invalid_plan_cannot_be_applied(world):
+def test_applying_reconciles_observed_programmes_for_old_and_new_sections(
+    world: SectionWorld,
+) -> None:
+    """The plan importer writes StudentTermSection directly, bypassing the normal
+    replacement service. Programme ownership must move with the registration,
+    while authoritative imported memberships remain untouched.
+    """
+    StudentTermSection.objects.create(
+        student_id=700001,
+        academic_year=YEAR,
+        term=TERM,
+        term_section=world["solo"],
+    )
+    TermSectionProgram.objects.create(
+        term_section=world["solo"],
+        program="AI",
+        assignment_source="observed",
+    )
+    TermSectionProgram.objects.create(
+        term_section=world["solo"],
+        program="DS",
+        assignment_source="import",
+    )
+    TermSectionProgram.objects.create(
+        term_section=world["s1"],
+        program="STALE",
+        assignment_source="observed",
+    )
+    TermSectionProgram.objects.create(
+        term_section=world["s1"],
+        program="DS",
+        assignment_source="import",
+    )
+
+    plan = build_plan(
+        _rosters(("AI331", "AI:S1", "Mon 09:00-10:15; Wed 09:00-10:15", "", "-", 1, "")),
+        _detail((700001, "AI", "AI331", "Core", "AI:S1", "", "", "", "")),
+        YEAR,
+        TERM,
+    )
+    apply_plan(plan, YEAR, TERM)
+
+    assert set(world["solo"].program_links.values_list("program", "assignment_source")) == {
+        ("DS", "import")
+    }
+    assert set(world["s1"].program_links.values_list("program", "assignment_source")) == {
+        ("AI", "observed"),
+        ("DS", "import"),
+    }
+
+
+def test_an_invalid_plan_cannot_be_applied(world: SectionWorld) -> None:
     plan = build_plan(
         _rosters(("AI331", "AI:S1", "Mon 09:00-10:15; Wed 09:00-10:15", "", "-", 1, "")),
         _detail((700001, "AI", "AI331", "Core", "NOPE", "", "", "", "")),
@@ -526,7 +608,7 @@ def test_an_invalid_plan_cannot_be_applied(world):
     assert StudentTermSection.objects.count() == 0
 
 
-def test_an_unknown_student_is_named_and_never_created(world):
+def test_an_unknown_student_is_named_and_never_created(world: SectionWorld) -> None:
     """Caught in `build_plan` by name. It used to reach `check_students_exist`,
     which is fine — but once the cohort check landed, an id with no `Student` row
     was reported as an unresolvable COHORT, which is true and useless."""
@@ -542,7 +624,7 @@ def test_an_unknown_student_is_named_and_never_created(world):
     assert not Student.objects.filter(student_id=999999).exists()
 
 
-def test_the_same_section_twice_for_one_student_is_one_seat(world):
+def test_the_same_section_twice_for_one_student_is_one_seat(world: SectionWorld) -> None:
     """A lecture row and a lab row name the same section. That is one registration."""
     plan = build_plan(
         _rosters(("AI331", "AI:S1", "Mon 09:00-10:15; Wed 09:00-10:15", "", "-", 1, "")),
@@ -556,7 +638,7 @@ def test_the_same_section_twice_for_one_student_is_one_seat(world):
     assert len(plan.links) == 1
 
 
-def test_the_term_written_is_the_term_asked_for(world):
+def test_the_term_written_is_the_term_asked_for(world: SectionWorld) -> None:
     plan = build_plan(
         _rosters(("AI331", "AI:S1", "Mon 09:00-10:15; Wed 09:00-10:15", "", "-", 1, "")),
         _detail((700001, "AI", "AI331", "Core", "AI:S1", "", "", "", "")),
@@ -585,14 +667,19 @@ def test_the_term_written_is_the_term_asked_for(world):
         (None, set()),
     ],
 )
-def test_meeting_times_are_parsed_from_the_workbook_prose(cell, expected):
+def test_meeting_times_are_parsed_from_the_workbook_prose(
+    cell: object,
+    expected: set[Meeting],
+) -> None:
     assert parse_meetings(cell) == expected
 
 
 # -- round three: what the second review found still contradicted the contract --
 
 
-def test_two_sections_at_the_same_start_but_different_ends_are_distinguished(world):
+def test_two_sections_at_the_same_start_but_different_ends_are_distinguished(
+    world: SectionWorld,
+) -> None:
     """The END time is part of a section identity, and the first version threw it
     away: the regex captured it, `parse_meetings` returned only `(DAY, START)`, and
     the database projection selected only `start_time`. So a 75-minute lecture and
@@ -613,7 +700,10 @@ def test_two_sections_at_the_same_start_but_different_ends_are_distinguished(wor
     assert plan.links[0]["term_section_id"] != short.id
 
 
-def test_a_short_write_rolls_back_instead_of_committing(world, monkeypatch):
+def test_a_short_write_rolls_back_instead_of_committing(
+    world: SectionWorld,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """The postcondition used to be checked AFTER the transaction closed, so the
     delete and the short write had already committed and the exception reported a
     failure the database had made permanent.
@@ -641,7 +731,12 @@ def test_a_short_write_rolls_back_instead_of_committing(world, monkeypatch):
 
     real_bulk_create = QuerySet.bulk_create
 
-    def short_bulk_create(self, objs, *args, **kwargs):
+    def short_bulk_create(
+        self: QuerySet[StudentTermSection],
+        objs: Iterable[StudentTermSection],
+        *args: Any,
+        **kwargs: Any,
+    ) -> list[StudentTermSection]:
         return real_bulk_create(self, list(objs)[:1], *args, **kwargs)
 
     monkeypatch.setattr(QuerySet, "bulk_create", short_bulk_create)

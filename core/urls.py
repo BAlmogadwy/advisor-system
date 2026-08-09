@@ -32,6 +32,7 @@ from .course_detail_views import (
 from .db_admin_views import (
     db_admin_page,
     db_backup_snapshot_view,
+    db_clear_section_snapshot_view,
     db_delete_external_courses_view,
     db_delete_program_catalog_view,
     db_delete_students_view,
@@ -44,6 +45,7 @@ from .db_admin_views import (
     db_preview_delete_program_catalog_view,
     db_preview_delete_students_view,
     db_preview_oracle_plan_view,
+    db_preview_section_snapshot_view,
     db_preview_term_sections_view,
     db_programme_capacities_view,
     db_update_programme_capacities_view,
@@ -567,6 +569,16 @@ urlpatterns = [
         "ops/db/preview-delete-students/",
         db_preview_delete_students_view,
         name="db_preview_delete_students",
+    ),
+    path(
+        "ops/db/section-snapshot/preview/",
+        db_preview_section_snapshot_view,
+        name="db_preview_section_snapshot",
+    ),
+    path(
+        "ops/db/section-snapshot/clear/",
+        db_clear_section_snapshot_view,
+        name="db_clear_section_snapshot",
     ),
     path("ops/db/delete-students/", db_delete_students_view, name="db_delete_students"),
     path(

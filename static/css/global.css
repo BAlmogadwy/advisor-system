@@ -7275,6 +7275,404 @@ html[data-theme="dark"] .trace-btn-copy { color: var(--t3) !important; }
 
     .danger-panel .dba-section-title::before { background: var(--danger); }
 
+    /* Current section snapshot: preview-first destructive workflow */
+    .dba-snapshot-status {
+      margin-bottom: 0.875rem;
+      padding: 0.75rem 0.9rem;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      color: var(--t2);
+      background: var(--glass-bg-data);
+      font-size: 0.82rem;
+      line-height: 1.55;
+    }
+    .dba-snapshot-status.is-success {
+      border-color: color-mix(in srgb, var(--success) 30%, var(--line));
+      color: color-mix(in srgb, var(--success) 75%, var(--ink));
+      background: color-mix(in srgb, var(--success) 7%, var(--card));
+    }
+    .dba-snapshot-status.is-error {
+      border-color: color-mix(in srgb, var(--danger) 32%, var(--line));
+      color: color-mix(in srgb, var(--danger) 78%, var(--ink));
+      background: color-mix(in srgb, var(--danger) 7%, var(--card));
+    }
+    .dba-snapshot-status.is-info {
+      border-color: color-mix(in srgb, var(--royal) 24%, var(--line));
+      background: color-mix(in srgb, var(--royal) 5%, var(--card));
+    }
+    .dba-snapshot-lock-note {
+      display: flex;
+      align-items: flex-start;
+      gap: 0.4rem;
+      margin-top: 0.75rem;
+      color: var(--t3);
+      font-size: 0.72rem;
+      line-height: 1.5;
+    }
+    .dba-snapshot-lock-note > span:first-child { flex: 0 0 auto; }
+
+    .dba-snapshot-heading,
+    .dba-snapshot-table-head,
+    .dba-snapshot-actions {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
+    }
+    .dba-snapshot-scope {
+      color: var(--t3);
+      font-size: 0.78rem;
+    }
+    .dba-preview-ready {
+      flex: 0 0 auto;
+      padding: 0.28rem 0.55rem;
+      border: 1px solid color-mix(in srgb, var(--success) 28%, var(--line));
+      border-radius: 999px;
+      color: var(--success);
+      background: color-mix(in srgb, var(--success) 7%, var(--card));
+      font-size: 0.69rem;
+      font-weight: 800;
+    }
+
+    .dba-snapshot-metrics {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 0.6rem;
+      margin-top: 1rem;
+    }
+    .dba-snapshot-metric {
+      display: flex;
+      min-height: 70px;
+      flex-direction: column;
+      justify-content: center;
+      gap: 0.2rem;
+      padding: 0.7rem 0.8rem;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: var(--glass-bg-data);
+    }
+    .dba-snapshot-metric span {
+      color: var(--t3);
+      font-size: 0.71rem;
+      font-weight: 700;
+    }
+    .dba-snapshot-metric strong {
+      color: var(--danger);
+      font-family: var(--font-serif);
+      font-size: 1.45rem;
+      line-height: 1;
+    }
+
+    .dba-snapshot-note {
+      margin-top: 0.75rem;
+      padding: 0.65rem 0.75rem;
+      border-inline-start: 3px solid var(--amber);
+      border-radius: 8px;
+      color: var(--t2);
+      background: color-mix(in srgb, var(--warning) 7%, var(--card));
+      font-size: 0.78rem;
+      line-height: 1.55;
+      white-space: pre-line;
+    }
+    .dba-snapshot-table-head {
+      margin-bottom: 0.5rem;
+      color: var(--t2);
+      font-size: 0.76rem;
+    }
+    .dba-snapshot-table-head span { color: var(--t3); font-size: 0.7rem; }
+    .dba-snapshot-table-wrap {
+      max-height: 320px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+    }
+    .dba-snapshot-table {
+      color: var(--t2);
+      font-size: 0.76rem;
+    }
+    .dba-snapshot-table thead th {
+      position: sticky;
+      z-index: 1;
+      top: 0;
+      border-color: var(--line);
+      color: var(--t3);
+      background: var(--card);
+      font-size: 0.68rem;
+      white-space: nowrap;
+    }
+    .dba-snapshot-table td { border-color: var(--line); }
+    .dba-snapshot-table tr.is-retained td { opacity: 0.72; }
+    .dba-snapshot-code { color: var(--teal); font-weight: 800; }
+    .dba-program-chips {
+      display: flex;
+      align-items: center;
+      gap: 0.25rem;
+      flex-wrap: wrap;
+    }
+    .dba-program-chip {
+      display: inline-flex;
+      padding: 0.16rem 0.4rem;
+      border: 1px solid var(--teal-border);
+      border-radius: 999px;
+      color: var(--teal-deep);
+      background: color-mix(in srgb, var(--teal) 6%, var(--card));
+      font-size: 0.64rem;
+      font-weight: 800;
+    }
+    .dba-snapshot-action {
+      display: inline-flex;
+      padding: 0.18rem 0.4rem;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      font-size: 0.64rem;
+      font-weight: 800;
+      white-space: nowrap;
+    }
+    .dba-snapshot-action.is-delete {
+      border-color: color-mix(in srgb, var(--danger) 28%, var(--line));
+      color: var(--danger);
+      background: color-mix(in srgb, var(--danger) 6%, var(--card));
+    }
+    .dba-snapshot-action.is-retained {
+      color: var(--t3);
+      background: var(--glass-bg-data);
+    }
+
+    .dba-snapshot-preserved {
+      border-color: color-mix(in srgb, var(--success) 22%, var(--line));
+      background: color-mix(in srgb, var(--success) 3%, var(--card));
+    }
+    .dba-snapshot-preserved ul {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 0.45rem 1.25rem;
+      margin: 0;
+      padding-inline-start: 1.1rem;
+      color: var(--t2);
+      font-size: 0.76rem;
+      line-height: 1.5;
+    }
+
+    .dba-snapshot-actions {
+      padding: 0.9rem 1rem;
+      border: 1px solid color-mix(in srgb, var(--danger) 22%, var(--line));
+      border-radius: var(--radius);
+      background: color-mix(in srgb, var(--danger) 4%, var(--card));
+    }
+    .dba-snapshot-actions > div {
+      display: flex;
+      min-width: 0;
+      flex-direction: column;
+      gap: 0.15rem;
+    }
+    .dba-snapshot-actions strong { color: var(--t1); font-size: 0.8rem; }
+    .dba-snapshot-actions span { color: var(--t3); font-size: 0.72rem; }
+    .dba-snapshot-actions .btn { flex: 0 0 auto; }
+
+    /* Current-section CSV merge workflow */
+    .dba-current-import-route,
+    .dba-current-import-actions,
+    .dba-current-import-preview-head,
+    .dba-current-import-table-head,
+    .dba-current-import-confirm {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
+    }
+    .dba-current-import-route {
+      margin-bottom: 1rem;
+      padding: 0.8rem 0.9rem;
+      border: 1px solid var(--teal-border);
+      border-radius: var(--radius);
+      background: color-mix(in srgb, var(--teal) 5%, var(--card));
+    }
+    .dba-current-import-route > div,
+    .dba-current-import-confirm > div {
+      display: flex;
+      min-width: 0;
+      flex-direction: column;
+      gap: 0.15rem;
+    }
+    .dba-current-import-route strong,
+    .dba-current-import-confirm strong { color: var(--t1); font-size: 0.8rem; }
+    .dba-current-import-route span,
+    .dba-current-import-confirm span { color: var(--t3); font-size: 0.73rem; line-height: 1.5; }
+    .dba-current-import-route .btn { flex: 0 0 auto; }
+
+    .dba-source-choice {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 0.5rem;
+    }
+    .dba-source-choice > label {
+      display: flex;
+      min-height: 64px;
+      align-items: flex-start;
+      gap: 0.55rem;
+      padding: 0.65rem 0.7rem;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      cursor: pointer;
+      background: var(--glass-bg-data);
+    }
+    .dba-source-choice > label:has(input:checked) {
+      border-color: var(--teal);
+      box-shadow: 0 0 0 2px color-mix(in srgb, var(--teal) 9%, transparent);
+    }
+    .dba-source-choice input { margin-top: 0.15rem; }
+    .dba-source-choice label > span { display: flex; flex-direction: column; gap: 0.1rem; }
+    .dba-source-choice strong { color: var(--t1); font-size: 0.76rem; }
+    .dba-source-choice small { color: var(--t3); font-size: 0.67rem; line-height: 1.35; }
+
+    .dba-default-programmes {
+      margin-top: 1rem;
+      padding-top: 0.9rem;
+      border-top: 1px solid var(--line);
+    }
+    .dba-default-programmes legend {
+      width: auto;
+      margin-bottom: 0.15rem;
+      color: var(--t1);
+      font-size: 0.8rem;
+      font-weight: 800;
+    }
+    .dba-default-programmes p {
+      margin-bottom: 0.55rem;
+      color: var(--t3);
+      font-size: 0.72rem;
+      line-height: 1.5;
+    }
+    .dba-programme-selector { display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap; }
+    .dba-programme-option {
+      display: inline-flex;
+      min-height: 36px;
+      align-items: center;
+      gap: 0.4rem;
+      padding: 0.35rem 0.65rem;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      cursor: pointer;
+      color: var(--t2);
+      background: var(--glass-bg-data);
+      font-size: 0.72rem;
+      font-weight: 800;
+    }
+    .dba-programme-option:has(input:checked) {
+      border-color: var(--teal);
+      color: var(--teal-deep);
+      background: color-mix(in srgb, var(--teal) 7%, var(--card));
+    }
+    .dba-programme-option input { margin: 0; }
+
+    .dba-current-import-actions {
+      align-items: flex-start;
+      margin-top: 1rem;
+    }
+    .dba-current-import-actions > span {
+      max-width: 54rem;
+      color: var(--t3);
+      font-size: 0.72rem;
+      line-height: 1.55;
+    }
+    .dba-current-import-actions .btn { flex: 0 0 auto; }
+
+    .dba-current-import-preview-head { align-items: flex-start; }
+    .dba-current-import-preview-head p { color: var(--t3); font-size: 0.75rem; }
+    .dba-preview-ready.is-blocked {
+      border-color: color-mix(in srgb, var(--danger) 28%, var(--line));
+      color: var(--danger);
+      background: color-mix(in srgb, var(--danger) 6%, var(--card));
+    }
+    .dba-current-import-metrics {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 0.55rem;
+      margin-top: 1rem;
+    }
+    .dba-current-import-metric {
+      display: flex;
+      min-height: 68px;
+      flex-direction: column;
+      justify-content: center;
+      gap: 0.2rem;
+      padding: 0.65rem 0.75rem;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: var(--glass-bg-data);
+    }
+    .dba-current-import-metric span { color: var(--t3); font-size: 0.68rem; font-weight: 750; }
+    .dba-current-import-metric strong { color: var(--t1); font-size: 1.3rem; line-height: 1; }
+    .dba-current-import-metric.is-new strong,
+    .dba-current-import-metric.is-add strong { color: var(--success); }
+    .dba-current-import-metric.is-remove strong { color: var(--royal); }
+    .dba-current-import-metric.is-warning strong { color: var(--warning); }
+
+    .dba-current-import-programme-status {
+      margin-top: 0.7rem;
+      padding: 0.65rem 0.75rem;
+      border-inline-start: 3px solid var(--teal);
+      border-radius: 8px;
+      color: var(--t2);
+      background: color-mix(in srgb, var(--teal) 5%, var(--card));
+      font-size: 0.74rem;
+      line-height: 1.55;
+    }
+    .dba-current-import-table-head { margin-bottom: 0.45rem; }
+    .dba-current-import-table-head strong { color: var(--t2); font-size: 0.76rem; }
+    .dba-current-import-table-head span { color: var(--t3); font-size: 0.69rem; }
+    .dba-current-import-table-wrap {
+      max-height: 340px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+    }
+    .dba-current-import-table { color: var(--t2); font-size: 0.74rem; }
+    .dba-current-import-table thead th {
+      position: sticky;
+      z-index: 1;
+      top: 0;
+      border-color: var(--line);
+      color: var(--t3);
+      background: var(--card);
+      font-size: 0.67rem;
+      white-space: nowrap;
+    }
+    .dba-current-import-table td { border-color: var(--line); vertical-align: middle; }
+    .dba-current-import-table td:first-child small {
+      display: block;
+      max-width: 15rem;
+      overflow: hidden;
+      margin-top: 0.08rem;
+      color: var(--t3);
+      font-size: 0.63rem;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .dba-programme-unassigned { color: var(--warning); font-size: 0.68rem; font-weight: 800; }
+    .dba-assignment-source {
+      display: inline-flex;
+      padding: 0.16rem 0.4rem;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      color: var(--t3);
+      background: var(--glass-bg-data);
+      font-size: 0.63rem;
+      font-weight: 800;
+      white-space: nowrap;
+    }
+    .dba-assignment-source.is-csv { border-color: var(--teal-border); color: var(--teal-deep); }
+    .dba-assignment-source.is-default { border-color: color-mix(in srgb, var(--royal) 28%, var(--line)); color: var(--royal); }
+    .dba-assignment-source.is-preserved { border-color: var(--line); color: var(--t2); }
+    .dba-assignment-source.is-mixed { border-color: color-mix(in srgb, var(--warning) 35%, var(--line)); color: var(--warning); }
+    .dba-assignment-source.is-unassigned { border-color: color-mix(in srgb, var(--warning) 35%, var(--line)); color: var(--warning); }
+
+    .dba-current-import-confirm {
+      padding: 0.9rem 1rem;
+      border: 1px solid var(--teal-border);
+      border-radius: var(--radius);
+      background: color-mix(in srgb, var(--teal) 4%, var(--card));
+    }
+    .dba-current-import-confirm .btn { flex: 0 0 auto; }
+
     /* Step flow indicator (for term sections) */
     .dba-steps {
       display:      flex;
@@ -7332,6 +7730,17 @@ html[data-theme="dark"] .trace-btn-copy { color: var(--t3) !important; }
       }
       .dba-risk-badge { display: none; }
       .dba-nav-name  { font-size: 0.72rem; }
+      .dba-snapshot-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .dba-snapshot-preserved ul { grid-template-columns: 1fr; }
+      .dba-snapshot-actions { align-items: stretch; flex-direction: column; }
+      .dba-snapshot-actions .btn { width: 100%; }
+      .dba-current-import-route,
+      .dba-current-import-actions,
+      .dba-current-import-confirm { align-items: stretch; flex-direction: column; }
+      .dba-current-import-route .btn,
+      .dba-current-import-actions .btn,
+      .dba-current-import-confirm .btn { width: 100%; }
+      .dba-current-import-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     }
 
     /* ═══════════════════════════════════════════════════════════
@@ -7410,6 +7819,21 @@ html[data-theme="dark"] .trace-btn-copy { color: var(--t3) !important; }
       background: rgba(10,142,110,0.08);
       border-color: rgba(10,142,110,0.2);
     }
+
+    html[data-theme="dark"] .dba-snapshot-table thead th { background: var(--card); }
+    html[data-theme="dark"] .dba-snapshot-status.is-success,
+    html[data-theme="dark"] .dba-snapshot-preserved {
+      background: rgba(34,197,94,0.06);
+    }
+    html[data-theme="dark"] .dba-snapshot-status.is-error,
+    html[data-theme="dark"] .dba-snapshot-actions {
+      background: rgba(220,38,38,0.07);
+    }
+    html[data-theme="dark"] .dba-snapshot-note { background: rgba(245,158,11,0.07); }
+    html[data-theme="dark"] .dba-current-import-route,
+    html[data-theme="dark"] .dba-current-import-programme-status,
+    html[data-theme="dark"] .dba-current-import-confirm { background: rgba(10,142,110,0.07); }
+    html[data-theme="dark"] .dba-current-import-table thead th { background: var(--card); }
 
     /* Step indicators */
     html[data-theme="dark"] .dba-step {
@@ -9045,116 +9469,6 @@ html[data-theme="dark"] .pf-card.pf-saved {
   40% { box-shadow: 0 0 0 3px rgba(12,168,126,0.25), 5px 5px 14px rgba(0,0,0,0.4), -5px -5px 14px rgba(255,255,255,0.02); }
   100%{ box-shadow: 5px 5px 14px rgba(0,0,0,0.4), -5px -5px 14px rgba(255,255,255,0.02); }
 }
-
-/* ============================================================
-   SECTIONS IMPORT — feature-specific styles
-   ------------------------------------------------------------
-   Moved out of core/templates/core/sections_import.html.
-   ============================================================ */
-    /* Softer form label — the global .form-label is uppercase-bold which
-       is too heavy for a simple file-upload label on this page. */
-    .si-panel > .row .form-label { text-transform: none; font-weight: 600; letter-spacing: 0; }
-
-    /* ── Drag-and-drop file upload zone ── */
-    .si-dropzone {
-      border: 2px dashed color-mix(in srgb, var(--teal) 25%, transparent);
-      border-radius: var(--radius);
-      padding: 2rem;
-      text-align: center;
-      cursor: pointer;
-      transition: all 0.2s var(--ease);
-      background: color-mix(in srgb, var(--teal) 2%, transparent);
-    }
-    .si-dropzone:hover, .si-dropzone.dragover {
-      border-color: var(--teal);
-      background: var(--teal-dim);
-    }
-    .si-dropzone:focus-within {
-      outline: 2px solid var(--teal); outline-offset: 2px;
-    }
-    .si-dropzone-icon { color: var(--teal); margin-bottom: 0.75rem; opacity: 0.6; transition: all 0.2s; }
-    .si-dropzone.dragover .si-dropzone-icon { opacity: 1; transform: translateY(-4px); }
-    .si-dropzone-text { font-size: 0.9rem; color: var(--t2); margin-bottom: 0.5rem; }
-    .si-dropzone-text strong { display: block; margin-bottom: 0.2rem; }
-    .si-dropzone-text span { font-size: 0.8rem; color: var(--t4); }
-    .si-dropzone-file { font-size: 0.78rem; color: var(--teal); font-family: var(--font-mono); font-weight: 600; }
-    .si-dropzone.has-file { border-color: var(--teal); border-style: solid; background: color-mix(in srgb, var(--teal) 4%, transparent); }
-
-    /* ── Column-header filter popover ── */
-    .si-filterable { position: relative; cursor: pointer; user-select: none; white-space: nowrap; }
-    .si-filter-icon { display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; margin-inline-start: 3px; vertical-align: middle; border-radius: 4px; color: var(--t4); transition: all 0.15s; }
-    .si-filter-icon svg { width: 12px; height: 12px; }
-    .si-filterable:hover .si-filter-icon { color: var(--teal); background: color-mix(in srgb, var(--teal) 8%, transparent); }
-    .si-filter-icon.active { color: var(--teal); background: color-mix(in srgb, var(--teal) 12%, transparent); }
-    .si-filter-pop {
-      display: none; position: absolute; top: 100%; inset-inline-start: 0; z-index: 20;
-      min-width: 180px; padding: 8px; margin-top: 4px;
-      background: var(--card); border: 1px solid rgba(0,0,0,0.1); border-radius: 8px;
-      box-shadow: 0 6px 20px rgba(0,0,0,0.12);
-    }
-    .si-filter-pop.open { display: block; }
-    .si-filter-pop input {
-      width: 100%; font-size: 0.78rem; padding: 6px 10px;
-      border: 1px solid rgba(0,0,0,0.12); border-radius: 6px;
-      background: var(--bg); color: var(--t1); outline: none;
-    }
-    .si-filter-pop input:focus { border-color: var(--teal); box-shadow: 0 0 0 2px color-mix(in srgb, var(--teal) 12%, transparent); background: var(--card); }
-    .si-filter-pop input::placeholder { color: var(--t4); }
-    .si-filter-clear {
-      display: none; margin-top: 6px; width: 100%; padding: 4px 0;
-      font-size: 0.7rem; color: var(--danger); background: none;
-      border: none; cursor: pointer; text-align: center; border-radius: 4px;
-    }
-    .si-filter-clear:hover { background: rgba(220,53,69,0.06); }
-    .si-filter-clear.visible { display: block; }
-
-    /* ── Mobile density ── */
-    @media (max-width: 768px) {
-      .si-panel { padding: 10px 14px; }
-      .si-dropzone { padding: 1.25rem; }
-      .si-dropzone-icon { margin-bottom: 0.35rem; }
-    }
-
-    /* ── Dark mode overrides (Deep Navy) ───────────────────── */
-    /* .si-panel / .kpi dark surface moved to V2 UNIFIED rule */
-    html[data-theme="dark"] .si-filter-pop {
-      background: #151826;
-      border-color: rgba(255,255,255,0.08);
-      box-shadow: 0 6px 20px rgba(0,0,0,0.4);
-    }
-    html[data-theme="dark"] .si-filter-pop input {
-      background: rgba(255,255,255,0.05);
-      border-color: rgba(255,255,255,0.08);
-      color: #e2e4ec;
-    }
-    html[data-theme="dark"] .si-filter-pop input:focus {
-      border-color: #0CA87E;
-      box-shadow: 0 0 0 2px rgba(12,168,126,0.15);
-      background: rgba(255,255,255,0.06);
-    }
-    html[data-theme="dark"] .si-filter-pop input::placeholder { color: #7a7e92; }
-    html[data-theme="dark"] .si-filter-clear { color: #f87171; }
-    html[data-theme="dark"] .si-filter-clear:hover { background: rgba(220,53,69,0.10); }
-
-    html[data-theme="dark"] .si-dropzone {
-      border-color: rgba(12,168,126,0.20);
-      background: rgba(12,168,126,0.03);
-    }
-    html[data-theme="dark"] .si-dropzone:hover,
-    html[data-theme="dark"] .si-dropzone.dragover {
-      border-color: #0CA87E;
-      background: rgba(12,168,126,0.08);
-    }
-    html[data-theme="dark"] .si-dropzone.has-file {
-      border-color: #0CA87E;
-      background: rgba(12,168,126,0.05);
-    }
-    html[data-theme="dark"] .si-dropzone-text { color: #c0c4d4; }
-    html[data-theme="dark"] .si-dropzone-text span { color: #7a7e92; }
-
-    html[data-theme="dark"] .si-filterable:hover .si-filter-icon { background: rgba(12,168,126,0.12); }
-    html[data-theme="dark"] .si-filter-icon { color: #7a7e92; }
-    html[data-theme="dark"] .si-filter-icon.active { color: #0CA87E; background: rgba(12,168,126,0.15); }
 
 /* ============================================================
    USER MANAGEMENT — feature-specific styles

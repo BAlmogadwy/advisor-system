@@ -1,11 +1,29 @@
+import sqlite3
+from pathlib import Path
+
 import pytest
+from django.conf import settings
 from django.contrib.auth.models import Group, User
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import Client
 from pytest import MonkeyPatch
 
-from core.models import Course, Prerequisite, ProgrammeRequirement
-from core.services.db_admin_ops import import_oracle_plan_from_rows
+from core.models import (
+    Course,
+    Prerequisite,
+    ProgrammeRequirement,
+    Student,
+    StudentCourse,
+    StudentTermSection,
+    TermSection,
+    TermSectionProgram,
+)
+from core.services import db_admin_ops
+from core.services.db_admin_ops import (
+    delete_students,
+    import_oracle_plan_from_rows,
+    preview_delete_students,
+)
 from core.services.rbac import ROLE_SUPER_ADMIN, ensure_role_groups
 
 pytestmark = pytest.mark.django_db
@@ -41,6 +59,76 @@ def test_backup_snapshot_endpoint(monkeypatch: MonkeyPatch) -> None:
     assert payload["backup_path"].endswith(".db")
 
 
+def test_backup_snapshot_names_do_not_collide_within_one_second(
+    monkeypatch: MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "source.sqlite3"
+    with sqlite3.connect(source) as source_db:
+        source_db.execute("CREATE TABLE snapshot_probe (value TEXT NOT NULL)")
+        source_db.execute("INSERT INTO snapshot_probe VALUES ('ready')")
+    backup_dir = tmp_path / "backups"
+
+    monkeypatch.setitem(settings.DATABASES["default"], "NAME", str(source))
+    monkeypatch.setattr(db_admin_ops, "BACKUP_DIR", backup_dir)
+
+    first = db_admin_ops.create_backup_snapshot()
+    second = db_admin_ops.create_backup_snapshot()
+
+    assert first["backup_file"] != second["backup_file"]
+    assert (backup_dir / str(first["backup_file"])).exists()
+    assert (backup_dir / str(second["backup_file"])).exists()
+
+
+def test_backup_snapshot_includes_committed_data_while_wal_checkpoint_is_busy(
+    monkeypatch: MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "source.sqlite3"
+    backup_dir = tmp_path / "backups"
+    writer = sqlite3.connect(source, timeout=0.1)
+    reader = sqlite3.connect(source, timeout=0.1)
+    checkpoint = sqlite3.connect(source, timeout=0.1)
+
+    try:
+        assert writer.execute("PRAGMA journal_mode=WAL").fetchone()[0].lower() == "wal"
+        writer.execute("PRAGMA wal_autocheckpoint=0")
+        writer.execute("CREATE TABLE snapshot_probe (id INTEGER PRIMARY KEY, value TEXT)")
+        writer.execute("INSERT INTO snapshot_probe VALUES (1, 'before-wal')")
+        writer.commit()
+        writer.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
+
+        reader.execute("BEGIN")
+        assert reader.execute("SELECT value FROM snapshot_probe WHERE id=1").fetchone() == (
+            "before-wal",
+        )
+
+        writer.execute("UPDATE snapshot_probe SET value='committed-in-wal' WHERE id=1")
+        writer.commit()
+        assert source.with_name(f"{source.name}-wal").stat().st_size > 0
+
+        checkpoint.execute("PRAGMA busy_timeout=0")
+        busy, _wal_pages, _checkpointed_pages = checkpoint.execute(
+            "PRAGMA wal_checkpoint(TRUNCATE)"
+        ).fetchone()
+        assert busy == 1
+
+        monkeypatch.setitem(settings.DATABASES["default"], "NAME", str(source))
+        monkeypatch.setattr(db_admin_ops, "BACKUP_DIR", backup_dir)
+
+        result = db_admin_ops.create_backup_snapshot()
+        backup_path = backup_dir / str(result["backup_file"])
+        with sqlite3.connect(backup_path) as backup_db:
+            assert backup_db.execute("SELECT value FROM snapshot_probe WHERE id=1").fetchone() == (
+                "committed-in-wal",
+            )
+            assert backup_db.execute("PRAGMA integrity_check").fetchone() == ("ok",)
+    finally:
+        reader.close()
+        checkpoint.close()
+        writer.close()
+
+
 def test_integrity_report_endpoint(monkeypatch: MonkeyPatch) -> None:
     _login_superadmin()
     monkeypatch.setattr(
@@ -73,6 +161,11 @@ def test_delete_students_returns_backup_metadata(monkeypatch: MonkeyPatch) -> No
             "ok": True,
             "students_count": 5,
             "student_courses_count": 18,
+            "student_term_sections_count": 7,
+            "affected_term_sections_count": 3,
+            "deleted_students": 5,
+            "deleted_student_courses": 18,
+            "deleted_student_term_sections": 7,
             "backup": {
                 "ok": True,
                 "backup_path": "runtime/db_backups/advisor_20260213_120500.db",
@@ -93,6 +186,89 @@ def test_delete_students_returns_backup_metadata(monkeypatch: MonkeyPatch) -> No
     payload = response.json()
     assert payload["ok"] is True
     assert payload["backup"]["backup_path"].endswith(".db")
+    assert payload["student_term_sections_count"] == 7
+    assert payload["deleted_student_term_sections"] == 7
+
+
+def test_delete_students_removes_timetable_links_and_reconciles_programmes(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    ai_student = Student.objects.create(
+        student_id=810001,
+        name="AI Student",
+        program="AI",
+        section="M",
+    )
+    ds_student = Student.objects.create(
+        student_id=810002,
+        name="DS Student",
+        program="DS",
+        section="M",
+    )
+    course = Course.objects.create(course_code="CS285", credit_hours=3)
+    StudentCourse.objects.create(student=ai_student, course=course, status="studying")
+    term_section = TermSection.objects.create(
+        scenario=None,
+        source_tag="scraper_timetable",
+        course_name="Software Engineering",
+        course_code="CS",
+        course_number="285",
+        course_key="CS285",
+        section="M3",
+    )
+    StudentTermSection.objects.create(
+        student_id=ai_student.student_id,
+        academic_year="1448",
+        term="1",
+        term_section=term_section,
+        source="scraper_timetable",
+    )
+    StudentTermSection.objects.create(
+        student_id=ds_student.student_id,
+        academic_year="1448",
+        term="1",
+        term_section=term_section,
+        source="scraper_timetable",
+    )
+    TermSectionProgram.objects.create(
+        term_section=term_section,
+        program="AI",
+        assignment_source="observed",
+    )
+    TermSectionProgram.objects.create(
+        term_section=term_section,
+        program="DS",
+        assignment_source="observed",
+    )
+    TermSectionProgram.objects.create(
+        term_section=term_section,
+        program="SHARED",
+        assignment_source="import",
+    )
+    monkeypatch.setattr(
+        "core.services.db_admin_ops.create_backup_snapshot",
+        lambda: {"ok": True, "backup_file": "test.sqlite3", "size_bytes": 1},
+    )
+
+    preview = preview_delete_students(program="AI", section="M")
+    assert preview["students_count"] == 1
+    assert preview["student_courses_count"] == 1
+    assert preview["student_term_sections_count"] == 1
+    assert preview["affected_term_sections_count"] == 1
+
+    result = delete_students(program="AI", section="M")
+
+    assert result["deleted_students"] == 1
+    assert result["deleted_student_courses"] == 1
+    assert result["deleted_student_term_sections"] == 1
+    assert not Student.objects.filter(student_id=ai_student.student_id).exists()
+    assert not StudentTermSection.objects.filter(student_id=ai_student.student_id).exists()
+    assert Student.objects.filter(student_id=ds_student.student_id).exists()
+    assert StudentTermSection.objects.filter(student_id=ds_student.student_id).exists()
+    assert set(term_section.program_links.values_list("program", "assignment_source")) == {
+        ("DS", "observed"),
+        ("SHARED", "import"),
+    }
 
 
 def test_delete_program_catalog_returns_backup_metadata(monkeypatch: MonkeyPatch) -> None:

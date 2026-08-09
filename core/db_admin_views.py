@@ -6,9 +6,11 @@ from django.shortcuts import render
 from django.views.decorators.http import require_GET, require_POST
 
 from core.authz import role_required
-from core.models import ProgrammeRequirement
+from core.models import ProgrammeRequirement, TermSectionProgram
 from core.services.audit import log_audit_event
 from core.services.db_admin_ops import (
+    SectionSnapshotClearError,
+    clear_section_snapshot,
     create_backup_snapshot,
     delete_external_courses,
     delete_program_catalog,
@@ -18,6 +20,7 @@ from core.services.db_admin_ops import (
     import_program_plan,
     legacy_load_department_files_exact,
     list_external_courses,
+    preview_clear_section_snapshot,
     preview_delete_program_catalog,
     preview_delete_students,
     preview_oracle_plan,
@@ -25,6 +28,7 @@ from core.services.db_admin_ops import (
     set_elective_term_mapping,
 )
 from core.services.rbac import ROLE_ADVISOR, ROLE_SUPER_ADMIN
+from core.services.section_programmes import normalize_section_program
 from core.services.term_sections import (
     import_term_sections_from_csv,
     preview_term_sections_from_csv,
@@ -37,7 +41,98 @@ from core.utils import validate_import_path
 @role_required(ROLE_SUPER_ADMIN)
 @require_GET
 def db_admin_page(request: HttpRequest) -> HttpResponse:
-    return render(request, "core/db_admin.html", get_sidebar_context(request))
+    context = get_sidebar_context(request)
+    linked_programs = TermSectionProgram.objects.values_list("program", flat=True).distinct()
+    configured_programs = ProgrammeRequirement.objects.values_list("program", flat=True).distinct()
+    context["section_program_options"] = sorted(
+        {
+            normalized
+            for value in [*linked_programs, *configured_programs]
+            if (normalized := normalize_section_program(value))
+        }
+    )
+    return render(request, "core/db_admin.html", context)
+
+
+@role_required(ROLE_SUPER_ADMIN)
+@require_POST
+def db_preview_section_snapshot_view(request: HttpRequest) -> JsonResponse:
+    payload, err = _parse_json_body(request)
+    if err:
+        return err
+
+    try:
+        result = preview_clear_section_snapshot(
+            program=payload.get("program", ""),
+            gender=payload.get("gender", "ALL"),
+            all_programs=payload.get("all_programs"),
+            user_id=request.user.pk,
+        )
+    except SectionSnapshotClearError as exc:
+        log_audit_event(
+            request,
+            action="db.section_snapshot.preview",
+            status="error",
+            details={**exc.details, "code": exc.code},
+            error_text=str(exc),
+        )
+        return JsonResponse(
+            {"ok": False, "error": str(exc), "code": exc.code, **exc.details},
+            status=exc.status_code,
+        )
+
+    log_audit_event(
+        request,
+        action="db.section_snapshot.preview",
+        status="success",
+        details={
+            "scope": result.get("scope", {}),
+            "sections_count": result.get("sections_count", 0),
+            "physical_sections_count": result.get("physical_sections_count", 0),
+            "student_links_count": result.get("student_links_count", 0),
+        },
+    )
+    return JsonResponse(result)
+
+
+@role_required(ROLE_SUPER_ADMIN)
+@require_POST
+def db_clear_section_snapshot_view(request: HttpRequest) -> JsonResponse:
+    payload, err = _parse_json_body(request)
+    if err:
+        return err
+
+    try:
+        result = clear_section_snapshot(
+            preview_token=str(payload.get("preview_token", "")),
+            confirm=str(payload.get("confirm", "")),
+            user_id=request.user.pk,
+        )
+    except SectionSnapshotClearError as exc:
+        log_audit_event(
+            request,
+            action="db.section_snapshot.clear",
+            status="error",
+            details={**exc.details, "code": exc.code},
+            error_text=str(exc),
+        )
+        return JsonResponse(
+            {"ok": False, "error": str(exc), "code": exc.code, **exc.details},
+            status=exc.status_code,
+        )
+
+    log_audit_event(
+        request,
+        action="db.section_snapshot.clear",
+        status="success",
+        details={
+            "scope": result.get("scope", {}),
+            "deleted": result.get("deleted", {}),
+            "retained_sections_count": result.get("retained_sections_count", 0),
+            "backup_file": result.get("backup", {}).get("backup_file", ""),
+        },
+    )
+    return JsonResponse(result)
 
 
 @role_required(ROLE_SUPER_ADMIN)
@@ -74,8 +169,10 @@ def db_delete_students_view(request: HttpRequest) -> JsonResponse:
         details={
             "program": program or "",
             "section": section or "",
-            "deleted_students": result.get("students_count", 0),
-            "deleted_student_courses": result.get("student_courses_count", 0),
+            "deleted_students": result.get("deleted_students", 0),
+            "deleted_student_courses": result.get("deleted_student_courses", 0),
+            "deleted_student_term_sections": result.get("deleted_student_term_sections", 0),
+            "affected_term_sections": result.get("affected_term_sections_count", 0),
         },
     )
     return JsonResponse(result)
@@ -243,27 +340,48 @@ def db_preview_term_sections_view(request: HttpRequest) -> JsonResponse:
         return err
 
     csv_path = str(payload.get("csv_path", "")).strip()
-    academic_year = str(payload.get("academic_year", "")).strip()
-    term = str(payload.get("term", "")).strip()
-    is_department = bool(payload.get("is_department", False))
+    source_tag = str(payload.get("source_tag", "other")).strip().lower()
+    default_programs_raw = payload.get("default_programs", [])
 
-    if not csv_path or not academic_year or not term:
-        return JsonResponse({"error": "csv_path, academic_year, and term are required"}, status=400)
+    if not csv_path:
+        return JsonResponse({"error": "csv_path is required"}, status=400)
+    if source_tag not in {"department", "other"}:
+        return JsonResponse({"error": "source_tag must be 'department' or 'other'"}, status=400)
+    if not isinstance(default_programs_raw, list):
+        return JsonResponse({"error": "default_programs must be a list"}, status=400)
+    try:
+        default_programs = sorted(
+            {
+                normalized
+                for value in default_programs_raw
+                if (normalized := normalize_section_program(value))
+            }
+        )
+    except ValueError as exc:
+        return JsonResponse({"error": str(exc)}, status=400)
 
     resolved, err_msg = validate_import_path(csv_path)
     if err_msg:
         return JsonResponse({"error": f"csv_path: {err_msg}"}, status=400)
     csv_path = str(resolved)
 
-    source_tag = "department" if is_department else "other"
-
     try:
         result = preview_term_sections_from_csv(
             csv_path=csv_path,
-            academic_year=academic_year,
-            term=term,
             source_tag=source_tag,
+            default_programs=default_programs,
         )
+        impact = result.get("impact", {})
+        sections_count = int(impact.get("sections_unique", result.get("sections_in_file", 0)) or 0)
+        result.setdefault("sections_in_file", sections_count)
+        result.setdefault(
+            "meeting_rows_in_file",
+            int(impact.get("meeting_rows_unique", result.get("total_rows", 0)) or 0),
+        )
+        result["confirmation_phrase"] = str(
+            result.get("expected_confirmation") or f"IMPORT {sections_count}"
+        )
+        result["can_import"] = bool(result.get("can_import", True)) and sections_count > 0
         return JsonResponse(result)
     except (ValueError, FileNotFoundError) as exc:
         return JsonResponse({"error": str(exc)}, status=400)
@@ -277,57 +395,140 @@ def db_import_term_sections_view(request: HttpRequest) -> JsonResponse:
         return err
 
     csv_path = str(payload.get("csv_path", "")).strip()
-    academic_year = str(payload.get("academic_year", "")).strip()
-    term = str(payload.get("term", "")).strip()
-    is_department = bool(payload.get("is_department", False))
-    truncate_existing = bool(payload.get("truncate_existing", True))
+    source_tag = str(payload.get("source_tag", "other")).strip().lower()
+    default_programs_raw = payload.get("default_programs", [])
+    confirmation_value = payload.get("confirm", "")
+    confirmation = confirmation_value if isinstance(confirmation_value, str) else ""
+    preview_fingerprint_value = payload.get("preview_fingerprint", "")
+    preview_fingerprint = (
+        preview_fingerprint_value if isinstance(preview_fingerprint_value, str) else ""
+    )
 
-    if not csv_path or not academic_year or not term:
-        return JsonResponse({"error": "csv_path, academic_year, and term are required"}, status=400)
+    if not csv_path:
+        return JsonResponse({"error": "csv_path is required"}, status=400)
+    if source_tag not in {"department", "other"}:
+        return JsonResponse({"error": "source_tag must be 'department' or 'other'"}, status=400)
+    if not isinstance(default_programs_raw, list):
+        return JsonResponse({"error": "default_programs must be a list"}, status=400)
+    if len(preview_fingerprint) != 64 or any(
+        char not in "0123456789abcdef" for char in preview_fingerprint
+    ):
+        return JsonResponse(
+            {
+                "error": "A valid preview fingerprint is required; run Preview again",
+                "code": "preview_required",
+            },
+            status=400,
+        )
+    try:
+        default_programs = sorted(
+            {
+                normalized
+                for value in default_programs_raw
+                if (normalized := normalize_section_program(value))
+            }
+        )
+    except ValueError as exc:
+        return JsonResponse({"error": str(exc)}, status=400)
 
     resolved, err_msg = validate_import_path(csv_path)
     if err_msg:
         return JsonResponse({"error": f"csv_path: {err_msg}"}, status=400)
     csv_path = str(resolved)
 
-    source_tag = "department" if is_department else "other"
-
     try:
+        # Recalculate against the current database. A browser preview never
+        # authorizes an import after its file or DB impact has changed.
+        preview = preview_term_sections_from_csv(
+            csv_path=csv_path,
+            source_tag=source_tag,
+            default_programs=default_programs,
+        )
+        impact = preview.get("impact", {})
+        sections_count = int(impact.get("sections_unique", preview.get("sections_in_file", 0)) or 0)
+        expected_confirmation = f"IMPORT {sections_count}"
+        fresh_fingerprint = str(preview.get("preview_fingerprint", ""))
+        if sections_count <= 0 or not bool(preview.get("can_import", True)):
+            return JsonResponse(
+                {
+                    "ok": False,
+                    "error": "Import is blocked by the current preview",
+                    "preview": preview,
+                },
+                status=409,
+            )
+        if fresh_fingerprint != preview_fingerprint:
+            return JsonResponse(
+                {
+                    "ok": False,
+                    "error": "The file or section data changed after Preview; run Preview again",
+                    "code": "preview_stale",
+                },
+                status=409,
+            )
+        if confirmation != expected_confirmation:
+            return JsonResponse(
+                {
+                    "ok": False,
+                    "error": f"Type {expected_confirmation} to confirm this import",
+                    "confirmation_phrase": expected_confirmation,
+                },
+                status=400,
+            )
+
         result = import_term_sections_from_csv(
             csv_path=csv_path,
-            academic_year=academic_year,
-            term=term,
             source_tag=source_tag,
-            truncate_existing_term=truncate_existing,
+            default_programs=default_programs,
+            expected_preview_fingerprint=preview_fingerprint,
+            backup_before_import=True,
         )
+        result.setdefault("ok", True)
+        backup = result.get("backup")
+        if not isinstance(backup, dict) or backup.get("ok") is not True:
+            raise ValueError("Import completed without valid backup metadata")
         log_audit_event(
             request,
             action="db.import_term_sections",
             status="success",
             details={
                 "csv_path": csv_path,
-                "academic_year": academic_year,
-                "term": term,
                 "source_tag": source_tag,
-                "truncate_existing": truncate_existing,
-                "rows_for_term": result.get("rows_for_term", 0),
+                "default_programs": default_programs,
+                "sections_in_file": sections_count,
+                "backup_file": backup.get("backup_file", backup.get("backup_path", "")),
             },
         )
         return JsonResponse(result)
-    except (ValueError, FileNotFoundError) as exc:
+    except Exception as exc:
+        preview_stale = "Import preview is stale; run preview again" in str(exc)
+        client_error = isinstance(exc, ValueError | FileNotFoundError)
         log_audit_event(
             request,
             action="db.import_term_sections",
             status="error",
             details={
                 "csv_path": csv_path,
-                "academic_year": academic_year,
-                "term": term,
                 "source_tag": source_tag,
+                "default_programs": default_programs,
             },
             error_text=str(exc),
         )
-        return JsonResponse({"error": str(exc)}, status=400)
+        payload = {
+            "error": (
+                str(exc)
+                if client_error or preview_stale
+                else "Section import failed. Review the server audit log and retry."
+            )
+        }
+        if preview_stale:
+            payload["code"] = "preview_stale"
+        elif not client_error:
+            payload["code"] = "import_failed"
+        status = 409 if preview_stale else 400
+        if not preview_stale and not client_error:
+            status = 500
+        return JsonResponse(payload, status=status)
 
 
 @role_required(ROLE_SUPER_ADMIN)

@@ -1,0 +1,792 @@
+.sections-import-page {
+  --si-soft: color-mix(in srgb, var(--teal) 7%, var(--card));
+  --si-soft-strong: color-mix(in srgb, var(--teal) 13%, var(--card));
+  --si-line: color-mix(in srgb, var(--teal) 24%, transparent);
+  display: grid;
+  gap: 1rem;
+}
+
+.sections-import-page .si-panel {
+  margin: 0;
+  padding: clamp(1rem, 2.2vw, 1.5rem);
+  overflow: visible;
+}
+
+.sections-import-page .si-section-heading,
+.sections-import-page .si-table-heading,
+.sections-import-page .si-program-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.sections-import-page .si-section-heading {
+  padding-block-end: 1rem;
+  border-block-end: 1px solid var(--si-line);
+}
+
+.sections-import-page .si-section-heading h2,
+.sections-import-page .si-table-heading h2 {
+  margin: 0;
+  color: var(--t1);
+  font-size: clamp(1rem, 1.8vw, 1.22rem);
+  line-height: 1.35;
+}
+
+.sections-import-page .si-eyebrow {
+  margin: 0 0 0.25rem;
+  color: var(--teal);
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.sections-import-page .si-steps {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.sections-import-page .si-steps li {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.35rem 0.55rem;
+  border: 1px solid var(--si-line);
+  border-radius: 999px;
+  color: var(--t2);
+  background: var(--si-soft);
+  font-size: 0.74rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.sections-import-page .si-steps li span {
+  display: grid;
+  width: 1.25rem;
+  height: 1.25rem;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--teal);
+  color: #fff;
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+}
+
+.sections-import-page .si-input-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.65fr) minmax(15rem, 0.85fr);
+  gap: 1rem;
+  margin-block: 1rem;
+}
+
+.sections-import-page .si-input-block,
+.sections-import-page .si-source-card,
+.sections-import-page .si-program-selector {
+  min-width: 0;
+}
+
+.sections-import-page .si-input-label,
+.sections-import-page .si-source-card legend,
+.sections-import-page .si-program-selector legend {
+  float: none;
+  width: auto;
+  margin: 0 0 0.55rem;
+  padding: 0;
+  color: var(--t1);
+  font-size: 0.84rem;
+  font-weight: 800;
+}
+
+.sections-import-page .si-dropzone {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.8rem;
+  min-height: 7.25rem;
+  padding: 1rem;
+  border: 1.5px dashed color-mix(in srgb, var(--teal) 45%, var(--t4));
+  border-radius: calc(var(--radius) - 2px);
+  background: var(--si-soft);
+  cursor: pointer;
+  transition: border-color 0.18s ease, background-color 0.18s ease, transform 0.18s ease;
+}
+
+.sections-import-page .si-dropzone:hover,
+.sections-import-page .si-dropzone.dragover {
+  border-color: var(--teal);
+  background: var(--si-soft-strong);
+}
+
+.sections-import-page .si-dropzone.dragover {
+  transform: translateY(-2px);
+}
+
+.sections-import-page .si-dropzone:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--teal) 32%, transparent);
+  outline-offset: 3px;
+}
+
+.sections-import-page .si-dropzone.has-file {
+  border-style: solid;
+  border-color: var(--teal);
+}
+
+.sections-import-page .si-dropzone-icon {
+  display: grid;
+  width: 3rem;
+  height: 3rem;
+  place-items: center;
+  border-radius: 0.85rem;
+  color: var(--teal);
+  background: color-mix(in srgb, var(--teal) 12%, transparent);
+}
+
+.sections-import-page .si-dropzone-icon svg {
+  width: 1.55rem;
+  height: 1.55rem;
+}
+
+.sections-import-page .si-dropzone-copy {
+  display: grid;
+  gap: 0.2rem;
+  min-width: 0;
+  color: var(--t1);
+}
+
+.sections-import-page .si-dropzone-copy strong {
+  font-size: 0.86rem;
+}
+
+.sections-import-page .si-dropzone-copy small {
+  color: var(--t3);
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+}
+
+.sections-import-page .si-dropzone-file {
+  max-width: 13rem;
+  overflow: hidden;
+  padding: 0.38rem 0.55rem;
+  border: 1px solid var(--si-line);
+  border-radius: 0.55rem;
+  background: var(--card);
+  color: var(--teal);
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sections-import-page .si-source-card {
+  margin: 0;
+  padding: 1rem;
+  border: 1px solid var(--si-line);
+  border-radius: calc(var(--radius) - 2px);
+  background: var(--si-soft);
+}
+
+.sections-import-page .si-switch-row {
+  display: flex;
+  min-height: 5.4rem;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  cursor: pointer;
+}
+
+.sections-import-page .si-switch-row span {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.sections-import-page .si-switch-row strong {
+  color: var(--t1);
+  font-size: 0.84rem;
+}
+
+.sections-import-page .si-switch-row small {
+  color: var(--t3);
+  font-size: 0.74rem;
+  line-height: 1.6;
+}
+
+.sections-import-page .si-switch-row input {
+  width: 2.7rem;
+  height: 1.45rem;
+  flex: 0 0 auto;
+  accent-color: var(--teal);
+  cursor: pointer;
+}
+
+.sections-import-page .si-program-selector {
+  margin: 0 0 1rem;
+  padding: 1rem;
+  border: 1px solid var(--si-line);
+  border-radius: calc(var(--radius) - 2px);
+  background: color-mix(in srgb, var(--card) 90%, var(--teal) 10%);
+}
+
+.sections-import-page .si-program-actions {
+  display: flex;
+  gap: 0.35rem;
+}
+
+.sections-import-page .si-text-button {
+  padding: 0.3rem 0.5rem;
+  border: 0;
+  border-radius: 0.45rem;
+  background: transparent;
+  color: var(--teal);
+  font: inherit;
+  font-size: 0.72rem;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.sections-import-page .si-text-button:hover {
+  background: var(--si-soft-strong);
+}
+
+.sections-import-page .si-text-button:focus-visible,
+.sections-import-page .si-program-chip input:focus-visible + span {
+  outline: 2px solid var(--teal);
+  outline-offset: 2px;
+}
+
+.sections-import-page .si-text-button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.sections-import-page .si-help-text {
+  max-width: 75rem;
+  margin: 0.55rem 0 0.8rem;
+  color: var(--t3);
+  font-size: 0.76rem;
+  line-height: 1.7;
+}
+
+.sections-import-page .si-program-heading .si-help-text {
+  margin: 0;
+}
+
+.sections-import-page .si-program-options,
+.sections-import-page .si-program-tags,
+.sections-import-page .si-effective-programs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.42rem;
+}
+
+.sections-import-page .si-program-chip {
+  position: relative;
+  margin: 0;
+  cursor: pointer;
+}
+
+.sections-import-page .si-program-chip input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  opacity: 0;
+}
+
+.sections-import-page .si-program-chip span,
+.sections-import-page .si-program-tag {
+  display: inline-flex;
+  min-width: 2.6rem;
+  align-items: center;
+  justify-content: center;
+  padding: 0.36rem 0.65rem;
+  border: 1px solid var(--si-line);
+  border-radius: 999px;
+  background: var(--card);
+  color: var(--t2);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  font-weight: 800;
+  transition: border-color 0.15s ease, background-color 0.15s ease, color 0.15s ease;
+}
+
+.sections-import-page .si-program-chip:hover span {
+  border-color: var(--teal);
+}
+
+.sections-import-page .si-program-chip input:checked + span,
+.sections-import-page .si-program-tag {
+  border-color: color-mix(in srgb, var(--teal) 52%, transparent);
+  background: color-mix(in srgb, var(--teal) 12%, var(--card));
+  color: var(--teal);
+}
+
+.sections-import-page .si-program-chip input:checked + span::before {
+  content: "✓";
+  margin-inline-end: 0.32rem;
+}
+
+.sections-import-page .si-selection-status {
+  margin: 0.65rem 0 0;
+  color: var(--teal);
+  font-size: 0.74rem;
+  font-weight: 700;
+}
+
+.sections-import-page .si-selection-status.is-blocked,
+.sections-import-page .si-program-empty {
+  color: var(--danger);
+}
+
+.sections-import-page .si-no-programs {
+  width: 100%;
+  padding: 0.7rem;
+  border: 1px solid color-mix(in srgb, var(--danger) 35%, transparent);
+  border-radius: 0.6rem;
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 7%, var(--card));
+  font-size: 0.78rem;
+}
+
+.sections-import-page .si-merge-note {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.8rem;
+  margin-block-end: 1rem;
+  padding: 0.85rem 1rem;
+  border: 1px solid color-mix(in srgb, #d97706 35%, transparent);
+  border-radius: calc(var(--radius) - 2px);
+  background: color-mix(in srgb, #f59e0b 8%, var(--card));
+}
+
+.sections-import-page .si-merge-icon {
+  display: grid;
+  width: 2rem;
+  height: 2rem;
+  place-items: center;
+  border-radius: 50%;
+  background: color-mix(in srgb, #d97706 14%, transparent);
+  color: #b45309;
+}
+
+.sections-import-page .si-merge-icon svg {
+  width: 1.05rem;
+  height: 1.05rem;
+}
+
+.sections-import-page .si-merge-note strong {
+  color: var(--t1);
+  font-size: 0.8rem;
+}
+
+.sections-import-page .si-merge-note p {
+  margin: 0.18rem 0 0;
+  color: var(--t2);
+  font-size: 0.74rem;
+  line-height: 1.6;
+}
+
+.sections-import-page .si-admin-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  color: #b45309;
+  font-size: 0.73rem;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.sections-import-page .si-action-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+}
+
+.sections-import-page .si-tech-toggle {
+  margin-inline-start: auto;
+}
+
+.sections-import-page .si-status {
+  margin: 0.75rem 0 0;
+  padding: 0.7rem 0.85rem;
+  font-size: 0.78rem;
+  line-height: 1.55;
+}
+
+.sections-import-page .si-technical-output {
+  max-height: 18rem;
+  margin: 0.75rem 0 0;
+  overflow: auto;
+  padding: 0.85rem;
+  border: 1px solid var(--si-line);
+  border-radius: 0.65rem;
+  direction: ltr;
+  background: color-mix(in srgb, var(--t1) 4%, var(--card));
+  color: var(--t2);
+  font-size: 0.7rem;
+  text-align: left;
+  white-space: pre-wrap;
+}
+
+.sections-import-page .si-preview-heading {
+  align-items: center;
+}
+
+.sections-import-page .si-effective-programs {
+  justify-content: flex-end;
+}
+
+.sections-import-page .si-impact-grid {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 0.65rem;
+  margin-block-start: 1rem;
+}
+
+.sections-import-page .si-impact-card {
+  display: grid;
+  min-height: 6rem;
+  align-content: space-between;
+  gap: 0.55rem;
+  padding: 0.8rem;
+  border: 1px solid var(--si-line);
+  border-radius: 0.75rem;
+  background: var(--card);
+}
+
+.sections-import-page .si-impact-card span {
+  color: var(--t3);
+  font-size: 0.7rem;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+.sections-import-page .si-impact-card strong {
+  color: var(--t1);
+  font-family: var(--font-serif);
+  font-size: 1.55rem;
+  line-height: 1;
+}
+
+.sections-import-page .si-impact-card.is-positive strong {
+  color: var(--teal);
+}
+
+.sections-import-page .si-preview-panel.has-risk .si-impact-card.is-warning {
+  border-color: color-mix(in srgb, var(--danger) 48%, transparent);
+  background: color-mix(in srgb, var(--danger) 7%, var(--card));
+}
+
+.sections-import-page .si-preview-panel.has-risk .si-impact-card.is-warning strong {
+  color: var(--danger);
+}
+
+.sections-import-page .si-impact-details {
+  margin: 0.8rem 0 0;
+  color: var(--t3);
+  font-size: 0.73rem;
+  line-height: 1.6;
+}
+
+.sections-import-page .si-table-heading {
+  align-items: end;
+  margin-block-end: 0.8rem;
+}
+
+.sections-import-page .si-table-heading p {
+  margin: 0.25rem 0 0;
+  color: var(--t3);
+  font-size: 0.73rem;
+}
+
+.sections-import-page .si-table-panel {
+  overflow: hidden;
+}
+
+.sections-import-page .table-responsive {
+  overflow-x: auto;
+  border: 1px solid var(--si-line);
+  border-radius: 0.75rem;
+}
+
+.sections-import-page .si-preview-table {
+  min-width: 72rem;
+  margin: 0;
+  direction: inherit;
+}
+
+.sections-import-page .si-preview-table th {
+  position: relative;
+  padding: 0.72rem 0.6rem;
+  border-block-end-color: var(--si-line);
+  background: var(--si-soft);
+  color: var(--t2);
+  font-size: 0.7rem;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.sections-import-page .si-preview-table td {
+  padding: 0.68rem 0.6rem;
+  border-color: color-mix(in srgb, var(--t4) 18%, transparent);
+  color: var(--t2);
+  font-size: 0.73rem;
+  vertical-align: middle;
+}
+
+.sections-import-page .si-course-code {
+  color: var(--teal);
+  font-family: var(--font-mono);
+}
+
+.sections-import-page .si-time {
+  white-space: nowrap;
+}
+
+.sections-import-page .si-program-tags {
+  min-width: 6rem;
+}
+
+.sections-import-page .si-program-tags .si-program-tag {
+  min-width: 2rem;
+  padding: 0.2rem 0.42rem;
+  font-size: 0.64rem;
+}
+
+.sections-import-page .si-source-tag {
+  display: inline-flex;
+  padding: 0.2rem 0.45rem;
+  border-radius: 999px;
+  background: var(--si-soft-strong);
+  color: var(--teal);
+  font-size: 0.64rem;
+  font-weight: 800;
+}
+
+.sections-import-page .si-filterable {
+  cursor: pointer;
+  user-select: none;
+}
+
+.sections-import-page .si-filter-icon {
+  display: inline-flex;
+  width: 1.1rem;
+  height: 1.1rem;
+  align-items: center;
+  justify-content: center;
+  margin-inline-start: 0.2rem;
+  border-radius: 0.3rem;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--t4);
+  cursor: pointer;
+  vertical-align: middle;
+}
+
+.sections-import-page .si-filter-icon:focus-visible {
+  outline: 2px solid var(--teal);
+  outline-offset: 2px;
+}
+
+.sections-import-page .si-filter-icon svg {
+  width: 0.7rem;
+  height: 0.7rem;
+}
+
+.sections-import-page .si-filter-icon.active,
+.sections-import-page .si-filterable:hover .si-filter-icon {
+  background: var(--si-soft-strong);
+  color: var(--teal);
+}
+
+.sections-import-page .si-filter-pop {
+  position: absolute;
+  z-index: 25;
+  inset-block-start: calc(100% - 0.2rem);
+  inset-inline-start: 0.35rem;
+  display: none;
+  width: 13rem;
+  padding: 0.65rem;
+  border: 1px solid var(--si-line);
+  border-radius: 0.65rem;
+  background: var(--card);
+  box-shadow: var(--shadow-card);
+}
+
+.sections-import-page .si-filter-pop.open {
+  display: grid;
+  gap: 0.4rem;
+}
+
+.sections-import-page .si-filter-pop label {
+  color: var(--t2);
+  font-size: 0.68rem;
+}
+
+.sections-import-page .si-filter-pop input {
+  width: 100%;
+  padding: 0.42rem 0.5rem;
+  border: 1px solid var(--si-line);
+  border-radius: 0.45rem;
+  background: var(--card);
+  color: var(--t1);
+  font: inherit;
+  font-size: 0.72rem;
+  outline: none;
+}
+
+.sections-import-page .si-filter-pop input:focus {
+  border-color: var(--teal);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--teal) 18%, transparent);
+}
+
+.sections-import-page .si-filter-clear {
+  display: none;
+  justify-self: end;
+  padding: 0.2rem 0.35rem;
+  border: 0;
+  background: transparent;
+  color: var(--danger);
+  font-size: 0.68rem;
+  cursor: pointer;
+}
+
+.sections-import-page .si-filter-clear.visible {
+  display: block;
+}
+
+.sections-import-page .empty-state {
+  padding: 2.4rem 1rem;
+  text-align: center;
+}
+
+.sections-import-page .empty-title {
+  color: var(--t2);
+  font-weight: 800;
+}
+
+.sections-import-page .empty-hint {
+  margin-block-start: 0.35rem;
+  color: var(--t3);
+  font-size: 0.73rem;
+}
+
+html[data-theme="dark"] .sections-import-page {
+  --si-soft: rgba(10, 142, 110, 0.09);
+  --si-soft-strong: rgba(10, 142, 110, 0.16);
+  --si-line: rgba(45, 212, 191, 0.2);
+}
+
+html[data-theme="dark"] .sections-import-page .si-program-selector,
+html[data-theme="dark"] .sections-import-page .si-impact-card,
+html[data-theme="dark"] .sections-import-page .si-dropzone-file,
+html[data-theme="dark"] .sections-import-page .si-filter-pop,
+html[data-theme="dark"] .sections-import-page .si-filter-pop input {
+  background: rgba(255, 255, 255, 0.035);
+}
+
+html[data-theme="dark"] .sections-import-page .si-merge-note {
+  background: rgba(245, 158, 11, 0.08);
+}
+
+html[data-theme="dark"] .sections-import-page .si-admin-link,
+html[data-theme="dark"] .sections-import-page .si-merge-icon {
+  color: #fbbf24;
+}
+
+@media (max-width: 1050px) {
+  .sections-import-page .si-impact-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .sections-import-page .si-input-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 720px) {
+  .sections-import-page .si-section-heading,
+  .sections-import-page .si-program-heading,
+  .sections-import-page .si-merge-note {
+    align-items: stretch;
+  }
+
+  .sections-import-page .si-section-heading,
+  .sections-import-page .si-program-heading {
+    flex-direction: column;
+  }
+
+  .sections-import-page .si-steps {
+    width: 100%;
+  }
+
+  .sections-import-page .si-steps li {
+    flex: 1;
+    justify-content: center;
+  }
+
+  .sections-import-page .si-dropzone {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .sections-import-page .si-dropzone-file {
+    grid-column: 1 / -1;
+    max-width: 100%;
+  }
+
+  .sections-import-page .si-merge-note {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .sections-import-page .si-admin-link {
+    grid-column: 1 / -1;
+    justify-self: start;
+  }
+
+  .sections-import-page .si-impact-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .sections-import-page .si-preview-heading {
+    align-items: flex-start;
+  }
+
+  .sections-import-page .si-effective-programs {
+    justify-content: flex-start;
+  }
+
+  .sections-import-page .si-tech-toggle {
+    width: 100%;
+    margin-inline-start: 0;
+  }
+}
+
+@media (max-width: 440px) {
+  .sections-import-page .si-impact-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .sections-import-page .si-steps li {
+    padding-inline: 0.3rem;
+    font-size: 0.66rem;
+  }
+
+  .sections-import-page .si-action-row .btn {
+    width: 100%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sections-import-page .si-dropzone,
+  .sections-import-page .si-program-chip span {
+    transition: none;
+  }
+}

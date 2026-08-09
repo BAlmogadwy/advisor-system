@@ -7,12 +7,31 @@ from core.services.term_sections import import_term_sections_from_csv
 
 
 class Command(BaseCommand):
-    help = "Import cleaned term course sections CSV into advisor DB table term_course_sections"
+    help = "Merge a cleaned CSV into the current section snapshot"
 
     def add_arguments(self, parser: ArgumentParser) -> None:
         parser.add_argument("--csv", required=True, help="Path to cleaned CSV")
-        parser.add_argument("--year", required=True, help="Academic year label (e.g. 1447)")
-        parser.add_argument("--term", required=True, help="Term label (e.g. 1 or Fall)")
+        parser.add_argument(
+            "--year",
+            default="",
+            help="Deprecated compatibility option; current sections are a single snapshot",
+        )
+        parser.add_argument(
+            "--term",
+            default="",
+            help="Deprecated compatibility option; current sections are a single snapshot",
+        )
+        parser.add_argument(
+            "--program",
+            action="append",
+            default=[],
+            dest="default_programs",
+            metavar="CODE",
+            help=(
+                "Default programme for sections without a CSV programme value; "
+                "repeat for shared sections (for example --program AI --program DS)"
+            ),
+        )
         parser.add_argument(
             "--department",
             action="store_true",
@@ -21,7 +40,10 @@ class Command(BaseCommand):
         parser.add_argument(
             "--truncate",
             action="store_true",
-            help="Delete existing rows for this year+term before import",
+            help=(
+                "Disabled safety guard: use DB Admin > Clear Current Section Snapshot "
+                "before running a merge import"
+            ),
         )
 
     def handle(self, *args: Any, **options: Any) -> None:
@@ -32,6 +54,8 @@ class Command(BaseCommand):
                 term=str(options["term"]),
                 source_tag="department" if bool(options["department"]) else "other",
                 truncate_existing_term=bool(options["truncate"]),
+                default_programs=list(options["default_programs"]),
+                backup_before_import=True,
             )
         except Exception as exc:
             raise CommandError(str(exc)) from exc
