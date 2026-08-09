@@ -35,6 +35,8 @@ scripts/_fix_fetch.py
 data/debug_failures/
 data/students_list.csv
 data/failed_scrapes.csv
+# Programme-specific batch exports (AI.csv, CS.csv, COE.csv, ...)
+data/[A-Z]*.csv
 staticfiles/
 nul
 
