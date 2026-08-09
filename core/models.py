@@ -1,4 +1,5 @@
 import uuid
+from typing import Any
 
 from django.conf import settings
 from django.db import models, transaction
@@ -47,6 +48,12 @@ class Course(models.Model):
 
 
 class StudentCourse(models.Model):
+    class Status(models.TextChoices):
+        PASSED = "passed", "Passed"
+        STUDYING = "studying", "Studying"
+        FAILED = "failed", "Failed"
+        NOT_TAKEN = "not_taken", "Not taken"
+
     student = models.ForeignKey(
         Student,
         on_delete=models.CASCADE,
@@ -58,7 +65,7 @@ class StudentCourse(models.Model):
         related_name="student_courses",
     )
     programme_term = models.IntegerField(null=True, blank=True)
-    status = models.TextField(blank=True, default="")
+    status = models.TextField(choices=Status.choices, default=Status.NOT_TAKEN)
     grade = models.TextField(blank=True, default="")
     mark = models.FloatField(null=True, blank=True)
     actual_term = models.TextField(blank=True, default="")
@@ -386,6 +393,51 @@ class TermSection(models.Model):
 
     def __str__(self) -> str:
         return f"TermSection({self.course_key}:{self.section})"
+
+
+class TermSectionProgram(models.Model):
+    """Programme membership for a global current-term section.
+
+    A section may serve more than one programme, so programme ownership is a
+    normalized link instead of a comma-separated field on ``TermSection``.
+    ``assignment_source`` distinguishes memberships observed through student
+    registrations from authoritative memberships supplied by a section import.
+    """
+
+    term_section = models.ForeignKey(
+        TermSection,
+        on_delete=models.CASCADE,
+        related_name="program_links",
+    )
+    program = models.CharField(max_length=32)
+    assignment_source = models.CharField(max_length=24, default="observed")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "term_section_programs"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["term_section", "program"],
+                name="uq_term_section_program",
+            ),
+            models.CheckConstraint(
+                condition=~models.Q(program=""),
+                name="ck_tsp_program_nonempty",
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=["program", "term_section"],
+                name="idx_tsp_program_section",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"TermSectionProgram({self.term_section_id}/{self.program})"
+
+    def save(self, *args: Any, **kwargs: Any) -> None:
+        self.program = (self.program or "").strip().upper()
+        super().save(*args, **kwargs)
 
 
 class TermSectionMeeting(models.Model):
@@ -810,7 +862,7 @@ class ScenarioSectionBudget(models.Model):
     def __str__(self) -> str:
         return f"Budget({self.scenario_id}/{self.course_key or self.course_code})"
 
-    def save(self, *args, **kwargs) -> None:
+    def save(self, *args: Any, **kwargs: Any) -> None:
         if not self.course_key:
             self.course_key = self.course_code
         super().save(*args, **kwargs)
@@ -1687,7 +1739,7 @@ class AdvisorMessage(models.Model):
     def __str__(self) -> str:
         return f"Message({self.id}/{self.role})"
 
-    def save(self, *args, **kwargs):
+    def save(self, *args: Any, **kwargs: Any) -> None:
         """Claim the next position in the conversation on first write.
 
         Computed here rather than by the callers, because a message written without
@@ -1930,7 +1982,7 @@ class AdvisorEscalation(models.Model):
     def __str__(self) -> str:
         return f"{self.reference}({self.status})"
 
-    def save(self, *args, **kwargs):
+    def save(self, *args: Any, **kwargs: Any) -> None:
         if not self.reference:
             self.reference = allocate_escalation_reference()
         super().save(*args, **kwargs)
