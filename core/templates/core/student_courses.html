@@ -13,6 +13,7 @@
 
 {% block page_intro %}
   <p class="mb-0">{% if LANGUAGE_CODE == 'ar' %}اعرف المقررات التي استوفيت متطلباتها الأكاديمية، وما الذي يمنع بقية مقررات خطتك.{% else %}See which academic requirements you have completed and what blocks the rest of your plan.{% endif %}</p>
+  <p class="student-guidance-note mb-0 mt-2">{% if LANGUAGE_CODE == 'ar' %}هذه أهلية أكاديمية وليست إتاحة للتسجيل. لا تعرض الصفحة الشعب أو المقاعد، والمقرر الجاري لا يفتح ما بعده نهائيًا إلا بعد اجتيازه.{% else %}This is academic eligibility, not registration availability. The page does not show sections or seats, and an in-progress course only unlocks its dependants after you pass it.{% endif %}</p>
 {% endblock %}
 
 {% block content %}
@@ -20,84 +21,79 @@
 
 <nav class="student-course-jumps mb-3" aria-label="{% if LANGUAGE_CODE == 'ar' %}أقسام الصفحة{% else %}Page sections{% endif %}">
   <a href="#course-summary">{% if LANGUAGE_CODE == 'ar' %}ملخص وضعي{% else %}My summary{% endif %}</a>
-  <a href="#open-courses">{% if LANGUAGE_CODE == 'ar' %}المقررات المتاحة{% else %}Open courses{% endif %}</a>
+  <a href="#open-courses">{% if LANGUAGE_CODE == 'ar' %}مستوفية المتطلبات{% else %}Requirements met{% endif %}</a>
   <a href="#blocked-courses">{% if LANGUAGE_CODE == 'ar' %}العوائق{% else %}Blockers{% endif %}</a>
   {% if report.graph and report.graph.items %}<a class="student-course-jumps-map" href="{% url 'student_plan_map' %}">{% if LANGUAGE_CODE == 'ar' %}خريطة الخطة{% else %}Plan map{% endif %} <span aria-hidden="true">↗</span></a>{% endif %}
 </nav>
 
 {# ── 1. Where you stand ── #}
-<section class="card p-3 mb-3" id="course-summary" aria-labelledby="course-summary-title">
+<section class="card p-3 mb-3 student-course-summary" id="course-summary" aria-labelledby="course-summary-title">
   <h2 class="student-section-title" id="course-summary-title">{% if LANGUAGE_CODE == 'ar' %}أين أنت الآن{% else %}Where you stand{% endif %}</h2>
-  <div class="student-kpi-grid">
-    <div class="kpi"><div class="k">{% if LANGUAGE_CODE == 'ar' %}متاحة أكاديميًا{% else %}Academically open{% endif %}</div><div class="v">{{ report.counts.open }}</div></div>
-    <div class="kpi"><div class="k">{% if LANGUAGE_CODE == 'ar' %}تفصلها مادة واحدة{% else %}One course away{% endif %}</div><div class="v">{{ report.counts.one_step }}</div></div>
-    <div class="kpi"><div class="k">{% if LANGUAGE_CODE == 'ar' %}ما زالت محجوبة{% else %}Still blocked{% endif %}</div><div class="v">{{ report.counts.locked }}</div></div>
-    <div class="kpi"><div class="k">{% if LANGUAGE_CODE == 'ar' %}مجتازة{% else %}Passed{% endif %}</div><div class="v">{{ report.counts.passed }}</div></div>
+  <div class="student-kpi-grid student-course-progress-grid">
+    <div class="kpi" data-course-state="passed" data-value="{{ progress.passed }}"><div class="k">{% if LANGUAGE_CODE == 'ar' %}مجتازة{% else %}Passed{% endif %}</div><div class="v">{{ progress.passed }}</div></div>
+    {% if progress.studying %}<div class="kpi" data-course-state="studying" data-value="{{ progress.studying }}"><div class="k">{% if LANGUAGE_CODE == 'ar' %}جارية في السجل{% else %}In progress on record{% endif %}</div><div class="v">{{ progress.studying }}</div></div>{% endif %}
+    <div class="kpi" data-course-state="open" data-value="{{ progress.open }}"><div class="k">{% if LANGUAGE_CODE == 'ar' %}متاحة أكاديميًا{% else %}Academically open{% endif %}</div><div class="v">{{ progress.open }}</div></div>
+    <div class="kpi" data-course-state="one-step" data-value="{{ progress.one_step }}"><div class="k">{% if LANGUAGE_CODE == 'ar' %}يفصلها مقرر واحد{% else %}One course away{% endif %}</div><div class="v">{{ progress.one_step }}</div></div>
+    <div class="kpi" data-course-state="blocked-deeper" data-value="{{ progress.blocked_deeper }}"><div class="k">{% if LANGUAGE_CODE == 'ar' %}تحتاج أكثر من متطلب{% else %}Need multiple requirements{% endif %}</div><div class="v">{{ progress.blocked_deeper }}</div></div>
   </div>
 
-  <p class="mb-0 mt-2">
-    {% if LANGUAGE_CODE == 'ar' %}
-      استوفيت المتطلبات الأكاديمية لـ<strong>{{ report.counts.open }}</strong> مقرر.{% if report.counts.one_step %} و<strong>{{ report.counts.one_step }}</strong> من المقررات تفصلها مادة واحدة فقط.{% endif %}
-    {% else %}
-      You have completed the academic requirements for <strong>{{ report.counts.open }}</strong> courses.{% if report.counts.one_step %} <strong>{{ report.counts.one_step }}</strong> more are just one course away.{% endif %}
-    {% endif %}
-  </p>
+  <p class="student-course-progress-caption mb-0 mt-2">{% if LANGUAGE_CODE == 'ar' %}كل مقرر يظهر في حالة واحدة فقط؛ لذلك لا تتكرر الأعداد في هذا الملخص.{% else %}Each course appears in exactly one state, so these figures do not double-count.{% endif %}</p>
 
   {% if report.top_blocker %}
   <div class="student-next-step mt-2">
-    <span class="student-next-step-label">{% if LANGUAGE_CODE == 'ar' %}أفضل خطوة تالية{% else %}Best next step{% endif %}</span>
-    <span>{% if LANGUAGE_CODE == 'ar' %}اجتياز{% else %}Pass{% endif %} <strong dir="ltr">{{ report.top_blocker.code }}</strong> — {{ report.top_blocker.name }}. {% if LANGUAGE_CODE == 'ar' %}يفتح لك{% else %}It opens{% endif %} <strong>{{ report.top_blocker.frees_eventually }}</strong> {% if LANGUAGE_CODE == 'ar' %}من مقرراتك المتبقية.{% else %}of your remaining courses.{% endif %}</span>
+    <span class="student-next-step-label">{% if LANGUAGE_CODE == 'ar' %}أعلى أثر في سلسلة المتطلبات{% else %}Highest prerequisite-chain impact{% endif %}</span>
+    <span>
+      {% if LANGUAGE_CODE == 'ar' %}اجتياز{% else %}Pass{% endif %}
+      <bdi class="student-course-identity" dir="ltr"><strong>{{ report.top_blocker.code }}</strong> — {{ report.top_blocker.name }}</bdi>.
+      {% if LANGUAGE_CODE == 'ar' %}يفتح مباشرةً <strong>{{ report.top_blocker.frees_now }}</strong> من المقررات، ويمتد أثره عبر سلسلة تضم <strong>{{ report.top_blocker.frees_eventually }}</strong> من مقرراتك المتبقية.{% else %}It directly unlocks <strong>{{ report.top_blocker.frees_now }}</strong> courses and sits on the prerequisite chain of <strong>{{ report.top_blocker.frees_eventually }}</strong> remaining courses.{% endif %}
+    </span>
   </div>
   {% endif %}
-
-  <p class="student-evidence-note small text-secondary mb-0 mt-2">
-    {% if LANGUAGE_CODE == 'ar' %}هذه نتيجة أكاديمية وليست تأكيدًا للتسجيل. المقرر الجاري يُحتسب مستوفىً للمتطلب، لكن عليك اجتيازه. لا تعرض هذه الصفحة طرح الشعب أو المقاعد المتاحة.{% else %}This is academic guidance, not registration confirmation. A course in progress counts as met here, but you still have to pass it. This page does not show section offerings or available seats.{% endif %}
-  </p>
 </section>
 
 {# ── 2. Open to you — academically open, never a registration promise ── #}
 <section class="card p-3 mb-3" id="open-courses" aria-labelledby="open-courses-title">
   <h2 class="student-section-title" id="open-courses-title">
-    {% if LANGUAGE_CODE == 'ar' %}مقررات متاحة لك{% else %}Open to you{% endif %}
+    {% if LANGUAGE_CODE == 'ar' %}مقررات مستوفية المتطلبات أكاديميًا{% else %}Courses with requirements met{% endif %}
     <span class="badge text-bg-success">{{ report.counts.open }}</span>
   </h2>
 
   {% if report.open_courses %}
-    {% if open_this_term %}
+    {% if recommended_next_term %}
       <div class="student-course-group">
         <div class="student-course-group-head">
-          <h3>{% if LANGUAGE_CODE == 'ar' %}مناسبة لخطة هذا الفصل{% else %}Fits your current-term plan{% endif %}</h3>
-          <span class="badge text-bg-primary">{{ open_this_term|length }}</span>
+          <h3>{% if LANGUAGE_CODE == 'ar' %}مرشحة لخطة الفصل القادم{% else %}Recommended for next term{% endif %}</h3>
+          <span class="badge text-bg-primary">{{ recommended_next_term|length }}</span>
         </div>
-        <p class="small text-secondary mb-2">{% if LANGUAGE_CODE == 'ar' %}استوفيت متطلباتها وتقع ضمن توصية الفصل الحالية. تحقّق من الشعب في بوابة الجامعة.{% else %}You meet their requirements and they fit the current-term recommendation. Check sections in the university portal.{% endif %}</p>
+        <p class="small text-secondary mb-2">{% if LANGUAGE_CODE == 'ar' %}استوفيت متطلباتها وظهرت ضمن توصية الفصل الأكاديمي القادم. تحقّق من طرح الشعب في بوابة الجامعة.{% else %}You meet their requirements and they appear in the next-term academic recommendation. Check section offerings in the university portal.{% endif %}</p>
         <div class="student-course-list" role="list">
-          {% for c in open_this_term %}
-            <article class="student-course-row" id="c-{{ c.code }}" role="listitem">
-              <a class="student-course-code" href="{% url 'student_course_detail_page' c.code %}" dir="ltr">{{ c.code }}</a>
-              <div class="student-course-name">{{ c.name|default:"—" }}</div>
+          {% for c in recommended_next_term %}
+            <a class="student-course-row" id="c-{{ c.code }}" role="listitem" href="{% url 'student_course_detail_page' c.code %}">
+              <span class="student-course-code" dir="ltr">{{ c.code }}</span>
+              <span class="student-course-name" dir="auto">{{ c.name|default:"—" }}</span>
               <div class="student-course-credits"><strong dir="ltr">{{ c.credits|default_if_none:"—" }}</strong> {% if LANGUAGE_CODE == 'ar' %}ساعات{% else %}credits{% endif %}</div>
-              <span class="badge text-bg-primary student-course-status">{% if LANGUAGE_CODE == 'ar' %}هذا الفصل{% else %}This term{% endif %}</span>
-            </article>
+              <span class="badge text-bg-primary student-course-status">{% if LANGUAGE_CODE == 'ar' %}الفصل القادم{% else %}Next term{% endif %}</span>
+            </a>
           {% endfor %}
         </div>
       </div>
     {% endif %}
 
-    {% if open_later %}
-      <div class="student-course-group{% if open_this_term %} mt-3{% endif %}">
+    {% if open_other_terms %}
+      <div class="student-course-group{% if recommended_next_term %} mt-3{% endif %}">
         <div class="student-course-group-head">
-          <h3>{% if LANGUAGE_CODE == 'ar' %}متاحة أكاديميًا لخطة لاحقة{% else %}Academically open for a later plan{% endif %}</h3>
-          <span class="badge text-bg-secondary">{{ open_later|length }}</span>
+          <h3>{% if LANGUAGE_CODE == 'ar' %}مستوفية المتطلبات لخطة لاحقة{% else %}Requirements met for a later plan{% endif %}</h3>
+          <span class="badge text-bg-secondary">{{ open_other_terms|length }}</span>
         </div>
-        <p class="small text-secondary mb-2">{% if LANGUAGE_CODE == 'ar' %}متطلباتها مستوفاة، لكنها ليست ضمن توصية الفصل الحالية.{% else %}Their requirements are met, but they are not in the current-term recommendation.{% endif %}</p>
+        <p class="small text-secondary mb-2">{% if LANGUAGE_CODE == 'ar' %}متطلباتها مستوفاة، لكنها ليست ضمن توصية الفصل الأكاديمي القادم.{% else %}Their requirements are met, but they are not in the next-term academic recommendation.{% endif %}</p>
         <div class="student-course-list" role="list">
-          {% for c in open_later %}
-            <article class="student-course-row" id="c-{{ c.code }}" role="listitem">
-              <a class="student-course-code" href="{% url 'student_course_detail_page' c.code %}" dir="ltr">{{ c.code }}</a>
-              <div class="student-course-name">{{ c.name|default:"—" }}</div>
+          {% for c in open_other_terms %}
+            <a class="student-course-row" id="c-{{ c.code }}" role="listitem" href="{% url 'student_course_detail_page' c.code %}">
+              <span class="student-course-code" dir="ltr">{{ c.code }}</span>
+              <span class="student-course-name" dir="auto">{{ c.name|default:"—" }}</span>
               <div class="student-course-credits"><strong dir="ltr">{{ c.credits|default_if_none:"—" }}</strong> {% if LANGUAGE_CODE == 'ar' %}ساعات{% else %}credits{% endif %}</div>
               <span class="student-course-status small text-secondary">{% if LANGUAGE_CODE == 'ar' %}عادةً فصل لاحق{% else %}Usually later{% endif %}</span>
-            </article>
+            </a>
           {% endfor %}
         </div>
       </div>
@@ -114,14 +110,13 @@
     </div>
   {% endif %}
 
-  <p class="student-evidence-note small text-secondary mb-0 mt-3">{% if LANGUAGE_CODE == 'ar' %}«متاحة» تعني أنك أنهيت كل ما يتطلبه المقرر: مقرراته السابقة وشرط الساعات المعتمدة.{% else %}“Open” means you have finished everything the course requires — its prerequisite courses and its credit-hour requirement.{% endif %}</p>
 </section>
 
 {# ── 3. What's stopping me ── #}
 <section class="card p-3 mb-3" id="blocked-courses" aria-labelledby="blocked-courses-title">
   <h2 class="student-section-title" id="blocked-courses-title">
     {% if LANGUAGE_CODE == 'ar' %}ما الذي يمنعني؟{% else %}What's stopping me?{% endif %}
-    <span class="badge text-bg-danger">{{ report.counts.locked }}</span>
+    <span class="badge text-bg-secondary">{{ report.counts.locked }}</span>
   </h2>
   {% if report.locked_courses %}
     <p class="small text-secondary">{% if LANGUAGE_CODE == 'ar' %}مرتبة من الأقرب إلى الفتح. افتح أي مقرر لمعرفة المتطلب الناقص.{% else %}Closest to unlocking first. Open a course to see its missing requirement.{% endif %}</p>
@@ -129,7 +124,7 @@
     {% for c in report.locked_courses %}
       <details class="student-blocker-item">
         <summary>
-          <span class="student-blocker-course"><strong dir="ltr">{{ c.code }}</strong> <span>{{ c.name }}</span></span>
+          <span class="student-blocker-course"><strong dir="ltr">{{ c.code }}</strong> <span dir="auto">{{ c.name }}</span></span>
           <span class="student-blocker-badges">
             {% if c.steps %}<span class="badge text-bg-secondary">{% if LANGUAGE_CODE == 'ar' %}{{ c.steps }} خطوة{% else %}{{ c.steps }} step{{ c.steps|pluralize }}{% endif %}</span>{% endif %}
             {% if c.frees_eventually %}<span class="badge text-bg-primary">{% if LANGUAGE_CODE == 'ar' %}يفتح {{ c.frees_eventually }}{% else %}opens {{ c.frees_eventually }}{% endif %}</span>{% endif %}

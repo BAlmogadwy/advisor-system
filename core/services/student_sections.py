@@ -265,7 +265,11 @@ def append_unmapped_studying_courses(
 
 
 def get_student_term_registration_summary(
-    student_id: int | str, academic_year: str, term: str
+    student_id: int | str,
+    academic_year: str,
+    term: str,
+    *,
+    baseline_rows: list[dict[str, object]] | None = None,
 ) -> dict[str, object]:
     """Registered credit hours for THE TERM ASKED FOR, and how confident that is.
 
@@ -287,7 +291,16 @@ def get_student_term_registration_summary(
     Credits are counted ONCE PER COURSE. The baseline is one row per MEETING, so
     summing rows would multiply a 3-hour course by its three weekly sessions.
     """
-    rows = get_student_term_baseline(student_id, str(academic_year), str(term))
+    # A caller that has already applied a student-facing visibility rule (for
+    # example the cohort filter on the home timetable) can pass those exact rows.
+    # The number and the visible timetable must never be derived from different
+    # section sets. ``None`` means "load them"; an explicit empty list remains
+    # honest no-evidence, not a request to fetch again.
+    rows = (
+        get_student_term_baseline(student_id, str(academic_year), str(term))
+        if baseline_rows is None
+        else baseline_rows
+    )
     if not rows:
         return {
             "value": None,

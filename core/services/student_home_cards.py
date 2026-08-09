@@ -248,7 +248,13 @@ def validate_band_table(bands: list[dict[str, Any]], scale: int = GPA_SCALE) -> 
             )
 
 
-def _registered_hours(student_id: int, academic_year: int, term: int) -> dict[str, Any]:
+def _registered_hours(
+    student_id: int,
+    academic_year: int,
+    term: int,
+    *,
+    current_term_rows: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     """Credit HOURS registered for the configured term, and where the figure came from.
 
     Three numbers were available and two of them are wrong for this card:
@@ -269,7 +275,10 @@ def _registered_hours(student_id: int, academic_year: int, term: int) -> dict[st
 
     try:
         summary = get_student_term_registration_summary(
-            int(student_id), str(academic_year), str(term)
+            int(student_id),
+            str(academic_year),
+            str(term),
+            baseline_rows=current_term_rows,
         )
     except Exception:  # noqa: BLE001 — one card degrades, the page does not
         return {
@@ -300,7 +309,13 @@ def _registered_hours(student_id: int, academic_year: int, term: int) -> dict[st
     }
 
 
-def build_student_home_cards(student_id: int, academic_year: int, term: int) -> dict[str, Any]:
+def build_student_home_cards(
+    student_id: int,
+    academic_year: int,
+    term: int,
+    *,
+    current_term_rows: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     """Everything the student home screen shows, decided here.
 
     ONE service, and the template renders it without interpreting anything. The
@@ -310,16 +325,51 @@ def build_student_home_cards(student_id: int, academic_year: int, term: int) -> 
     eventually disagree, and the one on screen is the one nobody tested.
     """
     from core.models import Student
+    from core.services.student_helpers import normalize_code
+    from core.services.student_sections import (
+        get_student_term_baseline,
+        section_gender,
+        student_gender,
+    )
     from core.services.student_unlock import build_unlock_report
 
-    report = build_unlock_report(int(student_id), int(academic_year), int(term))
+    if current_term_rows is None:
+        try:
+            current_term_rows = get_student_term_baseline(
+                int(student_id), str(academic_year), str(term)
+            )
+            gender = student_gender(student_id)
+            if gender:
+                current_term_rows = [
+                    row
+                    for row in current_term_rows
+                    if section_gender(str(row.get("section") or "")) in ("", gender)
+                ]
+        except Exception:  # noqa: BLE001 — all home cards still degrade together
+            current_term_rows = []
+    current_codes = {
+        normalize_code(row.get("course_key") or row.get("course_code") or "")
+        for row in current_term_rows
+        if normalize_code(row.get("course_key") or row.get("course_code") or "")
+    }
+    report = build_unlock_report(
+        int(student_id),
+        int(academic_year),
+        int(term),
+        additional_studying_codes=current_codes,
+    )
     buckets = progress_buckets(report)
     student = Student.objects.filter(student_id=int(student_id)).values("gpa").first() or {}
 
     band = gpa_band(student.get("gpa"))
     leaders = unlock_leaders(report, limit=1)
     top = leaders[0] if leaders else None
-    registered = _registered_hours(int(student_id), int(academic_year), int(term))
+    registered = _registered_hours(
+        int(student_id),
+        int(academic_year),
+        int(term),
+        current_term_rows=current_term_rows,
+    )
 
     course_total = (
         buckets["open"]

@@ -16,14 +16,16 @@ from django.views.decorators.cache import never_cache
 from django.views.decorators.http import require_http_methods, require_POST
 
 from core.models import Course, Student, StudentTermSection
-from core.report_views import _build_student_plan_payload
+from core.services.advisor_presentations import graduation_presentation_from_tool_results
 from core.services.rbac import ROLE_STUDENT, get_user_scope
 from core.services.recommender import recommend_next_courses
 from core.services.student_graduation import build_graduation_report
-from core.services.student_home_cards import build_student_home_cards
+from core.services.student_helpers import normalize_code
+from core.services.student_home_cards import build_student_home_cards, progress_buckets
 from core.services.student_otp import OTPError, issue_otp, provision_student_user, verify_otp
-from core.services.student_sections import get_student_term_baseline, student_gender
+from core.services.student_sections import get_student_term_baseline, section_gender, student_gender
 from core.services.student_unlock import build_unlock_report
+from core.services.timetable_provenance import baseline_sections
 from core.settings_views import load_defaults
 from core.sidebar_context import get_sidebar_context
 
@@ -195,25 +197,6 @@ def _weekly_timetable(rows: list[dict]) -> tuple[list[dict], list[dict]]:
     return ordered, unscheduled
 
 
-def _weekly_grid(days: list[dict]) -> dict:
-    """Lay the week out as the timetable workspace does: days down, time slots
-    across, one cell per (day, slot). Slots are the distinct (start, end) pairs
-    this student actually has, so the grid stays as narrow as her real week."""
-    slots = sorted({(m["start_time"], m["end_time"]) for d in days for m in d["meetings"]})
-    index = {s: i for i, s in enumerate(slots)}
-    rows = []
-    for d in days:
-        cells: list[list[dict]] = [[] for _ in slots]
-        for m in d["meetings"]:
-            cells[index[(m["start_time"], m["end_time"])]].append(m)
-        rows.append({"code": d["code"], "cells": cells})
-    return {
-        "slots": [{"start": a, "end": b} for a, b in slots],
-        "rows": rows,
-        "columns": len(slots),
-    }
-
-
 @never_cache
 @login_required
 def student_courses_view(request: HttpRequest) -> HttpResponse:
@@ -248,12 +231,13 @@ def student_courses_view(request: HttpRequest) -> HttpResponse:
             "academic_year": year,
             "term": term,
             "report": report or None,
-            "open_this_term": [
+            "progress": progress_buckets(report) if report else None,
+            "recommended_next_term": [
                 course
                 for course in (report or {}).get("open_courses", [])
                 if course.get("fits_this_term")
             ],
-            "open_later": [
+            "open_other_terms": [
                 course
                 for course in (report or {}).get("open_courses", [])
                 if not course.get("fits_this_term")
@@ -324,6 +308,20 @@ def student_graduation_view(request: HttpRequest) -> HttpResponse:
         logger.exception("graduation report failed for %s", student_id)
         grad = None
 
+    graduation_presentation = {}
+    if grad:
+        graduation_presentation = graduation_presentation_from_tool_results(
+            [
+                {
+                    **grad,
+                    "tool": "graduation_progress",
+                    "ok": True,
+                    "scenario_academic_year": year,
+                    "scenario_term": term,
+                }
+            ]
+        )
+
     return render(
         request,
         "core/student_graduation.html",
@@ -334,6 +332,7 @@ def student_graduation_view(request: HttpRequest) -> HttpResponse:
             "academic_year": year,
             "term": term,
             "grad": grad or None,
+            "graduation_presentation": graduation_presentation,
         },
     )
 
@@ -388,14 +387,6 @@ def student_home_view(request: HttpRequest) -> HttpResponse:
     defaults = load_defaults()
     year, term = int(defaults["academic_year"]), int(defaults["term"])
 
-    # The builders are shared with the advisor screens and can raise on incomplete
-    # curriculum data; a student's only page must degrade, never 500.
-    try:
-        plan, _err = _build_student_plan_payload(student_id)
-    except Exception:  # noqa: BLE001
-        logger.exception("student plan build failed for %s", student_id)
-        plan = None
-
     # Show the configured term. If nothing is registered there, fall back to the
     # one published timetable in the database — but ONLY when the whole database
     # holds exactly one (year, term). TermSection carries no year/term of its own,
@@ -403,10 +394,27 @@ def student_home_view(request: HttpRequest) -> HttpResponse:
     # term would be drawn with another term's times; in that case show nothing
     # rather than something plausible and wrong. The label always names the term.
     try:
-        rows = get_student_term_baseline(student_id, str(year), str(term))
+        configured_rows = get_student_term_baseline(student_id, str(year), str(term))
     except Exception:  # noqa: BLE001
         logger.exception("student timetable load failed for %s", student_id)
-        rows = []
+        configured_rows = []
+
+    # One cohort rule, applied before these rows feed ANY home-screen fact. The
+    # timetable, hours card, plan state and recommendation exclusion must all see
+    # the same configured-term evidence.
+    gender = student_gender(student_id)
+
+    def visible_to_student(candidate_rows: list[dict]) -> list[dict]:
+        if not gender:
+            return candidate_rows
+        return [
+            row
+            for row in candidate_rows
+            if section_gender(str(row.get("section") or "")) in ("", gender)
+        ]
+
+    configured_rows = visible_to_student(configured_rows)
+    rows = list(configured_rows)
     tt_year, tt_term, tt_fallback = year, term, False
     if not rows:
         published = list(
@@ -415,36 +423,65 @@ def student_home_view(request: HttpRequest) -> HttpResponse:
             .distinct()[:2]
         )
         if len(published) == 1:
+            published_year, published_term = published[0]
             mine = StudentTermSection.objects.filter(
-                student_id=student_id, term_section__scenario__isnull=True
+                student_id=student_id,
+                academic_year=str(published_year),
+                term=str(published_term),
+                term_section__scenario__isnull=True,
             ).exists()
-            if mine:
-                tt_year, tt_term, tt_fallback = published[0][0], published[0][1], True
+            is_other_term = (str(published_year), str(published_term)) != (
+                str(year),
+                str(term),
+            )
+            if mine and is_other_term:
+                tt_year, tt_term, tt_fallback = published_year, published_term, True
                 try:
-                    rows = get_student_term_baseline(student_id, str(tt_year), str(tt_term))
+                    rows = visible_to_student(
+                        get_student_term_baseline(student_id, str(tt_year), str(tt_term))
+                    )
                 except Exception:  # noqa: BLE001
                     logger.exception("student fallback timetable failed for %s", student_id)
                     rows = []
-    # Defence in depth: the institution segregates sections by gender, so never render
-    # a section of the other cohort even if a mapping row exists. Mirrors the ORM rule
-    # in services.student_sections.gender_section_filter: own-gender sections PLUS any
-    # ungendered one; a blank/unknown gender keeps everything (never hide all).
-    gender = student_gender(student_id)
-    if gender:
-        rows = [
-            r
-            for r in rows
-            if not str(r.get("section") or "").upper().startswith(("M", "F"))
-            or str(r.get("section") or "").upper().startswith(gender)
-        ]
     timetable, unscheduled = _weekly_timetable(rows)
-    grid = _weekly_grid(timetable)
+    timetable_meetings = [
+        {
+            "course_code": meeting.get("course_code") or "",
+            "course_name": meeting.get("course_name") or "",
+            "section": meeting.get("section") or "",
+            "day": day["code"],
+            "start_time": meeting.get("start_time") or "",
+            "end_time": meeting.get("end_time") or "",
+            "room": meeting.get("room") or "",
+            "instructor": meeting.get("instructor") or "",
+            "source": "current",
+        }
+        for day in timetable
+        for meeting in day["meetings"]
+    ]
+
+    current_codes = list(
+        dict.fromkeys(
+            normalize_code(row.get("course_code") or "")
+            for row in baseline_sections(configured_rows)
+            if normalize_code(row.get("course_code") or "")
+        )
+    )
+    current_code_set = set(current_codes)
 
     try:
-        rec_codes = recommend_next_courses(student_id, year, term)
+        all_rec_codes = list(
+            dict.fromkeys(
+                normalize_code(code)
+                for code in recommend_next_courses(student_id, year, term)
+                if normalize_code(code)
+            )
+        )
     except Exception:  # noqa: BLE001
         logger.exception("student recommendations failed for %s", student_id)
-        rec_codes = []
+        all_rec_codes = []
+    rec_codes = [code for code in all_rec_codes if code not in current_code_set]
+    recommendations_already_current = [code for code in all_rec_codes if code in current_code_set]
     # ONE service for every card on this screen. `eligible_now` used to be computed
     # here — a second implementation of "what can this student take", rendered as
     # «متاحة للتسجيل هذا الفصل». Prerequisite data does not establish that a course
@@ -452,15 +489,30 @@ def student_home_view(request: HttpRequest) -> HttpResponse:
     # two implementations of one card eventually disagree, with the one on screen
     # being the one nobody tested.
     try:
-        home_cards = build_student_home_cards(student_id=student_id, academic_year=year, term=term)
+        home_cards = build_student_home_cards(
+            student_id=student_id,
+            academic_year=year,
+            term=term,
+            current_term_rows=configured_rows,
+        )
     except Exception:  # noqa: BLE001 — one card block degrades, the page does not
         logger.exception("student home cards failed for %s", student_id)
         home_cards = None
 
-    names = dict(
-        Course.objects.filter(course_code__in=rec_codes).values_list("course_code", "description")
-    )
-    recommendations = [{"code": c, "name": names.get(c, "")} for c in rec_codes]
+    course_info = {
+        normalize_code(code): {"name": name or "", "credits": credits}
+        for code, name, credits in Course.objects.filter(course_code__in=rec_codes).values_list(
+            "course_code", "description", "credit_hours"
+        )
+    }
+    recommendations = [
+        {
+            "code": code,
+            "name": course_info.get(code, {}).get("name", ""),
+            "credits": course_info.get(code, {}).get("credits"),
+        }
+        for code in rec_codes
+    ]
 
     # base.html includes the shared sidebar partial, which hides its staff navigation
     # for a STUDENT role (see partials/sidebar.html) — the student gets the app shell.
@@ -476,11 +528,11 @@ def student_home_view(request: HttpRequest) -> HttpResponse:
             "timetable_year": tt_year,
             "timetable_term": tt_term,
             "timetable_is_fallback": tt_fallback,
-            "plan": plan,
             "timetable": timetable,
-            "grid": grid,
+            "timetable_meetings": timetable_meetings,
             "unscheduled": unscheduled,
             "recommendations": recommendations,
+            "recommendations_already_current": recommendations_already_current,
             "home_cards": home_cards,
         },
     )

@@ -347,6 +347,15 @@ def test_a_course_page_shows_status_reasons_and_prerequisites(client_as_student)
     assert "يتطلب اجتياز" in body
 
 
+def test_a_course_page_keeps_the_student_navigation(client_as_student):
+    """A student subpage must not fall back to the staff sidebar when its view
+    forgets the shared navigation context."""
+    body = _page(client_as_student, "CB201").content.decode()
+    assert reverse("student_home") in body
+    assert reverse("student_advisor") in body
+    assert "/virtual-advisor/" not in body
+
+
 def test_an_unready_slot_shows_one_sentence_and_no_option_cards(client_as_student):
     """31 of 38 slots are unmapped, so this IS the screen for most students.
 

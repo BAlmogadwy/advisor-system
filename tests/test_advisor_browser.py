@@ -779,11 +779,23 @@ class AdvisorBrowserTests(StaticLiveServerTestCase):
 
         page.locator("#saNewChat").click()
         assert page.locator("#saEmptyState").is_visible()
-        assert page.locator("#saExamples [data-sa-example]").count() == 3
+        examples = page.locator("#saExamples [data-sa-example]")
+        assert examples.count() == 6
+        prompts = examples.evaluate_all("nodes => nodes.map(node => node.dataset.saExample)")
+        assert prompts == [
+            "Approximately how many terms remain until I complete my degree plan?",
+            "Which courses can I take this term?",
+            "Build a proposed timetable around my current sections without clashes.",
+            "Does my current timetable have any clashes?",
+            "Can replacing a current course improve my graduation plan?",
+            "How many times may I withdraw from a course?",
+        ]
         assert "?c=" not in page.url
 
         composer = page.locator("#saQuestion")
         assert composer.evaluate("node => node.tagName") == "TEXTAREA"
+        examples.nth(2).click()
+        assert composer.input_value() == prompts[2]
         initial_height = composer.bounding_box()["height"]
         composer.fill("First line\nSecond line\nThird line")
         assert composer.bounding_box()["height"] > initial_height

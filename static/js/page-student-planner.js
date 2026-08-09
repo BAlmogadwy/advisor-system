@@ -9,7 +9,7 @@
   'use strict';
 
   const root = document.querySelector('.sp-layout');
-  if (!root || !window.WeekGrid) return;
+  if (!root || !window.StudentTimetable) return;
 
   const AR = String(root.dataset.language || '').toLowerCase().startsWith('ar');
   const draftId = root.dataset.draftId;
@@ -18,11 +18,13 @@
   const els = {
     term: q('spTerm'), courseCount: q('spCourseCount'), creditCount: q('spCreditCount'),
     creditCeiling: q('spCreditCeiling'), currentEmpty: q('spCurrentEmpty'),
+    currentSummary: q('spCurrentSummary'), currentDetails: q('spCurrentDetails'),
     currentGrid: q('spCurrentGrid'), search: q('spCourseSearch'), catalog: q('spCatalog'),
     catalogEmpty: q('spCatalogEmpty'), requested: q('spRequested'),
     requestedEmpty: q('spRequestedEmpty'), keep: q('spKeep'), rebuild: q('spRebuild'),
     confirm: q('spConfirm'), confirmText: q('spConfirmText'), confirmBtn: q('spConfirmBtn'),
     confirmCancel: q('spConfirmCancel'), generate: q('spGenerate'), options: q('spOptions'),
+    optionPreview: q('spOptionPreview'),
     optionsEmpty: q('spOptionsEmpty'), unplacedBox: q('spUnplacedBox'),
     unplaced: q('spUnplaced'), status: q('spStatus'),
   };
@@ -38,6 +40,9 @@
     remove: AR ? 'إزالة' : 'Remove',
     add: AR ? 'إضافة' : 'Add',
     selected: AR ? 'مختار' : 'Selected',
+    inCurrent: AR ? 'في جدولك' : 'In your timetable',
+    fixedCurrent: AR ? 'شعبة حالية مثبتة' : 'Current section fixed',
+    proposed: AR ? 'مقترح' : 'Proposed',
     recommended: AR ? 'موصى به' : 'Recommended',
     ready: AR ? 'جاهز للتخطيط' : 'Ready to plan',
     blocked: AR ? 'متطلب سابق ناقص' : 'Missing prerequisite',
@@ -52,6 +57,14 @@
     copied: AR ? 'نُسخت القائمة. لم يتم حفظ أو تسجيل أي شيء.' : 'Checklist copied. Nothing was saved or registered.',
     copyFail: AR ? 'تعذّر النسخ تلقائيًا. حدّد القائمة وانسخها يدويًا.' : 'Automatic copy failed. Select and copy the checklist manually.',
     option: AR ? 'الخيار' : 'Option',
+    coverage: AR ? 'تمت الجدولة' : 'Scheduled',
+    unscheduled: AR ? 'غير مجدول' : 'not scheduled',
+    complete: AR ? 'مكتمل' : 'Complete',
+    partial: AR ? 'جزئي' : 'Partial',
+    recordedTimesClear: AR ? 'لا تداخل بين الأوقات المسجّلة' : 'No overlap among recorded times',
+    optionMissing: AR ? 'لم يدخل في هذا الخيار' : 'Not placed in this option',
+    source: AR ? 'النوع' : 'Type',
+    hourUnit: AR ? 'ساعة' : 'credits',
     course: AR ? 'المقرر' : 'Course',
     section: AR ? 'الشعبة' : 'Section',
     day: AR ? 'اليوم' : 'Day',
@@ -71,12 +84,11 @@
     wed: AR ? 'الأربعاء' : 'Wed', thu: AR ? 'الخميس' : 'Thu', fri: AR ? 'الجمعة' : 'Fri', sat: AR ? 'السبت' : 'Sat',
   };
   const DAY_LABELS = { SUN: T.sun, MON: T.mon, TUE: T.tue, WED: T.wed, THU: T.thu, FRI: T.fri, SAT: T.sat };
-  const COLORS = ['#167d78', '#315da8', '#8a5aa8', '#b86b32', '#3f7f4f', '#9a4767'];
-
   let data = null;
   let selectedCodes = [];
   let fixedSections = {};
-  let filter = 'all';
+  let filter = 'recommended';
+  let activeOptionIndex = 0;
   let confirmation = null;
   let busy = false;
 
@@ -110,13 +122,8 @@
   function setBusy(state) {
     busy = state;
     root.classList.toggle('is-busy', state);
-    els.generate.disabled = state || selectedCodes.length === 0;
+    els.generate.disabled = state || effectiveCodes().length === 0;
     els.generate.setAttribute('aria-busy', state ? 'true' : 'false');
-  }
-  function esc(value) {
-    return String(value == null ? '' : value)
-      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;').replace(/'/g, '&#039;');
   }
   function node(tag, className, text) {
     const item = document.createElement(tag);
@@ -124,40 +131,70 @@
     if (text != null) item.textContent = String(text);
     return item;
   }
+  function ltr(value) { return '\u2066' + String(value == null ? '' : value) + '\u2069'; }
+  function bdi(value, className) {
+    const item = node('bdi', className, value);
+    item.dir = 'ltr';
+    return item;
+  }
   function catalogByCode(code) {
     return ((data && data.workspace && data.workspace.catalog) || [])
       .find((row) => row.course_code === code);
   }
+  function currentCourseMap() {
+    const map = new Map();
+    (((data || {}).workspace || {}).current_timetable || []).forEach((row) => {
+      const code = String(row.course_code || '').replace(/\s+/g, '').toUpperCase();
+      if (!code) return;
+      const existing = map.get(code) || { course_code: code, course_name: row.course_name || '', section: row.section || '', credits: Number(row.credits || 0) };
+      if (!existing.section && row.section) existing.section = row.section;
+      if (!existing.credits && row.credits) existing.credits = Number(row.credits || 0);
+      map.set(code, existing);
+    });
+    return map;
+  }
+  function effectiveCodes() {
+    if (!els.keep.checked) return selectedCodes.slice();
+    return Array.from(new Set(selectedCodes.concat(Array.from(currentCourseMap().keys()))));
+  }
   function selectedCredits() {
-    return selectedCodes.reduce((sum, code) => sum + Number((catalogByCode(code) || {}).credits || 0), 0);
+    return effectiveCodes().reduce((sum, code) => {
+      const current = currentCourseMap().get(code);
+      return sum + Number((catalogByCode(code) || current || {}).credits || 0);
+    }, 0);
   }
-  function courseColor(code) {
-    let hash = 0;
-    String(code || '').split('').forEach((char) => { hash = ((hash << 5) - hash) + char.charCodeAt(0); });
-    return COLORS[Math.abs(hash) % COLORS.length];
-  }
-
   function renderWeek(host, meetings, emptyMessage) {
     const blocks = (meetings || []).filter((meeting) => meeting.day && meeting.start && meeting.end);
-    host.innerHTML = window.WeekGrid.renderWeekGrid({
-      mode: 'blocks',
-      blocks: blocks,
-      days: ['SUN', 'MON', 'TUE', 'WED', 'THU'],
+    const hasCurrent = blocks.some((meeting) => meeting.source === 'current');
+    const hasProposed = blocks.some((meeting) => meeting.source !== 'current');
+    window.StudentTimetable.render(host, blocks, {
+      lang: AR ? 'ar' : 'en',
+      dir: AR ? 'rtl' : 'ltr',
       dayLabels: DAY_LABELS,
       timeLabel: T.time,
-      empty: '<p class="sp-muted mb-0">' + esc(emptyMessage || '') + '</p>',
-      bg: () => 'color-mix(in srgb, var(--surface) 82%, var(--brand) 18%)',
-      accent: (meeting) => courseColor(meeting.course_code),
-      cellHtml: (meeting) => '<span class="wg-cid">' + esc(meeting.course_code) + '</span>' +
-        '<span class="wg-meta">' + esc(meeting.section || '') + '<br>' + esc(meeting.start) + '–' + esc(meeting.end) + '</span>',
+      emptyText: emptyMessage || '',
+      currentLabel: T.fixedCurrent,
+      proposedLabel: T.proposed,
+      showCourseName: true,
+      showSource: hasCurrent && hasProposed,
     });
   }
 
   function renderCurrent(workspace) {
     const rows = workspace.current_timetable || [];
-    const meetings = rows.filter((row) => row.day && row.start && row.end);
-    els.currentEmpty.hidden = rows.length > 0;
-    renderWeek(els.currentGrid, meetings, AR ? 'لا توجد أوقات حالية لعرضها.' : 'No current meeting times to show.');
+    const meetings = rows.filter((row) => row.day && row.start && row.end)
+      .map((row) => Object.assign({}, row, { source: 'current' }));
+    const courses = Array.from(currentCourseMap().values());
+    els.currentEmpty.hidden = courses.length > 0;
+    els.currentSummary.replaceChildren();
+    courses.forEach((course) => {
+      const chip = node('div', 'sp-current-chip');
+      chip.appendChild(bdi(course.course_code, 'sp-code'));
+      chip.appendChild(bdi(course.section || '—', 'sp-current-section'));
+      els.currentSummary.appendChild(chip);
+    });
+    els.currentDetails.hidden = meetings.length === 0;
+    if (meetings.length) renderWeek(els.currentGrid, meetings, '');
   }
 
   function statusLabel(course) {
@@ -171,20 +208,22 @@
     const catalog = ((data && data.workspace && data.workspace.catalog) || []).filter((course) => {
       const haystack = (course.course_code + ' ' + course.course_name).toLowerCase();
       if (search && !haystack.includes(search)) return false;
-      if (filter === 'recommended' && !course.recommended) return false;
-      if (filter === 'ready' && course.status !== 'ready') return false;
+      if (!search && filter === 'recommended' && !course.recommended) return false;
+      if (!search && filter === 'ready' && course.status !== 'ready') return false;
       return true;
     });
     els.catalog.replaceChildren();
     els.catalogEmpty.hidden = catalog.length > 0;
     catalog.forEach((course) => {
-      const selected = selectedCodes.includes(course.course_code);
+      const selected = effectiveCodes().includes(course.course_code);
+      const fixedCurrent = els.keep.checked && currentCourseMap().has(course.course_code);
       const unavailable = course.status !== 'ready' && !selected;
       const card = node('article', 'sp-course-card' + (selected ? ' is-selected' : '') + (unavailable ? ' is-disabled' : ''));
       const main = node('div', 'sp-course-main');
       const title = node('div', 'sp-course-title');
-      title.appendChild(node('strong', 'sp-code', course.course_code));
+      title.appendChild(bdi(course.course_code, 'sp-code'));
       if (course.recommended) title.appendChild(node('span', 'sp-tag sp-tag-rec', T.recommended));
+      if (fixedCurrent) title.appendChild(node('span', 'sp-tag sp-tag-current', T.inCurrent));
       main.appendChild(title);
       main.appendChild(node('span', 'sp-name', course.course_name || ''));
       const meta = node('div', 'sp-course-meta');
@@ -195,23 +234,32 @@
       }
       main.appendChild(meta);
       card.appendChild(main);
-      const button = node('button', selected ? 'btn btn-sm btn-outline-danger' : 'btn btn-sm btn-outline-primary', selected ? T.remove : T.add);
-      button.type = 'button';
-      button.disabled = busy || unavailable;
-      button.addEventListener('click', () => toggleCourse(course.course_code));
-      card.appendChild(button);
+      if (!fixedCurrent) {
+        const button = node('button', selected ? 'btn btn-sm btn-outline-danger' : 'btn btn-sm btn-outline-primary', selected ? T.remove : T.add);
+        button.type = 'button';
+        button.disabled = busy || unavailable;
+        button.addEventListener('click', () => toggleCourse(course.course_code));
+        card.appendChild(button);
+      }
       els.catalog.appendChild(card);
     });
   }
 
   function renderRequested() {
     els.requested.replaceChildren();
-    els.requestedEmpty.hidden = selectedCodes.length > 0;
-    selectedCodes.forEach((code) => {
+    const codes = effectiveCodes();
+    const current = currentCourseMap();
+    els.requestedEmpty.hidden = codes.length > 0;
+    codes.forEach((code) => {
       const course = catalogByCode(code) || { course_code: code, course_name: '', sections: [] };
+      const fixedCurrent = els.keep.checked && current.has(code);
+      const currentSection = fixedCurrent ? String((current.get(code) || {}).section || '') : '';
       const item = node('li', 'sp-requested-item');
       const label = node('div', 'sp-requested-label');
-      label.appendChild(node('strong', 'sp-code', code));
+      const labelLine = node('div', 'sp-requested-title');
+      labelLine.appendChild(bdi(code, 'sp-code'));
+      if (fixedCurrent) labelLine.appendChild(node('span', 'sp-tag sp-tag-current', T.fixedCurrent));
+      label.appendChild(labelLine);
       if (course.course_name) label.appendChild(node('span', 'sp-name', course.course_name));
       item.appendChild(label);
 
@@ -226,26 +274,30 @@
         const option = document.createElement('option');
         option.value = String(section.id);
         const times = (section.meetings || []).map((meeting) =>
-          (DAY_LABELS[meeting.day] || meeting.day) + ' ' + meeting.start + '–' + meeting.end
+          (DAY_LABELS[meeting.day] || meeting.day) + ' ' + ltr(meeting.start + '–' + meeting.end)
         ).join(' · ');
-        option.textContent = section.label + (times ? ' — ' + times : '');
-        option.selected = Number(fixedSections[code]) === Number(section.id);
+        option.textContent = ltr(section.label) + (times ? ' — ' + times : '');
+        option.selected = fixedCurrent
+          ? String(section.label || '') === currentSection
+          : Number(fixedSections[code]) === Number(section.id);
         select.appendChild(option);
       });
-      select.disabled = busy || !(course.sections || []).length;
+      select.disabled = busy || fixedCurrent || !(course.sections || []).length;
       select.addEventListener('change', () => pinSection(code, select.value));
       item.appendChild(select);
 
-      const remove = node('button', 'btn btn-sm btn-link text-danger', T.remove);
-      remove.type = 'button';
-      remove.disabled = busy;
-      remove.addEventListener('click', () => toggleCourse(code));
-      item.appendChild(remove);
+      if (!fixedCurrent) {
+        const remove = node('button', 'btn btn-sm btn-link text-danger', T.remove);
+        remove.type = 'button';
+        remove.disabled = busy;
+        remove.addEventListener('click', () => toggleCourse(code));
+        item.appendChild(remove);
+      }
       els.requested.appendChild(item);
     });
-    els.courseCount.textContent = String(selectedCodes.length);
+    els.courseCount.textContent = String(codes.length);
     els.creditCount.textContent = String(selectedCredits());
-    els.generate.disabled = busy || selectedCodes.length === 0;
+    els.generate.disabled = busy || codes.length === 0;
   }
 
   function renderUnplaced(unplaced) {
@@ -253,7 +305,7 @@
     els.unplacedBox.hidden = !(unplaced || []).length;
     (unplaced || []).forEach((row) => {
       const item = node('li');
-      item.appendChild(node('strong', 'sp-code', row.course_code));
+      item.appendChild(bdi(row.course_code, 'sp-code'));
       item.appendChild(node('span', 'sp-reason', (row.course_name ? ' — ' + row.course_name + ': ' : ': ') + (row.reason || '')));
       els.unplaced.appendChild(item);
     });
@@ -266,26 +318,47 @@
     const wrap = node('div', 'sp-grid-wrap');
     wrap.tabIndex = 0;
     const table = node('table', 'sp-grid');
-    const caption = node('caption', 'sp-visually-hidden', T.option + ' ' + (index + 1));
+    const caption = node('caption', 'sp-visually-hidden', optionLabel(option, index));
     table.appendChild(caption);
     const head = document.createElement('thead');
     const row = document.createElement('tr');
-    [T.course, T.section, T.day, T.from, T.to].forEach((label) => {
+    [T.course, T.section, T.day, T.from, T.to, T.source].forEach((label) => {
       const th = node('th', '', label); th.scope = 'col'; row.appendChild(th);
     });
     head.appendChild(row); table.appendChild(head);
     const body = document.createElement('tbody');
     (option.meetings || []).forEach((meeting) => {
       const tr = document.createElement('tr');
-      tr.appendChild(node('td', '', meeting.course_code + (meeting.course_name ? ' — ' + meeting.course_name : '')));
-      tr.appendChild(node('td', '', meeting.section));
+      const courseCell = node('td');
+      courseCell.appendChild(bdi(meeting.course_code, 'sp-code'));
+      if (meeting.course_name) courseCell.appendChild(node('span', '', ' — ' + meeting.course_name));
+      tr.appendChild(courseCell);
+      tr.appendChild(bdiCell(meeting.section));
       tr.appendChild(node('td', '', DAY_LABELS[meeting.day] || meeting.day));
-      tr.appendChild(node('td', '', meeting.start));
-      tr.appendChild(node('td', '', meeting.end));
+      tr.appendChild(bdiCell(meeting.start));
+      tr.appendChild(bdiCell(meeting.end));
+      tr.appendChild(node('td', '', meeting.source === 'current' ? T.inCurrent : T.proposed));
       body.appendChild(tr);
     });
     table.appendChild(body); wrap.appendChild(table); details.appendChild(wrap);
     return details;
+  }
+
+  function bdiCell(value) {
+    const cell = node('td');
+    cell.appendChild(bdi(value));
+    return cell;
+  }
+
+  function optionLabel(option, index) {
+    const names = (option.planner_options || []).filter(Boolean);
+    return names.length ? T.option + ' ' + names.join(' · ') : T.option + ' ' + (index + 1);
+  }
+
+  function coverage(option) {
+    const scheduled = Number(option.scheduled_courses != null ? option.scheduled_courses : (option.courses || []).length);
+    const target = Number(option.target_courses != null && option.target_courses > 0 ? option.target_courses : effectiveCodes().length);
+    return { scheduled: scheduled, target: target, complete: target > 0 && scheduled >= target };
   }
 
   function checklist(option) {
@@ -298,6 +371,7 @@
 
   async function copyChecklist(option, button) {
     const value = checklist(option);
+    const originalLabel = button.textContent;
     try {
       if (navigator.clipboard && window.isSecureContext) {
         await navigator.clipboard.writeText(value);
@@ -310,50 +384,104 @@
       }
       button.textContent = AR ? 'تم النسخ' : 'Copied';
       say(T.copied);
-      setTimeout(() => { button.textContent = T.copy; }, 1800);
+      setTimeout(() => { button.textContent = originalLabel; }, 1800);
     } catch (_) {
       say(T.copyFail + '\n' + value);
     }
   }
 
-  function renderOption(option, index) {
-    const card = node('article', 'sp-option');
+  function appendOptionMissing(card, option) {
+    if (!(option.unplaced || []).length) return;
+    const box = node('div', 'sp-option-missing');
+    box.appendChild(node('strong', '', T.optionMissing));
+    const list = node('ul', 'sp-unplaced');
+    (option.unplaced || []).forEach((row) => {
+      const item = node('li');
+      item.appendChild(bdi(row.course_code, 'sp-code'));
+      item.appendChild(node('span', 'sp-reason', (row.course_name ? ' — ' + row.course_name + ': ' : ': ') + (row.reason || '')));
+      list.appendChild(item);
+    });
+    box.appendChild(list);
+    card.appendChild(box);
+  }
+
+  function renderOptionPreview(option, index) {
+    const card = node('article', 'sp-option sp-option-preview-card');
     const header = node('header', 'sp-option-head');
     const title = node('div');
-    const heading = node('h3', 'h6 mb-1', T.option + ' ' + (index + 1));
+    const heading = node('h3', 'h6 mb-1', optionLabel(option, index));
     heading.id = 'spOption' + index;
     card.setAttribute('aria-labelledby', heading.id);
     title.appendChild(heading);
-    title.appendChild(node('span', 'sp-muted', String(option.credit_hours || 0) + ' ' + T.credits));
+    const resultCoverage = coverage(option);
+    const coverageLine = node('div', 'sp-option-coverage');
+    coverageLine.appendChild(node('span', resultCoverage.complete ? 'sp-tag sp-tag-ready' : 'sp-tag sp-tag-warning', resultCoverage.complete ? T.complete : T.partial));
+    coverageLine.appendChild(node('span', 'sp-muted', T.coverage + ' ' + resultCoverage.scheduled + '/' + resultCoverage.target + ' · ' + String(option.credit_hours || 0) + ' ' + T.hourUnit));
+    title.appendChild(coverageLine);
     header.appendChild(title);
-    const copy = node('button', 'btn btn-sm btn-outline-primary', T.copy);
+    const copy = node('button', 'btn btn-sm btn-outline-primary', T.copy + ' (' + resultCoverage.scheduled + '/' + resultCoverage.target + ')');
     copy.type = 'button';
     copy.addEventListener('click', () => copyChecklist(option, copy));
     header.appendChild(copy);
     card.appendChild(header);
 
     const facts = node('div', 'sp-option-facts');
-    [[T.days, option.days_on_campus], [T.earliest, option.earliest_start || '—'], [T.latest, option.latest_end || '—']]
+    [[T.days, option.days_on_campus], [T.earliest, ltr(option.earliest_start || '—')], [T.latest, ltr(option.latest_end || '—')]]
       .forEach(([label, value]) => {
         const fact = node('div'); fact.appendChild(node('span', '', label)); fact.appendChild(node('strong', '', value)); facts.appendChild(fact);
       });
     card.appendChild(facts);
+    const legend = node('div', 'sp-option-legend');
+    if ((option.meetings || []).some((meeting) => meeting.source === 'current')) {
+      legend.appendChild(node('span', 'sp-legend-current', T.fixedCurrent));
+    }
+    if ((option.meetings || []).some((meeting) => meeting.source !== 'current')) {
+      legend.appendChild(node('span', 'sp-legend-proposed', T.proposed));
+    }
+    legend.appendChild(node('span', 'sp-recorded-clear', T.recordedTimesClear));
+    card.appendChild(legend);
+    appendOptionMissing(card, option);
     const grid = node('div', 'sp-week sp-option-week');
+    grid.tabIndex = 0;
     renderWeek(grid, option.meetings || [], AR ? 'لا توجد أوقات لعرضها.' : 'No meeting times to show.');
     card.appendChild(grid);
+    card.appendChild(node('p', 'sp-scroll-hint', AR ? 'مرّر أفقيًا لعرض بقية الأيام عند الحاجة.' : 'Scroll horizontally to see the remaining days when needed.'));
     card.appendChild(renderDetails(option, index));
     return card;
   }
 
-  function renderOptions(options) {
+  function renderOptionChoice(option, index, options) {
+    const resultCoverage = coverage(option);
+    const button = node('button', 'sp-option-choice' + (index === activeOptionIndex ? ' is-active' : ''));
+    button.type = 'button';
+    button.setAttribute('aria-pressed', index === activeOptionIndex ? 'true' : 'false');
+    button.appendChild(node('strong', 'sp-option-choice-title', optionLabel(option, index)));
+    button.appendChild(node('span', resultCoverage.complete ? 'sp-tag sp-tag-ready' : 'sp-tag sp-tag-warning', resultCoverage.complete ? T.complete : T.partial));
+    button.appendChild(node('span', 'sp-option-choice-coverage', T.coverage + ' ' + resultCoverage.scheduled + '/' + resultCoverage.target));
+    button.appendChild(node('span', 'sp-muted', String(option.credit_hours || 0) + ' ' + T.hourUnit + ' · ' + String(option.days_on_campus || 0) + ' ' + T.days));
+    if ((option.unplaced || []).length) button.appendChild(node('span', 'sp-option-choice-missing', T.unscheduled + ' ' + option.unplaced.length));
+    button.addEventListener('click', () => {
+      activeOptionIndex = index;
+      renderOptions(options, false);
+    });
+    return button;
+  }
+
+  function renderOptions(options, resetActive) {
+    const rows = options || [];
+    if (resetActive !== false) activeOptionIndex = 0;
+    if (activeOptionIndex >= rows.length) activeOptionIndex = 0;
     els.options.replaceChildren();
-    els.optionsEmpty.hidden = (options || []).length > 0;
-    if (!(options || []).length) {
+    els.optionPreview.replaceChildren();
+    els.optionsEmpty.hidden = rows.length > 0;
+    if (!rows.length) {
       els.optionsEmpty.textContent = data && data.draft && data.draft.has_current_generation
         ? T.none
         : (AR ? 'ابنِ الخيارات لعرض الجداول الممكنة هنا.' : 'Build options to see possible timetables here.');
+      return;
     }
-    (options || []).forEach((option, index) => els.options.appendChild(renderOption(option, index)));
+    rows.forEach((option, index) => els.options.appendChild(renderOptionChoice(option, index, rows)));
+    els.optionPreview.appendChild(renderOptionPreview(rows[activeOptionIndex], activeOptionIndex));
   }
 
   function render(payload) {
@@ -364,7 +492,8 @@
     fixedSections = {};
     (draft.requested || []).forEach((row) => { if (row.fixed_section_id) fixedSections[row.course_code] = row.fixed_section_id; });
     els.term.textContent = draft.academic_year + '/' + draft.term;
-    els.creditCeiling.textContent = String(workspace.credit_ceiling || '—');
+    els.term.dir = 'ltr';
+    els.creditCeiling.textContent = String(workspace.credit_ceiling || '—') + (workspace.credit_ceiling ? ' ' + T.hourUnit : '');
     els.keep.checked = !!draft.keep_current_sections;
     els.rebuild.checked = !draft.keep_current_sections;
     renderCurrent(workspace);
@@ -388,9 +517,17 @@
     setBusy(true);
     confirmation = null;
     els.confirm.hidden = true;
+    const codes = Array.from(new Set(nextCodes || []));
+    const pins = Object.assign({}, nextPins || {});
+    if (els.keep.checked) {
+      currentCourseMap().forEach((_course, code) => {
+        if (!codes.includes(code)) codes.push(code);
+        delete pins[code];
+      });
+    }
     const result = await post(base + 'edit/', {
-      course_codes: nextCodes,
-      fixed_sections: nextPins,
+      course_codes: codes,
+      fixed_sections: pins,
       keep_current_sections: els.keep.checked,
     });
     setBusy(false);
@@ -399,6 +536,7 @@
   }
 
   function toggleCourse(code) {
+    if (els.keep.checked && currentCourseMap().has(code)) return;
     const next = selectedCodes.includes(code)
       ? selectedCodes.filter((item) => item !== code)
       : selectedCodes.concat([code]);
@@ -416,7 +554,19 @@
   async function changeMode(keep) {
     if (busy) return;
     setBusy(true); confirmation = null; els.confirm.hidden = true;
-    const result = await post(base + 'edit/', { keep_current_sections: keep });
+    const codes = selectedCodes.slice();
+    const pins = Object.assign({}, fixedSections);
+    if (keep) {
+      currentCourseMap().forEach((_course, code) => {
+        if (!codes.includes(code)) codes.push(code);
+        delete pins[code];
+      });
+    }
+    const result = await post(base + 'edit/', {
+      course_codes: codes,
+      fixed_sections: pins,
+      keep_current_sections: keep,
+    });
     setBusy(false);
     if (!result.ok) { say(result.body.error || T.editFail); await load(); return; }
     render(result.body);
@@ -441,7 +591,7 @@
 
   async function generate() {
     if (busy) return;
-    if (!selectedCodes.length) { say(T.chooseOne); return; }
+    if (!effectiveCodes().length) { say(T.chooseOne); return; }
     if (els.rebuild.checked && !confirmation) { askConfirmation(); return; }
     setBusy(true); say(T.building);
     const result = await post(base + 'generate/', confirmation ? { confirmation: confirmation } : {});

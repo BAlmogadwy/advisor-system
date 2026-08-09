@@ -6,7 +6,7 @@
 
 {% block page_intro %}
   <p class="mb-0">
-    {% if LANGUAGE_CODE == 'ar' %}اختر المقررات والشُعب التي تفضّلها، ثم قارن جداول خالية من التعارض مبنية على سجلك الأكاديمي.{% else %}Choose courses and preferred sections, then compare clash-free timetable proposals built from your academic record.{% endif %}
+    {% if LANGUAGE_CODE == 'ar' %}اختر طريقة البناء والمقررات، ثم قارن بدائل لا تتداخل أوقاتها المسجّلة في بياناتنا.{% else %}Choose a build mode and courses, then compare alternatives whose recorded meeting times do not overlap.{% endif %}
   </p>
 {% endblock %}
 
@@ -16,7 +16,7 @@
     <span class="sp-boundary-icon" aria-hidden="true">i</span>
     <div>
       <strong>{% if LANGUAGE_CODE == 'ar' %}هذه مساحة اقتراح مؤقتة فقط{% else %}This is only a temporary proposal workspace{% endif %}</strong>
-      <p>{% if LANGUAGE_CODE == 'ar' %}لن يسجّل النظام أي مقرر، ولن يحفظ أو يطبّق هذا الجدول. بعد أن تختار، انسخ قائمة المقررات والشُعب وأدخلها بنفسك في بوابة الجامعة الرئيسية. تظل الإتاحة والمقاعد خاضعة لما يظهر في البوابة وقت التسجيل.{% else %}The system will not register courses or save or apply this timetable. When you choose an option, copy its course-and-section checklist and enter it yourself in the university’s main portal. Availability and seats remain subject to what the portal shows at registration time.{% endif %}</p>
+      <p>{% if LANGUAGE_CODE == 'ar' %}لن يسجّل النظام أي مقرر، ولن يحفظ أو يطبّق هذا الجدول. انسخ اختيارك وأدخله بنفسك في بوابة الجامعة الرئيسية. بيانات الشُعب والأوقات مرجع مسجّل لدينا وليست تأكيدًا للطرح أو المقاعد؛ تحقّق من البوابة وقت التسجيل.{% else %}The system will not register, save, or apply this timetable. Copy your choice and enter it yourself in the university portal. Recorded sections and times are reference data, not confirmation of term availability or seats; verify them in the portal at registration time.{% endif %}</p>
     </div>
   </aside>
 
@@ -36,15 +36,47 @@
       </div>
     </div>
     <p class="sp-muted sp-empty mb-0" id="spCurrentEmpty" hidden>{% if LANGUAGE_CODE == 'ar' %}لا توجد اجتماعات حالية مسجلة لهذا الفصل في بياناتنا.{% else %}No current meetings are recorded for this term in our data.{% endif %}</p>
-    <div class="sp-week" id="spCurrentGrid"></div>
+    <div class="sp-current-summary" id="spCurrentSummary"></div>
+    <details class="sp-current-details" id="spCurrentDetails">
+      <summary>{% if LANGUAGE_CODE == 'ar' %}عرض الجدول الأسبوعي الحالي{% else %}Show current weekly timetable{% endif %}</summary>
+      <div class="sp-week" id="spCurrentGrid" tabindex="0"></div>
+      <p class="sp-scroll-hint">{% if LANGUAGE_CODE == 'ar' %}مرّر أفقيًا لعرض بقية الأيام عند الحاجة.{% else %}Scroll horizontally to see the remaining days when needed.{% endif %}</p>
+    </details>
+  </section>
+
+  <section class="card p-3 mb-3" aria-labelledby="spModeHeading">
+    <div class="sp-section-head">
+      <div>
+        <span class="sp-step">2</span>
+        <h2 class="h6 mb-1" id="spModeHeading">{% if LANGUAGE_CODE == 'ar' %}حدّد طريقة الاقتراح{% else %}Choose how to build{% endif %}</h2>
+        <p class="sp-muted mb-0">{% if LANGUAGE_CODE == 'ar' %}اختر إن كنت تريد تثبيت شُعبك الحالية أو تجربة توزيع مستقل.{% else %}Choose whether to keep your current sections fixed or explore an independent arrangement.{% endif %}</p>
+      </div>
+    </div>
+    <fieldset class="sp-modes">
+      <legend class="sp-visually-hidden">{% if LANGUAGE_CODE == 'ar' %}طريقة بناء الجدول المقترح{% else %}How to build the proposed timetable{% endif %}</legend>
+      <label class="sp-mode-card" for="spKeep">
+        <input type="radio" name="spMode" id="spKeep" value="keep" checked>
+        <span><strong>{% if LANGUAGE_CODE == 'ar' %}ابنِ حول شُعبي الحالية{% else %}Build around my current sections{% endif %}</strong><small>{% if LANGUAGE_CODE == 'ar' %}يثبّت شُعبك الحالية ويضع الاختيارات الأخرى حول أوقاتها المسجّلة.{% else %}Fixes your current sections and fits other choices around their recorded times.{% endif %}</small></span>
+      </label>
+      <label class="sp-mode-card" for="spRebuild">
+        <input type="radio" name="spMode" id="spRebuild" value="rebuild">
+        <span><strong>{% if LANGUAGE_CODE == 'ar' %}اقترح من جديد{% else %}Propose from scratch{% endif %}</strong><small>{% if LANGUAGE_CODE == 'ar' %}يجرّب شُعبًا مختلفة على الشاشة فقط؛ تسجيلك الحقيقي لا يتغيّر.{% else %}Tries different sections on screen only; your real registration is unchanged.{% endif %}</small></span>
+      </label>
+    </fieldset>
+
+    <div class="sp-confirm" id="spConfirm" hidden>
+      <p class="sp-warning" id="spConfirmText"></p>
+      <button type="button" class="btn btn-warning btn-sm" id="spConfirmBtn">{% if LANGUAGE_CODE == 'ar' %}نعم، اعرض اقتراحًا جديدًا{% else %}Yes, show a fresh proposal{% endif %}</button>
+      <button type="button" class="btn btn-link btn-sm" id="spConfirmCancel">{% if LANGUAGE_CODE == 'ar' %}تراجع{% else %}Cancel{% endif %}</button>
+    </div>
   </section>
 
   <section class="card p-3 mb-3" aria-labelledby="spCoursesHeading">
     <div class="sp-section-head">
       <div>
-        <span class="sp-step">2</span>
-        <h2 class="h6 mb-1" id="spCoursesHeading">{% if LANGUAGE_CODE == 'ar' %}اختر المقررات والشُعب{% else %}Choose courses and sections{% endif %}</h2>
-        <p class="sp-muted mb-0">{% if LANGUAGE_CODE == 'ar' %}بدأنا بتوصيات خطتك. يمكنك الإضافة أو الإزالة وتثبيت شعبة مفضلة.{% else %}We started with recommendations from your plan. Add or remove courses and optionally pin a preferred section.{% endif %}</p>
+        <span class="sp-step">3</span>
+        <h2 class="h6 mb-1" id="spCoursesHeading">{% if LANGUAGE_CODE == 'ar' %}اختر مقررات الاقتراح وشُعبه{% else %}Choose proposal courses and sections{% endif %}</h2>
+        <p class="sp-muted mb-0">{% if LANGUAGE_CODE == 'ar' %}تظهر توصيات خطتك أولًا. في وضع الاحتفاظ تبقى شُعبك الحالية مثبتة، ويمكنك إضافة مقررات أخرى إن سمح السقف.{% else %}Plan recommendations appear first. In keep mode, current sections stay fixed and you may add courses when the ceiling allows.{% endif %}</p>
       </div>
     </div>
 
@@ -55,49 +87,26 @@
           <input id="spCourseSearch" type="search" placeholder="{% if LANGUAGE_CODE == 'ar' %}ابحث برمز المقرر أو اسمه{% else %}Search by course code or name{% endif %}">
         </label>
         <div class="sp-filter-row" role="group" aria-label="{% if LANGUAGE_CODE == 'ar' %}مرشحات المقررات{% else %}Course filters{% endif %}">
-          <button type="button" class="sp-filter is-active" data-sp-filter="all">{% if LANGUAGE_CODE == 'ar' %}الكل{% else %}All{% endif %}</button>
-          <button type="button" class="sp-filter" data-sp-filter="recommended">{% if LANGUAGE_CODE == 'ar' %}موصى بها{% else %}Recommended{% endif %}</button>
+          <button type="button" class="sp-filter" data-sp-filter="all">{% if LANGUAGE_CODE == 'ar' %}الكل{% else %}All{% endif %}</button>
+          <button type="button" class="sp-filter is-active" data-sp-filter="recommended">{% if LANGUAGE_CODE == 'ar' %}موصى بها{% else %}Recommended{% endif %}</button>
           <button type="button" class="sp-filter" data-sp-filter="ready">{% if LANGUAGE_CODE == 'ar' %}جاهزة{% else %}Ready{% endif %}</button>
         </div>
+        <p class="sp-catalog-scope">{% if LANGUAGE_CODE == 'ar' %}«جاهزة» تعني أن متطلباتها مستوفاة ولها شُعب بأوقات مسجّلة لدينا؛ تحقّق من طرحها الفعلي في البوابة.{% else %}“Ready” means prerequisites are met and recorded section times exist; verify actual term offering in the portal.{% endif %}</p>
         <p class="sp-muted sp-empty" id="spCatalogEmpty" hidden>{% if LANGUAGE_CODE == 'ar' %}لا توجد مقررات تطابق البحث.{% else %}No courses match this search.{% endif %}</p>
         <div class="sp-catalog" id="spCatalog"></div>
       </div>
 
       <aside class="sp-selection-panel" aria-labelledby="spRequestedHeading">
-        <h3 class="h6" id="spRequestedHeading">{% if LANGUAGE_CODE == 'ar' %}اختيارك الحالي{% else %}Current selection{% endif %}</h3>
+        <h3 class="h6" id="spRequestedHeading">{% if LANGUAGE_CODE == 'ar' %}مقررات الاقتراح{% else %}Proposal courses{% endif %}</h3>
         <p class="sp-muted sp-empty" id="spRequestedEmpty" hidden>{% if LANGUAGE_CODE == 'ar' %}اختر مقررًا واحدًا على الأقل.{% else %}Choose at least one course.{% endif %}</p>
         <ul class="sp-requested" id="spRequested"></ul>
-        <p class="sp-selection-note">{% if LANGUAGE_CODE == 'ar' %}اختيار «أي شعبة مناسبة» يترك للمخطط حرية العثور على أفضل ترتيب خالٍ من التعارض.{% else %}“Any suitable section” lets the planner find the best clash-free arrangement.{% endif %}</p>
+        <p class="sp-selection-note">{% if LANGUAGE_CODE == 'ar' %}اختيار «أي شعبة مناسبة» يسمح للمولّد بتجربة أحد الترتيبات الممكنة بلا تداخل بين الأوقات المسجّلة.{% else %}“Any suitable section” lets the generator try a possible arrangement without overlap among recorded times.{% endif %}</p>
       </aside>
     </div>
-  </section>
-
-  <section class="card p-3 mb-3" aria-labelledby="spModeHeading">
-    <div class="sp-section-head">
-      <div>
-        <span class="sp-step">3</span>
-        <h2 class="h6 mb-1" id="spModeHeading">{% if LANGUAGE_CODE == 'ar' %}حدّد طريقة الاقتراح{% else %}Choose how to build{% endif %}</h2>
-      </div>
+    <div class="sp-generate-row">
+      <button type="button" class="btn btn-primary" id="spGenerate">{% if LANGUAGE_CODE == 'ar' %}بناء خيارات الجدول{% else %}Build timetable options{% endif %}</button>
+      <p class="sp-status" id="spStatus" role="status" aria-live="polite"></p>
     </div>
-    <fieldset class="sp-modes">
-      <legend class="sp-visually-hidden">{% if LANGUAGE_CODE == 'ar' %}طريقة بناء الجدول المقترح{% else %}How to build the proposed timetable{% endif %}</legend>
-      <label class="sp-mode-card" for="spKeep">
-        <input type="radio" name="spMode" id="spKeep" value="keep" checked>
-        <span><strong>{% if LANGUAGE_CODE == 'ar' %}ابنِ حول شُعبي الحالية{% else %}Build around my current sections{% endif %}</strong><small>{% if LANGUAGE_CODE == 'ar' %}يُبقيها داخل الاقتراح ويضيف اختياراتك حولها.{% else %}Keep them in the proposal and fit your choices around them.{% endif %}</small></span>
-      </label>
-      <label class="sp-mode-card" for="spRebuild">
-        <input type="radio" name="spMode" id="spRebuild" value="rebuild">
-        <span><strong>{% if LANGUAGE_CODE == 'ar' %}اقترح من جديد{% else %}Propose from scratch{% endif %}</strong><small>{% if LANGUAGE_CODE == 'ar' %}قد يعرض شُعبًا مختلفة، لكنه لا يغيّر تسجيلك الحقيقي.{% else %}May show different sections, but never changes your real registration.{% endif %}</small></span>
-      </label>
-    </fieldset>
-
-    <div class="sp-confirm" id="spConfirm" hidden>
-      <p class="sp-warning" id="spConfirmText"></p>
-      <button type="button" class="btn btn-warning btn-sm" id="spConfirmBtn">{% if LANGUAGE_CODE == 'ar' %}نعم، اعرض اقتراحًا جديدًا{% else %}Yes, show a fresh proposal{% endif %}</button>
-      <button type="button" class="btn btn-link btn-sm" id="spConfirmCancel">{% if LANGUAGE_CODE == 'ar' %}تراجع{% else %}Cancel{% endif %}</button>
-    </div>
-
-    <button type="button" class="btn btn-primary mt-3" id="spGenerate">{% if LANGUAGE_CODE == 'ar' %}بناء خيارات الجدول{% else %}Build timetable options{% endif %}</button>
   </section>
 
   <section class="card p-3" aria-labelledby="spOptionsHeading">
@@ -105,21 +114,21 @@
       <div>
         <span class="sp-step">4</span>
         <h2 class="h6 mb-1" id="spOptionsHeading">{% if LANGUAGE_CODE == 'ar' %}قارن الخيارات المقترحة{% else %}Compare proposed options{% endif %}</h2>
-        <p class="sp-muted mb-0">{% if LANGUAGE_CODE == 'ar' %}اختر ما يناسبك ثم انسخ قائمته إلى بوابة الجامعة بنفسك.{% else %}Choose what suits you, then copy its checklist into the university portal yourself.{% endif %}</p>
+        <p class="sp-muted mb-0">{% if LANGUAGE_CODE == 'ar' %}توضح كل بطاقة عدد المقررات التي نجح المولّد في جدولتها. اختر بطاقة لعرض جدولها الكامل.{% else %}Each card shows how many courses the generator placed. Select a card to preview its full timetable.{% endif %}</p>
       </div>
     </div>
     <p class="sp-muted sp-empty" id="spOptionsEmpty">{% if LANGUAGE_CODE == 'ar' %}ابنِ الخيارات لعرض الجداول الممكنة هنا.{% else %}Build options to see possible timetables here.{% endif %}</p>
-    <div class="sp-options" id="spOptions"></div>
+    <div class="sp-option-choices" id="spOptions"></div>
+    <div class="sp-option-preview" id="spOptionPreview"></div>
     <div class="sp-unplaced-box" id="spUnplacedBox" hidden>
       <h3 class="h6">{% if LANGUAGE_CODE == 'ar' %}مقررات لم تدخل في الاقتراح{% else %}Courses not placed in the proposal{% endif %}</h3>
       <ul class="sp-unplaced" id="spUnplaced"></ul>
     </div>
   </section>
 
-  <p class="sp-status" id="spStatus" role="status" aria-live="polite"></p>
 </div>
 {% endblock %}
 
 {% block extra_js %}
-<script src="{% static 'js/page-student-planner.js' %}?v=2" defer></script>
+<script src="{% static 'js/page-student-planner.js' %}?v=4" defer></script>
 {% endblock %}

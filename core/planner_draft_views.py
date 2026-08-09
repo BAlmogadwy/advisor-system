@@ -151,22 +151,29 @@ def _workspace_json(draft: Any) -> dict[str, Any]:
         )
         safe_sections = []
         for section in sections_by_code.get(code, []):
+            meetings = [
+                {
+                    "day": str(meeting.day or ""),
+                    "start": str(meeting.start_time or ""),
+                    "end": str(meeting.end_time or ""),
+                }
+                for meeting in sorted(
+                    section.meetings.all(),
+                    key=lambda item: (item.day or "", item.start_time or ""),
+                )
+                if meeting.day and meeting.start_time and meeting.end_time
+            ]
+            # A section with no complete recorded interval cannot support the
+            # screen's only scheduling guarantee: checking time overlap.  It may
+            # still exist in the source catalogue, but it is not a schedulable
+            # option here until its meeting data is complete.
+            if not meetings:
+                continue
             safe_sections.append(
                 {
                     "id": int(section.id),
                     "label": str(section.section or ""),
-                    "meetings": [
-                        {
-                            "day": str(meeting.day or ""),
-                            "start": str(meeting.start_time or ""),
-                            "end": str(meeting.end_time or ""),
-                        }
-                        for meeting in sorted(
-                            section.meetings.all(),
-                            key=lambda item: (item.day or "", item.start_time or ""),
-                        )
-                        if meeting.day or meeting.start_time or meeting.end_time
-                    ],
+                    "meetings": meetings,
                 }
             )
         credits = int(
@@ -219,6 +226,11 @@ def _workspace_json(draft: Any) -> dict[str, Any]:
         "credit_ceiling": credit_ceiling(int(draft.term)),
         "catalog": catalog,
         "current_timetable": current,
+        # `TermSection` is a current recorded catalogue without term columns.
+        # Never let a planning-term label turn that into a claim that the section
+        # is offered in that term.
+        "section_catalog_term_known": False,
+        "clash_check_scope": "recorded_complete_meeting_times",
         "workspace_persistence": "temporary_draft",
         "registration_action": "student_manual_portal_only",
         "can_save_timetable": False,
@@ -229,6 +241,16 @@ def _workspace_json(draft: Any) -> dict[str, Any]:
 def _alternative_json(
     alternative: dict[str, Any], names: dict[str, str], selected: str, requested: set[str]
 ) -> dict[str, Any]:
+    option_unplaced = [
+        {
+            "course_code": str(item.get("course_code") or ""),
+            "course_name": names.get(str(item.get("course_code") or ""), ""),
+            "reason": UNPLACED_AR.get(str(item.get("reason_code") or ""), UNPLACED_AR_DEFAULT),
+        }
+        for item in (alternative.get("unplaced") or [])
+    ]
+    scheduled = int(alternative.get("scheduled_courses") or 0)
+    target = int(alternative.get("target_courses") or 0)
     return {
         "key": alternative.get("key", ""),
         # A V2 timetable is an on-screen proposal, not a stored preference.
@@ -240,6 +262,14 @@ def _alternative_json(
         "days": list(alternative.get("days") or []),
         "earliest_start": alternative.get("earliest_start"),
         "latest_end": alternative.get("latest_end"),
+        # The exact planner identities and its coverage statement are part of the
+        # answer, not operator trivia.  Dropping them made a 3/5 result look like a
+        # complete anonymous timetable in the browser.
+        "planner_options": [str(name) for name in (alternative.get("planner_options") or [])],
+        "scheduled_courses": scheduled,
+        "target_courses": target,
+        "complete": bool(target and scheduled >= target),
+        "unplaced": option_unplaced,
         "courses": [
             {
                 "course_code": c.get("course_code", ""),
@@ -250,6 +280,7 @@ def _alternative_json(
                 # because a course the student never named must not be presented as
                 # though they did.
                 "requested": str(c.get("course_code") or "") in requested,
+                "source": "current" if c.get("source") == "current" else "proposed",
                 # `term_section_id` is deliberately NOT here. It was carried for a
                 # pin affordance this screen does not yet have — so it was a raw
                 # primary key, per course, per alternative, shipped for nothing.
@@ -265,6 +296,7 @@ def _alternative_json(
                 "day": m.get("day", ""),
                 "start": m.get("start", ""),
                 "end": m.get("end", ""),
+                "source": "current" if m.get("source") == "current" else "proposed",
             }
             for m in alternative.get("meetings", [])
         ],
@@ -350,7 +382,8 @@ def _draft_json(draft: Any) -> dict[str, Any]:
 #: actually known.
 UNPLACED_AR: dict[str, str] = {
     "NOT_ON_FILE": "لا توجد شُعب مسجَّلة لهذا المقرر في بياناتنا. راجع بوابة التسجيل للتأكد.",
-    "ALL_SECTIONS_CLASH": "كل الشُعب المطروحة لهذا المقرر تتعارض مع بقية جدولك.",
+    "ALL_SECTIONS_CLASH": "كل الشُعب المسجّلة في بياناتنا لهذا المقرر تتعارض مع بقية جدولك.",
+    "OMITTED_IN_THIS_VARIANT": "لم يضع هذا الخيار المقرر؛ قارنه بخيار آخر قد يتضمنه.",
     "PREREQUISITES": "لم تُستوفَ متطلبات هذا المقرر السابقة بعد.",
     "DID_NOT_FIT": "لم يتّسع له الجدول مع بقية المقررات ضمن الحدود المتاحة.",
 }

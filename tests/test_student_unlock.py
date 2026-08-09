@@ -1,5 +1,7 @@
 """Student "what can I take / why is it locked" report + screen."""
 
+import re
+
 import pytest
 from django.contrib.auth.models import User
 from django.test import Client, override_settings
@@ -165,6 +167,56 @@ def test_screen_renders_from_session_identity_only(plan):
     assert "TA101" in body
     for undefined in ("text-muted", "text-bg-warning", "table-light"):
         assert undefined not in body  # classes that do not exist in this design system
+
+
+@override_settings(ALLOWED_HOSTS=["testserver"])
+def test_course_summary_renders_disjoint_progress_states(plan):
+    """The one-step count is part of locked, so peer tiles must use its remainder."""
+    u = student_otp.provision_student_user(SID)
+    c = Client()
+    c.force_login(u)
+
+    response = c.get("/student/courses/")
+    progress = response.context["progress"]
+    counts = response.context["report"]["counts"]
+    assert progress["one_step"] + progress["blocked_deeper"] == counts["locked"]
+
+    body = response.content.decode()
+    for state in ("passed", "open", "one-step", "blocked-deeper"):
+        assert f'data-course-state="{state}"' in body
+    assert 'data-course-state="locked"' not in body
+
+
+@override_settings(ALLOWED_HOSTS=["testserver"])
+def test_unlock_callout_distinguishes_direct_and_chain_impact(plan):
+    u = student_otp.provision_student_user(SID)
+    c = Client()
+    c.force_login(u)
+
+    body = c.get(reverse("student_courses"), headers={"accept-language": "ar"}).content.decode()
+    assert "أعلى أثر في سلسلة المتطلبات" in body
+    assert "يفتح مباشرةً <strong>1</strong>" in body
+    assert "سلسلة تضم <strong>2</strong>" in body
+    assert "أفضل خطوة تالية" not in body
+
+
+@override_settings(ALLOWED_HOSTS=["testserver"])
+def test_recommender_candidates_are_labelled_for_next_term(plan, monkeypatch):
+    real_builder = build_unlock_report
+
+    def with_a_next_term_candidate(*args, **kwargs):
+        report = real_builder(*args, **kwargs)
+        report["open_courses"][0]["fits_this_term"] = True
+        return report
+
+    monkeypatch.setattr("core.student_auth_views.build_unlock_report", with_a_next_term_candidate)
+    u = student_otp.provision_student_user(SID)
+    c = Client()
+    c.force_login(u)
+
+    body = c.get(reverse("student_courses"), headers={"accept-language": "ar"}).content.decode()
+    assert "مرشحة لخطة الفصل القادم" in body
+    assert "هذا الفصل" not in body
 
 
 @override_settings(ALLOWED_HOSTS=["testserver"])
@@ -637,6 +689,77 @@ def test_studying_courses_are_not_counted_as_finished(plan):
     assert len(g["in_progress"]) == 1
 
 
+def _render_arabic_graduation_page():
+    """Render the real student page through the session-scoped route."""
+    user = student_otp.provision_student_user(SID)
+    client = Client()
+    client.force_login(user)
+    response = client.get(
+        reverse("student_graduation"),
+        headers={"accept-language": "ar"},
+    )
+    assert response.status_code == 200
+    body = response.content.decode()
+    assert 'lang="ar"' in body, "Arabic assertions require the Arabic template branch"
+    return response, body
+
+
+@override_settings(ALLOWED_HOSTS=["testserver"])
+def test_incomplete_graduation_screen_promotes_the_verified_lower_bound(plan):
+    """An unresolved forecast has no estimate; its useful result is the lower bound.
+
+    The old screen gave the prerequisite-only floor a KPI, rendered the actual
+    lower bound in prose, and left the estimate as a dash. That made the weaker
+    number look like the answer to "how many terms?".
+    """
+    Prerequisite.objects.filter(program=PROG, course_code="TB201").update(
+        prerequisite_course_code="ZZ999"
+    )
+
+    response, body = _render_arabic_graduation_page()
+    grad = response.context["grad"]
+    assert grad["simulation_completed"] is False
+    assert grad["estimated_additional_terms"] is None
+    lower_bound = grad["lower_bound_additional_terms"]
+
+    assert 'data-grad-result="lower-bound"' in body
+    assert re.search(
+        rf'data-grad-result="lower-bound"[\s\S]{{0,800}}>\s*{lower_bound}\s*<',
+        body,
+    ), "the verified lower bound must be the promoted result, not buried in prose"
+
+
+@override_settings(ALLOWED_HOSTS=["testserver"])
+def test_graduation_screen_names_the_scenario_and_does_not_promise_registration(plan):
+    _response, body = _render_arabic_graduation_page()
+
+    assert "محاكاة لإكمال متطلبات الخطة" in body
+    assert "ليست موعدًا رسميًا للتخرج" in body
+    assert "18 ساعة/فصل رئيسي" in body
+    assert "ماذا أستطيع أن أسجّل الآن؟" not in body
+
+
+@override_settings(ALLOWED_HOSTS=["testserver"])
+def test_graduation_screen_lists_every_current_course_assumed_passed(plan):
+    _map_current_courses("TA101", "TCAP")
+
+    response, body = _render_arabic_graduation_page()
+    assumed = response.context["grad"]["current_courses_assumed_passed"]
+    assert {course["code"] for course in assumed} == {"TA101", "TCAP"}
+    for course in assumed:
+        assert course["code"] in body, (
+            f"{course['code']} affects the forecast but is absent from its visible assumptions"
+        )
+
+
+@override_settings(ALLOWED_HOSTS=["testserver"])
+def test_graduation_view_prepares_a_presentation_when_the_scenario_has_terms(plan):
+    response, _body = _render_arabic_graduation_page()
+
+    assert response.context["grad"]["term_plan"]
+    assert response.context["graduation_presentation"]
+
+
 @override_settings(ALLOWED_HOSTS=["testserver"])
 def test_graduation_screen_is_session_scoped(plan):
     u = student_otp.provision_student_user(SID)
@@ -698,42 +821,6 @@ def test_no_fallback_when_two_timetables_are_loaded(plan):
     assert r.context["timetable"] == []
     for ts in made:
         ts.delete()
-
-
-def test_weekly_grid_places_meetings_in_the_right_cells():
-    """Days down, time slots across — the timetable-workspace layout."""
-    from core.student_auth_views import _weekly_grid
-
-    days = [
-        {
-            "code": "MON",
-            "meetings": [
-                {"course_code": "A", "start_time": "09:00", "end_time": "10:15"},
-                {"course_code": "B", "start_time": "13:00", "end_time": "14:15"},
-            ],
-        },
-        {
-            "code": "WED",
-            "meetings": [
-                {"course_code": "C", "start_time": "13:00", "end_time": "14:15"},
-            ],
-        },
-    ]
-    g = _weekly_grid(days)
-    assert g["columns"] == 2  # two distinct slots only
-    assert [(s["start"], s["end"]) for s in g["slots"]] == [("09:00", "10:15"), ("13:00", "14:15")]
-    mon, wed = g["rows"]
-    assert [m["course_code"] for m in mon["cells"][0]] == ["A"]
-    assert [m["course_code"] for m in mon["cells"][1]] == ["B"]
-    assert wed["cells"][0] == []  # nothing at 09:00 on Wed
-    assert [m["course_code"] for m in wed["cells"][1]] == ["C"]
-
-
-def test_weekly_grid_is_empty_for_an_empty_week():
-    from core.student_auth_views import _weekly_grid
-
-    g = _weekly_grid([])
-    assert g == {"slots": [], "rows": [], "columns": 0}
 
 
 # ── the declared type decides what is an elective slot (issue #55) ──
@@ -1022,13 +1109,12 @@ def test_the_open_list_does_not_tell_the_student_they_may_register(gs_plan):
         "the Arabic page rendered in English, so every Arabic assertion below is vacuous"
     )
     assert "تستطيع تسجيلها الآن" not in ar_body, "the registration-permission heading is back"
-    assert "مقررات متاحة لك" in ar_body
-    # The footnote is what carries the meaning; the heading must not outrun it.
-    assert "«متاحة» تعني أنك أنهيت كل ما يتطلبه المقرر" in ar_body
+    assert "مقررات مستوفية المتطلبات أكاديميًا" in ar_body
+    assert "هذه أهلية أكاديمية وليست إتاحة للتسجيل" in ar_body
 
     en_body = client.get(
         reverse("student_courses"), headers={"accept-language": "en"}
     ).content.decode()
     assert "You can take these now" not in en_body, "the English claim is still there"
-    assert "Open to you" in en_body
-    assert "“Open” means you have finished everything the course requires" in en_body
+    assert "Courses with requirements met" in en_body
+    assert "This is academic eligibility, not registration availability" in en_body

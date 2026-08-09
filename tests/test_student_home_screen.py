@@ -182,6 +182,16 @@ def test_no_raw_template_syntax_reaches_the_student(student):
         assert marker not in body, marker
 
 
+def test_the_academic_summary_renders_each_fact_once(student):
+    """The raw Student row and the evidence-backed home cards used to render two
+    GPAs and two contradictory-looking registered-credit figures."""
+    body = _page()
+    assert body.count('class="k">المعدل التراكمي') == 1
+    assert body.count('class="k">ساعات هذا الفصل') == 1
+    assert 'class="k">الساعات المسجّلة' not in body
+    assert 'class="k">الحالة' not in body
+
+
 # ── degradation ──────────────────────────────────────────────────
 
 
@@ -302,7 +312,7 @@ def test_no_rows_for_the_configured_term_is_unknown_not_zero(student):
     assert card["source"] == "no_term_registration_evidence"
 
     body = _page()
-    hours_block = body[body.index("الساعات المسجلة") :][:400]
+    hours_block = body[body.index("ساعات هذا الفصل") :][:400]
     assert "—" in hours_block, "an unknown figure was rendered as a number"
 
 

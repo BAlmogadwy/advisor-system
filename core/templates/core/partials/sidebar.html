@@ -2,7 +2,7 @@
 {% load i18n %}
 {% get_current_language as LANGUAGE_CODE %}
 
-<aside class="sidebar" aria-label="{% if LANGUAGE_CODE == 'ar' %}شريط التنقل الجانبي{% else %}Sidebar navigation{% endif %}">
+<aside class="sidebar" id="appSidebar" aria-label="{% if LANGUAGE_CODE == 'ar' %}شريط التنقل الجانبي{% else %}Sidebar navigation{% endif %}">
   <div class="side-decor side-decor-l" aria-hidden="true"></div>
   <!-- Logo area -->
   <div class="logo-area">
@@ -244,7 +244,9 @@
     // Only match path-based links, skip hash links
     if (!href || href.startsWith('/#')) return;
     const isStudentPlanner = path.startsWith('/student/planner/') && href === '/student/timetable/';
-    const isStudentCoursesSubpage = path === '/student/plan-map/' && href === '/student/courses/';
+    const isStudentCoursesSubpage = (
+      path === '/student/plan-map/' || path.startsWith('/student/courses/')
+    ) && href === '/student/courses/';
     if (path === href || path === href.replace(/\/$/, '') || isStudentPlanner || isStudentCoursesSubpage) {
       a.classList.add('active');
     }
@@ -265,7 +267,8 @@
   /* Create hamburger button */
   const toggle = document.createElement('button');
   toggle.className    = 'sidebar-toggle';
-  toggle.setAttribute('aria-label', 'Toggle navigation');
+  toggle.setAttribute('aria-label', '{% if LANGUAGE_CODE == "ar" %}فتح قائمة التنقل{% else %}Open navigation{% endif %}');
+  toggle.setAttribute('aria-controls', 'appSidebar');
   toggle.setAttribute('aria-expanded', 'false');
   toggle.innerHTML = `<span class="sidebar-toggle-icon">
     <span></span><span></span><span></span>
@@ -275,6 +278,7 @@
     sidebar.classList.add('sidebar-open');
     backdrop.classList.add('active');
     toggle.setAttribute('aria-expanded', 'true');
+    toggle.setAttribute('aria-label', '{% if LANGUAGE_CODE == "ar" %}إغلاق قائمة التنقل{% else %}Close navigation{% endif %}');
     document.body.style.overflow = 'hidden';
   }
 
@@ -282,6 +286,7 @@
     sidebar.classList.remove('sidebar-open');
     backdrop.classList.remove('active');
     toggle.setAttribute('aria-expanded', 'false');
+    toggle.setAttribute('aria-label', '{% if LANGUAGE_CODE == "ar" %}فتح قائمة التنقل{% else %}Open navigation{% endif %}');
     document.body.style.overflow = '';
   }
 

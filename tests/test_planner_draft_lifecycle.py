@@ -599,11 +599,96 @@ def test_the_response_carries_no_operator_metadata(owner_client, world, draft, m
     _post(owner_client, "planner_draft_generate", draft)
     body = owner_client.get(_url("planner_draft_detail", draft)).content.decode()
 
-    for leaked in ("fingerprint", "baseline", "registered_count", "instructor", "room", "source"):
+    for leaked in ("fingerprint", "baseline", "registered_count", "instructor", "room"):
         assert leaked not in body, leaked
     payload = json.loads(body)
     meeting = payload["alternatives"][0]["meetings"][0]
-    assert set(meeting) == {"course_code", "course_name", "section", "day", "start", "end"}
+    assert set(meeting) == {
+        "course_code",
+        "course_name",
+        "section",
+        "day",
+        "start",
+        "end",
+        "source",
+    }
+    assert meeting["source"] in {"current", "proposed"}
+
+
+def test_browser_alternative_preserves_its_own_coverage_and_unplaced_reasons(
+    owner_client, world, draft, monkeypatch
+):
+    """A partial A2 result must not become an anonymous complete timetable."""
+
+    svc.edit_draft(draft, course_codes=["CS113", "AI221"])
+
+    def partial(_request):
+        return {
+            "generated": 3,
+            "alternatives": [
+                {
+                    "key": "safe-key",
+                    "planner_options": ["A2"],
+                    "scheduled_courses": 1,
+                    "target_courses": 2,
+                    "course_count": 1,
+                    "credit_hours": 3,
+                    "days_on_campus": 1,
+                    "days": ["SUN"],
+                    "earliest_start": "09:00",
+                    "latest_end": "10:15",
+                    "courses": [
+                        {
+                            "course_code": "CS113",
+                            "section": "M1",
+                            "source": "proposed",
+                        }
+                    ],
+                    "meetings": [
+                        {
+                            "course_code": "CS113",
+                            "section": "M1",
+                            "day": "SUN",
+                            "start": "09:00",
+                            "end": "10:15",
+                            "source": "proposed",
+                        }
+                    ],
+                    "unplaced": [
+                        {
+                            "course_code": "AI221",
+                            "reason_code": "OMITTED_IN_THIS_VARIANT",
+                            "reason": "internal wording must not reach the browser",
+                        }
+                    ],
+                }
+            ],
+            "unplaced": [],
+        }
+
+    monkeypatch.setattr(svc, "build_student_options", partial)
+    option = _post(owner_client, "planner_draft_generate", draft).json()["alternatives"][0]
+
+    assert option["planner_options"] == ["A2"]
+    assert option["scheduled_courses"] == 1
+    assert option["target_courses"] == 2
+    assert option["complete"] is False
+    assert option["unplaced"][0]["course_code"] == "AI221"
+    assert option["unplaced"][0]["reason"] == UNPLACED_AR["OMITTED_IN_THIS_VARIANT"]
+    assert "internal wording" not in json.dumps(option)
+
+
+def test_workspace_discloses_catalogue_scope_and_requires_complete_times(
+    owner_client, world, draft
+):
+    TermSectionMeeting.objects.filter(term_section__course_key="AI221").delete()
+    workspace = owner_client.get(_url("planner_draft_detail", draft)).json()["workspace"]
+    courses = {row["course_code"]: row for row in workspace["catalog"]}
+
+    assert workspace["section_catalog_term_known"] is False
+    assert workspace["clash_check_scope"] == "recorded_complete_meeting_times"
+    assert courses["AI221"]["status"] == "offering_unknown"
+    assert courses["AI221"]["sections"] == []
 
 
 def test_a_course_the_student_never_asked_for_is_marked_as_added(
