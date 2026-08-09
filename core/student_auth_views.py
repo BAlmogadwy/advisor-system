@@ -23,7 +23,13 @@ from core.services.student_graduation import build_graduation_report
 from core.services.student_helpers import normalize_code
 from core.services.student_home_cards import build_student_home_cards, progress_buckets
 from core.services.student_otp import OTPError, issue_otp, provision_student_user, verify_otp
-from core.services.student_sections import get_student_term_baseline, section_gender, student_gender
+from core.services.student_sections import (
+    EXPECTED_TIMETABLE_SOURCE_PREFIX,
+    get_student_term_baseline,
+    section_gender,
+    student_gender,
+    timetable_snapshot_kind,
+)
 from core.services.student_unlock import build_unlock_report
 from core.services.timetable_provenance import baseline_sections
 from core.settings_views import load_defaults
@@ -414,6 +420,14 @@ def student_home_view(request: HttpRequest) -> HttpResponse:
         ]
 
     configured_rows = visible_to_student(configured_rows)
+    registered_configured_rows = [
+        row
+        for row in configured_rows
+        if not str(row.get("source") or "")
+        .strip()
+        .lower()
+        .startswith(EXPECTED_TIMETABLE_SOURCE_PREFIX)
+    ]
     rows = list(configured_rows)
     tt_year, tt_term, tt_fallback = year, term, False
     if not rows:
@@ -443,6 +457,7 @@ def student_home_view(request: HttpRequest) -> HttpResponse:
                 except Exception:  # noqa: BLE001
                     logger.exception("student fallback timetable failed for %s", student_id)
                     rows = []
+    tt_snapshot_kind = timetable_snapshot_kind(rows)
     timetable, unscheduled = _weekly_timetable(rows)
     timetable_meetings = [
         {
@@ -454,20 +469,37 @@ def student_home_view(request: HttpRequest) -> HttpResponse:
             "end_time": meeting.get("end_time") or "",
             "room": meeting.get("room") or "",
             "instructor": meeting.get("instructor") or "",
-            "source": "current",
+            "source": (
+                "planned"
+                if tt_snapshot_kind == "expected"
+                else "mixed"
+                if tt_snapshot_kind == "mixed"
+                else "current"
+            ),
         }
         for day in timetable
         for meeting in day["meetings"]
     ]
 
-    current_codes = list(
+    registered_codes = list(
         dict.fromkeys(
             normalize_code(row.get("course_code") or "")
-            for row in baseline_sections(configured_rows)
+            for row in baseline_sections(registered_configured_rows)
             if normalize_code(row.get("course_code") or "")
         )
     )
-    current_code_set = set(current_codes)
+    registered_code_set = set(registered_codes)
+    expected_rows = [
+        row
+        for row in configured_rows
+        if str(row.get("source") or "").strip().lower().startswith(EXPECTED_TIMETABLE_SOURCE_PREFIX)
+    ]
+    expected_code_set = {
+        normalize_code(row.get("course_code") or "")
+        for row in baseline_sections(expected_rows)
+        if normalize_code(row.get("course_code") or "")
+    }
+    timetable_code_set = registered_code_set | expected_code_set
 
     try:
         all_rec_codes = list(
@@ -480,8 +512,11 @@ def student_home_view(request: HttpRequest) -> HttpResponse:
     except Exception:  # noqa: BLE001
         logger.exception("student recommendations failed for %s", student_id)
         all_rec_codes = []
-    rec_codes = [code for code in all_rec_codes if code not in current_code_set]
-    recommendations_already_current = [code for code in all_rec_codes if code in current_code_set]
+    rec_codes = [code for code in all_rec_codes if code not in timetable_code_set]
+    recommendations_already_current = [
+        code for code in all_rec_codes if code in registered_code_set
+    ]
+    recommendations_already_expected = [code for code in all_rec_codes if code in expected_code_set]
     # ONE service for every card on this screen. `eligible_now` used to be computed
     # here — a second implementation of "what can this student take", rendered as
     # «متاحة للتسجيل هذا الفصل». Prerequisite data does not establish that a course
@@ -493,7 +528,10 @@ def student_home_view(request: HttpRequest) -> HttpResponse:
             student_id=student_id,
             academic_year=year,
             term=term,
-            current_term_rows=configured_rows,
+            # An imported next-term plan is useful timetable evidence, but it is
+            # not proof that the student registered those hours or is studying
+            # those courses. Academic-summary cards use registrar evidence only.
+            current_term_rows=registered_configured_rows,
         )
     except Exception:  # noqa: BLE001 — one card block degrades, the page does not
         logger.exception("student home cards failed for %s", student_id)
@@ -528,11 +566,15 @@ def student_home_view(request: HttpRequest) -> HttpResponse:
             "timetable_year": tt_year,
             "timetable_term": tt_term,
             "timetable_is_fallback": tt_fallback,
+            "timetable_snapshot_kind": tt_snapshot_kind,
+            "timetable_is_expected": tt_snapshot_kind == "expected",
+            "timetable_is_mixed": tt_snapshot_kind == "mixed",
             "timetable": timetable,
             "timetable_meetings": timetable_meetings,
             "unscheduled": unscheduled,
             "recommendations": recommendations,
             "recommendations_already_current": recommendations_already_current,
+            "recommendations_already_expected": recommendations_already_expected,
             "home_cards": home_cards,
         },
     )

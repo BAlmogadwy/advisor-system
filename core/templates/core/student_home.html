@@ -135,10 +135,24 @@
 {# ── My timetable ── #}
 <section class="card student-home-timetable-card p-3 mb-3" aria-labelledby="student-timetable-title">
   <div class="student-home-section-head mb-2">
-    <h2 class="student-section-title mb-0" id="student-timetable-title">{% if LANGUAGE_CODE == 'ar' %}جدولي الأسبوعي{% else %}My weekly timetable{% endif %}</h2>
-    {% if timetable_is_fallback %}<span class="badge text-bg-primary"><bdi dir="ltr">{{ timetable_year }}/{{ timetable_term }}</bdi></span>{% endif %}
+    <h2 class="student-section-title mb-0" id="student-timetable-title">
+      {% if timetable_is_expected %}
+        {% if LANGUAGE_CODE == 'ar' %}جدولي المتوقع{% else %}My expected timetable{% endif %}
+      {% else %}
+        {% if LANGUAGE_CODE == 'ar' %}جدولي الأسبوعي{% else %}My weekly timetable{% endif %}
+      {% endif %}
+    </h2>
+    {% if timetable_is_expected or timetable_is_fallback %}<span class="badge text-bg-primary"><bdi dir="ltr">{{ timetable_year }}/{{ timetable_term }}</bdi></span>{% endif %}
   </div>
-  {% if timetable_is_fallback %}
+  {% if timetable_is_expected %}
+    <p class="small text-secondary" dir="auto">
+      {% if LANGUAGE_CODE == 'ar' %}هذه خطة متوقعة للفصل القادم وليست تسجيلاً فعلياً. راجعها هنا، ثم سجّل المقررات التي تختارها بنفسك في بوابة الجامعة الرئيسية.{% else %}This is an expected next-term plan, not an actual registration. Review it here, then register the courses you choose yourself in the university's main portal.{% endif %}
+    </p>
+  {% elif timetable_is_mixed %}
+    <p class="small text-secondary" dir="auto">
+      {% if LANGUAGE_CODE == 'ar' %}تتضمن بيانات هذا الفصل مصادر تسجيل وخطة متوقعة معاً؛ لا تُعامل الخطة المتوقعة كتسجيل فعلي.{% else %}This term contains both registration evidence and an expected plan; the expected plan must not be treated as actual registration.{% endif %}
+    </p>
+  {% elif timetable_is_fallback %}
     <p class="small text-secondary"><span dir="auto">{% if LANGUAGE_CODE == 'ar' %}لا يوجد تسجيل في الفصل الحالي (<bdi dir="ltr">{{ academic_year }}/{{ term }}</bdi>)، لذا يُعرض جدولك من آخر جدول منشور.{% else %}Nothing is registered for the current term (<bdi dir="ltr">{{ academic_year }}/{{ term }}</bdi>), so this is your schedule from the most recently published timetable.{% endif %}</span></p>
   {% endif %}
   {% if timetable %}
@@ -236,6 +250,8 @@
     </div>
   {% elif recommendations_already_current %}
     <p class="student-home-empty mb-0" dir="auto">{% if LANGUAGE_CODE == 'ar' %}مقررات التوصية الحالية موجودة أصلًا في جدولك، لذلك لا توجد إضافة جديدة مقترحة من النظام.{% else %}The current recommended courses are already in your timetable, so the system has no new addition to suggest.{% endif %}</p>
+  {% elif recommendations_already_expected %}
+    <p class="student-home-empty mb-0" dir="auto">{% if LANGUAGE_CODE == 'ar' %}مقررات التوصية الحالية موجودة أصلًا في جدولك المتوقع، لذلك لا يكررها النظام كإضافات جديدة. هذا لا يعني أنها مسجّلة في بوابة الجامعة.{% else %}The current recommended courses are already in your expected timetable, so the system does not repeat them as new additions. This does not mean they are registered in the university portal.{% endif %}</p>
   {% else %}
     <p class="student-home-empty mb-0">{% if LANGUAGE_CODE == 'ar' %}لا توجد توصية جديدة من النظام حاليًا.{% else %}There is no new system recommendation at the moment.{% endif %}</p>
   {% endif %}

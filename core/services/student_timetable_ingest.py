@@ -600,7 +600,7 @@ def ingest_student_timetable_html(
         term,
         section_ids,
         source="scraper_timetable",
-        replace_all_global=True,
+        replace_source_across_terms="scraper_timetable",
     )
 
     if report_path is not None and missing:

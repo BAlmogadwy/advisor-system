@@ -15,11 +15,15 @@ from core.services.timetable_provenance import (
     CHANGE_ADD,
     CHANGE_REPLACE_SECTION,
     CHANGE_RETAIN,
+    OUTCOME_ALREADY_IN_EXPECTED_PLAN,
     OUTCOME_ALREADY_REGISTERED,
     OUTCOME_NOT_PLACED,
     SOURCE_CURRENT_REGISTRATION,
+    SOURCE_EXPECTED_PLAN,
     SOURCE_STUDENT_REQUEST,
     SOURCE_SYSTEM_RECOMMENDATION,
+    TIMETABLE_FACT_KEYS,
+    TimetableProvenanceError,
     baseline_sections,
     build_timetable_facts,
 )
@@ -159,6 +163,26 @@ def test_the_sections_the_student_already_holds_appear_in_the_answer() -> None:
     assert [r["course_code"] for r in facts.retained_sections] == ["AI331", "CS323"]
     assert {r["change"] for r in facts.retained_sections} == {CHANGE_RETAIN}
     assert {r["source"] for r in facts.retained_sections} == {SOURCE_CURRENT_REGISTRATION}
+
+
+def test_expected_plan_baseline_is_never_labelled_as_current_registration() -> None:
+    facts = _facts(
+        requested_codes=["AI331"],
+        baseline=[_baseline_row("AI331", "M1", "MON", "09:00", "10:15")],
+        baseline_kind="EXPECTED_PLAN",
+        credit_hours={"AI331": 4},
+    )
+
+    assert facts.baseline_kind == "EXPECTED_PLAN"
+    assert {row["source"] for row in facts.retained_sections} == {SOURCE_EXPECTED_PLAN}
+    assert facts.unplaced_courses[0]["outcome"] == OUTCOME_ALREADY_IN_EXPECTED_PLAN
+    assert facts.as_payload()["baseline_kind"] == "EXPECTED_PLAN"
+    assert "baseline_kind" in TIMETABLE_FACT_KEYS
+
+
+def test_mixed_baseline_refuses_to_build_timetable_facts() -> None:
+    with pytest.raises(TimetableProvenanceError, match="mixed expected-plan"):
+        _facts(baseline_kind="MIXED_REVIEW_REQUIRED")
 
 
 def test_a_newly_scheduled_section_is_an_add_not_a_retain() -> None:

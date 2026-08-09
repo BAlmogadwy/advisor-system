@@ -81,6 +81,7 @@ def _workspace_json(draft: Any) -> dict[str, Any]:
         gender_section_filter,
         get_student_term_baseline,
         student_gender_strict,
+        timetable_snapshot_kind,
     )
 
     student = Student.objects.filter(student_id=draft.student_id).values("program").first() or {}
@@ -231,6 +232,12 @@ def _workspace_json(draft: Any) -> dict[str, Any]:
         "credit_ceiling": credit_ceiling(int(draft.term)),
         "catalog": catalog,
         "current_timetable": current,
+        "timetable_kind": {
+            "expected": "EXPECTED_PLAN",
+            "mixed": "MIXED_REVIEW_REQUIRED",
+            "registered": "REGISTERED",
+            "empty": "EMPTY",
+        }[timetable_snapshot_kind(baseline)],
         # `TermSection` is a current recorded catalogue without term columns.
         # Never let a planning-term label turn that into a claim that the section
         # is offered in that term.

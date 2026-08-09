@@ -58,6 +58,35 @@ _MAX_COURSE_MATCHES = 10
 #: student to the planner instead of paraphrasing a refusal, and the tests, which
 #: must be able to tell this refusal apart from every other `ok: False`.
 REBUILD_REQUIRES_PLANNER_CONFIRMATION = "REBUILD_REQUIRES_PLANNER_CONFIRMATION"
+MIXED_TIMETABLE_SOURCES = "MIXED_TIMETABLE_SOURCES"
+
+
+def _timetable_baseline_kind(rows: list[dict[str, Any]]) -> str:
+    """One external vocabulary for every timetable-producing capability."""
+    from core.services.student_sections import timetable_snapshot_kind
+
+    return {
+        "expected": "EXPECTED_PLAN",
+        "mixed": "MIXED_REVIEW_REQUIRED",
+        "registered": "REGISTERED",
+        "empty": "EMPTY",
+    }[timetable_snapshot_kind(rows)]
+
+
+def _mixed_timetable_error(*, tool: str, academic_year: Any, term: Any) -> dict[str, Any]:
+    """Fail closed instead of flattening two provenance classes into 'current'."""
+    return {
+        "ok": False,
+        "tool": tool,
+        "reason": MIXED_TIMETABLE_SOURCES,
+        "baseline_kind": "MIXED_REVIEW_REQUIRED",
+        "academic_year": academic_year,
+        "term": term,
+        "error": (
+            "This term contains both registrar and expected-plan timetable rows. "
+            "They cannot be combined into one current timetable; the snapshot needs review."
+        ),
+    }
 
 
 # ── Scope helpers ────────────────────────────────────────────────
@@ -641,7 +670,10 @@ def _exec_recommend_courses(
     from core.models import ElectiveCourse, ProgrammeRequirement, Student
     from core.services.credit_policy import credit_policy_evidence
     from core.services.recommender import recommend_next_courses
-    from core.services.student_sections import get_student_term_baseline
+    from core.services.student_sections import (
+        EXPECTED_TIMETABLE_SOURCE_PREFIX,
+        get_student_term_baseline,
+    )
     from core.services.timetable_provenance import baseline_sections
     from core.services.virtual_advisor import _course_names
 
@@ -654,16 +686,38 @@ def _exec_recommend_courses(
 
     codes = recommend_next_courses(int(student_id), int(year), int(term))
     baseline = get_student_term_baseline(int(student_id), str(year), str(term))
+    registered_baseline = [
+        row
+        for row in baseline
+        if not str(row.get("source") or "")
+        .strip()
+        .lower()
+        .startswith(EXPECTED_TIMETABLE_SOURCE_PREFIX)
+    ]
+    expected_baseline = [
+        row
+        for row in baseline
+        if str(row.get("source") or "").strip().lower().startswith(EXPECTED_TIMETABLE_SOURCE_PREFIX)
+    ]
     current_codes = list(
         dict.fromkeys(
             normalize_code(row.get("course_code") or "")
-            for row in baseline_sections(baseline)
+            for row in baseline_sections(registered_baseline)
             if normalize_code(row.get("course_code") or "")
         )
     )
-    new_codes = [code for code in codes if code not in set(current_codes)]
+    expected_codes = list(
+        dict.fromkeys(
+            normalize_code(row.get("course_code") or "")
+            for row in baseline_sections(expected_baseline)
+            if normalize_code(row.get("course_code") or "")
+        )
+    )
+    existing_codes = set(current_codes) | set(expected_codes)
+    new_codes = [code for code in codes if code not in existing_codes]
     already_current = [code for code in codes if code in set(current_codes)]
-    names = _course_names(set(codes) | set(current_codes))
+    already_expected = [code for code in codes if code in set(expected_codes)]
+    names = _course_names(set(codes) | existing_codes)
 
     profile = (
         Student.objects.filter(student_id=student_id).values("program", "status").first() or {}
@@ -673,7 +727,7 @@ def _exec_recommend_courses(
     # unresolved 16-hour ceiling that must not be papered over with the general one.
     student_status = str(profile.get("status") or "").strip()
     credit_map: dict[str, int] = {}
-    credit_qs = ProgrammeRequirement.objects.filter(course_code__in=set(codes) | set(current_codes))
+    credit_qs = ProgrammeRequirement.objects.filter(course_code__in=set(codes) | existing_codes)
     if program:
         for raw_code, hours in credit_qs.filter(program__iexact=program).values_list(
             "course_code", "credit_hours"
@@ -681,7 +735,7 @@ def _exec_recommend_courses(
             credit_map.setdefault(normalize_code(raw_code), int(hours or 0))
     for raw_code, hours in credit_qs.values_list("course_code", "credit_hours"):
         credit_map.setdefault(normalize_code(raw_code), int(hours or 0))
-    catalogue_missing = [code for code in set(codes) | set(current_codes) if code not in credit_map]
+    catalogue_missing = [code for code in set(codes) | existing_codes if code not in credit_map]
     if catalogue_missing:
         for raw_code, hours in ElectiveCourse.objects.filter(
             course_code__in=catalogue_missing
@@ -713,6 +767,14 @@ def _exec_recommend_courses(
             }
             for code in already_current
         ],
+        "already_in_expected_plan": [
+            {
+                "course_code": code,
+                "course_name": names.get(code, ""),
+                "credit_hours": credit_map.get(code),
+            }
+            for code in already_expected
+        ],
         "current_registered_credit_hours": sum(
             credit_map[code] for code in current_codes if code in credit_map
         ),
@@ -725,9 +787,9 @@ def _exec_recommend_courses(
             student_status=student_status,
         ),
         "note": (
-            "recommendations contains only courses not already in this term's current "
-            "timetable. already_in_current_timetable is context only: never offer those "
-            "courses as additions. If recommendations is empty, say there is no new "
+            "recommendations contains only courses not already in the registered timetable "
+            "or expected plan. Never call already_in_expected_plan registered/current. "
+            "If recommendations is empty, say there is no new "
             "system-recommended course rather than repeating a current course. That empty "
             "list does not prove courses are closed/unavailable or that a credit cap caused "
             "the result, so do not speculate about either."
@@ -1264,7 +1326,10 @@ def _exec_my_timetable(
     args: dict[str, Any], scope: dict[str, Any], ctx: dict[str, Any]
 ) -> dict[str, Any]:
     """The student's registered weekly schedule: day, time, course, section, room."""
-    from core.services.student_sections import get_student_term_baseline, student_gender
+    from core.services.student_sections import (
+        get_student_term_baseline,
+        student_gender,
+    )
 
     student_id, error = _resolve_scoped_student_id(args, scope)
     if error:
@@ -1294,6 +1359,16 @@ def _exec_my_timetable(
             if not str(r.get("section") or "").upper().startswith(("M", "F"))
             or str(r.get("section") or "").upper().startswith(gender)
         ]
+    schedule_kind = _timetable_baseline_kind(rows)
+    if schedule_kind == "MIXED_REVIEW_REQUIRED":
+        mixed = _mixed_timetable_error(
+            tool="my_timetable",
+            academic_year=year,
+            term=term,
+        )
+        mixed["schedule_kind"] = schedule_kind
+        mixed["is_expected_plan"] = False
+        return mixed
     meetings = [
         {
             "day": r["day"],
@@ -1330,25 +1405,43 @@ def _exec_my_timetable(
             entry["scheduled"] = True
 
     registrations = sorted(by_section.values(), key=lambda x: (x["course_code"], x["section"]))
-    # Registered but with no meeting on file — real, and invisible in a meetings list.
     unscheduled = [r for r in registrations if not r["scheduled"]]
-    return {
+    credit_hours = sum(r["credits"] for r in registrations)
+    result = {
         "student_id": int(student_id),
         "academic_year": year,
         "term": term,
+        "schedule_kind": schedule_kind,
+        "is_expected_plan": schedule_kind == "EXPECTED_PLAN",
         "meetings": meetings[: _MAX_LIST_ROWS * 2],
         "registrations": registrations,
-        "registered_course_count": len(registrations),
-        "registered_credit_hours": sum(r["credits"] for r in registrations),
         "courses_without_a_time": sorted(r["course_code"] for r in unscheduled),
-        "note": (
-            "The timetable on file for the term shown; not a live seat count. "
-            "registered_credit_hours counts each course ONCE — the underlying rows are "
-            "per meeting, so adding them up over-counts a course that meets several "
-            "times a week. courses_without_a_time are genuinely registered; they simply "
-            "have no meeting recorded, so they do not appear in meetings."
-        ),
     }
+    if schedule_kind == "EXPECTED_PLAN":
+        result.update(
+            {
+                "expected_course_count": len(registrations),
+                "expected_credit_hours": credit_hours,
+                "note": (
+                    "This is an expected next-term planning snapshot, not actual university "
+                    "registration. Never describe these courses or sections as registered or "
+                    "current; the student must apply choices in the university portal."
+                ),
+            }
+        )
+    else:
+        result.update(
+            {
+                "registered_course_count": len(registrations),
+                "registered_credit_hours": credit_hours,
+                "note": (
+                    "The registered timetable on file for the term shown; not a live seat "
+                    "count. registered_credit_hours counts each course once. Courses without "
+                    "a time are registered rows whose meeting time is not recorded."
+                ),
+            }
+        )
+    return result
 
 
 def _plan_terms_with_canonical_readiness(terms: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -1590,6 +1683,13 @@ def _student_sections_context(
         }, {}
     catalog = _catalog_for_courses(str(year), str(term), codes, gender, program)
     baseline = get_student_term_baseline(int(student_id), str(year), str(term))
+    baseline_kind = _timetable_baseline_kind(baseline)
+    if baseline_kind == "MIXED_REVIEW_REQUIRED":
+        return _mixed_timetable_error(
+            tool="my_clash_free_sections",
+            academic_year=year,
+            term=term,
+        ), {}
     return None, {
         "student_id": int(student_id),
         "year": year,
@@ -1598,13 +1698,14 @@ def _student_sections_context(
         "codes": codes,
         "catalog": catalog,
         "baseline": baseline,
+        "baseline_kind": baseline_kind,
     }
 
 
 def _exec_my_clash_free_sections(
     args: dict[str, Any], scope: dict[str, Any], ctx: dict[str, Any]
 ) -> dict[str, Any]:
-    """Which sections of a course fit the student's current timetable, and which do not."""
+    """Which sections fit the student's source-classified timetable baseline."""
     from core.services.planner_builder import DAY_MAP, Meeting, _overlap
 
     error, c = _student_sections_context(args, scope, ctx)
@@ -1630,7 +1731,7 @@ def _exec_my_clash_free_sections(
     results = []
     for code in c["codes"]:
         sections = c["catalog"].get(code) or []
-        current_sections = sorted(
+        baseline_sections_for_course = sorted(
             {
                 str(row.get("section") or "").strip()
                 for row in c["baseline"]
@@ -1643,7 +1744,15 @@ def _exec_my_clash_free_sections(
                 {
                     "course_code": code,
                     "sections_on_file": 0,
-                    "currently_registered_sections": current_sections,
+                    "currently_registered_sections": (
+                        baseline_sections_for_course if c["baseline_kind"] == "REGISTERED" else []
+                    ),
+                    "expected_plan_sections": (
+                        baseline_sections_for_course
+                        if c["baseline_kind"] == "EXPECTED_PLAN"
+                        else []
+                    ),
+                    "baseline_sections": baseline_sections_for_course,
                     "clash_free": [],
                     "clashing": [],
                     # NOT "no sections available" — that claims the university offers
@@ -1670,13 +1779,21 @@ def _exec_my_clash_free_sections(
                             {
                                 "section_meeting": f"{sm.day} {sm.start}-{sm.end}",
                                 "conflicts_with": label,
-                                "registered_meeting": f"{bm.day} {bm.start}-{bm.end}",
+                                "baseline_meeting": f"{bm.day} {bm.start}-{bm.end}",
                             }
                         )
             entry = {
                 "section": s["section"],
                 "meetings": [f"{m.day} {m.start}-{m.end}" for m in s["meetings"]],
-                "is_current_section": str(s["section"]) in current_sections,
+                "is_baseline_section": str(s["section"]) in baseline_sections_for_course,
+                "is_current_section": (
+                    c["baseline_kind"] == "REGISTERED"
+                    and str(s["section"]) in baseline_sections_for_course
+                ),
+                "is_expected_plan_section": (
+                    c["baseline_kind"] == "EXPECTED_PLAN"
+                    and str(s["section"]) in baseline_sections_for_course
+                ),
             }
             if hits:
                 clashing.append({**entry, "conflicts": hits[:4]})
@@ -1687,7 +1804,13 @@ def _exec_my_clash_free_sections(
             {
                 "course_code": code,
                 "sections_on_file": len(sections),
-                "currently_registered_sections": current_sections,
+                "currently_registered_sections": (
+                    baseline_sections_for_course if c["baseline_kind"] == "REGISTERED" else []
+                ),
+                "expected_plan_sections": (
+                    baseline_sections_for_course if c["baseline_kind"] == "EXPECTED_PLAN" else []
+                ),
+                "baseline_sections": baseline_sections_for_course,
                 "clash_free": free[:_MAX_LIST_ROWS],
                 "clashing": clashing[:_MAX_LIST_ROWS],
                 "status": "OK" if free else "ALL_CLASH",
@@ -1698,14 +1821,16 @@ def _exec_my_clash_free_sections(
         "ok": True,
         "student_id": c["student_id"],
         "compared_against_term": f"{c['year']}/{c['term']}",
+        "baseline_kind": c["baseline_kind"],
         "courses": results,
         "note": (
-            "Compared against the timetable the student is registered in for the term "
-            "shown. Sections carry NO term of their own, so never call these 'next "
+            "Compared against the stored baseline identified by baseline_kind. EXPECTED_PLAN "
+            "is planning data, not registration; MIXED_REVIEW_REQUIRED must not be presented "
+            "as one registered timetable. Sections carry NO term of their own, so never call these 'next "
             "term's' sections. status NOT_ON_FILE means the section catalogue holds "
             "nothing for that course - it does NOT mean the university offers none, and "
             "must not be reported as 'no sections available'. A section marked "
-            "is_current_section is already in this student's current timetable. When "
+            "is_current_section is registrar evidence; is_expected_plan_section is not. When "
             "checking another section of the same course, the current section is replaced "
             "before clash comparison. Seat counts are absent from this result, so never "
             "say a section has room."
@@ -1888,6 +2013,13 @@ def _exec_build_my_timetable(
     asked = list(dict.fromkeys(wanted + recommended))
 
     baseline = get_student_term_baseline(int(student_id), str(year), str(term))
+    baseline_kind = _timetable_baseline_kind(baseline)
+    if baseline_kind == "MIXED_REVIEW_REQUIRED":
+        return _mixed_timetable_error(
+            tool="build_my_timetable",
+            academic_year=year,
+            term=term,
+        )
     held_rows = baseline_sections(baseline)
     held = {row["course_code"] for row in held_rows}
 
@@ -1918,6 +2050,7 @@ def _exec_build_my_timetable(
             credit_hours=credits,
             default_credits=DEFAULT_CREDITS,
             cap=cap,
+            baseline_kind=baseline_kind,
             # `None`, not `[]`. Chat cannot pin a section — `must_include` names
             # courses — so the key is absent rather than asserting nothing was pinned.
             fixed_sections=None,
@@ -1937,9 +2070,9 @@ def _exec_build_my_timetable(
             "ok": True,
             **_facts([], []),
             "note": (
-                "There is nothing to schedule: the recommender returned no courses for "
-                "this student and none were named. That usually means the plan is "
-                "complete or every remaining course is blocked."
+                "There is nothing additional to schedule: the recommender returned no "
+                "courses and none were named. retained_sections are classified by "
+                "baseline_kind; EXPECTED_PLAN rows are planning evidence, not registration."
             ),
             "tool": "build_my_timetable",
         }
@@ -1968,9 +2101,9 @@ def _exec_build_my_timetable(
             ),
             "alternatives_considered": 0,
             "note": (
-                "No timetable could be built from the sections on file. Any section "
-                "under retained_sections is still the student's — it was never at risk, "
-                "because this build never touched what they are already registered in."
+                "No timetable could be built from the sections on file. Any section under "
+                "retained_sections remains part of the stored baseline. Read baseline_kind: "
+                "EXPECTED_PLAN means planning evidence and must not be called registered."
             ),
             "tool": "build_my_timetable",
         }
@@ -1992,19 +2125,20 @@ def _exec_build_my_timetable(
             "an offer of a seat - there are no seat counts in the data, so never say a "
             "section has room. Every course and section carries where it came from: "
             "source STUDENT_REQUEST means the student named it, SYSTEM_RECOMMENDATION "
-            "means the recommender chose it, and CURRENT_REGISTRATION means they are "
-            "already registered in it. change RETAIN means it was kept untouched, ADD "
+            "means the recommender chose it, CURRENT_REGISTRATION is registrar evidence, "
+            "and EXPECTED_PLAN is planning evidence only. baseline_kind decides which one "
+            "retained_sections carry. change RETAIN means it was kept untouched, ADD "
             "means it is newly scheduled. Report retained_sections as kept and "
             "new_sections as proposed; never present a retained section as new. A "
             "partial result is normal: a course appears under unplaced_courses with "
             "reason_code NOT_ON_FILE when no section of it is on file (say exactly "
             "that, never 'not available'), with ALL_SECTIONS_CLASH when every section "
             "collides with something already in the week, and with outcome "
-            "ALREADY_REGISTERED when the student is registered in it already - that "
-            "last one is not a failure and must never be reported as one. "
+            "ALREADY_REGISTERED for registrar evidence or ALREADY_IN_EXPECTED_PLAN for "
+            "planning evidence - neither outcome is a scheduling failure. "
             "credit_summary splits the hours already held from the hours this build "
             "adds. Sections carry no term of their own; the term shown is the one the "
-            "student's current timetable belongs to. The student still registers "
+            "stored baseline belongs to. The student still registers "
             "through the university portal."
         ),
         "tool": "build_my_timetable",
@@ -2075,8 +2209,15 @@ def _exec_build_timetable_proposal(
     recommended = [code for code in recommended if code and code in permitted]
 
     baseline = get_student_term_baseline(int(student_id), str(year), str(term))
-    current = baseline_sections(baseline)
-    held_codes = [normalize_code(row.get("course_code") or "") for row in current]
+    baseline_kind = _timetable_baseline_kind(baseline)
+    if baseline_kind == "MIXED_REVIEW_REQUIRED":
+        return _mixed_timetable_error(
+            tool="build_timetable_proposal",
+            academic_year=year,
+            term=term,
+        )
+    baseline_section_rows = baseline_sections(baseline)
+    held_codes = [normalize_code(row.get("course_code") or "") for row in baseline_section_rows]
     if mode == "around_current":
         planned_codes = [
             code
@@ -2133,7 +2274,7 @@ def _exec_build_timetable_proposal(
         )
     }
 
-    current_safe = [
+    baseline_safe = [
         {
             "course_code": row.get("course_code", ""),
             "course_name": row.get("course_name") or names.get(row.get("course_code", ""), ""),
@@ -2141,9 +2282,9 @@ def _exec_build_timetable_proposal(
             "credits": credits.get(normalize_code(row.get("course_code") or ""), DEFAULT_CREDITS),
             "meetings": list(row.get("meetings") or []),
         }
-        for row in current
+        for row in baseline_section_rows
     ]
-    current_credits = sum(int(row.get("credits") or 0) for row in current_safe)
+    baseline_credits = sum(int(row.get("credits") or 0) for row in baseline_safe)
 
     alternatives = []
     for index, alternative in enumerate(result.get("alternatives") or [], start=1):
@@ -2200,10 +2341,10 @@ def _exec_build_timetable_proposal(
                 ),
                 "unplaced_courses": alternative_unplaced,
                 "course_count": len(courses)
-                + (len(current_safe) if mode == "around_current" else 0),
+                + (len(baseline_safe) if mode == "around_current" else 0),
                 "proposed_credit_hours": proposed_credits,
                 "total_credit_hours": proposed_credits
-                + (current_credits if mode == "around_current" else 0),
+                + (baseline_credits if mode == "around_current" else 0),
                 "days_on_campus": int(alternative.get("days_on_campus") or 0),
                 "days": list(alternative.get("days") or []),
                 "earliest_start": alternative.get("earliest_start"),
@@ -2226,10 +2367,18 @@ def _exec_build_timetable_proposal(
         "tool": "build_timetable_proposal",
         "planning_term": f"{year}/{term}",
         "mode": mode,
+        "baseline_kind": baseline_kind,
         "student_requested_courses": requested,
         "system_recommended_courses": recommended,
-        "current_sections": current_safe,
-        "current_credit_hours": current_credits,
+        "baseline_sections": baseline_safe,
+        "baseline_credit_hours": baseline_credits,
+        # Compatibility fields remain truthful.  They are populated only when
+        # provenance establishes registrar evidence; expected-plan data has its
+        # own fields and must never arrive under a name containing "current".
+        "current_sections": baseline_safe if baseline_kind == "REGISTERED" else [],
+        "current_credit_hours": baseline_credits if baseline_kind == "REGISTERED" else 0,
+        "expected_plan_sections": (baseline_safe if baseline_kind == "EXPECTED_PLAN" else []),
+        "expected_plan_credit_hours": (baseline_credits if baseline_kind == "EXPECTED_PLAN" else 0),
         "credit_ceiling": cap,
         "alternatives": alternatives,
         "unplaced_courses": unplaced,
@@ -2247,8 +2396,10 @@ def _exec_build_timetable_proposal(
         "can_register": False,
         "note": (
             "These are clash-checked proposals from the sections on file, not live seat "
-            "availability and not registration. around_current keeps current_sections "
-            "fixed and alternatives list only the proposed additions. from_scratch "
+            "availability and not registration. baseline_kind identifies whether the stored "
+            "baseline is REGISTERED or EXPECTED_PLAN; expected rows must never be called "
+            "registered/current. around_current keeps baseline_sections fixed and alternatives "
+            "list only the proposed additions. from_scratch "
             "rebuilds the whole candidate course set. planner_options are the exact A1-C3 "
             "identities emitted by the Planner; multiple names on one alternative mean those "
             "generator runs produced the same timetable. Name each distinct alternative in "
@@ -2263,9 +2414,10 @@ def _exec_build_timetable_proposal(
             "and do not print internal reason_code labels. State the Planner identities "
             "and scheduled/target coverage for every returned alternative, including one that "
             "placed zero of its target additions. If no_additional_courses is true, the Planner "
-            "had no target course to schedule: say the current timetable is retained with no "
-            "proposed additions, and do not invent Planner identities or describe current "
-            "credits versus the credit ceiling as coverage. Do not call an omission a clash unless its returned reason says "
+            "had no target course to schedule: say the stored baseline is retained with no "
+            "proposed additions, using baseline_kind to call it registered or expected. Do "
+            "not invent Planner identities or describe baseline credits versus the credit "
+            "ceiling as coverage. Do not call an omission a clash unless its returned reason says "
             "that; NOT_ON_FILE means only that no section is recorded here. Never say "
             "timetable access is unavailable."
         ),
@@ -2794,9 +2946,10 @@ def build_default_registry() -> AdvisorCapabilityRegistry:
         AdvisorCapability(
             name="my_timetable",
             description=(
-                "The student's registered weekly class schedule: day, start and end time, "
-                "course, section, room and instructor. Use for 'what is my schedule', 'when "
-                "is my class', 'what do I have on Monday', 'where is my class'."
+                "The student's stored weekly timetable with explicit schedule_kind: "
+                "REGISTERED is registrar evidence; EXPECTED_PLAN is a manually seeded "
+                "next-term plan and is not registration. Includes day, start/end time, "
+                "course, section, room and instructor."
             ),
             parameters={
                 "type": "object",
@@ -2874,17 +3027,17 @@ def build_default_registry() -> AdvisorCapabilityRegistry:
         AdvisorCapability(
             name="my_clash_free_sections",
             description=(
-                "For one or more courses, which sections fit the student's CURRENT "
-                "registered timetable and which collide - naming the course, day and "
+                "For one or more courses, which sections fit the student's stored "
+                "timetable baseline and which collide - naming the course, day and "
                 "both time ranges of every collision. Use for 'which section of X can I "
                 "take', 'does section F11 clash with my schedule', 'all the sections "
                 "clash, is that right'. status NOT_ON_FILE means no section is recorded "
                 "for that course; say exactly that, never 'no sections available'. There "
                 "are no seat counts, so call them recorded sections rather than available "
-                "sections, and never claim a section has room. The result marks "
-                "is_current_section=true when that section is already in the student's "
-                "current timetable; state that plainly rather than offering it as a new "
-                "addition."
+                "sections, and never claim a section has room. Read baseline_kind first: "
+                "REGISTERED marks registrar evidence with is_current_section, while "
+                "EXPECTED_PLAN marks planning-only evidence with is_expected_plan_section. "
+                "MIXED_REVIEW_REQUIRED is refused rather than combined."
             ),
             parameters={
                 "type": "object",
@@ -2919,10 +3072,11 @@ def build_default_registry() -> AdvisorCapabilityRegistry:
                 "student insists on and max_credits for a ceiling. A partial result is "
                 "the normal outcome and must be reported as such, never as a failure. "
                 "It is a SUGGESTION: it does not register anything and cannot promise "
-                "a seat. It ALWAYS keeps the sections the student is already "
-                "registered in and fits the new courses around them - those sections "
-                "are listed in retained_sections, so say what was kept from that list "
-                "and never from memory. "
+                "a seat. It keeps the stored baseline sections and fits the new courses "
+                "around them. Read baseline_kind before naming that baseline: REGISTERED "
+                "is registrar evidence; EXPECTED_PLAN is planning-only evidence and must "
+                "never be called registered/current. The rows are listed in "
+                "retained_sections, so say what was kept from that list and never from memory. "
                 # The retention promise used to stand alone, with nothing in the
                 # payload behind it: `placed` holds only what the solver chose, and
                 # the baseline reaches the solver as an occupancy mask that never
@@ -2990,10 +3144,12 @@ def build_default_registry() -> AdvisorCapabilityRegistry:
                 "Build multiple real, clash-checked timetable proposals from the existing "
                 "section catalogue. Use whenever the student asks to build/create a "
                 "timetable, build around current sections, rebuild from scratch, or show "
-                "alternatives without clashes. mode=around_current keeps current sections "
-                "fixed and fits proposed additions around them. mode=from_scratch may choose "
-                "different sections for the current course set, but still changes nothing. "
-                "The result contains current_sections and distinct alternatives with actual "
+                "alternatives without clashes. mode=around_current keeps baseline_sections "
+                "fixed and fits proposed additions around them. baseline_kind distinguishes "
+                "REGISTERED from planning-only EXPECTED_PLAN data; a mixed source state is "
+                "refused for review. mode=from_scratch may choose different sections for the "
+                "baseline course set, but still changes nothing. The result contains neutral "
+                "baseline_sections, truthful compatibility fields, and alternatives with actual "
                 "course/section/day/start/end values. planner_options preserves the exact "
                 "A1-A3, B1-B3 and C1-C3 identities from the Planner; several identities on "
                 "one alternative mean those runs found the same schedule. Each alternative "
@@ -3014,7 +3170,7 @@ def build_default_registry() -> AdvisorCapabilityRegistry:
                         "type": "string",
                         "enum": ["around_current", "from_scratch"],
                         "description": (
-                            "around_current for keeping current sections fixed; "
+                            "around_current for keeping the stored baseline sections fixed; "
                             "from_scratch for a fresh section arrangement."
                         ),
                     },

@@ -443,6 +443,20 @@ def test_study_plan_from_another_programme_is_rejected_before_database_write() -
 def test_confirmed_empty_summer_timetable_is_a_valid_zero_course_snapshot() -> None:
     _seed_last_known_state()
     student = Student.objects.get(student_id=_STUDENT_ID)
+    expected_section = TermSection.objects.create(
+        course_code="FP",
+        course_number="201",
+        course_key="FP201",
+        course_name="Expected next-term section",
+        section="M2",
+    )
+    expected_link = StudentTermSection.objects.create(
+        student_id=student.student_id,
+        academic_year="1448",
+        term="1",
+        term_section=expected_section,
+        source="registration_plan_1448_t1",
+    )
     scenario = TimetableScenario.objects.create(
         academic_year="1448",
         term="1",
@@ -505,8 +519,10 @@ def test_confirmed_empty_summer_timetable_is_a_valid_zero_course_snapshot() -> N
     assert student.current_registered_credits == 0
     assert not StudentTermSection.objects.filter(
         student_id=_STUDENT_ID,
+        source="scraper_timetable",
         term_section__scenario__isnull=True,
     ).exists()
+    assert StudentTermSection.objects.filter(pk=expected_link.pk).exists()
     assert StudentTermSection.objects.filter(pk=scenario_link.pk).exists()
     assert TermSection.objects.filter(course_key="ZZ999", section="M1").exists()
     assert (
@@ -520,6 +536,55 @@ def test_confirmed_empty_summer_timetable_is_a_valid_zero_course_snapshot() -> N
     assert stale_row.status == "not_taken"
     stale_regular_row.refresh_from_db()
     assert stale_regular_row.status == "not_taken"
+
+
+def test_confirmed_empty_explicit_term_replaces_matching_plan_only() -> None:
+    _seed_last_known_state()
+    current_plan_section = TermSection.objects.create(
+        course_code="CP",
+        course_number="201",
+        course_key="CP201",
+        course_name="Plan for the term now confirmed empty",
+        section="M2",
+    )
+    current_plan_link = StudentTermSection.objects.create(
+        student_id=_STUDENT_ID,
+        academic_year="1448",
+        term="1",
+        term_section=current_plan_section,
+        source="registration_plan_1448_t1",
+    )
+    future_plan_section = TermSection.objects.create(
+        course_code="FP",
+        course_number="301",
+        course_key="FP301",
+        course_name="Later expected plan",
+        section="M3",
+    )
+    future_plan_link = StudentTermSection.objects.create(
+        student_id=_STUDENT_ID,
+        academic_year="1449",
+        term="1",
+        term_section=future_plan_section,
+        source="registration_plan_1449_t1",
+    )
+
+    result = _process_student(
+        str(_STUDENT_ID),
+        _valid_study_html(),
+        _confirmed_empty_timetable_html(),
+        program="AI",
+        section="M",
+        empty_snapshot_year="1448",
+        empty_snapshot_term="1",
+    )
+
+    assert result["academic_year"] == "1448"
+    assert result["term"] == "1"
+    assert result["deleted_student_section_links"] == 2
+    assert not StudentTermSection.objects.filter(pk=current_plan_link.pk).exists()
+    assert StudentTermSection.objects.filter(pk=future_plan_link.pk).exists()
+    assert TermSection.objects.filter(pk=current_plan_section.pk).exists()
 
 
 def test_null_earned_credit_sentinel_is_saved_as_zero_for_confirmed_student() -> None:
@@ -581,6 +646,34 @@ def test_empty_timetable_marker_requires_matching_study_plan_identity() -> None:
 
 def test_complete_student_response_reaches_the_existing_persistence_path() -> None:
     _seed_last_known_state()
+    future_section = TermSection.objects.create(
+        course_code="FP",
+        course_number="201",
+        course_key="FP201",
+        course_name="Expected future section",
+        section="M2",
+    )
+    future_link = StudentTermSection.objects.create(
+        student_id=_STUDENT_ID,
+        academic_year="1449",
+        term="1",
+        term_section=future_section,
+        source="registration_plan_1449_t1",
+    )
+    superseded_section = TermSection.objects.create(
+        course_code="SP",
+        course_number="201",
+        course_key="SP201",
+        course_name="Expected section for term now scraped",
+        section="M3",
+    )
+    superseded_link = StudentTermSection.objects.create(
+        student_id=_STUDENT_ID,
+        academic_year="1448",
+        term="1",
+        term_section=superseded_section,
+        source="registration_plan_1448_t1",
+    )
 
     result = _process_student(
         str(_STUDENT_ID),
@@ -617,6 +710,8 @@ def test_complete_student_response_reaches_the_existing_persistence_path() -> No
         student_id=_STUDENT_ID,
         term_section__course_key="ZZ999",
     ).exists()
+    assert StudentTermSection.objects.filter(pk=future_link.pk).exists()
+    assert not StudentTermSection.objects.filter(pk=superseded_link.pk).exists()
     assert TermSectionMeeting.objects.filter(
         term_section=current_link.term_section,
         day="SUN",
@@ -684,6 +779,51 @@ def test_scrape_retimestamps_a_reused_global_section_into_the_new_snapshot() -> 
             "room",
         )
     ) == [("SUN", "09:00", "10:15", "R101")]
+
+
+def test_real_scrape_coexists_with_future_plan_for_the_same_physical_section() -> None:
+    """Term-scoped uniqueness keeps both meanings of one physical section.
+
+    The former student/section-only constraint silently discarded the real row
+    when a future expected plan already referenced that section. Both links are
+    valid because their academic terms and provenance are different.
+    """
+    _seed_last_known_state()
+    reused = TermSection.objects.create(
+        course_code="VX",
+        course_number="101",
+        course_key="VX101",
+        course_name="Validation Course 101",
+        section="M7",
+    )
+    expected = StudentTermSection.objects.create(
+        student_id=_STUDENT_ID,
+        academic_year="1449",
+        term="1",
+        term_section=reused,
+        source="registration_plan_1449_t1",
+    )
+
+    _process_student(
+        str(_STUDENT_ID),
+        _valid_study_html(),
+        _valid_timetable_html(),
+        program="AI",
+        section="M",
+    )
+
+    assert StudentTermSection.objects.filter(pk=expected.pk).exists()
+    current = StudentTermSection.objects.get(
+        student_id=_STUDENT_ID,
+        term_section=reused,
+        academic_year="1448",
+        term="1",
+    )
+    assert (current.academic_year, current.term, current.source) == (
+        "1448",
+        "1",
+        "scraper_timetable",
+    )
 
 
 def test_term_scoped_planner_replace_preserves_another_term_snapshot() -> None:

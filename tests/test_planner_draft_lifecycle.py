@@ -21,6 +21,7 @@ from core.models import (
     PlannerDraft,
     ProgrammeRequirement,
     Student,
+    StudentTermSection,
     TermSection,
     TermSectionMeeting,
     TermSectionProgram,
@@ -692,6 +693,153 @@ def test_workspace_discloses_catalogue_scope_and_requires_complete_times(
     assert workspace["clash_check_scope"] == "recorded_complete_meeting_times"
     assert courses["AI221"]["status"] == "offering_unknown"
     assert courses["AI221"]["sections"] == []
+
+
+def test_workspace_identifies_an_expected_plan_baseline(owner_client, world, draft):
+    StudentTermSection.objects.create(
+        student_id=OWNER,
+        academic_year=draft.academic_year,
+        term=draft.term,
+        term_section=world[("CS113", "M1")],
+        source=f"registration_plan_{draft.academic_year}_t{draft.term}",
+    )
+
+    workspace = owner_client.get(_url("planner_draft_detail", draft)).json()["workspace"]
+
+    assert workspace["timetable_kind"] == "EXPECTED_PLAN"
+    assert {row["course_code"] for row in workspace["current_timetable"]} == {"CS113"}
+
+
+def test_expected_plan_proposal_uses_neutral_and_expected_fields(world, monkeypatch):
+    from core.services.advisor_presentations import timetable_presentation_from_tool_results
+    from core.services.llm_remote_privacy import (
+        RemoteIdentityMap,
+        project_tool_result_for_remote,
+    )
+    from core.services.rbac import ROLE_STUDENT
+    from core.services.virtual_advisor_capabilities import _exec_build_timetable_proposal
+
+    StudentTermSection.objects.create(
+        student_id=OWNER,
+        academic_year="1448",
+        term="1",
+        term_section=world[("CS113", "M1")],
+        source="registration_plan_1448_t1",
+    )
+    monkeypatch.setattr(
+        "core.services.recommender.recommend_next_courses", lambda *_args, **_kwargs: []
+    )
+
+    def no_additions(request):
+        assert request.keep_current_sections is True
+        assert request.must_include == ()
+        return {"generated": 0, "alternatives": [], "unplaced": []}
+
+    monkeypatch.setattr("core.services.student_planner.build_student_options", no_additions)
+    result = _exec_build_timetable_proposal(
+        {"mode": "around_current"},
+        {"role": ROLE_STUDENT, "student_id": OWNER},
+        {"academic_year": 1448, "term": 1},
+    )
+
+    assert result["ok"] is True
+    assert result["baseline_kind"] == "EXPECTED_PLAN"
+    assert result["baseline_sections"] == result["expected_plan_sections"]
+    assert result["baseline_sections"][0]["course_code"] == "CS113"
+    assert result["baseline_credit_hours"] == result["expected_plan_credit_hours"] == 3
+    assert result["current_sections"] == []
+    assert result["current_credit_hours"] == 0
+
+    remote = project_tool_result_for_remote("build_timetable_proposal", result, RemoteIdentityMap())
+    assert remote["baseline_kind"] == "EXPECTED_PLAN"
+    assert remote["baseline_sections"] == remote["expected_plan_sections"]
+    assert remote["current_sections"] == []
+
+    presentation = timetable_presentation_from_tool_results([result])
+    assert presentation["baseline_kind"] == "EXPECTED_PLAN"
+    assert presentation["baseline_sections"] == presentation["expected_plan_sections"]
+    assert presentation["current_sections"] == []
+
+
+def test_expected_plan_legacy_builder_keeps_expected_provenance(world, monkeypatch):
+    from core.services.llm_remote_privacy import (
+        RemoteIdentityMap,
+        project_tool_result_for_remote,
+    )
+    from core.services.rbac import ROLE_STUDENT
+    from core.services.virtual_advisor_capabilities import _exec_build_my_timetable
+
+    StudentTermSection.objects.create(
+        student_id=OWNER,
+        academic_year="1448",
+        term="1",
+        term_section=world[("CS113", "M1")],
+        source="registration_plan_1448_t1",
+    )
+    monkeypatch.setattr(
+        "core.services.recommender.recommend_next_courses", lambda *_args, **_kwargs: []
+    )
+
+    result = _exec_build_my_timetable(
+        {},
+        {"role": ROLE_STUDENT, "student_id": OWNER},
+        {"academic_year": 1448, "term": 1},
+    )
+
+    assert result["ok"] is True
+    assert result["baseline_kind"] == "EXPECTED_PLAN"
+    assert result["retained_sections"][0]["source"] == "EXPECTED_PLAN"
+    assert "CURRENT_REGISTRATION" not in str(result["retained_sections"])
+
+    remote = project_tool_result_for_remote("build_my_timetable", result, RemoteIdentityMap())
+    assert remote["baseline_kind"] == "EXPECTED_PLAN"
+    assert remote["retained_sections"][0]["source"] == "EXPECTED_PLAN"
+
+
+def test_mixed_timetable_sources_fail_closed_across_student_tools(world, monkeypatch):
+    from core.services.rbac import ROLE_STUDENT
+    from core.services.virtual_advisor_capabilities import (
+        _exec_build_timetable_proposal,
+        _exec_my_clash_free_sections,
+        _exec_my_timetable,
+    )
+
+    StudentTermSection.objects.create(
+        student_id=OWNER,
+        academic_year="1448",
+        term="1",
+        term_section=world[("CS113", "M1")],
+        source="registration_plan_1448_t1",
+    )
+    StudentTermSection.objects.create(
+        student_id=OWNER,
+        academic_year="1448",
+        term="1",
+        term_section=world[("AI221", "M1")],
+        source="scraper_timetable",
+    )
+    monkeypatch.setattr(
+        "core.services.recommender.recommend_next_courses", lambda *_args, **_kwargs: []
+    )
+
+    def should_not_build(_request):
+        raise AssertionError("a mixed baseline must be refused before the planner runs")
+
+    monkeypatch.setattr("core.services.student_planner.build_student_options", should_not_build)
+    scope = {"role": ROLE_STUDENT, "student_id": OWNER}
+    ctx = {"academic_year": 1448, "term": 1}
+    results = [
+        _exec_my_timetable({}, scope, ctx),
+        _exec_my_clash_free_sections({"course_code": "CS113"}, scope, ctx),
+        _exec_build_timetable_proposal({"mode": "around_current"}, scope, ctx),
+    ]
+
+    for result in results:
+        assert result["ok"] is False
+        assert result["reason"] == "MIXED_TIMETABLE_SOURCES"
+        assert result["baseline_kind"] == "MIXED_REVIEW_REQUIRED"
+        assert "meetings" not in result
+        assert "baseline_sections" not in result
 
 
 def test_a_course_the_student_never_asked_for_is_marked_as_added(

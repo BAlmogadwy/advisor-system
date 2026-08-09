@@ -32,13 +32,13 @@
       <div>
         <span class="sp-step">1</span>
         <h2 class="h6 mb-1" id="spCurrentHeading">{% if LANGUAGE_CODE == 'ar' %}جدولك الحالي{% else %}Your current timetable{% endif %}</h2>
-        <p class="sp-muted mb-0">{% if LANGUAGE_CODE == 'ar' %}مرجع للعرض فقط؛ لا يغيّر المخطط تسجيلك الحالي.{% else %}Shown only as a reference; the planner never changes your current registration.{% endif %}</p>
+        <p class="sp-muted mb-0" id="spCurrentSubtitle">{% if LANGUAGE_CODE == 'ar' %}مرجع للعرض فقط؛ لا يغيّر المخطط تسجيلك الحالي.{% else %}Shown only as a reference; the planner never changes your current registration.{% endif %}</p>
       </div>
     </div>
     <p class="sp-muted sp-empty mb-0" id="spCurrentEmpty" hidden>{% if LANGUAGE_CODE == 'ar' %}لا توجد اجتماعات حالية مسجلة لهذا الفصل في بياناتنا.{% else %}No current meetings are recorded for this term in our data.{% endif %}</p>
     <div class="sp-current-summary" id="spCurrentSummary"></div>
     <details class="sp-current-details" id="spCurrentDetails">
-      <summary>{% if LANGUAGE_CODE == 'ar' %}عرض الجدول الأسبوعي الحالي{% else %}Show current weekly timetable{% endif %}</summary>
+      <summary id="spCurrentDetailsSummary">{% if LANGUAGE_CODE == 'ar' %}عرض الجدول الأسبوعي الحالي{% else %}Show current weekly timetable{% endif %}</summary>
       <div class="sp-week" id="spCurrentGrid" tabindex="0"></div>
       <p class="sp-scroll-hint">{% if LANGUAGE_CODE == 'ar' %}مرّر أفقيًا لعرض بقية الأيام عند الحاجة.{% else %}Scroll horizontally to see the remaining days when needed.{% endif %}</p>
     </details>
@@ -56,7 +56,7 @@
       <legend class="sp-visually-hidden">{% if LANGUAGE_CODE == 'ar' %}طريقة بناء الجدول المقترح{% else %}How to build the proposed timetable{% endif %}</legend>
       <label class="sp-mode-card" for="spKeep">
         <input type="radio" name="spMode" id="spKeep" value="keep" checked>
-        <span><strong>{% if LANGUAGE_CODE == 'ar' %}ابنِ حول شُعبي الحالية{% else %}Build around my current sections{% endif %}</strong><small>{% if LANGUAGE_CODE == 'ar' %}يثبّت شُعبك الحالية ويضع الاختيارات الأخرى حول أوقاتها المسجّلة.{% else %}Fixes your current sections and fits other choices around their recorded times.{% endif %}</small></span>
+        <span><strong id="spKeepTitle">{% if LANGUAGE_CODE == 'ar' %}ابنِ حول شُعبي الحالية{% else %}Build around my current sections{% endif %}</strong><small id="spKeepHelp">{% if LANGUAGE_CODE == 'ar' %}يثبّت شُعبك الحالية ويضع الاختيارات الأخرى حول أوقاتها المسجّلة.{% else %}Fixes your current sections and fits other choices around their recorded times.{% endif %}</small></span>
       </label>
       <label class="sp-mode-card" for="spRebuild">
         <input type="radio" name="spMode" id="spRebuild" value="rebuild">
@@ -130,5 +130,5 @@
 {% endblock %}
 
 {% block extra_js %}
-<script src="{% static 'js/page-student-planner.js' %}?v=4" defer></script>
+<script src="{% static 'js/page-student-planner.js' %}?v=5" defer></script>
 {% endblock %}

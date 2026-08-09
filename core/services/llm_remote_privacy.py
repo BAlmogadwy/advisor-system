@@ -671,9 +671,34 @@ def _project_my_plan_by_term(result: dict[str, Any], _: RemoteIdentityMap) -> di
 
 def _project_recommend_courses(result: dict[str, Any], _: RemoteIdentityMap) -> dict[str, Any]:
     out = _envelope(result)
-    out.update(_keep(result, "program", "academic_year", "term", "policy", "recommendation_policy"))
+    out.update(
+        _keep(
+            result,
+            "program",
+            "academic_year",
+            "term",
+            "policy",
+            "recommendation_policy",
+            "recommendation_count",
+            "recommendation_state",
+            "current_registered_credit_hours",
+            "note",
+        )
+    )
     out["recommendations"] = _course_rows(
         result.get("recommendations"), "course_code", "course_name", "credit_hours", "prerequisites"
+    )
+    out["already_in_current_timetable"] = _course_rows(
+        result.get("already_in_current_timetable"),
+        "course_code",
+        "course_name",
+        "credit_hours",
+    )
+    out["already_in_expected_plan"] = _course_rows(
+        result.get("already_in_expected_plan"),
+        "course_code",
+        "course_name",
+        "credit_hours",
     )
     return out
 
@@ -705,7 +730,13 @@ def _project_my_clash_free_sections(result: dict[str, Any], _: RemoteIdentityMap
         for raw in rows:
             if not isinstance(raw, dict):
                 continue
-            row = _keep(raw, "section", "is_current_section")
+            row = _keep(
+                raw,
+                "section",
+                "is_baseline_section",
+                "is_current_section",
+                "is_expected_plan_section",
+            )
             row["meetings"] = meeting_rows(raw.get("meetings"))
             if include_conflicts:
                 row["conflicts"] = _course_rows(
@@ -713,6 +744,7 @@ def _project_my_clash_free_sections(result: dict[str, Any], _: RemoteIdentityMap
                     "section_meeting",
                     "conflicts_with",
                     "registered_meeting",
+                    "baseline_meeting",
                 )
             projected.append(row)
         return projected
@@ -725,6 +757,7 @@ def _project_my_clash_free_sections(result: dict[str, Any], _: RemoteIdentityMap
             "term",
             "course_code",
             "compared_against_term",
+            "baseline_kind",
             "note",
         )
     )
@@ -737,6 +770,8 @@ def _project_my_clash_free_sections(result: dict[str, Any], _: RemoteIdentityMap
             "course_code",
             "sections_on_file",
             "currently_registered_sections",
+            "expected_plan_sections",
+            "baseline_sections",
             "status",
         )
         course["clash_free"] = section_rows(raw.get("clash_free"), include_conflicts=False)
@@ -799,6 +834,7 @@ def _project_build_my_timetable(result: dict[str, Any], _: RemoteIdentityMap) ->
         _keep(
             result,
             "using_timetable_of_term",
+            "baseline_kind",
             "student_requested_courses",
             "system_recommended_courses",
             "retained_sections",
@@ -827,9 +863,12 @@ def _project_build_timetable_proposal(
             result,
             "planning_term",
             "mode",
+            "baseline_kind",
             "student_requested_courses",
             "system_recommended_courses",
+            "baseline_credit_hours",
             "current_credit_hours",
+            "expected_plan_credit_hours",
             "credit_ceiling",
             "alternatives_generated",
             "distinct_alternatives",
@@ -839,16 +878,22 @@ def _project_build_timetable_proposal(
             "note",
         )
     )
-    current = result.get("current_sections")
-    if isinstance(current, list):
-        out["current_sections"] = [
+
+    def safe_sections(value: Any) -> list[dict[str, Any]]:
+        if not isinstance(value, list):
+            return []
+        return [
             {
                 **_keep(row, "course_code", "course_name", "section", "credits"),
                 "meetings": [str(item) for item in (row.get("meetings") or [])],
             }
-            for row in current
+            for row in value
             if isinstance(row, dict)
         ]
+
+    for section_field in ("baseline_sections", "current_sections", "expected_plan_sections"):
+        if isinstance(result.get(section_field), list):
+            out[section_field] = safe_sections(result.get(section_field))
     alternatives = result.get("alternatives")
     if isinstance(alternatives, list):
         out["alternatives"] = []
@@ -900,7 +945,20 @@ def _project_my_timetable(result: dict[str, Any], _: RemoteIdentityMap) -> dict[
     and the room; who teaches it is a member of staff whose name does not need to
     leave the institution to answer "when is my lecture"."""
     out = _envelope(result)
-    out.update(_keep(result, "academic_year", "term"))
+    out.update(
+        _keep(
+            result,
+            "academic_year",
+            "term",
+            "schedule_kind",
+            "is_expected_plan",
+            "expected_course_count",
+            "expected_credit_hours",
+            "registered_course_count",
+            "registered_credit_hours",
+            "note",
+        )
+    )
     meetings = result.get("meetings")
     if isinstance(meetings, list):
         out["meetings"] = [

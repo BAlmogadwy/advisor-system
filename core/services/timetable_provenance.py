@@ -73,6 +73,10 @@ SOURCE_SYSTEM_RECOMMENDATION = "SYSTEM_RECOMMENDATION"
 #: the two course lists describe what was asked of the builder this turn, and a
 #: standing registration was asked for by neither.
 SOURCE_CURRENT_REGISTRATION = "CURRENT_REGISTRATION"
+#: Kept from an imported expected-plan snapshot.  It occupies time while a
+#: proposal is built, but it is not evidence of registration in the university
+#: portal and must never inherit ``SOURCE_CURRENT_REGISTRATION`` by convenience.
+SOURCE_EXPECTED_PLAN = "EXPECTED_PLAN"
 #: The solver returned a course that is in neither input list. Unreachable today —
 #: the shortlist is built from those two lists — and named rather than defaulted,
 #: because the fallback used to be SYSTEM_RECOMMENDATION and that is a provenance
@@ -94,6 +98,10 @@ CHANGE_REPLACE_SECTION = "REPLACE_SECTION"
 
 #: What became of a course the builder was asked to handle.
 OUTCOME_ALREADY_REGISTERED = "ALREADY_REGISTERED"
+#: The requested/recommended course is already represented in the expected plan.
+#: This is deliberately distinct from ``ALREADY_REGISTERED`` because the latter
+#: is a registrar claim.
+OUTCOME_ALREADY_IN_EXPECTED_PLAN = "ALREADY_IN_EXPECTED_PLAN"
 OUTCOME_PLACED = "PLACED"
 OUTCOME_NOT_PLACED = "NOT_PLACED"
 
@@ -106,6 +114,7 @@ TIMETABLE_FACT_KEYS = frozenset(
     {
         "student_id",
         "using_timetable_of_term",
+        "baseline_kind",
         "student_requested_courses",
         "system_recommended_courses",
         "retained_sections",
@@ -153,7 +162,7 @@ def _same_section(held: dict[str, Any], placed: dict[str, Any]) -> bool:
     """
     held_id, placed_id = held.get("term_section_id"), placed.get("term_section_id")
     if held_id is not None and placed_id is not None:
-        return held_id == placed_id
+        return bool(held_id == placed_id)
     return _text(held.get("section")).upper() == _text(placed.get("section")).upper()
 
 
@@ -215,6 +224,7 @@ class TimetableAnswerFacts:
 
     student_id: int
     using_timetable_of_term: str
+    baseline_kind: str
     student_requested_courses: tuple[dict[str, Any], ...]
     system_recommended_courses: tuple[dict[str, Any], ...]
     retained_sections: tuple[dict[str, Any], ...]
@@ -232,6 +242,7 @@ class TimetableAnswerFacts:
         payload: dict[str, Any] = {
             "student_id": self.student_id,
             "using_timetable_of_term": self.using_timetable_of_term,
+            "baseline_kind": self.baseline_kind,
             "student_requested_courses": [dict(r) for r in self.student_requested_courses],
             "system_recommended_courses": [dict(r) for r in self.system_recommended_courses],
             "retained_sections": [dict(r) for r in self.retained_sections],
@@ -258,6 +269,7 @@ def build_timetable_facts(
     default_credits: int,
     cap: int,
     fixed_sections: list[dict[str, Any]] | None = None,
+    baseline_kind: str = "REGISTERED",
 ) -> TimetableAnswerFacts:
     """Assemble the provenance from the four inputs that actually know it.
 
@@ -270,6 +282,16 @@ def build_timetable_facts(
     figure came from the fallback is marked ``credits_estimated``, so a summary
     built on a guess says so instead of reading as a record.
     """
+    normalized_baseline_kind = _text(baseline_kind).upper() or "REGISTERED"
+    if normalized_baseline_kind == "MIXED_REVIEW_REQUIRED":
+        raise TimetableProvenanceError(
+            "mixed expected-plan and registrar rows cannot be presented as one timetable"
+        )
+    if normalized_baseline_kind not in {"REGISTERED", "EXPECTED_PLAN", "EMPTY"}:
+        raise TimetableProvenanceError(
+            f"unsupported timetable baseline kind: {normalized_baseline_kind!r}"
+        )
+
     requested = [c for c in dict.fromkeys(requested_codes) if c]
     # Order-preserving de-duplication, and the student's own list wins the overlap:
     # a course named in `must_include` that the recommender also chose is the
@@ -282,7 +304,7 @@ def build_timetable_facts(
 
     def credits_for(code: str) -> tuple[int, bool]:
         value = credit_hours.get(code)
-        if value in (None, ""):
+        if value is None:
             return int(default_credits), True
         return int(value), False
 
@@ -354,8 +376,13 @@ def build_timetable_facts(
         else:
             new_sections.append(section_row(row, source=source, change=CHANGE_ADD))
 
+    retained_source = (
+        SOURCE_EXPECTED_PLAN
+        if normalized_baseline_kind == "EXPECTED_PLAN"
+        else SOURCE_CURRENT_REGISTRATION
+    )
     retained_sections = [
-        section_row(h, source=SOURCE_CURRENT_REGISTRATION, change=CHANGE_RETAIN)
+        section_row(h, source=retained_source, change=CHANGE_RETAIN)
         for h in held
         if (h["course_code"], h.get("section", "")) not in replaced_keys
     ]
@@ -381,13 +408,18 @@ def build_timetable_facts(
     # the student's own baseline and calls the result ALL_SECTIONS_CLASH — measured
     # at 33 of 95 unplaced rows across 20 students, every one of them a course the
     # student was sitting in.
+    held_outcome = (
+        OUTCOME_ALREADY_IN_EXPECTED_PLAN
+        if normalized_baseline_kind == "EXPECTED_PLAN"
+        else OUTCOME_ALREADY_REGISTERED
+    )
     for code in [c for c in (*requested, *recommended) if c in held_by_course]:
         hours, estimated = credits_for(code)
         row = {
             "course_code": code,
             "credit_hours": hours,
             "source": source_of[code],
-            "outcome": OUTCOME_ALREADY_REGISTERED,
+            "outcome": held_outcome,
             "sections": [h.get("section", "") for h in held_by_course[code]],
         }
         if estimated:
@@ -399,6 +431,7 @@ def build_timetable_facts(
     return TimetableAnswerFacts(
         student_id=int(student_id),
         using_timetable_of_term=using_timetable_of_term,
+        baseline_kind=normalized_baseline_kind,
         student_requested_courses=tuple(course_row(c) for c in requested),
         system_recommended_courses=tuple(course_row(c) for c in recommended),
         retained_sections=tuple(retained_sections),
@@ -508,10 +541,12 @@ __all__ = [
     "CHANGE_ADD",
     "CHANGE_REPLACE_SECTION",
     "CHANGE_RETAIN",
+    "OUTCOME_ALREADY_IN_EXPECTED_PLAN",
     "OUTCOME_ALREADY_REGISTERED",
     "OUTCOME_NOT_PLACED",
     "OUTCOME_PLACED",
     "SOURCE_CURRENT_REGISTRATION",
+    "SOURCE_EXPECTED_PLAN",
     "SOURCE_STUDENT_REQUEST",
     "SOURCE_SYSTEM_RECOMMENDATION",
     "SOURCE_UNATTRIBUTED",

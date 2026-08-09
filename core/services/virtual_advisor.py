@@ -984,6 +984,7 @@ def _current_term_registrations(student_id: int, passed: set[str]) -> dict[str, 
     latest = (
         StudentTermSection.objects.filter(
             student_id=student_id,
+            source="scraper_timetable",
             term_section__scenario__isnull=True,
         )
         .order_by("-academic_year", "-term")
@@ -992,7 +993,11 @@ def _current_term_registrations(student_id: int, passed: set[str]) -> dict[str, 
     )
     if latest is not None:
         academic_year, term = latest
-        baseline = get_student_term_baseline(student_id, academic_year, term)
+        baseline = [
+            row
+            for row in get_student_term_baseline(student_id, academic_year, term)
+            if str(row.get("source") or "") == "scraper_timetable"
+        ]
     else:
         academic_year = term = None
         baseline = []

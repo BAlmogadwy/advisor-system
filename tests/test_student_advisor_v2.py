@@ -1648,6 +1648,47 @@ def test_current_only_presentation_preserves_the_no_additional_course_state():
     assert safe["alternatives"] == []
 
 
+def test_mixed_timetable_presentation_fails_closed():
+    from core.services.advisor_presentations import normalise_presentation
+
+    assert (
+        normalise_presentation(
+            {
+                "kind": "timetable_proposals",
+                "baseline_kind": "MIXED_REVIEW_REQUIRED",
+                "baseline_sections": [{"course_code": "AI113", "section": "M1"}],
+                "alternatives": [{"planner_options": ["A1"]}],
+            }
+        )
+        == {}
+    )
+
+
+def test_safe_section_answer_refuses_a_mixed_baseline():
+    from core.services.student_advisor_v2 import _safe_section_answer
+
+    answer = _safe_section_answer(
+        "English",
+        [
+            {
+                "ok": True,
+                "tool": "my_clash_free_sections",
+                "baseline_kind": "MIXED_REVIEW_REQUIRED",
+                "courses": [
+                    {
+                        "course_code": "AI113",
+                        "sections_on_file": 1,
+                        "currently_registered_sections": ["M1"],
+                    }
+                ],
+            }
+        ],
+    )
+
+    assert "both registrar and expected-plan rows" in answer
+    assert "already in your current timetable" not in answer
+
+
 def test_timetable_presentation_rejects_malformed_collection_shapes():
     from core.services.advisor_presentations import normalise_presentation
 

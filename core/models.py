@@ -493,8 +493,8 @@ class StudentTermSection(models.Model):
         db_table = "student_term_sections"
         constraints = [
             models.UniqueConstraint(
-                fields=["student_id", "term_section"],
-                name="ux_student_term_sections_unique",
+                fields=["student_id", "academic_year", "term", "term_section"],
+                name="ux_sts_student_term_section",
             ),
         ]
         indexes = [

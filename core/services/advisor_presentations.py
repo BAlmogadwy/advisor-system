@@ -201,21 +201,41 @@ def normalise_presentation(payload: Any) -> dict[str, Any]:
         return {}
 
     mode = _text(payload.get("mode"), 32)
-    current_sections = []
-    for row in _items(payload.get("current_sections"), _MAX_COURSES):
-        if not isinstance(row, dict):
-            continue
-        current_sections.append(
-            {
-                "course_code": _text(row.get("course_code"), 32),
-                "course_name": _text(row.get("course_name")),
-                "section": _text(row.get("section"), 32),
-                "credits": _number(row.get("credits")),
-                "meetings": [
-                    _text(value, 80) for value in _items(row.get("meetings"), _MAX_MEETINGS)
-                ],
-            }
+    baseline_kind = _text(payload.get("baseline_kind"), 32).upper() or "REGISTERED"
+    if baseline_kind == "MIXED_REVIEW_REQUIRED":
+        # The capability should already have refused this state.  Keep the view
+        # model fail-closed as a second boundary so a stored/legacy payload cannot
+        # render combined expected and registrar rows under a reassuring label.
+        return {}
+    if baseline_kind not in {"REGISTERED", "EXPECTED_PLAN", "EMPTY"}:
+        return {}
+
+    def section_rows(value: Any) -> list[dict[str, Any]]:
+        rows = []
+        for row in _items(value, _MAX_COURSES):
+            if not isinstance(row, dict):
+                continue
+            rows.append(
+                {
+                    "course_code": _text(row.get("course_code"), 32),
+                    "course_name": _text(row.get("course_name")),
+                    "section": _text(row.get("section"), 32),
+                    "credits": _number(row.get("credits")),
+                    "meetings": [
+                        _text(item, 80) for item in _items(row.get("meetings"), _MAX_MEETINGS)
+                    ],
+                }
+            )
+        return rows
+
+    baseline_sections = section_rows(payload.get("baseline_sections"))
+    if not baseline_sections:
+        legacy_field = (
+            "expected_plan_sections" if baseline_kind == "EXPECTED_PLAN" else "current_sections"
         )
+        baseline_sections = section_rows(payload.get(legacy_field))
+    current_sections = baseline_sections if baseline_kind == "REGISTERED" else []
+    expected_plan_sections = baseline_sections if baseline_kind == "EXPECTED_PLAN" else []
 
     alternatives = []
     for row in _items(payload.get("alternatives"), _MAX_ALTERNATIVES):
@@ -281,17 +301,24 @@ def normalise_presentation(payload: Any) -> dict[str, Any]:
     # comparison and provenance. Those sections are not fixed or retained, so
     # presenting them under "Current retained sections" is materially false.
     if mode == "from_scratch":
+        baseline_sections = []
         current_sections = []
+        expected_plan_sections = []
 
-    if not alternatives and not current_sections:
+    if not alternatives and not baseline_sections:
         return {}
     return {
         "kind": KIND_TIMETABLE,
         "planning_term": _text(payload.get("planning_term"), 24),
         "mode": mode,
+        "baseline_kind": baseline_kind,
+        "baseline_credit_hours": _number(payload.get("baseline_credit_hours")),
         "current_credit_hours": _number(payload.get("current_credit_hours")),
+        "expected_plan_credit_hours": _number(payload.get("expected_plan_credit_hours")),
         "credit_ceiling": _number(payload.get("credit_ceiling")),
+        "baseline_sections": baseline_sections,
         "current_sections": current_sections,
+        "expected_plan_sections": expected_plan_sections,
         "alternatives": alternatives,
         "no_additional_courses": payload.get("no_additional_courses") is True,
         # Server-owned constants, never copied from a model or client.
@@ -314,9 +341,14 @@ def timetable_presentation_from_tool_results(
                 "kind": KIND_TIMETABLE,
                 "planning_term": result.get("planning_term"),
                 "mode": result.get("mode"),
+                "baseline_kind": result.get("baseline_kind"),
+                "baseline_credit_hours": result.get("baseline_credit_hours"),
                 "current_credit_hours": result.get("current_credit_hours"),
+                "expected_plan_credit_hours": result.get("expected_plan_credit_hours"),
                 "credit_ceiling": result.get("credit_ceiling"),
+                "baseline_sections": result.get("baseline_sections"),
                 "current_sections": result.get("current_sections"),
+                "expected_plan_sections": result.get("expected_plan_sections"),
                 "alternatives": result.get("alternatives"),
                 "no_additional_courses": result.get("no_additional_courses"),
             }

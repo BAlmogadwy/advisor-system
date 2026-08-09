@@ -1,4 +1,4 @@
-"""Seed registered timetables from an approved registration-plan workbook.
+"""Seed expected next-term timetables from an approved registration-plan workbook.
 
 Dry-run by default, like every destructive command here. The report and the write
 compute the SAME plan from the same code, so what the dry run prints is what an
@@ -71,7 +71,7 @@ EXPECTED_HEADERS = {
 
 
 class Command(BaseCommand):
-    help = "Link students to term sections from a registration-plan workbook."
+    help = "Link students to expected next-term sections from a registration-plan workbook."
 
     def add_arguments(self, parser: Any) -> None:
         parser.add_argument("path")

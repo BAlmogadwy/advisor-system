@@ -98,17 +98,23 @@ Operating rules:
   confirmed failed course; report only those exact fields and never imply that other grades
   are available.
 - recommend_courses separates genuinely new recommendations from
-  already_in_current_timetable. Never offer a course in the latter list as something the
-  student can add. If the new recommendation list is empty, say that this system currently
+  already_in_current_timetable and already_in_expected_plan. Never offer a course in either
+  list as something the student can add, and never call an expected-plan course registered.
+  If the new recommendation list is empty, say that this system currently
   has no additional recommended course; do not repeat the student's existing courses and
   do not speculate that courses are closed/unavailable or that a credit cap caused it.
+- my_timetable returns schedule_kind. EXPECTED_PLAN is a manually seeded planning
+  snapshot, never actual registration: call it the expected timetable, use the expected_*
+  totals, and remind the student to apply choices in the university portal. REGISTERED is
+  registrar evidence. MIXED_REVIEW_REQUIRED must not be presented as one current timetable.
 - Section catalogue meetings do not label or separate lecture and laboratory components.
   You may compare whole sections and their times after receiving a course code, but never
   decide whether a lab can be changed independently from its lecture or whether the two are
   linked. State that this needs confirmation from the academic department or adviser.
 - For a request about a named section of a named course, call my_clash_free_sections.
-  Read currently_registered_sections and is_current_section: if the requested section is
-  already in the current timetable, say so directly. Never report that section data is
+  Read baseline_kind first. currently_registered_sections/is_current_section are registrar
+  evidence; expected_plan_sections/is_expected_plan_section are only planning evidence and
+  must be called expected, never registered/current. Never report that section data is
   missing when the tool returned sections_on_file greater than zero. Call catalogue rows
   "recorded sections", not "available sections": this result has no seat-availability fact.
 - Recommendations are proposals shown in this system. This system NEVER registers a real
@@ -142,6 +148,10 @@ Operating rules:
   evidence. Keep the prose concise and do not repeat every section/day/time row; the card
   shows all details and is read-only.
   Do not invent an option, section, meeting time, seat count, or live availability.
+- build_timetable_proposal returns baseline_kind plus neutral baseline_sections. REGISTERED
+  permits the compatibility current_* fields; EXPECTED_PLAN uses expected_plan_* and must
+  be called an expected plan, never current registration. MIXED_REVIEW_REQUIRED is a
+  review state and must not be flattened into a timetable proposal.
 - When build_timetable_proposal returns no_additional_courses=true, it means there was no
   requested or recommended target course left to add. Say that the current timetable is
   retained and no additional course was proposed. Do not invent Planner identities, call
@@ -338,7 +348,7 @@ def _humanise_internal_output_markers(answer: str, language: str) -> str:
         "recommend_courses": "محرك توصية المقررات",
         "graduation_progress": "محاكاة التقدم نحو التخرج",
         "my_clash_free_sections": "فحص الشعب غير المتعارضة",
-        "my_timetable": "جدولك الحالي",
+        "my_timetable": "بيانات جدولك",
         "my_progress": "تقدمك الأكاديمي",
         "my_plan_by_term": "خطة المقررات حسب الفصل",
         "get_student_context": "بياناتك الأكاديمية",
@@ -369,7 +379,7 @@ def _humanise_internal_output_markers(answer: str, language: str) -> str:
         "recommend_courses": "the course recommendation engine",
         "graduation_progress": "the graduation-progress simulation",
         "my_clash_free_sections": "the clash-free section check",
-        "my_timetable": "your current timetable",
+        "my_timetable": "your timetable data",
         "my_progress": "your academic progress",
         "my_plan_by_term": "your term-by-term plan",
         "get_student_context": "your academic context",
@@ -608,13 +618,31 @@ def _safe_section_answer(language: str, tool_results: list[dict[str, Any]]) -> s
     if not result:
         return ""
     term = str(result.get("compared_against_term") or "").strip()
+    baseline_kind = str(result.get("baseline_kind") or "REGISTERED")
+    if baseline_kind == "MIXED_REVIEW_REQUIRED":
+        return (
+            "تتضمن بيانات هذا الفصل تسجيلًا فعليًا وخطة متوقعة معًا، لذلك لا يمكن "
+            "إجراء فحص موثوق قبل مراجعة مصدر الجدول."
+            if language == "Arabic"
+            else "This term contains both registrar and expected-plan rows, so a reliable "
+            "section comparison cannot be made until the timetable source is reviewed."
+        )
+    expected_baseline = baseline_kind == "EXPECTED_PLAN"
     lines: list[str] = []
     for course in result.get("courses") or []:
         if not isinstance(course, dict):
             continue
         code = str(course.get("course_code") or "").strip()
         count = int(course.get("sections_on_file") or 0)
-        current = [str(value) for value in course.get("currently_registered_sections") or []]
+        current = [
+            str(value)
+            for value in (
+                course.get("expected_plan_sections")
+                if expected_baseline
+                else course.get("currently_registered_sections")
+            )
+            or []
+        ]
         free = [
             str(row.get("section") or "").strip()
             for row in course.get("clash_free") or []
@@ -631,7 +659,11 @@ def _safe_section_answer(language: str, tool_results: list[dict[str, Any]]) -> s
                 continue
             if current:
                 joined = "، ".join(current)
-                sentence = f"الشعبة {joined} لمقرر {code} موجودة بالفعل في جدولك الحالي"
+                sentence = (
+                    f"الشعبة {joined} لمقرر {code} موجودة في جدولك المتوقع"
+                    if expected_baseline
+                    else f"الشعبة {joined} لمقرر {code} موجودة بالفعل في جدولك الحالي"
+                )
                 if term:
                     sentence += f" للفصل {term}"
                 sentence += "."
@@ -641,14 +673,19 @@ def _safe_section_answer(language: str, tool_results: list[dict[str, Any]]) -> s
             else:
                 lines.append(f"يوجد للمقرر {code} عدد {count} من الشعب المسجلة في بيانات النظام.")
             if clashing:
-                lines.append("الشعب التي تتعارض مع جدولك الحالي: " + "، ".join(clashing) + ".")
+                label = "جدولك المتوقع" if expected_baseline else "جدولك الحالي"
+                lines.append(f"الشعب التي تتعارض مع {label}: " + "، ".join(clashing) + ".")
         else:
             if not count:
                 lines.append(f"No section for {code} is recorded in this system's data.")
                 continue
             if current:
                 joined = ", ".join(current)
-                sentence = f"Section {joined} of {code} is already in your current timetable"
+                sentence = (
+                    f"Section {joined} of {code} is in your expected timetable"
+                    if expected_baseline
+                    else f"Section {joined} of {code} is already in your current timetable"
+                )
                 if term:
                     sentence += f" for {term}"
                 sentence += "."
@@ -658,11 +695,16 @@ def _safe_section_answer(language: str, tool_results: list[dict[str, Any]]) -> s
             else:
                 lines.append(f"The system has {count} recorded sections for {code}.")
             if clashing:
-                lines.append(
-                    "Sections that clash with your current timetable: " + ", ".join(clashing) + "."
-                )
+                label = "expected timetable" if expected_baseline else "current timetable"
+                lines.append(f"Sections that clash with your {label}: " + ", ".join(clashing) + ".")
     if not lines:
         return ""
+    if expected_baseline:
+        lines.append(
+            "هذا جدول متوقع وليس تسجيلًا فعليًا في بوابة الجامعة."
+            if language == "Arabic"
+            else "This is an expected plan, not actual registration in the university portal."
+        )
     lines.append(
         "هذا فحص للجدول فقط؛ لم يسجّل النظام أو يغيّر أي شعبة في بوابة الجامعة."
         if language == "Arabic"

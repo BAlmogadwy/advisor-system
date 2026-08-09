@@ -3,6 +3,8 @@
 Usage:
     python manage.py scrape_students --csv data/students_list.csv
     python manage.py scrape_students --csv data/students_list.csv --concurrency 4 --save-html
+    python manage.py scrape_students --csv data/students_list.csv \
+        --empty-snapshot-year 1448 --empty-snapshot-term 1
 """
 
 from __future__ import annotations
@@ -87,6 +89,26 @@ def _elective_scope_for_program(
         and outcome["term"]
     }
     return student_ids, snapshots
+
+
+def _empty_snapshot_scope(options: dict[str, Any]) -> tuple[str, str]:
+    """Validate the optional operator-supplied term for empty timetables.
+
+    A confirmed-empty portal response contains no term metadata.  The scraper
+    can therefore clear an expected plan for that term only when the operator
+    supplies both parts of the target explicitly.
+    """
+    academic_year = str(options.get("empty_snapshot_year") or "").strip()
+    term = str(options.get("empty_snapshot_term") or "").strip()
+    if bool(academic_year) != bool(term):
+        raise CommandError(
+            "--empty-snapshot-year and --empty-snapshot-term must be supplied together."
+        )
+    if academic_year and not re.fullmatch(r"[0-9]{4}", academic_year):
+        raise CommandError("--empty-snapshot-year must be a four-digit academic year.")
+    if term and term not in {"1", "2", "3"}:
+        raise CommandError("--empty-snapshot-term must be 1, 2, or 3.")
+    return academic_year, term
 
 
 def _validate_study_plan(study_data: list[dict]) -> tuple[bool, str]:
@@ -269,6 +291,9 @@ def _process_student(
     timetable_html: str,
     program: str,
     section: str,
+    *,
+    empty_snapshot_year: str = "",
+    empty_snapshot_term: str = "",
 ) -> dict:
     """Parse scraped HTML and persist via Django ORM.  Pure sync."""
     from django.db import transaction
@@ -332,12 +357,16 @@ def _process_student(
         )
 
         if validated_timetable["schedule_state"] == "confirmed_empty_current_schedule":
-            clear_result = clear_student_section_snapshot(sid)
+            clear_result = clear_student_section_snapshot(
+                sid,
+                academic_year=empty_snapshot_year,
+                term=empty_snapshot_term,
+            )
             bridge_res = {
                 "ok": True,
                 "schedule_state": "confirmed_empty_current_schedule",
-                "academic_year": "",
-                "term": "",
+                "academic_year": empty_snapshot_year,
+                "term": empty_snapshot_term,
                 "parsed_rows": 0,
                 "mapped_sections": 0,
                 "missing_links": 0,
@@ -464,8 +493,29 @@ class Command(BaseCommand):
         parser.add_argument("--save-html", action="store_true")
         parser.add_argument("--max-retries", type=int, default=2)
         parser.add_argument("--debug-dir", default="data/debug_failures")
+        parser.add_argument(
+            "--empty-snapshot-year",
+            default="",
+            metavar="YYYY",
+            help=(
+                "Academic year whose expected-plan links should also be cleared "
+                "after a verified empty timetable; requires --empty-snapshot-term"
+            ),
+        )
+        parser.add_argument(
+            "--empty-snapshot-term",
+            default="",
+            choices=("1", "2", "3"),
+            help=(
+                "Term whose expected-plan links should also be cleared after a "
+                "verified empty timetable; requires --empty-snapshot-year"
+            ),
+        )
 
     def handle(self, *args: Any, **options: Any) -> None:
+        empty_snapshot_year, empty_snapshot_term = _empty_snapshot_scope(options)
+        options["empty_snapshot_year"] = empty_snapshot_year
+        options["empty_snapshot_term"] = empty_snapshot_term
         if not HAS_PLAYWRIGHT:
             self.stderr.write(
                 self.style.ERROR(
@@ -499,6 +549,8 @@ class Command(BaseCommand):
         max_retries = options["max_retries"]
         save_html = options["save_html"]
         debug_dir = options["debug_dir"]
+        empty_snapshot_year = str(options.get("empty_snapshot_year") or "")
+        empty_snapshot_term = str(options.get("empty_snapshot_term") or "")
 
         # Read CSV
         students = self._read_csv(csv_path)
@@ -540,6 +592,8 @@ class Command(BaseCommand):
                     max_retries,
                     save_html,
                     debug_dir,
+                    empty_snapshot_year=empty_snapshot_year,
+                    empty_snapshot_term=empty_snapshot_term,
                 )
             )
             for s in students
@@ -644,6 +698,9 @@ class Command(BaseCommand):
         max_retries: int,
         save_html: bool,
         debug_dir: str,
+        *,
+        empty_snapshot_year: str = "",
+        empty_snapshot_term: str = "",
     ) -> StudentScrapeOutcome:
         """Return an attributed success/failure outcome for one student."""
         async with sem:
@@ -680,6 +737,8 @@ class Command(BaseCommand):
                             timetable_html,
                             program,
                             section,
+                            empty_snapshot_year=empty_snapshot_year,
+                            empty_snapshot_term=empty_snapshot_term,
                         )
                         logger.info("[TT-LINK] %s: %s", student_id, bridge_res)
 

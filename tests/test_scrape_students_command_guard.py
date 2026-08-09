@@ -142,6 +142,26 @@ def test_handle_holds_blocking_snapshot_guard_for_entire_run(monkeypatch: Monkey
     assert events == ["guard_acquired", "run", "guard_released"]
 
 
+@pytest.mark.parametrize(
+    ("academic_year", "term"),
+    [("1448", ""), ("", "1")],
+)
+def test_empty_snapshot_scope_options_must_be_supplied_together(
+    monkeypatch: MonkeyPatch,
+    academic_year: str,
+    term: str,
+) -> None:
+    command = scrape_students.Command()
+    monkeypatch.setattr(scrape_students, "HAS_PLAYWRIGHT", False)
+
+    with pytest.raises(CommandError, match="must be supplied together"):
+        command.handle(
+            csv="students.csv",
+            empty_snapshot_year=academic_year,
+            empty_snapshot_term=term,
+        )
+
+
 def test_handle_refuses_to_run_when_blocking_guard_unexpectedly_fails(
     monkeypatch: MonkeyPatch,
 ) -> None:

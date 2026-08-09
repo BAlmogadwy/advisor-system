@@ -18,6 +18,9 @@
   const els = {
     term: q('spTerm'), courseCount: q('spCourseCount'), creditCount: q('spCreditCount'),
     creditCeiling: q('spCreditCeiling'), currentEmpty: q('spCurrentEmpty'),
+    currentHeading: q('spCurrentHeading'), currentSubtitle: q('spCurrentSubtitle'),
+    currentDetailsSummary: q('spCurrentDetailsSummary'), keepTitle: q('spKeepTitle'),
+    keepHelp: q('spKeepHelp'),
     currentSummary: q('spCurrentSummary'), currentDetails: q('spCurrentDetails'),
     currentGrid: q('spCurrentGrid'), search: q('spCourseSearch'), catalog: q('spCatalog'),
     catalogEmpty: q('spCatalogEmpty'), requested: q('spRequested'),
@@ -91,6 +94,7 @@
   let activeOptionIndex = 0;
   let confirmation = null;
   let busy = false;
+  let mixedBaseline = false;
 
   function csrf() {
     const token = document.querySelector('[name=csrfmiddlewaretoken]');
@@ -122,7 +126,7 @@
   function setBusy(state) {
     busy = state;
     root.classList.toggle('is-busy', state);
-    els.generate.disabled = state || effectiveCodes().length === 0;
+    els.generate.disabled = state || mixedBaseline || effectiveCodes().length === 0;
     els.generate.setAttribute('aria-busy', state ? 'true' : 'false');
   }
   function node(tag, className, text) {
@@ -181,6 +185,85 @@
   }
 
   function renderCurrent(workspace) {
+    const timetableKind = String(workspace.timetable_kind || 'REGISTERED').toUpperCase();
+    const expected = timetableKind === 'EXPECTED_PLAN';
+    mixedBaseline = timetableKind === 'MIXED_REVIEW_REQUIRED';
+    els.keep.disabled = mixedBaseline;
+    els.rebuild.disabled = mixedBaseline;
+    root.classList.toggle('has-mixed-timetable-baseline', mixedBaseline);
+    if (mixedBaseline) {
+      els.keep.checked = false;
+      els.rebuild.checked = false;
+      els.generate.disabled = true;
+      els.currentHeading.textContent = AR ? 'بيانات الجدول تحتاج مراجعة' : 'Timetable data needs review';
+      els.currentSubtitle.textContent = AR
+        ? 'تتضمن بيانات هذا الفصل تسجيلًا فعليًا وخطة متوقعة معًا. أُوقف البناء حتى لا تُعامل الخطة المتوقعة كتسجيل حقيقي.'
+        : 'This term contains both registrar and expected-plan rows. Building is paused so the expected plan is not treated as real registration.';
+      els.currentEmpty.textContent = AR
+        ? 'لا يمكن اعتماد خط أساس للجدول قبل مراجعة مصدر البيانات.'
+        : 'No timetable baseline can be trusted until its source is reviewed.';
+      els.currentDetailsSummary.textContent = AR
+        ? 'عرض الصفوف التي تحتاج مراجعة'
+        : 'Show rows requiring review';
+      els.keepTitle.textContent = AR ? 'البناء حول هذه الصفوف متوقف' : 'Build-around is paused';
+      els.keepHelp.textContent = AR
+        ? 'لا يمكن تثبيت صفوف من مصدرين مختلفين على أنها جدول حالي واحد.'
+        : 'Rows from two provenance classes cannot be fixed as one current timetable.';
+      T.inCurrent = AR ? 'مصدر مختلط' : 'Mixed source';
+      T.fixedCurrent = AR ? 'صف يحتاج مراجعة' : 'Row needs review';
+      T.stale = AR
+        ? 'تغيّرت بيانات الجدول المختلطة. يلزم مراجعة المصدر قبل البناء.'
+        : 'The mixed timetable data changed. Its source must be reviewed before building.';
+      T.freshWarning = T.stale;
+    } else if (expected) {
+      els.currentHeading.textContent = AR ? 'جدولك المتوقع' : 'Your expected timetable';
+      els.currentSubtitle.textContent = AR
+        ? 'خطة متوقعة للعرض فقط وليست تسجيلًا فعليًا في بوابة الجامعة.'
+        : 'A planning-only expected timetable, not actual registration in the university portal.';
+      els.currentEmpty.textContent = AR
+        ? 'لا توجد اجتماعات في الجدول المتوقع لهذا الفصل.'
+        : 'No meetings are recorded in the expected timetable for this term.';
+      els.currentDetailsSummary.textContent = AR
+        ? 'عرض الجدول الأسبوعي المتوقع'
+        : 'Show expected weekly timetable';
+      els.keepTitle.textContent = AR
+        ? 'ابنِ حول شُعبي المتوقعة'
+        : 'Build around my expected sections';
+      els.keepHelp.textContent = AR
+        ? 'يثبّت شُعب الخطة المتوقعة ويضع الاختيارات الأخرى حول أوقاتها؛ ولا يسجّل أي مقرر.'
+        : 'Fixes the expected-plan sections and fits other choices around them; nothing is registered.';
+      T.inCurrent = AR ? 'في جدولك المتوقع' : 'In your expected timetable';
+      T.fixedCurrent = AR ? 'شعبة متوقعة مثبتة' : 'Expected section fixed';
+      T.stale = AR
+        ? 'تغيّر جدولك المتوقع منذ بناء هذه الخيارات. أعد البناء لتحديثها.'
+        : 'Your expected timetable changed after these options were built. Build again to refresh them.';
+      T.freshWarning = AR
+        ? 'سيعرض النظام اقتراحًا قد يستخدم شُعبًا مختلفة عن جدولك المتوقع. لن يتغيّر أي تسجيل حقيقي.'
+        : 'The system may propose sections different from your expected timetable. No real registration will change.';
+    } else {
+      els.currentHeading.textContent = AR ? 'جدولك الحالي' : 'Your current timetable';
+      els.currentSubtitle.textContent = AR
+        ? 'مرجع للعرض فقط؛ لا يغيّر المخطط تسجيلك الحالي.'
+        : 'Shown only as a reference; the planner never changes your current registration.';
+      els.currentEmpty.textContent = AR
+        ? 'لا توجد اجتماعات حالية مسجلة لهذا الفصل في بياناتنا.'
+        : 'No current meetings are recorded for this term in our data.';
+      els.currentDetailsSummary.textContent = AR
+        ? 'عرض الجدول الأسبوعي الحالي'
+        : 'Show current weekly timetable';
+      els.keepTitle.textContent = AR ? 'ابنِ حول شُعبي الحالية' : 'Build around my current sections';
+      els.keepHelp.textContent = AR
+        ? 'يثبّت شُعبك الحالية ويضع الاختيارات الأخرى حول أوقاتها المسجّلة.'
+        : 'Fixes your current sections and fits other choices around their recorded times.';
+      T.inCurrent = AR ? 'في جدولك' : 'In your timetable';
+      T.fixedCurrent = AR ? 'شعبة حالية مثبتة' : 'Current section fixed';
+      T.stale = AR
+        ? 'تغيّر جدولك الحالي منذ بناء هذه الخيارات. أعد البناء لتحديثها.'
+        : 'Your current timetable changed after these options were built. Build again to refresh them.';
+      T.freshWarning = AR
+        ? 'سيعرض النظام اقتراحًا قد يستخدم شُعبًا مختلفة عن شُعبك الحالية. لن يتغيّر تسجيلك الحقيقي.'
+        : 'The system may propose sections different from your current ones. Your real registration will not change.';
+    }
     const rows = workspace.current_timetable || [];
     const meetings = rows.filter((row) => row.day && row.start && row.end)
       .map((row) => Object.assign({}, row, { source: 'current' }));

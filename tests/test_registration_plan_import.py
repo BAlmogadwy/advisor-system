@@ -250,10 +250,18 @@ def test_the_dry_run_reports_what_the_apply_would_delete(world: SectionWorld) ->
     against the real database it would have removed all 1081 with no number shown
     anywhere."""
     StudentTermSection.objects.create(
-        student_id=700001, academic_year=YEAR, term=TERM, term_section=world["solo"]
+        student_id=700001,
+        academic_year=YEAR,
+        term=TERM,
+        term_section=world["solo"],
+        source=f"registration_plan_{YEAR}_t{TERM}",
     )
     StudentTermSection.objects.create(
-        student_id=700001, academic_year=YEAR, term=TERM, term_section=world["s2"]
+        student_id=700001,
+        academic_year=YEAR,
+        term=TERM,
+        term_section=world["s2"],
+        source=f"registration_plan_{YEAR}_t{TERM}",
     )
     plan = build_plan(
         _rosters(("AI331", "AI:S1", "Mon 09:00-10:15; Wed 09:00-10:15", "", "-", 1, "")),
@@ -286,11 +294,8 @@ def test_the_written_count_is_measured_not_promised(world: SectionWorld) -> None
     )
 
 
-def test_a_cross_term_collision_is_refused_before_it_eats_a_row(world: SectionWorld) -> None:
-    """`StudentTermSection` is unique on `(student_id, term_section)` only, and
-    `TermSection` has no year or term — the same section rows are shared by every
-    term. Seeding term 2 for a student already in that section in term 1 collided,
-    was swallowed by `ignore_conflicts`, and was reported as written."""
+def test_the_same_physical_section_can_be_recorded_in_two_terms(world: SectionWorld) -> None:
+    """A real current row and an expected future row have distinct meanings."""
     StudentTermSection.objects.create(
         student_id=700001, academic_year="1447", term="2", term_section=world["s1"]
     )
@@ -300,8 +305,38 @@ def test_a_cross_term_collision_is_refused_before_it_eats_a_row(world: SectionWo
         YEAR,
         TERM,
     )
+    assert plan.ok, plan.problems
+    apply_plan(plan, YEAR, TERM)
+    assert set(
+        StudentTermSection.objects.filter(
+            student_id=700001,
+            term_section=world["s1"],
+        ).values_list("academic_year", "term")
+    ) == {("1447", "2"), (YEAR, TERM)}
+
+
+def test_expected_import_refuses_to_replace_real_target_term_rows(
+    world: SectionWorld,
+) -> None:
+    real = StudentTermSection.objects.create(
+        student_id=700001,
+        academic_year=YEAR,
+        term=TERM,
+        term_section=world["solo"],
+        source="scraper_timetable",
+    )
+    plan = build_plan(
+        _rosters(("AI331", "AI:S1", "Mon 09:00-10:15; Wed 09:00-10:15", "", "-", 1, "")),
+        _detail((700001, "AI", "AI331", "Core", "AI:S1", "", "", "", "")),
+        YEAR,
+        TERM,
+    )
+
     assert not plan.ok
-    assert any(p.code == "CROSS_TERM_COLLISION" for p in plan.problems), plan.problems
+    assert any(p.code == "TARGET_TERM_HAS_REGISTRAR_ROWS" for p in plan.problems)
+    with pytest.raises(ValueError, match="failed validation"):
+        apply_plan(plan, YEAR, TERM)
+    assert StudentTermSection.objects.filter(pk=real.pk).exists()
 
 
 def test_a_registration_with_no_student_id_is_refused(world: SectionWorld) -> None:
@@ -517,13 +552,17 @@ def test_a_course_that_HAS_sections_but_did_not_resolve_still_fails(
 
 
 def test_applying_replaces_only_the_students_in_the_plan(world: SectionWorld) -> None:
-    """A student the plan could not place keeps what they have. Two were blocked in
-    the real workbook; an import that never considered them must not empty them."""
+    """A student absent from the workbook keeps what they have; the replacement
+    boundary must not expand beyond students the imported detail sheet considered."""
     StudentTermSection.objects.create(
         student_id=700002, academic_year=YEAR, term=TERM, term_section=world["solo"]
     )
     StudentTermSection.objects.create(
-        student_id=700001, academic_year=YEAR, term=TERM, term_section=world["solo"]
+        student_id=700001,
+        academic_year=YEAR,
+        term=TERM,
+        term_section=world["solo"],
+        source=f"registration_plan_{YEAR}_t{TERM}",
     )
     plan = build_plan(
         _rosters(("AI331", "AI:S1", "Mon 09:00-10:15; Wed 09:00-10:15", "", "-", 1, "")),
@@ -545,6 +584,87 @@ def test_applying_replaces_only_the_students_in_the_plan(world: SectionWorld) ->
     )
 
 
+def test_reimport_removes_stale_links_for_students_now_only_on_nonphysical_rows(
+    world: SectionWorld,
+) -> None:
+    """The detail sheet, not successful section resolution, defines replacement.
+
+    A student's revised plan may contain only an uncovered online course or a
+    deliberately non-physical project. Neither produces a link, but both prove
+    that the workbook considered the student. Their old expected link must not
+    survive as if it were still part of the new plan.
+    """
+    for student_id in (700001, 700002):
+        StudentTermSection.objects.create(
+            student_id=student_id,
+            academic_year=YEAR,
+            term=TERM,
+            term_section=world["solo"],
+            source=f"registration_plan_{YEAR}_t{TERM}",
+        )
+
+    plan = build_plan(
+        _rosters(),
+        _detail(
+            (
+                700001,
+                "AI",
+                "GSE1",
+                "Online elective",
+                "online (evening)",
+                "Sun 15:50-17:30 (online)",
+                "",
+                "",
+                "",
+            ),
+            (700002, "AI", "AI491", "Project", "—", "no timeslot", "", "", ""),
+        ),
+        YEAR,
+        TERM,
+    )
+
+    assert plan.ok, [str(p) for p in plan.problems]
+    assert plan.students == set(), "non-physical rows must not become section links"
+    assert plan.replacement_scope == {700001, 700002}
+    assert plan.replaces == 2
+
+    result = apply_plan(plan, YEAR, TERM)
+
+    assert result == {"removed": 2, "written": 0, "students": 0}
+    assert not StudentTermSection.objects.filter(
+        student_id__in=(700001, 700002), academic_year=YEAR, term=TERM
+    ).exists()
+
+
+def test_nonphysical_workbook_student_still_blocks_a_registrar_collision(
+    world: SectionWorld,
+) -> None:
+    """No-link students are still in scope, so real registrar evidence protects
+    them from expected-plan replacement just like students receiving links.
+    """
+    real = StudentTermSection.objects.create(
+        student_id=700001,
+        academic_year=YEAR,
+        term=TERM,
+        term_section=world["solo"],
+        source="scraper_timetable",
+    )
+    plan = build_plan(
+        _rosters(),
+        _detail((700001, "AI", "AI491", "Project", "—", "no timeslot", "", "", "")),
+        YEAR,
+        TERM,
+    )
+
+    assert plan.students == set()
+    assert plan.replacement_scope == {700001}
+    assert not plan.ok
+    assert any(p.code == "TARGET_TERM_HAS_REGISTRAR_ROWS" for p in plan.problems)
+    with pytest.raises(ValueError, match="failed validation"):
+        apply_plan(plan, YEAR, TERM)
+    assert StudentTermSection.objects.filter(pk=real.pk).exists()
+
+
 def test_applying_reconciles_observed_programmes_for_old_and_new_sections(
     world: SectionWorld,
 ) -> None:
@@ -557,6 +677,7 @@ def test_applying_reconciles_observed_programmes_for_old_and_new_sections(
         academic_year=YEAR,
         term=TERM,
         term_section=world["solo"],
+        source=f"registration_plan_{YEAR}_t{TERM}",
     )
     TermSectionProgram.objects.create(
         term_section=world["solo"],
@@ -713,7 +834,11 @@ def test_a_short_write_rolls_back_instead_of_committing(
     from django.db.models.query import QuerySet
 
     kept = StudentTermSection.objects.create(
-        student_id=700001, academic_year=YEAR, term=TERM, term_section=world["solo"]
+        student_id=700001,
+        academic_year=YEAR,
+        term=TERM,
+        term_section=world["solo"],
+        source=f"registration_plan_{YEAR}_t{TERM}",
     )
     plan = build_plan(
         _rosters(

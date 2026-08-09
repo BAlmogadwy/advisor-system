@@ -162,6 +162,28 @@ def test_arabic_timetable_host_and_exact_table_have_explicit_rtl(home_student):
     assert re.search(r'<table class="student-timetable-table" dir="rtl">', body)
 
 
+def test_expected_plan_is_labelled_and_never_counted_as_registered(
+    home_student,
+    monkeypatch,
+):
+    StudentTermSection.objects.update(source="registration_plan_1448_t1")
+    monkeypatch.setattr(
+        "core.student_auth_views.recommend_next_courses",
+        lambda *_args, **_kwargs: [CURRENT],
+    )
+
+    response = _response(home_student)
+    body = response.content.decode()
+
+    assert response.context["timetable_is_expected"] is True
+    assert response.context["home_cards"]["registered_hours"]["known"] is False
+    assert response.context["recommendations_already_current"] == []
+    assert CURRENT in response.context["recommendations_already_expected"]
+    assert "My expected timetable" in body
+    assert "not an actual registration" in body
+    assert all(meeting["source"] == "planned" for meeting in response.context["timetable_meetings"])
+
+
 def test_home_states_the_read_only_boundary_and_links_recommendations(home_student):
     body = _response(home_student).content.decode()
     copy = re.sub(r"\s+", " ", body).lower()

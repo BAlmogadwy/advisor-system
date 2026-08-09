@@ -15,6 +15,8 @@ from core.services.section_programmes import (
 )
 from core.services.student_helpers import normalize_code
 
+EXPECTED_TIMETABLE_SOURCE_PREFIX = "registration_plan_"
+
 # Sections are gender-segregated and labelled with a leading gender tag, e.g.
 # "M7", "F3" (first character is the cohort gender). A student (Student.section
 # is "M" or "F") may only see/take sections of their own gender. Labels without
@@ -144,6 +146,30 @@ def ensure_student_section_schema() -> None:
     # Schema is managed by Django migrations.
     # Keep this function as a compatibility no-op for existing call sites.
     return
+
+
+def timetable_snapshot_kind(rows: list[dict[str, object]]) -> str:
+    """Classify timetable rows without confusing a plan with registration.
+
+    Imported registration plans deliberately share ``StudentTermSection`` with
+    registrar snapshots so every existing timetable renderer can use them. Their
+    provenance is still authoritative: ``registration_plan_*`` means expected,
+    while every other source is registration evidence. A mixed snapshot is named
+    explicitly instead of silently choosing the more reassuring interpretation.
+    """
+    sources = {
+        str(row.get("source") or "").strip().lower()
+        for row in rows
+        if str(row.get("source") or "").strip()
+    }
+    if not sources:
+        return "empty" if not rows else "registered"
+    expected = {source for source in sources if source.startswith(EXPECTED_TIMETABLE_SOURCE_PREFIX)}
+    if expected == sources:
+        return "expected"
+    if expected:
+        return "mixed"
+    return "registered"
 
 
 def get_student_term_baseline(
@@ -368,15 +394,27 @@ def replace_student_term_sections(
     source: str = "manual",
     *,
     replace_all_global: bool = False,
+    replace_source_across_terms: str = "",
 ) -> dict[str, int]:
     from django.db import transaction
 
+    normalized_section_ids = list(dict.fromkeys(int(section_id) for section_id in term_section_ids))
     with transaction.atomic():
         current_rows = StudentTermSection.objects.filter(
             student_id=student_id,
             term_section__scenario__isnull=True,
         )
-        if not replace_all_global:
+        if replace_source_across_terms:
+            # A registrar scrape is the authoritative CURRENT snapshot, but a
+            # registration-plan import is an expected FUTURE snapshot. Refresh
+            # every older row written by this scraper plus every row for the term
+            # that has now become current. Future plans for other terms survive;
+            # when their own term is scraped, the same-term branch replaces them.
+            current_rows = current_rows.filter(
+                Q(source=replace_source_across_terms)
+                | Q(academic_year=str(academic_year), term=str(term))
+            )
+        elif not replace_all_global:
             # Planner calls remain term-scoped: planning another term must not
             # erase the student's actual current registration snapshot.
             current_rows = current_rows.filter(
@@ -384,7 +422,7 @@ def replace_student_term_sections(
                 term=str(term),
             )
         affected_section_ids = set(current_rows.values_list("term_section_id", flat=True))
-        affected_section_ids.update(int(section_id) for section_id in term_section_ids)
+        affected_section_ids.update(normalized_section_ids)
         current_rows.delete()
 
         objs = [
@@ -395,30 +433,57 @@ def replace_student_term_sections(
                 term_section_id=int(sid),
                 source=source,
             )
-            for sid in term_section_ids
+            for sid in normalized_section_ids
         ]
-        StudentTermSection.objects.bulk_create(objs, ignore_conflicts=True)
+        StudentTermSection.objects.bulk_create(
+            objs,
+            # Registrar refreshes must never report a row that a uniqueness
+            # conflict silently discarded. Legacy/manual planner callers retain
+            # their historical ignore-conflicts behaviour outside this path.
+            ignore_conflicts=not bool(replace_source_across_terms),
+        )
         reconcile_observed_section_programs(affected_section_ids)
 
-    return {"inserted": len(term_section_ids)}
+    return {"inserted": len(normalized_section_ids)}
 
 
-def clear_student_section_snapshot(student_id: int | str) -> dict[str, int]:
-    """Clear one student's current registration snapshot, not shared sections.
+def clear_student_section_snapshot(
+    student_id: int | str,
+    *,
+    academic_year: str = "",
+    term: str = "",
+) -> dict[str, int]:
+    """Clear one student's scraped snapshot and an explicitly current plan.
 
     The timetable service supplies no year/term metadata when a verified student
     has no summer timetable. Student-facing readers treat the latest link as
-    current, so retaining any old links would falsely present a prior schedule
-    as today's registration. Shared ``TermSection`` rows, meetings, and any
-    scenario-owned student assignments remain.
+    current, so retaining an older ``scraper_timetable`` link would falsely
+    present a prior schedule as today's registration. Expected next-term rows
+    written by ``import_registration_plan`` normally remain. When an operator
+    explicitly supplies the current academic year and term, expected links for
+    that exact term are also stale and are cleared. Other expected terms, shared
+    ``TermSection`` rows, meetings, and scenario assignments always remain.
     """
     from django.db import transaction
+
+    normalized_year = str(academic_year or "").strip()
+    normalized_term = str(term or "").strip()
+    if bool(normalized_year) != bool(normalized_term):
+        raise ValueError("academic_year and term must be supplied together")
 
     with transaction.atomic():
         rows = StudentTermSection.objects.filter(
             student_id=student_id,
             term_section__scenario__isnull=True,
         )
+        removable = Q(source="scraper_timetable")
+        if normalized_year and normalized_term:
+            removable |= Q(
+                academic_year=normalized_year,
+                term=normalized_term,
+                source__startswith=EXPECTED_TIMETABLE_SOURCE_PREFIX,
+            )
+        rows = rows.filter(removable)
         affected_section_ids = set(rows.values_list("term_section_id", flat=True))
         deleted = rows.delete()[0]
         reconcile_observed_section_programs(affected_section_ids)

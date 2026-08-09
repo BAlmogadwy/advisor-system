@@ -1,4 +1,4 @@
-"""Seed registered timetables from an approved registration plan workbook.
+"""Seed expected next-term timetables from an approved registration plan workbook.
 
 Planning is side-effect-free: `build_plan()` parses, resolves and validates a
 deterministic plan. `apply_plan()` is the sole writer and applies only a validated
@@ -19,10 +19,13 @@ seating them at all.
 
 WHAT THIS WRITES INTO, AND WHY IT REFUSES SO MUCH
 
-`StudentTermSection` is the authoritative registered timetable. The student home
-screen, the adviser chat and the expected-versus-registered comparison all read
-it, so one wrong link propagates into three surfaces and contradicts nothing that
-would notice.
+`StudentTermSection` carries both snapshots. Academic year/term plus ``source``
+distinguish the expected plan (for example ``registration_plan_1448_t1``) from
+the registrar scrape (``scraper_timetable``). The student home screen, adviser
+chat and expected-versus-registered comparison all read it, so one wrong link
+propagates into three surfaces and contradicts nothing that would notice. A later
+scrape preserves future plan rows and replaces them only when that planned term
+itself becomes the current registrar snapshot.
 
 A data-integrity review of the first version found four of its seven claimed
 properties violated. Each is now enforced by the mechanism rather than asserted
@@ -101,7 +104,14 @@ class Plan:
     """What an apply would do. The same object the dry run prints."""
 
     links: list[dict[str, Any]] = field(default_factory=list)
+    #: Students who receive at least one physical-section link. Keep this count
+    #: separate from ``replacement_students``: a workbook student whose new plan
+    #: contains only a project, foundation retake, or uncovered online course has
+    #: no link to write, but their stale expected links still have to be removed.
     students: set[int] = field(default_factory=set)
+    #: Every validated student id present in the workbook detail sheet. This is
+    #: the authoritative replacement scope for the target expected term.
+    replacement_students: set[int] = field(default_factory=set)
     skipped_unplaceable: int = 0
     section_map: dict[tuple[str, str], Section] = field(default_factory=dict)
     #: course -> the registrations it could not carry, because NO section for
@@ -138,10 +148,21 @@ class Plan:
     def ok(self) -> bool:
         return not self.problems
 
+    @property
+    def replacement_scope(self) -> set[int]:
+        """Students whose target-term expected snapshot this plan replaces.
+
+        Include link recipients defensively so a directly constructed/tampered
+        ``Plan`` cannot write a link outside its delete, collision, or existence
+        checks. ``build_plan`` itself always places link recipients in both sets.
+        """
+        return self.replacement_students | self.students
+
     def summary(self) -> str:
         return (
             f"{len(self.links)} section links for {len(self.students)} students, "
-            f"REPLACING {self.replaces} existing row(s) for those students; "
+            f"{len(self.replacement_scope)} workbook student(s) in replacement scope, "
+            f"REPLACING {self.replaces} existing row(s) for that scope; "
             f"{self.detail_rows_read} detail rows read "
             f"({self.blank_rows} blank, {self.duplicate_rows} duplicate, "
             f"{self.skipped_unplaceable} with no timeslot); "
@@ -403,6 +424,13 @@ def build_plan(
             )
             continue
 
+        # Presence in the validated detail sheet makes this student's expected
+        # target-term snapshot authoritative even when none of their rows can be
+        # represented as a physical section. Without this separate scope, a
+        # re-import that changed a student to only Project/Foundation/uncovered
+        # rows left their previous expected sections visible indefinitely.
+        plan.replacement_students.add(student_id)
+
         kind = str(row[3] or "").strip()
         if kind in UNPLACEABLE_KINDS:
             plan.skipped_unplaceable += 1
@@ -488,7 +516,7 @@ def build_plan(
     plan.check_conservation()
     if plan.ok:
         plan.replaces = count_rows_to_replace(plan, academic_year, term)
-        _check_cross_term_collisions(plan, academic_year, term)
+        _check_target_registered_collisions(plan, academic_year, term)
     return plan
 
 
@@ -496,65 +524,66 @@ def count_rows_to_replace(plan: Plan, academic_year: str, term: str) -> int:
     """Existing rows an apply would DELETE. Computed by the same code that reports."""
     from core.models import StudentTermSection
 
-    if not plan.students:
+    scope = plan.replacement_scope
+    if not scope:
         return 0
     return StudentTermSection.objects.filter(
-        student_id__in=sorted(plan.students),
+        student_id__in=sorted(scope),
         academic_year=str(academic_year),
         term=str(term),
+        source__startswith="registration_plan_",
     ).count()
 
 
-def _check_cross_term_collisions(plan: Plan, academic_year: str, term: str) -> None:
-    """Refuse rather than let a uniqueness constraint eat rows in silence.
+def _check_target_registered_collisions(plan: Plan, academic_year: str, term: str) -> None:
+    """An expected-plan import must never replace registrar evidence.
 
-    `StudentTermSection` is unique on `(student_id, term_section)` ONLY, and
-    `TermSection` carries no year or term — the same 50 section rows are shared by
-    every term. So seeding term 2 for a student already seeded in term 1 collides:
-    the DELETE is year/term-scoped, the INSERT is not, and `ignore_conflicts` used
-    to swallow the difference and report the row as written.
+    Re-running an import is allowed to replace an earlier ``registration_plan_*``
+    snapshot. Once a real scrape exists for the target term, however, the term is
+    no longer an expected-only workspace and importing a plan would turn actual
+    registration back into a forecast. Refuse before the operator reaches apply.
     """
     from core.models import StudentTermSection
 
-    if not plan.links:
+    scope = plan.replacement_scope
+    if not scope:
         return
-    wanted = {(link["student_id"], link["term_section_id"]) for link in plan.links}
-    clashing = StudentTermSection.objects.filter(student_id__in=sorted(plan.students)).exclude(
-        academic_year=str(academic_year), term=str(term)
-    )
-    for student_id, section_id, year, other in clashing.values_list(
-        "student_id", "term_section_id", "academic_year", "term"
-    ):
-        if (student_id, section_id) in wanted:
-            plan.problems.append(
-                Problem(
-                    f"student {student_id}",
-                    "CROSS_TERM_COLLISION",
-                    f"section #{section_id} is already recorded for {year}/{other}, and the "
-                    "uniqueness constraint spans terms — this row cannot be written without "
-                    "removing that one",
-                )
+    registered = StudentTermSection.objects.filter(
+        student_id__in=sorted(scope),
+        academic_year=str(academic_year),
+        term=str(term),
+        term_section__scenario__isnull=True,
+    ).exclude(source__startswith="registration_plan_")
+    sample = list(registered.values_list("student_id", "source")[:5])
+    if sample:
+        plan.problems.append(
+            Problem(
+                f"term {academic_year}/{term}",
+                "TARGET_TERM_HAS_REGISTRAR_ROWS",
+                f"{registered.count()} non-plan row(s) already exist for students in this "
+                f"import (sample: {sample}); an expected plan may not replace them",
             )
+        )
 
 
 def check_students_exist(plan: Plan) -> list[int]:
-    """Student ids in the plan with no `Student` row. Never auto-created."""
+    """Student ids in the replacement scope with no `Student` row. Never created."""
     from core.models import Student
 
+    scope = plan.replacement_scope
     known = set(
-        Student.objects.filter(student_id__in=list(plan.students)).values_list(
-            "student_id", flat=True
-        )
+        Student.objects.filter(student_id__in=list(scope)).values_list("student_id", flat=True)
     )
-    return sorted(plan.students - known)
+    return sorted(scope - known)
 
 
 def apply_plan(plan: Plan, academic_year: str, term: str) -> dict[str, int]:
     """Write a validated plan atomically.
 
-    Replaces the term for THE STUDENTS IN THE PLAN ONLY. A student absent from the
-    workbook keeps whatever they have — the two the plan could not place are not
-    silently emptied by an import that never considered them.
+    Replaces the term for EVERY VALIDATED STUDENT IN THE WORKBOOK. A student absent
+    from the workbook keeps whatever they have. A student present with only a
+    project, foundation retake, or uncovered course has no new physical link, so
+    their stale expected links are removed rather than surviving the re-import.
 
     Every guard the command performs is repeated here. This function is exported,
     and `StudentTermSection.student_id` is a plain integer with no foreign key, so
@@ -584,11 +613,19 @@ def apply_plan(plan: Plan, academic_year: str, term: str) -> dict[str, int]:
         )
 
     with transaction.atomic():
-        rows_to_replace = StudentTermSection.objects.filter(
-            student_id__in=sorted(plan.students),
+        replacement_scope = plan.replacement_scope
+        target_rows = StudentTermSection.objects.select_for_update().filter(
+            student_id__in=sorted(replacement_scope),
             academic_year=str(academic_year),
             term=str(term),
+            term_section__scenario__isnull=True,
         )
+        registered_rows = target_rows.exclude(source__startswith="registration_plan_")
+        if registered_rows.exists():
+            raise ValueError(
+                "refusing to replace registrar rows with an expected registration plan"
+            )
+        rows_to_replace = target_rows.filter(source__startswith="registration_plan_")
         affected_section_ids = set(rows_to_replace.values_list("term_section_id", flat=True))
         affected_section_ids.update(int(link["term_section_id"]) for link in plan.links)
         removed = rows_to_replace.delete()[0]
@@ -618,6 +655,7 @@ def apply_plan(plan: Plan, academic_year: str, term: str) -> dict[str, int]:
             student_id__in=sorted(plan.students),
             academic_year=str(academic_year),
             term=str(term),
+            source=f"registration_plan_{academic_year}_t{term}",
         ).count()
 
         # INSIDE the transaction, and that is the whole point. Raising after the

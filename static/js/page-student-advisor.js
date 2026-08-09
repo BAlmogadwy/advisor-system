@@ -66,6 +66,7 @@
       ? 'مقترحات للتخطيط فقط — لا يتم حفظ جدول أو تسجيل مقرر هنا.'
       : 'Planning proposals only — nothing is saved and no course is registered here.',
     currentSections: AR ? 'الشعب الحالية المثبتة' : 'Current retained sections',
+    expectedSections: AR ? 'شُعب الخطة المتوقعة المثبتة' : 'Expected-plan sections retained',
     plannerOption: AR ? 'خيار المخطط' : 'Planner option',
     creditHours: AR ? 'ساعة' : 'credits',
     meetings: AR ? 'المواعيد' : 'Meetings',
@@ -75,6 +76,9 @@
     noAdditionalCourses: AR
       ? 'تم الإبقاء على جدولك الحالي؛ لا يوجد مقرر إضافي مطلوب أو موصى به لبناء خيار جديد.'
       : 'Your current timetable is retained; there is no requested or recommended additional course to build into a new option.',
+    noAdditionalExpectedCourses: AR
+      ? 'تم الإبقاء على جدولك المتوقع؛ لا يوجد مقرر إضافي مطلوب أو موصى به لبناء خيار جديد. هذه الخطة ليست تسجيلًا فعليًا.'
+      : 'Your expected timetable is retained; there is no requested or recommended additional course to build into a new option. This plan is not actual registration.',
 
     graduationMapTitle: AR ? 'مسار السيناريو حتى إكمال الخطة' : 'Scenario path to plan completion',
     graduationMapComplete: AR
@@ -1070,9 +1074,14 @@
     if (!presentation || presentation.kind !== 'timetable_proposals') return null;
     const alternatives = Array.isArray(presentation.alternatives)
       ? presentation.alternatives : [];
-    const current = Array.isArray(presentation.current_sections)
-      ? presentation.current_sections : [];
-    if (!alternatives.length && !current.length) return null;
+    const baselineKind = String(presentation.baseline_kind || 'REGISTERED').toUpperCase();
+    if (baselineKind === 'MIXED_REVIEW_REQUIRED') return null;
+    const baseline = Array.isArray(presentation.baseline_sections)
+      ? presentation.baseline_sections
+      : (baselineKind === 'EXPECTED_PLAN' && Array.isArray(presentation.expected_plan_sections)
+        ? presentation.expected_plan_sections
+        : (Array.isArray(presentation.current_sections) ? presentation.current_sections : []));
+    if (!alternatives.length && !baseline.length) return null;
 
     const wrap = el('section', 'sa-timetable');
     const dir = language === 'ar' ? 'rtl' : language === 'en' ? 'ltr' : (AR ? 'rtl' : 'ltr');
@@ -1087,11 +1096,13 @@
     wrap.appendChild(heading);
     wrap.appendChild(el('p', 'sa-tt-boundary', T.planningOnly));
 
-    if (current.length) {
+    if (baseline.length) {
       const retained = el('details', 'sa-tt-current');
-      retained.appendChild(el('summary', null, T.currentSections + ' (' + current.length + ')'));
+      const retainedLabel = baselineKind === 'EXPECTED_PLAN'
+        ? T.expectedSections : T.currentSections;
+      retained.appendChild(el('summary', null, retainedLabel + ' (' + baseline.length + ')'));
       const list = el('div', 'sa-tt-current-list');
-      current.forEach(function (course) {
+      baseline.forEach(function (course) {
         const row = el('div', 'sa-tt-current-row');
         row.appendChild(timetableCourseKey(course));
         if (course.course_name) row.appendChild(el('span', 'sa-tt-course-name', course.course_name));
@@ -1105,7 +1116,12 @@
     }
 
     if (!alternatives.length && presentation.no_additional_courses === true) {
-      wrap.appendChild(el('p', 'sa-tt-empty sa-tt-no-additional-courses', T.noAdditionalCourses));
+      wrap.appendChild(el(
+        'p',
+        'sa-tt-empty sa-tt-no-additional-courses',
+        baselineKind === 'EXPECTED_PLAN'
+          ? T.noAdditionalExpectedCourses : T.noAdditionalCourses
+      ));
     }
 
     const optionList = el('div', 'sa-tt-options');

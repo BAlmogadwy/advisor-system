@@ -113,6 +113,24 @@ def test_retaken_courses_appear_in_current_registrations():
     assert block["term"] == "2"
     assert block["source"] == "timetable_sections"
 
+
+def test_newer_expected_plan_never_replaces_latest_real_registration_context():
+    _make_retake_student()
+    expected_section = TermSection.objects.first()
+    StudentTermSection.objects.create(
+        student_id=SID,
+        academic_year="1448",
+        term="1",
+        term_section=expected_section,
+        source="registration_plan_1448_t1",
+    )
+
+    context = build_verified_student_context(student_id=SID)
+    block = context["course_evidence"]["current_term_registrations"]
+
+    assert (block["academic_year"], block["term"]) == ("1447", "2")
+    assert block["registered_course_count"] == 5
+
     by_code = {row["course_code"]: row for row in block["registrations"]}
     assert by_code["CS289"]["retake"] is True
     assert by_code["GS103"]["retake"] is True
@@ -539,6 +557,45 @@ def test_registered_credit_hours_counts_each_course_once():
         f"credit total {out['registered_credit_hours']} equals the per-meeting sum "
         f"{naive} — the multi-count is back"
     )
+
+
+def test_expected_timetable_uses_planning_totals_not_registered_totals():
+    from core.services.rbac import ROLE_SUPER_ADMIN
+    from core.services.virtual_advisor_capabilities import get_default_registry
+
+    _make_retake_student()
+    expected_section = TermSection.objects.get(course_key="CS289")
+    StudentTermSection.objects.all().delete()
+    StudentTermSection.objects.create(
+        student_id=SID,
+        academic_year="1448",
+        term="1",
+        term_section=expected_section,
+        source="registration_plan_1448_t1",
+    )
+
+    out = get_default_registry().execute(
+        "my_timetable",
+        {"student_id": SID},
+        scope={"role": ROLE_SUPER_ADMIN},
+        ctx={"academic_year": 1448, "term": 1},
+    )
+
+    assert out["schedule_kind"] == "EXPECTED_PLAN"
+    assert out["expected_course_count"] == 1
+    assert out["expected_credit_hours"] == 4
+    assert "registered_course_count" not in out
+    assert "not actual university registration" in out["note"]
+
+    from core.services.llm_remote_privacy import (
+        RemoteIdentityMap,
+        project_tool_result_for_remote,
+    )
+
+    remote = project_tool_result_for_remote("my_timetable", out, RemoteIdentityMap())
+    assert remote["schedule_kind"] == "EXPECTED_PLAN"
+    assert remote["is_expected_plan"] is True
+    assert "not actual university registration" in remote["note"]
 
 
 def test_graduation_progress_returns_the_fields_the_report_computes():
