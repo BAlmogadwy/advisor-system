@@ -1307,12 +1307,39 @@ def _assistant_prefill_for_model(model: str) -> str | None:
 
 _STUDENT_ID_RE = re.compile(r"\b\d{6,9}\b")
 _ARABIC_SCRIPT_RE = re.compile(r"[؀-ۿ]")
+_SAUDI_CONVERSATIONAL_RE = re.compile(
+    r"(?:(?<![؀-ۿ])(?:[وفبل])?(?:وش|ويش|ايش|أيش|إيش|وشلون|شلون|شنو|ابي|أبي|"
+    r"ابغى|أبغى|ابغا|ودي|مو|مب|ماني|الحين|دحين|عشان|يمدي|يمديني|"
+    r"يمديك|كذا|ترى|بدال|ناوي|ماخذ|باخذ|خذت|زبط|ظبط|ضبط|سوي|سوّي|"
+    r"اقدر|أقدر|عادي|يصير|ليه|ليش|لين|تكفى|تراني|توني)(?![؀-ۿ])|"
+    r"(?<![؀-ۿ])(?:[وفبل])?(?:ابيك|أبيك|ابغاك|أبغاك|سويلي|سوّيلي|"
+    r"زبطلي|ظبطلي|ضبطلي|عطني|اعطني|أعطني|خلني|وشرايك)(?![؀-ۿ])|"
+    r"(?<![؀-ۿ])(?:[وفبل])?هال[؀-ۿ]+(?![؀-ۿ])|كم\s+باقي|"
+    r"كم\s+(?:ترم|فصل).*?باقي|جدولي.*?فيه)",
+    re.IGNORECASE,
+)
 
 
 def _answer_language(question: str) -> str:
     """Deterministic answer-language pin (battery testing showed the model
     occasionally answering English questions in Arabic)."""
     return "Arabic" if _ARABIC_SCRIPT_RE.search(question or "") else "English"
+
+
+def _answer_style(question: str) -> str:
+    """Pin a student-facing register without asking the model to guess it.
+
+    Arabic answers always use a Saudi university context.  A small, high-signal
+    marker set decides whether to mirror an explicitly conversational question;
+    otherwise the answer remains professional Saudi Arabic.  This is deliberately
+    separate from language detection so English course titles and codes cannot
+    push an Arabic turn into an English style.
+    """
+    if _answer_language(question) != "Arabic":
+        return "Plain English"
+    if _SAUDI_CONVERSATIONAL_RE.search(question or ""):
+        return "Conversational Saudi Arabic"
+    return "Professional Saudi Arabic"
 
 
 def _mentioned_student_ids(answer: str) -> set[str]:

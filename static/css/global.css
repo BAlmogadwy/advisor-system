@@ -5902,6 +5902,7 @@ details > summary::-webkit-details-marker   { display: none; }
 
 .sec-id { min-width: 40px; font-weight: 700; }
 .sec-time { color: var(--t3); font-size: 11px; }
+.sec-program { color: var(--t3); font-size: 10px; white-space: nowrap; }
 .sec-capacity { margin-inline-start: auto; font-size: 11px; font-weight: 600; }
 
 .avail-summary-bar {
@@ -11636,6 +11637,40 @@ main[data-page="student-advisor"] > .content-wrap > .page-intro {
   color: var(--t2);
   font-size: .8rem;
 }
+.sa-tt-constraints {
+  margin: 0 0 .65rem;
+  padding: .55rem .6rem;
+  border: 1px solid var(--teal-border);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--teal-dim) 70%, var(--surface));
+}
+.sa-tt-constraints .sa-tt-subtitle { margin-top: 0; color: var(--brand-strong); }
+.sa-tt-constraint-chips { display: flex; flex-wrap: wrap; gap: .35rem; }
+.sa-tt-constraint-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: .2rem;
+  min-width: 0;
+  padding: .24rem .5rem;
+  border: 1px solid var(--teal-border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--t1);
+  font-size: .76rem;
+}
+.sa-tt-constraint-chip.is-pinned { border-style: dashed; }
+.sa-tt-constraint-alert {
+  margin: 0 0 .65rem;
+  padding: .58rem .65rem;
+  border: 1px solid color-mix(in srgb, var(--danger) 35%, var(--line));
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--danger) 7%, var(--surface));
+  color: var(--t1);
+  font-size: .8rem;
+}
+.sa-tt-constraint-alert .sa-tt-subtitle { margin-top: 0; color: var(--danger); }
+.sa-tt-constraint-alert ul { margin: 0; padding-inline-start: 1.2rem; }
+.sa-tt-constraint-alert li + li { margin-top: .25rem; }
 .sa-tt-current,
 .sa-tt-option {
   min-width: 0;

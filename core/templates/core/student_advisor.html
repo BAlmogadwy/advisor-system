@@ -83,17 +83,17 @@
       <div class="va-messages" id="saMessages" role="log" aria-busy="false">
         <div class="sa-empty-state" id="saEmptyState">
           <span class="sa-empty-mark" aria-hidden="true">AI</span>
-          <h3>{% if LANGUAGE_CODE == 'ar' %}كيف أساعدك اليوم؟{% else %}How can I help today?{% endif %}</h3>
+          <h3>{% if LANGUAGE_CODE == 'ar' %}كيف أقدر أساعدك اليوم؟{% else %}How can I help today?{% endif %}</h3>
           <p class="sa-muted" id="saWelcome">
             {% if LANGUAGE_CODE == 'ar' %}اسألني عن خطتك، مقرراتك، أو الأنظمة المعتمدة. الإجابة مبنية على سجلك الأكاديمي.{% else %}Ask about your plan, courses, or approved regulations. Answers use your academic record.{% endif %}
           </p>
           <div class="va-examples" id="saExamples">
             {% if LANGUAGE_CODE == 'ar' %}
-              <button type="button" data-sa-example="كم فصل دراسي متبقٍ لي تقريبًا حتى أنهي متطلبات الخطة؟"><span aria-hidden="true">◎</span><strong>كم فصل باقي؟</strong></button>
-              <button type="button" data-sa-example="ما المقررات التي أستطيع دراستها هذا الفصل؟"><span aria-hidden="true">＋</span><strong>ماذا أستطيع أن أدرس؟</strong></button>
-              <button type="button" data-sa-example="ابنِ جدولًا مقترحًا حول شعبي الحالية دون تعارضات."><span aria-hidden="true">▦</span><strong>ابنِ جدولًا مقترحًا</strong></button>
-              <button type="button" data-sa-example="هل توجد تعارضات في جدولي الحالي؟"><span aria-hidden="true">⇄</span><strong>هل جدولي متعارض؟</strong></button>
-              <button type="button" data-sa-example="هل يوجد مقرر في جدولي الحالي يمكن استبداله لتحسين خطة التخرج؟"><span aria-hidden="true">↗</span><strong>هل أستطيع تحسين خطة تخرجي؟</strong></button>
+              <button type="button" data-sa-example="كم ترم باقي لي تقريبًا لين أخلص متطلبات الخطة؟"><span aria-hidden="true">◎</span><strong>كم ترم باقي؟</strong></button>
+              <button type="button" data-sa-example="وش المقررات اللي أقدر آخذها هالترم؟"><span aria-hidden="true">＋</span><strong>وش أقدر آخذ؟</strong></button>
+              <button type="button" data-sa-example="أبغى جدول مقترح حول شعبي الحالية بدون تعارضات."><span aria-hidden="true">▦</span><strong>رتّب لي جدول</strong></button>
+              <button type="button" data-sa-example="جدولي الحالي فيه تعارضات؟"><span aria-hidden="true">⇄</span><strong>جدولي فيه تعارض؟</strong></button>
+              <button type="button" data-sa-example="فيه مقرر أقدر أبدله من جدولي الحالي عشان أتخرج أسرع؟"><span aria-hidden="true">↗</span><strong>أقدر أحسّن خطة تخرجي؟</strong></button>
               <button type="button" data-sa-example="كم مرة أقدر أنسحب من مقرر؟"><span aria-hidden="true">↩</span><strong>كم مرة أنسحب؟</strong></button>
             {% else %}
               <button type="button" data-sa-example="Approximately how many terms remain until I complete my degree plan?"><span aria-hidden="true">◎</span><strong>Terms remaining</strong></button>

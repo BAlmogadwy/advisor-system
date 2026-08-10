@@ -71,6 +71,13 @@
     creditHours: AR ? 'ساعة' : 'credits',
     meetings: AR ? 'المواعيد' : 'Meetings',
     section: AR ? 'الشعبة' : 'section',
+    enforcedConstraints: AR ? 'قيود الجدول المطلوبة' : 'Requested timetable constraints',
+    mustTake: AR ? 'مقرر إلزامي' : 'Must take',
+    pinnedSection: AR ? 'شعبة مثبتة' : 'Pinned section',
+    constraintProblems: AR ? 'تعذر تحقيق القيود المطلوبة' : 'Requested constraints could not be satisfied',
+    noValidConstrainedOption: AR
+      ? 'لم يُعرض جدول جزئي على أنه صالح. عدّل القيد المطلوب ثم أعد المحاولة.'
+      : 'No partial timetable is presented as valid. Adjust the requested constraint and try again.',
     unplaced: AR ? 'لم تُدرج في هذا الخيار' : 'Not placed in this option',
     noAdditions: AR ? 'لا توجد إضافات في هذا الخيار.' : 'This option has no additions.',
     noAdditionalCourses: AR
@@ -1081,7 +1088,14 @@
       : (baselineKind === 'EXPECTED_PLAN' && Array.isArray(presentation.expected_plan_sections)
         ? presentation.expected_plan_sections
         : (Array.isArray(presentation.current_sections) ? presentation.current_sections : []));
-    if (!alternatives.length && !baseline.length) return null;
+    const mustTake = Array.isArray(presentation.must_take_courses)
+      ? presentation.must_take_courses.filter(Boolean) : [];
+    const pinned = Array.isArray(presentation.pinned_sections)
+      ? presentation.pinned_sections : [];
+    const constraintFailures = Array.isArray(presentation.constraint_failures)
+      ? presentation.constraint_failures : [];
+    if (!alternatives.length && !baseline.length && !mustTake.length
+        && !pinned.length && !constraintFailures.length) return null;
 
     const wrap = el('section', 'sa-timetable');
     const dir = language === 'ar' ? 'rtl' : language === 'en' ? 'ltr' : (AR ? 'rtl' : 'ltr');
@@ -1095,6 +1109,56 @@
     }
     wrap.appendChild(heading);
     wrap.appendChild(el('p', 'sa-tt-boundary', T.planningOnly));
+
+    if (mustTake.length || pinned.length) {
+      const constraints = el('section', 'sa-tt-constraints');
+      constraints.appendChild(el('h5', 'sa-tt-subtitle', T.enforcedConstraints));
+      const chips = el('div', 'sa-tt-constraint-chips');
+      mustTake.forEach(function (code) {
+        const chip = el('span', 'sa-tt-constraint-chip is-required');
+        chip.appendChild(el('span', null, T.mustTake + ': '));
+        chip.appendChild(ltrNode('bdi', null, String(code)));
+        chips.appendChild(chip);
+      });
+      pinned.forEach(function (row) {
+        if (!row || !row.course_code || !row.section_label) return;
+        const chip = el('span', 'sa-tt-constraint-chip is-pinned');
+        chip.appendChild(el('span', null, T.pinnedSection + ': '));
+        chip.appendChild(ltrNode('bdi', null, String(row.course_code)));
+        chip.appendChild(document.createTextNode(' · '));
+        chip.appendChild(ltrNode('bdi', null, String(row.section_label)));
+        chips.appendChild(chip);
+      });
+      constraints.appendChild(chips);
+      wrap.appendChild(constraints);
+    }
+
+    if (constraintFailures.length) {
+      const alert = el('section', 'sa-tt-constraint-alert');
+      alert.setAttribute('role', 'alert');
+      alert.appendChild(el('h5', 'sa-tt-subtitle', T.constraintProblems));
+      const list = el('ul', null);
+      constraintFailures.forEach(function (row) {
+        const item = el('li');
+        if (row && row.course_code) {
+          item.appendChild(ltrNode('strong', null, String(row.course_code)));
+          if (row.section_label) {
+            item.appendChild(document.createTextNode(' · '));
+            item.appendChild(ltrNode('bdi', null, String(row.section_label)));
+          }
+        }
+        if (row && row.reason) {
+          if (item.childNodes.length) item.appendChild(document.createTextNode(' — '));
+          item.appendChild(document.createTextNode(String(row.reason)));
+        }
+        list.appendChild(item);
+      });
+      alert.appendChild(list);
+      if (!alternatives.length) {
+        alert.appendChild(el('p', 'sa-tt-empty', T.noValidConstrainedOption));
+      }
+      wrap.appendChild(alert);
+    }
 
     if (baseline.length) {
       const retained = el('details', 'sa-tt-current');

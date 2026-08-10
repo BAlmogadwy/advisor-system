@@ -71,7 +71,14 @@ class PlannerRequest:
     student_id: int
     year: int
     term: int
+    # Soft candidates: the builder may omit these when they do not fit.  This
+    # historical field used to be the only course list despite its hard-sounding
+    # name, so changing its meaning would silently make every recommendation a
+    # hard constraint for existing callers.
     must_include: tuple[str, ...] = ()
+    # True hard requirements.  Every returned alternative must contain each of
+    # these courses (or retain it from the baseline in keep-current mode).
+    required_courses: tuple[str, ...] = ()
     keep_current_sections: bool = True
     max_credits: int = 0
     # Draft-backed screens already materialise the recommendation into
@@ -352,6 +359,13 @@ def build_student_options(request: PlannerRequest) -> dict[str, Any]:
     # What the student asked for, then whatever their own plan recommends. Ordered so
     # a named course is never dropped in favour of a recommended one.
     wanted = [normalize_code(c) for c in request.must_include if str(c).strip()]
+    required = [normalize_code(c) for c in request.required_courses if str(c).strip()]
+    required_set = set(required)
+    pinned = {
+        normalize_code(code): int(section_id)
+        for code, section_id in request.fixed_sections
+        if normalize_code(code)
+    }
     recommended = (
         [
             normalize_code(c)
@@ -360,7 +374,10 @@ def build_student_options(request: PlannerRequest) -> dict[str, Any]:
         if request.include_recommendations
         else []
     )
-    codes = list(dict.fromkeys(wanted + recommended))
+    # A pin is a constraint on a candidate.  Include its course defensively even
+    # when a caller forgot to repeat it in the soft candidate list; whether it is
+    # REQUIRED remains a separate, explicit decision.
+    codes = list(dict.fromkeys(wanted + required + list(pinned) + recommended))
     baseline = get_student_term_baseline(student_id, str(request.year), str(request.term))
     current_mappings = _baseline_mappings(baseline) if request.keep_current_sections else []
     current_codes = {
@@ -368,6 +385,45 @@ def build_student_options(request: PlannerRequest) -> dict[str, Any]:
         for mapping in current_mappings
         if normalize_code(mapping.get("course_code") or "")
     }
+
+    # In around-current mode the retained section is immutable for this build.
+    # A pin to that same section is already satisfied; a pin to a different
+    # section cannot be honoured and must not degrade into a baseline-only result
+    # that looks as though the pin succeeded.
+    baseline_pin_failures: list[dict[str, Any]] = []
+    if request.keep_current_sections:
+        current_ids_by_code: dict[str, set[int]] = {}
+        for mapping in current_mappings:
+            code = normalize_code(mapping.get("course_code") or "")
+            section_id = mapping.get("term_section_id")
+            if not code or section_id in (None, ""):
+                continue
+            current_ids_by_code.setdefault(code, set()).add(int(section_id))
+        for code, pinned_id in pinned.items():
+            current_ids = current_ids_by_code.get(code)
+            if current_ids and current_ids != {pinned_id}:
+                baseline_pin_failures.append(
+                    {
+                        "course_code": code,
+                        "reason_code": "PIN_CONFLICTS_WITH_RETAINED_SECTION",
+                        "reason": (
+                            "The requested pinned section differs from the section retained "
+                            "in around-current mode. Use a from-scratch proposal to compare "
+                            "another section; nothing was changed."
+                        ),
+                    }
+                )
+    if baseline_pin_failures:
+        return {
+            "student_id": student_id,
+            "term": f"{request.year}/{request.term}",
+            "requested": codes,
+            "alternatives": [],
+            "unplaced": baseline_pin_failures,
+            "constraint_failures": baseline_pin_failures,
+            "generated": 0,
+            "reason": "HARD_CONSTRAINTS_UNSATISFIED",
+        }
 
     # The builder uses the baseline as an occupancy mask; it does not emit those
     # sections as selected mappings.  Asking it to schedule a held course therefore
@@ -378,6 +434,9 @@ def build_student_options(request: PlannerRequest) -> dict[str, Any]:
         [code for code in codes if code not in current_codes]
         if request.keep_current_sections
         else list(codes)
+    )
+    required_addition_codes = (
+        required_set - current_codes if request.keep_current_sections else set(required_set)
     )
     if not addition_codes and not current_mappings:
         return {
@@ -393,10 +452,13 @@ def build_student_options(request: PlannerRequest) -> dict[str, Any]:
     # A pin is a filter on one course's options; every other course keeps its full
     # list. The builder honours this before any solver runs, so mixing pinned and
     # free courses in one request needs nothing special here.
-    pinned = dict(request.fixed_sections)
     shortlist: list[dict[str, Any]] = []
     for code in addition_codes:
-        item: dict[str, Any] = {"course_code": code, "credits": _credit_for(code, credits)}
+        item: dict[str, Any] = {
+            "course_code": code,
+            "credits": _credit_for(code, credits),
+            "must_take": code in required_set,
+        }
         if code in pinned:
             item["pinned_sections"] = [{"term_section_id": int(pinned[code])}]
         shortlist.append(item)
@@ -409,6 +471,26 @@ def build_student_options(request: PlannerRequest) -> dict[str, Any]:
 
     generated = 0
     solver_options: list[dict[str, Any]] = []
+    solver_unscheduled: list[dict[str, Any]] = []
+    solver_constraint_failures: list[dict[str, Any]] = []
+
+    def _honours_hard_constraints(option: dict[str, Any]) -> bool:
+        selected = {
+            normalize_code(mapping.get("course_code") or ""): mapping
+            for mapping in (option.get("mappings") or [])
+            if normalize_code(mapping.get("course_code") or "")
+        }
+        if not required_addition_codes.issubset(selected):
+            return False
+        for code, pinned_id in pinned.items():
+            mapping = selected.get(code)
+            # A pin without must-take is only a filter: omission remains valid.
+            if mapping is None:
+                continue
+            if int(mapping.get("term_section_id") or 0) != int(pinned_id):
+                return False
+        return True
+
     if shortlist and not (request.keep_current_sections and requested_cap > 0 and solver_cap <= 0):
         result = run_solver(
             year=str(request.year),
@@ -420,13 +502,67 @@ def build_student_options(request: PlannerRequest) -> dict[str, Any]:
             gender=gender,
             program=program,
         )
-        solver_options = list(result.get("options") or [])
+        raw_solver_options = list(result.get("options") or [])
+        solver_options = [
+            option for option in raw_solver_options if _honours_hard_constraints(option)
+        ]
+        solver_unscheduled = list(result.get("unscheduled") or [])
+        solver_constraint_failures = list(
+            (result.get("summary") or {}).get("hard_constraint_failures") or []
+        )
         generated = len(solver_options)
+
+    # A required addition that could not be placed invalidates the whole proposed
+    # alternative.  Preserve an explanation, but never turn the retained baseline
+    # into a successful option missing that course.
+    if not solver_options and required_addition_codes:
+        unscheduled_by_code = {
+            normalize_code(row.get("course_code") or ""): row
+            for row in solver_unscheduled
+            if normalize_code(row.get("course_code") or "")
+        }
+        for code in sorted(required_addition_codes):
+            source = unscheduled_by_code.get(code) or {}
+            reason = str(source.get("reason") or "").strip()
+            if not reason:
+                reason = (
+                    "Could not fit with chosen constraints/objective"
+                    if requested_cap <= 0 or solver_cap > 0
+                    else "Could not fit within the remaining credit limit"
+                )
+            if code not in unscheduled_by_code:
+                solver_unscheduled.append({"course_code": code, "reason": reason})
+            if not any(
+                normalize_code(row.get("course_code") or "") == code
+                for row in solver_constraint_failures
+            ):
+                solver_constraint_failures.append(
+                    {
+                        "course_code": code,
+                        "reason": f"Required course could not be scheduled: {reason}",
+                    }
+                )
+
+    # ``planner_builder`` no longer disguises an empty mapping as a valid option.
+    # Retain its no-result diagnostics internally so this adapter can still
+    # explain globally unplaced courses; ``raw_options`` below filters this row
+    # out unless a real retained baseline makes it a meaningful alternative.
+    if not solver_options and solver_unscheduled and not required_addition_codes:
+        solver_options = [
+            {
+                "name": "",
+                "scheduled": 0,
+                "target": len(shortlist),
+                "mappings": [],
+                "unscheduled": solver_unscheduled,
+                "diagnostic_only": True,
+            }
+        ]
 
     # Keeping a real baseline is itself a useful alternative.  This also covers a
     # solver that found no addition and a cap already consumed by current courses.
     # The synthetic row has no A/B/C label because no Planner method produced it.
-    if current_mappings and not solver_options:
+    if current_mappings and not solver_options and not required_addition_codes:
         reason = (
             "Could not fit with chosen constraints/objective"
             if shortlist and requested_cap > 0 and solver_cap <= 0
@@ -556,8 +692,12 @@ def build_student_options(request: PlannerRequest) -> dict[str, Any]:
     # Global unplaced means no generated option could place the course. Courses
     # omitted only by A2/A3 belong to that alternative's `unplaced`, not here.
     unplaced: list[dict[str, Any]] = []
-    first = (solver_options or [{}])[0]
-    for entry in first.get("unscheduled") or []:
+    first_unscheduled = (
+        list(solver_options[0].get("unscheduled") or [])
+        if solver_options
+        else list(solver_unscheduled)
+    )
+    for entry in first_unscheduled:
         course_code = normalize_code(entry.get("course_code") or "")
         if course_code in placed_in_any_option:
             continue
@@ -576,6 +716,7 @@ def build_student_options(request: PlannerRequest) -> dict[str, Any]:
         "requested": codes,
         "alternatives": alternatives,
         "unplaced": unplaced,
+        "constraint_failures": solver_constraint_failures if not alternatives else [],
         # How many the builder produced before duplicates were removed, so a caller
         # can see that "3 alternatives" came from nine attempts rather than three.
         "generated": generated,
@@ -662,3 +803,139 @@ def validate_draft_selection(
         pinned[code] = section_id
 
     return codes, pinned
+
+
+@dataclass(frozen=True)
+class SectionLabelPin:
+    """A public pin request: stable course code + human-visible section label."""
+
+    course_code: str
+    section_label: str
+
+
+@dataclass(frozen=True)
+class ResolvedSectionPin:
+    """A validated current-snapshot pin, with its database id kept server-side."""
+
+    course_code: str
+    section_label: str
+    term_section_id: int
+
+
+class SectionPinResolutionError(ValueError):
+    """A label pin cannot be resolved without guessing or crossing student scope."""
+
+    def __init__(self, *, course_code: str, section_label: str, reason: str) -> None:
+        self.course_code = normalize_code(course_code)
+        self.section_label = str(section_label or "").strip().upper()
+        self.reason = str(reason)
+        super().__init__(self.reason)
+
+    def as_failure(self) -> dict[str, str]:
+        return {
+            "course_code": self.course_code,
+            "section_label": self.section_label,
+            "reason": self.reason,
+        }
+
+
+def resolve_section_label_pins(
+    student_id: int,
+    course_codes: list[str],
+    requested_pins: tuple[SectionLabelPin, ...],
+) -> tuple[ResolvedSectionPin, ...]:
+    """Resolve public section labels to private ids against the current snapshot.
+
+    Chat must never accept a model-supplied ``TermSection`` id.  Labels are resolved
+    afresh against global (``scenario IS NULL``) rows, then the existing draft
+    validator re-checks course-plan membership plus the canonical programme/cohort
+    rule.  There is deliberately no year/term predicate: ``TermSection`` is the
+    current global snapshot and stores no historical term dimension.
+    """
+    from core.models import TermSection
+
+    normalized_codes = [normalize_code(code) for code in course_codes if normalize_code(code)]
+    try:
+        validated_codes, _ = validate_draft_selection(student_id, normalized_codes, {})
+    except DraftRejected as exc:
+        raise SectionPinResolutionError(
+            course_code="",
+            section_label="",
+            reason=str(exc),
+        ) from exc
+
+    resolved: list[ResolvedSectionPin] = []
+    seen: dict[str, str] = {}
+    for requested in requested_pins:
+        code = normalize_code(requested.course_code)
+        label = str(requested.section_label or "").strip().upper()
+        if not code or not label:
+            raise SectionPinResolutionError(
+                course_code=code,
+                section_label=label,
+                reason="Each pinned section requires both a course code and a section label.",
+            )
+        previous = seen.get(code)
+        if previous is not None:
+            if previous == label:
+                continue
+            raise SectionPinResolutionError(
+                course_code=code,
+                section_label=label,
+                reason=(f"More than one exact section was pinned for {code}; choose one section."),
+            )
+        seen[code] = label
+
+        matches = list(
+            TermSection.objects.filter(
+                scenario__isnull=True,
+                course_key__iexact=code,
+                section__iexact=label,
+            ).order_by("id")[:2]
+        )
+        if not matches:
+            raise SectionPinResolutionError(
+                course_code=code,
+                section_label=label,
+                reason=(
+                    f"No current global section record matches {code} section {label}. "
+                    "This does not mean the university does not offer it."
+                ),
+            )
+        if len(matches) > 1:
+            raise SectionPinResolutionError(
+                course_code=code,
+                section_label=label,
+                reason=(
+                    f"More than one current section record matches {code} section {label}; "
+                    "the data must be reviewed before it can be pinned."
+                ),
+            )
+
+        section = matches[0]
+        try:
+            # Reuse the existing authority boundary instead of duplicating the
+            # plan, exact-course, programme and cohort rules here.
+            validate_draft_selection(
+                student_id,
+                validated_codes,
+                {code: int(section.id)},
+            )
+        except DraftRejected as exc:
+            raise SectionPinResolutionError(
+                course_code=code,
+                section_label=label,
+                reason=(
+                    f"{code} section {label} is not valid for this student's programme or cohort."
+                ),
+            ) from exc
+
+        resolved.append(
+            ResolvedSectionPin(
+                course_code=code,
+                section_label=str(section.section or label).strip().upper(),
+                term_section_id=int(section.id),
+            )
+        )
+
+    return tuple(resolved)

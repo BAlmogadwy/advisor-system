@@ -10,23 +10,33 @@ from django.test import override_settings
 from core.models import Student
 from core.services.advisor_principal import AdvisorPrincipal
 from core.services.llm_backend import ChatResult, LLMTimeout, ToolCallRequest, ToolChatResult
+from core.services.policy_contract import requires_policy_contract
 from core.services.rbac import ROLE_STUDENT
 from core.services.student_advisor_v2 import (
+    _GRADUATION_UNSUPPORTED_INFERENCE,
+    _UNCERTAINTY_MARKERS,
     FORBIDDEN_STUDENT_V2_TOOLS,
     STUDENT_V2_TOOL_NAMES,
+    _apply_saudi_register,
+    _claims_portal_action,
     _humanise_internal_output_markers,
     _internal_output_markers,
+    _misstates_variant_omission,
     _normalise_graduation_scenario_args,
     _normalise_timetable_proposal_args,
     _policy_grounding,
+    _requires_graduation_progress,
     _requires_graduation_what_if,
     _requires_section_check,
     _requires_timetable_proposal,
+    _section_answer_contradicts_evidence,
+    _speculates_about_empty_recommendations,
     answer_student_advisor,
     answer_student_advisor_v2,
     execute_student_v2_tool,
     student_v2_tool_schemas,
 )
+from core.services.virtual_advisor import _answer_style
 from core.services.virtual_advisor_capabilities import get_default_registry
 
 SID = 4901234
@@ -139,6 +149,227 @@ def test_v2_refuses_to_become_generic_when_the_student_record_is_missing():
         )
 
     assert client.messages == []
+
+
+@pytest.mark.parametrize(
+    ("question", "expected"),
+    [
+        ("وش أقدر أسجل هالترم؟", "Conversational Saudi Arabic"),
+        ("وأبغى أعرف جدولي", "Conversational Saudi Arabic"),
+        ("فودي بجدول خفيف", "Conversational Saudi Arabic"),
+        ("شلون أرتب جدولي؟", "Conversational Saudi Arabic"),
+        ("أبيك ترتب لي الجدول", "Conversational Saudi Arabic"),
+        ("سويلي جدول خفيف", "Conversational Saudi Arabic"),
+        ("عادي أنزل 21 ساعة؟", "Conversational Saudi Arabic"),
+        ("مب فاهم ليش المقرر مقفل", "Conversational Saudi Arabic"),
+        ("كم ترم باقي لي؟", "Conversational Saudi Arabic"),
+        ("جدولي الحالي فيه تعارضات؟", "Conversational Saudi Arabic"),
+        ("ما المقررات المتاحة لي؟", "Professional Saudi Arabic"),
+        ("Which courses can I take?", "Plain English"),
+    ],
+)
+def test_answer_style_mirrors_saudi_register(question: str, expected: str):
+    assert _answer_style(question) == expected
+
+
+def test_v2_pins_saudi_answer_style_in_the_model_message():
+    client = FakeClient(_answer_turn("أكيد، وش تحتاج؟"))
+
+    result = answer_student_advisor_v2(
+        question="هلا، وأبغى مساعدة في خطتي",
+        principal=_principal(),
+        academic_year=1448,
+        term=1,
+        llm_client=client,
+    )
+
+    prompt = client.messages[0][-1]["content"]
+    assert "answer_language: Arabic" in prompt
+    assert "answer_style: Conversational Saudi Arabic" in prompt
+    assert result["agent"]["answer_style"] == "Conversational Saudi Arabic"
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        "سوِّ لي أكثر من خيار للجدول، مو خيار واحد بس.",
+        "أبغى جدول يشمل AI352 وAI371.",
+        "سوي لي جدول خفيف للترم الجاي.",
+        "سويلي جدول خفيف للترم الجاي.",
+        "زبط لي جدول ثلاثة أيام.",
+        "أبي جدول ما فيه محاضرات بدري.",
+        "ودي بجدول بدون فراغات.",
+    ],
+)
+def test_saudi_timetable_requests_require_planner_evidence(question: str):
+    assert _requires_timetable_proposal(question) is True
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        "مو أبي جدول",
+        "مو أبي جدول جديد، أبي أعرف وش مسجل",
+        "ما أبغى بدائل، اعرض جدولي الحالي",
+        "اعرض لي جدولي المسجل حاليًا",
+        "جدولي الحالي فيه تعارضات؟",
+    ],
+)
+def test_non_building_saudi_timetable_questions_do_not_force_a_proposal(question: str):
+    assert _requires_timetable_proposal(question) is False
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        "كم ترم باقي لي؟",
+        "باقي لي كم فصل وأخلص الخطة؟",
+        "متى أخلص من الخطة؟",
+        "كم باقي وأصير خريج؟",
+        "أبي أخلص بأسرع وقت ممكن، كم ترم أقل شي باقي لي؟",
+        "كم فصل دراسي متبقٍ لي تقريبًا حتى أنهي متطلبات الخطة؟",
+    ],
+)
+def test_saudi_graduation_questions_require_simulation_evidence(question: str):
+    assert _requires_graduation_progress(question) is True
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        "متى أخلص اختباراتي؟",
+        "كم مادة أخلص هالترم؟",
+    ],
+)
+def test_non_graduation_completion_questions_do_not_start_a_simulation(question: str):
+    assert _requires_graduation_progress(question) is False
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        "إذا شلت DS341 هالترم، متى أتخرج؟",
+        "لو ما نزلت DS341 الحين، يطول تخرجي؟",
+        "لو حطيت MATH204 بدال DS341، وش يصير على تخرجي؟",
+        "أشيل DS341 وأحط MATH204 مكانها، أتخرج أسرع؟",
+    ],
+)
+def test_saudi_current_course_changes_require_what_if_evidence(question: str):
+    assert _requires_graduation_what_if(question) is True
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        "هل مكان محاضرة DS341 بيأثر على تخرجي؟",
+        "حطيت DS341 في جدولي، متى أتخرج؟",
+    ],
+)
+def test_non_change_graduation_questions_do_not_start_a_what_if(question: str):
+    assert _requires_graduation_what_if(question) is False
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        "يمديني أسجل 21 ساعة؟",
+        "عادي أنزل 21 ساعة؟",
+        "يصير آخذ 21 ساعة؟",
+        "من أكلم عشان أرفع عذر؟",
+        "النظام مو راضي يسجل المادة",
+    ],
+)
+def test_saudi_policy_questions_keep_policy_grounding(question: str):
+    assert requires_policy_contract(question) is True
+
+
+def test_bare_saudi_filler_does_not_create_a_policy_question():
+    assert requires_policy_contract("عادي") is False
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        "النظام مو راضي يعرض جدولي",
+        "الصفحة ما تخليني أشوف المحاضرات",
+        "وش أخذت الترم الماضي؟",
+        "لو حطيت MATH204 بدال DS341، وش بيصير على تخرجي؟",
+    ],
+)
+def test_saudi_data_and_technical_questions_do_not_become_policy_questions(question: str):
+    assert requires_policy_contract(question) is False
+
+
+def test_saudi_safety_phrasing_is_still_detected():
+    assert _claims_portal_action("تم تسجيلك في AI331") is True
+    assert _claims_portal_action("تمّ تسجيلك في AI331") is True
+    assert _claims_portal_action("سويت لك التسجيل") is True
+    assert _claims_portal_action("خلاص سجلتك في AI331") is True
+    assert _claims_portal_action("لم يتم تسجيلك في AI331") is False
+    assert _claims_portal_action("ما سجلتك في AI331") is False
+    assert _GRADUATION_UNSUPPORTED_INFERENCE.search("يمكن يحتاج ترم زيادة")
+    assert _UNCERTAINTY_MARKERS.search("الدليل ما وضّح هالنقطة")
+
+    section_result = {
+        "tool": "my_clash_free_sections",
+        "ok": True,
+        "courses": [{"course_code": "CS285", "sections_on_file": 3}],
+    }
+    assert _section_answer_contradicts_evidence(
+        "ما عندنا بيانات شعب لـ CS285.",
+        [section_result],
+    )
+    assert not _section_answer_contradicts_evidence(
+        "ما فيه تعارض في شعبة M3.",
+        [section_result],
+    )
+
+    empty_recommendations = {
+        "tool": "recommend_courses",
+        "ok": True,
+        "recommendations": [],
+    }
+    assert _speculates_about_empty_recommendations(
+        "المواد مو متاحة هالترم.",
+        [empty_recommendations],
+    )
+
+    variant_result = {
+        "tool": "build_timetable_proposal",
+        "ok": True,
+        "alternatives": [
+            {
+                "unplaced_courses": [
+                    {"course_code": "AI352", "reason_code": "OMITTED_IN_THIS_VARIANT"}
+                ]
+            }
+        ],
+    }
+    assert _misstates_variant_omission(
+        "ما فيه أي خيار يجمع كل المواد.",
+        [variant_result],
+    )
+
+
+def test_verified_fallback_can_use_conversational_saudi_without_changing_facts():
+    formal = (
+        "تقدّر المحاكاة أنك تحتاج إلى 3 فصول إضافية. "
+        "الحد الأدنى هو فصلان، ولا يضمن الطرح المستقبلي أو المقاعد. "
+        "هذا سيناريو للقراءة فقط، ولم يتغير سجلك."
+    )
+
+    conversational = _apply_saudi_register(
+        formal,
+        "Arabic",
+        "Conversational Saudi Arabic",
+    )
+
+    assert conversational.startswith("بحسب المحاكاة، باقي لك تقريبًا 3 فصول إضافية")
+    assert "الحد الأدنى هو فصلان" in conversational
+    assert "لا يضمن الطرح المستقبلي أو المقاعد" in conversational
+    assert "هذا مجرد سيناريو للقراءة فقط" in conversational
+    assert "ما تغيّر سجلك" in conversational
+    assert _apply_saudi_register(formal, "Arabic", "Professional Saudi Arabic") == formal
 
 
 def test_named_course_and_section_requires_fresh_section_evidence():
@@ -261,7 +492,7 @@ def test_section_contradiction_falls_back_to_verified_server_text(monkeypatch):
     )
 
     assert "M3" in result["answer"]
-    assert "موجودة بالفعل في جدولك الحالي" in result["answer"]
+    assert "موجودة فعلًا في جدولك الحالي" in result["answer"]
     assert "لا توجد شعب" not in result["answer"]
     assert result["agent"]["section_safe_fallback_used"] is True
 
@@ -339,6 +570,12 @@ def test_explicit_timetable_edits_require_real_planner_evidence(question):
             ["explicit_credit_cap"],
         ),
         (
+            "أبي جدول 15 ساعة.",
+            {},
+            {"max_credits": 15},
+            ["explicit_credit_cap"],
+        ),
+        (
             "ابنِ جدولًا من الصفر وتجاهل جدولي الحالي.",
             {"mode": "around_current"},
             {"mode": "from_scratch"},
@@ -359,6 +596,16 @@ def test_timetable_arguments_follow_explicit_student_constraints(
 
     assert arguments == expected
     assert normalisations == reasons
+
+
+def test_timetable_gap_hours_are_not_misread_as_a_credit_cap():
+    arguments, normalisations = _normalise_timetable_proposal_args(
+        "أبغى جدول فيه 3 ساعات فراغ بين المحاضرات.",
+        {},
+    )
+
+    assert arguments == {}
+    assert normalisations == []
 
 
 def test_internal_evidence_labels_are_rewritten_for_the_student(monkeypatch):
@@ -576,6 +823,36 @@ def test_current_course_graduation_questions_require_what_if_evidence(question):
             {},
             {"search_better_replacements": True},
             "open_replacement_search",
+        ),
+        (
+            "إذا شلت DS341 هالترم، متى أتخرج؟",
+            {},
+            {"remove_current_courses": ["DS341"]},
+            "explicit_omission",
+        ),
+        (
+            "لو ما نزلت DS٣٤١ الحين، يطول تخرجي؟",
+            {},
+            {"remove_current_courses": ["DS341"]},
+            "explicit_omission",
+        ),
+        (
+            "لو حطيت MATH204 بدال DS341، وش يصير؟",
+            {},
+            {
+                "remove_current_courses": ["DS341"],
+                "add_current_courses": ["MATH204"],
+            },
+            "explicit_replacement",
+        ),
+        (
+            "أشيل DS341 وأحط MATH204 مكانها، أتخرج أسرع؟",
+            {},
+            {
+                "remove_current_courses": ["DS341"],
+                "add_current_courses": ["MATH204"],
+            },
+            "explicit_replacement",
         ),
     ],
 )

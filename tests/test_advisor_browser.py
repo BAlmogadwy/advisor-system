@@ -399,6 +399,9 @@ class AdvisorBrowserTests(StaticLiveServerTestCase):
             "planning_term": "1448/1",
             "mode": "from_scratch",
             "can_save": True,  # the server normaliser must force this off
+            "must_take_courses": ["CS211"],
+            "pinned_sections": [{"course_code": "CS211", "section_label": "M2"}],
+            "constraints_satisfied": True,
             "current_sections": [
                 {
                     "course_code": "AI221",
@@ -467,6 +470,10 @@ class AdvisorBrowserTests(StaticLiveServerTestCase):
         assert card.get_attribute("aria-label") == "Timetable alternatives"
         assert page.locator(".sa-tt-option").count() == 2
         assert page.locator(".sa-tt-option").nth(0).get_attribute("open") is not None
+        assert page.locator(".sa-tt-constraint-chip").count() == 2
+        constraint_text = page.locator(".sa-tt-constraints").text_content()
+        assert "Must take: CS211" in constraint_text
+        assert "Pinned section: CS211" in constraint_text
         assert "A1 / B1 / C1" in page.locator(".sa-tt-option-name").nth(0).inner_text()
         assert "10:30–11:45" in page.locator(".sa-tt-option").nth(0).inner_text()
         assert page.locator(".sa-timetable button").count() == 0
@@ -799,6 +806,28 @@ class AdvisorBrowserTests(StaticLiveServerTestCase):
         initial_height = composer.bounding_box()["height"]
         composer.fill("First line\nSecond line\nThird line")
         assert composer.bounding_box()["height"] > initial_height
+
+    def test_arabic_empty_state_uses_natural_saudi_starter_questions(self):
+        page = self._page(
+            locale="ar",
+            extra_http_headers={"Accept-Language": "ar"},
+        )
+        page.context.add_cookies(
+            [{"name": "django_language", "value": "ar", "url": self.live_server_url}]
+        )
+        self._open(page)
+
+        assert page.locator("#saEmptyState h3").inner_text() == "كيف أقدر أساعدك اليوم؟"
+        examples = page.locator("#saExamples [data-sa-example]")
+        prompts = examples.evaluate_all("nodes => nodes.map(node => node.dataset.saExample)")
+        assert prompts == [
+            "كم ترم باقي لي تقريبًا لين أخلص متطلبات الخطة؟",
+            "وش المقررات اللي أقدر آخذها هالترم؟",
+            "أبغى جدول مقترح حول شعبي الحالية بدون تعارضات.",
+            "جدولي الحالي فيه تعارضات؟",
+            "فيه مقرر أقدر أبدله من جدولي الحالي عشان أتخرج أسرع؟",
+            "كم مرة أقدر أنسحب من مقرر؟",
+        ]
 
     def test_new_answer_thinks_then_reveals_prose_before_evidence(self):
         page = self._page(viewport={"width": 1280, "height": 800})

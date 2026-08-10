@@ -237,6 +237,31 @@ def normalise_presentation(payload: Any) -> dict[str, Any]:
     current_sections = baseline_sections if baseline_kind == "REGISTERED" else []
     expected_plan_sections = baseline_sections if baseline_kind == "EXPECTED_PLAN" else []
 
+    must_take_courses = [
+        _text(code, 32).upper()
+        for code in _items(payload.get("must_take_courses"), _MAX_COURSES)
+        if _text(code, 32)
+    ]
+    pinned_sections = [
+        {
+            "course_code": _text(row.get("course_code"), 32).upper(),
+            "section_label": _text(row.get("section_label") or row.get("section"), 32).upper(),
+        }
+        for row in _items(payload.get("pinned_sections"), _MAX_COURSES)
+        if isinstance(row, dict)
+        and _text(row.get("course_code"), 32)
+        and _text(row.get("section_label") or row.get("section"), 32)
+    ]
+    constraint_failures = [
+        {
+            "course_code": _text(row.get("course_code"), 32).upper(),
+            "section_label": _text(row.get("section_label"), 32).upper(),
+            "reason": _text(row.get("reason"), 500),
+        }
+        for row in _items(payload.get("constraint_failures"), _MAX_COURSES)
+        if isinstance(row, dict)
+    ]
+
     alternatives = []
     for row in _items(payload.get("alternatives"), _MAX_ALTERNATIVES):
         if not isinstance(row, dict):
@@ -305,7 +330,13 @@ def normalise_presentation(payload: Any) -> dict[str, Any]:
         current_sections = []
         expected_plan_sections = []
 
-    if not alternatives and not baseline_sections:
+    if (
+        not alternatives
+        and not baseline_sections
+        and not must_take_courses
+        and not pinned_sections
+        and not constraint_failures
+    ):
         return {}
     return {
         "kind": KIND_TIMETABLE,
@@ -320,6 +351,10 @@ def normalise_presentation(payload: Any) -> dict[str, Any]:
         "current_sections": current_sections,
         "expected_plan_sections": expected_plan_sections,
         "alternatives": alternatives,
+        "must_take_courses": must_take_courses,
+        "pinned_sections": pinned_sections,
+        "constraints_satisfied": payload.get("constraints_satisfied") is True,
+        "constraint_failures": constraint_failures,
         "no_additional_courses": payload.get("no_additional_courses") is True,
         # Server-owned constants, never copied from a model or client.
         "can_save": False,
@@ -350,6 +385,10 @@ def timetable_presentation_from_tool_results(
                 "current_sections": result.get("current_sections"),
                 "expected_plan_sections": result.get("expected_plan_sections"),
                 "alternatives": result.get("alternatives"),
+                "must_take_courses": result.get("must_take_courses"),
+                "pinned_sections": result.get("pinned_sections"),
+                "constraints_satisfied": result.get("constraints_satisfied"),
+                "constraint_failures": result.get("constraint_failures"),
                 "no_additional_courses": result.get("no_additional_courses"),
             }
         )

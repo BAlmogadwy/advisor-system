@@ -2090,20 +2090,45 @@ def _exec_build_my_timetable(
 
     options = result.get("options") or []
     if not options:
+        raw_unplaced = result.get("unscheduled") or []
+        translated_unplaced: list[dict[str, Any]] = []
+        for entry in raw_unplaced:
+            reason_code, explanation = _translate_unplaced(entry.get("reason"))
+            translated_unplaced.append(
+                {
+                    "course_code": entry.get("course_code"),
+                    "reason_code": reason_code,
+                    "reason": explanation,
+                }
+            )
+        if not translated_unplaced:
+            translated_unplaced = [
+                {
+                    "course_code": course_code,
+                    "reason_code": None,
+                    "reason": "No valid timetable satisfies the current constraints.",
+                }
+                for course_code in codes
+            ]
+        reason_codes = ", ".join(
+            sorted(
+                {
+                    str(entry.get("reason_code") or "NO_VALID_TIMETABLE")
+                    for entry in translated_unplaced
+                }
+            )
+        )
         return {
             "ok": True,
-            **_facts(
-                [],
-                [
-                    {"course_code": c, "reason_code": None, "reason": "No plan could be built."}
-                    for c in codes
-                ],
-            ),
+            **_facts([], translated_unplaced),
             "alternatives_considered": 0,
             "note": (
-                "No timetable could be built from the sections on file. Any section under "
-                "retained_sections remains part of the stored baseline. Read baseline_kind: "
-                "EXPECTED_PLAN means planning evidence and must not be called registered."
+                "No timetable could be built from the sections on file. Unplaced reason "
+                f"codes: {reason_codes}. NOT_ON_FILE means only that this system has no "
+                "section record for the course, never that the university does not offer it. "
+                "Any section under retained_sections remains part of the stored baseline. "
+                "Read baseline_kind: EXPECTED_PLAN means planning evidence and must not be "
+                "called registered."
             ),
             "tool": "build_my_timetable",
         }
@@ -2160,8 +2185,11 @@ def _exec_build_timetable_proposal(
     from core.services.student_planner import (
         DEFAULT_CREDITS,
         PlannerRequest,
+        SectionLabelPin,
+        SectionPinResolutionError,
         build_student_options,
         permitted_course_codes,
+        resolve_section_label_pins,
         validate_draft_selection,
     )
     from core.services.student_sections import get_student_term_baseline
@@ -2192,10 +2220,167 @@ def _exec_build_timetable_proposal(
             "error": "course_codes must be a list.",
             "tool": "build_timetable_proposal",
         }
+
+    raw_required = args.get("must_take_courses") or []
+    if not isinstance(raw_required, list):
+        return {
+            "ok": False,
+            "error": "must_take_courses must be a list.",
+            "must_take_courses": [],
+            "pinned_sections": [],
+            "constraints_satisfied": False,
+            "constraint_failures": [
+                {
+                    "course_code": "",
+                    "section_label": "",
+                    "reason": "must_take_courses must be a list of course codes.",
+                }
+            ],
+            "tool": "build_timetable_proposal",
+        }
+    required: list[str] = []
+    for raw_code in raw_required:
+        code = normalize_code(raw_code)
+        if not code:
+            return {
+                "ok": False,
+                "error": "Every must-take course must have a course code.",
+                "must_take_courses": required,
+                "pinned_sections": [],
+                "constraints_satisfied": False,
+                "constraint_failures": [
+                    {
+                        "course_code": "",
+                        "section_label": "",
+                        "reason": "Every must-take course must have a course code.",
+                    }
+                ],
+                "tool": "build_timetable_proposal",
+            }
+        if code not in required:
+            required.append(code)
+
+    raw_pins = args.get("pinned_sections") or []
+    if not isinstance(raw_pins, list):
+        return {
+            "ok": False,
+            "error": "pinned_sections must be a list.",
+            "must_take_courses": required,
+            "pinned_sections": [],
+            "constraints_satisfied": False,
+            "constraint_failures": [
+                {
+                    "course_code": "",
+                    "section_label": "",
+                    "reason": (
+                        "pinned_sections must be a list of course-code and section-label pairs."
+                    ),
+                }
+            ],
+            "tool": "build_timetable_proposal",
+        }
+    requested_pins: list[SectionLabelPin] = []
+    public_pins: list[dict[str, str]] = []
+    pin_by_code: dict[str, str] = {}
+    for raw_pin in raw_pins:
+        if not isinstance(raw_pin, dict) or set(raw_pin) - {"course_code", "section_label"}:
+            failure = {
+                "course_code": "",
+                "section_label": "",
+                "reason": ("Each pinned section must contain only course_code and section_label."),
+            }
+            return {
+                "ok": False,
+                "error": failure["reason"],
+                "must_take_courses": required,
+                "pinned_sections": public_pins,
+                "constraints_satisfied": False,
+                "constraint_failures": [failure],
+                "tool": "build_timetable_proposal",
+            }
+        code = normalize_code(raw_pin.get("course_code") or "")
+        label = str(raw_pin.get("section_label") or "").strip().upper()
+        if not code or not label:
+            failure = {
+                "course_code": code,
+                "section_label": label,
+                "reason": "Each pinned section requires a course code and a section label.",
+            }
+            return {
+                "ok": False,
+                "error": failure["reason"],
+                "must_take_courses": required,
+                "pinned_sections": public_pins,
+                "constraints_satisfied": False,
+                "constraint_failures": [failure],
+                "tool": "build_timetable_proposal",
+            }
+        previous = pin_by_code.get(code)
+        if previous is not None:
+            if previous == label:
+                continue
+            failure = {
+                "course_code": code,
+                "section_label": label,
+                "reason": f"More than one exact section was pinned for {code}; choose one.",
+            }
+            return {
+                "ok": False,
+                "error": failure["reason"],
+                "must_take_courses": required,
+                "pinned_sections": public_pins,
+                "constraints_satisfied": False,
+                "constraint_failures": [failure],
+                "tool": "build_timetable_proposal",
+            }
+        pin_by_code[code] = label
+        requested_pins.append(SectionLabelPin(course_code=code, section_label=label))
+        public_pins.append({"course_code": code, "section_label": label})
+
+    # Pins constrain a candidate but do not make it required.  Add each pinned
+    # course to the candidate set so the pin is meaningful; only
+    # must_take_courses receives the hard must-take flag.
+    explicit_codes = [*raw_codes, *required, *pin_by_code]
     try:
-        requested, _ = validate_draft_selection(int(student_id), raw_codes, {})
+        requested, _ = validate_draft_selection(int(student_id), explicit_codes, {})
     except ValueError as exc:
-        return {"ok": False, "error": str(exc), "tool": "build_timetable_proposal"}
+        failure = {
+            "course_code": "",
+            "section_label": "",
+            "reason": str(exc),
+        }
+        return {
+            "ok": False,
+            "error": str(exc),
+            "must_take_courses": required,
+            "pinned_sections": public_pins,
+            "constraints_satisfied": False,
+            "constraint_failures": [failure],
+            "tool": "build_timetable_proposal",
+        }
+
+    try:
+        resolved_pins = resolve_section_label_pins(
+            int(student_id),
+            requested,
+            tuple(requested_pins),
+        )
+    except SectionPinResolutionError as exc:
+        return {
+            "ok": False,
+            "error": exc.reason,
+            "must_take_courses": required,
+            "pinned_sections": public_pins,
+            "constraints_satisfied": False,
+            "constraint_failures": [exc.as_failure()],
+            "tool": "build_timetable_proposal",
+        }
+    # Echo the canonical labels actually resolved from the current global
+    # snapshot.  Internal ids remain below this boundary.
+    public_pins = [
+        {"course_code": pin.course_code, "section_label": pin.section_label}
+        for pin in resolved_pins
+    ]
 
     program = str(
         Student.objects.filter(student_id=student_id).values_list("program", flat=True).first()
@@ -2218,6 +2403,41 @@ def _exec_build_timetable_proposal(
         )
     baseline_section_rows = baseline_sections(baseline)
     held_codes = [normalize_code(row.get("course_code") or "") for row in baseline_section_rows]
+    resolved_pin_by_code = {pin.course_code: pin for pin in resolved_pins}
+    if mode == "around_current":
+        held_labels_by_code: dict[str, set[str]] = {}
+        for row in baseline_section_rows:
+            code = normalize_code(row.get("course_code") or "")
+            if not code:
+                continue
+            held_labels_by_code.setdefault(code, set()).add(
+                str(row.get("section") or "").strip().upper()
+            )
+        for code, pin in resolved_pin_by_code.items():
+            held_labels = held_labels_by_code.get(code)
+            if held_labels and held_labels != {pin.section_label}:
+                failure = {
+                    "course_code": code,
+                    "section_label": pin.section_label,
+                    "reason": (
+                        f"{code} is retained in section "
+                        f"{', '.join(sorted(label for label in held_labels if label)) or '(blank)'}; "
+                        f"section {pin.section_label} cannot be pinned in around-current mode. "
+                        "Use a from-scratch proposal to compare another section. Nothing was changed."
+                    ),
+                }
+                return {
+                    "ok": False,
+                    "error": failure["reason"],
+                    "tool": "build_timetable_proposal",
+                    "planning_term": f"{year}/{term}",
+                    "mode": mode,
+                    "baseline_kind": baseline_kind,
+                    "must_take_courses": required,
+                    "pinned_sections": public_pins,
+                    "constraints_satisfied": False,
+                    "constraint_failures": [failure],
+                }
     if mode == "around_current":
         planned_codes = [
             code
@@ -2255,14 +2475,87 @@ def _exec_build_timetable_proposal(
             year=int(year),
             term=int(term),
             must_include=tuple(planned_codes),
+            required_courses=tuple(required),
             keep_current_sections=mode == "around_current",
             max_credits=cap,
             include_recommendations=False,
+            fixed_sections=tuple((pin.course_code, pin.term_section_id) for pin in resolved_pins),
         )
     )
 
+    required_set = set(required)
+    raw_result_alternatives = list(result.get("alternatives") or [])
+
+    def _alternative_honours_constraints(alternative: dict[str, Any]) -> bool:
+        sections_by_code: dict[str, set[str]] = {}
+        for row in alternative.get("courses") or []:
+            code = normalize_code(row.get("course_code") or "")
+            if not code:
+                continue
+            sections_by_code.setdefault(code, set()).add(
+                str(row.get("section") or "").strip().upper()
+            )
+        if not required_set.issubset(sections_by_code):
+            return False
+        for code, label in pin_by_code.items():
+            selected_labels = sections_by_code.get(code)
+            # Pin-only courses remain optional, but any selected instance must be
+            # the exact requested section.
+            if selected_labels is not None and selected_labels != {label}:
+                return False
+        return True
+
+    valid_result_alternatives = [
+        alternative
+        for alternative in raw_result_alternatives
+        if _alternative_honours_constraints(alternative)
+    ]
+
+    constraint_failures: list[dict[str, str]] = []
+
+    def _append_constraint_failure(code: str, reason: str) -> None:
+        normalized = normalize_code(code)
+        failure = {
+            "course_code": normalized,
+            "section_label": pin_by_code.get(normalized, ""),
+            "reason": str(reason or "A required timetable constraint could not be satisfied."),
+        }
+        identity = (failure["course_code"], failure["section_label"])
+        if any(
+            (row["course_code"], row["section_label"]) == identity for row in constraint_failures
+        ):
+            return
+        constraint_failures.append(failure)
+
+    if required_set and not valid_result_alternatives:
+        unplaced_by_code = {
+            normalize_code(row.get("course_code") or ""): str(row.get("reason") or "")
+            for row in (result.get("unplaced") or [])
+            if normalize_code(row.get("course_code") or "")
+        }
+        for row in result.get("constraint_failures") or []:
+            code = normalize_code(row.get("course_code") or "")
+            if code in required_set:
+                _append_constraint_failure(code, str(row.get("reason") or ""))
+        for code in sorted(required_set):
+            _append_constraint_failure(
+                code,
+                unplaced_by_code.get(code)
+                or "No valid timetable satisfies this required course under the current constraints.",
+            )
+
+    constraints_satisfied = not constraint_failures
+    no_additional_courses = mode == "around_current" and not planned_codes
+    if no_additional_courses:
+        # The shared planner deliberately treats a retained baseline as one safe
+        # fallback alternative.  In chat, however, that baseline already has its
+        # own section and there is no target coverage to compare.  Showing it a
+        # second time creates a fake 5/5 "proposal" and used to double both the
+        # course and credit totals.
+        valid_result_alternatives = []
+
     all_codes = set(held_codes) | set(planned_codes)
-    for alternative in result.get("alternatives") or []:
+    for alternative in valid_result_alternatives:
         all_codes.update(
             normalize_code(row.get("course_code") or "") for row in alternative.get("courses") or []
         )
@@ -2287,7 +2580,16 @@ def _exec_build_timetable_proposal(
     baseline_credits = sum(int(row.get("credits") or 0) for row in baseline_safe)
 
     alternatives = []
-    for index, alternative in enumerate(result.get("alternatives") or [], start=1):
+    for index, alternative in enumerate(valid_result_alternatives, start=1):
+        raw_course_rows = [
+            row for row in (alternative.get("courses") or []) if isinstance(row, dict)
+        ]
+        has_source_metadata = any("source" in row for row in raw_course_rows)
+        visible_course_rows = (
+            [row for row in raw_course_rows if row.get("source") != "current"]
+            if mode == "around_current" and has_source_metadata
+            else raw_course_rows
+        )
         courses = [
             {
                 "course_code": str(row.get("course_code") or ""),
@@ -2295,8 +2597,16 @@ def _exec_build_timetable_proposal(
                 "section": str(row.get("section") or ""),
                 "credits": int(row.get("credits") or DEFAULT_CREDITS),
             }
-            for row in alternative.get("courses") or []
+            for row in visible_course_rows
         ]
+        raw_meeting_rows = [
+            row for row in (alternative.get("meetings") or []) if isinstance(row, dict)
+        ]
+        visible_meeting_rows = (
+            [row for row in raw_meeting_rows if row.get("source") != "current"]
+            if mode == "around_current" and has_source_metadata
+            else raw_meeting_rows
+        )
         meetings = [
             {
                 "course_code": str(row.get("course_code") or ""),
@@ -2306,9 +2616,34 @@ def _exec_build_timetable_proposal(
                 "start": str(row.get("start") or ""),
                 "end": str(row.get("end") or ""),
             }
-            for row in alternative.get("meetings") or []
+            for row in visible_meeting_rows
         ]
-        proposed_credits = int(alternative.get("credit_hours") or 0)
+        raw_credit_hours = int(alternative.get("credit_hours") or 0)
+        if mode == "around_current" and has_source_metadata:
+            proposed_credits = max(0, raw_credit_hours - baseline_credits)
+            total_credit_hours = raw_credit_hours
+            held_course_count = len({code for code in held_codes if code})
+            scheduled_courses = max(
+                0, int(alternative.get("scheduled_courses") or 0) - held_course_count
+            )
+            target_courses = max(0, int(alternative.get("target_courses") or 0) - held_course_count)
+            course_count = int(alternative.get("course_count") or 0)
+        else:
+            proposed_credits = raw_credit_hours
+            total_credit_hours = proposed_credits + (
+                baseline_credits if mode == "around_current" else 0
+            )
+            scheduled_courses = int(
+                alternative.get("scheduled_courses")
+                if alternative.get("scheduled_courses") is not None
+                else len(courses)
+            )
+            target_courses = int(
+                alternative.get("target_courses")
+                if alternative.get("target_courses") is not None
+                else len(planned_codes)
+            )
+            course_count = len(courses) + (len(baseline_safe) if mode == "around_current" else 0)
         planner_options = [
             str(name).strip().upper()
             for name in alternative.get("planner_options") or []
@@ -2329,22 +2664,12 @@ def _exec_build_timetable_proposal(
                 "planner_options": planner_options,
                 "courses": courses,
                 "meetings": meetings,
-                "scheduled_courses": int(
-                    alternative.get("scheduled_courses")
-                    if alternative.get("scheduled_courses") is not None
-                    else len(courses)
-                ),
-                "target_courses": int(
-                    alternative.get("target_courses")
-                    if alternative.get("target_courses") is not None
-                    else len(planned_codes)
-                ),
+                "scheduled_courses": scheduled_courses,
+                "target_courses": target_courses,
                 "unplaced_courses": alternative_unplaced,
-                "course_count": len(courses)
-                + (len(baseline_safe) if mode == "around_current" else 0),
+                "course_count": course_count,
                 "proposed_credit_hours": proposed_credits,
-                "total_credit_hours": proposed_credits
-                + (baseline_credits if mode == "around_current" else 0),
+                "total_credit_hours": total_credit_hours,
                 "days_on_campus": int(alternative.get("days_on_campus") or 0),
                 "days": list(alternative.get("days") or []),
                 "earliest_start": alternative.get("earliest_start"),
@@ -2361,7 +2686,6 @@ def _exec_build_timetable_proposal(
         }
         for row in result.get("unplaced") or []
     ]
-    no_additional_courses = mode == "around_current" and not planned_codes
     return {
         "ok": True,
         "tool": "build_timetable_proposal",
@@ -2370,6 +2694,10 @@ def _exec_build_timetable_proposal(
         "baseline_kind": baseline_kind,
         "student_requested_courses": requested,
         "system_recommended_courses": recommended,
+        "must_take_courses": required,
+        "pinned_sections": public_pins,
+        "constraints_satisfied": constraints_satisfied,
+        "constraint_failures": constraint_failures,
         "baseline_sections": baseline_safe,
         "baseline_credit_hours": baseline_credits,
         # Compatibility fields remain truthful.  They are populated only when
@@ -2389,7 +2717,9 @@ def _exec_build_timetable_proposal(
         # The Planner always attempts A1-A3, B1-B3 and C1-C3. Identical section
         # sets are collapsed for chat readability, while their exact Planner
         # names remain on each distinct alternative above.
-        "alternatives_generated": int(result.get("generated") or len(alternatives)),
+        "alternatives_generated": (
+            0 if no_additional_courses else int(result.get("generated") or len(alternatives))
+        ),
         "distinct_alternatives": len(alternatives),
         "registration_action": "STUDENT_MANUAL_PORTAL_ONLY",
         "can_save": False,
@@ -2400,7 +2730,10 @@ def _exec_build_timetable_proposal(
             "baseline is REGISTERED or EXPECTED_PLAN; expected rows must never be called "
             "registered/current. around_current keeps baseline_sections fixed and alternatives "
             "list only the proposed additions. from_scratch "
-            "rebuilds the whole candidate course set. planner_options are the exact A1-C3 "
+            "rebuilds the whole candidate course set. must_take_courses and pinned_sections "
+            "are the exact hard constraints used for this build. If constraints_satisfied is "
+            "false, explain constraint_failures and do not present a partial timetable as "
+            "valid. planner_options are the exact A1-C3 "
             "identities emitted by the Planner; multiple names on one alternative mean those "
             "generator runs produced the same timetable. Name each distinct alternative in "
             "prose with those identities and coverage. The interface renders every actual "
@@ -3155,8 +3488,12 @@ def build_default_registry() -> AdvisorCapabilityRegistry:
                 "one alternative mean those runs found the same schedule. Each alternative "
                 "has its own scheduled/target counts and unplaced_courses; show the Planner "
                 "identity even when zero additions were placed, and preserve each unplaced "
-                "reason rather than calling every omission a clash. Never answer such "
-                "a request by saying section times or clash detection are unavailable: call "
+                "reason rather than calling every omission a clash. Use must_take_courses "
+                "for courses required in every result. Use "
+                "pinned_sections with course_code + section_label to restrict a course to "
+                "one exact recorded section; add the course to must_take_courses too when "
+                "that exact section is required in every result. Never answer such a request "
+                "by saying section times or clash detection are unavailable: call "
                 "this tool. This tool never saves, applies, registers, drops, or reserves."
             ),
             parameters={
@@ -3178,8 +3515,36 @@ def build_default_registry() -> AdvisorCapabilityRegistry:
                         "type": "array",
                         "items": {"type": "string"},
                         "description": (
-                            "Optional course codes the student explicitly wants included; "
-                            "official recommendations are considered as well."
+                            "Optional candidate course codes. The Planner may omit a "
+                            "candidate when it does not fit; official recommendations are "
+                            "considered as additional candidates."
+                        ),
+                    },
+                    "must_take_courses": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": (
+                            "Hard required course codes. Every returned alternative must "
+                            "contain each course (or retain it from the around-current "
+                            "baseline); otherwise no alternative is returned as valid."
+                        ),
+                    },
+                    "pinned_sections": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "course_code": {"type": "string"},
+                                "section_label": {"type": "string"},
+                            },
+                            "required": ["course_code", "section_label"],
+                            "additionalProperties": False,
+                        },
+                        "description": (
+                            "Exact section filters named by course code and visible section "
+                            "label, for example AI331/M2. A pin does not by itself make the "
+                            "course required; also list it in must_take_courses when every "
+                            "alternative must contain it. Never send a database section id."
                         ),
                     },
                     "max_credits": {

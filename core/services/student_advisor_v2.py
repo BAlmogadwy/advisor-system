@@ -30,10 +30,12 @@ from core.services.advisor_presentations import (
 from core.services.advisor_principal import AdvisorPrincipal
 from core.services.advisor_remote_boundary import boundary_for_scope
 from core.services.llm_backend import LLMError, UsageTotals, get_llm_client
+from core.services.llm_remote_privacy import fold_digits
 from core.services.policy_contract import requires_policy_contract
 from core.services.rbac import ROLE_STUDENT
 from core.services.virtual_advisor import (
     _answer_language,
+    _answer_style,
     _assistant_prefill_for_client,
     _bad_citations,
     _credit_policy_evidence_citations,
@@ -82,6 +84,13 @@ clear, practical answer.
 
 Operating rules:
 - Answer in the language named in the latest user message.
+- Follow the supplied answer_style. For Arabic, speak like a clear Saudi academic
+  adviser and mirror the student's formality. In conversational Saudi Arabic, use
+  familiar wording such as «وش»، «تقدر»، «هالترم»، and «الحين» naturally when it
+  fits, without forcing slang, caricaturing the dialect, or repeating greetings.
+  In professional Saudi Arabic, use warm, direct standard Arabic without slang.
+  Keep official academic terms, policy wording, citations, course codes, and
+  numbers precise. Do not drift into Egyptian, Levantine, or Maghrebi phrasing.
 - Use tools for every claim about this student's record, degree plan, prerequisites,
   recommendations, credit position, graduation outlook, adviser, or university rules.
 - You may call several tools and combine their evidence. Ask one short clarification only
@@ -111,12 +120,18 @@ Operating rules:
   You may compare whole sections and their times after receiving a course code, but never
   decide whether a lab can be changed independently from its lecture or whether the two are
   linked. State that this needs confirmation from the academic department or adviser.
-- For a request about a named section of a named course, call my_clash_free_sections.
-  Read baseline_kind first. currently_registered_sections/is_current_section are registrar
-  evidence; expected_plan_sections/is_expected_plan_section are only planning evidence and
-  must be called expected, never registered/current. Never report that section data is
-  missing when the tool returned sections_on_file greater than zero. Call catalogue rows
-  "recorded sections", not "available sections": this result has no seat-availability fact.
+- For a read-only question about a named section of a named course—whether it is recorded,
+  whether it clashes, or which section fits—call my_clash_free_sections. A request to PIN an
+  exact section while building a timetable is different: call build_timetable_proposal with
+  pinned_sections=[{course_code, section_label}] and put that course in must_take_courses, so
+  the exact pinned section is required in every returned option. Do not call both tools merely
+  because a pin request contains the word "section"; the proposal builder supplies the
+  verified section evidence for that build. Read baseline_kind first.
+  currently_registered_sections/is_current_section are registrar evidence;
+  expected_plan_sections/is_expected_plan_section are only planning evidence and must be
+  called expected, never registered/current. Never report that section data is missing when
+  the tool returned sections_on_file greater than zero. Call catalogue rows "recorded
+  sections", not "available sections": this result has no seat-availability fact.
 - Recommendations are proposals shown in this system. This system NEVER registers a real
   course, saves/applies a university timetable, reserves a seat, or changes the main portal.
   If asked to register, save, apply, or confirm courses, explain that you can prepare and
@@ -128,6 +143,14 @@ Operating rules:
   build_timetable_proposal. Use mode=around_current when current sections must stay fixed
   and mode=from_scratch when the student asks for a fresh arrangement. Never say that
   timetable times or clash detection are unavailable when this tool can answer.
+- Preserve hard timetable constraints exactly. Pass explicitly mandatory courses in
+  must_take_courses. Pass an exact requested section as a course_code/section_label item in
+  pinned_sections—never invent or request a database section id. A pinned course in a
+  pin-and-build request is also must-take: it and that exact section must appear in every
+  valid option. Other sections of that course are ignored. If the course cannot be placed in
+  its pinned section, report that no valid option satisfies the request; never present an
+  unpinned or partial option as if it did. If a pin does not identify exactly one course and
+  one section, ask one short clarification instead of building an unconstrained timetable.
 - When build_timetable_proposal returns alternatives, name each distinct option with its
   exact Planner identity from planner_options (A1-A3, B1-B3, C1-C3), coverage, and important
   differences. Several Planner identities on one alternative mean those generator runs found
@@ -225,6 +248,12 @@ _PORTAL_ACTION_CLAIMS = (
     re.compile(r"(?:لقد\s+)?حفظت\s+لك\s+(?:الجدول|الخطة)"),
     re.compile(r"(?:لقد\s+)?(?:طبقت|أكدت|أرسلت)\s+لك\s+(?:الجدول|الخطة|التسجيل)"),
     re.compile(r"حجزت\s+لك\s+(?:مقعد|مكان)"),
+    re.compile(
+        r"(?:(?<![؀-ۿ])(?<!لم )(?<!ما )تم[ً-ْ]*|(?<![؀-ۿ])(?<!ما )صار)\s+"
+        r"(?:تسجيلك|حفظ\s+جدولك|تطبيق\s+جدولك|تأكيد\s+تسجيلك)"
+    ),
+    re.compile(r"(?<!ما )(?:سويت|سو[ّ]?يت|خلصت)\s+لك\s+(?:التسجيل|الجدول|الخطة)"),
+    re.compile(r"(?<!لم )(?<!ما )سجلتك(?:\s+في)?"),
 )
 
 _TIMETABLE_PROPOSAL_PATTERNS = (
@@ -240,16 +269,42 @@ _TIMETABLE_PROPOSAL_PATTERNS = (
     ),
     re.compile(r"\bbuild\s+around\s+(?:my\s+)?current\s+sections?\b", re.IGNORECASE),
     re.compile(
-        r"(?:ابن|ابني|أبني|تبني|نبني|بناء|أنشئ|انشئ|كوّن|كون|رتب|اقترح|اعرض|جدول)"
+        r"(?:ابن|ابني|أبني|تبني|نبني|بناء|أنشئ|انشئ|كوّن|كون|رتب|اقترح)"
         r".*(?:جدول|شعب|تعارض|بدائل)"
     ),
-    re.compile(r"(?:جدول|شعب|تعارض).*(?:ابن|أنشئ|انشئ|كوّن|كون|رتب|اقترح|اعرض)"),
+    re.compile(r"(?:جدول|شعب|تعارض).*(?:ابن|أنشئ|انشئ|كوّن|كون|رتب|اقترح)"),
     re.compile(r"(?:لا\s+تغي[ّ]?ر|ثب[ّ]?ت).*?الشعب.*?(?:غي[ّ]?ر|بد[ّ]?ل).*?المقررات"),
+    re.compile(r"(?:أبي|ابي|أبغى|ابغى|ابغا|ودي)(?:ك|\s+لي)?\s+(?:ب)?(?:جدول|بدائل)"),
+    re.compile(r"(?:سو[ً-ْ]*ي?|سوي|زبط|ظبط|ضبط)(?:\s*لي)?\s+.*?(?:جدول|دوام)"),
+    re.compile(r"(?:خل|خل[ّ]?ي)\s+.*?(?:دوامي|محاضراتي).*?(?:يومين|ثلاث(?:ة|ه)|3)\s*أيام?"),
+    re.compile(r"(?:اعرض|ور[ّ]?ني).*?(?:بدائل|خيارات).*?(?:جدول|شعب|تعارض)"),
+    re.compile(r"(?:بدائل|خيارات).*?(?:جدول|شعب|تعارض).*?(?:اعرض|ور[ّ]?ني)"),
+    re.compile(r"جدول\s+لي\s+.*?(?:المقررات|المواد|الشعب|دوامي)"),
+)
+
+_NEGATED_TIMETABLE_CLAUSE_PATTERN = re.compile(
+    r"^\s*(?:أنا\s+)?(?:مو|ما|مش)\s+(?:أبي|ابي|أبغى|ابغى|ابغا|ودي)\s+" r"(?:جدول|بدائل)(?:\s+.*)?$",
+    re.IGNORECASE,
 )
 
 
 def _requires_timetable_proposal(question: str) -> bool:
-    return any(pattern.search(question or "") for pattern in _TIMETABLE_PROPOSAL_PATTERNS)
+    text = str(question or "")
+    clauses = re.split(r"[،,؛;.!؟]+|\s+(?:لكن|بس)\s+", text)
+    positive_clauses = [
+        clause
+        for clause in clauses
+        if clause.strip() and not _NEGATED_TIMETABLE_CLAUSE_PATTERN.search(clause)
+    ]
+    positive_text = " ".join(positive_clauses)
+    if any(pattern.search(positive_text) for pattern in _TIMETABLE_PROPOSAL_PATTERNS):
+        return True
+    # A pin is itself a request to run the proposal builder, even when the student
+    # omits the word "timetable". This includes an ambiguous pin so the tool loop
+    # can refuse it deterministically instead of falling through to a generic
+    # section answer that silently ignores the requested constraint.
+    pin, ambiguous_pin = _explicit_pin_from_question(positive_text)
+    return pin is not None or ambiguous_pin
 
 
 _TIMETABLE_CREDIT_CAP_PATTERNS = (
@@ -265,25 +320,200 @@ _TIMETABLE_CREDIT_CAP_PATTERNS = (
         r"(?:credits?|hours?)?",
         re.IGNORECASE,
     ),
+    re.compile(
+        r"(?:أبي|ابي|أبغى|ابغى|ودي|خل|خل[ّ]?ي)\s+"
+        r"(?:ال)?(?:جدول|دوام)(?:ي|ه)?(?:\s+يكون)?\s*"
+        r"(?:من|بـ?)?\s*(?P<cap>\d{1,2})\s*(?:ساعة|ساعات|وحدة|وحدات)"
+        r"(?:\s*(?:بالكثير|كحد\s+أقصى))?",
+        re.IGNORECASE,
+    ),
 )
 _TIMETABLE_FROM_SCRATCH_PATTERN = re.compile(
     r"(?:\bfrom\s+scratch\b|\bignore\s+(?:all\s+)?(?:my\s+)?current\b|"
-    r"من\s+الصفر|تجاهل.*?(?:جدول|شعب).*?الحالي)",
+    r"من\s+الصفر|من\s+البداي(?:ة|ه)|جدول\s+جديد.*?(?:من\s+البداي(?:ة|ه)|بالكامل)|"
+    r"تجاهل.*?(?:جدول|شعب).*?الحالي|لا\s+تعتمد.*?(?:جدول|شعب).*?الحالي)",
     re.IGNORECASE,
 )
 _TIMETABLE_AROUND_CURRENT_PATTERN = re.compile(
     r"(?:\baround\s+(?:my\s+)?current\b|\bkeep\s+(?:my\s+)?current\b|"
-    r"(?:احتفظ|خل[ّ]?|خلي|ثب[ّ]?ت|لا\s+تغي[ّ]?ر).*?(?:الشعب|الجدول).*?الحالي|"
+    r"(?:احتفظ|خل[ّ]?|خلي|خلك|ثب[ّ]?ت|لا\s+تغي[ّ]?ر).*?(?:الشعب|شعبي|الجدول).*?الحالي|"
     r"(?:احتفظ|خل[ّ]?|خلي|ثب[ّ]?ت|لا\s+تغي[ّ]?ر).*?الشعب.*?(?:كما\s+ه[يو]|مثل\s+ما\s+ه[يو])|"
+    r"(?:خل|خل[ّ]?ي|خلك).*?شعبي.*?(?:زي|مثل)\s+ما\s+ه[يو]|"
     r"(?:الشعب|الجدول).*?الحالي.*?(?:كما\s+ه[يو]|مثل\s+ما\s+ه[يو]))",
     re.IGNORECASE,
 )
+
+# The model may understand a pin perfectly and still omit it from the tool call. A
+# section constraint is too important to leave to that choice: losing ``M2`` while
+# keeping ``AI331`` produces a plausible-looking timetable that answers a different
+# question. These patterns therefore extract only explicit, mechanically verifiable
+# constraints from the student's own sentence. Database ids never enter this layer.
+_TIMETABLE_CONSTRAINT_COURSE_PATTERN = re.compile(
+    r"\b[A-Z]{2,6}\s*-?\s*\d{1,4}\b",
+    re.IGNORECASE,
+)
+_TIMETABLE_CONSTRAINT_SECTION_PATTERN = re.compile(
+    r"\b[A-Z]{1,2}\s*-?\s*\d{1,2}[A-Z]?\b",
+    re.IGNORECASE,
+)
+_TIMETABLE_PIN_VERB_PATTERN = re.compile(
+    r"(?:\bpin(?:ned|ning)?\b|ثب[ّ]?ت(?:ي|ها|ه|لي)?)",
+    re.IGNORECASE,
+)
+_TIMETABLE_SECTION_NOUN_PATTERN = re.compile(
+    r"(?:\bsections?\b|شعب(?:ة|ه|تي|تك|ته|تها|هم)?)",
+    re.IGNORECASE,
+)
+_TIMETABLE_MUST_TAKE_PATTERN = re.compile(
+    r"(?:\bmust(?:\s|-)*take\b|\bhave\s+to\s+take\b|"
+    r"\bneed\s+to\s+take\b|\brequired\s+to\s+take\b|"
+    r"\bmust(?:\s|-)*include\b|\bmust\s+(?:be\s+(?:included|present)|appear)\b|"
+    r"\bmandatory\b|"
+    r"(?:لازم|ضروري|إجباري|اجباري)(?:\s+(?:آخذ|اخذ|أنزل|انزل|أدرس|ادرس|"
+    r"يكون|تكون|أضيف|اضيف))?)",
+    re.IGNORECASE,
+)
+_TIMETABLE_NEGATED_MUST_TAKE_PATTERN = re.compile(
+    r"(?:\b(?:do\s+not|don't|dont)\s+(?:have|need)\s+to\s+take\b|"
+    r"(?:مو|ما|مش|ليس)\s+(?:لازم|ضروري|إجباري|اجباري)|"
+    r"(?:لازم|ضروري)\s+ما\s+(?:آخذ|اخذ|أنزل|انزل))",
+    re.IGNORECASE,
+)
+_ARABIC_CONJUNCTION_BEFORE_IDENTIFIER = re.compile(
+    r"(?<![A-Za-z0-9])و(?=[A-Za-z]{1,6}\s*-?\s*\d)",
+)
+
+
+def _fold_constraint_text(text: str) -> str:
+    """Fold digits and detach Arabic ``و`` joined directly to an identifier.
+
+    Arabic commonly writes the conjunction without a space (``M1 وM2``). Python's
+    Unicode word boundary treats both ``و`` and ``M`` as word characters, so the
+    second label would otherwise be invisible and an ambiguous two-pin request
+    would be misread as one exact pin. Replacing one character with one space keeps
+    match spans aligned for the course/section overlap check below.
+    """
+    return _ARABIC_CONJUNCTION_BEFORE_IDENTIFIER.sub(" ", fold_digits(text))
+
+
+def _constraint_course_codes(text: str) -> list[str]:
+    """Unique course codes in textual order, folded but never inferred."""
+    out: list[str] = []
+    for match in _TIMETABLE_CONSTRAINT_COURSE_PATTERN.finditer(_fold_constraint_text(text)):
+        code = re.sub(r"[\s-]+", "", match.group(0)).upper()
+        if code and code not in out:
+            out.append(code)
+    return out
+
+
+def _constraint_section_labels(text: str) -> list[str]:
+    """Unique section labels, excluding tokens that are complete course codes."""
+    folded = _fold_constraint_text(text)
+    course_spans = [match.span() for match in _TIMETABLE_CONSTRAINT_COURSE_PATTERN.finditer(folded)]
+    out: list[str] = []
+    for match in _TIMETABLE_CONSTRAINT_SECTION_PATTERN.finditer(folded):
+        start, end = match.span()
+        if any(
+            start < course_end and end > course_start for course_start, course_end in course_spans
+        ):
+            continue
+        label = re.sub(r"[\s-]+", "", match.group(0)).upper()
+        if label and label not in out:
+            out.append(label)
+    return out
+
+
+def _explicit_pin_from_question(question: str) -> tuple[dict[str, str] | None, bool]:
+    """Return one exact pin and whether explicit pin syntax was ambiguous.
+
+    Repetition is not ambiguity—``AI331`` commonly appears once in the must-take
+    clause and once beside its pin. Distinct values are what matter. Conversely,
+    one label with two courses or two labels with one course is never resolved by
+    proximity: choosing one would turn a language-model guess into a hard schedule
+    constraint.
+    """
+    text = str(question or "")
+    if not _TIMETABLE_PIN_VERB_PATTERN.search(text):
+        return None, False
+    codes = _constraint_course_codes(text)
+    labels = _constraint_section_labels(text)
+    # ``Pin AI331`` names no section and remains an ordinary course constraint.
+    # Once a section noun or label is present, however, an incomplete/multi-valued
+    # binding must stop the build rather than silently discarding the pin.
+    section_intent = bool(labels or _TIMETABLE_SECTION_NOUN_PATTERN.search(text))
+    if not section_intent:
+        return None, False
+    if len(codes) != 1 or len(labels) != 1:
+        return None, True
+    return {"course_code": codes[0], "section_label": labels[0]}, False
+
+
+def _explicit_must_take_courses(question: str) -> list[str]:
+    """Extract course codes from clauses that explicitly make them mandatory."""
+    out: list[str] = []
+    # Adversatives delimit scope; ``must take AI331, but compare CS323`` must not
+    # make the comparison course mandatory. Coordinating ``and`` deliberately does
+    # not split, because ``must take AI331 and CS323`` makes both mandatory.
+    clauses = re.split(r"[،,؛;.!؟]+|\s+(?:but|however|لكن|بس)\s+", str(question or ""))
+    for clause in clauses:
+        if not _TIMETABLE_MUST_TAKE_PATTERN.search(clause):
+            continue
+        if _TIMETABLE_NEGATED_MUST_TAKE_PATTERN.search(clause):
+            continue
+        for code in _constraint_course_codes(clause):
+            if code not in out:
+                out.append(code)
+    return out
+
+
+def _normalised_constraint_codes(value: Any) -> list[str]:
+    """Sanitise model-provided code lists without creating any new code."""
+    values = [value] if isinstance(value, str) else value
+    if not isinstance(values, list):
+        return []
+    out: list[str] = []
+    for raw in values:
+        code = re.sub(r"[\s-]+", "", fold_digits(str(raw or ""))).upper()
+        if _TIMETABLE_CONSTRAINT_COURSE_PATTERN.fullmatch(code) and code not in out:
+            out.append(code)
+    return out
+
+
+def _normalised_section_pins(value: Any) -> list[dict[str, str]]:
+    """Keep only label-based pins; ids or malformed model output are discarded."""
+    if not isinstance(value, list):
+        return []
+    out: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for raw in value:
+        if not isinstance(raw, dict):
+            continue
+        code_values = _normalised_constraint_codes([raw.get("course_code")])
+        label = re.sub(r"[\s-]+", "", fold_digits(str(raw.get("section_label") or ""))).upper()
+        if (
+            len(code_values) != 1
+            or not _TIMETABLE_CONSTRAINT_SECTION_PATTERN.fullmatch(label)
+            or _TIMETABLE_CONSTRAINT_COURSE_PATTERN.fullmatch(label)
+        ):
+            continue
+        code = code_values[0]
+        if code in seen:
+            continue
+        seen.add(code)
+        out.append({"course_code": code, "section_label": label})
+    return out
 
 
 def _normalise_timetable_proposal_args(
     question: str, arguments: dict[str, Any]
 ) -> tuple[dict[str, Any], list[str]]:
-    """Carry explicit mode and credit choices into the existing planner tool."""
+    """Carry explicit mode, credit and hard constraints into the planner tool.
+
+    The model's call remains useful for conversational interpretation, but an
+    explicit Must-take or section pin in the student's own text wins over an
+    omitted/conflicting model argument. Only course codes and human-facing section
+    labels cross this boundary; the capability resolves and validates ids locally.
+    """
     text = str(question or "")
     normalised = dict(arguments or {})
     reasons: list[str] = []
@@ -307,6 +537,56 @@ def _normalise_timetable_proposal_args(
         normalised["max_credits"] = cap
         break
 
+    explicit_must_take = _explicit_must_take_courses(text)
+    explicit_pin, ambiguous_pin = _explicit_pin_from_question(text)
+    if ambiguous_pin:
+        # Internal sentinel only. The tool loop removes it before the remote
+        # boundary and refuses the call locally, so neither the provider nor the
+        # capability sees a made-up/unconstrained pin.
+        normalised.pop("pinned_sections", None)
+        normalised["_constraint_input_error"] = "AMBIGUOUS_PIN"
+        return normalised, [*reasons, "ambiguous_pinned_sections"]
+
+    requested_codes = _normalised_constraint_codes(normalised.get("course_codes"))
+    must_take = _normalised_constraint_codes(normalised.get("must_take_courses"))
+    for code in explicit_must_take:
+        if code not in requested_codes:
+            requested_codes.append(code)
+        if code not in must_take:
+            must_take.append(code)
+    if explicit_must_take:
+        reasons.append("explicit_must_take_courses")
+
+    pins = _normalised_section_pins(normalised.get("pinned_sections"))
+    if explicit_pin is not None:
+        # The sentence names exactly one pin. Replace any model interpretation
+        # instead of combining it with an unmentioned second hard constraint.
+        pins = [explicit_pin]
+        pin_code = explicit_pin["course_code"]
+        if pin_code not in requested_codes:
+            requested_codes.append(pin_code)
+        # A natural-language "pin and build around it" requires this course to
+        # occur; otherwise a solver could satisfy the pin vacuously by omitting it.
+        if pin_code not in must_take:
+            must_take.append(pin_code)
+        reasons.append("explicit_pinned_sections")
+
+    # Preserve the historical exact argument shape when no course constraint was
+    # supplied. Several callers/tests compare this dict directly, and adding empty
+    # arrays would make absence indistinguishable from an explicit empty request.
+    if requested_codes:
+        normalised["course_codes"] = requested_codes
+    elif "course_codes" in normalised:
+        normalised["course_codes"] = []
+    if must_take:
+        normalised["must_take_courses"] = must_take
+    elif "must_take_courses" in normalised:
+        normalised["must_take_courses"] = []
+    if pins:
+        normalised["pinned_sections"] = pins
+    elif "pinned_sections" in normalised:
+        normalised["pinned_sections"] = []
+
     return normalised, reasons
 
 
@@ -319,7 +599,8 @@ _INTERNAL_OUTPUT_MARKERS = re.compile(
     r"graduation_progress|my_clash_free_sections|my_timetable|my_progress|"
     r"my_plan_by_term|get_student_context|lookup_course|course_prerequisites|"
     r"why_course_locked|policy_lookup|my_advisor|max_credits|"
-    r"around_current|from_scratch)",
+    r"around_current|from_scratch|must_take_courses|pinned_sections|"
+    r"section_label|AMBIGUOUS_PIN)",
     re.IGNORECASE,
 )
 
@@ -360,6 +641,10 @@ def _humanise_internal_output_markers(answer: str, language: str) -> str:
         "max_credits": "الحد الأقصى للساعات",
         "around_current": "البناء حول الجدول الحالي",
         "from_scratch": "البناء من الصفر",
+        "must_take_courses": "المقررات المطلوبة في كل بديل",
+        "pinned_sections": "قيود الشعب المثبّتة",
+        "section_label": "رمز الشعبة",
+        "ambiguous_pin": "تثبيت شعبة يحتاج إلى توضيح",
     }
     replacements_en = {
         "source_leaves_unresolved": "the source leaves this point unresolved",
@@ -391,6 +676,10 @@ def _humanise_internal_output_markers(answer: str, language: str) -> str:
         "max_credits": "the maximum credit limit",
         "around_current": "building around the current timetable",
         "from_scratch": "building from scratch",
+        "must_take_courses": "courses required in every option",
+        "pinned_sections": "exact pinned-section constraints",
+        "section_label": "the section identifier",
+        "ambiguous_pin": "a section pin that needs clarification",
     }
     replacements = replacements_ar if language == "Arabic" else replacements_en
     text = str(answer or "")
@@ -429,6 +718,13 @@ def _requires_section_check(question: str) -> bool:
     copying an earlier assistant mistake out of conversation history.
     """
     text = str(question or "")
+    # An exact pin is checked by the same builder that must honour it. Requiring
+    # my_clash_free_sections as well creates two independent interpretations of
+    # the label and used to let the second, read-only comparison stand in for a
+    # proposal that had silently dropped the pin. Plain section questions still
+    # use the clash checker below.
+    if _requires_timetable_proposal(text):
+        return False
     return bool(
         _COURSE_CODE_TOKEN_PATTERN.search(text)
         and (_SECTION_REQUEST_WORD_PATTERN.search(text) or _SECTION_CODE_TOKEN_PATTERN.search(text))
@@ -437,7 +733,14 @@ def _requires_section_check(question: str) -> bool:
 
 _GRADUATION_PROGRESS_PATTERN = re.compile(
     r"(?:\bgraduat(?:e|ing|ion)\b|تخر(?:ج|ّج)|التخرج|"
-    r"(?:مدة|موعد|وقت).*?إنهاء\s+(?:خطتي|الخطة|متطلبات\s+الخطة))",
+    r"(?:مدة|موعد|وقت).*?إنهاء\s+(?:خطتي|الخطة|متطلبات\s+الخطة)|"
+    r"(?:كم|وش).*?(?:ترم|فصل).*?(?:باقي|متبق)|"
+    r"(?:باقي|متبق).*?(?:كم).*?(?:ترم|فصل)|"
+    r"(?:متى|كم).*?(?:أخلص|اخلص|أنهي|انهي)(?:\s+من)?\s+"
+    r"(?:خطتي|الخطة|متطلبات\s+الخطة|دراستي|الجامعة)|"
+    r"(?:متى|كم|باقي).*?(?:أصير|اصير|أكون|اكون)\s+خريج|"
+    r"(?:أخلص|اخلص|أنهي|انهي).*?(?:خطتي|الخطة|متطلبات\s+الخطة)|"
+    r"(?:أبي|ابي|أبغى|ابغى|ودي).*?(?:أخلص|اخلص).*?الخطة)",
     re.IGNORECASE,
 )
 
@@ -451,15 +754,20 @@ _COURSE_CODE_TOKEN_PATTERN = re.compile(rf"\b{_COURSE_CODE_EXPR}\b", re.IGNORECA
 _CURRENT_COURSE_CHANGE_PATTERN = re.compile(
     r"(?:\b(?:do\s+not|don['’]t|did\s+not|didn['’]t|not)\s+take\b|"
     r"\b(?:skip|drop|remove|replace|swap|defer)\b|\binstead\s+of\b|"
-    r"(?:ما\s*(?:آخذ|اخذ|أخذت|اخذت)|لم\s+(?:آخذ|اخذ)|بدل|استبدل|أستبدل|استبدال|"
-    r"أبدل|ابدل|أحذف|احذف|حذف|أؤجل|اؤجل|تأجيل|أترك|اترك))",
+    r"(?:ما\s*(?:آخذ|اخذ|أخذت|اخذت|خذت|نزلت|أنزل|انزل|باخذ|بآخذ|بنزل)|"
+    r"(?:ماني|مو)\s*(?:ماخذ|آخذ|اخذ|باخذ|بآخذ|منزل)|لم\s+(?:آخذ|اخذ|أنزل|انزل)|"
+    r"بدل|بدال|استبدل|أستبدل|استبدال|أبدل|ابدل|أغير|اغير|"
+    r"أحذف|احذف|حذف|أشيل|اشيل|شيل|شلت|أكنسل|اكنسل|ألغي|الغي|"
+    r"أؤجل|اؤجل|تأجيل|أترك|اترك))",
     re.IGNORECASE,
 )
 _OPEN_REPLACEMENT_PATTERN = re.compile(
     r"(?:\b(?:which|what|any)\s+(?:current\s+)?course\b.*\b(?:replace|swap)\b|"
     r"\b(?:replace|swap)\b.*\b(?:which|what|any)\s+(?:current\s+)?course\b|"
-    r"(?:أي|اي|فيه|هناك|يوجد).*?(?:مقرر|مادة).*?(?:استبدل|أستبدل|أبدل|ابدل)|"
-    r"(?:استبدل|أستبدل|أبدل|ابدل).*?(?:أي|اي|مقرر|مادة))",
+    r"(?:أي|اي|وش|فيه|هناك|يوجد).*?(?:مقرر|مادة).*?"
+    r"(?:استبدل|أستبدل|أبدل|ابدل|أغير|اغير|أشيل|اشيل)|"
+    r"(?:استبدل|أستبدل|أبدل|ابدل|أغير|اغير|أشيل|اشيل).*?"
+    r"(?:أي|اي|وش|مقرر|مادة))",
     re.IGNORECASE,
 )
 
@@ -482,7 +790,7 @@ def _requires_graduation_what_if(question: str) -> bool:
 
 _ARABIC_INSTEAD_PATTERN = re.compile(
     rf"(?P<add>\b{_COURSE_CODE_EXPR}\b)\s+"
-    rf"(?:بدل(?:اً|ا)?(?:\s+من)?|عوض(?:اً|ا)?\s+عن)\s+"
+    rf"(?:بدل(?:اً|ا)?(?:\s+من)?|بدال|مكان|عوض(?:اً|ا)?\s+عن)\s+"
     rf"(?P<remove>\b{_COURSE_CODE_EXPR}\b)",
     re.IGNORECASE,
 )
@@ -496,13 +804,29 @@ _ENGLISH_REPLACE_PATTERN = re.compile(
     re.IGNORECASE,
 )
 _ARABIC_REPLACE_PATTERN = re.compile(
-    rf"(?:استبدل|أستبدل|أبدل|ابدل)\s+(?P<remove>\b{_COURSE_CODE_EXPR}\b)\s+"
+    rf"(?:استبدل|أستبدل|أبدل|ابدل|أغير|اغير)\s+"
+    rf"(?P<remove>\b{_COURSE_CODE_EXPR}\b)\s+"
     rf"(?:ب|بـ|مع)\s*(?P<add>\b{_COURSE_CODE_EXPR}\b)",
     re.IGNORECASE,
 )
+_ARABIC_REMOVE_ADD_PATTERN = re.compile(
+    rf"(?:أشيل|اشيل|شيل|شلت|أحذف|احذف|ألغي|الغي|أكنسل|اكنسل)\s+"
+    rf"(?P<remove>\b{_COURSE_CODE_EXPR}\b).*?"
+    rf"(?:وأحط|واحط|وحط|حطيت|وأضيف|واضيف|وأبدله\s+ب|وابدله\s+ب)\s*"
+    rf"(?P<add>\b{_COURSE_CODE_EXPR}\b)",
+    re.IGNORECASE,
+)
+_ARABIC_REVERSED_INSTEAD_PATTERN = re.compile(
+    rf"(?:بدال|بدل|مكان)\s+(?P<remove>\b{_COURSE_CODE_EXPR}\b).*?"
+    rf"(?:آخذ|اخذ|أنزل|انزل|أحط|احط|حطيت)\s+"
+    rf"(?P<add>\b{_COURSE_CODE_EXPR}\b)",
+    re.IGNORECASE,
+)
 _ARABIC_OMISSION_PATTERN = re.compile(
-    rf"(?:ما\s*(?:آخذ|اخذ|أخذت|اخذت)|لم\s+(?:آخذ|اخذ)|"
-    rf"أحذف|احذف|حذف|أؤجل|اؤجل|أترك|اترك)\s+"
+    rf"(?:ما\s*(?:آخذ|اخذ|أخذت|اخذت|خذت|نزلت|أنزل|انزل|باخذ|بآخذ|بنزل)|"
+    rf"(?:ماني|مو)\s*(?:ماخذ|آخذ|اخذ|باخذ|بآخذ|منزل)|"
+    rf"لم\s+(?:آخذ|اخذ|أنزل|انزل)|أحذف|احذف|حذف|أشيل|اشيل|شيل|شلت|"
+    rf"أكنسل|اكنسل|ألغي|الغي|أؤجل|اؤجل|أترك|اترك)\s+"
     rf"(?:مقرر\s+|مادة\s+)?(?P<remove>\b{_COURSE_CODE_EXPR}\b)",
     re.IGNORECASE,
 )
@@ -515,7 +839,7 @@ _ENGLISH_OMISSION_PATTERN = re.compile(
 
 
 def _normalise_course_code(value: Any) -> str:
-    return re.sub(r"[\s-]+", "", str(value or "")).upper()
+    return re.sub(r"[\s-]+", "", fold_digits(str(value or ""))).upper()
 
 
 def _normalise_graduation_scenario_args(
@@ -542,6 +866,8 @@ def _normalise_graduation_scenario_args(
         _ENGLISH_INSTEAD_PATTERN,
         _ENGLISH_REPLACE_PATTERN,
         _ARABIC_REPLACE_PATTERN,
+        _ARABIC_REMOVE_ADD_PATTERN,
+        _ARABIC_REVERSED_INSTEAD_PATTERN,
     ):
         match = pattern.search(text)
         if match:
@@ -579,6 +905,8 @@ def _normalise_graduation_scenario_args(
 _SECTION_DATA_MISSING_CLAIM = re.compile(
     r"(?:لا\s+توجد\s+(?:شعب|بيانات)|"
     r"لا\s+(?:يحتوي|يوجد).*?(?:سجل|شعب)|"
+    r"ما\s+(?:فيه|عندنا)\s+(?:أي\s+)?(?:شعب|بيانات(?:\s+(?:عن|لـ?)\s+الشعب)?)|"
+    r"(?:الشعب|بيانات\s+الشعب).*?مو\s+(?:موجودة|مسجلة|متوفرة)|"
     r"غير\s+مسجل(?:ة|ه)?.*?(?:شعب|النظام)|"
     r"\bno\s+(?:recorded\s+)?sections?\b|"
     r"\bno\s+section\s+data\b|"
@@ -605,7 +933,54 @@ def _section_answer_contradicts_evidence(answer: str, tool_results: list[dict[st
     return has_recorded_sections and bool(_SECTION_DATA_MISSING_CLAIM.search(answer or ""))
 
 
-def _safe_section_answer(language: str, tool_results: list[dict[str, Any]]) -> str:
+def _apply_saudi_register(answer: str, language: str, answer_style: str) -> str:
+    """Make deterministic Arabic fallbacks match the pinned Saudi register.
+
+    These are exact, meaning-preserving phrase substitutions over text generated
+    by this module—not a free-form rewrite.  Safety fallbacks therefore keep the
+    same numbers, course codes, qualifications, and registration boundaries.
+    """
+    if language != "Arabic" or answer_style != "Conversational Saudi Arabic":
+        return answer
+    replacements = (
+        ("لم أتمكن من التحقق", "ما قدرت أتحقق"),
+        ("لذلك لن أعرض", "وعشان كذا ما راح أعرض"),
+        ("لا توجد شعبة", "ما فيه شعبة"),
+        ("موجودة بالفعل", "موجودة فعلًا"),
+        ("لا يظهر لها تعارض", "ما يظهر لها تعارض"),
+        ("لا يمكن إجراء", "ما نقدر نجري"),
+        ("لم تُشغّل محاكاة التغيير", "ما قدرنا نشغّل محاكاة التغيير"),
+        ("تعذر التحقق", "ما قدرنا نتحقق"),
+        ("لم يثبت البحث الأكاديمي المحدود وجود", "البحث الأكاديمي المحدود ما أثبت وجود"),
+        ("لا يتغير عدد الفصول المقدّر", "ما يتغيّر عدد الفصول المقدّر"),
+        ("لا يمكن إثبات أثر دقيق", "ما نقدر نثبت أثر دقيق"),
+        ("تقدّر المحاكاة أنك تحتاج إلى", "بحسب المحاكاة، باقي لك تقريبًا"),
+        ("لا يمكن إعطاء فصل إكمال دقيق", "ما نقدر نحدد فصل الإكمال بدقة"),
+        ("لأن المحاكاة لم تحسم", "لأن المحاكاة ما حسمت"),
+        ("ويفترض اجتياز جميع المقررات", "ويفترض إنك تجتاز كل المقررات"),
+        ("ولا يغيّر سجلك أو يسجل مقررات", "وما يغيّر سجلك ولا يسجل مقررات"),
+        ("هذا سيناريو للقراءة فقط", "هذا مجرد سيناريو للقراءة فقط"),
+        ("هذا افتراض أكاديمي للقراءة فقط", "هذا مجرد افتراض أكاديمي للقراءة فقط"),
+        (
+            "هذا فحص للجدول فقط؛ لم يسجّل النظام أو يغيّر أي شعبة",
+            "هذا فحص للجدول فقط؛ النظام ما سجّل ولا غيّر أي شعبة",
+        ),
+        ("هذا جدول متوقع وليس تسجيلًا فعليًا", "هذا جدول متوقع، مو تسجيلًا فعليًا"),
+        ("يجب فحص الشعب", "لازم نفحص الشعب"),
+        ("لم يتغير", "ما تغيّر"),
+        ("لا يتغير", "ما يتغيّر"),
+    )
+    styled = str(answer or "")
+    for formal, saudi in replacements:
+        styled = styled.replace(formal, saudi)
+    return styled
+
+
+def _safe_section_answer(
+    language: str,
+    tool_results: list[dict[str, Any]],
+    answer_style: str = "",
+) -> str:
     """Deterministic last line of defence for verified section evidence."""
     result = next(
         (
@@ -620,13 +995,14 @@ def _safe_section_answer(language: str, tool_results: list[dict[str, Any]]) -> s
     term = str(result.get("compared_against_term") or "").strip()
     baseline_kind = str(result.get("baseline_kind") or "REGISTERED")
     if baseline_kind == "MIXED_REVIEW_REQUIRED":
-        return (
+        answer = (
             "تتضمن بيانات هذا الفصل تسجيلًا فعليًا وخطة متوقعة معًا، لذلك لا يمكن "
             "إجراء فحص موثوق قبل مراجعة مصدر الجدول."
             if language == "Arabic"
             else "This term contains both registrar and expected-plan rows, so a reliable "
             "section comparison cannot be made until the timetable source is reviewed."
         )
+        return _apply_saudi_register(answer, language, answer_style)
     expected_baseline = baseline_kind == "EXPECTED_PLAN"
     lines: list[str] = []
     for course in result.get("courses") or []:
@@ -710,7 +1086,7 @@ def _safe_section_answer(language: str, tool_results: list[dict[str, Any]]) -> s
         if language == "Arabic"
         else "This is a timetable check only; no section was registered or changed in the university portal."
     )
-    return "\n".join(lines)
+    return _apply_saudi_register("\n".join(lines), language, answer_style)
 
 
 def _planner_option_names(tool_results: list[dict[str, Any]]) -> list[str]:
@@ -733,7 +1109,9 @@ _EXHAUSTIVE_VARIANT_CLAIM = re.compile(
     r"\bcould\s+not\s+(?:fit|accommodat|place)\w*.*?\ball\b|"
     r"(?:لا\s+(?:يمكن|يتوفر|يوجد|تسمح).*?(?:ترتيب|خيار|جمع).*?"
     r"(?:يومين|ثلاثة\s+أيام|3\s*أيام)|"
-    r"جميع\s+(?:البدائل|الخيارات)\s+الممكنة))",
+    r"جميع\s+(?:البدائل|الخيارات)\s+الممكنة|"
+    r"ما\s+(?:فيه|في)\s+(?:أي\s+)?(?:خيار|ترتيب).*?"
+    r"(?:يجمع|يحط|يستوعب).*?(?:كل|جميع)\s+(?:المواد|المقررات)))",
     re.IGNORECASE | re.DOTALL,
 )
 
@@ -760,6 +1138,9 @@ def _misstates_variant_omission(answer: str, tool_results: list[dict[str, Any]])
 _EMPTY_RECOMMENDATION_SPECULATION = re.compile(
     r"(?:لا\s+توجد\s+مواد\s+(?:مفتوحة|متاحة)|"
     r"(?:استوفيت|بلغت)\s+(?:الحد|سقف)|"
+    r"(?:المواد|المقررات).*?مو\s+(?:متاحة|مطروحة|مفتوحة)|"
+    r"ما\s+فيه\s+(?:مواد|مقررات).*?(?:متاحة|مطروحة|مفتوحة)|"
+    r"وصلت\s+(?:الحد|السقف)|"
     r"\breached\s+(?:the\s+)?(?:credit\s+)?cap\b|"
     r"\bno\s+(?:new\s+)?courses?\s+(?:are\s+)?(?:open|available)\b)",
     re.IGNORECASE,
@@ -889,7 +1270,9 @@ _GRADUATION_UNSUPPORTED_INFERENCE = re.compile(
     r"(?:قد|مما)\s+(?:يستدعي|يتطلب).*?فصل(?:اً|ًا|ا)?\s+إضاف|"
     r"ترتيب(?:اً|ًا|ا)?\s+خاص|"
     r"الحد\s+الأقصى\s+المسموح|"
-    r"(?:لا|لم)\s+(?:يوجد|يظهر).*?(?:موعد|مكان|شعبة).*?(?:متاح|الفصول|المحاك))",
+    r"(?:لا|لم)\s+(?:يوجد|يظهر).*?(?:موعد|مكان|شعبة).*?(?:متاح|الفصول|المحاك)|"
+    r"(?:يمكن|ممكن|شكله).*?(?:يحتاج|يبغى\s+له).*?ترم\s+(?:زيادة|إضافي)|"
+    r"ما\s+(?:فيه|له).*?(?:وقت|مكان|شعبة).*?(?:متاح|مناسب|مطروح))",
     re.IGNORECASE | re.DOTALL,
 )
 
@@ -1017,7 +1400,7 @@ def _comparison_blocker_text(comparison: dict[str, Any], language: str) -> str:
     return " ".join(parts)
 
 
-def _safe_graduation_what_if_answer(language: str, what_if: dict[str, Any]) -> str:
+def _safe_graduation_what_if_answer_base(language: str, what_if: dict[str, Any]) -> str:
     if not what_if.get("valid"):
         errors = [
             _what_if_error_text(error, language)
@@ -1170,7 +1553,23 @@ def _safe_graduation_what_if_answer(language: str, what_if: dict[str, Any]) -> s
     return "\n".join(lines)
 
 
-def _safe_graduation_answer(language: str, tool_results: list[dict[str, Any]]) -> str:
+def _safe_graduation_what_if_answer(
+    language: str,
+    what_if: dict[str, Any],
+    answer_style: str = "",
+) -> str:
+    return _apply_saudi_register(
+        _safe_graduation_what_if_answer_base(language, what_if),
+        language,
+        answer_style,
+    )
+
+
+def _safe_graduation_answer(
+    language: str,
+    tool_results: list[dict[str, Any]],
+    answer_style: str = "",
+) -> str:
     """Deterministic last line of defence for a grounded graduation answer."""
     graduation = next(
         (
@@ -1185,7 +1584,7 @@ def _safe_graduation_answer(language: str, tool_results: list[dict[str, Any]]) -
 
     what_if = graduation.get("what_if")
     if isinstance(what_if, dict):
-        return _safe_graduation_what_if_answer(language, what_if)
+        return _safe_graduation_what_if_answer(language, what_if, answer_style)
 
     has_current = bool(graduation.get("current_courses_assumed_passed"))
     cap = int(graduation.get("max_credits_per_term") or 18)
@@ -1235,10 +1634,12 @@ def _safe_graduation_answer(language: str, tool_results: list[dict[str, Any]]) -
                 )
             blocker_lines.append(f"- {code}: " + ("؛ ".join(reasons) or "متطلب غير محسوم"))
         blockers = "\n" + "\n".join(blocker_lines) if blocker_lines else ""
-        return (
+        return _apply_saudi_register(
             opening + blockers + f"\nهذا سيناريو للقراءة فقط بحد أقصى {cap} ساعة في كل فصل رئيس، "
             "ويفترض اجتياز جميع المقررات من أول محاولة. لا يضمن الطرح المستقبلي "
-            "أو المقاعد أو أوقات الشعب أو صلاحية التسجيل، ولا يغيّر سجلك أو يسجل مقررات."
+            "أو المقاعد أو أوقات الشعب أو صلاحية التسجيل، ولا يغيّر سجلك أو يسجل مقررات.",
+            language,
+            answer_style,
         )
 
     if graduation.get("simulation_completed"):
@@ -1309,6 +1710,7 @@ def _unresolved_policy_ids(tool_results: list[dict[str, Any]]) -> list[str]:
 
 _UNCERTAINTY_MARKERS = re.compile(
     r"(?:لم\s+(?:يحسم|يوضح|يحدد|يفصل)|غير\s+واضح|لا\s+(?:يحسم|يوضح|يحدد|ينص)|"
+    r"(?:المصدر|الدليل|النص)\s+ما\s+(?:وضح|وضّح|ذكر|حدد|حسم|فصل)|مو\s+واضح|"
     r"does\s+not\s+(?:settle|state|specify|define)|unclear|unresolved)",
     re.IGNORECASE,
 )
@@ -1398,11 +1800,13 @@ def _policy_grounding(question: str, tool_results: list[dict[str, Any]]) -> tupl
     return required, "none_matched"
 
 
-def _citation_refusal(language: str) -> str:
+def _citation_refusal(language: str, answer_style: str = "") -> str:
     if language == "Arabic":
-        return (
+        return _apply_saudi_register(
             "لم أتمكن من التحقق من مرجع الإجابة في الأدلة المعتمدة، لذلك لن أعرض "
-            "معلومة غير موثقة. راجع مرشدك الأكاديمي أو عمادة القبول والتسجيل."
+            "معلومة غير موثقة. راجع مرشدك الأكاديمي أو عمادة القبول والتسجيل.",
+            language,
+            answer_style,
         )
     return (
         "I could not verify the source for this answer against the approved records, "
@@ -1415,13 +1819,20 @@ def _claims_portal_action(answer: str) -> bool:
     return any(pattern.search(answer or "") for pattern in _PORTAL_ACTION_CLAIMS)
 
 
-def _portal_boundary_response(language: str) -> str:
+def _portal_boundary_response(language: str, answer_style: str = "") -> str:
     if language == "Arabic":
-        return (
-            "أستطيع إعداد مقترح دراسي ومراجعته معك هنا، لكن هذا النظام لا يسجل "
-            "المقررات ولا يحفظ أو يطبق جدولًا في بوابة الجامعة. إذا أعجبك المقترح، "
-            "فعليك إدخال المقررات التي اخترتها بنفسك في البوابة الرئيسية للجامعة."
+        answer = (
+            "أقدر أجهز لك مقترحًا دراسيًا ونراجعه معًا هنا، لكن النظام ما يسجل "
+            "المقررات ولا يحفظ أو يطبق جدولًا في بوابة الجامعة. إذا ناسبك المقترح، "
+            "لازم تدخل المقررات اللي اخترتها بنفسك في البوابة الرئيسية للجامعة."
+            if answer_style == "Conversational Saudi Arabic"
+            else (
+                "أستطيع إعداد مقترح دراسي ومراجعته معك هنا، لكن هذا النظام لا يسجل "
+                "المقررات ولا يحفظ أو يطبق جدولًا في بوابة الجامعة. إذا أعجبك المقترح، "
+                "فعليك إدخال المقررات التي اخترتها بنفسك في البوابة الرئيسية للجامعة."
+            )
         )
+        return answer
     return (
         "I can prepare and check a study proposal with you here, but this system cannot "
         "register courses or save/apply a timetable in the university portal. If you "
@@ -1458,6 +1869,7 @@ def answer_student_advisor_v2(
     tool_context = {"academic_year": int(academic_year), "term": int(term)}
 
     language = _answer_language(clean_question)
+    answer_style = _answer_style(clean_question)
     llm = llm_client or get_llm_client()
     resolved_model = llm.resolve_model(model)
     scope = principal.as_scope()
@@ -1497,6 +1909,7 @@ def answer_student_advisor_v2(
             "role": "user",
             "content": (
                 f"answer_language: {language}\n"
+                f"answer_style: {answer_style}\n"
                 f"configured_planning_term_hijri: {academic_year}/{term}\n"
                 "Use this configured term unless the student explicitly asks about another. "
                 "Do not ask for a Gregorian year.\n"
@@ -1517,7 +1930,13 @@ def answer_student_advisor_v2(
     tool_turn_error = ""
     fallback_seeded = False
     requires_timetable_proposal = _requires_timetable_proposal(clean_question)
-    requires_section_check = _requires_section_check(clean_question)
+    # A proposal containing an exact pin is itself the authoritative clash/section
+    # check for that build. Keep the independent section capability for inspection
+    # questions only; otherwise the same sentence is interpreted twice and the
+    # second call can contradict or obscure the hard pin.
+    requires_section_check = (
+        _requires_section_check(clean_question) and not requires_timetable_proposal
+    )
     requires_graduation_progress = _requires_graduation_progress(clean_question)
     requires_graduation_what_if = _requires_graduation_what_if(clean_question)
     timetable_reprompted = False
@@ -1534,6 +1953,7 @@ def answer_student_advisor_v2(
     policy_uncertainty_reprompted = False
     internal_output_reprompted = False
     internal_output_sanitized = False
+    constraint_input_refused = False
 
     for iteration in range(_max_iterations()):
         iterations = iteration + 1
@@ -1571,6 +1991,7 @@ def answer_student_advisor_v2(
             if (
                 candidate
                 and requires_section_check
+                and not requires_timetable_proposal
                 and not has_section_evidence
                 and not section_tool_reprompted
             ):
@@ -1854,6 +2275,7 @@ def answer_student_advisor_v2(
             effective_arguments = model_arguments
             scenario_normalization = ""
             timetable_normalizations: list[str] = []
+            constraint_input_error = ""
             if call.name == "graduation_progress":
                 effective_arguments, scenario_normalization = _normalise_graduation_scenario_args(
                     clean_question,
@@ -1863,6 +2285,11 @@ def answer_student_advisor_v2(
                 effective_arguments, timetable_normalizations = _normalise_timetable_proposal_args(
                     clean_question,
                     model_arguments,
+                )
+                # Private control signal: never advertise it and never let it
+                # cross the remote boundary or reach the capability executor.
+                constraint_input_error = str(
+                    effective_arguments.pop("_constraint_input_error", "") or ""
                 )
             tools_called.append(
                 {
@@ -1884,6 +2311,27 @@ def answer_student_advisor_v2(
                 messages.append(
                     _tool_message(call.id, {"ok": False, "error": "Capability unavailable."})
                 )
+                continue
+
+            if constraint_input_error == "AMBIGUOUS_PIN":
+                constraint_input_refused = True
+                local_result = {
+                    "tool": call.name,
+                    "ok": False,
+                    "error_code": "AMBIGUOUS_PIN",
+                    "error": (
+                        "The section pin is ambiguous. Ask the student to name exactly "
+                        "one course code and one section label for each pin. No timetable "
+                        "was built without that constraint."
+                    ),
+                    "constraints_satisfied": False,
+                }
+                # The normal remote projector retains the fixed error envelope
+                # while dropping implementation-only fields. Nothing identifying
+                # or database-backed is carried by this refusal.
+                provider_result = boundary.project_tool_result(call.name, local_result)
+                local_results.append(local_result)
+                messages.append(_tool_message(call.id, provider_result))
                 continue
 
             cache_key = json.dumps(
@@ -1934,7 +2382,7 @@ def answer_student_advisor_v2(
             for row in local_results
         )
         if verified_what_if:
-            answer = _safe_graduation_answer(language, local_results)
+            answer = _safe_graduation_answer(language, local_results, answer_style)
             if answer:
                 graduation_safe_fallback_used = True
                 break
@@ -1990,7 +2438,22 @@ def answer_student_advisor_v2(
         answer = forced.content
         answer_model = forced.model or answer_model
 
-    safe_section = _safe_section_answer(language, local_results)
+    if constraint_input_refused:
+        answer = (
+            "طلب تثبيت الشعبة غير واضح بما يكفي. اذكر مقررًا واحدًا وشعبة واحدة "
+            "لكل تثبيت، مثل: «ثبّت AI331 شعبة M2 وابنِ الجدول حولها». لم أبنِ "
+            "جدولًا من دون القيد المطلوب، ولم يتغير تسجيلك الفعلي."
+            if language == "Arabic"
+            else (
+                "The section pin is not specific enough. Name exactly one course and one "
+                "section for each pin, for example: ‘Pin AI331 section M2 and build around "
+                "it.’ I did not build an unconstrained timetable, and your actual "
+                "registration was not changed."
+            )
+        )
+        answer = _apply_saudi_register(answer, language, answer_style)
+
+    safe_section = _safe_section_answer(language, local_results, answer_style)
     if (
         requires_section_check
         and safe_section
@@ -1999,7 +2462,7 @@ def answer_student_advisor_v2(
         answer = safe_section
         section_safe_fallback_used = True
 
-    safe_graduation = _safe_graduation_answer(language, local_results)
+    safe_graduation = _safe_graduation_answer(language, local_results, answer_style)
     incomplete_graduation = any(
         row.get("tool") == "graduation_progress"
         and row.get("ok")
@@ -2024,6 +2487,7 @@ def answer_student_advisor_v2(
                 "course or timetable was changed."
             )
         )
+        answer = _apply_saudi_register(answer, language, answer_style)
         graduation_safe_fallback_used = True
     elif safe_graduation and (
         graduation_what_if
@@ -2036,6 +2500,7 @@ def answer_student_advisor_v2(
 
     if _internal_output_markers(answer):
         answer = _humanise_internal_output_markers(answer, language)
+        answer = _apply_saudi_register(answer, language, answer_style)
         internal_output_sanitized = True
 
     # Recommendation/context tools legitimately carry the approved credit-load
@@ -2056,11 +2521,11 @@ def answer_student_advisor_v2(
             answer = safe_graduation
             graduation_safe_fallback_used = True
         else:
-            answer = _citation_refusal(language)
+            answer = _citation_refusal(language, answer_style)
 
     portal_claim_refused = _claims_portal_action(answer)
     if portal_claim_refused:
-        answer = _portal_boundary_response(language)
+        answer = _portal_boundary_response(language, answer_style)
 
     policy_required, grounding = _policy_grounding(clean_question, local_results)
     cited_policy_ids = [
@@ -2083,6 +2548,7 @@ def answer_student_advisor_v2(
         ),
         "agent": {
             "version": "student-v2",
+            "answer_style": answer_style,
             "loop_used": True,
             "iterations": iterations,
             "tools_called": tools_called,
@@ -2113,6 +2579,7 @@ def answer_student_advisor_v2(
             "policy_uncertainty_reprompted": policy_uncertainty_reprompted,
             "internal_output_reprompted": internal_output_reprompted,
             "internal_output_sanitized": internal_output_sanitized,
+            "constraint_input_refused": constraint_input_refused,
             "read_only": True,
             "portal_action": "student_manual_only",
         },

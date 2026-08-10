@@ -872,12 +872,47 @@ def _project_build_timetable_proposal(
             "credit_ceiling",
             "alternatives_generated",
             "distinct_alternatives",
+            "constraints_satisfied",
             "registration_action",
             "can_save",
             "can_register",
             "note",
         )
     )
+
+    # Timetable constraints cross the remote boundary by their public labels
+    # only.  The model never needs (and must never receive) TermSection primary
+    # keys in order to explain what the planner enforced.
+    must_take = result.get("must_take_courses")
+    if isinstance(must_take, list | tuple):
+        out["must_take_courses"] = [
+            str(code or "").strip().upper()[:32]
+            for code in must_take[:20]
+            if str(code or "").strip()
+        ]
+
+    pinned = result.get("pinned_sections")
+    if isinstance(pinned, list | tuple):
+        out["pinned_sections"] = [
+            {
+                "course_code": str(row.get("course_code") or "").strip().upper()[:32],
+                "section_label": str(row.get("section_label") or row.get("section") or "").strip()[
+                    :32
+                ],
+            }
+            for row in pinned[:20]
+            if isinstance(row, dict)
+            and str(row.get("course_code") or "").strip()
+            and str(row.get("section_label") or row.get("section") or "").strip()
+        ]
+
+    failures = result.get("constraint_failures")
+    if isinstance(failures, list | tuple):
+        out["constraint_failures"] = [
+            _keep(row, "course_code", "section_label", "reason")
+            for row in failures[:20]
+            if isinstance(row, dict)
+        ]
 
     def safe_sections(value: Any) -> list[dict[str, Any]]:
         if not isinstance(value, list):
