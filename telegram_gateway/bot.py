@@ -1,0 +1,536 @@
+"""What a Telegram update means, and what the gateway does about it.
+
+This module is the channel, and it is deliberately thin: it decides who is asking,
+refuses everything it is not sure about, and hands the actual question to
+`core.services.advisor_turn` — the same application service the web chat calls.
+There is no prompt here, no tool list, no model client and no second adviser. If
+this file ever needs to know what a prerequisite is, something has gone wrong.
+
+**Parsing is refusal-first.** `parse_update` returns `None` for everything that is
+not a private text message from a real user, and it is the only place that
+decision is made. A filter applied later — in the router, in the handler — is a
+filter that some future branch reaches around. In particular:
+
+* group, supergroup and channel chats are dropped before any lookup, so a bot
+  added to a class group cannot be made to read out somebody's record;
+* edited messages, callback queries, inline queries and channel posts are dropped,
+  because the webhook subscribes to `message` only and anything else arriving is
+  either a misconfiguration or an attempt;
+* photos, documents, voice notes, contacts and locations are dropped without being
+  fetched. Downloading a file from a webhook payload is a request to a
+  third-party URL made on the strength of an untrusted message.
+
+**A private chat's room id must equal its sender id.** Telegram guarantees it, and
+checking it costs one comparison — but it means the gateway never has to store a
+chat id alongside a user id, and a payload that claims otherwise is malformed by
+construction rather than something to reason about.
+"""
+
+from __future__ import annotations
+
+import logging
+from dataclasses import dataclass
+from typing import Any
+
+from django.conf import settings
+from django.db import IntegrityError, transaction
+
+from core.models import AdvisorMessage
+from core.services import advisor_turn
+from core.services.advisor_principal import AdvisorPrincipal, IdentityError
+from core.services.rbac import ROLE_STUDENT
+
+from . import linking, messages
+from .formatting import render_answer
+from .models import TelegramLink, TelegramUpdateReceipt
+from .transport import send_photo, send_text
+
+logger = logging.getLogger(__name__)
+
+#: The only `allowed_updates` the webhook is registered for, restated here so the
+#: server refuses what it did not ask for even if the registration drifts.
+SUPPORTED_UPDATE_KEYS = ("message",)
+
+#: Commands a chat may use before it has proved who it is. Everything else gets
+#: the linking prompt and nothing about any student.
+UNAUTHENTICATED_COMMANDS = frozenset({"/start", "/link", "/confirm", "/help", "/privacy"})
+
+#: Most pictures one answer may send. Telegram allows ten in an album; four is
+#: what a student will actually look at, and each one costs a browser render.
+MAX_CARD_IMAGES = 4
+
+
+@dataclass(frozen=True)
+class InboundMessage:
+    """A private text message from one Telegram user. The only thing acted on."""
+
+    update_id: int
+    telegram_user_id: int
+    chat_id: int
+    text: str
+
+    @property
+    def command(self) -> str:
+        """The leading `/command`, lower-cased, with any `@botname` suffix removed.
+
+        Telegram appends `@thebot` to commands in groups; groups never reach here,
+        but a client may send the suffixed form in a private chat too and a router
+        that compares against the raw token would call it unknown.
+        """
+        head = self.text.strip().split(maxsplit=1)[0] if self.text.strip() else ""
+        if not head.startswith("/"):
+            return ""
+        return head.split("@", 1)[0].lower()
+
+
+def parse_update(payload: Any) -> InboundMessage | None:
+    """The one place an update becomes something the gateway will act on.
+
+    Returns `None` — meaning "acknowledge and do nothing" — for every shape that
+    is not a private text message. `None` is not an error: Telegram must still get
+    its `200`, or it redelivers.
+    """
+    if not isinstance(payload, dict):
+        return None
+
+    update_id = payload.get("update_id")
+    if not isinstance(update_id, int) or isinstance(update_id, bool):
+        # Without an update id there is no idempotency key, and without an
+        # idempotency key a retry becomes a second answer. Refuse.
+        return None
+
+    # `message` only. `edited_message`, `channel_post`, `callback_query`,
+    # `inline_query` and the rest are not subscribed to and are not handled.
+    # Resolved THROUGH the tuple rather than beside it: a constant that is checked
+    # and then ignored in favour of a hard-coded key looks like a control and is a
+    # comment, and the two drift the moment either is edited.
+    message = next((payload[key] for key in SUPPORTED_UPDATE_KEYS if key in payload), None)
+    if not isinstance(message, dict):
+        return None
+
+    chat = message.get("chat")
+    sender = message.get("from")
+    if not isinstance(chat, dict) or not isinstance(sender, dict):
+        return None
+
+    # Private chats only, and the check is on the chat's declared type rather than
+    # on an id heuristic.
+    if str(chat.get("type") or "") != "private":
+        return None
+
+    if sender.get("is_bot"):
+        return None
+
+    chat_id = chat.get("id")
+    user_id = sender.get("id")
+    if not isinstance(chat_id, int) or isinstance(chat_id, bool):
+        return None
+    if not isinstance(user_id, int) or isinstance(user_id, bool):
+        return None
+    # In a private chat these are the same number. Requiring it means the link
+    # table needs only one column to answer both "who is this" and "where do I
+    # reply", and a payload that separates them is refused rather than guessed at.
+    if chat_id != user_id:
+        return None
+
+    text = message.get("text")
+    if not isinstance(text, str):
+        # Photos, documents, voice notes, contacts, locations, stickers. Nothing is
+        # fetched, nothing is stored; the caller answers with a short refusal.
+        return InboundMessage(
+            update_id=update_id, telegram_user_id=user_id, chat_id=chat_id, text=""
+        )
+
+    return InboundMessage(
+        update_id=update_id,
+        telegram_user_id=user_id,
+        chat_id=chat_id,
+        # Trimmed to the adviser's own ceiling plus a little, so an enormous paste
+        # is refused by length rather than carried around.
+        text=text[: advisor_turn.MAX_QUESTION_CHARS + 1],
+    )
+
+
+def claim_update(update_id: int) -> bool:
+    """Record this update as seen. False if it already was.
+
+    Telegram redelivers any update whose webhook call did not return `200`
+    promptly — including one that timed out *after* the answer was generated. The
+    claim is a primary-key insert, so two concurrent redeliveries cannot both win.
+    """
+    try:
+        with transaction.atomic():
+            TelegramUpdateReceipt.objects.create(update_id=int(update_id))
+    except IntegrityError:
+        return False
+    return True
+
+
+def is_enabled() -> bool:
+    """Whether the channel is switched on. Read at call time, default off."""
+    return bool(getattr(settings, "TELEGRAM_ADVISOR_ENABLED", False))
+
+
+def _principal_for(link: TelegramLink) -> AdvisorPrincipal:
+    """The self-only student principal for a verified link.
+
+    Built from the link row and from nothing in the message. `AdvisorPrincipal`
+    refuses a non-positive id rather than clamping it, which is what stops a
+    sentinel from becoming student number 1.
+    """
+    return AdvisorPrincipal(role=ROLE_STUDENT, student_id=int(link.student_id))
+
+
+def _current_conversation(link: TelegramLink, principal: AdvisorPrincipal) -> Any:
+    """The thread this chat is in, creating one on first use.
+
+    Re-checks ownership of a stored conversation instead of trusting the foreign
+    key: a link whose student changed — which cannot happen today, but is one
+    migration away from being possible — must not carry the previous student's
+    thread with it.
+    """
+    conversation = link.current_conversation
+    if conversation is not None and conversation.student_id == principal.student_id:
+        return conversation
+    conversation = advisor_turn.start_conversation(principal=principal)
+    link.current_conversation = conversation
+    link.save(update_fields=["current_conversation"])
+    return conversation
+
+
+def _web_url(conversation_id: Any = None, *, path: str = "/student/advisor/") -> str:
+    """The web adviser screen, opened ON THIS CONVERSATION.
+
+    The `?c=` is not decoration. The screen bootstraps its thread from that one
+    parameter — `page-student-advisor.js` reads
+    `new URLSearchParams(location.search).get('c')` and only calls
+    `openConversation` when it is present — so a link without it renders the
+    sidebar and no messages. To a student following "the full timetable is on the
+    platform" from a chat, that is an empty page where their answer should be, and
+    it looks like the data is missing rather than like the link is wrong.
+
+    Safe to put in the URL: it is a random UUID, not a student identifier, and the
+    screen still proves ownership server-side before returning a single message.
+    The browser already carries it exactly this way.
+    """
+    base = str(getattr(settings, "TELEGRAM_PUBLIC_BASE_URL", "") or "").strip().rstrip("/")
+    if not base:
+        return ""
+    url = f"{base}{path}"
+    if conversation_id:
+        url = f"{url}?c={conversation_id}"
+    return url
+
+
+def _link_url(raw_token: str) -> str:
+    base = str(getattr(settings, "TELEGRAM_PUBLIC_BASE_URL", "") or "").strip().rstrip("/")
+    if not base:
+        return ""
+    return f"{base}/telegram/link/{raw_token}/"
+
+
+# ── command handling ─────────────────────────────────────────────
+
+
+def _handle_link(inbound: InboundMessage) -> list[str]:
+    if linking.active_link_for_chat(inbound.telegram_user_id) is not None:
+        return [messages.ALREADY_LINKED]
+    issued = linking.issue_link_token(telegram_user_id=inbound.telegram_user_id)
+    url = _link_url(issued.raw_token)
+    if not url:
+        # No public base URL means the invitation would be a token with nowhere to
+        # go. Fail closed and say so, rather than sending a broken link.
+        logger.warning("telegram: TELEGRAM_PUBLIC_BASE_URL is not set; cannot issue a link")
+        return [messages.LINK_NOT_CONFIGURED]
+    minutes = max(1, int(linking.token_ttl().total_seconds() // 60))
+    return [messages.link_invitation(url, minutes)]
+
+
+def _handle_confirm(inbound: InboundMessage) -> list[str]:
+    """Complete a link with the code shown in the browser.
+
+    This is the half of the ceremony that proves the browser and the chat are the
+    same person. The lookup inside `confirm_link` is scoped to THIS chat, so an
+    approval earned in somebody else's browser is unreachable from here — and a
+    student who followed a forwarded link and then messaged the bot finds no
+    approval of their own, which is the correct answer rather than a confusing one.
+    """
+    parts = inbound.text.strip().split(maxsplit=1)
+    code = linking.normalise_code(parts[1]) if len(parts) > 1 else ""
+    if not code:
+        return [messages.CONFIRM_USAGE]
+    try:
+        linking.confirm_link(telegram_user_id=inbound.telegram_user_id, code=code)
+    except linking.LinkError as exc:
+        if exc.code == linking.STUDENT_ALREADY_LINKED:
+            return [messages.STUDENT_ALREADY_LINKED_CHAT]
+        if exc.code == linking.CHAT_ALREADY_LINKED:
+            return [messages.CHAT_ALREADY_LINKED_CHAT]
+        # Wrong code, expired approval, or nothing awaiting confirmation — one
+        # answer, because distinguishing them says whether an approval exists for
+        # a chat, which is what somebody holding a forwarded link wants to know.
+        return [messages.CONFIRM_INVALID]
+    return [messages.LINK_CONFIRMED]
+
+
+def _handle_unlink(inbound: InboundMessage) -> list[str]:
+    if linking.unlink_chat(inbound.telegram_user_id):
+        return [messages.UNLINKED]
+    return [messages.NOT_LINKED_TO_UNLINK]
+
+
+def _handle_new(link: TelegramLink, principal: AdvisorPrincipal) -> list[str]:
+    conversation = advisor_turn.start_conversation(principal=principal)
+    link.current_conversation = conversation
+    link.save(update_fields=["current_conversation"])
+    return [messages.NEW_CONVERSATION]
+
+
+def _handle_advisor(link: TelegramLink, principal: AdvisorPrincipal) -> list[str]:
+    """Hand the most recent answered turn to a human adviser.
+
+    Reuses `advisor_turn.escalate_turn`, which is the same call the web button
+    makes — so a case raised from a phone is the same case, with the same lock over
+    the source message and the same evidence snapshot.
+    """
+    conversation = link.current_conversation
+    if conversation is None or conversation.student_id != principal.student_id:
+        return [messages.ESCALATION_NOTHING_TO_ESCALATE]
+
+    # Ownership is in the query here too, and `in_reply_to` is required: a case
+    # whose evidence cannot include the question is one an adviser has to
+    # reconstruct from the student's memory of it.
+    message = (
+        AdvisorMessage.objects.select_related("in_reply_to")
+        .filter(
+            conversation=conversation,
+            conversation__student_id=principal.student_id,
+            role=AdvisorMessage.ROLE_ASSISTANT,
+            in_reply_to__isnull=False,
+        )
+        .order_by("-sequence", "-created_at")
+        .first()
+    )
+    if message is None:
+        return [messages.ESCALATION_NOTHING_TO_ESCALATE]
+
+    result = advisor_turn.escalate_turn(
+        principal=principal,
+        message=message,
+        # The student typed `/advisor`, which IS the explicit request the
+        # escalation policy distinguishes from an adviser-initiated hand-off.
+        student_requested=True,
+    )
+    if result.outcome == advisor_turn.ESCALATION_RATE_LIMITED:
+        return [messages.rate_limited(result.retry_after)]
+    if result.outcome == advisor_turn.ESCALATION_NOT_WARRANTED:
+        return [messages.ESCALATION_NOT_WARRANTED]
+    if result.escalation is None:
+        # Unreachable today — CREATED and EXISTS both carry a case — but a channel
+        # that renders `None.reference` fails with a stack trace where it should
+        # fail with a sentence.
+        return [messages.ESCALATION_NOTHING_TO_ESCALATE]
+    if result.outcome == advisor_turn.ESCALATION_EXISTS:
+        return [messages.ESCALATION_EXISTS.format(reference=result.escalation.reference)]
+    return [messages.ESCALATION_CREATED.format(reference=result.escalation.reference)]
+
+
+def handle_command(inbound: InboundMessage, link: TelegramLink | None) -> list[str]:
+    """Everything that resolves without calling the model.
+
+    Returns the messages to send, in order. Kept synchronous because none of it
+    is slow, and a webhook that answers `/help` out of band for no reason is a
+    webhook whose failure modes nobody understands.
+    """
+    command = inbound.command
+
+    if command == "/privacy":
+        return [messages.PRIVACY]
+    if command == "/start":
+        return [messages.START]
+
+    if link is None:
+        # The allow-list IS the gate, rather than a list that documents one. Every
+        # other command, and every free-text question, gets the linking prompt:
+        # nothing about the sender, nothing about any student.
+        if command not in UNAUTHENTICATED_COMMANDS:
+            return [messages.NEEDS_LINK]
+        if command == "/link":
+            return _handle_link(inbound)
+        if command == "/confirm":
+            return _handle_confirm(inbound)
+        return [messages.HELP_UNLINKED]
+
+    try:
+        principal = _principal_for(link)
+    except IdentityError:
+        # A link row whose student id will not resolve is a broken link, and the
+        # safe reading of a broken link is "not linked".
+        logger.warning("telegram: an active link carries an unusable student id; revoking")
+        link.revoke()
+        return [messages.NEEDS_LINK]
+
+    if command == "/help":
+        return [messages.HELP_LINKED]
+    if command in {"/link", "/confirm"}:
+        return [messages.ALREADY_LINKED]
+    if command == "/unlink":
+        return _handle_unlink(inbound)
+    if command == "/new":
+        return _handle_new(link, principal)
+    if command == "/advisor":
+        return _handle_advisor(link, principal)
+    return [messages.UNKNOWN_COMMAND]
+
+
+# ── the academic turn ────────────────────────────────────────────
+
+
+def answer_question(*, link_id: Any, update_id: int, question: str, server_port: str = "") -> None:
+    """Run one adviser turn for a linked chat and deliver the result.
+
+    Runs off the webhook thread (see `runner`), so it re-reads the link rather
+    than carrying an object across a thread boundary — the row may have been
+    revoked in between, and a revoked link must not get an answer.
+
+    Everything about *what* to say comes from `run_advisor_turn`; this function
+    chooses only which of the outcomes maps to which sentence.
+    """
+    link = TelegramLink.objects.filter(pk=link_id, status=TelegramLink.STATUS_ACTIVE).first()
+    if link is None:
+        # Unlinked between asking and answering. Silence is correct: the chat is no
+        # longer entitled to anything, including an explanation.
+        logger.info("telegram: link revoked before the answer was delivered; dropping")
+        return
+
+    try:
+        principal = _principal_for(link)
+    except IdentityError:
+        link.revoke()
+        return
+
+    conversation = _current_conversation(link, principal)
+
+    result = advisor_turn.run_advisor_turn(
+        principal=principal,
+        conversation=conversation,
+        question=question,
+        # Telegram's own counter. A redelivered update that slipped past the
+        # receipt still cannot produce a second stored turn or a second model
+        # call — the partial unique index on (conversation, idempotency_key)
+        # catches it, and `run_advisor_turn` replays the stored answer.
+        idempotency_key=f"tg:{int(update_id)}",
+    )
+
+    # Re-read before delivering, not only before generating. A turn takes up to
+    # ~90 seconds and the whole point of `/unlink` on a stolen handset is that it
+    # takes effect NOW — a revocation that lands mid-generation must not still be
+    # followed by the student's GPA arriving in the thief's chat. The answer is
+    # already persisted, so dropping the delivery loses the student nothing.
+    live = TelegramLink.objects.filter(pk=link_id, status=TelegramLink.STATUS_ACTIVE).first()
+    if live is None:
+        logger.info("telegram: link revoked during generation; dropping delivery")
+        return
+
+    chat_id = int(live.telegram_user_id)
+
+    # The picture FIRST, then the words. A student scrolling a phone should meet
+    # the timetable and then read the caveats about it — and the caveats travel as
+    # their own message, never as a caption, because Telegram caps a caption at
+    # 1024 characters and silently truncating a disclaimer is the one failure this
+    # channel must not have.
+    #
+    # Every failure here is silent by design: `_send_card_image` returns nothing
+    # rather than raising, so a missing Chromium or a slow render costs the
+    # picture and never the answer.
+    _send_card_image(result, chat_id, server_port=server_port)
+
+    for text in _render_outcome(result):
+        # To the link's OWN chat, never to the id carried in the payload that
+        # triggered this: the payload is attacker-controlled input and the link row
+        # is the verified fact.
+        send_text(chat_id=chat_id, text=text)
+
+
+def _send_card_image(
+    result: advisor_turn.TurnResult, chat_id: int, *, server_port: str = ""
+) -> None:
+    """Deliver a picture of the timetable card, or quietly deliver nothing."""
+    from core.services.advisor_presentations import KIND_TIMETABLE
+
+    from .rendering import images_enabled, local_base_url, render_card
+
+    assistant = result.assistant_message
+    if assistant is None or not assistant.presentation or not images_enabled():
+        return
+    # Only the kind the card renderer actually draws. `renderTimetablePresentation`
+    # returns null for anything else, so without this a graduation answer would
+    # start a browser, wait for a page that renders nothing, and log a failure —
+    # ~2 seconds and a warning for a picture that was never going to exist.
+    if str(assistant.presentation.get("kind") or "") != KIND_TIMETABLE:
+        return
+    alternatives = assistant.presentation.get("alternatives") or []
+    count = min(len(alternatives), MAX_CARD_IMAGES) if alternatives else 1
+
+    for index in range(count):
+        png = render_card(
+            message_id=assistant.pk,
+            base_url=local_base_url(server_port),
+            option_index=index if alternatives else None,
+        )
+        if not png:
+            # Already logged by the renderer. Stop rather than press on: if one
+            # render failed the next will too, and the text below still carries
+            # the link to the web screen, which is what shipped before images.
+            return
+        send_photo(chat_id=chat_id, png=png)
+
+
+def _render_outcome(result: advisor_turn.TurnResult) -> list[str]:
+    """One turn outcome, as the messages a student should receive.
+
+    Only `AdvisorMessage.content` — the stored, validated answer — is ever sent.
+    The adviser's result dict also carries the agent trace and, on the V1 branch
+    the feature flag still defaults to, the student's own unprojected record; none
+    of it is read here, and reading it would put a database row into a chat
+    message.
+    """
+    if result.outcome == advisor_turn.RATE_LIMITED:
+        return [messages.rate_limited(result.retry_after)]
+    if result.outcome == advisor_turn.QUESTION_TOO_LONG:
+        return [messages.QUESTION_TOO_LONG]
+    if result.outcome == advisor_turn.QUESTION_EMPTY:
+        return [messages.UNSUPPORTED_CONTENT]
+    if result.outcome == advisor_turn.NO_STUDENT_RECORD:
+        return [messages.NO_STUDENT_RECORD]
+    if result.outcome in {advisor_turn.GENERATION_FAILED, advisor_turn.KEY_CONFLICT}:
+        return [messages.GENERATION_FAILED]
+
+    assistant = result.assistant_message
+    if assistant is None:
+        # REPLAYED with nothing paired: the earlier attempt stored the question and
+        # never got an answer. Telling the student it failed is true and lets them
+        # ask again.
+        return [messages.GENERATION_FAILED]
+
+    return render_answer(
+        answer=assistant.content,
+        citations=list(assistant.citations.all()),
+        web_url=_web_url(assistant.conversation_id),
+        # The web chat draws a structured timetable card and the adviser's prompt
+        # keeps its prose short because of it. Rather than rebuild that card out of
+        # chat messages, point at the screen that already draws it.
+        has_presentation=bool(assistant.presentation),
+    )
+
+
+__all__ = [
+    "SUPPORTED_UPDATE_KEYS",
+    "UNAUTHENTICATED_COMMANDS",
+    "InboundMessage",
+    "answer_question",
+    "claim_update",
+    "handle_command",
+    "is_enabled",
+    "parse_update",
+]

@@ -18,16 +18,12 @@ how provenance drifts without anyone noticing.
 
 from __future__ import annotations
 
-import hashlib
 import logging
 import uuid
-from datetime import timedelta
 from typing import Any
 
-from django.db import IntegrityError, transaction
 from django.http import HttpRequest, JsonResponse
 from django.shortcuts import get_object_or_404
-from django.utils import timezone
 from django.views.decorators.http import require_GET, require_POST
 
 from .advisor_http import forbidden as _forbidden
@@ -40,42 +36,41 @@ from .models import (
     AdvisorFeedback,
     AdvisorMessage,
     AdvisorMessageCitation,
-    FinalDisposition,
 )
-from .services.advisor_escalation import (
-    build_evidence,
-    deterministic_summary,
-    escalation_reason,
-    may_escalate,
-)
-from .services.advisor_history import load_visible_history
-from .services.advisor_outcome import derive_outcome
+from .services import advisor_turn
 from .services.advisor_presentations import normalise_presentation
-from .services.rate_limit import CONVERSATION, ESCALATION, FEEDBACK, GENERATION, HISTORY
-from .services.rate_limit import release as refund_budget
+from .services.advisor_principal import AdvisorPrincipal
+from .services.advisor_turn import (
+    MAX_TITLE_CHARS,
+    ConversationNotFound,
+    open_conversation,
+)
+
+# Re-exported, not merely imported: the browser's retry affordance is decided by
+# the same staleness window the turn service uses to reclaim an abandoned turn, and
+# a second copy of "fifteen minutes" here is a way for the screen and the service
+# to disagree about which questions are still being answered.
+from .services.advisor_turn import STALE_GENERATION as STALE_GENERATION  # noqa: PLC0414
+from .services.advisor_turn import is_resumable as _is_resumable
+from .services.rate_limit import CONVERSATION, FEEDBACK, HISTORY
 
 logger = logging.getLogger(__name__)
 
-MAX_QUESTION_CHARS = 4000
-MAX_TITLE_CHARS = 120
 
-
-def _owned_conversation(conversation_id: Any, student_id: int) -> AdvisorConversation:
+def _owned_conversation(principal: AdvisorPrincipal, conversation_id: Any) -> AdvisorConversation:
     """Fetch a conversation the student owns, or 404.
 
-    Ownership is part of the filter. Fetching by id and checking `.student_id`
-    afterwards would be one forgotten line away from a leak, and the forgotten
-    line would look like working code.
+    Ownership is part of the filter, and the filter lives in `advisor_turn` so
+    that every channel proves it the same way. A malformed id is indistinguishable
+    from someone else's id, and both should tell the caller the same thing:
+    nothing here.
     """
     try:
-        parsed = uuid.UUID(str(conversation_id))
-    except (ValueError, AttributeError, TypeError):
-        # A malformed id is indistinguishable from someone else's id, and both
-        # should tell the caller the same thing: nothing here.
+        return open_conversation(principal=principal, conversation_id=conversation_id)
+    except ConversationNotFound:
         from django.http import Http404
 
         raise Http404("No such conversation") from None
-    return get_object_or_404(AdvisorConversation, id=parsed, student_id=student_id)
 
 
 # ── serialisation: the ONLY shape the browser ever sees ──────────
@@ -236,7 +231,7 @@ def conversation_messages_view(request: HttpRequest, conversation_id: str) -> Js
     over = _over_budget(HISTORY, student_id)
     if over:
         return over
-    conversation = _owned_conversation(conversation_id, student_id)
+    conversation = _owned_conversation(principal, conversation_id)
     messages = conversation.messages.prefetch_related("citations", "escalations").order_by(
         "sequence", "created_at"
     )
@@ -267,376 +262,91 @@ def conversation_messages_view(request: HttpRequest, conversation_id: str) -> Js
     return JsonResponse({"conversation": _conversation_json(conversation), "messages": out})
 
 
-def _title_from(question: str) -> str:
-    words = question.strip().split()
-    return " ".join(words[:8])[:MAX_TITLE_CHARS]
+def _turn_json(result: advisor_turn.TurnResult, **extra: Any) -> dict[str, Any]:
+    """The three objects every turn response carries, from the SAVED rows.
+
+    The answer inherits the QUESTION's language: that is the value
+    `_answer_language` pinned the model to before it wrote a word.
+    """
+    student_message = result.student_message
+    assistant_message = result.assistant_message
+    asked_in = _language_of(student_message.content) if student_message else ""
+    return {
+        "conversation": _conversation_json(result.conversation) if result.conversation else None,
+        "student_message": _message_json(student_message) if student_message else None,
+        "assistant_message": (
+            _message_json(assistant_message, language=asked_in) if assistant_message else None
+        ),
+        **extra,
+    }
 
 
 @require_POST
 def conversation_post_message_view(request: HttpRequest, conversation_id: str) -> JsonResponse:
     """Ask a question and persist the whole turn.
 
-    The adviser call sits OUTSIDE the transaction and the writes sit inside it. A
-    model that takes ninety seconds must not hold a database transaction open for
-    ninety seconds, and the writes must still be all-or-nothing: an assistant
-    message without its citations would be an uncited answer that looks cited-by-
-    omission rather than one that failed.
+    The turn itself lives in `core.services.advisor_turn`, which the Telegram
+    channel calls too — so ownership, idempotency, the generation budget and the
+    order they run in are one implementation rather than two that drift. What
+    stays here is what HTTP owns: reading the body, and rendering the outcome.
     """
-    from .services.student_advisor_v2 import answer_student_advisor
-
     principal = _principal(request)
     if principal is None:
         return _forbidden()
-    student_id = principal.student_id
-    conversation = _owned_conversation(conversation_id, student_id)
+    conversation = _owned_conversation(principal, conversation_id)
 
     payload, err = _body(request)
     if err:
         return err
-    question = str(payload.get("message") or "").strip()
-    if not question:
-        return JsonResponse({"error": "message is required"}, status=400)
-    if len(question) > MAX_QUESTION_CHARS:
-        return JsonResponse({"error": "message is too long"}, status=400)
 
-    key = str(payload.get("idempotency_key") or "").strip()[:64]
-    request_hash = hashlib.sha256(question.encode("utf-8")).hexdigest()
-
-    student_message = None
-    if key:
-        existing = conversation.messages.filter(
-            idempotency_key=key, role=AdvisorMessage.ROLE_STUDENT
-        ).first()
-        if existing is not None:
-            resumed, response = _resume_or_replay(conversation, existing, student_id, request_hash)
-            if response is not None:
-                return response
-            student_message = resumed
-
-    # Charged here: after ownership, after validation, and after the idempotency
-    # branch that may replay a stored answer — but still before the model is
-    # called, which is what admission control requires. Charged earlier, a replay
-    # served entirely from storage cost the student the same as a new question.
-    over = _over_budget(GENERATION, student_id)
-    if over:
-        return over
-
-    if student_message is None:
-        try:
-            with transaction.atomic():
-                student_message = AdvisorMessage.objects.create(
-                    conversation=conversation,
-                    role=AdvisorMessage.ROLE_STUDENT,
-                    content=question,
-                    idempotency_key=key,
-                    request_hash=request_hash,
-                    status=AdvisorMessage.STATUS_PENDING,
-                )
-        except IntegrityError:
-            if not key:
-                # The unique constraint only covers non-empty keys, so this cannot be
-                # an idempotency collision — it is some other integrity failure, and
-                # the recovery below would match an unrelated earlier keyless turn
-                # and serve its stored answer as this question's.
-                raise
-            # Two concurrent sends of the same key. The other one is authoritative.
-            existing = conversation.messages.filter(
-                idempotency_key=key, role=AdvisorMessage.ROLE_STUDENT
-            ).first()
-            if existing is None:
-                raise
-            resumed, response = _resume_or_replay(conversation, existing, student_id, request_hash)
-            if response is not None:
-                return response
-            student_message = resumed
-
-    try:
-        # The turns the student already saw, so a follow-up has something to refer
-        # to. Excludes THIS question, which was written to the database before
-        # generation and would otherwise arrive twice — and twice again on a retry,
-        # which reuses the same row.
-        result = answer_student_advisor(
-            question=question,
-            principal=principal,
-            history=load_visible_history(conversation, exclude_message_id=student_message.pk),
-        )
-    except ValueError as exc:
-        # The student's own row is gone — a roster re-import can do this. Passing a
-        # real identity makes it raise where the general-mode stub used to answer
-        # blandly and work, so without this branch the student gets a 503 on every
-        # question they ever ask, permanently, with no explanation. Do NOT fall back
-        # to the general context: an answer that silently stops being about them is
-        # the failure this whole change removes.
-        logger.warning(
-            "Adviser has no student record for conversation %s: %s", conversation.id, exc
-        )
-        # No answer is possible for this student until their record is restored, so
-        # charging them would spend the whole allowance on a diagnosis and then
-        # replace it with a rate-limit message that hides the diagnosis.
-        refund_budget(GENERATION, student_id)
-        student_message.status = AdvisorMessage.STATUS_FAILED
-        student_message.save(update_fields=["status"])
-        return JsonResponse(
-            {
-                "conversation": _conversation_json(conversation),
-                "student_message": _message_json(student_message),
-                "assistant_message": None,
-                "error": ("تعذر العثور على سجلك الأكاديمي. يرجى التواصل مع عمادة القبول والتسجيل."),
-            },
-            status=409,
-        )
-    except Exception:  # noqa: BLE001
-        logger.exception("Adviser generation failed for conversation %s", conversation.id)
-        student_message.status = AdvisorMessage.STATUS_FAILED
-        student_message.save(update_fields=["status"])
-        return JsonResponse(
-            {
-                "conversation": _conversation_json(conversation),
-                "student_message": _message_json(student_message),
-                "assistant_message": None,
-                # No exception class name: varying the input and reading back
-                # `ConnectionError` vs `OperationalError` is a free map of which
-                # subsystem the student just broke.
-                "error": "The adviser could not answer just now. Your question was saved.",
-            },
-            status=503,
-        )
-
-    assistant_message = _persist_answer(conversation, student_message, result)
-    return JsonResponse(
-        {
-            "conversation": _conversation_json(conversation),
-            "student_message": _message_json(student_message),
-            # The answer inherits the QUESTION's language: that is the value
-            # `_answer_language` pinned the model to before it wrote a word.
-            "assistant_message": _message_json(
-                assistant_message, language=_language_of(student_message.content)
-            ),
-        },
-        status=201,
+    result = advisor_turn.run_advisor_turn(
+        principal=principal,
+        conversation=conversation,
+        question=str(payload.get("message") or ""),
+        idempotency_key=str(payload.get("idempotency_key") or ""),
     )
 
-
-#: How long a turn may sit PENDING before we accept that whatever was generating it
-#: is gone. Generously longer than the slowest model call, because resuming a turn
-#: that IS still running would answer it twice.
-STALE_GENERATION = timedelta(minutes=15)
-
-
-def _is_resumable(message: AdvisorMessage) -> bool:
-    """Whether this turn still needs an answer.
-
-    FAILED is the clean case: generation raised and said so. PENDING is the dirty
-    one — the worker was killed, the deploy restarted, the request timed out
-    upstream — and nothing else will ever move it on. Treating PENDING as
-    permanently in-flight rebuilds, one state over, exactly the trap that made a
-    failed question unanswerable forever.
-    """
-    if message.status == AdvisorMessage.STATUS_FAILED:
-        return True
-    if message.status != AdvisorMessage.STATUS_PENDING:
-        return False
-    started = message.generation_started_at or message.created_at
-    return timezone.now() - started > STALE_GENERATION
-
-
-def _resume_or_replay(
-    conversation: AdvisorConversation,
-    existing: AdvisorMessage,
-    student_id: int,
-    request_hash: str,
-) -> tuple[AdvisorMessage | None, JsonResponse | None]:
-    """Decide what a repeated idempotency key means for THIS turn.
-
-    Idempotency exists so a retry cannot produce a second answer to a question
-    already answered. It must not also mean a question that FAILED can never be
-    answered at all — and it did: replaying returned the failed student message
-    with `assistant_message: null`, so every retry succeeded at doing nothing and
-    the student's question was permanently stuck.
-
-    A pending turn is still being generated, so replaying is right. A finished one
-    has its answer. A failed one is unfinished, and gets resumed.
-
-    Returns `(message_to_answer, None)` to generate, or `(None, response)` to
-    return immediately.
-    """
-    if existing.request_hash != request_hash:
-        # The same key carrying a different question is a client bug, not a retry.
-        # Answering it would silently attach one question's answer to another's key.
-        return None, JsonResponse(
+    if result.outcome == advisor_turn.QUESTION_EMPTY:
+        return JsonResponse({"error": "message is required"}, status=400)
+    if result.outcome == advisor_turn.QUESTION_TOO_LONG:
+        return JsonResponse({"error": "message is too long"}, status=400)
+    if result.outcome == advisor_turn.KEY_CONFLICT:
+        return JsonResponse(
             {"error": "idempotency_key was already used for a different message."},
             status=409,
         )
-    if not _is_resumable(existing):
-        return None, _replay(conversation, existing, student_id)
-
-    # Claim it with ONE conditional UPDATE. Reading the status and then writing it
-    # is two statements with a gap in between, and a double-clicked Retry fits
-    # inside that gap: both requests see FAILED, both claim it, both call the
-    # model, and the student gets two answers to one question.
-    claimed = AdvisorMessage.objects.filter(pk=existing.pk, status=existing.status).update(
-        status=AdvisorMessage.STATUS_PENDING, generation_started_at=timezone.now()
-    )
-    if not claimed:
-        # Someone else claimed it first. They are generating; we replay.
-        existing.refresh_from_db()
-        return None, _replay(conversation, existing, student_id)
-
-    existing.status = AdvisorMessage.STATUS_PENDING
-    return existing, None
-
-
-def _replay(
-    conversation: AdvisorConversation, student_message: AdvisorMessage, student_id: int
-) -> JsonResponse:
-    """Return the turn this key already produced, rather than generating again."""
-    assistant = (
-        conversation.messages.filter(in_reply_to=student_message)
-        .prefetch_related("citations")
-        .order_by("sequence", "created_at")
-        .first()
-    )
-    if assistant is None:
-        # Rows written before turns were paired explicitly. The old heuristic is
-        # wrong whenever turns finish out of order, so it is a fallback for history
-        # only — never the primary answer.
-        assistant = (
-            conversation.messages.filter(
-                role=AdvisorMessage.ROLE_ASSISTANT,
-                in_reply_to__isnull=True,
-                created_at__gte=student_message.created_at,
-            )
-            .prefetch_related("citations")
-            .order_by("sequence", "created_at")
-            .first()
+    if result.outcome == advisor_turn.RATE_LIMITED:
+        response = JsonResponse(
+            {
+                "error": "لقد أرسلت طلبات كثيرة. يرجى المحاولة بعد قليل.",
+                "retry_after": result.retry_after,
+            },
+            status=429,
         )
-    return JsonResponse(
-        {
-            "conversation": _conversation_json(conversation),
-            "student_message": _message_json(student_message),
-            "assistant_message": (
-                _message_json(assistant, language=_language_of(student_message.content))
-                if assistant
-                else None
+        response["Retry-After"] = str(result.retry_after)
+        return response
+    if result.outcome == advisor_turn.REPLAYED:
+        return JsonResponse(_turn_json(result, replayed=True), status=200)
+    if result.outcome == advisor_turn.NO_STUDENT_RECORD:
+        return JsonResponse(
+            _turn_json(
+                result,
+                error="تعذر العثور على سجلك الأكاديمي. يرجى التواصل مع عمادة القبول والتسجيل.",
             ),
-            "replayed": True,
-        },
-        status=200,
-    )
-
-
-def _persist_answer(
-    conversation: AdvisorConversation,
-    student_message: AdvisorMessage,
-    result: dict[str, Any],
-) -> AdvisorMessage:
-    """Save the assistant turn and its citations as one unit.
-
-    Only citations the answer ACTUALLY made are stored, intersected with what the
-    request was entitled to cite. Saving everything retrieved would attach
-    authority to records the answer never used, which reads to a student as
-    "these sources support this" — the same defect as background evidence
-    appearing beside a claim.
-    """
-    from .services.virtual_advisor import _claimed_citations
-
-    agent = result.get("agent") or {}
-    answer = str(result.get("answer") or "")
-
-    # Derived ONCE, here, from the result the student will actually see — after the
-    # citation check and any grounding retry. Deriving it earlier and correcting it
-    # later leaves a window where the stored outcome disagrees with the stored
-    # answer, and the escalation layer reads the stored outcome.
-    outcome = derive_outcome(result)
-    entitled = {c.get("policy_id"): c for c in (result.get("citations") or [])}
-    claimed = [c for c in _claimed_citations(answer) if c.get("policy_id") in entitled]
-
-    status = AdvisorMessage.STATUS_COMPLETED
-    if outcome.disposition in {FinalDisposition.ABSTAIN, FinalDisposition.ESCALATE}:
-        status = AdvisorMessage.STATUS_ABSTAINED
-
-    with transaction.atomic():
-        assistant = AdvisorMessage.objects.create(
-            conversation=conversation,
-            in_reply_to=student_message,
-            role=AdvisorMessage.ROLE_ASSISTANT,
-            content=answer,
-            presentation=normalise_presentation(result.get("presentation")),
-            grounding_state=str(agent.get("policy_grounding") or ""),
-            final_disposition=outcome.disposition,
-            reason_codes=outcome.reason_codes,
-            missing_information=outcome.missing_information,
-            outcome_schema_version=outcome.schema_version,
-            model_name=str(result.get("model") or ""),
-            route=(
-                AdvisorMessage.ROUTE_AGENT
-                if agent.get("loop_used")
-                else AdvisorMessage.ROUTE_SEEDED_FALLBACK
+            status=409,
+        )
+    if result.outcome == advisor_turn.GENERATION_FAILED:
+        return JsonResponse(
+            _turn_json(
+                result,
+                # No exception class name: varying the input and reading back
+                # `ConnectionError` vs `OperationalError` is a free map of which
+                # subsystem the student just broke.
+                error="The adviser could not answer just now. Your question was saved.",
             ),
-            status=status,
+            status=503,
         )
-        for claim in claimed:
-            source = entitled[claim["policy_id"]]
-            AdvisorMessageCitation.objects.create(
-                message=assistant,
-                policy_id=source.get("policy_id") or "",
-                document_title=source.get("document_title") or "",
-                edition=str(source.get("edition") or ""),
-                page=_page_shown(claim, source),
-                effective_from=str(source.get("effective_from") or ""),
-                effective_to=str(source.get("effective_to") or ""),
-                authority_status="AUTHORITY_APPROVED",
-                validation_status=AdvisorMessageCitation.VALID,
-                source_version_hash=_source_hash(source),
-            )
-
-        student_message.status = AdvisorMessage.STATUS_COMPLETED
-        student_message.save(update_fields=["status"])
-
-        conversation.last_message_at = timezone.now()
-        if not conversation.title:
-            conversation.title = _title_from(student_message.content)
-        conversation.save(update_fields=["last_message_at", "title", "updated_at"])
-
-    # Re-read so the response is built from what the database holds, not from the
-    # objects that were just constructed in memory.
-    return AdvisorMessage.objects.prefetch_related("citations").get(pk=assistant.pk)
-
-
-def _page_shown(claim: dict[str, Any], source: dict[str, Any]) -> str:
-    """The single page this citation points a student at.
-
-    A policy record's `page` is an int when the rule sits on one page and a LIST
-    when it spans several, so taking it verbatim renders "p. [24, 25]" in the
-    Sources block — and on PostgreSQL a long enough span overflows the column,
-    raising inside the atomic block, leaving the turn stranded mid-generation.
-    SQLite truncates silently, so it would never show up in development.
-
-    The claim is the better source anyway: it carries the page the answer actually
-    sent the student to, already parsed to one integer.
-    """
-    page = claim.get("page")
-    if page is None:
-        page = source.get("page")
-    if isinstance(page, list | tuple):
-        page = page[0] if page else None
-    return "" if page is None else str(page)[:40]
-
-
-def _source_hash(citation: dict[str, Any]) -> str:
-    """Fingerprint of the cited source AS SHOWN, so a later revision is detectable."""
-    material = "|".join(
-        str(citation.get(field) or "")
-        for field in (
-            "policy_id",
-            "document_id",
-            "edition",
-            "page",
-            "effective_from",
-            "effective_to",
-        )
-    )
-    return hashlib.sha256(material.encode("utf-8")).hexdigest()
+    return JsonResponse(_turn_json(result), status=201)
 
 
 @require_POST
@@ -697,8 +407,6 @@ def message_feedback_view(request: HttpRequest, message_id: str) -> JsonResponse
 
 
 # ── escalation: handing one turn to a person ─────────────────────
-
-MAX_NOTE_CHARS = 2000
 
 
 #: What a student is told a case is doing. The internal names are a workflow
@@ -765,96 +473,51 @@ def _owned_assistant_message(message_id: Any, student_id: int) -> AdvisorMessage
 def escalation_create_view(request: HttpRequest, message_id: str) -> JsonResponse:
     """Hand one answered turn to a human adviser.
 
-    The whole thing is one transaction over a LOCKED source message, because three
-    things have to agree afterwards: a case exists, its evidence matches the answer
-    that produced it, and that answer says it was escalated. A database holding an
-    open case whose source turn still reads ABSTAIN is one where the adviser and
-    the student are looking at different accounts of the same event.
+    The decision itself lives in `core.services.advisor_turn.escalate_turn`, which
+    the Telegram `/advisor` command calls too — so a case raised from a phone and a
+    case raised from the browser are the same case, made the same way, with the
+    same lock over the source message.
     """
     principal = _principal(request)
     if principal is None:
         return _forbidden()
-    student_id = principal.student_id
 
     payload, err = _body(request)
     if err:
         return err
-    note = str(payload.get("student_note") or "").strip()[:MAX_NOTE_CHARS]
-    student_requested = bool(payload.get("student_requested"))
 
-    message = _owned_assistant_message(message_id, student_id)
+    message = _owned_assistant_message(message_id, principal.student_id)
 
-    with transaction.atomic():
-        # Locked for the whole decision: without it two taps of the button both see
-        # no open case and both try to create one.
-        locked = (
-            AdvisorMessage.objects.select_for_update()
-            .select_related("in_reply_to")
-            .get(pk=message.pk)
-        )
+    result = advisor_turn.escalate_turn(
+        principal=principal,
+        message=message,
+        student_note=str(payload.get("student_note") or ""),
+        student_requested=bool(payload.get("student_requested")),
+    )
 
-        existing = (
-            AdvisorEscalation.objects.filter(source_message=locked)
-            .exclude(status__in=AdvisorEscalation.TERMINAL_STATUSES)
-            .first()
-        )
-        if existing is not None:
-            # The same request, not a second one. Returned as-is: regenerating the
-            # summary would rewrite what an adviser may already have read.
-            return JsonResponse({"escalation": _escalation_json(existing)}, status=200)
-
-        if not may_escalate(locked, student_requested=student_requested):
-            return JsonResponse(
-                {
-                    "error": (
-                        "هذه الإجابة لا تحتاج إلى مراجعة المرشد الأكاديمي. "
-                        "يمكنك طلب المراجعة صراحةً إذا رغبت."
-                    )
-                },
-                status=409,
-            )
-
-        over = _over_budget(ESCALATION, student_id)
-        if over:
-            return over
-
-        evidence = build_evidence(locked)
-        try:
-            # Its OWN savepoint. An IntegrityError marks the enclosing atomic block
-            # broken, so without this the recovery query below cannot run — the
-            # concurrency handler would itself raise, in production, on exactly the
-            # contended path it exists to survive.
-            with transaction.atomic():
-                escalation = AdvisorEscalation.objects.create(
-                    conversation=locked.conversation,
-                    source_message=locked,
-                    student_id=student_id,
-                    reason_code=escalation_reason(locked, student_requested=student_requested),
-                    student_note=note,
-                    generated_summary=deterministic_summary(evidence),
-                    evidence_snapshot=evidence,
+    if result.outcome == advisor_turn.ESCALATION_NOT_WARRANTED:
+        return JsonResponse(
+            {
+                "error": (
+                    "هذه الإجابة لا تحتاج إلى مراجعة المرشد الأكاديمي. "
+                    "يمكنك طلب المراجعة صراحةً إذا رغبت."
                 )
-        except IntegrityError:
-            # The partial unique index caught a concurrent creation. That request
-            # won; this one reports its result rather than inventing a second case.
-            winner = (
-                AdvisorEscalation.objects.filter(source_message=locked)
-                .exclude(status__in=AdvisorEscalation.TERMINAL_STATUSES)
-                .first()
-            )
-            if winner is None:
-                raise
-            return JsonResponse({"escalation": _escalation_json(winner)}, status=200)
-
-        # The turn now says it was escalated — but keeps the reasons that
-        # constrained the ANSWER. Those record why the adviser stopped where it
-        # did; the case records why a person was asked, and for a student who
-        # simply wanted a human to look, that is a different fact.
-        locked.final_disposition = FinalDisposition.ESCALATE
-        locked.status = AdvisorMessage.STATUS_ESCALATED
-        locked.save(update_fields=["final_disposition", "status"])
-
-    return JsonResponse({"escalation": _escalation_json(escalation)}, status=201)
+            },
+            status=409,
+        )
+    if result.outcome == advisor_turn.ESCALATION_RATE_LIMITED:
+        response = JsonResponse(
+            {
+                "error": "لقد أرسلت طلبات كثيرة. يرجى المحاولة بعد قليل.",
+                "retry_after": result.retry_after,
+            },
+            status=429,
+        )
+        response["Retry-After"] = str(result.retry_after)
+        return response
+    if result.outcome == advisor_turn.ESCALATION_EXISTS:
+        return JsonResponse({"escalation": _escalation_json(result.escalation)}, status=200)
+    return JsonResponse({"escalation": _escalation_json(result.escalation)}, status=201)
 
 
 @require_GET

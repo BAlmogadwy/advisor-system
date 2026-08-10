@@ -331,7 +331,7 @@ def test_two_simultaneous_submissions_produce_one_case(client):
                 )
         return real_build(msg)
 
-    with mock.patch("core.advisor_conversation_views.build_evidence", side_effect=build_then_race):
+    with mock.patch("core.services.advisor_turn.build_evidence", side_effect=build_then_race):
         response = _escalate(client, message)
 
     assert response.status_code == 200

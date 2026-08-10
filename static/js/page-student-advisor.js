@@ -1848,6 +1848,28 @@
     });
   }
 
+  /* The timetable card, drawn by the SAME function the thread uses.
+
+     The Telegram channel sends a picture of the proposed timetable, and the
+     picture has to be of THIS card — not of a second one drawn server-side. A
+     Pillow or matplotlib re-implementation would be a second answer to "what does
+     a timetable look like", and this codebase has already paid for that twice
+     (the lecture grid duplicated in four places; three cohort classifiers
+     disagreeing about " M1"). Exporting the real function means the image cannot
+     drift from the screen the student is linked to, and Arabic shaping stays the
+     browser's job rather than becoming ours again.
+
+     Exposed only as a render entry point: it takes a presentation object that the
+     server has already put through `normalise_presentation`, and reaches nothing
+     else. */
+  window.__SA_RENDER_TIMETABLE_CARD__ = renderTimetablePresentation;
+
+  /* A card-only page has no thread, no session and no endpoints to call. Without
+     this guard the bootstrap below would fire there, request the conversation
+     list unauthenticated, and paint the "could not load" state into the very
+     screenshot we are taking. */
+  if (cfg.cardOnly) return;
+
   /* A direct visit to the adviser is a fresh workspace. An existing conversation
      opens only when its id is explicit in the URL (the History drawer writes that
      id when a student selects a thread). This keeps history durable without making

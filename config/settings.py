@@ -59,6 +59,7 @@ INSTALLED_APPS = [
     "django.contrib.staticfiles",
     "core",
     "whatsapp_gateway",
+    "telegram_gateway",
     # New timetabling subsystem. Deliberately isolated from core's timetable
     # engine: shares no code, no tables and no state, so it cannot regress the
     # timetable in production use today. See docs/SCHEDULER-BLUEPRINT.md.
@@ -225,6 +226,50 @@ WHATSAPP_STUDENT_EMAIL_DOMAIN = os.getenv("WHATSAPP_STUDENT_EMAIL_DOMAIN", "")
 WHATSAPP_OTP_TTL_SECONDS = int(os.getenv("WHATSAPP_OTP_TTL_SECONDS", "300"))
 WHATSAPP_OTP_MAX_ATTEMPTS = int(os.getenv("WHATSAPP_OTP_MAX_ATTEMPTS", "5"))
 WHATSAPP_ALLOW_SUPER_ADMIN = os.getenv("WHATSAPP_ALLOW_SUPER_ADMIN", "false").lower() == "true"
+
+# Telegram Advisor Gateway. Keep credentials out of the repository.
+#
+# The channel is a TRANSPORT for the existing Student Advisor — it holds no prompt
+# and no model client of its own, and every one of these settings is either a
+# credential or a switch. See docs/TELEGRAM-ADVISOR-CHANNEL.md.
+#
+# Default OFF. A deployment that has not decided to run this feature must not
+# acquire a public webhook by upgrading.
+TELEGRAM_ADVISOR_ENABLED = os.getenv("TELEGRAM_ADVISOR_ENABLED", "false").lower() == "true"
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
+# Telegram echoes this in `X-Telegram-Bot-Api-Secret-Token` on every webhook call.
+# Unset means the webhook refuses everything — deliberately NOT relaxed under
+# DEBUG the way WHATSAPP_REQUIRE_SIGNATURE is, because "open in development" is a
+# default that travels.
+TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
+TELEGRAM_BOT_USERNAME = os.getenv("TELEGRAM_BOT_USERNAME", "")
+# Origin the linking URL is built from, e.g. https://advisor.example.edu. Without
+# it `/link` fails closed rather than sending a token pointing nowhere.
+TELEGRAM_PUBLIC_BASE_URL = os.getenv("TELEGRAM_PUBLIC_BASE_URL", "")
+TELEGRAM_LINK_TOKEN_TTL_SECONDS = int(os.getenv("TELEGRAM_LINK_TOKEN_TTL_SECONDS", "900"))
+TELEGRAM_API_TIMEOUT_SECONDS = float(os.getenv("TELEGRAM_API_TIMEOUT_SECONDS", "30"))
+# Shown by /privacy when set; the built-in notice is used either way.
+TELEGRAM_PRIVACY_URL = os.getenv("TELEGRAM_PRIVACY_URL", "")
+# Run the adviser turn inline instead of on the background thread. Debugging only —
+# a turn can take ~90 s and Telegram redelivers anything it does not get a prompt
+# 200 for. Always on under pytest regardless of this value.
+TELEGRAM_DISPATCH_SYNC = os.getenv("TELEGRAM_DISPATCH_SYNC", "false").lower() == "true"
+# Send a PNG of the proposed timetable alongside the answer. OFF by default and
+# separate from TELEGRAM_ADVISOR_ENABLED on purpose: a week grid is a compact
+# record of where a student is and when, Telegram stores it under a durable
+# file_id, and it forwards far more easily than prose. Enabling it also makes
+# the /privacy notice incomplete until that text is updated.
+# Requires Chromium: add `playwright install chromium` to the Render build.
+TELEGRAM_SEND_TIMETABLE_IMAGES = (
+    os.getenv("TELEGRAM_SEND_TIMETABLE_IMAGES", "false").lower() == "true"
+)
+# Where the headless browser reaches THIS process. Local, never the public
+# hostname: the browser runs beside the server, and routing a signed card URL
+# out through the internet and back would be pointless exposure.
+# Empty by default: the port is taken from the webhook request that triggered
+# the render, which is always right. Set this only where the request port is
+# not where the app is reachable (a unix socket, a container port mapping).
+TELEGRAM_INTERNAL_BASE_URL = os.getenv("TELEGRAM_INTERNAL_BASE_URL", "")
 
 DEFAULT_FROM_EMAIL = os.getenv("DEFAULT_FROM_EMAIL", "advisor-bot@localhost")
 

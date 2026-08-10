@@ -1,0 +1,75 @@
+{% extends "core/base.html" %}
+{% load i18n %}{% get_current_language as LANGUAGE_CODE %}
+
+{% comment %}
+The consent step, and the only place a Telegram chat becomes a student.
+
+Two things are load-bearing and easy to lose in a redesign:
+
+* the privacy notice is rendered HERE, before the button, not linked from it. A
+  student who has to click through to read what is processed has not been told;
+* there is no student field on this form. The identity comes from the session on
+  the server side, so there is nothing on this page to tamper with — and adding a
+  hidden `student_id` "for convenience" would rebuild exactly the hole the whole
+  design avoids.
+
+The page never displays the student number, the name, or which Telegram account is
+being linked. It does not need to, and each of them is a disclosure to whoever is
+looking over the reader's shoulder.
+{% endcomment %}
+
+{% block title %}{% if LANGUAGE_CODE == 'ar' %}تأكيد ربط تيليجرام{% else %}Confirm Telegram linking{% endif %}{% endblock %}
+
+{% block body %}
+<div class="login-wrap" role="main">
+  <div class="login-card" style="max-width:640px">
+    <h1 class="login-title">
+      {% if LANGUAGE_CODE == 'ar' %}ربط حساب تيليجرام{% else %}Link your Telegram account{% endif %}
+    </h1>
+    <p class="login-sub">
+      {% if LANGUAGE_CODE == 'ar' %}
+        أنت على وشك السماح لمحادثة تيليجرام التي طلبت الربط بسؤال المرشد الأكاديمي باسمك.
+      {% else %}
+        You are about to let the Telegram chat that requested this link ask the academic adviser on your behalf.
+      {% endif %}
+    </p>
+
+    {% comment %}
+    Said before the button, not after it: a student who did not type /link
+    themselves should recognise at THIS point that they were sent here, and stop.
+    The page cannot name the chat — it stores no Telegram profile data — so the
+    check it can offer is the student's own memory of having started the flow.
+    {% endcomment %}
+    <p class="login-sub" style="font-weight:600">
+      {% if LANGUAGE_CODE == 'ar' %}
+        إن لم تكن أنت من أرسل /link إلى البوت للتو، فلا تُكمل — أغلق هذه الصفحة.
+      {% else %}
+        If you did not just send /link to the bot yourself, do not continue — close this page.
+      {% endif %}
+    </p>
+    <p class="login-sub">
+      {% if LANGUAGE_CODE == 'ar' %}
+        لن يتم الربط بمجرد الضغط: سيظهر لك رمز تُرسله من محادثتك مع البوت.
+      {% else %}
+        Pressing this does not link anything yet — you will be given a code to send from your own chat with the bot.
+      {% endif %}
+    </p>
+
+    <pre style="white-space:pre-wrap;text-align:start;font:inherit;margin:1rem 0;padding:1rem;
+                border:1px solid var(--border, #d8dee9);border-radius:12px;">{{ privacy_text }}</pre>
+
+    <form method="post" action="{% url 'telegram_link_confirm' token %}">
+      {% csrf_token %}
+      <button type="submit" class="btn btn-primary" style="width:100%">
+        {% if LANGUAGE_CODE == 'ar' %}أوافق وأربط الحساب{% else %}I agree — link my account{% endif %}
+      </button>
+    </form>
+
+    <p style="margin-top:1rem">
+      <a href="{% url 'student_home' %}">
+        {% if LANGUAGE_CODE == 'ar' %}إلغاء والعودة{% else %}Cancel and go back{% endif %}
+      </a>
+    </p>
+  </div>
+</div>
+{% endblock %}

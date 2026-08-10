@@ -1,0 +1,170 @@
+{% load static %}<!doctype html>
+<html lang="{% if language == 'ar' %}ar{% else %}en{% endif %}"
+      dir="{% if language == 'ar' %}rtl{% else %}ltr{% endif %}">
+<head>
+  <meta charset="utf-8">
+  <title>card</title>
+  {% comment %} The SAME stylesheet the thread uses. The card's classes are defined there;
+     restating them here would be the second-renderer problem in CSS form. {% endcomment %}
+  <link href="{% static 'css/global.css' %}?v=50" rel="stylesheet">
+  <link href="{% static 'css/bootstrap-compat.css' %}?v=3" rel="stylesheet">
+  <style>
+    /* Deliberately narrow. A phone renders the image at its own width, and a
+       desktop-width screenshot is unreadable once Telegram scales it down. */
+    html, body { margin: 0; padding: 0; background: #ffffff; }
+    /* Wider than the 720 the meetings list needed: a five-day grid has five
+       columns plus a time gutter, and Telegram scales the image down. */
+    #sa-card-root { width: 900px; padding: 16px; box-sizing: border-box; }
+    .sa-tt-grid table { font-size: 13px; }
+    .sa-tt-grid td, .sa-tt-grid th { padding: 4px 6px; vertical-align: middle; }
+  </style>
+</head>
+<body>
+{% comment %} Card-only page: no chrome, no nav, no session, no endpoints. It exists to be
+   screenshotted. It loads the SAME renderer the thread uses, with `cardOnly`,
+   which exports the render function and skips the bootstrap that would otherwise
+   request the conversation list — unauthenticated, here — and paint a "could not
+   load" state into the picture. {% endcomment %}
+<div id="sa-card-root"></div>
+
+{% comment %} The adviser module refuses to initialise unless its host page has a composer:
+   `if (!formEl || !questionEl || !messagesEl || !sendBtn || !convListEl) return;`
+   (page-student-advisor.js:32). That guard is right — it stops the script running
+   on pages that are not the adviser — so the card page satisfies the contract
+   instead of weakening it. These five are inert, hidden, never focused and never
+   submitted; they exist so the module reaches the point where it exports its
+   renderer. If the module ever requires a sixth, the card page renders nothing
+   and the answer degrades to text-and-link, which is the safe direction. {% endcomment %}
+<div hidden aria-hidden="true" style="display:none">
+  <form id="saForm"><textarea id="saQuestion"></textarea><button id="saSend" type="button"></button></form>
+  <div id="saMessages"></div>
+  <div id="saConvList"></div>
+</div>
+
+{% comment %} `presentation` is the stored value, put through `normalise_presentation` again
+   by the view before it reaches this page. `json_script` escapes it safely;
+   never interpolate it into a script body. {% endcomment %}
+{{ presentation|json_script:"sa-card-data" }}
+
+<script>
+  /* Only the flag and the language. No URL map: this page calls no endpoint, and
+     a list of endpoints is something a screenshot page has no business knowing. */
+  window.__STUDENT_ADVISOR__ = {
+    isArabic: {% if language == 'ar' %}true{% else %}false{% endif %},
+    cardOnly: true,
+    urls: {}
+  };
+</script>
+{% comment %} The shared week-grid primitive. `base.html` loads it on every real page, but
+   this page does not extend base.html, so it is named explicitly. The card's own
+   renderer does not use it — the chat thread shows a meetings LIST, which is the
+   right shape for a narrow bubble holding three or four alternatives. An image
+   has neither constraint: it renders offscreen at a fixed width, one option at a
+   time, and a week grid reads at a glance where nine list rows do not. {% endcomment %}
+<script src="{% static 'js/shared-timetable.js' %}?v=3"></script>
+<script src="{% static 'js/page-student-advisor.js' %}?v=24"></script>
+<script>
+  (function () {
+    var IS_AR = {% if language == 'ar' %}true{% else %}false{% endif %};
+    var DAY_LABELS = IS_AR
+      ? {SUN: 'الأحد', MON: 'الاثنين', TUE: 'الثلاثاء', WED: 'الأربعاء', THU: 'الخميس',
+         FRI: 'الجمعة', SAT: 'السبت'}
+      : {SUN: 'Sun', MON: 'Mon', TUE: 'Tue', WED: 'Wed', THU: 'Thu', FRI: 'Fri', SAT: 'Sat'};
+    var root = document.getElementById('sa-card-root');
+    var data = JSON.parse(document.getElementById('sa-card-data').textContent);
+    var render = window.__SA_RENDER_TIMETABLE_CARD__;
+    if (typeof render !== 'function') {
+      /* Surfaced in the DOM rather than thrown: the renderer waits for
+         `data-card-ready`, and a silent failure here would become a screenshot
+         timeout with no explanation in the log. */
+      root.setAttribute('data-card-error', 'renderer-missing');
+      root.setAttribute('data-card-ready', '1');
+      return;
+    }
+    var node = render(data, '{% if language == "ar" %}ar{% else %}en{% endif %}');
+    if (node) {
+      root.appendChild(node);
+
+      /* One image per option. The card draws every alternative as a <details>
+         with only the first open, which is right on a screen you can click but
+         wrong in a picture: the other options would be reduced to a closed
+         summary bar. So each render shows exactly one option, fully expanded,
+         and hides the rest — while keeping the shared heading, the constraints
+         and the «مقترحات للتخطيط فقط» disclaimer in EVERY image, so no single
+         picture can be forwarded without its caveat. */
+      /* A JS comment, not a `{# #}` one. Django template comments are
+         SINGLE-LINE; a multi-line one is not stripped and leaks into the output
+         as literal text, which here produced `SyntaxError: Invalid or unexpected
+         token` and a screenshot timeout. Same trap this screen has grown before.
+
+         And the value is unfiltered on purpose. `|default:"-1"` was wrong and
+         wrong quietly: Django's `default` fires on any FALSY value, and option
+         zero IS 0 — so the first option of every answer fell back to -1, showed
+         every option with the first merely open, and never reached the grid,
+         while options 1 and 2 rendered correctly. The view always supplies an
+         int, so no filter is needed. */
+      var wanted = {{ option_index }};
+      if (wanted >= 0) {
+        var options = root.querySelectorAll('details.sa-tt-option');
+        if (wanted >= options.length) {
+          root.setAttribute('data-card-error', 'no-such-option');
+        }
+        for (var i = 0; i < options.length; i++) {
+          if (i === wanted) {
+            options[i].open = true;
+            gridify(options[i], (data.alternatives || [])[i]);
+          } else {
+            options[i].hidden = true;
+            options[i].style.display = 'none';
+          }
+        }
+      }
+
+      /* Swap the meetings list for the shared week grid — IN THE IMAGE ONLY.
+         Same `meetings` array, same `WeekGrid.renderWeekGrid` the planner and the
+         student timetable use, so this is not a fifth bespoke rendering of a
+         week. If the primitive is missing the list simply stays, which is a
+         readable picture rather than an empty one. */
+      function gridify(details, option) {
+        var list = details.querySelector('ul.sa-tt-meetings');
+        var meetings = (option && option.meetings) || [];
+        if (!list || !meetings.length || !window.WeekGrid) return;
+
+        var html = window.WeekGrid.renderWeekGrid({
+          blocks: meetings,
+          mode: 'table',
+          dir: IS_AR ? 'rtl' : 'ltr',
+          dayLabels: DAY_LABELS,
+          timeLabel: IS_AR ? 'الوقت' : 'Time',
+          cellHtml: function (m) {
+            /* Escaped: `course_name` is database text, and this is the one place
+               on the card that builds HTML from a string rather than DOM nodes. */
+            var code = esc(m.course_code || '');
+            var sec = m.section ? ' · ' + esc(m.section) : '';
+            var name = m.course_name ? '<br><small>' + esc(m.course_name) + '</small>' : '';
+            return '<strong dir="ltr">' + code + sec + '</strong>' + name;
+          }
+        });
+        if (html) {
+          var holder = document.createElement('div');
+          holder.className = 'sa-tt-grid';
+          holder.innerHTML = html;
+          list.parentNode.replaceChild(holder, list);
+        }
+      }
+
+      function esc(value) {
+        var d = document.createElement('div');
+        d.appendChild(document.createTextNode(String(value == null ? '' : value)));
+        return d.innerHTML;
+      }
+    } else {
+      root.setAttribute('data-card-error', 'nothing-to-render');
+    }
+    /* The screenshot waits for this attribute rather than sleeping a fixed time,
+       so a slow machine yields a correct picture instead of a half-drawn one. */
+    root.setAttribute('data-card-ready', '1');
+  })();
+</script>
+</body>
+</html>
