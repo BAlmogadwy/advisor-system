@@ -437,6 +437,14 @@ def planner_sections_catalog_view(request: HttpRequest) -> JsonResponse:
     term = str(payload.get("term", "")).strip()
     course_codes = payload.get("course_codes", [])
     student_id = str(payload.get("student_id", "")).strip()
+    # Positive contract used by the current UI. The older names remain accepted
+    # so bookmarked/older planner pages keep the former programme-safe default.
+    program_sections_only = bool(
+        payload.get(
+            "program_sections_only",
+            payload.get("strict_program", payload.get("strict_sections", True)),
+        )
+    )
 
     if not year or not term:
         return _err(
@@ -463,18 +471,19 @@ def planner_sections_catalog_view(request: HttpRequest) -> JsonResponse:
             except UnknownStudentGender as exc:
                 return _err(str(exc), code="STUDENT_COHORT_UNRESOLVED", status=409)
             ts_qs = ts_qs.filter(gender_section_filter(gender))
-            student_program = (
-                Student.objects.filter(student_id=student_id)
-                .values_list("program", flat=True)
-                .first()
-            )
-            if not str(student_program or "").strip():
-                return _err(
-                    "Student programme is not recorded",
-                    code="STUDENT_PROGRAM_UNRESOLVED",
-                    status=409,
+            if program_sections_only:
+                student_program = (
+                    Student.objects.filter(student_id=student_id)
+                    .values_list("program", flat=True)
+                    .first()
                 )
-            ts_qs = filter_sections_for_program(ts_qs, student_program)
+                if not str(student_program or "").strip():
+                    return _err(
+                        "Student programme is not recorded",
+                        code="STUDENT_PROGRAM_UNRESOLVED",
+                        status=409,
+                    )
+                ts_qs = filter_sections_for_program(ts_qs, student_program)
         if isinstance(course_codes, list) and course_codes:
             normalized = [
                 str(c).replace(" ", "").strip().upper() for c in course_codes if str(c).strip()
@@ -518,7 +527,13 @@ def planner_sections_catalog_view(request: HttpRequest) -> JsonResponse:
                         }
                     )
 
-        return _ok({"sections": list(grouped.values()), "count": len(grouped)})
+        return _ok(
+            {
+                "sections": list(grouped.values()),
+                "count": len(grouped),
+                "program_sections_only": program_sections_only,
+            }
+        )
     except Exception as exc:
         return _internal_error(exc)
 
@@ -537,7 +552,15 @@ def planner_build_view(request: HttpRequest) -> JsonResponse:
     year = str(payload.get("academic_year", "")).strip()
     term = str(payload.get("term", "")).strip()
     mode = str(payload.get("mode", "keep")).strip().lower()
-    strict_sections = bool(payload.get("strict_sections", False))
+    program_sections_only = bool(
+        payload.get(
+            "program_sections_only",
+            payload.get("strict_program", payload.get("strict_sections", True)),
+        )
+    )
+    allow_full_sections = bool(
+        payload.get("allow_full_sections", payload.get("ignore_capacity", False))
+    )
     shortlist = payload.get("shortlist", [])
     baseline = payload.get("baseline", [])
     student_id = str(payload.get("student_id", "")).strip()
@@ -574,18 +597,19 @@ def planner_build_view(request: HttpRequest) -> JsonResponse:
         if scope_deny:
             return scope_deny
         gender = student_gender(student_id_int)
-        program = str(
+        student_program = str(
             Student.objects.filter(student_id=student_id_int)
             .values_list("program", flat=True)
             .first()
             or ""
         ).strip()
-        if not program:
+        if program_sections_only and not student_program:
             return _err(
                 "Student programme is not recorded",
                 code="STUDENT_PROGRAM_UNRESOLVED",
                 status=409,
             )
+        program = student_program if program_sections_only else None
 
     normalized_shortlist: list[dict[str, object]] = []
     for item in shortlist:
@@ -600,15 +624,57 @@ def planner_build_view(request: HttpRequest) -> JsonResponse:
             )
         pinned_raw = item.get("pinned_sections", [])
         pinned_sections: list[dict[str, object]] = []
-        if isinstance(pinned_raw, list):
-            for ps in pinned_raw:
-                if isinstance(ps, dict) and ps.get("term_section_id"):
-                    pinned_sections.append(
-                        {
-                            "term_section_id": int(ps["term_section_id"]),
-                            "section": str(ps.get("section", "")),
-                        }
-                    )
+        if not isinstance(pinned_raw, list):
+            return _err(
+                "pinned_sections must be a list",
+                code="VALIDATION_PINNED_SECTIONS",
+                status=400,
+            )
+        for ps in pinned_raw:
+            if not isinstance(ps, dict) or not ps.get("term_section_id"):
+                return _err(
+                    "Each pinned section must include term_section_id",
+                    code="VALIDATION_PINNED_SECTION",
+                    status=400,
+                )
+            try:
+                pinned_id = int(ps["term_section_id"])
+            except (TypeError, ValueError):
+                return _err(
+                    "Pinned term_section_id must be a positive integer",
+                    code="VALIDATION_PINNED_SECTION",
+                    status=400,
+                )
+            if pinned_id <= 0:
+                return _err(
+                    "Pinned term_section_id must be a positive integer",
+                    code="VALIDATION_PINNED_SECTION",
+                    status=400,
+                )
+            pinned_sections.append(
+                {
+                    "term_section_id": pinned_id,
+                    "section": str(ps.get("section", "")),
+                }
+            )
+        if len(pinned_sections) > 1:
+            return _err(
+                "Only one exact section may be pinned per course",
+                code="VALIDATION_PINNED_SECTION_COUNT",
+                status=400,
+            )
+
+        must_take_raw = item.get("must_take", False)
+        if isinstance(must_take_raw, bool):
+            must_take = must_take_raw
+        elif isinstance(must_take_raw, int) and must_take_raw in (0, 1):
+            must_take = bool(must_take_raw)
+        else:
+            return _err(
+                "must_take must be a boolean",
+                code="VALIDATION_MUST_TAKE",
+                status=400,
+            )
 
         normalized_shortlist.append(
             {
@@ -619,7 +685,7 @@ def planner_build_view(request: HttpRequest) -> JsonResponse:
                 "missing_prerequisites": item.get("missing_prerequisites", [])
                 if isinstance(item.get("missing_prerequisites", []), list)
                 else [],
-                "must_take": bool(item.get("must_take", False)),
+                "must_take": must_take,
                 "credits": int(item.get("credits", 0) or 0),
                 "pinned_sections": pinned_sections,
             }
@@ -627,8 +693,7 @@ def planner_build_view(request: HttpRequest) -> JsonResponse:
 
     keep_registered = mode != "ignore"
     suggest_swaps = bool(payload.get("swap", False))
-    strict_sections = bool(payload.get("strict_sections", False))
-    consider_capacity = not bool(payload.get("ignore_capacity", False))
+    enforce_capacity = not allow_full_sections
     max_credits = int(payload.get("max_credits", 0) or 0)  # type: ignore[call-overload]
     try:
         result = build_plans(
@@ -638,13 +703,20 @@ def planner_build_view(request: HttpRequest) -> JsonResponse:
             baseline if isinstance(baseline, list) else [],
             keep_registered,
             suggest_swaps=suggest_swaps,
-            strict_per_course=strict_sections,
-            consider_capacity=consider_capacity,
+            # The staff checkbox named "Strict" historically reached this
+            # unrelated exact-one-per-course constraint. It now controls
+            # programme scoping above; Must-take remains the course-level rule.
+            strict_per_course=False,
+            consider_capacity=enforce_capacity,
             max_credits=max_credits,
             gender=gender,
             program=program,
         )
         result["mode"] = mode
+        result["constraints"] = {
+            "program_sections_only": program_sections_only,
+            "allow_full_sections": allow_full_sections,
+        }
         return _ok(result)
     except Exception as exc:
         return _internal_error(exc)

@@ -57,6 +57,35 @@ def _norm_course_key(value: Any) -> str:
     return str(value or "").replace(" ", "").upper()
 
 
+def _nonnegative_int_or_none(value: Any) -> int | None:
+    """Return a stored non-negative count without confusing NULL with zero."""
+    if value is None or value == "":
+        return None
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed >= 0 else None
+
+
+def _remaining_capacity(option: dict[str, Any]) -> int | None:
+    """Known seats left, or ``None`` when either capacity fact is unknown.
+
+    ``TermSection.available_capacity`` is the section's maximum capacity despite
+    its historical name; ``registered_count`` is the current occupancy.
+    """
+    maximum = _nonnegative_int_or_none(option.get("available_capacity"))
+    registered = _nonnegative_int_or_none(option.get("registered_count"))
+    if maximum is None or registered is None:
+        return None
+    return max(0, maximum - registered)
+
+
+def _known_full_section(option: dict[str, Any]) -> bool:
+    remaining = _remaining_capacity(option)
+    return remaining == 0 if remaining is not None else False
+
+
 def _option_course_key(option: dict[str, Any]) -> str:
     key = _norm_course_key(option.get("course_key"))
     if key:
@@ -234,8 +263,8 @@ def _catalog_for_courses(
                 "course_number": "",
                 "section": str(sec or ""),
                 "course_name": str(name or ""),
-                "registered_count": int(reg) if reg is not None and str(reg).isdigit() else None,
-                "available_capacity": int(cap) if cap is not None and str(cap).isdigit() else 0,
+                "registered_count": _nonnegative_int_or_none(reg),
+                "available_capacity": _nonnegative_int_or_none(cap),
                 "meetings": _section_meetings(int(sid)),
             }
         )
@@ -479,12 +508,12 @@ def _bitmask_build_option_b(
                 }
             )
             unscheduled_codes.add(code)
-            if strict_per_course:
+            if strict_per_course or code in must_take_codes:
                 strict_blockers.append(code)
             continue
         course_options.append((code, filtered_opts))
 
-    if strict_per_course and strict_blockers:
+    if strict_blockers:
         for code in strict_blockers:
             if code in unscheduled_codes:
                 continue
@@ -520,7 +549,7 @@ def _bitmask_build_option_b(
         for o in selected_opts:
             all_meetings.extend(o.get("meetings", []))
             if consider_capacity:
-                cap_total += int(o.get("available_capacity") or 0)
+                cap_total += int(_remaining_capacity(o) or 0)
         gap_minutes = _gap_minutes_from_meetings(all_meetings)
         # maximize: scheduled, then fewer days, then fewer gaps, then more capacity
         return (scheduled, -day_count, -gap_minutes, cap_total)
@@ -555,7 +584,7 @@ def _bitmask_build_option_b(
             dfs(i + 1, used_mask, chosen, used_cr)
 
         # credit-cap check: skip if adding this course would exceed the cap
-        if _max_cr and not is_must and (used_cr + course_cr) > _max_cr:
+        if _max_cr and (used_cr + course_cr) > _max_cr:
             return
 
         for opt in opts:
@@ -669,12 +698,12 @@ def _bitmask_build_option_c(
                 }
             )
             unscheduled_codes.add(code)
-            if strict_per_course:
+            if strict_per_course or code in must_take_codes:
                 strict_blockers.append(code)
             continue
         course_options.append((code, filtered_opts))
 
-    if strict_per_course and strict_blockers:
+    if strict_blockers:
         for code in strict_blockers:
             if code in unscheduled_codes:
                 continue
@@ -752,7 +781,7 @@ def _bitmask_build_option_c(
             dfs(i + 1, cur_days, chosen, used_cr)
 
         # credit-cap check: skip if adding this course would exceed the cap
-        if _max_cr and not is_must and (used_cr + course_cr) > _max_cr:
+        if _max_cr and (used_cr + course_cr) > _max_cr:
             return
 
         for opt in opts:
@@ -905,7 +934,7 @@ def _cp_build_option(
         else:
             model.Add(sum(var_by_sid[s] for s in sids) <= 1)
 
-    if strict_per_course and strict_blockers:
+    if strict_blockers:
         for code in strict_blockers:
             if code in unscheduled_codes:
                 continue
@@ -943,8 +972,7 @@ def _cp_build_option(
 
     # Capacity preference (prefer options with more open seats)
     cap_sum = sum(
-        (int(option_by_sid[sid].get("available_capacity") or 0) * var_by_sid[sid])
-        for sid in var_by_sid
+        (int(_remaining_capacity(option_by_sid[sid]) or 0) * var_by_sid[sid]) for sid in var_by_sid
     )
     if not consider_capacity:
         cap_sum = 0
@@ -1157,6 +1185,31 @@ def build_plans(
     gender: str = "",
     program: str | None = None,
 ) -> dict[str, Any]:
+    must_take_codes = {
+        str(item.get("course_code", "")).replace(" ", "").upper()
+        for item in shortlist
+        if item.get("must_take") and str(item.get("course_code", "")).strip()
+    }
+
+    # A pin is singular: the last valid value is the exact section allowed for
+    # that course.  The list-shaped payload is retained for API compatibility
+    # with older clients, but it is not an "acceptable alternatives" list.
+    pinned_id_by_code: dict[str, int] = {}
+    for item in shortlist:
+        code = str(item.get("course_code", "")).replace(" ", "").upper()
+        pinned_raw = item.get("pinned_sections") or []
+        if not code or not isinstance(pinned_raw, list):
+            continue
+        for pinned in pinned_raw:
+            if not isinstance(pinned, dict):
+                continue
+            try:
+                term_section_id = int(pinned.get("term_section_id") or 0)
+            except (TypeError, ValueError):
+                continue
+            if term_section_id > 0:
+                pinned_id_by_code[code] = term_section_id
+
     codes = sorted(
         {
             str(x.get("course_code", "")).replace(" ", "").upper()
@@ -1166,25 +1219,24 @@ def build_plans(
     )
     catalog = _catalog_for_courses(year, term, codes, gender, program)
 
-    # Filter catalog for courses with pinned (advisor-selected) sections.
-    # When pinned_sections is present, the builder only considers those
-    # specific term_section_ids instead of all available sections.
-    for item in shortlist:
-        pinned_raw = item.get("pinned_sections") or []
-        if not isinstance(pinned_raw, list) or not pinned_raw:
-            continue
-        code = str(item.get("course_code", "")).replace(" ", "").upper()
-        pinned_ids: set[int] = set()
-        for _p in pinned_raw:
-            if isinstance(_p, dict):
-                _tid = _p.get("term_section_id")
-                if _tid is not None:
-                    pinned_ids.add(int(_tid))  # type: ignore[call-overload]
-        if pinned_ids and code in catalog:
+    # A pinned section is an exact hard constraint. Other sections for the
+    # course are removed before any solver or alternative-generation pass.
+    for code, pinned_id in pinned_id_by_code.items():
+        if code in catalog:
             catalog[code] = [
                 s
                 for s in catalog[code]
-                if int(s.get("term_section_id") or 0) in pinned_ids  # type: ignore[call-overload]
+                if int(s.get("term_section_id") or 0) == pinned_id  # type: ignore[call-overload]
+            ]
+
+    # Capacity is a hard eligibility rule unless the caller explicitly allows
+    # full sections. Unknown counts stay eligible: they are not evidence that a
+    # section has reached capacity. Filtering here makes A, B, C and the
+    # no-OR-Tools fallback follow the same contract.
+    if consider_capacity:
+        for code, section_options in catalog.items():
+            catalog[code] = [
+                option for option in section_options if not _known_full_section(option)
             ]
 
     # Build course → credits mapping for max-credit enforcement
@@ -1194,6 +1246,63 @@ def build_plans(
         cr = int(item.get("credits", 0) or 0)
         if cr > 0:
             credits_map[code] = cr
+
+    rejected_unscheduled: list[list[dict[str, Any]]] = []
+    rejected_hard_failures: list[dict[str, Any]] = []
+
+    def _hard_requirement_failures(
+        selected: list[dict[str, Any]], unscheduled: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        selected_by_code = {_option_course_key(item): item for item in selected}
+        unscheduled_by_code = {
+            str(item.get("course_code", "")).replace(" ", "").upper(): item for item in unscheduled
+        }
+        failures: list[dict[str, Any]] = []
+
+        for code in sorted(must_take_codes):
+            if code in selected_by_code:
+                continue
+            detail = unscheduled_by_code.get(code, {}).get(
+                "reason", "No valid section satisfies the current constraints"
+            )
+            failures.append(
+                {
+                    "kind": "must_take",
+                    "course_code": code,
+                    "reason": f"Must-take course could not be scheduled: {detail}",
+                }
+            )
+
+        for code, pinned_id in sorted(pinned_id_by_code.items()):
+            selected_item = selected_by_code.get(code)
+            if selected_item is None:
+                continue
+            selected_id = int(selected_item.get("term_section_id") or 0)
+            if selected_id != pinned_id:
+                failures.append(
+                    {
+                        "kind": "pinned_section",
+                        "course_code": code,
+                        "reason": "The generated option did not use the exact pinned section",
+                        "term_section_id": pinned_id,
+                    }
+                )
+
+        if max_credits and max_credits > 0:
+            scheduled_credits = sum(credits_map.get(code, 0) for code in selected_by_code)
+            if scheduled_credits > max_credits:
+                failures.append(
+                    {
+                        "kind": "max_credits",
+                        "course_code": "",
+                        "reason": (
+                            f"Generated option has {scheduled_credits} credits, "
+                            f"above the {max_credits}-credit limit"
+                        ),
+                    }
+                )
+
+        return failures
 
     def _catalog_without_sids(excluded: set[int]) -> dict[str, list[dict[str, Any]]]:
         if not excluded:
@@ -1265,8 +1374,14 @@ def build_plans(
 
             cat = _catalog_without_sids(excl)
             sel, uns = _run_method(method, cat)
+            hard_failures = _hard_requirement_failures(sel, uns)
+            if hard_failures:
+                rejected_hard_failures.extend(hard_failures)
+                rejected_unscheduled.append(uns)
+                continue
             sig = _sig(sel)
             if not sig:
+                rejected_unscheduled.append(uns)
                 continue
             if sig in seen:
                 continue
@@ -1281,8 +1396,6 @@ def build_plans(
                 if nk not in visited_excl:
                     queue.append(nxt)
 
-        if not results:
-            results.append(_run_method(method, _catalog_without_sids(set())))
         return results
 
     def fmt_option(
@@ -1321,11 +1434,23 @@ def build_plans(
         for i, (sel, uns) in enumerate(variants, start=1):
             options.append(fmt_option(f"{method}{i}", method, i, sel, uns))
 
+    fallback_unscheduled = max(rejected_unscheduled, key=len, default=[])
     best = (
         max(options, key=lambda x: x["scheduled"])
         if options
-        else {"scheduled": 0, "target": len(shortlist), "unscheduled": []}
+        else {
+            "scheduled": 0,
+            "target": len(shortlist),
+            "unscheduled": fallback_unscheduled,
+        }
     )
+
+    hard_failures_by_key: dict[tuple[str, str], dict[str, Any]] = {}
+    if not options:
+        for failure in rejected_hard_failures:
+            key = (str(failure.get("kind", "")), str(failure.get("course_code", "")))
+            hard_failures_by_key.setdefault(key, failure)
+    hard_constraint_failures = list(hard_failures_by_key.values())
 
     swap_suggestions: list[dict[str, Any]] = []
     if keep_registered and suggest_swaps and best["unscheduled"]:
@@ -1345,8 +1470,13 @@ def build_plans(
             "target": best["target"],
             "conflicts": len(best["unscheduled"]),
             "swaps_required": len(swap_suggestions),
-            "best_feasible": True,
+            "best_feasible": bool(options),
+            "hard_constraint_failures": hard_constraint_failures,
         },
         "options": options,
+        # Diagnostics for callers that need to explain why no valid option was
+        # emitted. This is deliberately outside ``options``: an empty mapping is
+        # not a timetable result.
+        "unscheduled": best["unscheduled"],
         "swap_suggestions": swap_suggestions,
     }

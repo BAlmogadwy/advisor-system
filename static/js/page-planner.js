@@ -32,9 +32,21 @@ const T = {
   trustBuilt: (mapped,unresolved,time)=> IS_AR ? `جودة الربط: ${mapped?'ربط متاح':'اعتماد على الاحتياطي'} | غير المحلول: ${unresolved} | آخر بناء: ${time}` : `Mapping quality: ${mapped?'mapped available':'fallback only'} | Unresolved: ${unresolved} | Last build: ${time}`,
   noCoursesFoundStudentPlan: IS_AR ? 'لم يتم العثور على مقررات في خطة الطالب.' : 'No courses found in student plan.',
   failedLoadStudentPlanPanel: IS_AR ? 'فشل تحميل لوحة خطة الطالب.' : 'Failed to load student plan panel.',
+  noRunYet: IS_AR ? 'لم يتم التشغيل بعد.' : 'No run yet.',
+  noOptionSelected: IS_AR ? 'لم يتم اختيار أي خيار.' : 'No option selected.',
+  noFeasibleHardConstraints: IS_AR
+    ? 'لا توجد نتيجة صالحة تحقق جميع المقررات الإلزامية والشُعب المثبّتة ضمن القيود الحالية.'
+    : 'No valid result satisfies every must-take course and exact pinned section under the current constraints.',
+  builderRunning: IS_AR ? 'جارٍ بناء خيارات الجدول...' : 'Building timetable options...',
+  crossProgramApplyDisabled: IS_AR
+    ? 'الخطة التي تسمح بشُعب برامج أخرى مخصصة للمقارنة فقط. فعّل «شُعب برنامج الطالب فقط» قبل الحفظ الداخلي.'
+    : 'Cross-programme options are comparison-only. Enable “Student programme sections only” before internal saving.',
 };
 
 const errMsg=(d)=> (d?.error?.message || d?.error || T.requestFailed);
+const escapeHtml=(value)=>String(value??'').replace(/[&<>"]/g,(char)=>({
+  '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'
+}[char]));
 
 function setBanner(kind, text){
   const b=q('statusBanner');
@@ -83,6 +95,61 @@ let shortlist=[];
 let currentCtx={student_id:'',academic_year:'',term:''};
 let currentBaseline=[];
 let lastBuilderOptions=[];
+let builderGeneration=0;
+
+function useProgrammeSectionsOnly(){
+  return !!q('programSectionsOnly')?.checked;
+}
+
+function allowFullSections(){
+  return !!q('allowFullSections')?.checked;
+}
+
+function sectionCapacity(section){
+  const maximumRaw=section?.available_capacity;
+  const registeredRaw=section?.registered_count;
+  const maximumKnown=maximumRaw!==null && maximumRaw!==undefined && maximumRaw!=='' && Number.isFinite(Number(maximumRaw)) && Number(maximumRaw)>=0;
+  const registeredKnown=registeredRaw!==null && registeredRaw!==undefined && registeredRaw!=='' && Number.isFinite(Number(registeredRaw)) && Number(registeredRaw)>=0;
+  if(!maximumKnown || !registeredKnown){
+    return {known:false, full:false, maximum:null, registered:null, remaining:null};
+  }
+  const maximum=Number(maximumRaw);
+  const registered=Number(registeredRaw);
+  const remaining=Math.max(0, maximum-registered);
+  return {known:true, full:remaining===0, maximum, registered, remaining};
+}
+
+function invalidateBuilderResults(){
+  builderGeneration += 1;
+  lastBuilderOptions=[];
+  const selected=q('selectedOption');
+  if(selected) selected.value='';
+  const cards=q('optionCards');
+  if(cards) cards.innerHTML='';
+  const details=q('builderOptions');
+  if(details) details.innerHTML='';
+  const swaps=q('swapSuggestions');
+  if(swaps) swaps.innerHTML=`<span class="text-secondary">${T.noSwaps}</span>`;
+  const summary=q('builderSummary');
+  if(summary) summary.textContent=T.noRunYet;
+  const selectedBar=q('selectedOptionBar');
+  if(selectedBar){
+    selectedBar.className='planner-banner planner-banner-neutral';
+    selectedBar.textContent=T.noOptionSelected;
+  }
+  const apply=q('applyOption');
+  if(apply) apply.disabled=true;
+  const source=q('visualSource');
+  if(source){
+    source.innerHTML='';
+    const baseline=document.createElement('option');
+    baseline.value='baseline';
+    baseline.textContent=IS_AR?'الأساس':'Baseline';
+    source.appendChild(baseline);
+    source.value='baseline';
+  }
+  renderVisualTimetable('baseline');
+}
 
 /* Robust day normalisation: prefer stable codes (SUN/MON/...) */
 function normalizeDay(d){
@@ -234,10 +301,32 @@ function renderVisualTimetable(source='baseline'){
 }
 
 q('mode').addEventListener('change',()=>{
+  invalidateBuilderResults();
   q('planningBanner').classList.toggle('d-none', q('mode').value!=='ignore');
   if(currentCtx?.student_id){ renderPlanPalette(currentCtx.student_id); renderAvailableSections(); }
   renderVisualTimetable(q('visualSource').value || 'baseline');
 });
+
+q('programSectionsOnly')?.addEventListener('change',()=>{
+  invalidateBuilderResults();
+  if(currentCtx?.student_id){
+    renderPlanPalette(currentCtx.student_id);
+    renderAvailableSections();
+  }
+  setBanner('info', useProgrammeSectionsOnly()
+    ? (IS_AR?'سيستخدم البناء شُعب برنامج الطالب فقط. شغّل البناء من جديد.':'The builder will use student-programme sections only. Run it again.')
+    : (IS_AR?'يمكن للبناء الآن مقارنة شُعب برامج أخرى؛ هذه النتائج للمقارنة فقط.':'The builder may now compare other programmes’ sections; those results are comparison-only.'));
+});
+
+q('allowFullSections')?.addEventListener('change',()=>{
+  invalidateBuilderResults();
+  setBanner('info', allowFullSections()
+    ? (IS_AR?'سيسمح البناء بالشُعب الممتلئة للتخطيط فقط. شغّل البناء من جديد.':'Full sections will be allowed for planning only. Run the builder again.')
+    : (IS_AR?'سيستبعد البناء الشُعب المعروفة بأنها ممتلئة. شغّل البناء من جديد.':'Known full sections will be excluded. Run the builder again.'));
+});
+
+q('maxCredits')?.addEventListener('change',invalidateBuilderResults);
+q('swap')?.addEventListener('change',invalidateBuilderResults);
 
 q('visualSource').addEventListener('change',(e)=>renderVisualTimetable(e.target.value));
 ['1','2','3'].forEach(s=> q('step'+s)?.addEventListener('click',()=>setStep(s)));
@@ -246,6 +335,7 @@ q('prevStep')?.addEventListener('click',()=>{ const order=['1','2','3']; const i
 q('nextStep')?.addEventListener('click',()=>{ const order=['1','2','3']; const i=Math.min(order.length-1,order.indexOf(currentStep)+1); setStep(order[i]); });
 
 function renderShortlist(){
+  invalidateBuilderResults();
   const wrap=q('shortlist'); wrap.innerHTML='';
   let credits=0;
   shortlist.forEach((c,idx)=>{
@@ -256,7 +346,7 @@ function renderShortlist(){
     const hasPinned=(c.pinned_sections&&c.pinned_sections.length>0);
     const pinnedHtml=hasPinned
       ? `<div class="d-flex align-items-center flex-wrap" style="margin-top:3px; gap:4px">
-           <span class="fs-11 fw-semibold text-teal">${IS_AR?'شعب محددة:':'Pinned:'}</span>
+           <span class="fs-11 fw-semibold text-teal" title="${IS_AR?'هذه هي الشعبة الوحيدة المسموح بها لهذا المقرر':'This is the only allowed section for this course'}">${IS_AR?'الشعبة المثبّتة:':'Pinned section:'}</span>
            ${c.pinned_sections.map((p,pi)=>`<span class="sl-pin-badge align-items-center fs-11 fw-semibold text-teal u-cursor-pointer" data-pi="${pi}" title="${IS_AR?'انقر للإزالة':'Click to remove'}" style="display:inline-flex; gap:3px; padding:1px 7px; border-radius:5px; background:var(--teal-dim)">§${p.section} <span style="font-size:9px;opacity:0.6">✕</span></span>`).join('')}
          </div>`
       : `<div class="fs-11 text-t4" style="margin-top:2px">${IS_AR?'أي شعبة (البناء يختار الأنسب)':'Any section (builder picks best)'}</div>`;
@@ -272,7 +362,7 @@ function renderShortlist(){
       </div>
       <div class="form-check mt-1">
         <input type="checkbox" class="form-check-input" id="m${idx}" ${c.must_take?'checked':''}>
-        <label class="form-check-label" for="m${idx}">${IS_AR?'إلزامي':'Must-take'}</label>
+        <label class="form-check-label" for="m${idx}" title="${IS_AR?'يجب أن يظهر هذا المقرر في كل نتيجة':'This course is required in every result'}">${IS_AR?'إلزامي — في كل نتيجة':'Must-take — every result'}</label>
       </div>`;
 
     /* Remove individual pinned section badges */
@@ -288,7 +378,10 @@ function renderShortlist(){
 
     wrap.appendChild(row);
     row.querySelector('button[data-i]').onclick=()=>{shortlist.splice(idx,1);renderShortlist();};
-    row.querySelector('input[type="checkbox"]').onchange=(e)=>{shortlist[idx].must_take=e.target.checked;};
+    row.querySelector('input[type="checkbox"]').onchange=(e)=>{
+      shortlist[idx].must_take=e.target.checked;
+      invalidateBuilderResults();
+    };
   });
   q('shortCredits').textContent=String(credits);
 }
@@ -310,7 +403,13 @@ async function renderPlanPalette(studentId){
       const secRes=await fetch('/ops/planner/sections-catalog/',{
         method:'POST',
         headers:{'Content-Type':'application/json','X-CSRFToken':getCsrfToken()},
-        body:JSON.stringify({student_id:currentCtx.student_id,academic_year:currentCtx.academic_year,term:currentCtx.term,course_codes:codes})
+        body:JSON.stringify({
+          student_id:currentCtx.student_id,
+          academic_year:currentCtx.academic_year,
+          term:currentCtx.term,
+          course_codes:codes,
+          program_sections_only:useProgrammeSectionsOnly()
+        })
       });
       const secData=await secRes.json();
       sections=secData.sections||[];
@@ -350,7 +449,7 @@ async function renderPlanPalette(studentId){
         const code=String(c.course_code||'').replace(/\s+/g,'').toUpperCase();
         const list=secByCourse[code]||[];
         const hasAny=list.length>0;
-        const hasOpen=list.some(s=> Number(s.available_capacity||0) > 0);
+        const hasOpen=list.some(s=> !sectionCapacity(s).full);
         const prereqOk = (String(c.status||'') !== 'not_taken') ? true : Boolean(c.can_register);
 
         let cls='plan-black';
@@ -464,7 +563,13 @@ async function renderAvailableSections(){
     const secRes=await fetch('/ops/planner/sections-catalog/',{
       method:'POST',
       headers:{'Content-Type':'application/json','X-CSRFToken':getCsrfToken()},
-      body:JSON.stringify({student_id:currentCtx.student_id,academic_year:currentCtx.academic_year,term:currentCtx.term,course_codes:codes})
+      body:JSON.stringify({
+        student_id:currentCtx.student_id,
+        academic_year:currentCtx.academic_year,
+        term:currentCtx.term,
+        course_codes:codes,
+        program_sections_only:useProgrammeSectionsOnly()
+      })
     });
     const secData=await secRes.json();
     const sections=secData.sections||[];
@@ -512,17 +617,17 @@ async function renderAvailableSections(){
 
       let secHtml='';
       secs.forEach(s=>{
-        const cap=Number(s.available_capacity||0);
-        const hasSeats=cap>0;
+        const capacity=sectionCapacity(s);
+        const hasSeats=!capacity.full;
         const conflict=hasConflict(s.meetings);
 
         let colorClass, dotClass, statusLabel;
         if(!conflict&&hasSeats){
           colorClass='sec-teal'; dotClass='sec-dot-teal';
-          statusLabel=IS_AR?'متاح':'Open'; counts.green++;
+          statusLabel=capacity.known?(IS_AR?'متاح':'Open'):(IS_AR?'السعة غير معروفة':'Capacity unknown'); counts.green++;
         }else if(conflict&&hasSeats){
           colorClass='sec-rose'; dotClass='sec-dot-rose';
-          statusLabel=IS_AR?'تعارض':'Conflict'; counts.pink++;
+          statusLabel=capacity.known?(IS_AR?'تعارض':'Conflict'):(IS_AR?'تعارض · السعة غير معروفة':'Conflict · capacity unknown'); counts.pink++;
         }else if(conflict&&!hasSeats){
           colorClass='sec-red'; dotClass='sec-dot-red';
           statusLabel=IS_AR?'ممتلئ+تعارض':'Full+Conflict'; counts.red++;
@@ -535,14 +640,18 @@ async function renderAvailableSections(){
           `${UI.dayShort[normalizeDay(m.day)]||normalizeDay(m.day)} ${m.start_time||''}-${m.end_time||''}`
         ).join(', ')||'TBA';
 
-        const totalSeats=(Number(s.registered_count||0)+cap);
+        const capacityText=capacity.known
+          ? `${capacity.registered}/${capacity.maximum}`
+          : (IS_AR?'السعة غير معروفة':'Capacity unknown');
+        const programs=(s.programs||[]).join('/') || (IS_AR?'غير مرتبط ببرنامج':'Unassigned');
 
         secHtml+=`
           <div class="avail-sec-row ${colorClass}" data-tsid="${s.term_section_id}" title="${statusLabel}">
             <span class="sec-dot ${dotClass}"></span>
             <span class="sec-id">${s.section||'?'}</span>
             <span class="sec-time">${timeStr}</span>
-            <span class="sec-capacity">${s.registered_count||0}/${totalSeats}</span>
+            <span class="sec-program">${programs}</span>
+            <span class="sec-capacity">${capacityText}</span>
           </div>`;
       });
 
@@ -576,14 +685,12 @@ async function renderAvailableSections(){
             };
             shortlist.push(existing);
           } else {
-            /* Add section to existing entry */
-            if(!existing.pinned_sections) existing.pinned_sections=[];
-            if(!existing.pinned_sections.find(p=>p.term_section_id===tsid)){
-              existing.pinned_sections.push({term_section_id:tsid, section:secLabel});
-            } else {
+            /* A pin is exact and singular: choosing another section replaces it. */
+            if(existing.pinned_sections?.length===1 && existing.pinned_sections[0].term_section_id===tsid){
               setBanner('info', IS_AR?`الشعبة ${secLabel} مضافة مسبقاً`:`Section ${secLabel} already pinned`);
               return;
             }
+            existing.pinned_sections=[{term_section_id:tsid, section:secLabel}];
           }
 
           renderShortlist();
@@ -657,6 +764,7 @@ q('applyOption').onclick=async()=>{
   const name=q('selectedOption').value;
   if(!name) return notify.warning(T.selectBuilderFirst);
   if(!currentCtx.student_id) return notify.warning(T.fetchStudentFirst);
+  if(!useProgrammeSectionsOnly()) return notify.warning(T.crossProgramApplyDisabled);
 
   const opt=(lastBuilderOptions||[]).find(x=>String(x.name||'')===String(name));
   if(!opt) return notify.warning(T.optionNotFound);
@@ -693,10 +801,16 @@ q('applyOption').onclick=async()=>{
 
 q('runBuilder').onclick=async()=>{
   setStep('3');
+  const applyButton=q('applyOption');
+  if(applyButton) applyButton.disabled=true;
 
   /* Fix: correct preconditions + correct message */
   if(!currentCtx.student_id) return notify.warning(T.fetchStudentFirst);
   if(!currentCtx.academic_year || !currentCtx.term) return notify.warning(T.enterYearTerm);
+
+  invalidateBuilderResults();
+  const runGeneration=builderGeneration;
+  setBanner('info', T.builderRunning);
 
   let r, data;
   try{
@@ -709,8 +823,8 @@ q('runBuilder').onclick=async()=>{
         term:currentCtx.term,
         mode:q('mode').value,
         swap:q('swap').checked,
-        strict_sections:q('strictSections')?.checked||false,
-        ignore_capacity:q('ignoreCapacity')?.checked||false,
+        program_sections_only:useProgrammeSectionsOnly(),
+        allow_full_sections:allowFullSections(),
         max_credits:Number(q('maxCredits')?.value||0),
         shortlist,
         baseline:currentBaseline
@@ -718,30 +832,57 @@ q('runBuilder').onclick=async()=>{
     });
     data=await r.json();
   }catch(err){
+    if(runGeneration!==builderGeneration) return;
     setBanner('danger', IS_AR?'فشل تشغيل المُنشئ':'Builder request failed');
     notify.error(IS_AR?'فشل تشغيل المُنشئ':'Builder request failed', err.message||String(err));
     return;
   }
+  if(runGeneration!==builderGeneration) return;
   if(data.error){setBanner('danger', errMsg(data)); return;}
 
   const s=data.summary||{};
-  q('builderSummary').innerHTML=`
+  const options=Array.isArray(data.options)?data.options:[];
+  const hardFailures=Array.isArray(s.hard_constraint_failures)?s.hard_constraint_failures:[];
+  const feasible=Boolean(s.best_feasible && options.length);
+  const failureHtml=hardFailures.map(f=>{
+    const code=escapeHtml(f.course_code||'');
+    const reason=IS_AR
+      ? (f.kind==='must_take'
+        ? 'تعذر إدراج المقرر الإلزامي ضمن القيود الحالية.'
+        : (f.kind==='pinned_section'
+          ? 'تعذر استخدام الشعبة المثبّتة بالضبط.'
+          : 'يتعارض حد الساعات مع القيود المطلوبة.'))
+      : escapeHtml(f.reason||T.noFeasibleHardConstraints);
+    return `<div class="mt-1">• ${code?`<strong>${code}</strong>: `:''}${reason}</div>`;
+  }).join('');
+  const summaryEl=q('builderSummary');
+  summaryEl.className=`planner-banner planner-banner-${feasible?'ok':'warn'}`;
+  summaryEl.innerHTML=`
     <div><strong>${IS_AR ? 'تمت الجدولة' : 'Scheduled'}:</strong> ${s.scheduled||0}/${s.target||0}</div>
     <div><strong>${IS_AR ? 'التعارضات' : 'Conflicts'}:</strong> ${s.conflicts||0}</div>
     <div><strong>${IS_AR ? 'التبديلات المطلوبة' : 'Swaps required'}:</strong> ${s.swaps_required||0}</div>
-    <div><strong>${IS_AR ? 'الحالة' : 'Status'}:</strong> ${s.best_feasible?(IS_AR?'تم العثور على أفضل خطة ممكنة':'Best feasible plan found'):(IS_AR?'لا توجد خطة ممكنة':'No feasible plan')}</div>`;
+    <div><strong>${IS_AR ? 'الحالة' : 'Status'}:</strong> ${feasible?(IS_AR?'تم العثور على أفضل خطة ممكنة':'Best feasible plan found'):(IS_AR?'لا توجد خطة تحقق جميع القيود الإلزامية':'No plan satisfies all hard constraints')}</div>
+    ${failureHtml}`;
 
-  setBanner('success', IS_AR ? 'اكتمل تشغيل المُنشئ. راجع الخيارات أدناه.' : 'Builder run completed. Review options below.');
+  setBanner(
+    feasible?'success':'warning',
+    feasible
+      ? (IS_AR ? 'اكتمل تشغيل المُنشئ. راجع الخيارات أدناه.' : 'Builder run completed. Review options below.')
+      : T.noFeasibleHardConstraints
+  );
 
-  const unresolved=(data.options||[])[0]?.unscheduled?.length || 0;
+  const unresolved=Number(s.conflicts ?? Math.max(0, Number(s.target||0)-Number(s.scheduled||0)));
   q('trustStrip').textContent=T.trustBuilt(!!currentBaseline.length, unresolved, new Date().toLocaleTimeString());
 
   const wrap=q('builderOptions');
   wrap.innerHTML='';
-  lastBuilderOptions=(data.options||[]);
+  lastBuilderOptions=options;
   q('selectedOption').value='';
   const cards=q('optionCards');
   cards.innerHTML='';
+  if(!feasible){
+    cards.innerHTML=`<div class="col-12"><div class="planner-banner planner-banner-warn">${T.noFeasibleHardConstraints}</div></div>`;
+  }
 
   const vs=q('visualSource');
   if(vs){
@@ -749,13 +890,13 @@ q('runBuilder').onclick=async()=>{
     vs.innerHTML='';
     const mk=(v,t)=>{const o=document.createElement('option');o.value=v;o.textContent=t;vs.appendChild(o);};
     mk('baseline', IS_AR ? 'الأساس' : 'Baseline');
-    (data.options||[]).forEach(o=>mk(String(o.name||''), IS_AR ? `خيار المُنشئ ${o.name||''}` : `Builder ${o.name||''}`));
+    options.forEach(o=>mk(String(o.name||''), IS_AR ? `خيار المُنشئ ${o.name||''}` : `Builder ${o.name||''}`));
     mk('overlay', IS_AR ? 'تراكب (الأساس + المحدد)' : 'Overlay (Baseline + Selected)');
     if([...vs.options].some(o=>o.value===prev)) vs.value=prev;
   }
 
   let bestName=''; let bestScore=-1;
-  (data.options||[]).forEach(opt=>{ if((opt.scheduled||0)>bestScore){bestScore=(opt.scheduled||0); bestName=String(opt.name||'');} });
+  options.forEach(opt=>{ if((opt.scheduled||0)>bestScore){bestScore=(opt.scheduled||0); bestName=String(opt.name||'');} });
 
   function chooseOption(name){
     q('selectedOption').value=String(name||'');
@@ -766,6 +907,12 @@ q('runBuilder').onclick=async()=>{
     } else {
       bar.className='planner-banner planner-banner-neutral';
       bar.innerHTML=`<span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg></span>${IS_AR ? 'لا يوجد خيار محدد.' : 'No option selected.'}`;
+    }
+
+    const apply=q('applyOption');
+    if(apply){
+      apply.disabled=!name || !useProgrammeSectionsOnly();
+      apply.title=(!useProgrammeSectionsOnly())?T.crossProgramApplyDisabled:'';
     }
 
     cards.querySelectorAll('[data-opt]').forEach(el=>{
@@ -788,7 +935,7 @@ q('runBuilder').onclick=async()=>{
     renderVisualTimetable(chosenSource);
   }
 
-  (data.options||[]).forEach(opt=>{
+  options.forEach(opt=>{
     const col=document.createElement('div');
     col.className='col-md-4';
     col.innerHTML=`
@@ -804,7 +951,7 @@ q('runBuilder').onclick=async()=>{
 
   if(bestName){ chooseOption(bestName); }
 
-  (data.options||[]).forEach(opt=>{
+  options.forEach(opt=>{
     const div=document.createElement('div');
     div.className='border rounded p-2 mb-2';
     const method = String(opt.method||opt.name||'').charAt(0).toUpperCase();
@@ -832,6 +979,7 @@ q('runBuilder').onclick=async()=>{
 };
 
 q('fetchBtn').onclick=async()=>{
+  invalidateBuilderResults();
   setStep('1');
   q('fetchState').textContent = IS_AR ? 'جارٍ التحميل...' : 'Loading...';
   setBanner('info', IS_AR ? 'جارٍ جلب بيانات الطالب...' : 'Fetching student context...');

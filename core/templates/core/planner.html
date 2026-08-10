@@ -201,15 +201,18 @@
 
             <div class="d-flex flex-wrap align-items-center" style="gap:8px; margin-bottom:12px">
               <button id="runBuilder" class="pl-btn pl-btn-primary"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"/></svg></span>{% if LANGUAGE_CODE == 'ar' %}بناء{% else %}Build{% endif %}</button>
-              <button id="applyOption" class="pl-btn pl-btn-success"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></span>{% if LANGUAGE_CODE == 'ar' %}تطبيق{% else %}Apply{% endif %}</button>
+              <button id="applyOption" class="pl-btn pl-btn-success" disabled><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></span>{% if LANGUAGE_CODE == 'ar' %}تطبيق{% else %}Apply{% endif %}</button>
             </div>
             <div class="pl-checks align-items-center" style="margin-bottom:10px">
-              <label><input id="strictSections" type="checkbox"> {% if LANGUAGE_CODE == 'ar' %}صارم{% else %}Strict{% endif %}</label>
-              <label><input id="ignoreCapacity" type="checkbox"> {% if LANGUAGE_CODE == 'ar' %}تجاهل السعة{% else %}Ignore capacity{% endif %}</label>
+              <label title="{% if LANGUAGE_CODE == 'ar' %}يختار المنشئ فقط الشُعب المرتبطة ببرنامج الطالب، بما فيها الشُعب المشتركة المرتبطة بالبرنامج.{% else %}Use only sections explicitly linked to the student's programme, including shared sections linked to it.{% endif %}"><input id="programSectionsOnly" type="checkbox" checked> {% if LANGUAGE_CODE == 'ar' %}شُعب برنامج الطالب فقط{% else %}Student programme sections only{% endif %}</label>
+              <label title="{% if LANGUAGE_CODE == 'ar' %}يسمح بإدخال الشُعب التي بلغ عدد المسجلين فيها سعتها القصوى. هذا للتخطيط فقط ولا يحجز مقعدًا.{% else %}Allow sections whose registered count has reached capacity. Planning only; this does not reserve a seat.{% endif %}"><input id="allowFullSections" type="checkbox"> {% if LANGUAGE_CODE == 'ar' %}السماح بالشُعب الممتلئة{% else %}Allow full sections{% endif %}</label>
               <label class="align-items-center" style="display:inline-flex; gap:4px">
                 {% if LANGUAGE_CODE == 'ar' %}الحد الأقصى ساعات{% else %}Max credits{% endif %}
                 <input class="text-center" id="maxCredits" type="text" inputmode="numeric" pattern="[0-9]*" value="17" dir="ltr" style="width:52px; padding:2px 4px; border:1px solid var(--border); border-radius:6px; font-size:12px; font-family:'Courier New',monospace">
               </label>
+            </div>
+            <div class="fs-11 text-t4" style="margin-top:-4px;margin-bottom:10px">
+              {% if LANGUAGE_CODE == 'ar' %}عند إلغاء قيد البرنامج يمكن استخدام شُعب برامج أخرى. الشُعب ذات السعة غير المعروفة لا تُعامل كممتلئة.{% else %}Turning off programme-only allows other programmes' sections. Unknown capacity is not treated as full.{% endif %}
             </div>
 
             <input id="selectedOption" type="hidden">
@@ -292,5 +295,5 @@
   const defaultYear = {{ default_year }};
   const defaultTerm = {{ default_term }};
 </script>
-<script src="{% static 'js/page-planner.js' %}?v=8"></script>
+<script src="{% static 'js/page-planner.js' %}?v=10"></script>
 {% endblock %}

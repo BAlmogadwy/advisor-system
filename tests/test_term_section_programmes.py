@@ -1015,3 +1015,244 @@ def test_import_refuses_affected_membership_and_meeting_drift_atomically(
         ("AI", "import"),
         ("DS", "import"),
     }
+
+
+def _staff_planner_client(username: str) -> Client:
+    ensure_role_groups()
+    user = User.objects.create_user(username=username, password="test-password")
+    user.groups.add(Group.objects.get(name=ROLE_SUPER_ADMIN))
+    client = Client()
+    client.force_login(user)
+    return client
+
+
+def test_planner_programme_only_flag_controls_catalogue_scope() -> None:
+    student = Student.objects.create(
+        student_id=910006,
+        name="AI Student",
+        program="AI",
+        section="M",
+    )
+    ai_only = _section("M1")
+    shared = _section("M2")
+    ds_only = _section("M3")
+    unassigned = _section("M4")
+    wrong_gender = _section("F1")
+    TermSectionProgram.objects.create(term_section=ai_only, program="AI")
+    TermSectionProgram.objects.create(term_section=shared, program="AI")
+    TermSectionProgram.objects.create(term_section=shared, program="DS")
+    TermSectionProgram.objects.create(term_section=ds_only, program="DS")
+    TermSectionProgram.objects.create(term_section=wrong_gender, program="AI")
+    client = _staff_planner_client("planner-programme-scope")
+
+    def catalog(program_sections_only: bool) -> set[int]:
+        response = client.post(
+            "/ops/planner/sections-catalog/",
+            data=json.dumps(
+                {
+                    "academic_year": "1448",
+                    "term": "1",
+                    "student_id": student.student_id,
+                    "course_codes": ["CS112"],
+                    "program_sections_only": program_sections_only,
+                }
+            ),
+            content_type="application/json",
+        )
+        assert response.status_code == 200
+        assert response.json()["program_sections_only"] is program_sections_only
+        return {int(row["term_section_id"]) for row in response.json()["sections"]}
+
+    assert catalog(True) == {ai_only.id, shared.id}
+    assert catalog(False) == {ai_only.id, shared.id, ds_only.id, unassigned.id}
+    assert wrong_gender.id not in catalog(False)
+
+
+def test_planner_build_maps_controls_to_programme_and_capacity_contracts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    student = Student.objects.create(
+        student_id=910007,
+        name="AI Student",
+        program="AI",
+        section="M",
+    )
+    calls: list[dict[str, object]] = []
+
+    def fake_build_plans(*args: object, **kwargs: object) -> dict[str, object]:
+        calls.append(kwargs)
+        return {"summary": {}, "options": [], "swap_suggestions": []}
+
+    monkeypatch.setattr("core.planner_views.build_plans", fake_build_plans)
+    client = _staff_planner_client("planner-control-contract")
+
+    def build(program_only: bool, allow_full: bool) -> dict[str, object]:
+        response = client.post(
+            "/ops/planner/build/",
+            data=json.dumps(
+                {
+                    "student_id": student.student_id,
+                    "academic_year": "1448",
+                    "term": "1",
+                    "mode": "keep",
+                    "shortlist": [{"course_code": "CS112", "credits": 3, "status": "Eligible"}],
+                    "baseline": [],
+                    "program_sections_only": program_only,
+                    "allow_full_sections": allow_full,
+                    "max_credits": 18,
+                }
+            ),
+            content_type="application/json",
+        )
+        assert response.status_code == 200
+        return cast(dict[str, object], response.json())
+
+    strict_result = build(True, False)
+    relaxed_result = build(False, True)
+
+    assert calls[0]["program"] == "AI"
+    assert calls[0]["strict_per_course"] is False
+    assert calls[0]["consider_capacity"] is True
+    assert strict_result["constraints"] == {
+        "program_sections_only": True,
+        "allow_full_sections": False,
+    }
+
+    assert calls[1]["program"] is None
+    assert calls[1]["strict_per_course"] is False
+    assert calls[1]["consider_capacity"] is False
+    assert relaxed_result["constraints"] == {
+        "program_sections_only": False,
+        "allow_full_sections": True,
+    }
+
+
+def test_planner_build_preserves_boolean_must_take_and_one_exact_pin(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    student = Student.objects.create(
+        student_id=910008,
+        name="Pinned Student",
+        program="AI",
+        section="M",
+    )
+    captured_shortlists: list[list[dict[str, object]]] = []
+
+    def fake_build_plans(*args: object, **kwargs: object) -> dict[str, object]:
+        captured_shortlists.append(cast(list[dict[str, object]], args[2]))
+        return {"summary": {}, "options": [], "swap_suggestions": []}
+
+    monkeypatch.setattr("core.planner_views.build_plans", fake_build_plans)
+    client = _staff_planner_client("planner-hard-request-contract")
+    response = client.post(
+        "/ops/planner/build/",
+        data=json.dumps(
+            {
+                "student_id": student.student_id,
+                "academic_year": "1448",
+                "term": "1",
+                "mode": "keep",
+                "program_sections_only": False,
+                "shortlist": [
+                    {
+                        "course_code": "engl214",
+                        "credits": 3,
+                        "status": "Eligible",
+                        "must_take": True,
+                        "pinned_sections": [{"term_section_id": 123, "section": "M2"}],
+                    }
+                ],
+                "baseline": [],
+            }
+        ),
+        content_type="application/json",
+    )
+
+    assert response.status_code == 200
+    assert captured_shortlists == [
+        [
+            {
+                "course_code": "ENGL214",
+                "priority": "Med",
+                "score": 0,
+                "status": "Eligible",
+                "missing_prerequisites": [],
+                "must_take": True,
+                "credits": 3,
+                "pinned_sections": [{"term_section_id": 123, "section": "M2"}],
+            }
+        ]
+    ]
+
+
+@pytest.mark.parametrize(
+    ("must_take", "pins", "error_code"),
+    [
+        ("false", [], "VALIDATION_MUST_TAKE"),
+        (
+            False,
+            [
+                {"term_section_id": 123, "section": "M2"},
+                {"term_section_id": 124, "section": "M3"},
+            ],
+            "VALIDATION_PINNED_SECTION_COUNT",
+        ),
+    ],
+)
+def test_planner_build_rejects_ambiguous_hard_request_payloads(
+    must_take: object,
+    pins: list[dict[str, object]],
+    error_code: str,
+) -> None:
+    student = Student.objects.create(
+        student_id=910009,
+        name="Validation Student",
+        program="AI",
+        section="M",
+    )
+    client = _staff_planner_client(f"planner-hard-validation-{error_code.lower()}")
+    response = client.post(
+        "/ops/planner/build/",
+        data=json.dumps(
+            {
+                "student_id": student.student_id,
+                "academic_year": "1448",
+                "term": "1",
+                "mode": "keep",
+                "program_sections_only": False,
+                "shortlist": [
+                    {
+                        "course_code": "ENGL214",
+                        "credits": 3,
+                        "status": "Eligible",
+                        "must_take": must_take,
+                        "pinned_sections": pins,
+                    }
+                ],
+                "baseline": [],
+            }
+        ),
+        content_type="application/json",
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == error_code
+
+
+def test_staff_planner_ui_uses_clear_positive_control_names() -> None:
+    root = Path(__file__).resolve().parents[1]
+    template = (root / "core" / "templates" / "core" / "planner.html").read_text(encoding="utf-8")
+    script = (root / "static" / "js" / "page-planner.js").read_text(encoding="utf-8")
+
+    assert 'id="programSectionsOnly" type="checkbox" checked' in template
+    assert 'id="allowFullSections" type="checkbox"' in template
+    assert "Student programme sections only" in template
+    assert "Allow full sections" in template
+    assert "program_sections_only:useProgrammeSectionsOnly()" in script
+    assert "allow_full_sections:allowFullSections()" in script
+    assert "Must-take — every result" in script
+    assert "existing.pinned_sections=[{term_section_id:tsid" in script
+    assert "function renderShortlist(){\n  invalidateBuilderResults();" in script
+    assert "hard_constraint_failures" in script
+    assert "q('strictSections')" not in script
+    assert "q('ignoreCapacity')" not in script
