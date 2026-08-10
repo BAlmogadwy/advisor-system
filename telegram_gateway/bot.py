@@ -443,7 +443,16 @@ def answer_question(*, link_id: Any, update_id: int, question: str, server_port:
     # Every failure here is silent by design: `_send_card_image` returns nothing
     # rather than raising, so a missing Chromium or a slow render costs the
     # picture and never the answer.
-    _send_card_image(result, chat_id, server_port=server_port)
+    try:
+        _send_card_image(result, chat_id, server_port=server_port)
+    except Exception:  # noqa: BLE001
+        # The picture is a courtesy; the answer is the product. Without this guard
+        # a raise here left the student with the acknowledgement and then silence
+        # for ever — the answer generated, validated and stored, the webhook
+        # already 200'd so Telegram never redelivers, and the exception swallowed
+        # by the background runner. The docstring below used to assert this could
+        # not happen; nothing enforced it.
+        logger.warning("telegram: card image phase failed; sending text only")
 
     for text in _render_outcome(result):
         # To the link's OWN chat, never to the id carried in the payload that
@@ -458,7 +467,7 @@ def _send_card_image(
     """Deliver a picture of the timetable card, or quietly deliver nothing."""
     from core.services.advisor_presentations import KIND_TIMETABLE
 
-    from .rendering import images_enabled, local_base_url, render_card
+    from .rendering import images_enabled, local_base_url, render_cards
 
     assistant = result.assistant_message
     if assistant is None or not assistant.presentation or not images_enabled():
@@ -472,12 +481,15 @@ def _send_card_image(
     alternatives = assistant.presentation.get("alternatives") or []
     count = min(len(alternatives), MAX_CARD_IMAGES) if alternatives else 1
 
-    for index in range(count):
-        png = render_card(
-            message_id=assistant.pk,
-            base_url=local_base_url(server_port),
-            option_index=index if alternatives else None,
-        )
+    # One browser for all of them. A Chromium launch costs a second or two, and
+    # four cold launches per answer against two executor slots is how a busy hour
+    # becomes a queue.
+    images = render_cards(
+        message_id=assistant.pk,
+        base_url=local_base_url(server_port),
+        option_indexes=[i if alternatives else None for i in range(count)],
+    )
+    for png in images:
         if not png:
             # Already logged by the renderer. Stop rather than press on: if one
             # render failed the next will too, and the text below still carries

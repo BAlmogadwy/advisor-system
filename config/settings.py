@@ -271,6 +271,16 @@ TELEGRAM_SEND_TIMETABLE_IMAGES = (
 # not where the app is reachable (a unix socket, a container port mapping).
 TELEGRAM_INTERNAL_BASE_URL = os.getenv("TELEGRAM_INTERNAL_BASE_URL", "")
 
+# The card renderer fetches over loopback, so the loopback Host must be allowed —
+# otherwise `CommonMiddleware` answers 400 DisallowedHost and the screenshot waits
+# 15 s for an attribute that will never appear. Added HERE rather than left to
+# DJANGO_ALLOWED_HOSTS because the operator sets that to the public hostname and
+# has no reason to guess that an internal fetch also needs a home.
+if TELEGRAM_SEND_TIMETABLE_IMAGES:
+    for _loopback in ("127.0.0.1", "localhost"):
+        if _loopback not in ALLOWED_HOSTS:
+            ALLOWED_HOSTS.append(_loopback)
+
 DEFAULT_FROM_EMAIL = os.getenv("DEFAULT_FROM_EMAIL", "advisor-bot@localhost")
 
 # Email / SMTP (Gmail app-password). Credentials come from .env, never the repo.

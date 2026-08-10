@@ -279,8 +279,12 @@ def card_view(request: HttpRequest, token: str) -> HttpResponse:
     from core.services.advisor_presentations import normalise_presentation
 
     from .cards import unsign_card
+    from .rendering import images_enabled
 
-    if not bot.is_enabled():
+    # Gated on the IMAGE flag, not just the channel flag. The endpoint exists only
+    # to be screenshotted; with images off nothing mints a token for it, so leaving
+    # it routed is surface for no purpose.
+    if not bot.is_enabled() or not images_enabled():
         return HttpResponse(status=404)
 
     payload = unsign_card(token)

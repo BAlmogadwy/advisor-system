@@ -1935,13 +1935,11 @@ def cards():
     set_renderer(None)
 
 
-IMAGES_ON = override_settings(
-    TELEGRAM_ADVISOR_ENABLED=True,
-    TELEGRAM_WEBHOOK_SECRET=SECRET,
-    TELEGRAM_PUBLIC_BASE_URL="https://advisor.example.edu",
-    TELEGRAM_BOT_TOKEN="",
-    TELEGRAM_SEND_TIMETABLE_IMAGES=True,
-)
+#: Same flag set as CHANNEL_ON with images ON. Built by copying it rather than
+#: retyping, because the two drifting is how `TELEGRAM_INTERNAL_BASE_URL` came to
+#: be pinned in one and ambient in the other — the THIRD recurrence of a bug this
+#: file already documents twice.
+IMAGES_ON = override_settings(**{**CHANNEL_ON.options, "TELEGRAM_SEND_TIMETABLE_IMAGES": True})
 
 
 def _timetable_presentation():
@@ -2092,7 +2090,7 @@ def test_the_card_page_refuses_an_expired_token(client):
         assert unsign_card(token) is None
 
 
-@CHANNEL_ON
+@IMAGES_ON
 def test_the_card_page_renders_only_the_whitelisted_presentation(client):
     """Re-normalised on the way OUT as well as in: it is being handed to a
     renderer, and a row stored under older rules is exactly what the whitelist
@@ -2272,20 +2270,30 @@ def test_no_render_is_attempted_when_the_base_url_is_unknown(client, cards):
     assert cards.requested == [], "a card was fetched with no base URL"
 
 
-def test_the_internal_base_url_defaults_to_empty_not_a_guessed_port():
-    from django.conf import settings
+def test_the_internal_base_url_defaults_to_the_request_port_and_stays_local():
+    """And a NON-local override is refused.
 
+    The natural workaround for a broken loopback fetch is to point this at the
+    public origin — which would send a signed card token, a bearer credential for
+    one student's timetable, across the internet and back through the edge on
+    every render. Refused rather than trusted.
+    """
     from telegram_gateway.rendering import local_base_url
 
     with override_settings(TELEGRAM_INTERNAL_BASE_URL=""):
         assert local_base_url(8002) == "http://127.0.0.1:8002"
-        # An explicit setting still wins, for socket/container deployments.
-    with override_settings(TELEGRAM_INTERNAL_BASE_URL="http://app.internal:9000/"):
-        assert local_base_url(8002) == "http://app.internal:9000"
-    assert settings is not None
+        assert local_base_url("") == ""
+
+    for local in ("http://127.0.0.1:9000/", "http://localhost:9000"):
+        with override_settings(TELEGRAM_INTERNAL_BASE_URL=local):
+            assert local_base_url(8002) == local.rstrip("/")
+
+    for remote in ("https://advisor.example.edu", "http://app.internal:9000"):
+        with override_settings(TELEGRAM_INTERNAL_BASE_URL=remote):
+            assert local_base_url(8002) == "", f"{remote} was accepted"
 
 
-@CHANNEL_ON
+@IMAGES_ON
 def test_option_zero_is_not_swallowed_by_a_falsy_default(client):
     """`{{ option_index|default:"-1" }}` is wrong for option 0, and wrong quietly.
 
@@ -2320,7 +2328,7 @@ def test_option_zero_is_not_swallowed_by_a_falsy_default(client):
     assert "var wanted = -1;" in body_none
 
 
-@CHANNEL_ON
+@IMAGES_ON
 def test_the_card_page_leaks_no_template_comments(client):
     """Django `{# #}` comments are SINGLE-LINE. A multi-line one is not stripped:
     it is served verbatim, and inside a <script> it produced
@@ -2336,7 +2344,13 @@ def test_the_card_page_leaks_no_template_comments(client):
         presentation=_timetable_presentation(),
         status=AdvisorMessage.STATUS_COMPLETED,
     )
-    body = client.get(f"/telegram/card/{sign_card(message_id=m.pk)}/").content.decode("utf-8")
+    response = client.get(f"/telegram/card/{sign_card(message_id=m.pk)}/")
+    body = response.content.decode("utf-8")
+
+    # Positive control FIRST: an empty 404 body would satisfy every assertion
+    # below without the page ever having rendered.
+    assert response.status_code == 200
+    assert "sa-card-root" in body and "AI331" in body
 
     assert "{#" not in body and "#}" not in body
     # And the internal commentary itself never reaches the wire.
@@ -2355,7 +2369,7 @@ def test_the_card_template_has_no_multiline_django_comments():
         assert not found, f"{path} has a multi-line {{# #}} comment; use {{% comment %}}"
 
 
-@CHANNEL_ON
+@IMAGES_ON
 def test_the_image_uses_the_shared_week_grid_not_a_new_one(client):
     """The picture reuses `WeekGrid.renderWeekGrid` — the same primitive the
     planner and the student timetable use — rather than becoming a fifth bespoke
@@ -2381,3 +2395,390 @@ def test_the_image_uses_the_shared_week_grid_not_a_new_one(client):
     # The web thread is untouched: no grid call was added to the adviser module.
     js = Path("static/js/page-student-advisor.js").read_text(encoding="utf-8")
     assert "renderWeekGrid" not in js, "option 1 was 'image only'; the screen changed too"
+
+
+# ── housekeeping: the tables nobody reads once they have done their job ──
+
+
+def test_purge_removes_only_rows_past_the_window(settings):
+    """Receipts grow at one row per message the bot ever receives, and tokens at
+    one per /link. Neither is read again once spent."""
+    from telegram_gateway.linking import purge_expired
+    from telegram_gateway.models import TelegramLinkToken, TelegramUpdateReceipt
+
+    old = timezone.now() - timedelta(days=30)
+    fresh = linking.issue_link_token(telegram_user_id=CHAT)
+    TelegramUpdateReceipt.objects.create(update_id=1)
+    TelegramUpdateReceipt.objects.create(update_id=2)
+
+    # Backdate one of each; `auto_now_add` has to be written around.
+    TelegramUpdateReceipt.objects.filter(update_id=1).update(received_at=old)
+    stale = TelegramLinkToken.objects.create(
+        token_hash="deadbeef" * 8,
+        telegram_user_id=OTHER_CHAT,
+        expires_at=timezone.now() - timedelta(days=29),
+    )
+    TelegramLinkToken.objects.filter(pk=stale.pk).update(created_at=old)
+
+    tokens, receipts = purge_expired(timedelta(days=7))
+
+    assert tokens == 1 and receipts == 1
+    assert TelegramUpdateReceipt.objects.filter(update_id=2).exists(), "a fresh receipt was purged"
+    assert linking.peek_token(fresh.raw_token) is not None, "a live token was purged"
+
+
+def test_the_purge_command_is_dry_by_default():
+    """A command that deletes on a bare invocation deletes when somebody runs it
+    to see what it does."""
+    from io import StringIO
+
+    from django.core.management import call_command
+
+    from telegram_gateway.models import TelegramUpdateReceipt
+
+    TelegramUpdateReceipt.objects.create(update_id=99)
+    TelegramUpdateReceipt.objects.filter(update_id=99).update(
+        received_at=timezone.now() - timedelta(days=30)
+    )
+
+    out = StringIO()
+    call_command("purge_telegram_tokens", stdout=out)
+    assert "DRY RUN" in out.getvalue()
+    assert TelegramUpdateReceipt.objects.filter(update_id=99).exists(), "dry run deleted"
+
+    out = StringIO()
+    call_command("purge_telegram_tokens", "--apply", stdout=out)
+    assert not TelegramUpdateReceipt.objects.filter(update_id=99).exists()
+
+
+# ── the card token as an authentication boundary ─────────────────
+
+
+@IMAGES_ON
+def test_a_forged_signature_is_refused(client):
+    """The signature IS the authentication on this endpoint — there is no session
+    to fall back on. A structurally valid token whose signature is wrong must be
+    indistinguishable from one that was never real."""
+    from telegram_gateway.cards import sign_card, unsign_card
+
+    conversation = AdvisorConversation.objects.create(student_id=MINE)
+    m = AdvisorMessage.objects.create(
+        conversation=conversation,
+        role=AdvisorMessage.ROLE_ASSISTANT,
+        content="x",
+        presentation=_timetable_presentation(),
+        status=AdvisorMessage.STATUS_COMPLETED,
+    )
+    good = sign_card(message_id=m.pk)
+    assert client.get(f"/telegram/card/{good}/").status_code == 200  # positive control
+
+    # One character of the signature flipped — everything else identical.
+    head, _, sig = good.rpartition(":")
+    flipped = "B" if sig[0] != "B" else "C"
+    forged = f"{head}:{flipped}{sig[1:]}"
+    assert forged != good and len(forged) == len(good)
+
+    assert unsign_card(forged) is None
+    assert client.get(f"/telegram/card/{forged}/").status_code == 404
+
+    # And an empty token, which the earlier `bad or 'x'` loop never actually sent.
+    assert unsign_card("") is None
+
+
+def test_a_card_token_carries_no_student_identifier():
+    """Decoded, not grepped. `signing.dumps` base64-encodes its payload, so
+    asserting a decimal student id is absent from the token string proves
+    nothing — a token containing one would pass that check."""
+    from telegram_gateway.cards import sign_card, unsign_card
+
+    payload = unsign_card(sign_card(message_id="abc-123", option_index=2))
+    assert payload is not None
+    assert set(payload) <= {"m", "i"}, f"the token carries extra fields: {payload}"
+
+
+def test_the_card_token_window_is_short():
+    """Pinned, not patched. It is a bearer URL to one student's timetable; the
+    earlier test mocked this constant away rather than asserting it."""
+    from telegram_gateway.cards import CARD_TOKEN_MAX_AGE_SECONDS
+
+    assert 0 < CARD_TOKEN_MAX_AGE_SECONDS <= 300
+
+
+@IMAGES_ON
+def test_the_card_page_refuses_a_token_naming_a_student_message(client):
+    """The token names a message id; the view must still insist it is an
+    ASSISTANT turn. Without that filter a signed token plus a guessed id renders
+    whatever presentation a student-role row happens to carry."""
+    from telegram_gateway.cards import sign_card
+
+    conversation = AdvisorConversation.objects.create(student_id=MINE)
+    student_turn = AdvisorMessage.objects.create(
+        conversation=conversation,
+        role=AdvisorMessage.ROLE_STUDENT,
+        content="ابنِ لي جدولًا",
+        presentation=_timetable_presentation(),
+        status=AdvisorMessage.STATUS_COMPLETED,
+    )
+    assert client.get(f"/telegram/card/{sign_card(message_id=student_turn.pk)}/").status_code == 404
+
+
+@CHANNEL_ON
+def test_the_card_endpoint_retires_with_the_image_flag(client):
+    """With images off nothing mints a token, so leaving the endpoint live is
+    surface for no purpose."""
+    from telegram_gateway.cards import sign_card
+
+    conversation = AdvisorConversation.objects.create(student_id=MINE)
+    m = AdvisorMessage.objects.create(
+        conversation=conversation,
+        role=AdvisorMessage.ROLE_ASSISTANT,
+        content="x",
+        presentation=_timetable_presentation(),
+        status=AdvisorMessage.STATUS_COMPLETED,
+    )
+    assert client.get(f"/telegram/card/{sign_card(message_id=m.pk)}/").status_code == 404
+
+
+# ── the image phase must never cost the answer ───────────────────
+
+
+@IMAGES_ON
+def test_a_raising_image_phase_still_delivers_the_text(client, outbox, cards):
+    """Proved by the review: without a guard the student got the acknowledgement
+    and then silence for ever — answer stored, webhook already 200'd so Telegram
+    never redelivers, exception swallowed by the background runner."""
+    _link()
+    with (
+        mock.patch("telegram_gateway.rendering.local_base_url", side_effect=RuntimeError("boom")),
+        _adviser(answer="هذا جدولك.", presentation=_timetable_presentation()),
+    ):
+        response = _post(client, _update(text="ابنِ لي جدولًا"))
+
+    assert response.status_code == 200
+    assert outbox.photos == []
+    body = " ".join(outbox.texts)
+    assert "هذا جدولك." in body, "the answer was lost with the picture"
+    assert messages.WORKING in body
+
+
+@IMAGES_ON
+def test_one_image_per_option_capped(client, outbox, cards):
+    """Six alternatives must not become six browser renders and six messages."""
+    from telegram_gateway.bot import MAX_CARD_IMAGES
+
+    _link()
+    presentation = _timetable_presentation()
+    presentation["alternatives"] = [
+        {
+            "planner_options": [f"A{i}"],
+            "meetings": [
+                {
+                    "day": "SUN",
+                    "start": "09:00",
+                    "end": "10:15",
+                    "course_code": "AI331",
+                    "section": "M1",
+                }
+            ],
+            "scheduled_courses": 1,
+            "target_courses": 1,
+            "total_credit_hours": 4,
+        }
+        for i in range(6)
+    ]
+    with _adviser(answer="هذا جدولك.", presentation=presentation):
+        _post(client, _update(text="ابنِ لي جدولًا"))
+
+    assert len(cards.requested) == MAX_CARD_IMAGES == 4
+    assert len(outbox.photos) == MAX_CARD_IMAGES
+
+    from telegram_gateway.cards import unsign_card
+
+    indexes = [unsign_card(u.split("/telegram/card/")[1].rstrip("/"))["i"] for u in cards.requested]
+    assert indexes == [0, 1, 2, 3]
+
+
+# ── the production shape, which is where this feature actually broke ──
+
+
+class _FakeResponse:
+    def __init__(self, status: int) -> None:
+        self.status = status
+
+
+class _FakePage:
+    def __init__(self, status: int = 200, error: str | None = None) -> None:
+        self._status = status
+        self._error = error
+        self.goto_kwargs: dict = {}
+
+    def goto(self, url, **kwargs):
+        self.goto_kwargs = kwargs
+        return _FakeResponse(self._status)
+
+    def wait_for_selector(self, selector, **kwargs):
+        return object()
+
+    def query_selector(self, selector):
+        page = self
+
+        class _Root:
+            def get_attribute(self, name):
+                return page._error if name == "data-card-error" else None
+
+            def screenshot(self, **kwargs):
+                return b"PNG-BYTES"
+
+        return _Root()
+
+
+class _FakeBrowser:
+    def __init__(self, page: _FakePage) -> None:
+        self._page = page
+        self.context_kwargs: dict = {}
+        self.closed = False
+
+    def new_context(self, **kwargs):
+        self.context_kwargs = kwargs
+        browser = self
+
+        class _Ctx:
+            def new_page(self):
+                return browser._page
+
+        return _Ctx()
+
+    def close(self):
+        self.closed = True
+
+
+def _fake_playwright(page: _FakePage):
+    """Drive PlaywrightCardRenderer without a browser, capturing what it asked for."""
+    holder: dict = {}
+
+    class _Chromium:
+        def launch(self, **kwargs):
+            holder["launch_kwargs"] = kwargs
+            holder["browser"] = _FakeBrowser(page)
+            return holder["browser"]
+
+    class _P:
+        chromium = _Chromium()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    return (lambda: _P()), holder
+
+
+def test_the_renderer_asserts_the_proxy_header_so_production_does_not_301():
+    """`SECURE_SSL_REDIRECT` is on whenever DEBUG is off, and this fetch is plain
+    HTTP over loopback. Without the header the card page AND every {% static %}
+    asset 301 to https://127.0.0.1:PORT, where nothing speaks TLS — the renderer
+    script never loads and the page reports `renderer-missing`. Exempting only the
+    card path would fix the page and leave the assets broken."""
+    from telegram_gateway.rendering import PlaywrightCardRenderer
+
+    page = _FakePage()
+    fake, holder = _fake_playwright(page)
+    with mock.patch("playwright.sync_api.sync_playwright", fake):
+        out = PlaywrightCardRenderer().render_many(["http://127.0.0.1:8002/telegram/card/t/"])
+
+    assert out == [b"PNG-BYTES"]
+    headers = holder["browser"].context_kwargs.get("extra_http_headers") or {}
+    assert headers.get("X-Forwarded-Proto") == "https", headers
+    assert holder["launch_kwargs"].get("timeout"), "launch has no deadline"
+    assert page.goto_kwargs.get("wait_until") == "domcontentloaded"
+    assert holder["browser"].closed, "the browser was not closed"
+
+
+def test_a_non_200_card_page_is_named_in_the_log_not_swallowed(caplog):
+    """400 (DisallowedHost) and 301 (SSL redirect) otherwise both surface as an
+    indistinguishable TimeoutError, and an operator holding only
+    `card render failed` has nothing to go on."""
+    import logging
+
+    from telegram_gateway.rendering import PlaywrightCardRenderer
+
+    caplog.set_level(logging.WARNING)
+    for status in (400, 301, 500):
+        caplog.clear()
+        fake, _ = _fake_playwright(_FakePage(status=status))
+        with mock.patch("playwright.sync_api.sync_playwright", fake):
+            out = PlaywrightCardRenderer().render_many(["http://127.0.0.1:8002/telegram/card/t/"])
+        assert out == [None]
+        logged = " ".join(r.getMessage() for r in caplog.records)
+        assert str(status) in logged, f"HTTP {status} was not named: {logged!r}"
+
+
+def test_the_loopback_host_is_allowed_when_images_are_on():
+    """The renderer fetches over loopback, so the loopback Host must be allowed —
+    otherwise CommonMiddleware answers 400 and the screenshot waits 15s for an
+    attribute that will never appear. Left to DJANGO_ALLOWED_HOSTS this never
+    happens: the operator sets that to the public hostname.
+
+    Re-imports the settings module with the flag on, because the flag is off in
+    this process and the append is module-level.
+    """
+    import importlib
+    import os
+
+    import config.settings as live
+
+    saved = {
+        k: os.environ.get(k) for k in ("TELEGRAM_SEND_TIMETABLE_IMAGES", "DJANGO_ALLOWED_HOSTS")
+    }
+    # FORCED, not defaulted: a developer's own .env carries
+    # `DJANGO_ALLOWED_HOSTS=127.0.0.1,localhost`, which would satisfy the
+    # assertion whether or not the append exists — and did.
+    os.environ["DJANGO_ALLOWED_HOSTS"] = "advisor.example.edu"
+    try:
+        os.environ["TELEGRAM_SEND_TIMETABLE_IMAGES"] = "false"
+        without = importlib.reload(live)
+        assert "127.0.0.1" not in without.ALLOWED_HOSTS, (
+            "the control failed: loopback is present with images OFF, so this "
+            "test cannot prove the append does anything"
+        )
+
+        os.environ["TELEGRAM_SEND_TIMETABLE_IMAGES"] = "true"
+        fresh = importlib.reload(live)
+        assert fresh.TELEGRAM_SEND_TIMETABLE_IMAGES is True
+        assert "127.0.0.1" in fresh.ALLOWED_HOSTS, fresh.ALLOWED_HOSTS
+        assert "localhost" in fresh.ALLOWED_HOSTS
+        assert "advisor.example.edu" in fresh.ALLOWED_HOSTS, "the public host was lost"
+    finally:
+        for key, value in saved.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+        importlib.reload(live)
+
+
+@IMAGES_ON
+def test_a_graduation_card_starts_no_browser(client, outbox, cards):
+    """`renderTimetablePresentation` draws only `timetable_proposals`. Without the
+    kind gate a graduation answer launches Chromium, waits for a page that renders
+    nothing, and logs a failure — seconds and a warning for a picture that was
+    never going to exist."""
+    from core.services.advisor_presentations import KIND_GRADUATION, normalise_presentation
+
+    graduation = {
+        "kind": KIND_GRADUATION,
+        "graph": {
+            "extraNodes": ["AI331", "CS323"],
+            "items": [{"course_code": "AI331", "prerequisite_course_code": "CS323"}],
+        },
+    }
+    assert normalise_presentation(graduation), "the graduation fixture is not renderable"
+
+    _link()
+    with _adviser(answer="خطة تخرجك.", presentation=graduation):
+        _post(client, _update(text="متى أتخرج؟"))
+
+    assert cards.requested == [], "a browser was started for a non-timetable card"
+    assert outbox.photos == []
+    assert "خطة تخرجك." in " ".join(outbox.texts)

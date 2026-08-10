@@ -10,11 +10,16 @@ launch, a render timeout, a broken page — all of them degrade to "send the tex
 and the link", which is exactly the behaviour that shipped before images existed.
 
 **It must be replaceable in tests.** Same shape as the transport: a module-level
-renderer swapped by `set_renderer`, and a recording implementation that yields
-deterministic bytes. Nothing in the test suite may start a browser — Playwright
-is installed here, but Chromium is *not* installed on Render (`playwright install
-chromium` is still missing from the build command), so a test that needs a real
-browser would pass locally and fail in CI for a reason unrelated to the change.
+renderer swapped by `set_renderer`, plus an autouse fixture in `tests/conftest.py`
+that refuses to start a browser at all. Convention was not enough: the LLM client
+got a network guard only after a test reached the internet for real, and this is
+the same hazard one module over.
+
+A correction worth keeping written down: an earlier version of this docstring said
+Chromium was **not** installed on Render. It is — `build.sh` has run
+`playwright install chromium` since 2026-04-08. That mistake was not harmless. It
+told an operator to expect exactly the symptom the real bugs produced, so
+`card render failed` would have been explained away rather than investigated.
 """
 
 from __future__ import annotations
@@ -72,45 +77,96 @@ class RecordingRenderer:
         self.requested.append(url)
         return None if self.fail else self.png
 
+    def render_many(self, urls: list[str]) -> list[bytes | None]:
+        return [self.render(url) for url in urls]
+
 
 class PlaywrightCardRenderer:
     """The real one. Screenshots `#sa-card-root` on the signed card page."""
 
     def render(self, url: str) -> bytes | None:
+        found = self.render_many([url])
+        return found[0] if found else None
+
+    def render_many(self, urls: list[str]) -> list[bytes | None]:
+        """Every card for one answer, in ONE browser.
+
+        A Chromium launch costs one to two seconds. Four options meant four cold
+        launches per answer against two executor slots, which is how a busy hour
+        turns into a queue nobody is watching.
+
+        Every step carries an explicit timeout. `launch`, `screenshot` and `close`
+        have no deadline of their own, so a browser that wedges holds an executor
+        slot for ever — and with two slots, two wedged renders silence the channel
+        for every student while each new question is still promised an answer.
+        """
         try:
             from playwright.sync_api import sync_playwright
         except ImportError:
             logger.warning("telegram: playwright is not installed; sending text only")
-            return None
+            return []
 
+        out: list[bytes | None] = []
         try:
             with sync_playwright() as p:
-                browser = p.chromium.launch(args=["--disable-dev-shm-usage"])
+                browser = p.chromium.launch(
+                    args=["--disable-dev-shm-usage"], timeout=RENDER_TIMEOUT_MS
+                )
                 try:
-                    page = browser.new_page(
+                    context = browser.new_context(
                         viewport={"width": VIEWPORT[0], "height": VIEWPORT[1]},
                         device_scale_factor=2,  # legible after Telegram's downscale
+                        # The app redirects http->https whenever DEBUG is off, and
+                        # this fetch is plain HTTP over loopback. Without this the
+                        # card page AND every {% static %} asset 301 to
+                        # https://127.0.0.1:PORT, where nothing speaks TLS — so the
+                        # renderer script never loads and the page reports
+                        # `renderer-missing`. Asserting the proxy header is what the
+                        # edge does in production; exempting the path would only fix
+                        # the page and leave the assets broken.
+                        extra_http_headers={"X-Forwarded-Proto": "https"},
                     )
-                    page.goto(url, timeout=RENDER_TIMEOUT_MS, wait_until="load")
-                    # Wait for the page to SAY it is done rather than sleeping.
-                    # A fixed delay produces a half-drawn card on a slow machine
-                    # and wastes time on a fast one.
-                    page.wait_for_selector(
-                        "#sa-card-root[data-card-ready]", timeout=RENDER_TIMEOUT_MS
-                    )
-                    root = page.query_selector("#sa-card-root")
-                    if root is None or root.get_attribute("data-card-error"):
-                        logger.warning(
-                            "telegram: card page reported %s",
-                            root.get_attribute("data-card-error") if root else "no root",
-                        )
-                        return None
-                    return root.screenshot(type="png")
+                    page = context.new_page()
+                    for url in urls:
+                        out.append(self._one(page, url))
                 finally:
                     browser.close()
         except Exception as exc:  # noqa: BLE001
-            # Includes a missing Chromium, which is the expected state on Render
-            # today. No URL in the log: it carries a signed token.
+            # No URL in the log: it carries a signed token.
+            logger.warning("telegram: card render failed (%s)", type(exc).__name__)
+        return out
+
+    def _one(self, page: Any, url: str) -> bytes | None:
+        try:
+            response = page.goto(
+                url,
+                timeout=RENDER_TIMEOUT_MS,
+                # NOT `load`: the application stylesheet @imports Google Fonts, so
+                # `load` waits on two third-party round trips inside the screenshot
+                # budget. The page publishes `data-card-ready` precisely so that
+                # nothing has to wait on unrelated subresources.
+                wait_until="domcontentloaded",
+            )
+            status = getattr(response, "status", None)
+            if status is not None and status != 200:
+                # Named, because 400 (DisallowedHost) and 301 (SSL redirect) both
+                # otherwise surface as an indistinguishable TimeoutError below —
+                # and an operator with only "card render failed" has nothing to go on.
+                logger.warning("telegram: card page returned HTTP %s", status)
+                return None
+            # Wait for the page to SAY it is done rather than sleeping. A fixed
+            # delay produces a half-drawn card on a slow machine and wastes time
+            # on a fast one.
+            page.wait_for_selector("#sa-card-root[data-card-ready]", timeout=RENDER_TIMEOUT_MS)
+            root = page.query_selector("#sa-card-root")
+            if root is None or root.get_attribute("data-card-error"):
+                logger.warning(
+                    "telegram: card page reported %s",
+                    root.get_attribute("data-card-error") if root else "no root",
+                )
+                return None
+            return root.screenshot(type="png", timeout=RENDER_TIMEOUT_MS)
+        except Exception as exc:  # noqa: BLE001
             logger.warning("telegram: card render failed (%s)", type(exc).__name__)
             return None
 
@@ -159,6 +215,34 @@ def render_card(*, message_id: Any, base_url: str, option_index: int | None = No
         return None
 
 
+def render_cards(
+    *, message_id: Any, base_url: str, option_indexes: list[int | None]
+) -> list[bytes | None]:
+    """Every card for one answer, sharing one browser. Never raises."""
+    if not images_enabled():
+        return []
+    if not base_url:
+        logger.warning("telegram: cannot render a card without an internal base URL")
+        return []
+
+    from .cards import sign_card
+
+    base = str(base_url).rstrip("/")
+    urls = [
+        f"{base}/telegram/card/{sign_card(message_id=message_id, option_index=i)}/"
+        for i in option_indexes
+    ]
+    renderer = get_renderer()
+    try:
+        many = getattr(renderer, "render_many", None)
+        if callable(many):
+            return list(many(urls))
+        return [renderer.render(url) for url in urls]
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("telegram: card renderer raised (%s)", type(exc).__name__)
+        return []
+
+
 def local_base_url(port: int | str | None = None) -> str:
     """Where the headless browser reaches this process.
 
@@ -175,6 +259,22 @@ def local_base_url(port: int | str | None = None) -> str:
     """
     configured = str(getattr(settings, "TELEGRAM_INTERNAL_BASE_URL", "") or "").strip()
     if configured:
+        # Refused if it is not local. The natural workaround for a broken loopback
+        # fetch is to point this at the public origin — and that would send a signed
+        # card token, a bearer credential for one student's timetable, out across the
+        # internet and back through the edge on every render.
+        from urllib.parse import urlparse
+
+        host = (urlparse(configured).hostname or "").lower()
+        # Loopback only. `0.0.0.0` is deliberately NOT here: it is a bind
+        # address, not a destination, and a card URL aimed at it is either a
+        # mistake or an attempt to widen this check.
+        if host not in {"127.0.0.1", "localhost", "::1"}:
+            logger.error(
+                "telegram: TELEGRAM_INTERNAL_BASE_URL must be a loopback origin; "
+                "refusing to fetch card URLs over a non-local host"
+            )
+            return ""
         return configured.rstrip("/")
     if port:
         return f"http://127.0.0.1:{int(port)}"
@@ -194,5 +294,6 @@ __all__ = [
     "images_enabled",
     "local_base_url",
     "render_card",
+    "render_cards",
     "set_renderer",
 ]

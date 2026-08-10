@@ -321,7 +321,125 @@ must equal `TELEGRAM_WEBHOOK_SECRET` exactly or every update is refused with 403
 
 ---
 
-## 6. Migrations
+## 6. Timetable images
+
+When an answer carries a timetable card, the bot sends a **PNG of that card** —
+one image per option, up to four — and then the text. Off by default
+(`TELEGRAM_SEND_TIMETABLE_IMAGES=false`).
+
+### One renderer, not two
+
+The image is a **screenshot of the real card**, produced by loading the real
+renderer. `static/js/page-student-advisor.js` exports
+`renderTimetablePresentation` as `window.__SA_RENDER_TIMETABLE_CARD__`; a
+chrome-less page calls it with the stored presentation; Playwright screenshots
+`#sa-card-root`.
+
+A Pillow or matplotlib drawing routine was rejected for two reasons:
+
+- **It would be a second renderer.** The lecture grid is already duplicated in
+  four places in this codebase, and three cohort classifiers already disagree
+  about `" M1"`. A fifth drawing of a week would drift from the screen the image
+  links to, and a student comparing them would find them different.
+- **It would re-open Arabic shaping.** Pillow does no shaping, so «الأحد» comes
+  out as disconnected letters in reverse. A screenshot leaves shaping to the
+  browser, and inherits the bidi fixes from #66 for free.
+
+Inside the picture the meetings list is swapped for
+`WeekGrid.renderWeekGrid({mode: 'table'})` — the same primitive the planner and
+the student timetable use. **Image only**: the chat thread keeps its list, which
+is the right shape for a narrow bubble holding several alternatives, and a test
+asserts `renderWeekGrid` never appears in `page-student-advisor.js`.
+
+### The card URL is signed, not session-authenticated
+
+The headless browser has no session and must not be given one — minting a login
+so a screenshot can be taken is how a convenience becomes an authentication hole.
+
+```text
+sign_card(message_id, option_index)   ->  django.core.signing, salt "telegram_gateway.card"
+GET /telegram/card/<signed>/          ->  180-second max_age, no session, no cookie
+                                          Cache-Control: no-store, private
+                                          X-Robots-Tag: noindex, nofollow
+```
+
+Nothing mints one of these for a user; the only caller is
+`rendering.render_card`, running on this machine. The browser fetches over
+**localhost** — never `TELEGRAM_PUBLIC_BASE_URL` — so a signed URL never leaves
+the host.
+
+### Every failure costs the picture, never the answer
+
+The answer is generated, validated and stored before anything here runs, so every
+path in `rendering.py` returns `None` rather than raising: no Chromium, no
+launch, a timeout, a broken page. All degrade to text-and-link, which is exactly
+what shipped before images existed. `transport.send_photo` absorbs delivery
+failures for the same reason a raise would make the webhook non-200 and Telegram
+redeliver.
+
+### Captions are 1024 characters, not 4096
+
+So the caveats never ride in one. Images go first, the validated answer text goes
+as its own message. A truncated «مقترحات للتخطيط فقط» is the failure this channel
+exists to avoid.
+
+### Two traps this feature already fell into
+
+Both were silent, and both are now pinned by tests:
+
+- **`{{ option_index|default:"-1" }}` swallowed option zero.** Django's `default`
+  filter fires on any *falsy* value and the first option's index is `0`, so the
+  first image of every answer fell back to "render as the screen does" — all
+  options shown, grid swap skipped. Options 1 and 2 were correct, which is why it
+  looked like it worked.
+- **Multi-line `{# #}` is not stripped by Django.** All five leaked verbatim into
+  the served HTML, and the one inside `<script>` produced `SyntaxError: Invalid or
+  unexpected token` and a screenshot timeout. Use `{% comment %}`.
+
+### Settings
+
+| Variable | Default | Notes |
+|---|---|---|
+| `TELEGRAM_SEND_TIMETABLE_IMAGES` | `false` | Its own switch, separate from the channel flag — see §4 |
+| `TELEGRAM_INTERNAL_BASE_URL` | `""` | Override only. Empty means the port is taken from the webhook request, which is always right; the first version hard-coded `8000` and failed silently on every other port |
+
+### Production: Chromium IS installed — and the loopback fetch is the real hazard
+
+`build.sh` has run `playwright install chromium` since 2026-04-08. An earlier
+draft of this document said the opposite, and that error was worse than useless:
+it told an operator to expect exactly the symptom the real bugs produced, so
+`card render failed` would have been explained away instead of investigated.
+
+The genuine production hazards are both about the **loopback fetch**, and both
+would have failed 100% of the time:
+
+- `ALLOWED_HOSTS` is built purely from `DJANGO_ALLOWED_HOSTS`, which an operator
+  sets to the public hostname — so `Host: 127.0.0.1:PORT` was a **400
+  DisallowedHost**. `config/settings.py` now appends the loopback hosts whenever
+  the image flag is on.
+- `SECURE_SSL_REDIRECT` is on whenever `DEBUG` is off, so the plain-HTTP loopback
+  fetch was **301'd to `https://127.0.0.1:PORT`**, where nothing speaks TLS. The
+  renderer now sends `X-Forwarded-Proto: https`, which is what the edge asserts in
+  production. Exempting the card path alone would not have worked: every
+  `{% static %}` asset 301s too, so the renderer script would not load and the
+  page would report `renderer-missing`.
+
+Both were invisible — a 400 and a 301 each surfaced as an indistinguishable
+`TimeoutError`. The renderer now logs the HTTP status when it is not 200.
+
+### Housekeeping
+
+```bash
+python manage.py purge_telegram_tokens --apply
+```
+
+Deletes spent link tokens and update receipts older than seven days. Dry-run
+without `--apply`. Schedule it beside `purge_planner_drafts` in `render.yaml` —
+receipts grow at one row per message the bot ever receives.
+
+---
+
+## 7. Migrations
 
 One migration, `telegram_gateway/0001_initial.py`, dependent on
 `core.0061_scope_student_term_section_uniqueness`. It touches **no existing
@@ -345,7 +463,7 @@ Deterministic (`makemigrations --check` reports no changes) and reversible
 
 ---
 
-## 7. Reliability
+## 8. Reliability
 
 The webhook **acknowledges and hands off**. An adviser turn is budgeted at up to
 4 tool iterations × 75 s; answering inline would exceed Telegram's patience,
@@ -382,7 +500,7 @@ costs nothing but the answer.
 
 ---
 
-## 8. Production deployment checklist
+## 9. Production deployment checklist
 
 - [ ] Product owner has ruled on GPA / marks / failed-course grades (§4)
 - [ ] `TELEGRAM_WEBHOOK_SECRET` generated with a CSPRNG, ≥ 32 chars, set in Render
@@ -393,11 +511,15 @@ costs nothing but the answer.
 - [ ] `setWebhook` called with `secret_token` and `allowed_updates: ["message"]`
 - [ ] `getWebhookInfo` shows no `last_error_message`
 - [ ] BotFather privacy mode **enabled**, join-groups **disabled**
+- [ ] If images are wanted: `TELEGRAM_SEND_TIMETABLE_IMAGES=true`. Chromium is
+      already installed by `build.sh`; the loopback host and the proxy header
+      are handled in code
+- [ ] `purge_telegram_tokens` scheduled
 - [ ] `TELEGRAM_ADVISOR_ENABLED=true` set **last**
 - [ ] Smoke test with a test bot and a test student (§10)
 - [ ] Schedule `linking.purge_expired()` (spent tokens + old receipts)
 
-## 9. Rollback / disable
+## 10. Rollback / disable
 
 **Fastest (seconds), no deploy:** set `TELEGRAM_ADVISOR_ENABLED=false` and
 restart. The webhook answers 404 and nothing academic is reachable.
@@ -419,7 +541,7 @@ the selected Telegram links*. Or `linking.revoke_links_for_student(student_id)`.
 
 ---
 
-## 10. Manual test script (test bot + test student)
+## 11. Manual test script (test bot + test student)
 
 Use a **separate** BotFather bot and a test student. Never the production bot.
 
@@ -454,37 +576,48 @@ Use a **separate** BotFather bot and a test student. Never the production bot.
 
 ---
 
-## 11. Known limitations
+## 12. Known limitations
 
 1. **GPA / marks / failed grades are not channel-suppressed.** Open product-owner
    decision (§4). Mitigated only by the default-off flag.
-2. **Background execution is not durable.** A restart mid-turn strands the turn
+2. **Images have never been exercised on Render.** Chromium is installed and the
+   two loopback defects are fixed, but the whole path has only been proven
+   locally. The first production enablement should be watched, not assumed.
+3. **Background execution is not durable.** A restart mid-turn strands the turn
    `PENDING` and the chat gets no answer; the student sees it on the web and can
    re-ask. Durable delivery = migrate to `timetable_repair_jobs`.
-3. **Plain text only.** No bold, no tables, no inline keyboards, no buttons. The
-   deliberate cost of having no escaping bug.
-4. **Structured cards are a link, not a render.** Timetable and graduation
-   presentations point at the web screen (§ requirement: do not recreate the UI).
-5. **Arabic bidi is unaddressed here.** The web fix for reversed time ranges
-   («09:00-10:15» painted backwards) lives in the template layer. Telegram renders
-   client-side and applies its own bidi; a Telegram-specific isolation pass was
-   **not** written and time ranges may render reversed on some clients. Verify at
-   step 9/12 of the manual script.
-6. **One conversation per chat.** No thread switching from Telegram; `/new` is the
+4. **Plain text only.** No bold, no tables, no inline keyboards, no buttons — the
+   deliberate cost of having no escaping bug. Timetable **images** are the one
+   exception, and they are pictures rather than markup.
+5. **Only timetable cards become images.** `renderTimetablePresentation` draws
+   `timetable_proposals` and nothing else, so a graduation scenario still points
+   at the web screen.
+6. **Bidi: the image is correct, the text may not be.** The screenshot inherits
+   the template-layer fix from #66 — «09:00-10:15» renders the right way round,
+   verified. The plain-text answer is a different matter: Telegram applies its own
+   bidi to message text, and no Telegram-specific isolation pass was written.
+   Check a text answer containing a time range on a real client.
+7. **English sentences inside the Arabic card reverse their punctuation** —
+   «.the registration portal». Pre-existing on the web card, not caused by the
+   images: at `page-student-advisor.js:1240-1245` the course *code* is isolated
+   with `ltrNode` while the course *name* and the English `reason` beside it are
+   not. Not fixed here. → the bidi topic file.
+8. **One conversation per chat.** No thread switching from Telegram; `/new` is the
    only control. The web sidebar remains the full interface.
-7. **`/advisor` escalates the most recent answered turn only.**
-8. **No outbound retry.** A failed send is not retried; the answer is stored and
-   visible on the web.
-9. **No delivery of adviser replies to escalations.** A resolved case is not
-   pushed to Telegram; the student checks the platform.
-10. **Receipts and tokens need periodic purging** (`linking.purge_expired`); no
-    scheduler entry is created by this change.
-11. **The `csrf_exempt` webhook is the repo's second.** It reads no session and no
+9. **`/advisor` escalates the most recent answered turn only.**
+10. **No outbound retry.** A failed send is not retried; the answer is stored and
+    visible on the web.
+11. **No delivery of adviser replies to escalations.** A resolved case is not
+    pushed to Telegram; the student checks the platform.
+12. **Purging is a command, not a schedule.** `purge_telegram_tokens --apply`
+    exists; no `render.yaml` cron entry is created by this change. Receipts grow at
+    one row per message the bot ever receives.
+13. **The `csrf_exempt` webhook is the repo's second.** It reads no session and no
     cookie, but it is a permanent exception worth re-reviewing if it ever grows.
 
 ---
 
-## 12. Files
+## 13. Files
 
 **New**
 

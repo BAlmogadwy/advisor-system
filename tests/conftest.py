@@ -67,3 +67,31 @@ def _no_real_provider_settings(settings) -> None:  # noqa: PT004
     settings.ALIBABA_LLM_API_KEY = ""
     settings.ALIBABA_LLM_MODEL = ""
     settings.ALIBABA_LLM_ALLOW_LIVE_REQUESTS = False
+
+
+@pytest.fixture(autouse=True)
+def forbid_headless_browser(monkeypatch) -> None:  # noqa: PT004
+    """No test starts Chromium.
+
+    `telegram_gateway.rendering` documents this rule and, until now, nothing
+    enforced it: `set_renderer(None)` restores the lazy REAL renderer, so a test
+    decorated with the image settings but missing its fixture would launch a
+    browser, pass on the author's machine, and behave differently wherever the
+    browser is slower or absent. That is exactly the accident `forbid_llm_network`
+    above was written after — the same hazard, one module over.
+
+    A test that wants recorded bytes installs its own renderer with
+    `set_renderer(...)`, which replaces this one.
+    """
+    from telegram_gateway import rendering
+
+    class _Refuse:
+        def render(self, url: str):
+            raise AssertionError(
+                "a test tried to start a real browser; install a RecordingRenderer"
+            )
+
+        def render_many(self, urls):
+            return [self.render(u) for u in urls]
+
+    monkeypatch.setattr(rendering, "_RENDERER", _Refuse(), raising=False)
