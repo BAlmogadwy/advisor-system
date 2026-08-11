@@ -29,14 +29,22 @@ construction rather than something to reason about.
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass
 from typing import Any
 
 from django.conf import settings
 from django.db import IntegrityError, transaction
+from django.utils import timezone
 
-from core.models import AdvisorMessage
+from core.models import AdvisorMessage, Student, StudentCourse
 from core.services import advisor_turn
+from core.services.advisor_channel_privacy import (
+    TELEGRAM_SAFE_IDEMPOTENCY_PREFIX,
+    TELEGRAM_SAFE_PROFILE,
+    TELEGRAM_UNVALIDATED_PROFILE,
+    TELEGRAM_WITHHELD_PROFILE,
+)
 from core.services.advisor_principal import AdvisorPrincipal, IdentityError
 from core.services.rbac import ROLE_STUDENT
 
@@ -58,6 +66,163 @@ UNAUTHENTICATED_COMMANDS = frozenset({"/start", "/link", "/confirm", "/help", "/
 #: Most pictures one answer may send. Telegram allows ten in an album; four is
 #: what a student will actually look at, and each one costs a browser render.
 MAX_CARD_IMAGES = 4
+
+
+_PERSONAL_ACADEMIC_RECORD = re.compile(
+    r"(?:\bmy\s+(?:cumulative\s+|term\s+)?gpa\b|"
+    r"\bmy\s+(?:cgpa|mark|marks|grade|grades|result|results|transcript|academic\s+standing|failed\s+courses?)\b|"
+    r"\b(?:what|how)\s+(?:is|was)\s+my\s+(?:gpa|cgpa|grade|mark|score|result)\b|"
+    r"\bwhat\s+(?:grade|mark|score|result)\s+did\s+i\s+get\b|"
+    r"\bwhat\s+did\s+i\s+get\b|"
+    r"\b(?:show|list|give|tell)\s+me\s+(?:the\s+)?(?:grades?|marks?|results?|transcript|academic\s+standing|courses?\s+i\s+failed)\b|"
+    r"\b(?:list|show)\s+(?:the\s+)?(?:courses?|classes?|subjects?)\s+i\s+(?:failed|did\s+not\s+pass)\b|"
+    r"\bhow\s+many\s+(?:failed\s+)?(?:courses?|classes?|subjects?)\s+(?:are\s+)?(?:on|in)\s+my\s+(?:record|transcript)\b|"
+    r"\b(?:what|which)\s+(?:courses?|classes?|subjects?)\s+(?:have\s+i|i\s+have)\s+not\s+passed\b|"
+    r"\b(?:did\s+i|have\s+i)\s+(?:pass|fail)\b|"
+    r"\bam\s+i\s+(?:passing|failing)\b|"
+    r"\bam\s+i\s+(?:on|under)\s+academic\s+probation\b|"
+    r"\bwhere\s+do\s+i\s+stand\s+academically\b|"
+    r"\b(?:name|show|list)\s+(?:my\s+)?unsuccessful\s+(?:courses?|classes?|modules?|subjects?)\b|"
+    r"\bwhich\s+(?:course|class|module|subject)\s+am\s+i\s+retaking\b|"
+    r"\bwhat\s+(?:letter|number)\s+(?:appears|is\s+recorded)\s+(?:beside|next\s+to)\b|"
+    r"\b(?:what\s+about\s+mine|and\s+mine|what\s+is\s+mine)\b|"
+    r"(?:ممكن\s+)?(?:تعرض|توريني|تطلع)\s+(?:لي\s+)?درجات\s+(?:المواد|المقررات)|"
+    r"(?:كم|وش|ايش|إيش|قد\s*ايش).*?(?:معدلي|نسبتي|تقديري|درجتي|درجاتي|علامتي|نتيجتي)|"
+    r"(?:معدلي|المعدل\s+حقي|(?:gpa|cgpa)\s+حقي|نسبتي|تقديري|درجتي|درجاتي|علامتي|نتيجتي|سجلي\s+الأكاديمي)|"
+    r"(?:كم|وش|ايش|إيش)\s+جبت(?:\s+في)?|"
+    r"(?:اعرض|أعرض|ورني|طلع|هات|اعطني|أعطني)\s+.*?(?:درجاتي|علاماتي|نتيجتي|سجلي\s+الأكاديمي|المواد\s+اللي\s+رسبت)|"
+    r"(?:نتيجة|درجة|علامة)\s+(?:مقرر|مادة)\s+[A-Z]{2,5}\s*\d{2,4}|"
+    r"(?:هل|وش|ايش|إيش).*?(?:رسبت|نجحت|ناجح|راسب).*?(?:في|بـ|ب)?|"
+    r"(?:وش|ما|ايش).*?(?:المواد|المقررات).*?(?:رسبت|راسب)|"
+    r"(?:المواد|المقررات).*?(?:اللي|التي).*?(?:رسبت|ما\s+نجحت)|"
+    r"(?:انا|أنا).*?(?:ناجح|نجحت|راسب|رسبت|انذار\s+اكاديمي|إنذار\s+أكاديمي)|"
+    r"(?:طيب\s+)?(?:وش\s+عني|حقي\s*\??|بالنسبة\s+لي\s*\??))",
+    re.IGNORECASE,
+)
+
+_PERSONAL_ACADEMIC_OUTPUT = re.compile(
+    r"(?:\byour\s+(?:current\s+|cumulative\s+|term\s+)?(?:gpa|cgpa|mark|marks|grade|grades|score|result|results|transcript|academic\s+standing|failed\s+courses?)\b|"
+    r"\byou\s+(?:received|got|scored|(?:have\s+)?failed|(?:have\s+)?passed)\b|"
+    r"\b(?:courses?|classes?|subjects?)\s+you\s+(?:failed|did\s+not\s+pass)\b|"
+    r"(?:معدلك|نسبتك|تقديرك|درجتك|درجاتك|علامتك|علاماتك|نتيجتك)|"
+    r"(?:أنت|انت).*?(?:ناجح|راسب|نجحت|رسبت)|"
+    r"(?:نجحت|رسبت)\s+في)",
+    re.IGNORECASE,
+)
+
+
+def requires_secure_record_surface(question: str) -> bool:
+    """Whether an exact personal result must stay off the Telegram channel.
+
+    General policy questions such as "how is GPA calculated?" remain answerable.
+    The boundary is for the caller's recorded result, not for the academic topic.
+    """
+
+    text = str(question or "")
+    text = re.sub(r"[ًٌٍَُِّْـ]", "", text)
+    return bool(_PERSONAL_ACADEMIC_RECORD.search(text))
+
+
+def contains_personal_record_output(
+    answer: str,
+    *,
+    student_id: int | None = None,
+    question: str = "",
+) -> bool:
+    """Fail closed if a model volunteers a personal result despite input gating.
+
+    Language patterns catch explicit phrasing. The second layer compares output
+    with the student's structured GPA and latest course results, so terse forms
+    such as ``GPA: 2.86`` or ``CS113 - B`` cannot bypass the boundary merely by
+    omitting a possessive phrase.
+    """
+
+    text = _normalise_record_text(answer)
+    if _PERSONAL_ACADEMIC_OUTPUT.search(text):
+        return True
+    if not isinstance(student_id, int) or student_id <= 0:
+        return False
+
+    student = Student.objects.filter(student_id=student_id).values("gpa").first()
+    if student and student.get("gpa") is not None:
+        expected_gpa = float(student["gpa"])
+        labelled_gpas = re.findall(
+            r"(?:\b(?:gpa|cgpa)\b(?:\s+on\s+file)?\s*(?::|=|\-|is)\s*"
+            r"([0-5](?:[.,]\d{1,4})?)|"
+            r"([0-5](?:[.,]\d{1,4})?)\s*\b(?:gpa|cgpa)\b)",
+            text,
+            re.IGNORECASE,
+        )
+        for before, after in labelled_gpas:
+            raw_number = before or after
+            try:
+                shown = float(raw_number.replace(",", "."))
+            except ValueError:
+                continue
+            if abs(shown - expected_gpa) < 0.0051:
+                return True
+
+    folded = text.casefold()
+    rows = (
+        StudentCourse.objects.filter(student_id=student_id)
+        .select_related("course")
+        .values("course__course_code", "status", "grade", "mark")
+    )
+    for row in rows:
+        code = str(row.get("course__course_code") or "").strip()
+        if not code:
+            continue
+        code_match = re.search(_course_code_pattern(code), text, re.IGNORECASE)
+        if code_match is None:
+            continue
+        record_context = f"{question}\n{text}"
+        if row.get("status") == StudentCourse.Status.FAILED and re.search(
+            r"(?:failed|failure|unsuccessful|did\s+not\s+pass|retak(?:e|ing)|"
+            r"رس(?:ب|وب)|راسب|إعادة|اعادة)",
+            record_context,
+            re.IGNORECASE,
+        ):
+            return True
+
+        left = max(0, code_match.start() - 100)
+        right = min(len(text), code_match.end() + 100)
+        neighbourhood = folded[left:right]
+        grade = str(row.get("grade") or "").strip().casefold()
+        if grade and re.search(
+            rf"(?:[-:=]\s*|\b(?:grade|result|التقدير|النتيجة)\s*(?:is|هي|:)?\s*)"
+            rf"{re.escape(grade)}(?![\w])",
+            neighbourhood,
+            re.IGNORECASE,
+        ):
+            return True
+        mark = row.get("mark")
+        if mark is not None and _contains_exact_mark(neighbourhood, float(mark)):
+            return True
+    return False
+
+
+def _normalise_record_text(value: Any) -> str:
+    text = re.sub(r"[ًٌٍَُِّْـ]", "", str(value or ""))
+    return text.translate(str.maketrans("٠١٢٣٤٥٦٧٨٩٫٬", "0123456789.,"))
+
+
+def _course_code_pattern(code: str) -> str:
+    compact = re.sub(r"[^A-Za-z0-9]", "", code)
+    match = re.fullmatch(r"([A-Za-z]+)(\d+)", compact)
+    if match:
+        return rf"(?<![A-Za-z0-9]){re.escape(match.group(1))}\s*[- ]?\s*{re.escape(match.group(2))}(?![A-Za-z0-9])"
+    return rf"(?<![A-Za-z0-9]){re.escape(code)}(?![A-Za-z0-9])"
+
+
+def _contains_exact_mark(text: str, mark: float) -> bool:
+    for raw_number in re.findall(r"(?<!\d)(\d{1,3}(?:[.,]\d{1,3})?)(?!\d)", text):
+        try:
+            shown = float(raw_number.replace(",", "."))
+        except ValueError:
+            continue
+        if abs(shown - mark) < 0.0051:
+            return True
+    return False
 
 
 @dataclass(frozen=True)
@@ -344,6 +509,11 @@ def handle_command(inbound: InboundMessage, link: TelegramLink | None) -> list[s
     """
     command = inbound.command
 
+    # Transport admission happens before the inline receipt is claimed in
+    # ``views``. Keeping it there lets overload be acknowledged silently after one
+    # explanatory notice instead of persisting and replying to every refused
+    # update. This function owns command meaning only.
+
     if command == "/privacy":
         return [messages.PRIVACY]
     if command == "/start":
@@ -386,6 +556,175 @@ def handle_command(inbound: InboundMessage, link: TelegramLink | None) -> list[s
 # ── the academic turn ────────────────────────────────────────────
 
 
+def execute_durable_job(job: TelegramUpdateReceipt) -> dict[str, Any]:
+    """Materialise one queued question or ordered command without delivering it.
+
+    The queue persists this return value before it contacts Telegram. A delivery
+    retry therefore resumes from the stored message cursor and never repeats the
+    model call, starts another conversation, or raises a second escalation.
+    """
+
+    from .jobs import PermanentJobError, RetryJob
+
+    link = linking.active_link_by_id(job.link_id)
+    if link is None:
+        raise PermanentJobError("link_revoked")
+
+    try:
+        principal = _principal_for(link)
+    except IdentityError as exc:
+        link.revoke()
+        raise PermanentJobError("link_revoked") from exc
+
+    if job.kind == TelegramUpdateReceipt.KIND_COMMAND:
+        command = str(job.payload_text or "").strip().split(maxsplit=1)[0]
+        command = command.split("@", 1)[0].lower()
+        if command == "/new":
+            return _execute_durable_new(job, link, principal)
+        if command == "/advisor":
+            return _execute_durable_advisor(job, link, principal)
+        raise PermanentJobError("unsupported_command")
+
+    if job.kind != TelegramUpdateReceipt.KIND_QUESTION:
+        raise PermanentJobError("unsupported_job_kind")
+
+    question = str(job.payload_text or "")
+    if requires_secure_record_surface(question):
+        return {
+            "messages": [
+                messages.sensitive_record_web_only(_web_url(link.current_conversation_id))
+            ],
+            "result_code": "secure_surface_required",
+            "conversation_id": link.current_conversation_id,
+        }
+
+    conversation = _current_conversation(link, principal)
+    result = advisor_turn.run_advisor_turn(
+        principal=principal,
+        conversation=conversation,
+        question=question,
+        idempotency_key=f"{TELEGRAM_SAFE_IDEMPOTENCY_PREFIX}{int(job.update_id)}",
+        channel_profile=TELEGRAM_SAFE_PROFILE,
+    )
+
+    if result.outcome == advisor_turn.REPLAYED and result.assistant_message is None:
+        # Another execution still owns this idempotent turn, or a dead execution
+        # has not crossed the shared stale threshold yet. Marking the queue job
+        # successful here would permanently replace the eventual answer with a
+        # generic failure. Defer until the row is safely resumable instead.
+        pending = result.student_message
+        started = (
+            pending.generation_started_at or pending.created_at
+            if pending is not None
+            else timezone.now()
+        )
+        remaining = advisor_turn.STALE_GENERATION - (timezone.now() - started)
+        raise RetryJob(
+            "generation_in_progress",
+            delay_seconds=max(1.0, remaining.total_seconds() + 1.0),
+        )
+
+    # Revalidate the exact university account after generation. A deactivation,
+    # role removal, scope change or unlink that lands mid-turn blocks delivery;
+    # the stored web answer remains available to an authorised future session.
+    if linking.active_link_by_id(link.pk) is None:
+        raise PermanentJobError("link_revoked")
+
+    assistant = result.assistant_message
+    rendered = _render_outcome(result)
+    result_code = result.outcome.lower()
+    if _finalize_telegram_output(
+        result,
+        student_id=principal.student_id,
+        question=question,
+    ):
+        rendered = [messages.sensitive_record_web_only(_web_url(conversation.pk))]
+        result_code = "secure_output_withheld"
+    return {
+        "messages": rendered,
+        "result_code": result_code,
+        "assistant_message_id": assistant.pk if assistant is not None else None,
+        "conversation_id": conversation.pk,
+    }
+
+
+def _execute_durable_new(
+    job: TelegramUpdateReceipt,
+    link: TelegramLink,
+    principal: AdvisorPrincipal,
+) -> dict[str, Any]:
+    """Create exactly one conversation for `/new`, including after a retry."""
+
+    from core.services.rate_limit import CONVERSATION
+    from core.services.rate_limit import consume as spend_budget
+
+    with transaction.atomic():
+        locked_job = (
+            TelegramUpdateReceipt.objects.select_for_update()
+            .select_related("conversation")
+            .get(update_id=job.update_id)
+        )
+        conversation = locked_job.conversation
+        if conversation is not None and conversation.student_id == principal.student_id:
+            # The executor committed this side effect before a worker died. Point
+            # the link back at the same row and continue; never create a second.
+            link.current_conversation = conversation
+            link.save(update_fields=["current_conversation"])
+        else:
+            decision = spend_budget(CONVERSATION, int(principal.student_id or 0))
+            if not decision.allowed:
+                return {
+                    "messages": [messages.rate_limited(decision.retry_after)],
+                    "result_code": "rate_limited",
+                }
+            conversation = advisor_turn.start_conversation(principal=principal)
+            locked_job.conversation = conversation
+            locked_job.save(update_fields=["conversation"])
+            link.current_conversation = conversation
+            link.save(update_fields=["current_conversation"])
+
+    return {
+        "messages": [messages.NEW_CONVERSATION],
+        "result_code": "new_conversation",
+        "conversation_id": conversation.pk,
+    }
+
+
+def _execute_durable_advisor(
+    job: TelegramUpdateReceipt,
+    link: TelegramLink,
+    principal: AdvisorPrincipal,
+) -> dict[str, Any]:
+    """Escalate and materialise its Telegram reply in one transaction.
+
+    A worker may die after the case is committed but before the generic queue
+    layer stores the reply. If an adviser closes that case before retry, calling
+    ``escalate_turn`` again could create a second case. Keeping the side effect
+    and the delivery payload in the same transaction removes that crash gap.
+    """
+
+    from . import jobs
+
+    with transaction.atomic():
+        locked_job = TelegramUpdateReceipt.objects.select_for_update().get(update_id=job.update_id)
+        if locked_job.result_code or locked_job.delivery_payload:
+            return {}
+
+        rendered = _handle_advisor(link, principal)
+        if not jobs.store_delivery(
+            locked_job,
+            messages=rendered,
+            result_code="advisor_command",
+            conversation_id=link.current_conversation_id,
+        ):
+            # The enclosing transaction also rolls back a newly-created case.
+            raise jobs.RetryJob("lease_lost")
+
+    # The queue layer refreshes the job after execution and observes the payload
+    # already stored above, so it does not overwrite or repeat this command.
+    return {}
+
+
 def answer_question(*, link_id: Any, update_id: int, question: str, server_port: str = "") -> None:
     """Run one adviser turn for a linked chat and deliver the result.
 
@@ -396,7 +735,7 @@ def answer_question(*, link_id: Any, update_id: int, question: str, server_port:
     Everything about *what* to say comes from `run_advisor_turn`; this function
     chooses only which of the outcomes maps to which sentence.
     """
-    link = TelegramLink.objects.filter(pk=link_id, status=TelegramLink.STATUS_ACTIVE).first()
+    link = linking.active_link_by_id(link_id)
     if link is None:
         # Unlinked between asking and answering. Silence is correct: the chat is no
         # longer entitled to anything, including an explanation.
@@ -409,6 +748,13 @@ def answer_question(*, link_id: Any, update_id: int, question: str, server_port:
         link.revoke()
         return
 
+    if requires_secure_record_surface(question):
+        send_text(
+            chat_id=int(link.telegram_user_id),
+            text=messages.sensitive_record_web_only(_web_url(link.current_conversation_id)),
+        )
+        return
+
     conversation = _current_conversation(link, principal)
 
     result = advisor_turn.run_advisor_turn(
@@ -419,7 +765,8 @@ def answer_question(*, link_id: Any, update_id: int, question: str, server_port:
         # receipt still cannot produce a second stored turn or a second model
         # call — the partial unique index on (conversation, idempotency_key)
         # catches it, and `run_advisor_turn` replays the stored answer.
-        idempotency_key=f"tg:{int(update_id)}",
+        idempotency_key=f"{TELEGRAM_SAFE_IDEMPOTENCY_PREFIX}{int(update_id)}",
+        channel_profile=TELEGRAM_SAFE_PROFILE,
     )
 
     # Re-read before delivering, not only before generating. A turn takes up to
@@ -427,12 +774,17 @@ def answer_question(*, link_id: Any, update_id: int, question: str, server_port:
     # takes effect NOW — a revocation that lands mid-generation must not still be
     # followed by the student's GPA arriving in the thief's chat. The answer is
     # already persisted, so dropping the delivery loses the student nothing.
-    live = TelegramLink.objects.filter(pk=link_id, status=TelegramLink.STATUS_ACTIVE).first()
+    live = linking.active_link_by_id(link_id)
     if live is None:
         logger.info("telegram: link revoked during generation; dropping delivery")
         return
 
     chat_id = int(live.telegram_user_id)
+    output_withheld = _finalize_telegram_output(
+        result,
+        student_id=principal.student_id,
+        question=question,
+    )
 
     # The picture FIRST, then the words. A student scrolling a phone should meet
     # the timetable and then read the caveats about it — and the caveats travel as
@@ -444,7 +796,8 @@ def answer_question(*, link_id: Any, update_id: int, question: str, server_port:
     # rather than raising, so a missing Chromium or a slow render costs the
     # picture and never the answer.
     try:
-        _send_card_image(result, chat_id, server_port=server_port)
+        if not output_withheld:
+            _send_card_image(result, chat_id, server_port=server_port)
     except Exception:  # noqa: BLE001
         # The picture is a courtesy; the answer is the product. Without this guard
         # a raise here left the student with the acknowledgement and then silence
@@ -454,11 +807,73 @@ def answer_question(*, link_id: Any, update_id: int, question: str, server_port:
         # not happen; nothing enforced it.
         logger.warning("telegram: card image phase failed; sending text only")
 
-    for text in _render_outcome(result):
+    rendered = _render_outcome(result)
+    if output_withheld:
+        rendered = [messages.sensitive_record_web_only(_web_url(conversation.pk))]
+    for text in rendered:
         # To the link's OWN chat, never to the id carried in the payload that
         # triggered this: the payload is attacker-controlled input and the link row
         # is the verified fact.
         send_text(chat_id=chat_id, text=text)
+
+
+def _finalize_telegram_output(
+    result: advisor_turn.TurnResult,
+    *,
+    student_id: int | None,
+    question: str,
+) -> bool:
+    """Persist and return whether this turn must stay on the web surface.
+
+    A Telegram answer begins as ``telegram_unvalidated``. Only this function may
+    promote it to ``telegram_safe`` after the output boundary, or to
+    ``telegram_withheld``. A replay still marked unvalidated means a process died
+    after storing the model response but before this decision; it is withheld
+    without comparing the old answer to today's mutable academic record.
+    """
+
+    assistant = result.assistant_message
+    student_message = result.student_message
+    if assistant is None:
+        return False
+    if student_message is None:
+        return True
+
+    profile = str(student_message.generation_profile or "")
+    if profile == TELEGRAM_WITHHELD_PROFILE:
+        return True
+    if profile == TELEGRAM_SAFE_PROFILE:
+        return False
+    if profile != TELEGRAM_UNVALIDATED_PROFILE:
+        # Unknown/legacy provenance is never evidence that the output crossed the
+        # current boundary.
+        return True
+
+    if result.outcome == advisor_turn.REPLAYED:
+        target = TELEGRAM_WITHHELD_PROFILE
+    else:
+        target = (
+            TELEGRAM_WITHHELD_PROFILE
+            if contains_personal_record_output(
+                assistant.content,
+                student_id=student_id,
+                question=question,
+            )
+            else TELEGRAM_SAFE_PROFILE
+        )
+
+    changed = AdvisorMessage.objects.filter(
+        pk=student_message.pk,
+        generation_profile=TELEGRAM_UNVALIDATED_PROFILE,
+    ).update(generation_profile=target)
+    if changed:
+        student_message.generation_profile = target
+        return target == TELEGRAM_WITHHELD_PROFILE
+
+    # A competing execution made the durable decision first. Respect it rather
+    # than overwriting or re-evaluating it.
+    student_message.refresh_from_db(fields=["generation_profile"])
+    return student_message.generation_profile != TELEGRAM_SAFE_PROFILE
 
 
 def _send_card_image(
@@ -542,7 +957,10 @@ __all__ = [
     "InboundMessage",
     "answer_question",
     "claim_update",
+    "execute_durable_job",
+    "contains_personal_record_output",
     "handle_command",
     "is_enabled",
     "parse_update",
+    "requires_secure_record_surface",
 ]

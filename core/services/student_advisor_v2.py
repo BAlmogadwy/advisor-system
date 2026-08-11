@@ -23,6 +23,22 @@ from typing import Any
 from django.conf import settings
 
 from core.models import Student
+from core.services.advisor_channel_privacy import (
+    fallback_tool as channel_fallback_tool,
+)
+from core.services.advisor_channel_privacy import (
+    is_telegram_safe_profile,
+)
+from core.services.advisor_channel_privacy import (
+    project_history as project_channel_history,
+)
+from core.services.advisor_channel_privacy import (
+    project_tool_result as project_channel_tool_result,
+)
+from core.services.advisor_channel_privacy import (
+    project_tool_schemas as project_channel_tool_schemas,
+)
+from core.services.advisor_channel_privacy import system_prompt as channel_system_prompt
 from core.services.advisor_presentations import (
     graduation_presentation_from_tool_results,
     timetable_presentation_from_tool_results,
@@ -1849,6 +1865,7 @@ def answer_student_advisor_v2(
     history: Any = None,
     model: str | None = None,
     llm_client: Any = None,
+    channel_profile: str = "",
 ) -> dict[str, Any]:
     """Run one student turn through a single plan/act/observe agent loop."""
     if principal.role != ROLE_STUDENT or principal.student_id is None:
@@ -1892,7 +1909,11 @@ def answer_student_advisor_v2(
     policy_prefetched = True
     policy_result, _ = _seed_policy_evidence(clean_question, scope)
     seeded_policy_results: list[dict[str, Any]] = [policy_result]
-    projected_policy = boundary.project_tool_result("policy_lookup", policy_result)
+    projected_policy = project_channel_tool_result(
+        "policy_lookup",
+        boundary.project_tool_result("policy_lookup", policy_result),
+        profile=channel_profile,
+    )
     policy_prompt = "\nverified_policy_evidence: " + json.dumps(
         _policy_evidence_for_prompt(projected_policy),
         ensure_ascii=False,
@@ -1900,11 +1921,17 @@ def answer_student_advisor_v2(
         default=str,
     )
 
-    schemas = boundary.tool_schemas(student_v2_tool_schemas())
+    schemas = project_channel_tool_schemas(
+        boundary.tool_schemas(student_v2_tool_schemas()),
+        profile=channel_profile,
+    )
     advertised = {str((schema.get("function") or {}).get("name") or "") for schema in schemas}
     messages: list[dict[str, Any]] = [
-        {"role": "system", "content": SYSTEM_PROMPT},
-        *_sanitize_history(history),
+        {
+            "role": "system",
+            "content": channel_system_prompt(SYSTEM_PROMPT, profile=channel_profile),
+        },
+        *_sanitize_history(project_channel_history(history, profile=channel_profile)),
         {
             "role": "user",
             "content": (
@@ -2329,7 +2356,14 @@ def answer_student_advisor_v2(
                 # The normal remote projector retains the fixed error envelope
                 # while dropping implementation-only fields. Nothing identifying
                 # or database-backed is carried by this refusal.
-                provider_result = boundary.project_tool_result(call.name, local_result)
+                provider_result = project_channel_tool_result(
+                    call.name,
+                    boundary.project_tool_result(call.name, local_result),
+                    profile=channel_profile,
+                )
+                local_result = project_channel_tool_result(
+                    call.name, local_result, profile=channel_profile
+                )
                 local_results.append(local_result)
                 messages.append(_tool_message(call.id, provider_result))
                 continue
@@ -2353,13 +2387,20 @@ def answer_student_advisor_v2(
                 # identity here as well so the executor receives only choices the
                 # model is actually allowed to make.
                 arguments.pop("student_id", None)
-                local_result = execute_student_v2_tool(
+                raw_local_result = execute_student_v2_tool(
                     call.name,
                     arguments,
                     principal=principal,
                     context=tool_context,
                 )
-                provider_result = boundary.project_tool_result(call.name, local_result)
+                provider_result = project_channel_tool_result(
+                    call.name,
+                    boundary.project_tool_result(call.name, raw_local_result),
+                    profile=channel_profile,
+                )
+                local_result = project_channel_tool_result(
+                    call.name, raw_local_result, profile=channel_profile
+                )
             except Exception:  # fail closed without exposing boundary details
                 local_result = {"tool": call.name, "ok": False, "error": "Capability refused."}
                 provider_result = boundary.refusal_result(call.name)
@@ -2389,22 +2430,28 @@ def answer_student_advisor_v2(
 
     if not answer:
         if not any(row.get("tool") != "policy_lookup" for row in local_results):
-            fallback_local = execute_student_v2_tool(
-                "get_student_context",
+            fallback_name = channel_fallback_tool(profile=channel_profile)
+            fallback_raw = execute_student_v2_tool(
+                fallback_name,
                 {},
                 principal=principal,
                 context=tool_context,
             )
             try:
-                fallback_provider = boundary.project_tool_result(
-                    "get_student_context", fallback_local
+                fallback_provider = project_channel_tool_result(
+                    fallback_name,
+                    boundary.project_tool_result(fallback_name, fallback_raw),
+                    profile=channel_profile,
                 )
             except Exception:
-                fallback_provider = boundary.refusal_result("get_student_context")
+                fallback_provider = boundary.refusal_result(fallback_name)
+            fallback_local = project_channel_tool_result(
+                fallback_name, fallback_raw, profile=channel_profile
+            )
             local_results.append(fallback_local)
             tools_called.append(
                 {
-                    "name": "get_student_context",
+                    "name": fallback_name,
                     "arguments": {},
                     "reason": "verified_fallback_after_tool_turn_failure",
                 }
@@ -2588,11 +2635,16 @@ def answer_student_advisor_v2(
 
 def answer_student_advisor(**kwargs: Any) -> dict[str, Any]:
     """Feature-flagged seam used by the durable student conversation endpoint."""
-    if is_enabled():
+    # The legacy runtime has no channel-specific evidence projection. Telegram
+    # therefore stays on V2 even during a web rollback of the V2 feature flag;
+    # silently downgrading here would reopen exact-record access.
+    if is_enabled() or is_telegram_safe_profile(kwargs.get("channel_profile")):
         return answer_student_advisor_v2(**kwargs)
     from core.services.virtual_advisor import answer_virtual_advisor
 
-    return answer_virtual_advisor(**kwargs)
+    legacy_kwargs = dict(kwargs)
+    legacy_kwargs.pop("channel_profile", None)
+    return answer_virtual_advisor(**legacy_kwargs)
 
 
 __all__ = [

@@ -16,6 +16,7 @@ from .views import (
     card_view,
     link_confirm_view,
     link_manage_view,
+    link_reauthenticate_view,
     link_start_view,
     telegram_webhook_view,
 )
@@ -29,4 +30,9 @@ urlpatterns = [
     # pattern gets a chance to swallow it.
     path("link/<str:token>/", link_start_view, name="telegram_link_start"),
     path("link/<str:token>/confirm/", link_confirm_view, name="telegram_link_confirm"),
+    path(
+        "link/<str:token>/reauth/",
+        link_reauthenticate_view,
+        name="telegram_link_reauthenticate",
+    ),
 ]

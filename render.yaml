@@ -19,12 +19,253 @@ services:
         fromDatabase:
           name: advisor-db
           property: connectionString
+      # The web service is the single source of truth for every setting the
+      # Telegram worker consumes. Existing Blueprints ignore newly introduced
+      # sync:false entries, so populate/verify them on this service before sync.
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_WEBHOOK_SECRET
+        sync: false
+      - key: TELEGRAM_ADVISOR_ENABLED
+        sync: false
+      - key: TELEGRAM_PUBLIC_BASE_URL
+        sync: false
+      - key: TELEGRAM_LINK_TOKEN_TTL_SECONDS
+        sync: false
+      - key: TELEGRAM_API_TIMEOUT_SECONDS
+        sync: false
+      - key: LLM_BACKEND
+        sync: false
+      - key: LOCAL_LLM_BASE_URL
+        sync: false
+      - key: LOCAL_LLM_MODEL
+        sync: false
+      - key: LOCAL_LLM_TIMEOUT_SECONDS
+        sync: false
+      - key: LOCAL_LLM_MAX_TOKENS
+        sync: false
+      - key: LOCAL_LLM_ALLOW_REMOTE
+        sync: false
+      - key: ALIBABA_LLM_BASE_URL
+        sync: false
+      - key: ALIBABA_LLM_API_KEY
+        sync: false
+      - key: ALIBABA_LLM_MODEL
+        sync: false
+      - key: ALIBABA_LLM_ENABLE_THINKING
+        sync: false
+      - key: ALIBABA_LLM_TIMEOUT_SECONDS
+        sync: false
+      - key: ALIBABA_LLM_MAX_TOKENS
+        sync: false
+      - key: ALIBABA_LLM_MAX_RETRIES
+        sync: false
+      - key: ALIBABA_LLM_ALLOW_LIVE_REQUESTS
+        sync: false
+      - key: VIRTUAL_ADVISOR_AGENT_LOOP_ENABLED
+        sync: false
+      - key: VIRTUAL_ADVISOR_MAX_TOOL_ITERATIONS
+        sync: false
+      - key: VIRTUAL_ADVISOR_MAX_TOOL_CALLS
+        sync: false
+      - key: VIRTUAL_ADVISOR_LOOP_MAX_TOKENS
+        sync: false
+      - key: VIRTUAL_ADVISOR_TOOL_TURN_TIMEOUT_SECONDS
+        sync: false
+      - key: STUDENT_ADVISOR_V2_ENABLED
+        sync: false
+      - key: STUDENT_ADVISOR_V2_MAX_TOOL_ITERATIONS
+        sync: false
+      - key: STUDENT_ADVISOR_V2_MAX_TOOL_CALLS
+        sync: false
+      - key: STUDENT_ADVISOR_V2_MAX_TOKENS
+        sync: false
+      - key: STUDENT_ADVISOR_V2_TOOL_TIMEOUT_SECONDS
+        sync: false
+
+  # Telegram updates are acknowledged by the web service only after their work
+  # is committed to PostgreSQL. This continuously running process leases and
+  # drains that durable queue. Every setting it consumes is copied from
+  # advisor-system below; the worker has no independently editable provider copy.
+  - type: worker
+    name: advisor-telegram-worker
+    runtime: python
+    plan: starter
+    buildCommand: chmod +x build.sh && ./build.sh
+    startCommand: python manage.py telegram_advisor_worker --sleep 1 --max-attempts 3
+    envVars:
+      - key: DJANGO_SECRET_KEY
+        fromService:
+          name: advisor-system
+          type: web
+          envVarKey: DJANGO_SECRET_KEY
+      - key: DJANGO_DEBUG
+        value: "false"
+      - key: DJANGO_ALLOWED_HOSTS
+        fromService:
+          name: advisor-system
+          type: web
+          envVarKey: DJANGO_ALLOWED_HOSTS
+      - key: DATABASE_URL
+        fromDatabase:
+          name: advisor-db
+          property: connectionString
+      - key: TELEGRAM_BOT_TOKEN
+        fromService:
+          name: advisor-system
+          type: web
+          envVarKey: TELEGRAM_BOT_TOKEN
+      - key: TELEGRAM_ADVISOR_ENABLED
+        fromService:
+          name: advisor-system
+          type: web
+          envVarKey: TELEGRAM_ADVISOR_ENABLED
+      - key: TELEGRAM_PUBLIC_BASE_URL
+        fromService:
+          name: advisor-system
+          type: web
+          envVarKey: TELEGRAM_PUBLIC_BASE_URL
+      - key: TELEGRAM_LINK_TOKEN_TTL_SECONDS
+        fromService:
+          name: advisor-system
+          type: web
+          envVarKey: TELEGRAM_LINK_TOKEN_TTL_SECONDS
+      - key: TELEGRAM_API_TIMEOUT_SECONDS
+        fromService:
+          name: advisor-system
+          type: web
+          envVarKey: TELEGRAM_API_TIMEOUT_SECONDS
+      - key: TELEGRAM_SEND_TIMETABLE_IMAGES
+        value: "false"
+      # Provider, agent-loop and V2 controls all come from the web service. A kill
+      # switch changed there therefore changes the worker on the same Blueprint
+      # sync instead of silently reverting to a code default here.
+      - key: LLM_BACKEND
+        fromService:
+          name: advisor-system
+          type: web
+          envVarKey: LLM_BACKEND
+      - key: LOCAL_LLM_BASE_URL
+        fromService:
+          name: advisor-system
+          type: web
+          envVarKey: LOCAL_LLM_BASE_URL
+      - key: LOCAL_LLM_MODEL
+        fromService:
+          name: advisor-system
+          type: web
+          envVarKey: LOCAL_LLM_MODEL
+      - key: LOCAL_LLM_TIMEOUT_SECONDS
+        fromService:
+          name: advisor-system
+          type: web
+          envVarKey: LOCAL_LLM_TIMEOUT_SECONDS
+      - key: LOCAL_LLM_MAX_TOKENS
+        fromService:
+          name: advisor-system
+          type: web
+          envVarKey: LOCAL_LLM_MAX_TOKENS
+      - key: LOCAL_LLM_ALLOW_REMOTE
+        fromService:
+          name: advisor-system
+          type: web
+          envVarKey: LOCAL_LLM_ALLOW_REMOTE
+      - key: ALIBABA_LLM_BASE_URL
+        fromService:
+          name: advisor-system
+          type: web
+          envVarKey: ALIBABA_LLM_BASE_URL
+      - key: ALIBABA_LLM_API_KEY
+        fromService:
+          name: advisor-system
+          type: web
+          envVarKey: ALIBABA_LLM_API_KEY
+      - key: ALIBABA_LLM_MODEL
+        fromService:
+          name: advisor-system
+          type: web
+          envVarKey: ALIBABA_LLM_MODEL
+      - key: ALIBABA_LLM_ENABLE_THINKING
+        fromService:
+          name: advisor-system
+          type: web
+          envVarKey: ALIBABA_LLM_ENABLE_THINKING
+      - key: ALIBABA_LLM_TIMEOUT_SECONDS
+        fromService:
+          name: advisor-system
+          type: web
+          envVarKey: ALIBABA_LLM_TIMEOUT_SECONDS
+      - key: ALIBABA_LLM_MAX_TOKENS
+        fromService:
+          name: advisor-system
+          type: web
+          envVarKey: ALIBABA_LLM_MAX_TOKENS
+      - key: ALIBABA_LLM_MAX_RETRIES
+        fromService:
+          name: advisor-system
+          type: web
+          envVarKey: ALIBABA_LLM_MAX_RETRIES
+      - key: ALIBABA_LLM_ALLOW_LIVE_REQUESTS
+        fromService:
+          name: advisor-system
+          type: web
+          envVarKey: ALIBABA_LLM_ALLOW_LIVE_REQUESTS
+      - key: VIRTUAL_ADVISOR_AGENT_LOOP_ENABLED
+        fromService:
+          name: advisor-system
+          type: web
+          envVarKey: VIRTUAL_ADVISOR_AGENT_LOOP_ENABLED
+      - key: VIRTUAL_ADVISOR_MAX_TOOL_ITERATIONS
+        fromService:
+          name: advisor-system
+          type: web
+          envVarKey: VIRTUAL_ADVISOR_MAX_TOOL_ITERATIONS
+      - key: VIRTUAL_ADVISOR_MAX_TOOL_CALLS
+        fromService:
+          name: advisor-system
+          type: web
+          envVarKey: VIRTUAL_ADVISOR_MAX_TOOL_CALLS
+      - key: VIRTUAL_ADVISOR_LOOP_MAX_TOKENS
+        fromService:
+          name: advisor-system
+          type: web
+          envVarKey: VIRTUAL_ADVISOR_LOOP_MAX_TOKENS
+      - key: VIRTUAL_ADVISOR_TOOL_TURN_TIMEOUT_SECONDS
+        fromService:
+          name: advisor-system
+          type: web
+          envVarKey: VIRTUAL_ADVISOR_TOOL_TURN_TIMEOUT_SECONDS
+      - key: STUDENT_ADVISOR_V2_ENABLED
+        fromService:
+          name: advisor-system
+          type: web
+          envVarKey: STUDENT_ADVISOR_V2_ENABLED
+      - key: STUDENT_ADVISOR_V2_MAX_TOOL_ITERATIONS
+        fromService:
+          name: advisor-system
+          type: web
+          envVarKey: STUDENT_ADVISOR_V2_MAX_TOOL_ITERATIONS
+      - key: STUDENT_ADVISOR_V2_MAX_TOOL_CALLS
+        fromService:
+          name: advisor-system
+          type: web
+          envVarKey: STUDENT_ADVISOR_V2_MAX_TOOL_CALLS
+      - key: STUDENT_ADVISOR_V2_MAX_TOKENS
+        fromService:
+          name: advisor-system
+          type: web
+          envVarKey: STUDENT_ADVISOR_V2_MAX_TOKENS
+      - key: STUDENT_ADVISOR_V2_TOOL_TIMEOUT_SECONDS
+        fromService:
+          name: advisor-system
+          type: web
+          envVarKey: STUDENT_ADVISOR_V2_TOOL_TIMEOUT_SECONDS
 
   # Retention is a SCHEDULE, not a side effect of deploying. The release chain
-  # above still runs migrations and the rate-limit sweep, but planner drafts hold
-  # a student's registered timetable — instructor names, rooms, enrolment counts —
-  # inside `generated_inputs`, and how long that survives must not depend on how
-  # often anyone ships.
+  # above still runs migrations and the rate-limit sweep. Planner drafts and
+  # terminal Telegram jobs hold student data, and how long either survives must
+  # not depend on how often anyone ships. QUEUED/RUNNING Telegram jobs are never
+  # retention candidates.
   #
   # 03:00 UTC is 06:00 in Riyadh: after the overnight quiet, before the day starts.
   - type: cron
@@ -33,7 +274,7 @@ services:
     plan: starter
     schedule: "0 3 * * *"
     buildCommand: chmod +x build.sh && ./build.sh
-    startCommand: python manage.py purge_planner_drafts --apply
+    startCommand: python manage.py purge_planner_drafts --apply && python manage.py purge_telegram_tokens --apply
     envVars:
       - key: DJANGO_SECRET_KEY
         fromService:

@@ -143,12 +143,10 @@ class HttpTelegramTransport:
         )
         try:
             with urlopen(request, timeout=timeout) as response:  # noqa: S310  # nosec B310
-                return {"ok": True, "response": json.loads(response.read().decode("utf-8"))}
+                return _telegram_response(response, operation="sendMessage")
         except HTTPError as exc:
-            # `exc.code` only. The body can echo the request, and the request
-            # contains the answer.
             logger.warning("telegram: sendMessage rejected with HTTP %s", exc.code)
-            return {"ok": False, "error": "http_error", "status": exc.code}
+            return _http_error_result(exc)
         except (URLError, TimeoutError) as exc:
             logger.warning("telegram: sendMessage transport failure (%s)", type(exc).__name__)
             return {"ok": False, "error": "unreachable"}
@@ -210,13 +208,78 @@ class HttpTelegramTransport:
         )
         try:
             with urlopen(request, timeout=timeout) as response:  # noqa: S310  # nosec B310
-                return {"ok": True, "response": json.loads(response.read().decode("utf-8"))}
+                return _telegram_response(response, operation="sendPhoto")
         except HTTPError as exc:
             logger.warning("telegram: sendPhoto rejected with HTTP %s", exc.code)
-            return {"ok": False, "error": "http_error", "status": exc.code}
+            return _http_error_result(exc)
         except (URLError, TimeoutError) as exc:
             logger.warning("telegram: sendPhoto transport failure (%s)", type(exc).__name__)
             return {"ok": False, "error": "unreachable"}
+
+
+def _telegram_response(response: Any, *, operation: str) -> dict[str, Any]:
+    """Validate a 2xx Bot API response and retain no Telegram response data."""
+
+    payload = _json_object_from_body(response)
+    if payload is None:
+        logger.warning("telegram: %s returned an invalid response", operation)
+        return {"ok": False, "error": "invalid_response"}
+    if payload.get("ok") is not True:
+        # Telegram sometimes reports application-level rejection with HTTP 200.
+        # Descriptions and result objects can echo message/account data, so the
+        # failure is deliberately reduced to one stable local code.
+        logger.warning("telegram: %s was rejected by the Bot API", operation)
+        return {"ok": False, "error": "telegram_rejected"}
+    # A successful send needs no remote message id, echoed text, chat object, or
+    # file metadata. Keeping only the acknowledgement also prevents a durable
+    # caller from accidentally persisting Telegram's response body.
+    return {"ok": True}
+
+
+def _http_error_result(exc: HTTPError) -> dict[str, Any]:
+    """Return a sanitized HTTP failure, including only a valid 429 delay."""
+
+    result: dict[str, Any] = {"ok": False, "error": "http_error", "status": exc.code}
+    if exc.code == 429:
+        retry_after = _retry_after_from_http_error(exc)
+        if retry_after is not None:
+            result["retry_after"] = retry_after
+    return result
+
+
+def _retry_after_from_http_error(exc: HTTPError) -> int | None:
+    """Read only Telegram's documented ``parameters.retry_after`` integer."""
+
+    payload = _json_object_from_body(exc)
+    if payload is None:
+        return None
+    parameters = payload.get("parameters")
+    if not isinstance(parameters, dict):
+        return None
+    retry_after = parameters.get("retry_after")
+    # JSON booleans are Python ints, so reject them explicitly. Telegram documents
+    # this field as an Integer; accepting strings/floats would broaden the trusted
+    # shape and could feed an unbounded value into a worker's timedelta.
+    if isinstance(retry_after, bool) or not isinstance(retry_after, int):
+        return None
+    if not 1 <= retry_after <= 2_147_483_647:
+        return None
+    return retry_after
+
+
+def _json_object_from_body(stream: Any) -> dict[str, Any] | None:
+    """Parse a JSON object without ever returning or logging the raw body."""
+
+    try:
+        raw = stream.read()
+        if isinstance(raw, bytes):
+            raw = raw.decode("utf-8")
+        if not isinstance(raw, str):
+            return None
+        payload = json.loads(raw)
+    except Exception:  # noqa: BLE001 - a malformed remote body must stay a delivery failure.
+        return None
+    return payload if isinstance(payload, dict) else None
 
 
 _TRANSPORT: TelegramTransport | None = None
@@ -269,6 +332,43 @@ def send_text(*, chat_id: int, text: str, timeout: float | None = None) -> dict[
         return {"ok": False, "error": "delivery_failed"}
 
 
+def delivery_succeeded(result: Any) -> bool:
+    """Whether Telegram accepted one outbound unit.
+
+    The transport deliberately returns data instead of raising so a delivery
+    outage cannot make Telegram replay an already-generated academic answer.
+    Durable workers still need one shared interpretation of that data; leaving
+    each caller to inspect loosely shaped dictionaries is how a rejected send is
+    accidentally marked delivered.
+    """
+
+    return isinstance(result, dict) and result.get("ok") is True
+
+
+def delivery_is_retryable(result: Any) -> bool:
+    """Classify a failed send without retaining Telegram's response body.
+
+    Network errors, rate limiting and server errors may recover. Other 4xx
+    responses describe a request/chat that retrying unchanged will not repair.
+    An unconfigured deployment is treated as transient so a corrected secret can
+    drain the durable queue rather than losing every answer accepted during the
+    mistake.
+    """
+
+    if delivery_succeeded(result):
+        return False
+    if not isinstance(result, dict):
+        return True
+    status = result.get("status")
+    try:
+        status_i = int(status)
+    except (TypeError, ValueError):
+        return True
+    if status_i == 429 or status_i >= 500:
+        return True
+    return not 400 <= status_i < 500
+
+
 __all__ = [
     "INLINE_TIMEOUT_SECONDS",
     "TELEGRAM_MAX_CAPTION_CHARS",
@@ -276,6 +376,8 @@ __all__ = [
     "HttpTelegramTransport",
     "RecordingTransport",
     "TelegramTransport",
+    "delivery_is_retryable",
+    "delivery_succeeded",
     "get_transport",
     "send_photo",
     "send_text",

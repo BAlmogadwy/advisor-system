@@ -163,6 +163,20 @@ NEW_CONVERSATION = (
 #: as a result. It says the question arrived, not that it has been answered.
 WORKING = "وصلني سؤالك، وجارٍ إعداد الإجابة… · Received — preparing your answer…"
 
+
+def sensitive_record_web_only(url: str) -> str:
+    """Keep exact grades and GPA inside the authenticated university surface."""
+
+    destination = f"\n{url}" if url else ""
+    return (
+        "حفاظًا على خصوصية سجلك الأكاديمي، ما أعرض المعدل التراكمي أو الدرجات "
+        "أو نتيجة الرسوب داخل تيليجرام. افتح المرشد في بوابة الطالب لعرضها بعد "
+        f"تسجيل الدخول.{destination}\n\n"
+        "For privacy, exact GPA, marks, and failed-course results are shown only "
+        "inside the authenticated student portal."
+    )
+
+
 #: The safe answer when the adviser or the model could not produce one. Arabic
 #: first, no exception class, no subsystem name: varying the input and reading
 #: back which error came out is a free map of what just broke.
@@ -245,6 +259,7 @@ __all__ = [
     "UNLINKED",
     "UNSUPPORTED_CONTENT",
     "WORKING",
+    "sensitive_record_web_only",
     "link_invitation",
     "rate_limited",
 ]

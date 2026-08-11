@@ -31,7 +31,9 @@ from __future__ import annotations
 
 import uuid
 
-from django.db import models
+from django.conf import settings
+from django.db import models, transaction
+from django.db.models.functions import Now
 from django.utils import timezone
 
 
@@ -54,6 +56,19 @@ class TelegramLink(models.Model):
     #: `AdvisorConversation.student_id`: a plain integer, not a foreign key, so a
     #: roster re-import cannot cascade a student's conversations away.
     student_id = models.IntegerField(db_index=True)
+
+    #: The exact Django account whose authenticated session approved this link.
+    #: ``student_id`` remains the academic subject key, while this relation makes
+    #: account lifecycle changes (deactivation, deletion, role/scope changes)
+    #: observable on every Telegram turn.  SET_NULL preserves the revoked-history
+    #: row when an account is deleted; a null binding is never authorised.
+    university_user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="+",
+    )
 
     status = models.CharField(max_length=16, choices=STATUS_CHOICES, default=STATUS_ACTIVE)
 
@@ -109,10 +124,19 @@ class TelegramLink(models.Model):
         any more" stays answerable, and so the partial unique constraints let the
         same student link a new device afterwards.
         """
-        self.status = self.STATUS_REVOKED
-        self.revoked_at = timezone.now()
-        self.current_conversation = None
-        self.save(update_fields=["status", "revoked_at", "current_conversation"])
+        now = timezone.now()
+        with transaction.atomic():
+            self.status = self.STATUS_REVOKED
+            self.revoked_at = now
+            self.current_conversation = None
+            self.save(update_fields=["status", "revoked_at", "current_conversation"])
+            # Revocation is an authentication boundary. Any still-live ceremony
+            # tied to either side of this link must die with it; otherwise an old
+            # approved code can recreate the link without a fresh browser login.
+            TelegramLinkToken.objects.filter(consumed_at__isnull=True).filter(
+                models.Q(telegram_user_id=self.telegram_user_id)
+                | models.Q(approved_student_id=self.student_id)
+            ).update(consumed_at=now)
 
 
 class TelegramLinkToken(models.Model):
@@ -161,6 +185,16 @@ class TelegramLinkToken(models.Model):
     #: student the link WILL bind to, taken from the session at that moment and
     #: never from the token, the URL or the chat.
     approved_student_id = models.IntegerField(null=True, blank=True)
+    #: The exact account present in the authenticated browser session at
+    #: approval.  Confirmation revalidates this account before copying the
+    #: binding to ``TelegramLink``.
+    approved_user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="+",
+    )
     approved_at = models.DateTimeField(null=True, blank=True)
 
     #: SHA-256 of the confirmation code shown in the browser. Hashed for the same
@@ -187,13 +221,38 @@ class TelegramLinkToken(models.Model):
 
 
 class TelegramUpdateReceipt(models.Model):
-    """Proof that this `update_id` has already been accepted.
+    """Proof that an update was accepted, and its optional durable work envelope.
 
     Telegram redelivers any update whose webhook call did not return `200`
     promptly, and a redelivery that reaches the adviser is a second stored
     question, a second stored answer and a second model call. The receipt is
-    claimed before any of that happens.
+    claimed before any of that happens.  Most receipts remain the tiny terminal
+    ``INLINE`` records they always were.  Linked adviser questions and ordered
+    commands may instead use the same row as a database-backed queue job, keeping
+    idempotency and enqueueing atomic rather than coordinating two tables.
     """
+
+    KIND_INLINE = "INLINE"
+    KIND_QUESTION = "QUESTION"
+    KIND_COMMAND = "COMMAND"
+    KIND_CHOICES = (
+        (KIND_INLINE, "Inline receipt"),
+        (KIND_QUESTION, "Advisor question"),
+        (KIND_COMMAND, "Ordered command"),
+    )
+
+    STATUS_QUEUED = "QUEUED"
+    STATUS_RUNNING = "RUNNING"
+    STATUS_SUCCEEDED = "SUCCEEDED"
+    STATUS_FAILED = "FAILED"
+    STATUS_CANCELLED = "CANCELLED"
+    STATUS_CHOICES = (
+        (STATUS_QUEUED, "Queued"),
+        (STATUS_RUNNING, "Running"),
+        (STATUS_SUCCEEDED, "Succeeded"),
+        (STATUS_FAILED, "Failed"),
+        (STATUS_CANCELLED, "Cancelled"),
+    )
 
     #: Telegram's own counter, used directly as the primary key so that "seen
     #: twice" is a primary-key collision rather than a check somebody has to
@@ -201,8 +260,76 @@ class TelegramUpdateReceipt(models.Model):
     update_id = models.BigIntegerField(primary_key=True)
     received_at = models.DateTimeField(auto_now_add=True, db_index=True)
 
+    # Existing callers create only a receipt.  These defaults deliberately make
+    # those rows terminal so deploying this migration cannot queue historical
+    # updates, nor change the current webhook before it is explicitly integrated.
+    kind = models.CharField(
+        max_length=16,
+        choices=KIND_CHOICES,
+        default=KIND_INLINE,
+        db_default=KIND_INLINE,
+    )
+    status = models.CharField(
+        max_length=16,
+        choices=STATUS_CHOICES,
+        default=STATUS_SUCCEEDED,
+        db_default=STATUS_SUCCEEDED,
+    )
+
+    # The exact link row is the authorisation and ordering key.  SET_NULL is
+    # fail-closed: deleting/anonymising a link makes queued work unexecutable while
+    # retaining the update-id receipt that suppresses a Telegram replay.
+    link = models.ForeignKey(
+        TelegramLink,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="update_jobs",
+    )
+    conversation = models.ForeignKey(
+        "core.AdvisorConversation",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="telegram_update_jobs",
+    )
+    assistant_message = models.ForeignKey(
+        "core.AdvisorMessage",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="telegram_update_jobs",
+    )
+
+    # Normalised text only, never the raw Telegram update.  It is cleared as soon
+    # as execution has materialised a delivery or the job becomes terminal.
+    payload_text = models.TextField(blank=True, default="", db_default="")
+    delivery_payload = models.JSONField(default=dict, blank=True, db_default={})
+    delivery_cursor = models.PositiveIntegerField(default=0, db_default=0)
+    result_code = models.CharField(max_length=64, blank=True, default="", db_default="")
+    error_code = models.CharField(max_length=64, blank=True, default="", db_default="")
+
+    available_at = models.DateTimeField(default=timezone.now, db_default=Now())
+    attempt_count = models.PositiveSmallIntegerField(default=0, db_default=0)
+    locked_by = models.CharField(max_length=128, blank=True, default="", db_default="")
+    locked_at = models.DateTimeField(null=True, blank=True)
+    lease_expires_at = models.DateTimeField(null=True, blank=True)
+    finished_at = models.DateTimeField(null=True, blank=True)
+
     class Meta:
         db_table = "telegram_update_receipts"
+        indexes = [
+            models.Index(fields=["status", "available_at", "update_id"], name="idx_tg_job_ready"),
+            models.Index(fields=["link", "status", "update_id"], name="idx_tg_job_link_fifo"),
+            models.Index(fields=["status", "lease_expires_at"], name="idx_tg_job_lease"),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["link"],
+                condition=models.Q(status="RUNNING", link__isnull=False),
+                name="uq_tg_running_link",
+            )
+        ]
 
     def __str__(self) -> str:
         return f"TelegramUpdateReceipt({self.update_id})"

@@ -23,7 +23,7 @@ from django.test import override_settings
 from django.urls import reverse
 from django.utils import timezone
 
-from core.models import AdvisorConversation, AdvisorMessage, Student
+from core.models import AdvisorConversation, AdvisorMessage, Course, Student, StudentCourse
 from core.services.rbac import ensure_role_groups
 from telegram_gateway import bot, linking, messages
 from telegram_gateway.models import TelegramLink, TelegramLinkToken, TelegramUpdateReceipt
@@ -49,6 +49,7 @@ CHANNEL_ON = override_settings(
     TELEGRAM_BOT_TOKEN="",
     TELEGRAM_SEND_TIMETABLE_IMAGES=False,
     TELEGRAM_INTERNAL_BASE_URL="",
+    TELEGRAM_DISPATCH_SYNC=True,
 )
 
 
@@ -77,12 +78,22 @@ def _student(client, student_id: int) -> User:
     _student_row(student_id)
     user = student_otp.provision_student_user(student_id)
     client.force_login(user)
+    session = client.session
+    session[student_otp.STUDENT_AUTHENTICATED_AT_SESSION_KEY] = int(timezone.now().timestamp())
+    session.save()
     return user
 
 
 def _link(student_id: int = MINE, telegram_user_id: int = CHAT) -> TelegramLink:
+    from core.services import student_otp
+
     _student_row(student_id)
-    return TelegramLink.objects.create(telegram_user_id=telegram_user_id, student_id=student_id)
+    user = student_otp.provision_student_user(student_id)
+    return TelegramLink.objects.create(
+        telegram_user_id=telegram_user_id,
+        student_id=student_id,
+        university_user=user,
+    )
 
 
 def _complete_ceremony(client, student_id: int = MINE, telegram_user_id: int = CHAT):
@@ -482,6 +493,54 @@ def test_an_anonymous_visitor_cannot_approve_a_link(client):
 
 
 @CHANNEL_ON
+def test_a_stale_student_session_must_reauthenticate_before_linking(client):
+    from core.services import student_otp
+
+    _student(client, MINE)
+    session = client.session
+    session[student_otp.STUDENT_AUTHENTICATED_AT_SESSION_KEY] = int(
+        (timezone.now() - timedelta(minutes=11)).timestamp()
+    )
+    session.save()
+    issued = linking.issue_link_token(telegram_user_id=CHAT)
+
+    page = client.get(reverse("telegram_link_start", args=[issued.raw_token]))
+    approval = client.post(reverse("telegram_link_confirm", args=[issued.raw_token]))
+
+    assert page.status_code == 403
+    assert page.context["state"] == "reauth"
+    assert approval.status_code == 403
+    assert approval.context["state"] == "reauth"
+    assert TelegramLinkToken.objects.get().approved_student_id is None
+
+
+@CHANNEL_ON
+def test_reauthentication_is_a_csrf_protected_post_back_to_student_login(client):
+    _student(client, MINE)
+    issued = linking.issue_link_token(telegram_user_id=CHAT)
+
+    response = client.post(reverse("telegram_link_reauthenticate", args=[issued.raw_token]))
+
+    assert response.status_code == 302
+    assert response["Location"].startswith(reverse("student_login"))
+    assert "next=" in response["Location"]
+    assert "_auth_user_id" not in client.session
+
+
+@CHANNEL_ON
+def test_confirmation_page_identifies_only_the_masked_account_suffix(client):
+    _student(client, MINE)
+    issued = linking.issue_link_token(telegram_user_id=CHAT)
+
+    response = client.get(reverse("telegram_link_start", args=[issued.raw_token]))
+
+    body = response.content.decode()
+    assert response.status_code == 200
+    assert str(MINE)[-4:] in body
+    assert str(MINE) not in body
+
+
+@CHANNEL_ON
 def test_a_non_student_account_cannot_approve_a_link(client):
     """`get_user_role` falls back to ADVISOR for an authenticated account with no
     group. A channel that accepted that fallback would hand adviser-tier identity
@@ -619,6 +678,20 @@ def test_confirm_is_reachable_from_the_chat_end_to_end(client, outbox):
 
 
 @CHANNEL_ON
+def test_confirmation_code_response_is_never_browser_cacheable(client):
+    _student(client, MINE)
+    issued = linking.issue_link_token(telegram_user_id=CHAT)
+
+    response = client.post(reverse("telegram_link_confirm", args=[issued.raw_token]))
+
+    assert response.status_code == 200
+    assert "/confirm" in response.content.decode("utf-8")
+    cache_control = response.headers.get("Cache-Control", "")
+    assert "no-store" in cache_control
+    assert "max-age=0" in cache_control
+
+
+@CHANNEL_ON
 def test_confirm_with_no_code_explains_itself(client, outbox):
     _post(client, _update(text="/confirm"))
     assert outbox.texts == [messages.CONFIRM_USAGE]
@@ -630,6 +703,35 @@ def test_confirm_with_nothing_pending_reveals_nothing(client, outbox):
     approval at all — telling them apart says whether an approval exists."""
     _post(client, _update(text="/confirm ABC123"))
     assert outbox.texts == [messages.CONFIRM_INVALID]
+
+
+@CHANNEL_ON
+def test_link_command_has_a_persistent_per_chat_admission_budget(client, outbox):
+    from core.services.rate_limit import LIMITS, TELEGRAM_LINK
+
+    max_calls, _window = LIMITS[TELEGRAM_LINK]
+    for index in range(max_calls + 1):
+        _post(client, _update(update_id=8000 + index, text="/link"))
+
+    assert TelegramLinkToken.objects.count() == max_calls
+    assert "طلبات كثيرة" in outbox.texts[-1]
+
+
+@CHANNEL_ON
+def test_unlink_is_never_blocked_by_the_command_budget(client, outbox):
+    from core.services.rate_limit import LIMITS, TELEGRAM_COMMAND
+    from core.services.rate_limit import consume as spend_budget
+
+    link = _link()
+    max_calls, _window = LIMITS[TELEGRAM_COMMAND]
+    for _ in range(max_calls):
+        assert spend_budget(TELEGRAM_COMMAND, CHAT).allowed
+
+    _post(client, _update(update_id=8100, text="/unlink"))
+
+    link.refresh_from_db()
+    assert link.status == TelegramLink.STATUS_REVOKED
+    assert outbox.texts[-1] == messages.UNLINKED
 
 
 @CHANNEL_ON
@@ -890,6 +992,177 @@ def test_the_turn_layer_also_holds_when_the_receipt_is_lost(client, outbox):
 
     assert adviser.call_count == 1
     assert AdvisorMessage.objects.filter(role=AdvisorMessage.ROLE_ASSISTANT).count() == 1
+
+
+@CHANNEL_ON
+def test_question_new_and_followup_are_durably_processed_in_link_order(client, outbox):
+    from telegram_gateway import jobs
+
+    link = _link()
+    with mock.patch("telegram_gateway.runner.dispatch_sync", return_value=False):
+        _post(client, _update(update_id=7001, text="سؤال أول"))
+        _post(client, _update(update_id=7002, text="/new"))
+        _post(client, _update(update_id=7003, text="سؤال ثاني"))
+
+    assert (
+        list(TelegramUpdateReceipt.objects.order_by("update_id").values_list("status", flat=True))
+        == [TelegramUpdateReceipt.STATUS_QUEUED] * 3
+    )
+
+    with _adviser() as adviser:
+        for _ in range(3):
+            jobs.run_next_job(worker_id="ordered-test")
+
+    assert adviser.call_count == 2
+    questions = list(
+        AdvisorMessage.objects.filter(role=AdvisorMessage.ROLE_STUDENT).order_by("created_at")
+    )
+    assert len(questions) == 2
+    assert questions[0].conversation_id != questions[1].conversation_id
+    link.refresh_from_db()
+    assert link.current_conversation_id == questions[1].conversation_id
+    assert not TelegramUpdateReceipt.objects.exclude(
+        status=TelegramUpdateReceipt.STATUS_SUCCEEDED
+    ).exists()
+
+
+@CHANNEL_ON
+def test_external_worker_cannot_overtake_the_progress_acknowledgement(client, outbox):
+    """The durable row exists first, but is not claimable until WORKING returns."""
+
+    _link()
+    observed: dict[str, object] = {}
+
+    def inspect_during_send(*, chat_id, text, timeout):
+        assert chat_id == CHAT
+        assert text == messages.WORKING
+        assert timeout == 3.0
+        queued = TelegramUpdateReceipt.objects.get(update_id=7099)
+        observed["status"] = queued.status
+        observed["available_at"] = queued.available_at
+        observed["now"] = timezone.now()
+        return {"ok": True}
+
+    with (
+        mock.patch("telegram_gateway.runner.dispatch_sync", return_value=False),
+        mock.patch("telegram_gateway.views.send_text", side_effect=inspect_during_send),
+    ):
+        response = _post(client, _update(update_id=7099, text="سؤال"))
+
+    assert response.status_code == 200
+    assert observed["status"] == TelegramUpdateReceipt.STATUS_QUEUED
+    assert observed["available_at"] > observed["now"]
+    queued = TelegramUpdateReceipt.objects.get(update_id=7099)
+    assert queued.available_at <= timezone.now()
+
+
+@CHANNEL_ON
+def test_unlink_immediately_cancels_queued_questions(client, outbox):
+    from telegram_gateway import jobs
+
+    _link()
+    with mock.patch("telegram_gateway.runner.dispatch_sync", return_value=False):
+        _post(client, _update(update_id=7101, text="سؤال خاص"))
+
+    _post(client, _update(update_id=7102, text="/unlink"))
+    queued = TelegramUpdateReceipt.objects.get(update_id=7101)
+    assert queued.status == TelegramUpdateReceipt.STATUS_CANCELLED
+    assert queued.payload_text == ""
+
+    with _adviser() as adviser:
+        assert jobs.run_next_job(worker_id="after-unlink") is None
+    adviser.assert_not_called()
+
+
+@CHANNEL_ON
+@override_settings(TELEGRAM_MAX_PENDING_PER_LINK=1)
+def test_webhook_refuses_more_work_when_the_links_durable_queue_is_full(client, outbox):
+    _link()
+    with mock.patch("telegram_gateway.runner.dispatch_sync", return_value=False):
+        first = _post(client, _update(update_id=7151, text="السؤال الأول"))
+        second = _post(client, _update(update_id=7152, text="السؤال الثاني"))
+
+    assert first.json()["queued"] is True
+    assert second.json()["admitted"] is False
+    assert TelegramUpdateReceipt.objects.get(update_id=7151).status == (
+        TelegramUpdateReceipt.STATUS_QUEUED
+    )
+    assert TelegramUpdateReceipt.objects.get(update_id=7152).status == (
+        TelegramUpdateReceipt.STATUS_SUCCEEDED
+    )
+    assert "طلبات كثيرة" in outbox.texts[-1]
+
+
+@CHANNEL_ON
+def test_durable_ingress_is_bounded_even_when_the_worker_drains_each_job(
+    client, outbox, monkeypatch
+):
+    from core.services import rate_limit
+
+    _link()
+    monkeypatch.setitem(rate_limit.LIMITS, rate_limit.TELEGRAM_INGRESS, (2, 600))
+
+    with _adviser() as adviser:
+        first = _post(client, _update(update_id=7161, text="السؤال الأول"))
+        second = _post(client, _update(update_id=7162, text="السؤال الثاني"))
+        refused = _post(client, _update(update_id=7163, text="السؤال الثالث"))
+
+    assert first.json()["queued"] is True
+    assert second.json()["queued"] is True
+    assert refused.json()["admitted"] is False
+    assert adviser.call_count == 2
+    refused_receipt = TelegramUpdateReceipt.objects.get(update_id=7163)
+    assert refused_receipt.kind == TelegramUpdateReceipt.KIND_INLINE
+    assert refused_receipt.status == TelegramUpdateReceipt.STATUS_SUCCEEDED
+    assert "طلبات كثيرة" in outbox.texts[-1]
+
+    sent_after_notice = len(outbox.sent)
+    for offset in range(10):
+        repeated = _post(
+            client,
+            _update(update_id=7170 + offset, text=f"ضغط إضافي {offset}"),
+        )
+        assert repeated.json()["admitted"] is False
+        assert repeated.json()["notified"] is False
+
+    assert len(outbox.sent) == sent_after_notice
+    assert TelegramUpdateReceipt.objects.count() == 3
+
+
+@CHANNEL_ON
+def test_unlinked_unlink_spam_is_bounded_after_the_security_override_is_irrelevant(
+    client, outbox, monkeypatch
+):
+    from core.services import rate_limit
+
+    monkeypatch.setitem(rate_limit.LIMITS, rate_limit.TELEGRAM_COMMAND, (2, 600))
+    for offset in range(10):
+        _post(client, _update(update_id=7180 + offset, text="/unlink"))
+
+    # Two admitted explanations plus one rate-limit notice; everything after it
+    # is acknowledged silently and creates no idempotency row.
+    assert len(outbox.sent) == 3
+    assert TelegramUpdateReceipt.objects.count() == 3
+
+
+@CHANNEL_ON
+def test_new_command_side_effect_is_idempotent_before_delivery_is_materialised(client):
+    from telegram_gateway import jobs
+
+    link = _link()
+    job, created = jobs.enqueue_question_or_command(
+        update_id=7201,
+        link=link,
+        kind=TelegramUpdateReceipt.KIND_COMMAND,
+        payload_text="/new",
+    )
+    assert created
+
+    first = bot.execute_durable_job(job)
+    second = bot.execute_durable_job(job)
+
+    assert first["conversation_id"] == second["conversation_id"]
+    assert AdvisorConversation.objects.filter(student_id=MINE).count() == 1
 
 
 @CHANNEL_ON
@@ -1303,9 +1576,26 @@ def test_no_secret_or_identifier_reaches_the_logs(client, outbox, caplog):
 
 
 def test_no_raw_update_payload_is_stored():
-    """The receipt proves `seen`, not `what`. There is nowhere to put a payload."""
+    """Only normalised work text is temporary; the raw Telegram body has no field."""
     field_names = {f.name for f in TelegramUpdateReceipt._meta.get_fields()}
-    assert field_names == {"update_id", "received_at"}
+    assert not ({"raw_update", "raw_payload", "telegram_payload", "profile"} & field_names)
+
+    from telegram_gateway import jobs
+
+    link = _link()
+    job, _ = jobs.enqueue_question_or_command(
+        update_id=991,
+        link=link,
+        kind=TelegramUpdateReceipt.KIND_QUESTION,
+        payload_text="temporary private question",
+    )
+    jobs.run_job(
+        job.update_id,
+        executor=lambda _job: {"messages": [], "result_code": "tested"},
+    )
+    job.refresh_from_db()
+    assert job.payload_text == ""
+    assert job.delivery_payload == {}
 
 
 def test_no_telegram_profile_information_is_stored():
@@ -1314,6 +1604,293 @@ def test_no_telegram_profile_information_is_stored():
     field_names = {f.name for f in TelegramLink._meta.get_fields()}
     for forbidden in ("username", "first_name", "last_name", "phone", "phone_number", "photo"):
         assert not any(forbidden in name for name in field_names), forbidden
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        "كم معدلي التراكمي؟",
+        "وش جبت في CS113؟",
+        "هل نجحت في DS341؟",
+        "ايش المواد اللي رسبت فيها؟",
+        "What did I get in CS113?",
+        "What grade did I get in CS113?",
+        "What is my CGPA?",
+        "Show me the grades on my transcript",
+        "List the courses I failed",
+        "How many failed classes are on my record?",
+        "What courses have I not passed?",
+        "What about mine?",
+        "Did I fail DS341?",
+        "Show my academic standing",
+        "اعطني نتيجة مقرر CS113",
+        "اعرض سجلي الأكاديمي",
+        "طيب وش عني؟",
+    ],
+)
+def test_exact_personal_results_require_the_authenticated_web_surface(question):
+    assert bot.requires_secure_record_surface(question)
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        "كيف ينحسب المعدل التراكمي؟",
+        "هل الرسوب يؤثر على المعدل؟",
+        "How is GPA calculated?",
+        "What is the passing grade policy?",
+    ],
+)
+def test_general_grade_policy_questions_remain_available_in_telegram(question):
+    assert not bot.requires_secure_record_surface(question)
+
+
+@CHANNEL_ON
+def test_a_personal_grade_request_never_calls_the_model_or_enters_chat_history(client, outbox):
+    _link()
+    with _adviser() as adviser:
+        response = _post(client, _update(text="وش جبت في CS113؟"))
+
+    assert response.status_code == 200
+    adviser.assert_not_called()
+    assert AdvisorMessage.objects.count() == 0
+    assert "authenticated student portal" in " ".join(outbox.texts)
+    receipt = TelegramUpdateReceipt.objects.get()
+    assert receipt.status == TelegramUpdateReceipt.STATUS_SUCCEEDED
+    assert receipt.result_code == "secure_surface_required"
+    assert receipt.payload_text == ""
+
+
+@CHANNEL_ON
+@pytest.mark.parametrize(
+    "answer, forbidden",
+    [
+        ("Your CGPA is 2.86 and your grade in CS113 is B.", "2.86"),
+        ("معدلك التراكمي 2.86 ودرجتك في CS113 هي ب.", "2.86"),
+    ],
+)
+def test_a_model_that_volunteers_a_personal_result_is_blocked_before_telegram_delivery(
+    client, outbox, answer, forbidden
+):
+    _link()
+    with _adviser(answer=answer):
+        response = _post(client, _update(text="Which courses should I take next?"))
+
+    assert response.status_code == 200
+    delivered = " ".join(outbox.texts)
+    assert forbidden not in delivered
+    assert "authenticated student portal" in delivered
+    assert AdvisorMessage.objects.filter(
+        role=AdvisorMessage.ROLE_ASSISTANT,
+        content=answer,
+    ).exists(), "the complete answer should remain available on the authenticated web surface"
+    receipt = TelegramUpdateReceipt.objects.get()
+    assert receipt.result_code == "secure_output_withheld"
+    student_turn = AdvisorMessage.objects.get(role=AdvisorMessage.ROLE_STUDENT)
+    assert student_turn.generation_profile == "telegram_withheld"
+
+
+@CHANNEL_ON
+def test_a_withheld_answer_never_reenters_later_telegram_history(client, outbox):
+    _link()
+    with _adviser(answer="Your CGPA is 2.86."):
+        _post(client, _update(update_id=8200, text="Which courses should I take?"))
+
+    seen: list[list[dict[str, str]]] = []
+
+    def capture(**kwargs):
+        seen.append(kwargs.get("history") or [])
+        return _fake_answer("A safe answer.")
+
+    with mock.patch("core.services.student_advisor_v2.answer_student_advisor", side_effect=capture):
+        _post(client, _update(update_id=8201, text="Tell me more."))
+
+    assert seen == [[]]
+
+
+@CHANNEL_ON
+def test_a_withheld_replay_stays_withheld_after_the_student_record_changes():
+    """The durable decision, not a fresh comparison with mutable rows, wins."""
+
+    from telegram_gateway import jobs
+
+    student = _student_row(MINE)
+    student.gpa = 2.86
+    student.save(update_fields=["gpa"])
+    link = _link()
+    job, created = jobs.enqueue_question_or_command(
+        update_id=8202,
+        link=link,
+        kind=TelegramUpdateReceipt.KIND_QUESTION,
+        payload_text="Which courses should I take next?",
+    )
+    assert created
+
+    with _adviser(answer="Your CGPA is 2.86.") as adviser:
+        first = bot.execute_durable_job(job)
+        student.gpa = 4.0
+        student.save(update_fields=["gpa"])
+        second = bot.execute_durable_job(job)
+
+    assert adviser.call_count == 1
+    assert first["result_code"] == second["result_code"] == "secure_output_withheld"
+    assert "2.86" not in " ".join(first["messages"] + second["messages"])
+    assert "authenticated student portal" in " ".join(second["messages"])
+
+
+@CHANNEL_ON
+def test_a_crash_before_output_validation_cannot_release_or_remember_the_answer():
+    """Unvalidated provenance closes the commit-before-DLP crash window."""
+
+    from core.services import advisor_turn
+    from core.services.advisor_channel_privacy import (
+        TELEGRAM_SAFE_IDEMPOTENCY_PREFIX,
+        TELEGRAM_SAFE_PROFILE,
+        TELEGRAM_UNVALIDATED_PROFILE,
+        TELEGRAM_WITHHELD_PROFILE,
+    )
+    from core.services.advisor_history import load_profiled_history
+    from telegram_gateway import jobs
+
+    student = _student_row(MINE)
+    student.gpa = 2.86
+    student.save(update_fields=["gpa"])
+    link = _link()
+    conversation = AdvisorConversation.objects.create(student_id=MINE)
+    link.current_conversation = conversation
+    link.save(update_fields=["current_conversation"])
+    update_id = 8203
+    question = "Which courses should I take next?"
+
+    # Simulate the worker dying immediately after the shared turn service commits
+    # the model response, before bot.execute_durable_job reaches its output check.
+    with _adviser(answer="GPA: 2.86"):
+        result = advisor_turn.run_advisor_turn(
+            principal=bot._principal_for(link),
+            conversation=conversation,
+            question=question,
+            idempotency_key=f"{TELEGRAM_SAFE_IDEMPOTENCY_PREFIX}{update_id}",
+            channel_profile=TELEGRAM_SAFE_PROFILE,
+        )
+
+    assert result.outcome == advisor_turn.CREATED
+    assert result.student_message.generation_profile == TELEGRAM_UNVALIDATED_PROFILE
+    assert (
+        load_profiled_history(
+            conversation,
+            channel_profile=TELEGRAM_SAFE_PROFILE,
+        )
+        == []
+    )
+
+    student.gpa = 4.0
+    student.save(update_fields=["gpa"])
+    job, created = jobs.enqueue_question_or_command(
+        update_id=update_id,
+        link=link,
+        kind=TelegramUpdateReceipt.KIND_QUESTION,
+        payload_text=question,
+    )
+    assert created
+    with _adviser(side_effect=AssertionError("replay called the model")) as adviser:
+        replay = bot.execute_durable_job(job)
+
+    adviser.assert_not_called()
+    assert replay["result_code"] == "secure_output_withheld"
+    assert "2.86" not in " ".join(replay["messages"])
+    result.student_message.refresh_from_db()
+    assert result.student_message.generation_profile == TELEGRAM_WITHHELD_PROFILE
+    assert (
+        load_profiled_history(
+            conversation,
+            channel_profile=TELEGRAM_SAFE_PROFILE,
+        )
+        == []
+    )
+
+
+@CHANNEL_ON
+def test_general_gpa_policy_output_is_not_mistaken_for_a_personal_result(client, outbox):
+    _link()
+    answer = "GPA is calculated by weighting each course grade by its credit hours."
+    with _adviser(answer=answer):
+        _post(client, _update(text="How is GPA calculated?"))
+
+    assert answer in " ".join(outbox.texts)
+    assert (
+        AdvisorMessage.objects.get(role=AdvisorMessage.ROLE_STUDENT).generation_profile
+        == "telegram_safe"
+    )
+
+
+@CHANNEL_ON
+def test_record_defence_does_not_hide_ordinary_course_and_policy_language(client, outbox):
+    student = _student_row(MINE)
+    student.gpa = 2.86
+    student.save(update_fields=["gpa"])
+    passed = Course.objects.create(course_code="CS113")
+    failed = Course.objects.create(course_code="DS341")
+    StudentCourse.objects.create(
+        student=student,
+        course=passed,
+        status=StudentCourse.Status.PASSED,
+        grade="A",
+    )
+    StudentCourse.objects.create(
+        student=student,
+        course=failed,
+        status=StudentCourse.Status.FAILED,
+    )
+    _link()
+    answer = (
+        "A GPA of 2.86 can be a general policy threshold. "
+        "CS113 is a prerequisite, and DS341 is another course code."
+    )
+
+    with _adviser(answer=answer):
+        _post(client, _update(text="Explain these programme terms generally."))
+
+    assert answer in " ".join(outbox.texts)
+
+
+@CHANNEL_ON
+@pytest.mark.parametrize(
+    "answer, setup_kind",
+    [
+        ("GPA: 2.86", "gpa"),
+        ("You currently have a 2.86 GPA.", "gpa"),
+        ("The cumulative GPA on file is 2.86.", "gpa"),
+        ("CS113 - B", "grade"),
+        ("You failed DS341.", "failed"),
+    ],
+)
+def test_structured_record_values_cannot_bypass_the_output_boundary(
+    client, outbox, answer, setup_kind
+):
+    student = _student_row(MINE)
+    student.gpa = 2.86
+    student.save(update_fields=["gpa"])
+    if setup_kind in {"grade", "failed"}:
+        code = "CS113" if setup_kind == "grade" else "DS341"
+        course = Course.objects.create(course_code=code)
+        StudentCourse.objects.create(
+            student=student,
+            course=course,
+            status=(
+                StudentCourse.Status.PASSED
+                if setup_kind == "grade"
+                else StudentCourse.Status.FAILED
+            ),
+            grade="B" if setup_kind == "grade" else "",
+        )
+    _link()
+
+    with _adviser(answer=answer):
+        _post(client, _update(text="Which courses should I take next?"))
+
+    delivered = " ".join(outbox.texts)
+    assert answer not in delivered
+    assert "authenticated student portal" in delivered
 
 
 def test_credentials_live_only_in_the_environment():
@@ -1348,6 +1925,70 @@ def test_advisor_hands_the_last_turn_to_a_human_using_the_shared_function(client
     case = AdvisorEscalation.objects.get()
     assert case.student_id == MINE
     assert case.reference in " ".join(outbox.texts)
+
+
+@CHANNEL_ON
+def test_advisor_case_and_reply_survive_a_worker_crash_without_a_second_case(client, outbox):
+    """Closing the first case before retry must not make `/advisor` run twice."""
+
+    from core.models import AdvisorEscalation
+    from telegram_gateway import jobs
+
+    link = _link()
+    with _adviser(answer="لست متأكدًا من هذه الحالة."):
+        _post(client, _update(update_id=8100, text="حالتي خاصة"))
+
+    job, created = jobs.enqueue_question_or_command(
+        update_id=8101,
+        link=link,
+        kind=TelegramUpdateReceipt.KIND_COMMAND,
+        payload_text="/advisor",
+    )
+    assert created
+    now = timezone.now()
+    TelegramUpdateReceipt.objects.filter(pk=job.pk).update(
+        status=TelegramUpdateReceipt.STATUS_RUNNING,
+        attempt_count=1,
+        locked_by="crashing-worker",
+        locked_at=now,
+        lease_expires_at=now + timedelta(hours=1),
+    )
+    job.refresh_from_db()
+
+    with mock.patch("core.services.advisor_turn.may_escalate", return_value=True):
+        assert bot.execute_durable_job(job) == {}
+
+    job.refresh_from_db()
+    case = AdvisorEscalation.objects.get()
+    assert case.reference in " ".join(job.delivery_payload["messages"])
+
+    # The process dies here: the durable payload exists but no delivery cursor
+    # moved. A human then closes the case before lease recovery/retry.
+    case.status = AdvisorEscalation.Status.CLOSED
+    case.save(update_fields=["status"])
+    TelegramUpdateReceipt.objects.filter(pk=job.pk).update(
+        status=TelegramUpdateReceipt.STATUS_QUEUED,
+        available_at=timezone.now(),
+        locked_by="",
+        locked_at=None,
+        lease_expires_at=None,
+    )
+    delivered: list[str] = []
+
+    def executor_must_not_repeat(_job):
+        raise AssertionError("the escalation side effect was repeated")
+
+    retried = jobs.run_job(
+        job.update_id,
+        worker_id="replacement-worker",
+        executor=executor_must_not_repeat,
+        deliver=lambda _job, text: delivered.append(text) or {"ok": True},
+    )
+
+    assert retried is not None
+    assert retried.status == TelegramUpdateReceipt.STATUS_SUCCEEDED
+    assert AdvisorEscalation.objects.count() == 1
+    assert case.reference in " ".join(delivered)
 
 
 @CHANNEL_ON
@@ -1426,7 +2067,7 @@ def test_revoking_mid_generation_stops_the_answer_reaching_the_chat(client, outb
         "core.services.student_advisor_v2.answer_student_advisor",
         side_effect=_revoke_then_answer,
     ):
-        response = _post(client, _update(text="كم معدلي؟"))
+        response = _post(client, _update(text="وش المقررات المناسبة لي؟"))
 
     assert response.status_code == 200
     delivered = " ".join(outbox.texts)
@@ -1997,16 +2638,21 @@ def test_no_image_is_sent_while_the_flag_is_off(client, outbox, cards):
 
 
 @IMAGES_ON
-def test_an_image_is_sent_before_the_text(client, outbox, cards):
-    """Picture first, then the words — and the caveats travel as their own
-    message, never as a caption, because a caption is capped at 1024."""
+def test_durable_rollout_remains_text_only_even_if_the_legacy_image_flag_is_on(
+    client, outbox, cards
+):
+    """The durable rollout intentionally does not export timetable images.
+
+    A week-grid image is a compact location/schedule record and Telegram retains
+    it as a file. The dormant renderer can be reintroduced only with its own
+    durable delivery item; it must never bypass the queue as an immediate send.
+    """
     _link()
     with _adviser(answer="هذا جدولك.", presentation=_timetable_presentation()):
         _post(client, _update(text="ابنِ لي جدولًا"))
 
-    assert len(outbox.photos) == 1
-    assert outbox.photos[0]["bytes"] > 0
-    assert outbox.photos[0]["caption"] == "", "a caption would truncate the caveats"
+    assert cards.requested == []
+    assert outbox.photos == []
     assert "هذا جدولك." in " ".join(outbox.texts)
 
 
@@ -2019,13 +2665,17 @@ def test_a_failed_render_still_delivers_the_answer(client, outbox):
 
     failing = _renderer(fail=True)
     try:
-        _link()
+        link = _link()
         with _adviser(answer="هذا جدولك.", presentation=_timetable_presentation()):
-            response = _post(client, _update(text="ابنِ لي جدولًا"))
+            bot.answer_question(
+                link_id=link.pk,
+                update_id=1,
+                question="ابنِ لي جدولًا",
+                server_port="8000",
+            )
     finally:
         set_renderer(None)
 
-    assert response.status_code == 200
     assert failing.requested, "the renderer was never asked"
     assert outbox.photos == []
     body = " ".join(outbox.texts)
@@ -2047,9 +2697,14 @@ def test_the_render_url_is_signed_and_local(client, outbox, cards):
     """The headless browser has no session and must not be given one. And it
     reaches this process locally — routing a signed card URL out through the
     public hostname and back would be exposure for nothing."""
-    _link()
+    link = _link()
     with _adviser(answer="هذا جدولك.", presentation=_timetable_presentation()):
-        _post(client, _update(text="ابنِ لي جدولًا"))
+        bot.answer_question(
+            link_id=link.pk,
+            update_id=1,
+            question="ابنِ لي جدولًا",
+            server_port="8000",
+        )
 
     assert len(cards.requested) == 1
     url = cards.requested[0]
@@ -2235,23 +2890,15 @@ def test_an_unconfigured_token_sends_no_photo_and_opens_no_socket():
 
 
 @IMAGES_ON
-def test_the_card_is_fetched_on_the_port_the_request_arrived_on(client, outbox, cards):
-    """The renderer fetches the card over localhost, and the port must be real.
-
-    The first version hard-coded 8000. On a server running anywhere else the
-    fetch hit nothing, returned None, and the turn degraded to text — the SAME
-    outcome as a legitimately missing Chromium, so the misconfiguration was
-    invisible. The port now comes from the request that triggered the work.
-    """
-    _link()
+def test_the_legacy_card_helper_honours_its_explicit_server_port(client, outbox, cards):
+    """The dormant renderer helper never guesses or hard-codes its local port."""
+    link = _link()
     with _adviser(answer="هذا جدولك.", presentation=_timetable_presentation()):
-        # Django's test client reports SERVER_PORT 80 unless told otherwise.
-        client.post(
-            reverse("telegram_webhook"),
-            data=json.dumps(_update(text="ابنِ لي جدولًا")),
-            content_type="application/json",
-            HTTP_X_TELEGRAM_BOT_API_SECRET_TOKEN=SECRET,
-            SERVER_PORT="8002",
+        bot.answer_question(
+            link_id=link.pk,
+            update_id=1,
+            question="ابنِ لي جدولًا",
+            server_port="8002",
         )
 
     assert cards.requested, "no card was requested"
@@ -2410,9 +3057,16 @@ def test_purge_removes_only_rows_past_the_window(settings):
     fresh = linking.issue_link_token(telegram_user_id=CHAT)
     TelegramUpdateReceipt.objects.create(update_id=1)
     TelegramUpdateReceipt.objects.create(update_id=2)
+    TelegramUpdateReceipt.objects.create(
+        update_id=3,
+        kind=TelegramUpdateReceipt.KIND_QUESTION,
+        status=TelegramUpdateReceipt.STATUS_QUEUED,
+        payload_text="still waiting",
+    )
 
     # Backdate one of each; `auto_now_add` has to be written around.
     TelegramUpdateReceipt.objects.filter(update_id=1).update(received_at=old)
+    TelegramUpdateReceipt.objects.filter(update_id=3).update(received_at=old)
     stale = TelegramLinkToken.objects.create(
         token_hash="deadbeef" * 8,
         telegram_user_id=OTHER_CHAT,
@@ -2424,6 +3078,7 @@ def test_purge_removes_only_rows_past_the_window(settings):
 
     assert tokens == 1 and receipts == 1
     assert TelegramUpdateReceipt.objects.filter(update_id=2).exists(), "a fresh receipt was purged"
+    assert TelegramUpdateReceipt.objects.filter(update_id=3).exists(), "live work was purged"
     assert linking.peek_token(fresh.raw_token) is not None, "a live token was purged"
 
 
@@ -2547,18 +3202,21 @@ def test_a_raising_image_phase_still_delivers_the_text(client, outbox, cards):
     """Proved by the review: without a guard the student got the acknowledgement
     and then silence for ever — answer stored, webhook already 200'd so Telegram
     never redelivers, exception swallowed by the background runner."""
-    _link()
+    link = _link()
     with (
         mock.patch("telegram_gateway.rendering.local_base_url", side_effect=RuntimeError("boom")),
         _adviser(answer="هذا جدولك.", presentation=_timetable_presentation()),
     ):
-        response = _post(client, _update(text="ابنِ لي جدولًا"))
+        bot.answer_question(
+            link_id=link.pk,
+            update_id=1,
+            question="ابنِ لي جدولًا",
+            server_port="8000",
+        )
 
-    assert response.status_code == 200
     assert outbox.photos == []
     body = " ".join(outbox.texts)
     assert "هذا جدولك." in body, "the answer was lost with the picture"
-    assert messages.WORKING in body
 
 
 @IMAGES_ON
@@ -2566,7 +3224,7 @@ def test_one_image_per_option_capped(client, outbox, cards):
     """Six alternatives must not become six browser renders and six messages."""
     from telegram_gateway.bot import MAX_CARD_IMAGES
 
-    _link()
+    link = _link()
     presentation = _timetable_presentation()
     presentation["alternatives"] = [
         {
@@ -2587,7 +3245,12 @@ def test_one_image_per_option_capped(client, outbox, cards):
         for i in range(6)
     ]
     with _adviser(answer="هذا جدولك.", presentation=presentation):
-        _post(client, _update(text="ابنِ لي جدولًا"))
+        bot.answer_question(
+            link_id=link.pk,
+            update_id=1,
+            question="ابنِ لي جدولًا",
+            server_port="8000",
+        )
 
     assert len(cards.requested) == MAX_CARD_IMAGES == 4
     assert len(outbox.photos) == MAX_CARD_IMAGES

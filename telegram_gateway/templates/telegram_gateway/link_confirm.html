@@ -13,9 +13,9 @@ Two things are load-bearing and easy to lose in a redesign:
   hidden `student_id` "for convenience" would rebuild exactly the hole the whole
   design avoids.
 
-The page never displays the student number, the name, or which Telegram account is
-being linked. It does not need to, and each of them is a disclosure to whoever is
-looking over the reader's shoulder.
+The page shows only the last four digits of the authenticated student number. That
+is enough to catch a shared-browser/wrong-account mistake without disclosing the
+full identifier. It never displays the name or Telegram profile data.
 {% endcomment %}
 
 {% block title %}{% if LANGUAGE_CODE == 'ar' %}تأكيد ربط تيليجرام{% else %}Confirm Telegram linking{% endif %}{% endblock %}
@@ -31,6 +31,14 @@ looking over the reader's shoulder.
         أنت على وشك السماح لمحادثة تيليجرام التي طلبت الربط بسؤال المرشد الأكاديمي باسمك.
       {% else %}
         You are about to let the Telegram chat that requested this link ask the academic adviser on your behalf.
+      {% endif %}
+    </p>
+
+    <p class="login-sub" style="font-weight:700">
+      {% if LANGUAGE_CODE == 'ar' %}
+        الحساب الجامعي الذي سيتم ربطه ينتهي بـ <span dir="ltr">••••{{ student_suffix }}</span>.
+      {% else %}
+        The university account being linked ends in <span dir="ltr">••••{{ student_suffix }}</span>.
       {% endif %}
     </p>
 

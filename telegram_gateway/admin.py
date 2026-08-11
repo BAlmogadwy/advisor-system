@@ -18,7 +18,6 @@ from typing import Any
 from django.contrib import admin, messages
 from django.db.models import QuerySet
 from django.http import HttpRequest
-from django.utils import timezone
 
 from .models import TelegramLink
 
@@ -43,6 +42,7 @@ class TelegramLinkAdmin(admin.ModelAdmin):
     readonly_fields = (
         "id",
         "student_id",
+        "university_user",
         "status",
         "current_conversation",
         "linked_at",
@@ -66,13 +66,33 @@ class TelegramLinkAdmin(admin.ModelAdmin):
         # the only record that a chat once had access.
         return False
 
-    @admin.action(description="Revoke the selected Telegram links (immediate)")
-    def revoke_selected_links(self, request: HttpRequest, queryset: QuerySet[TelegramLink]) -> None:
-        revoked = queryset.filter(status=TelegramLink.STATUS_ACTIVE).update(
-            status=TelegramLink.STATUS_REVOKED,
-            revoked_at=timezone.now(),
-            current_conversation=None,
+    def has_revoke_permission(self, request: HttpRequest) -> bool:
+        """Use the model's change grant to authorise the one safe mutation.
+
+        ``has_change_permission`` stays false so Django never exposes the edit
+        form. A custom action permission keeps revocation available to operators
+        who were deliberately granted change rights without also granting field
+        editing.
+        """
+
+        return bool(
+            request.user.is_active
+            and request.user.is_staff
+            and request.user.has_perm("telegram_gateway.change_telegramlink")
         )
+
+    @admin.action(
+        permissions=["revoke"],
+        description="Revoke the selected Telegram links (immediate)",
+    )
+    def revoke_selected_links(self, request: HttpRequest, queryset: QuerySet[TelegramLink]) -> None:
+        from . import linking
+
+        revoked = linking.revoke_links(queryset)
+        if revoked:
+            from .jobs import cancel_jobs_for_revoked_links
+
+            cancel_jobs_for_revoked_links()
         self.message_user(
             request,
             f"{revoked} Telegram link(s) revoked. Access ends immediately.",

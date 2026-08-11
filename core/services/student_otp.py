@@ -16,6 +16,7 @@ from django.conf import settings
 from django.contrib.auth.models import Group, User
 from django.core.mail import send_mail
 from django.db import transaction
+from django.http import HttpRequest
 from django.utils import timezone
 
 from core.models import StudentLoginOTP
@@ -23,9 +24,49 @@ from core.services.rbac import ROLE_NAMES, ROLE_STUDENT, ensure_role_groups, set
 
 logger = logging.getLogger(__name__)
 
+STUDENT_AUTHENTICATED_AT_SESSION_KEY = "student_authenticated_at"
+DEFAULT_RECENT_AUTH_SECONDS = 10 * 60
+
 
 class OTPError(Exception):
     """Raised for rate-limit, send-failure, or account-conflict conditions."""
+
+
+def mark_student_authentication(request: HttpRequest) -> None:
+    """Record a successful student authentication in this browser session."""
+
+    request.session[STUDENT_AUTHENTICATED_AT_SESSION_KEY] = int(timezone.now().timestamp())
+
+
+def has_recent_student_authentication(
+    request: HttpRequest, *, max_age_seconds: int | None = None
+) -> bool:
+    """Whether this exact session completed student authentication recently.
+
+    ``User.last_login`` is account-wide: a login on the student's phone would make
+    a stale shared-lab session look fresh. The session marker is deliberately
+    browser-specific, and sessions created before this control fail closed.
+    """
+
+    user = getattr(request, "user", None)
+    if not getattr(user, "is_authenticated", False) or not getattr(user, "is_active", False):
+        return False
+    raw = request.session.get(STUDENT_AUTHENTICATED_AT_SESSION_KEY)
+    try:
+        authenticated_at = int(raw)
+    except (TypeError, ValueError):
+        return False
+    configured_age = (
+        getattr(
+            settings,
+            "TELEGRAM_LINK_AUTH_MAX_AGE_SECONDS",
+            DEFAULT_RECENT_AUTH_SECONDS,
+        )
+        if max_age_seconds is None
+        else max_age_seconds
+    )
+    age = int(timezone.now().timestamp()) - authenticated_at
+    return 0 <= age <= max(1, int(configured_age))
 
 
 def student_email(student_id: int) -> str:

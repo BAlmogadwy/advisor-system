@@ -41,15 +41,20 @@ import hmac
 import logging
 import secrets
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import datetime, timedelta
+from typing import Any
 
 from django.conf import settings
+from django.contrib.auth import get_user_model
 from django.db import IntegrityError, transaction
-from django.db.models import F
+from django.db.models import F, Q
 from django.http import HttpRequest
 from django.utils import timezone
 
+from core.models import Student, UserScope
 from core.services.advisor_principal import AdvisorPrincipal, IdentityError
+from core.services.rbac import ROLE_STUDENT, get_user_role
+from core.services.student_otp import has_recent_student_authentication
 
 from .models import TelegramLink, TelegramLinkToken
 
@@ -181,7 +186,151 @@ def normalise_code(raw: str) -> str:
     return "".join(str(raw or "").split()).replace("-", "").upper()
 
 
-@transaction.atomic
+def _active_student_account(*, user_id: Any, student_id: int) -> Any | None:
+    """Return the exact still-authorised account, or fail closed.
+
+    ``Student.status`` is academic standing and has no stable active/inactive
+    vocabulary, so it is deliberately not an authentication input.  The account
+    lifecycle is the Django user plus its STUDENT role and authoritative
+    ``UserScope`` binding; the Student row must still exist as the academic
+    subject the link would expose.
+    """
+
+    if not user_id:
+        return None
+    user = (
+        get_user_model()
+        ._default_manager.filter(
+            pk=user_id,
+            is_active=True,
+            is_staff=False,
+            is_superuser=False,
+        )
+        .first()
+    )
+    if user is None:
+        return None
+    if get_user_role(user) != ROLE_STUDENT:
+        return None
+    if not UserScope.objects.filter(user_id=user.pk, student_id=student_id).exists():
+        return None
+    if not Student.objects.filter(student_id=student_id).exists():
+        return None
+    return user
+
+
+def _burn_live_tokens(
+    *,
+    student_ids: set[int] | None = None,
+    telegram_user_ids: set[int] | None = None,
+    preserve_token_ids: set[Any] | None = None,
+) -> int:
+    """Invalidate ceremonies related to an identity boundary.
+
+    A confirmation code is a temporary authentication credential. It must not
+    outlive a successful competing link or any revocation affecting the student
+    or chat it could bind.
+    """
+
+    students = {int(value) for value in (student_ids or set())}
+    chats = {int(value) for value in (telegram_user_ids or set())}
+    scope = Q(pk__isnull=True)
+    if students:
+        scope |= Q(approved_student_id__in=students)
+    if chats:
+        scope |= Q(telegram_user_id__in=chats)
+    if not students and not chats:
+        return 0
+    tokens = TelegramLinkToken.objects.filter(consumed_at__isnull=True).filter(scope)
+    if preserve_token_ids:
+        tokens = tokens.exclude(pk__in=preserve_token_ids)
+    return tokens.update(consumed_at=timezone.now())
+
+
+def _consume_token(token: TelegramLinkToken) -> bool:
+    """Claim one live token without letting an exception roll the claim back."""
+
+    return bool(
+        TelegramLinkToken.objects.filter(
+            pk=token.pk,
+            consumed_at__isnull=True,
+            expires_at__gt=timezone.now(),
+        ).update(consumed_at=timezone.now())
+    )
+
+
+def revoke_links(queryset: Any, *, preserve_token_ids: set[Any] | None = None) -> int:
+    """Revoke a selected link queryset and burn every related live ceremony."""
+
+    with transaction.atomic():
+        targets = list(
+            queryset.filter(status=TelegramLink.STATUS_ACTIVE).values_list(
+                "pk", "student_id", "telegram_user_id"
+            )
+        )
+        if not targets:
+            return 0
+        now = timezone.now()
+        revoked = TelegramLink.objects.filter(pk__in=[row[0] for row in targets]).update(
+            status=TelegramLink.STATUS_REVOKED,
+            revoked_at=now,
+            current_conversation=None,
+        )
+        _burn_live_tokens(
+            student_ids={int(row[1]) for row in targets},
+            telegram_user_ids={int(row[2]) for row in targets},
+            preserve_token_ids=preserve_token_ids,
+        )
+        return int(revoked)
+
+
+def active_account_for_link(
+    link: TelegramLink, *, preserve_token_id: Any | None = None
+) -> Any | None:
+    """Revalidate a link's exact university account and revoke invalid links.
+
+    This is intentionally a live database decision on every entry point, not a
+    property remembered at link time.  Revocation is durable so deleting and
+    recreating a university account cannot silently revive the old chat binding.
+    """
+
+    if link.status != TelegramLink.STATUS_ACTIVE:
+        return None
+    account = _active_student_account(
+        user_id=link.university_user_id,
+        student_id=int(link.student_id),
+    )
+    if account is not None:
+        return account
+
+    now = timezone.now()
+    revoked = revoke_links(
+        TelegramLink.objects.filter(
+            pk=link.pk,
+            status=TelegramLink.STATUS_ACTIVE,
+        ),
+        preserve_token_ids={preserve_token_id} if preserve_token_id else None,
+    )
+    if revoked:
+        link.status = TelegramLink.STATUS_REVOKED
+        link.revoked_at = now
+        link.current_conversation = None
+    logger.info("telegram: invalid university account binding revoked")
+    return None
+
+
+def _invalidate_conflicting_links(
+    *, student_id: int, telegram_user_id: int, preserve_token_id: Any | None = None
+) -> None:
+    """Revoke stale rows before live uniqueness/conflict decisions are made."""
+
+    conflicts = TelegramLink.objects.filter(status=TelegramLink.STATUS_ACTIVE).filter(
+        Q(student_id=student_id) | Q(telegram_user_id=telegram_user_id)
+    )
+    for candidate in conflicts:
+        active_account_for_link(candidate, preserve_token_id=preserve_token_id)
+
+
 def approve_link(*, request: HttpRequest, raw_token: str) -> str:
     """Record that THIS student approves the invitation, and return the code.
 
@@ -198,30 +347,44 @@ def approve_link(*, request: HttpRequest, raw_token: str) -> str:
 
     Raises `LinkError`; returns the raw confirmation code, which is not stored.
     """
+    # Repeated here as the authority boundary, not only in the page view. A direct
+    # POST or a future caller must not be able to approve a sensitive account link
+    # merely because an eight-hour browser session still exists.
+    if not has_recent_student_authentication(request):
+        raise LinkError(NOT_A_STUDENT)
+
     try:
         principal = AdvisorPrincipal.for_student(request)
     except IdentityError as exc:
         raise LinkError(NOT_A_STUDENT) from exc
 
     student_id = int(principal.student_id or 0)
+    account = _active_student_account(user_id=request.user.pk, student_id=student_id)
+    if account is None:
+        raise LinkError(NOT_A_STUDENT)
 
     token = TelegramLinkToken.objects.filter(token_hash=hash_token(raw_token)).first()
     if token is None or not token.is_live:
         raise LinkError(TOKEN_INVALID)
 
+    _invalidate_conflicting_links(
+        student_id=student_id,
+        telegram_user_id=int(token.telegram_user_id),
+        preserve_token_id=token.pk,
+    )
+
     # The states worth naming before a code is issued, so the student is told what
     # to do rather than watching a code fail later for a reason nobody explained.
     active = TelegramLink.objects.filter(status=TelegramLink.STATUS_ACTIVE)
-    if (
-        active.filter(student_id=student_id)
-        .exclude(telegram_user_id=token.telegram_user_id)
-        .exists()
+    student_link = active.filter(student_id=student_id).first()
+    if student_link is not None and (
+        student_link.telegram_user_id != token.telegram_user_id
+        or student_link.university_user_id != account.pk
     ):
         raise LinkError(STUDENT_ALREADY_LINKED)
-    if (
-        active.filter(telegram_user_id=token.telegram_user_id)
-        .exclude(student_id=student_id)
-        .exists()
+    chat_link = active.filter(telegram_user_id=token.telegram_user_id).first()
+    if chat_link is not None and (
+        chat_link.student_id != student_id or chat_link.university_user_id != account.pk
     ):
         raise LinkError(CHAT_ALREADY_LINKED)
 
@@ -232,6 +395,7 @@ def approve_link(*, request: HttpRequest, raw_token: str) -> str:
         pk=token.pk, consumed_at__isnull=True, expires_at__gt=timezone.now()
     ).update(
         approved_student_id=student_id,
+        approved_user_id=account.pk,
         approved_at=timezone.now(),
         confirm_code_hash=hash_token(code),
         confirm_attempts=0,
@@ -267,6 +431,7 @@ def confirm_link(*, telegram_user_id: int, code: str) -> TelegramLink:
             consumed_at__isnull=True,
             expires_at__gt=timezone.now(),
             approved_student_id__isnull=False,
+            approved_user_id__isnull=False,
         )
         .order_by("-approved_at")
         .first()
@@ -292,17 +457,45 @@ def confirm_link(*, telegram_user_id: int, code: str) -> TelegramLink:
     if student_id <= 0:
         raise LinkError(CONFIRM_INVALID)
 
+    account = _active_student_account(user_id=token.approved_user_id, student_id=student_id)
+    if account is None:
+        # This approval cannot become valid again: it names an exact account that
+        # was deactivated, deleted, de-scoped, or ceased to be a student.
+        TelegramLinkToken.objects.filter(pk=token.pk).update(consumed_at=timezone.now())
+        raise LinkError(CONFIRM_INVALID)
+
+    _invalidate_conflicting_links(student_id=student_id, telegram_user_id=chat_id)
+
     # Re-checked here, not only at approval time: the two are minutes apart and
     # either side may have linked something else in between.
     active = TelegramLink.objects.filter(status=TelegramLink.STATUS_ACTIVE)
-    if active.filter(student_id=student_id).exclude(telegram_user_id=chat_id).exists():
+    student_link = active.filter(student_id=student_id).first()
+    if student_link is not None and (
+        student_link.telegram_user_id != chat_id or student_link.university_user_id != account.pk
+    ):
+        if not _consume_token(token):
+            raise LinkError(CONFIRM_INVALID)
         raise LinkError(STUDENT_ALREADY_LINKED)
-    if active.filter(telegram_user_id=chat_id).exclude(student_id=student_id).exists():
+    chat_link = active.filter(telegram_user_id=chat_id).first()
+    if chat_link is not None and (
+        chat_link.student_id != student_id or chat_link.university_user_id != account.pk
+    ):
+        if not _consume_token(token):
+            raise LinkError(CONFIRM_INVALID)
         raise LinkError(CHAT_ALREADY_LINKED)
 
-    existing = active.filter(telegram_user_id=chat_id, student_id=student_id).first()
+    existing = active.filter(
+        telegram_user_id=chat_id,
+        student_id=student_id,
+        university_user_id=account.pk,
+    ).first()
     if existing is not None:
-        # Already linked, and the same pair. Idempotent by design.
+        # Already linked, and the same pair. Idempotent by effect, but the code is
+        # still single-use: leaving it live lets it recreate this link after an
+        # unlink without another authenticated browser ceremony.
+        if not _consume_token(token):
+            raise LinkError(CONFIRM_INVALID)
+        _burn_live_tokens(student_ids={student_id}, telegram_user_ids={chat_id})
         return existing
 
     # The claim and the link are one unit: a token marked spent with no link to
@@ -320,8 +513,10 @@ def confirm_link(*, telegram_user_id: int, code: str) -> TelegramLink:
             link = TelegramLink.objects.create(
                 telegram_user_id=chat_id,
                 student_id=student_id,
+                university_user_id=account.pk,
                 status=TelegramLink.STATUS_ACTIVE,
             )
+            _burn_live_tokens(student_ids={student_id}, telegram_user_ids={chat_id})
         except IntegrityError as exc:
             # The partial unique constraints caught a concurrent link. The database
             # is the authority here, not the checks above — those are for a good
@@ -335,13 +530,26 @@ def confirm_link(*, telegram_user_id: int, code: str) -> TelegramLink:
 def active_link_for_chat(telegram_user_id: int) -> TelegramLink | None:
     """The verified student behind this chat, or nothing.
 
-    Every academic path in the gateway starts here, and a `None` return is the
-    only thing standing between an unlinked sender and somebody's record — so it
-    is a filtered query rather than a fetch-then-check.
+    Every academic path in the gateway starts here. The status filter retrieves
+    only a candidate; the exact bound university account is revalidated before
+    that candidate is returned, and an invalid candidate is durably revoked.
     """
-    return TelegramLink.objects.filter(
-        telegram_user_id=int(telegram_user_id), status=TelegramLink.STATUS_ACTIVE
+    link = TelegramLink.objects.filter(
+        telegram_user_id=int(telegram_user_id),
+        status=TelegramLink.STATUS_ACTIVE,
     ).first()
+    if link is None or active_account_for_link(link) is None:
+        return None
+    return link
+
+
+def active_link_by_id(link_id: Any) -> TelegramLink | None:
+    """Resolve queued/background work through the same live account gate."""
+
+    link = TelegramLink.objects.filter(pk=link_id, status=TelegramLink.STATUS_ACTIVE).first()
+    if link is None or active_account_for_link(link) is None:
+        return None
+    return link
 
 
 def unlink_chat(telegram_user_id: int) -> bool:
@@ -361,25 +569,50 @@ def revoke_links_for_student(student_id: int) -> int:
     phone knows the student, and should never have to be told a Telegram id to do
     their job. Returns the number of links revoked.
     """
-    now = timezone.now()
-    return TelegramLink.objects.filter(
-        student_id=int(student_id), status=TelegramLink.STATUS_ACTIVE
-    ).update(status=TelegramLink.STATUS_REVOKED, revoked_at=now, current_conversation=None)
+    return revoke_links(
+        TelegramLink.objects.filter(student_id=int(student_id), status=TelegramLink.STATUS_ACTIVE)
+    )
 
 
 def purge_expired(older_than: timedelta | None = None) -> tuple[int, int]:
-    """Housekeeping: drop spent tokens and old update receipts.
+    """Delete only old dead tokens and old terminal receipt/jobs.
 
     Neither table is read once its row has served its purpose — a consumed token
-    can never link again and a receipt older than any plausible Telegram retry
-    window can never suppress a duplicate. Returns `(tokens, receipts)` deleted.
+    can never link again. QUEUED/RUNNING jobs remain actionable regardless of
+    age. Returns `(tokens, receipts)` deleted.
     """
+    now = timezone.now()
+    cutoff = now - (older_than or timedelta(days=7))
+    tokens, _ = (
+        TelegramLinkToken.objects.filter(created_at__lt=cutoff)
+        .filter(Q(consumed_at__isnull=False) | Q(expires_at__lte=now))
+        .delete()
+    )
+    receipts, _ = purgeable_terminal_receipts(cutoff).delete()
+    return tokens, receipts
+
+
+def purgeable_terminal_receipts(cutoff: datetime):
+    """Terminal receipts whose retention period has elapsed since completion.
+
+    Legacy inline receipts predate ``finished_at`` and legitimately have it null;
+    their receipt time is the only available terminal timestamp. Durable work
+    with a completion timestamp is retained for the full window after it
+    actually finishes, however long it waited in the queue first.
+    """
+
     from .models import TelegramUpdateReceipt
 
-    cutoff = timezone.now() - (older_than or timedelta(days=7))
-    tokens, _ = TelegramLinkToken.objects.filter(created_at__lt=cutoff).delete()
-    receipts, _ = TelegramUpdateReceipt.objects.filter(received_at__lt=cutoff).delete()
-    return tokens, receipts
+    terminal = (
+        TelegramUpdateReceipt.STATUS_SUCCEEDED,
+        TelegramUpdateReceipt.STATUS_FAILED,
+        TelegramUpdateReceipt.STATUS_CANCELLED,
+    )
+    terminal_age = Q(finished_at__lt=cutoff) | Q(
+        finished_at__isnull=True,
+        received_at__lt=cutoff,
+    )
+    return TelegramUpdateReceipt.objects.filter(terminal_age, status__in=terminal)
 
 
 __all__ = [
@@ -391,6 +624,8 @@ __all__ = [
     "TOKEN_INVALID",
     "IssuedToken",
     "LinkError",
+    "active_account_for_link",
+    "active_link_by_id",
     "active_link_for_chat",
     "approve_link",
     "confirm_link",
@@ -399,7 +634,9 @@ __all__ = [
     "normalise_code",
     "peek_token",
     "purge_expired",
+    "purgeable_terminal_receipts",
     "revoke_links_for_student",
+    "revoke_links",
     "token_ttl",
     "unlink_chat",
 ]

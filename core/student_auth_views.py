@@ -24,7 +24,13 @@ from core.services.recommender import recommend_next_courses
 from core.services.student_graduation import build_graduation_report
 from core.services.student_helpers import normalize_code
 from core.services.student_home_cards import build_student_home_cards, progress_buckets
-from core.services.student_otp import OTPError, issue_otp, provision_student_user, verify_otp
+from core.services.student_otp import (
+    OTPError,
+    issue_otp,
+    mark_student_authentication,
+    provision_student_user,
+    verify_otp,
+)
 from core.services.student_sections import (
     EXPECTED_TIMETABLE_SOURCE_PREFIX,
     get_student_term_baseline,
@@ -194,6 +200,7 @@ def student_login_view(request: HttpRequest) -> HttpResponse:
                 },
             )
         login(request, user, backend=_MODEL_BACKEND)
+        mark_student_authentication(request)
         return _post_login_redirect(request)
 
     if exists:
@@ -243,6 +250,7 @@ def student_otp_verify_view(request: HttpRequest) -> HttpResponse:
                 },
             )
         login(request, user, backend=_MODEL_BACKEND)
+        mark_student_authentication(request)
         request.session.pop("otp_student_id", None)
         return _post_login_redirect(request)
 

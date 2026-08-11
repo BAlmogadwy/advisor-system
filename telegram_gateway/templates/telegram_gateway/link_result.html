@@ -112,6 +112,22 @@ at URLs wants to know.
       </p>
       <p><a href="{% url 'student_login' %}">{% if LANGUAGE_CODE == 'ar' %}تسجيل الدخول{% else %}Sign in{% endif %}</a></p>
 
+    {% elif state == "reauth" %}
+      <h1 class="login-title">{% if LANGUAGE_CODE == 'ar' %}تحقق من هويتك مرة أخرى{% else %}Verify your identity again{% endif %}</h1>
+      <p class="login-sub">
+        {% if LANGUAGE_CODE == 'ar' %}
+          ربط تيليجرام قرار حساس. انتهت صلاحية التحقق في هذه الجلسة، لذلك يلزم تسجيل الدخول مرة أخرى بالرمز الجامعي قبل المتابعة.
+        {% else %}
+          Linking Telegram is a sensitive account decision. This session is no longer recently verified, so sign in with a fresh university code before continuing.
+        {% endif %}
+      </p>
+      <form method="post" action="{% url 'telegram_link_reauthenticate' token %}">
+        {% csrf_token %}
+        <button type="submit" class="btn btn-primary" style="width:100%">
+          {% if LANGUAGE_CODE == 'ar' %}تسجيل الدخول والتحقق{% else %}Sign in and verify{% endif %}
+        </button>
+      </form>
+
     {% elif state == "disabled" %}
       <h1 class="login-title">{% if LANGUAGE_CODE == 'ar' %}الخدمة غير مفعّلة{% else %}Not enabled{% endif %}</h1>
       <p class="login-sub">

@@ -55,7 +55,7 @@ from core.services.advisor_escalation import (
     escalation_reason,
     may_escalate,
 )
-from core.services.advisor_history import load_visible_history
+from core.services.advisor_history import load_profiled_history, load_visible_history
 from core.services.advisor_principal import AdvisorPrincipal, IdentityError
 from core.services.rate_limit import ESCALATION, GENERATION
 from core.services.rate_limit import consume as spend_budget
@@ -192,6 +192,7 @@ def run_advisor_turn(
     conversation: AdvisorConversation,
     question: str,
     idempotency_key: str = "",
+    channel_profile: str = "",
 ) -> TurnResult:
     """Ask one question and persist the whole turn.
 
@@ -217,6 +218,15 @@ def run_advisor_turn(
         return TurnResult(outcome=QUESTION_TOO_LONG, conversation=conversation)
 
     key = str(idempotency_key or "").strip()[:64]
+    profile = str(channel_profile or "").strip()[:32]
+    from core.services.advisor_channel_privacy import (
+        TELEGRAM_SAFE_PROFILE,
+        TELEGRAM_UNVALIDATED_PROFILE,
+    )
+
+    initial_generation_profile = (
+        TELEGRAM_UNVALIDATED_PROFILE if profile == TELEGRAM_SAFE_PROFILE else profile
+    )
     request_hash = hashlib.sha256(question.encode("utf-8")).hexdigest()
 
     student_message = None
@@ -225,7 +235,12 @@ def run_advisor_turn(
             idempotency_key=key, role=AdvisorMessage.ROLE_STUDENT
         ).first()
         if existing is not None:
-            resumed = _resume_or_replay(conversation, existing, request_hash)
+            resumed = _resume_or_replay(
+                conversation,
+                existing,
+                request_hash,
+                expected_profile=profile,
+            )
             if isinstance(resumed, TurnResult):
                 return resumed
             student_message = resumed
@@ -249,6 +264,7 @@ def run_advisor_turn(
                     content=question,
                     idempotency_key=key,
                     request_hash=request_hash,
+                    generation_profile=initial_generation_profile,
                     status=AdvisorMessage.STATUS_PENDING,
                 )
         except IntegrityError:
@@ -264,7 +280,12 @@ def run_advisor_turn(
             ).first()
             if existing is None:
                 raise
-            resumed = _resume_or_replay(conversation, existing, request_hash)
+            resumed = _resume_or_replay(
+                conversation,
+                existing,
+                request_hash,
+                expected_profile=profile,
+            )
             if isinstance(resumed, TurnResult):
                 return resumed
             student_message = resumed
@@ -274,10 +295,26 @@ def run_advisor_turn(
         # to. Excludes THIS question, which was written to the database before
         # generation and would otherwise arrive twice — and twice again on a retry,
         # which reuses the same row.
+        from core.services.advisor_channel_privacy import (
+            TELEGRAM_SAFE_PROFILE,
+            is_telegram_safe_profile,
+            project_history,
+        )
+
+        if is_telegram_safe_profile(channel_profile):
+            history = load_profiled_history(
+                conversation,
+                channel_profile=TELEGRAM_SAFE_PROFILE,
+                exclude_message_id=student_message.pk,
+            )
+        else:
+            history = load_visible_history(conversation, exclude_message_id=student_message.pk)
+
         result = answer_student_advisor(
             question=question,
             principal=principal,
-            history=load_visible_history(conversation, exclude_message_id=student_message.pk),
+            history=project_history(history, profile=channel_profile),
+            channel_profile=channel_profile,
         )
     except ValueError as exc:
         # The student's own row is gone — a roster re-import can do this. Passing a
@@ -323,6 +360,8 @@ def _resume_or_replay(
     conversation: AdvisorConversation,
     existing: AdvisorMessage,
     request_hash: str,
+    *,
+    expected_profile: str = "",
 ) -> AdvisorMessage | TurnResult:
     """Decide what a repeated idempotency key means for THIS turn.
 
@@ -340,6 +379,26 @@ def _resume_or_replay(
     read both as `None` and carry on, which is the one outcome this function never
     produces.
     """
+    from core.services.advisor_channel_privacy import (
+        TELEGRAM_SAFE_PROFILE,
+        TELEGRAM_UNVALIDATED_PROFILE,
+        TELEGRAM_WITHHELD_PROFILE,
+    )
+
+    existing_profile = str(existing.generation_profile or "")
+    compatible_profiles = {expected_profile}
+    if expected_profile == TELEGRAM_SAFE_PROFILE:
+        # Telegram first writes an unvalidated provenance marker. Only the
+        # transport-side output boundary can promote it to safe or withheld.
+        # All three remain idempotently replayable, while history admits only the
+        # final safe state.
+        compatible_profiles.update({TELEGRAM_UNVALIDATED_PROFILE, TELEGRAM_WITHHELD_PROFILE})
+    if existing_profile not in compatible_profiles:
+        return TurnResult(
+            outcome=KEY_CONFLICT,
+            conversation=conversation,
+            student_message=existing,
+        )
     if existing.request_hash != request_hash:
         # The same key carrying a different question is a client bug, not a retry.
         # Answering it would silently attach one question's answer to another's key.
@@ -351,8 +410,15 @@ def _resume_or_replay(
     # is two statements with a gap in between, and a double-clicked Retry fits
     # inside that gap: both requests see FAILED, both claim it, both call the
     # model, and the student gets two answers to one question.
-    claimed = AdvisorMessage.objects.filter(pk=existing.pk, status=existing.status).update(
-        status=AdvisorMessage.STATUS_PENDING, generation_started_at=timezone.now()
+    claim = AdvisorMessage.objects.filter(pk=existing.pk, status=existing.status)
+    if existing.status == AdvisorMessage.STATUS_PENDING:
+        # PENDING -> PENDING does not change the status, so status alone is not a
+        # compare-and-swap: two stale retries both update one row and both call the
+        # model. The generation timestamp is the fencing value for that state.
+        claim = claim.filter(generation_started_at=existing.generation_started_at)
+    claimed = claim.update(
+        status=AdvisorMessage.STATUS_PENDING,
+        generation_started_at=timezone.now(),
     )
     if not claimed:
         # Someone else claimed it first. They are generating; we replay.

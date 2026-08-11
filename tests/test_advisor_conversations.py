@@ -645,6 +645,35 @@ def test_only_one_of_two_simultaneous_retries_may_claim_the_turn(client):
     assert lost.outcome == REPLAYED
 
 
+def test_only_one_of_two_simultaneous_stale_pending_retries_may_claim_the_turn(client):
+    """PENDING -> PENDING also needs a fencing value because status is unchanged."""
+    from django.utils import timezone
+
+    from core.services.advisor_turn import REPLAYED, STALE_GENERATION, _resume_or_replay
+
+    conversation = _conversation(MINE)
+    _student(client, MINE)
+    request_hash = hashlib.sha256("سؤال".encode()).hexdigest()
+    AdvisorMessage.objects.create(
+        conversation=conversation,
+        role=AdvisorMessage.ROLE_STUDENT,
+        content="سؤال",
+        idempotency_key="k-stale-race",
+        request_hash=request_hash,
+        status=AdvisorMessage.STATUS_PENDING,
+        generation_started_at=timezone.now() - STALE_GENERATION - timedelta(minutes=1),
+    )
+    first = AdvisorMessage.objects.get(idempotency_key="k-stale-race")
+    second = AdvisorMessage.objects.get(idempotency_key="k-stale-race")
+
+    won = _resume_or_replay(conversation, first, request_hash)
+    assert isinstance(won, AdvisorMessage)
+
+    lost = _resume_or_replay(conversation, second, request_hash)
+    assert not isinstance(lost, AdvisorMessage)
+    assert lost.outcome == REPLAYED
+
+
 def test_an_integrity_error_with_no_key_is_not_treated_as_a_retry(client):
     """The unique constraint only covers non-empty keys, so a keyless send can
     never collide on it. Recovering as if it had matched the conversation's oldest

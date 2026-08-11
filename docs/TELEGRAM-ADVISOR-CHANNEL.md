@@ -1,10 +1,17 @@
 # Telegram Advisor Channel
 
-A **transport** for the existing Student Advisor. Not a second adviser, not a
-second prompt, not a second academic policy. A linked student asks a question in a
-private Telegram chat; the question reaches the same application service the web
-chat calls, under the same self-only student principal, with the same tools, the
-same privacy projection, the same rate limits and the same stored conversation.
+A **transport** for the existing Student Advisor. Not a second adviser and not a
+second academic policy. A linked student asks a question in a private Telegram
+chat; the question reaches the same application service the web chat calls under
+the same self-only student principal, conversation store and adviser-generation
+budget. Channel-specific ingress and command budgets are additional controls.
+
+The evidence surface is intentionally **not** the same. Telegram always uses
+Student Advisor V2 under the server-selected `telegram_safe` execution profile,
+even while the web V2 feature flag is off. That profile removes transcript-shaped
+capabilities, projects every tool/fallback result, and admits as generation
+history only prior Telegram turns promoted to `telegram_safe`. The authenticated
+web adviser remains the full-record surface.
 
 Feature-flagged, **off by default** (`TELEGRAM_ADVISOR_ENABLED=false`).
 
@@ -18,16 +25,30 @@ Telegram private chat
                                                 constant-time compare, fail closed)
   → parse_update()                             (private chats only, text only,
                                                 chat.id == from.id, `message` only)
-  → claim_update(update_id)                    (idempotency receipt — PK insert)
-  → TelegramLink                               (verified telegram_user_id → student_id)
-  → AdvisorPrincipal(role=STUDENT, student_id) (self-only, built from the link row)
+  → enqueue update_id + normalized work        (one PostgreSQL transaction; durable
+                                                idempotency receipt / queue row)
+                                                question starts briefly unavailable
+  → send “Received — preparing…”               (questions only; after commit)
+  → release job in finally                     (or bounded timestamp self-releases it)
+  ← 200                                        (after durable enqueue and ack attempt)
+
+Persistent telegram_advisor_worker
+  → lease ready work                           (per-link FIFO; stale leases recover)
+  → revalidate TelegramLink + student access   (fail closed at execution time)
+  → AdvisorPrincipal(role=STUDENT, student_id) (self-only, rebuilt from current data)
+  → personal-record intent gate                (known exact-result requests stay web-only)
   → core.services.advisor_turn.run_advisor_turn()   ←── SHARED WITH THE WEB
       ├─ ownership → validation → idempotency/replay → GENERATION budget
-      ├─ persist student turn (AdvisorMessage, PENDING)
-      ├─ answer_student_advisor(question, principal, history)   ← existing seam
+      ├─ persist student turn (AdvisorMessage, PENDING, telegram_unvalidated)
+      ├─ load only server-profiled Telegram-safe history
+      ├─ answer_student_advisor(...) → V2 forced for telegram_safe
+      │    └─ restricted schemas + projected evidence + safe fallback
       └─ persist_answer() → AdvisorMessage + AdvisorMessageCitation
+  → personal-record output DLP                 (profile → telegram_safe or withheld)
   → formatting.render_answer()                 (plain text, no parse_mode, safe split)
-  → transport.send_text()                      (Telegram Bot API)
+  → persist delivery payload
+  → transport.send_text()                      (Telegram Bot API; retryable failures requeue)
+  → advance cursor after each accepted message
 ```
 
 ### The seam
@@ -53,12 +74,21 @@ its **order**:
 
 A second copy of that sequence would get the order subtly wrong and still work.
 
+`answer_student_advisor` remains the shared model seam, but
+`channel_profile="telegram_safe"` is a hard runtime selection: it routes to V2
+even when `STUDENT_ADVISOR_V2_ENABLED=false`. The legacy adviser has no
+channel-specific evidence projection, so falling back to it would silently reopen
+the full-record surface. Section 4 describes the layers around this shared turn.
+
 ### What the channel does **not** contain
 
-No prompt, no tool schema, no model client, no capability list, no policy
-retrieval, no academic logic. `tests/test_telegram_gateway.py` asserts this
-structurally: the gateway source may not name `answer_virtual_advisor`, any tool
-in `STUDENT_V2_TOOL_NAMES`, or anything in `FORBIDDEN_STUDENT_V2_TOOLS`.
+The `telegram_gateway` package contains no standalone adviser prompt, tool schema,
+model client, policy retrieval or academic decision logic. It selects the
+server-owned safe profile and applies transport-side input/output privacy checks;
+the profile's system rules, schema reduction and evidence projection live beside
+the shared V2 runtime in `core.services`. `tests/test_telegram_gateway.py` asserts
+structurally that `bot.py` names no capability in `STUDENT_V2_TOOL_NAMES` or
+`FORBIDDEN_STUDENT_V2_TOOLS`.
 
 ---
 
@@ -164,8 +194,8 @@ open-redirect payloads are tested.
 | 5 | Private chats only | `bot.parse_update` |
 | 6 | Group/supergroup/channel/inline refused **silently** | `bot.parse_update` — replying into a group would itself be the disclosure |
 | 7 | Only `message` updates | `SUPPORTED_UPDATE_KEYS` |
-| 8 | `update_id` idempotency | `TelegramUpdateReceipt` (PK) **and** `AdvisorMessage.idempotency_key = "tg:<update_id>"`. The receipt is claimed before the work and **released if the work raises**, so a crash does not make a question permanently unaskable |
-| 9 | No raw payload stored | receipt has exactly `{update_id, received_at}` — asserted by test |
+| 8 | `update_id` idempotency | `TelegramUpdateReceipt` is both the PK receipt and durable job envelope; a duplicate cannot enqueue a second turn, and a process crash leaves claimable work |
+| 9 | No raw update stored | queue rows keep only normalized work/delivery fields needed for execution; terminal cleanup removes old rows |
 | 10 | No content/token/id logging | asserted by `test_no_secret_or_identifier_reaches_the_logs` |
 | 11 | Redacted operational logs | log lines carry no interpolated identifiers at all |
 | 12 | Credentials only in env | asserted by `test_credentials_live_only_in_the_environment` |
@@ -173,6 +203,9 @@ open-redirect payloads are tested.
 | 14 | Feature flag, default off | `TELEGRAM_ADVISOR_ENABLED` |
 | 15 | No files/images/contacts/locations/voice | non-text messages get one refusal, nothing is fetched |
 | 16 | No live bot created, no credentials committed | this change configures nothing |
+| 17 | Reduced evidence surface | `TELEGRAM_SAFE_PROFILE` forces V2, removes transcript-shaped schemas, and projects results before model or fallback use |
+| 18 | History provenance is server-owned | `AdvisorMessage.generation_profile`; a client-supplied idempotency prefix cannot opt a web answer into Telegram history |
+| 19 | Generated output is quarantined until validated | the turn starts `telegram_unvalidated`; only output DLP can promote it to `telegram_safe`, otherwise only the authenticated-web notice reaches Telegram |
 
 **Deliberately not copied from `whatsapp_gateway`:** its signature check returns
 `not require_signature` when unconfigured, and its default is
@@ -192,7 +225,9 @@ one purpose, replying under the student's verified university identity.
 
 **What the university stores:** the `telegram_user_id → student_id` mapping, and
 the questions and answers in the *existing* `AdvisorConversation` /
-`AdvisorMessage` tables the student already sees on the web.
+`AdvisorMessage` tables the student already sees on the web. While work is queued,
+the durable job envelope also holds the normalized question needed to execute it;
+that input is cleared when delivery is materialized or the job becomes terminal.
 
 **What is deliberately not stored:** Telegram display name, username, phone
 number, profile photo, and any raw update payload. None is needed to deliver an
@@ -206,34 +241,57 @@ on the confirmation page *before* the button — not linked from it.
 **Retention.** `/unlink` revokes the mapping immediately. It does **not** delete
 the conversation: that history lives in the student's university account under the
 platform's existing retention policy. The `/privacy` text states this plainly
-rather than implying unlinking erases anything.
+rather than implying unlinking erases anything. Old terminal queue metadata is
+deleted by the daily retention job seven days after `finished_at`; legacy inline
+receipts that predate that field fall back to `received_at`. `QUEUED` and
+`RUNNING` work is excluded regardless of age.
 
-**Model training.** Conversation data is not used to train any model; the remote
-provider boundary is unchanged (`llm_remote_privacy.project_tool_result_for_remote`
-still decides what leaves the building, and the channel does not touch it).
+**Model training.** Conversation data is not used to train any model. A remote
+backend still passes through its existing provider boundary, and the Telegram
+profile is an additional, narrower projection rather than a replacement for it.
 
-**Only `AdvisorMessage.content` is ever sent.** The adviser's result dict also
-carries the agent trace — and, on the V1 branch that `STUDENT_ADVISOR_V2_ENABLED`
-still defaults to, a `verified_context` key holding the student's unprojected
-record. `bot._render_outcome` reads the stored message and never the result dict.
+### Layered exact-record boundary
 
-### Open product-owner decision — marks, GPA and failed-course grades
+Exact GPA/CGPA, marks, letter grades, failed-course results, transcript detail and
+registrar academic standing stay in the authenticated web adviser. This is held by
+several independent layers:
 
-**Not resolved by this change, and it gates production enablement.**
+1. **Intent gate before generation.** `bot.requires_secure_record_surface`
+   recognises explicit Arabic/English personal-record requests and returns the
+   authenticated-web notice without calling the model or creating an adviser turn.
+   General policy questions such as “How is GPA calculated?” remain answerable.
+2. **Forced reduced V2 evidence.** `telegram_safe` forces Student Advisor V2 even
+   if the web rollout flag is false. `get_student_context` and `my_plan_by_term`
+   are not advertised; all remaining tool results are recursively projected to
+   remove exact-result and status-derived fields before the model or deterministic
+   answer logic sees them. Cached/repeated tool responses, forced-answer paths and
+   deterministic renderers consume those projected copies too. If the tool loop
+   needs seeded fallback evidence, it uses projected `my_progress`, not the full
+   student-context fallback.
+3. **Profiled history only.** `core.services.advisor_history.load_profiled_history`
+   loads only questions whose server-owned `AdvisorMessage.generation_profile` is
+   `telegram_safe` and the assistant messages directly paired with those
+   questions. Web turns, legacy turns and withheld Telegram turns are excluded.
+   Only the output boundary can promote a turn to that state; an idempotency key
+   supplied by a web client cannot forge this provenance.
+4. **Output data-loss prevention (DLP) before Telegram delivery.** The persisted
+   assistant text is checked both for personal-result language and against the
+   student's current structured GPA/course-result values. If it still discloses
+   a protected result, the generated answer is withheld; otherwise an atomic
+   conditional update promotes the question from `telegram_unvalidated` to
+   `telegram_safe`. Telegram receives only the authenticated-web notice for a
+   withheld answer.
 
-The adviser answers questions about a student's own record, and an answer may
-legitimately contain a GPA or a grade. Suppressing those *for this channel only*
-is a new **channel axis** through `ToolBoundary.project_tool_result` /
-`project_context` — post-filtering the Arabic prose afterwards is the wrong fix
-and would mangle correct answers.
-
-No such axis was built. The mitigation is that the channel is **off by default**,
-so nothing is disclosed until a product owner turns it on. Decide before enabling:
-
-- may a Telegram answer state a GPA?
-- may it state an individual course mark or a failed-course grade?
-
-If the answer to either is no, that work is a prerequisite, not a follow-up.
+The model result dictionary and raw tool evidence are never used as the outbound
+message. A safe answer is rendered from the persisted `AdvisorMessage`; a withheld
+answer remains visible only through the authorised web conversation. Its student
+turn is durably changed from `telegram_unvalidated` to `telegram_withheld`, so the
+decision survives retries and neither that question nor its assistant answer can
+enter future Telegram generation history. A crash after answer persistence but
+before output validation leaves the turn unvalidated; replay fails closed by
+withholding and marking it, without testing the old answer against a student
+record that may since have changed. Concurrent finalisers use a compare-and-swap
+and respect the first durable decision.
 
 ---
 
@@ -249,8 +307,9 @@ All via environment variables. Nothing is committed.
 | `TELEGRAM_BOT_USERNAME` | `""` | Informational |
 | `TELEGRAM_PUBLIC_BASE_URL` | `""` | e.g. `https://advisor-system-v9zs.onrender.com`. Empty ⇒ `/link` refuses |
 | `TELEGRAM_LINK_TOKEN_TTL_SECONDS` | `900` | Floor 60 s |
+| `TELEGRAM_LINK_AUTH_MAX_AGE_SECONDS` | `600` | Maximum age of the session-local student authentication proof used to approve a link |
+| `TELEGRAM_MAX_PENDING_PER_LINK` | `10` | Hard cap on queued/running work per linked chat; `/unlink` is never throttled |
 | `TELEGRAM_API_TIMEOUT_SECONDS` | `30` | |
-| `TELEGRAM_PRIVACY_URL` | `""` | Optional external notice; the built-in one is always shown |
 | `TELEGRAM_DISPATCH_SYNC` | `false` | Debugging only. Always on under pytest |
 
 ### Local setup
@@ -272,7 +331,13 @@ TELEGRAM_PUBLIC_BASE_URL=https://<your-https-tunnel-or-host>
 Then:
 
 ```bash
-.venv/Scripts/python.exe manage.py migrate telegram_gateway
+.venv/Scripts/python.exe manage.py migrate
+```
+
+Keep the durable queue worker running in a second terminal:
+
+```bash
+.venv/Scripts/python.exe manage.py telegram_advisor_worker --sleep 1 --max-attempts 3
 ```
 
 Telegram requires a public HTTPS endpoint. `localhost` will not work — use a
@@ -300,32 +365,37 @@ unlink - إلغاء الربط · Unlink
 
 ### setWebhook
 
-Registers the endpoint, the secret, and the **only** update type the server
-accepts:
+Use the management command so the bot token stays in the environment instead of
+appearing in shell history, process listings, terminal scrollback, or pasted
+support logs:
 
 ```bash
-curl -X POST "https://api.telegram.org/bot<TELEGRAM_BOT_TOKEN>/setWebhook" \
-  -H "Content-Type: application/json" \
-  -d '{"url":"https://<host>/telegram/webhook/","secret_token":"<TELEGRAM_WEBHOOK_SECRET>","allowed_updates":["message"],"drop_pending_updates":true,"max_connections":20}'
+python manage.py telegram_webhook --set
 ```
 
-Verify (the response must show your URL, `pending_update_count: 0`, and no
-`last_error_message`):
+The command registers `allowed_updates=["message"]`, the configured secret, and
+`max_connections=1` so ingress matches the ordered durable queue. It drops stale
+pending updates by default; use `--keep-pending` only for an intentional recovery.
+Verify after registration (the response must show the expected URL,
+`max_connections: 1`, and no `last_error_message`):
 
 ```bash
-curl "https://api.telegram.org/bot<TELEGRAM_BOT_TOKEN>/getWebhookInfo"
+python manage.py telegram_webhook --info
 ```
 
 `secret_token` is what Telegram echoes in `X-Telegram-Bot-Api-Secret-Token`. It
 must equal `TELEGRAM_WEBHOOK_SECRET` exactly or every update is refused with 403.
+The command validates the HTTPS origin and secret format and never prints the
+credential.
 
 ---
 
 ## 6. Timetable images
 
-When an answer carries a timetable card, the bot sends a **PNG of that card** —
-one image per option, up to four — and then the text. Off by default
-(`TELEGRAM_SEND_TIMETABLE_IMAGES=false`).
+The first durable rollout is **text-only**. It never sends a timetable PNG, even
+if an old deployment accidentally leaves `TELEGRAM_SEND_TIMETABLE_IMAGES=true`.
+The existing signed-card renderer is retained as dormant groundwork, but it is
+not connected to the durable delivery queue.
 
 ### One renderer, not two
 
@@ -400,10 +470,15 @@ Both were silent, and both are now pinned by tests:
 
 | Variable | Default | Notes |
 |---|---|---|
-| `TELEGRAM_SEND_TIMETABLE_IMAGES` | `false` | Its own switch, separate from the channel flag — see §4 |
-| `TELEGRAM_INTERNAL_BASE_URL` | `""` | Override only. Empty means the port is taken from the webhook request, which is always right; the first version hard-coded `8000` and failed silently on every other port |
+| `TELEGRAM_SEND_TIMETABLE_IMAGES` | `false` | Must remain false; durable image delivery is not implemented |
+| `TELEGRAM_INTERNAL_BASE_URL` | `""` | Leave empty for the first rollout. The current override accepts loopback only, which is not the web service from a separate Render worker |
 
 ### Production: Chromium IS installed — and the loopback fetch is the real hazard
+
+> **Not a first-rollout path:** the durable worker is a separate Render service,
+> so its loopback address does not reach `advisor-system`. Keep images off until
+> an authenticated worker-to-web rendering origin is designed and exercised end
+> to end; do not point this setting at the public site as an ad-hoc workaround.
 
 `build.sh` has run `playwright install chromium` since 2026-04-08. An earlier
 draft of this document said the opposite, and that error was worse than useless:
@@ -433,30 +508,61 @@ Both were invisible — a 400 and a 301 each surfaced as an indistinguishable
 python manage.py purge_telegram_tokens --apply
 ```
 
-Deletes spent link tokens and update receipts older than seven days. Dry-run
-without `--apply`. Schedule it beside `purge_planner_drafts` in `render.yaml` —
-receipts grow at one row per message the bot ever receives.
+Deletes spent link tokens and old **terminal** update/job rows. Durable rows age
+from `finished_at`, so time spent waiting or running does not consume their
+retention window. Legacy inline receipts with no finish timestamp use
+`received_at`. It never deletes `QUEUED` or `RUNNING` work. The command is dry-run
+without `--apply`; `render.yaml` runs the applied cleanup every day after
+`purge_planner_drafts`, because retention must not depend on deploy frequency.
 
 ---
 
 ## 7. Migrations
 
-One migration, `telegram_gateway/0001_initial.py`, dependent on
-`core.0061_scope_student_term_section_uniqueness`. It touches **no existing
-table**. Three new tables:
+The final channel spans one core migration and three gateway migrations:
+
+- `telegram_gateway/0001_initial.py` creates the isolated link, token and update-
+  receipt tables. It depends on
+  `core.0061_scope_student_term_section_uniqueness`.
+- `core/0062_advisor_message_generation_profile.py` adds the server-owned
+  `AdvisorMessage.generation_profile` provenance marker. Existing rows receive
+  the empty/unprofiled value and therefore cannot become Telegram-safe history.
+- `telegram_gateway/0002_durable_advisor_jobs.py` extends the original update
+  receipt into the durable queue envelope, adds its foreign keys, finish/lease/
+  delivery fields, FIFO indexes and one-running-job-per-link constraint.
+- `telegram_gateway/0003_account_binding.py` binds a link and an approved token to
+  the exact university user account. Because legacy rows contain no historical
+  account primary key that can be verified safely, its data migration revokes all
+  active legacy links and burns approved-but-unconsumed legacy tokens. Those users
+  must complete the linking ceremony again.
+
+The rollout-compatible fields in `0002` have **database defaults**, not merely
+Python defaults. An old web process that still inserts the original
+`(update_id, received_at)` shape therefore creates an `INLINE` / `SUCCEEDED`
+terminal receipt with empty/zero queue fields; it neither fails on missing columns
+nor accidentally queues historical traffic. Nullable relationship and lease
+fields complete that rolling-deploy compatibility. A direct-SQL regression test
+pins the old insert shape.
+
+The gateway owns:
 
 - `telegram_links` — two partial unique indexes (`uq_tg_active_telegram_user`,
   `uq_tg_active_student`), both `WHERE status='ACTIVE'`
 - `telegram_link_tokens`
 - `telegram_update_receipts`
 
-Deterministic (`makemigrations --check` reports no changes) and reversible
-(`CreateModel` only; asserted by `test_the_migration_is_reversible`).
+Run the unscoped migration command before starting the worker. Targeting only the
+`telegram_gateway` app does **not** guarantee that the independent core `0062`
+branch is applied.
 
 ```bash
-.venv/Scripts/python.exe manage.py migrate telegram_gateway        # apply
-.venv/Scripts/python.exe manage.py migrate telegram_gateway zero   # roll back
+.venv/Scripts/python.exe manage.py migrate                          # apply all four
+.venv/Scripts/python.exe manage.py migrate telegram_gateway zero    # remove channel tables
 ```
+
+The second command leaves the harmless core provenance column in place; it is a
+schema rollback, not operational queue cleanup, and must follow an application
+rollback that no longer runs the gateway.
 
 > Partial unique indexes are enforced by both SQLite and PostgreSQL 16. Index
 > names are global in PostgreSQL — these are prefixed `uq_tg_` and do not collide.
@@ -465,69 +571,118 @@ Deterministic (`makemigrations --check` reports no changes) and reversible
 
 ## 8. Reliability
 
-The webhook **acknowledges and hands off**. An adviser turn is budgeted at up to
-4 tool iterations × 75 s; answering inline would exceed Telegram's patience,
-Telegram would redeliver, and the redelivery would run the model again.
+The webhook separates two acknowledgements. A linked question or ordered command
+is first committed to PostgreSQL; the `update_id` is both its idempotency key and
+durable work row, so a webhook retry cannot enqueue a second model call. For a
+question, the row initially carries a short future `available_at` timestamp. Only
+after that commit does the request attempt the bilingual “Received — preparing…”
+progress message. The job is released to the worker in a `finally` block after
+that attempt, so the final answer cannot overtake the progress message. If the web
+process dies before release, the original bounded timestamp makes the job
+claimable automatically. A lost progress message never suppresses the final
+answer. HTTP 200 follows the durable enqueue and progress-message attempt.
 
-`telegram_gateway/runner.py` reuses the shim
-`core/services/planner_job_runner.py` already uses — a process-local
-`ThreadPoolExecutor` plus `close_old_connections` on both sides.
+Render runs one persistent queue process:
 
-**No Redis, no Celery, no broker was added.** Justification: the project has none,
-adding one for a single background call makes the deployment depend on a service
-nothing else needs, and Render would need a second process type. The durable
-alternative already in the repo (`core/services/timetable_repair_jobs.py`, drained
-by the `repair_worker` management command) is the correct escalation if delivery
-must survive a restart.
+```bash
+python manage.py telegram_advisor_worker --sleep 1 --max-attempts 3
+```
 
-**Limits of this choice:** process-local and not durable. A worker killed mid-turn
-leaves the question `PENDING` and the answer undelivered to the chat. It is not
-lost — the row is in the same table the web adviser reads, so the student sees it
-on the web, and `advisor_turn.is_resumable` treats a turn stranded past
-`STALE_GENERATION` (15 min) as answerable again, so re-asking works instead of
-being refused as a duplicate.
+The worker leases ready rows, processes each link in order, materialises the
+answer/command result before contacting Telegram, and advances a delivery cursor
+after each accepted message. A process exit does not erase work: an expired
+30-minute default lease becomes claimable again. A retry resumes the materialised
+payload at the first unconfirmed message; it does not call the model, create a new
+conversation, or repeat a command side effect. Retryable failures are requeued up
+to the configured attempt limit; terminal failures remain inspectable until the
+retention job removes them. `QUEUED` and `RUNNING` rows are never retention-cleanup
+candidates.
 
-Telegram API timeouts and delivery failures are **absorbed**, never raised:
-`transport.send_text` returns a failure dict. A raise would make the webhook
-non-200 → redelivery → a second model call for an answer already generated.
+A 2xx Bot API response counts as delivery only when its JSON object contains
+`"ok": true`; HTTP 200 with `"ok": false`, invalid JSON, network errors and 5xx
+responses remain failures and are requeued up to the attempt cap. HTTP 429 is
+also retryable and, when Telegram supplies a valid integer
+`parameters.retry_after`, that exact validated delay becomes the job's next
+`available_at`. Other 4xx responses are terminal. Remote descriptions, message
+objects and response bodies are neither logged nor persisted.
 
-**Sends made inside the request use a 3-second deadline**
-(`transport.INLINE_TIMEOUT_SECONDS`), not the 30-second one. Render runs gunicorn
-with two *sync* workers for the entire platform, so a Telegram stall on the
-request path is not a slow reply — it is the site having no worker left. The
-background path keeps the full `TELEGRAM_API_TIMEOUT_SECONDS`, where blocking
-costs nothing but the answer.
+Outbound delivery is intentionally **at least once**, not exactly once. The
+cursor can be advanced only after Telegram accepts a send. If the worker dies in
+the narrow gap after that acceptance but before the database update commits, the
+replacement worker sends that message again. Telegram exposes no idempotency key
+for `sendMessage`; the safe trade is a possible duplicate bubble rather than a
+silently lost answer. In this delivery-only crash window the already-materialised
+generation is not rerun, and `/advisor` does not create a second case.
+
+`/advisor` has one additional transaction boundary. The escalation side effect
+and the durable Telegram reply payload containing its case reference commit in
+the same database transaction under the job lease. The network send happens only
+after commit. A crash can therefore retry the stored reply without creating a
+second escalation—even if a human closes the first case before the retry.
+
+There is no Redis/Celery dependency. PostgreSQL is already the system of record,
+and the lease is safe across deploys and worker restarts. Keep exactly one Render
+worker for predictable ordering and capacity; the database claims remain the
+correctness boundary if a replacement overlaps briefly during a deploy.
+
+`advisor-system` is the single source of truth for the Telegram token/public
+origin/link TTL/API timeout and every selected `LLM_*`, `VIRTUAL_ADVISOR_*`, and
+`STUDENT_ADVISOR_V2_*` value. `render.yaml` copies those values into the worker
+with `fromService`; do not create an independently editable worker copy. Render
+ignores newly added `sync: false` variables when updating an existing Blueprint,
+so populate and verify every declared value on `advisor-system` before that sync.
+Keep `TELEGRAM_SEND_TIMETABLE_IMAGES=false` for the first rollout.
+`STUDENT_ADVISOR_V2_ENABLED` still controls the web rollout; it does not downgrade
+`telegram_safe`, while the V2 iteration/call/token/timeout controls do govern the
+Telegram turn.
+
+The worker validates configuration before its first queue query. It refuses to
+start unless the channel is enabled, the Bot API token is syntactically usable,
+`TELEGRAM_PUBLIC_BASE_URL` is one credential-free HTTPS origin on a Telegram
+webhook port, and the selected production LLM client can be constructed with its
+egress approval enabled. These checks open no socket; provider reachability is
+still covered by the deployment smoke test.
 
 ---
 
 ## 9. Production deployment checklist
 
-- [ ] Product owner has ruled on GPA / marks / failed-course grades (§4)
+- [ ] Exact GPA / marks / failed-course requests return the authenticated-portal boundary message (§4)
 - [ ] `TELEGRAM_WEBHOOK_SECRET` generated with a CSPRNG, ≥ 32 chars, set in Render
       env (`sync: false`), **not** in the repo
 - [ ] `TELEGRAM_BOT_TOKEN` set in Render env, never committed
 - [ ] `TELEGRAM_PUBLIC_BASE_URL` is the real **https://** origin
-- [ ] `manage.py migrate telegram_gateway` applied
-- [ ] `setWebhook` called with `secret_token` and `allowed_updates: ["message"]`
-- [ ] `getWebhookInfo` shows no `last_error_message`
+- [ ] All worker-consumed Telegram/adviser variables are populated on
+      `advisor-system`; the worker receives them through `fromService`
+- [ ] Unscoped `manage.py migrate` applied (`core.0062` and
+      `telegram_gateway.0001`–`0003` all present)
+- [ ] Any pre-`0003` active links have been revoked by the migration and are
+      re-approved through the two-sided ceremony, not manually reactivated
+- [ ] Persistent `advisor-telegram-worker` is running the command in §8
+- [ ] First rollout is text-only: `TELEGRAM_SEND_TIMETABLE_IMAGES=false` and
+      `TELEGRAM_INTERNAL_BASE_URL` left empty
+- [ ] `TELEGRAM_ADVISOR_ENABLED=true` set on `advisor-system`; Blueprint synced so
+      the worker inherits it, and both services restarted
+- [ ] `python manage.py telegram_webhook --set` completed
+- [ ] `python manage.py telegram_webhook --info` shows `max_connections: 1` and no
+      `last_error_message`
 - [ ] BotFather privacy mode **enabled**, join-groups **disabled**
-- [ ] If images are wanted: `TELEGRAM_SEND_TIMETABLE_IMAGES=true`. Chromium is
-      already installed by `build.sh`; the loopback host and the proxy header
-      are handled in code
-- [ ] `purge_telegram_tokens` scheduled
-- [ ] `TELEGRAM_ADVISOR_ENABLED=true` set **last**
+- [ ] Daily Render retention cron includes `purge_telegram_tokens --apply`
 - [ ] Smoke test with a test bot and a test student (§10)
-- [ ] Schedule `linking.purge_expired()` (spent tokens + old receipts)
+- [ ] Only after text delivery is stable, evaluate timetable images as a separate
+      rollout; Chromium and loopback configuration are described in §6
 
 ## 10. Rollback / disable
 
-**Fastest (seconds), no deploy:** set `TELEGRAM_ADVISOR_ENABLED=false` and
-restart. The webhook answers 404 and nothing academic is reachable.
+**Fastest (seconds), no deploy:** set `TELEGRAM_ADVISOR_ENABLED=false` on the web
+service, restart it, and suspend `advisor-telegram-worker`. The webhook then
+answers 404 and no queued answer is delivered. Queued rows remain durable for a
+controlled recovery; do not purge them as part of rollback.
 
 **Stop Telegram calling at all:**
 
 ```bash
-curl -X POST "https://api.telegram.org/bot<TOKEN>/deleteWebhook?drop_pending_updates=true"
+python manage.py telegram_webhook --delete
 ```
 
 **Kill the credential:** BotFather → `/revoke`. Every call with the old token dies.
@@ -535,9 +690,12 @@ curl -X POST "https://api.telegram.org/bot<TOKEN>/deleteWebhook?drop_pending_upd
 **Revoke one student's access:** Django admin → Telegram links → select → *Revoke
 the selected Telegram links*. Or `linking.revoke_links_for_student(student_id)`.
 
-**Full removal:** `migrate telegram_gateway zero`, drop `telegram_gateway` from
-`INSTALLED_APPS` and `config/urls.py`. Nothing in `core` depends on it.
-`core/services/advisor_turn.py` **stays** — the web adviser uses it.
+**Full channel removal:** after rolling back code that starts or routes the
+gateway, run `migrate telegram_gateway zero`, then remove `telegram_gateway` from
+`INSTALLED_APPS` and `config/urls.py`. The shared turn service, the core channel-
+privacy helpers and `AdvisorMessage.generation_profile` remain; removing that core
+provenance field would require its own reviewed migration. In particular,
+`core/services/advisor_turn.py` **stays** because the web adviser uses it.
 
 ---
 
@@ -558,8 +716,9 @@ Use a **separate** BotFather bot and a test student. Never the production bot.
 | 7c | **Forwarded-link drill**: mint a token in bot chat A, open the URL in a browser signed in as the test student, approve, then try `/confirm <code>` from a *different* chat B | Refused. Nothing linked |
 | 8 | Reopen the same URL | "expired or already used" |
 | 9 | Ask `ما المواد المتبقية لي؟` | Brief ack, then a real Arabic answer about **this** student |
-| 10 | Compare with the web adviser | Same student, same conversation thread |
-| 11 | Follow-up (`وماذا عن الفصل القادم؟`) | Understands the reference |
+| 9b | Ask `كم معدلي؟` after linking | No model answer; directs the student to the authenticated web adviser |
+| 10 | Compare with the web adviser | Same student and stored thread; Telegram still exposes only its reduced evidence profile |
+| 11 | Follow-up (`وماذا عن الفصل القادم؟`) | Understands the prior **safe Telegram** answer without ingesting web/withheld turns |
 | 12 | Ask something that produces a long answer | Split into several messages; sources whole and last |
 | 13 | `سجّل لي مادة AI351` | Refused. No registration is performed |
 | 14 | `/new`, then a follow-up | No memory of the previous thread |
@@ -578,80 +737,81 @@ Use a **separate** BotFather bot and a test student. Never the production bot.
 
 ## 12. Known limitations
 
-1. **GPA / marks / failed grades are not channel-suppressed.** Open product-owner
-   decision (§4). Mitigated only by the default-off flag.
-2. **Images have never been exercised on Render.** Chromium is installed and the
-   two loopback defects are fixed, but the whole path has only been proven
-   locally. The first production enablement should be watched, not assumed.
-3. **Background execution is not durable.** A restart mid-turn strands the turn
-   `PENDING` and the chat gets no answer; the student sees it on the web and can
-   re-ask. Durable delivery = migrate to `timetable_repair_jobs`.
-4. **Plain text only.** No bold, no tables, no inline keyboards, no buttons — the
-   deliberate cost of having no escaping bug. Timetable **images** are the one
-   exception, and they are pictures rather than markup.
-5. **Only timetable cards become images.** `renderTimetablePresentation` draws
-   `timetable_proposals` and nothing else, so a graduation scenario still points
-   at the web screen.
-6. **Bidi: the image is correct, the text may not be.** The screenshot inherits
+1. **Timetable images are not part of durable delivery.** The signed renderer is
+   retained but disconnected; the rollout is text-and-authenticated-web-link only.
+2. **Durability still needs a running worker.** A stopped worker does not lose
+   committed work, but students receive no queued answers until it resumes.
+3. **Plain text only.** No bold, no tables, no inline keyboards or buttons — the
+   deliberate cost of having no escaping bug.
+4. **Bidi: the dormant card image is correct, the text may not be.** The screenshot inherits
    the template-layer fix from #66 — «09:00-10:15» renders the right way round,
    verified. The plain-text answer is a different matter: Telegram applies its own
    bidi to message text, and no Telegram-specific isolation pass was written.
    Check a text answer containing a time range on a real client.
-7. **English sentences inside the Arabic card reverse their punctuation** —
+5. **English sentences inside the Arabic card reverse their punctuation** —
    «.the registration portal». Pre-existing on the web card, not caused by the
    images: at `page-student-advisor.js:1240-1245` the course *code* is isolated
    with `ltrNode` while the course *name* and the English `reason` beside it are
    not. Not fixed here. → the bidi topic file.
-8. **One conversation per chat.** No thread switching from Telegram; `/new` is the
+6. **One conversation per chat.** No thread switching from Telegram; `/new` is the
    only control. The web sidebar remains the full interface.
-9. **`/advisor` escalates the most recent answered turn only.**
-10. **No outbound retry.** A failed send is not retried; the answer is stored and
-    visible on the web.
-11. **No delivery of adviser replies to escalations.** A resolved case is not
+7. **`/advisor` escalates the most recent answered turn only.**
+8. **Outbound retry is bounded.** Transient failures and 429 responses are retried;
+   after three claims a failing job becomes terminal. Any generated answer remains
+   visible on the web for investigation.
+9. **Outbound messages are at least once.** A crash after Telegram accepts a
+   message but before its cursor update can produce one duplicate bubble on retry.
+   The model and durable command side effects are not repeated.
+10. **No delivery of adviser replies to escalations.** A resolved case is not
     pushed to Telegram; the student checks the platform.
-12. **Purging is a command, not a schedule.** `purge_telegram_tokens --apply`
-    exists; no `render.yaml` cron entry is created by this change. Receipts grow at
-    one row per message the bot ever receives.
-13. **The `csrf_exempt` webhook is the repo's second.** It reads no session and no
+11. **Terminal-job history is retained for seven days after completion.** The
+    daily Render cron ages durable rows from `finished_at` and legacy inline rows
+    from `received_at`; export separate audit data before then if required.
+12. **The `csrf_exempt` webhook is the repo's second.** It reads no session and no
     cookie, but it is a permanent exception worth re-reviewing if it ever grows.
 
 ---
 
-## 13. Files
+## 13. Implementation map
 
-**New**
+The implementation is spread deliberately across the shared adviser boundary and
+the transport-specific gateway:
 
-```
-core/services/advisor_turn.py          the channel-neutral turn (extracted)
-telegram_gateway/                      models, linking, bot, transport,
-                                       formatting, messages, runner, views,
-                                       urls, admin, migrations/0001_initial.py
-telegram_gateway/templates/…           link_confirm, link_result, link_manage
-tests/test_telegram_gateway.py         134 tests
-docs/TELEGRAM-ADVISOR-CHANNEL.md       this file
-```
+| File / area | Responsibility |
+|---|---|
+| `core/services/advisor_turn.py` | Channel-neutral turn ordering, persistence, idempotency and profiled-history selection |
+| `core/services/advisor_channel_privacy.py` | Telegram-safe schemas, evidence projection, safe fallback, system rules and history filter |
+| `core/services/advisor_history.py` | Visible and server-profiled conversation-history loaders |
+| `core/services/student_advisor_v2.py` | Forced V2 selection for `telegram_safe` and projection hooks around tools/fallback |
+| `core/models.py`, `core/migrations/0062_…` | Server-owned `AdvisorMessage.generation_profile` provenance |
+| `telegram_gateway/bot.py` | Parsing, command meaning, intent gate, output DLP and durable executor |
+| `telegram_gateway/jobs.py` | Admission, FIFO leases, result materialisation, delivery cursor, retry and recovery |
+| `telegram_gateway/transport.py` | Sanitised Bot API client and `ok`/HTTP/429 interpretation |
+| `telegram_gateway/linking.py`, `models.py` | Two-sided linking, exact account revalidation, retention query and channel data model |
+| `telegram_gateway/views.py` | Webhook authentication, durable enqueue and ordered progress acknowledgement |
+| `telegram_gateway/configuration.py`, `management/commands/` | Startup/webhook validation, persistent worker and housekeeping commands |
+| `telegram_gateway/migrations/0001_…`–`0003_…` | Channel tables, durable queue rollout and exact-account migration |
+| `telegram_gateway/templates/`, `urls.py`, `admin.py` | Browser ceremony, routing and restricted administration |
+| `render.yaml` | Web/worker environment inheritance and scheduled retention |
+
+Regression coverage lives across `tests/test_telegram_gateway.py`,
+`test_telegram_jobs.py`, `test_telegram_transport.py`,
+`test_telegram_account_lifecycle.py`, `test_advisor_channel_privacy.py`, and the
+shared adviser conversation/escalation suites. Counts are intentionally omitted:
+the suite grows as review findings become executable boundaries.
 
 ### The review that changed the design
 
-A four-lens adversarial review (auth, webhook/transport, extraction fidelity,
-mutation testing) ran against the first implementation. It found one **blocker** —
-the link ceremony had no channel binding (§2) — plus an unauthenticated 500 on a
-non-ASCII secret header, a revocation that did not stop an in-flight answer, a
-30-second blocking send on a 2-worker deployment, a receipt that burned an
-`update_id` on crash, and a stale `?next=` inheritable across sign-ins on a shared
-machine. All are fixed above. The extraction lens confirmed **no web behaviour
-changed**.
+A four-lens adversarial review (authentication, webhook/transport, extraction
+fidelity and mutation testing) ran against the first implementation. It found the
+channel-binding blocker described in §2, plus an unauthenticated non-ASCII-header
+500, mid-generation revocation leakage, request-thread blocking, crash-burned
+receipts and a stale post-login redirect. Later production reviews added the
+durable queue, exact-account binding, forced reduced evidence profile, output DLP,
+progress ordering, sanitised Bot API retry semantics and atomic `/advisor`
+materialisation described above.
 
-Every fix carries a test that was verified by mutation: the fix is broken, the
-suite is run, and the suite goes red. 16/16.
-
-**Modified**
-
-```
-core/advisor_conversation_views.py     now a thin adapter over advisor_turn
-core/student_auth_views.py             validated redirect-after-login
-config/settings.py                     INSTALLED_APPS + TELEGRAM_* block
-config/urls.py                         path("telegram/", …)
-tests/test_advisor_conversations.py    two white-box helpers moved modules
-tests/test_advisor_escalation.py       one patch target moved modules
-```
+Each material boundary has a focused regression test, with mutation checks used
+for the original review findings. The shared web application-service ordering
+remains in `advisor_turn`; Telegram-specific trust decisions stay at explicit
+profile and transport boundaries.

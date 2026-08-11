@@ -27,21 +27,32 @@ from __future__ import annotations
 import hmac
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from django.conf import settings
+from django.contrib.auth import logout
 from django.http import HttpRequest, HttpResponse, JsonResponse
 from django.shortcuts import redirect, render
+from django.views.decorators.cache import never_cache
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_http_methods, require_POST
 
-from . import bot, linking, messages
+from core.services.advisor_principal import AdvisorPrincipal, IdentityError
+from core.services.rate_limit import TELEGRAM_COMMAND, TELEGRAM_LINK
+from core.services.student_otp import has_recent_student_authentication
+
+from . import bot, jobs, linking, messages
 from .models import TelegramUpdateReceipt
 from .transport import INLINE_TIMEOUT_SECONDS, send_text
 
 logger = logging.getLogger(__name__)
 
 _SECRET_HEADER = "HTTP_X_TELEGRAM_BOT_API_SECRET_TOKEN"
+_ORDERED_COMMANDS = frozenset({"/new", "/advisor"})
+# The worker is held behind this timestamp until the webhook has attempted the
+# progress acknowledgement. A process crash still releases the durable job after
+# a bounded delay instead of leaving it stranded.
+_ACK_ACTIVATION_FALLBACK_SECONDS = max(10.0, INLINE_TIMEOUT_SECONDS + 2.0)
 
 
 def _secret_ok(request: HttpRequest) -> bool:
@@ -107,33 +118,18 @@ def telegram_webhook_view(request: HttpRequest) -> JsonResponse:
         # a reply into a group would itself be the disclosure.
         return JsonResponse({"ok": True, "ignored": "unsupported"}, status=200)
 
-    if not bot.claim_update(inbound.update_id):
-        # Already handled. Telegram is retrying a delivery whose response it never
-        # saw; the work is done and must not be done again.
-        return JsonResponse({"ok": True, "duplicate": True}, status=200)
-
-    try:
-        # The port THIS process is listening on, carried through so the card
-        # renderer can fetch over localhost. Hard-coding it produced a silent
-        # failure on every server not running on 8000.
-        return _dispatch_inbound(
-            inbound, server_port=str(request.META.get("SERVER_PORT", "") or "")
-        )
-    except Exception:
-        # The receipt is claimed BEFORE the work so a concurrent redelivery cannot
-        # race it. That makes it a promise the work happened — so if the work
-        # raises, the promise has to be withdrawn, or this question can never be
-        # asked again under this update id. Safe to release: the partial unique
-        # index on (conversation, idempotency_key) is the second line of defence
-        # against a double answer.
-        TelegramUpdateReceipt.objects.filter(update_id=inbound.update_id).delete()
-        raise
+    # Durable requests claim their update id while they are enqueued below. Inline
+    # requests keep the small terminal receipt used by the original gateway.
+    return _dispatch_inbound(inbound)
 
 
-def _dispatch_inbound(inbound: bot.InboundMessage, *, server_port: str = "") -> JsonResponse:
-    """Everything after the update has been authenticated and claimed."""
+def _dispatch_inbound(inbound: bot.InboundMessage) -> JsonResponse:
+    """Claim inline updates or durably enqueue ordered linked work."""
     if not inbound.text.strip():
         # A photo, voice note, contact, location or sticker. Nothing was fetched.
+        refused = _admit_inline(inbound, budget_name=TELEGRAM_COMMAND)
+        if refused is not None:
+            return refused
         send_text(
             chat_id=inbound.chat_id,
             text=messages.UNSUPPORTED_CONTENT,
@@ -143,30 +139,133 @@ def _dispatch_inbound(inbound: bot.InboundMessage, *, server_port: str = "") -> 
 
     link = linking.active_link_for_chat(inbound.telegram_user_id)
 
-    if inbound.command or link is None:
-        # Commands and every unlinked message resolve without the model, so they
-        # are answered inline. An unlinked sender never reaches the branch below.
+    # Questions, /new and /advisor all touch ordered conversation state. They are
+    # persisted before acknowledgement, and the worker admits only the lowest
+    # active update id for each link.
+    if link is not None and (not inbound.command or inbound.command in _ORDERED_COMMANDS):
+        kind = (
+            TelegramUpdateReceipt.KIND_COMMAND
+            if inbound.command
+            else TelegramUpdateReceipt.KIND_QUESTION
+        )
+        try:
+            available_at = (
+                _now() + timedelta(seconds=_ACK_ACTIVATION_FALLBACK_SECONDS)
+                if kind == TelegramUpdateReceipt.KIND_QUESTION
+                else None
+            )
+            job, created = jobs.enqueue_question_or_command(
+                update_id=inbound.update_id,
+                link=link,
+                kind=kind,
+                payload_text=inbound.text,
+                available_at=available_at,
+            )
+        except (jobs.AdmissionLimited, jobs.LinkUnavailable, jobs.QueueFull) as exc:
+            reply = (
+                messages.NEEDS_LINK
+                if isinstance(exc, jobs.LinkUnavailable)
+                else messages.rate_limited(getattr(exc, "retry_after", 60))
+            )
+            return _refuse_once(inbound, text=reply)
+        if not created:
+            return JsonResponse({"ok": True, "duplicate": True}, status=200)
+
+        link.last_seen_at = _now()
+        link.save(update_fields=["last_seen_at"])
+
+        if kind == TelegramUpdateReceipt.KIND_QUESTION:
+            # A progress acknowledgement is sent only after the job is durable.
+            # While it is in flight, ``available_at`` keeps an external worker
+            # from overtaking it with the final answer. Always release after the
+            # attempt: send_text reports failure instead of raising, and the final
+            # answer is still useful when Telegram lost this courtesy message.
+            try:
+                send_text(
+                    chat_id=inbound.chat_id,
+                    text=messages.WORKING,
+                    timeout=INLINE_TIMEOUT_SECONDS,
+                )
+            finally:
+                jobs.make_job_available(job.update_id)
+
+        from .runner import dispatch_sync
+
+        if dispatch_sync():
+            jobs.run_job(job.update_id, worker_id="telegram-inline-test")
+        return JsonResponse({"ok": True, "queued": True}, status=200)
+
+    # Public/unknown commands, /unlink and every unlinked message are cheap and
+    # finish inline. An exception withdraws only this terminal receipt; durable
+    # jobs above are never erased after acknowledgement.
+    # A linked `/unlink` is the emergency revocation path and bypasses admission.
+    # Once it succeeds the chat is unlinked, so later `/unlink` spam is ordinary
+    # unlinked command traffic and is bounded like everything else.
+    if inbound.command == "/unlink" and link is not None:
+        if not bot.claim_update(inbound.update_id):
+            return JsonResponse({"ok": True, "duplicate": True}, status=200)
+    else:
+        budget = TELEGRAM_LINK if inbound.command in {"/link", "/confirm"} else TELEGRAM_COMMAND
+        refused = _admit_inline(inbound, budget_name=budget)
+        if refused is not None:
+            return refused
+    try:
         for text in bot.handle_command(inbound, link):
             send_text(chat_id=inbound.chat_id, text=text, timeout=INLINE_TIMEOUT_SECONDS)
+        if inbound.command == "/unlink":
+            jobs.cancel_jobs_for_revoked_links()
         return JsonResponse({"ok": True}, status=200)
+    except Exception:
+        TelegramUpdateReceipt.objects.filter(
+            update_id=inbound.update_id,
+            kind=TelegramUpdateReceipt.KIND_INLINE,
+        ).delete()
+        raise
 
-    link.last_seen_at = _now()
-    link.save(update_fields=["last_seen_at"])
 
-    # Acknowledged, not answered. The wording matters: a progress message that
-    # reads as a result is a claim the system has not earned yet.
-    send_text(chat_id=inbound.chat_id, text=messages.WORKING, timeout=INLINE_TIMEOUT_SECONDS)
+def _admit_inline(inbound: bot.InboundMessage, *, budget_name: str) -> JsonResponse | None:
+    """Claim one cheap update only after its persistent admission succeeds."""
 
-    from .runner import dispatch
+    if TelegramUpdateReceipt.objects.filter(update_id=inbound.update_id).exists():
+        return JsonResponse({"ok": True, "duplicate": True}, status=200)
 
-    dispatch(
-        bot.answer_question,
-        link_id=link.pk,
-        update_id=inbound.update_id,
-        question=inbound.text,
-        server_port=server_port,
+    from core.services.rate_limit import consume as spend_budget
+    from core.services.rate_limit import release as refund_budget
+
+    decision = spend_budget(budget_name, int(inbound.telegram_user_id))
+    if not decision.allowed:
+        return _refuse_once(
+            inbound,
+            text=messages.rate_limited(decision.retry_after),
+        )
+    if bot.claim_update(inbound.update_id):
+        return None
+
+    # A concurrent delivery won the receipt after our optimistic existence check.
+    # It owns the work, so this request must not consume another allowance unit.
+    refund_budget(budget_name, int(inbound.telegram_user_id))
+    return JsonResponse({"ok": True, "duplicate": True}, status=200)
+
+
+def _refuse_once(inbound: bot.InboundMessage, *, text: str) -> JsonResponse:
+    """Explain overload once per chat/window, then acknowledge it silently."""
+
+    from core.services.rate_limit import TELEGRAM_REFUSAL_NOTICE
+    from core.services.rate_limit import consume as spend_budget
+    from core.services.rate_limit import release as refund_budget
+
+    notice = spend_budget(TELEGRAM_REFUSAL_NOTICE, int(inbound.telegram_user_id))
+    notified = False
+    if notice.allowed:
+        if not bot.claim_update(inbound.update_id):
+            refund_budget(TELEGRAM_REFUSAL_NOTICE, int(inbound.telegram_user_id))
+            return JsonResponse({"ok": True, "duplicate": True}, status=200)
+        send_text(chat_id=inbound.chat_id, text=text, timeout=INLINE_TIMEOUT_SECONDS)
+        notified = True
+    return JsonResponse(
+        {"ok": True, "admitted": False, "notified": notified},
+        status=200,
     )
-    return JsonResponse({"ok": True}, status=200)
 
 
 def _now() -> datetime:
@@ -178,6 +277,7 @@ def _now() -> datetime:
 # ── linking: the browser half ────────────────────────────────────
 
 
+@never_cache
 @require_GET
 def link_start_view(request: HttpRequest, token: str) -> HttpResponse:
     """The page the student opens from the bot.
@@ -207,13 +307,36 @@ def link_start_view(request: HttpRequest, token: str) -> HttpResponse:
         destination = reverse("telegram_link_start", args=[token])
         return redirect(f"{reverse('student_login')}?next={destination}")
 
+    try:
+        principal = AdvisorPrincipal.for_student(request)
+    except IdentityError:
+        return render(
+            request,
+            "telegram_gateway/link_result.html",
+            {"state": "not_a_student"},
+            status=403,
+        )
+    if not has_recent_student_authentication(request):
+        return render(
+            request,
+            "telegram_gateway/link_result.html",
+            {"state": "reauth", "token": token},
+            status=403,
+        )
+
+    student_suffix = str(principal.student_id)[-4:]
     return render(
         request,
         "telegram_gateway/link_confirm.html",
-        {"token": token, "privacy_text": messages.PRIVACY},
+        {
+            "token": token,
+            "privacy_text": messages.PRIVACY,
+            "student_suffix": student_suffix,
+        },
     )
 
 
+@never_cache
 @require_POST
 def link_confirm_view(request: HttpRequest, token: str) -> HttpResponse:
     """Approve the invitation, and hand back the code that completes it.
@@ -238,6 +361,14 @@ def link_confirm_view(request: HttpRequest, token: str) -> HttpResponse:
     if not request.user.is_authenticated:
         return render(request, "telegram_gateway/link_result.html", {"state": "signin"}, status=403)
 
+    if not has_recent_student_authentication(request):
+        return render(
+            request,
+            "telegram_gateway/link_result.html",
+            {"state": "reauth", "token": token},
+            status=403,
+        )
+
     try:
         code = linking.approve_link(request=request, raw_token=token)
     except linking.LinkError as exc:
@@ -259,6 +390,33 @@ def link_confirm_view(request: HttpRequest, token: str) -> HttpResponse:
         "telegram_gateway/link_result.html",
         {"state": "approved", "confirm_code": code},
     )
+
+
+@never_cache
+@require_POST
+def link_reauthenticate_view(request: HttpRequest, token: str) -> HttpResponse:
+    """End a stale browser session before the account-linking decision.
+
+    Linking is an authentication event, not merely a page reached while some old
+    session cookie happens to exist. The POST and CSRF token prevent an external
+    page from silently signing a student out; the ordinary OTP login then records
+    a fresh session-local authentication timestamp and returns to this token.
+    """
+
+    if not bot.is_enabled():
+        return render(
+            request, "telegram_gateway/link_result.html", {"state": "disabled"}, status=404
+        )
+    if linking.peek_token(token) is None:
+        return render(
+            request, "telegram_gateway/link_result.html", {"state": "invalid"}, status=404
+        )
+
+    logout(request)
+    from django.urls import reverse
+
+    destination = reverse("telegram_link_start", args=[token])
+    return redirect(f"{reverse('student_login')}?next={destination}")
 
 
 @require_GET
@@ -365,6 +523,7 @@ def link_manage_view(request: HttpRequest) -> HttpResponse:
 __all__ = [
     "link_confirm_view",
     "link_manage_view",
+    "link_reauthenticate_view",
     "link_start_view",
     "telegram_webhook_view",
 ]

@@ -247,28 +247,33 @@ TELEGRAM_BOT_USERNAME = os.getenv("TELEGRAM_BOT_USERNAME", "")
 # it `/link` fails closed rather than sending a token pointing nowhere.
 TELEGRAM_PUBLIC_BASE_URL = os.getenv("TELEGRAM_PUBLIC_BASE_URL", "")
 TELEGRAM_LINK_TOKEN_TTL_SECONDS = int(os.getenv("TELEGRAM_LINK_TOKEN_TTL_SECONDS", "900"))
+# Linking is an account-security decision, so an old authenticated browser session
+# is not enough. The successful student login timestamp is stored in that exact
+# session and must still be within this window when the invitation is approved.
+TELEGRAM_LINK_AUTH_MAX_AGE_SECONDS = int(os.getenv("TELEGRAM_LINK_AUTH_MAX_AGE_SECONDS", "600"))
+# Bound the amount of normalized question text one chat can leave waiting in the
+# durable queue. The generation rate limit still governs model calls; this cap
+# protects storage when messages arrive faster than the worker can drain them.
+TELEGRAM_MAX_PENDING_PER_LINK = int(os.getenv("TELEGRAM_MAX_PENDING_PER_LINK", "10"))
 TELEGRAM_API_TIMEOUT_SECONDS = float(os.getenv("TELEGRAM_API_TIMEOUT_SECONDS", "30"))
-# Shown by /privacy when set; the built-in notice is used either way.
-TELEGRAM_PRIVACY_URL = os.getenv("TELEGRAM_PRIVACY_URL", "")
-# Run the adviser turn inline instead of on the background thread. Debugging only —
-# a turn can take ~90 s and Telegram redelivers anything it does not get a prompt
-# 200 for. Always on under pytest regardless of this value.
+# Drain a newly committed queue job in the webhook process. Debugging only — a
+# turn can take ~90 s and Telegram redelivers anything it does not get a prompt
+# 200 for. Production must leave this false and run telegram_advisor_worker.
+# Pytest drains inline regardless of this value.
 TELEGRAM_DISPATCH_SYNC = os.getenv("TELEGRAM_DISPATCH_SYNC", "false").lower() == "true"
-# Send a PNG of the proposed timetable alongside the answer. OFF by default and
-# separate from TELEGRAM_ADVISOR_ENABLED on purpose: a week grid is a compact
-# record of where a student is and when, Telegram stores it under a durable
-# file_id, and it forwards far more easily than prose. Enabling it also makes
-# the /privacy notice incomplete until that text is updated.
-# Requires Chromium: add `playwright install chromium` to the Render build.
+# Legacy direct-handler image switch. The first durable-worker rollout is
+# deliberately text-only regardless of this value: a week grid is a compact
+# record of where a student is and when, and Telegram retains it as a file. Keep
+# false until image generation itself has a durable, privacy-reviewed delivery
+# design. The dormant direct-handler renderer remains covered by tests.
 TELEGRAM_SEND_TIMETABLE_IMAGES = (
     os.getenv("TELEGRAM_SEND_TIMETABLE_IMAGES", "false").lower() == "true"
 )
 # Where the headless browser reaches THIS process. Local, never the public
 # hostname: the browser runs beside the server, and routing a signed card URL
 # out through the internet and back would be pointless exposure.
-# Empty by default: the port is taken from the webhook request that triggered
-# the render, which is always right. Set this only where the request port is
-# not where the app is reachable (a unix socket, a container port mapping).
+# Used only by the dormant direct-handler image renderer. A separate queue worker
+# cannot reach the web process through its own loopback interface.
 TELEGRAM_INTERNAL_BASE_URL = os.getenv("TELEGRAM_INTERNAL_BASE_URL", "")
 
 # The card renderer fetches over loopback, so the loopback Host must be allowed —

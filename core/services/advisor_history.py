@@ -93,3 +93,55 @@ def load_visible_history(
     # The most recent window, still in chronological order — a history that ends
     # mid-exchange reads as if the adviser ignored the last thing said.
     return turns[-max_messages:]
+
+
+def load_profiled_history(
+    conversation: Any,
+    *,
+    channel_profile: str,
+    exclude_message_id: Any = None,
+    max_messages: int = MAX_HISTORY_MESSAGES,
+) -> list[dict[str, str]]:
+    """History only from turns created under one explicit channel profile.
+
+    A shared conversation may also contain web answers or older channel answers
+    produced before a stricter data boundary existed. The student-message
+    server-owned generation profile is the durable provenance marker; assistants
+    are admitted only when they directly answer one of those marked questions.
+    """
+
+    profile = str(channel_profile or "")
+    if not profile:
+        return []
+
+    settled = (
+        conversation.messages.filter(status__in=_SETTLED)
+        .exclude(pk=exclude_message_id)
+        .select_related("in_reply_to")
+        .order_by("sequence", "created_at")
+    )
+    allowed_questions: set[Any] = set()
+    turns: list[dict[str, str]] = []
+    for message in settled:
+        text = str(message.content or "").strip()
+        if not text:
+            continue
+        if message.role == AdvisorMessage.ROLE_STUDENT:
+            if str(message.generation_profile or "") != profile:
+                continue
+            allowed_questions.add(message.pk)
+            turns.append({"role": "user", "content": text, "channel_profile": profile})
+        elif (
+            message.role == AdvisorMessage.ROLE_ASSISTANT
+            and message.in_reply_to_id in allowed_questions
+        ):
+            text = _POLICY_MARKER.sub("", text).strip()
+            if text:
+                turns.append(
+                    {
+                        "role": "assistant",
+                        "content": text,
+                        "channel_profile": profile,
+                    }
+                )
+    return turns[-max_messages:]
