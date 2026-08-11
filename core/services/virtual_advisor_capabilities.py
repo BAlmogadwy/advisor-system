@@ -3429,6 +3429,8 @@ def build_default_registry() -> AdvisorCapabilityRegistry:
                 # confirmed workflow; what is unavailable is doing it from chat.
                 "If the student asks to DISCARD their current sections and rebuild "
                 "the week from scratch, call this with keep_current_sections=false. "
+                "Chat always keeps the student's current sections; it cannot confirm "
+                "their removal itself. "
                 "Do not answer that request yourself and do not tell the student it "
                 "is impossible — it is not. The server will route them to the "
                 "planner, where the rebuild is confirmed. Saying they confirm it to "
