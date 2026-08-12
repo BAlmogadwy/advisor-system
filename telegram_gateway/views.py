@@ -436,13 +436,19 @@ def card_view(request: HttpRequest, token: str) -> HttpResponse:
     from core.models import AdvisorMessage
     from core.services.advisor_presentations import normalise_presentation
 
-    from .cards import unsign_card
+    from .cards import unsign_card, verify_renderer_request
     from .rendering import images_enabled
 
     # Gated on the IMAGE flag, not just the channel flag. The endpoint exists only
     # to be screenshotted; with images off nothing mints a token for it, so leaving
     # it routed is surface for no purpose.
     if not bot.is_enabled() or not images_enabled():
+        return HttpResponse(status=404)
+
+    # A signed URL is necessary but not sufficient. The browser also carries a
+    # separate short-lived proof in a header that access logs do not record, so a
+    # URL copied from any delayed/error log is useless on the public web service.
+    if not verify_renderer_request(request.headers.get("X-Telegram-Card-Renderer", "")):
         return HttpResponse(status=404)
 
     payload = unsign_card(token)
@@ -479,6 +485,56 @@ def card_view(request: HttpRequest, token: str) -> HttpResponse:
     # short-lived signature, not a page.
     response["Cache-Control"] = "no-store, private"
     response["X-Robots-Tag"] = "noindex, nofollow"
+    response["Referrer-Policy"] = "no-referrer"
+    # The shared stylesheet imports a web font on ordinary screens. A private
+    # render must remain entirely on the worker-local origin: no third-party
+    # request should learn that a card was rendered, even as an origin-only
+    # referrer. The screenshot uses the platform fallback font when that import
+    # is blocked.
+    response["Content-Security-Policy"] = (
+        "default-src 'none'; "
+        "script-src 'self' 'unsafe-inline'; "
+        "style-src 'self' 'unsafe-inline'; "
+        "img-src 'self' data:; "
+        "font-src 'self' data:; "
+        "connect-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+    )
+    return response
+
+
+@require_GET
+def card_asset_view(request: HttpRequest, asset_path: str) -> HttpResponse:
+    """Serve only the source assets used by the authenticated card renderer.
+
+    This avoids coupling worker screenshots to a possibly stale collected-static
+    manifest. It deliberately is not a general static route: both the separate
+    renderer proof and an exact filename allowlist are required.
+    """
+
+    from .card_assets import CARD_ASSET_CONTENT_TYPES, resolve_card_asset
+    from .cards import verify_renderer_request
+    from .rendering import images_enabled
+
+    if not bot.is_enabled() or not images_enabled():
+        return HttpResponse(status=404)
+    if not verify_renderer_request(request.headers.get("X-Telegram-Card-Renderer", "")):
+        return HttpResponse(status=404)
+
+    normalised = str(asset_path or "").replace("\\", "/").lstrip("/")
+    resolved = resolve_card_asset(normalised)
+    if resolved is None:
+        return HttpResponse(status=404)
+
+    try:
+        body = resolved.read_bytes()
+    except OSError:
+        logger.warning("telegram: an allowlisted card asset could not be read")
+        return HttpResponse(status=404)
+
+    response = HttpResponse(body, content_type=CARD_ASSET_CONTENT_TYPES[normalised])
+    response["Cache-Control"] = "no-store, private"
+    response["X-Content-Type-Options"] = "nosniff"
+    response["Referrer-Policy"] = "no-referrer"
     return response
 
 
@@ -521,6 +577,8 @@ def link_manage_view(request: HttpRequest) -> HttpResponse:
 
 
 __all__ = [
+    "card_asset_view",
+    "card_view",
     "link_confirm_view",
     "link_manage_view",
     "link_reauthenticate_view",

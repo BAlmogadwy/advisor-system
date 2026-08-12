@@ -144,8 +144,9 @@ def contains_personal_record_output(
         return False
 
     student = Student.objects.filter(student_id=student_id).values("gpa").first()
-    if student and student.get("gpa") is not None:
-        expected_gpa = float(student["gpa"])
+    stored_gpa = student.get("gpa") if student else None
+    if stored_gpa is not None:
+        expected_gpa = float(stored_gpa)
         labelled_gpas = re.findall(
             r"(?:\b(?:gpa|cgpa)\b(?:\s+on\s+file)?\s*(?::|=|\-|is)\s*"
             r"([0-5](?:[.,]\d{1,4})?)|"
@@ -640,8 +641,20 @@ def execute_durable_job(job: TelegramUpdateReceipt) -> dict[str, Any]:
     ):
         rendered = [messages.sensitive_record_web_only(_web_url(conversation.pk))]
         result_code = "secure_output_withheld"
+        output_withheld = True
+    else:
+        output_withheld = False
     return {
         "messages": rendered,
+        "delivery_payload": {
+            "items": _durable_delivery_items(
+                result,
+                rendered=rendered,
+                output_withheld=output_withheld,
+                student_id=principal.student_id,
+                question=question,
+            ),
+        },
         "result_code": result_code,
         "assistant_message_id": assistant.pk if assistant is not None else None,
         "conversation_id": conversation.pk,
@@ -797,7 +810,13 @@ def answer_question(*, link_id: Any, update_id: int, question: str, server_port:
     # picture and never the answer.
     try:
         if not output_withheld:
-            _send_card_image(result, chat_id, server_port=server_port)
+            _send_card_image(
+                result,
+                chat_id,
+                server_port=server_port,
+                student_id=principal.student_id,
+                question=question,
+            )
     except Exception:  # noqa: BLE001
         # The picture is a courtesy; the answer is the product. Without this guard
         # a raise here left the student with the acknowledgement and then silence
@@ -877,10 +896,15 @@ def _finalize_telegram_output(
 
 
 def _send_card_image(
-    result: advisor_turn.TurnResult, chat_id: int, *, server_port: str = ""
+    result: advisor_turn.TurnResult,
+    chat_id: int,
+    *,
+    server_port: str = "",
+    student_id: int | None = None,
+    question: str = "",
 ) -> None:
     """Deliver a picture of the timetable card, or quietly deliver nothing."""
-    from core.services.advisor_presentations import KIND_TIMETABLE
+    from core.services.advisor_presentations import KIND_TIMETABLE, normalise_presentation
 
     from .rendering import images_enabled, local_base_url, render_cards
 
@@ -891,9 +915,16 @@ def _send_card_image(
     # returns null for anything else, so without this a graduation answer would
     # start a browser, wait for a page that renders nothing, and log a failure —
     # ~2 seconds and a warning for a picture that was never going to exist.
-    if str(assistant.presentation.get("kind") or "") != KIND_TIMETABLE:
+    presentation = normalise_presentation(assistant.presentation)
+    if not presentation or presentation.get("kind") != KIND_TIMETABLE:
         return
-    alternatives = assistant.presentation.get("alternatives") or []
+    if _presentation_contains_personal_record(
+        presentation,
+        student_id=student_id,
+        question=question,
+    ):
+        return
+    alternatives = presentation.get("alternatives") or []
     count = min(len(alternatives), MAX_CARD_IMAGES) if alternatives else 1
 
     # One browser for all of them. A Chromium launch costs a second or two, and
@@ -911,6 +942,120 @@ def _send_card_image(
             # the link to the web screen, which is what shipped before images.
             return
         send_photo(chat_id=chat_id, png=png)
+
+
+def _durable_delivery_items(
+    result: advisor_turn.TurnResult,
+    *,
+    rendered: list[str],
+    output_withheld: bool,
+    student_id: int | None,
+    question: str,
+) -> list[dict[str, Any]]:
+    """Describe photos and text without exporting or persisting any PNG bytes."""
+
+    from core.services.advisor_presentations import (
+        KIND_TIMETABLE,
+        normalise_presentation,
+    )
+
+    from . import jobs
+    from .rendering import images_enabled
+
+    items: list[dict[str, Any]] = []
+    assistant = result.assistant_message
+    if not output_withheld and assistant is not None and images_enabled():
+        presentation = normalise_presentation(assistant.presentation)
+        if (
+            presentation
+            and presentation.get("kind") == KIND_TIMETABLE
+            and not _presentation_contains_personal_record(
+                presentation,
+                student_id=student_id,
+                question=question,
+            )
+        ):
+            alternatives = presentation.get("alternatives") or []
+            option_indexes: list[int | None] = (
+                list(range(min(len(alternatives), MAX_CARD_IMAGES))) if alternatives else [None]
+            )
+            items.extend(
+                {
+                    "kind": jobs.DELIVERY_KIND_TIMETABLE_PHOTO,
+                    "option_index": option_index,
+                }
+                for option_index in option_indexes
+            )
+    items.extend(
+        {"kind": jobs.DELIVERY_KIND_TEXT, "text": str(text)} for text in rendered if str(text)
+    )
+    return items
+
+
+def _presentation_contains_personal_record(
+    presentation: dict[str, Any],
+    *,
+    student_id: int | None,
+    question: str,
+) -> bool:
+    """Apply Telegram output DLP to every natural-language field in a card.
+
+    Structured timetable facts such as days, times, credits and section labels
+    are intentionally allowed by the channel policy. Natural-language names and
+    failure/unplaced reasons can originate in older stored rows or tool output,
+    so they cross the same personal-record boundary as assistant prose before a
+    screenshot recipe is created.
+    """
+
+    visible: list[str] = []
+    contextual_rows: list[str] = []
+
+    def add_course(row: Any, *, include_reason: bool = False) -> None:
+        if not isinstance(row, dict):
+            return
+        fields = [
+            str(value)
+            for value in (row.get("course_code"), row.get("course_name"))
+            if str(value or "").strip()
+        ]
+        if include_reason and str(row.get("reason") or "").strip():
+            fields.append(str(row["reason"]))
+        visible.extend(fields)
+        if fields:
+            # Keep semantically related values together as well. A row may carry
+            # ``course_code=DS341`` and ``reason=failed with mark 40``; neither
+            # field proves whose result it is alone, but together they disclose
+            # this student's exact record. The non-whitespace separator prevents
+            # a trailing digit in a course code from being consumed as the
+            # reverse-order value in a later ``GPA: 2.86`` field.
+            contextual_rows.append(" | ".join(fields))
+
+    for row in presentation.get("baseline_sections") or []:
+        add_course(row)
+    for row in presentation.get("constraint_failures") or []:
+        add_course(row, include_reason=True)
+    for option in presentation.get("alternatives") or []:
+        if not isinstance(option, dict):
+            continue
+        for row in option.get("courses") or []:
+            add_course(row)
+        for row in option.get("meetings") or []:
+            add_course(row)
+        for row in option.get("unplaced_courses") or []:
+            add_course(row, include_reason=True)
+
+    # Screen fields independently. Joining with whitespace lets a reverse-order
+    # GPA pattern bridge unrelated values (for example the trailing ``1`` in a
+    # course code followed by ``GPA: 2.86``), consume the GPA label, and hide the
+    # actual match from the forward-order pattern.
+    return any(
+        contains_personal_record_output(
+            field,
+            student_id=student_id,
+            question=question,
+        )
+        for field in [*visible, *contextual_rows]
+    )
 
 
 def _render_outcome(result: advisor_turn.TurnResult) -> list[str]:

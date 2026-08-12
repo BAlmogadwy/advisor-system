@@ -261,19 +261,19 @@ TELEGRAM_API_TIMEOUT_SECONDS = float(os.getenv("TELEGRAM_API_TIMEOUT_SECONDS", "
 # 200 for. Production must leave this false and run telegram_advisor_worker.
 # Pytest drains inline regardless of this value.
 TELEGRAM_DISPATCH_SYNC = os.getenv("TELEGRAM_DISPATCH_SYNC", "false").lower() == "true"
-# Legacy direct-handler image switch. The first durable-worker rollout is
-# deliberately text-only regardless of this value: a week grid is a compact
-# record of where a student is and when, and Telegram retains it as a file. Keep
-# false until image generation itself has a durable, privacy-reviewed delivery
-# design. The dormant direct-handler renderer remains covered by tests.
+# Separate privacy/operations switch for timetable images. A week grid is a
+# compact record of where a student is and when, and Telegram retains it as a
+# file. When enabled, the durable worker materialises only a typed photo recipe,
+# renders from the stored assistant message, and tracks photo progress separately
+# from the legacy-compatible text cursor. Keep the explicit default off for new
+# deployments.
 TELEGRAM_SEND_TIMETABLE_IMAGES = (
     os.getenv("TELEGRAM_SEND_TIMETABLE_IMAGES", "false").lower() == "true"
 )
-# Where the headless browser reaches THIS process. Local, never the public
-# hostname: the browser runs beside the server, and routing a signed card URL
-# out through the internet and back would be pointless exposure.
-# Used only by the dormant direct-handler image renderer. A separate queue worker
-# cannot reach the web process through its own loopback interface.
+# Optional local-development origin for the headless browser. It must stay on
+# loopback; a public hostname would expose the short-lived signed card URL. When
+# empty, the durable worker starts a card-only Django listener on an ephemeral
+# loopback port and serves only the renderer's exact source-asset allowlist.
 TELEGRAM_INTERNAL_BASE_URL = os.getenv("TELEGRAM_INTERNAL_BASE_URL", "")
 
 # The card renderer fetches over loopback, so the loopback Host must be allowed —

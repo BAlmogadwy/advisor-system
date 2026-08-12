@@ -38,6 +38,8 @@ from django.core import signing
 #: Signing namespace. A dedicated salt means a token minted here cannot be
 #: replayed against any other signed value in the project.
 _SALT = "telegram_gateway.card"
+_RENDERER_SALT = "telegram_gateway.card_renderer"
+_RENDERER_PURPOSE = "render_timetable_card"
 
 #: How long a signed card URL stays valid. Long enough for a cold browser start,
 #: short enough that a URL captured from a process list is already dead.
@@ -68,4 +70,30 @@ def unsign_card(token: str) -> dict[str, Any] | None:
     return payload
 
 
-__all__ = ["CARD_TOKEN_MAX_AGE_SECONDS", "sign_card", "unsign_card"]
+def sign_renderer_request() -> str:
+    """Mint the second, header-only proof required by the card endpoint."""
+
+    return signing.dumps(_RENDERER_PURPOSE, salt=_RENDERER_SALT)
+
+
+def verify_renderer_request(token: str) -> bool:
+    """Whether a request came from a recently started server-owned renderer."""
+
+    try:
+        purpose = signing.loads(
+            str(token or ""),
+            salt=_RENDERER_SALT,
+            max_age=CARD_TOKEN_MAX_AGE_SECONDS,
+        )
+    except signing.BadSignature:
+        return False
+    return isinstance(purpose, str) and purpose == _RENDERER_PURPOSE
+
+
+__all__ = [
+    "CARD_TOKEN_MAX_AGE_SECONDS",
+    "sign_card",
+    "sign_renderer_request",
+    "unsign_card",
+    "verify_renderer_request",
+]

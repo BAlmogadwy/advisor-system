@@ -44,11 +44,12 @@ Persistent telegram_advisor_worker
       ├─ answer_student_advisor(...) → V2 forced for telegram_safe
       │    └─ restricted schemas + projected evidence + safe fallback
       └─ persist_answer() → AdvisorMessage + AdvisorMessageCitation
-  → personal-record output DLP                 (profile → telegram_safe or withheld)
+  → personal-record output DLP                 (prose + visible card fields)
   → formatting.render_answer()                 (plain text, no parse_mode, safe split)
-  → persist delivery payload
-  → transport.send_text()                      (Telegram Bot API; retryable failures requeue)
-  → advance cursor after each accepted message
+  → persist typed text/photo delivery manifest (recipes only; no PNG or remote metadata)
+  → render photos in bounded secret-free child (optional phase, independent retry budget)
+  → transport.send_photo(); advance JSON photo cursor
+  → transport.send_text(); advance DB text cursor
 ```
 
 ### The seam
@@ -220,14 +221,22 @@ door: session-authenticated and CSRF-protected.
 
 ## 4. Privacy
 
-**What is processed:** the text of the question, and the Telegram user id — for
-one purpose, replying under the student's verified university identity.
+**What is processed:** the question text, the validated adviser answer, and the
+Telegram user id — for one purpose, replying under the student's verified
+university identity. When that answer contains a current, expected, or proposed
+timetable presentation, the channel may also render and send images containing
+the planning term; course names/codes and sections; class days and times; credit
+load; requested must-take and pinned-section constraints; and unplaced courses or
+reasons a requested constraint could not be satisfied.
 
 **What the university stores:** the `telegram_user_id → student_id` mapping, and
 the questions and answers in the *existing* `AdvisorConversation` /
 `AdvisorMessage` tables the student already sees on the web. While work is queued,
 the durable job envelope also holds the normalized question needed to execute it;
 that input is cleared when delivery is materialized or the job becomes terminal.
+For a timetable answer the queue stores only typed image recipes referencing the
+existing adviser message, not PNG bytes or Telegram file metadata. The recipes are
+cleared with the rest of the delivery payload when the job becomes terminal.
 
 **What is deliberately not stored:** Telegram display name, username, phone
 number, profile photo, and any raw update payload. None is needed to deliver an
@@ -235,12 +244,15 @@ answer. `test_no_telegram_profile_information_is_stored` fails if a column with
 any of those names is added.
 
 **Telegram is an external cloud service and bot chats are not end-to-end
-encrypted.** `/privacy` says so in Arabic and English, and the same text is shown
-on the confirmation page *before* the button — not linked from it.
+encrypted.** Sent timetable images are retained under Telegram's policies and can
+be downloaded or forwarded like other Telegram media. `/privacy` says so in
+Arabic and English, and the same text is shown on the confirmation page *before*
+the button — not linked from it.
 
 **Retention.** `/unlink` revokes the mapping immediately. It does **not** delete
 the conversation: that history lives in the student's university account under the
-platform's existing retention policy. The `/privacy` text states this plainly
+platform's existing retention policy. Nor can it retract messages or timetable
+images already sent to Telegram. The `/privacy` text states both facts plainly
 rather than implying unlinking erases anything. Old terminal queue metadata is
 deleted by the daily retention job seven days after `finished_at`; legacy inline
 receipts that predate that field fall back to `received_at`. `QUEUED` and
@@ -392,10 +404,32 @@ credential.
 
 ## 6. Timetable images
 
-The first durable rollout is **text-only**. It never sends a timetable PNG, even
-if an old deployment accidentally leaves `TELEGRAM_SEND_TIMETABLE_IMAGES=true`.
-The existing signed-card renderer is retained as dormant groundwork, but it is
-not connected to the durable delivery queue.
+The durable worker sends timetable PNGs when
+`TELEGRAM_SEND_TIMETABLE_IMAGES=true`. This includes a card for a current or
+expected timetable when the adviser presents one, as well as generated timetable
+alternatives. A card can show the planning term, course and section details,
+meeting days and times, credit load, requested must-take/pinned constraints, and
+unplaced courses or constraint-failure reasons. Images are delivery items in the
+same database-backed queue as the answer text; they never bypass the worker after
+the model turn.
+
+The materialized payload is a versioned, ordered manifest. A timetable answer
+places up to four typed `timetable_photo` recipes before its typed `text` items.
+Each recipe contains only an option index; the server-owned
+`assistant_message` foreign key identifies the stored, normalized presentation.
+There is no arbitrary URL or message id in the JSON and no PNG/base64 blob in the
+database. Progress is deliberately split: `photo_cursor`,
+`photo_attempt_count`, and `text_phase_started` live in the typed JSON manifest,
+while the existing database `delivery_cursor` always counts only the
+legacy-compatible text list. The database `attempt_count` remains zero throughout
+the optional-photo phase and starts at one only when required-text delivery
+begins. Legacy
+queued payloads containing only `messages` remain readable during rollout. For
+the rollback window, newly materialized manifests also retain the validated text
+in that legacy `messages` key; an older worker therefore degrades to text instead
+of silently treating a v2 row as empty. If that older worker sends part of the
+text and a new worker later resumes the row, the new worker preserves the text
+cursor, skips any now-out-of-order photos, and continues with only the unsent text.
 
 ### One renderer, not two
 
@@ -416,10 +450,19 @@ A Pillow or matplotlib drawing routine was rejected for two reasons:
   browser, and inherits the bidi fixes from #66 for free.
 
 Inside the picture the meetings list is swapped for
-`WeekGrid.renderWeekGrid({mode: 'table'})` — the same primitive the planner and
-the student timetable use. **Image only**: the chat thread keeps its list, which
-is the right shape for a narrow bubble holding several alternatives, and a test
-asserts `renderWeekGrid` never appears in `page-student-advisor.js`.
+`WeekGrid.renderWeekGrid({mode: 'blocks', step: 5})` — the same primitive the
+planner and student timetable use, with exact five-minute geometry so a
+09:00–10:15 meeting does not appear to end at 10:30. Each block prints its exact
+start/end time with the course code and section. A deterministic high-contrast
+palette distinguishes courses; each full course name appears once in a compact
+legend instead of being repeated inside every meeting. The card uses a 720 CSS
+pixel root at device scale 2 (a 1440-pixel PNG), removes the grid's outer time
+padding, and uses a compact 32-pixel half-hour height for Telegram readability.
+Unplaced courses keep their full reason in compact bidi-safe warning rows rather
+than large red paragraphs. For a baseline card,
+sections without meetings and unparseable legacy meeting strings stay in a
+compact fallback list below the grid rather than disappearing. **Image only**:
+the interactive chat thread keeps its semantic list.
 
 ### The card URL is signed, not session-authenticated
 
@@ -428,24 +471,59 @@ so a screenshot can be taken is how a convenience becomes an authentication hole
 
 ```text
 sign_card(message_id, option_index)   ->  django.core.signing, salt "telegram_gateway.card"
-GET /telegram/card/<signed>/          ->  180-second max_age, no session, no cookie
+sign_renderer_request()               ->  separate 180-second header proof
+GET /telegram/card/<signed>/          ->  requires both proofs; no session, no cookie
                                           Cache-Control: no-store, private
                                           X-Robots-Tag: noindex, nofollow
+GET /telegram/card-assets/<allowlisted path>
+                                      ->  renderer header required; no-store
 ```
 
-Nothing mints one of these for a user; the only caller is
-`rendering.render_card`, running on this machine. The browser fetches over
-**localhost** — never `TELEGRAM_PUBLIC_BASE_URL` — so a signed URL never leaves
-the host.
+Nothing mints one of these for a user; the only caller is the card renderer. A
+durable worker is a separate Render service, so it cannot use the web service's
+loopback address. Without an explicit valid loopback override, each render batch
+therefore starts a short-lived Django origin bound to `127.0.0.1` on an ephemeral
+port, renders all remaining options through one browser, and shuts the origin
+down in `finally`. The wrapper exposes only the signed card route and the exact
+renderer asset namespace; the asset view resolves a small filename allowlist
+from source files, so a stale collected-static manifest cannot break every image.
+Every other application route returns 404. A permanent request-log filter
+redacts the signed path while preserving error diagnostics, and shutdown tracks
+request threads with a bounded join so a stuck handler cannot accumulate more
+listeners. The browser itself runs in a separate child process with a 60-second
+hard deadline.
+Only short-lived signed loopback URLs and the renderer proof cross its stdin; an
+environment allowlist keeps the Django secret, database URL, Telegram token and
+LLM credentials out of the Python/Playwright/Chromium process tree. Its stdout is
+a bounded binary PNG protocol, stderr is discarded, and timeout or abnormal-exit
+teardown reaps the complete process group, including a browser stuck during
+`close()` or orphaned after its Python driver exits. The
+browser fetches over **worker-local IPv4 loopback** — never
+`TELEGRAM_PUBLIC_BASE_URL` — so the signed URL never crosses the public edge.
 
-### Every failure costs the picture, never the answer
+### Durable retry without rerunning the adviser
 
-The answer is generated, validated and stored before anything here runs, so every
-path in `rendering.py` returns `None` rather than raising: no Chromium, no
-launch, a timeout, a broken page. All degrade to text-and-link, which is exactly
-what shipped before images existed. `transport.send_photo` absorbs delivery
-failures for the same reason a raise would make the webhook non-200 and Telegram
-redeliver.
+The answer is generated, validated and stored before anything is drawn. A
+transient render or `sendPhoto` failure requeues the job at the current image
+item; confirmed images are not repeated during an ordinary retry and the model is
+never called again. Photo attempts and required-text attempts have independent
+budgets, so three image attempts cannot consume the answer's three delivery
+attempts—even when adviser generation itself needed retries. A crash on the last
+photo lease degrades the remaining images and leaves the stored text claimable,
+including by the previous text-only worker during a rollback. If that older
+worker has already begun text delivery, rolling forward preserves its consumed
+database retry count; compatibility recovery never grants extra text attempts.
+Telegram exposes no
+outbound idempotency key, so the same at-least-once
+caveat as text still applies: a process death after Telegram accepts an image but
+before the photo-cursor commit can duplicate that one image.
+
+An image must still never cost the student the validated answer. A permanent
+photo failure, or exhaustion of the bounded retry budget, skips the affected
+photo item(s), records the sanitized terminal warning
+`image_delivery_degraded`, and continues with the text and authenticated web
+link. `transport.send_photo` returns structured, sanitized outcomes so neither
+exception details nor Telegram response bodies enter the durable payload.
 
 ### Captions are 1024 characters, not 4096
 
@@ -470,23 +548,23 @@ Both were silent, and both are now pinned by tests:
 
 | Variable | Default | Notes |
 |---|---|---|
-| `TELEGRAM_SEND_TIMETABLE_IMAGES` | `false` | Must remain false; durable image delivery is not implemented |
-| `TELEGRAM_INTERNAL_BASE_URL` | `""` | Leave empty for the first rollout. The current override accepts loopback only, which is not the web service from a separate Render worker |
+| `TELEGRAM_SEND_TIMETABLE_IMAGES` | `false` | Explicit privacy/operations switch. Set on `advisor-system`; the worker inherits the exact value through `fromService` |
+| `TELEGRAM_INTERNAL_BASE_URL` | `""` | Optional plain-HTTP IPv4-loopback override (`127.0.0.1` or `localhost`) for local development. Empty uses the worker's short-lived loopback origin; `::1` is rejected |
 
-### Production: Chromium IS installed — and the loopback fetch is the real hazard
+### Production: self-contained worker rendering
 
-> **Not a first-rollout path:** the durable worker is a separate Render service,
-> so its loopback address does not reach `advisor-system`. Keep images off until
-> an authenticated worker-to-web rendering origin is designed and exercised end
-> to end; do not point this setting at the public site as an ad-hoc workaround.
+The durable worker renders against its own temporary loopback origin. Do not point
+`TELEGRAM_INTERNAL_BASE_URL` at the public site as an ad-hoc workaround: that
+would send a bearer card token through the public edge and make availability of
+the image depend on another service.
 
 `build.sh` has run `playwright install chromium` since 2026-04-08. An earlier
 draft of this document said the opposite, and that error was worse than useless:
 it told an operator to expect exactly the symptom the real bugs produced, so
 `card render failed` would have been explained away instead of investigated.
 
-The genuine production hazards are both about the **loopback fetch**, and both
-would have failed 100% of the time:
+Two production hazards still apply to the worker-local **loopback fetch**, and
+both are pinned by tests:
 
 - `ALLOWED_HOSTS` is built purely from `DJANGO_ALLOWED_HOSTS`, which an operator
   sets to the public hostname — so `Host: 127.0.0.1:PORT` was a **400
@@ -495,12 +573,14 @@ would have failed 100% of the time:
 - `SECURE_SSL_REDIRECT` is on whenever `DEBUG` is off, so the plain-HTTP loopback
   fetch was **301'd to `https://127.0.0.1:PORT`**, where nothing speaks TLS. The
   renderer now sends `X-Forwarded-Proto: https`, which is what the edge asserts in
-  production. Exempting the card path alone would not have worked: every
-  `{% static %}` asset 301s too, so the renderer script would not load and the
-  page would report `renderer-missing`.
+  production. Exempting the card page alone would not have worked: its private
+  CSS/JavaScript asset requests pass through the same middleware, so the renderer
+  script would not load and the page would report `renderer-missing`.
 
-Both were invisible — a 400 and a 301 each surfaced as an indistinguishable
-`TimeoutError`. The renderer now logs the HTTP status when it is not 200.
+Both used to be invisible. Framework request diagnostics now remain visible with
+the signed path permanently redacted, while child-process failures are reported
+only by sanitized categories and never include a URL, environment value, or
+browser output.
 
 ### Housekeeping
 
@@ -588,31 +668,35 @@ Render runs one persistent queue process:
 python manage.py telegram_advisor_worker --sleep 1 --max-attempts 3
 ```
 
-The worker leases ready rows, processes each link in order, materialises the
-answer/command result before contacting Telegram, and advances a delivery cursor
-after each accepted message. A process exit does not erase work: an expired
-30-minute default lease becomes claimable again. A retry resumes the materialised
-payload at the first unconfirmed message; it does not call the model, create a new
-conversation, or repeat a command side effect. Retryable failures are requeued up
-to the configured attempt limit; terminal failures remain inspectable until the
-retention job removes them. `QUEUED` and `RUNNING` rows are never retention-cleanup
-candidates.
+The worker leases ready rows, processes each link in order, and materialises the
+answer/command result before contacting Telegram. Accepted photos advance the
+manifest's JSON photo cursor, and image attempts advance its separate JSON retry
+counter; accepted text chunks advance the database text cursor and use the
+database retry counter. A process exit does not erase work: an expired 30-minute default lease
+becomes claimable again. A retry resumes the materialised payload at the first
+unconfirmed item; it does not call the model, create a new conversation, or repeat
+a command side effect. Retryable failures are requeued up to the configured
+attempt limit; terminal failures remain inspectable until the retention job
+removes them. `QUEUED` and `RUNNING` rows are never retention-cleanup candidates.
 
 A 2xx Bot API response counts as delivery only when its JSON object contains
 `"ok": true`; HTTP 200 with `"ok": false`, invalid JSON, network errors and 5xx
 responses remain failures and are requeued up to the attempt cap. HTTP 429 is
 also retryable and, when Telegram supplies a valid integer
 `parameters.retry_after`, that exact validated delay becomes the job's next
-`available_at`. Other 4xx responses are terminal. Remote descriptions, message
-objects and response bodies are neither logged nor persisted.
+`available_at`. Other 4xx responses are permanent: a text-item rejection fails the
+job, while a photo-item rejection takes the documented image-degradation path and
+still releases the answer text. Remote descriptions, message objects, file
+metadata and response bodies are neither logged nor persisted.
 
 Outbound delivery is intentionally **at least once**, not exactly once. The
 cursor can be advanced only after Telegram accepts a send. If the worker dies in
 the narrow gap after that acceptance but before the database update commits, the
 replacement worker sends that message again. Telegram exposes no idempotency key
-for `sendMessage`; the safe trade is a possible duplicate bubble rather than a
-silently lost answer. In this delivery-only crash window the already-materialised
-generation is not rerun, and `/advisor` does not create a second case.
+for `sendMessage` or `sendPhoto`; the safe trade is a possible duplicate text or
+image rather than a silently lost answer. In this delivery-only crash window the
+already-materialised generation is not rerun, and `/advisor` does not create a
+second case.
 
 `/advisor` has one additional transaction boundary. The escalation side effect
 and the durable Telegram reply payload containing its case reference commit in
@@ -626,12 +710,13 @@ worker for predictable ordering and capacity; the database claims remain the
 correctness boundary if a replacement overlaps briefly during a deploy.
 
 `advisor-system` is the single source of truth for the Telegram token/public
-origin/link TTL/API timeout and every selected `LLM_*`, `VIRTUAL_ADVISOR_*`, and
-`STUDENT_ADVISOR_V2_*` value. `render.yaml` copies those values into the worker
-with `fromService`; do not create an independently editable worker copy. Render
-ignores newly added `sync: false` variables when updating an existing Blueprint,
-so populate and verify every declared value on `advisor-system` before that sync.
-Keep `TELEGRAM_SEND_TIMETABLE_IMAGES=false` for the first rollout.
+origin/link TTL/API timeout/image switch and every selected `LLM_*`,
+`VIRTUAL_ADVISOR_*`, and `STUDENT_ADVISOR_V2_*` value. `render.yaml` copies those
+values into the worker with `fromService`; do not create an independently editable
+worker copy. Render ignores newly added `sync: false` variables when updating an
+existing Blueprint, so populate and verify every declared value on
+`advisor-system` before that sync. Set `TELEGRAM_SEND_TIMETABLE_IMAGES=true` only
+after the disclosure and image smoke tests in §§9–11 are in place.
 `STUDENT_ADVISOR_V2_ENABLED` still controls the web rollout; it does not downgrade
 `telegram_safe`, while the V2 iteration/call/token/timeout controls do govern the
 Telegram turn.
@@ -640,8 +725,17 @@ The worker validates configuration before its first queue query. It refuses to
 start unless the channel is enabled, the Bot API token is syntactically usable,
 `TELEGRAM_PUBLIC_BASE_URL` is one credential-free HTTPS origin on a Telegram
 webhook port, and the selected production LLM client can be constructed with its
-egress approval enabled. These checks open no socket; provider reachability is
-still covered by the deployment smoke test.
+egress approval enabled. Provider validation opens no socket; provider
+reachability is still covered by the deployment smoke test. When timetable
+images are enabled, a separate preflight resolves the exact source assets,
+performs an authenticated bounded request against the worker-local card origin,
+and launches/closes Chromium in a secret-stripped subprocess. A hard timeout
+terminates its process tree, and a sanitized preflight failure stops the worker
+before it claims a student question. This channel-wide fail-fast state is
+deliberate when images are explicitly enabled: the service must show as unhealthy
+and leave durable jobs queued instead of silently operating as text-only. Once a
+healthy worker has started, an individual card's runtime/render/send failure still
+uses the per-job text fallback described in §6.
 
 ---
 
@@ -659,8 +753,13 @@ still covered by the deployment smoke test.
 - [ ] Any pre-`0003` active links have been revoked by the migration and are
       re-approved through the two-sided ceremony, not manually reactivated
 - [ ] Persistent `advisor-telegram-worker` is running the command in §8
-- [ ] First rollout is text-only: `TELEGRAM_SEND_TIMETABLE_IMAGES=false` and
-      `TELEGRAM_INTERNAL_BASE_URL` left empty
+- [ ] `/privacy` and the pre-link confirmation disclose current/expected/proposed
+      timetable-image contents (including credit load, requested constraints and
+      unplaced/failure reasons), Telegram retention/forwarding, and that unlink
+      cannot retract sent media
+- [ ] `TELEGRAM_SEND_TIMETABLE_IMAGES=true` is set on `advisor-system`; Blueprint
+      synced so the worker inherits it. Leave `TELEGRAM_INTERNAL_BASE_URL` empty
+      in production so rendering uses the worker-local origin
 - [ ] `TELEGRAM_ADVISOR_ENABLED=true` set on `advisor-system`; Blueprint synced so
       the worker inherits it, and both services restarted
 - [ ] `python manage.py telegram_webhook --set` completed
@@ -669,8 +768,8 @@ still covered by the deployment smoke test.
 - [ ] BotFather privacy mode **enabled**, join-groups **disabled**
 - [ ] Daily Render retention cron includes `purge_telegram_tokens --apply`
 - [ ] Smoke test with a test bot and a test student (§10)
-- [ ] Only after text delivery is stable, evaluate timetable images as a separate
-      rollout; Chromium and loopback configuration are described in §6
+- [ ] Timetable image smoke test passes for one option and for several alternatives;
+      image(s) arrive before the complete, untruncated text and web link
 
 ## 10. Rollback / disable
 
@@ -707,7 +806,7 @@ Use a **separate** BotFather bot and a test student. Never the production bot.
 |---|---|---|
 | 1 | `/start` in a private chat | Welcome + how to link. No student data |
 | 2 | `كم معدلي؟` before linking | Linking instructions only. No record, no student number |
-| 3 | `/privacy` | Notice incl. "not end-to-end encrypted" and how to unlink |
+| 3 | `/privacy` | Notice incl. "not end-to-end encrypted"; current/expected/proposed timetable image contents, constraints and failure reasons; forwardability; and what unlink cannot delete |
 | 4 | `/link` | A single-use URL with a stated expiry, no identifiers in it |
 | 5 | Open it signed out | Lands in the **existing** student login (Uni ID → OTP) |
 | 6 | Complete login | Returns to the confirmation page, privacy text visible |
@@ -717,6 +816,7 @@ Use a **separate** BotFather bot and a test student. Never the production bot.
 | 8 | Reopen the same URL | "expired or already used" |
 | 9 | Ask `ما المواد المتبقية لي؟` | Brief ack, then a real Arabic answer about **this** student |
 | 9b | Ask `كم معدلي؟` after linking | No model answer; directs the student to the authenticated web adviser |
+| 9c | Ask to see the current/expected timetable, then ask for a proposed timetable | One baseline image for the first request; one image per generated option (maximum four) for the second; each followed by the complete text answer and authenticated web link |
 | 10 | Compare with the web adviser | Same student and stored thread; Telegram still exposes only its reduced evidence profile |
 | 11 | Follow-up (`وماذا عن الفصل القادم؟`) | Understands the prior **safe Telegram** answer without ingesting web/withheld turns |
 | 12 | Ask something that produces a long answer | Split into several messages; sources whole and last |
@@ -737,13 +837,15 @@ Use a **separate** BotFather bot and a test student. Never the production bot.
 
 ## 12. Known limitations
 
-1. **Timetable images are not part of durable delivery.** The signed renderer is
-   retained but disconnected; the rollout is text-and-authenticated-web-link only.
+1. **Only timetable presentations become images.** Other adviser presentations
+   remain text-and-authenticated-web-link, and a timetable response is capped at
+   four option images.
 2. **Durability still needs a running worker.** A stopped worker does not lose
    committed work, but students receive no queued answers until it resumes.
-3. **Plain text only.** No bold, no tables, no inline keyboards or buttons — the
-   deliberate cost of having no escaping bug.
-4. **Bidi: the dormant card image is correct, the text may not be.** The screenshot inherits
+3. **Answer messages use plain text.** No bold, no text tables, no inline keyboards
+   or buttons — the deliberate cost of having no escaping bug. Timetable cards are
+   the one image type.
+4. **Bidi: the card image is correct, the text may not be.** The screenshot inherits
    the template-layer fix from #66 — «09:00-10:15» renders the right way round,
    verified. The plain-text answer is a different matter: Telegram applies its own
    bidi to message text, and no Telegram-specific isolation pass was written.
@@ -757,11 +859,12 @@ Use a **separate** BotFather bot and a test student. Never the production bot.
    only control. The web sidebar remains the full interface.
 7. **`/advisor` escalates the most recent answered turn only.**
 8. **Outbound retry is bounded.** Transient failures and 429 responses are retried;
-   after three claims a failing job becomes terminal. Any generated answer remains
+   after three claims a text failure becomes terminal, while an exhausted photo
+   falls back to the validated text and web link. Any generated answer remains
    visible on the web for investigation.
-9. **Outbound messages are at least once.** A crash after Telegram accepts a
-   message but before its cursor update can produce one duplicate bubble on retry.
-   The model and durable command side effects are not repeated.
+9. **Outbound delivery is at least once.** A crash after Telegram accepts a text
+   message or photo but before its cursor update can produce one duplicate item on
+   retry. The model and durable command side effects are not repeated.
 10. **No delivery of adviser replies to escalations.** A resolved case is not
     pushed to Telegram; the student checks the platform.
 11. **Terminal-job history is retained for seven days after completion.** The
@@ -785,8 +888,9 @@ the transport-specific gateway:
 | `core/services/student_advisor_v2.py` | Forced V2 selection for `telegram_safe` and projection hooks around tools/fallback |
 | `core/models.py`, `core/migrations/0062_…` | Server-owned `AdvisorMessage.generation_profile` provenance |
 | `telegram_gateway/bot.py` | Parsing, command meaning, intent gate, output DLP and durable executor |
-| `telegram_gateway/jobs.py` | Admission, FIFO leases, result materialisation, delivery cursor, retry and recovery |
+| `telegram_gateway/jobs.py` | Admission, FIFO leases, typed text/photo manifest, delivery cursor, retry and recovery |
 | `telegram_gateway/transport.py` | Sanitised Bot API client and `ok`/HTTP/429 interpretation |
+| `telegram_gateway/rendering.py`, `render_child.py`, `cards.py` | Worker-local card origin, bounded credential-free screenshot child and short-lived signed render references |
 | `telegram_gateway/linking.py`, `models.py` | Two-sided linking, exact account revalidation, retention query and channel data model |
 | `telegram_gateway/views.py` | Webhook authentication, durable enqueue and ordered progress acknowledgement |
 | `telegram_gateway/configuration.py`, `management/commands/` | Startup/webhook validation, persistent worker and housekeeping commands |

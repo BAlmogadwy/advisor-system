@@ -12,22 +12,25 @@ lets tests exercise queue semantics without a model or Telegram connection.
 
 from __future__ import annotations
 
+import logging
 import re
 import socket
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from datetime import timedelta
 from math import ceil
 from time import sleep
-from typing import Any
+from typing import Any, NamedTuple
 
 from django.conf import settings
 from django.db import close_old_connections, connection, transaction
-from django.db.models import Exists, OuterRef, Q
+from django.db.models import Exists, OuterRef, Q, QuerySet
 from django.utils import timezone
 
 from core.services.advisor_turn import STALE_GENERATION
 
 from .models import TelegramLink, TelegramUpdateReceipt
+
+logger = logging.getLogger(__name__)
 
 # A recovered queue job may resume a stale PENDING AdvisorMessage. Its lease must
 # therefore outlive both the shared stale threshold and the configured maximum
@@ -45,6 +48,12 @@ DEFAULT_MAX_ATTEMPTS = 3
 DEFAULT_IDLE_SLEEP_SECONDS = 1.0
 DEFAULT_MAX_PENDING_PER_LINK = 10
 MAX_ERROR_CODE_CHARS = 64
+DELIVERY_MANIFEST_VERSION = 2
+DELIVERY_KIND_TEXT = "text"
+DELIVERY_KIND_TIMETABLE_PHOTO = "timetable_photo"
+MAX_DELIVERY_ITEMS = 64
+MAX_TIMETABLE_PHOTOS = 4
+DELIVERY_CURSOR_MODE_SPLIT = "split"
 
 ACTIVE_STATUSES = (
     TelegramUpdateReceipt.STATUS_QUEUED,
@@ -58,6 +67,11 @@ TERMINAL_STATUSES = (
 
 Executor = Callable[[TelegramUpdateReceipt], Mapping[str, Any] | None]
 Deliver = Callable[[TelegramUpdateReceipt, str], Mapping[str, Any] | bool | None]
+PhotoDeliver = Callable[[TelegramUpdateReceipt, bytes], Mapping[str, Any] | bool | None]
+PhotoRender = Callable[
+    [TelegramUpdateReceipt, Sequence[int | None]],
+    Sequence[bytes | None],
+]
 
 _CODE_CHARACTERS = re.compile(r"[^A-Za-z0-9_.:-]+")
 
@@ -93,6 +107,17 @@ class AdmissionLimited(Exception):
     def __init__(self, retry_after: int) -> None:
         super().__init__("telegram ingress rate limited")
         self.retry_after = max(1, int(retry_after or 1))
+
+
+class _DeliveryState(NamedTuple):
+    photo_items: list[dict[str, Any]]
+    text_items: list[dict[str, Any]]
+    photo_cursor: int
+    photo_attempt_count: int
+    text_cursor: int
+    text_phase_started: bool
+    legacy_shared_cursor: bool
+    rollback_text_takeover: bool
 
 
 def enqueue_question_or_command(
@@ -205,6 +230,8 @@ def run_job(
     max_attempts: int = DEFAULT_MAX_ATTEMPTS,
     executor: Executor | None = None,
     deliver: Deliver | None = None,
+    render_photos: PhotoRender | None = None,
+    deliver_photo: PhotoDeliver | None = None,
 ) -> TelegramUpdateReceipt | None:
     """Claim and execute one specific queued job, respecting per-link FIFO."""
 
@@ -216,7 +243,14 @@ def run_job(
     )
     if job is None:
         return TelegramUpdateReceipt.objects.filter(update_id=update_id).first()
-    return _execute_claimed_job(job, executor=executor, deliver=deliver, max_attempts=max_attempts)
+    return _execute_claimed_job(
+        job,
+        executor=executor,
+        deliver=deliver,
+        render_photos=render_photos,
+        deliver_photo=deliver_photo,
+        max_attempts=max_attempts,
+    )
 
 
 def run_next_job(
@@ -225,6 +259,8 @@ def run_next_job(
     max_attempts: int = DEFAULT_MAX_ATTEMPTS,
     execute: Executor | None = None,
     deliver: Deliver | None = None,
+    render_photos: PhotoRender | None = None,
+    deliver_photo: PhotoDeliver | None = None,
 ) -> TelegramUpdateReceipt | None:
     """Recover stale work, claim the next FIFO-eligible job, and execute it."""
 
@@ -238,7 +274,14 @@ def run_next_job(
     )
     if job is None:
         return None
-    return _execute_claimed_job(job, executor=execute, deliver=deliver, max_attempts=max_attempts)
+    return _execute_claimed_job(
+        job,
+        executor=execute,
+        deliver=deliver,
+        render_photos=render_photos,
+        deliver_photo=deliver_photo,
+        max_attempts=max_attempts,
+    )
 
 
 def store_delivery(
@@ -252,8 +295,10 @@ def store_delivery(
 ) -> bool:
     """Persist an executor result under the current lease and discard input text."""
 
-    payload = dict(delivery_payload or {})
-    payload["messages"] = [str(message) for message in messages]
+    payload = _materialised_delivery_payload(
+        messages=messages,
+        delivery_payload=delivery_payload,
+    )
     values: dict[str, Any] = {
         "delivery_payload": payload,
         "delivery_cursor": 0,
@@ -262,6 +307,16 @@ def store_delivery(
         "error_code": "",
         "lease_expires_at": timezone.now() + _lease_duration(job),
     }
+    if any(item["kind"] == DELIVERY_KIND_TIMETABLE_PHOTO for item in payload["items"]):
+        # Retries now belong to the optional photo phase, not adviser
+        # generation. Keep the rollback-visible counter below its terminal
+        # boundary so a previous worker can still drain `messages`.
+        values["attempt_count"] = 0
+    else:
+        # Generation and delivery have independent budgets. The currently
+        # leased send is text attempt one even when generation succeeded only
+        # on its final retry.
+        values["attempt_count"] = 1
     if assistant_message_id is not None:
         values["assistant_message_id"] = assistant_message_id
     if conversation_id is not None:
@@ -273,19 +328,424 @@ def store_delivery(
     return bool(updated)
 
 
-def mark_delivery_progress(job: TelegramUpdateReceipt, cursor: int) -> bool:
-    """Advance the durable delivery cursor monotonically under the current lease."""
+def _materialised_delivery_payload(
+    *,
+    messages: list[str] | tuple[str, ...],
+    delivery_payload: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    """Build the only durable outbound shape accepted by new workers.
+
+    Timetable pictures are recipes, never bytes, URLs, chat ids or message ids.
+    The source message is the job's trusted foreign key and the renderer mints a
+    short-lived card token only when the leased worker is ready to draw it.
+    """
+
+    raw = dict(delivery_payload) if isinstance(delivery_payload, Mapping) else {}
+    supplied_items = raw.get("items")
+    if isinstance(supplied_items, list):
+        supplied = _normalise_delivery_items(supplied_items)
+        photos = [item for item in supplied if item["kind"] == DELIVERY_KIND_TIMETABLE_PHOTO]
+        supplied_text = [item for item in supplied if item["kind"] == DELIVERY_KIND_TEXT]
+        authoritative_text = [
+            {"kind": DELIVERY_KIND_TEXT, "text": str(message)}
+            for message in messages
+            if str(message)
+        ]
+        text_items = authoritative_text or supplied_text
+        # A photo is only an enhancement to a validated answer. Never persist a
+        # photo-only job, and apply the same total bound here that the reader
+        # enforces so a producer cannot write a manifest it later rejects.
+        if not text_items:
+            photos = []
+        items = photos + text_items[: max(0, MAX_DELIVERY_ITEMS - len(photos))]
+    else:
+        items = [{"kind": DELIVERY_KIND_TEXT, "text": str(message)} for message in messages][
+            :MAX_DELIVERY_ITEMS
+        ]
+    # Keep the legacy key for one rollback window. A pre-v2 worker reads only
+    # ``messages``; without this bridge, rolling back while a v2 row is queued
+    # would mark it successful without sending its validated text.
+    legacy_messages = [item["text"] for item in items if item["kind"] == DELIVERY_KIND_TEXT]
+    return {
+        "version": DELIVERY_MANIFEST_VERSION,
+        # Keep the database delivery_cursor aligned with the legacy ``messages``
+        # list at all times. Photo progress lives separately in this JSON, so a
+        # rollback after any confirmed image still lets the previous worker send
+        # every unconfirmed text chunk.
+        "cursor_mode": DELIVERY_CURSOR_MODE_SPLIT,
+        "photo_cursor": 0,
+        "photo_attempt_count": 0,
+        "text_phase_started": not bool(
+            any(item["kind"] == DELIVERY_KIND_TIMETABLE_PHOTO for item in items)
+        ),
+        "items": items,
+        "messages": legacy_messages,
+    }
+
+
+def _delivery_items(payload: Any) -> list[dict[str, Any]] | None:
+    """Read a typed manifest, with compatibility for already-queued text jobs."""
+
+    if payload in (None, {}):
+        return []
+    if not isinstance(payload, Mapping):
+        return None
+    raw = dict(payload)
+    if "version" in raw or "items" in raw:
+        raw_items = raw.get("items")
+        if raw.get("version") != DELIVERY_MANIFEST_VERSION or not isinstance(raw_items, list):
+            return None
+        items = _normalise_delivery_items(raw_items)
+        if len(items) != len(raw_items):
+            return None
+        seen_text = False
+        for item in items:
+            if item["kind"] == DELIVERY_KIND_TEXT:
+                seen_text = True
+            elif seen_text:
+                # Cursor positions belong to the persisted order. Reordering a
+                # malformed row would resend confirmed text and skip an unsent
+                # photo, so reject it visibly instead.
+                return None
+        if any(item["kind"] == DELIVERY_KIND_TIMETABLE_PHOTO for item in items) and not any(
+            item["kind"] == DELIVERY_KIND_TEXT for item in items
+        ):
+            return None
+        photo_indexes = [
+            item["option_index"] for item in items if item["kind"] == DELIVERY_KIND_TIMETABLE_PHOTO
+        ]
+        if photo_indexes:
+            expected_indexes: list[int | None]
+            if photo_indexes == [None]:
+                expected_indexes = [None]
+            else:
+                expected_indexes = list(range(len(photo_indexes)))
+            if photo_indexes != expected_indexes:
+                # Server-authored manifests are either one baseline card or the
+                # ordered alternatives 0..N. Duplicate/gapped values indicate a
+                # corrupted row and must not become duplicate/wrong photos.
+                return None
+        return items
+
+    # Rows materialised by the first durable rollout used ``messages``. They may
+    # still be waiting during a rolling deploy, so they must drain as text rather
+    # than being mistaken for empty completed work.
+    legacy = raw.get("messages")
+    if not isinstance(legacy, list):
+        return None
+    return [
+        {"kind": DELIVERY_KIND_TEXT, "text": str(message)}
+        for message in legacy[:MAX_DELIVERY_ITEMS]
+    ]
+
+
+def _normalise_delivery_items(raw_items: Sequence[Any]) -> list[dict[str, Any]]:
+    """Whitelist delivery items so persisted JSON can never choose a fetch URL."""
+
+    items: list[dict[str, Any]] = []
+    photo_count = 0
+    for raw in raw_items:
+        if len(items) >= MAX_DELIVERY_ITEMS or not isinstance(raw, Mapping):
+            continue
+        kind = raw.get("kind")
+        if kind == DELIVERY_KIND_TEXT:
+            text = raw.get("text")
+            if isinstance(text, str) and text:
+                items.append({"kind": DELIVERY_KIND_TEXT, "text": text})
+            continue
+        if kind != DELIVERY_KIND_TIMETABLE_PHOTO or photo_count >= MAX_TIMETABLE_PHOTOS:
+            continue
+        option_index = raw.get("option_index")
+        if option_index is not None and (
+            isinstance(option_index, bool)
+            or not isinstance(option_index, int)
+            or not 0 <= option_index < MAX_TIMETABLE_PHOTOS
+        ):
+            continue
+        items.append(
+            {
+                "kind": DELIVERY_KIND_TIMETABLE_PHOTO,
+                "option_index": option_index,
+            }
+        )
+        photo_count += 1
+    return items
+
+
+def _delivery_state(
+    payload: Any,
+    items: list[dict[str, Any]],
+    delivery_cursor: Any,
+) -> _DeliveryState | None:
+    """Validate split photo/text progress, including pre-split v2 queue rows."""
+
+    try:
+        text_cursor = int(delivery_cursor or 0)
+    except (TypeError, ValueError):
+        return None
+    if text_cursor < 0 or not isinstance(payload, Mapping):
+        return None
+
+    photo_items = [item for item in items if item["kind"] == DELIVERY_KIND_TIMETABLE_PHOTO]
+    text_items = [item for item in items if item["kind"] == DELIVERY_KIND_TEXT]
+    if not photo_items:
+        if text_cursor > len(text_items):
+            return None
+        return _DeliveryState([], text_items, 0, 0, text_cursor, True, False, False)
+
+    raw = dict(payload)
+    mode = raw.get("cursor_mode")
+    if mode is None:
+        # Compatibility with v2 rows materialised before the cursor was split.
+        # Their DB cursor counted [photos..., text...]. Normalise them under the
+        # lease before any new send; newly written rows always declare `split`.
+        if "photo_cursor" in raw or "photo_attempt_count" in raw or "text_phase_started" in raw:
+            return None
+        if text_cursor <= len(photo_items):
+            photo_cursor = text_cursor
+            text_cursor = 0
+            text_phase_started = False
+        elif text_cursor <= len(items):
+            photo_cursor = len(photo_items)
+            text_cursor -= len(photo_items)
+            text_phase_started = True
+        else:
+            return None
+        if text_cursor > len(text_items):
+            return None
+        return _DeliveryState(
+            photo_items,
+            text_items,
+            photo_cursor,
+            0,
+            text_cursor,
+            text_phase_started,
+            True,
+            False,
+        )
+    if mode != DELIVERY_CURSOR_MODE_SPLIT:
+        return None
+
+    photo_cursor = raw.get("photo_cursor", 0)
+    photo_attempt_count = raw.get("photo_attempt_count", 0)
+    text_phase_started = raw.get("text_phase_started", False)
+    if (
+        isinstance(photo_cursor, bool)
+        or not isinstance(photo_cursor, int)
+        or not 0 <= photo_cursor <= len(photo_items)
+        or isinstance(photo_attempt_count, bool)
+        or not isinstance(photo_attempt_count, int)
+        or photo_attempt_count < 0
+        or not isinstance(text_phase_started, bool)
+        or text_cursor > len(text_items)
+    ):
+        return None
+    rollback_text_takeover = not text_phase_started and text_cursor > 0
+    if text_phase_started and photo_cursor != len(photo_items):
+        return None
+    return _DeliveryState(
+        photo_items,
+        text_items,
+        photo_cursor,
+        photo_attempt_count,
+        text_cursor,
+        text_phase_started or rollback_text_takeover,
+        False,
+        rollback_text_takeover,
+    )
+
+
+def _persist_split_delivery_state(job: TelegramUpdateReceipt, state: _DeliveryState) -> bool:
+    """Convert an already-queued shared-cursor v2 row under its current lease."""
+
+    payload = dict(job.delivery_payload or {})
+    payload["cursor_mode"] = DELIVERY_CURSOR_MODE_SPLIT
+    payload["photo_cursor"] = state.photo_cursor
+    payload["photo_attempt_count"] = state.photo_attempt_count
+    payload["text_phase_started"] = state.text_phase_started
+    lease_expires_at = timezone.now() + _lease_duration(job)
+    values = {
+        "delivery_payload": payload,
+        "delivery_cursor": state.text_cursor,
+        "lease_expires_at": lease_expires_at,
+    }
+    updated = _owned_running(job).update(**values)
+    if updated:
+        job.delivery_payload = payload
+        job.delivery_cursor = state.text_cursor
+        job.lease_expires_at = lease_expires_at
+    return bool(updated)
+
+
+def _begin_text_after_skipping_photos(
+    job: TelegramUpdateReceipt,
+    state: _DeliveryState,
+) -> bool:
+    """Atomically abandon remaining photos and start required text delivery.
+
+    A rolled-back text-only worker may already have consumed delivery attempts.
+    Preserve the claimed counter in that takeover case; only a genuine photo
+    phase receives a fresh first text attempt.
+    """
+
+    payload = dict(job.delivery_payload or {})
+    skipped_photos = state.photo_cursor < len(state.photo_items)
+    payload["cursor_mode"] = DELIVERY_CURSOR_MODE_SPLIT
+    payload["photo_cursor"] = len(state.photo_items)
+    payload["photo_attempt_count"] = state.photo_attempt_count
+    payload["text_phase_started"] = True
+    if skipped_photos:
+        payload["image_degraded"] = True
+    lease_expires_at = timezone.now() + _lease_duration(job)
+    text_attempt_count = int(job.attempt_count or 0) if state.rollback_text_takeover else 1
+    values = {
+        "delivery_payload": payload,
+        "delivery_cursor": state.text_cursor,
+        "attempt_count": text_attempt_count,
+        "lease_expires_at": lease_expires_at,
+    }
+    updated = _owned_running(job).update(**values)
+    if updated:
+        job.delivery_payload = payload
+        job.delivery_cursor = state.text_cursor
+        job.attempt_count = text_attempt_count
+        job.lease_expires_at = lease_expires_at
+    return bool(updated)
+
+
+def _begin_photo_delivery_attempt(
+    job: TelegramUpdateReceipt,
+    state: _DeliveryState,
+) -> bool:
+    """Count one optional-image attempt without consuming the legacy counter.
+
+    ``attempt_count`` predates image delivery and is the only budget a rolled-
+    back worker understands. Keeping it at zero throughout Chromium/sendPhoto
+    work guarantees that a crash can still roll back to a text-delivery attempt.
+    The durable JSON counter independently bounds image retries.
+    """
+
+    payload = dict(job.delivery_payload or {})
+    if (
+        payload.get("cursor_mode") != DELIVERY_CURSOR_MODE_SPLIT
+        or payload.get("text_phase_started") is True
+    ):
+        return False
+    payload["photo_attempt_count"] = state.photo_attempt_count + 1
+    lease_expires_at = timezone.now() + _lease_duration(job)
+    values = {
+        "delivery_payload": payload,
+        "attempt_count": 0,
+        "lease_expires_at": lease_expires_at,
+    }
+    updated = _owned_running(job).update(**values)
+    if updated:
+        job.delivery_payload = payload
+        job.attempt_count = 0
+        job.lease_expires_at = lease_expires_at
+    return bool(updated)
+
+
+def mark_photo_progress(
+    job: TelegramUpdateReceipt,
+    cursor: int,
+    *,
+    image_degraded: bool = False,
+) -> bool:
+    """Advance the photo-only cursor without changing legacy text progress."""
+
+    payload = dict(job.delivery_payload or {})
+    if payload.get("cursor_mode") != DELIVERY_CURSOR_MODE_SPLIT:
+        return False
+    current = payload.get("photo_cursor", 0)
+    next_cursor = int(cursor)
+    if isinstance(current, bool) or not isinstance(current, int) or next_cursor <= current:
+        return False
+    payload["photo_cursor"] = next_cursor
+    if image_degraded:
+        payload["image_degraded"] = True
+    lease_expires_at = timezone.now() + _lease_duration(job)
+    updated = _owned_running(job).update(
+        delivery_payload=payload,
+        lease_expires_at=lease_expires_at,
+    )
+    if updated:
+        job.delivery_payload = payload
+        job.lease_expires_at = lease_expires_at
+    return bool(updated)
+
+
+def _requeue_photo_delivery(
+    job: TelegramUpdateReceipt,
+    *,
+    photo_attempt_count: int,
+    error_code: str,
+    delay_seconds: float | None = None,
+) -> bool:
+    """Requeue optional-image work while preserving its separate retry count."""
+
+    delay = (
+        _retry_delay(photo_attempt_count)
+        if delay_seconds is None
+        else max(0.0, float(delay_seconds))
+    )
+    values = {
+        "status": TelegramUpdateReceipt.STATUS_QUEUED,
+        "attempt_count": 0,
+        "available_at": timezone.now() + timedelta(seconds=delay),
+        "error_code": _safe_code(error_code, "image_delivery_failed"),
+        "locked_by": "",
+        "locked_at": None,
+        "lease_expires_at": None,
+        "finished_at": None,
+    }
+    updated = _owned_running(job).update(**values)
+    if updated:
+        for field, value in values.items():
+            setattr(job, field, value)
+    return bool(updated)
+
+
+def _begin_text_delivery(job: TelegramUpdateReceipt, *, photo_count: int) -> bool:
+    """Start required text with a fresh bounded attempt budget exactly once."""
+
+    payload = dict(job.delivery_payload or {})
+    if payload.get("cursor_mode") != DELIVERY_CURSOR_MODE_SPLIT:
+        return False
+    if payload.get("text_phase_started") is True:
+        return True
+    if payload.get("photo_cursor") != photo_count:
+        return False
+    payload["text_phase_started"] = True
+    lease_expires_at = timezone.now() + _lease_duration(job)
+    values = {
+        "delivery_payload": payload,
+        # This running claim is text attempt one. Image retries no longer consume
+        # the budget that protects delivery of the validated answer.
+        "attempt_count": 1,
+        "lease_expires_at": lease_expires_at,
+    }
+    updated = _owned_running(job).update(**values)
+    if updated:
+        job.delivery_payload = payload
+        job.attempt_count = 1
+        job.lease_expires_at = lease_expires_at
+    return bool(updated)
+
+
+def mark_delivery_progress(
+    job: TelegramUpdateReceipt,
+    cursor: int,
+) -> bool:
+    """Advance the legacy-compatible text cursor under the current lease."""
 
     next_cursor = max(0, int(cursor))
     lease_expires_at = timezone.now() + _lease_duration(job)
-    updated = (
-        _owned_running(job)
-        .filter(delivery_cursor__lt=next_cursor)
-        .update(
-            delivery_cursor=next_cursor,
-            lease_expires_at=lease_expires_at,
-        )
-    )
+    values: dict[str, Any] = {
+        "delivery_cursor": next_cursor,
+        "lease_expires_at": lease_expires_at,
+    }
+    updated = _owned_running(job).filter(delivery_cursor__lt=next_cursor).update(**values)
     if updated:
         job.delivery_cursor = next_cursor
         job.lease_expires_at = lease_expires_at
@@ -394,7 +854,19 @@ def recover_stale_jobs(
                 job.payload_text = ""
                 job.delivery_payload = {}
                 job.finished_at = now
+            elif _photo_attempt_budget_exhausted(job, max_attempts=max_attempts):
+                if _degrade_exhausted_photo_phase_locked(job, now=now):
+                    recovered += 1
+                    continue
+                job.status = TelegramUpdateReceipt.STATUS_FAILED
+                job.error_code = "invalid_delivery_manifest"
+                job.payload_text = ""
+                job.delivery_payload = {}
+                job.finished_at = now
             elif int(job.attempt_count or 0) >= _max_attempts(max_attempts):
+                if _degrade_exhausted_photo_phase_locked(job, now=now):
+                    recovered += 1
+                    continue
                 job.status = TelegramUpdateReceipt.STATUS_FAILED
                 job.error_code = "lease_expired_max_attempts"
                 job.payload_text = ""
@@ -454,6 +926,8 @@ def run_worker_loop(
     max_attempts: int = DEFAULT_MAX_ATTEMPTS,
     execute: Executor | None = None,
     deliver: Deliver | None = None,
+    render_photos: PhotoRender | None = None,
+    deliver_photo: PhotoDeliver | None = None,
 ) -> int:
     """Poll and execute durable jobs until stopped; return the claimed-job count."""
 
@@ -468,6 +942,8 @@ def run_worker_loop(
                 max_attempts,
                 execute=execute,
                 deliver=deliver,
+                render_photos=render_photos,
+                deliver_photo=deliver_photo,
             )
         finally:
             close_old_connections()
@@ -510,6 +986,8 @@ def _claim_next_job(
         if job is None:
             _fail_exhausted_queued_jobs(max_attempts=max_attempts)
             return None
+        if _photo_attempt_budget_exhausted(job, max_attempts=max_attempts):
+            _degrade_exhausted_photo_phase_locked(job, now=now)
         return _claim_locked(job, worker_id=worker_id, lease_seconds=lease_seconds)
 
 
@@ -529,9 +1007,14 @@ def _claim_specific_job(
         if job.link is None or job.link.status != TelegramLink.STATUS_ACTIVE:
             _cancel_locked(job, "link_revoked")
             return None
+        if _photo_attempt_budget_exhausted(job, max_attempts=max_attempts):
+            if not _degrade_exhausted_photo_phase_locked(job, now=now):
+                _fail_locked(job, "invalid_delivery_manifest")
+                return None
         if int(job.attempt_count or 0) >= _max_attempts(max_attempts):
-            _fail_locked(job, "max_attempts_exhausted")
-            return None
+            if not _degrade_exhausted_photo_phase_locked(job, now=now):
+                _fail_locked(job, "max_attempts_exhausted")
+                return None
         if TelegramUpdateReceipt.objects.filter(
             link_id=job.link_id,
             update_id__lt=job.update_id,
@@ -546,7 +1029,12 @@ def _claim_locked(
 ) -> TelegramUpdateReceipt:
     now = timezone.now()
     job.status = TelegramUpdateReceipt.STATUS_RUNNING
-    job.attempt_count = int(job.attempt_count or 0) + 1
+    # Materialised photo work has its own durable retry counter. Make the claim
+    # itself rollback-safe (including max_attempts=1): there must be no committed
+    # claim-to-render window in which an old worker sees a terminal DB counter.
+    job.attempt_count = (
+        0 if _pending_photo_delivery_state(job) is not None else int(job.attempt_count or 0) + 1
+    )
     job.locked_by = worker_id
     job.locked_at = now
     job.lease_expires_at = now + timedelta(
@@ -571,6 +1059,8 @@ def _execute_claimed_job(
     *,
     executor: Executor | None,
     deliver: Deliver | None,
+    render_photos: PhotoRender | None,
+    deliver_photo: PhotoDeliver | None,
     max_attempts: int,
 ) -> TelegramUpdateReceipt:
     if not _link_is_active(job):
@@ -621,6 +1111,8 @@ def _execute_claimed_job(
             if isinstance(messages, str):
                 messages = (messages,)
             extra_payload = result.pop("delivery_payload", {}) or {}
+            if not isinstance(extra_payload, Mapping):
+                extra_payload = {}
             if not store_delivery(
                 job,
                 messages=tuple(str(message) for message in messages),
@@ -631,13 +1123,57 @@ def _execute_claimed_job(
             ):
                 return _fresh(job)
 
-    messages = list((job.delivery_payload or {}).get("messages") or [])
-    if not messages:
+    items = _delivery_items(job.delivery_payload)
+    state = (
+        _delivery_state(job.delivery_payload, items, job.delivery_cursor)
+        if items is not None
+        else None
+    )
+    if items is None or state is None:
+        finish_job(
+            job,
+            status=TelegramUpdateReceipt.STATUS_FAILED,
+            error_code="invalid_delivery_manifest",
+        )
+        return _fresh(job)
+    if not items:
         finish_job(job, result_code=job.result_code or "completed")
         return _fresh(job)
+    if state.rollback_text_takeover:
+        if not _begin_text_after_skipping_photos(job, state):
+            return _fresh(job)
+        state = state._replace(
+            photo_cursor=len(state.photo_items),
+            text_phase_started=True,
+            rollback_text_takeover=False,
+        )
+    elif state.legacy_shared_cursor:
+        if not _persist_split_delivery_state(job, state):
+            return _fresh(job)
+        state = state._replace(legacy_shared_cursor=False)
 
-    send = deliver or _default_deliver
-    for index in range(int(job.delivery_cursor or 0), len(messages)):
+    send_text_item = deliver or _default_deliver
+    send_photo_item = deliver_photo or _default_deliver_photo
+    render_photo_items = render_photos or _default_render_photos
+    rendered_photos: dict[int, bytes | None] = {}
+    images_enabled = render_photos is not None or bool(
+        getattr(settings, "TELEGRAM_SEND_TIMETABLE_IMAGES", False)
+    )
+
+    if state.photo_cursor < len(state.photo_items) and images_enabled:
+        if state.photo_attempt_count >= _max_attempts(max_attempts):
+            if not _begin_text_after_skipping_photos(job, state):
+                return _fresh(job)
+            state = state._replace(
+                photo_cursor=len(state.photo_items),
+                text_phase_started=True,
+            )
+        else:
+            if not _begin_photo_delivery_attempt(job, state):
+                return _fresh(job)
+            state = state._replace(photo_attempt_count=state.photo_attempt_count + 1)
+
+    for photo_index in range(state.photo_cursor, len(state.photo_items)):
         if not _link_is_active(job):
             finish_job(
                 job,
@@ -646,7 +1182,98 @@ def _execute_claimed_job(
             )
             return _fresh(job)
         try:
-            outcome = send(job, str(messages[index]))
+            if not images_enabled:
+                logger.warning(
+                    "telegram: timetable image delivery disabled for job=%s; "
+                    "delivering text fallback",
+                    job.update_id,
+                )
+                if not mark_photo_progress(job, photo_index + 1, image_degraded=True):
+                    return _fresh(job)
+                continue
+            if photo_index not in rendered_photos:
+                pending_indexes = list(range(photo_index, len(state.photo_items)))
+                option_indexes = [
+                    state.photo_items[candidate_index]["option_index"]
+                    for candidate_index in pending_indexes
+                ]
+                rendered = list(render_photo_items(job, option_indexes))
+                for offset, candidate_index in enumerate(pending_indexes):
+                    rendered_photos[candidate_index] = (
+                        rendered[offset] if offset < len(rendered) else None
+                    )
+            png = rendered_photos.get(photo_index)
+            if not png:
+                if state.photo_attempt_count < _max_attempts(max_attempts):
+                    _requeue_photo_delivery(
+                        job,
+                        photo_attempt_count=state.photo_attempt_count,
+                        error_code="image_render_failed",
+                    )
+                    return _fresh(job)
+                # A renderer outage must not strand the already-validated
+                # answer behind the photo. On the final attempt the photo is
+                # skipped and the text/web link still drains.
+                logger.warning(
+                    "telegram: timetable image render exhausted for job=%s; "
+                    "delivering text fallback",
+                    job.update_id,
+                )
+                if not mark_photo_progress(job, photo_index + 1, image_degraded=True):
+                    return _fresh(job)
+                continue
+            # Rendering may take several seconds. Re-check the exact account
+            # binding after it finishes and immediately before exporting the
+            # timetable to Telegram.
+            if not _link_is_active(job):
+                finish_job(
+                    job,
+                    status=TelegramUpdateReceipt.STATUS_CANCELLED,
+                    error_code="link_revoked",
+                )
+                return _fresh(job)
+            outcome = send_photo_item(job, png)
+        except Exception as exc:  # noqa: BLE001 - only the exception CLASS becomes durable.
+            outcome = {"ok": False, "error": type(exc).__name__}
+        if not _delivery_succeeded(outcome):
+            error_code, retryable, delay = _delivery_failure(outcome)
+            if not retryable or state.photo_attempt_count >= _max_attempts(max_attempts):
+                # Telegram may reject a particular image permanently (or the
+                # transient retry budget may expire). Preserve the required text
+                # answer instead of making an optional rendering failure terminal.
+                logger.warning(
+                    "telegram: timetable image delivery degraded for job=%s (%s)",
+                    job.update_id,
+                    error_code,
+                )
+                if not mark_photo_progress(job, photo_index + 1, image_degraded=True):
+                    return _fresh(job)
+                continue
+            if retryable:
+                _requeue_photo_delivery(
+                    job,
+                    photo_attempt_count=state.photo_attempt_count,
+                    error_code=error_code,
+                    delay_seconds=delay,
+                )
+            return _fresh(job)
+        if not mark_photo_progress(job, photo_index + 1):
+            return _fresh(job)
+
+    if state.photo_items and not state.text_phase_started:
+        if not _begin_text_delivery(job, photo_count=len(state.photo_items)):
+            return _fresh(job)
+
+    for text_index in range(state.text_cursor, len(state.text_items)):
+        if not _link_is_active(job):
+            finish_job(
+                job,
+                status=TelegramUpdateReceipt.STATUS_CANCELLED,
+                error_code="link_revoked",
+            )
+            return _fresh(job)
+        try:
+            outcome = send_text_item(job, state.text_items[text_index]["text"])
         except Exception as exc:  # noqa: BLE001 - only the exception CLASS becomes durable.
             outcome = {"ok": False, "error": type(exc).__name__}
         if not _delivery_succeeded(outcome):
@@ -665,10 +1292,18 @@ def _execute_claimed_job(
                     error_code=error_code,
                 )
             return _fresh(job)
-        if not mark_delivery_progress(job, index + 1):
+        if not mark_delivery_progress(job, text_index + 1):
             return _fresh(job)
 
-    finish_job(job, result_code=job.result_code or "completed")
+    finish_job(
+        job,
+        result_code=job.result_code or "completed",
+        error_code=(
+            "image_delivery_degraded"
+            if bool((job.delivery_payload or {}).get("image_degraded"))
+            else ""
+        ),
+    )
     return _fresh(job)
 
 
@@ -686,6 +1321,37 @@ def _default_deliver(job: TelegramUpdateReceipt, text: str) -> Mapping[str, Any]
     if link is None:
         return {"ok": False, "error": "link_revoked", "permanent": True}
     return send_text(chat_id=int(link.telegram_user_id), text=text)
+
+
+def _default_render_photos(
+    job: TelegramUpdateReceipt,
+    option_indexes: Sequence[int | None],
+) -> Sequence[bytes | None]:
+    """Render only server-authored recipes against the stored assistant message."""
+
+    if not job.assistant_message_id or not option_indexes:
+        return []
+    from .rendering import render_cards, worker_card_origin
+
+    with worker_card_origin() as base_url:
+        return render_cards(
+            message_id=job.assistant_message_id,
+            base_url=base_url,
+            option_indexes=list(option_indexes),
+        )
+
+
+def _default_deliver_photo(
+    job: TelegramUpdateReceipt,
+    png: bytes,
+) -> Mapping[str, Any] | bool | None:
+    from . import linking
+    from .transport import send_photo
+
+    link = linking.active_link_by_id(job.link_id)
+    if link is None:
+        return {"ok": False, "error": "link_revoked", "permanent": True}
+    return send_photo(chat_id=int(link.telegram_user_id), png=png)
 
 
 def _delivery_succeeded(outcome: Mapping[str, Any] | bool | None) -> bool:
@@ -726,7 +1392,7 @@ def _link_is_active(job: TelegramUpdateReceipt) -> bool:
     return linking.active_link_by_id(job.link_id) is not None
 
 
-def _owned_running(job: TelegramUpdateReceipt):
+def _owned_running(job: TelegramUpdateReceipt) -> QuerySet[TelegramUpdateReceipt]:
     if not job.locked_by or job.locked_at is None:
         return TelegramUpdateReceipt.objects.none()
     return TelegramUpdateReceipt.objects.filter(
@@ -792,17 +1458,123 @@ def _fail_locked(job: TelegramUpdateReceipt, error_code: str) -> None:
 
 
 def _fail_exhausted_queued_jobs(*, max_attempts: int) -> int:
-    now = timezone.now()
-    return TelegramUpdateReceipt.objects.filter(
-        status=TelegramUpdateReceipt.STATUS_QUEUED,
-        attempt_count__gte=_max_attempts(max_attempts),
-    ).update(
-        status=TelegramUpdateReceipt.STATUS_FAILED,
-        payload_text="",
-        delivery_payload={},
-        error_code="max_attempts_exhausted",
-        finished_at=now,
+    exhausted_ids = list(
+        TelegramUpdateReceipt.objects.filter(
+            status=TelegramUpdateReceipt.STATUS_QUEUED,
+            attempt_count__gte=_max_attempts(max_attempts),
+        ).values_list("update_id", flat=True)
     )
+    changed = 0
+    for update_id in exhausted_ids:
+        with transaction.atomic():
+            qs = TelegramUpdateReceipt.objects.filter(update_id=update_id)
+            if connection.features.has_select_for_update:
+                qs = qs.select_for_update()
+            job = qs.first()
+            if (
+                job is None
+                or job.status != TelegramUpdateReceipt.STATUS_QUEUED
+                or int(job.attempt_count or 0) < _max_attempts(max_attempts)
+            ):
+                continue
+            if not _degrade_exhausted_photo_phase_locked(job, now=timezone.now()):
+                _fail_locked(job, "max_attempts_exhausted")
+            changed += 1
+    return changed
+
+
+def _photo_attempt_budget_exhausted(
+    job: TelegramUpdateReceipt,
+    *,
+    max_attempts: int,
+) -> bool:
+    """Return whether durable optional-image retries are fully consumed."""
+
+    state = _pending_photo_delivery_state(job)
+    return bool(state is not None and state.photo_attempt_count >= _max_attempts(max_attempts))
+
+
+def _pending_photo_delivery_state(
+    job: TelegramUpdateReceipt,
+) -> _DeliveryState | None:
+    """Return a validated state only while optional photos remain ahead of text."""
+
+    items = _delivery_items(job.delivery_payload)
+    state = (
+        _delivery_state(job.delivery_payload, items, job.delivery_cursor)
+        if items is not None
+        else None
+    )
+    if state is None or state.photo_cursor >= len(state.photo_items) or state.text_phase_started:
+        return None
+    return state
+
+
+def _degrade_exhausted_photo_phase_locked(
+    job: TelegramUpdateReceipt,
+    *,
+    now: Any,
+) -> bool:
+    """Skip exhausted optional photos without resetting an active text budget.
+
+    A worker can die during Chromium or ``sendPhoto`` on its last lease. The
+    ordinary exhausted-job path would then clear the whole manifest, making the
+    optional image cost the student the already-validated answer. This transition
+    advances only across the remaining leading photo items and requeues the text
+    phase with its own bounded attempts.
+    """
+
+    items = _delivery_items(job.delivery_payload)
+    state = (
+        _delivery_state(job.delivery_payload, items, job.delivery_cursor)
+        if items is not None
+        else None
+    )
+    if items is None or state is None or not state.photo_items:
+        return False
+    # A rolled-back worker can advance the legacy DB cursor while leaving the
+    # split manifest's marker false. That means required text has already
+    # started: skip the now-out-of-order photos and preserve both its exact text
+    # cursor and consumed retry count. Genuine image-phase recovery still gives
+    # required text its independent fresh budget.
+    if state.text_phase_started and not state.rollback_text_takeover:
+        return False
+    if not state.text_items:
+        return False
+
+    payload = dict(job.delivery_payload or {})
+    payload["cursor_mode"] = DELIVERY_CURSOR_MODE_SPLIT
+    payload["photo_cursor"] = len(state.photo_items)
+    payload["photo_attempt_count"] = state.photo_attempt_count
+    payload["text_phase_started"] = True
+    skipped_photos = state.photo_cursor < len(state.photo_items)
+    if skipped_photos:
+        payload["image_degraded"] = True
+    job.status = TelegramUpdateReceipt.STATUS_QUEUED
+    job.delivery_payload = payload
+    job.delivery_cursor = state.text_cursor
+    job.attempt_count = int(job.attempt_count or 0) if state.rollback_text_takeover else 0
+    job.error_code = "image_delivery_degraded" if skipped_photos else ""
+    job.available_at = now
+    job.locked_by = ""
+    job.locked_at = None
+    job.lease_expires_at = None
+    job.finished_at = None
+    job.save(
+        update_fields=[
+            "status",
+            "delivery_payload",
+            "delivery_cursor",
+            "attempt_count",
+            "error_code",
+            "available_at",
+            "locked_by",
+            "locked_at",
+            "lease_expires_at",
+            "finished_at",
+        ]
+    )
+    return True
 
 
 def _fresh(job: TelegramUpdateReceipt) -> TelegramUpdateReceipt:

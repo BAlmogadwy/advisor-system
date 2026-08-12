@@ -1,22 +1,205 @@
-{% load static %}<!doctype html>
+<!doctype html>
 <html lang="{% if language == 'ar' %}ar{% else %}en{% endif %}"
       dir="{% if language == 'ar' %}rtl{% else %}ltr{% endif %}">
 <head>
   <meta charset="utf-8">
   <title>card</title>
-  {% comment %} The SAME stylesheet the thread uses. The card's classes are defined there;
-     restating them here would be the second-renderer problem in CSS form. {% endcomment %}
-  <link href="{% static 'css/global.css' %}?v=50" rel="stylesheet">
-  <link href="{% static 'css/bootstrap-compat.css' %}?v=3" rel="stylesheet">
+  {% comment %} The SAME semantic component and base stylesheet the thread uses. The
+     scoped rules below change only density and contrast for a static Telegram
+     image; timetable geometry remains in the shared WeekGrid renderer. {% endcomment %}
+  <link href="/telegram/card-assets/css/global.css?v=50" rel="stylesheet">
+  <link href="/telegram/card-assets/css/bootstrap-compat.css?v=3" rel="stylesheet">
   <style>
-    /* Deliberately narrow. A phone renders the image at its own width, and a
-       desktop-width screenshot is unreadable once Telegram scales it down. */
-    html, body { margin: 0; padding: 0; background: #ffffff; }
-    /* Wider than the 720 the meetings list needed: a five-day grid has five
-       columns plus a time gutter, and Telegram scales the image down. */
-    #sa-card-root { width: 900px; padding: 16px; box-sizing: border-box; }
-    .sa-tt-grid table { font-size: 13px; }
-    .sa-tt-grid td, .sa-tt-grid th { padding: 4px 6px; vertical-align: middle; }
+    /* This is a Telegram artifact, not the desktop chat panel. At DPR 2 the
+       720 CSS-pixel root becomes a sharp 1440-pixel image without shrinking the
+       type as aggressively as the former 1800-pixel card. */
+    html, body { margin: 0; padding: 0; background: #f5f8f7; }
+    #sa-card-root {
+      width: 720px;
+      padding: 12px;
+      box-sizing: border-box;
+      background: linear-gradient(145deg, #ffffff 0%, #f7fbfa 100%);
+    }
+    #sa-card-root .sa-timetable { margin: 0; padding: 0; border-top: 0; }
+    #sa-card-root .sa-tt-heading { margin-bottom: 7px; }
+    #sa-card-root .sa-tt-title { font-size: 20px; line-height: 1.25; }
+    #sa-card-root .sa-tt-term,
+    #sa-card-root .sa-tt-coverage,
+    #sa-card-root .sa-tt-credits {
+      padding: 3px 8px;
+      border-color: #d4e1e5;
+      background: #ffffff;
+      font-size: 12px;
+      font-weight: 700;
+    }
+    #sa-card-root .sa-tt-boundary {
+      margin-bottom: 9px;
+      padding: 8px 10px;
+      border-inline-start-width: 4px;
+      background: #eaf6f2;
+      color: #31485a;
+      font-size: 13px;
+      line-height: 1.45;
+    }
+    #sa-card-root .sa-tt-option,
+    #sa-card-root .sa-tt-current {
+      border-color: #bddbd4;
+      border-radius: 13px;
+      box-shadow: 0 6px 18px rgba(30, 73, 67, .07);
+    }
+    #sa-card-root .sa-tt-option[open] { box-shadow: inset 4px 0 0 #079678, 0 6px 18px rgba(30, 73, 67, .07); }
+    #sa-card-root .sa-tt-summary,
+    #sa-card-root .sa-tt-current > summary {
+      min-height: 44px;
+      padding: 8px 11px;
+      cursor: default;
+    }
+    #sa-card-root .sa-tt-summary::before,
+    #sa-card-root .sa-tt-current > summary::before { display: none; }
+    #sa-card-root .sa-tt-option-name { font-size: 15px; }
+    #sa-card-root .sa-card-partial .sa-tt-coverage {
+      border-color: #e4c180;
+      background: #fff7e6;
+      color: #92530b;
+    }
+    #sa-card-root .sa-tt-option-body { padding: 0 10px 10px; }
+    #sa-card-root .sa-tt-option-body > .sa-tt-subtitle:first-child { display: none; }
+
+    /* Keep the shared five-minute geometry, but give its card-only presentation
+       enough contrast to survive Telegram compression. */
+    #sa-card-root .sa-tt-grid-blocks { margin-top: 2px; }
+    #sa-card-root .sa-tt-grid-blocks .wg-blocks {
+      overflow: hidden;
+      border: 1px solid #c7dcd7;
+      border-radius: 10px;
+      background: #f7faf9;
+      box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .65);
+    }
+    #sa-card-root .wg-blocks .wg-h {
+      border-color: #d4e3df;
+      background: #eaf4f1;
+      color: #23394c;
+      font-size: 12px;
+      font-weight: 800;
+    }
+    #sa-card-root .wg-blocks .wg-t {
+      background: #f3f8f6;
+      color: #52677a;
+      font-size: 10px;
+      font-weight: 700;
+    }
+    #sa-card-root .wg-blocks .wg-cell { background: #fbfdfc; }
+    #sa-card-root .wg-blocks .wg-filled {
+      justify-content: center;
+      gap: 4px;
+      padding: 5px 6px;
+      border: 1px solid var(--sa-card-accent, #079678);
+      border-inline-start-width: 4px;
+      border-radius: 7px;
+      box-shadow: 0 2px 6px rgba(29, 55, 66, .12);
+    }
+    #sa-card-root .wg-blocks .wg-filled .wg-cid {
+      color: #13263a;
+      font-size: 12px;
+      line-height: 1.15;
+      text-align: start;
+    }
+    #sa-card-root .wg-blocks .wg-filled .wg-meta {
+      display: block;
+      overflow: visible;
+      color: #304b60;
+      font-size: 10px;
+      font-weight: 700;
+      line-height: 1.15;
+      text-align: start;
+      text-overflow: clip;
+      white-space: nowrap;
+    }
+    #sa-card-root .sa-card-palette-0 { --sa-card-bg: #dff4ee; --sa-card-accent: #07866d; }
+    #sa-card-root .sa-card-palette-1 { --sa-card-bg: #e4efff; --sa-card-accent: #3578c8; }
+    #sa-card-root .sa-card-palette-2 { --sa-card-bg: #f0e8ff; --sa-card-accent: #7656b7; }
+    #sa-card-root .sa-card-palette-3 { --sa-card-bg: #fff0d8; --sa-card-accent: #bd7415; }
+    #sa-card-root .sa-card-palette-4 { --sa-card-bg: #ffe8ec; --sa-card-accent: #bb5265; }
+    #sa-card-root .sa-card-palette-5 { --sa-card-bg: #ddf3f7; --sa-card-accent: #23849a; }
+
+    /* Long names belong once in a compact legend, not in every meeting block. */
+    #sa-card-root .sa-card-course-legend {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 6px;
+      margin-top: 7px;
+    }
+    #sa-card-root .sa-card-course-row {
+      display: grid;
+      grid-template-columns: 4px auto minmax(0, 1fr);
+      align-items: center;
+      gap: 7px;
+      min-width: 0;
+      padding: 6px 8px;
+      border: 1px solid color-mix(in srgb, var(--sa-card-accent) 32%, #dce7e5);
+      border-radius: 8px;
+      background: color-mix(in srgb, var(--sa-card-bg) 72%, #ffffff);
+    }
+    #sa-card-root .sa-card-course-swatch {
+      align-self: stretch;
+      min-height: 27px;
+      border-radius: 99px;
+      background: var(--sa-card-accent);
+    }
+    #sa-card-root .sa-card-course-key {
+      color: #162c40;
+      font-size: 11px;
+      font-weight: 800;
+      white-space: nowrap;
+    }
+    #sa-card-root .sa-card-course-name {
+      min-width: 0;
+      color: #42596c;
+      font-size: 10.5px;
+      line-height: 1.25;
+      text-align: start;
+    }
+
+    /* Missing catalogue data is a warning, not a destructive error. Preserve
+       every reason, but keep each course on one compact, bidi-safe row. */
+    #sa-card-root .sa-tt-unplaced-title {
+      margin: 9px 0 5px;
+      color: #a55b08;
+      font-size: 13px;
+    }
+    #sa-card-root .sa-tt-unplaced { gap: 5px; }
+    #sa-card-root .sa-tt-unplaced .sa-card-unplaced-row {
+      display: grid;
+      grid-template-columns: minmax(0, 210px) minmax(0, 1fr);
+      align-items: start;
+      gap: 10px;
+      min-width: 0;
+      padding: 7px 8px;
+      border: 1px solid #ecd4aa;
+      border-radius: 8px;
+      background: #fff9ec;
+      font-size: 11px;
+    }
+    #sa-card-root .sa-card-unplaced-key {
+      display: grid;
+      align-content: start;
+      gap: 2px;
+      min-width: 0;
+      color: #273d50;
+    }
+    #sa-card-root .sa-card-unplaced-key strong { color: #9a570d; font-size: 11.5px; }
+    #sa-card-root .sa-card-unplaced-name { min-width: 0; text-align: start; }
+    #sa-card-root .sa-card-unplaced-reason {
+      display: block;
+      margin: 0;
+      color: #566878;
+      line-height: 1.35;
+      text-align: start;
+    }
+    #sa-card-root .sa-tt-current-list[data-grid-fallback='1'] {
+      gap: 5px;
+      padding: 7px 0 0;
+    }
   </style>
 </head>
 <body>
@@ -56,13 +239,11 @@
   };
 </script>
 {% comment %} The shared week-grid primitive. `base.html` loads it on every real page, but
-   this page does not extend base.html, so it is named explicitly. The card's own
-   renderer does not use it — the chat thread shows a meetings LIST, which is the
-   right shape for a narrow bubble holding three or four alternatives. An image
-   has neither constraint: it renders offscreen at a fixed width, one option at a
-   time, and a week grid reads at a glance where nine list rows do not. {% endcomment %}
-<script src="{% static 'js/shared-timetable.js' %}?v=3"></script>
-<script src="{% static 'js/page-student-advisor.js' %}?v=24"></script>
+   this page does not extend base.html, so it is named explicitly. The chat thread
+   keeps the semantic meetings list; this card swaps the one visible option to the
+   same exact-time grid used by the planner and student timetable. {% endcomment %}
+<script src="/telegram/card-assets/js/shared-timetable.js?v=3"></script>
+<script src="/telegram/card-assets/js/page-student-advisor.js?v=24"></script>
 <script>
   (function () {
     var IS_AR = {% if language == 'ar' %}true{% else %}false{% endif %};
@@ -70,6 +251,16 @@
       ? {SUN: 'الأحد', MON: 'الاثنين', TUE: 'الثلاثاء', WED: 'الأربعاء', THU: 'الخميس',
          FRI: 'الجمعة', SAT: 'السبت'}
       : {SUN: 'Sun', MON: 'Mon', TUE: 'Tue', WED: 'Wed', THU: 'Thu', FRI: 'Fri', SAT: 'Sat'};
+    var COURSE_PALETTE = [
+      {background: '#dff4ee', accent: '#07866d'},
+      {background: '#e4efff', accent: '#3578c8'},
+      {background: '#f0e8ff', accent: '#7656b7'},
+      {background: '#fff0d8', accent: '#bd7415'},
+      {background: '#ffe8ec', accent: '#bb5265'},
+      {background: '#ddf3f7', accent: '#23849a'}
+    ];
+    var paletteByCourse = Object.create(null);
+    var nextPalette = 0;
     var root = document.getElementById('sa-card-root');
     var data = JSON.parse(document.getElementById('sa-card-data').textContent);
     var render = window.__SA_RENDER_TIMETABLE_CARD__;
@@ -118,6 +309,16 @@
             options[i].style.display = 'none';
           }
         }
+      } else if (!(data.alternatives || []).length) {
+        /* A current/expected baseline is the whole answer when there are no
+           alternatives. On the interactive screen it is a collapsed <details>,
+           but a screenshot cannot be clicked: expand it and draw its canonical
+           meeting strings with the same WeekGrid used for proposal options. */
+        var retained = root.querySelector('details.sa-tt-current');
+        if (retained) {
+          retained.open = true;
+          gridifyBaseline(retained, data.baseline_sections || []);
+        }
       }
 
       /* Swap the meetings list for the shared week grid — IN THE IMAGE ONLY.
@@ -128,29 +329,219 @@
       function gridify(details, option) {
         var list = details.querySelector('ul.sa-tt-meetings');
         var meetings = (option && option.meetings) || [];
+        replaceWithGrid(list, meetings);
+        enhanceOption(details, option || {});
+      }
+
+      function gridifyBaseline(details, sections) {
+        var list = details.querySelector('.sa-tt-current-list');
+        var meetings = [];
+        var parsedBySection = [];
+        (sections || []).forEach(function (course) {
+          var parsed = [];
+          (course.meetings || []).forEach(function (raw) {
+            var match = String(raw || '').match(
+              /^\s*(SUN|MON|TUE|WED|THU|FRI|SAT)\s+(\d{1,2}:\d{2})\s*[-\u2013\u2014]\s*(\d{1,2}:\d{2})\s*$/i
+            );
+            parsed.push(Boolean(match));
+            if (!match) return;
+            meetings.push({
+              course_code: course.course_code || '',
+              course_name: course.course_name || '',
+              section: course.section || '',
+              day: match[1].toUpperCase(),
+              start: match[2],
+              end: match[3]
+            });
+          });
+          parsedBySection.push(parsed);
+        });
+        replaceWithGrid(list, meetings, function () {
+          retainUnmappedBaselineRows(list, parsedBySection);
+        });
+      }
+
+      /* WeekGrid can only place canonical DAY HH:MM-HH:MM meetings. Keep a
+         compact row under the visual grid for every baseline section without a
+         meeting and for every legacy meeting string it could not parse. A
+         partial parse keeps only the unparsed strings, avoiding a duplicate of
+         the meetings already visible in the grid. */
+      function retainUnmappedBaselineRows(list, parsedBySection) {
+        var rows = Array.prototype.slice.call(list.querySelectorAll('.sa-tt-current-row'));
+        rows.forEach(function (row, sectionIndex) {
+          var parsed = parsedBySection[sectionIndex] || [];
+          if (!parsed.length) return;
+          if (parsed.every(Boolean)) {
+            row.remove();
+            return;
+          }
+          var meetingNodes = row.querySelectorAll('.sa-tt-current-meeting');
+          for (var i = 0; i < meetingNodes.length; i++) {
+            if (parsed[i]) meetingNodes[i].remove();
+          }
+        });
+        if (list.children.length) {
+          list.setAttribute('data-grid-fallback', '1');
+        } else {
+          list.remove();
+        }
+      }
+
+      function replaceWithGrid(list, meetings, retainFallbacks) {
         if (!list || !meetings.length || !window.WeekGrid) return;
 
         var html = window.WeekGrid.renderWeekGrid({
           blocks: meetings,
-          mode: 'table',
+          /* Five-minute block geometry preserves the real end boundary. The
+             table renderer rounds a 75/100-minute meeting up to 90/120. */
+          mode: 'blocks',
+          step: 5,
+          labelStep: 30,
+          padMinutes: 0,
+          majorHeight: 32,
           dir: IS_AR ? 'rtl' : 'ltr',
           dayLabels: DAY_LABELS,
           timeLabel: IS_AR ? 'الوقت' : 'Time',
+          bg: function (m) { return paletteFor(m).background; },
+          accent: function (m) { return paletteFor(m).accent; },
+          cellClass: function (m) {
+            return 'sa-card-course-block sa-card-palette-' + paletteFor(m).index;
+          },
           cellHtml: function (m) {
-            /* Escaped: `course_name` is database text, and this is the one place
-               on the card that builds HTML from a string rather than DOM nodes. */
+            /* Escaped: these are database values, and this is the one place on
+               the card that builds HTML from a string rather than DOM nodes. */
             var code = esc(m.course_code || '');
             var sec = m.section ? ' · ' + esc(m.section) : '';
-            var name = m.course_name ? '<br><small>' + esc(m.course_name) + '</small>' : '';
-            return '<strong dir="ltr">' + code + sec + '</strong>' + name;
+            var time = esc(m.start || '') + '–' + esc(m.end || '');
+            return '<span class="wg-cid sa-card-block-key" data-course-code="' + code +
+              '" dir="ltr">' + code + sec + '</span>' +
+              '<span class="wg-meta sa-card-block-time" dir="ltr">' + time + '</span>';
           }
         });
         if (html) {
           var holder = document.createElement('div');
-          holder.className = 'sa-tt-grid';
+          holder.className = 'sa-tt-grid sa-tt-grid-blocks';
           holder.innerHTML = html;
-          list.parentNode.replaceChild(holder, list);
+          var legend = buildCourseLegend(meetings);
+          if (typeof retainFallbacks === 'function') {
+            list.parentNode.insertBefore(holder, list);
+            if (legend) list.parentNode.insertBefore(legend, list);
+            retainFallbacks();
+          } else {
+            list.parentNode.replaceChild(holder, list);
+            if (legend) holder.parentNode.insertBefore(legend, holder.nextSibling);
+          }
         }
+      }
+
+      function paletteFor(meeting) {
+        var key = String((meeting && meeting.course_code) || (meeting && meeting.course_name) || '?');
+        if (paletteByCourse[key] == null) {
+          paletteByCourse[key] = nextPalette % COURSE_PALETTE.length;
+          nextPalette += 1;
+        }
+        var index = paletteByCourse[key];
+        return {
+          index: index,
+          background: COURSE_PALETTE[index].background,
+          accent: COURSE_PALETTE[index].accent
+        };
+      }
+
+      function buildCourseLegend(meetings) {
+        var seen = Object.create(null);
+        var rows = [];
+        (meetings || []).forEach(function (meeting) {
+          var code = String((meeting && meeting.course_code) || '');
+          var section = String((meeting && meeting.section) || '');
+          var name = String((meeting && meeting.course_name) || '');
+          var key = code + '\u0000' + section;
+          if (seen[key] || (!code && !name)) return;
+          seen[key] = true;
+          rows.push({course_code: code, section: section, course_name: name});
+        });
+        if (!rows.length) return null;
+
+        var legend = document.createElement('div');
+        legend.className = 'sa-card-course-legend';
+        rows.forEach(function (course) {
+          var palette = paletteFor(course);
+          var row = document.createElement('div');
+          row.className = 'sa-card-course-row sa-card-palette-' + palette.index;
+          row.setAttribute('data-course-code', course.course_code);
+
+          var swatch = document.createElement('span');
+          swatch.className = 'sa-card-course-swatch';
+          row.appendChild(swatch);
+
+          var key = document.createElement('bdi');
+          key.className = 'sa-card-course-key';
+          key.setAttribute('dir', 'ltr');
+          key.textContent = course.course_code + (course.section ? ' · ' + course.section : '');
+          row.appendChild(key);
+
+          var name = document.createElement('span');
+          name.className = 'sa-card-course-name';
+          name.setAttribute('dir', 'auto');
+          name.textContent = course.course_name;
+          row.appendChild(name);
+          legend.appendChild(row);
+        });
+        return legend;
+      }
+
+      function enhanceOption(details, option) {
+        var scheduled = Number(option.scheduled_courses || 0);
+        var target = Number(option.target_courses || 0);
+        var coverage = details.querySelector('.sa-tt-coverage');
+        if (coverage && target > 0) {
+          coverage.textContent = IS_AR
+            ? scheduled + ' من ' + target + ' مقررات'
+            : scheduled + ' of ' + target + ' courses';
+          if (scheduled < target) details.classList.add('sa-card-partial');
+        }
+        var credits = Number(option.total_credit_hours || option.proposed_credit_hours || 0);
+        var creditNode = details.querySelector('.sa-tt-credits');
+        if (creditNode && credits) creditNode.textContent = credits + (IS_AR ? ' س' : ' cr');
+        compactUnplaced(details, option.unplaced_courses || []);
+      }
+
+      function compactUnplaced(details, courses) {
+        var list = details.querySelector('.sa-tt-unplaced');
+        if (!list || !courses.length) return;
+        var title = details.querySelector('.sa-tt-unplaced-title');
+        if (title) title.textContent = title.textContent + ' (' + courses.length + ')';
+        while (list.firstChild) list.removeChild(list.firstChild);
+
+        courses.forEach(function (course) {
+          var item = document.createElement('li');
+          item.className = 'sa-card-unplaced-row';
+          item.setAttribute('data-course-code', String(course.course_code || ''));
+
+          var key = document.createElement('span');
+          key.className = 'sa-card-unplaced-key';
+          var code = document.createElement('strong');
+          code.setAttribute('dir', 'ltr');
+          code.textContent = String(course.course_code || '');
+          key.appendChild(code);
+          if (course.course_name) {
+            var name = document.createElement('span');
+            name.className = 'sa-card-unplaced-name';
+            name.setAttribute('dir', 'auto');
+            name.textContent = String(course.course_name);
+            key.appendChild(name);
+          }
+          item.appendChild(key);
+
+          if (course.reason) {
+            var reason = document.createElement('span');
+            reason.className = 'sa-tt-reason sa-card-unplaced-reason';
+            reason.setAttribute('dir', 'auto');
+            reason.textContent = String(course.reason);
+            item.appendChild(reason);
+          }
+          list.appendChild(item);
+        });
       }
 
       function esc(value) {

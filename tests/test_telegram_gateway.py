@@ -15,11 +15,14 @@ from __future__ import annotations
 
 import json
 from datetime import timedelta
+from pathlib import Path
+from typing import Any
 from unittest import mock
 
 import pytest
 from django.contrib.auth.models import User
-from django.test import override_settings
+from django.http import HttpResponse
+from django.test import Client, override_settings
 from django.urls import reverse
 from django.utils import timezone
 
@@ -27,6 +30,7 @@ from core.models import AdvisorConversation, AdvisorMessage, Course, Student, St
 from core.services.rbac import ensure_role_groups
 from telegram_gateway import bot, linking, messages
 from telegram_gateway.models import TelegramLink, TelegramLinkToken, TelegramUpdateReceipt
+from telegram_gateway.rendering import RecordingRenderer
 from telegram_gateway.transport import RecordingTransport, set_transport
 
 pytestmark = pytest.mark.django_db
@@ -1960,7 +1964,9 @@ def test_advisor_case_and_reply_survive_a_worker_crash_without_a_second_case(cli
 
     job.refresh_from_db()
     case = AdvisorEscalation.objects.get()
-    assert case.reference in " ".join(job.delivery_payload["messages"])
+    assert case.reference in " ".join(
+        item["text"] for item in job.delivery_payload["items"] if item["kind"] == "text"
+    )
 
     # The process dies here: the durable payload exists but no delivery cursor
     # moved. A human then closes the case before lease recovery/retry.
@@ -2567,6 +2573,24 @@ def _renderer(fail: bool = False):
     return r
 
 
+def _card_request(client: Client, token: str) -> HttpResponse:
+    from telegram_gateway.cards import sign_renderer_request
+
+    return client.get(  # type: ignore[return-value]
+        f"/telegram/card/{token}/",
+        HTTP_X_TELEGRAM_CARD_RENDERER=sign_renderer_request(),
+    )
+
+
+def _card_asset_request(client: Client, asset_path: str) -> HttpResponse:
+    from telegram_gateway.cards import sign_renderer_request
+
+    return client.get(  # type: ignore[return-value]
+        f"/telegram/card-assets/{asset_path}",
+        HTTP_X_TELEGRAM_CARD_RENDERER=sign_renderer_request(),
+    )
+
+
 @pytest.fixture
 def cards():
     from telegram_gateway.rendering import set_renderer
@@ -2638,22 +2662,170 @@ def test_no_image_is_sent_while_the_flag_is_off(client, outbox, cards):
 
 
 @IMAGES_ON
-def test_durable_rollout_remains_text_only_even_if_the_legacy_image_flag_is_on(
-    client, outbox, cards
-):
-    """The durable rollout intentionally does not export timetable images.
-
-    A week-grid image is a compact location/schedule record and Telegram retains
-    it as a file. The dormant renderer can be reintroduced only with its own
-    durable delivery item; it must never bypass the queue as an immediate send.
-    """
+def test_durable_worker_delivers_the_timetable_image_and_validated_text(
+    client: Client,
+    outbox: RecordingTransport,
+    cards: RecordingRenderer,
+) -> None:
+    """The picture is a cursor-tracked queue item, never an immediate side send."""
     _link()
     with _adviser(answer="هذا جدولك.", presentation=_timetable_presentation()):
         _post(client, _update(text="ابنِ لي جدولًا"))
 
-    assert cards.requested == []
+    assert len(cards.requested) == 1
+    assert len(outbox.photos) == 1
+    assert "هذا جدولك." in " ".join(outbox.texts)
+
+
+@IMAGES_ON
+def test_durable_render_failure_retries_then_preserves_the_text_answer(
+    client: Client,
+    outbox: RecordingTransport,
+) -> None:
+    from telegram_gateway import jobs
+    from telegram_gateway.rendering import set_renderer
+
+    failing = _renderer(fail=True)
+    try:
+        _link()
+        with _adviser(
+            answer="هذا جدولك.",
+            presentation=_timetable_presentation(),
+        ) as adviser:
+            _post(client, _update(update_id=8801, text="ابنِ لي جدولًا"))
+            TelegramUpdateReceipt.objects.filter(update_id=8801).update(available_at=timezone.now())
+            jobs.run_job(8801, worker_id="image-retry-2")
+            TelegramUpdateReceipt.objects.filter(update_id=8801).update(available_at=timezone.now())
+            final = jobs.run_job(8801, worker_id="image-retry-3")
+    finally:
+        set_renderer(None)
+
+    assert adviser.call_count == 1
+    assert len(failing.requested) == 3
     assert outbox.photos == []
     assert "هذا جدولك." in " ".join(outbox.texts)
+    assert final is not None
+    assert final.status == TelegramUpdateReceipt.STATUS_SUCCEEDED
+    assert final.error_code == "image_delivery_degraded"
+
+
+@IMAGES_ON
+def test_withheld_output_never_materialises_or_sends_a_timetable_image(
+    client: Client,
+    outbox: RecordingTransport,
+    cards: RecordingRenderer,
+) -> None:
+    student = _student_row(MINE)
+    student.gpa = 2.86
+    student.save(update_fields=["gpa"])
+    _link()
+
+    with _adviser(
+        answer="Your CGPA is 2.86.",
+        presentation=_timetable_presentation(),
+    ):
+        _post(client, _update(update_id=8802, text="Which courses should I take?"))
+
+    job = TelegramUpdateReceipt.objects.get(update_id=8802)
+    assert job.result_code == "secure_output_withheld"
+    assert cards.requested == []
+    assert outbox.photos == []
+    assert "2.86" not in " ".join(outbox.texts)
+
+
+@IMAGES_ON
+@pytest.mark.parametrize(
+    ("visible_result", "course_code"),
+    [
+        ("GPA: 2.86", "AI331"),
+        ("CS113 - 84", "CS113"),
+        ("You failed DS341.", "DS341"),
+        ("Failed previously with mark 40.", "DS341"),
+    ],
+)
+def test_personal_record_text_inside_a_presentation_suppresses_only_the_photo_recipe(
+    client: Client,
+    outbox: RecordingTransport,
+    cards: RecordingRenderer,
+    visible_result: str,
+    course_code: str,
+) -> None:
+    """Safe prose still travels; visible personal data must never enter a screenshot."""
+
+    from telegram_gateway import jobs
+
+    student = _student_row(MINE)
+    student.gpa = 2.86
+    student.save(update_fields=["gpa"])
+    passed = Course.objects.create(course_code="CS113")
+    failed = Course.objects.create(course_code="DS341")
+    StudentCourse.objects.create(
+        student=student,
+        course=passed,
+        status=StudentCourse.Status.PASSED,
+        grade="B",
+        mark=84,
+    )
+    StudentCourse.objects.create(
+        student=student,
+        course=failed,
+        status=StudentCourse.Status.FAILED,
+        grade="F",
+        mark=40,
+    )
+    _link()
+
+    presentation = _timetable_presentation()
+    presentation["constraint_failures"] = [
+        {
+            "course_code": course_code,
+            "section_label": "M1",
+            "reason": visible_result,
+        }
+    ]
+    safe_answer = "Here is the timetable summary you requested."
+    from core.services.advisor_presentations import normalise_presentation
+
+    normalised = normalise_presentation(presentation)
+    assert bot.contains_personal_record_output(
+        f"{course_code} | {visible_result}",
+        student_id=MINE,
+        question="Build me a timetable.",
+    )
+    assert bot._presentation_contains_personal_record(
+        normalised,
+        student_id=MINE,
+        question="Build me a timetable.",
+    )
+    captured_items: list[dict] = []
+    original = bot._durable_delivery_items
+
+    def capture_items(*args: Any, **kwargs: Any) -> list[dict[str, Any]]:
+        items = original(*args, **kwargs)
+        captured_items.extend(items)
+        return items
+
+    with (
+        mock.patch("telegram_gateway.bot._durable_delivery_items", side_effect=capture_items),
+        _adviser(answer=safe_answer, presentation=presentation),
+    ):
+        response = _post(
+            client,
+            _update(update_id=8803, text="Build me a timetable."),
+        )
+
+    assert response.status_code == 200
+    assert captured_items, "the durable answer was not materialised"
+    assert not any(
+        item.get("kind") == jobs.DELIVERY_KIND_TIMETABLE_PHOTO for item in captured_items
+    )
+    assert any(
+        item.get("kind") == jobs.DELIVERY_KIND_TEXT and safe_answer in item.get("text", "")
+        for item in captured_items
+    )
+    assert cards.requested == []
+    assert outbox.photos == []
+    assert safe_answer in " ".join(outbox.texts)
 
 
 @IMAGES_ON
@@ -2721,7 +2893,7 @@ def test_the_render_url_is_signed_and_local(client, outbox, cards):
 @CHANNEL_ON
 def test_the_card_page_refuses_an_unsigned_or_forged_token(client):
     for bad in ["nonsense", "a.b.c", ""]:
-        response = client.get(f"/telegram/card/{bad or 'x'}/")
+        response = _card_request(client, bad or "x")
         assert response.status_code == 404
 
 
@@ -2768,7 +2940,7 @@ def test_the_card_page_renders_only_the_whitelisted_presentation(client):
         status=AdvisorMessage.STATUS_COMPLETED,
     )
 
-    response = client.get(f"/telegram/card/{sign_card(message_id=m.pk)}/")
+    response = _card_request(client, sign_card(message_id=m.pk))
 
     assert response.status_code == 200
     body = response.content.decode("utf-8")
@@ -2776,8 +2948,60 @@ def test_the_card_page_renders_only_the_whitelisted_presentation(client):
     assert "AI331" in body
     assert "cardOnly" in body, "the bootstrap guard is missing; the page would call the API"
     assert response["Cache-Control"] == "no-store, private"
+    assert response["Referrer-Policy"] == "no-referrer"
+    policy = response["Content-Security-Policy"]
+    assert "default-src 'none'" in policy
+    assert "connect-src 'none'" in policy
+    assert "fonts.googleapis.com" not in policy
     # No student identifier on a page reachable with only a signature.
     assert str(MINE) not in body
+
+
+@IMAGES_ON
+def test_card_assets_are_exactly_allowlisted_renderer_only_and_no_store(
+    client: Client,
+    tmp_path: Path,
+) -> None:
+    """Screenshots use source assets, not a possibly stale collected manifest."""
+
+    with override_settings(STATIC_ROOT=tmp_path / "stale-static-root"):
+        response = _card_asset_request(client, "js/shared-timetable.js")
+
+    assert response.status_code == 200
+    assert b"WeekGrid" in response.content
+    assert response["Content-Type"].startswith("text/javascript")
+    assert response["Cache-Control"] == "no-store, private"
+    assert response["X-Content-Type-Options"] == "nosniff"
+
+    assert client.get("/telegram/card-assets/js/shared-timetable.js").status_code == 404
+    assert (
+        client.get(
+            "/telegram/card-assets/js/shared-timetable.js",
+            HTTP_X_TELEGRAM_CARD_RENDERER="forged",
+        ).status_code
+        == 404
+    )
+    assert _card_asset_request(client, "js/not-allowlisted.js").status_code == 404
+
+
+@IMAGES_ON
+def test_card_html_loads_only_the_private_source_asset_route(client: Client) -> None:
+    from telegram_gateway.cards import sign_card
+
+    conversation = AdvisorConversation.objects.create(student_id=MINE)
+    message = AdvisorMessage.objects.create(
+        conversation=conversation,
+        role=AdvisorMessage.ROLE_ASSISTANT,
+        content="x",
+        presentation=_timetable_presentation(),
+        status=AdvisorMessage.STATUS_COMPLETED,
+    )
+
+    body = _card_request(client, sign_card(message_id=message.pk)).content.decode("utf-8")
+    assert "/telegram/card-assets/css/global.css" in body
+    assert "/telegram/card-assets/js/page-student-advisor.js" in body
+    assert 'href="/static/' not in body
+    assert 'src="/static/' not in body
 
 
 @CHANNEL_ON
@@ -2791,7 +3015,7 @@ def test_the_card_page_refuses_a_message_with_no_card(client):
         content="no card here",
         status=AdvisorMessage.STATUS_COMPLETED,
     )
-    assert client.get(f"/telegram/card/{sign_card(message_id=m.pk)}/").status_code == 404
+    assert _card_request(client, sign_card(message_id=m.pk)).status_code == 404
 
 
 @override_settings(TELEGRAM_ADVISOR_ENABLED=False)
@@ -2806,7 +3030,7 @@ def test_the_card_page_is_dead_while_the_channel_is_off(client):
         presentation=_timetable_presentation(),
         status=AdvisorMessage.STATUS_COMPLETED,
     )
-    assert client.get(f"/telegram/card/{sign_card(message_id=m.pk)}/").status_code == 404
+    assert _card_request(client, sign_card(message_id=m.pk)).status_code == 404
 
 
 def test_there_is_exactly_one_timetable_renderer():
@@ -2960,19 +3184,81 @@ def test_option_zero_is_not_swallowed_by_a_falsy_default(client):
         status=AdvisorMessage.STATUS_COMPLETED,
     )
 
-    body = client.get(
-        f"/telegram/card/{sign_card(message_id=m.pk, option_index=0)}/"
+    body = _card_request(
+        client,
+        sign_card(message_id=m.pk, option_index=0),
     ).content.decode("utf-8")
     assert "var wanted = 0;" in body, "option 0 was turned into a fallback"
 
-    body_one = client.get(
-        f"/telegram/card/{sign_card(message_id=m.pk, option_index=1)}/"
+    body_one = _card_request(
+        client,
+        sign_card(message_id=m.pk, option_index=1),
     ).content.decode("utf-8")
     assert "var wanted = 1;" in body_one
 
     # And no index at all still means "render as the screen draws it".
-    body_none = client.get(f"/telegram/card/{sign_card(message_id=m.pk)}/").content.decode("utf-8")
+    body_none = _card_request(client, sign_card(message_id=m.pk)).content.decode("utf-8")
     assert "var wanted = -1;" in body_none
+
+
+@IMAGES_ON
+@pytest.mark.parametrize(
+    ("baseline_kind", "section_field"),
+    [
+        ("REGISTERED", "baseline_sections"),
+        ("REGISTERED", "current_sections"),
+        ("EXPECTED_PLAN", "expected_plan_sections"),
+    ],
+)
+def test_a_baseline_only_card_expands_and_gridifies_every_supported_baseline_shape(
+    client: Client,
+    baseline_kind: str,
+    section_field: str,
+) -> None:
+    """A screenshot has no click target, so a closed baseline is an empty answer."""
+
+    from core.services.advisor_presentations import KIND_TIMETABLE, normalise_presentation
+    from telegram_gateway.cards import sign_card
+
+    section = {
+        "course_code": "AI331",
+        "course_name": "Machine Learning",
+        "section": "M2",
+        "credits": 4,
+        "meetings": ["SUN 09:00-10:15", "WED 10:30\u201311:45"],
+    }
+    presentation = {
+        "kind": KIND_TIMETABLE,
+        "baseline_kind": baseline_kind,
+        section_field: [section],
+        "alternatives": [],
+    }
+    normalised = normalise_presentation(presentation)
+    assert normalised["baseline_sections"] == [section]
+
+    conversation = AdvisorConversation.objects.create(student_id=MINE)
+    assistant = AdvisorMessage.objects.create(
+        conversation=conversation,
+        role=AdvisorMessage.ROLE_ASSISTANT,
+        content="Here is your timetable.",
+        presentation=presentation,
+        status=AdvisorMessage.STATUS_COMPLETED,
+    )
+
+    response = _card_request(client, sign_card(message_id=assistant.pk))
+    body = response.content.decode("utf-8")
+
+    assert response.status_code == 200
+    assert "var wanted = -1;" in body
+    assert "AI331" in body and "SUN 09:00-10:15" in body
+    assert "var retained = root.querySelector('details.sa-tt-current');" in body
+    assert "retained.open = true;" in body
+    assert "gridifyBaseline(retained, data.baseline_sections || []);" in body
+    assert "function gridifyBaseline(details, sections)" in body
+    assert "course_code: course.course_code" in body
+    assert "course_name: course.course_name" in body
+    assert "section: course.section" in body
+    assert "window.WeekGrid.renderWeekGrid" in body
 
 
 @IMAGES_ON
@@ -2991,7 +3277,7 @@ def test_the_card_page_leaks_no_template_comments(client):
         presentation=_timetable_presentation(),
         status=AdvisorMessage.STATUS_COMPLETED,
     )
-    response = client.get(f"/telegram/card/{sign_card(message_id=m.pk)}/")
+    response = _card_request(client, sign_card(message_id=m.pk))
     body = response.content.decode("utf-8")
 
     # Positive control FIRST: an empty 404 body would satisfy every assertion
@@ -3034,7 +3320,7 @@ def test_the_image_uses_the_shared_week_grid_not_a_new_one(client):
         presentation=_timetable_presentation(),
         status=AdvisorMessage.STATUS_COMPLETED,
     )
-    body = client.get(f"/telegram/card/{sign_card(message_id=m.pk)}/").content.decode("utf-8")
+    body = _card_request(client, sign_card(message_id=m.pk)).content.decode("utf-8")
 
     assert "shared-timetable.js" in body, "the card page does not load WeekGrid"
     assert "WeekGrid.renderWeekGrid" in body
@@ -3125,7 +3411,7 @@ def test_a_forged_signature_is_refused(client):
         status=AdvisorMessage.STATUS_COMPLETED,
     )
     good = sign_card(message_id=m.pk)
-    assert client.get(f"/telegram/card/{good}/").status_code == 200  # positive control
+    assert _card_request(client, good).status_code == 200  # positive control
 
     # One character of the signature flipped — everything else identical.
     head, _, sig = good.rpartition(":")
@@ -3134,10 +3420,37 @@ def test_a_forged_signature_is_refused(client):
     assert forged != good and len(forged) == len(good)
 
     assert unsign_card(forged) is None
-    assert client.get(f"/telegram/card/{forged}/").status_code == 404
+    assert _card_request(client, forged).status_code == 404
 
     # And an empty token, which the earlier `bad or 'x'` loop never actually sent.
     assert unsign_card("") is None
+
+
+@IMAGES_ON
+def test_a_signed_card_url_alone_is_not_enough_without_the_renderer_header(
+    client: Client,
+) -> None:
+    from telegram_gateway.cards import sign_card
+
+    conversation = AdvisorConversation.objects.create(student_id=MINE)
+    message = AdvisorMessage.objects.create(
+        conversation=conversation,
+        role=AdvisorMessage.ROLE_ASSISTANT,
+        content="x",
+        presentation=_timetable_presentation(),
+        status=AdvisorMessage.STATUS_COMPLETED,
+    )
+    token = sign_card(message_id=message.pk)
+
+    assert client.get(f"/telegram/card/{token}/").status_code == 404
+    assert (
+        client.get(
+            f"/telegram/card/{token}/",
+            HTTP_X_TELEGRAM_CARD_RENDERER="forged",
+        ).status_code
+        == 404
+    )
+    assert _card_request(client, token).status_code == 200
 
 
 def test_a_card_token_carries_no_student_identifier():
@@ -3174,7 +3487,7 @@ def test_the_card_page_refuses_a_token_naming_a_student_message(client):
         presentation=_timetable_presentation(),
         status=AdvisorMessage.STATUS_COMPLETED,
     )
-    assert client.get(f"/telegram/card/{sign_card(message_id=student_turn.pk)}/").status_code == 404
+    assert _card_request(client, sign_card(message_id=student_turn.pk)).status_code == 404
 
 
 @CHANNEL_ON
@@ -3191,7 +3504,7 @@ def test_the_card_endpoint_retires_with_the_image_flag(client):
         presentation=_timetable_presentation(),
         status=AdvisorMessage.STATUS_COMPLETED,
     )
-    assert client.get(f"/telegram/card/{sign_card(message_id=m.pk)}/").status_code == 404
+    assert _card_request(client, sign_card(message_id=m.pk)).status_code == 404
 
 
 # ── the image phase must never cost the answer ───────────────────
@@ -3343,16 +3656,22 @@ def test_the_renderer_asserts_the_proxy_header_so_production_does_not_301():
     asset 301 to https://127.0.0.1:PORT, where nothing speaks TLS — the renderer
     script never loads and the page reports `renderer-missing`. Exempting only the
     card path would fix the page and leave the assets broken."""
-    from telegram_gateway.rendering import PlaywrightCardRenderer
+    from telegram_gateway import render_child
+    from telegram_gateway.cards import sign_renderer_request
 
     page = _FakePage()
     fake, holder = _fake_playwright(page)
     with mock.patch("playwright.sync_api.sync_playwright", fake):
-        out = PlaywrightCardRenderer().render_many(["http://127.0.0.1:8002/telegram/card/t/"])
+        out = render_child.render_urls(
+            ["http://127.0.0.1:8002/telegram/card/t/"], sign_renderer_request()
+        )
 
     assert out == [b"PNG-BYTES"]
     headers = holder["browser"].context_kwargs.get("extra_http_headers") or {}
     assert headers.get("X-Forwarded-Proto") == "https", headers
+    from telegram_gateway.cards import verify_renderer_request
+
+    assert verify_renderer_request(headers.get("X-Telegram-Card-Renderer", ""))
     assert holder["launch_kwargs"].get("timeout"), "launch has no deadline"
     assert page.goto_kwargs.get("wait_until") == "domcontentloaded"
     assert holder["browser"].closed, "the browser was not closed"
@@ -3364,14 +3683,17 @@ def test_a_non_200_card_page_is_named_in_the_log_not_swallowed(caplog):
     `card render failed` has nothing to go on."""
     import logging
 
-    from telegram_gateway.rendering import PlaywrightCardRenderer
+    from telegram_gateway import render_child
+    from telegram_gateway.cards import sign_renderer_request
 
     caplog.set_level(logging.WARNING)
     for status in (400, 301, 500):
         caplog.clear()
         fake, _ = _fake_playwright(_FakePage(status=status))
         with mock.patch("playwright.sync_api.sync_playwright", fake):
-            out = PlaywrightCardRenderer().render_many(["http://127.0.0.1:8002/telegram/card/t/"])
+            out = render_child.render_urls(
+                ["http://127.0.0.1:8002/telegram/card/t/"], sign_renderer_request()
+            )
         assert out == [None]
         logged = " ".join(r.getMessage() for r in caplog.records)
         assert str(status) in logged, f"HTTP {status} was not named: {logged!r}"

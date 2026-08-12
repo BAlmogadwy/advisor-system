@@ -13,6 +13,7 @@ which does not.
 from django.urls import path
 
 from .views import (
+    card_asset_view,
     card_view,
     link_confirm_view,
     link_manage_view,
@@ -25,6 +26,11 @@ urlpatterns = [
     path("webhook/", telegram_webhook_view, name="telegram_webhook"),
     # Signed, short-lived, and reached only by the local screenshotter.
     path("card/<str:token>/", card_view, name="telegram_card"),
+    path(
+        "card-assets/<path:asset_path>",
+        card_asset_view,
+        name="telegram_card_asset",
+    ),
     path("link/manage/", link_manage_view, name="telegram_link_manage"),
     # After `link/manage/`, so the literal segment is matched before the token
     # pattern gets a chance to swallow it.
