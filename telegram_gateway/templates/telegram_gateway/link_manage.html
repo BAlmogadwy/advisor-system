@@ -13,8 +13,8 @@ a person has at this screen.
 {% block title %}{% if LANGUAGE_CODE == 'ar' %}إدارة ربط تيليجرام{% else %}Manage Telegram linking{% endif %}{% endblock %}
 
 {% block body %}
-<div class="login-wrap" role="main">
-  <div class="login-card" style="max-width:640px">
+<main id="main-content" class="login-wrap telegram-link-wrap" role="main" tabindex="-1">
+  <div class="login-card telegram-link-card">
     <h1 class="login-title">{% if LANGUAGE_CODE == 'ar' %}ربط تيليجرام{% else %}Telegram linking{% endif %}</h1>
 
     {% if has_link %}
@@ -48,5 +48,5 @@ a person has at this screen.
       {% if LANGUAGE_CODE == 'ar' %}العودة إلى بوابة الطالب{% else %}Back to the student portal{% endif %}
     </a></p>
   </div>
-</div>
+</main>
 {% endblock %}

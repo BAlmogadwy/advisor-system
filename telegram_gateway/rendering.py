@@ -217,8 +217,8 @@ def _install_card_request_log_redaction() -> None:
 _install_card_request_log_redaction()
 
 
-def images_enabled() -> bool:
-    """Whether to send timetable pictures at all. Read at call time, default off.
+def timetable_images_enabled() -> bool:
+    """Whether to send timetable pictures. Read at call time, default off.
 
     Separate from `TELEGRAM_ADVISOR_ENABLED` on purpose: a picture of a week grid
     is a compact record of where a student is and when, it is stored on Telegram's
@@ -226,6 +226,35 @@ def images_enabled() -> bool:
     That deserves its own switch and its own decision.
     """
     return bool(getattr(settings, "TELEGRAM_SEND_TIMETABLE_IMAGES", False))
+
+
+def graduation_images_enabled() -> bool:
+    """Whether to export graduation-plan maps to Telegram, default off.
+
+    This is deliberately independent from timetable images because the map
+    contains a substantially broader academic-progress snapshot.
+    """
+
+    return bool(getattr(settings, "TELEGRAM_SEND_GRADUATION_IMAGES", False))
+
+
+def images_enabled() -> bool:
+    """Whether the private adviser-card rendering surface is needed at all."""
+
+    return timetable_images_enabled() or graduation_images_enabled()
+
+
+def presentation_images_enabled(presentation: Any) -> bool:
+    """Whether this normalized presentation's own export switch is enabled."""
+
+    if not isinstance(presentation, dict):
+        return False
+    kind = str(presentation.get("kind") or "")
+    if kind == "timetable_proposals":
+        return timetable_images_enabled()
+    if kind == "graduation_scenario":
+        return graduation_images_enabled()
+    return False
 
 
 class CardRenderer(Protocol):
@@ -605,7 +634,7 @@ def set_renderer(renderer: CardRenderer | None) -> None:
 
 
 def render_card(*, message_id: Any, base_url: str, option_index: int | None = None) -> bytes | None:
-    """A PNG of this message's card, or `None` — never an exception.
+    """A PNG of this message's adviser card, or `None` — never an exception.
 
     `base_url` is where the headless browser should reach this server. It is the
     LOCAL origin, not `TELEGRAM_PUBLIC_BASE_URL`: the browser runs beside the
@@ -850,10 +879,13 @@ __all__ = [
     "PlaywrightCardRenderer",
     "RecordingRenderer",
     "get_renderer",
+    "graduation_images_enabled",
     "images_enabled",
     "local_base_url",
+    "presentation_images_enabled",
     "render_card",
     "render_cards",
     "set_renderer",
+    "timetable_images_enabled",
     "worker_card_origin",
 ]

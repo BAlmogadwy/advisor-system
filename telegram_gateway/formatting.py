@@ -119,6 +119,7 @@ def render_answer(
     citations: Any = None,
     web_url: str = "",
     has_presentation: bool = False,
+    language: str = "ar",
     limit: int = SAFE_CHUNK_CHARS,
 ) -> list[str]:
     """The student-visible answer, as the messages that will actually be sent.
@@ -138,14 +139,21 @@ def render_answer(
     if not body:
         return []
 
+    language_code = _language_code(language)
     tail_parts: list[str] = []
 
-    rendered_citations = _citation_lines(citations)
+    rendered_citations = _citation_lines(citations, language=language_code)
     if rendered_citations:
-        tail_parts.append("المصادر:\n" + "\n".join(rendered_citations))
+        source_heading = "المصادر:" if language_code == "ar" else "Sources:"
+        tail_parts.append(source_heading + "\n" + "\n".join(rendered_citations))
 
     if has_presentation and web_url:
-        tail_parts.append(f"الجدول الكامل والتفاصيل على المنصة:\n{web_url}")
+        platform_heading = (
+            "عرض الخطة والتفاصيل الكاملة على المنصة:"
+            if language_code == "ar"
+            else "View the full plan and details on the platform:"
+        )
+        tail_parts.append(f"{platform_heading}\n{web_url}")
 
     tail = "\n\n".join(tail_parts)
 
@@ -162,7 +170,13 @@ def render_answer(
     return [*chunks, *split_message(tail, limit=limit)]
 
 
-def _citation_lines(citations: Any) -> list[str]:
+def _language_code(language: Any) -> str:
+    """Reduce the transport's deterministic language decision to a closed value."""
+
+    return "ar" if str(language or "").strip().lower() in {"ar", "arabic"} else "en"
+
+
+def _citation_lines(citations: Any, *, language: str = "ar") -> list[str]:
     """One line per source, from the stored rows.
 
     The policy id is deliberately absent. It is the machine half of the citation
@@ -171,6 +185,7 @@ def _citation_lines(citations: Any) -> list[str]:
     """
     if not citations:
         return []
+    language_code = _language_code(language)
     lines: list[str] = []
     seen: set[str] = set()
     for citation in citations:
@@ -183,8 +198,9 @@ def _citation_lines(citations: Any) -> list[str]:
         if edition:
             parts.append(edition)
         if page:
-            parts.append(f"ص {page}")
-        line = "• " + "، ".join(parts)
+            parts.append(f"ص {page}" if language_code == "ar" else f"p. {page}")
+        separator = "، " if language_code == "ar" else ", "
+        line = "• " + separator.join(parts)
         if line in seen:
             continue
         seen.add(line)

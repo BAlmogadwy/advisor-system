@@ -50,6 +50,9 @@ DEFAULT_MAX_PENDING_PER_LINK = 10
 MAX_ERROR_CODE_CHARS = 64
 DELIVERY_MANIFEST_VERSION = 2
 DELIVERY_KIND_TEXT = "text"
+# Kept as the v2 wire name for rollback compatibility. It now means one
+# server-authored adviser-card recipe: timetable alternatives use indices and a
+# baseline/graduation card uses the single ``None`` recipe.
 DELIVERY_KIND_TIMETABLE_PHOTO = "timetable_photo"
 MAX_DELIVERY_ITEMS = 64
 MAX_TIMETABLE_PHOTOS = 4
@@ -118,6 +121,7 @@ class _DeliveryState(NamedTuple):
     text_phase_started: bool
     legacy_shared_cursor: bool
     rollback_text_takeover: bool
+    text_first: bool
 
 
 def enqueue_question_or_command(
@@ -307,7 +311,9 @@ def store_delivery(
         "error_code": "",
         "lease_expires_at": timezone.now() + _lease_duration(job),
     }
-    if any(item["kind"] == DELIVERY_KIND_TIMETABLE_PHOTO for item in payload["items"]):
+    if any(item["kind"] == DELIVERY_KIND_TIMETABLE_PHOTO for item in payload["items"]) and not bool(
+        payload.get("text_first")
+    ):
         # Retries now belong to the optional photo phase, not adviser
         # generation. Keep the rollback-visible counter below its terminal
         # boundary so a previous worker can still drain `messages`.
@@ -335,7 +341,7 @@ def _materialised_delivery_payload(
 ) -> dict[str, Any]:
     """Build the only durable outbound shape accepted by new workers.
 
-    Timetable pictures are recipes, never bytes, URLs, chat ids or message ids.
+    Adviser-card pictures are recipes, never bytes, URLs, chat ids or message ids.
     The source message is the job's trusted foreign key and the renderer mints a
     short-lived card token only when the leased worker is ready to draw it.
     """
@@ -357,6 +363,9 @@ def _materialised_delivery_payload(
         # enforces so a producer cannot write a manifest it later rejects.
         if not text_items:
             photos = []
+        # Keep the physical v2 layout readable by the previous photo-first
+        # worker during a rolling deploy. New workers follow the explicit
+        # ``text_first`` bit rather than treating list order as send order.
         items = photos + text_items[: max(0, MAX_DELIVERY_ITEMS - len(photos))]
     else:
         items = [{"kind": DELIVERY_KIND_TEXT, "text": str(message)} for message in messages][
@@ -378,6 +387,7 @@ def _materialised_delivery_payload(
         "text_phase_started": not bool(
             any(item["kind"] == DELIVERY_KIND_TIMETABLE_PHOTO for item in items)
         ),
+        "text_first": True,
         "items": items,
         "messages": legacy_messages,
     }
@@ -398,15 +408,24 @@ def _delivery_items(payload: Any) -> list[dict[str, Any]] | None:
         items = _normalise_delivery_items(raw_items)
         if len(items) != len(raw_items):
             return None
-        seen_text = False
+        previous_kind = ""
+        transitions = 0
         for item in items:
-            if item["kind"] == DELIVERY_KIND_TEXT:
-                seen_text = True
-            elif seen_text:
-                # Cursor positions belong to the persisted order. Reordering a
-                # malformed row would resend confirmed text and skip an unsent
-                # photo, so reject it visibly instead.
-                return None
+            kind = item["kind"]
+            if previous_kind and kind != previous_kind:
+                transitions += 1
+            previous_kind = kind
+        if transitions > 1:
+            return None
+        if (
+            items
+            and items[0]["kind"] == DELIVERY_KIND_TEXT
+            and any(item["kind"] == DELIVERY_KIND_TIMETABLE_PHOTO for item in items)
+            and raw.get("text_first") is not True
+        ):
+            # A text-first physical layout needs the explicit ordering bit;
+            # otherwise older manifests would acquire ambiguous cursor meaning.
+            return None
         if any(item["kind"] == DELIVERY_KIND_TIMETABLE_PHOTO for item in items) and not any(
             item["kind"] == DELIVERY_KIND_TEXT for item in items
         ):
@@ -491,7 +510,7 @@ def _delivery_state(
     if not photo_items:
         if text_cursor > len(text_items):
             return None
-        return _DeliveryState([], text_items, 0, 0, text_cursor, True, False, False)
+        return _DeliveryState([], text_items, 0, 0, text_cursor, True, False, False, True)
 
     raw = dict(payload)
     mode = raw.get("cursor_mode")
@@ -522,6 +541,7 @@ def _delivery_state(
             text_phase_started,
             True,
             False,
+            False,
         )
     if mode != DELIVERY_CURSOR_MODE_SPLIT:
         return None
@@ -529,6 +549,7 @@ def _delivery_state(
     photo_cursor = raw.get("photo_cursor", 0)
     photo_attempt_count = raw.get("photo_attempt_count", 0)
     text_phase_started = raw.get("text_phase_started", False)
+    text_first = raw.get("text_first", False)
     if (
         isinstance(photo_cursor, bool)
         or not isinstance(photo_cursor, int)
@@ -537,12 +558,11 @@ def _delivery_state(
         or not isinstance(photo_attempt_count, int)
         or photo_attempt_count < 0
         or not isinstance(text_phase_started, bool)
+        or not isinstance(text_first, bool)
         or text_cursor > len(text_items)
     ):
         return None
-    rollback_text_takeover = not text_phase_started and text_cursor > 0
-    if text_phase_started and photo_cursor != len(photo_items):
-        return None
+    rollback_text_takeover = not text_first and not text_phase_started and text_cursor > 0
     return _DeliveryState(
         photo_items,
         text_items,
@@ -552,6 +572,7 @@ def _delivery_state(
         text_phase_started or rollback_text_takeover,
         False,
         rollback_text_takeover,
+        text_first,
     )
 
 
@@ -626,10 +647,12 @@ def _begin_photo_delivery_attempt(
     """
 
     payload = dict(job.delivery_payload or {})
-    if (
-        payload.get("cursor_mode") != DELIVERY_CURSOR_MODE_SPLIT
-        or payload.get("text_phase_started") is True
-    ):
+    if payload.get("cursor_mode") != DELIVERY_CURSOR_MODE_SPLIT:
+        return False
+    # Old split manifests used ``text_phase_started`` to mean photos were already
+    # finished. New text-first manifests mark it true from creation and carry an
+    # explicit ordering bit, so their post-text photo phase remains valid.
+    if payload.get("text_phase_started") is True and payload.get("text_first") is not True:
         return False
     payload["photo_attempt_count"] = state.photo_attempt_count + 1
     lease_expires_at = timezone.now() + _lease_duration(job)
@@ -691,6 +714,9 @@ def _requeue_photo_delivery(
     )
     values = {
         "status": TelegramUpdateReceipt.STATUS_QUEUED,
+        # Required text is already confirmed (text-first manifests) or has not
+        # started yet (legacy photo-first manifests). In both cases optional
+        # images own a fresh, separately persisted retry counter.
         "attempt_count": 0,
         "available_at": timezone.now() + timedelta(seconds=delay),
         "error_code": _safe_code(error_code, "image_delivery_failed"),
@@ -736,6 +762,8 @@ def _begin_text_delivery(job: TelegramUpdateReceipt, *, photo_count: int) -> boo
 def mark_delivery_progress(
     job: TelegramUpdateReceipt,
     cursor: int,
+    *,
+    reset_attempt_count: bool = False,
 ) -> bool:
     """Advance the legacy-compatible text cursor under the current lease."""
 
@@ -745,10 +773,15 @@ def mark_delivery_progress(
         "delivery_cursor": next_cursor,
         "lease_expires_at": lease_expires_at,
     }
+    if reset_attempt_count:
+        # The validated text is now fully confirmed. Optional card delivery owns
+        # a separate budget, and the cursor makes this reset safe for a rolling
+        # rollback: an older worker sees no remaining text to resend.
+        values["attempt_count"] = 0
     updated = _owned_running(job).filter(delivery_cursor__lt=next_cursor).update(**values)
     if updated:
-        job.delivery_cursor = next_cursor
-        job.lease_expires_at = lease_expires_at
+        for field, value in values.items():
+            setattr(job, field, value)
     return bool(updated)
 
 
@@ -1156,18 +1189,73 @@ def _execute_claimed_job(
     send_photo_item = deliver_photo or _default_deliver_photo
     render_photo_items = render_photos or _default_render_photos
     rendered_photos: dict[int, bytes | None] = {}
-    images_enabled = render_photos is not None or bool(
-        getattr(settings, "TELEGRAM_SEND_TIMETABLE_IMAGES", False)
-    )
+    # Test callers may inject a renderer explicitly. Production must instead
+    # consult the switch for THIS stored presentation, not the union of both
+    # media switches: enabling graduation maps must not make an already-queued
+    # timetable spend three doomed render retries (and vice versa).
+    images_enabled = render_photos is not None or _job_presentation_images_enabled(job)
+
+    if state.text_first:
+        # Required text always goes first in newly materialised manifests. It owns
+        # the legacy DB cursor and retry budget, so a transient failure pauses
+        # before any optional media can escape.
+        for text_index in range(state.text_cursor, len(state.text_items)):
+            if not _link_is_active(job):
+                finish_job(
+                    job,
+                    status=TelegramUpdateReceipt.STATUS_CANCELLED,
+                    error_code="link_revoked",
+                )
+                return _fresh(job)
+            try:
+                outcome = send_text_item(job, state.text_items[text_index]["text"])
+            except Exception as exc:  # noqa: BLE001 - only the exception CLASS becomes durable.
+                outcome = {"ok": False, "error": type(exc).__name__}
+            if not _delivery_succeeded(outcome):
+                error_code, retryable, delay = _delivery_failure(outcome)
+                if retryable:
+                    requeue_delivery(
+                        job,
+                        error_code=error_code,
+                        delay_seconds=delay,
+                        max_attempts=max_attempts,
+                    )
+                else:
+                    finish_job(
+                        job,
+                        status=TelegramUpdateReceipt.STATUS_FAILED,
+                        error_code=error_code,
+                    )
+                return _fresh(job)
+            if not mark_delivery_progress(
+                job,
+                text_index + 1,
+                reset_attempt_count=(
+                    text_index + 1 == len(state.text_items)
+                    and state.photo_cursor < len(state.photo_items)
+                ),
+            ):
+                return _fresh(job)
+
+    # Refresh the in-memory cursor after the text loop; lease-guarded persistence
+    # updates the model instance, while this immutable snapshot still holds its
+    # pre-send value.
+    state = state._replace(text_cursor=job.delivery_cursor)
 
     if state.photo_cursor < len(state.photo_items) and images_enabled:
         if state.photo_attempt_count >= _max_attempts(max_attempts):
-            if not _begin_text_after_skipping_photos(job, state):
-                return _fresh(job)
-            state = state._replace(
-                photo_cursor=len(state.photo_items),
-                text_phase_started=True,
-            )
+            if state.text_first:
+                for photo_index in range(state.photo_cursor, len(state.photo_items)):
+                    if not mark_photo_progress(job, photo_index + 1, image_degraded=True):
+                        return _fresh(job)
+                state = state._replace(photo_cursor=len(state.photo_items))
+            else:
+                if not _begin_text_after_skipping_photos(job, state):
+                    return _fresh(job)
+                state = state._replace(
+                    photo_cursor=len(state.photo_items),
+                    text_phase_started=True,
+                )
         else:
             if not _begin_photo_delivery_attempt(job, state):
                 return _fresh(job)
@@ -1184,7 +1272,7 @@ def _execute_claimed_job(
         try:
             if not images_enabled:
                 logger.warning(
-                    "telegram: timetable image delivery disabled for job=%s; "
+                    "telegram: presentation image delivery disabled for job=%s; "
                     "delivering text fallback",
                     job.update_id,
                 )
@@ -1260,40 +1348,40 @@ def _execute_claimed_job(
         if not mark_photo_progress(job, photo_index + 1):
             return _fresh(job)
 
-    if state.photo_items and not state.text_phase_started:
-        if not _begin_text_delivery(job, photo_count=len(state.photo_items)):
-            return _fresh(job)
-
-    for text_index in range(state.text_cursor, len(state.text_items)):
-        if not _link_is_active(job):
-            finish_job(
-                job,
-                status=TelegramUpdateReceipt.STATUS_CANCELLED,
-                error_code="link_revoked",
-            )
-            return _fresh(job)
-        try:
-            outcome = send_text_item(job, state.text_items[text_index]["text"])
-        except Exception as exc:  # noqa: BLE001 - only the exception CLASS becomes durable.
-            outcome = {"ok": False, "error": type(exc).__name__}
-        if not _delivery_succeeded(outcome):
-            error_code, retryable, delay = _delivery_failure(outcome)
-            if retryable:
-                requeue_delivery(
-                    job,
-                    error_code=error_code,
-                    delay_seconds=delay,
-                    max_attempts=max_attempts,
-                )
-            else:
+    if not state.text_first:
+        if state.photo_items and not state.text_phase_started:
+            if not _begin_text_delivery(job, photo_count=len(state.photo_items)):
+                return _fresh(job)
+        for text_index in range(state.text_cursor, len(state.text_items)):
+            if not _link_is_active(job):
                 finish_job(
                     job,
-                    status=TelegramUpdateReceipt.STATUS_FAILED,
-                    error_code=error_code,
+                    status=TelegramUpdateReceipt.STATUS_CANCELLED,
+                    error_code="link_revoked",
                 )
-            return _fresh(job)
-        if not mark_delivery_progress(job, text_index + 1):
-            return _fresh(job)
+                return _fresh(job)
+            try:
+                outcome = send_text_item(job, state.text_items[text_index]["text"])
+            except Exception as exc:  # noqa: BLE001 - only the exception CLASS becomes durable.
+                outcome = {"ok": False, "error": type(exc).__name__}
+            if not _delivery_succeeded(outcome):
+                error_code, retryable, delay = _delivery_failure(outcome)
+                if retryable:
+                    requeue_delivery(
+                        job,
+                        error_code=error_code,
+                        delay_seconds=delay,
+                        max_attempts=max_attempts,
+                    )
+                else:
+                    finish_job(
+                        job,
+                        status=TelegramUpdateReceipt.STATUS_FAILED,
+                        error_code=error_code,
+                    )
+                return _fresh(job)
+            if not mark_delivery_progress(job, text_index + 1):
+                return _fresh(job)
 
     finish_job(
         job,
@@ -1331,7 +1419,14 @@ def _default_render_photos(
 
     if not job.assistant_message_id or not option_indexes:
         return []
-    from .rendering import render_cards, worker_card_origin
+    from core.services.advisor_presentations import normalise_presentation
+
+    from .rendering import presentation_images_enabled, render_cards, worker_card_origin
+
+    assistant = job.assistant_message
+    presentation = normalise_presentation(assistant.presentation if assistant else None)
+    if not presentation_images_enabled(presentation):
+        return []
 
     with worker_card_origin() as base_url:
         return render_cards(
@@ -1339,6 +1434,20 @@ def _default_render_photos(
             base_url=base_url,
             option_indexes=list(option_indexes),
         )
+
+
+def _job_presentation_images_enabled(job: TelegramUpdateReceipt) -> bool:
+    """Whether this job's exact stored card kind is allowed to leave the system."""
+
+    if not job.assistant_message_id:
+        return False
+    from core.services.advisor_presentations import normalise_presentation
+
+    from .rendering import presentation_images_enabled
+
+    assistant = job.assistant_message
+    presentation = normalise_presentation(assistant.presentation if assistant else None)
+    return presentation_images_enabled(presentation)
 
 
 def _default_deliver_photo(
@@ -1497,7 +1606,7 @@ def _photo_attempt_budget_exhausted(
 def _pending_photo_delivery_state(
     job: TelegramUpdateReceipt,
 ) -> _DeliveryState | None:
-    """Return a validated state only while optional photos remain ahead of text."""
+    """Return validated state while the job is exclusively delivering photos."""
 
     items = _delivery_items(job.delivery_payload)
     state = (
@@ -1505,7 +1614,13 @@ def _pending_photo_delivery_state(
         if items is not None
         else None
     )
-    if state is None or state.photo_cursor >= len(state.photo_items) or state.text_phase_started:
+    if state is None or state.photo_cursor >= len(state.photo_items):
+        return None
+    if state.text_first:
+        # New manifests cannot enter their optional-media phase until every
+        # required text chunk is durably confirmed.
+        return state if state.text_cursor == len(state.text_items) else None
+    if state.text_phase_started:
         return None
     return state
 
@@ -1537,7 +1652,11 @@ def _degrade_exhausted_photo_phase_locked(
     # started: skip the now-out-of-order photos and preserve both its exact text
     # cursor and consumed retry count. Genuine image-phase recovery still gives
     # required text its independent fresh budget.
-    if state.text_phase_started and not state.rollback_text_takeover:
+    if (
+        state.text_phase_started
+        and not state.rollback_text_takeover
+        and not (state.text_first and state.text_cursor == len(state.text_items))
+    ):
         return False
     if not state.text_items:
         return False

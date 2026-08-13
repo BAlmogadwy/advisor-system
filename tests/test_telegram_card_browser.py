@@ -17,10 +17,11 @@ from typing import TYPE_CHECKING, Any, ClassVar, TypeAlias
 os.environ.setdefault("DJANGO_ALLOW_ASYNC_UNSAFE", "1")
 
 import pytest
+from django.contrib.staticfiles.testing import StaticLiveServerTestCase
 from django.test import LiveServerTestCase, override_settings
 
 from core.models import AdvisorConversation, AdvisorMessage
-from core.services.advisor_presentations import KIND_TIMETABLE
+from core.services.advisor_presentations import KIND_GRADUATION, KIND_TIMETABLE
 from telegram_gateway.cards import sign_card, sign_renderer_request
 
 if TYPE_CHECKING:
@@ -56,6 +57,7 @@ class _NoStaticInterception:
 @override_settings(
     TELEGRAM_ADVISOR_ENABLED=True,
     TELEGRAM_SEND_TIMETABLE_IMAGES=True,
+    TELEGRAM_SEND_GRADUATION_IMAGES=True,
     MEDIA_URL="/media/",
 )
 class TelegramCardBrowserTests(LiveServerTestCase):
@@ -281,6 +283,102 @@ class TelegramCardBrowserTests(LiveServerTestCase):
         self.assertEqual(png_width, 1440)
         self.assertLess(png_height, 1300)
 
+    def test_graduation_card_renders_the_shared_map_and_marks_itself_ready(self) -> None:
+        presentation = {
+            "kind": KIND_GRADUATION,
+            "program": "DS2",
+            "planning_term": "1448/1",
+            "simulation_completed": True,
+            "lower_bound_terms_including_planning_baseline": 2,
+            "max_credits_per_term": 18,
+            "band_labels": {
+                "1": "Planning baseline 1448/1",
+                "2": "Projected 1448/2",
+            },
+            "graph": {
+                "items": [
+                    {
+                        "course_code": "DS341",
+                        "prerequisite_course_code": "DS225",
+                    }
+                ],
+                "termOf": {"DS225": 1, "DS341": 2},
+                "nameOf": {"DS225": "Data Mining", "DS341": "Data Governance"},
+                "statusOf": {"DS225": "studying", "DS341": "open"},
+                "extraNodes": ["DS225", "DS341"],
+            },
+            "unresolved_requirements": [],
+            "read_only": True,
+        }
+
+        page = self._open_card(presentation)
+
+        root = page.locator("#sa-card-root")
+        self.assertEqual(root.get_attribute("data-card-ready"), "1")
+        self.assertEqual(page.locator(".sa-graduation-map").count(), 1)
+        self.assertEqual(page.locator(".sa-timetable").count(), 0)
+        self.assertIn("DS341", page.locator(".sa-graduation-map").inner_text())
+        self.assertEqual(page.locator(".sa-graduation-map .prereq-svg").count(), 1)
+        self.assertTrue(page.locator(".sa-grad-desktop").is_visible())
+        self.assertFalse(page.locator(".sa-grad-mobile").is_visible())
+        self.assertFalse(page.locator(".sa-grad-expand").is_visible())
+        self.assertFalse(page.locator(".sa-grad-toolbar .pg-modes").is_visible())
+        dimensions = root.evaluate(
+            "node => ({clientWidth: node.clientWidth, scrollWidth: node.scrollWidth})"
+        )
+        self.assertLessEqual(dimensions["scrollWidth"], dimensions["clientWidth"] + 1)
+        png = root.screenshot(type="png")
+        png_width, png_height = struct.unpack(">II", png[16:24])
+        self.assertEqual(png_width, 1440)
+        self.assertLess(png_height, 3000)
+
+    def test_replacement_card_keeps_swap_banner_and_outside_plan_caution(self) -> None:
+        presentation = {
+            "kind": KIND_TIMETABLE,
+            "planning_term": "1448/1",
+            "mode": "certified_replacement",
+            "baseline_kind": "EXPECTED_PLAN",
+            "replacement": {
+                "remove_course": {"course_code": "DS341", "credits": 3},
+                "add_course": {"course_code": "CS285", "credits": 4},
+                "outside_plan_addition": True,
+                "academic_improvement": {"proven_improvement": True, "terms_saved": 1},
+            },
+            "alternatives": [
+                {
+                    "planner_options": ["A1"],
+                    "scheduled_courses": 1,
+                    "target_courses": 1,
+                    "total_credit_hours": 4,
+                    "courses": [{"course_code": "CS285", "section": "M3", "credits": 4}],
+                    "meetings": [
+                        {
+                            "course_code": "CS285",
+                            "section": "M3",
+                            "day": "MON",
+                            "start": "10:30",
+                            "end": "11:45",
+                        }
+                    ],
+                    "unplaced_courses": [],
+                }
+            ],
+        }
+
+        page = self._open_card(presentation, option_index=0)
+
+        banner = page.locator(".sa-tt-replacement")
+        self.assertEqual(banner.count(), 1)
+        self.assertIn("Replace DS341 with CS285", " ".join(banner.inner_text().split()))
+        self.assertIn(
+            "outside your recorded study plan",
+            page.locator(".sa-tt-replacement-caution").inner_text(),
+        )
+        self.assertLessEqual(
+            banner.evaluate("node => node.scrollWidth - node.clientWidth"),
+            1,
+        )
+
     def test_baseline_grid_keeps_unscheduled_and_legacy_meeting_rows(self) -> None:
         presentation = {
             "kind": KIND_TIMETABLE,
@@ -350,3 +448,45 @@ def test_card_source_selects_exact_shared_blocks_and_retains_grid_fallbacks() ->
     assert "sa-card-unplaced-row" in source
     assert "data-grid-fallback" in source
     assert "retainUnmappedBaselineRows" in source
+
+
+@override_settings(TELEGRAM_ADVISOR_ENABLED=True)
+class TelegramLinkPageBrowserTests(StaticLiveServerTestCase):
+    """One real-browser check for the custom body used by all link templates."""
+
+    _pw: ClassVar[Playwright]
+    browser: ClassVar[Browser]
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        super().setUpClass()
+        cls._pw = sync_playwright().start()
+        cls.browser = cls._pw.chromium.launch()
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        cls.browser.close()
+        cls._pw.stop()
+        super().tearDownClass()
+
+    def test_result_page_skip_link_reaches_a_sensibly_wide_main_landmark(self) -> None:
+        context = self.browser.new_context(viewport={"width": 1000, "height": 800})
+        self.addCleanup(context.close)
+        page = context.new_page()
+
+        response = page.goto(f"{self.live_server_url}/telegram/link/not-a-real-token/")
+        assert response is not None
+        self.assertEqual(response.status, 404)
+
+        main = page.locator("main#main-content.telegram-link-wrap")
+        self.assertEqual(main.count(), 1)
+        width = main.evaluate("node => node.getBoundingClientRect().width")
+        self.assertGreater(width, 600)
+        self.assertLessEqual(width, 720)
+
+        skip = page.locator("a.skip-link")
+        self.assertEqual(skip.get_attribute("href"), "#main-content")
+        skip.focus()
+        page.keyboard.press("Enter")
+        page.wait_for_function("window.location.hash === '#main-content'")
+        self.assertEqual(page.evaluate("document.activeElement.id"), "main-content")

@@ -1893,6 +1893,7 @@
      server has already put through `normalise_presentation`, and reaches nothing
      else. */
   window.__SA_RENDER_TIMETABLE_CARD__ = renderTimetablePresentation;
+  window.__SA_RENDER_GRADUATION_CARD__ = renderGraduationPresentation;
 
   /* A card-only page has no thread, no session and no endpoints to call. Without
      this guard the bootstrap below would fire there, request the conversation

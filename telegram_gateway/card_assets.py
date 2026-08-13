@@ -1,4 +1,4 @@
-"""The exact source assets needed by the private timetable-card renderer.
+"""The exact source assets needed by the private adviser-card renderer.
 
 The durable Telegram worker must not depend on ``STATIC_ROOT`` being fresh. A
 partially collected or stale WhiteNoise manifest can otherwise make every card
@@ -20,6 +20,7 @@ CARD_ASSET_CONTENT_TYPES = {
     "css/global.css": "text/css; charset=utf-8",
     "css/bootstrap-compat.css": "text/css; charset=utf-8",
     "js/shared-timetable.js": "text/javascript; charset=utf-8",
+    "js/prereq-graph.js": "text/javascript; charset=utf-8",
     "js/page-student-advisor.js": "text/javascript; charset=utf-8",
     # global.css references this path. Browsers normally do not fetch it for the
     # card DOM, but keeping the exact dependency available avoids a renderer

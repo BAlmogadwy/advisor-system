@@ -270,6 +270,13 @@ TELEGRAM_DISPATCH_SYNC = os.getenv("TELEGRAM_DISPATCH_SYNC", "false").lower() ==
 TELEGRAM_SEND_TIMETABLE_IMAGES = (
     os.getenv("TELEGRAM_SEND_TIMETABLE_IMAGES", "false").lower() == "true"
 )
+# A graduation map reveals much more of a student's academic progression than a
+# weekly timetable. Keep it behind a second explicit consent/operations switch;
+# enabling timetable pictures must never silently broaden what leaves the
+# university surface.
+TELEGRAM_SEND_GRADUATION_IMAGES = (
+    os.getenv("TELEGRAM_SEND_GRADUATION_IMAGES", "false").lower() == "true"
+)
 # Optional local-development origin for the headless browser. It must stay on
 # loopback; a public hostname would expose the short-lived signed card URL. When
 # empty, the durable worker starts a card-only Django listener on an ephemeral
@@ -281,7 +288,7 @@ TELEGRAM_INTERNAL_BASE_URL = os.getenv("TELEGRAM_INTERNAL_BASE_URL", "")
 # 15 s for an attribute that will never appear. Added HERE rather than left to
 # DJANGO_ALLOWED_HOSTS because the operator sets that to the public hostname and
 # has no reason to guess that an internal fetch also needs a home.
-if TELEGRAM_SEND_TIMETABLE_IMAGES:
+if TELEGRAM_SEND_TIMETABLE_IMAGES or TELEGRAM_SEND_GRADUATION_IMAGES:
     for _loopback in ("127.0.0.1", "localhost"):
         if _loopback not in ALLOWED_HOSTS:
             ALLOWED_HOSTS.append(_loopback)

@@ -1,4 +1,4 @@
-"""A picture of the timetable card, drawn by the card's own renderer.
+"""A picture of an adviser card, drawn by the card's own renderer.
 
 The Telegram channel sends an image of a proposed timetable. The tempting way to
 build that is a server-side drawing routine — Pillow, matplotlib — and it is the
@@ -17,9 +17,9 @@ different.
 re-fighting the bidi battle that #66 already fought in the template layer, in a
 new place where none of that work applies.
 
-So the image is a screenshot of the real card, produced by loading the real
-renderer with the stored presentation. One renderer, and Arabic shaping stays the
-browser's job.
+So each image is a screenshot of the real timetable or graduation-plan card,
+produced by loading the shared browser renderer with the stored presentation.
+One renderer, and Arabic shaping stays the browser's job.
 
 **The URL is signed, not session-authenticated.** The headless browser has no
 session and must not be given one — minting a login so a screenshot can be taken

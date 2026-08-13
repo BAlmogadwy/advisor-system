@@ -52,6 +52,7 @@ CHANNEL_ON = override_settings(
     TELEGRAM_PUBLIC_BASE_URL="https://advisor.example.edu",
     TELEGRAM_BOT_TOKEN="",
     TELEGRAM_SEND_TIMETABLE_IMAGES=False,
+    TELEGRAM_SEND_GRADUATION_IMAGES=False,
     TELEGRAM_INTERNAL_BASE_URL="",
     TELEGRAM_DISPATCH_SYNC=True,
 )
@@ -376,6 +377,8 @@ def test_the_privacy_notice_does_not_claim_end_to_end_encryption(client, outbox)
     assert "ليست مشفّرة طرفًا إلى طرف" in notice
     assert "not end-to-end encrypted" in notice
     assert "/unlink" in notice
+    assert "خريطة" in notice and "graduation-plan map" in notice
+    assert "prerequisite links" in notice
     # The retention promise has to be accurate: unlinking revokes the mapping and
     # does NOT delete the conversation.
     assert "سجل المحادثات" in notice or "retention" in notice
@@ -1355,6 +1358,31 @@ def test_a_long_answer_splits_without_dropping_the_sources():
     assert "فقرة" in " ".join(chunks)
 
 
+def test_english_answer_localises_its_citation_and_platform_footer():
+    from telegram_gateway.formatting import render_answer
+
+    class _Citation:
+        document_title = "Student Guide"
+        edition = "1447"
+        page = "24"
+
+    rendered = "\n".join(
+        render_answer(
+            answer="You may take the course.",
+            citations=[_Citation()],
+            web_url="https://advisor.example.edu/student/advisor/?c=example",
+            has_presentation=True,
+            language="English",
+        )
+    )
+
+    assert "Sources:" in rendered
+    assert "Student Guide, 1447, p. 24" in rendered
+    assert "View the full plan and details on the platform:" in rendered
+    assert "المصادر:" not in rendered
+    assert "على المنصة" not in rendered
+
+
 def test_splitting_never_cuts_a_word_in_half():
     from telegram_gateway.formatting import split_message
 
@@ -2183,6 +2211,28 @@ def test_link_manage_never_shows_a_telegram_identifier(client):
 
 
 @CHANNEL_ON
+def test_link_pages_keep_the_shared_skip_link_target_and_wide_wrapper(client):
+    """Custom base bodies still need the landmark targeted by the global skip link."""
+
+    _student(client, MINE)
+    issued = linking.issue_link_token(telegram_user_id=CHAT)
+    pages = [
+        client.get(reverse("telegram_link_start", args=[issued.raw_token])),
+        client.get(reverse("telegram_link_manage")),
+        client.get(reverse("telegram_link_start", args=["invalid-token"])),
+    ]
+
+    for response in pages:
+        html = response.content.decode("utf-8")
+        assert 'href="#main-content"' in html
+        assert html.count('id="main-content"') == 1
+        assert 'class="login-wrap telegram-link-wrap"' in html
+
+    css = Path("static/css/global.css").read_text(encoding="utf-8")
+    assert ".telegram-link-wrap" in css and "max-width: 720px" in css
+
+
+@CHANNEL_ON
 def test_approving_a_link_requires_a_csrf_token(client):
     """The webhook is csrf_exempt; the linking pages must not be."""
     from django.test import Client
@@ -2605,6 +2655,9 @@ def cards():
 #: be pinned in one and ambient in the other — the THIRD recurrence of a bug this
 #: file already documents twice.
 IMAGES_ON = override_settings(**{**CHANNEL_ON.options, "TELEGRAM_SEND_TIMETABLE_IMAGES": True})
+GRADUATION_IMAGES_ON = override_settings(
+    **{**CHANNEL_ON.options, "TELEGRAM_SEND_GRADUATION_IMAGES": True}
+)
 
 
 def _timetable_presentation():
@@ -2627,6 +2680,40 @@ def _timetable_presentation():
     return p
 
 
+def _graduation_presentation():
+    from core.services.advisor_presentations import KIND_GRADUATION, normalise_presentation
+
+    presentation = {
+        "kind": KIND_GRADUATION,
+        "program": "DS2",
+        "planning_term": "1448/1",
+        "simulation_completed": True,
+        "lower_bound_terms_including_planning_baseline": 2,
+        "max_credits_per_term": 18,
+        "band_labels": {
+            "0": "Completed before the scenario",
+            "1": "Planning baseline 1448/1",
+            "2": "Projected 1448/2",
+        },
+        "graph": {
+            "items": [
+                {
+                    "course_code": "DS341",
+                    "prerequisite_course_code": "DS225",
+                }
+            ],
+            "termOf": {"DS225": 1, "DS341": 2},
+            "nameOf": {"DS225": "Data Mining", "DS341": "Data Governance"},
+            "statusOf": {"DS225": "studying", "DS341": "open"},
+            "extraNodes": ["DS225", "DS341"],
+        },
+        "unresolved_requirements": [],
+        "read_only": True,
+    }
+    assert normalise_presentation(presentation), "fixture is not a renderable graduation card"
+    return presentation
+
+
 def test_images_fail_closed_when_nothing_configures_them(settings):
     """A picture of a week grid says where a student is and when, Telegram keeps
     it under a durable file_id, and it forwards more easily than prose. It gets
@@ -2639,6 +2726,7 @@ def test_images_fail_closed_when_nothing_configures_them(settings):
     from telegram_gateway.rendering import images_enabled
 
     del settings.TELEGRAM_SEND_TIMETABLE_IMAGES
+    del settings.TELEGRAM_SEND_GRADUATION_IMAGES
     assert images_enabled() is False
 
 
@@ -2648,6 +2736,7 @@ def test_the_image_setting_defaults_to_off_in_settings():
 
     source = Path("config/settings.py").read_text(encoding="utf-8")
     assert 'os.getenv("TELEGRAM_SEND_TIMETABLE_IMAGES", "false").lower() == "true"' in source
+    assert 'os.getenv("TELEGRAM_SEND_GRADUATION_IMAGES", "false").lower() == "true"' in source
 
 
 @CHANNEL_ON
@@ -2966,12 +3055,15 @@ def test_card_assets_are_exactly_allowlisted_renderer_only_and_no_store(
 
     with override_settings(STATIC_ROOT=tmp_path / "stale-static-root"):
         response = _card_asset_request(client, "js/shared-timetable.js")
+        graph_response = _card_asset_request(client, "js/prereq-graph.js")
 
     assert response.status_code == 200
     assert b"WeekGrid" in response.content
     assert response["Content-Type"].startswith("text/javascript")
     assert response["Cache-Control"] == "no-store, private"
     assert response["X-Content-Type-Options"] == "nosniff"
+    assert graph_response.status_code == 200
+    assert b"PrereqGraph" in graph_response.content
 
     assert client.get("/telegram/card-assets/js/shared-timetable.js").status_code == 404
     assert (
@@ -3000,6 +3092,7 @@ def test_card_html_loads_only_the_private_source_asset_route(client: Client) -> 
     body = _card_request(client, sign_card(message_id=message.pk)).content.decode("utf-8")
     assert "/telegram/card-assets/css/global.css" in body
     assert "/telegram/card-assets/js/page-student-advisor.js" in body
+    assert "/telegram/card-assets/js/prereq-graph.js" in body
     assert 'href="/static/' not in body
     assert 'src="/static/' not in body
 
@@ -3472,6 +3565,20 @@ def test_the_card_token_window_is_short():
     assert 0 < CARD_TOKEN_MAX_AGE_SECONDS <= 300
 
 
+def test_renderer_proof_keeps_the_established_authentication_purpose():
+    """A rollout must remain compatible with proofs minted by the prior worker."""
+    from django.core import signing
+
+    from telegram_gateway.cards import verify_renderer_request
+
+    established_proof = signing.dumps(
+        "render_timetable_card",
+        salt="telegram_gateway.card_renderer",
+    )
+
+    assert verify_renderer_request(established_proof)
+
+
 @IMAGES_ON
 def test_the_card_page_refuses_a_token_naming_a_student_message(client):
     """The token names a message id; the view must still insist it is an
@@ -3714,7 +3821,12 @@ def test_the_loopback_host_is_allowed_when_images_are_on():
     import config.settings as live
 
     saved = {
-        k: os.environ.get(k) for k in ("TELEGRAM_SEND_TIMETABLE_IMAGES", "DJANGO_ALLOWED_HOSTS")
+        k: os.environ.get(k)
+        for k in (
+            "TELEGRAM_SEND_TIMETABLE_IMAGES",
+            "TELEGRAM_SEND_GRADUATION_IMAGES",
+            "DJANGO_ALLOWED_HOSTS",
+        )
     }
     # FORCED, not defaulted: a developer's own .env carries
     # `DJANGO_ALLOWED_HOSTS=127.0.0.1,localhost`, which would satisfy the
@@ -3722,6 +3834,7 @@ def test_the_loopback_host_is_allowed_when_images_are_on():
     os.environ["DJANGO_ALLOWED_HOSTS"] = "advisor.example.edu"
     try:
         os.environ["TELEGRAM_SEND_TIMETABLE_IMAGES"] = "false"
+        os.environ["TELEGRAM_SEND_GRADUATION_IMAGES"] = "false"
         without = importlib.reload(live)
         assert "127.0.0.1" not in without.ALLOWED_HOSTS, (
             "the control failed: loopback is present with images OFF, so this "
@@ -3743,12 +3856,166 @@ def test_the_loopback_host_is_allowed_when_images_are_on():
         importlib.reload(live)
 
 
+@GRADUATION_IMAGES_ON
+def test_durable_worker_materialises_validated_text_before_one_graduation_photo(
+    client: Client,
+    outbox: RecordingTransport,
+    cards: RecordingRenderer,
+) -> None:
+    from telegram_gateway import jobs
+
+    _link()
+    answer = "Your graduation scenario is ready."
+    manifests: list[list[dict[str, Any]]] = []
+    original = bot._durable_delivery_items
+
+    def capture_items(*args: Any, **kwargs: Any) -> list[dict[str, Any]]:
+        items = original(*args, **kwargs)
+        manifests.append(items)
+        return items
+
+    with (
+        mock.patch("telegram_gateway.bot._durable_delivery_items", side_effect=capture_items),
+        _adviser(answer=answer, presentation=_graduation_presentation()),
+    ):
+        _post(client, _update(update_id=8804, text="When will I graduate?"))
+
+    job = TelegramUpdateReceipt.objects.get(update_id=8804)
+    assert job.status == TelegramUpdateReceipt.STATUS_SUCCEEDED
+    assert len(manifests) == 1
+    items = manifests[0]
+    assert len(items) == 2
+    assert items[0]["kind"] == jobs.DELIVERY_KIND_TEXT
+    assert answer in items[0]["text"]
+    assert items[1] == {
+        "kind": jobs.DELIVERY_KIND_TIMETABLE_PHOTO,
+        "option_index": None,
+    }
+    assert len(cards.requested) == 1
+    assert len(outbox.photos) == 1
+    delivered_text = " ".join(outbox.texts)
+    assert answer in delivered_text
+    assert "View the full plan and details on the platform:" in delivered_text
+    assert "على المنصة" not in delivered_text
+
+
 @IMAGES_ON
-def test_a_graduation_card_starts_no_browser(client, outbox, cards):
-    """`renderTimetablePresentation` draws only `timetable_proposals`. Without the
-    kind gate a graduation answer launches Chromium, waits for a page that renders
-    nothing, and logs a failure — seconds and a warning for a picture that was
-    never going to exist."""
+def test_durable_timetable_alternatives_still_materialise_one_photo_per_option(
+    client: Client,
+    outbox: RecordingTransport,
+    cards: RecordingRenderer,
+) -> None:
+    from telegram_gateway import jobs
+    from telegram_gateway.cards import unsign_card
+
+    presentation = _timetable_presentation()
+    presentation["alternatives"] = [
+        {
+            "planner_options": [f"A{index + 1}"],
+            "meetings": [
+                {
+                    "day": "SUN",
+                    "start": f"0{9 + index}:00",
+                    "end": f"{10 + index}:15",
+                    "course_code": "AI331",
+                    "section": f"M{index + 1}",
+                }
+            ],
+            "scheduled_courses": 1,
+            "target_courses": 1,
+            "total_credit_hours": 4,
+        }
+        for index in range(2)
+    ]
+    _link()
+    manifests: list[list[dict[str, Any]]] = []
+    original = bot._durable_delivery_items
+
+    def capture_items(*args: Any, **kwargs: Any) -> list[dict[str, Any]]:
+        items = original(*args, **kwargs)
+        manifests.append(items)
+        return items
+
+    with (
+        mock.patch("telegram_gateway.bot._durable_delivery_items", side_effect=capture_items),
+        _adviser(answer="Here are two timetable options.", presentation=presentation),
+    ):
+        _post(client, _update(update_id=8805, text="Build two timetable alternatives."))
+
+    assert len(manifests) == 1
+    items = manifests[0]
+    assert items[0]["kind"] == jobs.DELIVERY_KIND_TEXT
+    assert items[1:] == [
+        {"kind": jobs.DELIVERY_KIND_TIMETABLE_PHOTO, "option_index": 0},
+        {"kind": jobs.DELIVERY_KIND_TIMETABLE_PHOTO, "option_index": 1},
+    ]
+    assert len(items) == 3
+    indexes = [
+        unsign_card(url.split("/telegram/card/")[1].rstrip("/"))["i"] for url in cards.requested
+    ]
+    assert indexes == [0, 1]
+    assert len(outbox.photos) == 2
+
+
+@GRADUATION_IMAGES_ON
+def test_personal_record_inside_graduation_card_suppresses_only_the_photo_recipe(
+    client: Client,
+    outbox: RecordingTransport,
+    cards: RecordingRenderer,
+) -> None:
+    from telegram_gateway import jobs
+
+    student = _student_row(MINE)
+    student.gpa = 2.86
+    student.save(update_fields=["gpa"])
+    _link()
+    presentation = _graduation_presentation()
+    presentation["unresolved_requirements"] = [
+        {
+            "code": "DS492",
+            "name": "GPA: 2.86",
+            "missing_prerequisites": [],
+        }
+    ]
+    safe_answer = "Your graduation scenario is available on the platform."
+
+    from core.services.advisor_presentations import normalise_presentation
+
+    normalised = normalise_presentation(presentation)
+    assert bot._presentation_contains_personal_record(
+        normalised,
+        student_id=MINE,
+        question="When will I graduate?",
+    )
+    manifests: list[list[dict[str, Any]]] = []
+    original = bot._durable_delivery_items
+
+    def capture_items(*args: Any, **kwargs: Any) -> list[dict[str, Any]]:
+        items = original(*args, **kwargs)
+        manifests.append(items)
+        return items
+
+    with (
+        mock.patch("telegram_gateway.bot._durable_delivery_items", side_effect=capture_items),
+        _adviser(answer=safe_answer, presentation=presentation),
+    ):
+        _post(client, _update(update_id=8806, text="When will I graduate?"))
+
+    assert len(manifests) == 1
+    items = manifests[0]
+    assert not any(item.get("kind") == jobs.DELIVERY_KIND_TIMETABLE_PHOTO for item in items)
+    assert any(
+        item.get("kind") == jobs.DELIVERY_KIND_TEXT and safe_answer in item.get("text", "")
+        for item in items
+    )
+    assert cards.requested == []
+    assert outbox.photos == []
+    assert safe_answer in " ".join(outbox.texts)
+
+
+@IMAGES_ON
+def test_timetable_image_flag_alone_does_not_enable_graduation_photos(client, outbox, cards):
+    """The narrower timetable-media consent cannot export a graduation map."""
     from core.services.advisor_presentations import KIND_GRADUATION, normalise_presentation
 
     graduation = {
@@ -3767,3 +4034,19 @@ def test_a_graduation_card_starts_no_browser(client, outbox, cards):
     assert cards.requested == [], "a browser was started for a non-timetable card"
     assert outbox.photos == []
     assert "خطة تخرجك." in " ".join(outbox.texts)
+
+
+@IMAGES_ON
+def test_signed_graduation_card_is_404_when_only_timetable_images_are_enabled(client):
+    from telegram_gateway.cards import sign_card
+
+    conversation = AdvisorConversation.objects.create(student_id=MINE)
+    message = AdvisorMessage.objects.create(
+        conversation=conversation,
+        role=AdvisorMessage.ROLE_ASSISTANT,
+        content="x",
+        presentation=_graduation_presentation(),
+        status=AdvisorMessage.STATUS_COMPLETED,
+    )
+
+    assert _card_request(client, sign_card(message_id=message.pk)).status_code == 404

@@ -7,7 +7,7 @@
   {% comment %} The SAME semantic component and base stylesheet the thread uses. The
      scoped rules below change only density and contrast for a static Telegram
      image; timetable geometry remains in the shared WeekGrid renderer. {% endcomment %}
-  <link href="/telegram/card-assets/css/global.css?v=50" rel="stylesheet">
+  <link href="/telegram/card-assets/css/global.css?v=51" rel="stylesheet">
   <link href="/telegram/card-assets/css/bootstrap-compat.css?v=3" rel="stylesheet">
   <style>
     /* This is a Telegram artifact, not the desktop chat panel. At DPR 2 the
@@ -40,6 +40,23 @@
       color: #31485a;
       font-size: 13px;
       line-height: 1.45;
+    }
+    #sa-card-root .sa-tt-replacement {
+      margin-bottom: 9px;
+      padding: 7px 9px;
+      border-color: #a9d8ce;
+      background: #eef9f6;
+    }
+    #sa-card-root .sa-tt-replacement-swap { font-size: 13px; }
+    #sa-card-root .sa-tt-replacement-code {
+      padding: 2px 7px;
+      background: #ffffff;
+      font-size: 12px;
+    }
+    #sa-card-root .sa-tt-replacement-caution {
+      padding-top: 5px;
+      color: #765214;
+      font-size: 11px;
     }
     #sa-card-root .sa-tt-option,
     #sa-card-root .sa-tt-current {
@@ -200,6 +217,30 @@
       gap: 5px;
       padding: 7px 0 0;
     }
+
+    /* A graduation scenario is also a static adviser card here. Preserve the
+       exact shared prerequisite graph, but remove controls that cannot be used
+       in a Telegram image and force the desktop map at this narrow viewport. */
+    #sa-card-root .sa-graduation-map {
+      margin: 0;
+      padding: 0;
+      border-top: 0;
+    }
+    #sa-card-root .sa-graduation-map .sa-grad-expand,
+    #sa-card-root .sa-graduation-map .pg-modes { display: none !important; }
+    #sa-card-root .sa-graduation-map .sa-grad-mobile { display: none !important; }
+    #sa-card-root .sa-graduation-map .sa-grad-desktop {
+      display: block !important;
+      overflow: visible;
+      padding: 6px;
+    }
+    #sa-card-root .sa-graduation-map .sa-grad-panel { overflow: visible; }
+    #sa-card-root .sa-graduation-map .sa-grad-toolbar {
+      justify-content: flex-end;
+      min-height: 34px;
+      padding: 5px 8px;
+    }
+    #sa-card-root .sa-graduation-map .sa-grad-blockers { margin-bottom: 0; }
   </style>
 </head>
 <body>
@@ -238,12 +279,12 @@
     urls: {}
   };
 </script>
-{% comment %} The shared week-grid primitive. `base.html` loads it on every real page, but
-   this page does not extend base.html, so it is named explicitly. The chat thread
-   keeps the semantic meetings list; this card swaps the one visible option to the
-   same exact-time grid used by the planner and student timetable. {% endcomment %}
+{% comment %} The shared week-grid and prerequisite-graph primitives. `base.html`
+   normally supplies them, but this chrome-less page names its exact dependencies
+   through the private, allowlisted asset route. {% endcomment %}
 <script src="/telegram/card-assets/js/shared-timetable.js?v=3"></script>
-<script src="/telegram/card-assets/js/page-student-advisor.js?v=24"></script>
+<script src="/telegram/card-assets/js/prereq-graph.js?v=1"></script>
+<script src="/telegram/card-assets/js/page-student-advisor.js?v=25"></script>
 <script>
   (function () {
     var IS_AR = {% if language == 'ar' %}true{% else %}false{% endif %};
@@ -263,7 +304,9 @@
     var nextPalette = 0;
     var root = document.getElementById('sa-card-root');
     var data = JSON.parse(document.getElementById('sa-card-data').textContent);
-    var render = window.__SA_RENDER_TIMETABLE_CARD__;
+    var render = data.kind === 'graduation_scenario'
+      ? window.__SA_RENDER_GRADUATION_CARD__
+      : window.__SA_RENDER_TIMETABLE_CARD__;
     if (typeof render !== 'function') {
       /* Surfaced in the DOM rather than thrown: the renderer waits for
          `data-card-ready`, and a silent failure here would become a screenshot

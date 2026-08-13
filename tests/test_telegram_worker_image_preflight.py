@@ -44,6 +44,7 @@ VALID_WORKER_SETTINGS = {
     "TELEGRAM_BOT_TOKEN": "123:abc",
     "TELEGRAM_PUBLIC_BASE_URL": "https://advisor.example.edu",
     "TELEGRAM_SEND_TIMETABLE_IMAGES": False,
+    "TELEGRAM_SEND_GRADUATION_IMAGES": False,
     "LLM_BACKEND": "local",
     "LOCAL_LLM_BASE_URL": "http://127.0.0.1:1234/v1",
     "LOCAL_LLM_MODEL": "local-test-model",
@@ -64,6 +65,25 @@ def test_default_off_worker_never_runs_the_image_preflight(monkeypatch):
 
 @override_settings(**{**VALID_WORKER_SETTINGS, "TELEGRAM_SEND_TIMETABLE_IMAGES": True})
 def test_image_enabled_worker_preflights_before_polling(monkeypatch):
+    events: list[str] = []
+    monkeypatch.setattr(
+        worker_command,
+        "validate_worker_image_runtime",
+        lambda: events.append("preflight"),
+    )
+    monkeypatch.setattr(
+        worker_command,
+        "run_worker_loop",
+        lambda **_kwargs: events.append("poll") or 0,
+    )
+
+    call_command("telegram_advisor_worker", "--once")
+
+    assert events == ["preflight", "poll"]
+
+
+@override_settings(**{**VALID_WORKER_SETTINGS, "TELEGRAM_SEND_GRADUATION_IMAGES": True})
+def test_graduation_image_enabled_worker_preflights_before_polling(monkeypatch):
     events: list[str] = []
     monkeypatch.setattr(
         worker_command,

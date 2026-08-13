@@ -295,7 +295,9 @@ class Command(BaseCommand):
                 "egress approval is disabled. Refusing to consume Telegram jobs."
             )
 
-        if bool(getattr(settings, "TELEGRAM_SEND_TIMETABLE_IMAGES", False)):
+        if bool(getattr(settings, "TELEGRAM_SEND_TIMETABLE_IMAGES", False)) or bool(
+            getattr(settings, "TELEGRAM_SEND_GRADUATION_IMAGES", False)
+        ):
             try:
                 validate_worker_image_runtime()
             except ImageRuntimeValidationError as exc:

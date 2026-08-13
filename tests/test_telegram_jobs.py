@@ -35,6 +35,7 @@ VALID_WORKER_SETTINGS = {
     "TELEGRAM_BOT_TOKEN": "123:abc",
     "TELEGRAM_PUBLIC_BASE_URL": "https://advisor.example.edu",
     "TELEGRAM_SEND_TIMETABLE_IMAGES": False,
+    "TELEGRAM_SEND_GRADUATION_IMAGES": False,
     "LLM_BACKEND": "local",
     "LOCAL_LLM_BASE_URL": "http://127.0.0.1:1234/v1",
     "LOCAL_LLM_MODEL": "local-test-model",
@@ -47,6 +48,7 @@ WORKER_INHERITED_ENV = {
     "TELEGRAM_LINK_TOKEN_TTL_SECONDS",
     "TELEGRAM_API_TIMEOUT_SECONDS",
     "TELEGRAM_SEND_TIMETABLE_IMAGES",
+    "TELEGRAM_SEND_GRADUATION_IMAGES",
     "LLM_BACKEND",
     "LOCAL_LLM_BASE_URL",
     "LOCAL_LLM_MODEL",
@@ -457,6 +459,21 @@ def _text(value: str) -> dict[str, Any]:
     return {"kind": jobs.DELIVERY_KIND_TEXT, "text": value}
 
 
+def _legacy_split_photo_manifest(
+    *items: Mapping[str, Any], messages: Sequence[str]
+) -> dict[str, Any]:
+    """The already-queued photo-first v2 shape kept for rollback tests."""
+
+    return {
+        **_photo_manifest(*items),
+        "messages": list(messages),
+        "cursor_mode": jobs.DELIVERY_CURSOR_MODE_SPLIT,
+        "photo_cursor": 0,
+        "photo_attempt_count": 0,
+        "text_phase_started": False,
+    }
+
+
 def _record_success(target: list[_T], value: _T) -> dict[str, bool]:
     target.append(value)
     return {"ok": True}
@@ -467,7 +484,7 @@ def _record_failure(target: list[_T], value: _T, error: str) -> dict[str, Any]:
     return {"ok": False, "error": error, "retry_after": 0}
 
 
-def test_durable_manifest_delivers_photos_before_text_with_one_cursor() -> None:
+def test_durable_manifest_delivers_text_before_photos_with_independent_cursors() -> None:
     link = _link()
     _enqueue(41, link, "question")
     calls: list[str] = []
@@ -500,7 +517,46 @@ def test_durable_manifest_delivers_photos_before_text_with_one_cursor() -> None:
     assert result.status == TelegramUpdateReceipt.STATUS_SUCCEEDED
     assert result.delivery_cursor == 1
     assert render_calls == [[0, 1]], "all remaining cards should share one browser batch"
-    assert calls == ["png-0", "png-1", "answer"]
+    assert calls == ["answer", "png-0", "png-1"]
+
+
+def test_text_retry_stops_before_any_photo_is_rendered_or_sent() -> None:
+    link = _link()
+    _enqueue(4101, link, "question")
+    calls: list[str] = []
+    failed_once = False
+
+    def send_text(_job: TelegramUpdateReceipt, text: str) -> Mapping[str, Any]:
+        nonlocal failed_once
+        calls.append(text)
+        if not failed_once:
+            failed_once = True
+            return {"ok": False, "error": "unreachable", "retry_after": 0}
+        return {"ok": True}
+
+    kwargs: dict[str, Any] = {
+        "render_photos": lambda _job, _indexes: [b"png"],
+        "deliver_photo": lambda _job, png: _record_success(calls, png.decode()),
+        "deliver": send_text,
+    }
+    first = jobs.run_job(
+        4101,
+        "worker-a",
+        executor=lambda _job: {
+            "delivery_payload": _photo_manifest(_photo(0), _text("answer")),
+            "result_code": "answered",
+        },
+        **kwargs,
+    )
+
+    assert first is not None and first.status == TelegramUpdateReceipt.STATUS_QUEUED
+    assert calls == ["answer"]
+    assert first.delivery_payload["photo_cursor"] == 0
+
+    second = jobs.run_job(4101, "worker-b", **kwargs)
+
+    assert second is not None and second.status == TelegramUpdateReceipt.STATUS_SUCCEEDED
+    assert calls == ["answer", "answer", "png"]
 
 
 def test_photo_retry_resumes_at_the_first_unconfirmed_item_without_rerunning_executor() -> None:
@@ -557,15 +613,15 @@ def test_photo_retry_resumes_at_the_first_unconfirmed_item_without_rerunning_exe
     )
 
     assert first is not None and first.status == TelegramUpdateReceipt.STATUS_QUEUED
-    assert first.delivery_cursor == 0
+    assert first.delivery_cursor == 1
     assert first.delivery_payload["photo_cursor"] == 1
     assert second is not None and second.status == TelegramUpdateReceipt.STATUS_SUCCEEDED
     assert executions == 1
     assert render_calls == [[0, 1], [1]]
-    assert deliveries == ["png-0", "png-1", "png-1", "answer"]
+    assert deliveries == ["answer", "png-0", "png-1", "png-1"]
 
 
-def test_confirmed_photos_are_not_resent_when_text_delivery_retries() -> None:
+def test_text_delivery_retries_before_photos_are_attempted() -> None:
     link = _link()
     _enqueue(43, link, "question")
     photos: list[bytes] = []
@@ -597,8 +653,8 @@ def test_confirmed_photos_are_not_resent_when_text_delivery_retries() -> None:
     second = jobs.run_job(43, "worker-b", **kwargs)
 
     assert first is not None and first.delivery_cursor == 0
-    assert first.delivery_payload["photo_cursor"] == 1
-    assert first.delivery_payload["text_phase_started"] is True
+    assert first.delivery_payload["photo_cursor"] == 0
+    assert first.delivery_payload["text_first"] is True
     assert second is not None and second.status == TelegramUpdateReceipt.STATUS_SUCCEEDED
     assert photos == [b"png"]
     assert texts == ["answer", "answer"]
@@ -616,9 +672,11 @@ def test_confirmed_photo_progress_survives_rollback_and_roll_forward(recovery_mo
         kind=TelegramUpdateReceipt.KIND_QUESTION,
         status=TelegramUpdateReceipt.STATUS_RUNNING,
         result_code="answered",
-        delivery_payload=jobs._materialised_delivery_payload(
+        delivery_payload=_legacy_split_photo_manifest(
+            _photo(0),
+            _text("validated answer"),
+            _text("second chunk"),
             messages=["validated answer", "second chunk"],
-            delivery_payload=_photo_manifest(_photo(0)),
         ),
         delivery_cursor=0,
         attempt_count=1,
@@ -701,9 +759,11 @@ def test_rollback_text_takeover_preserves_the_terminal_claim_count() -> None:
         kind=TelegramUpdateReceipt.KIND_QUESTION,
         status=TelegramUpdateReceipt.STATUS_QUEUED,
         result_code="answered",
-        delivery_payload=jobs._materialised_delivery_payload(
+        delivery_payload=_legacy_split_photo_manifest(
+            _photo(0),
+            _text("already confirmed"),
+            _text("still pending"),
             messages=["already confirmed", "still pending"],
-            delivery_payload=_photo_manifest(_photo(0)),
         ),
         delivery_cursor=1,
         attempt_count=2,
@@ -788,24 +848,24 @@ def test_photo_attempts_do_not_exhaust_the_fresh_text_retry_budget(
         "deliver_photo": send_photo,
         "deliver": send_text,
     }
-    first = jobs.run_job(4311, "photo-worker-1", **shared)
-    second = jobs.run_job(4311, "photo-worker-2", **shared)
-    text_failure = jobs.run_job(4311, "photo-worker-3", **shared)
-
-    assert first is not None and first.status == TelegramUpdateReceipt.STATUS_QUEUED
-    assert second is not None and second.status == TelegramUpdateReceipt.STATUS_QUEUED
+    text_failure = jobs.run_job(4311, "text-worker-1", **shared)
     assert text_failure is not None
     assert text_failure.status == TelegramUpdateReceipt.STATUS_QUEUED
     assert text_failure.attempt_count == 1
-    assert text_failure.delivery_payload["photo_cursor"] == 1
-    assert text_failure.delivery_payload["text_phase_started"] is True
+    assert text_failure.delivery_payload["photo_cursor"] == 0
+    assert text_failure.delivery_payload["text_first"] is True
     assert text_failure.delivery_cursor == 0
-    assert executions == 1
-    assert renders == 3
-    assert photo_attempts == 3
-    assert text_attempts == 1
+    first = jobs.run_job(4311, "text-worker-2-photo-1", **shared)
+    second = jobs.run_job(4311, "photo-worker-2", **shared)
 
-    result = jobs.run_job(4311, "text-retry-worker", **shared)
+    assert first is not None and first.status == TelegramUpdateReceipt.STATUS_QUEUED
+    assert second is not None and second.status == TelegramUpdateReceipt.STATUS_QUEUED
+    assert executions == 1
+    assert renders == 2
+    assert photo_attempts == 2
+    assert text_attempts == 2
+
+    result = jobs.run_job(4311, "photo-worker-3", **shared)
 
     assert result is not None and result.status == TelegramUpdateReceipt.STATUS_SUCCEEDED
     assert result.delivery_cursor == 1
@@ -868,21 +928,19 @@ def test_generation_photo_and_text_each_receive_their_full_retry_budget() -> Non
     generation_2 = jobs.run_job(4312, "generation-2", **shared)
     assert generation_2 is not None
     assert generation_2.status == TelegramUpdateReceipt.STATUS_QUEUED
-    first_photo = jobs.run_job(4312, "generation-3-photo-1", **shared)
-    assert first_photo is not None and first_photo.status == TelegramUpdateReceipt.STATUS_QUEUED
-    assert first_photo.attempt_count == 0
-    assert first_photo.delivery_payload["photo_attempt_count"] == 1
-
-    photo_2 = jobs.run_job(4312, "photo-2", **shared)
-    assert photo_2 is not None and photo_2.status == TelegramUpdateReceipt.STATUS_QUEUED
-    first_text = jobs.run_job(4312, "photo-3-text-1", **shared)
-    assert first_text is not None and first_text.status == TelegramUpdateReceipt.STATUS_QUEUED
-    assert first_text.attempt_count == 1
-    assert first_text.delivery_payload["photo_attempt_count"] == 3
+    text_1 = jobs.run_job(4312, "generation-3-text-1", **shared)
+    assert text_1 is not None and text_1.status == TelegramUpdateReceipt.STATUS_QUEUED
+    assert text_1.attempt_count == 1
+    assert text_1.delivery_payload["photo_attempt_count"] == 0
 
     text_2 = jobs.run_job(4312, "text-2", **shared)
     assert text_2 is not None and text_2.status == TelegramUpdateReceipt.STATUS_QUEUED
-    result = jobs.run_job(4312, "text-3", **shared)
+    first_photo = jobs.run_job(4312, "text-3-photo-1", **shared)
+    assert first_photo is not None and first_photo.status == TelegramUpdateReceipt.STATUS_QUEUED
+    assert first_photo.delivery_payload["photo_attempt_count"] == 1
+    photo_2 = jobs.run_job(4312, "photo-2", **shared)
+    assert photo_2 is not None and photo_2.status == TelegramUpdateReceipt.STATUS_QUEUED
+    result = jobs.run_job(4312, "photo-3", **shared)
 
     assert result is not None and result.status == TelegramUpdateReceipt.STATUS_SUCCEEDED
     assert executions == 3
@@ -890,14 +948,34 @@ def test_generation_photo_and_text_each_receive_their_full_retry_budget() -> Non
     assert text_attempts == 3
 
 
-def test_photo_worker_crash_remains_drainable_by_the_previous_text_worker() -> None:
-    """A rollback must see a non-terminal counter and intact legacy messages."""
+def test_legacy_photo_worker_crash_remains_drainable_by_the_previous_text_worker() -> None:
+    """An already-queued photo-first row remains safe during a rollback."""
 
     class PhotoWorkerCrash(BaseException):
         pass
 
     link = _link()
     _enqueue(4313, link, "question")
+    job = TelegramUpdateReceipt.objects.get(update_id=4313)
+    now = timezone.now()
+    job.status = TelegramUpdateReceipt.STATUS_RUNNING
+    job.result_code = "answered"
+    job.delivery_payload = _legacy_split_photo_manifest(
+        _photo(0),
+        _text("validated answer"),
+        messages=["validated answer"],
+    )
+    job.attempt_count = 0
+    job.locked_by = "materialising-worker"
+    job.locked_at = now
+    job.lease_expires_at = now + timedelta(minutes=10)
+    job.save()
+    jobs._requeue_photo_delivery(
+        job,
+        photo_attempt_count=0,
+        error_code="ready",
+        delay_seconds=0,
+    )
     photo_attempts = 0
 
     def send_photo(_job: TelegramUpdateReceipt, _png: bytes) -> Mapping[str, Any]:
@@ -916,11 +994,6 @@ def test_photo_worker_crash_remains_drainable_by_the_previous_text_worker() -> N
     first = jobs.run_job(
         4313,
         "photo-worker-1",
-        executor=lambda _job: {
-            "messages": ["validated answer"],
-            "delivery_payload": _photo_manifest(_photo(0)),
-            "result_code": "answered",
-        },
         **shared,
     )
     assert first is not None and first.status == TelegramUpdateReceipt.STATUS_QUEUED
@@ -995,7 +1068,10 @@ def test_legacy_materialised_messages_still_drain_after_the_manifest_rollout() -
     assert delivered == ["legacy answer"]
 
 
-@override_settings(TELEGRAM_SEND_TIMETABLE_IMAGES=False)
+@override_settings(
+    TELEGRAM_SEND_TIMETABLE_IMAGES=False,
+    TELEGRAM_SEND_GRADUATION_IMAGES=False,
+)
 def test_disabling_images_drains_an_already_materialised_photo_job_as_text() -> None:
     link = _link()
     TelegramUpdateReceipt.objects.create(
@@ -1017,6 +1093,80 @@ def test_disabling_images_drains_an_already_materialised_photo_job_as_text() -> 
 
     assert result is not None and result.status == TelegramUpdateReceipt.STATUS_SUCCEEDED
     assert result.error_code == "image_delivery_degraded"
+    assert delivered == ["answer"]
+
+
+@pytest.mark.parametrize(
+    ("update_id", "settings_overrides", "presentation", "option_index"),
+    [
+        (
+            4601,
+            {
+                "TELEGRAM_SEND_TIMETABLE_IMAGES": False,
+                "TELEGRAM_SEND_GRADUATION_IMAGES": True,
+            },
+            {
+                "kind": "timetable_proposals",
+                "baseline_kind": "REGISTERED",
+                "baseline_sections": [{"course_code": "AI331"}],
+            },
+            0,
+        ),
+        (
+            4602,
+            {
+                "TELEGRAM_SEND_TIMETABLE_IMAGES": True,
+                "TELEGRAM_SEND_GRADUATION_IMAGES": False,
+            },
+            {
+                "kind": "graduation_scenario",
+                "graph": {"extraNodes": ["AI331"], "items": []},
+            },
+            None,
+        ),
+    ],
+)
+def test_the_other_image_switch_does_not_retry_a_disabled_queued_card(
+    update_id: int,
+    settings_overrides: dict[str, bool],
+    presentation: dict[str, Any],
+    option_index: int | None,
+) -> None:
+    """Each media consent governs its own already-materialised queue recipes."""
+
+    link = _link()
+    conversation = AdvisorConversation.objects.create(student_id=link.student_id)
+    assistant = AdvisorMessage.objects.create(
+        conversation=conversation,
+        role=AdvisorMessage.ROLE_ASSISTANT,
+        content="answer",
+        presentation=presentation,
+    )
+    TelegramUpdateReceipt.objects.create(
+        update_id=update_id,
+        link=link,
+        kind=TelegramUpdateReceipt.KIND_QUESTION,
+        status=TelegramUpdateReceipt.STATUS_QUEUED,
+        result_code="answered",
+        assistant_message=assistant,
+        delivery_payload=jobs._materialised_delivery_payload(
+            messages=["answer"],
+            delivery_payload=_photo_manifest(_photo(option_index)),
+        ),
+    )
+    delivered: list[str] = []
+
+    with override_settings(**settings_overrides):
+        result = jobs.run_job(
+            update_id,
+            "worker-a",
+            deliver_photo=lambda _job, _png: pytest.fail("the disabled card was sent"),
+            deliver=lambda _job, text: _record_success(delivered, text),
+        )
+
+    assert result is not None and result.status == TelegramUpdateReceipt.STATUS_SUCCEEDED
+    assert result.error_code == "image_delivery_degraded"
+    assert result.delivery_payload == {}
     assert delivered == ["answer"]
 
 
@@ -1043,6 +1193,7 @@ def test_photo_manifest_persists_only_a_recipe_and_authoritative_text() -> None:
             "result_code": "answered",
         },
         render_photos=lambda _job, _indexes: [],
+        deliver=lambda _job, _text: {"ok": True},
         max_attempts=2,
     )
 
@@ -1054,6 +1205,7 @@ def test_photo_manifest_persists_only_a_recipe_and_authoritative_text() -> None:
         "photo_cursor": 0,
         "photo_attempt_count": 1,
         "text_phase_started": False,
+        "text_first": True,
     }
     serialized = str(result.delivery_payload)
     assert "attacker" not in serialized

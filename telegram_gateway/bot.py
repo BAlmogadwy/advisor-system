@@ -632,7 +632,7 @@ def execute_durable_job(job: TelegramUpdateReceipt) -> dict[str, Any]:
         raise PermanentJobError("link_revoked")
 
     assistant = result.assistant_message
-    rendered = _render_outcome(result)
+    rendered = _render_outcome(result, question=question)
     result_code = result.outcome.lower()
     if _finalize_telegram_output(
         result,
@@ -826,7 +826,7 @@ def answer_question(*, link_id: Any, update_id: int, question: str, server_port:
         # not happen; nothing enforced it.
         logger.warning("telegram: card image phase failed; sending text only")
 
-    rendered = _render_outcome(result)
+    rendered = _render_outcome(result, question=question)
     if output_withheld:
         rendered = [messages.sensitive_record_web_only(_web_url(conversation.pk))]
     for text in rendered:
@@ -903,20 +903,29 @@ def _send_card_image(
     student_id: int | None = None,
     question: str = "",
 ) -> None:
-    """Deliver a picture of the timetable card, or quietly deliver nothing."""
-    from core.services.advisor_presentations import KIND_TIMETABLE, normalise_presentation
+    """Deliver a picture of a supported adviser card, or quietly deliver nothing."""
+    from core.services.advisor_presentations import (
+        KIND_GRADUATION,
+        KIND_TIMETABLE,
+        normalise_presentation,
+    )
 
-    from .rendering import images_enabled, local_base_url, render_cards
+    from .rendering import (
+        graduation_images_enabled,
+        local_base_url,
+        render_cards,
+        timetable_images_enabled,
+    )
 
     assistant = result.assistant_message
-    if assistant is None or not assistant.presentation or not images_enabled():
+    if assistant is None or not assistant.presentation:
         return
-    # Only the kind the card renderer actually draws. `renderTimetablePresentation`
-    # returns null for anything else, so without this a graduation answer would
-    # start a browser, wait for a page that renders nothing, and log a failure —
-    # ~2 seconds and a warning for a picture that was never going to exist.
     presentation = normalise_presentation(assistant.presentation)
-    if not presentation or presentation.get("kind") != KIND_TIMETABLE:
+    kind = presentation.get("kind") if presentation else ""
+    if not (
+        (kind == KIND_TIMETABLE and timetable_images_enabled())
+        or (kind == KIND_GRADUATION and graduation_images_enabled())
+    ):
         return
     if _presentation_contains_personal_record(
         presentation,
@@ -925,7 +934,9 @@ def _send_card_image(
     ):
         return
     alternatives = presentation.get("alternatives") or []
-    count = min(len(alternatives), MAX_CARD_IMAGES) if alternatives else 1
+    count = (
+        min(len(alternatives), MAX_CARD_IMAGES) if kind == KIND_TIMETABLE and alternatives else 1
+    )
 
     # One browser for all of them. A Chromium launch costs a second or two, and
     # four cold launches per answer against two executor slots is how a busy hour
@@ -933,7 +944,9 @@ def _send_card_image(
     images = render_cards(
         message_id=assistant.pk,
         base_url=local_base_url(server_port),
-        option_indexes=[i if alternatives else None for i in range(count)],
+        option_indexes=[
+            i if kind == KIND_TIMETABLE and alternatives else None for i in range(count)
+        ],
     )
     for png in images:
         if not png:
@@ -955,29 +968,37 @@ def _durable_delivery_items(
     """Describe photos and text without exporting or persisting any PNG bytes."""
 
     from core.services.advisor_presentations import (
+        KIND_GRADUATION,
         KIND_TIMETABLE,
         normalise_presentation,
     )
 
     from . import jobs
-    from .rendering import images_enabled
+    from .rendering import graduation_images_enabled, timetable_images_enabled
 
-    items: list[dict[str, Any]] = []
+    # Telegram renders messages in send order. Lead with the complete validated
+    # answer so optional card rendering can never make the student wait for (or
+    # see images ahead of) the explanation and platform link.
+    items: list[dict[str, Any]] = [
+        {"kind": jobs.DELIVERY_KIND_TEXT, "text": str(text)} for text in rendered if str(text)
+    ]
     assistant = result.assistant_message
-    if not output_withheld and assistant is not None and images_enabled():
+    if not output_withheld and assistant is not None:
         presentation = normalise_presentation(assistant.presentation)
-        if (
-            presentation
-            and presentation.get("kind") == KIND_TIMETABLE
-            and not _presentation_contains_personal_record(
-                presentation,
-                student_id=student_id,
-                question=question,
-            )
+        kind = presentation.get("kind") if presentation else ""
+        kind_enabled = (kind == KIND_TIMETABLE and timetable_images_enabled()) or (
+            kind == KIND_GRADUATION and graduation_images_enabled()
+        )
+        if kind_enabled and not _presentation_contains_personal_record(
+            presentation,
+            student_id=student_id,
+            question=question,
         ):
             alternatives = presentation.get("alternatives") or []
             option_indexes: list[int | None] = (
-                list(range(min(len(alternatives), MAX_CARD_IMAGES))) if alternatives else [None]
+                list(range(min(len(alternatives), MAX_CARD_IMAGES)))
+                if kind == KIND_TIMETABLE and alternatives
+                else [None]
             )
             items.extend(
                 {
@@ -986,9 +1007,6 @@ def _durable_delivery_items(
                 }
                 for option_index in option_indexes
             )
-    items.extend(
-        {"kind": jobs.DELIVERY_KIND_TEXT, "text": str(text)} for text in rendered if str(text)
-    )
     return items
 
 
@@ -1000,11 +1018,12 @@ def _presentation_contains_personal_record(
 ) -> bool:
     """Apply Telegram output DLP to every natural-language field in a card.
 
-    Structured timetable facts such as days, times, credits and section labels
-    are intentionally allowed by the channel policy. Natural-language names and
-    failure/unplaced reasons can originate in older stored rows or tool output,
-    so they cross the same personal-record boundary as assistant prose before a
-    screenshot recipe is created.
+    Structured planning facts such as course codes, days, times, credits,
+    section labels, prerequisite edges and coarse progress states are allowed by
+    the channel policy. Natural-language names, failure/unplaced reasons and
+    unresolved-requirement labels can originate in older stored rows or tool
+    output, so they cross the same personal-record boundary as assistant prose
+    before a screenshot recipe is created.
     """
 
     visible: list[str] = []
@@ -1015,7 +1034,10 @@ def _presentation_contains_personal_record(
             return
         fields = [
             str(value)
-            for value in (row.get("course_code"), row.get("course_name"))
+            for value in (
+                row.get("course_code") or row.get("code"),
+                row.get("course_name") or row.get("name"),
+            )
             if str(value or "").strip()
         ]
         if include_reason and str(row.get("reason") or "").strip():
@@ -1044,6 +1066,32 @@ def _presentation_contains_personal_record(
         for row in option.get("unplaced_courses") or []:
             add_course(row, include_reason=True)
 
+    # Graduation maps include names outside the timetable row shapes above.
+    # Treat every natural-language course field as outbound media, while course
+    # status enums/codes/edges remain the structured planning facts they are.
+    # Older stored presentations are screened here after normalisation too.
+    graph = presentation.get("graph")
+    if isinstance(graph, dict):
+        names = graph.get("nameOf")
+        if isinstance(names, dict):
+            for code, name in names.items():
+                add_course({"course_code": code, "course_name": name})
+    for key in ("removed_current_courses", "added_current_courses"):
+        for row in presentation.get(key) or []:
+            add_course(row)
+    for row in presentation.get("unresolved_requirements") or []:
+        add_course(row)
+        if isinstance(row, dict):
+            missing = row.get("missing_prerequisites")
+            if isinstance(missing, list):
+                visible.extend(str(value) for value in missing if str(value or "").strip())
+    for value in (presentation.get("program"), presentation.get("planning_term")):
+        if str(value or "").strip():
+            visible.append(str(value))
+    labels = presentation.get("band_labels")
+    if isinstance(labels, dict):
+        visible.extend(str(value) for value in labels.values() if str(value or "").strip())
+
     # Screen fields independently. Joining with whitespace lets a reverse-order
     # GPA pattern bridge unrelated values (for example the trailing ``1`` in a
     # course code followed by ``GPA: 2.86``), consume the GPA label, and hide the
@@ -1058,7 +1106,11 @@ def _presentation_contains_personal_record(
     )
 
 
-def _render_outcome(result: advisor_turn.TurnResult) -> list[str]:
+def _render_outcome(
+    result: advisor_turn.TurnResult,
+    *,
+    question: str = "",
+) -> list[str]:
     """One turn outcome, as the messages a student should receive.
 
     Only `AdvisorMessage.content` — the stored, validated answer — is ever sent.
@@ -1085,6 +1137,11 @@ def _render_outcome(result: advisor_turn.TurnResult) -> list[str]:
         # ask again.
         return [messages.GENERATION_FAILED]
 
+    from core.services.virtual_advisor import _answer_language
+
+    source_question = question or (
+        result.student_message.content if result.student_message is not None else ""
+    )
     return render_answer(
         answer=assistant.content,
         citations=list(assistant.citations.all()),
@@ -1093,6 +1150,7 @@ def _render_outcome(result: advisor_turn.TurnResult) -> list[str]:
         # keeps its prose short because of it. Rather than rebuild that card out of
         # chat messages, point at the screen that already draws it.
         has_presentation=bool(assistant.presentation),
+        language=_answer_language(source_question),
     )
 
 

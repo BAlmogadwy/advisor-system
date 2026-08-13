@@ -1,4 +1,4 @@
-"""Secret-free Playwright child for Telegram timetable-card screenshots.
+"""Secret-free Playwright child for Telegram adviser-card screenshots.
 
 This module is executed as an isolated Python script by ``rendering.py``.  It is
 deliberately standard-library-only until ``render_urls`` imports Playwright: no

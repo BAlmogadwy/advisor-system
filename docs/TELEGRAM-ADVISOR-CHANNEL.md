@@ -244,7 +244,8 @@ answer. `test_no_telegram_profile_information_is_stored` fails if a column with
 any of those names is added.
 
 **Telegram is an external cloud service and bot chats are not end-to-end
-encrypted.** Sent timetable images are retained under Telegram's policies and can
+encrypted.** Sent timetable and graduation-plan images are retained under
+Telegram's policies and can
 be downloaded or forwarded like other Telegram media. `/privacy` says so in
 Arabic and English, and the same text is shown on the confirmation page *before*
 the button — not linked from it.
@@ -402,7 +403,7 @@ credential.
 
 ---
 
-## 6. Timetable images
+## 6. Adviser card images
 
 The durable worker sends timetable PNGs when
 `TELEGRAM_SEND_TIMETABLE_IMAGES=true`. This includes a card for a current or
@@ -413,17 +414,27 @@ unplaced courses or constraint-failure reasons. Images are delivery items in the
 same database-backed queue as the answer text; they never bypass the worker after
 the model turn.
 
-The materialized payload is a versioned, ordered manifest. A timetable answer
-places up to four typed `timetable_photo` recipes before its typed `text` items.
+Graduation-plan maps require the independent
+`TELEGRAM_SEND_GRADUATION_IMAGES=true` switch. One image may show the planning
+baseline, completed/baseline/projected/unresolved course states, prerequisite
+links, requested scenario changes, and unresolved requirements. This flag stays
+off unless that broader export has been explicitly accepted; enabling timetable
+images alone does not enable it.
+
+The materialized payload is a versioned manifest. For rolling-worker
+compatibility, its physical v2 list keeps up to four typed `timetable_photo`
+recipes ahead of the typed `text` items, while the explicit `text_first` bit
+requires new workers to deliver the complete text before those optional images.
 Each recipe contains only an option index; the server-owned
 `assistant_message` foreign key identifies the stored, normalized presentation.
 There is no arbitrary URL or message id in the JSON and no PNG/base64 blob in the
 database. Progress is deliberately split: `photo_cursor`,
-`photo_attempt_count`, and `text_phase_started` live in the typed JSON manifest,
+`photo_attempt_count`, `text_phase_started`, and the explicit `text_first`
+ordering bit live in the typed JSON manifest,
 while the existing database `delivery_cursor` always counts only the
-legacy-compatible text list. The database `attempt_count` remains zero throughout
-the optional-photo phase and starts at one only when required-text delivery
-begins. Legacy
+legacy-compatible text list. The database `attempt_count` starts at one for
+required-text delivery and resets to zero after all text is confirmed, while the
+optional-photo phase uses its own bounded JSON counter. Legacy
 queued payloads containing only `messages` remain readable during rollout. For
 the rollback window, newly materialized manifests also retain the validated text
 in that legacy `messages` key; an older worker therefore degrades to text instead
@@ -549,6 +560,7 @@ Both were silent, and both are now pinned by tests:
 | Variable | Default | Notes |
 |---|---|---|
 | `TELEGRAM_SEND_TIMETABLE_IMAGES` | `false` | Explicit privacy/operations switch. Set on `advisor-system`; the worker inherits the exact value through `fromService` |
+| `TELEGRAM_SEND_GRADUATION_IMAGES` | `false` | Independent opt-in for the broader graduation-progress map; never implied by the timetable flag |
 | `TELEGRAM_INTERNAL_BASE_URL` | `""` | Optional plain-HTTP IPv4-loopback override (`127.0.0.1` or `localhost`) for local development. Empty uses the worker's short-lived loopback origin; `::1` is rejected |
 
 ### Production: self-contained worker rendering
@@ -715,8 +727,8 @@ origin/link TTL/API timeout/image switch and every selected `LLM_*`,
 values into the worker with `fromService`; do not create an independently editable
 worker copy. Render ignores newly added `sync: false` variables when updating an
 existing Blueprint, so populate and verify every declared value on
-`advisor-system` before that sync. Set `TELEGRAM_SEND_TIMETABLE_IMAGES=true` only
-after the disclosure and image smoke tests in §§9–11 are in place.
+`advisor-system` before that sync. Set either image flag to true only after its
+disclosure and image smoke tests in §§9–11 are in place.
 `STUDENT_ADVISOR_V2_ENABLED` still controls the web rollout; it does not downgrade
 `telegram_safe`, while the V2 iteration/call/token/timeout controls do govern the
 Telegram turn.
@@ -726,8 +738,8 @@ start unless the channel is enabled, the Bot API token is syntactically usable,
 `TELEGRAM_PUBLIC_BASE_URL` is one credential-free HTTPS origin on a Telegram
 webhook port, and the selected production LLM client can be constructed with its
 egress approval enabled. Provider validation opens no socket; provider
-reachability is still covered by the deployment smoke test. When timetable
-images are enabled, a separate preflight resolves the exact source assets,
+reachability is still covered by the deployment smoke test. When either adviser
+image switch is enabled, a separate preflight resolves the exact source assets,
 performs an authenticated bounded request against the worker-local card origin,
 and launches/closes Chromium in a secret-stripped subprocess. A hard timeout
 terminates its process tree, and a sanitized preflight failure stops the worker
@@ -753,13 +765,16 @@ uses the per-job text fallback described in §6.
 - [ ] Any pre-`0003` active links have been revoked by the migration and are
       re-approved through the two-sided ceremony, not manually reactivated
 - [ ] Persistent `advisor-telegram-worker` is running the command in §8
-- [ ] `/privacy` and the pre-link confirmation disclose current/expected/proposed
-      timetable-image contents (including credit load, requested constraints and
-      unplaced/failure reasons), Telegram retention/forwarding, and that unlink
-      cannot retract sent media
+- [ ] `/privacy` and the pre-link confirmation disclose timetable-image contents
+      and, if enabled, graduation-map course states, prerequisite links, scenario
+      changes and unresolved requirements; plus Telegram retention/forwarding and
+      that unlink cannot retract sent media
 - [ ] `TELEGRAM_SEND_TIMETABLE_IMAGES=true` is set on `advisor-system`; Blueprint
       synced so the worker inherits it. Leave `TELEGRAM_INTERNAL_BASE_URL` empty
       in production so rendering uses the worker-local origin
+- [ ] If graduation-map export was separately approved,
+      `TELEGRAM_SEND_GRADUATION_IMAGES=true` is set and inherited; otherwise it
+      remains false even when timetable images are on
 - [ ] `TELEGRAM_ADVISOR_ENABLED=true` set on `advisor-system`; Blueprint synced so
       the worker inherits it, and both services restarted
 - [ ] `python manage.py telegram_webhook --set` completed
@@ -769,7 +784,7 @@ uses the per-job text fallback described in §6.
 - [ ] Daily Render retention cron includes `purge_telegram_tokens --apply`
 - [ ] Smoke test with a test bot and a test student (§10)
 - [ ] Timetable image smoke test passes for one option and for several alternatives;
-      image(s) arrive before the complete, untruncated text and web link
+      the complete, untruncated text and web link arrive before the image(s)
 
 ## 10. Rollback / disable
 
@@ -806,7 +821,7 @@ Use a **separate** BotFather bot and a test student. Never the production bot.
 |---|---|---|
 | 1 | `/start` in a private chat | Welcome + how to link. No student data |
 | 2 | `كم معدلي؟` before linking | Linking instructions only. No record, no student number |
-| 3 | `/privacy` | Notice incl. "not end-to-end encrypted"; current/expected/proposed timetable image contents, constraints and failure reasons; forwardability; and what unlink cannot delete |
+| 3 | `/privacy` | Notice incl. "not end-to-end encrypted"; timetable and graduation-map image contents; forwardability; and what unlink cannot delete |
 | 4 | `/link` | A single-use URL with a stated expiry, no identifiers in it |
 | 5 | Open it signed out | Lands in the **existing** student login (Uni ID → OTP) |
 | 6 | Complete login | Returns to the confirmation page, privacy text visible |
@@ -816,7 +831,8 @@ Use a **separate** BotFather bot and a test student. Never the production bot.
 | 8 | Reopen the same URL | "expired or already used" |
 | 9 | Ask `ما المواد المتبقية لي؟` | Brief ack, then a real Arabic answer about **this** student |
 | 9b | Ask `كم معدلي؟` after linking | No model answer; directs the student to the authenticated web adviser |
-| 9c | Ask to see the current/expected timetable, then ask for a proposed timetable | One baseline image for the first request; one image per generated option (maximum four) for the second; each followed by the complete text answer and authenticated web link |
+| 9c | Ask to see the current/expected timetable, then ask for a proposed timetable | The complete text answer and authenticated web link arrive first; then one baseline image for the first request and one image per generated option (maximum four) for the second |
+| 9d | With the graduation-image flag enabled, ask `كم فصل باقي لي؟` | The complete text arrives first, followed by one graduation-plan image; the map labels the planning baseline and remains read-only |
 | 10 | Compare with the web adviser | Same student and stored thread; Telegram still exposes only its reduced evidence profile |
 | 11 | Follow-up (`وماذا عن الفصل القادم؟`) | Understands the prior **safe Telegram** answer without ingesting web/withheld turns |
 | 12 | Ask something that produces a long answer | Split into several messages; sources whole and last |

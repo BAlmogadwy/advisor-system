@@ -421,7 +421,7 @@ def link_reauthenticate_view(request: HttpRequest, token: str) -> HttpResponse:
 
 @require_GET
 def card_view(request: HttpRequest, token: str) -> HttpResponse:
-    """Render one timetable card, for the screenshotter and nothing else.
+    """Render one adviser presentation card, for the screenshotter and nothing else.
 
     Signature-authenticated, **not** session-authenticated. The headless browser
     has no session and must not be handed one — minting a login so a screenshot
@@ -437,7 +437,7 @@ def card_view(request: HttpRequest, token: str) -> HttpResponse:
     from core.services.advisor_presentations import normalise_presentation
 
     from .cards import unsign_card, verify_renderer_request
-    from .rendering import images_enabled
+    from .rendering import images_enabled, presentation_images_enabled
 
     # Gated on the IMAGE flag, not just the channel flag. The endpoint exists only
     # to be screenshotted; with images off nothing mints a token for it, so leaving
@@ -463,7 +463,7 @@ def card_view(request: HttpRequest, token: str) -> HttpResponse:
         return HttpResponse(status=404)
 
     presentation = normalise_presentation(message.presentation)
-    if not presentation:
+    if not presentation or not presentation_images_enabled(presentation):
         return HttpResponse(status=404)
 
     from core.advisor_conversation_views import _language_of

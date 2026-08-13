@@ -21,8 +21,8 @@ full identifier. It never displays the name or Telegram profile data.
 {% block title %}{% if LANGUAGE_CODE == 'ar' %}تأكيد ربط تيليجرام{% else %}Confirm Telegram linking{% endif %}{% endblock %}
 
 {% block body %}
-<div class="login-wrap" role="main">
-  <div class="login-card" style="max-width:640px">
+<main id="main-content" class="login-wrap telegram-link-wrap" role="main" tabindex="-1">
+  <div class="login-card telegram-link-card">
     <h1 class="login-title">
       {% if LANGUAGE_CODE == 'ar' %}ربط حساب تيليجرام{% else %}Link your Telegram account{% endif %}
     </h1>
@@ -79,5 +79,5 @@ full identifier. It never displays the name or Telegram profile data.
       </a>
     </p>
   </div>
-</div>
+</main>
 {% endblock %}

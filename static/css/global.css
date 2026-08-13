@@ -8700,6 +8700,10 @@ body:has(.login-wrap) {
     width: 100%; max-width: 420px; padding: 1.5rem;
     animation: login-fade-up 0.5s var(--ease) both;
   }
+  .telegram-link-wrap {
+    max-width: 720px;
+    box-sizing: border-box;
+  }
   @keyframes login-fade-up {
     from { opacity: 0; transform: translateY(20px); }
     to   { opacity: 1; transform: translateY(0); }
@@ -8714,6 +8718,13 @@ body:has(.login-wrap) {
       8px 8px 20px rgba(163,177,198,0.6),
       -8px -8px 20px rgba(255,255,255,0.8);
     overflow: hidden;
+  }
+  .telegram-link-card {
+    width: 100%;
+  }
+  .telegram-link-card--result {
+    max-width: 640px;
+    margin-inline: auto;
   }
 
   /* ─── Avatar circle ─── */

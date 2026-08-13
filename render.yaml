@@ -36,6 +36,8 @@ services:
         sync: false
       - key: TELEGRAM_SEND_TIMETABLE_IMAGES
         sync: false
+      - key: TELEGRAM_SEND_GRADUATION_IMAGES
+        sync: false
       - key: LLM_BACKEND
         sync: false
       - key: LOCAL_LLM_BASE_URL
@@ -142,6 +144,11 @@ services:
           name: advisor-system
           type: web
           envVarKey: TELEGRAM_SEND_TIMETABLE_IMAGES
+      - key: TELEGRAM_SEND_GRADUATION_IMAGES
+        fromService:
+          name: advisor-system
+          type: web
+          envVarKey: TELEGRAM_SEND_GRADUATION_IMAGES
       # Provider, agent-loop and V2 controls all come from the web service. A kill
       # switch changed there therefore changes the worker on the same Blueprint
       # sync instead of silently reverting to a code default here.
