@@ -16,6 +16,13 @@ import copy
 import re
 from typing import Any
 
+from core.services.llm_remote_privacy import (
+    project_course_comparison_timetable_reason,
+    project_course_replacement_limitations,
+    project_course_replacement_timetable_details,
+    project_course_replacement_timetable_reason,
+)
+
 TELEGRAM_SAFE_PROFILE = "telegram_safe"
 TELEGRAM_SAFE_IDEMPOTENCY_PREFIX = "tg-safe-v1:"
 TELEGRAM_UNVALIDATED_PROFILE = "telegram_unvalidated"
@@ -92,9 +99,53 @@ def project_tool_result(tool_name: str, result: dict[str, Any], *, profile: Any 
         }
     projected = _scrub(copy.deepcopy(result))
     if isinstance(projected, dict):
+        if str(tool_name or "") == "course_choice_comparison":
+            _project_course_comparison_reasons(projected)
+        elif str(tool_name or "") == "feasible_course_replacements":
+            _project_course_replacement_reasons(projected)
         projected["channel_record_projection"] = TELEGRAM_SAFE_PROFILE
         return projected
     return {"ok": False, "error": "Capability result could not be projected safely."}
+
+
+def _project_course_comparison_reasons(result: dict[str, Any]) -> None:
+    """Replace service-authored timetable prose with bounded public wording.
+
+    ``result`` is already a private deep copy, so pruning it cannot remove the
+    richer diagnostic evidence retained by the local capability result.
+    """
+
+    for candidate in result.get("candidates") or []:
+        if not isinstance(candidate, dict):
+            continue
+        timetable = candidate.get("timetable")
+        if not isinstance(timetable, dict):
+            continue
+        public_reason = project_course_comparison_timetable_reason(timetable)
+        timetable.pop("reason_code", None)
+        timetable.pop("reason", None)
+        timetable.update(public_reason)
+
+
+def _project_course_replacement_reasons(result: dict[str, Any]) -> None:
+    """Bound replacement diagnostics to the same public vocabularies."""
+
+    for replacement in result.get("rejected_replacements") or []:
+        if not isinstance(replacement, dict):
+            continue
+        timetable = replacement.get("timetable")
+        if not isinstance(timetable, dict):
+            continue
+        public_reason = project_course_replacement_timetable_reason(timetable)
+        timetable.pop("reason_code", None)
+        timetable.pop("reason", None)
+        timetable.update(public_reason)
+        if "details" in timetable:
+            timetable["details"] = project_course_replacement_timetable_details(
+                timetable.get("details")
+            )
+    if "limitations" in result:
+        result["limitations"] = project_course_replacement_limitations(result.get("limitations"))
 
 
 def project_history(history: Any, *, profile: Any = "") -> Any:
@@ -142,7 +193,11 @@ def _scrub(value: Any, *, parent_key: str = "") -> Any:
             # tailored conclusion would disclose the same fact indirectly.
             if normalised == "qualification":
                 continue
-            if normalised in {"status", "current_status"} and _status_is_sensitive(raw_value):
+            if normalised in {
+                "status",
+                "current_status",
+                "academic_status",
+            } and _status_is_sensitive(raw_value):
                 continue
             clean[key] = _scrub(raw_value, parent_key=normalised)
         return clean

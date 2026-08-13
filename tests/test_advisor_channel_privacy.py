@@ -96,7 +96,23 @@ def test_telegram_profile_withholds_transcript_shaped_tools_and_shared_history()
     names = {schema["function"]["name"] for schema in schemas}
 
     assert not (names & TELEGRAM_WITHHELD_TOOLS)
-    assert {"recommend_courses", "graduation_progress", "my_timetable"} <= names
+    assert {
+        "recommend_courses",
+        "course_choice_comparison",
+        "feasible_course_replacements",
+        "graduation_progress",
+        "my_timetable",
+    } <= names
+    replacement_schema = next(
+        schema for schema in schemas if schema["function"]["name"] == "feasible_course_replacements"
+    )
+    replacement_parameters = replacement_schema["function"]["parameters"]
+    replacement_properties = replacement_parameters["properties"]
+    assert {"remove_course", "add_course"} <= set(replacement_properties)
+    assert not ({"academic_year", "term"} & set(replacement_properties))
+    assert "student_id" not in replacement_properties
+    assert "student_ref" not in replacement_properties
+    assert "student_id" not in replacement_parameters.get("required", [])
     assert (
         project_history(
             [{"role": "assistant", "content": "Your old GPA was 2.86"}],
@@ -139,6 +155,148 @@ def test_telegram_projection_removes_exact_results_and_status_derived_policy():
     assert "failed" not in encoded and "graduation expected" not in encoded
     assert projected["credit_policy"]["max_recommended_credit_hours"] == 18
     assert projected["courses"][1]["status"] == "studying"
+
+
+def test_telegram_comparison_projection_removes_failed_academic_status():
+    projected = project_tool_result(
+        "course_choice_comparison",
+        {
+            "tool": "course_choice_comparison",
+            "ok": True,
+            "candidates": [
+                {"course_code": "DS341", "academic_status": "failed"},
+                {"course_code": "AI331", "academic_status": "open_now"},
+            ],
+        },
+        profile=TELEGRAM_SAFE_PROFILE,
+    )
+
+    assert "academic_status" not in projected["candidates"][0]
+    assert projected["candidates"][1]["academic_status"] == "open_now"
+
+
+@pytest.mark.parametrize(
+    ("reason_code", "expected_reason"),
+    [
+        (
+            "NOT_ON_FILE",
+            "No section for this course is recorded in the current catalogue snapshot; "
+            "this is not proof that the university does not offer it.",
+        ),
+        ("PRIVATE_STUDENT_4909123", None),
+    ],
+)
+def test_telegram_comparison_projection_never_forwards_free_text_reasons(
+    reason_code: str,
+    expected_reason: str | None,
+):
+    raw_reason = "Student 4909123: adviser-private@example.test"
+    result = {
+        "tool": "course_choice_comparison",
+        "ok": True,
+        "candidates": [
+            {
+                "course_code": "AI331",
+                "timetable": {
+                    "status": "NOT_DETERMINABLE",
+                    "reason_code": reason_code,
+                    "reason": raw_reason,
+                },
+            }
+        ],
+    }
+
+    projected = project_tool_result(
+        "course_choice_comparison",
+        result,
+        profile=TELEGRAM_SAFE_PROFILE,
+    )
+    timetable = projected["candidates"][0]["timetable"]
+    encoded = json.dumps(projected, ensure_ascii=False)
+
+    assert raw_reason not in encoded
+    assert "adviser-private@example.test" not in encoded
+    if expected_reason is None:
+        assert "reason_code" not in timetable
+        assert "reason" not in timetable
+    else:
+        assert timetable["reason_code"] == reason_code
+        assert timetable["reason"] == expected_reason
+    assert result["candidates"][0]["timetable"]["reason"] == raw_reason
+
+
+def test_telegram_replacement_projection_never_forwards_free_text_reasons():
+    raw_reason = "Student 4909123: adviser-private@example.test"
+    projected = project_tool_result(
+        "feasible_course_replacements",
+        {
+            "tool": "feasible_course_replacements",
+            "ok": True,
+            "rejected_replacements": [
+                {
+                    "timetable": {
+                        "status": "NOT_DETERMINABLE",
+                        "reason_code": "PLANNER_UNAVAILABLE",
+                        "reason": raw_reason,
+                    }
+                }
+            ],
+        },
+        profile=TELEGRAM_SAFE_PROFILE,
+    )
+
+    timetable = projected["rejected_replacements"][0]["timetable"]
+    assert timetable == {
+        "status": "NOT_DETERMINABLE",
+        "reason_code": "PLANNER_UNAVAILABLE",
+        "reason": "The timetable planner could not evaluate this replacement safely.",
+    }
+    assert raw_reason not in json.dumps(projected, ensure_ascii=False)
+
+
+def test_telegram_replacement_projection_bounds_nested_reasons_and_limitations():
+    public_limitation = (
+        "This is read-only planning. It does not register, drop, replace, or save "
+        "any course or timetable."
+    )
+    private_text = "Student 4909123: adviser-private@example.test"
+    result = {
+        "tool": "feasible_course_replacements",
+        "ok": True,
+        "rejected_replacements": [
+            {
+                "timetable": {
+                    "status": "NOT_DETERMINABLE",
+                    "reason_code": "BASELINE_SECTION_MAPPING_INCOMPLETE",
+                    "details": [
+                        {
+                            "reason_code": "MULTIPLE_BASELINE_SECTIONS",
+                            "course_code": "DS341",
+                        },
+                        {"reason_code": private_text, "course_code": "AI331"},
+                    ],
+                }
+            }
+        ],
+        "limitations": [public_limitation, private_text],
+    }
+
+    projected = project_tool_result(
+        "feasible_course_replacements",
+        result,
+        profile=TELEGRAM_SAFE_PROFILE,
+    )
+
+    assert projected["rejected_replacements"][0]["timetable"]["details"] == [
+        {
+            "reason_code": "MULTIPLE_BASELINE_SECTIONS",
+            "course_code": "DS341",
+        },
+        {"course_code": "AI331"},
+    ]
+    assert projected["limitations"] == [public_limitation]
+    assert private_text not in json.dumps(projected, ensure_ascii=False)
+    assert result["limitations"][-1] == private_text
 
 
 def test_v2_model_sees_only_projected_tools_results_and_no_web_history(monkeypatch):

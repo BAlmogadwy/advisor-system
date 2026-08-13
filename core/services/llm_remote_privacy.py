@@ -83,6 +83,8 @@ REMOTE_POLICY: dict[str, RemoteExposure] = {
     # ── session-bound: echo the caller's own id back, nothing else personal ──
     "my_progress": RemoteExposure.PROJECT,
     "why_course_locked": RemoteExposure.PROJECT,
+    "course_choice_comparison": RemoteExposure.PROJECT,
+    "feasible_course_replacements": RemoteExposure.PROJECT,
     "graduation_progress": RemoteExposure.PROJECT,
     "my_plan_by_term": RemoteExposure.PROJECT,
     "recommend_courses": RemoteExposure.PROJECT,
@@ -272,6 +274,154 @@ def _course_rows(rows: Any, *fields: str) -> list[dict[str, Any]]:
     return [_keep(row, *fields) for row in rows if isinstance(row, dict)]
 
 
+_COURSE_COMPARISON_TIMETABLE_PUBLIC_REASONS = {
+    "BASELINE_MEETING_DATA_INCOMPLETE": (
+        "At least one retained baseline section has missing or invalid meeting "
+        "data, so clashes cannot be certified."
+    ),
+    "CANDIDATE_MEETING_DATA_INCOMPLETE": (
+        "At least one recorded candidate section has missing or invalid meeting "
+        "data, so the complete timetable choice cannot be compared."
+    ),
+    "MIXED_BASELINE_REVIEW_REQUIRED": (
+        "Registered and expected-plan rows are mixed, so there is no single "
+        "timetable baseline to compare against."
+    ),
+    "COHORT_UNRESOLVED": (
+        "The student's section cohort is unresolved, so eligible catalogue "
+        "sections cannot be selected safely."
+    ),
+    "NOT_ON_FILE": (
+        "No section for this course is recorded in the current catalogue snapshot; "
+        "this is not proof that the university does not offer it."
+    ),
+    "SECTION_SNAPSHOT_TERM_MISMATCH": (
+        "The section catalogue is the configured current snapshot, not the explicit "
+        "comparison term, so timetable fit cannot be certified."
+    ),
+}
+
+_COURSE_REPLACEMENT_TIMETABLE_PUBLIC_REASONS = {
+    "SECTION_SNAPSHOT_TERM_MISMATCH": (
+        "The section catalogue is not verified for the requested term, so a "
+        "replacement timetable cannot be certified."
+    ),
+    "MIXED_BASELINE": (
+        "Registered and expected-plan rows are mixed, so a replacement timetable "
+        "cannot be certified from one baseline."
+    ),
+    "ACADEMIC_TIMETABLE_BASELINE_MISMATCH": (
+        "The academic planning baseline cannot be matched completely to recorded "
+        "sections, so a replacement timetable cannot be certified."
+    ),
+    "BASELINE_SECTION_MAPPING_INCOMPLETE": (
+        "At least one retained baseline course has no single recorded section mapping, "
+        "so a complete replacement timetable cannot be certified."
+    ),
+    "BASELINE_CLASH": ("The retained recorded baseline already contains a timetable clash."),
+    "PLANNER_UNAVAILABLE": ("The timetable planner could not evaluate this replacement safely."),
+    "NOT_ON_FILE": (
+        "No section for the replacement course is recorded in the current catalogue "
+        "snapshot; this is not proof that the university does not offer it."
+    ),
+    "ALL_SECTIONS_CLASH": (
+        "Every recorded replacement section checked clashes with the retained timetable."
+    ),
+    "DID_NOT_FIT": "No recorded combination satisfied all selected timetable limits.",
+    "MISSING_MEETING_DATA": (
+        "A selected section has missing or invalid meeting data, so clashes cannot be certified."
+    ),
+    "MEETING_DATA_INCOMPLETE": (
+        "A recorded section has missing or invalid meeting data, so clashes cannot be certified."
+    ),
+    "UNKNOWN": "The recorded timetable evidence was not sufficient to certify this swap.",
+}
+
+_COURSE_REPLACEMENT_TIMETABLE_PUBLIC_DETAIL_REASONS = frozenset(
+    {
+        "BASELINE_SECTION_MAPPING_INCOMPLETE",
+        "MULTIPLE_BASELINE_SECTIONS",
+        "BASELINE_MEETING_DATA_MISSING",
+    }
+)
+
+_COURSE_REPLACEMENT_PUBLIC_LIMITATIONS = frozenset(
+    {
+        "The section catalogue is a recorded, termless snapshot; a section on file is not proof that it is offered now.",
+        "Capacity is deliberately ignored because the snapshot does not reserve a seat. No result proves a live seat.",
+        "This is read-only planning. It does not register, drop, replace, or save any course or timetable.",
+        "A clash-free result does not establish registration permission, equivalence, or an approved exception.",
+    }
+)
+
+
+def project_course_comparison_timetable_reason(value: Any) -> dict[str, str]:
+    """Return only a bounded comparison reason selected by a known reason code.
+
+    Capability ``reason`` text is useful in the internal evidence view, but it is
+    still unconstrained text.  External projections therefore use it only as local
+    diagnostic context and derive the provider/channel wording from this allowlist.
+    An unknown code fails closed: neither the code nor its accompanying text leaves.
+    """
+
+    if not isinstance(value, dict):
+        return {}
+    reason_code = str(value.get("reason_code") or "").strip().upper()
+    reason = _COURSE_COMPARISON_TIMETABLE_PUBLIC_REASONS.get(reason_code)
+    if reason is None:
+        return {}
+    return {"reason_code": reason_code, "reason": reason}
+
+
+def project_course_replacement_timetable_reason(value: Any) -> dict[str, str]:
+    """Project a replacement rejection through a closed reason-code vocabulary."""
+
+    if not isinstance(value, dict):
+        return {}
+    reason_code = str(value.get("reason_code") or "").strip().upper()
+    reason = _COURSE_REPLACEMENT_TIMETABLE_PUBLIC_REASONS.get(reason_code)
+    if reason is None:
+        return {}
+    return {"reason_code": reason_code, "reason": reason}
+
+
+def project_course_replacement_timetable_details(value: Any) -> list[dict[str, Any]]:
+    """Project bounded rejection evidence and omit unknown diagnostic codes."""
+
+    if not isinstance(value, list):
+        return []
+    projected: list[dict[str, Any]] = []
+    for raw in value[:20]:
+        if not isinstance(raw, dict):
+            continue
+        row = _keep(
+            raw,
+            "course_code",
+            "course_a",
+            "section_a",
+            "course_b",
+            "section_b",
+            "day",
+        )
+        reason_code = str(raw.get("reason_code") or "").strip().upper()
+        if reason_code in _COURSE_REPLACEMENT_TIMETABLE_PUBLIC_DETAIL_REASONS:
+            row["reason_code"] = reason_code
+        projected.append(row)
+    return projected
+
+
+def project_course_replacement_limitations(value: Any) -> list[str]:
+    """Return only fixed public caveats emitted by the replacement service."""
+
+    if not isinstance(value, list):
+        return []
+    return [
+        item
+        for item in value
+        if isinstance(item, str) and item in _COURSE_REPLACEMENT_PUBLIC_LIMITATIONS
+    ][:20]
+
+
 def _project_lookup_course(result: dict[str, Any], _: RemoteIdentityMap) -> dict[str, Any]:
     """Course reference data. No person in it today — and this projector is what
     keeps that true when somebody adds `created_by` or `last_edited_by`."""
@@ -386,13 +536,17 @@ def _project_graduation_summary(summary: Any) -> dict[str, Any] | None:
         summary,
         "simulation_completed",
         "estimated_additional_terms",
-        "estimated_terms_including_current",
+        "estimated_terms_including_planning_baseline",
         "lower_bound_additional_terms",
-        "lower_bound_terms_including_current",
-        "registered_credits_now",
+        "lower_bound_terms_including_planning_baseline",
+        "registered_credits_at_planning_baseline",
     )
-    out["current_courses_assumed_passed"] = _course_rows(
-        summary.get("current_courses_assumed_passed"), "code", "name", "credits"
+    out["planning_baseline_courses_assumed_passed"] = _course_rows(
+        summary.get("planning_baseline_courses_assumed_passed")
+        or summary.get("current_courses_assumed_passed"),
+        "code",
+        "name",
+        "credits",
     )
     out["unresolved_requirements"] = _course_rows(
         summary.get("unresolved_requirements"), *_GRADUATION_BLOCKER_FIELDS
@@ -416,9 +570,9 @@ def _project_graduation_comparison(comparison: Any) -> dict[str, Any] | None:
         "baseline_lower_bound_additional_terms",
         "scenario_lower_bound_additional_terms",
         "lower_bound_change",
-        "baseline_current_credits",
-        "scenario_current_credits",
-        "current_credit_change",
+        "baseline_planning_credits",
+        "scenario_planning_credits",
+        "planning_credit_change",
     )
     out["blockers_resolved"] = _course_rows(
         comparison.get("blockers_resolved"), *_GRADUATION_BLOCKER_FIELDS
@@ -526,25 +680,31 @@ def _project_graduation_progress(result: dict[str, Any], _: RemoteIdentityMap) -
             "credits_remaining_in_plan",
             "credits_earned_registrar",
             "gpa",
+            "planning_baseline_academic_year",
+            "planning_baseline_term",
             "minimum_terms_by_prerequisites",
-            "minimum_terms_by_credit_capacity_after_current",
+            "minimum_terms_by_credit_capacity_after_planning_baseline",
             "lower_bound_additional_terms",
-            "lower_bound_terms_including_current",
+            "lower_bound_terms_including_planning_baseline",
             "max_credits_per_term",
             "estimated_additional_terms",
-            "estimated_terms_including_current",
+            "estimated_terms_including_planning_baseline",
             "terms_estimate",
             "simulation_completed",
             "simulated_terms_examined",
             "productive_terms_planned",
-            "final_term_possible",
+            "plan_completion_in_planning_baseline_possible",
             "passed_credits_in_plan",
-            "registered_credits_now",
+            "registered_credits_at_planning_baseline",
             "simulation_assumptions",
         )
     )
-    out["current_courses_assumed_passed"] = _course_rows(
-        result.get("current_courses_assumed_passed"), "code", "name", "credits"
+    out["planning_baseline_courses_assumed_passed"] = _course_rows(
+        result.get("planning_baseline_courses_assumed_passed")
+        or result.get("current_courses_assumed_passed"),
+        "code",
+        "name",
+        "credits",
     )
     out["courses_in_progress"] = _course_rows(
         result.get("courses_in_progress"), "code", "name", "credits", "term", "type"
@@ -700,6 +860,263 @@ def _project_recommend_courses(result: dict[str, Any], _: RemoteIdentityMap) -> 
         "course_name",
         "credit_hours",
     )
+    return out
+
+
+def _project_course_choice_comparison(
+    result: dict[str, Any], _: RemoteIdentityMap
+) -> dict[str, Any]:
+    """Project only course/planning evidence; the session identity never leaves."""
+    out = _envelope(result)
+    out.update(
+        _keep(
+            result,
+            "program",
+            "academic_year",
+            "term",
+            "objective",
+            "baseline_kind",
+            "verdict",
+            "preferred_course",
+        )
+    )
+    leaders = result.get("criterion_leaders")
+    out["criterion_leaders"] = (
+        {
+            str(key): [str(code) for code in value if isinstance(code, str)]
+            for key, value in leaders.items()
+            if isinstance(value, list)
+        }
+        if isinstance(leaders, dict)
+        else {}
+    )
+    out["candidates"] = []
+    for raw in result.get("candidates") or []:
+        if not isinstance(raw, dict):
+            continue
+        row = _keep(
+            raw,
+            "course_code",
+            "course_name",
+            "credit_hours",
+            "kind",
+            "academic_status",
+            "prerequisite_ready",
+        )
+        row["missing_prerequisites"] = _course_rows(
+            raw.get("missing_prerequisites"),
+            "kind",
+            "course_code",
+            "required",
+            "effective",
+            "remaining",
+        )
+        if isinstance(row.get("missing_prerequisites"), list):
+            row["missing_prerequisites"] = [
+                {
+                    **_keep(blocker, "kind", "course_code", "required", "remaining"),
+                }
+                for blocker in row["missing_prerequisites"]
+                if isinstance(blocker, dict)
+            ]
+        row["recommendation"] = _keep(raw.get("recommendation") or {}, "state", "rank")
+        row["impact"] = _keep(
+            raw.get("impact") or {},
+            "direct_unlock_count",
+            "chain_course_count",
+            "weighted_downstream_score",
+            "weighted_score_method",
+        )
+        raw_timetable = raw.get("timetable") or {}
+        row["timetable"] = _keep(
+            raw_timetable,
+            "status",
+            "sections_on_file",
+            "clash_free_count",
+            "clashing_count",
+        )
+        row["timetable"].update(project_course_comparison_timetable_reason(raw_timetable))
+        row["timetable"]["baseline_sections"] = [
+            str(section)
+            for section in raw_timetable.get("baseline_sections") or []
+            if isinstance(section, str)
+        ]
+        graduation = raw.get("graduation") or {}
+        row["graduation"] = _keep(
+            graduation,
+            "status",
+            "simulation_completed",
+            "estimated_additional_terms",
+            "lower_bound_additional_terms",
+        )
+        row["graduation"]["unresolved_requirements"] = []
+        for unresolved in graduation.get("unresolved_requirements") or []:
+            if not isinstance(unresolved, dict):
+                continue
+            projected_unresolved = _keep(unresolved, "code", "name")
+            projected_unresolved["missing_course_prerequisites"] = [
+                str(code)
+                for code in unresolved.get("missing_course_prerequisites") or []
+                if isinstance(code, str)
+            ]
+            projected_unresolved["missing_prerequisites_outside_plan"] = [
+                str(code)
+                for code in unresolved.get("missing_prerequisites_outside_plan") or []
+                if isinstance(code, str)
+            ]
+            gate = unresolved.get("credit_hour_gate")
+            projected_unresolved["credit_hour_gate"] = (
+                _keep(gate, "required", "effective_in_scenario", "remaining")
+                if isinstance(gate, dict)
+                else None
+            )
+            row["graduation"]["unresolved_requirements"].append(projected_unresolved)
+        out["candidates"].append(row)
+    return out
+
+
+def _project_feasible_course_replacements(
+    result: dict[str, Any], _: RemoteIdentityMap
+) -> dict[str, Any]:
+    """Allowlist only public course, academic, and timetable facts for swaps."""
+    out = _envelope(result)
+    out.update(
+        _keep(
+            result,
+            "academic_year",
+            "term",
+            "baseline_kind",
+            "requested_remove_course",
+            "requested_add_course",
+            "status",
+            "rejected_replacements_count",
+        )
+    )
+    out["academic_search"] = _keep(
+        result.get("academic_search") or {},
+        "pairs_evaluated",
+        "search_truncated",
+        "candidate_courses_considered",
+        "academic_improvements_found",
+        "academic_results_checked_for_timetable",
+    )
+
+    def course(value: Any) -> dict[str, Any]:
+        return _keep(value or {}, "course_code", "course_name", "credits")
+
+    def academic(value: Any) -> dict[str, Any]:
+        projected = _keep(
+            value or {},
+            "proven_improvement",
+            "timing_effect",
+            "term_difference",
+            "terms_saved",
+            "exact_timing_comparison_available",
+            "improvement_basis",
+            "blockers_resolved",
+            "blockers_improved",
+            "blockers_introduced",
+            "status",
+        )
+        for key in ("blockers_resolved", "blockers_improved", "blockers_introduced"):
+            projected[key] = [
+                str(code) for code in projected.get(key) or [] if isinstance(code, str)
+            ][:50]
+        return projected
+
+    def option(value: dict[str, Any]) -> dict[str, Any]:
+        projected = _keep(
+            value,
+            "scheduled_courses",
+            "target_courses",
+            "credit_hours",
+            "days_on_campus",
+            "days",
+            "earliest_start",
+            "latest_end",
+        )
+        projected["planner_options"] = [
+            str(name) for name in value.get("planner_options") or [] if isinstance(name, str)
+        ][:20]
+        projected["days"] = [str(day) for day in value.get("days") or [] if isinstance(day, str)][
+            :7
+        ]
+        projected["complete_sections"] = [
+            {
+                **_keep(row, "course_code", "course_name", "section", "credits", "source"),
+                "meetings": [
+                    _keep(meeting, "day", "start", "end")
+                    for meeting in row.get("meetings") or []
+                    if isinstance(meeting, dict)
+                ],
+            }
+            for row in value.get("complete_sections") or []
+            if isinstance(row, dict)
+        ]
+        projected["meetings"] = [
+            _keep(row, "course_code", "section", "day", "start", "end")
+            for row in value.get("meetings") or []
+            if isinstance(row, dict)
+        ]
+        return projected
+
+    out["certified_replacements"] = []
+    for raw in result.get("certified_replacements") or []:
+        if not isinstance(raw, dict):
+            continue
+        timetable = raw.get("timetable") or {}
+        out["certified_replacements"].append(
+            {
+                "remove_course": course(raw.get("remove_course")),
+                "add_course": course(raw.get("add_course")),
+                "outside_plan_addition": raw.get("outside_plan_addition") is True,
+                "academic_improvement": academic(raw.get("academic_improvement")),
+                "graduation_scenario": _keep(
+                    raw.get("graduation_scenario") or {},
+                    "simulation_completed",
+                    "estimated_additional_terms",
+                    "lower_bound_additional_terms",
+                ),
+                "timetable": {
+                    "status": timetable.get("status"),
+                    "certified_options": [
+                        option(row)
+                        for row in timetable.get("certified_options") or []
+                        if isinstance(row, dict)
+                    ],
+                },
+            }
+        )
+
+    out["rejected_replacements"] = []
+    for raw in result.get("rejected_replacements") or []:
+        if not isinstance(raw, dict):
+            continue
+        timetable = raw.get("timetable") or {}
+        out["rejected_replacements"].append(
+            {
+                "remove_course": course(raw.get("remove_course")),
+                "add_course": course(raw.get("add_course")),
+                "academic": academic(raw.get("academic")),
+                "timetable": {
+                    **_keep(timetable, "status"),
+                    **project_course_replacement_timetable_reason(timetable),
+                },
+            }
+        )
+        details = timetable.get("details")
+        if isinstance(details, list):
+            out["rejected_replacements"][-1]["timetable"]["details"] = (
+                project_course_replacement_timetable_details(details)
+            )
+    out["certification_search"] = _keep(
+        result.get("certification_search") or {},
+        "academic_candidates_received",
+        "timetable_candidates_checked",
+        "certified_result_limit",
+        "search_truncated",
+    )
+    out["limitations"] = project_course_replacement_limitations(result.get("limitations"))
     return out
 
 
@@ -1304,6 +1721,8 @@ PROJECTORS = {
     "why_course_locked": _project_why_course_locked,
     "my_plan_by_term": _project_my_plan_by_term,
     "recommend_courses": _project_recommend_courses,
+    "course_choice_comparison": _project_course_choice_comparison,
+    "feasible_course_replacements": _project_feasible_course_replacements,
     "my_clash_free_sections": _project_my_clash_free_sections,
     "build_my_timetable": _project_build_my_timetable,
     "build_timetable_proposal": _project_build_timetable_proposal,
@@ -1965,6 +2384,10 @@ __all__ = [
     "authoriser_for_scope",
     "fold_digits",
     "project_tool_result_for_remote",
+    "project_course_comparison_timetable_reason",
+    "project_course_replacement_limitations",
+    "project_course_replacement_timetable_details",
+    "project_course_replacement_timetable_reason",
     "project_verified_context_for_remote",
     "reference_tokens_in",
     "reject_identity_arguments",
