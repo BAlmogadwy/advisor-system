@@ -223,6 +223,17 @@ def _section_meetings(term_section_id: int) -> list[Meeting]:
     return out
 
 
+def _strict_clock_minutes(value: Any) -> int | None:
+    parts = str(value or "").strip().split(":")
+    if len(parts) not in {2, 3} or any(not part.isdigit() for part in parts):
+        return None
+    hour, minute = int(parts[0]), int(parts[1])
+    second = int(parts[2]) if len(parts) == 3 else 0
+    if not 0 <= hour <= 23 or not 0 <= minute <= 59 or second != 0:
+        return None
+    return hour * 60 + minute
+
+
 def _catalog_for_courses(
     year: str,
     term: str,
@@ -242,16 +253,39 @@ def _catalog_for_courses(
         # Gender-segregated: only schedule the student into their own cohort's
         # sections (plus any ungendered section).
         qs = qs.filter(gender_section_filter(gender))
-    rows = qs.order_by("course_code", "course_number", "section").values_list(
-        "id",
-        "course_code",
-        "course_number",
-        "course_key",
-        "section",
-        "course_name",
-        "registered_count",
-        "available_capacity",
+    rows = list(
+        qs.order_by("course_code", "course_number", "section").values_list(
+            "id",
+            "course_code",
+            "course_number",
+            "course_key",
+            "section",
+            "course_name",
+            "registered_count",
+            "available_capacity",
+        )
     )
+    meetings_by_section: dict[int, list[Meeting]] = {int(row[0]): [] for row in rows}
+    meeting_issues_by_section: dict[int, list[str]] = {int(row[0]): [] for row in rows}
+    for section_id, day, start, end in (
+        TermSectionMeeting.objects.filter(term_section_id__in=meetings_by_section)
+        .order_by("term_section_id", "day", "start_time", "end_time", "id")
+        .values_list("term_section_id", "day", "start_time", "end_time")
+    ):
+        if not start or not end:
+            meeting_issues_by_section[int(section_id)].append("MISSING_MEETING_DATA")
+            continue
+        raw_day = str(day or "").strip()
+        meetings_by_section[int(section_id)].append(
+            Meeting(
+                day=DAY_MAP.get(raw_day, raw_day),
+                start=str(start),
+                end=str(end),
+            )
+        )
+    for section_id, meetings in meetings_by_section.items():
+        if not meetings and not meeting_issues_by_section[section_id]:
+            meeting_issues_by_section[section_id].append("MISSING_MEETING_DATA")
     out: dict[str, list[dict[str, Any]]] = {}
     for sid, code, num, course_key, sec, name, reg, cap in rows:
         full = _norm_course_key(course_key) or _norm_course_key(f"{code or ''}{num or ''}")
@@ -265,10 +299,59 @@ def _catalog_for_courses(
                 "course_name": str(name or ""),
                 "registered_count": _nonnegative_int_or_none(reg),
                 "available_capacity": _nonnegative_int_or_none(cap),
-                "meetings": _section_meetings(int(sid)),
+                "meetings": meetings_by_section[int(sid)],
+                **(
+                    {"meeting_issue_codes": meeting_issues_by_section[int(sid)]}
+                    if meeting_issues_by_section[int(sid)]
+                    else {}
+                ),
             }
         )
     return out
+
+
+def _complete_catalogue(
+    catalog: dict[str, list[dict[str, Any]]],
+) -> tuple[dict[str, list[dict[str, Any]]], dict[str, list[dict[str, Any]]]]:
+    """Exclude sections whose timetable cannot safely participate in a solver.
+
+    A section with no meetings, a partly blank meeting set, or a malformed time
+    must not look like an all-day-free option.  Keep bounded diagnostics so the
+    caller can distinguish incomplete local evidence from an absent section.
+    """
+
+    complete: dict[str, list[dict[str, Any]]] = {}
+    issues: dict[str, list[dict[str, Any]]] = {}
+    for code, options in catalog.items():
+        clean_options: list[dict[str, Any]] = []
+        for option in options:
+            reason_codes = {
+                str(value).strip().upper()
+                for value in option.get("meeting_issue_codes") or []
+                if str(value).strip()
+            }
+            meetings = list(option.get("meetings") or [])
+            if not meetings:
+                reason_codes.add("MISSING_MEETING_DATA")
+            for meeting in meetings:
+                day = str(getattr(meeting, "day", "") or "").strip().upper()
+                start = _strict_clock_minutes(getattr(meeting, "start", ""))
+                end = _strict_clock_minutes(getattr(meeting, "end", ""))
+                if day not in _DAY_INDEX:
+                    reason_codes.add("INVALID_MEETING_DAY")
+                if start is None or end is None or end <= start:
+                    reason_codes.add("INVALID_MEETING_TIME")
+            if reason_codes:
+                issues.setdefault(code, []).append(
+                    {
+                        "section": str(option.get("section") or ""),
+                        "reason_codes": sorted(reason_codes),
+                    }
+                )
+            else:
+                clean_options.append(option)
+        complete[code] = clean_options
+    return complete, issues
 
 
 def _choose(
@@ -1184,6 +1267,7 @@ def build_plans(
     max_credits: int = 0,
     gender: str = "",
     program: str | None = None,
+    require_complete_meetings: bool = False,
 ) -> dict[str, Any]:
     must_take_codes = {
         str(item.get("course_code", "")).replace(" ", "").upper()
@@ -1218,6 +1302,9 @@ def build_plans(
         }
     )
     catalog = _catalog_for_courses(year, term, codes, gender, program)
+    incomplete_meetings: dict[str, list[dict[str, Any]]] = {}
+    if require_complete_meetings:
+        catalog, incomplete_meetings = _complete_catalogue(catalog)
 
     # A pinned section is an exact hard constraint. Other sections for the
     # course are removed before any solver or alternative-generation pass.
@@ -1357,6 +1444,20 @@ def build_plans(
             credits_map=credits_map,
         )
 
+    def _annotate_incomplete_meeting_evidence(
+        unscheduled: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        annotated: list[dict[str, Any]] = []
+        for row in unscheduled:
+            item = dict(row)
+            code = str(item.get("course_code") or "").replace(" ", "").upper()
+            details = incomplete_meetings.get(code) or []
+            if details:
+                item["reason"] = "Section meeting data is incomplete or invalid"
+                item["details"] = details
+            annotated.append(item)
+        return annotated
+
     def _top_k_method(
         method: str, k: int = 3
     ) -> list[tuple[list[dict[str, Any]], list[dict[str, Any]]]]:
@@ -1374,6 +1475,7 @@ def build_plans(
 
             cat = _catalog_without_sids(excl)
             sel, uns = _run_method(method, cat)
+            uns = _annotate_incomplete_meeting_evidence(uns)
             hard_failures = _hard_requirement_failures(sel, uns)
             if hard_failures:
                 rejected_hard_failures.extend(hard_failures)
@@ -1422,6 +1524,12 @@ def build_plans(
                         {"day": m.day, "start_time": m.start, "end_time": m.end}
                         for m in s.get("meetings", [])
                     ],
+                    # Internal evidence marker consumed by deterministic callers
+                    # that must certify a complete timetable.  The ordinary
+                    # planner may still display a recorded section whose time is
+                    # incomplete, but it must never silently turn that section
+                    # into a clash-free proof.
+                    "meeting_issue_codes": list(s.get("meeting_issue_codes") or []),
                 }
                 for s in sel
             ],

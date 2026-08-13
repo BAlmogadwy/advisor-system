@@ -48,6 +48,47 @@ The next read-only slice adds `my_timetable`, `my_clash_free_sections`, and
 planner engine and returns multiple section/time alternatives directly to the
 same agent loop. The legacy `build_my_timetable` tool remains excluded.
 
+`course_choice_comparison` adds a deterministic two-to-four-course comparison
+inside the same agent. It evaluates every named course against one student,
+programme, configured term, and planning baseline. It keeps these dimensions
+separate rather than inventing a composite score:
+
+- recorded prerequisite readiness and exact blockers;
+- membership and rank in the existing course recommendation;
+- courses waiting on it as their sole remaining prerequisite;
+- courses containing it anywhere in their remaining prerequisite chain;
+- the project's discounted downstream plan-impact heuristic (`Σ 1/d`), clearly
+  labelled as a project heuristic rather than university policy;
+- recorded section count and individual clash-free fit against the baseline;
+- a fair read-only graduation scenario for each candidate.
+
+The result names a preferred course only when the chosen objective has a unique,
+verified leader. Ties, conflicting dimensions, incomplete graduation forecasts,
+unknown codes, settled courses, and missing section evidence remain explicit.
+No recorded section means only that this application's current catalogue has no
+row; it is not a claim about university offering or live seat availability. The
+same projected evidence and deterministic answer are used on web and Telegram.
+
+`feasible_course_replacements` handles the narrower but stronger question: “which
+course can I replace so the graduation path improves and the resulting complete
+timetable still fits?” It does not combine academic value and timetable fit into
+one score. Instead, it requires both gates independently:
+
+- `graduation_progress` must prove a one-for-one change improves the complete
+  forecast (earlier completion, or a previously unresolved forecast completes);
+- the existing Planner must retain every other exact baseline section and place
+  the replacement in a complete clash-free option.
+
+The student may name both sides, only the course to remove, only the course to
+add, or neither. Any unstated side is selected by the deterministic bounded
+search, never invented by the model. Positive results are certified; a negative
+or truncated search is described only as “none found in the checked results,” not
+as proof that no arrangement exists. Registered and expected-plan baselines keep
+their provenance. Capacity is deliberately ignored, and the result never proves
+a live offering, seat, registration permission, equivalence, or a portal action.
+The best certified swap reuses the timetable presentation on web and Telegram so
+the student can see the actual retained and replacement sections and times.
+
 ## Timetable proposal workspace
 
 Timetable planning uses the same deterministic core from both chat and the
@@ -77,10 +118,12 @@ unavailable when the application has both.
 ## Graduation forecast
 
 `graduation_progress` extends the existing progress report with a read-only,
-term-by-term scenario. It starts from the exact current Planner baseline, assumes
-those courses pass, and repeatedly runs the existing recommender one main term
-ahead. A simulated course is added to the in-memory passed set only after its
-term, and every term is capped at 18 credits.
+term-by-term scenario. It starts from the exact Planner snapshot selected as the
+planning baseline, which may be an expected next-term timetable rather than the
+student's actual current registration. It assumes those baseline courses pass and
+repeatedly runs the existing recommender one main term ahead. A simulated course
+is added to the in-memory passed set only after its term, and every term is capped
+at 18 credits.
 
 The scenario never writes a pass, registration, section, or timetable record.
 It is an estimate only: every course is assumed passed on the first attempt and
@@ -89,7 +132,7 @@ If the recommender cannot resolve all plan requirements, the capability returns
 a lower bound and the exact remaining prerequisite/hour blockers instead of an
 invented completion term.
 
-The same capability supports read-only changes to the current term. For a
+The same capability supports read-only changes to the planning-baseline term. For a
 specific question it removes and/or adds the requested course codes to an
 in-memory copy of the Planner baseline, validates recorded prerequisites and the
 18-credit scenario cap, then reruns the complete forecast. The response compares

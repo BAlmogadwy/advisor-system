@@ -19,16 +19,22 @@ from core.services.student_advisor_v2 import (
     STUDENT_V2_TOOL_NAMES,
     _apply_saudi_register,
     _claims_portal_action,
+    _explicit_comparison_year_term,
     _humanise_internal_output_markers,
     _internal_output_markers,
     _misstates_variant_omission,
+    _normalise_course_comparison_args,
+    _normalise_feasible_replacement_args,
     _normalise_graduation_scenario_args,
     _normalise_timetable_proposal_args,
     _policy_grounding,
+    _requires_course_choice_comparison,
+    _requires_feasible_course_replacements,
     _requires_graduation_progress,
     _requires_graduation_what_if,
     _requires_section_check,
     _requires_timetable_proposal,
+    _safe_course_comparison_answer,
     _section_answer_contradicts_evidence,
     _speculates_about_empty_recommendations,
     answer_student_advisor,
@@ -115,6 +121,8 @@ class FakeClient:
 def test_v2_surface_is_small_self_scoped_and_read_only():
     assert not (set(STUDENT_V2_TOOL_NAMES) & FORBIDDEN_STUDENT_V2_TOOLS)
     assert "course_prerequisites" in STUDENT_V2_TOOL_NAMES
+    assert "course_choice_comparison" in STUDENT_V2_TOOL_NAMES
+    assert "feasible_course_replacements" in STUDENT_V2_TOOL_NAMES
     registry = get_default_registry()
     assert all(registry.capabilities[name].read_only for name in STUDENT_V2_TOOL_NAMES)
 
@@ -133,6 +141,255 @@ def test_v2_surface_is_small_self_scoped_and_read_only():
         "add_current_courses",
         "search_better_replacements",
     } <= set(graduation_properties)
+    comparison_schema = next(
+        schema for schema in schemas if schema["function"]["name"] == "course_choice_comparison"
+    )
+    comparison_params = comparison_schema["function"]["parameters"]
+    assert comparison_params["properties"]["course_codes"]["minItems"] == 2
+    assert comparison_params["properties"]["course_codes"]["maxItems"] == 4
+    assert "academic_year" not in comparison_params["properties"]
+    assert "term" not in comparison_params["properties"]
+    replacement_schema = next(
+        schema for schema in schemas if schema["function"]["name"] == "feasible_course_replacements"
+    )
+    assert set(replacement_schema["function"]["parameters"]["properties"]) == {
+        "remove_course",
+        "add_course",
+    }
+
+
+def test_replacement_capability_fails_closed_on_unexpected_service_error(monkeypatch):
+    def explode(*args, **kwargs):
+        raise RuntimeError("database connection details must not escape")
+
+    monkeypatch.setattr(
+        "core.services.course_replacement_feasibility.find_feasible_course_replacements",
+        explode,
+    )
+
+    result = execute_student_v2_tool(
+        "feasible_course_replacements",
+        {"remove_course": "DS341", "add_course": "CS285"},
+        principal=_principal(),
+        context={"academic_year": 1448, "term": 1},
+    )
+
+    assert result == {
+        "ok": False,
+        "error": ("The verified replacement check could not be completed from the recorded data."),
+        "tool": "feasible_course_replacements",
+    }
+
+
+def test_replacement_capability_uses_server_term_not_model_override(monkeypatch):
+    seen = {}
+
+    def capture(student_id, academic_year, term, **kwargs):
+        seen.update(
+            student_id=student_id,
+            academic_year=academic_year,
+            term=term,
+            **kwargs,
+        )
+        return {"status": "NOT_DETERMINABLE", "certified_replacements": []}
+
+    monkeypatch.setattr(
+        "core.services.course_replacement_feasibility.find_feasible_course_replacements",
+        capture,
+    )
+
+    execute_student_v2_tool(
+        "feasible_course_replacements",
+        {
+            "remove_course": "DS341",
+            "add_course": "CS285",
+            "academic_year": 1447,
+            "term": 2,
+        },
+        principal=_principal(),
+        context={"academic_year": 1448, "term": 1},
+    )
+
+    assert seen["academic_year"] == 1448
+    assert seen["term"] == 1
+
+
+def test_replacement_capability_fails_closed_when_requested_term_differs_from_snapshot(
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        "core.services.course_replacement_feasibility.find_feasible_course_replacements",
+        lambda *_args, **_kwargs: pytest.fail(
+            "term-mismatched replacement must not reach academic or timetable services"
+        ),
+    )
+
+    result = get_default_registry().execute(
+        "feasible_course_replacements",
+        {
+            "remove_course": "DS341",
+            "add_course": "CS285",
+            "academic_year": 1447,
+            "term": 2,
+        },
+        scope=_principal().as_scope(),
+        ctx={
+            "academic_year": 1448,
+            "term": 1,
+            "section_snapshot_academic_year": 1448,
+            "section_snapshot_term": 1,
+        },
+    )
+
+    assert result["status"] == "NOT_DETERMINABLE"
+    assert result["academic_year"] == 1447
+    assert result["term"] == 2
+    assert result["certified_replacements"] == []
+    assert result["rejected_replacements"][0]["timetable"]["reason_code"] == (
+        "SECTION_SNAPSHOT_TERM_MISMATCH"
+    )
+
+
+def test_comparison_capability_uses_server_term_not_model_override(monkeypatch):
+    seen = {}
+
+    def capture(student_id, course_codes, academic_year, term, **kwargs):
+        seen.update(
+            student_id=student_id,
+            course_codes=course_codes,
+            academic_year=academic_year,
+            term=term,
+            **kwargs,
+        )
+        return {"ok": True, "candidates": []}
+
+    monkeypatch.setattr("core.services.course_choice_comparison.compare_course_choices", capture)
+
+    execute_student_v2_tool(
+        "course_choice_comparison",
+        {
+            "course_codes": ["AI331", "DS341"],
+            "academic_year": 1447,
+            "term": 2,
+        },
+        principal=_principal(),
+        context={"academic_year": 1448, "term": 1},
+    )
+
+    assert seen["academic_year"] == 1448
+    assert seen["term"] == 1
+
+
+def test_legacy_comparison_context_treats_configured_term_as_section_snapshot(monkeypatch):
+    seen = {}
+
+    def capture(student_id, course_codes, academic_year, term, **kwargs):
+        seen.update(
+            student_id=student_id,
+            course_codes=course_codes,
+            academic_year=academic_year,
+            term=term,
+            **kwargs,
+        )
+        return {"ok": True, "candidates": []}
+
+    monkeypatch.setattr("core.services.course_choice_comparison.compare_course_choices", capture)
+
+    get_default_registry().execute(
+        "course_choice_comparison",
+        {"course_codes": ["AI331", "DS341"]},
+        scope=_principal().as_scope(),
+        ctx={"academic_year": 1448, "term": 1},
+    )
+
+    assert seen["academic_year"] == 1448
+    assert seen["term"] == 1
+    assert seen["timetable_evidence_available"] is True
+
+
+def test_direct_comparison_override_cannot_reuse_configured_section_snapshot(monkeypatch):
+    seen = {}
+
+    def capture(student_id, course_codes, academic_year, term, **kwargs):
+        seen.update(
+            student_id=student_id,
+            course_codes=course_codes,
+            academic_year=academic_year,
+            term=term,
+            **kwargs,
+        )
+        return {"ok": True, "candidates": []}
+
+    monkeypatch.setattr("core.services.course_choice_comparison.compare_course_choices", capture)
+
+    get_default_registry().execute(
+        "course_choice_comparison",
+        {
+            "course_codes": ["AI331", "DS341"],
+            "academic_year": 1447,
+            "term": 2,
+        },
+        scope=_principal().as_scope(),
+        ctx={"academic_year": 1448, "term": 1},
+    )
+
+    assert seen["academic_year"] == 1447
+    assert seen["term"] == 2
+    assert seen["timetable_evidence_available"] is False
+
+
+def test_partial_explicit_snapshot_provenance_fails_closed(monkeypatch):
+    seen = {}
+
+    def capture(student_id, course_codes, academic_year, term, **kwargs):
+        seen.update(**kwargs)
+        return {"ok": True, "candidates": []}
+
+    monkeypatch.setattr("core.services.course_choice_comparison.compare_course_choices", capture)
+
+    get_default_registry().execute(
+        "course_choice_comparison",
+        {"course_codes": ["AI331", "DS341"]},
+        scope=_principal().as_scope(),
+        ctx={
+            "academic_year": 1448,
+            "term": 1,
+            "section_snapshot_academic_year": 1448,
+        },
+    )
+
+    assert seen["timetable_evidence_available"] is False
+
+
+def test_replacement_snapshot_mismatch_answer_does_not_claim_academic_evaluation():
+    from core.services.student_advisor_v2 import _safe_feasible_replacement_answer
+
+    answer = _safe_feasible_replacement_answer(
+        "English",
+        [
+            {
+                "ok": True,
+                "tool": "feasible_course_replacements",
+                "baseline_kind": "NOT_EVALUATED",
+                "requested_remove_course": "DS341",
+                "requested_add_course": "CS285",
+                "certified_replacements": [],
+                "rejected_replacements": [
+                    {
+                        "academic": {"status": "NOT_EVALUATED"},
+                        "timetable": {
+                            "status": "NOT_DETERMINABLE",
+                            "reason_code": "SECTION_SNAPSHOT_TERM_MISMATCH",
+                        },
+                    }
+                ],
+            }
+        ],
+    )
+
+    assert "does not belong to the requested term" in answer
+    assert "stopped before running the academic-improvement simulation" in answer
+    assert "Academic evidence was evaluable" not in answer
 
 
 def test_v2_refuses_to_become_generic_when_the_student_record_is_missing():
@@ -711,11 +968,11 @@ def _incomplete_graduation_result() -> dict[str, Any]:
         "ok": True,
         "simulation_completed": False,
         "lower_bound_additional_terms": 5,
-        "lower_bound_terms_including_current": 6,
+        "lower_bound_terms_including_planning_baseline": 6,
         "estimated_additional_terms": None,
-        "estimated_terms_including_current": None,
+        "estimated_terms_including_planning_baseline": None,
         "max_credits_per_term": 18,
-        "current_courses_assumed_passed": [{"code": "AI113", "credits": 3}],
+        "planning_baseline_courses_assumed_passed": [{"code": "AI113", "credits": 3}],
         "unresolved_requirements": [
             {
                 "code": "DS492",
@@ -738,7 +995,7 @@ def _incomplete_graduation_result() -> dict[str, Any]:
 def _complete_lower_bound_answer() -> str:
     return (
         "The lower bound is at least 5 additional terms, or 6 including the "
-        "current term. DS492 still needs the 147-credit gate, and MATH471 still "
+        "planning baseline. DS492 still needs the 147-credit gate, and MATH471 still "
         "needs MATH204. This assumes first-attempt passes and at most 18 credits "
         "per main term; offerings, seats, and registration permission are not guaranteed."
     )
@@ -783,6 +1040,548 @@ def test_graduation_question_cannot_answer_before_calling_the_scenario(monkeypat
 )
 def test_current_course_graduation_questions_require_what_if_evidence(question):
     assert _requires_graduation_what_if(question) is True
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        "آخذ AI331 ولا DS341؟",
+        "وش أفضل لي الحين: AI331 أو DS341؟",
+        "قارن لي AI331 وDS341 حسب تأثيرهم على خطتي.",
+        "وش الخيار اللي يفتح مواد أكثر: AI331 ولا DS341؟",
+        "أيهم متطلباته مكتملة: AI331 ولا DS341؟",
+        "إذا هدفي أتخرج أسرع، آخذ AI331 ولا DS341؟",
+        "Which is better for me, AI331 or DS341?",
+        "Rank AI331, CS372 and AI352 by plan impact.",
+    ],
+)
+def test_explicit_course_choices_require_comparison_evidence(question):
+    assert _requires_course_choice_comparison(question) is True
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        "وش الأفضل بينهم؟",
+        "هل آخذ AI331؟",
+        "لو أخذت MATH204 بدل DS341 هل يتأخر التخرج؟",
+        "ابنِ لي جدولًا فيه AI331 أو DS341.",
+    ],
+)
+def test_ambiguous_or_owned_scenarios_do_not_use_course_comparison_gate(question):
+    assert _requires_course_choice_comparison(question) is False
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        "بناءً على جدولي، وش أقدر أبدل بدون تعارض؟",
+        "إذا شلت DS341، وش أفضل بديل يدخل مع باقي شعبي؟",
+        "هل فيه تبديل يحسن مسار تخرجي ويعطيني جدول كامل؟",
+        "إذا بدلت DS341 بـ CS285، هل يتحسن تخرجي ويدخل في جدولي؟",
+        "If I replace DS341 with CS285, will it improve graduation and fit my timetable?",
+        "Replace DS341 with CS285 if it fits.",
+        "Make sure the DS341 replacement fits.",
+        "Replace DS341 with the best course that fits.",
+        "Find a course fitting my schedule to replace DS341.",
+        "Substitute DS341 with CS285 if it fits.",
+        "Use CS285 as a replacement for DS341 if it fits.",
+        "Switch DS341 to CS285 if it fits.",
+        "Drop DS341 and take CS285 if it fits.",
+        "Can I take CS285 instead of DS341 if it fits my timetable?",
+        "Which current course can I replace without a clash?",
+        "What course can I replace so my timetable still fits?",
+        "إذا بدلت DS341 بـ CS285، هل يضبط مع جدولي؟",
+        "أبغى أبدل DS341 بمقرر يمشي مع دوامي.",
+        "هل بديل DS341 يركب على جدولي؟",
+        "آخذ MATH204 بدل DS341 ويناسب جدولي.",
+        "أحط MATH204 مكان DS341 إذا يناسب جدولي.",
+    ],
+)
+def test_complete_timetable_replacement_questions_require_two_gate_evidence(question):
+    assert _requires_feasible_course_replacements(question) is True
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        "إذا شلت DS341 هل يتأخر تخرجي؟",
+        "أي شعبة من CS285 ما تتعارض؟",
+        "ابنِ لي جدول جديد من الصفر.",
+        "قارن DS341 وCS285.",
+        "Replace DS341 with CS285 to improve graduation.",
+        "Which CS285 section fits my timetable?",
+        "Replace DS341 with CS285 if it fits my degree plan.",
+        "Replace DS341 with a course fitting my career goals.",
+        "Replace DS341 with a fitting course for my career.",
+        "Swap DS341 for the course that best fits my interests.",
+        "Replace DS341 because CS285 is a better career fit.",
+        "Replace DS341 because CS285 is a better degree-plan fit.",
+        "Replace this word because it fits the sentence.",
+        "Replace the course description with this paragraph if it fits.",
+        "Replace the course title with CS285 if it fits.",
+        "Replace section M1 with M2 for DS341.",
+        "Can I replace DS341 section M1 with M2 without a clash?",
+    ],
+)
+def test_academic_only_or_timetable_only_requests_do_not_use_two_gate_swap(question):
+    assert _requires_feasible_course_replacements(question) is False
+
+
+@pytest.mark.parametrize(
+    ("question", "model_arguments", "expected"),
+    [
+        (
+            "إذا بدلت DS341 بـ CS285، هل يتحسن تخرجي ويدخل في جدولي؟",
+            {"remove_course": "WRONG1", "add_course": "WRONG2"},
+            {"remove_course": "DS341", "add_course": "CS285"},
+        ),
+        (
+            "إذا شلت DS341، وش أفضل بديل يدخل مع باقي شعبي؟",
+            {"add_course": "MADE999"},
+            {"remove_course": "DS341"},
+        ),
+        (
+            "وش أقدر أشيل من جدولي وآخذ CS285 بدون تعارض؟",
+            {"remove_course": "MADE999"},
+            {"add_course": "CS285"},
+        ),
+        (
+            "بناءً على جدولي، وش أقدر أبدل بدون تعارض؟",
+            {"remove_course": "MADE999", "add_course": "FAKE100"},
+            {},
+        ),
+        (
+            "Substitute DS341 with CS285 if it fits.",
+            {"remove_course": "WRONG1", "add_course": "WRONG2"},
+            {"remove_course": "DS341", "add_course": "CS285"},
+        ),
+        (
+            "Use CS285 as a replacement for DS341 if it fits.",
+            {},
+            {"remove_course": "DS341", "add_course": "CS285"},
+        ),
+        (
+            "Switch DS341 to CS285 if it fits.",
+            {},
+            {"remove_course": "DS341", "add_course": "CS285"},
+        ),
+        (
+            "Drop DS341 and take CS285 if it fits.",
+            {},
+            {"remove_course": "DS341", "add_course": "CS285"},
+        ),
+        (
+            "آخذ MATH204 بدل DS341 ويناسب جدولي.",
+            {},
+            {"remove_course": "DS341", "add_course": "MATH204"},
+        ),
+        (
+            "أحط MATH204 مكان DS341 إذا يناسب جدولي.",
+            {},
+            {"remove_course": "DS341", "add_course": "MATH204"},
+        ),
+    ],
+)
+def test_replacement_arguments_are_bound_only_to_student_wording(
+    question, model_arguments, expected
+):
+    normalised, _ = _normalise_feasible_replacement_args(question, model_arguments)
+    assert normalised == expected
+
+
+def test_replacement_normalizer_discards_model_term_override():
+    normalised, reasons = _normalise_feasible_replacement_args(
+        "If I replace DS341 with CS285, will it fit my timetable?",
+        {
+            "remove_course": "DS341",
+            "add_course": "CS285",
+            "academic_year": 1447,
+            "term": 2,
+        },
+    )
+
+    assert normalised == {"remove_course": "DS341", "add_course": "CS285"}
+    assert "discarded_model_term_override" in reasons
+
+
+def _certified_replacement_result() -> dict[str, Any]:
+    return {
+        "tool": "feasible_course_replacements",
+        "ok": True,
+        "academic_year": 1448,
+        "term": 1,
+        "baseline_kind": "REGISTERED",
+        "status": "CERTIFIED_SWAPS_FOUND",
+        "requested_remove_course": "DS341",
+        "requested_add_course": "CS285",
+        "academic_search": {"search_truncated": False},
+        "certification_search": {"search_truncated": False},
+        "certified_replacements": [
+            {
+                "remove_course": {
+                    "course_code": "DS341",
+                    "course_name": "DATA PRIVACY",
+                    "credits": 3,
+                },
+                "add_course": {
+                    "course_code": "CS285",
+                    "course_name": "SOFTWARE ENGINEERING",
+                    "credits": 3,
+                },
+                "outside_plan_addition": False,
+                "academic_improvement": {
+                    "proven_improvement": True,
+                    "timing_effect": "EARLIER",
+                    "terms_saved": 1,
+                    "blockers_resolved": ["CS385"],
+                    "blockers_improved": [],
+                    "blockers_introduced": [],
+                },
+                "timetable": {
+                    "status": "COMPLETE_CLASH_FREE",
+                    "certified_options": [
+                        {
+                            "planner_options": ["A1"],
+                            "complete_sections": [
+                                {
+                                    "course_code": "CS285",
+                                    "course_name": "SOFTWARE ENGINEERING",
+                                    "section": "M3",
+                                    "credits": 3,
+                                    "meetings": [
+                                        {"day": "Sunday", "start": "09:00", "end": "10:15"}
+                                    ],
+                                }
+                            ],
+                            "meetings": [
+                                {
+                                    "course_code": "CS285",
+                                    "section": "M3",
+                                    "day": "Sunday",
+                                    "start": "09:00",
+                                    "end": "10:15",
+                                }
+                            ],
+                            "scheduled_courses": 1,
+                            "target_courses": 1,
+                            "credit_hours": 3,
+                            "days_on_campus": 1,
+                            "days": ["Sunday"],
+                            "earliest_start": "09:00",
+                            "latest_end": "10:15",
+                        }
+                    ],
+                },
+            }
+        ],
+        "rejected_replacements": [],
+        "limitations": [],
+    }
+
+
+def test_replacement_cannot_answer_before_fresh_two_gate_evidence(monkeypatch):
+    calls: list[tuple[str, dict[str, Any]]] = []
+
+    def fake_execute(name, arguments, **kwargs):
+        calls.append((name, arguments))
+        return _certified_replacement_result()
+
+    monkeypatch.setattr("core.services.student_advisor_v2.execute_student_v2_tool", fake_execute)
+    client = FakeClient(
+        _answer_turn("أكيد بدّلها، ما فيه تعارض."),
+        _tool_turn(
+            "feasible_course_replacements",
+            {"remove_course": "CS285", "add_course": "DS341"},
+        ),
+    )
+
+    result = answer_student_advisor_v2(
+        question="إذا بدلت DS341 بـ CS285، هل يتحسن تخرجي ويدخل في جدولي؟",
+        principal=_principal(),
+        academic_year=1448,
+        term=1,
+        llm_client=client,
+    )
+
+    assert calls == [
+        ("feasible_course_replacements", {"remove_course": "DS341", "add_course": "CS285"})
+    ]
+    assert result["answer"].startswith("**الخلاصة:** وجدت 1 تبديلًا")
+    assert "توفير 1 فصل" in result["answer"]
+    assert "CS285 M3" in result["answer"]
+    assert "لا يثبت" in result["answer"]
+    assert result["presentation"]["kind"] == "timetable_proposals"
+    assert result["presentation"]["replacement"]["add_course"]["course_code"] == "CS285"
+    assert result["agent"]["replacement_grounding_required"] is True
+    assert result["agent"]["replacement_reprompted"] is True
+    assert result["agent"]["replacement_safe_fallback_used"] is True
+    assert result["agent"]["iterations"] == 2
+
+
+@pytest.mark.parametrize(
+    ("question", "expected_codes", "expected_objective"),
+    [
+        ("آخذ ai-331 ولا DS 341؟", ["AI331", "DS341"], "balanced"),
+        ("وش يفتح أكثر AI331 أو DS341؟", ["AI331", "DS341"], "unlock_impact"),
+        ("أيهم يناسب جدولي AI331 ولا DS341؟", ["AI331", "DS341"], "timetable_fit"),
+        ("أيهم يخليني أتخرج أسرع AI331 أو DS341؟", ["AI331", "DS341"], "graduation"),
+        ("أي وحدة تأجيلها يضرني أقل: AI331 أو DS341؟", ["AI331", "DS341"], "graduation"),
+    ],
+)
+def test_comparison_arguments_are_bound_to_explicit_codes_and_objective(
+    question, expected_codes, expected_objective
+):
+    normalised, reasons = _normalise_course_comparison_args(
+        question,
+        {"course_codes": ["WRONG100"], "objective": "balanced"},
+    )
+    assert normalised["course_codes"] == expected_codes
+    assert normalised["objective"] == expected_objective
+    assert "explicit_course_codes" in reasons
+
+
+def test_comparison_arguments_discard_forged_model_term_override():
+    normalised, reasons = _normalise_course_comparison_args(
+        "Which is better for me, AI331 or DS341?",
+        {
+            "course_codes": ["AI331", "DS341"],
+            "academic_year": 1447,
+            "term": 2,
+        },
+    )
+
+    assert "academic_year" not in normalised
+    assert "term" not in normalised
+    assert "discarded_model_term_override" in reasons
+
+
+@pytest.mark.parametrize(
+    ("question", "expected"),
+    [
+        ("Compare AI331 and DS341 for 1447/2.", (1447, 2)),
+        ("قارن AI331 وDS341 في ١٤٤٧/٢", (1447, 2)),
+        ("Compare AI331 and DS341 for 2026/2.", None),
+        ("Compare AI331 and DS341 for 1447/4.", None),
+        ("Compare AI331 and DS341; I graduated in 1447.", None),
+        ("I took CS113 in 1447/2; compare AI331 and DS341 now.", None),
+        ("I studied in 1447/2. For comparison, AI331 or DS341?", None),
+        ("Not for 1447/2 but compare AI331 and DS341 for 1448/1.", None),
+        ("Compare AI331 and DS341 in term 1447/2.", (1447, 2)),
+        ("Compare AI331 and DS341 for term 1447/2.", (1447, 2)),
+        ("For 1447/2, compare AI331 and DS341.", (1447, 2)),
+        ("In 1447/2 compare AI331 and DS341.", (1447, 2)),
+    ],
+)
+def test_explicit_comparison_term_parser_is_conservative(question, expected):
+    assert _explicit_comparison_year_term(question) == expected
+
+
+@pytest.mark.parametrize(
+    ("question", "expected_year", "expected_term"),
+    [
+        ("Compare AI331 and DS341.", 1448, 1),
+        ("Compare AI331 and DS341 for 1447/2.", 1447, 2),
+        ("قارن AI331 وDS341 في ١٤٤٧/٢", 1447, 2),
+        ("Compare AI331 and DS341 for 2026/2.", 1448, 1),
+        ("Compare AI331 and DS341 for 1447/4.", 1448, 1),
+    ],
+)
+def test_comparison_execution_uses_only_trusted_student_term_context(
+    monkeypatch, question, expected_year, expected_term
+):
+    seen = {}
+
+    def fake_execute(name, arguments, *, principal, context=None):
+        seen.update(name=name, arguments=arguments, context=dict(context or {}))
+        return _comparison_result()
+
+    monkeypatch.setattr("core.services.student_advisor_v2.execute_student_v2_tool", fake_execute)
+    client = FakeClient(
+        _tool_turn(
+            "course_choice_comparison",
+            {
+                "course_codes": ["AI331", "DS341"],
+                "academic_year": 1446,
+                "term": 3,
+            },
+        )
+    )
+
+    answer_student_advisor_v2(
+        question=question,
+        principal=_principal(),
+        academic_year=1448,
+        term=1,
+        llm_client=client,
+    )
+
+    assert seen["name"] == "course_choice_comparison"
+    assert "academic_year" not in seen["arguments"]
+    assert "term" not in seen["arguments"]
+    assert seen["context"] == {
+        "academic_year": expected_year,
+        "term": expected_term,
+        "section_snapshot_academic_year": 1448,
+        "section_snapshot_term": 1,
+    }
+
+
+def _comparison_result() -> dict[str, Any]:
+    return {
+        "tool": "course_choice_comparison",
+        "ok": True,
+        "program": "AI",
+        "academic_year": 1448,
+        "term": 1,
+        "objective": "unlock_impact",
+        "baseline_kind": "EMPTY",
+        "verdict": "PREFERRED",
+        "preferred_course": "AI331",
+        "criterion_leaders": {"direct_unlock": ["AI331"]},
+        "decision_basis": ["direct_unlock"],
+        "limitations": [],
+        "candidates": [
+            {
+                "course_code": "AI331",
+                "course_name": "KNOWLEDGE REPRESENTATION",
+                "credit_hours": 4,
+                "kind": "COURSE",
+                "academic_status": "open_now",
+                "prerequisite_ready": True,
+                "missing_prerequisites": [],
+                "recommendation": {"state": "RECOMMENDED", "rank": 1},
+                "impact": {
+                    "direct_unlock_count": 3,
+                    "chain_course_count": 5,
+                    "weighted_downstream_score": 5.5,
+                    "weighted_score_method": "sum_inverse_distance",
+                },
+                "timetable": {
+                    "status": "OK",
+                    "sections_on_file": 2,
+                    "clash_free_count": 1,
+                    "clashing_count": 1,
+                    "baseline_sections": [],
+                },
+                "graduation": {
+                    "status": "COMPLETED",
+                    "simulation_completed": True,
+                    "estimated_additional_terms": 4,
+                    "lower_bound_additional_terms": 4,
+                    "unresolved_requirements": [],
+                },
+            },
+            {
+                "course_code": "DS341",
+                "course_name": "DATA PRIVACY",
+                "credit_hours": 3,
+                "kind": "COURSE",
+                "academic_status": "blocked",
+                "prerequisite_ready": False,
+                "missing_prerequisites": [{"kind": "MISSING_COURSE", "course_code": "DS225"}],
+                "recommendation": {"state": "NOT_RECOMMENDED", "rank": None},
+                "impact": {
+                    "direct_unlock_count": 0,
+                    "chain_course_count": 1,
+                    "weighted_downstream_score": 1.0,
+                    "weighted_score_method": "sum_inverse_distance",
+                },
+                "timetable": {
+                    "status": "NOT_ON_FILE",
+                    "sections_on_file": 0,
+                    "clash_free_count": 0,
+                    "clashing_count": 0,
+                    "baseline_sections": [],
+                },
+                "graduation": {
+                    "status": "NOT_DETERMINABLE",
+                    "simulation_completed": False,
+                    "estimated_additional_terms": None,
+                    "lower_bound_additional_terms": 4,
+                    "unresolved_requirements": [{"code": "DS492"}],
+                },
+            },
+        ],
+    }
+
+
+@pytest.mark.parametrize(
+    ("language", "reason_code", "expected"),
+    [
+        (
+            "English",
+            "CANDIDATE_MEETING_DATA_INCOMPLETE",
+            "candidate-section meeting data is incomplete or invalid",
+        ),
+        (
+            "Arabic",
+            "BASELINE_MEETING_DATA_INCOMPLETE",
+            "بيانات مواعيد الجدول المرجعي ناقصة أو غير صالحة",
+        ),
+    ],
+)
+def test_safe_course_comparison_explains_indeterminate_timetable_evidence(
+    language: str,
+    reason_code: str,
+    expected: str,
+) -> None:
+    result = _comparison_result()
+    result["verdict"] = "NOT_DETERMINABLE"
+    result["preferred_course"] = None
+    result["candidates"][0]["timetable"] = {
+        "status": "NOT_DETERMINABLE",
+        "reason_code": reason_code,
+        "reason": "The service supplied a bounded explanation.",
+        "sections_on_file": 2,
+        "clash_free_count": None,
+        "clashing_count": None,
+        "baseline_sections": [],
+    }
+
+    answer = _safe_course_comparison_answer(language, [result])
+
+    assert expected in answer
+    assert "0 recorded section(s), 0 individually clash-free" not in answer
+
+
+def test_course_comparison_cannot_answer_before_fresh_evidence(monkeypatch):
+    calls: list[tuple[str, dict[str, Any]]] = []
+
+    def fake_execute(name, arguments, **kwargs):
+        calls.append((name, arguments))
+        return _comparison_result()
+
+    monkeypatch.setattr("core.services.student_advisor_v2.execute_student_v2_tool", fake_execute)
+    client = FakeClient(
+        _answer_turn("AI331 is definitely better."),
+        _tool_turn(
+            "course_choice_comparison",
+            {"course_codes": ["DS341"], "objective": "balanced"},
+        ),
+    )
+
+    result = answer_student_advisor_v2(
+        question="وش يفتح أكثر AI331 ولا DS341؟",
+        principal=_principal(),
+        academic_year=1448,
+        term=1,
+        llm_client=client,
+    )
+
+    assert calls == [
+        (
+            "course_choice_comparison",
+            {"course_codes": ["AI331", "DS341"], "objective": "unlock_impact"},
+        )
+    ]
+    assert result["answer"].startswith("**الخلاصة:** AI331")
+    assert "مؤشر تخطيطي" in result["answer"]
+    assert "ما سجلت أو غيّرت" in result["answer"]
+    assert result["agent"]["course_comparison_grounding_required"] is True
+    assert result["agent"]["course_comparison_reprompted"] is True
+    assert result["agent"]["course_comparison_safe_fallback_used"] is True
+    assert result["agent"]["iterations"] == 2
 
 
 @pytest.mark.parametrize(
@@ -940,7 +1739,7 @@ def test_current_course_what_if_normalises_initial_baseline_call(monkeypatch):
         "graduation_progress",
         {"remove_current_courses": ["DS341"]},
     )
-    assert "DS341 is not in the recorded current timetable" in result["answer"]
+    assert "DS341 is not in the planning-baseline timetable" in result["answer"]
     assert result["agent"]["graduation_what_if_required"] is True
     assert result["agent"]["graduation_what_if_reprompted"] is False
     assert result["agent"]["graduation_what_if_missing"] is False
@@ -1033,7 +1832,7 @@ def test_arabic_allowed_load_or_missing_place_claim_uses_safe_summary(monkeypatc
         lambda name, arguments, **kwargs: _incomplete_graduation_result(),
     )
     unsafe_arabic = (
-        "الحد الأدنى هو 5 فصول إضافية أو 6 مع الفصل الحالي. DS492 يحتاج 147 ساعة، "
+        "الحد الأدنى هو 5 فصول إضافية أو 6 مع الفصل المرجعي للتخطيط. DS492 يحتاج 147 ساعة، "
         "وMATH471 يحتاج MATH204. استخدم الحد الأقصى المسموح وهو 18 ساعة، ولم يظهر "
         "للمقرر مكان في الفصول المحاكية."
     )
@@ -1108,7 +1907,7 @@ def test_current_term_what_if_answer_uses_structured_comparison(monkeypatch):
         llm_client=client,
     )
 
-    assert "Current-term scenario: remove DS341 and add MATH204" in result["answer"]
+    assert "Planning-baseline scenario: remove DS341 and add MATH204" in result["answer"]
     assert "does not yet prove earlier graduation" in result["answer"]
     assert "Blockers resolved in the simulation: MATH471" in result["answer"]
     assert "outside the degree-plan requirements" in result["answer"]
@@ -1602,10 +2401,13 @@ def test_remote_graduation_projection_keeps_the_scenario_but_not_student_identit
             "ok": True,
             "student_id": 4610192,
             "program": "DS2",
+            "planning_baseline_academic_year": 1448,
+            "planning_baseline_term": 1,
             "max_credits_per_term": 18,
             "lower_bound_additional_terms": 5,
+            "lower_bound_terms_including_planning_baseline": 6,
             "simulation_completed": False,
-            "current_courses_assumed_passed": [
+            "planning_baseline_courses_assumed_passed": [
                 {
                     "code": "AI113",
                     "name": "AI Fundamentals",
@@ -1655,11 +2457,11 @@ def test_remote_graduation_projection_keeps_the_scenario_but_not_student_identit
                 ],
                 "baseline": {
                     "lower_bound_additional_terms": 5,
-                    "registered_credits_now": 18,
+                    "registered_credits_at_planning_baseline": 18,
                 },
                 "scenario": {
                     "lower_bound_additional_terms": 5,
-                    "registered_credits_now": 18,
+                    "registered_credits_at_planning_baseline": 18,
                 },
                 "comparison": {
                     "timing_effect": "UNRESOLVED_IMPROVEMENT",
@@ -1681,7 +2483,10 @@ def test_remote_graduation_projection_keeps_the_scenario_but_not_student_identit
 
     assert "student_id" not in projected
     assert "scenario_graph" not in projected
-    assert "section" not in projected["current_courses_assumed_passed"][0]
+    assert "section" not in projected["planning_baseline_courses_assumed_passed"][0]
+    assert "current_courses_assumed_passed" not in projected
+    assert projected["planning_baseline_academic_year"] == 1448
+    assert projected["planning_baseline_term"] == 1
     assert projected["max_credits_per_term"] == 18
     assert projected["term_plan"][0]["course_codes"] == ["GSE1"]
     assert projected["unresolved_requirements"][0]["missing_prerequisites_outside_plan"] == [
@@ -1865,6 +2670,8 @@ def test_graduation_scenario_presentation_reuses_plan_edges_with_simulated_terms
         "DS225": "studying",
         "DS341": "open",
     }
+    assert safe["planning_term"] == "1448/1"
+    assert safe["band_labels"]["1"] == "Planning baseline 1448/1"
     assert safe["band_labels"]["2"] == "Projected 1448/2"
     assert safe["unresolved_requirements"][0]["code"] == "DS492"
     assert "student_id" not in str(safe)

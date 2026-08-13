@@ -513,10 +513,73 @@ class AdvisorBrowserTests(StaticLiveServerTestCase):
         assert "no requested or recommended additional course" in notice
         assert page.locator(".sa-tt-option").count() == 0
 
+    def test_certified_replacement_card_names_the_swap_and_outside_plan_caution(self):
+        conversation = AdvisorConversation.objects.create(student_id=MINE)
+        self._turn(
+            conversation,
+            answer="This swap is academically better and fits the complete timetable.",
+            citations=[],
+            question="Replace DS341 with CS285 if it fits my timetable",
+            presentation={
+                "kind": "timetable_proposals",
+                "planning_term": "1448/1",
+                "mode": "certified_replacement",
+                "baseline_kind": "REGISTERED",
+                "replacement": {
+                    "remove_course": {"course_code": "DS341", "credits": 3},
+                    "add_course": {"course_code": "CS285", "credits": 4},
+                    "outside_plan_addition": True,
+                    "academic_improvement": {
+                        "proven_improvement": True,
+                        "terms_saved": 1,
+                    },
+                },
+                "alternatives": [
+                    {
+                        "planner_options": ["A1"],
+                        "scheduled_courses": 1,
+                        "target_courses": 1,
+                        "total_credit_hours": 4,
+                        "courses": [{"course_code": "CS285", "section": "M3", "credits": 4}],
+                        "meetings": [
+                            {
+                                "course_code": "CS285",
+                                "section": "M3",
+                                "day": "MON",
+                                "start": "10:30",
+                                "end": "11:45",
+                            }
+                        ],
+                        "unplaced_courses": [],
+                    }
+                ],
+            },
+        )
+        page = self._page(viewport={"width": 375, "height": 812})
+        self._open(page, f"?c={conversation.id}")
+        page.wait_for_selector(".sa-tt-replacement")
+
+        banner = page.locator(".sa-tt-replacement")
+        assert "Replace DS341 with CS285" in " ".join(banner.inner_text().split())
+        assert page.locator(".sa-tt-replacement-code").count() == 2
+        assert page.locator(".sa-tt-replacement-code").nth(0).get_attribute("dir") == "ltr"
+        assert (
+            "outside your recorded study plan"
+            in page.locator(".sa-tt-replacement-caution").inner_text()
+        )
+        assert banner.evaluate("node => node.scrollWidth - node.clientWidth") <= 1
+
     def test_arabic_timetable_card_keeps_codes_and_times_left_to_right(self):
         presentation = {
             "kind": "timetable_proposals",
             "planning_term": "1448/1",
+            "mode": "certified_replacement",
+            "replacement": {
+                "remove_course": {"course_code": "DS341", "credits": 3},
+                "add_course": {"course_code": "CS211", "credits": 4},
+                "outside_plan_addition": False,
+                "academic_improvement": {"proven_improvement": True, "terms_saved": 1},
+            },
             "alternatives": [
                 {
                     "planner_options": ["A1", "B1", "C1"],
@@ -558,6 +621,9 @@ class AdvisorBrowserTests(StaticLiveServerTestCase):
 
         card = page.locator(".sa-timetable")
         assert card.get_attribute("dir") == "rtl"
+        replacement = page.locator(".sa-tt-replacement")
+        assert "استبدل DS341 بـ CS211" in " ".join(replacement.inner_text().split())
+        assert page.locator(".sa-tt-replacement-caution").count() == 0
         assert "خيار المخطط" in page.locator(".sa-tt-option-name").inner_text()
         assert page.locator(".sa-tt-option-name bdi").get_attribute("dir") == "ltr"
         assert page.locator(".sa-tt-time").get_attribute("dir") == "ltr"
@@ -580,6 +646,8 @@ class AdvisorBrowserTests(StaticLiveServerTestCase):
                 "max_credits_per_term": 18,
                 "band_labels": {
                     "0": "Completed before the scenario",
+                    # A persisted pre-rename payload: the UI must continue to
+                    # read it but present the term as a planning baseline.
                     "1": "Current 1448/1",
                     "2": "Projected 1448/2",
                 },
@@ -623,7 +691,8 @@ class AdvisorBrowserTests(StaticLiveServerTestCase):
         assert "not a final graduation date" in card.inner_text()
         assert page.locator(".sa-grad-toolbar .pg-mode").count() == 2
         svg_text = page.locator(".prereq-svg").text_content()
-        assert "Current term 1448/1" in svg_text
+        assert "Planning baseline term 1448/1" in svg_text
+        assert "Current term 1448/1" not in svg_text
         assert "Projected term 1448/2" in svg_text
         assert "DS492" in page.locator(".sa-grad-blockers").inner_text()
         assert "MATH204" in page.locator(".sa-grad-blockers").inner_text()

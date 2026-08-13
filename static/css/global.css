@@ -11637,6 +11637,50 @@ main[data-page="student-advisor"] > .content-wrap > .page-intro {
   color: var(--t2);
   font-size: .8rem;
 }
+.sa-tt-replacement {
+  display: grid;
+  gap: .35rem;
+  margin: 0 0 .65rem;
+  padding: .55rem .65rem;
+  border: 1px solid var(--teal-border);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--teal-dim) 78%, var(--surface));
+}
+.sa-tt-replacement-swap {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: .2rem;
+  margin: 0;
+  color: var(--t1);
+  font-size: .84rem;
+  font-weight: 700;
+}
+.sa-tt-replacement-code {
+  display: inline-flex;
+  padding: .12rem .42rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+  font-size: .8rem;
+}
+.sa-tt-replacement-code.is-removed {
+  color: var(--danger);
+  text-decoration: line-through;
+  text-decoration-thickness: 1px;
+}
+.sa-tt-replacement-code.is-added {
+  border-color: var(--teal-border);
+  color: var(--brand-strong);
+}
+.sa-tt-replacement-caution {
+  margin: 0;
+  padding-top: .35rem;
+  border-top: 1px solid color-mix(in srgb, var(--warning) 30%, var(--line));
+  color: var(--t2);
+  font-size: .76rem;
+  line-height: 1.45;
+}
 .sa-tt-constraints {
   margin: 0 0 .65rem;
   padding: .55rem .6rem;

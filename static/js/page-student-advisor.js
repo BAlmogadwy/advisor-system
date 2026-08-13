@@ -86,6 +86,11 @@
     noAdditionalExpectedCourses: AR
       ? 'تم الإبقاء على جدولك المتوقع؛ لا يوجد مقرر إضافي مطلوب أو موصى به لبناء خيار جديد. هذه الخطة ليست تسجيلًا فعليًا.'
       : 'Your expected timetable is retained; there is no requested or recommended additional course to build into a new option. This plan is not actual registration.',
+    replaceCourse: AR ? 'استبدل' : 'Replace',
+    replaceWith: AR ? 'بـ' : 'with',
+    outsidePlanReplacement: AR
+      ? 'تنبيه: المقرر البديل خارج خطتك الدراسية المسجلة؛ تحقق من احتسابه في بوابة الجامعة.'
+      : 'Caution: the replacement course is outside your recorded study plan; verify how it will count in the university portal.',
 
     graduationMapTitle: AR ? 'مسار السيناريو حتى إكمال الخطة' : 'Scenario path to plan completion',
     graduationMapComplete: AR
@@ -100,15 +105,15 @@
     scenarioTerms: AR ? 'حسب فصول السيناريو' : 'By scenario term',
     prerequisiteChain: AR ? 'حسب سلسلة المتطلبات' : 'By prerequisite chain',
     completedBefore: AR ? 'مجتاز قبل السيناريو' : 'Passed before scenario',
-    currentScenario: AR ? 'الفصل الحالي' : 'Current term',
+    planningBaselineScenario: AR ? 'الفصل المرجعي للتخطيط' : 'Planning baseline term',
     projectedScenario: AR ? 'فصل متوقع' : 'Projected term',
-    assumedCurrent: AR ? 'مفترض اجتيازه هذا الفصل' : 'Assumed passed this term',
+    assumedBaseline: AR ? 'مفترض اجتيازه في الفصل المرجعي للتخطيط' : 'Assumed passed in the planning baseline term',
     projectedCourse: AR ? 'مخطط في السيناريو' : 'Planned in scenario',
     unresolvedCourse: AR ? 'غير محسوم' : 'Unresolved',
     unresolvedRequirements: AR ? 'متطلبات لم تحسمها المحاكاة' : 'Requirements the simulation could not resolve',
     missingPrerequisites: AR ? 'متطلبات سابقة ناقصة' : 'Missing prerequisites',
     creditGate: AR ? 'شرط الساعات' : 'Credit requirement',
-    scenarioChange: AR ? 'تعديل الفصل الحالي في هذا السيناريو' : 'Current-term change in this scenario',
+    scenarioChange: AR ? 'تعديل الفصل المرجعي للتخطيط في هذا السيناريو' : 'Planning-baseline change in this scenario',
     removed: AR ? 'حذف' : 'Removed',
     added: AR ? 'إضافة' : 'Added',
     maximumPerTerm: AR ? 'حد المحاكاة لكل فصل' : 'Simulation cap per term',
@@ -1110,6 +1115,27 @@
     wrap.appendChild(heading);
     wrap.appendChild(el('p', 'sa-tt-boundary', T.planningOnly));
 
+    const replacement = presentation.replacement && typeof presentation.replacement === 'object'
+      ? presentation.replacement : null;
+    const removedCourse = replacement && replacement.remove_course;
+    const addedCourse = replacement && replacement.add_course;
+    if (removedCourse && removedCourse.course_code && addedCourse && addedCourse.course_code) {
+      const notice = el('section', 'sa-tt-replacement');
+      notice.setAttribute('aria-label', T.replaceCourse);
+      const swap = el('p', 'sa-tt-replacement-swap');
+      swap.appendChild(el('span', null, T.replaceCourse + ' '));
+      swap.appendChild(ltrNode('strong', 'sa-tt-replacement-code is-removed', String(removedCourse.course_code)));
+      swap.appendChild(document.createTextNode(' ' + T.replaceWith + ' '));
+      swap.appendChild(ltrNode('strong', 'sa-tt-replacement-code is-added', String(addedCourse.course_code)));
+      notice.appendChild(swap);
+      if (replacement.outside_plan_addition === true) {
+        const caution = el('p', 'sa-tt-replacement-caution', T.outsidePlanReplacement);
+        caution.setAttribute('role', 'note');
+        notice.appendChild(caution);
+      }
+      wrap.appendChild(notice);
+    }
+
     if (mustTake.length || pinned.length) {
       const constraints = el('section', 'sa-tt-constraints');
       constraints.appendChild(el('h5', 'sa-tt-subtitle', T.enforcedConstraints));
@@ -1256,8 +1282,12 @@
   function graduationBandLabel(value) {
     const label = String(value || '');
     if (label === 'Completed before the scenario') return T.completedBefore;
+    if (label.indexOf('Planning baseline ') === 0) {
+      return T.planningBaselineScenario + ' ' + label.slice('Planning baseline '.length);
+    }
     if (label.indexOf('Current ') === 0) {
-      return T.currentScenario + ' ' + label.slice('Current '.length);
+      // Backward compatibility for already stored presentation payloads.
+      return T.planningBaselineScenario + ' ' + label.slice('Current '.length);
     }
     if (label.indexOf('Projected ') === 0) {
       return T.projectedScenario + ' ' + label.slice('Projected '.length);
@@ -1282,7 +1312,7 @@
       pgTerminal: AR ? 'نهاية السلسلة' : 'chain end',
       pgHoverHint: AR ? 'مرّر لإبراز السلسلة' : 'hover to highlight a chain',
       pgPassed: T.completedBefore,
-      pgStudying: T.assumedCurrent,
+      pgStudying: T.assumedBaseline,
       pgOpen: T.projectedCourse,
       pgLocked: T.unresolvedCourse,
       pgSameTermWarn: function (n) {
@@ -1305,7 +1335,7 @@
     });
     const statusText = {
       passed: T.completedBefore,
-      studying: T.assumedCurrent,
+      studying: T.assumedBaseline,
       open: T.projectedCourse,
       locked: T.unresolvedCourse,
     };

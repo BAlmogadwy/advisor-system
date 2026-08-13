@@ -63,6 +63,10 @@ def test_students_get_only_self_scoped_tools():
         "my_clash_free_sections",
         "build_my_timetable",
         "build_timetable_proposal",
+        # Deterministic, self-scoped planning comparisons. Both remain
+        # read-only and resolve the chatting student from the principal.
+        "course_choice_comparison",
+        "feasible_course_replacements",
         # The written regulations. Carries no student data at all — the rules are the
         # same for everyone — so it widens what a student can READ, not what they can
         # reach ABOUT THEMSELVES or anyone else. Added deliberately when the policy

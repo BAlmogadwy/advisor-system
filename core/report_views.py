@@ -9,6 +9,7 @@ from core.authz import role_required
 from core.models import Course, Prerequisite, ProgrammeRequirement, Student
 from core.services.advisors import list_students_by_advisor, resolve_roster_scope
 from core.services.conflict_matrix import build_conflict_matrix_report, export_conflict_matrix_xlsx
+from core.services.course_priority import program_downstream_importance_scores
 from core.services.debug_reporting import build_recommendation_debug_report
 from core.services.eligibility import (
     build_course_eligibility_report,
@@ -179,53 +180,12 @@ def _build_batch_course_rows(
 
 
 def _program_importance_scores(program: str) -> dict[str, float]:
-    rows = Prerequisite.objects.filter(
-        program=program,
-    ).values_list("course_code", "prerequisite_course_code")
+    """Compatibility wrapper retaining the report's six-decimal output."""
 
-    graph: dict[str, set[str]] = {}
-
-    def add_edge(prereq: str, course: str) -> None:
-        p = normalize_code(prereq)
-        c = normalize_code(course)
-        if not p or not c:
-            return
-        graph.setdefault(p, set()).add(c)
-        graph.setdefault(c, set())
-
-    for course_raw, prereq_raw in rows:
-        course = normalize_code(course_raw)
-        if not course:
-            continue
-        prereq_cell = "" if prereq_raw is None else str(prereq_raw)
-        parts = [x.strip() for x in prereq_cell.split(",") if x.strip()]
-        if not parts:
-            graph.setdefault(course, set())
-            continue
-        for p in parts:
-            add_edge(p, course)
-
-    scores: dict[str, float] = {}
-    for node in graph:
-        dist: dict[str, int] = {node: 0}
-        queue: list[str] = [node]
-        idx = 0
-        while idx < len(queue):
-            current = queue[idx]
-            idx += 1
-            for nxt in graph.get(current, set()):
-                if nxt not in dist:
-                    dist[nxt] = dist[current] + 1
-                    queue.append(nxt)
-
-        score = 0.0
-        for target, d in dist.items():
-            if target == node or d == 0:
-                continue
-            score += 1.0 / d
-        scores[node] = round(score, 6)
-
-    return scores
+    return {
+        code: round(score, 6)
+        for code, score in program_downstream_importance_scores(program).items()
+    }
 
 
 def _build_student_plan_payload(
