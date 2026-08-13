@@ -303,9 +303,18 @@ def _course_detail(
             reasons = list(entry.get("reasons") or [])
             break
 
-    prereq_codes, hours_gate = split_hour_prereqs(get_prerequisites(code, program))
     graph = report.get("graph") or {}
     status_of = graph.get("statusOf") or {}
+    graph_prerequisites = [
+        normalize_code(item.get("prerequisite_course_code"))
+        for item in graph.get("items") or []
+        if normalize_code(item.get("course_code")) == code
+        and normalize_code(item.get("prerequisite_course_code"))
+    ]
+    graph_codes = {normalize_code(value) for value in graph.get("extraNodes") or []}
+    prereq_codes, hours_gate = split_hour_prereqs(
+        graph_prerequisites if code in graph_codes else get_prerequisites(code, program)
+    )
 
     # "If I pass this, what opens?" — read from the report's own `dependents`
     # rather than recounted from `graph.items` here.

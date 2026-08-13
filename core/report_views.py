@@ -24,7 +24,7 @@ from core.services.rbac import ROLE_ADVISOR, ROLE_GENERAL_ADVISOR
 from core.services.recommender import recommend_next_courses
 from core.services.reporting import build_aggregate_counts
 from core.services.student_helpers import (
-    get_prerequisites,
+    get_program_prerequisites,
     get_student_course_status_sets,
     get_student_program,
     normalize_code,
@@ -228,7 +228,11 @@ def _program_importance_scores(program: str) -> dict[str, float]:
     return scores
 
 
-def _build_student_plan_payload(student_id: int) -> tuple[dict | None, JsonResponse | None]:
+def _build_student_plan_payload(
+    student_id: int,
+    *,
+    prerequisite_map: dict[str, list[str]] | None = None,
+) -> tuple[dict | None, JsonResponse | None]:
     program = get_student_program(student_id)
     if not program:
         return None, JsonResponse(
@@ -238,6 +242,9 @@ def _build_student_plan_payload(student_id: int) -> tuple[dict | None, JsonRespo
     passed, studying, failed = get_student_course_status_sets(student_id)
     satisfied_pool = passed | studying
     importance_scores = _program_importance_scores(program)
+    prerequisites_by_course = (
+        prerequisite_map if prerequisite_map is not None else get_program_prerequisites(program)
+    )
 
     pr_rows = (
         ProgrammeRequirement.objects.filter(
@@ -267,7 +274,7 @@ def _build_student_plan_payload(student_id: int) -> tuple[dict | None, JsonRespo
         else:
             status = "not_taken"
 
-        prereqs = get_prerequisites(code, program)
+        prereqs = prerequisites_by_course.get(code, [])
         # A "146(HOURS)" prerequisite is a credit-hour gate, not a course. Tested as a
         # course code it can never be satisfied, which locked every capstone forever.
         course_prereqs, required_hours = split_hour_prereqs(prereqs)

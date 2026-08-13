@@ -36,7 +36,7 @@ from __future__ import annotations
 from core.services.eligibility import hour_gate, split_hour_prereqs
 from core.services.recommender import eligible_next_term_courses
 from core.services.student_helpers import (
-    get_prerequisites,
+    get_program_prerequisites,
     is_elective_slot,
     normalize_code,
 )
@@ -71,16 +71,38 @@ def build_unlock_report(
     additional_studying_codes: set[str] | None = None,
     excluded_studying_codes: set[str] | None = None,
     registered_credits_override: int | None = None,
+    _prerequisite_map: dict[str, list[str]] | None = None,
+    _query_cache: dict[object, object] | None = None,
 ) -> dict:
     """Return the full report. Pure read; raises nothing the caller must handle
     beyond the usual DB errors."""
     from core.report_views import _build_student_plan_payload
 
-    payload, _err = _build_student_plan_payload(student_id)
+    payload_key = ("student_plan_payload", int(student_id))
+    cached_payload = _query_cache.get(payload_key) if _query_cache is not None else None
+    if isinstance(cached_payload, dict):
+        payload = cached_payload
+    else:
+        payload, _err = _build_student_plan_payload(
+            student_id,
+            prerequisite_map=_prerequisite_map,
+        )
+        if _query_cache is not None and payload:
+            _query_cache[payload_key] = payload
     if not payload:
         return {}
 
     program = str(payload.get("program") or "")
+    prerequisite_key = ("program_prerequisites", program.strip().upper())
+    cached_prerequisites = _query_cache.get(prerequisite_key) if _query_cache is not None else None
+    if _prerequisite_map is not None:
+        prerequisites_by_course = _prerequisite_map
+    elif isinstance(cached_prerequisites, dict):
+        prerequisites_by_course = cached_prerequisites
+    else:
+        prerequisites_by_course = get_program_prerequisites(program)
+        if _query_cache is not None:
+            _query_cache[prerequisite_key] = prerequisites_by_course
     passed = {
         c["course_code"] for t in payload["terms"] for c in t["courses"] if c["status"] == "passed"
     }
@@ -105,19 +127,26 @@ def build_unlock_report(
     from core.models import Course
 
     codes = {c["course_code"] for t in payload["terms"] for c in t["courses"]}
-    names = {
-        normalize_code(k): (v or "")
-        for k, v in Course.objects.filter(course_code__in=codes).values_list(
-            "course_code", "description"
-        )
-    }
+    names_key = ("course_names", program.strip().upper())
+    cached_names = _query_cache.get(names_key) if _query_cache is not None else None
+    if isinstance(cached_names, dict) and codes <= set(cached_names):
+        names = cached_names
+    else:
+        names = {
+            normalize_code(k): (v or "")
+            for k, v in Course.objects.filter(course_code__in=codes).values_list(
+                "course_code", "description"
+            )
+        }
+        if _query_cache is not None:
+            _query_cache[names_key] = names
 
     # ── one pass: classify every plan course ──
     info: dict[str, dict] = {}
     for tblock in payload["terms"]:
         for c in tblock["courses"]:
             code = c["course_code"]
-            course_prereqs, req_hours = split_hour_prereqs(get_prerequisites(code, program))
+            course_prereqs, req_hours = split_hour_prereqs(prerequisites_by_course.get(code, []))
             gate = (
                 hour_gate(
                     student_id,
@@ -160,10 +189,17 @@ def build_unlock_report(
                 "placeholder": _is_placeholder(code, c.get("type") or ""),
             }
 
-    try:
-        fits = set(eligible_next_term_courses(student_id, year, term))
-    except Exception:  # noqa: BLE001 — a recommender failure must not lose the screen
-        fits = set()
+    fits_key = ("eligible_next_term_courses", int(student_id), int(year), int(term))
+    cached_fits = _query_cache.get(fits_key) if _query_cache is not None else None
+    if isinstance(cached_fits, set):
+        fits = cached_fits
+    else:
+        try:
+            fits = set(eligible_next_term_courses(student_id, year, term))
+        except Exception:  # noqa: BLE001 — a recommender failure must not lose the screen
+            fits = set()
+        if _query_cache is not None:
+            _query_cache[fits_key] = fits
 
     def unsatisfied_closure(code: str) -> set[str]:
         """Every plan course that must still be passed before `code` can be taken."""
