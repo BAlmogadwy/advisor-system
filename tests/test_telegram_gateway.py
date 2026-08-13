@@ -159,6 +159,63 @@ def _fake_answer(answer="باقي لك ٣ مواد.", citations=None, agent=None
     }
 
 
+@pytest.mark.parametrize(
+    ("answer", "forbidden"),
+    [
+        (
+            "The scenario has 5 terms. I cannot generate or send images; the plan is below.\n\nDetails.",
+            "cannot generate or send images",
+        ),
+        (
+            "الخطة فيها 5 فصول. لا يمكنني إنشاء أو إرسال صور؛ والتفاصيل بالأسفل.\n\nالتفاصيل.",
+            "لا يمكنني إنشاء أو إرسال صور",
+        ),
+    ],
+)
+def test_presentation_delivery_removes_false_model_image_incapability(answer, forbidden):
+    from types import SimpleNamespace
+
+    assistant = SimpleNamespace(
+        content=answer,
+        presentation=_graduation_presentation(),
+        citations=SimpleNamespace(all=lambda: []),
+        conversation_id="conversation-id",
+    )
+    result = SimpleNamespace(
+        outcome="CREATED",
+        assistant_message=assistant,
+        student_message=SimpleNamespace(content="Show the plan image."),
+    )
+
+    rendered = bot._render_outcome(result, question="Show the plan image.")
+
+    assert forbidden not in "\n".join(rendered)
+    assert "Details." in "\n".join(rendered) or "التفاصيل." in "\n".join(rendered)
+
+
+def test_presentation_delivery_preserves_facts_after_same_line_media_claim():
+    from types import SimpleNamespace
+
+    assistant = SimpleNamespace(
+        content=(
+            "I cannot send an image, but the verified plan estimates 6 terms "
+            "including the planning baseline."
+        ),
+        presentation=_graduation_presentation(),
+        citations=SimpleNamespace(all=lambda: []),
+        conversation_id="conversation-id",
+    )
+    result = SimpleNamespace(
+        outcome="CREATED",
+        assistant_message=assistant,
+        student_message=SimpleNamespace(content="Show the plan image."),
+    )
+
+    rendered = bot._render_outcome(result, question="Show the plan image.")
+
+    assert "verified plan estimates 6 terms" in "\n".join(rendered)
+
+
 def _adviser(*, answer="باقي لك ٣ مواد.", side_effect=None, **kw):
     """Patch the adviser at the ONE seam every channel goes through."""
     if side_effect is not None:
@@ -3220,6 +3277,80 @@ def test_the_legacy_card_helper_honours_its_explicit_server_port(client, outbox,
 
     assert cards.requested, "no card was requested"
     assert cards.requested[0].startswith("http://127.0.0.1:8002/"), cards.requested[0]
+
+
+@IMAGES_ON
+def test_the_legacy_delivery_path_sends_all_text_before_the_photo(client):
+    """The direct fallback preserves the durable worker's delivery invariant."""
+    link = _link()
+    events = []
+
+    with (
+        mock.patch.object(
+            bot,
+            "send_text",
+            side_effect=lambda **_kwargs: events.append("text") or {"ok": True},
+        ),
+        mock.patch.object(
+            bot,
+            "_send_card_image",
+            side_effect=lambda *_args, **_kwargs: events.append("photo"),
+        ),
+        _adviser(answer="Here is your timetable.", presentation=_timetable_presentation()),
+    ):
+        bot.answer_question(
+            link_id=link.pk,
+            update_id=1,
+            question="Build my timetable.",
+            server_port="8002",
+        )
+
+    assert events.count("photo") == 1
+    text_indexes = [index for index, event in enumerate(events) if event == "text"]
+    assert text_indexes
+    assert events.index("photo") > max(text_indexes)
+
+
+@IMAGES_ON
+def test_the_legacy_delivery_path_sends_no_photo_when_text_delivery_fails(client):
+    link = _link()
+
+    with (
+        mock.patch.object(bot, "send_text", return_value={"ok": False, "error": "timeout"}),
+        mock.patch.object(bot, "_send_card_image") as send_card,
+        _adviser(answer="Here is your timetable.", presentation=_timetable_presentation()),
+    ):
+        bot.answer_question(
+            link_id=link.pk,
+            update_id=1,
+            question="Build my timetable.",
+            server_port="8002",
+        )
+
+    send_card.assert_not_called()
+
+
+@IMAGES_ON
+def test_the_legacy_delivery_path_rechecks_link_after_card_render(client, outbox):
+    link = _link()
+
+    def render_then_revoke(*_args, **_kwargs):
+        link.revoke()
+        return [b"png"]
+
+    with (
+        mock.patch("telegram_gateway.rendering.render_cards", side_effect=render_then_revoke),
+        _adviser(answer="Here is your timetable.", presentation=_timetable_presentation()),
+    ):
+        bot.answer_question(
+            link_id=link.pk,
+            update_id=1,
+            question="Build my timetable.",
+            server_port="8002",
+        )
+
+    assert outbox.texts
+    assert outbox.photos == []
 
 
 @IMAGES_ON

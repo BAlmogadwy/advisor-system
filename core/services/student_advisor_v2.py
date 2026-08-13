@@ -41,6 +41,7 @@ from core.services.advisor_channel_privacy import (
 from core.services.advisor_channel_privacy import system_prompt as channel_system_prompt
 from core.services.advisor_presentations import (
     graduation_presentation_from_tool_results,
+    remove_false_media_incapability,
     replacement_timetable_presentation_from_tool_results,
     timetable_presentation_from_tool_results,
 )
@@ -2009,6 +2010,101 @@ _LOWER_BOUND_MARKERS = re.compile(
     re.IGNORECASE,
 )
 
+_PLANNING_BASELINE_CURRENT_TERM_CLAIM = re.compile(
+    r"(?:\b(?<!not\s)(?:after|including|in|during|for|through)\s+"
+    r"(?:(?:your|the|this)\s+)?current\s+(?:one|term|semester)\b|"
+    r"\bcurrent\s+planning\s+baseline\b|"
+    r"(?:بعد|شامل(?:ة)?[\u064b-\u0652]*ا?|باحتساب|بما\s+(?:فيه|فيها|يشمل)|خلال|في|من)\s+"
+    r"(?:الفصل\s+الحالي|فصل(?:ي|ك|ه|ها|هم)?\s+الحالي|"
+    r"الترم\s+الحالي|ترم(?:ي|ك|ه|ها|هم)?\s+الحالي|"
+    r"هالترم|هالفصل|(?:الترم|الفصل)\s+(?:ذا|هذا))|"
+    r"(?:الأساس\s+التخطيطي|الفصل\s+المرجعي\s+للتخطيط)\s+الحالي|"
+    r"(?:\|\s*(?:\*{0,2}current\*{0,2}|\*{0,2}الحالي\*{0,2})\s*\||"
+    r"(?:term|semester|الفصل|فصل|الترم)\s*:\s*"
+    r"(?:\*{0,2}current\*{0,2}|\*{0,2}الحالي\*{0,2})))",
+    re.IGNORECASE,
+)
+
+_PLANNING_BASELINE_CURRENT_TERM_CONTRAST = re.compile(
+    r"(?:\b(?:not(?:\s+(?:in|for|during))?|different\s+from|differs\s+from|"
+    r"rather\s+than|unlike)\s+(?:(?:your|the|this)\s+)?current\s+(?:term|semester)\b|"
+    r"(?:ليس(?:ت)?(?:\s+(?:هو|هي))?(?:\s+(?:في|ضمن))?|يختلف\s+عن|"
+    r"مختلف(?:ة)?\s+عن|بدل(?:ًا|ا)?\s+من)\s+"
+    r"(?:الفصل\s+الدراسي\s+الحالي|الفصل\s+الحالي|"
+    r"فصل(?:ي|ك|ه|ها|هم)\s+الحالي|الترم\s+الحالي|"
+    r"ترم(?:ي|ك|ه|ها|هم)\s+الحالي))",
+    re.IGNORECASE,
+)
+
+_PLANNING_BASELINE_CURRENT_TERM_EQUIVALENCE = re.compile(
+    r"(?:\b(?:planning\s+baseline|baseline\s+term|forecast\s+baseline)\s+"
+    r"(?:is|equals|matches)\s+(?:the\s+same\s+as\s+)?"
+    r"(?:(?:your|the|this)\s+)?current\s+(?:term|semester)\b|"
+    r"(?:الفصل\s+المرجعي\s+للتخطيط|الفصل\s+المرجعي|أساس\s+التخطيط)\s+"
+    r"(?:هو|يساوي|يطابق|نفس)\s+(?:نفس\s+)?"
+    r"(?:الفصل\s+الدراسي\s+الحالي|الفصل\s+الحالي|"
+    r"فصل(?:ي|ك|ه|ها|هم)\s+الحالي|الترم\s+الحالي|"
+    r"ترم(?:ي|ك|ه|ها|هم)\s+الحالي))",
+    re.IGNORECASE,
+)
+
+_PLANNING_BASELINE_CURRENT_TERM_ASSIGNMENT = re.compile(
+    r"(?:\b(?:simulation|scenario|forecast|plan)\s+"
+    r"(?:treats|labels|identifies|calls|sets)\s+"
+    r"(?:(?:your|the|this)\s+)?current\s+(?:term|semester)\s+as\s+|"
+    r"(?:المحاكاة|السيناريو|التوقع|الخطة)\s+"
+    r"(?:تعتبر|تسمي|تحدد)\s+"
+    r"(?:الفصل\s+الدراسي\s+الحالي|الفصل\s+الحالي|"
+    r"فصل(?:ي|ك|ه|ها|هم)\s+الحالي|الترم\s+الحالي|"
+    r"ترم(?:ي|ك|ه|ها|هم)\s+الحالي)\s+(?:هو|كـ?))",
+    re.IGNORECASE,
+)
+
+
+def _mislabels_planning_baseline_as_current(answer: str, graduation: dict[str, Any] | None) -> bool:
+    """Whether prose promotes a simulation baseline to current-term evidence.
+
+    The selected Planner baseline may be a manually seeded expected timetable.
+    Graduation output intentionally does not claim that it is the registrar's
+    current term, so student-facing prose must use the neutral planning-baseline
+    label even when the numeric year/term happens to match today's configuration.
+    """
+    if not graduation:
+        return False
+    year = graduation.get("planning_baseline_academic_year")
+    term = graduation.get("planning_baseline_term")
+    if year is None or term is None:
+        return False
+    candidate = _PLANNING_BASELINE_CURRENT_TERM_CONTRAST.sub("", answer or "")
+    target = rf"{re.escape(str(year))}\s*/\s*{re.escape(str(term))}"
+    if re.search(
+        rf"{_PLANNING_BASELINE_CURRENT_TERM_ASSIGNMENT.pattern}\s*{target}\b",
+        candidate,
+        re.IGNORECASE,
+    ):
+        return True
+    if _PLANNING_BASELINE_CURRENT_TERM_EQUIVALENCE.search(candidate):
+        return True
+    if _PLANNING_BASELINE_CURRENT_TERM_CLAIM.search(candidate):
+        return True
+
+    # Catch direct/table labels only when they are explicitly bound to this
+    # scenario's verified planning-baseline term. This avoids broad matches such
+    # as “different from your current term” while covering common Markdown prose.
+    current_label = (
+        r"(?:current(?:\s+(?:term|semester))?|"
+        r"(?:your|the|this)\s+current\s+(?:term|semester)|"
+        r"الفصل\s+الدراسي\s+الحالي|الفصل\s+الحالي|"
+        r"فصل(?:ي|ك|ه|ها|هم)\s+الحالي|الترم\s+الحالي|"
+        r"ترم(?:ي|ك|ه|ها|هم)\s+الحالي|الحالي)"
+    )
+    direct_label = re.compile(
+        rf"(?im)(?:^|[,.،؛;:]\s+|\b(?:scenario|plan|forecast)\s*,?\s+)"
+        rf"(?:[-*]\s*)?\*{{0,2}}{current_label}\*{{0,2}}\s*"
+        rf"(?:\||[-–—:]|\b(?:is|هو)\b|\()?\s*{target}\s*\)?\b"
+    )
+    return bool(direct_label.search(candidate))
+
 
 def _graduation_revision_facts(
     answer: str, tool_results: list[dict[str, Any]]
@@ -2036,6 +2132,7 @@ def _graduation_revision_facts(
 
     candidate = answer or ""
     completed = bool(graduation.get("simulation_completed"))
+    baseline_mislabeled = _mislabels_planning_baseline_as_current(candidate, graduation)
     if completed:
         required_numbers = [graduation.get("estimated_additional_terms")]
         if graduation.get("planning_baseline_courses_assumed_passed"):
@@ -2045,7 +2142,7 @@ def _graduation_revision_facts(
             for number in required_numbers
             if number is not None and str(int(number)) not in candidate
         ]
-        if not missing_numbers:
+        if not missing_numbers and not baseline_mislabeled:
             return None
         return {
             "simulation_completed": True,
@@ -2054,6 +2151,7 @@ def _graduation_revision_facts(
                 "estimated_terms_including_planning_baseline"
             ),
             "missing_numbers": missing_numbers,
+            "mislabels_planning_baseline_as_current": baseline_mislabeled,
         }
 
     unresolved = [
@@ -2092,6 +2190,7 @@ def _graduation_revision_facts(
         and not missing_codes
         and not missing_blocker_details
         and _LOWER_BOUND_MARKERS.search(candidate)
+        and not baseline_mislabeled
     ):
         return None
     return {
@@ -2105,6 +2204,7 @@ def _graduation_revision_facts(
         "missing_codes": missing_codes,
         "missing_blocker_details": missing_blocker_details,
         "must_state_lower_bound": not bool(_LOWER_BOUND_MARKERS.search(candidate)),
+        "mislabels_planning_baseline_as_current": baseline_mislabeled,
     }
 
 
@@ -2432,6 +2532,18 @@ def _safe_graduation_answer(
         return _safe_graduation_what_if_answer(language, what_if, answer_style)
 
     has_baseline = bool(graduation.get("planning_baseline_courses_assumed_passed"))
+    baseline_year = graduation.get("planning_baseline_academic_year")
+    baseline_term = graduation.get("planning_baseline_term")
+    baseline_reference = (
+        f" ({int(baseline_year)}/{int(baseline_term)})"
+        if baseline_year is not None and baseline_term is not None
+        else ""
+    )
+    baseline_codes = [
+        str(course.get("code") or "").strip()
+        for course in graduation.get("planning_baseline_courses_assumed_passed") or []
+        if isinstance(course, dict) and str(course.get("code") or "").strip()
+    ]
     cap = int(graduation.get("max_credits_per_term") or 18)
     unresolved = [
         row
@@ -2446,7 +2558,7 @@ def _safe_graduation_answer(
             if has_baseline:
                 opening += (
                     f"، أو {int(graduation.get('estimated_terms_including_planning_baseline') or additional)} "
-                    "فصول باحتساب الفصل المرجعي للتخطيط"
+                    f"فصول باحتساب الفصل المرجعي للتخطيط{baseline_reference}"
                 )
             opening += "."
         else:
@@ -2455,7 +2567,7 @@ def _safe_graduation_answer(
             if has_baseline:
                 opening += (
                     f"، أو {int(graduation.get('lower_bound_terms_including_planning_baseline') or additional)} "
-                    "فصول باحتساب الفصل المرجعي للتخطيط"
+                    f"فصول باحتساب الفصل المرجعي للتخطيط{baseline_reference}"
                 )
             opening += "؛ لا يمكن إعطاء فصل إكمال دقيق لأن المحاكاة لم تحسم كل المتطلبات."
 
@@ -2479,9 +2591,35 @@ def _safe_graduation_answer(
                 )
             blocker_lines.append(f"- {code}: " + ("؛ ".join(reasons) or "متطلب غير محسوم"))
         blockers = "\n" + "\n".join(blocker_lines) if blocker_lines else ""
+        term_lines = []
+        for planned in graduation.get("term_plan") or []:
+            if not isinstance(planned, dict):
+                continue
+            year = planned.get("academic_year")
+            term = planned.get("term")
+            if year is None or term is None:
+                continue
+            codes = [
+                str(code).strip() for code in planned.get("course_codes") or [] if str(code).strip()
+            ]
+            term_lines.append(
+                f"- {int(year)}/{int(term)}: "
+                + ("، ".join(codes) if codes else "فصل انتظار في هذه المحاكاة")
+                + f" ({int(planned.get('credits') or 0)} ساعة)"
+            )
+        term_plan = "\nالفصول المتوقعة:\n" + "\n".join(term_lines) if term_lines else ""
+        baseline_assumption = (
+            " ويفترض اجتياز مقررات الفصل المرجعي للتخطيط: " + "، ".join(baseline_codes) + "."
+            if baseline_codes
+            else ""
+        )
         return _apply_saudi_register(
-            opening + blockers + f"\nهذا سيناريو للقراءة فقط بحد أقصى {cap} ساعة في كل فصل رئيس، "
-            "ويفترض اجتياز جميع المقررات من أول محاولة. لا يضمن الطرح المستقبلي "
+            opening
+            + blockers
+            + term_plan
+            + f"\nهذا سيناريو للقراءة فقط بحد أقصى {cap} ساعة في كل فصل رئيس،"
+            + baseline_assumption
+            + " ويفترض اجتياز جميع المقررات من أول محاولة. لا يضمن الطرح المستقبلي "
             "أو المقاعد أو أوقات الشعب أو صلاحية التسجيل، ولا يغيّر سجلك أو يسجل مقررات.",
             language,
             answer_style,
@@ -2494,7 +2632,7 @@ def _safe_graduation_answer(
             opening += (
                 ", or "
                 f"{int(graduation.get('estimated_terms_including_planning_baseline') or additional)} "
-                "terms including the planning baseline"
+                f"terms including the planning baseline{baseline_reference}"
             )
         opening += "."
     else:
@@ -2504,7 +2642,7 @@ def _safe_graduation_answer(
             opening += (
                 ", or "
                 f"{int(graduation.get('lower_bound_terms_including_planning_baseline') or additional)} "
-                "terms including the planning baseline"
+                f"terms including the planning baseline{baseline_reference}"
             )
         opening += "; no exact completion term can be given because requirements remain unresolved."
 
@@ -2528,11 +2666,36 @@ def _safe_graduation_answer(
             )
         blocker_lines.append(f"- {code}: " + ("; ".join(reasons) or "unresolved requirement"))
     blockers = "\n" + "\n".join(blocker_lines) if blocker_lines else ""
+    term_lines = []
+    for planned in graduation.get("term_plan") or []:
+        if not isinstance(planned, dict):
+            continue
+        year = planned.get("academic_year")
+        term = planned.get("term")
+        if year is None or term is None:
+            continue
+        codes = [
+            str(code).strip() for code in planned.get("course_codes") or [] if str(code).strip()
+        ]
+        term_lines.append(
+            f"- {int(year)}/{int(term)}: "
+            + (", ".join(codes) if codes else "waiting term in this simulation")
+            + f" ({int(planned.get('credits') or 0)} credits)"
+        )
+    term_plan = "\nProjected terms:\n" + "\n".join(term_lines) if term_lines else ""
+    baseline_assumption = (
+        " It assumes these planning-baseline courses pass: " + ", ".join(baseline_codes) + "."
+        if baseline_codes
+        else ""
+    )
     return (
         opening
         + blockers
+        + term_plan
         + f"\nThis read-only scenario caps each main term at {cap} credits and assumes every "
-        "course is passed on the first attempt. It cannot guarantee future offerings, seats, "
+        "course is passed on the first attempt."
+        + baseline_assumption
+        + " It cannot guarantee future offerings, seats, "
         "section times, or registration permission, and it does not change the student record."
     )
 
@@ -3170,6 +3333,8 @@ def answer_student_advisor_v2(
                             "credit-hour blocker. Keep the assumptions (first-attempt passes, "
                             "18-credit main-term cap, and no guarantee of future offerings, "
                             "seats, or registration permission). Describe only those returned "
+                            "facts. The planning baseline may be an expected timetable: call it "
+                            "the planning baseline and never the student's actual current term. "
                             "blockers: do not infer that one requires an extra term or special "
                             "arrangement, or that a course has no available time, place, "
                             "section, or offering. Call 18 credits the scenario cap, never the "
@@ -3553,6 +3718,12 @@ def answer_student_advisor_v2(
         and isinstance(row.get("what_if"), dict)
         for row in local_results
     )
+    graduation_baseline_label_corrected = any(
+        row.get("tool") == "graduation_progress"
+        and row.get("ok")
+        and _mislabels_planning_baseline_as_current(answer, row)
+        for row in local_results
+    )
     missing_required_what_if = requires_graduation_what_if and not graduation_what_if
     if missing_required_what_if:
         answer = (
@@ -3570,6 +3741,7 @@ def answer_student_advisor_v2(
     elif safe_graduation and (
         graduation_what_if
         or incomplete_graduation
+        or graduation_baseline_label_corrected
         or _graduation_revision_facts(answer, local_results)
         or _GRADUATION_UNSUPPORTED_INFERENCE.search(answer or "")
     ):
@@ -3580,6 +3752,14 @@ def answer_student_advisor_v2(
         answer = _humanise_internal_output_markers(answer, language)
         answer = _apply_saudi_register(answer, language, answer_style)
         internal_output_sanitized = True
+
+    presentation = (
+        replacement_timetable_presentation_from_tool_results(local_results)
+        or graduation_presentation_from_tool_results(local_results)
+        or timetable_presentation_from_tool_results(local_results)
+    )
+    if presentation:
+        answer = remove_false_media_incapability(answer)
 
     # Recommendation/context tools legitimately carry the approved credit-load
     # figures and their backing policy id. Convert that embedded provenance to the
@@ -3620,11 +3800,7 @@ def answer_student_advisor_v2(
         "citations": citations,
         "cited_policy_ids": cited_policy_ids,
         "missing_information": [],
-        "presentation": (
-            replacement_timetable_presentation_from_tool_results(local_results)
-            or graduation_presentation_from_tool_results(local_results)
-            or timetable_presentation_from_tool_results(local_results)
-        ),
+        "presentation": presentation,
         "agent": {
             "version": "student-v2",
             "answer_style": answer_style,
@@ -3661,6 +3837,7 @@ def answer_student_advisor_v2(
             "graduation_what_if_missing": missing_required_what_if,
             "graduation_reprompted": graduation_reprompted,
             "graduation_safe_fallback_used": graduation_safe_fallback_used,
+            "graduation_baseline_label_corrected": graduation_baseline_label_corrected,
             "policy_uncertainty_reprompted": policy_uncertainty_reprompted,
             "internal_output_reprompted": internal_output_reprompted,
             "internal_output_sanitized": internal_output_sanitized,

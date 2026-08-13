@@ -22,6 +22,7 @@ from core.services.student_advisor_v2 import (
     _explicit_comparison_year_term,
     _humanise_internal_output_markers,
     _internal_output_markers,
+    _mislabels_planning_baseline_as_current,
     _misstates_variant_omission,
     _normalise_course_comparison_args,
     _normalise_feasible_replacement_args,
@@ -35,6 +36,7 @@ from core.services.student_advisor_v2 import (
     _requires_section_check,
     _requires_timetable_proposal,
     _safe_course_comparison_answer,
+    _safe_graduation_answer,
     _section_answer_contradicts_evidence,
     _speculates_about_empty_recommendations,
     answer_student_advisor,
@@ -990,6 +992,287 @@ def _incomplete_graduation_result() -> dict[str, Any]:
             },
         ],
     }
+
+
+def _complete_graduation_result() -> dict[str, Any]:
+    return {
+        "tool": "graduation_progress",
+        "ok": True,
+        "planning_baseline_academic_year": 1448,
+        "planning_baseline_term": 1,
+        "simulation_completed": True,
+        "estimated_additional_terms": 5,
+        "estimated_terms_including_planning_baseline": 6,
+        "max_credits_per_term": 18,
+        "planning_baseline_courses_assumed_passed": [
+            {"code": "DS321", "credits": 3},
+            {"code": "DS341", "credits": 3},
+        ],
+        "term_plan": [
+            {
+                "sequence": 1,
+                "academic_year": 1448,
+                "term": 2,
+                "course_codes": ["DS331", "MATH204"],
+                "credits": 7,
+            },
+            {
+                "sequence": 2,
+                "academic_year": 1449,
+                "term": 1,
+                "course_codes": ["CS211"],
+                "credits": 4,
+            },
+        ],
+        "unresolved_requirements": [],
+    }
+
+
+@pytest.mark.parametrize(
+    ("language", "unsafe", "required", "forbidden"),
+    [
+        (
+            "English",
+            "You have 5 terms after the expected plan, or 6 including the current one.",
+            "planning baseline (1448/1)",
+            ("current one",),
+        ),
+        (
+            "Arabic",
+            "باقي 5 فصول بعد الفصل الحالي، أو 6 فصول شاملة فصلك الحالي.",
+            "الفصل المرجعي للتخطيط (1448/1)",
+            ("الفصل الحالي", "فصلك الحالي"),
+        ),
+    ],
+)
+def test_complete_graduation_answer_cannot_call_planning_baseline_current(
+    monkeypatch, language, unsafe, required, forbidden
+):
+    graduation = _complete_graduation_result()
+    monkeypatch.setattr(
+        "core.services.student_advisor_v2.execute_student_v2_tool",
+        lambda name, arguments, **kwargs: graduation,
+    )
+    client = FakeClient(
+        _tool_turn("graduation_progress", {}),
+        _answer_turn(unsafe),
+        _answer_turn(unsafe),
+    )
+
+    result = answer_student_advisor_v2(
+        question=(
+            "كم فصل متبقي لي حتى التخرج؟"
+            if language == "Arabic"
+            else "How many terms do I have left until graduation?"
+        ),
+        principal=_principal(),
+        academic_year=1448,
+        term=1,
+        llm_client=client,
+    )
+
+    assert required in result["answer"]
+    assert all(text not in result["answer"] for text in forbidden)
+    assert "DS321" in result["answer"]
+    assert "DS341" in result["answer"]
+    assert "1448/2" in result["answer"]
+    assert "DS331" in result["answer"]
+    assert "1449/1" in result["answer"]
+    assert result["agent"]["graduation_reprompted"] is True
+    assert result["agent"]["graduation_safe_fallback_used"] is True
+    assert result["agent"]["graduation_baseline_label_corrected"] is True
+
+
+def test_graduation_current_wording_guard_ignores_unrelated_current_fact():
+    graduation = _complete_graduation_result()
+
+    assert (
+        _mislabels_planning_baseline_as_current(
+            "The student currently has 86 earned credits; the planning baseline has 6 credits.",
+            graduation,
+        )
+        is False
+    )
+    assert "planning baseline (1448/1)" in _safe_graduation_answer("English", [graduation])
+
+    assert (
+        _mislabels_planning_baseline_as_current(
+            "The planning baseline is not your current term.", graduation
+        )
+        is False
+    )
+
+
+@pytest.mark.parametrize(
+    "unsafe",
+    [
+        "| **Current** | 1448/1 | DS321 |",
+        "| **الحالي** | 1448/1 | DS321 |",
+        "**Current** — 1448/1",
+        "Current | 1448/1",
+        "**الحالي** — 1448/1",
+        "الحالي | 1448/1",
+        "Your current term is 1448/1.",
+        "According to the scenario, your current term is 1448/1.",
+        "For this scenario, the current term is 1448/1.",
+        "In this plan, your current term is 1448/1.",
+        "The simulation treats your current semester as 1448/1.",
+        "حسب السيناريو، ترمك الحالي هو 1448/1.",
+        "The current semester (1448/1) includes DS321.",
+        "الفصل الدراسي الحالي هو 1448/1.",
+        "الفصل الدراسي الحالي 1448/1 يشمل DS321.",
+        "ترمك الحالي: 1448/1.",
+        "The planning baseline is your current term.",
+        "The planning baseline is the same as your current semester.",
+        "The forecast starts after the current planning baseline.",
+        "الفصل المرجعي للتخطيط هو الفصل الحالي.",
+        "الفصل المرجعي للتخطيط نفس الترم الحالي.",
+        "باقي 5 فصول بعد الأساس التخطيطي الحالي، أو 6 فصول بما فيها الفصل الحالي.",
+        "المجموع باحتساب هالترم 6 فصول.",
+        "المجموع شاملًا هالفصل 6 فصول.",
+        "المجموع بعد الترم ذا 5 فصول.",
+        "المجموع بعد الفصل هذا 5 فصول.",
+        "المجموع بعد فصلي الحالي 5 فصول.",
+    ],
+)
+def test_planning_baseline_guard_covers_standalone_and_saudi_current_labels(unsafe):
+    graduation = {
+        **_complete_graduation_result(),
+        "planning_baseline_courses_assumed_passed": [],
+    }
+
+    assert _mislabels_planning_baseline_as_current(unsafe, graduation) is True
+
+
+@pytest.mark.parametrize(
+    "safe",
+    [
+        "The planning baseline differs from your current term.",
+        "Use the planning baseline rather than your current term.",
+        "The planning baseline is unlike the current semester.",
+        "الفصل المرجعي للتخطيط يختلف عن فصلك الحالي.",
+        "الفصل المرجعي للتخطيط ليس هو الترم الحالي.",
+        "The planning baseline is not in the current term.",
+        "This forecast is not for the current semester.",
+        "The estimate is not after the current term.",
+        "The estimate is not including the current term.",
+        "الفصل المرجعي للتخطيط ليس في الفصل الحالي.",
+    ],
+)
+def test_planning_baseline_guard_preserves_explicit_contrasts(safe):
+    assert _mislabels_planning_baseline_as_current(safe, _complete_graduation_result()) is False
+
+
+@pytest.mark.parametrize(
+    ("answer", "forbidden"),
+    [
+        (
+            "The forecast is ready. I cannot generate or send images; see the plan below.\n\nPlan.",
+            "cannot generate or send images",
+        ),
+        (
+            "الخطة جاهزة. لا يمكنني إنشاء أو إرسال صور؛ شوف التفاصيل تحت.\n\nالتفاصيل.",
+            "لا يمكنني إنشاء أو إرسال صور",
+        ),
+    ],
+)
+def test_structured_presentation_removes_false_model_media_claim(answer, forbidden):
+    from core.services.advisor_presentations import remove_false_media_incapability
+
+    cleaned = remove_false_media_incapability(answer)
+
+    assert forbidden not in cleaned
+    assert "Plan." in cleaned or "التفاصيل." in cleaned
+
+
+@pytest.mark.parametrize(
+    ("answer", "required"),
+    [
+        (
+            "I cannot send an image, but the verified plan estimates 6 terms including the planning baseline.",
+            "verified plan estimates 6 terms",
+        ),
+        (
+            "لا يمكنني إرسال صور، لكن الخطة الموثوقة تقدر 6 فصول باحتساب الأساس التخطيطي.",
+            "الخطة الموثوقة تقدر 6 فصول",
+        ),
+    ],
+)
+def test_media_cleanup_preserves_same_line_planning_facts(answer, required):
+    from core.services.advisor_presentations import remove_false_media_incapability
+
+    cleaned = remove_false_media_incapability(answer)
+
+    assert required in cleaned
+    assert cleaned
+
+
+@pytest.mark.parametrize(
+    ("answer", "replacement"),
+    [
+        ("I cannot send an image.", "structured view"),
+        ("ما أقدر أرسل لك صورة.", "العرض المنظم"),
+    ],
+)
+def test_media_cleanup_replaces_a_claim_only_answer_with_coherent_text(answer, replacement):
+    from core.services.advisor_presentations import remove_false_media_incapability
+
+    cleaned = remove_false_media_incapability(answer)
+
+    assert cleaned
+    assert replacement in cleaned
+    assert answer not in cleaned
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [
+        "I cannot send an image containing grades; open the authenticated record.",
+        "I cannot provide a transcript image; use the authenticated portal.",
+        "I cannot send an image of your CGPA; use the authenticated portal.",
+        "I cannot send an image of your academic standing; use the authenticated portal.",
+        "I cannot send an image showing a failed-course result; use the authenticated portal.",
+        "لا يمكنني إرسال صورة تحتوي درجات؛ افتح السجل الموثق.",
+        "ما أقدر أرسل لك صورة كشف الدرجات؛ افتح البوابة الموثقة.",
+        "ما أقدر أرسل لك صورة الإنذار الأكاديمي؛ افتح البوابة الموثقة.",
+    ],
+)
+def test_media_cleanup_preserves_protected_record_image_refusals(answer):
+    from core.services.advisor_presentations import remove_false_media_incapability
+
+    assert remove_false_media_incapability(answer) == answer
+
+
+@pytest.mark.parametrize(
+    ("answer", "required"),
+    [
+        (
+            "I can’t directly generate, send, or display an image, but the plan has 6 terms.",
+            "the plan has 6 terms",
+        ),
+        ("I'm unable to send an image, but the plan has 6 terms.", "the plan has 6 terms"),
+        ("I am not able to send you an image, but the plan has 6 terms.", "the plan has 6 terms"),
+        ("I cannot send a timetable image, but the plan has 6 terms.", "the plan has 6 terms"),
+        (
+            "I cannot send a graduation-plan image, but the plan has 6 terms.",
+            "the plan has 6 terms",
+        ),
+        ("I cannot send the image, but the plan has 6 terms.", "the plan has 6 terms"),
+        ("I cannot send this image, but the plan has 6 terms.", "the plan has 6 terms"),
+        ("I cannot send images to you, but the plan has 6 terms.", "the plan has 6 terms"),
+        ("I cannot send an image here, but the plan has 6 terms.", "the plan has 6 terms"),
+        ("مو قادر ارسل لك صورة، لكن الخطة فيها 6 فصول.", "الخطة فيها 6 فصول"),
+        ("لا أقدر ارسل لك صورة؛ الخطة فيها 6 فصول.", "الخطة فيها 6 فصول"),
+    ],
+)
+def test_media_cleanup_handles_common_model_and_saudi_forms(answer, required):
+    from core.services.advisor_presentations import remove_false_media_incapability
+
+    cleaned = remove_false_media_incapability(answer)
+
+    assert required in cleaned
+    assert cleaned != answer
+    assert not cleaned.startswith(("but", "however", "لكن", "،", "because"))
 
 
 def _complete_lower_bound_answer() -> str:

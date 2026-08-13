@@ -45,13 +45,17 @@ from core.services.advisor_channel_privacy import (
     TELEGRAM_UNVALIDATED_PROFILE,
     TELEGRAM_WITHHELD_PROFILE,
 )
+from core.services.advisor_presentations import (
+    normalise_presentation,
+    remove_false_media_incapability,
+)
 from core.services.advisor_principal import AdvisorPrincipal, IdentityError
 from core.services.rbac import ROLE_STUDENT
 
 from . import linking, messages
 from .formatting import render_answer
 from .models import TelegramLink, TelegramUpdateReceipt
-from .transport import send_photo, send_text
+from .transport import delivery_succeeded, send_photo, send_text
 
 logger = logging.getLogger(__name__)
 
@@ -799,41 +803,37 @@ def answer_question(*, link_id: Any, update_id: int, question: str, server_port:
         question=question,
     )
 
-    # The picture FIRST, then the words. A student scrolling a phone should meet
-    # the timetable and then read the caveats about it — and the caveats travel as
-    # their own message, never as a caption, because Telegram caps a caption at
-    # 1024 characters and silently truncating a disclaimer is the one failure this
-    # channel must not have.
-    #
-    # Every failure here is silent by design: `_send_card_image` returns nothing
-    # rather than raising, so a missing Chromium or a slow render costs the
-    # picture and never the answer.
+    rendered = _render_outcome(result, question=question)
+    if output_withheld:
+        rendered = [messages.sensitive_record_web_only(_web_url(conversation.pk))]
+    text_delivered = True
+    for text in rendered:
+        # To the link's OWN chat, never to the id carried in the payload that
+        # triggered this: the payload is attacker-controlled input and the link row
+        # is the verified fact.
+        text_delivered = (
+            delivery_succeeded(send_text(chat_id=chat_id, text=text)) and text_delivered
+        )
+
+    # Text is the validated product and always goes first. Media is an optional
+    # enhancement, never a prerequisite for receiving the caveats and planning
+    # result. Keep this dormant direct path consistent with the durable worker.
     try:
-        if not output_withheld:
+        if (
+            not output_withheld
+            and text_delivered
+            and linking.active_link_by_id(link_id) is not None
+        ):
             _send_card_image(
                 result,
                 chat_id,
+                link_id=link_id,
                 server_port=server_port,
                 student_id=principal.student_id,
                 question=question,
             )
     except Exception:  # noqa: BLE001
-        # The picture is a courtesy; the answer is the product. Without this guard
-        # a raise here left the student with the acknowledgement and then silence
-        # for ever — the answer generated, validated and stored, the webhook
-        # already 200'd so Telegram never redelivers, and the exception swallowed
-        # by the background runner. The docstring below used to assert this could
-        # not happen; nothing enforced it.
-        logger.warning("telegram: card image phase failed; sending text only")
-
-    rendered = _render_outcome(result, question=question)
-    if output_withheld:
-        rendered = [messages.sensitive_record_web_only(_web_url(conversation.pk))]
-    for text in rendered:
-        # To the link's OWN chat, never to the id carried in the payload that
-        # triggered this: the payload is attacker-controlled input and the link row
-        # is the verified fact.
-        send_text(chat_id=chat_id, text=text)
+        logger.warning("telegram: card image phase failed; text was already delivered")
 
 
 def _finalize_telegram_output(
@@ -899,6 +899,7 @@ def _send_card_image(
     result: advisor_turn.TurnResult,
     chat_id: int,
     *,
+    link_id: Any | None = None,
     server_port: str = "",
     student_id: int | None = None,
     question: str = "",
@@ -953,6 +954,9 @@ def _send_card_image(
             # Already logged by the renderer. Stop rather than press on: if one
             # render failed the next will too, and the text below still carries
             # the link to the web screen, which is what shipped before images.
+            return
+        if link_id is not None and linking.active_link_by_id(link_id) is None:
+            logger.info("telegram: link revoked during card rendering; dropping media")
             return
         send_photo(chat_id=chat_id, png=png)
 
@@ -1142,14 +1146,20 @@ def _render_outcome(
     source_question = question or (
         result.student_message.content if result.student_message is not None else ""
     )
+    has_presentation = bool(normalise_presentation(assistant.presentation))
+    answer = (
+        remove_false_media_incapability(assistant.content)
+        if has_presentation
+        else assistant.content
+    )
     return render_answer(
-        answer=assistant.content,
+        answer=answer,
         citations=list(assistant.citations.all()),
         web_url=_web_url(assistant.conversation_id),
         # The web chat draws a structured timetable card and the adviser's prompt
         # keeps its prose short because of it. Rather than rebuild that card out of
         # chat messages, point at the screen that already draws it.
-        has_presentation=bool(assistant.presentation),
+        has_presentation=has_presentation,
         language=_answer_language(source_question),
     )
 

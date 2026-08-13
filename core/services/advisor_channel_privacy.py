@@ -37,6 +37,9 @@ Telegram channel data rule:
   one of those exact personal results, direct the student to the authenticated web adviser.
 - Continue answering planning, prerequisites, recommendations, timetable, graduation
   scenarios, adviser-contact, and general policy questions from the available evidence.
+- Timetable and graduation-plan images are a transport feature handled after the validated
+  answer. Never claim that you cannot generate, send, or display an image; explain the
+  planning result in text and let the channel attach any enabled image separately.
 """
 
 # These capabilities expose a transcript-like per-course status surface. Other

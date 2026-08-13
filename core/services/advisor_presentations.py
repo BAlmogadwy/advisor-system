@@ -9,6 +9,7 @@ database ids, model traces, seat counts, or internal reason codes.
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 KIND_TIMETABLE = "timetable_proposals"
@@ -20,6 +21,69 @@ _MAX_GRAPH_NODES = 160
 _MAX_GRAPH_EDGES = 360
 _MAX_UNRESOLVED = 80
 _MAX_SIMULATED_TERMS = 18
+
+_FALSE_MEDIA_INCAPABILITY = re.compile(
+    r"(?:\b(?:I|we)(?:\s+can(?:not|['’]t)|\s+(?:am|are)\s+(?:not\s+able|unable)\s+to|"
+    r"['’]m\s+(?:not\s+able|unable)\s+to)\s+"
+    r"(?:directly\s+)?(?:generate|send|create|display|attach|provide)"
+    r"(?:(?:\s*,\s*(?:(?:or|and)\s+)?|\s+(?:or|and)\s+)(?:directly\s+)?"
+    r"(?:generate|send|create|display|attach|provide))*\s+"
+    r"(?:(?:to\s+)?(?:you|the\s+student)\s+)?(?:an?|the|this)?\s*"
+    r"(?:(?:timetable|graduation[-\s]+plan)\s+)?(?:image|photo|map|picture)s?\b|"
+    r"(?:لا\s+أستطيع|ما\s+أقدر|لا\s+أقدر|ماني\s+قادر|مو\s+قادر|لا\s+يمكنني)\s+"
+    r"(?:إنشاء|أنشئ|اسوي|أسوي|إرسال|ارسل|أرسل|عرض|أعرض|إرفاق|ارفق|أرفق)"
+    r"(?:\s+أو\s+(?:إنشاء|أنشئ|أسوي|إرسال|أرسل|عرض|أعرض|إرفاق|أرفق))*"
+    r"(?:\s+(?:لك|لكم))?\s+"
+    r"(?:صورة|صور|خريطة|خرائط|مخطط))"
+    r"(?:\s+(?:of|containing|with|showing)\s+[^,;،؛.!?؟\n]*)?"
+    r"(?:\s+(?:to\s+you|here|in\s+(?:this|the)\s+(?:chat|channel)))?"
+    r"(?:\s+(?:because|due\s+to)\s+[^,;،؛.!?؟\n]*)?"
+    r"(?:\s*[,;،؛]\s*(?:but|however|لكن)\s+|\s*[.;،؛!?؟]\s*)?",
+    re.IGNORECASE,
+)
+
+_PROTECTED_MEDIA_CONTEXT = re.compile(
+    r"(?:\b(?:grade|mark|transcript|gpa|cgpa|score|failed[-\s]+course|"
+    r"course[-\s]+result|academic\s+(?:record|standing)|probation|warning)s?\b|"
+    r"(?:درجة|درجات|علامة|علامات|نتيجة|نتائج|كشف\s+الدرجات|"
+    r"السجل\s+الأكاديمي|الحالة\s+الأكاديمية|الوضع\s+الأكاديمي|"
+    r"المعدل(?:\s+التراكمي)?|رسوب|راسب|إنذار|تحذير))",
+    re.IGNORECASE,
+)
+
+
+def remove_false_media_incapability(text: str) -> str:
+    """Remove model claims contradicted by a structured presentation renderer."""
+    original = str(text or "")
+
+    def remove_claim(match: re.Match[str]) -> str:
+        # A valid timetable/graduation card disproves a generic media incapability
+        # claim, but it does not authorize grade, transcript, GPA, or other
+        # protected-record imagery. Preserve those refusals verbatim.
+        refusal = re.split(
+            r"[,،;؛]\s*(?:(?:but|however|لكن)\b)?",
+            original[match.start() :],
+            maxsplit=1,
+            flags=re.IGNORECASE,
+        )[0]
+        if _PROTECTED_MEDIA_CONTEXT.search(refusal):
+            return match.group(0)
+        return ""
+
+    cleaned = _FALSE_MEDIA_INCAPABILITY.sub(remove_claim, original)
+    cleaned = re.sub(r"[ \t]+(?=\n)", "", cleaned)
+    cleaned = re.sub(r"[ \t]{2,}", " ", cleaned)
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned).strip(" \t,;،؛")
+    if cleaned:
+        return cleaned
+
+    # Never let transport cleanup turn a complete answer into an empty one, and
+    # do not restore the false claim just to avoid silence. This neutral sentence
+    # is true for every accepted structured presentation even when optional
+    # Telegram media is disabled or later fails to render.
+    if re.search(r"[\u0600-\u06ff]", original):
+        return "تفاصيل الخطة موضحة في العرض المنظم."
+    return "The plan details are shown in the structured view."
 
 
 def _text(value: Any, limit: int = 240) -> str:
