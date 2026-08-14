@@ -774,12 +774,12 @@ uses the per-job text fallback described in §6.
       and, if enabled, graduation-map course states, prerequisite links, scenario
       changes and unresolved requirements; plus Telegram retention/forwarding and
       that unlink cannot retract sent media
-- [ ] `TELEGRAM_SEND_TIMETABLE_IMAGES=true` is set on `advisor-system`; Blueprint
-      synced so the worker inherits it. Leave `TELEGRAM_INTERNAL_BASE_URL` empty
-      in production so rendering uses the worker-local origin
-- [ ] If graduation-map export was separately approved,
-      `TELEGRAM_SEND_GRADUATION_IMAGES=true` is set and inherited; otherwise it
-      remains false even when timetable images are on
+- [ ] Initial production rollout is text-only:
+      `TELEGRAM_SEND_TIMETABLE_IMAGES=false` and
+      `TELEGRAM_SEND_GRADUATION_IMAGES=false` are set on `advisor-system` and
+      inherited by the worker. Leave `TELEGRAM_INTERNAL_BASE_URL` empty. Enable
+      either image switch only in a separately reviewed rollout after the worker
+      runtime passes the Chromium/Playwright preflight.
 - [ ] `TELEGRAM_ADVISOR_ENABLED=true` set on `advisor-system`; Blueprint synced so
       the worker inherits it, and both services restarted
 - [ ] `python manage.py telegram_webhook --set` completed
@@ -788,8 +788,8 @@ uses the per-job text fallback described in §6.
 - [ ] BotFather privacy mode **enabled**, join-groups **disabled**
 - [ ] Daily Render retention cron includes `purge_telegram_tokens --apply`
 - [ ] Smoke test with a test bot and a test student (§10)
-- [ ] Timetable image smoke test passes for one option and for several alternatives;
-      the complete, untruncated text and web link arrive before the image(s)
+- [ ] Text-only smoke test returns the complete, untruncated answer and sends no
+      photo. Image ordering tests belong to the separately approved image rollout.
 
 ## 10. Rollback / disable
 
@@ -797,6 +797,13 @@ uses the per-job text fallback described in §6.
 service, restart it, and suspend `advisor-telegram-worker`. The webhook then
 answers 404 and no queued answer is delivered. Queued rows remain durable for a
 controlled recovery; do not purge them as part of rollback.
+
+For a broader adviser/provider rollback, also set
+`STUDENT_ADVISOR_V2_ENABLED=false` and
+`ALIBABA_LLM_ALLOW_LIVE_REQUESTS=false`. Do **not** sync the Blueprint after an
+emergency dashboard disable: the checked-in rollout contract enables these three
+switches and a sync would turn them back on. Revert the switches in `render.yaml`
+and its contract tests first, merge that rollback, and only then sync again.
 
 **Stop Telegram calling at all:**
 
