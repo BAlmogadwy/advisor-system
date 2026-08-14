@@ -722,10 +722,14 @@ worker for predictable ordering and capacity; the database claims remain the
 correctness boundary if a replacement overlaps briefly during a deploy.
 
 `advisor-system` is the single source of truth for the Telegram token/public
-origin/link TTL/API timeout/image switch and every selected `LLM_*`,
-`VIRTUAL_ADVISOR_*`, and `STUDENT_ADVISOR_V2_*` value. `render.yaml` copies those
-values into the worker with `fromService`; do not create an independently editable
-worker copy. Render ignores newly added `sync: false` variables when updating an
+origin/link TTL/API timeout/image switch and selected `LLM_*`,
+`VIRTUAL_ADVISOR_*`, and `STUDENT_ADVISOR_V2_*` values. `render.yaml` copies the
+non-empty runtime values into the worker with `fromService`; do not create an
+independently editable worker copy. The optional empty `TELEGRAM_INTERNAL_BASE_URL`
+and `LOCAL_LLM_MODEL` are deliberately omitted from the worker because Render
+cannot resolve blank cross-service values; Django's empty defaults preserve the
+worker's loopback renderer and disabled local-model behavior. Render ignores newly
+added `sync: false` variables when updating an
 existing Blueprint, so populate and verify every declared value on
 `advisor-system` before that sync. Set either image flag to true only after its
 disclosure and image smoke tests in §§9–11 are in place.
@@ -758,8 +762,9 @@ uses the per-job text fallback described in §6.
       env (`sync: false`), **not** in the repo
 - [ ] `TELEGRAM_BOT_TOKEN` set in Render env, never committed
 - [ ] `TELEGRAM_PUBLIC_BASE_URL` is the real **https://** origin
-- [ ] All worker-consumed Telegram/adviser variables are populated on
-      `advisor-system`; the worker receives them through `fromService`
+- [ ] All non-empty worker-consumed Telegram/adviser variables are populated on
+      `advisor-system`; the worker receives them through `fromService`. The two
+      documented optional empty values remain absent from the worker.
 - [ ] Unscoped `manage.py migrate` applied (`core.0062` and
       `telegram_gateway.0001`–`0003` all present)
 - [ ] Any pre-`0003` active links have been revoked by the migration and are

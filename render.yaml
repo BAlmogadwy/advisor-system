@@ -152,8 +152,9 @@ services:
 
   # Telegram updates are acknowledged by the web service only after their work
   # is committed to PostgreSQL. This continuously running process leases and
-  # drains that durable queue. Every setting it consumes is copied from
-  # advisor-system below; the worker has no independently editable provider copy.
+  # drains that durable queue. Runtime values are copied from advisor-system
+  # below; optional blank TELEGRAM_INTERNAL_BASE_URL and LOCAL_LLM_MODEL are
+  # deliberately omitted because Render cannot inherit an empty value.
   - type: worker
     name: advisor-telegram-worker
     runtime: python
