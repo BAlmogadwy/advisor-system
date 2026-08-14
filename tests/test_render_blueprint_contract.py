@@ -204,19 +204,23 @@ def test_contract_requires_disabled_worker_standby(blueprint: Blueprint) -> None
     assert any("no-lease standby" in error for error in errors)
 
 
-def test_contract_keeps_public_channels_and_llm_egress_off(blueprint: Blueprint) -> None:
+def test_contract_requires_reviewed_live_rollout_and_keeps_images_off(
+    blueprint: Blueprint,
+) -> None:
     changed = deepcopy(blueprint)
     web = _service(changed, "advisor-system")
     env = {entry["key"]: entry for entry in web["envVars"]}
-    env["TELEGRAM_ADVISOR_ENABLED"]["value"] = "true"
+    env["TELEGRAM_ADVISOR_ENABLED"]["value"] = "false"
     env["TELEGRAM_SEND_TIMETABLE_IMAGES"]["value"] = "true"
-    env["ALIBABA_LLM_ALLOW_LIVE_REQUESTS"]["value"] = "true"
+    env["ALIBABA_LLM_ALLOW_LIVE_REQUESTS"]["value"] = "false"
+    env["STUDENT_ADVISOR_V2_ENABLED"]["value"] = "false"
 
     errors = validate_blueprint(changed, project_root=PROJECT_ROOT)
 
     assert any("TELEGRAM_ADVISOR_ENABLED" in error for error in errors)
     assert any("TELEGRAM_SEND_TIMETABLE_IMAGES" in error for error in errors)
     assert any("ALIBABA_LLM_ALLOW_LIVE_REQUESTS" in error for error in errors)
+    assert any("STUDENT_ADVISOR_V2_ENABLED" in error for error in errors)
 
 
 def test_contract_allows_sync_false_only_for_reviewed_secrets(blueprint: Blueprint) -> None:
