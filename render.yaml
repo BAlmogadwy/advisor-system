@@ -82,7 +82,7 @@ services:
       - key: TELEGRAM_WEBHOOK_SECRET
         sync: false
       - key: TELEGRAM_ADVISOR_ENABLED
-        value: "false"
+        value: "true"
       - key: TELEGRAM_PUBLIC_BASE_URL
         value: https://advisor-system-v9zs.onrender.com
       - key: TELEGRAM_LINK_TOKEN_TTL_SECONDS
@@ -128,7 +128,7 @@ services:
       - key: ALIBABA_LLM_MAX_RETRIES
         value: "2"
       - key: ALIBABA_LLM_ALLOW_LIVE_REQUESTS
-        value: "false"
+        value: "true"
       - key: VIRTUAL_ADVISOR_AGENT_LOOP_ENABLED
         value: "false"
       - key: VIRTUAL_ADVISOR_MAX_TOOL_ITERATIONS
@@ -140,7 +140,7 @@ services:
       - key: VIRTUAL_ADVISOR_TOOL_TURN_TIMEOUT_SECONDS
         value: "75"
       - key: STUDENT_ADVISOR_V2_ENABLED
-        value: "false"
+        value: "true"
       - key: STUDENT_ADVISOR_V2_MAX_TOOL_ITERATIONS
         value: "4"
       - key: STUDENT_ADVISOR_V2_MAX_TOOL_CALLS
