@@ -1,0 +1,766 @@
+# mypy: disable-error-code="no-untyped-def,arg-type"
+
+from __future__ import annotations
+
+import gzip
+import hashlib
+import json
+import os
+import sqlite3
+from contextlib import contextmanager
+from datetime import UTC, datetime
+from io import StringIO
+from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
+from django.core.management import call_command
+from django.core.management.base import CommandError
+from django.db import connection, connections
+from django.db.backends.sqlite3.base import DatabaseWrapper as SQLiteDatabaseWrapper
+from django.db.migrations.recorder import MigrationRecorder
+
+from core.management.commands import import_release_seed
+from core.management.commands.export_release_seed import (
+    canonical_content_sha256,
+    sign_manifest,
+)
+from core.management.commands.import_release_seed import (
+    CONFIRMATION_VALUE,
+    KILL_SWITCH_ENV,
+    KILL_SWITCH_VALUE,
+)
+from core.models import AuditLog, Course, Instructor, Student, StudentCourse
+
+pytestmark = pytest.mark.django_db(transaction=True)
+
+
+@pytest.fixture(autouse=True)
+def _strong_release_signing_key(monkeypatch):
+    monkeypatch.setenv(
+        "RELEASE_SEED_SIGNING_KEY",
+        "9c4785723dc524554acd065e559452245d0ef08ee24d774ba1c93c15e1fb5db8",
+    )
+
+
+def _source_records() -> tuple[Student, Course]:
+    student = Student.objects.create(
+        student_id=700001,
+        name="Seed Student",
+        program="AI",
+    )
+    course = Course.objects.create(
+        course_code="AI101",
+        description="Introduction",
+        credit_hours=3,
+    )
+    StudentCourse.objects.create(student=student, course=course, status="studying")
+    return student, course
+
+
+def _export(tmp_path: Path) -> tuple[Path, Path]:
+    snapshot = tmp_path / "frozen-release-source.sqlite3"
+    snapshot.unlink(missing_ok=True)
+    connection.ensure_connection()
+    with sqlite3.connect(snapshot) as destination:
+        connection.connection.backup(destination)
+    fixture = tmp_path / "release-seed.json.gz"
+    call_command(
+        "export_release_seed",
+        str(fixture),
+        "--sqlite-frozen-copy",
+        str(snapshot),
+        stdout=StringIO(),
+    )
+    manifest = tmp_path / "release-seed.manifest.json"
+    return fixture, manifest
+
+
+@contextmanager
+def _sqlite_rehearsal_target(path: Path):
+    alias = "release_seed_import_rehearsal"
+    path.unlink(missing_ok=True)
+    connection.ensure_connection()
+    with sqlite3.connect(path) as destination:
+        connection.connection.backup(destination)
+
+    database = dict(connection.settings_dict)
+    database.update({"NAME": str(path.resolve()), "OPTIONS": {}})
+    wrapper = SQLiteDatabaseWrapper(database, alias=alias)
+    wrapper.ensure_connection()
+    connections.databases[alias] = database
+    setattr(connections._connections, alias, wrapper)  # type: ignore[attr-defined]
+    try:
+        yield alias
+    finally:
+        wrapper.close()
+        connections.databases.pop(alias, None)
+        try:
+            delattr(connections._connections, alias)  # type: ignore[attr-defined]
+        except AttributeError:
+            pass
+
+
+def _replace(
+    fixture: Path,
+    manifest: Path,
+    *,
+    confirmation: str = CONFIRMATION_VALUE,
+    allow_sqlite: bool = True,
+    database: str,
+) -> str:
+    args = [
+        "import_release_seed",
+        str(fixture),
+        "--manifest",
+        str(manifest),
+        "--confirm-replace-target-database",
+        confirmation,
+        "--database",
+        database,
+    ]
+    if allow_sqlite:
+        args.append("--allow-sqlite-rehearsal")
+    stdout = StringIO()
+    call_command(*args, stdout=stdout)
+    return stdout.getvalue()
+
+
+def _target_sentinel() -> Student:
+    Student.objects.all().delete()
+    Course.objects.all().delete()
+    target = Student.objects.create(student_id=799999, name="Target Sentinel", program="DS")
+    AuditLog.objects.create(ts_utc="2026-01-01T00:00:00Z", action="target-sentinel")
+    return target
+
+
+def _rewrite_manifest(path: Path, update, *, resign: bool = True) -> None:
+    manifest = json.loads(path.read_text(encoding="utf-8"))
+    update(manifest)
+    if resign:
+        sign_manifest(manifest)
+    path.write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+
+def _rewrite_fixture(
+    path: Path,
+    manifest_path: Path,
+    update,
+    *,
+    resign: bool = True,
+    recompute_content: bool = True,
+) -> None:
+    records = json.loads(gzip.decompress(path.read_bytes()).decode("utf-8"))
+    update(records)
+    payload = gzip.compress(
+        (json.dumps(records, ensure_ascii=False, indent=2) + "\n").encode("utf-8"),
+        compresslevel=9,
+        mtime=0,
+    )
+    path.write_bytes(payload)
+
+    def update_manifest(manifest):
+        manifest["fixture"]["size_bytes"] = len(payload)
+        manifest["fixture"]["sha256"] = hashlib.sha256(payload).hexdigest()
+        if recompute_content:
+            manifest["fixture"]["canonical_content_sha256"] = canonical_content_sha256(records)
+
+    _rewrite_manifest(manifest_path, update_manifest, resign=resign)
+
+
+def test_bad_confirmation_and_disabled_kill_switch_make_no_writes(tmp_path, monkeypatch):
+    _source_records()
+    fixture, manifest = _export(tmp_path)
+    target = _target_sentinel()
+    monkeypatch.setenv(KILL_SWITCH_ENV, KILL_SWITCH_VALUE)
+
+    with _sqlite_rehearsal_target(tmp_path / "target.sqlite3") as alias:
+        with pytest.raises(CommandError, match="exact destructive confirmation"):
+            _replace(fixture, manifest, confirmation="yes", database=alias)
+        assert Student.objects.using(alias).filter(pk=target.pk).exists()
+        assert AuditLog.objects.using(alias).filter(action="target-sentinel").exists()
+
+        monkeypatch.delenv(KILL_SWITCH_ENV)
+        with pytest.raises(CommandError, match="kill-switch"):
+            _replace(fixture, manifest, database=alias)
+        assert Student.objects.using(alias).filter(pk=target.pk).exists()
+        assert AuditLog.objects.using(alias).filter(action="target-sentinel").exists()
+
+
+def test_sqlite_requires_explicit_rehearsal_flag(tmp_path, monkeypatch):
+    _source_records()
+    fixture, manifest = _export(tmp_path)
+    target = _target_sentinel()
+    monkeypatch.setenv(KILL_SWITCH_ENV, KILL_SWITCH_VALUE)
+
+    with _sqlite_rehearsal_target(tmp_path / "target.sqlite3") as alias:
+        with pytest.raises(CommandError, match="SQLite is allowed only"):
+            _replace(fixture, manifest, allow_sqlite=False, database=alias)
+        assert Student.objects.using(alias).filter(pk=target.pk).exists()
+
+
+def test_sqlite_rehearsal_unconditionally_rejects_live_default_database(tmp_path, monkeypatch):
+    _source_records()
+    fixture, manifest = _export(tmp_path)
+    target = _target_sentinel()
+    monkeypatch.setenv(KILL_SWITCH_ENV, KILL_SWITCH_VALUE)
+
+    with pytest.raises(CommandError, match="non-default disposable database alias"):
+        _replace(fixture, manifest, database="default")
+
+    assert Student.objects.filter(pk=target.pk, program="DS").exists()
+    assert AuditLog.objects.filter(action="target-sentinel").exists()
+
+
+def test_sqlite_rehearsal_rejects_hard_link_to_default_and_identity_probe_failure(
+    tmp_path, monkeypatch
+):
+    live_database = tmp_path / "live-default.sqlite3"
+    with sqlite3.connect(live_database) as database:
+        database.execute("CREATE TABLE sentinel (id INTEGER PRIMARY KEY)")
+    linked_target = tmp_path / "linked-rehearsal.sqlite3"
+    try:
+        os.link(live_database, linked_target)
+    except OSError as exc:
+        pytest.skip(f"filesystem hard links are unavailable: {exc}")
+
+    fake_connections = {
+        "default": SimpleNamespace(settings_dict={"NAME": str(live_database)}),
+        "release": SimpleNamespace(
+            vendor="sqlite",
+            settings_dict={"NAME": str(linked_target)},
+        ),
+    }
+    monkeypatch.setattr(import_release_seed, "connections", fake_connections)
+    with pytest.raises(CommandError, match="live default database"):
+        import_release_seed._validate_sqlite_rehearsal_target("release")
+
+    def identity_probe_failed(*args, **kwargs):
+        raise OSError("identity unavailable")
+
+    monkeypatch.setattr(import_release_seed.os.path, "samefile", identity_probe_failed)
+    with pytest.raises(CommandError, match="identity could not be safely verified"):
+        import_release_seed._validate_sqlite_rehearsal_target("release")
+
+
+def test_bad_checksum_makes_no_writes(tmp_path, monkeypatch):
+    _source_records()
+    fixture, manifest = _export(tmp_path)
+    target = _target_sentinel()
+    monkeypatch.setenv(KILL_SWITCH_ENV, KILL_SWITCH_VALUE)
+    fixture.write_bytes(fixture.read_bytes() + b"corruption")
+
+    with _sqlite_rehearsal_target(tmp_path / "target.sqlite3") as alias:
+        with pytest.raises(CommandError, match="fixture size|fixture checksum"):
+            _replace(fixture, manifest, database=alias)
+        assert Student.objects.using(alias).filter(pk=target.pk).exists()
+        assert AuditLog.objects.using(alias).filter(action="target-sentinel").exists()
+
+
+def test_tampered_fixture_and_matching_unsigned_manifest_changes_make_no_writes(
+    tmp_path, monkeypatch
+):
+    _source_records()
+    fixture, manifest = _export(tmp_path)
+    target = _target_sentinel()
+    monkeypatch.setenv(KILL_SWITCH_ENV, KILL_SWITCH_VALUE)
+
+    def change_scalar(records):
+        student = next(record for record in records if record["model"] == "core.student")
+        student["fields"]["program"] = "DS"
+
+    _rewrite_fixture(fixture, manifest, change_scalar, resign=False)
+    with _sqlite_rehearsal_target(tmp_path / "target.sqlite3") as alias:
+        with pytest.raises(CommandError, match="manifest signature does not match"):
+            _replace(fixture, manifest, database=alias)
+        assert Student.objects.using(alias).filter(pk=target.pk).exists()
+        assert AuditLog.objects.using(alias).filter(action="target-sentinel").exists()
+
+
+def test_different_export_and_import_signing_keys_make_no_writes(tmp_path, monkeypatch):
+    _source_records()
+    fixture, manifest = _export(tmp_path)
+    target = _target_sentinel()
+    monkeypatch.setenv(KILL_SWITCH_ENV, KILL_SWITCH_VALUE)
+    monkeypatch.setenv(
+        "RELEASE_SEED_SIGNING_KEY",
+        "e71b5fee2f162ff10b78ef01bb760734609d34bd07696833ef0451a216b05dcc",
+    )
+
+    with _sqlite_rehearsal_target(tmp_path / "target.sqlite3") as alias:
+        with pytest.raises(CommandError, match="same ephemeral RELEASE_SEED_SIGNING_KEY"):
+            _replace(fixture, manifest, database=alias)
+        assert Student.objects.using(alias).filter(pk=target.pk).exists()
+
+
+def test_bad_profile_makes_no_writes(tmp_path, monkeypatch):
+    _source_records()
+    fixture, manifest = _export(tmp_path)
+    target = _target_sentinel()
+    monkeypatch.setenv(KILL_SWITCH_ENV, KILL_SWITCH_VALUE)
+    _rewrite_manifest(manifest, lambda data: data["profile"].update(name="wrong-profile"))
+
+    with _sqlite_rehearsal_target(tmp_path / "target.sqlite3") as alias:
+        with pytest.raises(CommandError, match="profile does not match"):
+            _replace(fixture, manifest, database=alias)
+        assert Student.objects.using(alias).filter(pk=target.pk).exists()
+        assert AuditLog.objects.using(alias).filter(action="target-sentinel").exists()
+
+
+def test_bad_per_model_counts_make_no_writes(tmp_path, monkeypatch):
+    _source_records()
+    fixture, manifest = _export(tmp_path)
+    target = _target_sentinel()
+    monkeypatch.setenv(KILL_SWITCH_ENV, KILL_SWITCH_VALUE)
+
+    def corrupt(data):
+        counts = data["fixture"]["per_model"]["core.student"]
+        counts["exported"] += 1
+
+    _rewrite_manifest(manifest, corrupt)
+    with _sqlite_rehearsal_target(tmp_path / "target.sqlite3") as alias:
+        with pytest.raises(CommandError, match="per-model counts|total record count"):
+            _replace(fixture, manifest, database=alias)
+        assert Student.objects.using(alias).filter(pk=target.pk).exists()
+        assert AuditLog.objects.using(alias).filter(action="target-sentinel").exists()
+
+
+def test_bad_canonical_content_digest_makes_no_writes(tmp_path, monkeypatch):
+    _source_records()
+    fixture, manifest = _export(tmp_path)
+    target = _target_sentinel()
+    monkeypatch.setenv(KILL_SWITCH_ENV, KILL_SWITCH_VALUE)
+    _rewrite_manifest(
+        manifest,
+        lambda data: data["fixture"].update(canonical_content_sha256="0" * 64),
+    )
+
+    with _sqlite_rehearsal_target(tmp_path / "target.sqlite3") as alias:
+        with pytest.raises(CommandError, match="canonical content"):
+            _replace(fixture, manifest, database=alias)
+        assert Student.objects.using(alias).filter(pk=target.pk).exists()
+        assert AuditLog.objects.using(alias).filter(action="target-sentinel").exists()
+
+
+def test_unknown_fixture_model_makes_no_writes(tmp_path, monkeypatch):
+    _source_records()
+    fixture, manifest = _export(tmp_path)
+    target = _target_sentinel()
+    monkeypatch.setenv(KILL_SWITCH_ENV, KILL_SWITCH_VALUE)
+    _rewrite_fixture(
+        fixture,
+        manifest,
+        lambda records: records[0].update(model="core.unknown"),
+        recompute_content=False,
+    )
+
+    with _sqlite_rehearsal_target(tmp_path / "target.sqlite3") as alias:
+        with pytest.raises(CommandError, match="unknown or disallowed model"):
+            _replace(fixture, manifest, database=alias)
+        assert Student.objects.using(alias).filter(pk=target.pk).exists()
+        assert AuditLog.objects.using(alias).filter(action="target-sentinel").exists()
+
+
+def test_success_replaces_allowed_data_and_removes_runtime_rows(tmp_path, monkeypatch):
+    source_student, _ = _source_records()
+    fixture, manifest = _export(tmp_path)
+    target = _target_sentinel()
+    monkeypatch.setenv(KILL_SWITCH_ENV, KILL_SWITCH_VALUE)
+    migrations_before = set(MigrationRecorder.Migration.objects.values_list("app", "name"))
+
+    with _sqlite_rehearsal_target(tmp_path / "target.sqlite3") as alias:
+        output = _replace(fixture, manifest, database=alias)
+
+        assert "Imported" in output
+        assert "across 18 models" in output
+        assert Student.objects.using(alias).filter(pk=source_student.pk, program="AI").exists()
+        assert not Student.objects.using(alias).filter(pk=target.pk).exists()
+        assert Course.objects.using(alias).filter(course_code="AI101").exists()
+        assert StudentCourse.objects.using(alias).filter(student_id=source_student.pk).exists()
+        assert AuditLog.objects.using(alias).count() == 0
+        assert (
+            set(MigrationRecorder.Migration.objects.using(alias).values_list("app", "name"))
+            == migrations_before
+        )
+
+
+def test_success_round_trips_timestamp_microseconds_exactly(tmp_path, monkeypatch):
+    _source_records()
+    stamp = datetime(2026, 8, 14, 9, 10, 11, 123456, tzinfo=UTC)
+    target_stamp = datetime(2026, 8, 14, 9, 10, 11, 999999, tzinfo=UTC)
+    instructor = Instructor.objects.create(
+        full_name="Precision Test",
+        normalised_name="precision test",
+    )
+    Instructor.objects.filter(pk=instructor.pk).update(created_at=stamp, updated_at=stamp)
+    fixture, manifest = _export(tmp_path)
+
+    _target_sentinel()
+    Instructor.objects.filter(pk=instructor.pk).update(
+        created_at=target_stamp,
+        updated_at=target_stamp,
+    )
+    monkeypatch.setenv(KILL_SWITCH_ENV, KILL_SWITCH_VALUE)
+
+    with _sqlite_rehearsal_target(tmp_path / "target.sqlite3") as alias:
+        _replace(fixture, manifest, database=alias)
+        loaded = Instructor.objects.using(alias).get(pk=instructor.pk)
+        assert loaded.created_at == stamp
+        assert loaded.updated_at == stamp
+
+
+def test_post_load_validation_failure_rolls_back_old_target(tmp_path, monkeypatch):
+    _source_records()
+    fixture, manifest = _export(tmp_path)
+    target = _target_sentinel()
+    monkeypatch.setenv(KILL_SWITCH_ENV, KILL_SWITCH_VALUE)
+
+    def fail_validation(*args, **kwargs):
+        raise CommandError("forced post-load validation failure")
+
+    monkeypatch.setattr(import_release_seed, "_validate_loaded_database", fail_validation)
+    with _sqlite_rehearsal_target(tmp_path / "target.sqlite3") as alias:
+        with pytest.raises(CommandError, match="transaction was rolled back"):
+            _replace(fixture, manifest, database=alias)
+
+        assert Student.objects.using(alias).filter(pk=target.pk, program="DS").exists()
+        assert not Student.objects.using(alias).filter(pk=700001).exists()
+        assert Course.objects.using(alias).count() == 0
+        assert AuditLog.objects.using(alias).filter(action="target-sentinel").exists()
+
+
+@pytest.mark.parametrize(
+    ("maximum_key", "last_value", "is_called", "increment", "expected"),
+    [
+        (None, 1, False, 1, True),
+        (10, 10, True, 1, True),
+        (10, 11, False, 1, True),
+        (10, 10, False, 1, False),
+        (10, 9, True, 1, False),
+        (10, 10, True, 0, False),
+    ],
+)
+def test_sequence_high_water_check_is_side_effect_free_and_collision_safe(
+    maximum_key, last_value, is_called, increment, expected
+):
+    assert (
+        import_release_seed._sequence_position_is_safe(
+            maximum_key=maximum_key,
+            last_value=last_value,
+            is_called=is_called,
+            increment=increment,
+        )
+        is expected
+    )
+
+
+def test_postgres_checkout_binding_requires_release_commit_and_clean_tracked_state(
+    monkeypatch, settings
+):
+    expected_commit = "a" * 40
+    fake_connection = SimpleNamespace(vendor="postgresql")
+    monkeypatch.setattr(import_release_seed, "connections", {"release": fake_connection})
+    settings.DEBUG = False
+
+    def clean_run(command, **kwargs):
+        output = f"{expected_commit}\n" if command[1:3] == ["rev-parse", "HEAD"] else ""
+        return SimpleNamespace(stdout=output)
+
+    monkeypatch.setattr(import_release_seed.subprocess, "run", clean_run)
+    manifest = {"git": {"commit": expected_commit, "dirty": False}}
+    import_release_seed._validate_production_checkout("release", manifest, allow_rehearsal=False)
+
+    manifest["git"]["dirty"] = True
+    with pytest.raises(CommandError, match="clean production commit"):
+        import_release_seed._validate_production_checkout(
+            "release", manifest, allow_rehearsal=False
+        )
+
+    manifest["git"]["dirty"] = False
+
+    def dirty_run(command, **kwargs):
+        output = f"{expected_commit}\n" if command[1:3] == ["rev-parse", "HEAD"] else " M file"
+        return SimpleNamespace(stdout=output)
+
+    monkeypatch.setattr(import_release_seed.subprocess, "run", dirty_run)
+    with pytest.raises(CommandError, match="checkout does not match"):
+        import_release_seed._validate_production_checkout(
+            "release", manifest, allow_rehearsal=False
+        )
+
+
+def test_postgres_checkout_binding_rejects_debug_mode(monkeypatch, settings):
+    monkeypatch.setattr(
+        import_release_seed,
+        "connections",
+        {"release": SimpleNamespace(vendor="postgresql")},
+    )
+    settings.DEBUG = True
+    with pytest.raises(CommandError, match="production settings"):
+        import_release_seed._validate_production_checkout(
+            "release",
+            {"git": {"commit": "a" * 40, "dirty": False}},
+            allow_rehearsal=False,
+        )
+
+
+class _PostgresContextCursor:
+    def __init__(self, database_name: str, current_user: str, other_sessions: int):
+        self.database_name = database_name
+        self.current_user = current_user
+        self.other_sessions = other_sessions
+        self.query = ""
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        return False
+
+    def execute(self, query, params=None):
+        self.query = str(query)
+
+    def fetchone(self):
+        if "pg_stat_activity" in self.query:
+            return (self.other_sessions,)
+        return (self.database_name, self.current_user)
+
+
+class _PostgresContextConnection:
+    vendor = "postgresql"
+
+    def __init__(
+        self,
+        database_name: str,
+        *,
+        host: str = "dpg-advisor.render.com",
+        current_user: str = "advisor_owner",
+        other_sessions: int = 0,
+    ):
+        self.database_name = database_name
+        self.current_user = current_user
+        self.other_sessions = other_sessions
+        self.settings_dict = {"HOST": host}
+
+    def cursor(self):
+        return _PostgresContextCursor(
+            self.database_name,
+            self.current_user,
+            self.other_sessions,
+        )
+
+
+def _postgres_target_kwargs(
+    database_name: str,
+    *,
+    host: str = "dpg-advisor.render.com",
+    current_user: str = "advisor_owner",
+) -> dict[str, object]:
+    return {
+        "expected_database_name": database_name,
+        "confirmed_database_name": database_name,
+        "expected_host": host,
+        "confirmed_current_user": current_user,
+        "writers_confirmation": import_release_seed.WRITERS_SUSPENDED_VALUE,
+        "allow_rehearsal": False,
+    }
+
+
+def test_postgres_target_rejects_wrong_database_name_and_connected_writers(monkeypatch):
+    actual = import_release_seed.PRODUCTION_DATABASE_NAME
+    connection = _PostgresContextConnection(actual)
+    monkeypatch.setattr(import_release_seed, "connections", {"release": connection})
+
+    with pytest.raises(CommandError, match="both database-name confirmations"):
+        import_release_seed._validate_postgres_target_context(
+            "release",
+            **{
+                **_postgres_target_kwargs(actual),
+                "expected_database_name": "wrong_database",
+            },
+        )
+
+    connection.database_name = "nonproduction_database"
+    with pytest.raises(CommandError, match="configured production database"):
+        import_release_seed._validate_postgres_target_context(
+            "release",
+            **_postgres_target_kwargs("nonproduction_database"),
+        )
+
+    connection.database_name = actual
+    connection.other_sessions = 1
+    with pytest.raises(CommandError, match="client sessions are still connected"):
+        import_release_seed._validate_postgres_target_context(
+            "release",
+            **_postgres_target_kwargs(actual),
+        )
+
+
+def test_postgres_target_binds_normalized_host_and_current_user(monkeypatch):
+    actual = import_release_seed.PRODUCTION_DATABASE_NAME
+    connection = _PostgresContextConnection(actual, host="DPG-ADVISOR.RENDER.COM.")
+    monkeypatch.setattr(import_release_seed, "connections", {"release": connection})
+
+    import_release_seed._validate_postgres_target_context(
+        "release", **_postgres_target_kwargs(actual)
+    )
+
+    with pytest.raises(CommandError, match="host confirmation"):
+        import_release_seed._validate_postgres_target_context(
+            "release",
+            **_postgres_target_kwargs(actual, host="different.render.com"),
+        )
+    with pytest.raises(CommandError, match="user confirmation"):
+        import_release_seed._validate_postgres_target_context(
+            "release",
+            **_postgres_target_kwargs(actual, current_user="different_owner"),
+        )
+
+
+@pytest.mark.parametrize(
+    ("database_name", "host"),
+    [
+        (import_release_seed.PRODUCTION_DATABASE_NAME, "127.0.0.1"),
+        ("advisor_rehearsal", "dpg-advisor.render.com"),
+    ],
+)
+def test_postgres_rehearsal_rejects_production_database_identity(monkeypatch, database_name, host):
+    connection = _PostgresContextConnection(database_name, host=host)
+    monkeypatch.setattr(import_release_seed, "connections", {"release": connection})
+    kwargs = _postgres_target_kwargs(database_name, host=host)
+    kwargs["allow_rehearsal"] = True
+
+    with pytest.raises(CommandError, match="rehearsal cannot use the production"):
+        import_release_seed._validate_postgres_target_context("release", **kwargs)
+
+
+def test_postgres_target_requires_strong_writers_confirmation(monkeypatch):
+    actual = import_release_seed.PRODUCTION_DATABASE_NAME
+    monkeypatch.setattr(
+        import_release_seed,
+        "connections",
+        {"release": _PostgresContextConnection(actual)},
+    )
+    with pytest.raises(CommandError, match="writers suspension confirmation"):
+        import_release_seed._validate_postgres_target_context(
+            "release",
+            **{
+                **_postgres_target_kwargs(actual),
+                "writers_confirmation": "yes",
+            },
+        )
+
+
+class _FenceCursor:
+    def __init__(self, connection):
+        self.connection = connection
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        return False
+
+    def execute(self, query, params=None):
+        rendered = str(query)
+        if "ALLOW_CONNECTIONS false" in rendered:
+            self.connection.events.append("disable")
+            self.connection.allow_connections = False
+        elif "ALLOW_CONNECTIONS true" in rendered:
+            self.connection.events.append("restore")
+            if self.connection.fail_restore:
+                raise RuntimeError("restore failed")
+            self.connection.allow_connections = True
+        elif "datallowconn" in rendered:
+            self.connection.events.append("verify")
+
+    def fetchone(self):
+        return (self.connection.allow_connections,)
+
+
+class _FenceConnection:
+    vendor = "postgresql"
+
+    def __init__(self, *, fail_restore: bool = False):
+        self.allow_connections = True
+        self.events: list[str] = []
+        self.fail_restore = fail_restore
+
+    def get_autocommit(self):
+        return True
+
+    def cursor(self):
+        return _FenceCursor(self)
+
+
+def test_postgres_connection_fence_orders_and_restores_on_body_failure(monkeypatch):
+    connection = _FenceConnection()
+    monkeypatch.setattr(import_release_seed, "connections", {"release": connection})
+
+    with pytest.raises(RuntimeError, match="body failed"):
+        with import_release_seed._postgres_connection_fence(
+            "release",
+            database_name=import_release_seed.PRODUCTION_DATABASE_NAME,
+            enabled=True,
+            confirmation=import_release_seed.CONNECTION_FENCE_CONFIRMATION_VALUE,
+        ):
+            connection.events.append("body")
+            raise RuntimeError("body failed")
+
+    assert connection.events == ["disable", "verify", "body", "restore", "verify"]
+    assert connection.allow_connections is True
+
+
+def test_postgres_connection_fence_requires_exact_gate_and_reports_restore_failure(
+    monkeypatch,
+):
+    connection = _FenceConnection()
+    monkeypatch.setattr(import_release_seed, "connections", {"release": connection})
+
+    with pytest.raises(CommandError, match="connection-fence confirmation"):
+        with import_release_seed._postgres_connection_fence(
+            "release",
+            database_name=import_release_seed.PRODUCTION_DATABASE_NAME,
+            enabled=True,
+            confirmation="yes",
+        ):
+            raise AssertionError("unreachable")
+    assert connection.events == []
+
+    connection.fail_restore = True
+    with pytest.raises(CommandError, match="Emergency action"):
+        with import_release_seed._postgres_connection_fence(
+            "release",
+            database_name=import_release_seed.PRODUCTION_DATABASE_NAME,
+            enabled=True,
+            confirmation=import_release_seed.CONNECTION_FENCE_CONFIRMATION_VALUE,
+        ):
+            pass
+    assert connection.events == ["disable", "verify", "restore"]
+
+
+def test_target_flush_never_requests_cascade(monkeypatch):
+    observed: dict[str, bool] = {}
+
+    class Introspection:
+        def table_names(self, *, include_views):
+            assert include_views is False
+            return ["students", "courses", "django_migrations"]
+
+    class Operations:
+        def sql_flush(self, style, tables, *, reset_sequences, allow_cascade):
+            observed["allow_cascade"] = allow_cascade
+            assert set(tables) == {"students", "courses"}
+            assert reset_sequences is True
+            return []
+
+        def execute_sql_flush(self, statements):
+            assert statements == []
+
+    fake_connection = SimpleNamespace(introspection=Introspection(), ops=Operations())
+    monkeypatch.setattr(import_release_seed, "connections", {"release": fake_connection})
+    import_release_seed._flush_target_database("release")
+    assert observed == {"allow_cascade": False}
