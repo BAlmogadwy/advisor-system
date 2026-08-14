@@ -52,6 +52,9 @@ jobs:
   test:
     name: test (pytest)
     runs-on: ubuntu-latest
+    env:
+      DATABASE_URL: sqlite:////tmp/advisor-pytest-source.sqlite3
+      ADVISOR_DB_PATH: /tmp/nonexistent-legacy-advisor.sqlite3
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -68,8 +71,10 @@ jobs:
         # this branch and on its base, with an error about a missing executable
         # rather than anything about the code.
         run: python -m playwright install --with-deps chromium
-      - name: Clean shipped DB for fresh test database
-        run: rm -f db.sqlite3
+      - name: Keep the repository-local database out of CI
+        run: |
+          test ! -e db.sqlite3
+          test ! -e /tmp/advisor-pytest-source.sqlite3
       - name: Run migrations
         run: python manage.py migrate --noinput
       - name: Pytest + coverage
@@ -154,10 +159,633 @@ jobs:
           echo "concurrency tests passed: $passed"
           test "$passed" -eq 5 || { echo "expected 5 passing concurrency tests"; exit 1; }
 
+  production-preflight:
+    # This job mirrors the dependency boundary Render actually deploys. The
+    # regular jobs intentionally install requirements-dev.txt, which can hide a
+    # missing runtime dependency by pulling it in transitively.
+    name: production dependency + deploy preflight
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_DB: advisor_production_preflight
+          POSTGRES_USER: advisor
+          POSTGRES_PASSWORD: advisor_ci_only
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U advisor -d postgres"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=10
+    env:
+      DJANGO_SECRET_KEY: ci-only-do-not-deploy-7pL4W9xQ2nR8cV6mK3sT5yH1jF0aD4bG9uE2zX7
+      # Public test material only. Real release artifacts use a fresh ephemeral
+      # key supplied out of band to the one export/import cutover window.
+      RELEASE_SEED_SIGNING_KEY: 9b6e7f2c4d8a1e3057c9b2f641de8a734c0f6e92b5d178a463ef09c2d7b185fa
+      DJANGO_DEBUG: 'false'
+      DJANGO_ALLOWED_HOSTS: ci.example.invalid
+      CSRF_TRUSTED_ORIGINS: https://ci.example.invalid
+      DATABASE_URL: postgresql://advisor:advisor_ci_only@localhost:5432/advisor_production_preflight
+      EMAIL_BACKEND: django.core.mail.backends.smtp.EmailBackend
+      EMAIL_HOST_USER: ci-smtp@example.invalid
+      EMAIL_HOST_PASSWORD: ci-only-not-a-real-smtp-credential
+      ALLOW_NO_SMTP_PROCESS: 'false'
+      STUDENT_OTP_ASYNC_EMAIL: 'true'
+      TELEGRAM_ADVISOR_ENABLED: 'false'
+      TELEGRAM_SEND_TIMETABLE_IMAGES: 'false'
+      TELEGRAM_SEND_GRADUATION_IMAGES: 'false'
+      ALIBABA_LLM_ALLOW_LIVE_REQUESTS: 'false'
+      # Migration 0002 can optionally inspect a legacy SQLite source. Production
+      # CI must prove a clean deploy, not import the repository's local snapshot.
+      ADVISOR_DB_PATH: /tmp/nonexistent-legacy-advisor.sqlite3
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: .python-version
+      - name: Install production dependencies only
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip check
+      - name: Verify production-only imports and Render contract
+        run: |
+          python -c "import yaml; from core.services import policy_store; print('PyYAML', yaml.__version__, 'policy_store import OK')"
+          python scripts/validate_render_blueprint.py
+          python manage.py collectstatic --noinput
+      - name: Verify PostgreSQL 18 and run the complete pre-deploy chain
+        run: |
+          test ! -e db.sqlite3
+          python -c "import django, os; os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'config.settings'); django.setup(); from django.db import connection; assert connection.vendor == 'postgresql', connection.vendor; assert connection.pg_version // 10000 == 18, connection.pg_version"
+          python manage.py migrate --noinput
+          python manage.py createcachetable --database default
+          python manage.py normalise_exam_runs
+          python manage.py purge_rate_limit_buckets
+      - name: Build and authenticate an isolated frozen SQLite release seed
+        env:
+          DATABASE_URL: sqlite:////tmp/advisor-release-source.sqlite3
+        run: |
+          set -euo pipefail
+          source_db=/tmp/advisor-release-source.sqlite3
+          frozen_db=/tmp/advisor-release-frozen.sqlite3
+          artifact_dir=/tmp/advisor-release-artifact
+          test ! -e db.sqlite3
+          test ! -e "$source_db"
+          test ! -e "$frozen_db"
+          test ! -e "$artifact_dir"
+          mkdir "$artifact_dir"
+
+          python manage.py migrate --noinput
+          python - <<'PY'
+          import os
+
+          os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings")
+          import django
+
+          django.setup()
+
+          from django.contrib.auth import get_user_model
+          from django.contrib.auth.models import Group, Permission
+
+          from core.models import (
+              AcademicAdvisor,
+              Course,
+              CourseInstructor,
+              ElectiveCourse,
+              ElectiveTermMapping,
+              Instructor,
+              Prerequisite,
+              ProgrammeRequirement,
+              Room,
+              Student,
+              StudentCourse,
+              StudentTermSection,
+              TermSection,
+              TermSectionMeeting,
+              TermSectionProgram,
+              UserScope,
+          )
+
+          advisor = AcademicAdvisor.objects.create(
+              advisor_id="CI-ADV-1",
+              full_name="Release Rehearsal Advisor",
+              email="release-advisor@example.invalid",
+              department="AI",
+          )
+          student = Student.objects.create(
+              student_id=710001,
+              registration_no="CI-710001",
+              name="Release Rehearsal Student",
+              status="ACTIVE",
+              total_registered_credits=6,
+              total_earned_credits=3,
+              current_registered_credits=3,
+              program="AI",
+              section="M",
+              advisor_id=advisor.advisor_id,
+          )
+          student_group = Group.objects.create(name="STUDENT")
+          view_student_permission = Permission.objects.get(
+              content_type__app_label="core",
+              codename="view_student",
+          )
+          student_group.permissions.add(view_student_permission)
+          user = get_user_model().objects.create_user(
+              username="ci-release-student",
+              email="release-student@example.invalid",
+              password=None,
+          )
+          user.groups.add(student_group)
+          UserScope.objects.create(user=user, student_id=student.student_id)
+
+          prerequisite_course = Course.objects.create(
+              course_code="CS111",
+              department="CS",
+              description="Programming I",
+              credit_hours=3,
+          )
+          planned_course = Course.objects.create(
+              course_code="CS112",
+              department="CS",
+              description="Programming II",
+              credit_hours=3,
+          )
+          StudentCourse.objects.create(
+              student=student,
+              course=prerequisite_course,
+              programme_term=1,
+              status=StudentCourse.Status.PASSED,
+              grade="A",
+              mark=95,
+              actual_term="1447/2",
+          )
+          ProgrammeRequirement.objects.create(
+              program="AI",
+              course_code=prerequisite_course.course_code,
+              course_name=prerequisite_course.description,
+              type="mandatory",
+              programme_term=1,
+              credit_hours=3,
+          )
+          ProgrammeRequirement.objects.create(
+              program="AI",
+              course_code=planned_course.course_code,
+              course_name=planned_course.description,
+              type="mandatory",
+              programme_term=2,
+              credit_hours=3,
+          )
+          Prerequisite.objects.create(
+              program="AI",
+              course_code=planned_course.course_code,
+              prerequisite_course_code=prerequisite_course.course_code,
+          )
+
+          room = Room.objects.create(
+              room_code="CI-101",
+              building="CI",
+              floor=1,
+              capacity=30,
+              department="CS",
+              section="M",
+          )
+          instructor = Instructor.objects.create(
+              full_name="Release Rehearsal Instructor",
+              normalised_name="release rehearsal instructor",
+              email="release-instructor@example.invalid",
+              department="CS",
+          )
+          CourseInstructor.objects.create(
+              program="AI",
+              course_code=planned_course.course_code,
+              section="M",
+              instructor=instructor,
+              role="primary",
+          )
+          section = TermSection.objects.create(
+              source_tag="release-rehearsal",
+              course_name=planned_course.description,
+              available_capacity=30,
+              registered_count=1,
+              course_code="CS",
+              course_number="112",
+              course_key=planned_course.course_code,
+              section="M1",
+          )
+          TermSectionProgram.objects.create(
+              term_section=section,
+              program="AI",
+              assignment_source="import",
+          )
+          TermSectionMeeting.objects.create(
+              term_section=section,
+              day="SUN",
+              start_time="09:00",
+              end_time="10:15",
+              room=room.room_code,
+              instructor=instructor.full_name,
+          )
+          StudentTermSection.objects.create(
+              student_id=student.student_id,
+              academic_year="1448",
+              term="1",
+              term_section=section,
+              source="expected",
+          )
+
+          elective = ElectiveCourse.objects.create(
+              course_code="AI461",
+              course_name="Applied Machine Learning",
+              programme="AI",
+              category="department",
+              credit_hours=3,
+              prerequisites_csv=planned_course.course_code,
+          )
+          ElectiveTermMapping.objects.create(
+              academic_year="1448",
+              term=1,
+              programme="AI",
+              placeholder_code="AI1",
+              elective=elective,
+          )
+          PY
+
+          SOURCE_DB="$source_db" FROZEN_DB="$frozen_db" python - <<'PY'
+          import os
+          import sqlite3
+
+          source_path = os.environ["SOURCE_DB"]
+          frozen_path = os.environ["FROZEN_DB"]
+          with sqlite3.connect(f"file:{source_path}?mode=ro", uri=True) as source:
+              with sqlite3.connect(frozen_path) as frozen:
+                  source.backup(frozen)
+          with sqlite3.connect(f"file:{frozen_path}?mode=ro&immutable=1", uri=True) as frozen:
+              assert frozen.execute("PRAGMA integrity_check").fetchone() == ("ok",)
+          PY
+
+          for suffix in -wal -shm -journal; do
+            test ! -e "${frozen_db}${suffix}"
+          done
+          git_status=$(git status --porcelain)
+          if [ -n "$git_status" ]; then
+            printf '%s\n' "$git_status"
+            echo 'release export requires a clean checkout'
+            exit 1
+          fi
+          python manage.py export_release_seed \
+            "$artifact_dir/release-seed.json.gz" \
+            --sqlite-frozen-copy "$frozen_db"
+
+          ARTIFACT_DIR="$artifact_dir" python - <<'PY'
+          import gzip
+          import hashlib
+          import json
+          import os
+          import subprocess
+          from pathlib import Path
+
+          os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings")
+          import django
+
+          django.setup()
+
+          from core.management.commands.export_release_seed import (
+              ALLOWED_MODELS,
+              canonical_content_sha256,
+          )
+
+          root = Path(os.environ["ARTIFACT_DIR"])
+          fixture_path = root / "release-seed.json.gz"
+          manifest_path = root / "release-seed.manifest.json"
+          manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+          fixture_payload = fixture_path.read_bytes()
+          records = json.loads(gzip.decompress(fixture_payload).decode("utf-8"))
+          expected_commit = subprocess.run(
+              ["git", "rev-parse", "HEAD"],
+              check=True,
+              capture_output=True,
+              text=True,
+          ).stdout.strip()
+
+          assert manifest["git"] == {"commit": expected_commit, "dirty": False}
+          assert manifest["fixture"]["sha256"] == hashlib.sha256(fixture_payload).hexdigest()
+          assert manifest["fixture"]["canonical_content_sha256"] == canonical_content_sha256(records)
+          assert manifest["fixture"]["total_records"] == len(records)
+          assert set(manifest["fixture"]["per_model"]) == set(ALLOWED_MODELS)
+          assert all(
+              manifest["fixture"]["per_model"][label]["exported"] >= 1
+              for label in ALLOWED_MODELS
+          )
+          PY
+      - name: Seed PostgreSQL replacement and runtime sentinels
+        run: |
+          python - <<'PY'
+          import os
+          from datetime import timedelta
+
+          os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings")
+          import django
+
+          django.setup()
+
+          from django.utils import timezone
+
+          from core.models import AuditLog, Course, Student, StudentLoginOTP
+
+          Student.objects.create(
+              student_id=799999,
+              name="Preexisting PostgreSQL Sentinel",
+              program="DS",
+          )
+          superseded_one = Course.objects.create(
+              course_code="CI-OLD-1",
+              description="Discarded sequence setup row one",
+              credit_hours=1,
+          )
+          superseded_two = Course.objects.create(
+              course_code="CI-OLD-2",
+              description="Discarded sequence setup row two",
+              credit_hours=1,
+          )
+          sequence_sentinel = Course.objects.create(
+              course_code="CI-SEQUENCE-SENTINEL",
+              description="Preexisting PostgreSQL sequence sentinel",
+              credit_hours=1,
+          )
+          assert (
+              superseded_one.course_id,
+              superseded_two.course_id,
+              sequence_sentinel.course_id,
+          ) == (1, 2, 3)
+          superseded_one.delete()
+          superseded_two.delete()
+          AuditLog.objects.create(
+              ts_utc="2026-01-01T00:00:00Z",
+              action="release-rehearsal-runtime-sentinel",
+          )
+          StudentLoginOTP.objects.create(
+              student_id=799999,
+              code_hash="0" * 64,
+              expires_at=timezone.now() + timedelta(minutes=10),
+          )
+          assert Student.objects.filter(student_id=799999).exists()
+          assert Course.objects.filter(course_id=3, course_code="CI-SEQUENCE-SENTINEL").exists()
+          assert AuditLog.objects.filter(action="release-rehearsal-runtime-sentinel").exists()
+          assert StudentLoginOTP.objects.filter(student_id=799999).exists()
+          PY
+      - name: Force a post-validation PostgreSQL rollback under the connection fence
+        env:
+          RELEASE_SEED_DATABASE_REPLACEMENT: ALLOW_CHECKSUM_BOUND_DATABASE_REPLACEMENT
+          RELEASE_SEED_POSTGRES_REHEARSAL: ALLOW_NON_PRODUCTION_POSTGRES_REHEARSAL
+        run: |
+          python - <<'PY'
+          import os
+          from unittest.mock import patch
+
+          os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings")
+          import django
+
+          django.setup()
+
+          from django.core.management import call_command
+          from django.core.management.base import CommandError
+
+          from core.management.commands import import_release_seed
+
+          real_validation = import_release_seed._validate_loaded_database
+          reached_post_load_validation = False
+
+          def validate_then_fail(*args, **kwargs):
+              global reached_post_load_validation
+              real_validation(*args, **kwargs)
+              reached_post_load_validation = True
+              raise CommandError("CI forced failure after loaded-content validation")
+
+          with patch.object(
+              import_release_seed,
+              "_validate_loaded_database",
+              side_effect=validate_then_fail,
+          ):
+              try:
+                  call_command(
+                      "import_release_seed",
+                      "/tmp/advisor-release-artifact/release-seed.json.gz",
+                      manifest="/tmp/advisor-release-artifact/release-seed.manifest.json",
+                      confirm_replace_target_database="REPLACE_TARGET_DATABASE_WITH_RELEASE_SEED",
+                      expected_target_database="advisor_production_preflight",
+                      confirm_target_database_name="advisor_production_preflight",
+                      expected_target_host="localhost",
+                      confirm_target_current_user="advisor",
+                      confirm_writers_suspended="ALL_APPLICATION_WRITERS_ARE_SUSPENDED",
+                      enable_postgres_connection_fence=True,
+                      confirm_connection_fence="FENCE_NEW_CONNECTIONS_AND_RESTORE_AFTER_IMPORT",
+                      allow_nonproduction_postgres_rehearsal=True,
+                  )
+              except CommandError as exc:
+                  assert str(exc) == (
+                      "Release seed replacement failed; target transaction was rolled back."
+                  ), str(exc)
+              else:
+                  raise AssertionError("forced post-validation import failure unexpectedly succeeded")
+
+          assert reached_post_load_validation
+          PY
+      - name: Prove rollback, fence restoration, and sequence collision safety
+        run: |
+          python - <<'PY'
+          import os
+
+          os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings")
+          import django
+
+          django.setup()
+
+          from django.db import connection
+
+          from core.models import AuditLog, Course, Student, StudentLoginOTP
+
+          with connection.cursor() as cursor:
+              cursor.execute(
+                  "SELECT datallowconn FROM pg_database WHERE datname = current_database()"
+              )
+              assert cursor.fetchone() == (True,)
+
+          assert Student.objects.filter(
+              student_id=799999,
+              name="Preexisting PostgreSQL Sentinel",
+          ).exists()
+          assert not Student.objects.filter(student_id=710001).exists()
+          assert Course.objects.filter(
+              course_id=3,
+              course_code="CI-SEQUENCE-SENTINEL",
+          ).exists()
+          assert AuditLog.objects.filter(
+              action="release-rehearsal-runtime-sentinel"
+          ).exists()
+          assert StudentLoginOTP.objects.filter(student_id=799999).exists()
+
+          collision_probe = Course.objects.create(
+              course_code="CI-AFTER-ROLLBACK",
+              description="Sequence collision probe after forced rollback",
+              credit_hours=1,
+          )
+          assert collision_probe.course_id == 4, collision_probe.course_id
+          PY
+      - name: Atomically rehearse the release-seed replacement on PostgreSQL 18
+        env:
+          RELEASE_SEED_DATABASE_REPLACEMENT: ALLOW_CHECKSUM_BOUND_DATABASE_REPLACEMENT
+          RELEASE_SEED_POSTGRES_REHEARSAL: ALLOW_NON_PRODUCTION_POSTGRES_REHEARSAL
+        run: |
+          set -euo pipefail
+          python -c "from django.conf import settings; assert settings.DEBUG is False"
+          python manage.py import_release_seed \
+            /tmp/advisor-release-artifact/release-seed.json.gz \
+            --manifest /tmp/advisor-release-artifact/release-seed.manifest.json \
+            --confirm-replace-target-database REPLACE_TARGET_DATABASE_WITH_RELEASE_SEED \
+            --expected-target-database advisor_production_preflight \
+            --confirm-target-database-name advisor_production_preflight \
+            --expected-target-host localhost \
+            --confirm-target-current-user advisor \
+            --confirm-writers-suspended ALL_APPLICATION_WRITERS_ARE_SUSPENDED \
+            --enable-postgres-connection-fence \
+            --confirm-connection-fence FENCE_NEW_CONNECTIONS_AND_RESTORE_AFTER_IMPORT \
+            --allow-nonproduction-postgres-rehearsal \
+            | tee /tmp/advisor-release-import.log
+          grep -Fq 'across 18 models.' /tmp/advisor-release-import.log
+      - name: Verify replacement content, relations, and runtime purge
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings")
+          import django
+
+          django.setup()
+
+          from django.contrib.auth import get_user_model
+          from django.db import connection
+
+          from core.management.commands.export_release_seed import (
+              ALLOWED_MODELS,
+              _serialise_records,
+              canonical_content_sha256,
+          )
+          from core.models import (
+              AuditLog,
+              Course,
+              CourseInstructor,
+              Student,
+              StudentCourse,
+              StudentLoginOTP,
+              StudentTermSection,
+              TermSection,
+              UserScope,
+          )
+
+          manifest = json.loads(
+              Path("/tmp/advisor-release-artifact/release-seed.manifest.json").read_text(
+                  encoding="utf-8"
+              )
+          )
+          with connection.cursor() as cursor:
+              cursor.execute("SELECT current_database()")
+              assert cursor.fetchone() == ("advisor_production_preflight",)
+              cursor.execute(
+                  "SELECT datallowconn FROM pg_database WHERE datname = current_database()"
+              )
+              assert cursor.fetchone() == (True,)
+
+          assert not Student.objects.filter(student_id=799999).exists()
+          assert not Course.objects.filter(
+              course_code__in={"CI-SEQUENCE-SENTINEL", "CI-AFTER-ROLLBACK"}
+          ).exists()
+          assert not AuditLog.objects.exists()
+          assert not StudentLoginOTP.objects.exists()
+
+          student = Student.objects.get(student_id=710001)
+          course_result = StudentCourse.objects.select_related("course").get(student=student)
+          assert course_result.course.course_code == "CS111"
+          assert course_result.status == StudentCourse.Status.PASSED
+          scope = UserScope.objects.select_related("user").get(student_id=student.student_id)
+          assert scope.user == get_user_model().objects.get(username="ci-release-student")
+          assert set(scope.user.groups.values_list("name", flat=True)) == {"STUDENT"}
+          student_group = scope.user.groups.get(name="STUDENT")
+          assert student_group.permissions.filter(
+              content_type__app_label="core",
+              codename="view_student",
+          ).exists()
+          assert scope.user.has_perm("core.view_student")
+          section_link = StudentTermSection.objects.select_related("term_section").get(
+              student_id=student.student_id
+          )
+          assert section_link.term_section.course_key == "CS112"
+          assert TermSection.objects.get(pk=section_link.term_section_id).scenario_id is None
+          assert set(
+              section_link.term_section.program_links.values_list("program", flat=True)
+          ) == {"AI"}
+          assert CourseInstructor.objects.select_related("instructor").get(
+              program="AI", course_code="CS112", section="M"
+          ).instructor.normalised_name == "release rehearsal instructor"
+
+          records, counts = _serialise_records("default")
+          assert canonical_content_sha256(records) == manifest["fixture"]["canonical_content_sha256"]
+          assert counts["total_records"] == manifest["fixture"]["total_records"]
+          assert set(counts["per_model"]) == set(ALLOWED_MODELS)
+          for label in ALLOWED_MODELS:
+              assert counts["per_model"][label]["exported"] == manifest["fixture"]["per_model"][label]["exported"]
+          PY
+      - name: Fail on Django deployment warnings
+        run: python manage.py check --deploy --fail-level WARNING
+      - name: Boot the production web command and probe post-replacement database health
+        run: |
+          set -euo pipefail
+          PORT=8000 gunicorn config.wsgi --bind 127.0.0.1:8000 --workers 1 --worker-class gthread --threads 4 --timeout 120 >/tmp/advisor-gunicorn.log 2>&1 &
+          web_pid=$!
+          trap 'kill "$web_pid" 2>/dev/null || true' EXIT
+          healthy=false
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent --show-error \
+              --header 'Host: ci.example.invalid' \
+              --header 'X-Forwarded-Proto: https' \
+              http://127.0.0.1:8000/health/ >/tmp/advisor-health.json; then
+              healthy=true
+              break
+            fi
+            if ! kill -0 "$web_pid" 2>/dev/null; then
+              cat /tmp/advisor-gunicorn.log
+              exit 1
+            fi
+            sleep 1
+          done
+          if [ "$healthy" != true ]; then
+            cat /tmp/advisor-gunicorn.log
+            cat /tmp/advisor-health.json 2>/dev/null || true
+            exit 1
+          fi
+          grep -q '"status": "ok"' /tmp/advisor-health.json
+          kill "$web_pid"
+          wait "$web_pid" || true
+          trap - EXIT
+      - name: Prove disabled Telegram standby remains alive
+        run: |
+          set -euo pipefail
+          python manage.py telegram_advisor_worker --sleep 1 --max-attempts 3 --standby-when-disabled >/tmp/advisor-worker.log 2>&1 &
+          worker_pid=$!
+          trap 'kill "$worker_pid" 2>/dev/null || true' EXIT
+          sleep 3
+          kill -0 "$worker_pid"
+          kill "$worker_pid"
+          wait "$worker_pid" || true
+          trap - EXIT
+
   security:
     name: security (bandit + pip-audit)
     runs-on: ubuntu-latest
-    needs: [lint, typecheck, test]
+    needs: [lint, typecheck, test, production-preflight]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

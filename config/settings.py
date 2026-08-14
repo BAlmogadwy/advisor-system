@@ -293,22 +293,60 @@ if TELEGRAM_SEND_TIMETABLE_IMAGES or TELEGRAM_SEND_GRADUATION_IMAGES:
         if _loopback not in ALLOWED_HOSTS:
             ALLOWED_HOSTS.append(_loopback)
 
-DEFAULT_FROM_EMAIL = os.getenv("DEFAULT_FROM_EMAIL", "advisor-bot@localhost")
-
 # Email / SMTP (Gmail app-password). Credentials come from .env, never the repo.
-# Falls back to the console backend when no password is set, so dev works without
-# credentials and real mail starts the moment EMAIL_HOST_PASSWORD is filled in.
+# Local development may use the console backend, but production must never do so:
+# a console email contains the student's plaintext OTP and Render persists stdout
+# in service logs. A public production process therefore fails during settings
+# import unless an SMTP identity and credential are both present. Dedicated
+# worker/cron processes that cannot serve login routes may opt out explicitly;
+# they still default to SMTP rather than the console backend.
 EMAIL_HOST = os.getenv("EMAIL_HOST", "smtp.gmail.com")
 EMAIL_PORT = int(os.getenv("EMAIL_PORT", "587"))
 EMAIL_USE_TLS = os.getenv("EMAIL_USE_TLS", "true").lower() == "true"
 EMAIL_HOST_USER = os.getenv("EMAIL_HOST_USER", "")
 EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD", "")
 EMAIL_TIMEOUT = int(os.getenv("EMAIL_TIMEOUT", "20"))
-EMAIL_BACKEND = os.getenv(
-    "EMAIL_BACKEND",
-    "django.core.mail.backends.smtp.EmailBackend"
-    if EMAIL_HOST_PASSWORD
-    else "django.core.mail.backends.console.EmailBackend",
+_SMTP_EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
+_CONSOLE_EMAIL_BACKEND = "django.core.mail.backends.console.EmailBackend"
+EMAIL_BACKEND = os.getenv("EMAIL_BACKEND", "").strip() or (
+    _SMTP_EMAIL_BACKEND if EMAIL_HOST_PASSWORD or not DEBUG else _CONSOLE_EMAIL_BACKEND
+)
+ALLOW_NO_SMTP_PROCESS = os.getenv("ALLOW_NO_SMTP_PROCESS", "false").lower() == "true"
+DEFAULT_FROM_EMAIL = (
+    os.getenv("DEFAULT_FROM_EMAIL", "").strip()
+    or EMAIL_HOST_USER.strip()
+    or "advisor-bot@localhost"
+)
+
+
+def _require_production_smtp(
+    *,
+    debug: bool,
+    allow_no_smtp_process: bool,
+    backend: str,
+    host_user: str,
+    host_password: str,
+) -> None:
+    """Reject any public production process that could print OTPs to stdout."""
+
+    if debug or allow_no_smtp_process:
+        return
+    if backend != _SMTP_EMAIL_BACKEND:
+        raise ImproperlyConfigured(
+            "Production student OTP delivery requires Django's SMTP email backend."
+        )
+    if not host_user.strip() or not host_password:
+        raise ImproperlyConfigured(
+            "EMAIL_HOST_USER and EMAIL_HOST_PASSWORD are required in production."
+        )
+
+
+_require_production_smtp(
+    debug=DEBUG,
+    allow_no_smtp_process=ALLOW_NO_SMTP_PROCESS,
+    backend=EMAIL_BACKEND,
+    host_user=EMAIL_HOST_USER,
+    host_password=EMAIL_HOST_PASSWORD,
 )
 # Student OTP-login email domain (deterministic {student_id}@domain).
 STUDENT_EMAIL_DOMAIN = os.getenv("STUDENT_EMAIL_DOMAIN", "taibahu.edu.sa")

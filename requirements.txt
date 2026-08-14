@@ -18,6 +18,10 @@ gunicorn==25.1.0
 
 # ── App dependencies ──
 beautifulsoup4==4.14.3
+# Direct runtime dependency used by the adviser policy store.  Keep this
+# explicit so a clean production install does not rely on dev tooling pulling
+# it in transitively.
+PyYAML==6.0.3
 # soupsieve 2.8.4 — resolves pip-audit GHSA-836r-79rf-4m37 + GHSA-2wc2-fm75-p42x
 # (fixed in 2.8.4). Patch-level bump; bs4's CSS-select backend, no API change.
 soupsieve==2.8.4

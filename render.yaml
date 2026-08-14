@@ -2,23 +2,78 @@ services:
   - type: web
     name: advisor-system
     runtime: python
+    region: oregon
     plan: starter
+    numInstances: 1
+    branch: master
+    autoDeployTrigger: checksPass
+    healthCheckPath: /health/
     preDeployCommand: python manage.py migrate --noinput && python manage.py createcachetable --database default && python manage.py normalise_exam_runs && python manage.py purge_rate_limit_buckets
     buildCommand: chmod +x build.sh && ./build.sh
-    startCommand: gunicorn config.wsgi --bind 0.0.0.0:$PORT --workers 2 --timeout 120
+    # One process keeps the existing in-memory/IP throttles authoritative. gthread
+    # still allows concurrent requests without splitting those counters between
+    # Gunicorn processes.
+    startCommand: gunicorn config.wsgi --bind 0.0.0.0:$PORT --workers 1 --worker-class gthread --threads 4 --timeout 120
     envVars:
       - key: DJANGO_SECRET_KEY
         generateValue: true
       - key: DJANGO_DEBUG
         value: "false"
+      # Existing Render services may retain a legacy PYTHON_VERSION variable,
+      # which takes precedence over .python-version. Pin both surfaces.
+      - key: PYTHON_VERSION
+        value: "3.11.9"
+      - key: ALLOW_NO_SMTP_PROCESS
+        value: "false"
       - key: DJANGO_ALLOWED_HOSTS
-        sync: false
+        value: advisor-system-v9zs.onrender.com
       - key: CSRF_TRUSTED_ORIGINS
-        sync: false
+        value: https://advisor-system-v9zs.onrender.com
       - key: DATABASE_URL
         fromDatabase:
-          name: advisor-db
+          name: advisor-system-db
           property: connectionString
+      # Prevent the historical SQLite-import migration from ever discovering a
+      # workstation database during a fresh PostgreSQL bootstrap.
+      - key: ADVISOR_DB_PATH
+        value: /tmp/advisor-no-legacy-import.sqlite3
+      # Student sign-in is email-OTP based. Credentials stay server-side and
+      # must be populated on the existing web service before launch.
+      - key: EMAIL_HOST
+        value: smtp.gmail.com
+      - key: EMAIL_PORT
+        value: "587"
+      - key: EMAIL_USE_TLS
+        value: "true"
+      - key: EMAIL_HOST_USER
+        sync: false
+      - key: EMAIL_HOST_PASSWORD
+        sync: false
+      - key: EMAIL_TIMEOUT
+        value: "20"
+      - key: EMAIL_BACKEND
+        value: django.core.mail.backends.smtp.EmailBackend
+      - key: STUDENT_EMAIL_DOMAIN
+        value: taibahu.edu.sa
+      - key: STUDENT_OTP_TTL_SECONDS
+        value: "600"
+      - key: STUDENT_OTP_MAX_ATTEMPTS
+        value: "5"
+      - key: STUDENT_OTP_MAX_SENDS
+        value: "3"
+      - key: STUDENT_OTP_SEND_WINDOW_SECONDS
+        value: "900"
+      - key: STUDENT_OTP_ASYNC_EMAIL
+        value: "true"
+      - key: STUDENT_OTP_REDIRECT_EMAIL
+        value: ""
+      - key: IP_FROM_XFF
+        value: "true"
+      # Used only by explicit staff scraper operations; never sent to a client.
+      - key: PORTAL_ADMIN_USERNAME
+        sync: false
+      - key: PORTAL_ADMIN_PASSWORD
+        sync: false
       # The web service is the single source of truth for every setting the
       # Telegram worker consumes. Existing Blueprints ignore newly introduced
       # sync:false entries, so populate/verify them on this service before sync.
@@ -27,65 +82,73 @@ services:
       - key: TELEGRAM_WEBHOOK_SECRET
         sync: false
       - key: TELEGRAM_ADVISOR_ENABLED
-        sync: false
+        value: "false"
       - key: TELEGRAM_PUBLIC_BASE_URL
-        sync: false
+        value: https://advisor-system-v9zs.onrender.com
       - key: TELEGRAM_LINK_TOKEN_TTL_SECONDS
-        sync: false
+        value: "900"
+      - key: TELEGRAM_LINK_AUTH_MAX_AGE_SECONDS
+        value: "600"
+      - key: TELEGRAM_MAX_PENDING_PER_LINK
+        value: "10"
       - key: TELEGRAM_API_TIMEOUT_SECONDS
-        sync: false
+        value: "30"
+      - key: TELEGRAM_DISPATCH_SYNC
+        value: "false"
+      - key: TELEGRAM_INTERNAL_BASE_URL
+        value: ""
       - key: TELEGRAM_SEND_TIMETABLE_IMAGES
-        sync: false
+        value: "false"
       - key: TELEGRAM_SEND_GRADUATION_IMAGES
-        sync: false
+        value: "false"
       - key: LLM_BACKEND
-        sync: false
+        value: alibaba
       - key: LOCAL_LLM_BASE_URL
-        sync: false
+        value: http://127.0.0.1:1234/v1
       - key: LOCAL_LLM_MODEL
-        sync: false
+        value: ""
       - key: LOCAL_LLM_TIMEOUT_SECONDS
-        sync: false
+        value: "120"
       - key: LOCAL_LLM_MAX_TOKENS
-        sync: false
+        value: "1400"
       - key: LOCAL_LLM_ALLOW_REMOTE
-        sync: false
+        value: "false"
       - key: ALIBABA_LLM_BASE_URL
         sync: false
       - key: ALIBABA_LLM_API_KEY
         sync: false
       - key: ALIBABA_LLM_MODEL
-        sync: false
+        value: qwen3.7-max
       - key: ALIBABA_LLM_ENABLE_THINKING
-        sync: false
+        value: "false"
       - key: ALIBABA_LLM_TIMEOUT_SECONDS
-        sync: false
+        value: "75"
       - key: ALIBABA_LLM_MAX_TOKENS
-        sync: false
+        value: "3000"
       - key: ALIBABA_LLM_MAX_RETRIES
-        sync: false
+        value: "2"
       - key: ALIBABA_LLM_ALLOW_LIVE_REQUESTS
-        sync: false
+        value: "false"
       - key: VIRTUAL_ADVISOR_AGENT_LOOP_ENABLED
-        sync: false
+        value: "false"
       - key: VIRTUAL_ADVISOR_MAX_TOOL_ITERATIONS
-        sync: false
+        value: "5"
       - key: VIRTUAL_ADVISOR_MAX_TOOL_CALLS
-        sync: false
+        value: "12"
       - key: VIRTUAL_ADVISOR_LOOP_MAX_TOKENS
-        sync: false
+        value: "3000"
       - key: VIRTUAL_ADVISOR_TOOL_TURN_TIMEOUT_SECONDS
-        sync: false
+        value: "75"
       - key: STUDENT_ADVISOR_V2_ENABLED
-        sync: false
+        value: "false"
       - key: STUDENT_ADVISOR_V2_MAX_TOOL_ITERATIONS
-        sync: false
+        value: "4"
       - key: STUDENT_ADVISOR_V2_MAX_TOOL_CALLS
-        sync: false
+        value: "8"
       - key: STUDENT_ADVISOR_V2_MAX_TOKENS
-        sync: false
+        value: "1800"
       - key: STUDENT_ADVISOR_V2_TOOL_TIMEOUT_SECONDS
-        sync: false
+        value: "75"
 
   # Telegram updates are acknowledged by the web service only after their work
   # is committed to PostgreSQL. This continuously running process leases and
@@ -94,9 +157,13 @@ services:
   - type: worker
     name: advisor-telegram-worker
     runtime: python
+    region: oregon
     plan: starter
+    numInstances: 1
+    branch: master
+    autoDeployTrigger: checksPass
     buildCommand: chmod +x build.sh && ./build.sh
-    startCommand: python manage.py telegram_advisor_worker --sleep 1 --max-attempts 3
+    startCommand: python manage.py telegram_advisor_worker --sleep 1 --max-attempts 3 --standby-when-disabled
     envVars:
       - key: DJANGO_SECRET_KEY
         fromService:
@@ -105,6 +172,12 @@ services:
           envVarKey: DJANGO_SECRET_KEY
       - key: DJANGO_DEBUG
         value: "false"
+      - key: PYTHON_VERSION
+        value: "3.11.9"
+      # This process cannot serve the public OTP routes. Keep production SMTP
+      # fail-closed everywhere else without copying mail credentials into it.
+      - key: ALLOW_NO_SMTP_PROCESS
+        value: "true"
       - key: DJANGO_ALLOWED_HOSTS
         fromService:
           name: advisor-system
@@ -112,7 +185,7 @@ services:
           envVarKey: DJANGO_ALLOWED_HOSTS
       - key: DATABASE_URL
         fromDatabase:
-          name: advisor-db
+          name: advisor-system-db
           property: connectionString
       - key: TELEGRAM_BOT_TOKEN
         fromService:
@@ -139,6 +212,11 @@ services:
           name: advisor-system
           type: web
           envVarKey: TELEGRAM_API_TIMEOUT_SECONDS
+      - key: TELEGRAM_INTERNAL_BASE_URL
+        fromService:
+          name: advisor-system
+          type: web
+          envVarKey: TELEGRAM_INTERNAL_BASE_URL
       - key: TELEGRAM_SEND_TIMETABLE_IMAGES
         fromService:
           name: advisor-system
@@ -283,7 +361,10 @@ services:
   - type: cron
     name: advisor-purge-planner-drafts
     runtime: python
+    region: oregon
     plan: starter
+    branch: master
+    autoDeployTrigger: checksPass
     schedule: "0 3 * * *"
     buildCommand: chmod +x build.sh && ./build.sh
     startCommand: python manage.py purge_planner_drafts --apply && python manage.py purge_telegram_tokens --apply
@@ -295,14 +376,17 @@ services:
           envVarKey: DJANGO_SECRET_KEY
       - key: DJANGO_DEBUG
         value: "false"
+      - key: PYTHON_VERSION
+        value: "3.11.9"
+      - key: ALLOW_NO_SMTP_PROCESS
+        value: "true"
       - key: DJANGO_ALLOWED_HOSTS
-        sync: false
+        value: advisor-system-v9zs.onrender.com
       - key: DATABASE_URL
         fromDatabase:
-          name: advisor-db
+          name: advisor-system-db
           property: connectionString
 
-databases:
-  - name: advisor-db
-    plan: free
-    databaseName: advisor_db
+# advisor-system-db already exists as a paid PostgreSQL 18 resource. It is
+# referenced above but deliberately not declared here, so this Blueprint cannot
+# provision, resize, rename, or otherwise adopt the production database.

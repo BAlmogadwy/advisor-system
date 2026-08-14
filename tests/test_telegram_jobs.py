@@ -47,6 +47,7 @@ WORKER_INHERITED_ENV = {
     "TELEGRAM_PUBLIC_BASE_URL",
     "TELEGRAM_LINK_TOKEN_TTL_SECONDS",
     "TELEGRAM_API_TIMEOUT_SECONDS",
+    "TELEGRAM_INTERNAL_BASE_URL",
     "TELEGRAM_SEND_TIMETABLE_IMAGES",
     "TELEGRAM_SEND_GRADUATION_IMAGES",
     "LLM_BACKEND",
@@ -284,7 +285,7 @@ def test_render_worker_inherits_every_runtime_setting_from_the_web_service():
 
     assert not [entry["key"] for entry in worker_env.values() if "sync" in entry]
     for key in WORKER_INHERITED_ENV:
-        assert web_env[key]["sync"] is False, key
+        assert key in web_env, key
         assert worker_env[key]["fromService"] == {
             "name": "advisor-system",
             "type": "web",

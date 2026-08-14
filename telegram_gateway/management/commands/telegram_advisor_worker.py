@@ -7,6 +7,7 @@ import signal
 import socket
 import subprocess
 import sys
+import time
 from typing import Any
 from urllib.request import ProxyHandler, Request, build_opener
 
@@ -66,6 +67,21 @@ _IMAGE_RUNTIME_CODES = frozenset(
         "image_runtime_unavailable",
     }
 )
+
+
+def run_disabled_standby(*, idle_sleep_seconds: float) -> None:
+    """Keep the Render worker healthy without ever touching the queue.
+
+    Django settings are immutable for the life of this process, so enabling the
+    channel still requires the normal Render restart/redeploy.  This mode exists
+    only to make the deliberately-disabled first deployment stable; unlike the
+    regular command path, it performs no configuration validation and no lease
+    query.
+    """
+
+    delay = max(1.0, float(idle_sleep_seconds))
+    while True:
+        time.sleep(delay)
 
 
 class ImageRuntimeValidationError(RuntimeError):
@@ -228,6 +244,15 @@ class Command(BaseCommand):
     def add_arguments(self, parser: Any) -> None:
         parser.add_argument("--once", action="store_true", help="Process at most one job and exit.")
         parser.add_argument(
+            "--standby-when-disabled",
+            action="store_true",
+            help=(
+                "Stay alive without polling or leasing when TELEGRAM_ADVISOR_ENABLED "
+                "is false. Intended for a staged production rollout; the default "
+                "remains fail-closed."
+            ),
+        )
+        parser.add_argument(
             "--sleep",
             type=float,
             default=DEFAULT_IDLE_SLEEP_SECONDS,
@@ -253,6 +278,17 @@ class Command(BaseCommand):
 
     def handle(self, *args: Any, **options: Any) -> None:
         if not bool(getattr(settings, "TELEGRAM_ADVISOR_ENABLED", False)):
+            if bool(options.get("standby_when_disabled")):
+                self.stdout.write(
+                    self.style.WARNING(
+                        "Telegram adviser is disabled; worker is standing by without "
+                        "polling or leasing. A restart is required after enablement."
+                    )
+                )
+                run_disabled_standby(
+                    idle_sleep_seconds=float(options.get("sleep") or DEFAULT_IDLE_SLEEP_SECONDS)
+                )
+                return
             raise CommandError(
                 "TELEGRAM_ADVISOR_ENABLED is false; refusing to consume Telegram jobs."
             )
