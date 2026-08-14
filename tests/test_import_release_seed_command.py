@@ -12,16 +12,22 @@ from datetime import UTC, datetime
 from io import StringIO
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
+from django.contrib.auth import get_user_model
+from django.contrib.auth.models import Group, Permission
 from django.core.management import call_command
 from django.core.management.base import CommandError
-from django.db import connection, connections
+from django.db import connection, connections, transaction
 from django.db.backends.sqlite3.base import DatabaseWrapper as SQLiteDatabaseWrapper
 from django.db.migrations.recorder import MigrationRecorder
+from django.db.models.query import QuerySet
+from django.db.models.signals import m2m_changed, post_save, pre_save
 
 from core.management.commands import import_release_seed
 from core.management.commands.export_release_seed import (
+    _serialise_records,
     canonical_content_sha256,
     sign_manifest,
 )
@@ -30,7 +36,15 @@ from core.management.commands.import_release_seed import (
     KILL_SWITCH_ENV,
     KILL_SWITCH_VALUE,
 )
-from core.models import AuditLog, Course, Instructor, Student, StudentCourse
+from core.models import (
+    AuditLog,
+    Course,
+    CourseInstructor,
+    Instructor,
+    Student,
+    StudentCourse,
+    UserScope,
+)
 
 pytestmark = pytest.mark.django_db(transaction=True)
 
@@ -412,6 +426,217 @@ def test_success_round_trips_timestamp_microseconds_exactly(tmp_path, monkeypatc
         assert loaded.updated_at == stamp
 
 
+def test_postgres_model_load_order_is_fk_topological_and_fixture_order_independent():
+    order = import_release_seed._model_load_order()
+    positions = {label: index for index, label in enumerate(order)}
+
+    assert set(order) == set(import_release_seed.ALLOWED_MODELS)
+    assert positions["core.instructor"] < positions["core.courseinstructor"]
+    assert positions["core.electivecourse"] < positions["core.electivetermmapping"]
+    assert positions["core.student"] < positions["core.studentcourse"]
+    assert positions["core.course"] < positions["core.studentcourse"]
+    assert positions["core.termsection"] < positions["core.termsectionprogram"]
+    assert positions["core.termsection"] < positions["core.termsectionmeeting"]
+    assert positions["core.termsection"] < positions["core.studenttermsection"]
+    assert positions["auth.user"] < positions["core.userscope"]
+
+
+def test_raw_batch_insert_uses_bounded_multirow_raw_statements(monkeypatch):
+    calls: list[dict[str, Any]] = []
+
+    def record_insert(
+        queryset,
+        objects,
+        *,
+        fields,
+        returning_fields,
+        raw,
+        using,
+        **kwargs,
+    ):
+        calls.append(
+            {
+                "size": len(objects),
+                "field_names": [field.attname for field in fields],
+                "returning_fields": returning_fields,
+                "raw": raw,
+                "using": using,
+            }
+        )
+        return []
+
+    monkeypatch.setattr(QuerySet, "_insert", record_insert)
+    objects = [
+        StudentCourse(
+            id=index,
+            student_id=700001,
+            course_id=1,
+            status=StudentCourse.Status.STUDYING,
+        )
+        for index in range(1, 4_502)
+    ]
+
+    statements = import_release_seed._raw_batch_insert(
+        "default",
+        StudentCourse,
+        objects,
+        require_primary_keys=True,
+    )
+
+    assert statements == 3
+    assert [call["size"] for call in calls] == [2_000, 2_000, 501]
+    assert all(call["raw"] is True for call in calls)
+    assert all(call["returning_fields"] == [] for call in calls)
+    assert all(call["using"] == "default" for call in calls)
+    assert all("id" in call["field_names"] for call in calls)
+    assert all(not item._state.adding and item._state.db == "default" for item in objects)
+
+
+def test_raw_batch_insert_preserves_serialized_auto_now_values():
+    stamp = datetime(2026, 8, 14, 10, 11, 12, 654321, tzinfo=UTC)
+    instructor = Instructor(
+        id=987654,
+        full_name="Raw Timestamp",
+        normalised_name="raw timestamp",
+        created_at=stamp,
+        updated_at=stamp,
+    )
+
+    import_release_seed._raw_batch_insert(
+        "default",
+        Instructor,
+        [instructor],
+        require_primary_keys=True,
+    )
+
+    loaded = Instructor.objects.get(pk=instructor.pk)
+    assert loaded.created_at == stamp
+    assert loaded.updated_at == stamp
+
+
+def test_fixture_validation_rejects_duplicate_m2m_values_before_loading():
+    field = Group._meta.get_field("permissions")
+
+    with pytest.raises(CommandError, match="duplicate many-to-many"):
+        import_release_seed._validate_field_value(
+            field,
+            [
+                ["view_student", "core", "student"],
+                ["view_student", "core", "student"],
+            ],
+        )
+
+
+def test_batched_loader_preserves_forward_fk_m2m_counts_and_digest(tmp_path):
+    student, course = _source_records()
+    instructor = Instructor.objects.create(
+        full_name="Forward Instructor",
+        normalised_name="forward instructor",
+    )
+    course_link = CourseInstructor.objects.create(
+        program="AI",
+        course_code=course.course_code,
+        section="M",
+        instructor=instructor,
+    )
+    group = Group.objects.create(name="BATCHED_RELEASE_STUDENT")
+    permission = Permission.objects.get(
+        content_type__app_label="core",
+        codename="view_student",
+    )
+    group.permissions.add(permission)
+    user = get_user_model().objects.create_user(username="batched-release-user")
+    user.groups.add(group)
+    user.user_permissions.add(permission)
+    UserScope.objects.create(user=user, student_id=student.pk)
+
+    fixture, manifest_path = _export(tmp_path)
+    (
+        manifest,
+        expected_counts,
+        fixture_records,
+        total_records,
+        expected_digest,
+    ) = import_release_seed._validate_artifact(fixture, manifest_path)
+    assert total_records == sum(expected_counts.values())
+    # The loader must derive its own schema order rather than trust fixture order.
+    fixture_records = list(reversed(fixture_records))
+
+    signal_events: list[str] = []
+
+    def model_signal(sender, **kwargs):
+        signal_events.append(sender._meta.label_lower)
+
+    def relation_signal(sender, **kwargs):
+        signal_events.append(sender._meta.label_lower)
+
+    pre_save.connect(model_signal, sender=Instructor, dispatch_uid="release-seed-raw-pre")
+    post_save.connect(model_signal, sender=Instructor, dispatch_uid="release-seed-raw-post")
+    m2m_changed.connect(relation_signal, dispatch_uid="release-seed-raw-m2m")
+
+    try:
+        with _sqlite_rehearsal_target(tmp_path / "batched-target.sqlite3") as alias:
+            migrations_before = set(
+                MigrationRecorder.Migration.objects.using(alias).values_list("app", "name")
+            )
+            with transaction.atomic(using=alias):
+                import_release_seed._flush_target_database(alias)
+                regenerated_permission = Permission.objects.using(alias).get(
+                    content_type__app_label="core",
+                    codename="view_student",
+                )
+                target_permission_pk = permission.pk + 100_000
+                Permission.objects.using(alias).filter(pk=regenerated_permission.pk).delete()
+                Permission.objects.using(alias).create(
+                    pk=target_permission_pk,
+                    name=regenerated_permission.name,
+                    codename=regenerated_permission.codename,
+                    content_type_id=regenerated_permission.content_type_id,
+                )
+                statements = import_release_seed._load_verified_fixture_postgres(
+                    alias,
+                    fixture_records,
+                )
+                import_release_seed._validate_loaded_database(
+                    alias,
+                    expected_counts,
+                    expected_digest,
+                    migrations_before,
+                )
+
+            nonempty_models = sum(count > 0 for count in expected_counts.values())
+            assert statements <= nonempty_models + 3
+            assert (
+                CourseInstructor.objects.using(alias).get(pk=course_link.pk).instructor_id
+                == instructor.pk
+            )
+            loaded_group = Group.objects.using(alias).get(pk=group.pk)
+            assert set(
+                loaded_group.permissions.values_list("content_type__app_label", "codename")
+            ) == {("core", "view_student")}
+            loaded_user = get_user_model().objects.using(alias).get(pk=user.pk)
+            assert set(loaded_user.groups.values_list("pk", flat=True)) == {group.pk}
+            assert set(
+                loaded_user.user_permissions.values_list("content_type__app_label", "codename")
+            ) == {("core", "view_student")}
+            loaded_permission = Permission.objects.using(alias).get(
+                content_type__app_label="core",
+                codename="view_student",
+            )
+            assert loaded_permission.pk == target_permission_pk
+            assert loaded_permission.pk != permission.pk
+            assert UserScope.objects.using(alias).get(pk=user.pk).student_id == student.pk
+            loaded_records, _ = _serialise_records(alias)
+            assert canonical_content_sha256(loaded_records) == expected_digest
+            assert manifest["fixture"]["canonical_content_sha256"] == expected_digest
+    finally:
+        pre_save.disconnect(sender=Instructor, dispatch_uid="release-seed-raw-pre")
+        post_save.disconnect(sender=Instructor, dispatch_uid="release-seed-raw-post")
+        m2m_changed.disconnect(dispatch_uid="release-seed-raw-m2m")
+
+    assert signal_events == []
+
+
 def test_post_load_validation_failure_rolls_back_old_target(tmp_path, monkeypatch):
     _source_records()
     fixture, manifest = _export(tmp_path)
@@ -455,6 +680,65 @@ def test_sequence_high_water_check_is_side_effect_free_and_collision_safe(
         )
         is expected
     )
+
+
+def test_postgres_sequence_reset_uses_visible_transactional_restart(monkeypatch):
+    class Cursor:
+        def __init__(self):
+            self.executions: list[tuple[object, object]] = []
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc_value, traceback):
+            return False
+
+        def execute(self, query, params=None):
+            self.executions.append((query, params))
+
+        def fetchall(self):
+            return [
+                (
+                    "public",
+                    "courses",
+                    "course_id",
+                    "public",
+                    "courses_course_id_seq",
+                    1,
+                    1,
+                    1,
+                    2_147_483_647,
+                )
+            ]
+
+        def fetchone(self):
+            return (42,)
+
+    cursor = Cursor()
+
+    class Operations:
+        def sequence_reset_sql(self, *args, **kwargs):
+            raise AssertionError("PostgreSQL must not use non-transactional setval() SQL")
+
+    fake_connection = SimpleNamespace(
+        vendor="postgresql",
+        ops=Operations(),
+        cursor=lambda: cursor,
+    )
+    monkeypatch.setattr(import_release_seed, "connections", {"release": fake_connection})
+
+    import_release_seed._reset_loaded_sequences("release", [Course])
+
+    assert len(cursor.executions) == 3
+    catalog_query, catalog_params = cursor.executions[0]
+    assert "pg_table_is_visible(table_rel.oid)" in str(catalog_query)
+    assert catalog_params == [["courses"]]
+    restart_query, restart_params = cursor.executions[-1]
+    assert "ALTER SEQUENCE" in str(restart_query)
+    assert "RESTART WITH" in str(restart_query)
+    assert "Literal(43)" in str(restart_query)
+    assert restart_params is None
+    assert all("setval" not in str(query).lower() for query, _ in cursor.executions)
 
 
 def test_postgres_checkout_binding_requires_release_commit_and_clean_tracked_state(

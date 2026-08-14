@@ -9,7 +9,7 @@ import re
 import subprocess
 from argparse import ArgumentParser
 from collections import Counter
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from io import BytesIO
 from pathlib import Path
@@ -24,7 +24,7 @@ from django.core.management.sql import emit_post_migrate_signal
 from django.db import connections, router, transaction
 from django.db.migrations.executor import MigrationExecutor
 from django.db.migrations.recorder import MigrationRecorder
-from django.db.models import Exists, OuterRef
+from django.db.models import AutoField, Exists, OuterRef
 from psycopg2 import sql as postgres_sql  # type: ignore[import-untyped]
 
 from core.management.commands.export_release_seed import (
@@ -73,6 +73,13 @@ REGENERATED_MODELS = {
 COMMIT_SHA_PATTERN = re.compile(r"[0-9a-f]{40}\Z")
 SAFE_DATABASE_IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\Z")
 MAX_DECOMPRESSED_FIXTURE_BYTES = 512 * 1024 * 1024
+
+# Keep each PostgreSQL statement comfortably below the protocol's parameter
+# ceiling while amortising WAN latency. The largest model in the current
+# signed profile has far fewer than 30 concrete columns, so this also caps the
+# payload size of a single statement to a few megabytes.
+POSTGRES_RAW_INSERT_BATCH_SIZE = 2_000
+POSTGRES_SAFE_QUERY_PARAMETERS = 60_000
 
 
 def _fail(reason: str) -> CommandError:
@@ -352,7 +359,17 @@ def _validate_field_value(field: Any, value: Any) -> None:
             raise _fail("fixture contains an invalid many-to-many value")
         related_pk = field.remote_field.model._meta.pk
         natural_key = hasattr(field.remote_field.model._default_manager, "get_by_natural_key")
+        relation_identities: set[str] = set()
         for item in value:
+            identity = json.dumps(
+                item,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+            if identity in relation_identities:
+                raise _fail("fixture contains a duplicate many-to-many value")
+            relation_identities.add(identity)
             if natural_key:
                 if not isinstance(item, list | tuple) or not item:
                     raise _fail("fixture contains an invalid natural relation")
@@ -381,7 +398,7 @@ def _validate_records(
     decompressed: bytes,
     expected_counts: dict[str, int],
     expected_content_sha256: str,
-) -> tuple[str, int]:
+) -> tuple[list[dict[str, Any]], int]:
     try:
         text = decompressed.decode("utf-8")
         records = _strict_json_loads(text)
@@ -392,6 +409,8 @@ def _validate_records(
 
     actual_counts: Counter[str] = Counter()
     identities: set[tuple[str, str]] = set()
+    exported_student_ids: set[str] = set()
+    student_section_student_ids: set[str] = set()
     for record in records:
         item = _require_exact_keys(record, {"model", "pk", "fields"}, "fixture record")
         label = item["model"]
@@ -415,21 +434,34 @@ def _validate_records(
             raise _fail("fixture record fields do not match the installed model")
         for name, field in expected_fields.items():
             _validate_field_value(field, fields[name])
+        if label == "core.student":
+            exported_student_ids.add(str(normalized_pk))
+        elif label == "core.termsection" and fields["scenario"] is not None:
+            raise _fail("fixture contains a scenario-owned term section")
+        elif label == "core.studenttermsection":
+            try:
+                student_section_student_ids.add(
+                    str(Student._meta.pk.to_python(fields["student_id"]))
+                )
+            except (TypeError, ValueError) as exc:
+                raise _fail("fixture contains an invalid student section identity") from exc
         actual_counts[label] += 1
 
     if len(records) != sum(expected_counts.values()):
         raise _fail("fixture record total does not match the manifest")
     if any(actual_counts[label] != expected_counts[label] for label in ALLOWED_MODELS):
         raise _fail("fixture per-model counts do not match the manifest")
+    if not student_section_student_ids.issubset(exported_student_ids):
+        raise _fail("fixture contains a student section without an exported student")
     if not hmac.compare_digest(canonical_content_sha256(records), expected_content_sha256):
         raise _fail("fixture canonical content does not match the manifest")
-    return text, len(records)
+    return records, len(records)
 
 
 def _validate_artifact(
     fixture_path: Path,
     manifest_path: Path,
-) -> tuple[dict[str, Any], dict[str, int], str, int, str]:
+) -> tuple[dict[str, Any], dict[str, int], list[dict[str, Any]], int, str]:
     manifest = _read_manifest(manifest_path)
     _validate_manifest_signature(manifest)
     _validate_profile(manifest)
@@ -450,10 +482,10 @@ def _validate_artifact(
         raise _fail("fixture gzip stream is invalid") from exc
     if len(decompressed) > MAX_DECOMPRESSED_FIXTURE_BYTES:
         raise _fail("fixture expands beyond the importer safety limit")
-    fixture_text, total_records = _validate_records(
+    fixture_records, total_records = _validate_records(
         decompressed, expected_counts, expected_content_sha256
     )
-    return manifest, expected_counts, fixture_text, total_records, expected_content_sha256
+    return manifest, expected_counts, fixture_records, total_records, expected_content_sha256
 
 
 def _target_migration_state(using: str, source_manifest: dict[str, Any]) -> set[tuple[str, str]]:
@@ -862,14 +894,259 @@ def _validate_loaded_database(
         raise CommandError("Migration history changed during replacement.")
 
 
-def _load_verified_fixture(using: str, fixture_text: str) -> None:
+def _model_load_order() -> tuple[str, ...]:
+    """Return a stable FK-topological order for the signed model profile.
+
+    The fixture order is signed but isn't an insertion-order contract. Resolve
+    dependencies from the installed schema instead, while deliberately leaving
+    many-to-many tables for the second phase.
+    """
+
+    allowed = set(ALLOWED_MODELS)
+    dependencies: dict[str, set[str]] = {}
+    for label in ALLOWED_MODELS:
+        model = apps.get_model(label)
+        dependencies[label] = {
+            field.remote_field.model._meta.label_lower
+            for field in model._meta.concrete_fields
+            if field.is_relation
+            and field.remote_field is not None
+            and field.remote_field.model._meta.label_lower in allowed
+            and field.remote_field.model._meta.label_lower != label
+        }
+
+    ordered: list[str] = []
+    remaining = list(ALLOWED_MODELS)
+    while remaining:
+        ready = [label for label in remaining if dependencies[label].issubset(ordered)]
+        if not ready:
+            raise CommandError("Release seed model dependencies contain an unsupported cycle.")
+        for label in ready:
+            ordered.append(label)
+            remaining.remove(label)
+    return tuple(ordered)
+
+
+def _raw_insert_batch_size(model: type[Any], *, include_auto_pk: bool) -> int:
+    fields = [
+        field
+        for field in model._meta.concrete_fields
+        if not field.generated and (include_auto_pk or not isinstance(field, AutoField))
+    ]
+    parameters_per_row = max(1, len(fields))
+    return min(
+        POSTGRES_RAW_INSERT_BATCH_SIZE,
+        max(1, POSTGRES_SAFE_QUERY_PARAMETERS // parameters_per_row),
+    )
+
+
+def _raw_batch_insert(
+    using: str,
+    model: type[Any],
+    objects: Sequence[Any],
+    *,
+    require_primary_keys: bool,
+) -> int:
+    """Insert model instances with Django's raw insert compiler in bounded batches.
+
+    ``bulk_create()`` is intentionally unsuitable for a signed seed: its
+    compiler uses ``raw=False`` and therefore runs ``auto_now``/``auto_now_add``
+    field hooks. ``QuerySet._insert(raw=True)`` is the same raw primitive used
+    by Django's deserializer, but accepts a list of objects and emits a single
+    multi-row INSERT. This private API is covered by focused compatibility
+    tests and the pinned Django 5.2 production rehearsal.
+    """
+
+    if not objects:
+        return 0
+    primary_key_states = [item._is_pk_set() for item in objects]
+    if require_primary_keys and not all(primary_key_states):
+        raise CommandError("Release seed batch contains an object without a primary key.")
+    if any(primary_key_states) and not all(primary_key_states):
+        raise CommandError("Release seed batch mixes explicit and generated primary keys.")
+
+    include_auto_pk = all(primary_key_states)
+    fields = [
+        field
+        for field in model._meta.concrete_fields
+        if not field.generated and (include_auto_pk or not isinstance(field, AutoField))
+    ]
+    batch_size = _raw_insert_batch_size(model, include_auto_pk=include_auto_pk)
+    queryset = model._base_manager.using(using)
+    insert = getattr(queryset, "_insert", None)
+    if insert is None:
+        raise CommandError("Django raw batch insert API is unavailable.")
+
+    statements = 0
+    for offset in range(0, len(objects), batch_size):
+        batch = list(objects[offset : offset + batch_size])
+        insert(
+            batch,
+            fields=fields,
+            returning_fields=[],
+            raw=True,
+            using=using,
+        )
+        statements += 1
+        for item in batch:
+            item._state.adding = False
+            item._state.db = using
+    return statements
+
+
+def _bulk_insert_m2m(using: str, deserialized_objects: Sequence[Any]) -> int:
+    rows_by_through_model: dict[type[Any], list[Any]] = {}
+    seen_relations: set[tuple[str, str, str, str, str]] = set()
+
+    for item in deserialized_objects:
+        if not item.m2m_data:
+            continue
+        owner = item.object
+        owner_model = owner.__class__
+        for field_name, related_keys in item.m2m_data.items():
+            field = owner_model._meta.get_field(field_name)
+            through = field.remote_field.through
+            if through._meta.auto_created is not owner_model:
+                raise CommandError(
+                    "Release seed contains an unsupported custom many-to-many relation."
+                )
+            if not router.allow_migrate_model(using, through):
+                raise CommandError(
+                    "Release seed many-to-many model is not permitted on the target database."
+                )
+
+            source_field = through._meta.get_field(field.m2m_field_name())
+            target_field = through._meta.get_field(field.m2m_reverse_field_name())
+            rows = rows_by_through_model.setdefault(through, [])
+            for related_key in related_keys:
+                identity = (
+                    through._meta.label_lower,
+                    source_field.attname,
+                    str(owner.pk),
+                    target_field.attname,
+                    str(related_key),
+                )
+                if identity in seen_relations:
+                    continue
+                seen_relations.add(identity)
+                rows.append(
+                    through(
+                        **{
+                            source_field.attname: owner.pk,
+                            target_field.attname: related_key,
+                        }
+                    )
+                )
+        item.m2m_data = None
+
+    statements = 0
+    for through, rows in rows_by_through_model.items():
+        statements += _raw_batch_insert(
+            using,
+            through,
+            rows,
+            require_primary_keys=False,
+        )
+    return statements
+
+
+def _reset_loaded_sequences(using: str, loaded_models: Sequence[type[Any]]) -> None:
+    connection = connections[using]
+    if connection.vendor == "postgresql":
+        table_names = sorted({model._meta.db_table for model in loaded_models})
+        if not table_names:
+            return
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT table_ns.nspname,
+                       table_rel.relname,
+                       table_attr.attname,
+                       seq_ns.nspname,
+                       seq_rel.relname,
+                       pg_seq.seqstart,
+                       pg_seq.seqincrement,
+                       pg_seq.seqmin,
+                       pg_seq.seqmax
+                  FROM pg_class AS seq_rel
+                  JOIN pg_namespace AS seq_ns ON seq_ns.oid = seq_rel.relnamespace
+                  JOIN pg_depend AS dep
+                    ON dep.objid = seq_rel.oid
+                   AND dep.classid = 'pg_class'::regclass
+                   AND dep.refclassid = 'pg_class'::regclass
+                   AND dep.deptype IN ('a', 'i')
+                  JOIN pg_class AS table_rel ON table_rel.oid = dep.refobjid
+                  JOIN pg_namespace AS table_ns ON table_ns.oid = table_rel.relnamespace
+                  JOIN pg_attribute AS table_attr
+                    ON table_attr.attrelid = table_rel.oid
+                   AND table_attr.attnum = dep.refobjsubid
+                  JOIN pg_sequence AS pg_seq ON pg_seq.seqrelid = seq_rel.oid
+                 WHERE seq_rel.relkind = 'S'
+                   AND table_rel.relkind IN ('r', 'p')
+                   AND table_ns.nspname = ANY (current_schemas(false))
+                   AND pg_table_is_visible(table_rel.oid)
+                   AND table_rel.relname = ANY (%s)
+                 ORDER BY table_ns.nspname, table_rel.relname, table_attr.attname
+                """,
+                [table_names],
+            )
+            sequences = cursor.fetchall()
+            for (
+                table_schema,
+                table_name,
+                column_name,
+                sequence_schema,
+                sequence_name,
+                sequence_start,
+                increment,
+                sequence_minimum,
+                sequence_maximum,
+            ) in sequences:
+                if increment <= 0:
+                    raise CommandError("Imported sequence has an unsupported increment.")
+                cursor.execute(
+                    postgres_sql.SQL("SELECT MAX({column}) FROM {table}").format(
+                        column=postgres_sql.Identifier(column_name),
+                        table=postgres_sql.Identifier(table_schema, table_name),
+                    )
+                )
+                maximum_key = cursor.fetchone()[0]
+                restart_value = (
+                    int(sequence_start)
+                    if maximum_key is None
+                    else int(maximum_key) + int(increment)
+                )
+                if not int(sequence_minimum) <= restart_value <= int(sequence_maximum):
+                    raise CommandError("Imported sequence restart value is outside its bounds.")
+                # Unlike setval(), ALTER SEQUENCE ... RESTART is transactional.
+                # A later digest/count failure therefore restores both the old
+                # rows and their exact pre-import sequence position.
+                cursor.execute(
+                    postgres_sql.SQL("ALTER SEQUENCE {sequence} RESTART WITH {value}").format(
+                        sequence=postgres_sql.Identifier(sequence_schema, sequence_name),
+                        value=postgres_sql.Literal(restart_value),
+                    )
+                )
+        return
+
+    sequence_sql = connection.ops.sequence_reset_sql(no_style(), list(loaded_models))
+    if sequence_sql:
+        with connection.cursor() as cursor:
+            for statement in sequence_sql:
+                cursor.execute(statement)
+
+
+def _load_verified_fixture_iteratively(
+    using: str,
+    fixture_records: Sequence[dict[str, Any]],
+) -> None:
     connection = connections[using]
     deferred_objects = []
     loaded_models: set[type[Any]] = set()
     with connection.constraint_checks_disabled():
         objects = serializers.deserialize(
-            "json",
-            fixture_text,
+            "python",
+            fixture_records,
             using=using,
             ignorenonexistent=False,
             handle_forward_references=True,
@@ -886,11 +1163,72 @@ def _load_verified_fixture(using: str, fixture_text: str) -> None:
             item.save_deferred_fields(using=using)
 
     connection.check_constraints(table_names=[model._meta.db_table for model in loaded_models])
-    sequence_sql = connection.ops.sequence_reset_sql(no_style(), list(loaded_models))
-    if sequence_sql:
-        with connection.cursor() as cursor:
-            for statement in sequence_sql:
-                cursor.execute(statement)
+    _reset_loaded_sequences(using, list(loaded_models))
+
+
+def _load_verified_fixture_postgres(
+    using: str,
+    fixture_records: Sequence[dict[str, Any]],
+) -> int:
+    """Load the verified profile in O(models + batches), not O(records), writes."""
+
+    connection = connections[using]
+    records_by_model: dict[str, list[dict[str, Any]]] = {label: [] for label in ALLOWED_MODELS}
+    for record in fixture_records:
+        records_by_model[record["model"]].append(record)
+
+    load_order = _model_load_order()
+    for label in load_order:
+        model = apps.get_model(label)
+        if not router.allow_migrate_model(using, model):
+            raise CommandError("Release seed model is not permitted on the target database.")
+
+    objects_with_m2m: list[Any] = []
+    loaded_models: list[type[Any]] = []
+    statements = 0
+    with connection.constraint_checks_disabled():
+        for label in load_order:
+            model = apps.get_model(label)
+            batch_size = _raw_insert_batch_size(model, include_auto_pk=True)
+            model_records = records_by_model[label]
+            for offset in range(0, len(model_records), batch_size):
+                items = list(
+                    serializers.deserialize(
+                        "python",
+                        model_records[offset : offset + batch_size],
+                        using=using,
+                        ignorenonexistent=False,
+                        handle_forward_references=False,
+                    )
+                )
+                if any(item.object.__class__ is not model for item in items):
+                    raise CommandError("Release seed deserializer returned an unexpected model.")
+                if any(item.deferred_fields for item in items):
+                    raise CommandError("Release seed contains an unresolved forward relation.")
+                statements += _raw_batch_insert(
+                    using,
+                    model,
+                    [item.object for item in items],
+                    require_primary_keys=True,
+                )
+                objects_with_m2m.extend(item for item in items if item.m2m_data)
+            loaded_models.append(model)
+
+        statements += _bulk_insert_m2m(using, objects_with_m2m)
+
+    connection.check_constraints(table_names=[model._meta.db_table for model in loaded_models])
+    _reset_loaded_sequences(using, loaded_models)
+    return statements
+
+
+def _load_verified_fixture(
+    using: str,
+    fixture_records: Sequence[dict[str, Any]],
+) -> int | None:
+    if connections[using].vendor == "postgresql":
+        return _load_verified_fixture_postgres(using, fixture_records)
+    _load_verified_fixture_iteratively(using, fixture_records)
+    return None
 
 
 class Command(BaseCommand):
@@ -992,7 +1330,7 @@ class Command(BaseCommand):
         (
             manifest,
             expected_counts,
-            fixture_text,
+            fixture_records,
             total_records,
             expected_content_sha256,
         ) = _validate_artifact(fixture_path, manifest_path)
@@ -1012,6 +1350,7 @@ class Command(BaseCommand):
         )
         _validate_production_checkout(using, manifest, allow_rehearsal=allow_postgres_rehearsal)
 
+        postgres_insert_statements: int | None = None
         try:
             with _postgres_connection_fence(
                 using,
@@ -1045,7 +1384,7 @@ class Command(BaseCommand):
                         allow_rehearsal=allow_postgres_rehearsal,
                     )
                     _flush_target_database(using)
-                    _load_verified_fixture(using, fixture_text)
+                    postgres_insert_statements = _load_verified_fixture(using, fixture_records)
                     _validate_loaded_database(
                         using,
                         expected_counts,
@@ -1062,6 +1401,10 @@ class Command(BaseCommand):
                 "Release seed replacement failed; target transaction was rolled back."
             ) from None
 
+        if postgres_insert_statements is not None:
+            self.stdout.write(
+                f"PostgreSQL bulk loader used {postgres_insert_statements} INSERT statements."
+            )
         self.stdout.write(
             self.style.SUCCESS(
                 f"Imported {total_records} records across {len(ALLOWED_MODELS)} models."
