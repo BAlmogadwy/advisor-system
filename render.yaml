@@ -212,11 +212,6 @@ services:
           name: advisor-system
           type: web
           envVarKey: TELEGRAM_API_TIMEOUT_SECONDS
-      - key: TELEGRAM_INTERNAL_BASE_URL
-        fromService:
-          name: advisor-system
-          type: web
-          envVarKey: TELEGRAM_INTERNAL_BASE_URL
       - key: TELEGRAM_SEND_TIMETABLE_IMAGES
         fromService:
           name: advisor-system
@@ -240,11 +235,6 @@ services:
           name: advisor-system
           type: web
           envVarKey: LOCAL_LLM_BASE_URL
-      - key: LOCAL_LLM_MODEL
-        fromService:
-          name: advisor-system
-          type: web
-          envVarKey: LOCAL_LLM_MODEL
       - key: LOCAL_LLM_TIMEOUT_SECONDS
         fromService:
           name: advisor-system

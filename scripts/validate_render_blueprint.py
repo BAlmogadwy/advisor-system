@@ -134,12 +134,10 @@ WORKER_INHERITED_ENV_KEYS = frozenset(
         "TELEGRAM_PUBLIC_BASE_URL",
         "TELEGRAM_LINK_TOKEN_TTL_SECONDS",
         "TELEGRAM_API_TIMEOUT_SECONDS",
-        "TELEGRAM_INTERNAL_BASE_URL",
         "TELEGRAM_SEND_TIMETABLE_IMAGES",
         "TELEGRAM_SEND_GRADUATION_IMAGES",
         "LLM_BACKEND",
         "LOCAL_LLM_BASE_URL",
-        "LOCAL_LLM_MODEL",
         "LOCAL_LLM_TIMEOUT_SECONDS",
         "LOCAL_LLM_MAX_TOKENS",
         "LOCAL_LLM_ALLOW_REMOTE",
@@ -161,6 +159,12 @@ WORKER_INHERITED_ENV_KEYS = frozenset(
         "STUDENT_ADVISOR_V2_MAX_TOOL_CALLS",
         "STUDENT_ADVISOR_V2_MAX_TOKENS",
         "STUDENT_ADVISOR_V2_TOOL_TIMEOUT_SECONDS",
+    }
+)
+WORKER_OPTIONAL_EMPTY_ENV_KEYS = frozenset(
+    {
+        "TELEGRAM_INTERNAL_BASE_URL",
+        "LOCAL_LLM_MODEL",
     }
 )
 
@@ -345,6 +349,13 @@ def validate_blueprint(
             }
             if worker_env.get(key, {}).get("fromService") != expected_reference:
                 errors.append(f"{WORKER_SERVICE_NAME}:{key} must inherit from {WEB_SERVICE_NAME}.")
+
+        for key in sorted(WORKER_OPTIONAL_EMPTY_ENV_KEYS):
+            if key in worker_env:
+                errors.append(
+                    f"{WORKER_SERVICE_NAME}:{key} must remain absent so Render does not "
+                    "inherit an intentionally empty value."
+                )
 
         if worker_env.get("DJANGO_DEBUG", {}).get("value") != "false":
             errors.append(f"{WORKER_SERVICE_NAME} must explicitly set DJANGO_DEBUG=false.")
