@@ -4,6 +4,7 @@ from django.contrib.auth import authenticate, login, logout
 from django.core.cache import cache
 from django.http import HttpRequest, HttpResponse
 from django.shortcuts import redirect, render
+from django.views.decorators.cache import never_cache
 from django.views.decorators.http import require_http_methods, require_POST
 
 from core.services.rbac import ensure_role_groups, ensure_scope_schema
@@ -14,6 +15,7 @@ _LOGIN_MAX_FAILS = 5
 _LOGIN_LOCKOUT_SECONDS = 300
 
 
+@never_cache
 @require_http_methods(["GET", "POST"])
 def login_view(request: HttpRequest) -> HttpResponse:
     # RBAC bootstrap — log failures but never block login. authenticate()
