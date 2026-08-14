@@ -654,9 +654,10 @@ def test_postgres_target_requires_strong_writers_confirmation(monkeypatch):
         )
 
 
-class _FenceCursor:
+class _FenceMaintenanceCursor:
     def __init__(self, connection):
         self.connection = connection
+        self.result = None
 
     def __enter__(self):
         return self
@@ -666,34 +667,107 @@ class _FenceCursor:
 
     def execute(self, query, params=None):
         rendered = str(query)
-        if "ALLOW_CONNECTIONS false" in rendered:
+        if "current_database(), current_user" in rendered:
+            self.connection.owner.events.append("identity")
+            self.result = (
+                self.connection.owner.maintenance_database,
+                self.connection.owner.maintenance_user,
+            )
+        elif "ALLOW_CONNECTIONS false" in rendered:
             self.connection.events.append("disable")
             self.connection.allow_connections = False
+            if self.connection.owner.fail_disable:
+                raise RuntimeError("disable response lost")
         elif "ALLOW_CONNECTIONS true" in rendered:
             self.connection.events.append("restore")
-            if self.connection.fail_restore:
+            if self.connection.owner.fail_restore:
                 raise RuntimeError("restore failed")
             self.connection.allow_connections = True
         elif "datallowconn" in rendered:
             self.connection.events.append("verify")
+            self.result = (self.connection.allow_connections,)
 
     def fetchone(self):
-        return (self.connection.allow_connections,)
+        return self.result
+
+
+class _FenceMaintenanceConnection:
+    def __init__(self, owner):
+        self.owner = owner
+        self.events = owner.events
+        self.allow_connections = True
+        self._autocommit = False
+        self.closed = False
+
+    @property
+    def autocommit(self):
+        return self._autocommit
+
+    @autocommit.setter
+    def autocommit(self, value):
+        self._autocommit = value
+        self.events.append("maintenance-autocommit")
+
+    def cursor(self):
+        return _FenceMaintenanceCursor(self)
+
+    def close(self):
+        if not self.closed:
+            self.events.append("close")
+            self.closed = True
+
+
+class _FenceDatabaseDriver:
+    def __init__(self, owner):
+        self.owner = owner
+
+    def connect(self, **params):
+        self.owner.events.append("connect")
+        self.owner.connect_params = params
+        if self.owner.fail_connect:
+            raise RuntimeError("connect failed")
+        connection = _FenceMaintenanceConnection(self.owner)
+        self.owner.maintenance_connection = connection
+        return connection
 
 
 class _FenceConnection:
     vendor = "postgresql"
 
-    def __init__(self, *, fail_restore: bool = False):
-        self.allow_connections = True
+    def __init__(
+        self,
+        *,
+        fail_connect: bool = False,
+        fail_disable: bool = False,
+        fail_restore: bool = False,
+        maintenance_database: str = "postgres",
+        maintenance_user: str = "advisor_owner",
+    ):
         self.events: list[str] = []
+        self.fail_connect = fail_connect
+        self.fail_disable = fail_disable
         self.fail_restore = fail_restore
+        self.maintenance_database = maintenance_database
+        self.maintenance_user = maintenance_user
+        self.maintenance_connection: _FenceMaintenanceConnection | None = None
+        self.connect_params: dict[str, object] | None = None
+        self.connection_params = {
+            "dbname": import_release_seed.PRODUCTION_DATABASE_NAME,
+            "host": "dpg-advisor.render.com",
+            "user": "advisor_owner",
+            "password": "test-only-password",
+            "sslmode": "require",
+        }
+        self.Database = _FenceDatabaseDriver(self)
 
     def get_autocommit(self):
         return True
 
+    def get_connection_params(self):
+        return dict(self.connection_params)
+
     def cursor(self):
-        return _FenceCursor(self)
+        raise AssertionError("connection fence SQL must not use the target connection")
 
 
 def test_postgres_connection_fence_orders_and_restores_on_body_failure(monkeypatch):
@@ -704,14 +778,32 @@ def test_postgres_connection_fence_orders_and_restores_on_body_failure(monkeypat
         with import_release_seed._postgres_connection_fence(
             "release",
             database_name=import_release_seed.PRODUCTION_DATABASE_NAME,
+            confirmed_current_user="advisor_owner",
             enabled=True,
             confirmation=import_release_seed.CONNECTION_FENCE_CONFIRMATION_VALUE,
         ):
             connection.events.append("body")
             raise RuntimeError("body failed")
 
-    assert connection.events == ["disable", "verify", "body", "restore", "verify"]
-    assert connection.allow_connections is True
+    assert connection.events == [
+        "connect",
+        "maintenance-autocommit",
+        "identity",
+        "disable",
+        "verify",
+        "body",
+        "restore",
+        "verify",
+        "close",
+    ]
+    assert connection.connect_params == {
+        **connection.connection_params,
+        "dbname": import_release_seed.POSTGRES_MAINTENANCE_DATABASE,
+    }
+    assert connection.connection_params["dbname"] == import_release_seed.PRODUCTION_DATABASE_NAME
+    assert connection.maintenance_connection is not None
+    assert connection.maintenance_connection.allow_connections is True
+    assert connection.maintenance_connection.closed is True
 
 
 def test_postgres_connection_fence_requires_exact_gate_and_reports_restore_failure(
@@ -724,6 +816,7 @@ def test_postgres_connection_fence_requires_exact_gate_and_reports_restore_failu
         with import_release_seed._postgres_connection_fence(
             "release",
             database_name=import_release_seed.PRODUCTION_DATABASE_NAME,
+            confirmed_current_user="advisor_owner",
             enabled=True,
             confirmation="yes",
         ):
@@ -735,11 +828,77 @@ def test_postgres_connection_fence_requires_exact_gate_and_reports_restore_failu
         with import_release_seed._postgres_connection_fence(
             "release",
             database_name=import_release_seed.PRODUCTION_DATABASE_NAME,
+            confirmed_current_user="advisor_owner",
             enabled=True,
             confirmation=import_release_seed.CONNECTION_FENCE_CONFIRMATION_VALUE,
         ):
             pass
-    assert connection.events == ["disable", "verify", "restore"]
+    assert connection.events == [
+        "connect",
+        "maintenance-autocommit",
+        "identity",
+        "disable",
+        "verify",
+        "restore",
+        "close",
+    ]
+    assert connection.maintenance_connection is not None
+    assert connection.maintenance_connection.closed is True
+
+
+def test_postgres_connection_fence_restores_after_ambiguous_disable_failure(monkeypatch):
+    connection = _FenceConnection(fail_disable=True)
+    monkeypatch.setattr(import_release_seed, "connections", {"release": connection})
+
+    with pytest.raises(RuntimeError, match="disable response lost"):
+        with import_release_seed._postgres_connection_fence(
+            "release",
+            database_name=import_release_seed.PRODUCTION_DATABASE_NAME,
+            confirmed_current_user="advisor_owner",
+            enabled=True,
+            confirmation=import_release_seed.CONNECTION_FENCE_CONFIRMATION_VALUE,
+        ):
+            raise AssertionError("unreachable")
+
+    assert connection.events == [
+        "connect",
+        "maintenance-autocommit",
+        "identity",
+        "disable",
+        "restore",
+        "verify",
+        "close",
+    ]
+    assert connection.maintenance_connection is not None
+    assert connection.maintenance_connection.allow_connections is True
+    assert connection.maintenance_connection.closed is True
+
+
+@pytest.mark.parametrize(
+    "connection_kwargs",
+    [
+        {"fail_connect": True},
+        {"maintenance_database": "wrong_database"},
+        {"maintenance_user": "wrong_owner"},
+    ],
+)
+def test_postgres_connection_fence_fails_closed_before_disabling(monkeypatch, connection_kwargs):
+    connection = _FenceConnection(**connection_kwargs)
+    monkeypatch.setattr(import_release_seed, "connections", {"release": connection})
+
+    with pytest.raises(CommandError, match="maintenance connection could not be"):
+        with import_release_seed._postgres_connection_fence(
+            "release",
+            database_name=import_release_seed.PRODUCTION_DATABASE_NAME,
+            confirmed_current_user="advisor_owner",
+            enabled=True,
+            confirmation=import_release_seed.CONNECTION_FENCE_CONFIRMATION_VALUE,
+        ):
+            raise AssertionError("unreachable")
+
+    assert "disable" not in connection.events
+    if connection.maintenance_connection is not None:
+        assert connection.maintenance_connection.closed is True
 
 
 def test_target_flush_never_requests_cascade(monkeypatch):

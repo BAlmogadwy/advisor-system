@@ -51,6 +51,7 @@ WRITERS_SUSPENDED_VALUE = "ALL_APPLICATION_WRITERS_ARE_SUSPENDED"
 POSTGRES_REHEARSAL_ENV = "RELEASE_SEED_POSTGRES_REHEARSAL"
 POSTGRES_REHEARSAL_VALUE = "ALLOW_NON_PRODUCTION_POSTGRES_REHEARSAL"
 CONNECTION_FENCE_CONFIRMATION_VALUE = "FENCE_NEW_CONNECTIONS_AND_RESTORE_AFTER_IMPORT"
+POSTGRES_MAINTENANCE_DATABASE = "postgres"
 RENDER_POSTGRES_HOST_PATTERN = re.compile(r"(?:dpg-[a-z0-9-]+|[a-z0-9.-]+\.render\.com)\Z")
 EMERGENCY_FENCE_RESTORE_GUIDANCE = (
     "PostgreSQL connection fence restoration failed; the data transaction may already have "
@@ -608,6 +609,7 @@ def _postgres_connection_fence(
     using: str,
     *,
     database_name: str,
+    confirmed_current_user: str,
     enabled: bool,
     confirmation: str,
 ) -> Iterator[None]:
@@ -619,16 +621,46 @@ def _postgres_connection_fence(
         raise _fail("explicit PostgreSQL connection-fence confirmation was not supplied")
     if not connection.get_autocommit():
         raise _fail("PostgreSQL connection fence requires an autocommit owner connection")
+    if database_name == POSTGRES_MAINTENANCE_DATABASE:
+        raise _fail("target database cannot also be the maintenance database")
 
-    fence_applied = False
+    maintenance_connection = None
+    fence_may_be_applied = False
     try:
-        with connection.cursor() as cursor:
+        try:
+            connection_params = dict(connection.get_connection_params())
+            connection_params["dbname"] = POSTGRES_MAINTENANCE_DATABASE
+            database_driver = getattr(connection, "Database", None)
+            if database_driver is None:
+                raise RuntimeError("PostgreSQL database driver is unavailable")
+            maintenance_connection = database_driver.connect(**connection_params)
+            maintenance_connection.autocommit = True
+            with maintenance_connection.cursor() as cursor:
+                cursor.execute("SELECT current_database(), current_user")
+                identity = cursor.fetchone()
+            if identity != (POSTGRES_MAINTENANCE_DATABASE, confirmed_current_user):
+                raise RuntimeError("maintenance database identity mismatch")
+        except Exception:
+            if maintenance_connection is not None:
+                try:
+                    maintenance_connection.close()
+                except Exception:
+                    pass
+                maintenance_connection = None
+            raise _fail(
+                "PostgreSQL maintenance connection could not be established or verified"
+            ) from None
+
+        with maintenance_connection.cursor() as cursor:
+            # A network failure can occur after PostgreSQL executes the ALTER
+            # but before the client receives confirmation. From this point on,
+            # restoration is mandatory even when execute() raises.
+            fence_may_be_applied = True
             cursor.execute(
                 postgres_sql.SQL("ALTER DATABASE {database} WITH ALLOW_CONNECTIONS false").format(
                     database=postgres_sql.Identifier(database_name)
                 )
             )
-            fence_applied = True
             cursor.execute(
                 "SELECT datallowconn FROM pg_database WHERE datname = %s",
                 [database_name],
@@ -638,11 +670,12 @@ def _postgres_connection_fence(
                 raise _fail("PostgreSQL connection fence could not be verified")
         yield
     finally:
-        if fence_applied:
+        restoration_failed = False
+        if fence_may_be_applied:
             try:
-                if not connection.get_autocommit():
-                    raise RuntimeError("connection did not return to autocommit")
-                with connection.cursor() as cursor:
+                if maintenance_connection is None or not maintenance_connection.autocommit:
+                    raise RuntimeError("maintenance connection is unavailable")
+                with maintenance_connection.cursor() as cursor:
                     cursor.execute(
                         postgres_sql.SQL(
                             "ALTER DATABASE {database} WITH ALLOW_CONNECTIONS true"
@@ -656,7 +689,16 @@ def _postgres_connection_fence(
                     if state is None or state[0] is not True:
                         raise RuntimeError("connection fence restoration was not verified")
             except Exception:
-                raise CommandError(EMERGENCY_FENCE_RESTORE_GUIDANCE) from None
+                restoration_failed = True
+        if maintenance_connection is not None:
+            try:
+                maintenance_connection.close()
+            except Exception:
+                # The gate state was verified above. A local close failure must
+                # not replace either the body result or the recovery diagnosis.
+                pass
+        if restoration_failed:
+            raise CommandError(EMERGENCY_FENCE_RESTORE_GUIDANCE) from None
 
 
 def _take_postgres_advisory_lock(using: str) -> None:
@@ -974,6 +1016,7 @@ class Command(BaseCommand):
             with _postgres_connection_fence(
                 using,
                 database_name=expected_database_name,
+                confirmed_current_user=confirmed_current_user,
                 enabled=bool(options["enable_postgres_connection_fence"]),
                 confirmation=str(options["confirm_connection_fence"]),
             ):
