@@ -120,6 +120,29 @@ def test_contract_rejects_independent_worker_runtime_setting(blueprint: Blueprin
     assert any(f"{WORKER_SERVICE_NAME}:ALIBABA_LLM_MODEL must inherit" in error for error in errors)
 
 
+@pytest.mark.parametrize("key", ["TELEGRAM_INTERNAL_BASE_URL", "LOCAL_LLM_MODEL"])
+def test_contract_rejects_optional_empty_values_on_worker(
+    blueprint: Blueprint,
+    key: str,
+) -> None:
+    changed = deepcopy(blueprint)
+    worker = _service(changed, WORKER_SERVICE_NAME)
+    worker["envVars"].append(
+        {
+            "key": key,
+            "fromService": {
+                "name": "advisor-system",
+                "type": "web",
+                "envVarKey": key,
+            },
+        }
+    )
+
+    errors = validate_blueprint(changed, project_root=PROJECT_ROOT)
+
+    assert any(key in error and "intentionally empty value" in error for error in errors)
+
+
 def test_contract_rejects_runtime_version_drift(blueprint: Blueprint, tmp_path: Path) -> None:
     (tmp_path / ".python-version").write_text("3.12.0\n", encoding="utf-8")
     (tmp_path / "runtime.txt").write_text("python-3.11.9\n", encoding="utf-8")

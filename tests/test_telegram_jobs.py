@@ -47,12 +47,10 @@ WORKER_INHERITED_ENV = {
     "TELEGRAM_PUBLIC_BASE_URL",
     "TELEGRAM_LINK_TOKEN_TTL_SECONDS",
     "TELEGRAM_API_TIMEOUT_SECONDS",
-    "TELEGRAM_INTERNAL_BASE_URL",
     "TELEGRAM_SEND_TIMETABLE_IMAGES",
     "TELEGRAM_SEND_GRADUATION_IMAGES",
     "LLM_BACKEND",
     "LOCAL_LLM_BASE_URL",
-    "LOCAL_LLM_MODEL",
     "LOCAL_LLM_TIMEOUT_SECONDS",
     "LOCAL_LLM_MAX_TOKENS",
     "LOCAL_LLM_ALLOW_REMOTE",
@@ -291,6 +289,10 @@ def test_render_worker_inherits_every_runtime_setting_from_the_web_service():
             "type": "web",
             "envVarKey": key,
         }, key
+
+    for key in ("TELEGRAM_INTERNAL_BASE_URL", "LOCAL_LLM_MODEL"):
+        assert web_env[key]["value"] == ""
+        assert key not in worker_env
 
 
 def test_enqueue_is_idempotent_and_never_overwrites_the_first_payload():
