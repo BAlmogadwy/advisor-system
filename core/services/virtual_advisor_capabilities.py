@@ -324,6 +324,37 @@ def _ctx_year_term(
     return year, term, None
 
 
+def _section_snapshot_matches_requested_term(year: int, term: int, ctx: dict[str, Any]) -> bool:
+    """Whether the termless section table is known to represent this request.
+
+    Newer callers can name the section snapshot explicitly.  Older callers only
+    carry the server-configured planning term, which is also the term for which
+    the one live section snapshot is loaded.  Model-supplied ``args`` never count
+    as snapshot provenance.  If neither complete pair is available, timetable
+    certification must fail closed.
+    """
+
+    def _pair(year_key: str, term_key: str) -> tuple[int, int] | None:
+        try:
+            snapshot_year = int(ctx[year_key])
+            snapshot_term = int(ctx[term_key])
+        except (KeyError, TypeError, ValueError):
+            return None
+        if snapshot_year <= 0 or snapshot_term not in {1, 2, 3}:
+            return None
+        return snapshot_year, snapshot_term
+
+    explicit_keys = {
+        "section_snapshot_academic_year",
+        "section_snapshot_term",
+    }
+    if explicit_keys.intersection(ctx):
+        snapshot = _pair("section_snapshot_academic_year", "section_snapshot_term")
+    else:
+        snapshot = _pair("academic_year", "term")
+    return snapshot == (int(year), int(term))
+
+
 _FIND_STUDENTS_MESSAGE_ROWS = 30
 
 
@@ -797,6 +828,173 @@ def _exec_recommend_courses(
     }
 
 
+def _exec_course_choice_comparison(
+    args: dict[str, Any], scope: dict[str, Any], ctx: dict[str, Any]
+) -> dict[str, Any]:
+    """Compare two to four named courses from one verified planning baseline."""
+    from core.services.course_choice_comparison import compare_course_choices
+
+    student_id, error = _resolve_scoped_student_id(args, scope)
+    if error:
+        return {"ok": False, "error": error, "tool": "course_choice_comparison"}
+    if student_id is None:
+        return {
+            "ok": False,
+            "error": "Student identity is required.",
+            "tool": "course_choice_comparison",
+        }
+    year, term, error = _ctx_year_term(args, ctx)
+    if error:
+        return {"ok": False, "error": error, "tool": "course_choice_comparison"}
+    timetable_evidence_available = _section_snapshot_matches_requested_term(
+        int(year), int(term), ctx
+    )
+
+    raw_codes = args.get("course_codes")
+    if not isinstance(raw_codes, list):
+        return {
+            "ok": False,
+            "error": "course_codes must be a list of two to four course codes.",
+            "tool": "course_choice_comparison",
+        }
+    codes = [normalize_code(code) for code in raw_codes if normalize_code(code)]
+    if len(codes) < 2 or len(codes) > 4:
+        return {
+            "ok": False,
+            "error": "Choose two to four course codes to compare.",
+            "tool": "course_choice_comparison",
+        }
+    if len(set(codes)) != len(codes):
+        return {
+            "ok": False,
+            "error": "Each compared course must be different.",
+            "tool": "course_choice_comparison",
+        }
+
+    objective = str(args.get("objective") or "balanced").strip().lower()
+    if objective not in {"balanced", "graduation", "unlock_impact", "timetable_fit"}:
+        return {
+            "ok": False,
+            "error": "Unsupported comparison objective.",
+            "tool": "course_choice_comparison",
+        }
+    try:
+        return compare_course_choices(
+            int(student_id),
+            codes,
+            int(year),
+            int(term),
+            objective=objective,
+            timetable_evidence_available=timetable_evidence_available,
+        )
+    except ValueError as exc:
+        return {"ok": False, "error": str(exc), "tool": "course_choice_comparison"}
+
+
+def _exec_feasible_course_replacements(
+    args: dict[str, Any], scope: dict[str, Any], ctx: dict[str, Any]
+) -> dict[str, Any]:
+    """Certify academically improving swaps against one complete timetable."""
+    from core.services.course_replacement_feasibility import (
+        find_feasible_course_replacements,
+    )
+
+    student_id, error = _resolve_scoped_student_id(args, scope)
+    if error:
+        return {"ok": False, "error": error, "tool": "feasible_course_replacements"}
+    if student_id is None:
+        return {
+            "ok": False,
+            "error": "Student identity is required.",
+            "tool": "feasible_course_replacements",
+        }
+    year, term, error = _ctx_year_term(args, ctx)
+    if error:
+        return {"ok": False, "error": error, "tool": "feasible_course_replacements"}
+
+    remove_code = normalize_code(args.get("remove_course") or "")
+    add_code = normalize_code(args.get("add_course") or "")
+    if remove_code and add_code and remove_code == add_code:
+        return {
+            "ok": False,
+            "error": "The removed and added courses must be different.",
+            "tool": "feasible_course_replacements",
+        }
+
+    if not _section_snapshot_matches_requested_term(int(year), int(term), ctx):
+        return {
+            "ok": True,
+            "tool": "feasible_course_replacements",
+            "academic_year": int(year),
+            "term": int(term),
+            "baseline_kind": "NOT_EVALUATED",
+            "status": "NOT_DETERMINABLE",
+            "requested_remove_course": remove_code or None,
+            "requested_add_course": add_code or None,
+            "academic_search": {
+                "pairs_evaluated": 0,
+                "search_truncated": False,
+                "candidate_courses_considered": [],
+            },
+            "certification_search": {
+                "academic_candidates_received": 0,
+                "timetable_candidates_checked": 0,
+                "certified_result_limit": 0,
+                "search_truncated": False,
+            },
+            "certified_replacements": [],
+            "rejected_replacements": [
+                {
+                    "remove_course": {"course_code": remove_code},
+                    "add_course": {"course_code": add_code},
+                    "academic": {"status": "NOT_EVALUATED"},
+                    "timetable": {
+                        "status": "NOT_DETERMINABLE",
+                        "reason_code": "SECTION_SNAPSHOT_TERM_MISMATCH",
+                        "reason": (
+                            "The section catalogue is not verified for the requested term, "
+                            "so a replacement timetable cannot be certified."
+                        ),
+                    },
+                }
+            ],
+            "rejected_replacements_count": 1,
+            "limitations": [
+                "The section catalogue is a recorded, termless snapshot and is not "
+                "verified for the requested term."
+            ],
+        }
+
+    try:
+        return {
+            "ok": True,
+            "tool": "feasible_course_replacements",
+            **find_feasible_course_replacements(
+                int(student_id),
+                int(year),
+                int(term),
+                remove_course=remove_code or None,
+                add_course=add_code or None,
+                max_credits_per_term=18,
+            ),
+        }
+    except (TypeError, ValueError) as exc:
+        return {
+            "ok": False,
+            "error": str(exc),
+            "tool": "feasible_course_replacements",
+        }
+    except Exception:
+        logger.exception("Feasible course replacement certification failed")
+        return {
+            "ok": False,
+            "error": (
+                "The verified replacement check could not be completed from the recorded data."
+            ),
+            "tool": "feasible_course_replacements",
+        }
+
+
 def _exec_graduation_shortfall(
     args: dict[str, Any], scope: dict[str, Any], ctx: dict[str, Any]
 ) -> dict[str, Any]:
@@ -1257,7 +1455,7 @@ def _exec_graduation_progress(
     add_courses = args.get("add_current_courses") or []
     search_replacements = bool(args.get("search_better_replacements", False))
     if not isinstance(remove_courses, list) or not isinstance(add_courses, list):
-        return {"ok": False, "error": "Current-term course changes must be lists."}
+        return {"ok": False, "error": "Planning-baseline course changes must be lists."}
     if remove_courses or add_courses or search_replacements:
         g = build_graduation_what_if(
             int(student_id),
@@ -1274,6 +1472,8 @@ def _exec_graduation_progress(
     return {
         "student_id": int(student_id),
         "program": g["program"],
+        "planning_baseline_academic_year": g["planning_baseline_academic_year"],
+        "planning_baseline_term": g["planning_baseline_term"],
         "scenario_academic_year": int(year),
         "scenario_term": int(term),
         "plan_courses_passed": g["plan_courses_passed"],
@@ -1284,11 +1484,20 @@ def _exec_graduation_progress(
         "credits_earned_registrar": g["earned_credits_registrar"],
         "gpa": g["gpa"],
         "minimum_terms_by_prerequisites": g["chain_floor_terms"],
+        "minimum_terms_by_credit_capacity_after_planning_baseline": g[
+            "capacity_floor_terms_after_planning_baseline"
+        ],
         "minimum_terms_by_credit_capacity_after_current": g["capacity_floor_terms_after_current"],
         "lower_bound_additional_terms": g["lower_bound_additional_terms"],
+        "lower_bound_terms_including_planning_baseline": g[
+            "lower_bound_terms_including_planning_baseline"
+        ],
         "lower_bound_terms_including_current": g["lower_bound_terms_including_current"],
         "max_credits_per_term": g["max_credits_per_term"],
         "estimated_additional_terms": g["estimated_additional_terms"],
+        "estimated_terms_including_planning_baseline": g[
+            "estimated_terms_including_planning_baseline"
+        ],
         "estimated_terms_including_current": g["estimated_terms_including_current"],
         "terms_estimate": g["terms_estimate"],
         "simulation_completed": g["simulation_completed"],
@@ -1297,25 +1506,33 @@ def _exec_graduation_progress(
         "term_plan": g["term_plan"],
         "unresolved_requirements": g["unresolved_requirements"],
         "scenario_graph": g.get("scenario_graph") or {},
+        "planning_baseline_courses_assumed_passed": g["planning_baseline_courses_assumed_passed"],
         "current_courses_assumed_passed": g["current_courses_assumed_passed"],
         "simulation_assumptions": g["simulation_assumptions"],
         "credit_hour_gates": g["hour_gates"],
         # Computed by build_graduation_report and previously dropped on the floor.
         # "can this be my last term?" is one of the most-asked questions and the
         # answer was already sitting in the report.
+        "plan_completion_in_planning_baseline_possible": g[
+            "plan_completion_in_planning_baseline_possible"
+        ],
         "final_term_possible": g["final_term_possible"],
         "passed_credits_in_plan": g["passed_credits_in_plan"],
+        "registered_credits_at_planning_baseline": g["registered_credits_at_planning_baseline"],
         "registered_credits_now": g["registered_credits_now"],
         "courses_in_progress": g["in_progress"],
         "what_if": g.get("what_if"),
         "note": (
             "Registrar credits include courses outside the plan, so they are not a "
             "fraction of the plan total. The estimate repeatedly runs the existing "
-            "course recommender one main term ahead, assumes the current Planner "
-            "courses pass, then rolls each simulated term forward in memory only. "
+            "course recommender one main term ahead, assumes the selected planning-"
+            "baseline Planner courses pass, then rolls each simulated term forward "
+            "in memory only. The planning baseline may be an expected next-term plan, "
+            "so it must not be described as the student's actual current term. "
             "It uses an 18-credit maximum for every simulated term and does not "
             "guarantee offerings, seats, or first-attempt passes. final_term_possible "
-            "means the PLAN could be finished this term; graduation itself is a University Council "
+            "means the PLAN could be finished in the planning-baseline term; graduation "
+            "itself is a University Council "
             "decision (TU.GRADUATION.COUNCIL_AWARDS_DEGREE), so it must never be "
             "reported as 'you are graduating'."
         ),
@@ -1861,6 +2078,10 @@ _UNPLACED_REASONS: dict[str, tuple[str, str]] = {
     "Model infeasible under current hard constraints": (
         "DID_NOT_FIT",
         "No combination satisfied all the limits given.",
+    ),
+    "Section meeting data is incomplete or invalid": (
+        "MEETING_DATA_INCOMPLETE",
+        "A recorded section has missing or invalid meeting data, so clashes cannot be certified.",
     ),
 }
 
@@ -3014,6 +3235,98 @@ def build_default_registry() -> AdvisorCapabilityRegistry:
 
     registry.register(
         AdvisorCapability(
+            name="course_choice_comparison",
+            description=(
+                "Compare two to four exact course choices for this student from one "
+                "verified baseline. It keeps prerequisite readiness, recommendation "
+                "membership, direct personal unlocks, wider prerequisite-chain impact, "
+                "the project's discounted downstream-importance heuristic, recorded "
+                "clash-free section fit, and a fair graduation scenario separate. Use "
+                "for 'AI331 or DS341?', 'which opens more?', 'which fits my timetable?', "
+                "or a ranked comparison. A weighted importance score is a planning "
+                "heuristic, never university policy. No section record does not mean the "
+                "university offers none, and no result proves live seats, registration "
+                "permission, course equivalence, or a portal action. Exact graduation "
+                "claims are returned only when the structured scenarios complete."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "student_id": {
+                        "type": "integer",
+                        "description": "Omit for the chatting student.",
+                    },
+                    "course_codes": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "minItems": 2,
+                        "maxItems": 4,
+                        "description": "Two to four distinct exact course codes.",
+                    },
+                    "academic_year": {"type": "integer"},
+                    "term": {"type": "integer"},
+                    "objective": {
+                        "type": "string",
+                        "enum": [
+                            "balanced",
+                            "graduation",
+                            "unlock_impact",
+                            "timetable_fit",
+                        ],
+                        "description": "The student's stated priority; balanced if unstated.",
+                    },
+                },
+                "required": ["course_codes"],
+                "additionalProperties": False,
+            },
+            allowed_roles=_ALL_ROLES,
+            executor=_exec_course_choice_comparison,
+        )
+    )
+
+    registry.register(
+        AdvisorCapability(
+            name="feasible_course_replacements",
+            description=(
+                "Find one-for-one replacements that pass both independent gates: the "
+                "existing graduation forecast proves an academic improvement, and the "
+                "existing Planner places every retained baseline course plus the replacement "
+                "in a complete clash-free timetable. Use for 'what can I replace without a "
+                "clash?', 'replace DS341 with the best feasible course', or 'will replacing "
+                "DS341 with CS285 improve graduation and fit my timetable?'. Optional "
+                "remove_course and add_course bind either side of the search. The baseline may "
+                "be REGISTERED or EXPECTED_PLAN and must be described accordingly. Results use "
+                "only the recorded, termless section snapshot, deliberately ignore capacity, "
+                "and never prove live seats, current offering, registration permission, "
+                "equivalence, or a portal action. This capability is read-only."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "student_id": {
+                        "type": "integer",
+                        "description": "Omit for the chatting student.",
+                    },
+                    "remove_course": {
+                        "type": "string",
+                        "description": "Optional exact baseline course code to replace.",
+                    },
+                    "add_course": {
+                        "type": "string",
+                        "description": "Optional exact replacement course code to test.",
+                    },
+                    "academic_year": {"type": "integer"},
+                    "term": {"type": "integer"},
+                },
+                "additionalProperties": False,
+            },
+            allowed_roles=_ALL_ROLES,
+            executor=_exec_feasible_course_replacements,
+        )
+    )
+
+    registry.register(
+        AdvisorCapability(
             name="course_prerequisites",
             description=(
                 "Official prerequisites for one course (per program), including "
@@ -3225,9 +3538,9 @@ def build_default_registry() -> AdvisorCapabilityRegistry:
                 "How close this student is to graduating: courses passed of the plan total, "
                 "percent complete, courses and credits remaining, registrar credits earned, "
                 "GPA, any unmet credit-hour gate, and a read-only term-by-term scenario. The "
-                "scenario assumes current Planner courses pass, repeatedly calls the existing "
+                "scenario assumes the selected planning-baseline Planner courses pass, repeatedly calls the existing "
                 "recommender one main term ahead, and uses at most 18 credits in every term. "
-                "It can compare read-only current-term add/remove scenarios or search for a "
+                "It can compare read-only planning-baseline add/remove scenarios or search for a "
                 "one-course replacement that has a proven academic improvement. Use for "
                 "'when will I graduate', 'what if I do not take DS341', 'what if I replace "
                 "DS341 with MATH204', or 'can I replace a current course to improve graduation'."
@@ -3246,7 +3559,7 @@ def build_default_registry() -> AdvisorCapabilityRegistry:
                         "items": {"type": "string"},
                         "maxItems": 10,
                         "description": (
-                            "Current Planner course codes to remove only in this read-only "
+                            "Planning-baseline Planner course codes to remove only in this read-only "
                             "graduation scenario."
                         ),
                     },
@@ -3255,14 +3568,14 @@ def build_default_registry() -> AdvisorCapabilityRegistry:
                         "items": {"type": "string"},
                         "maxItems": 10,
                         "description": (
-                            "Course codes to add only to the simulated current term. They "
-                            "are assumed passed after this term, never immediately."
+                            "Course codes to add only to the simulated planning-baseline term. "
+                            "They are assumed passed after that term, never immediately."
                         ),
                     },
                     "search_better_replacements": {
                         "type": "boolean",
                         "description": (
-                            "When true, compare bounded one-for-one replacements of current "
+                            "When true, compare bounded one-for-one replacements of planning-baseline "
                             "courses and return only academically proven improvements. Do not "
                             "combine with explicit add/remove lists."
                         ),
@@ -3429,6 +3742,8 @@ def build_default_registry() -> AdvisorCapabilityRegistry:
                 # confirmed workflow; what is unavailable is doing it from chat.
                 "If the student asks to DISCARD their current sections and rebuild "
                 "the week from scratch, call this with keep_current_sections=false. "
+                "Chat always keeps the student's current sections; it cannot confirm "
+                "their removal itself. "
                 "Do not answer that request yourself and do not tell the student it "
                 "is impossible — it is not. The server will route them to the "
                 "planner, where the rebuild is confirmed. Saying they confirm it to "

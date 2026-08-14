@@ -612,8 +612,14 @@ def test_graduation_progress_returns_the_fields_the_report_computes():
     )
     for field in (
         "final_term_possible",
+        "plan_completion_in_planning_baseline_possible",
         "passed_credits_in_plan",
         "registered_credits_now",
+        "registered_credits_at_planning_baseline",
+        "planning_baseline_academic_year",
+        "planning_baseline_term",
+        "planning_baseline_courses_assumed_passed",
+        "estimated_terms_including_planning_baseline",
         "courses_in_progress",
     ):
         assert field in out, f"{field} is computed by the report and still dropped"

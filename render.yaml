@@ -2,38 +2,168 @@ services:
   - type: web
     name: advisor-system
     runtime: python
+    region: oregon
     plan: starter
+    numInstances: 1
+    branch: master
+    autoDeployTrigger: checksPass
+    healthCheckPath: /health/
     preDeployCommand: python manage.py migrate --noinput && python manage.py createcachetable --database default && python manage.py normalise_exam_runs && python manage.py purge_rate_limit_buckets
     buildCommand: chmod +x build.sh && ./build.sh
-    startCommand: gunicorn config.wsgi --bind 0.0.0.0:$PORT --workers 2 --timeout 120
+    # One process keeps the existing in-memory/IP throttles authoritative. gthread
+    # still allows concurrent requests without splitting those counters between
+    # Gunicorn processes.
+    startCommand: gunicorn config.wsgi --bind 0.0.0.0:$PORT --workers 1 --worker-class gthread --threads 4 --timeout 120
     envVars:
       - key: DJANGO_SECRET_KEY
         generateValue: true
       - key: DJANGO_DEBUG
         value: "false"
+      # Existing Render services may retain a legacy PYTHON_VERSION variable,
+      # which takes precedence over .python-version. Pin both surfaces.
+      - key: PYTHON_VERSION
+        value: "3.11.9"
+      - key: ALLOW_NO_SMTP_PROCESS
+        value: "false"
       - key: DJANGO_ALLOWED_HOSTS
-        sync: false
+        value: advisor-system-v9zs.onrender.com
       - key: CSRF_TRUSTED_ORIGINS
-        sync: false
+        value: https://advisor-system-v9zs.onrender.com
       - key: DATABASE_URL
         fromDatabase:
-          name: advisor-db
+          name: advisor-system-db
           property: connectionString
+      # Prevent the historical SQLite-import migration from ever discovering a
+      # workstation database during a fresh PostgreSQL bootstrap.
+      - key: ADVISOR_DB_PATH
+        value: /tmp/advisor-no-legacy-import.sqlite3
+      # Student sign-in is email-OTP based. Credentials stay server-side and
+      # must be populated on the existing web service before launch.
+      - key: EMAIL_HOST
+        value: smtp.gmail.com
+      - key: EMAIL_PORT
+        value: "587"
+      - key: EMAIL_USE_TLS
+        value: "true"
+      - key: EMAIL_HOST_USER
+        sync: false
+      - key: EMAIL_HOST_PASSWORD
+        sync: false
+      - key: EMAIL_TIMEOUT
+        value: "20"
+      - key: EMAIL_BACKEND
+        value: django.core.mail.backends.smtp.EmailBackend
+      - key: STUDENT_EMAIL_DOMAIN
+        value: taibahu.edu.sa
+      - key: STUDENT_OTP_TTL_SECONDS
+        value: "600"
+      - key: STUDENT_OTP_MAX_ATTEMPTS
+        value: "5"
+      - key: STUDENT_OTP_MAX_SENDS
+        value: "3"
+      - key: STUDENT_OTP_SEND_WINDOW_SECONDS
+        value: "900"
+      - key: STUDENT_OTP_ASYNC_EMAIL
+        value: "true"
+      - key: STUDENT_OTP_REDIRECT_EMAIL
+        value: ""
+      - key: IP_FROM_XFF
+        value: "true"
+      # Used only by explicit staff scraper operations; never sent to a client.
+      - key: PORTAL_ADMIN_USERNAME
+        sync: false
+      - key: PORTAL_ADMIN_PASSWORD
+        sync: false
+      # The web service is the single source of truth for every setting the
+      # Telegram worker consumes. Existing Blueprints ignore newly introduced
+      # sync:false entries, so populate/verify them on this service before sync.
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_WEBHOOK_SECRET
+        sync: false
+      - key: TELEGRAM_ADVISOR_ENABLED
+        value: "false"
+      - key: TELEGRAM_PUBLIC_BASE_URL
+        value: https://advisor-system-v9zs.onrender.com
+      - key: TELEGRAM_LINK_TOKEN_TTL_SECONDS
+        value: "900"
+      - key: TELEGRAM_LINK_AUTH_MAX_AGE_SECONDS
+        value: "600"
+      - key: TELEGRAM_MAX_PENDING_PER_LINK
+        value: "10"
+      - key: TELEGRAM_API_TIMEOUT_SECONDS
+        value: "30"
+      - key: TELEGRAM_DISPATCH_SYNC
+        value: "false"
+      - key: TELEGRAM_INTERNAL_BASE_URL
+        value: ""
+      - key: TELEGRAM_SEND_TIMETABLE_IMAGES
+        value: "false"
+      - key: TELEGRAM_SEND_GRADUATION_IMAGES
+        value: "false"
+      - key: LLM_BACKEND
+        value: alibaba
+      - key: LOCAL_LLM_BASE_URL
+        value: http://127.0.0.1:1234/v1
+      - key: LOCAL_LLM_MODEL
+        value: ""
+      - key: LOCAL_LLM_TIMEOUT_SECONDS
+        value: "120"
+      - key: LOCAL_LLM_MAX_TOKENS
+        value: "1400"
+      - key: LOCAL_LLM_ALLOW_REMOTE
+        value: "false"
+      - key: ALIBABA_LLM_BASE_URL
+        sync: false
+      - key: ALIBABA_LLM_API_KEY
+        sync: false
+      - key: ALIBABA_LLM_MODEL
+        value: qwen3.7-max
+      - key: ALIBABA_LLM_ENABLE_THINKING
+        value: "false"
+      - key: ALIBABA_LLM_TIMEOUT_SECONDS
+        value: "75"
+      - key: ALIBABA_LLM_MAX_TOKENS
+        value: "3000"
+      - key: ALIBABA_LLM_MAX_RETRIES
+        value: "2"
+      - key: ALIBABA_LLM_ALLOW_LIVE_REQUESTS
+        value: "false"
+      - key: VIRTUAL_ADVISOR_AGENT_LOOP_ENABLED
+        value: "false"
+      - key: VIRTUAL_ADVISOR_MAX_TOOL_ITERATIONS
+        value: "5"
+      - key: VIRTUAL_ADVISOR_MAX_TOOL_CALLS
+        value: "12"
+      - key: VIRTUAL_ADVISOR_LOOP_MAX_TOKENS
+        value: "3000"
+      - key: VIRTUAL_ADVISOR_TOOL_TURN_TIMEOUT_SECONDS
+        value: "75"
+      - key: STUDENT_ADVISOR_V2_ENABLED
+        value: "false"
+      - key: STUDENT_ADVISOR_V2_MAX_TOOL_ITERATIONS
+        value: "4"
+      - key: STUDENT_ADVISOR_V2_MAX_TOOL_CALLS
+        value: "8"
+      - key: STUDENT_ADVISOR_V2_MAX_TOKENS
+        value: "1800"
+      - key: STUDENT_ADVISOR_V2_TOOL_TIMEOUT_SECONDS
+        value: "75"
 
-  # Retention is a SCHEDULE, not a side effect of deploying. The release chain
-  # above still runs migrations and the rate-limit sweep, but planner drafts hold
-  # a student's registered timetable — instructor names, rooms, enrolment counts —
-  # inside `generated_inputs`, and how long that survives must not depend on how
-  # often anyone ships.
-  #
-  # 03:00 UTC is 06:00 in Riyadh: after the overnight quiet, before the day starts.
-  - type: cron
-    name: advisor-purge-planner-drafts
+  # Telegram updates are acknowledged by the web service only after their work
+  # is committed to PostgreSQL. This continuously running process leases and
+  # drains that durable queue. Every setting it consumes is copied from
+  # advisor-system below; the worker has no independently editable provider copy.
+  - type: worker
+    name: advisor-telegram-worker
     runtime: python
+    region: oregon
     plan: starter
-    schedule: "0 3 * * *"
+    numInstances: 1
+    branch: master
+    autoDeployTrigger: checksPass
     buildCommand: chmod +x build.sh && ./build.sh
-    startCommand: python manage.py purge_planner_drafts --apply
+    startCommand: python manage.py telegram_advisor_worker --sleep 1 --max-attempts 3 --standby-when-disabled
     envVars:
       - key: DJANGO_SECRET_KEY
         fromService:
@@ -42,14 +172,221 @@ services:
           envVarKey: DJANGO_SECRET_KEY
       - key: DJANGO_DEBUG
         value: "false"
+      - key: PYTHON_VERSION
+        value: "3.11.9"
+      # This process cannot serve the public OTP routes. Keep production SMTP
+      # fail-closed everywhere else without copying mail credentials into it.
+      - key: ALLOW_NO_SMTP_PROCESS
+        value: "true"
       - key: DJANGO_ALLOWED_HOSTS
-        sync: false
+        fromService:
+          name: advisor-system
+          type: web
+          envVarKey: DJANGO_ALLOWED_HOSTS
       - key: DATABASE_URL
         fromDatabase:
-          name: advisor-db
+          name: advisor-system-db
+          property: connectionString
+      - key: TELEGRAM_BOT_TOKEN
+        fromService:
+          name: advisor-system
+          type: web
+          envVarKey: TELEGRAM_BOT_TOKEN
+      - key: TELEGRAM_ADVISOR_ENABLED
+        fromService:
+          name: advisor-system
+          type: web
+          envVarKey: TELEGRAM_ADVISOR_ENABLED
+      - key: TELEGRAM_PUBLIC_BASE_URL
+        fromService:
+          name: advisor-system
+          type: web
+          envVarKey: TELEGRAM_PUBLIC_BASE_URL
+      - key: TELEGRAM_LINK_TOKEN_TTL_SECONDS
+        fromService:
+          name: advisor-system
+          type: web
+          envVarKey: TELEGRAM_LINK_TOKEN_TTL_SECONDS
+      - key: TELEGRAM_API_TIMEOUT_SECONDS
+        fromService:
+          name: advisor-system
+          type: web
+          envVarKey: TELEGRAM_API_TIMEOUT_SECONDS
+      - key: TELEGRAM_INTERNAL_BASE_URL
+        fromService:
+          name: advisor-system
+          type: web
+          envVarKey: TELEGRAM_INTERNAL_BASE_URL
+      - key: TELEGRAM_SEND_TIMETABLE_IMAGES
+        fromService:
+          name: advisor-system
+          type: web
+          envVarKey: TELEGRAM_SEND_TIMETABLE_IMAGES
+      - key: TELEGRAM_SEND_GRADUATION_IMAGES
+        fromService:
+          name: advisor-system
+          type: web
+          envVarKey: TELEGRAM_SEND_GRADUATION_IMAGES
+      # Provider, agent-loop and V2 controls all come from the web service. A kill
+      # switch changed there therefore changes the worker on the same Blueprint
+      # sync instead of silently reverting to a code default here.
+      - key: LLM_BACKEND
+        fromService:
+          name: advisor-system
+          type: web
+          envVarKey: LLM_BACKEND
+      - key: LOCAL_LLM_BASE_URL
+        fromService:
+          name: advisor-system
+          type: web
+          envVarKey: LOCAL_LLM_BASE_URL
+      - key: LOCAL_LLM_MODEL
+        fromService:
+          name: advisor-system
+          type: web
+          envVarKey: LOCAL_LLM_MODEL
+      - key: LOCAL_LLM_TIMEOUT_SECONDS
+        fromService:
+          name: advisor-system
+          type: web
+          envVarKey: LOCAL_LLM_TIMEOUT_SECONDS
+      - key: LOCAL_LLM_MAX_TOKENS
+        fromService:
+          name: advisor-system
+          type: web
+          envVarKey: LOCAL_LLM_MAX_TOKENS
+      - key: LOCAL_LLM_ALLOW_REMOTE
+        fromService:
+          name: advisor-system
+          type: web
+          envVarKey: LOCAL_LLM_ALLOW_REMOTE
+      - key: ALIBABA_LLM_BASE_URL
+        fromService:
+          name: advisor-system
+          type: web
+          envVarKey: ALIBABA_LLM_BASE_URL
+      - key: ALIBABA_LLM_API_KEY
+        fromService:
+          name: advisor-system
+          type: web
+          envVarKey: ALIBABA_LLM_API_KEY
+      - key: ALIBABA_LLM_MODEL
+        fromService:
+          name: advisor-system
+          type: web
+          envVarKey: ALIBABA_LLM_MODEL
+      - key: ALIBABA_LLM_ENABLE_THINKING
+        fromService:
+          name: advisor-system
+          type: web
+          envVarKey: ALIBABA_LLM_ENABLE_THINKING
+      - key: ALIBABA_LLM_TIMEOUT_SECONDS
+        fromService:
+          name: advisor-system
+          type: web
+          envVarKey: ALIBABA_LLM_TIMEOUT_SECONDS
+      - key: ALIBABA_LLM_MAX_TOKENS
+        fromService:
+          name: advisor-system
+          type: web
+          envVarKey: ALIBABA_LLM_MAX_TOKENS
+      - key: ALIBABA_LLM_MAX_RETRIES
+        fromService:
+          name: advisor-system
+          type: web
+          envVarKey: ALIBABA_LLM_MAX_RETRIES
+      - key: ALIBABA_LLM_ALLOW_LIVE_REQUESTS
+        fromService:
+          name: advisor-system
+          type: web
+          envVarKey: ALIBABA_LLM_ALLOW_LIVE_REQUESTS
+      - key: VIRTUAL_ADVISOR_AGENT_LOOP_ENABLED
+        fromService:
+          name: advisor-system
+          type: web
+          envVarKey: VIRTUAL_ADVISOR_AGENT_LOOP_ENABLED
+      - key: VIRTUAL_ADVISOR_MAX_TOOL_ITERATIONS
+        fromService:
+          name: advisor-system
+          type: web
+          envVarKey: VIRTUAL_ADVISOR_MAX_TOOL_ITERATIONS
+      - key: VIRTUAL_ADVISOR_MAX_TOOL_CALLS
+        fromService:
+          name: advisor-system
+          type: web
+          envVarKey: VIRTUAL_ADVISOR_MAX_TOOL_CALLS
+      - key: VIRTUAL_ADVISOR_LOOP_MAX_TOKENS
+        fromService:
+          name: advisor-system
+          type: web
+          envVarKey: VIRTUAL_ADVISOR_LOOP_MAX_TOKENS
+      - key: VIRTUAL_ADVISOR_TOOL_TURN_TIMEOUT_SECONDS
+        fromService:
+          name: advisor-system
+          type: web
+          envVarKey: VIRTUAL_ADVISOR_TOOL_TURN_TIMEOUT_SECONDS
+      - key: STUDENT_ADVISOR_V2_ENABLED
+        fromService:
+          name: advisor-system
+          type: web
+          envVarKey: STUDENT_ADVISOR_V2_ENABLED
+      - key: STUDENT_ADVISOR_V2_MAX_TOOL_ITERATIONS
+        fromService:
+          name: advisor-system
+          type: web
+          envVarKey: STUDENT_ADVISOR_V2_MAX_TOOL_ITERATIONS
+      - key: STUDENT_ADVISOR_V2_MAX_TOOL_CALLS
+        fromService:
+          name: advisor-system
+          type: web
+          envVarKey: STUDENT_ADVISOR_V2_MAX_TOOL_CALLS
+      - key: STUDENT_ADVISOR_V2_MAX_TOKENS
+        fromService:
+          name: advisor-system
+          type: web
+          envVarKey: STUDENT_ADVISOR_V2_MAX_TOKENS
+      - key: STUDENT_ADVISOR_V2_TOOL_TIMEOUT_SECONDS
+        fromService:
+          name: advisor-system
+          type: web
+          envVarKey: STUDENT_ADVISOR_V2_TOOL_TIMEOUT_SECONDS
+
+  # Retention is a SCHEDULE, not a side effect of deploying. The release chain
+  # above still runs migrations and the rate-limit sweep. Planner drafts and
+  # terminal Telegram jobs hold student data, and how long either survives must
+  # not depend on how often anyone ships. QUEUED/RUNNING Telegram jobs are never
+  # retention candidates.
+  #
+  # 03:00 UTC is 06:00 in Riyadh: after the overnight quiet, before the day starts.
+  - type: cron
+    name: advisor-purge-planner-drafts
+    runtime: python
+    region: oregon
+    plan: starter
+    branch: master
+    autoDeployTrigger: checksPass
+    schedule: "0 3 * * *"
+    buildCommand: chmod +x build.sh && ./build.sh
+    startCommand: python manage.py purge_planner_drafts --apply && python manage.py purge_telegram_tokens --apply
+    envVars:
+      - key: DJANGO_SECRET_KEY
+        fromService:
+          name: advisor-system
+          type: web
+          envVarKey: DJANGO_SECRET_KEY
+      - key: DJANGO_DEBUG
+        value: "false"
+      - key: PYTHON_VERSION
+        value: "3.11.9"
+      - key: ALLOW_NO_SMTP_PROCESS
+        value: "true"
+      - key: DJANGO_ALLOWED_HOSTS
+        value: advisor-system-v9zs.onrender.com
+      - key: DATABASE_URL
+        fromDatabase:
+          name: advisor-system-db
           property: connectionString
 
-databases:
-  - name: advisor-db
-    plan: free
-    databaseName: advisor_db
+# advisor-system-db already exists as a paid PostgreSQL 18 resource. It is
+# referenced above but deliberately not declared here, so this Blueprint cannot
+# provision, resize, rename, or otherwise adopt the production database.

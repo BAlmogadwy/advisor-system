@@ -2,7 +2,7 @@ from core.models import Prerequisite, ProgrammeRequirement
 from core.services.credit_policy import RECOMMENDED_MAX_CREDITS
 from core.services.eligibility import hour_gate, split_hour_prereqs
 from core.services.student_helpers import (
-    get_prerequisites,
+    get_program_prerequisites,
     get_student_passed_and_studying,
     get_student_program,
     normalize_code,
@@ -19,6 +19,12 @@ def calculate_real_student_term(
     current_academic_year: int,
     current_semester: int,
 ) -> int:
+    """Return completed main-term offset at the supplied calendar term.
+
+    The value is zero based: for a student entering in 1445, 1448/1 returns 6.
+    Adding one therefore gives programme level 7 for that same calendar term.
+    The public name is retained because other services already import it.
+    """
     join_year_hijri = int(str(student_id)[:2]) + 1400
     years_difference = current_academic_year - join_year_hijri
     terms_so_far = years_difference * 2 + current_semester - 1
@@ -66,6 +72,8 @@ def _next_term_candidates(
     passed: set,
     studying: set,
     effective_credits: int | None = None,
+    prerequisite_map: dict[str, list[str]] | None = None,
+    all_courses: list[dict] | None = None,
 ) -> list[dict]:
     """Courses the student may take in the coming term, ranked, BEFORE the credit cap.
 
@@ -74,25 +82,26 @@ def _next_term_candidates(
     overdue). This is the single definition of "registrable this term" — shared by the
     recommendation list and by the eligible-count shown to students.
     """
-    all_courses = get_all_department_courses(program)
+    programme_courses = (
+        all_courses if all_courses is not None else get_all_department_courses(program)
+    )
 
-    student_real_term = calculate_real_student_term(
+    completed_main_terms = calculate_real_student_term(
         student_id, current_academic_year, current_semester
     )
-    next_term = student_real_term + 1
-    next_term_parity = next_term % 2
+    target_programme_term = completed_main_terms + 1
+    target_term_parity = target_programme_term % 2
 
     # Batch-load all prerequisite_course_code values for this program (1 query
     # instead of N).  Used to compute unlock counts without per-candidate
     # queries.
-    all_prereq_codes = list(
-        Prerequisite.objects.filter(program=program).values_list(
-            "prerequisite_course_code", flat=True
-        )
+    prereqs_by_course = (
+        prerequisite_map if prerequisite_map is not None else get_program_prerequisites(program)
     )
+    all_prereq_codes = [",".join(values) for values in prereqs_by_course.values() if values]
 
     def prereqs_ok(course_code: str) -> bool:
-        course_prereqs, required_hours = split_hour_prereqs(get_prerequisites(course_code, program))
+        course_prereqs, required_hours = split_hour_prereqs(prereqs_by_course.get(course_code, []))
         courses_ok = all(pr in passed or pr in studying for pr in course_prereqs)
         if not courses_ok or not required_hours:
             return courses_ok
@@ -104,19 +113,19 @@ def _next_term_candidates(
         return normalize_code(course_code).startswith("GS")
 
     candidates: list[dict] = []
-    for c in all_courses:
+    for c in programme_courses:
         code = c["code"]
         if code in passed or code in studying:
             continue
         if not prereqs_ok(code):
             continue
-        if c["term"] % 2 != next_term_parity:
+        if c["term"] % 2 != target_term_parity:
             continue
-        if not (c["term"] < next_term or c["term"] == next_term):
+        if c["term"] > target_programme_term:
             continue
 
         unlock = _count_unlocks_from_prereqs(code, all_prereq_codes)
-        is_past = c["term"] < next_term
+        is_past = c["term"] < target_programme_term
         cc = dict(c)
         cc["_unlock"] = unlock
         cc["_past_rank"] = 0 if is_past else 1
@@ -149,6 +158,9 @@ def recommend_next_courses_for_state(
     studying: set[str] | None = None,
     effective_credits: int | None = None,
     max_credits: int = MAX_CREDITS,
+    program: str | None = None,
+    prerequisite_map: dict[str, list[str]] | None = None,
+    all_courses: list[dict] | None = None,
 ) -> list[str]:
     """Run the normal recommender against an in-memory academic state.
 
@@ -156,8 +168,8 @@ def recommend_next_courses_for_state(
     writes simulated passes to ``StudentCourse`` and deliberately leaves elective
     placeholders unresolved instead of inventing a concrete elective selection.
     """
-    program = get_student_program(student_id)
-    if not program:
+    program_name = program or get_student_program(student_id)
+    if not program_name:
         return []
     passed_n = {normalize_code(code) for code in passed if normalize_code(code)}
     studying_n = {normalize_code(code) for code in (studying or set()) if normalize_code(code)}
@@ -165,10 +177,12 @@ def recommend_next_courses_for_state(
         student_id,
         current_academic_year,
         current_semester,
-        program,
+        program_name,
         passed_n,
         studying_n,
         effective_credits,
+        prerequisite_map,
+        all_courses,
     )
     return _select_within_credit_cap(candidates, max(0, int(max_credits)))
 

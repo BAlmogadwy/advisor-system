@@ -9,6 +9,7 @@ from core.authz import role_required
 from core.models import Course, Prerequisite, ProgrammeRequirement, Student
 from core.services.advisors import list_students_by_advisor, resolve_roster_scope
 from core.services.conflict_matrix import build_conflict_matrix_report, export_conflict_matrix_xlsx
+from core.services.course_priority import program_downstream_importance_scores
 from core.services.debug_reporting import build_recommendation_debug_report
 from core.services.eligibility import (
     build_course_eligibility_report,
@@ -24,7 +25,7 @@ from core.services.rbac import ROLE_ADVISOR, ROLE_GENERAL_ADVISOR
 from core.services.recommender import recommend_next_courses
 from core.services.reporting import build_aggregate_counts
 from core.services.student_helpers import (
-    get_prerequisites,
+    get_program_prerequisites,
     get_student_course_status_sets,
     get_student_program,
     normalize_code,
@@ -179,56 +180,19 @@ def _build_batch_course_rows(
 
 
 def _program_importance_scores(program: str) -> dict[str, float]:
-    rows = Prerequisite.objects.filter(
-        program=program,
-    ).values_list("course_code", "prerequisite_course_code")
+    """Compatibility wrapper retaining the report's six-decimal output."""
 
-    graph: dict[str, set[str]] = {}
-
-    def add_edge(prereq: str, course: str) -> None:
-        p = normalize_code(prereq)
-        c = normalize_code(course)
-        if not p or not c:
-            return
-        graph.setdefault(p, set()).add(c)
-        graph.setdefault(c, set())
-
-    for course_raw, prereq_raw in rows:
-        course = normalize_code(course_raw)
-        if not course:
-            continue
-        prereq_cell = "" if prereq_raw is None else str(prereq_raw)
-        parts = [x.strip() for x in prereq_cell.split(",") if x.strip()]
-        if not parts:
-            graph.setdefault(course, set())
-            continue
-        for p in parts:
-            add_edge(p, course)
-
-    scores: dict[str, float] = {}
-    for node in graph:
-        dist: dict[str, int] = {node: 0}
-        queue: list[str] = [node]
-        idx = 0
-        while idx < len(queue):
-            current = queue[idx]
-            idx += 1
-            for nxt in graph.get(current, set()):
-                if nxt not in dist:
-                    dist[nxt] = dist[current] + 1
-                    queue.append(nxt)
-
-        score = 0.0
-        for target, d in dist.items():
-            if target == node or d == 0:
-                continue
-            score += 1.0 / d
-        scores[node] = round(score, 6)
-
-    return scores
+    return {
+        code: round(score, 6)
+        for code, score in program_downstream_importance_scores(program).items()
+    }
 
 
-def _build_student_plan_payload(student_id: int) -> tuple[dict | None, JsonResponse | None]:
+def _build_student_plan_payload(
+    student_id: int,
+    *,
+    prerequisite_map: dict[str, list[str]] | None = None,
+) -> tuple[dict | None, JsonResponse | None]:
     program = get_student_program(student_id)
     if not program:
         return None, JsonResponse(
@@ -238,6 +202,9 @@ def _build_student_plan_payload(student_id: int) -> tuple[dict | None, JsonRespo
     passed, studying, failed = get_student_course_status_sets(student_id)
     satisfied_pool = passed | studying
     importance_scores = _program_importance_scores(program)
+    prerequisites_by_course = (
+        prerequisite_map if prerequisite_map is not None else get_program_prerequisites(program)
+    )
 
     pr_rows = (
         ProgrammeRequirement.objects.filter(
@@ -267,7 +234,7 @@ def _build_student_plan_payload(student_id: int) -> tuple[dict | None, JsonRespo
         else:
             status = "not_taken"
 
-        prereqs = get_prerequisites(code, program)
+        prereqs = prerequisites_by_course.get(code, [])
         # A "146(HOURS)" prerequisite is a credit-hour gate, not a course. Tested as a
         # course code it can never be satisfied, which locked every capstone forever.
         course_prereqs, required_hours = split_hour_prereqs(prereqs)

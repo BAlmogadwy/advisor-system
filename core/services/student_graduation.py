@@ -1,13 +1,14 @@
 """Read-only graduation progress and term-by-term forecasting.
 
 The forecast repeatedly runs the existing course recommender against an in-memory
-academic state. Courses in the current Planner timetable are assumed passed first;
-each later recommendation is only added to the simulated passed set after that
-simulated term. No ``StudentCourse`` or timetable record is ever changed.
+academic state. Courses in the selected planning-baseline timetable are assumed
+passed first; each later recommendation is only added to the simulated passed set
+after that simulated term. No ``StudentCourse`` or timetable record is ever changed.
 
 This is a planning scenario, not an official graduation date. It assumes every
-current and simulated course is passed on the first attempt, uses an 18-credit cap
-for every simulated main term, and cannot guarantee future offerings or seats.
+planning-baseline and simulated course is passed on the first attempt, uses an
+18-credit cap for every simulated main term, and cannot guarantee future offerings
+or seats.
 """
 
 from __future__ import annotations
@@ -21,7 +22,7 @@ from core.services.recommender import (
     recommend_next_courses_for_state,
 )
 from core.services.student_helpers import (
-    get_prerequisites,
+    get_program_prerequisites,
     get_student_passed_and_studying,
     is_elective_slot,
     normalize_code,
@@ -51,11 +52,38 @@ def _current_course_state(
     year: int,
     term: int,
     credit_by_code: dict[str, int],
+    baseline_rows: list[dict] | None = None,
+    studying_rows: list[object] | None = None,
+    query_cache: dict[object, object] | None = None,
 ) -> tuple[list[dict], int]:
-    """Return the same current-course baseline the Planner builds, deduplicated."""
+    """Return the Planner snapshot selected as the simulation baseline."""
+    studying_key = ("studying_rows", int(student_id))
+    cached_studying = query_cache.get(studying_key) if query_cache is not None else None
+    if studying_rows is None and isinstance(cached_studying, list):
+        studying_rows = cached_studying
+    elif studying_rows is None:
+        from core.models import StudentCourse
+
+        studying_rows = list(
+            StudentCourse.objects.filter(
+                student_id=student_id,
+                status__iexact="studying",
+            )
+            .select_related("course")
+            .order_by("course__course_code")
+        )
+        if query_cache is not None:
+            query_cache[studying_key] = studying_rows
+
     rows = append_unmapped_studying_courses(
         student_id,
-        get_student_term_baseline(student_id, str(year), str(term)),
+        (
+            get_student_term_baseline(student_id, str(year), str(term))
+            if baseline_rows is None
+            else baseline_rows
+        ),
+        studying_rows=studying_rows,
+        credit_map=credit_by_code,
     )
     by_code: dict[str, dict] = {}
     for row in rows:
@@ -85,6 +113,8 @@ def _simulate_future_terms(
     earned_credits: int,
     current_credits: int,
     max_credits_per_term: int,
+    prerequisite_map: dict[str, list[str]],
+    recommender_courses: list[dict],
 ) -> dict:
     current_codes = {item["code"] for item in current_courses}
     simulated_passed = set(actual_passed) | current_codes
@@ -102,15 +132,22 @@ def _simulate_future_terms(
             break
 
         plan_year, plan_term = _next_main_term(cursor_year, cursor_term)
-        next_student_term = calculate_real_student_term(student_id, cursor_year, cursor_term) + 1
+        # The recommendation and the row it produces must refer to the same
+        # calendar term. Passing the cursor here previously labelled a 1448/1
+        # recommendation as 1448/2, which delayed term-sensitive courses and
+        # made the first projected term appear artificially blocked.
+        plan_student_term = calculate_real_student_term(student_id, plan_year, plan_term)
         recommended = recommend_next_courses_for_state(
             student_id,
-            cursor_year,
-            cursor_term,
+            plan_year,
+            plan_term,
             passed=simulated_passed,
             studying=set(),
             effective_credits=effective_credits,
             max_credits=max_credits_per_term,
+            program=program,
+            prerequisite_map=prerequisite_map,
+            all_courses=recommender_courses,
         )
         selected = [code for code in recommended if code in outstanding]
         courses = []
@@ -150,13 +187,13 @@ def _simulate_future_terms(
         # programme map, two empty terms cover both odd/even offering parities.
         # Without a new pass or new credits, repeating them cannot change any
         # prerequisite decision, so stop and surface the unresolved records.
-        if no_progress_terms >= 2 and next_student_term >= latest_programme_term:
+        if no_progress_terms >= 2 and plan_student_term >= latest_programme_term:
             break
 
     unresolved = sorted(set(plan_rows) - simulated_passed)
     unresolved_rows = []
     for code in unresolved:
-        course_prereqs, required_hours = split_hour_prereqs(get_prerequisites(code, program))
+        course_prereqs, required_hours = split_hour_prereqs(prerequisite_map.get(code, []))
         missing_prereqs = sorted(
             prereq for prereq in course_prereqs if prereq not in simulated_passed
         )
@@ -203,39 +240,60 @@ def build_graduation_report(
     max_credits_per_term: int = DEFAULT_MAX_CREDITS_PER_TERM,
     _current_courses_override: list[dict] | None = None,
     _excluded_studying_codes: set[str] | None = None,
+    _prerequisite_map: dict[str, list[str]] | None = None,
+    _query_cache: dict[object, object] | None = None,
 ) -> dict:
-    """Build current progress plus a non-persistent future-term scenario."""
+    """Build progress plus a non-persistent scenario after a planning baseline."""
     from core.models import Course, ProgrammeRequirement, Student
 
-    student_row = (
-        Student.objects.filter(student_id=student_id)
-        .values_list(
-            "program",
-            "total_earned_credits",
-            "current_registered_credits",
-            "gpa",
+    student_key = ("graduation_student", int(student_id))
+    student_row = _query_cache.get(student_key) if _query_cache is not None else None
+    if not isinstance(student_row, tuple):
+        student_row = (
+            Student.objects.filter(student_id=student_id)
+            .values_list(
+                "program",
+                "total_earned_credits",
+                "current_registered_credits",
+                "gpa",
+            )
+            .first()
         )
-        .first()
-    )
+        if _query_cache is not None and student_row is not None:
+            _query_cache[student_key] = student_row
     if not student_row or not student_row[0]:
         return {}
     program, earned_registrar, registered_registrar, gpa = student_row
 
-    requirements = list(
-        ProgrammeRequirement.objects.filter(program=program)
-        .order_by("programme_term", "course_code")
-        .values("course_code", "course_name", "programme_term", "credit_hours", "type")
-    )
+    requirements_key = ("graduation_requirements", str(program).strip().upper())
+    cached_requirements = _query_cache.get(requirements_key) if _query_cache is not None else None
+    if isinstance(cached_requirements, list):
+        requirements = cached_requirements
+    else:
+        requirements = list(
+            ProgrammeRequirement.objects.filter(program=program)
+            .order_by("programme_term", "course_code")
+            .values("course_code", "course_name", "programme_term", "credit_hours", "type")
+        )
+        if _query_cache is not None:
+            _query_cache[requirements_key] = requirements
     if not requirements:
         return {}
 
     codes = {normalize_code(row["course_code"]) for row in requirements}
-    names = {
-        normalize_code(code): (description or "")
-        for code, description in Course.objects.filter(course_code__in=codes).values_list(
-            "course_code", "description"
-        )
-    }
+    names_key = ("course_names", str(program).strip().upper())
+    cached_names = _query_cache.get(names_key) if _query_cache is not None else None
+    if isinstance(cached_names, dict) and codes <= set(cached_names):
+        names = cached_names
+    else:
+        names = {
+            normalize_code(code): (description or "")
+            for code, description in Course.objects.filter(course_code__in=codes).values_list(
+                "course_code", "description"
+            )
+        }
+        if _query_cache is not None:
+            _query_cache[names_key] = names
     plan_rows: dict[str, dict] = {}
     for requirement in requirements:
         code = normalize_code(requirement["course_code"])
@@ -248,10 +306,42 @@ def build_graduation_report(
             "elective_slot": is_elective_slot(requirement.get("type")),
         }
 
+    prerequisite_key = ("program_prerequisites", str(program).strip().upper())
+    cached_prerequisites = _query_cache.get(prerequisite_key) if _query_cache is not None else None
+    if _prerequisite_map is not None:
+        prerequisites_by_course = _prerequisite_map
+    elif isinstance(cached_prerequisites, dict):
+        prerequisites_by_course = cached_prerequisites
+    else:
+        prerequisites_by_course = get_program_prerequisites(str(program))
+    if _query_cache is not None:
+        _query_cache[prerequisite_key] = prerequisites_by_course
+    recommender_courses = [
+        {
+            "code": code,
+            "term": row["term"],
+            "credits": row["credits"],
+        }
+        for code, row in plan_rows.items()
+    ]
+
     credit_by_code = {code: row["credits"] for code, row in plan_rows.items()}
+    baseline_key = ("graduation_baseline", int(student_id), int(year), int(term))
+    cached_baseline = _query_cache.get(baseline_key) if _query_cache is not None else None
+    baseline_rows = cached_baseline if isinstance(cached_baseline, list) else None
     baseline_courses, baseline_credits = _current_course_state(
-        student_id, year, term, credit_by_code
+        student_id,
+        year,
+        term,
+        credit_by_code,
+        baseline_rows=baseline_rows,
+        query_cache=_query_cache,
     )
+    if _query_cache is not None and baseline_rows is None:
+        # Cache the canonical course-level projection. Subsequent scenario builds
+        # pass it as an override and therefore do not need to reload timetable
+        # rows merely to recover the same baseline.
+        _query_cache[baseline_key] = [dict(course) for course in baseline_courses]
     current_courses = (
         [dict(course) for course in _current_courses_override]
         if _current_courses_override is not None
@@ -272,6 +362,8 @@ def build_graduation_report(
         additional_studying_codes=current_codes,
         excluded_studying_codes=_excluded_studying_codes,
         registered_credits_override=registered_now,
+        _prerequisite_map=prerequisites_by_course,
+        _query_cache=_query_cache,
     )
     if not report:
         return {}
@@ -302,25 +394,27 @@ def build_graduation_report(
         earned_credits=int(earned_registrar or 0),
         current_credits=registered_now,
         max_credits_per_term=max(1, int(max_credits_per_term)),
+        prerequisite_map=prerequisites_by_course,
+        recommender_courses=recommender_courses,
     )
 
-    remaining_after_current = [
+    remaining_after_baseline = [
         course for course in remaining if course["code"] not in current_codes
     ]
-    credits_after_current = sum(
-        int(course.get("credits") or 0) for course in remaining_after_current
+    credits_after_baseline = sum(
+        int(course.get("credits") or 0) for course in remaining_after_baseline
     )
     capacity_floor = (
-        math.ceil(credits_after_current / max(1, int(max_credits_per_term)))
-        if credits_after_current
+        math.ceil(credits_after_baseline / max(1, int(max_credits_per_term)))
+        if credits_after_baseline
         else 0
     )
     additional_terms = simulation["estimated_additional_terms"]
-    including_current = (
+    including_baseline = (
         additional_terms + (1 if current_courses else 0) if additional_terms is not None else None
     )
     lower_bound = max(chain_floor, capacity_floor)
-    lower_bound_including_current = lower_bound + (1 if current_courses else 0)
+    lower_bound_including_baseline = lower_bound + (1 if current_courses else 0)
 
     hour_gates = []
     for course in locked:
@@ -345,20 +439,36 @@ def build_graduation_report(
         "remaining_credits": remaining_credits,
         "passed_credits_in_plan": passed_credits,
         "earned_credits_registrar": int(earned_registrar or 0),
+        "planning_baseline_academic_year": int(year),
+        "planning_baseline_term": int(term),
+        "registered_credits_at_planning_baseline": registered_now,
+        "planning_baseline_courses_assumed_passed": current_courses,
+        "planning_baseline": {
+            "academic_year": int(year),
+            "term": int(term),
+            "credits": registered_now,
+            "courses_assumed_passed": current_courses,
+        },
+        # Compatibility aliases retained for existing clients. In this feature,
+        # "current" has always meant the selected Planner simulation baseline,
+        # which may be an expected next-term timetable rather than today's term.
         "registered_credits_now": registered_now,
         "gpa": gpa,
         "chain_floor_terms": chain_floor,
+        "capacity_floor_terms_after_planning_baseline": capacity_floor,
         "capacity_floor_terms_after_current": capacity_floor,
         "lower_bound_additional_terms": lower_bound,
-        "lower_bound_terms_including_current": lower_bound_including_current,
+        "lower_bound_terms_including_planning_baseline": lower_bound_including_baseline,
+        "lower_bound_terms_including_current": lower_bound_including_baseline,
         # Backward-compatible aliases now use the 18-credit scenario, not a
         # guessed number of courses per term.
         "pace_terms": capacity_floor,
-        "terms_estimate": including_current,
+        "terms_estimate": including_baseline,
         "courses_per_term": None,
         "max_credits_per_term": max(1, int(max_credits_per_term)),
         "estimated_additional_terms": additional_terms,
-        "estimated_terms_including_current": including_current,
+        "estimated_terms_including_planning_baseline": including_baseline,
+        "estimated_terms_including_current": including_baseline,
         "simulation_completed": simulation["simulation_completed"],
         "simulated_terms_examined": simulation["simulated_terms_examined"],
         "productive_terms_planned": simulation["productive_terms_planned"],
@@ -370,12 +480,17 @@ def build_graduation_report(
         "scenario_graph": report.get("graph") or {},
         "current_courses_assumed_passed": current_courses,
         "simulation_assumptions": [
-            "All current and simulated courses are passed on the first attempt.",
+            "All planning-baseline and simulated courses are passed on the first attempt.",
             f"Every simulated main term uses a maximum of {max(1, int(max_credits_per_term))} credits.",
             "Elective placeholders remain plan requirements; no concrete elective is invented.",
             "Future course offerings, section times, seats, and registration permission are not guaranteed.",
             "The scenario is read-only and does not update the student record or university portal.",
         ],
+        "plan_completion_in_planning_baseline_possible": bool(current_courses)
+        and simulation["simulation_completed"]
+        and additional_terms == 0,
+        # Compatibility alias. It means completion of recorded PLAN
+        # requirements in the planning baseline, never official graduation.
         "final_term_possible": bool(current_courses)
         and simulation["simulation_completed"]
         and additional_terms == 0,
@@ -398,10 +513,23 @@ def _scenario_summary(report: dict) -> dict:
     return {
         "simulation_completed": bool(report.get("simulation_completed")),
         "estimated_additional_terms": report.get("estimated_additional_terms"),
+        "estimated_terms_including_planning_baseline": report.get(
+            "estimated_terms_including_planning_baseline"
+        ),
         "estimated_terms_including_current": report.get("estimated_terms_including_current"),
         "lower_bound_additional_terms": report.get("lower_bound_additional_terms"),
+        "lower_bound_terms_including_planning_baseline": report.get(
+            "lower_bound_terms_including_planning_baseline"
+        ),
         "lower_bound_terms_including_current": report.get("lower_bound_terms_including_current"),
+        "registered_credits_at_planning_baseline": int(
+            report.get("registered_credits_at_planning_baseline") or 0
+        ),
         "registered_credits_now": int(report.get("registered_credits_now") or 0),
+        "planning_baseline_courses_assumed_passed": report.get(
+            "planning_baseline_courses_assumed_passed"
+        )
+        or [],
         "current_courses_assumed_passed": report.get("current_courses_assumed_passed") or [],
         "unresolved_requirements": report.get("unresolved_requirements") or [],
     }
@@ -530,6 +658,15 @@ def _compare_reports(baseline: dict, scenario: dict, removed_codes: list[str]) -
         "scenario_lower_bound_additional_terms": scenario.get("lower_bound_additional_terms"),
         "lower_bound_change": int(scenario.get("lower_bound_additional_terms") or 0)
         - int(baseline.get("lower_bound_additional_terms") or 0),
+        "baseline_planning_credits": int(
+            baseline.get("registered_credits_at_planning_baseline") or 0
+        ),
+        "scenario_planning_credits": int(
+            scenario.get("registered_credits_at_planning_baseline") or 0
+        ),
+        "planning_credit_change": int(scenario.get("registered_credits_at_planning_baseline") or 0)
+        - int(baseline.get("registered_credits_at_planning_baseline") or 0),
+        # Compatibility aliases for existing local clients.
         "baseline_current_credits": int(baseline.get("registered_credits_now") or 0),
         "scenario_current_credits": int(scenario.get("registered_credits_now") or 0),
         "current_credit_change": int(scenario.get("registered_credits_now") or 0)
@@ -549,6 +686,7 @@ def _prepare_current_term_changes(
     remove_codes: list[str],
     add_codes: list[str],
     max_credits_per_term: int,
+    query_cache: dict[object, object] | None = None,
 ) -> dict:
     from core.models import Course, ProgrammeRequirement, Student
 
@@ -565,7 +703,7 @@ def _prepare_current_term_changes(
     if overlap:
         errors.append({"kind": "SAME_COURSE_REMOVED_AND_ADDED", "course_codes": overlap})
 
-    baseline_courses = baseline.get("current_courses_assumed_passed") or []
+    baseline_courses = baseline.get("planning_baseline_courses_assumed_passed") or []
     baseline_by_code = {course["code"]: dict(course) for course in baseline_courses}
     for code in remove_codes:
         if code not in baseline_by_code:
@@ -574,22 +712,50 @@ def _prepare_current_term_changes(
         if code in baseline_by_code and code not in remove_codes:
             errors.append({"kind": "ALREADY_IN_CURRENT_TIMETABLE", "course_code": code})
 
-    actual_passed, _actual_studying = get_student_passed_and_studying(student_id)
+    passed_key = ("passed_and_studying", int(student_id))
+    cached_status = query_cache.get(passed_key) if query_cache is not None else None
+    if isinstance(cached_status, tuple):
+        actual_passed, _actual_studying = cached_status
+    else:
+        actual_passed, _actual_studying = get_student_passed_and_studying(student_id)
+        if query_cache is not None:
+            query_cache[passed_key] = (actual_passed, _actual_studying)
     actual_passed = {normalize_code(code) for code in actual_passed}
     for code in add_codes:
         if code in actual_passed:
             errors.append({"kind": "ALREADY_PASSED", "course_code": code})
 
-    plan_rows = {
-        normalize_code(row["course_code"]): row
-        for row in ProgrammeRequirement.objects.filter(program=program).values(
-            "course_code", "course_name", "credit_hours", "type"
+    plan_key = ("scenario_plan_rows", program.strip().upper())
+    cached_plan_rows = query_cache.get(plan_key) if query_cache is not None else None
+    if isinstance(cached_plan_rows, dict):
+        plan_rows = cached_plan_rows
+    else:
+        plan_rows = {
+            normalize_code(row["course_code"]): row
+            for row in ProgrammeRequirement.objects.filter(program=program).values(
+                "course_code", "course_name", "credit_hours", "type"
+            )
+        }
+        if query_cache is not None:
+            query_cache[plan_key] = plan_rows
+
+    course_key = ("scenario_course_rows", program.strip().upper())
+    cached_course_rows = query_cache.get(course_key) if query_cache is not None else None
+    missing_course_codes = (
+        set(add_codes) - set(cached_course_rows or {})
+        if isinstance(cached_course_rows, dict)
+        else set(add_codes)
+    )
+    course_rows = dict(cached_course_rows) if isinstance(cached_course_rows, dict) else {}
+    if missing_course_codes:
+        course_rows.update(
+            {
+                normalize_code(course.course_code): course
+                for course in Course.objects.filter(course_code__in=missing_course_codes)
+            }
         )
-    }
-    course_rows = {
-        normalize_code(course.course_code): course
-        for course in Course.objects.filter(course_code__in=add_codes)
-    }
+        if query_cache is not None:
+            query_cache[course_key] = course_rows
 
     additions = []
     for code in add_codes:
@@ -622,7 +788,6 @@ def _prepare_current_term_changes(
 
     retained = [dict(course) for course in baseline_courses if course["code"] not in remove_codes]
     modified_courses = sorted(retained + additions, key=lambda course: course["code"])
-    modified_codes = {course["code"] for course in modified_courses}
     modified_credits = sum(int(course.get("credits") or 0) for course in modified_courses)
     if modified_credits > max_credits_per_term:
         errors.append(
@@ -633,16 +798,37 @@ def _prepare_current_term_changes(
             }
         )
 
-    earned = int(
-        Student.objects.filter(student_id=student_id)
-        .values_list("total_earned_credits", flat=True)
-        .first()
-        or 0
-    )
-    satisfied = actual_passed | modified_codes
+    earned_key = ("earned_credits", int(student_id))
+    cached_earned = query_cache.get(earned_key) if query_cache is not None else None
+    if isinstance(cached_earned, int):
+        earned = cached_earned
+    else:
+        earned = int(
+            Student.objects.filter(student_id=student_id)
+            .values_list("total_earned_credits", flat=True)
+            .first()
+            or 0
+        )
+        if query_cache is not None:
+            query_cache[earned_key] = earned
+
+    prerequisite_key = ("program_prerequisites", program.strip().upper())
+    cached_prerequisites = query_cache.get(prerequisite_key) if query_cache is not None else None
+    if isinstance(cached_prerequisites, dict):
+        prerequisites_by_course = cached_prerequisites
+    else:
+        prerequisites_by_course = get_program_prerequisites(program)
+        if query_cache is not None:
+            query_cache[prerequisite_key] = prerequisites_by_course
+    # A planning-baseline peer is not a passed prerequisite. The forecast may
+    # assume all baseline courses pass before the *next* simulated term, but a
+    # replacement being added to that same baseline cannot use a retained course
+    # as though it were already completed. Corequisites require an explicit rule;
+    # none is represented in this data model.
+    satisfied = set(actual_passed)
     for addition in additions:
         code = addition["code"]
-        course_prereqs, required_hours = split_hour_prereqs(get_prerequisites(code, program))
+        course_prereqs, required_hours = split_hour_prereqs(prerequisites_by_course.get(code, []))
         missing = sorted(prereq for prereq in course_prereqs if prereq not in satisfied - {code})
         if missing:
             errors.append(
@@ -685,6 +871,7 @@ def _evaluate_current_term_changes(
     remove_codes: list[str],
     add_codes: list[str],
     max_credits_per_term: int,
+    query_cache: dict[object, object] | None = None,
 ) -> dict:
     prepared = _prepare_current_term_changes(
         student_id=student_id,
@@ -693,6 +880,7 @@ def _evaluate_current_term_changes(
         remove_codes=remove_codes,
         add_codes=add_codes,
         max_credits_per_term=max_credits_per_term,
+        query_cache=query_cache,
     )
     if not prepared["valid"]:
         return {**prepared, "scenario_report": None, "comparison": None}
@@ -704,6 +892,14 @@ def _evaluate_current_term_changes(
         max_credits_per_term=max_credits_per_term,
         _current_courses_override=prepared["current_courses"],
         _excluded_studying_codes=set(remove_codes),
+        _prerequisite_map=(
+            query_cache.get(
+                ("program_prerequisites", str(baseline.get("program") or "").strip().upper())
+            )
+            if query_cache is not None
+            else None
+        ),
+        _query_cache=query_cache,
     )
     return {
         **prepared,
@@ -737,14 +933,34 @@ def build_graduation_what_if(
     add_current_courses: list[str] | None = None,
     search_better_replacements: bool = False,
     max_credits_per_term: int = DEFAULT_MAX_CREDITS_PER_TERM,
+    max_replacement_results: int = MAX_REPLACEMENT_RESULTS,
+    replacement_remove_course: str | None = None,
+    replacement_add_course: str | None = None,
+    _query_cache: dict[object, object] | None = None,
 ) -> dict:
-    """Compare current-term changes without mutating the student's real records."""
+    """Compare planning-baseline changes without mutating real records."""
     from core.models import Course
 
     cap = max(1, int(max_credits_per_term))
+    replacement_result_limit = max(
+        1,
+        min(int(max_replacement_results), MAX_REPLACEMENT_EVALUATIONS),
+    )
     remove_codes = _normalise_code_list(remove_current_courses)
     add_codes = _normalise_code_list(add_current_courses)
-    baseline = build_graduation_report(student_id, year, term, max_credits_per_term=cap)
+    replacement_remove_filter = normalize_code(replacement_remove_course or "")
+    replacement_add_filter = normalize_code(replacement_add_course or "")
+    # All candidates in this bounded what-if call observe one immutable database
+    # snapshot. Reuse those reads only for the lifetime of this request; a later
+    # request always starts from fresh rows.
+    query_cache: dict[object, object] = _query_cache if _query_cache is not None else {}
+    baseline = build_graduation_report(
+        student_id,
+        year,
+        term,
+        max_credits_per_term=cap,
+        _query_cache=query_cache,
+    )
     if not baseline:
         return {}
 
@@ -768,6 +984,7 @@ def build_graduation_what_if(
             remove_codes=remove_codes,
             add_codes=add_codes,
             max_credits_per_term=cap,
+            query_cache=query_cache,
         )
         scenario = evaluated.get("scenario_report") or baseline
         return {
@@ -791,14 +1008,17 @@ def build_graduation_what_if(
         }
 
     current_codes = {
-        course["code"] for course in baseline.get("current_courses_assumed_passed") or []
+        course["code"] for course in baseline.get("planning_baseline_courses_assumed_passed") or []
     }
     unlock = build_unlock_report(
         student_id,
         year,
         term,
         additional_studying_codes=current_codes,
-        registered_credits_override=int(baseline.get("registered_credits_now") or 0),
+        registered_credits_override=int(
+            baseline.get("registered_credits_at_planning_baseline") or 0
+        ),
+        _query_cache=query_cache,
     )
     candidates = {course["code"] for course in (unlock.get("open_courses") or [])}
     candidates.update(
@@ -814,12 +1034,22 @@ def build_graduation_what_if(
         for code in known_candidates
         if normalize_code(code) not in current_codes
     )
+    if replacement_add_filter:
+        candidate_codes = [code for code in candidate_codes if code == replacement_add_filter]
+
+    removable_courses = list(baseline.get("planning_baseline_courses_assumed_passed") or [])
+    if replacement_remove_filter:
+        removable_courses = [
+            course
+            for course in removable_courses
+            if normalize_code(course.get("code") or "") == replacement_remove_filter
+        ]
 
     improving = []
     unproven_blocker_progress_pairs = 0
     evaluated_count = 0
     truncated = False
-    for removed in baseline.get("current_courses_assumed_passed") or []:
+    for removed in removable_courses:
         for candidate in candidate_codes:
             if evaluated_count >= MAX_REPLACEMENT_EVALUATIONS:
                 truncated = True
@@ -833,6 +1063,7 @@ def build_graduation_what_if(
                 remove_codes=[removed["code"]],
                 add_codes=[candidate],
                 max_credits_per_term=cap,
+                query_cache=query_cache,
             )
             comparison = evaluated.get("comparison")
             if not evaluated["valid"] or not comparison:
@@ -862,10 +1093,14 @@ def build_graduation_what_if(
             "validation_errors": [],
             "baseline": _scenario_summary(baseline),
             "candidate_courses_considered": candidate_codes,
+            "requested_remove_course": replacement_remove_filter or None,
+            "requested_add_course": replacement_add_filter or None,
             "pairs_evaluated": evaluated_count,
             "search_truncated": truncated,
             "unproven_blocker_progress_pairs": unproven_blocker_progress_pairs,
-            "improving_replacements": improving[:MAX_REPLACEMENT_RESULTS],
+            "improving_replacements_found": len(improving),
+            "replacement_results_truncated": len(improving) > replacement_result_limit,
+            "improving_replacements": improving[:replacement_result_limit],
             "no_proven_improvement": not improving,
             "timetable_check_required": bool(improving),
             "note": (

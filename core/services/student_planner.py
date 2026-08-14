@@ -91,6 +91,19 @@ class PlannerRequest:
     #: from here is one the planner chooses freely, which is the default and the
     #: common case.
     fixed_sections: tuple[tuple[str, int], ...] = ()
+    #: Server-only evaluation seam. ``None`` loads the student's stored term
+    #: snapshot as usual; a tuple (including an empty tuple) is the exact
+    #: read-only baseline the caller wants the canonical Planner adapter to
+    #: evaluate.  This is used by course-replacement certification after removing
+    #: one current course in memory.  No HTTP/client field maps to it.
+    baseline_override: tuple[dict[str, Any], ...] | None = None
+    #: Server-only credit evidence for a concrete course that is not itself a
+    #: programme-requirement row (for example an approved elective choice). The
+    #: ordinary planner continues to derive every credit value from the programme.
+    course_credits_override: tuple[tuple[str, int], ...] = ()
+    #: Server-only proof mode. When true, a section with missing, partial, or
+    #: malformed meeting data is unavailable rather than appearing clash-free.
+    require_complete_meetings: bool = False
 
 
 def run_solver(
@@ -103,6 +116,7 @@ def run_solver(
     max_credits: int,
     gender: str,
     program: str | None = None,
+    require_complete_meetings: bool = False,
 ) -> dict[str, Any]:
     """THE one place student-facing code reaches the solver.
 
@@ -141,6 +155,7 @@ def run_solver(
         max_credits=int(max_credits or 0),
         gender=gender,
         program=program,
+        require_complete_meetings=require_complete_meetings,
     )
 
 
@@ -355,6 +370,11 @@ def build_student_options(request: PlannerRequest) -> dict[str, Any]:
             "راجع القسم لتحديث بياناتك."
         )
     credits = _course_credits(program)
+    for raw_code, raw_credits in request.course_credits_override:
+        code = normalize_code(raw_code)
+        value = int(raw_credits or 0)
+        if code and value > 0:
+            credits[code] = value
 
     # What the student asked for, then whatever their own plan recommends. Ordered so
     # a named course is never dropped in favour of a recommended one.
@@ -378,7 +398,11 @@ def build_student_options(request: PlannerRequest) -> dict[str, Any]:
     # when a caller forgot to repeat it in the soft candidate list; whether it is
     # REQUIRED remains a separate, explicit decision.
     codes = list(dict.fromkeys(wanted + required + list(pinned) + recommended))
-    baseline = get_student_term_baseline(student_id, str(request.year), str(request.term))
+    baseline = (
+        [dict(row) for row in request.baseline_override]
+        if request.baseline_override is not None
+        else get_student_term_baseline(student_id, str(request.year), str(request.term))
+    )
     current_mappings = _baseline_mappings(baseline) if request.keep_current_sections else []
     current_codes = {
         normalize_code(mapping.get("course_code") or "")
@@ -501,6 +525,7 @@ def build_student_options(request: PlannerRequest) -> dict[str, Any]:
             max_credits=solver_cap,
             gender=gender,
             program=program,
+            require_complete_meetings=request.require_complete_meetings,
         )
         raw_solver_options = list(result.get("options") or [])
         solver_options = [
@@ -655,6 +680,7 @@ def build_student_options(request: PlannerRequest) -> dict[str, Any]:
                         "section": m.get("section"),
                         "credits": _credit_for(str(m.get("course_code") or ""), credits),
                         "source": "current" if m.get("source") == "current" else "proposed",
+                        "meeting_issue_codes": list(m.get("meeting_issue_codes") or []),
                         # Kept for the SERVER's own use — the draft stores this whole
                         # structure, and a pin is expressed as a section id. The view
                         # strips it before anything reaches the browser.

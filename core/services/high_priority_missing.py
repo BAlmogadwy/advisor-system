@@ -1,8 +1,9 @@
-from collections import defaultdict, deque
+from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
 from core.models import Prerequisite, Student, StudentCourse
+from core.services import course_priority
 from core.services.recommender import get_all_department_courses
 from core.services.student_helpers import (
     normalize_code,
@@ -35,58 +36,23 @@ def _get_all_filtered_students(
 
 
 def _build_unlock_graph_for_program(program: str) -> dict[str, set[str]]:
-    program = program.strip().upper()
-    plan_courses = [normalize_code(r["code"]) for r in get_all_department_courses(program)]
-    g: dict[str, set[str]] = {c: set() for c in plan_courses}
+    """Compatibility wrapper for the canonical programme dependency graph."""
 
-    rows = Prerequisite.objects.filter(
-        program=program,
-    ).values_list("course_code", "prerequisite_course_code")
-    for course_code, prereq_cell in rows:
-        if not course_code or prereq_cell is None:
-            continue
-        course_norm = normalize_code(course_code)
-        g.setdefault(course_norm, set())
-        for p in str(prereq_cell).split(","):
-            p_norm = normalize_code(p)
-            if not p_norm:
-                continue
-            g.setdefault(p_norm, set())
-            g[p_norm].add(course_norm)
-    return g
+    return course_priority.build_program_dependency_graph(program)
 
 
 def _single_source_dist(graph: dict[str, set[str]], source: str) -> dict[str, int]:
-    dist = {source: 0}
-    q: deque[str] = deque([source])
-    while q:
-        u = q.popleft()
-        for v in graph.get(u, set()):
-            if v in dist:
-                continue
-            dist[v] = dist[u] + 1
-            q.append(v)
-    return dist
+    """Compatibility wrapper for callers of the former local helper."""
+
+    return course_priority.dependency_distances(graph, source)
 
 
 def _compute_priority_scores(
     graph: dict[str, set[str]], discount: str = "1_over_d"
 ) -> dict[str, float]:
-    scores: dict[str, float] = {}
-    for node in graph.keys():
-        dist_map = _single_source_dist(graph, node)
-        score = 0.0
-        for _, d in dist_map.items():
-            if d == 0:
-                continue
-            if discount == "none":
-                score += 1.0
-            elif discount == "half_power_d":
-                score += 0.5 ** (d - 1)
-            else:
-                score += 1.0 / d
-        scores[node] = score
-    return scores
+    """Compatibility wrapper preserving the report's unrounded float values."""
+
+    return course_priority.compute_downstream_importance_scores(graph, discount=discount)
 
 
 def _build_course_term_map(program: str) -> dict[str, int | None]:

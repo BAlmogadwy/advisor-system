@@ -23,8 +23,26 @@ from typing import Any
 from django.conf import settings
 
 from core.models import Student
+from core.services.advisor_channel_privacy import (
+    fallback_tool as channel_fallback_tool,
+)
+from core.services.advisor_channel_privacy import (
+    is_telegram_safe_profile,
+)
+from core.services.advisor_channel_privacy import (
+    project_history as project_channel_history,
+)
+from core.services.advisor_channel_privacy import (
+    project_tool_result as project_channel_tool_result,
+)
+from core.services.advisor_channel_privacy import (
+    project_tool_schemas as project_channel_tool_schemas,
+)
+from core.services.advisor_channel_privacy import system_prompt as channel_system_prompt
 from core.services.advisor_presentations import (
     graduation_presentation_from_tool_results,
+    remove_false_media_incapability,
+    replacement_timetable_presentation_from_tool_results,
     timetable_presentation_from_tool_results,
 )
 from core.services.advisor_principal import AdvisorPrincipal
@@ -62,6 +80,8 @@ STUDENT_V2_TOOL_NAMES: tuple[str, ...] = (
     "lookup_course",
     "course_prerequisites",
     "why_course_locked",
+    "course_choice_comparison",
+    "feasible_course_replacements",
     "recommend_courses",
     "graduation_progress",
     "policy_lookup",
@@ -112,6 +132,29 @@ Operating rules:
   If the new recommendation list is empty, say that this system currently
   has no additional recommended course; do not repeat the student's existing courses and
   do not speculate that courses are closed/unavailable or that a credit cap caused it.
+- For a choice between two to four exact course codes, call course_choice_comparison once.
+  Keep prerequisite readiness, recommendation membership, direct personal unlocks, wider
+  prerequisite-chain impact, the discounted downstream-importance heuristic, recorded
+  timetable fit, and graduation scenarios as separate dimensions. Do not add them into one
+  invented score. The weighted downstream value is this project's planning heuristic, not
+  an official university priority. A course being prerequisite-ready does not by itself make
+  it recommended, recorded in the section catalogue, clash-free, or permitted. A clash-free
+  count is individual to that course and does not prove that several chosen courses fit
+  together. Only a completed structured graduation comparison supports an exact difference
+  in terms; otherwise say that timing is not determinable. Never call compared courses
+  substitutes or equivalent requirements unless verified degree-plan evidence says so.
+- For a request to find or verify a course replacement that both improves the academic
+  graduation path and fits the complete recorded timetable, call
+  feasible_course_replacements once. Pass remove_course and/or add_course only when the
+  student's own wording identifies that side of the swap. A certified replacement has two
+  separate proofs: a complete graduation forecast improvement and a Planner option containing
+  every retained baseline section plus the replacement without clashes. Do not weaken this to
+  an individual section check, and do not combine the two proofs into an invented score. If no
+  certified swap is returned, describe only the bounded search that ran; never claim no feasible
+  swap exists everywhere when search_truncated is true or the limitations say the search is not
+  exhaustive. REGISTERED and EXPECTED_PLAN baselines must retain their exact meanings. A
+  certified recorded schedule still does not prove a live offering, seat, registration
+  permission, equivalence, or any portal action.
 - my_timetable returns schedule_kind. EXPECTED_PLAN is a manually seeded planning
   snapshot, never actual registration: call it the expected timetable, use the expected_*
   totals, and remind the student to apply choices in the university portal. REGISTERED is
@@ -205,8 +248,10 @@ Operating rules:
   extension question, report those as separate facts and never decide whether an extension
   is needed without elapsed-term evidence.
 - graduation_progress is a read-only scenario, not a promised graduation date. State both
-  estimated_additional_terms and estimated_terms_including_current when a current timetable
-  exists. Explain that it assumes every current and simulated course is passed first time,
+  estimated_additional_terms and estimated_terms_including_planning_baseline when a planning-
+  baseline timetable exists. The configured baseline can be an expected next-term plan, so
+  never call it the student's actual current term. Explain that it assumes every baseline and
+  simulated course is passed first time,
   uses at most 18 credits in each main term, and cannot guarantee future offerings, seats,
   section times, or registration permission. If simulation_completed is false, do not give
   simulated_terms_examined as a completion estimate; report lower_bound_additional_terms and
@@ -214,16 +259,16 @@ Operating rules:
   credit-hour blocker. Never infer that a blocker requires an extra term or special
   arrangement, or that a course has no available time, place, section, or offering. The
   18-credit value is the scenario cap, never the university's "maximum allowed" load.
-- For a question about skipping, adding, or replacing a CURRENT course, call
+- For a question about skipping, adding, or replacing a course in the planning baseline, call
   graduation_progress with remove_current_courses and/or add_current_courses. For "is there
-  any current course I can replace to improve graduation", use search_better_replacements.
+  any baseline course I can replace to improve graduation", use search_better_replacements.
   Report the returned baseline-versus-scenario comparison. An UNRESOLVED_IMPROVEMENT means
   recorded blockers improved; it does not prove an earlier graduation term and must not be
   described as a better replacement. Replacement search only returns swaps whose complete
-  forecast is earlier or changes from unresolved to completed. The search is academic only.
-  Do not say a candidate can actually be registered or fits the timetable; if the student
-  asks for timetable feasibility, check it separately with the existing timetable proposal
-  capability.
+  forecast is earlier or changes from unresolved to completed. That search is academic only.
+  When the same request also requires the modified complete timetable to fit, use
+  feasible_course_replacements instead; it runs the academic proof and Planner proof as one
+  bounded, deterministic read-only check. Do not say a candidate can actually be registered.
 - The expected-graduate load-request rule governs a request to increase registration load.
   It does not set the ordinary minimum load and does not govern whether withdrawing from a
   course would fall below that minimum. Do not introduce it into a withdrawal answer.
@@ -596,6 +641,7 @@ _INTERNAL_OUTPUT_MARKERS = re.compile(
     r"reason_code|NOT_ON_FILE|OMITTED_IN_THIS_VARIANT|"
     r"listed_as_prerequisite_for|sole_remaining_prerequisite(?:_for)?|"
     r"on_prerequisite_chain_of|build_timetable_proposal|recommend_courses|"
+    r"course_choice_comparison|feasible_course_replacements|"
     r"graduation_progress|my_clash_free_sections|my_timetable|my_progress|"
     r"my_plan_by_term|get_student_context|lookup_course|course_prerequisites|"
     r"why_course_locked|policy_lookup|my_advisor|max_credits|"
@@ -627,6 +673,8 @@ def _humanise_internal_output_markers(answer: str, language: str) -> str:
         "on_prerequisite_chain_of": "مقررات يقع ضمن سلسلة متطلباتها",
         "build_timetable_proposal": "منشئ مقترح الجدول",
         "recommend_courses": "محرك توصية المقررات",
+        "course_choice_comparison": "مقارنة خيارات المقررات",
+        "feasible_course_replacements": "فحص الاستبدال الأكاديمي والجدولي",
         "graduation_progress": "محاكاة التقدم نحو التخرج",
         "my_clash_free_sections": "فحص الشعب غير المتعارضة",
         "my_timetable": "بيانات جدولك",
@@ -662,6 +710,8 @@ def _humanise_internal_output_markers(answer: str, language: str) -> str:
         "on_prerequisite_chain_of": "courses whose prerequisite chain includes it",
         "build_timetable_proposal": "the timetable proposal builder",
         "recommend_courses": "the course recommendation engine",
+        "course_choice_comparison": "the course-choice comparison",
+        "feasible_course_replacements": "the academic and timetable replacement check",
         "graduation_progress": "the graduation-progress simulation",
         "my_clash_free_sections": "the clash-free section check",
         "my_timetable": "your timetable data",
@@ -788,6 +838,253 @@ def _requires_graduation_what_if(question: str) -> bool:
     )
 
 
+_REPLACEMENT_ACTION_PATTERN = re.compile(
+    r"(?:\b(?:replace|swap|substitute|replacement|switch|drop)\b|"
+    r"\b(?:instead\s+of|in\s+place\s+of)\b|"
+    r"استبدال|استبدل|أستبدل|بديل|تبديل|بدلت|أبدل|ابدل|أبدّل|ابدّل|أغير|اغير|"
+    r"أشيل|اشيل|شيل|شلت|أحذف|احذف|ألغي|الغي|بدل|بدال|مكان)",
+    re.IGNORECASE,
+)
+_REPLACEMENT_TIMETABLE_PROOF_PATTERN = re.compile(
+    r"(?:\b(?:timetable|schedule|section|clash|conflict)\b|"
+    r"without\s+(?:a\s+)?(?:clash|conflict)|"
+    r"جدول|شعب(?:ة|ه|تي|تك|ي)?|تعارض|بدون\s+تعارض|"
+    r"يدخل\s+(?:في|مع)|يركب\s+(?:في|مع|على)|"
+    r"(?:يضبط|يمشي|يتوافق)\s+(?:في|مع|على)\s+(?:جدولي|دوامي|باقي\s+شعبي)|"
+    r"(?:يناسب|يلائم)\s+(?:جدولي|دوامي)|دوام)",
+    re.IGNORECASE,
+)
+_REPLACEMENT_ENGLISH_FIT_PATTERN = re.compile(r"\bfit(?:s|ting)?\b", re.IGNORECASE)
+_REPLACEMENT_NON_TIMETABLE_FIT_PATTERN = re.compile(
+    r"(?:\b(?:career|degree(?:\s+plan)?|academic(?:\s+(?:plan|goals?))?|goals?|"
+    r"interests?|budget|sentence|description|requirements?|prerequisites?)\b"
+    r"[^.?!]{0,32}\bfit(?:s|ting)?\b|"
+    r"\bfit(?:s|ting)?\b[^.?!]{0,64}\b"
+    r"(?:career|degree(?:\s+plan)?|academic(?:\s+(?:plan|goals?))?|goals?|"
+    r"interests?|budget|sentence|description|requirements?|prerequisites?)\b)",
+    re.IGNORECASE,
+)
+_REPLACEMENT_TEXT_EDIT_PATTERN = re.compile(
+    r"(?:\b(?:word|sentence|paragraph|text|description|title|label|wording|phrase)\b|"
+    r"كلم(?:ة|ه)|جمل(?:ة|ه)|فقرة|نص|وصف|عنوان|صياغة)",
+    re.IGNORECASE,
+)
+_SAME_COURSE_SECTION_SWAP_PATTERN = re.compile(
+    r"(?:\b(?:replace|swap|switch)\b[^.?!]{0,80}\bsection\b|"
+    r"\bsection\b[^.?!]{0,80}\b(?:replace|swap|switch)\b|"
+    r"(?:استبدل|أستبدل|أبدل|ابدل|أغير|اغير|بدّل|بدل)[^.?!]{0,80}شعب(?:ة|ه)|"
+    r"شعب(?:ة|ه)[^.?!]{0,80}(?:استبدل|أستبدل|أبدل|ابدل|أغير|اغير|بدّل|بدل))",
+    re.IGNORECASE,
+)
+_REPLACEMENT_ADD_TARGET_PATTERNS = (
+    re.compile(
+        rf"\b(?:take|add|include)\s+(?P<add>{_COURSE_CODE_EXPR})\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        rf"(?:آخذ|اخذ|أنزل|انزل|أضيف|اضيف|أحط|احط)\s+"
+        rf"(?:مقرر\s+|مادة\s+)?(?P<add>\b{_COURSE_CODE_EXPR}\b)",
+        re.IGNORECASE,
+    ),
+)
+
+
+def _requires_feasible_course_replacements(question: str) -> bool:
+    """Require the two-gate swap engine when the timetable must survive a change.
+
+    This remains an evidence gate, not a role or intent classifier.  The model can
+    still understand and answer the request, but it may not claim that a modified
+    current timetable fits from an individual section check or an academic-only
+    graduation scenario.
+    """
+    text = str(question or "")
+    if not _REPLACEMENT_ACTION_PATTERN.search(text):
+        return False
+    # The adviser can receive pasted editing requests too. Text-object words are
+    # explicit counter-evidence: do not turn "replace this paragraph if it fits"
+    # into a degree-plan simulation. Open academic questions such as "what can I
+    # replace without a clash?" remain valid even when no course code is named.
+    if _REPLACEMENT_TEXT_EDIT_PATTERN.search(text):
+        return False
+    # Changing M1 to M2 for the same course is a section choice, not an academic
+    # course replacement. It belongs to the timetable/section evidence path.
+    if (
+        len(_comparison_course_codes(text)) == 1
+        and _constraint_section_labels(text)
+        and _SAME_COURSE_SECTION_SWAP_PATTERN.search(text)
+    ):
+        return False
+    if _REPLACEMENT_TIMETABLE_PROOF_PATTERN.search(text):
+        return True
+
+    # In a course-replacement question, bare "fit", "fits", and "fitting"
+    # commonly mean fitting the recorded timetable. Require explicit course
+    # context and reject stated non-timetable meanings rather than treating every
+    # occurrence of "fits" in ordinary prose as a two-gate scheduling request.
+    has_course_context = bool(
+        _COURSE_CODE_TOKEN_PATTERN.search(text)
+        or re.search(r"\b(?:course|class|section)\b", text, re.IGNORECASE)
+    )
+    return bool(
+        has_course_context
+        and _REPLACEMENT_ENGLISH_FIT_PATTERN.search(text)
+        and not _REPLACEMENT_NON_TIMETABLE_FIT_PATTERN.search(text)
+    )
+
+
+_COURSE_COMPARISON_CUE_PATTERN = re.compile(
+    r"(?:\bcompare\b|\bcomparison\b|\bversus\b|\bvs\.?\b|"
+    r"\bbetter\b|\bbest\b|\bwhich\s+(?:one|course)\b|\bor\b|"
+    r"\brank\b|\bprioriti[sz]e\b|\binstead\s+of\b|"
+    r"قارن|مقارن(?:ة|ه)|أيهم|ايهم|أي\s+(?:واحد|وحدة|مقرر|مادة)|"
+    r"وش\s+(?:أفضل|أحسن|أنسب|أولى)|و?الأفضل|أحسن|أنسب|أولى|"
+    r"ولا|أو|رت[ّ]?ب|بدل|بدال)",
+    re.IGNORECASE,
+)
+_COURSE_COMPARISON_TIMETABLE_OBJECTIVE = re.compile(
+    r"(?:\b(?:timetable|schedule|section|clash|conflict|time)\b|"
+    r"جدول|شعب(?:ة|ه)?|تعارض|وقت|دوام)",
+    re.IGNORECASE,
+)
+_COURSE_COMPARISON_UNLOCK_OBJECTIVE = re.compile(
+    r"(?:\b(?:unlock|impact|priority|prerequisite\s+chain|opens?\s+more)\b|"
+    r"يفتح|تفتح|أثر|تأثير|أولوية|اولوي(?:ة|ه)|سلسلة\s+المتطلبات|الخطة)",
+    re.IGNORECASE,
+)
+_COURSE_COMPARISON_DEFERRAL_OBJECTIVE = re.compile(
+    r"(?:\b(?:defer|delay|postpone|skip).*?(?:less|least|harm|impact)|"
+    r"تأجيل|أؤجل|اؤجل|أج[ّ]?ل|ضرر|يضر|يتأخر|تأخير)",
+    re.IGNORECASE,
+)
+
+
+def _comparison_course_codes(question: str) -> list[str]:
+    """Return distinct explicit course codes in the student's textual order."""
+    codes: list[str] = []
+    for match in _COURSE_CODE_TOKEN_PATTERN.finditer(_fold_constraint_text(str(question or ""))):
+        code = _normalise_course_code(match.group(0))
+        if code and code not in codes:
+            codes.append(code)
+    return codes
+
+
+def _requires_course_choice_comparison(question: str) -> bool:
+    """Ground an explicit 2–4 course choice in the deterministic comparator."""
+    text = str(question or "")
+    # Concrete add/remove graduation scenarios and actual timetable builds already
+    # have stronger deterministic engines. The comparator owns the choice question,
+    # not every sentence that happens to contain "or".
+    if _requires_graduation_what_if(text) or _requires_timetable_proposal(text):
+        return False
+    codes = _comparison_course_codes(question)
+    return 2 <= len(codes) <= 4 and bool(_COURSE_COMPARISON_CUE_PATTERN.search(text))
+
+
+def _normalise_course_comparison_args(
+    question: str, arguments: dict[str, Any]
+) -> tuple[dict[str, Any], list[str]]:
+    """Bind the model call to the exact candidates and objective in the question."""
+    normalised = dict(arguments or {})
+    reasons: list[str] = []
+    if "academic_year" in normalised or "term" in normalised:
+        # The model never chooses the comparison period. A period explicitly
+        # written by the student is parsed separately and carried only through
+        # trusted local execution context.
+        normalised.pop("academic_year", None)
+        normalised.pop("term", None)
+        reasons.append("discarded_model_term_override")
+    codes = _comparison_course_codes(question)
+    if 2 <= len(codes) <= 4 and normalised.get("course_codes") != codes:
+        normalised["course_codes"] = codes
+        reasons.append("explicit_course_codes")
+
+    text = str(question or "")
+    if _requires_graduation_progress(text) or _COURSE_COMPARISON_DEFERRAL_OBJECTIVE.search(text):
+        objective = "graduation"
+    elif _COURSE_COMPARISON_TIMETABLE_OBJECTIVE.search(text):
+        objective = "timetable_fit"
+    elif _COURSE_COMPARISON_UNLOCK_OBJECTIVE.search(text):
+        objective = "unlock_impact"
+    else:
+        # No stated priority means a balanced comparison. Letting the model pick
+        # graduation or timetable fit here would silently answer a different
+        # question and make otherwise identical prompts nondeterministic.
+        objective = "balanced"
+    if normalised.get("objective") != objective:
+        normalised["objective"] = objective
+        reasons.append("explicit_objective")
+    return normalised, reasons
+
+
+_EXPLICIT_COMPARISON_TERM_PATTERN = re.compile(
+    r"(?<!\d)(?P<academic_year>\d{4})\s*[/؍]\s*(?P<term>[1-3])(?!\d)"
+)
+_COMPARISON_TERM_TARGET_BEFORE_PATTERN = re.compile(
+    r"(?:\b(?:for|in)\s+(?:term\s+)?|"
+    r"(?:في|لـ?|للترم|للفصل)\s*)$",
+    re.IGNORECASE,
+)
+_COMPARISON_TERM_TARGET_AFTER_PATTERN = re.compile(
+    r"^\s*[, :]?\s*(?:please\s+)?(?:compare|rank)\b|"
+    r"^\s*[, :]?\s*(?:قارن|رت[ّ]?ب)\b",
+    re.IGNORECASE,
+)
+_COMPARISON_CLAUSE_BEFORE_TERM_PATTERN = re.compile(
+    r"(?:\b(?:compare|comparison|rank)\b|قارن|مقارن(?:ة|ه)|رت[ّ]?ب)",
+    re.IGNORECASE,
+)
+_COMPARISON_TERM_NEGATION_PATTERN = re.compile(
+    r"(?:\b(?:not|except)\s+(?:for\s+)?|(?:مو|ليس|لا)\s*(?:في|لـ?|للترم|للفصل)?\s*)$",
+    re.IGNORECASE,
+)
+
+
+def _explicit_comparison_year_term(question: str) -> tuple[int, int] | None:
+    """Parse a conservative student-authored Hijri ``year/term`` reference.
+
+    Digit folding supports both Western and Arabic numerals. The intentionally
+    narrow slash form prevents unrelated years and prose generated by the model
+    from silently moving a comparison to another timetable baseline.
+    """
+    text = fold_digits(str(question or ""))
+    matches = list(_EXPLICIT_COMPARISON_TERM_PATTERN.finditer(text))
+    if len(matches) != 1:
+        # Multiple periods normally describe history or a contrast. Without a
+        # full temporal parser, selecting either one risks moving the verified
+        # baseline away from what the student meant.
+        return None
+    for match in reversed(matches):
+        academic_year = int(match.group("academic_year"))
+        term = int(match.group("term"))
+        prefix = text[max(0, match.start() - 64) : match.start()]
+        suffix = text[match.end() : match.end() + 64]
+        if _COMPARISON_TERM_NEGATION_PATTERN.search(prefix):
+            continue
+        target_before = bool(_COMPARISON_TERM_TARGET_BEFORE_PATTERN.search(prefix))
+        target_after = bool(_COMPARISON_TERM_TARGET_AFTER_PATTERN.search(suffix))
+        # A bare historical phrase such as "I studied in 1447/2" must not
+        # redirect a later comparison. "Compare ... in 1447/2" is different:
+        # the comparison cue occurs in the same clause before the explicit term.
+        same_clause_prefix = re.split(r"[.;?!؟]", prefix)[-1]
+        comparison_before = bool(_COMPARISON_CLAUSE_BEFORE_TERM_PATTERN.search(same_clause_prefix))
+        if (
+            1400 <= academic_year <= 1500
+            and term in (1, 2, 3)
+            and (
+                target_after
+                or (target_before and comparison_before)
+                or re.search(
+                    r"(?:\b(?:comparison|compare|rank)\b|مقارن(?:ة|ه)|قارن|رت[ّ]?ب)"
+                    r"[^.;?!؟]{0,64}\b(?:for|in)\s+(?:term\s+)?$",
+                    same_clause_prefix,
+                    re.IGNORECASE,
+                )
+            )
+        ):
+            return academic_year, term
+    return None
+
+
 _ARABIC_INSTEAD_PATTERN = re.compile(
     rf"(?P<add>\b{_COURSE_CODE_EXPR}\b)\s+"
     rf"(?:بدل(?:اً|ا)?(?:\s+من)?|بدال|مكان|عوض(?:اً|ا)?\s+عن)\s+"
@@ -799,12 +1096,24 @@ _ENGLISH_INSTEAD_PATTERN = re.compile(
     re.IGNORECASE,
 )
 _ENGLISH_REPLACE_PATTERN = re.compile(
-    rf"\b(?:replace|swap)\s+(?P<remove>{_COURSE_CODE_EXPR})\s+"
-    rf"(?:with|for)\s+(?P<add>{_COURSE_CODE_EXPR})\b",
+    rf"\b(?:replace|swap|substitute)\s+(?P<remove>{_COURSE_CODE_EXPR})\s+"
+    rf"(?:with|for)\s+(?P<add>{_COURSE_CODE_EXPR})\b|"
+    rf"\bswitch\s+(?P<remove_switch>{_COURSE_CODE_EXPR})\s+(?:to|with|for)\s+"
+    rf"(?P<add_switch>{_COURSE_CODE_EXPR})\b|"
+    rf"\buse\s+(?P<add_use>{_COURSE_CODE_EXPR})\s+as\s+(?:a\s+)?replacement\s+for\s+"
+    rf"(?P<remove_use>{_COURSE_CODE_EXPR})\b|"
+    rf"\bdrop\s+(?P<remove_drop>{_COURSE_CODE_EXPR})\s+(?:and|then)\s+"
+    rf"(?:take|add)\s+(?P<add_drop>{_COURSE_CODE_EXPR})\b",
+    re.IGNORECASE,
+)
+_ARABIC_TAKE_INSTEAD_PATTERN = re.compile(
+    rf"(?:آخذ|اخذ|أنزل|انزل|أحط|احط)\s+"
+    rf"(?P<add>{_COURSE_CODE_EXPR})\s+(?:بدل|بدال|مكان)\s+"
+    rf"(?P<remove>{_COURSE_CODE_EXPR})\b",
     re.IGNORECASE,
 )
 _ARABIC_REPLACE_PATTERN = re.compile(
-    rf"(?:استبدل|أستبدل|أبدل|ابدل|أغير|اغير)\s+"
+    rf"(?:استبدال|استبدل|أستبدل|بدلت|أبدل|ابدل|أبدّل|ابدّل|أغير|اغير)\s+"
     rf"(?P<remove>\b{_COURSE_CODE_EXPR}\b)\s+"
     rf"(?:ب|بـ|مع)\s*(?P<add>\b{_COURSE_CODE_EXPR}\b)",
     re.IGNORECASE,
@@ -865,14 +1174,32 @@ def _normalise_graduation_scenario_args(
         _ARABIC_INSTEAD_PATTERN,
         _ENGLISH_INSTEAD_PATTERN,
         _ENGLISH_REPLACE_PATTERN,
+        _ARABIC_TAKE_INSTEAD_PATTERN,
         _ARABIC_REPLACE_PATTERN,
         _ARABIC_REMOVE_ADD_PATTERN,
         _ARABIC_REVERSED_INSTEAD_PATTERN,
     ):
         match = pattern.search(text)
         if match:
-            normalised["remove_current_courses"] = [_normalise_course_code(match.group("remove"))]
-            normalised["add_current_courses"] = [_normalise_course_code(match.group("add"))]
+            groups = match.groupdict()
+            remove = next(
+                (
+                    groups.get(key)
+                    for key in ("remove", "remove_switch", "remove_use", "remove_drop")
+                    if groups.get(key)
+                ),
+                "",
+            )
+            add = next(
+                (
+                    groups.get(key)
+                    for key in ("add", "add_switch", "add_use", "add_drop")
+                    if groups.get(key)
+                ),
+                "",
+            )
+            normalised["remove_current_courses"] = [_normalise_course_code(remove)]
+            normalised["add_current_courses"] = [_normalise_course_code(add)]
             normalised.pop("search_better_replacements", None)
             return normalised, "explicit_replacement"
 
@@ -900,6 +1227,70 @@ def _normalise_graduation_scenario_args(
             return normalised, "explicit_omission"
 
     return normalised, ""
+
+
+def _normalise_feasible_replacement_args(
+    question: str, arguments: dict[str, Any]
+) -> tuple[dict[str, Any], list[str]]:
+    """Bind both sides of a timetable-certified swap to the student's words.
+
+    The remote model is never allowed to choose a course silently.  A missing side
+    remains missing, which asks the deterministic service to search that side.  A
+    course mentioned only by the model is discarded before the capability runs.
+    """
+    # A certified replacement is defined against the timetable snapshot for the
+    # server-configured chat term.  The model may identify explicit course sides,
+    # but it may not silently redirect that proof to another year or term.
+    normalised: dict[str, Any] = {}
+    reasons: list[str] = []
+    if arguments.get("academic_year") not in (None, "") or arguments.get("term") not in (
+        None,
+        "",
+    ):
+        reasons.append("discarded_model_term_override")
+    scenario, scenario_reason = _normalise_graduation_scenario_args(question, {})
+    removed = [
+        _normalise_course_code(value)
+        for value in scenario.get("remove_current_courses") or []
+        if _normalise_course_code(value)
+    ]
+    added = [
+        _normalise_course_code(value)
+        for value in scenario.get("add_current_courses") or []
+        if _normalise_course_code(value)
+    ]
+
+    text = str(question or "")
+    codes = _comparison_course_codes(text)
+    if not removed and not added and len(codes) == 1:
+        explicit_add = next(
+            (
+                _normalise_course_code(match.group("add"))
+                for pattern in _REPLACEMENT_ADD_TARGET_PATTERNS
+                if (match := pattern.search(text))
+            ),
+            "",
+        )
+        if explicit_add:
+            added = [explicit_add]
+            scenario_reason = "explicit_add_target"
+        elif _REPLACEMENT_ACTION_PATTERN.search(text):
+            # "Replace DS341 with the best course that fits" identifies the
+            # removed side; the service, not the model, searches for the addition.
+            removed = [codes[0]]
+            scenario_reason = "explicit_remove_target"
+
+    if removed:
+        normalised["remove_course"] = removed[0]
+    if added:
+        normalised["add_course"] = added[0]
+    if scenario_reason:
+        reasons.append(scenario_reason)
+    if arguments.get("remove_course") and not removed:
+        reasons.append("discarded_unstated_remove_course")
+    if arguments.get("add_course") and not added:
+        reasons.append("discarded_unstated_add_course")
+    return normalised, reasons
 
 
 _SECTION_DATA_MISSING_CLAIM = re.compile(
@@ -1089,6 +1480,461 @@ def _safe_section_answer(
     return _apply_saudi_register("\n".join(lines), language, answer_style)
 
 
+def _comparison_status_text(status: Any, language: str) -> str:
+    value = str(status or "unknown").strip().lower()
+    if language == "Arabic":
+        return {
+            "passed": "مجتاز",
+            "studying": "تدرسه الآن",
+            "open_now": "متطلباته السابقة مستوفاة",
+            "blocked": "متطلباته السابقة غير مكتملة",
+            "unknown": "الوضع غير محسوم من البيانات",
+        }.get(value, "الوضع غير محسوم من البيانات")
+    return {
+        "passed": "already passed",
+        "studying": "being studied now",
+        "open_now": "recorded prerequisites satisfied",
+        "blocked": "blocked by recorded prerequisites",
+        "unknown": "status not determinable from the data",
+    }.get(value, "status not determinable from the data")
+
+
+def _safe_course_comparison_answer(
+    language: str,
+    tool_results: list[dict[str, Any]],
+    answer_style: str = "",
+) -> str:
+    """Render the deterministic comparison without asking the model to score it."""
+    result = next(
+        (row for row in reversed(tool_results) if row.get("tool") == "course_choice_comparison"),
+        None,
+    )
+    if not result:
+        return ""
+    if not result.get("ok"):
+        answer = (
+            "ما قدرت أبني مقارنة موثوقة بين المقررات المحددة. اذكر من مقررين إلى أربعة "
+            "مقررات مختلفة برموزها، مثل: «آخذ AI331 ولا DS341؟»."
+            if language == "Arabic"
+            else (
+                "I could not build a reliable comparison for those choices. Name two to "
+                "four different exact course codes, for example: ‘AI331 or DS341?’"
+            )
+        )
+        return _apply_saudi_register(answer, language, answer_style)
+
+    candidates = [row for row in result.get("candidates") or [] if isinstance(row, dict)]
+    verdict = str(result.get("verdict") or "NOT_DETERMINABLE").upper()
+    preferred = str(result.get("preferred_course") or "").strip().upper()
+    lines: list[str] = []
+    if language == "Arabic":
+        if verdict == "PREFERRED" and preferred:
+            lines.append(f"**الخلاصة:** {preferred} يتقدم حسب الهدف الذي طلبته والبيانات المتاحة.")
+        elif verdict == "TIE":
+            lines.append("**الخلاصة:** النتيجة متعادلة في الجوانب التي أمكن التحقق منها.")
+        else:
+            lines.append(
+                "**الخلاصة:** ما فيه مقرر أفضل في كل الجوانب من البيانات المتاحة؛ "
+                "الاختيار يعتمد على أولويتك."
+            )
+    else:
+        if verdict == "PREFERRED" and preferred:
+            lines.append(
+                f"**Conclusion:** {preferred} leads for your stated objective on the "
+                "verified evidence."
+            )
+        elif verdict == "TIE":
+            lines.append("**Conclusion:** The verified dimensions are tied.")
+        else:
+            lines.append(
+                "**Conclusion:** The evidence does not establish one course as better on "
+                "every dimension; the choice depends on your priority."
+            )
+
+    for row in candidates:
+        code = str(row.get("course_code") or "").strip().upper()
+        name = str(row.get("course_name") or "").strip()
+        heading = f"**{code}**" + (f" — {name}" if name else "")
+        parts: list[str] = [_comparison_status_text(row.get("academic_status"), language)]
+        missing: list[str] = []
+        for raw_missing in row.get("missing_prerequisites") or []:
+            if isinstance(raw_missing, dict):
+                missing_code = str(raw_missing.get("course_code") or "").strip()
+                if missing_code:
+                    missing.append(missing_code)
+                    continue
+                if str(raw_missing.get("kind") or "").upper() == "MISSING_HOURS":
+                    required = raw_missing.get("required")
+                    if required is not None:
+                        missing.append(
+                            f"شرط {int(required)} ساعة"
+                            if language == "Arabic"
+                            else f"{int(required)}-credit gate"
+                        )
+            elif str(raw_missing).strip():
+                missing.append(str(raw_missing).strip())
+        if missing:
+            parts.append(("ينقصه: " if language == "Arabic" else "missing: ") + ", ".join(missing))
+
+        recommendation = row.get("recommendation") or {}
+        rec_state = str(recommendation.get("state") or "").upper()
+        rec_rank = recommendation.get("rank")
+        if rec_state in {"RECOMMENDED", "NEW_RECOMMENDATION"}:
+            parts.append(
+                (f"ضمن توصية النظام (الترتيب {int(rec_rank)})" if rec_rank else "ضمن توصية النظام")
+                if language == "Arabic"
+                else (
+                    f"system recommendation rank {int(rec_rank)}"
+                    if rec_rank
+                    else "system-recommended"
+                )
+            )
+        elif rec_state in {"ALREADY_IN_CURRENT_TIMETABLE", "CURRENT_BASELINE"}:
+            parts.append(
+                "ضمن جدولك المسجل" if language == "Arabic" else "in the registered baseline"
+            )
+        elif rec_state in {"ALREADY_IN_EXPECTED_PLAN", "EXPECTED_BASELINE"}:
+            parts.append(
+                "ضمن جدولك المتوقع" if language == "Arabic" else "in the expected-plan baseline"
+            )
+        elif rec_state:
+            parts.append(
+                "ليس ضمن توصية النظام الحالية"
+                if language == "Arabic"
+                else "not in the current system recommendation"
+            )
+        if rec_rank and rec_state in {
+            "ALREADY_IN_CURRENT_TIMETABLE",
+            "CURRENT_BASELINE",
+            "ALREADY_IN_EXPECTED_PLAN",
+            "EXPECTED_BASELINE",
+        }:
+            parts.append(
+                f"ومدرج أيضًا في توصية النظام (الترتيب {int(rec_rank)})"
+                if language == "Arabic"
+                else f"also system recommendation rank {int(rec_rank)}"
+            )
+
+        impact = row.get("impact") or {}
+        direct = int(impact.get("direct_unlock_count") or 0)
+        chain = int(impact.get("chain_course_count") or 0)
+        weighted = impact.get("weighted_downstream_score")
+        parts.append(
+            f"يفتح مباشرة {direct}، ويمتد أثره في سلسلة {chain}"
+            if language == "Arabic"
+            else f"directly unlocks {direct}; appears in a remaining chain of {chain}"
+        )
+        if weighted is not None:
+            parts.append(
+                f"وزن أثر الخطة {float(weighted):.2f}"
+                if language == "Arabic"
+                else f"plan-impact weight {float(weighted):.2f}"
+            )
+
+        timetable = row.get("timetable") or {}
+        timetable_status = str(timetable.get("status") or "").upper()
+        if timetable_status == "NOT_ON_FILE":
+            parts.append(
+                "لا توجد له شعبة مسجلة في بيانات النظام"
+                if language == "Arabic"
+                else "no section is recorded in this system's data"
+            )
+        elif timetable_status in {"OK", "ALL_CLASH"}:
+            recorded = int(timetable.get("sections_on_file") or 0)
+            free = int(timetable.get("clash_free_count") or 0)
+            parts.append(
+                f"الشعب المسجلة {recorded}، وغير المتعارضة منفردةً {free}"
+                if language == "Arabic"
+                else f"{recorded} recorded section(s), {free} individually clash-free"
+            )
+        elif timetable_status == "NOT_DETERMINABLE":
+            reason_code = str(timetable.get("reason_code") or "").upper()
+            if reason_code == "BASELINE_MEETING_DATA_INCOMPLETE":
+                parts.append(
+                    "لا يمكن حسم التعارض لأن بيانات مواعيد الجدول المرجعي ناقصة أو غير صالحة"
+                    if language == "Arabic"
+                    else (
+                        "timetable fit is not determinable because baseline meeting "
+                        "data is incomplete or invalid"
+                    )
+                )
+            elif reason_code == "CANDIDATE_MEETING_DATA_INCOMPLETE":
+                parts.append(
+                    "لا يمكن حسم التعارض لأن بيانات مواعيد إحدى الشعب المرشحة ناقصة أو غير صالحة"
+                    if language == "Arabic"
+                    else (
+                        "timetable fit is not determinable because candidate-section "
+                        "meeting data is incomplete or invalid"
+                    )
+                )
+            elif reason_code == "SECTION_SNAPSHOT_TERM_MISMATCH":
+                parts.append(
+                    "لا يمكن حسم التعارض لأن سجل الشعب الحالي لا يخص فصل المقارنة المطلوب"
+                    if language == "Arabic"
+                    else (
+                        "timetable fit is not determinable because the current section "
+                        "snapshot does not belong to the requested comparison term"
+                    )
+                )
+            else:
+                parts.append(
+                    "لا يمكن حسم ملاءمة الجدول من البيانات المسجلة"
+                    if language == "Arabic"
+                    else "timetable fit is not determinable from the recorded data"
+                )
+
+        graduation = row.get("graduation") or {}
+        if (
+            graduation.get("simulation_completed")
+            and graduation.get("estimated_additional_terms") is not None
+        ):
+            terms = int(graduation["estimated_additional_terms"])
+            parts.append(
+                f"محاكاة التخرج المكتملة: {terms} فصل إضافي"
+                if language == "Arabic"
+                else f"completed graduation scenario: {terms} additional term(s)"
+            )
+        elif graduation:
+            lower = graduation.get("lower_bound_additional_terms")
+            parts.append(
+                (
+                    f"محاكاة التخرج غير مكتملة؛ الحد الأدنى {int(lower)} فصل"
+                    if lower is not None
+                    else "محاكاة التخرج غير مكتملة، فلا يمكن حسم فرق الفصول"
+                )
+                if language == "Arabic"
+                else (
+                    f"graduation scenario incomplete; lower bound {int(lower)} term(s)"
+                    if lower is not None
+                    else "graduation scenario incomplete; the term difference is not determinable"
+                )
+            )
+        lines.append(heading + ": " + "؛ ".join(parts) + ".")
+
+    if language == "Arabic":
+        lines.append(
+            "وزن أثر الخطة مؤشر تخطيطي داخل النظام، مو ترتيبًا رسميًا من الجامعة. "
+            "وفحص الشعب يعتمد على السجل الموجود لدينا، ولا يثبت توفر مقاعد أو صلاحية التسجيل. "
+            "المقارنة للقراءة فقط وما سجلت أو غيّرت أي مقرر."
+        )
+    else:
+        lines.append(
+            "The plan-impact weight is this project's planning heuristic, not an official "
+            "university ranking. Section checks use the catalogue recorded here and do not "
+            "prove live seats or registration permission. This comparison is read-only; no "
+            "course was registered or changed."
+        )
+    return _apply_saudi_register("\n\n".join(lines), language, answer_style)
+
+
+def _replacement_timing_text(improvement: dict[str, Any], language: str) -> str:
+    effect = str(improvement.get("timing_effect") or "").upper()
+    saved = improvement.get("terms_saved")
+    if effect == "EARLIER" and saved is not None:
+        return (
+            f"المحاكاة المكتملة تقدّر توفير {int(saved)} فصل دراسي"
+            if language == "Arabic"
+            else f"the completed simulation estimates {int(saved)} term(s) saved"
+        )
+    if effect == "FORECAST_COMPLETED":
+        return (
+            "السيناريو أكمل مسار تخرج لم تستطع المحاكاة المرجعية إكماله"
+            if language == "Arabic"
+            else "the scenario completed a graduation path the baseline simulation could not complete"
+        )
+    resolved = [str(code) for code in improvement.get("blockers_resolved") or [] if str(code)]
+    improved = [str(code) for code in improvement.get("blockers_improved") or [] if str(code)]
+    if resolved:
+        return (
+            "أثبتت المحاكاة تحسن المسار بحل عوائق: " + "، ".join(resolved)
+            if language == "Arabic"
+            else "the simulation proved improvement by resolving: " + ", ".join(resolved)
+        )
+    if improved:
+        return (
+            "أثبتت المحاكاة تحسن عوائق: " + "، ".join(improved)
+            if language == "Arabic"
+            else "the simulation proved improvement to blockers: " + ", ".join(improved)
+        )
+    return (
+        "أثبتت محاكاة التخرج تحسن المسار الكامل"
+        if language == "Arabic"
+        else "the complete graduation simulation proved an academic improvement"
+    )
+
+
+def _safe_feasible_replacement_answer(
+    language: str,
+    tool_results: list[dict[str, Any]],
+    answer_style: str = "",
+) -> str:
+    """Render only the service's two independent proofs and bounded negatives."""
+    result = next(
+        (
+            row
+            for row in reversed(tool_results)
+            if row.get("tool") == "feasible_course_replacements"
+        ),
+        None,
+    )
+    if not result:
+        return ""
+    if not result.get("ok"):
+        answer = (
+            "ما قدرت أشغّل فحص الاستبدال الموثوق، لذلك ما راح أقترح تبديلًا من غير "
+            "إثبات أكاديمي وجدول كامل غير متعارض. لم يتغير تسجيلك أو جدولك الفعلي."
+            if language == "Arabic"
+            else (
+                "I could not run the verified replacement check, so I will not suggest a "
+                "swap without both academic and complete-timetable evidence. Your real "
+                "registration and timetable were not changed."
+            )
+        )
+        return _apply_saudi_register(answer, language, answer_style)
+
+    baseline_kind = str(result.get("baseline_kind") or "").upper()
+    if language == "Arabic":
+        baseline_text = {
+            "REGISTERED": "جدولك المسجل",
+            "EXPECTED_PLAN": "جدولك المتوقع",
+            "EMPTY": "الجدول المرجعي الفارغ",
+            "MIXED_REVIEW_REQUIRED": "بيانات جدول مختلطة تحتاج مراجعة",
+        }.get(baseline_kind, "الجدول المرجعي المسجل في النظام")
+    else:
+        baseline_text = {
+            "REGISTERED": "your registered timetable",
+            "EXPECTED_PLAN": "your expected-plan timetable",
+            "EMPTY": "the empty planning baseline",
+            "MIXED_REVIEW_REQUIRED": "mixed timetable data that needs review",
+        }.get(baseline_kind, "the timetable baseline recorded in this system")
+
+    certified = [row for row in result.get("certified_replacements") or [] if isinstance(row, dict)]
+    lines: list[str] = []
+    if certified:
+        lines.append(
+            f"**الخلاصة:** وجدت {len(certified)} تبديلًا موثّقًا أكاديميًا وله جدول كامل غير متعارض مع {baseline_text}."
+            if language == "Arabic"
+            else (
+                f"**Conclusion:** I found {len(certified)} academically proven replacement(s) "
+                f"with a complete clash-free schedule around {baseline_text}."
+            )
+        )
+        for index, row in enumerate(certified, start=1):
+            removed = str((row.get("remove_course") or {}).get("course_code") or "").upper()
+            added = str((row.get("add_course") or {}).get("course_code") or "").upper()
+            improvement = row.get("academic_improvement") or {}
+            timetable = row.get("timetable") or {}
+            options = [
+                option
+                for option in timetable.get("certified_options") or []
+                if isinstance(option, dict)
+            ]
+            first = options[0] if options else {}
+            sections = [
+                f"{section.get('course_code')} {section.get('section')}"
+                for section in first.get("complete_sections") or []
+                if section.get("course_code") and section.get("section")
+            ]
+            if language == "Arabic":
+                lines.append(
+                    f"{index}. **{removed} ← {added}**: "
+                    + _replacement_timing_text(improvement, language)
+                    + f". تحقّق المنشئ من {len(options)} خيار كامل"
+                    + (f"؛ أولها: {', '.join(sections)}" if sections else "")
+                    + "."
+                )
+                if row.get("outside_plan_addition"):
+                    lines.append(
+                        f"   تنبيه: {added} خارج متطلبات الخطة المسجلة؛ تحسنه هنا متعلق بالمسار الأكاديمي المحاكى، ولا يعني أنه يعوّض متطلبًا من الخطة."
+                    )
+            else:
+                lines.append(
+                    f"{index}. **{removed} → {added}**: "
+                    + _replacement_timing_text(improvement, language)
+                    + f". The planner certified {len(options)} complete option(s)"
+                    + (f"; the first uses {', '.join(sections)}" if sections else "")
+                    + "."
+                )
+                if row.get("outside_plan_addition"):
+                    lines.append(
+                        f"   Note: {added} is outside the recorded degree-plan requirements; its simulated academic effect does not make it a substitute for a plan requirement."
+                    )
+    else:
+        requested_remove = str(result.get("requested_remove_course") or "").upper()
+        requested_add = str(result.get("requested_add_course") or "").upper()
+        exact = " → ".join(code for code in (requested_remove, requested_add) if code)
+        rejections = [
+            row for row in result.get("rejected_replacements") or [] if isinstance(row, dict)
+        ]
+        academic_rejected = any(
+            str((row.get("academic") or {}).get("status") or "").upper()
+            in {"ACADEMIC_INVALID", "ACADEMIC_NOT_IMPROVING"}
+            for row in rejections
+        )
+        timetable_statuses = {
+            str((row.get("timetable") or {}).get("status") or "").upper() for row in rejections
+        }
+        snapshot_term_mismatch = any(
+            str((row.get("timetable") or {}).get("reason_code") or "").upper()
+            == "SECTION_SNAPSHOT_TERM_MISMATCH"
+            for row in rejections
+        )
+        if language == "Arabic":
+            subject = f"للتبديل {exact}" if exact else "في البحث المطلوب"
+            if academic_rejected:
+                lines.append(
+                    f"**الخلاصة:** لم يثبت تحسن مسار التخرج {subject}، ولذلك لم أعتمده كتبديل أفضل ولم أبنِ عليه ادعاءً عن الجدول."
+                )
+            elif snapshot_term_mismatch:
+                lines.append(
+                    f"**الخلاصة:** لقطة الشعب المسجلة لا تخص الفصل المطلوب {subject}، لذلك أوقفت الفحص قبل محاكاة التحسن الأكاديمي ولم أوثّق جدولًا غير متعارض."
+                )
+            elif "NOT_DETERMINABLE" in timetable_statuses:
+                lines.append(
+                    f"**الخلاصة:** وُجد جانب أكاديمي قابل للفحص، لكن بيانات الشعب أو الجدول لم تكفِ لتوثيق جدول كامل غير متعارض {subject}."
+                )
+            else:
+                lines.append(
+                    f"**الخلاصة:** لم ينتج الفحص المحدود تبديلًا اجتاز معًا تحسن مسار التخرج والجدول الكامل غير المتعارض {subject}."
+                )
+            lines.append(
+                "هذه نتيجة بحث محدود في البيانات المسجلة، وليست إثباتًا بأنه لا يوجد أي ترتيب ممكن خارج النتائج التي فُحصت."
+            )
+        else:
+            subject = f"for {exact}" if exact else "in the requested search"
+            if academic_rejected:
+                lines.append(
+                    f"**Conclusion:** The graduation simulation did not prove an academic improvement {subject}, so I did not certify it as a better replacement or infer timetable feasibility."
+                )
+            elif snapshot_term_mismatch:
+                lines.append(
+                    f"**Conclusion:** The recorded section snapshot does not belong to the requested term {subject}, so I stopped before running the academic-improvement simulation and did not certify a clash-free timetable."
+                )
+            elif "NOT_DETERMINABLE" in timetable_statuses:
+                lines.append(
+                    f"**Conclusion:** Academic evidence was evaluable, but the recorded section or timetable data was insufficient to certify a complete clash-free schedule {subject}."
+                )
+            else:
+                lines.append(
+                    f"**Conclusion:** The bounded check did not produce a replacement that passed both the graduation-improvement and complete clash-free timetable gates {subject}."
+                )
+            lines.append(
+                "This was a bounded search of recorded data, not proof that no other arrangement exists."
+            )
+
+    lines.append(
+        "فحص الجدول يستخدم لقطة الشعب المسجلة ويتجاهل السعة عمدًا؛ لذلك لا يثبت طرح الشعبة الآن أو توفر مقعد أو صلاحية التسجيل. النتيجة للقراءة فقط، ولم يُحذف أو يُضف أو يُسجل أي مقرر."
+        if language == "Arabic"
+        else (
+            "The timetable proof uses the recorded section snapshot and deliberately "
+            "ignores capacity; it does not prove a current offering, live seat, or "
+            "registration permission. This is read-only: no course was dropped, added, "
+            "or registered."
+        )
+    )
+    return _apply_saudi_register("\n\n".join(lines), language, answer_style)
+
+
 def _planner_option_names(tool_results: list[dict[str, Any]]) -> list[str]:
     """Exact A1-C3 identities the final timetable answer must acknowledge."""
     names: list[str] = []
@@ -1164,6 +2010,101 @@ _LOWER_BOUND_MARKERS = re.compile(
     re.IGNORECASE,
 )
 
+_PLANNING_BASELINE_CURRENT_TERM_CLAIM = re.compile(
+    r"(?:\b(?<!not\s)(?:after|including|in|during|for|through)\s+"
+    r"(?:(?:your|the|this)\s+)?current\s+(?:one|term|semester)\b|"
+    r"\bcurrent\s+planning\s+baseline\b|"
+    r"(?:بعد|شامل(?:ة)?[\u064b-\u0652]*ا?|باحتساب|بما\s+(?:فيه|فيها|يشمل)|خلال|في|من)\s+"
+    r"(?:الفصل\s+الحالي|فصل(?:ي|ك|ه|ها|هم)?\s+الحالي|"
+    r"الترم\s+الحالي|ترم(?:ي|ك|ه|ها|هم)?\s+الحالي|"
+    r"هالترم|هالفصل|(?:الترم|الفصل)\s+(?:ذا|هذا))|"
+    r"(?:الأساس\s+التخطيطي|الفصل\s+المرجعي\s+للتخطيط)\s+الحالي|"
+    r"(?:\|\s*(?:\*{0,2}current\*{0,2}|\*{0,2}الحالي\*{0,2})\s*\||"
+    r"(?:term|semester|الفصل|فصل|الترم)\s*:\s*"
+    r"(?:\*{0,2}current\*{0,2}|\*{0,2}الحالي\*{0,2})))",
+    re.IGNORECASE,
+)
+
+_PLANNING_BASELINE_CURRENT_TERM_CONTRAST = re.compile(
+    r"(?:\b(?:not(?:\s+(?:in|for|during))?|different\s+from|differs\s+from|"
+    r"rather\s+than|unlike)\s+(?:(?:your|the|this)\s+)?current\s+(?:term|semester)\b|"
+    r"(?:ليس(?:ت)?(?:\s+(?:هو|هي))?(?:\s+(?:في|ضمن))?|يختلف\s+عن|"
+    r"مختلف(?:ة)?\s+عن|بدل(?:ًا|ا)?\s+من)\s+"
+    r"(?:الفصل\s+الدراسي\s+الحالي|الفصل\s+الحالي|"
+    r"فصل(?:ي|ك|ه|ها|هم)\s+الحالي|الترم\s+الحالي|"
+    r"ترم(?:ي|ك|ه|ها|هم)\s+الحالي))",
+    re.IGNORECASE,
+)
+
+_PLANNING_BASELINE_CURRENT_TERM_EQUIVALENCE = re.compile(
+    r"(?:\b(?:planning\s+baseline|baseline\s+term|forecast\s+baseline)\s+"
+    r"(?:is|equals|matches)\s+(?:the\s+same\s+as\s+)?"
+    r"(?:(?:your|the|this)\s+)?current\s+(?:term|semester)\b|"
+    r"(?:الفصل\s+المرجعي\s+للتخطيط|الفصل\s+المرجعي|أساس\s+التخطيط)\s+"
+    r"(?:هو|يساوي|يطابق|نفس)\s+(?:نفس\s+)?"
+    r"(?:الفصل\s+الدراسي\s+الحالي|الفصل\s+الحالي|"
+    r"فصل(?:ي|ك|ه|ها|هم)\s+الحالي|الترم\s+الحالي|"
+    r"ترم(?:ي|ك|ه|ها|هم)\s+الحالي))",
+    re.IGNORECASE,
+)
+
+_PLANNING_BASELINE_CURRENT_TERM_ASSIGNMENT = re.compile(
+    r"(?:\b(?:simulation|scenario|forecast|plan)\s+"
+    r"(?:treats|labels|identifies|calls|sets)\s+"
+    r"(?:(?:your|the|this)\s+)?current\s+(?:term|semester)\s+as\s+|"
+    r"(?:المحاكاة|السيناريو|التوقع|الخطة)\s+"
+    r"(?:تعتبر|تسمي|تحدد)\s+"
+    r"(?:الفصل\s+الدراسي\s+الحالي|الفصل\s+الحالي|"
+    r"فصل(?:ي|ك|ه|ها|هم)\s+الحالي|الترم\s+الحالي|"
+    r"ترم(?:ي|ك|ه|ها|هم)\s+الحالي)\s+(?:هو|كـ?))",
+    re.IGNORECASE,
+)
+
+
+def _mislabels_planning_baseline_as_current(answer: str, graduation: dict[str, Any] | None) -> bool:
+    """Whether prose promotes a simulation baseline to current-term evidence.
+
+    The selected Planner baseline may be a manually seeded expected timetable.
+    Graduation output intentionally does not claim that it is the registrar's
+    current term, so student-facing prose must use the neutral planning-baseline
+    label even when the numeric year/term happens to match today's configuration.
+    """
+    if not graduation:
+        return False
+    year = graduation.get("planning_baseline_academic_year")
+    term = graduation.get("planning_baseline_term")
+    if year is None or term is None:
+        return False
+    candidate = _PLANNING_BASELINE_CURRENT_TERM_CONTRAST.sub("", answer or "")
+    target = rf"{re.escape(str(year))}\s*/\s*{re.escape(str(term))}"
+    if re.search(
+        rf"{_PLANNING_BASELINE_CURRENT_TERM_ASSIGNMENT.pattern}\s*{target}\b",
+        candidate,
+        re.IGNORECASE,
+    ):
+        return True
+    if _PLANNING_BASELINE_CURRENT_TERM_EQUIVALENCE.search(candidate):
+        return True
+    if _PLANNING_BASELINE_CURRENT_TERM_CLAIM.search(candidate):
+        return True
+
+    # Catch direct/table labels only when they are explicitly bound to this
+    # scenario's verified planning-baseline term. This avoids broad matches such
+    # as “different from your current term” while covering common Markdown prose.
+    current_label = (
+        r"(?:current(?:\s+(?:term|semester))?|"
+        r"(?:your|the|this)\s+current\s+(?:term|semester)|"
+        r"الفصل\s+الدراسي\s+الحالي|الفصل\s+الحالي|"
+        r"فصل(?:ي|ك|ه|ها|هم)\s+الحالي|الترم\s+الحالي|"
+        r"ترم(?:ي|ك|ه|ها|هم)\s+الحالي|الحالي)"
+    )
+    direct_label = re.compile(
+        rf"(?im)(?:^|[,.،؛;:]\s+|\b(?:scenario|plan|forecast)\s*,?\s+)"
+        rf"(?:[-*]\s*)?\*{{0,2}}{current_label}\*{{0,2}}\s*"
+        rf"(?:\||[-–—:]|\b(?:is|هو)\b|\()?\s*{target}\s*\)?\b"
+    )
+    return bool(direct_label.search(candidate))
+
 
 def _graduation_revision_facts(
     answer: str, tool_results: list[dict[str, Any]]
@@ -1191,24 +2132,26 @@ def _graduation_revision_facts(
 
     candidate = answer or ""
     completed = bool(graduation.get("simulation_completed"))
+    baseline_mislabeled = _mislabels_planning_baseline_as_current(candidate, graduation)
     if completed:
         required_numbers = [graduation.get("estimated_additional_terms")]
-        if graduation.get("current_courses_assumed_passed"):
-            required_numbers.append(graduation.get("estimated_terms_including_current"))
+        if graduation.get("planning_baseline_courses_assumed_passed"):
+            required_numbers.append(graduation.get("estimated_terms_including_planning_baseline"))
         missing_numbers = [
             int(number)
             for number in required_numbers
             if number is not None and str(int(number)) not in candidate
         ]
-        if not missing_numbers:
+        if not missing_numbers and not baseline_mislabeled:
             return None
         return {
             "simulation_completed": True,
             "estimated_additional_terms": graduation.get("estimated_additional_terms"),
-            "estimated_terms_including_current": graduation.get(
-                "estimated_terms_including_current"
+            "estimated_terms_including_planning_baseline": graduation.get(
+                "estimated_terms_including_planning_baseline"
             ),
             "missing_numbers": missing_numbers,
+            "mislabels_planning_baseline_as_current": baseline_mislabeled,
         }
 
     unresolved = [
@@ -1217,8 +2160,8 @@ def _graduation_revision_facts(
         if isinstance(row, dict) and str(row.get("code") or "").strip()
     ]
     required_numbers = [graduation.get("lower_bound_additional_terms")]
-    if graduation.get("current_courses_assumed_passed"):
-        required_numbers.append(graduation.get("lower_bound_terms_including_current"))
+    if graduation.get("planning_baseline_courses_assumed_passed"):
+        required_numbers.append(graduation.get("lower_bound_terms_including_planning_baseline"))
     missing_numbers = [
         int(number)
         for number in required_numbers
@@ -1247,19 +2190,21 @@ def _graduation_revision_facts(
         and not missing_codes
         and not missing_blocker_details
         and _LOWER_BOUND_MARKERS.search(candidate)
+        and not baseline_mislabeled
     ):
         return None
     return {
         "simulation_completed": False,
         "lower_bound_additional_terms": graduation.get("lower_bound_additional_terms"),
-        "lower_bound_terms_including_current": graduation.get(
-            "lower_bound_terms_including_current"
+        "lower_bound_terms_including_planning_baseline": graduation.get(
+            "lower_bound_terms_including_planning_baseline"
         ),
         "unresolved_requirements": unresolved,
         "missing_numbers": missing_numbers,
         "missing_codes": missing_codes,
         "missing_blocker_details": missing_blocker_details,
         "must_state_lower_bound": not bool(_LOWER_BOUND_MARKERS.search(candidate)),
+        "mislabels_planning_baseline_as_current": baseline_mislabeled,
     }
 
 
@@ -1282,15 +2227,15 @@ def _what_if_error_text(error: dict[str, Any], language: str) -> str:
     code = str(error.get("course_code") or "").strip()
     if language == "Arabic":
         messages = {
-            "NOT_IN_CURRENT_TIMETABLE": f"{code} ليس ضمن مقررات الجدول الحالي المسجلة في النظام.",
-            "ALREADY_IN_CURRENT_TIMETABLE": f"{code} موجود بالفعل في الجدول الحالي.",
+            "NOT_IN_CURRENT_TIMETABLE": f"{code} ليس ضمن مقررات الفصل المرجعي للتخطيط.",
+            "ALREADY_IN_CURRENT_TIMETABLE": f"{code} موجود بالفعل في الفصل المرجعي للتخطيط.",
             "ALREADY_PASSED": f"{code} مسجل كمقرر مجتاز.",
             "COURSE_NOT_ON_FILE": f"لا توجد بيانات مقرر موثوقة للرمز {code}.",
             "COURSE_CREDITS_UNKNOWN": f"ساعات المقرر {code} غير معروفة.",
             "ELECTIVE_PLACEHOLDER_NOT_A_COURSE": f"{code} خانة اختيارية وليست مقررًا محددًا.",
             "SAME_COURSE_REMOVED_AND_ADDED": "لا يمكن حذف المقرر نفسه وإضافته في السيناريو ذاته.",
             "SEARCH_CANNOT_BE_COMBINED_WITH_EXPLICIT_CHANGES": "لا يمكن جمع البحث التلقائي مع تغييرات صريحة في الطلب نفسه.",
-            "TOO_MANY_CHANGES": "عدد تغييرات الفصل الحالي يتجاوز الحد المسموح للمحاكاة.",
+            "TOO_MANY_CHANGES": "عدد تغييرات الفصل المرجعي للتخطيط يتجاوز الحد المسموح للمحاكاة.",
         }
         if kind == "SCENARIO_EXCEEDS_CREDIT_CAP":
             return (
@@ -1305,18 +2250,18 @@ def _what_if_error_text(error: dict[str, Any], language: str) -> str:
                 f"لا يتحقق شرط ساعات {code}: المطلوب {int(error.get('required') or 0)} "
                 f"والمتاح في السيناريو {int(error.get('effective') or 0)}."
             )
-        return messages.get(kind, "تعذر التحقق من تغيير الفصل الحالي المطلوب.")
+        return messages.get(kind, "تعذر التحقق من تغيير الفصل المرجعي للتخطيط المطلوب.")
 
     messages = {
-        "NOT_IN_CURRENT_TIMETABLE": f"{code} is not in the recorded current timetable.",
-        "ALREADY_IN_CURRENT_TIMETABLE": f"{code} is already in the current timetable.",
+        "NOT_IN_CURRENT_TIMETABLE": f"{code} is not in the planning-baseline timetable.",
+        "ALREADY_IN_CURRENT_TIMETABLE": f"{code} is already in the planning baseline.",
         "ALREADY_PASSED": f"{code} is recorded as passed.",
         "COURSE_NOT_ON_FILE": f"No reliable course record was found for {code}.",
         "COURSE_CREDITS_UNKNOWN": f"The credit value for {code} is unknown.",
         "ELECTIVE_PLACEHOLDER_NOT_A_COURSE": f"{code} is an elective slot, not a concrete course.",
         "SAME_COURSE_REMOVED_AND_ADDED": "The same course cannot be removed and added in one scenario.",
         "SEARCH_CANNOT_BE_COMBINED_WITH_EXPLICIT_CHANGES": "Automatic replacement search cannot be combined with explicit changes.",
-        "TOO_MANY_CHANGES": "The current-term scenario contains too many changes.",
+        "TOO_MANY_CHANGES": "The planning-baseline scenario contains too many changes.",
     }
     if kind == "SCENARIO_EXCEEDS_CREDIT_CAP":
         return (
@@ -1332,7 +2277,7 @@ def _what_if_error_text(error: dict[str, Any], language: str) -> str:
             f"{int(error.get('required') or 0)}, while the scenario has "
             f"{int(error.get('effective') or 0)}."
         )
-    return messages.get(kind, "The requested current-term change could not be validated.")
+    return messages.get(kind, "The requested planning-baseline change could not be validated.")
 
 
 def _comparison_effect_text(comparison: dict[str, Any], language: str) -> str:
@@ -1426,7 +2371,7 @@ def _safe_graduation_what_if_answer_base(language: str, what_if: dict[str, Any])
             if not replacements:
                 answer = (
                     "لم يثبت البحث الأكاديمي المحدود وجود استبدال واحد مقابل واحد يحسن "
-                    "تقدير التخرج مقارنة بالجدول الحالي. هذا لا يثبت استحالة وجود ترتيب آخر. "
+                    "تقدير التخرج مقارنة بالجدول المرجعي للتخطيط. هذا لا يثبت استحالة وجود ترتيب آخر. "
                 )
                 if partial_count:
                     answer += (
@@ -1453,7 +2398,7 @@ def _safe_graduation_what_if_answer_base(language: str, what_if: dict[str, Any])
         if not replacements:
             answer = (
                 "The bounded academic search found no one-for-one replacement proven to "
-                "improve the graduation forecast over the current timetable. This does not "
+                "improve the graduation forecast over the planning-baseline timetable. This does not "
                 "prove that no other arrangement exists. "
             )
             if partial_count:
@@ -1499,11 +2444,11 @@ def _safe_graduation_what_if_answer_base(language: str, what_if: dict[str, Any])
             change.append("حذف " + "، ".join(removed))
         if added:
             change.append("إضافة " + "، ".join(added))
-        lines = ["سيناريو الفصل الحالي: " + " و".join(change) + "."]
+        lines = ["سيناريو الفصل المرجعي للتخطيط: " + " و".join(change) + "."]
         lines.append(_comparison_effect_text(comparison, language))
         lines.append(
             f"الحد الأدنى الإضافي: {baseline.get('lower_bound_additional_terms')} في "
-            f"الجدول الحالي مقابل {scenario.get('lower_bound_additional_terms')} في السيناريو."
+            f"الجدول المرجعي مقابل {scenario.get('lower_bound_additional_terms')} في السيناريو."
         )
         if resolved:
             lines.append("عوائق حُلّت في المحاكاة: " + "، ".join(resolved) + ".")
@@ -1528,11 +2473,11 @@ def _safe_graduation_what_if_answer_base(language: str, what_if: dict[str, Any])
         change.append("remove " + ", ".join(removed))
     if added:
         change.append("add " + ", ".join(added))
-    lines = ["Current-term scenario: " + " and ".join(change) + "."]
+    lines = ["Planning-baseline scenario: " + " and ".join(change) + "."]
     lines.append(_comparison_effect_text(comparison, language))
     lines.append(
         f"Additional-term lower bound: {baseline.get('lower_bound_additional_terms')} for "
-        f"the current timetable versus {scenario.get('lower_bound_additional_terms')} for the scenario."
+        f"the baseline timetable versus {scenario.get('lower_bound_additional_terms')} for the scenario."
     )
     if resolved:
         lines.append("Blockers resolved in the simulation: " + ", ".join(resolved) + ".")
@@ -1586,7 +2531,19 @@ def _safe_graduation_answer(
     if isinstance(what_if, dict):
         return _safe_graduation_what_if_answer(language, what_if, answer_style)
 
-    has_current = bool(graduation.get("current_courses_assumed_passed"))
+    has_baseline = bool(graduation.get("planning_baseline_courses_assumed_passed"))
+    baseline_year = graduation.get("planning_baseline_academic_year")
+    baseline_term = graduation.get("planning_baseline_term")
+    baseline_reference = (
+        f" ({int(baseline_year)}/{int(baseline_term)})"
+        if baseline_year is not None and baseline_term is not None
+        else ""
+    )
+    baseline_codes = [
+        str(course.get("code") or "").strip()
+        for course in graduation.get("planning_baseline_courses_assumed_passed") or []
+        if isinstance(course, dict) and str(course.get("code") or "").strip()
+    ]
     cap = int(graduation.get("max_credits_per_term") or 18)
     unresolved = [
         row
@@ -1598,19 +2555,19 @@ def _safe_graduation_answer(
         if graduation.get("simulation_completed"):
             additional = int(graduation.get("estimated_additional_terms") or 0)
             opening = f"تقدّر المحاكاة أنك تحتاج إلى {additional} فصول إضافية"
-            if has_current:
+            if has_baseline:
                 opening += (
-                    f"، أو {int(graduation.get('estimated_terms_including_current') or additional)} "
-                    "فصول باحتساب الفصل الحالي"
+                    f"، أو {int(graduation.get('estimated_terms_including_planning_baseline') or additional)} "
+                    f"فصول باحتساب الفصل المرجعي للتخطيط{baseline_reference}"
                 )
             opening += "."
         else:
             additional = int(graduation.get("lower_bound_additional_terms") or 0)
             opening = f"الحد الأدنى هو {additional} فصول إضافية"
-            if has_current:
+            if has_baseline:
                 opening += (
-                    f"، أو {int(graduation.get('lower_bound_terms_including_current') or additional)} "
-                    "فصول باحتساب الفصل الحالي"
+                    f"، أو {int(graduation.get('lower_bound_terms_including_planning_baseline') or additional)} "
+                    f"فصول باحتساب الفصل المرجعي للتخطيط{baseline_reference}"
                 )
             opening += "؛ لا يمكن إعطاء فصل إكمال دقيق لأن المحاكاة لم تحسم كل المتطلبات."
 
@@ -1634,9 +2591,35 @@ def _safe_graduation_answer(
                 )
             blocker_lines.append(f"- {code}: " + ("؛ ".join(reasons) or "متطلب غير محسوم"))
         blockers = "\n" + "\n".join(blocker_lines) if blocker_lines else ""
+        term_lines = []
+        for planned in graduation.get("term_plan") or []:
+            if not isinstance(planned, dict):
+                continue
+            year = planned.get("academic_year")
+            term = planned.get("term")
+            if year is None or term is None:
+                continue
+            codes = [
+                str(code).strip() for code in planned.get("course_codes") or [] if str(code).strip()
+            ]
+            term_lines.append(
+                f"- {int(year)}/{int(term)}: "
+                + ("، ".join(codes) if codes else "فصل انتظار في هذه المحاكاة")
+                + f" ({int(planned.get('credits') or 0)} ساعة)"
+            )
+        term_plan = "\nالفصول المتوقعة:\n" + "\n".join(term_lines) if term_lines else ""
+        baseline_assumption = (
+            " ويفترض اجتياز مقررات الفصل المرجعي للتخطيط: " + "، ".join(baseline_codes) + "."
+            if baseline_codes
+            else ""
+        )
         return _apply_saudi_register(
-            opening + blockers + f"\nهذا سيناريو للقراءة فقط بحد أقصى {cap} ساعة في كل فصل رئيس، "
-            "ويفترض اجتياز جميع المقررات من أول محاولة. لا يضمن الطرح المستقبلي "
+            opening
+            + blockers
+            + term_plan
+            + f"\nهذا سيناريو للقراءة فقط بحد أقصى {cap} ساعة في كل فصل رئيس،"
+            + baseline_assumption
+            + " ويفترض اجتياز جميع المقررات من أول محاولة. لا يضمن الطرح المستقبلي "
             "أو المقاعد أو أوقات الشعب أو صلاحية التسجيل، ولا يغيّر سجلك أو يسجل مقررات.",
             language,
             answer_style,
@@ -1645,21 +2628,21 @@ def _safe_graduation_answer(
     if graduation.get("simulation_completed"):
         additional = int(graduation.get("estimated_additional_terms") or 0)
         opening = f"The scenario estimates {additional} additional terms"
-        if has_current:
+        if has_baseline:
             opening += (
                 ", or "
-                f"{int(graduation.get('estimated_terms_including_current') or additional)} "
-                "terms including the current term"
+                f"{int(graduation.get('estimated_terms_including_planning_baseline') or additional)} "
+                f"terms including the planning baseline{baseline_reference}"
             )
         opening += "."
     else:
         additional = int(graduation.get("lower_bound_additional_terms") or 0)
         opening = f"The lower bound is {additional} additional terms"
-        if has_current:
+        if has_baseline:
             opening += (
                 ", or "
-                f"{int(graduation.get('lower_bound_terms_including_current') or additional)} "
-                "terms including the current term"
+                f"{int(graduation.get('lower_bound_terms_including_planning_baseline') or additional)} "
+                f"terms including the planning baseline{baseline_reference}"
             )
         opening += "; no exact completion term can be given because requirements remain unresolved."
 
@@ -1683,11 +2666,36 @@ def _safe_graduation_answer(
             )
         blocker_lines.append(f"- {code}: " + ("; ".join(reasons) or "unresolved requirement"))
     blockers = "\n" + "\n".join(blocker_lines) if blocker_lines else ""
+    term_lines = []
+    for planned in graduation.get("term_plan") or []:
+        if not isinstance(planned, dict):
+            continue
+        year = planned.get("academic_year")
+        term = planned.get("term")
+        if year is None or term is None:
+            continue
+        codes = [
+            str(code).strip() for code in planned.get("course_codes") or [] if str(code).strip()
+        ]
+        term_lines.append(
+            f"- {int(year)}/{int(term)}: "
+            + (", ".join(codes) if codes else "waiting term in this simulation")
+            + f" ({int(planned.get('credits') or 0)} credits)"
+        )
+    term_plan = "\nProjected terms:\n" + "\n".join(term_lines) if term_lines else ""
+    baseline_assumption = (
+        " It assumes these planning-baseline courses pass: " + ", ".join(baseline_codes) + "."
+        if baseline_codes
+        else ""
+    )
     return (
         opening
         + blockers
+        + term_plan
         + f"\nThis read-only scenario caps each main term at {cap} credits and assumes every "
-        "course is passed on the first attempt. It cannot guarantee future offerings, seats, "
+        "course is passed on the first attempt."
+        + baseline_assumption
+        + " It cannot guarantee future offerings, seats, "
         "section times, or registration permission, and it does not change the student record."
     )
 
@@ -1752,6 +2760,11 @@ def student_v2_tool_schemas() -> list[dict[str, Any]]:
         parameters = function.get("parameters") or {}
         properties = parameters.get("properties") or {}
         properties.pop("student_id", None)
+        if name in {"course_choice_comparison", "feasible_course_replacements"}:
+            # These evidence checks are bound to trusted local term context; the
+            # model cannot choose a different timetable baseline.
+            properties.pop("academic_year", None)
+            properties.pop("term", None)
         required = parameters.get("required")
         if isinstance(required, list):
             parameters["required"] = [item for item in required if item != "student_id"]
@@ -1775,6 +2788,10 @@ def execute_student_v2_tool(
         return {"tool": name, "ok": False, "error": "Tool arguments must be an object."}
     # Identity is session-owned even if a non-schema-compliant model sends it.
     arguments = {key: value for key, value in arguments.items() if key != "student_id"}
+    if name in {"course_choice_comparison", "feasible_course_replacements"}:
+        # Defense in depth for callers that bypass schema-guided generation.
+        arguments.pop("academic_year", None)
+        arguments.pop("term", None)
     return get_default_registry().execute(
         name,
         arguments,
@@ -1849,6 +2866,7 @@ def answer_student_advisor_v2(
     history: Any = None,
     model: str | None = None,
     llm_client: Any = None,
+    channel_profile: str = "",
 ) -> dict[str, Any]:
     """Run one student turn through a single plan/act/observe agent loop."""
     if principal.role != ROLE_STUDENT or principal.student_id is None:
@@ -1867,6 +2885,18 @@ def answer_student_advisor_v2(
         )
         term = term if term is not None else int(defaults["term"])
     tool_context = {"academic_year": int(academic_year), "term": int(term)}
+    comparison_tool_context = {
+        **tool_context,
+        "section_snapshot_academic_year": int(academic_year),
+        "section_snapshot_term": int(term),
+    }
+    replacement_tool_context = dict(comparison_tool_context)
+    explicit_comparison_term = _explicit_comparison_year_term(clean_question)
+    if explicit_comparison_term is not None:
+        comparison_tool_context.update(
+            academic_year=explicit_comparison_term[0],
+            term=explicit_comparison_term[1],
+        )
 
     language = _answer_language(clean_question)
     answer_style = _answer_style(clean_question)
@@ -1892,7 +2922,11 @@ def answer_student_advisor_v2(
     policy_prefetched = True
     policy_result, _ = _seed_policy_evidence(clean_question, scope)
     seeded_policy_results: list[dict[str, Any]] = [policy_result]
-    projected_policy = boundary.project_tool_result("policy_lookup", policy_result)
+    projected_policy = project_channel_tool_result(
+        "policy_lookup",
+        boundary.project_tool_result("policy_lookup", policy_result),
+        profile=channel_profile,
+    )
     policy_prompt = "\nverified_policy_evidence: " + json.dumps(
         _policy_evidence_for_prompt(projected_policy),
         ensure_ascii=False,
@@ -1900,11 +2934,17 @@ def answer_student_advisor_v2(
         default=str,
     )
 
-    schemas = boundary.tool_schemas(student_v2_tool_schemas())
+    schemas = project_channel_tool_schemas(
+        boundary.tool_schemas(student_v2_tool_schemas()),
+        profile=channel_profile,
+    )
     advertised = {str((schema.get("function") or {}).get("name") or "") for schema in schemas}
     messages: list[dict[str, Any]] = [
-        {"role": "system", "content": SYSTEM_PROMPT},
-        *_sanitize_history(history),
+        {
+            "role": "system",
+            "content": channel_system_prompt(SYSTEM_PROMPT, profile=channel_profile),
+        },
+        *_sanitize_history(project_channel_history(history, profile=channel_profile)),
         {
             "role": "user",
             "content": (
@@ -1929,16 +2969,35 @@ def answer_student_advisor_v2(
     iterations = 0
     tool_turn_error = ""
     fallback_seeded = False
-    requires_timetable_proposal = _requires_timetable_proposal(clean_question)
+    requires_feasible_replacement = _requires_feasible_course_replacements(clean_question)
+    requires_course_comparison = (
+        _requires_course_choice_comparison(clean_question) and not requires_feasible_replacement
+    )
+    requires_timetable_proposal = (
+        _requires_timetable_proposal(clean_question)
+        and not requires_course_comparison
+        and not requires_feasible_replacement
+    )
     # A proposal containing an exact pin is itself the authoritative clash/section
     # check for that build. Keep the independent section capability for inspection
     # questions only; otherwise the same sentence is interpreted twice and the
     # second call can contradict or obscure the hard pin.
     requires_section_check = (
-        _requires_section_check(clean_question) and not requires_timetable_proposal
+        _requires_section_check(clean_question)
+        and not requires_timetable_proposal
+        and not requires_course_comparison
+        and not requires_feasible_replacement
     )
-    requires_graduation_progress = _requires_graduation_progress(clean_question)
-    requires_graduation_what_if = _requires_graduation_what_if(clean_question)
+    requires_graduation_progress = (
+        _requires_graduation_progress(clean_question)
+        and not requires_course_comparison
+        and not requires_feasible_replacement
+    )
+    requires_graduation_what_if = (
+        _requires_graduation_what_if(clean_question)
+        and not requires_course_comparison
+        and not requires_feasible_replacement
+    )
     timetable_reprompted = False
     timetable_format_reprompted = False
     timetable_variant_reprompted = False
@@ -1950,6 +3009,10 @@ def answer_student_advisor_v2(
     graduation_what_if_reprompted = False
     graduation_reprompted = False
     graduation_safe_fallback_used = False
+    comparison_tool_reprompted = False
+    comparison_safe_fallback_used = False
+    replacement_tool_reprompted = False
+    replacement_safe_fallback_used = False
     policy_uncertainty_reprompted = False
     internal_output_reprompted = False
     internal_output_sanitized = False
@@ -1988,6 +3051,60 @@ def answer_student_advisor_v2(
                 and isinstance(row.get("what_if"), dict)
                 for row in local_results
             )
+            has_course_comparison_evidence = any(
+                row.get("tool") == "course_choice_comparison" and row.get("ok")
+                for row in local_results
+            )
+            has_feasible_replacement_evidence = any(
+                row.get("tool") == "feasible_course_replacements" and row.get("ok")
+                for row in local_results
+            )
+            if (
+                candidate
+                and requires_feasible_replacement
+                and not has_feasible_replacement_evidence
+                and not replacement_tool_reprompted
+            ):
+                messages.append(turn.assistant_message)
+                messages.append(
+                    {
+                        "role": "user",
+                        "content": (
+                            "This replacement request requires two fresh, independent proofs: "
+                            "an improved complete graduation forecast and a complete clash-free "
+                            "timetable retaining every other baseline section. Call "
+                            "feasible_course_replacements now. Pass remove_course and/or "
+                            "add_course only when that side is explicitly named in "
+                            "student_question; leave an unstated side absent for the "
+                            "deterministic search. Do not answer from an individual section "
+                            "check, an academic-only scenario, or conversation history."
+                        ),
+                    }
+                )
+                replacement_tool_reprompted = True
+                continue
+            if (
+                candidate
+                and requires_course_comparison
+                and not has_course_comparison_evidence
+                and not comparison_tool_reprompted
+            ):
+                messages.append(turn.assistant_message)
+                messages.append(
+                    {
+                        "role": "user",
+                        "content": (
+                            "This question explicitly compares named courses. Call "
+                            "course_choice_comparison now with every exact course code from "
+                            "student_question. Use one objective only: graduation, "
+                            "unlock_impact, timetable_fit, or balanced. Do not answer from "
+                            "history, add the dimensions into a made-up score, or choose a "
+                            "winner without this fresh comparison evidence."
+                        ),
+                    }
+                )
+                comparison_tool_reprompted = True
+                continue
             if (
                 candidate
                 and requires_section_check
@@ -2045,7 +3162,7 @@ def answer_student_advisor_v2(
                     {
                         "role": "user",
                         "content": (
-                            "The student asked for a current-term graduation what-if, not "
+                            "The student asked for a planning-baseline graduation what-if, not "
                             "the unchanged baseline. Reread the exact student question and "
                             "call graduation_progress again with scenario arguments. For a "
                             "course they will not take, use remove_current_courses. For X "
@@ -2209,13 +3326,15 @@ def answer_student_advisor_v2(
                             "Revise the graduation answer from the existing verified "
                             "evidence; do not call another tool. If the simulation is "
                             "complete, state both the additional-term estimate and the "
-                            "estimate including the current term. If it is incomplete, "
+                            "estimate including the planning baseline. If it is incomplete, "
                             "do not invent an exact completion term: state the lower bound "
-                            "both excluding and including the current term, then name every "
+                            "both excluding and including the planning baseline, then name every "
                             "unresolved requirement and its returned prerequisite or "
                             "credit-hour blocker. Keep the assumptions (first-attempt passes, "
                             "18-credit main-term cap, and no guarantee of future offerings, "
                             "seats, or registration permission). Describe only those returned "
+                            "facts. The planning baseline may be an expected timetable: call it "
+                            "the planning baseline and never the student's actual current term. "
                             "blockers: do not infer that one requires an extra term or special "
                             "arrangement, or that a course has no available time, place, "
                             "section, or offering. Call 18 credits the scenario cap, never the "
@@ -2275,11 +3394,21 @@ def answer_student_advisor_v2(
             effective_arguments = model_arguments
             scenario_normalization = ""
             timetable_normalizations: list[str] = []
+            comparison_normalizations: list[str] = []
+            replacement_normalizations: list[str] = []
             constraint_input_error = ""
             if call.name == "graduation_progress":
                 effective_arguments, scenario_normalization = _normalise_graduation_scenario_args(
                     clean_question,
                     model_arguments,
+                )
+            elif call.name == "course_choice_comparison":
+                effective_arguments, comparison_normalizations = _normalise_course_comparison_args(
+                    clean_question, model_arguments
+                )
+            elif call.name == "feasible_course_replacements":
+                effective_arguments, replacement_normalizations = (
+                    _normalise_feasible_replacement_args(clean_question, model_arguments)
                 )
             elif call.name == "build_timetable_proposal":
                 effective_arguments, timetable_normalizations = _normalise_timetable_proposal_args(
@@ -2303,6 +3432,16 @@ def answer_student_advisor_v2(
                     **(
                         {"argument_normalizations": timetable_normalizations}
                         if timetable_normalizations
+                        else {}
+                    ),
+                    **(
+                        {"comparison_normalizations": comparison_normalizations}
+                        if comparison_normalizations
+                        else {}
+                    ),
+                    **(
+                        {"replacement_normalizations": replacement_normalizations}
+                        if replacement_normalizations
                         else {}
                     ),
                 }
@@ -2329,7 +3468,14 @@ def answer_student_advisor_v2(
                 # The normal remote projector retains the fixed error envelope
                 # while dropping implementation-only fields. Nothing identifying
                 # or database-backed is carried by this refusal.
-                provider_result = boundary.project_tool_result(call.name, local_result)
+                provider_result = project_channel_tool_result(
+                    call.name,
+                    boundary.project_tool_result(call.name, local_result),
+                    profile=channel_profile,
+                )
+                local_result = project_channel_tool_result(
+                    call.name, local_result, profile=channel_profile
+                )
                 local_results.append(local_result)
                 messages.append(_tool_message(call.id, provider_result))
                 continue
@@ -2353,13 +3499,26 @@ def answer_student_advisor_v2(
                 # identity here as well so the executor receives only choices the
                 # model is actually allowed to make.
                 arguments.pop("student_id", None)
-                local_result = execute_student_v2_tool(
+                raw_local_result = execute_student_v2_tool(
                     call.name,
                     arguments,
                     principal=principal,
-                    context=tool_context,
+                    context=(
+                        comparison_tool_context
+                        if call.name == "course_choice_comparison"
+                        else replacement_tool_context
+                        if call.name == "feasible_course_replacements"
+                        else tool_context
+                    ),
                 )
-                provider_result = boundary.project_tool_result(call.name, local_result)
+                provider_result = project_channel_tool_result(
+                    call.name,
+                    boundary.project_tool_result(call.name, raw_local_result),
+                    profile=channel_profile,
+                )
+                local_result = project_channel_tool_result(
+                    call.name, raw_local_result, profile=channel_profile
+                )
             except Exception:  # fail closed without exposing boundary details
                 local_result = {"tool": call.name, "ok": False, "error": "Capability refused."}
                 provider_result = boundary.refusal_result(call.name)
@@ -2381,62 +3540,110 @@ def answer_student_advisor_v2(
             and isinstance(row.get("what_if"), dict)
             for row in local_results
         )
-        if verified_what_if:
+        if verified_what_if and not requires_feasible_replacement:
             answer = _safe_graduation_answer(language, local_results, answer_style)
             if answer:
                 graduation_safe_fallback_used = True
                 break
+        verified_comparison = any(
+            row.get("tool") == "course_choice_comparison" and row.get("ok") for row in local_results
+        )
+        if verified_comparison and not requires_feasible_replacement:
+            answer = _safe_course_comparison_answer(language, local_results, answer_style)
+            if answer:
+                comparison_safe_fallback_used = True
+                break
+        verified_replacement = any(
+            row.get("tool") == "feasible_course_replacements" and row.get("ok")
+            for row in local_results
+        )
+        if verified_replacement:
+            answer = _safe_feasible_replacement_answer(language, local_results, answer_style)
+            if answer:
+                replacement_safe_fallback_used = True
+                break
 
     if not answer:
-        if not any(row.get("tool") != "policy_lookup" for row in local_results):
-            fallback_local = execute_student_v2_tool(
-                "get_student_context",
-                {},
-                principal=principal,
-                context=tool_context,
-            )
-            try:
-                fallback_provider = boundary.project_tool_result(
-                    "get_student_context", fallback_local
+        if requires_feasible_replacement:
+            answer = (
+                "ما قدرت أشغّل فحص الاستبدال الموثوق، لذلك ما راح أقترح تبديلًا من غير "
+                "إثبات أكاديمي وجدول كامل غير متعارض. جرّب الطلب مرة ثانية، ولم يتغير "
+                "تسجيلك أو جدولك الفعلي."
+                if language == "Arabic"
+                else (
+                    "I could not run the verified replacement check, so I will not suggest "
+                    "a swap without both academic and complete-timetable evidence. Try again; "
+                    "your real registration and timetable were not changed."
                 )
-            except Exception:
-                fallback_provider = boundary.refusal_result("get_student_context")
-            local_results.append(fallback_local)
-            tools_called.append(
-                {
-                    "name": "get_student_context",
-                    "arguments": {},
-                    "reason": "verified_fallback_after_tool_turn_failure",
-                }
             )
-            fallback_seeded = True
+            replacement_safe_fallback_used = True
+        elif requires_course_comparison:
+            answer = (
+                "ما قدرت أشغّل المقارنة الموثوقة بين المقررات المحددة، لذلك ما راح "
+                "أختار واحدًا من غير دليل. جرّب الطلب مرة ثانية مع رموز المقررات."
+                if language == "Arabic"
+                else (
+                    "I could not run the verified comparison for those courses, so I will "
+                    "not choose one without evidence. Try again with the exact course codes."
+                )
+            )
+            comparison_safe_fallback_used = True
+        else:
+            if not any(row.get("tool") != "policy_lookup" for row in local_results):
+                fallback_name = channel_fallback_tool(profile=channel_profile)
+                fallback_raw = execute_student_v2_tool(
+                    fallback_name,
+                    {},
+                    principal=principal,
+                    context=tool_context,
+                )
+                try:
+                    fallback_provider = project_channel_tool_result(
+                        fallback_name,
+                        boundary.project_tool_result(fallback_name, fallback_raw),
+                        profile=channel_profile,
+                    )
+                except Exception:
+                    fallback_provider = boundary.refusal_result(fallback_name)
+                fallback_local = project_channel_tool_result(
+                    fallback_name, fallback_raw, profile=channel_profile
+                )
+                local_results.append(fallback_local)
+                tools_called.append(
+                    {
+                        "name": fallback_name,
+                        "arguments": {},
+                        "reason": "verified_fallback_after_tool_turn_failure",
+                    }
+                )
+                fallback_seeded = True
+                messages.append(
+                    {
+                        "role": "user",
+                        "content": (
+                            "Verified read-only student evidence for the fallback answer:\n"
+                            + json.dumps(fallback_provider, ensure_ascii=False, default=str)
+                        ),
+                    }
+                )
             messages.append(
                 {
                     "role": "user",
                     "content": (
-                        "Verified read-only student evidence for the fallback answer:\n"
-                        + json.dumps(fallback_provider, ensure_ascii=False, default=str)
+                        "Give the final answer now from the evidence already gathered. Do not call "
+                        "more tools. Preserve the no-registration/no-save boundary."
                     ),
                 }
             )
-        messages.append(
-            {
-                "role": "user",
-                "content": (
-                    "Give the final answer now from the evidence already gathered. Do not call "
-                    "more tools. Preserve the no-registration/no-save boundary."
-                ),
-            }
-        )
-        forced = llm.chat(
-            boundary.sanitise_messages(messages),
-            model=resolved_model,
-            max_tokens=_max_tokens(),
-            assistant_prefill=_assistant_prefill_for_client(llm, resolved_model),
-        )
-        usage.add(forced.usage)
-        answer = forced.content
-        answer_model = forced.model or answer_model
+            forced = llm.chat(
+                boundary.sanitise_messages(messages),
+                model=resolved_model,
+                max_tokens=_max_tokens(),
+                assistant_prefill=_assistant_prefill_for_client(llm, resolved_model),
+            )
+            usage.add(forced.usage)
+            answer = forced.content
+            answer_model = forced.model or answer_model
 
     if constraint_input_refused:
         answer = (
@@ -2452,6 +3659,42 @@ def answer_student_advisor_v2(
             )
         )
         answer = _apply_saudi_register(answer, language, answer_style)
+
+    if requires_feasible_replacement:
+        safe_replacement = _safe_feasible_replacement_answer(language, local_results, answer_style)
+        if safe_replacement:
+            answer = safe_replacement
+            replacement_safe_fallback_used = True
+        else:
+            answer = (
+                "ما قدرت أشغّل فحص الاستبدال الموثوق، لذلك ما راح أقترح تبديلًا من غير "
+                "إثبات أكاديمي وجدول كامل غير متعارض. لم يتغير تسجيلك أو جدولك الفعلي."
+                if language == "Arabic"
+                else (
+                    "I could not run the verified replacement check, so I will not suggest "
+                    "a swap without both academic and complete-timetable evidence. Your "
+                    "real registration and timetable were not changed."
+                )
+            )
+            answer = _apply_saudi_register(answer, language, answer_style)
+            replacement_safe_fallback_used = True
+
+    if requires_course_comparison:
+        safe_comparison = _safe_course_comparison_answer(language, local_results, answer_style)
+        if safe_comparison:
+            answer = safe_comparison
+            comparison_safe_fallback_used = True
+        else:
+            answer = (
+                "ما قدرت أشغّل المقارنة الموثوقة بين المقررات المحددة، لذلك ما راح "
+                "أختار واحدًا من غير دليل. أعد إرسال رموز المقررات من اثنين إلى أربعة."
+                if language == "Arabic"
+                else (
+                    "I could not run the verified comparison for those courses, so I will "
+                    "not choose one without evidence. Send two to four exact course codes."
+                )
+            )
+            comparison_safe_fallback_used = True
 
     safe_section = _safe_section_answer(language, local_results, answer_style)
     if (
@@ -2475,14 +3718,20 @@ def answer_student_advisor_v2(
         and isinstance(row.get("what_if"), dict)
         for row in local_results
     )
+    graduation_baseline_label_corrected = any(
+        row.get("tool") == "graduation_progress"
+        and row.get("ok")
+        and _mislabels_planning_baseline_as_current(answer, row)
+        for row in local_results
+    )
     missing_required_what_if = requires_graduation_what_if and not graduation_what_if
     if missing_required_what_if:
         answer = (
-            "تعذر تشغيل مقارنة التغيير المطلوب على مقررات الفصل الحالي، لذلك لن أعرض "
-            "تقدير الجدول الحالي وكأنه يجيب عن السيناريو. لم يتغير أي مقرر أو جدول فعلي."
+            "تعذر تشغيل مقارنة التغيير المطلوب على مقررات الفصل المرجعي للتخطيط، لذلك لن أعرض "
+            "تقدير الجدول المرجعي وكأنه يجيب عن السيناريو. لم يتغير أي مقرر أو جدول فعلي."
             if language == "Arabic"
             else (
-                "The requested current-term course comparison could not be run, so I will "
+                "The requested planning-baseline course comparison could not be run, so I will "
                 "not present the unchanged baseline as if it answered the scenario. No real "
                 "course or timetable was changed."
             )
@@ -2492,6 +3741,7 @@ def answer_student_advisor_v2(
     elif safe_graduation and (
         graduation_what_if
         or incomplete_graduation
+        or graduation_baseline_label_corrected
         or _graduation_revision_facts(answer, local_results)
         or _GRADUATION_UNSUPPORTED_INFERENCE.search(answer or "")
     ):
@@ -2502,6 +3752,14 @@ def answer_student_advisor_v2(
         answer = _humanise_internal_output_markers(answer, language)
         answer = _apply_saudi_register(answer, language, answer_style)
         internal_output_sanitized = True
+
+    presentation = (
+        replacement_timetable_presentation_from_tool_results(local_results)
+        or graduation_presentation_from_tool_results(local_results)
+        or timetable_presentation_from_tool_results(local_results)
+    )
+    if presentation:
+        answer = remove_false_media_incapability(answer)
 
     # Recommendation/context tools legitimately carry the approved credit-load
     # figures and their backing policy id. Convert that embedded provenance to the
@@ -2542,10 +3800,7 @@ def answer_student_advisor_v2(
         "citations": citations,
         "cited_policy_ids": cited_policy_ids,
         "missing_information": [],
-        "presentation": (
-            graduation_presentation_from_tool_results(local_results)
-            or timetable_presentation_from_tool_results(local_results)
-        ),
+        "presentation": presentation,
         "agent": {
             "version": "student-v2",
             "answer_style": answer_style,
@@ -2569,6 +3824,12 @@ def answer_student_advisor_v2(
             "section_evidence_reprompted": section_evidence_reprompted,
             "section_safe_fallback_used": section_safe_fallback_used,
             "recommendation_reprompted": recommendation_reprompted,
+            "course_comparison_grounding_required": requires_course_comparison,
+            "course_comparison_reprompted": comparison_tool_reprompted,
+            "course_comparison_safe_fallback_used": comparison_safe_fallback_used,
+            "replacement_grounding_required": requires_feasible_replacement,
+            "replacement_reprompted": replacement_tool_reprompted,
+            "replacement_safe_fallback_used": replacement_safe_fallback_used,
             "graduation_grounding_required": requires_graduation_progress,
             "graduation_what_if_required": requires_graduation_what_if,
             "graduation_tool_reprompted": graduation_tool_reprompted,
@@ -2576,6 +3837,7 @@ def answer_student_advisor_v2(
             "graduation_what_if_missing": missing_required_what_if,
             "graduation_reprompted": graduation_reprompted,
             "graduation_safe_fallback_used": graduation_safe_fallback_used,
+            "graduation_baseline_label_corrected": graduation_baseline_label_corrected,
             "policy_uncertainty_reprompted": policy_uncertainty_reprompted,
             "internal_output_reprompted": internal_output_reprompted,
             "internal_output_sanitized": internal_output_sanitized,
@@ -2588,11 +3850,16 @@ def answer_student_advisor_v2(
 
 def answer_student_advisor(**kwargs: Any) -> dict[str, Any]:
     """Feature-flagged seam used by the durable student conversation endpoint."""
-    if is_enabled():
+    # The legacy runtime has no channel-specific evidence projection. Telegram
+    # therefore stays on V2 even during a web rollback of the V2 feature flag;
+    # silently downgrading here would reopen exact-record access.
+    if is_enabled() or is_telegram_safe_profile(kwargs.get("channel_profile")):
         return answer_student_advisor_v2(**kwargs)
     from core.services.virtual_advisor import answer_virtual_advisor
 
-    return answer_virtual_advisor(**kwargs)
+    legacy_kwargs = dict(kwargs)
+    legacy_kwargs.pop("channel_profile", None)
+    return answer_virtual_advisor(**legacy_kwargs)
 
 
 __all__ = [

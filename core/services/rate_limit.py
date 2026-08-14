@@ -41,6 +41,10 @@ CONVERSATION = "advisor_conversation"
 ESCALATION = "advisor_escalation"
 FEEDBACK = "advisor_feedback"
 HISTORY = "advisor_history"
+TELEGRAM_COMMAND = "telegram_command"
+TELEGRAM_INGRESS = "telegram_ingress"
+TELEGRAM_LINK = "telegram_link"
+TELEGRAM_REFUSAL_NOTICE = "telegram_refusal_notice"
 
 #: (max_calls, window_seconds), justified where they are used.
 LIMITS: dict[str, tuple[int, int]] = {
@@ -78,6 +82,22 @@ LIMITS: dict[str, tuple[int, int]] = {
     # Deliberately loose: reading your own conversation back is not an attack, and
     # the client re-reads after every send. This is a runaway-script backstop.
     HISTORY: (240, 600),
+    # Cheap commands still create Telegram sends and database rows. This budget is
+    # keyed by Telegram user id because an unlinked chat has no university
+    # identity yet; it is intentionally separate from every student budget.
+    TELEGRAM_COMMAND: (30, 600),
+    # Durable messages have a separate ingress cap in addition to the generation
+    # budget. Once generation is exhausted, rate-limit replies are cheap; without
+    # this cap a sender could still create unlimited terminal jobs and Bot API
+    # sends while no additional model calls occur.
+    TELEGRAM_INGRESS: (30, 600),
+    # Link/confirm mint or probe bearer credentials, so their allowance is much
+    # tighter than help/privacy. Confirmation also has a per-token wrong-code cap.
+    TELEGRAM_LINK: (5, 3600),
+    # Once an admission budget is exhausted, replying to every refused update
+    # would turn the limiter into an unlimited Bot API sender. One notice is
+    # enough to explain the refusal; subsequent overload is acknowledged silently.
+    TELEGRAM_REFUSAL_NOTICE: (1, 600),
 }
 
 

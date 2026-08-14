@@ -8,11 +8,11 @@
 {% block page_chips %}
   <span class="ph-chip ph-chip-page">{% if LANGUAGE_CODE == 'ar' %}الرقم الجامعي{% else %}University ID{% endif %}: {{ student_id }}</span>
   {% if student and student.program %}<span class="ph-chip ph-chip-context">{{ student.program }}</span>{% endif %}
-  <span class="ph-chip ph-chip-context">{{ academic_year }} — {% if LANGUAGE_CODE == 'ar' %}الفصل{% else %}Term{% endif %} {{ term }}</span>
+  <span class="ph-chip ph-chip-context">{% if LANGUAGE_CODE == 'ar' %}الفصل المرجعي للتخطيط{% else %}Planning baseline{% endif %}: <bdi dir="ltr">{{ academic_year }}/{{ term }}</bdi></span>
 {% endblock %}
 
 {% block page_intro %}
-  <p class="mb-0">{% if LANGUAGE_CODE == 'ar' %}تقدّمك في متطلبات الخطة، والمسار الذي تستطيع المحاكاة بناءه انطلاقًا من جدولك الحالي.{% else %}Your degree-plan progress and the path the simulation can build from your current timetable.{% endif %}</p>
+  <p class="mb-0">{% if LANGUAGE_CODE == 'ar' %}تقدّمك في متطلبات الخطة، والمسار الذي تبنيه المحاكاة انطلاقًا من الجدول المحفوظ للفصل المرجعي للتخطيط.{% else %}Your degree-plan progress and the path simulated from the timetable stored for the planning baseline term.{% endif %}</p>
 {% endblock %}
 
 {% block content %}
@@ -75,7 +75,7 @@
           <strong dir="ltr">{{ grad.estimated_additional_terms }}</strong>
           <span>{% if LANGUAGE_CODE == 'ar' %}عدد الفصول الإضافية المقدّر{% else %}estimated additional terms{% endif %}</span>
         </div>
-        <p class="mb-0">{% if LANGUAGE_CODE == 'ar' %}عدد الفصول المقدّر باحتساب الفصل الحالي: <strong>{{ grad.estimated_terms_including_current }}</strong>.{% else %}Estimated terms including the current term: <strong>{{ grad.estimated_terms_including_current }}</strong>.{% endif %}</p>
+        <p class="mb-0">{% if LANGUAGE_CODE == 'ar' %}عدد الفصول المقدّر باحتساب الفصل المرجعي للتخطيط: <strong>{{ grad.estimated_terms_including_planning_baseline }}</strong>.{% else %}Estimated terms including the planning baseline: <strong>{{ grad.estimated_terms_including_planning_baseline }}</strong>.{% endif %}</p>
       </div>
     {% else %}
       <div class="student-grad-result is-incomplete" data-grad-result="lower-bound" data-value="{{ grad.lower_bound_additional_terms }}">
@@ -84,14 +84,14 @@
           <strong dir="ltr">{{ grad.lower_bound_additional_terms }}</strong>
           <span>{% if LANGUAGE_CODE == 'ar' %}الحد الأدنى المثبت للفصول الإضافية{% else %}verified minimum additional terms{% endif %}</span>
         </div>
-        <p class="mb-0">{% if LANGUAGE_CODE == 'ar' %}الحد الأدنى باحتساب الفصل الحالي: <strong>{{ grad.lower_bound_terms_including_current }}</strong> فصول. قد يزيد العدد بعد حسم المتطلبات الموضحة أدناه.{% else %}The minimum including the current term is <strong>{{ grad.lower_bound_terms_including_current }}</strong> terms. The total may increase after the unresolved requirements below are settled.{% endif %}</p>
+        <p class="mb-0">{% if LANGUAGE_CODE == 'ar' %}الحد الأدنى باحتساب الفصل المرجعي للتخطيط: <strong>{{ grad.lower_bound_terms_including_planning_baseline }}</strong> فصول. قد يزيد العدد بعد حسم المتطلبات الموضحة أدناه.{% else %}The minimum including the planning baseline is <strong>{{ grad.lower_bound_terms_including_planning_baseline }}</strong> terms. The total may increase after the unresolved requirements below are settled.{% endif %}</p>
       </div>
     {% endif %}
 
     <div class="student-grad-support-grid mt-3">
       <div class="student-grad-support">
         <span>{% if LANGUAGE_CODE == 'ar' %}الحد بسبب عبء الساعات{% else %}Credit-load floor{% endif %}</span>
-        <strong dir="ltr">{{ grad.capacity_floor_terms_after_current }}</strong>
+        <strong dir="ltr">{{ grad.capacity_floor_terms_after_planning_baseline }}</strong>
         <small>{% if LANGUAGE_CODE == 'ar' %}عند 18 ساعة/فصل رئيسي{% else %}at 18 credits/main term{% endif %}</small>
       </div>
       <div class="student-grad-support">
@@ -100,9 +100,9 @@
         <small>{% if LANGUAGE_CODE == 'ar' %}فصول لا يمكن اختصار ترتيبها{% else %}terms whose order cannot be compressed{% endif %}</small>
       </div>
       <div class="student-grad-support">
-        <span>{% if LANGUAGE_CODE == 'ar' %}مقررات الفصل الحالي المفترضة{% else %}Assumed current courses{% endif %}</span>
-        <strong dir="ltr">{{ grad.current_courses_assumed_passed|length }}</strong>
-        <small>{% if LANGUAGE_CODE == 'ar' %}{{ grad.registered_credits_now }} ساعة؛ لا تُعد منجزة بعد{% else %}{{ grad.registered_credits_now }} credits; not passed yet{% endif %}</small>
+        <span>{% if LANGUAGE_CODE == 'ar' %}مقررات الفصل المرجعي المفترض اجتيازها{% else %}Assumed planning-baseline courses{% endif %}</span>
+        <strong dir="ltr">{{ grad.planning_baseline_courses_assumed_passed|length }}</strong>
+        <small>{% if LANGUAGE_CODE == 'ar' %}{{ grad.registered_credits_at_planning_baseline }} ساعة؛ لم تُحتسب كمجتازة بعد{% else %}{{ grad.registered_credits_at_planning_baseline }} credits; not counted as passed yet{% endif %}</small>
       </div>
     </div>
 
@@ -112,12 +112,12 @@
       <span>{% if LANGUAGE_CODE == 'ar' %}للقراءة فقط{% else %}Read-only{% endif %}</span>
     </div>
 
-    {% if grad.current_courses_assumed_passed %}
+    {% if grad.planning_baseline_courses_assumed_passed %}
       <div class="student-grad-current-assumption mt-2">
-        <strong>{% if LANGUAGE_CODE == 'ar' %}افتراض الفصل الحالي:{% else %}Current-term assumption:{% endif %}</strong>
-        <span>{% if LANGUAGE_CODE == 'ar' %}تبقى هذه المقررات غير منجزة في نسبة التقدم، لكن المسار المستقبلي يفترض اجتيازها بنهاية الفصل:{% else %}These courses remain unfinished in the progress figure, while the future path assumes they are passed by the end of this term:{% endif %}</span>
+        <strong>{% if LANGUAGE_CODE == 'ar' %}افتراض الفصل المرجعي للتخطيط:{% else %}Planning-baseline assumption:{% endif %}</strong>
+        <span>{% if LANGUAGE_CODE == 'ar' %}تبقى هذه المقررات غير منجزة في نسبة التقدم، لكن المسار المستقبلي يفترض اجتيازها بنهاية الفصل المرجعي:{% else %}These courses remain unfinished in the progress figure, while the future path assumes they are passed by the end of the planning baseline term:{% endif %}</span>
         <span class="student-grad-code-list">
-          {% for course in grad.current_courses_assumed_passed %}<bdi dir="ltr">{{ course.code }}</bdi>{% endfor %}
+          {% for course in grad.planning_baseline_courses_assumed_passed %}<bdi dir="ltr">{{ course.code }}</bdi>{% endfor %}
         </span>
       </div>
     {% endif %}
@@ -170,7 +170,7 @@
   {% endif %}
 </section>
 
-{% if grad.current_courses_assumed_passed or grad.term_plan %}
+{% if grad.planning_baseline_courses_assumed_passed or grad.term_plan %}
 <section class="card p-3 mb-3 student-grad-path" aria-labelledby="student-grad-path-title">
   <div class="student-grad-path-heading">
     <div>
@@ -189,14 +189,14 @@
   </div>
 
   <div class="student-grad-timeline mt-3" role="list">
-    {% if grad.current_courses_assumed_passed %}
+    {% if grad.planning_baseline_courses_assumed_passed %}
       <article class="student-grad-term is-current" role="listitem">
         <div class="student-grad-term-head">
-          <div><span>{% if LANGUAGE_CODE == 'ar' %}الفصل الحالي{% else %}Current term{% endif %}</span><strong dir="ltr">{{ academic_year }}/{{ term }}</strong></div>
-          <span>{{ grad.registered_credits_now }} {% if LANGUAGE_CODE == 'ar' %}ساعة{% else %}credits{% endif %}</span>
+          <div><span>{% if LANGUAGE_CODE == 'ar' %}الفصل المرجعي للتخطيط{% else %}Planning baseline term{% endif %}</span><strong dir="ltr">{{ grad.planning_baseline_academic_year }}/{{ grad.planning_baseline_term }}</strong></div>
+          <span>{{ grad.registered_credits_at_planning_baseline }} {% if LANGUAGE_CODE == 'ar' %}ساعة{% else %}credits{% endif %}</span>
         </div>
         <ul class="student-grad-term-courses">
-          {% for course in grad.current_courses_assumed_passed %}
+          {% for course in grad.planning_baseline_courses_assumed_passed %}
             <li><bdi dir="ltr">{{ course.code }}</bdi><span dir="auto">{{ course.name }}</span></li>
           {% endfor %}
         </ul>

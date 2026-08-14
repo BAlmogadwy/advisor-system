@@ -8700,6 +8700,10 @@ body:has(.login-wrap) {
     width: 100%; max-width: 420px; padding: 1.5rem;
     animation: login-fade-up 0.5s var(--ease) both;
   }
+  .telegram-link-wrap {
+    max-width: 720px;
+    box-sizing: border-box;
+  }
   @keyframes login-fade-up {
     from { opacity: 0; transform: translateY(20px); }
     to   { opacity: 1; transform: translateY(0); }
@@ -8714,6 +8718,13 @@ body:has(.login-wrap) {
       8px 8px 20px rgba(163,177,198,0.6),
       -8px -8px 20px rgba(255,255,255,0.8);
     overflow: hidden;
+  }
+  .telegram-link-card {
+    width: 100%;
+  }
+  .telegram-link-card--result {
+    max-width: 640px;
+    margin-inline: auto;
   }
 
   /* ─── Avatar circle ─── */
@@ -11636,6 +11647,50 @@ main[data-page="student-advisor"] > .content-wrap > .page-intro {
   background: var(--teal-dim);
   color: var(--t2);
   font-size: .8rem;
+}
+.sa-tt-replacement {
+  display: grid;
+  gap: .35rem;
+  margin: 0 0 .65rem;
+  padding: .55rem .65rem;
+  border: 1px solid var(--teal-border);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--teal-dim) 78%, var(--surface));
+}
+.sa-tt-replacement-swap {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: .2rem;
+  margin: 0;
+  color: var(--t1);
+  font-size: .84rem;
+  font-weight: 700;
+}
+.sa-tt-replacement-code {
+  display: inline-flex;
+  padding: .12rem .42rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+  font-size: .8rem;
+}
+.sa-tt-replacement-code.is-removed {
+  color: var(--danger);
+  text-decoration: line-through;
+  text-decoration-thickness: 1px;
+}
+.sa-tt-replacement-code.is-added {
+  border-color: var(--teal-border);
+  color: var(--brand-strong);
+}
+.sa-tt-replacement-caution {
+  margin: 0;
+  padding-top: .35rem;
+  border-top: 1px solid color-mix(in srgb, var(--warning) 30%, var(--line));
+  color: var(--t2);
+  font-size: .76rem;
+  line-height: 1.45;
 }
 .sa-tt-constraints {
   margin: 0 0 .65rem;

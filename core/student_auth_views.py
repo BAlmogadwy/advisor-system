@@ -5,6 +5,7 @@ Separate from the advisor password login. No self-registration, no passwords.
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timedelta
 
 from django.conf import settings
 from django.contrib.auth import login
@@ -12,6 +13,7 @@ from django.contrib.auth.decorators import login_required
 from django.core.cache import cache
 from django.http import HttpRequest, HttpResponse
 from django.shortcuts import redirect, render
+from django.utils import timezone
 from django.views.decorators.cache import never_cache
 from django.views.decorators.http import require_http_methods, require_POST
 
@@ -22,7 +24,13 @@ from core.services.recommender import recommend_next_courses
 from core.services.student_graduation import build_graduation_report
 from core.services.student_helpers import normalize_code
 from core.services.student_home_cards import build_student_home_cards, progress_buckets
-from core.services.student_otp import OTPError, issue_otp, provision_student_user, verify_otp
+from core.services.student_otp import (
+    OTPError,
+    issue_otp,
+    mark_student_authentication,
+    provision_student_user,
+    verify_otp,
+)
 from core.services.student_sections import (
     EXPECTED_TIMETABLE_SOURCE_PREFIX,
     get_student_term_baseline,
@@ -49,6 +57,79 @@ def _client_ip(request: HttpRequest) -> str:
     return (request.META.get("REMOTE_ADDR", "") or "")[:64]
 
 
+#: Where to send the student after they sign in, when something sent them here on
+#: the way to somewhere else. Held in the SESSION rather than round-tripped through
+#: the two login forms: the OTP step is a separate POST that carries none of the
+#: first step's fields, so a hidden input would have to be threaded through both
+#: templates — and a value the browser sends back is a value the browser can
+#: change, which is the whole open-redirect surface. The session cannot be edited
+#: by its owner.
+_NEXT_SESSION_KEY = "post_login_next"
+
+
+#: How long a remembered destination stays usable. A login is a few minutes of
+#: work; anything older belongs to a session somebody walked away from.
+_NEXT_MAX_AGE_SECONDS = 600
+
+
+def _remember_next(request: HttpRequest) -> None:
+    """Record a validated `?next=`, and forget any earlier one.
+
+    `login_required` already appends `?next=` to every protected student route, so
+    this parameter has been arriving and being discarded since those routes
+    existed. Honouring it needs the check Django's own `LoginView` does — neither
+    login view here is a `LoginView`, so none of that protection is inherited.
+
+    Clearing on a request that carries NO `next` is the other half, and it is not
+    tidiness: a student who starts a redirect-carrying login on a shared lab
+    machine and walks away leaves the destination in a session that outlives them,
+    and the next person to sign in on that browser would be sent somewhere they
+    never asked to go.
+    """
+    from django.utils.http import url_has_allowed_host_and_scheme
+
+    candidate = str(request.GET.get("next") or "").strip()
+    if not candidate:
+        # Only a fresh GET clears. The Uni-ID POST is the second step of the SAME
+        # login and carries none of the first step's query string, so clearing on
+        # any request without `next` would drop the destination halfway through
+        # the flow it was recorded for.
+        if request.method == "GET":
+            request.session.pop(_NEXT_SESSION_KEY, None)
+        return
+    # Same host, same scheme, and a path rather than a bare authority. The leading
+    # single slash is checked explicitly because `//evil.example` is a
+    # protocol-relative URL that some parsers treat as a path.
+    if not candidate.startswith("/") or candidate.startswith("//"):
+        request.session.pop(_NEXT_SESSION_KEY, None)
+        return
+    if not url_has_allowed_host_and_scheme(
+        candidate, allowed_hosts={request.get_host()}, require_https=request.is_secure()
+    ):
+        request.session.pop(_NEXT_SESSION_KEY, None)
+        return
+    request.session[_NEXT_SESSION_KEY] = {
+        "url": candidate[:500],
+        "at": timezone.now().isoformat(),
+    }
+
+
+def _post_login_redirect(request: HttpRequest):
+    """Where sign-in lands. `student_home` unless something asked for elsewhere."""
+    stored = request.session.pop(_NEXT_SESSION_KEY, None)
+    if not isinstance(stored, dict):
+        return redirect("student_home")
+    try:
+        asked_at = datetime.fromisoformat(str(stored.get("at") or ""))
+    except ValueError:
+        return redirect("student_home")
+    if timezone.now() - asked_at > timedelta(seconds=_NEXT_MAX_AGE_SECONDS):
+        # Stale: this belongs to an abandoned attempt, not to whoever just signed in.
+        return redirect("student_home")
+    destination = str(stored.get("url") or "")
+    return redirect(destination) if destination else redirect("student_home")
+
+
 def _ip_throttled(request: HttpRequest, bucket: str, limit: int, window: int) -> bool:
     key = f"student_otp:{bucket}:{_client_ip(request)}"
     n = cache.get(key, 0)
@@ -61,9 +142,18 @@ def _ip_throttled(request: HttpRequest, bucket: str, limit: int, window: int) ->
 @never_cache
 @require_http_methods(["GET", "POST"])
 def student_login_view(request: HttpRequest) -> HttpResponse:
+    # Recorded before the already-authenticated shortcut, so a signed-in student
+    # following a link that needs them somewhere specific still gets there.
+    _remember_next(request)
+
     if request.user.is_authenticated:
         scope = get_user_scope(request.user)
-        return redirect("student_home" if scope.get("role") == ROLE_STUDENT else "dashboard")
+        if scope.get("role") == ROLE_STUDENT:
+            return _post_login_redirect(request)
+        # Staff never follow a student's `next`: the destination was chosen for a
+        # student session and may not be theirs to see.
+        request.session.pop(_NEXT_SESSION_KEY, None)
+        return redirect("dashboard")
 
     if request.method == "GET":
         return render(
@@ -110,7 +200,8 @@ def student_login_view(request: HttpRequest) -> HttpResponse:
                 },
             )
         login(request, user, backend=_MODEL_BACKEND)
-        return redirect("student_home")
+        mark_student_authentication(request)
+        return _post_login_redirect(request)
 
     if exists:
         try:
@@ -159,8 +250,9 @@ def student_otp_verify_view(request: HttpRequest) -> HttpResponse:
                 },
             )
         login(request, user, backend=_MODEL_BACKEND)
+        mark_student_authentication(request)
         request.session.pop("otp_student_id", None)
-        return redirect("student_home")
+        return _post_login_redirect(request)
 
     return render(
         request,

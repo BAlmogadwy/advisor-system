@@ -167,6 +167,130 @@ def _poisoned(tool: str) -> dict:
             "options": [{"course_code": "AI111", "added_by": CANARIES["latin_name"]}],
             "per_program": [{"program": "AI", "reviewer": CANARIES["latin_name"]}],
         },
+        "course_choice_comparison": {
+            "program": "AI",
+            "academic_year": 1448,
+            "term": 1,
+            "objective": "balanced",
+            "baseline_kind": "REGISTERED",
+            "verdict": "PREFERRED",
+            "preferred_course": "AI331",
+            "criterion_leaders": {"direct_unlock": ["AI331"]},
+            "candidates": [
+                {
+                    "course_code": "AI331",
+                    "course_name": "Knowledge Representation",
+                    "academic_status": "open_now",
+                    "prerequisite_ready": True,
+                    "missing_prerequisites": [],
+                    "recommendation": {"state": "RECOMMENDED", "rank": 1},
+                    "impact": {"direct_unlock_count": 3, "reviewer": CANARIES["name"]},
+                    "timetable": {"status": "OK", "sections_on_file": 2},
+                    "graduation": {
+                        "simulation_completed": True,
+                        "estimated_additional_terms": 4,
+                    },
+                    "student_id": MINE,
+                    "advisor_email": CANARIES["email"],
+                }
+            ],
+        },
+        "feasible_course_replacements": {
+            "academic_year": 1448,
+            "term": 1,
+            "baseline_kind": "REGISTERED",
+            "requested_remove_course": "DS341",
+            "requested_add_course": "AI331",
+            "status": "CERTIFIED_SWAPS_FOUND",
+            "academic_search": {
+                "pairs_evaluated": 12,
+                "search_truncated": False,
+                "academic_improvements_found": 2,
+                "private_student_id": MINE,
+            },
+            "certification_search": {
+                "academic_candidates_received": 2,
+                "timetable_candidates_checked": 2,
+                "certified_result_limit": 5,
+                "search_truncated": False,
+                "reviewed_by": CANARIES["latin_name"],
+            },
+            "certified_replacements": [
+                {
+                    "remove_course": {
+                        "course_code": "DS341",
+                        "course_name": "Data Privacy",
+                        "credits": 3,
+                        "student_id": MINE,
+                    },
+                    "add_course": {
+                        "course_code": "AI331",
+                        "course_name": "Knowledge Representation",
+                        "credits": 3,
+                        "owner_email": CANARIES["email"],
+                    },
+                    "academic_improvement": {
+                        "proven_improvement": True,
+                        "timing_effect": "EARLIER",
+                        "terms_saved": 1,
+                        "blockers_resolved": ["AI401"],
+                        "internal_note": CANARIES["internal_note"],
+                    },
+                    "timetable": {
+                        "status": "COMPLETE_CLASH_FREE",
+                        "certified_options": [
+                            {
+                                "planner_options": ["A1", {"owner": CANARIES["name"]}],
+                                "scheduled_courses": 2,
+                                "target_courses": 2,
+                                "credit_hours": 6,
+                                "days_on_campus": 2,
+                                "days": ["SUN", {"student_id": OTHER}],
+                                "complete_sections": [
+                                    {
+                                        "course_code": "AI331",
+                                        "course_name": "Knowledge Representation",
+                                        "section": "M2",
+                                        "credits": 3,
+                                        "source": "catalogue",
+                                        "section_id": OTHER,
+                                        "instructor": CANARIES["latin_name"],
+                                        "meetings": [
+                                            {
+                                                "day": "SUN",
+                                                "start": "09:00",
+                                                "end": "10:15",
+                                                "room": CANARIES["phone"],
+                                            }
+                                        ],
+                                    }
+                                ],
+                                "meetings": [
+                                    {
+                                        "course_code": "AI331",
+                                        "section": "M2",
+                                        "day": "SUN",
+                                        "start": "09:00",
+                                        "end": "10:15",
+                                        "internal_section_id": OTHER,
+                                        "advisor_id": CANARIES["advisor_id"],
+                                    }
+                                ],
+                                "private_blob": student_block,
+                            }
+                        ],
+                    },
+                    "student_id": MINE,
+                    "risk_score": CANARIES["risk_score"],
+                }
+            ],
+            "rejected_replacements": [],
+            "limitations": [
+                "Capacity is deliberately ignored because the snapshot does not reserve a seat."
+            ],
+            "student_id": MINE,
+            "private_blob": student_block,
+        },
     }
     return {**common, **shapes.get(tool, {"rows": [student_block], "summary": CANARIES["name"]})}
 
@@ -304,6 +428,312 @@ def test_clash_projection_keeps_section_evidence_without_people_or_rooms() -> No
     assert CANARIES["latin_name"] not in sent
     assert "B-214" not in sent
     assert str(MINE) not in sent
+
+
+def test_replacement_projection_keeps_proof_without_internal_section_identity() -> None:
+    boundary = RemoteToolBoundary(
+        scope=STUDENT_SCOPE,
+        identities=RemoteIdentityMap(nonce=FIXED),
+        known_names=(CANARIES["name"],),
+    )
+    projected = boundary.project_tool_result(
+        "feasible_course_replacements",
+        _poisoned("feasible_course_replacements"),
+    )
+
+    assert projected["status"] == "CERTIFIED_SWAPS_FOUND"
+    assert projected["certification_search"] == {
+        "academic_candidates_received": 2,
+        "timetable_candidates_checked": 2,
+        "certified_result_limit": 5,
+        "search_truncated": False,
+    }
+    replacement = projected["certified_replacements"][0]
+    assert replacement["remove_course"]["course_code"] == "DS341"
+    assert replacement["add_course"]["course_code"] == "AI331"
+    assert replacement["academic_improvement"]["blockers_resolved"] == ["AI401"]
+    option = replacement["timetable"]["certified_options"][0]
+    assert option["planner_options"] == ["A1"]
+    assert option["days"] == ["SUN"]
+    assert option["complete_sections"][0]["section"] == "M2"
+    assert option["complete_sections"][0]["meetings"] == [
+        {"day": "SUN", "start": "09:00", "end": "10:15"}
+    ]
+
+    encoded = json.dumps(projected, ensure_ascii=False, default=str)
+    assert "section_id" not in encoded
+    assert "internal_section_id" not in encoded
+    assert "instructor" not in encoded
+    assert "private_blob" not in encoded
+    leaked = sorted(label for label, value in CANARIES.items() if value in encoded)
+    assert leaked == []
+
+
+def test_replacement_projection_never_forwards_free_text_rejection_reason() -> None:
+    boundary = RemoteToolBoundary(
+        scope=STUDENT_SCOPE,
+        identities=RemoteIdentityMap(nonce=FIXED),
+    )
+    result = _poisoned("feasible_course_replacements")
+    result["rejected_replacements"] = [
+        {
+            "remove_course": {"course_code": "DS341"},
+            "add_course": {"course_code": "CS285"},
+            "academic": {"status": "PROVEN"},
+            "timetable": {
+                "status": "NOT_DETERMINABLE",
+                "reason_code": "MISSING_MEETING_DATA",
+                "reason": f"Student {MINE}: {CANARIES['email']}",
+            },
+        }
+    ]
+
+    timetable = boundary.project_tool_result("feasible_course_replacements", result)[
+        "rejected_replacements"
+    ][0]["timetable"]
+
+    assert timetable["reason_code"] == "MISSING_MEETING_DATA"
+    assert timetable["reason"].startswith("A selected section has missing")
+    assert str(MINE) not in json.dumps(timetable)
+    assert CANARIES["email"] not in json.dumps(timetable)
+
+
+def test_replacement_projection_maps_snapshot_term_mismatch_to_fixed_text() -> None:
+    boundary = RemoteToolBoundary(
+        scope=STUDENT_SCOPE,
+        identities=RemoteIdentityMap(nonce=FIXED),
+    )
+    result = _poisoned("feasible_course_replacements")
+    result["rejected_replacements"] = [
+        {
+            "timetable": {
+                "status": "NOT_DETERMINABLE",
+                "reason_code": "section_snapshot_term_mismatch",
+                "reason": f"Student {MINE}: {CANARIES['email']}",
+            }
+        }
+    ]
+
+    timetable = boundary.project_tool_result("feasible_course_replacements", result)[
+        "rejected_replacements"
+    ][0]["timetable"]
+
+    assert timetable == {
+        "status": "NOT_DETERMINABLE",
+        "reason_code": "SECTION_SNAPSHOT_TERM_MISMATCH",
+        "reason": (
+            "The section catalogue is not verified for the requested term, so a "
+            "replacement timetable cannot be certified."
+        ),
+    }
+
+
+def test_replacement_projection_drops_unknown_rejection_reason() -> None:
+    boundary = RemoteToolBoundary(
+        scope=STUDENT_SCOPE,
+        identities=RemoteIdentityMap(nonce=FIXED),
+    )
+    result = _poisoned("feasible_course_replacements")
+    result["rejected_replacements"] = [
+        {
+            "timetable": {
+                "status": "NOT_DETERMINABLE",
+                "reason_code": f"PRIVATE_{MINE}",
+                "reason": CANARIES["email"],
+            }
+        }
+    ]
+
+    timetable = boundary.project_tool_result("feasible_course_replacements", result)[
+        "rejected_replacements"
+    ][0]["timetable"]
+
+    assert timetable == {"status": "NOT_DETERMINABLE"}
+
+
+def test_replacement_projection_bounds_nested_reasons_and_limitations() -> None:
+    boundary = RemoteToolBoundary(
+        scope=STUDENT_SCOPE,
+        identities=RemoteIdentityMap(nonce=FIXED),
+    )
+    result = _poisoned("feasible_course_replacements")
+    public_limitation = (
+        "Capacity is deliberately ignored because the snapshot does not reserve a "
+        "seat. No result proves a live seat."
+    )
+    private_text = f"Student {MINE}: {CANARIES['email']}"
+    result["rejected_replacements"] = [
+        {
+            "timetable": {
+                "status": "NOT_DETERMINABLE",
+                "reason_code": "BASELINE_SECTION_MAPPING_INCOMPLETE",
+                "details": [
+                    {
+                        "reason_code": "BASELINE_MEETING_DATA_MISSING",
+                        "course_code": "DS341",
+                    },
+                    {
+                        "reason_code": private_text,
+                        "course_code": "AI331",
+                    },
+                ],
+            }
+        }
+    ]
+    result["limitations"] = [public_limitation, private_text]
+
+    projected = boundary.project_tool_result("feasible_course_replacements", result)
+    timetable = projected["rejected_replacements"][0]["timetable"]
+
+    assert timetable["details"] == [
+        {
+            "reason_code": "BASELINE_MEETING_DATA_MISSING",
+            "course_code": "DS341",
+        },
+        {"course_code": "AI331"},
+    ]
+    assert projected["limitations"] == [public_limitation]
+    encoded = json.dumps(projected, ensure_ascii=False)
+    assert private_text not in encoded
+    assert CANARIES["email"] not in encoded
+
+
+def test_course_comparison_projection_keeps_safe_timetable_uncertainty_reason() -> None:
+    """The remote writer must know why clash evidence was not determinable.
+
+    Structured meeting details remain local because they are unnecessary for the
+    explanation; a bounded reason code selects fixed public wording.
+    """
+    boundary = RemoteToolBoundary(
+        scope=STUDENT_SCOPE,
+        identities=RemoteIdentityMap(nonce=FIXED),
+        known_names=(CANARIES["name"],),
+    )
+    result = _poisoned("course_choice_comparison")
+    result["candidates"][0]["timetable"] = {
+        "status": "NOT_DETERMINABLE",
+        "reason_code": "CANDIDATE_MEETING_DATA_INCOMPLETE",
+        "reason": f"Student {MINE} instructor {CANARIES['email']}",
+        "details": [
+            {
+                "section": "M1",
+                "instructor": CANARIES["latin_name"],
+                "room": "B-214",
+            }
+        ],
+        "sections_on_file": 2,
+        "clash_free_count": None,
+        "clashing_count": None,
+    }
+
+    projected = boundary.project_tool_result("course_choice_comparison", result)
+    timetable = projected["candidates"][0]["timetable"]
+
+    assert timetable == {
+        "status": "NOT_DETERMINABLE",
+        "reason_code": "CANDIDATE_MEETING_DATA_INCOMPLETE",
+        "reason": (
+            "At least one recorded candidate section has missing or invalid meeting "
+            "data, so the complete timetable choice cannot be compared."
+        ),
+        "sections_on_file": 2,
+        "clash_free_count": None,
+        "clashing_count": None,
+        "baseline_sections": [],
+    }
+    assert "details" not in timetable
+    encoded = json.dumps(projected, ensure_ascii=False)
+    assert str(MINE) not in encoded
+    assert CANARIES["email"] not in encoded
+    assert CANARIES["latin_name"] not in encoded
+    assert result["candidates"][0]["timetable"]["reason"] == (
+        f"Student {MINE} instructor {CANARIES['email']}"
+    )
+
+
+@pytest.mark.parametrize(
+    ("reason_code", "public_reason"),
+    [
+        (
+            "BASELINE_MEETING_DATA_INCOMPLETE",
+            "At least one retained baseline section has missing or invalid meeting "
+            "data, so clashes cannot be certified.",
+        ),
+        (
+            "CANDIDATE_MEETING_DATA_INCOMPLETE",
+            "At least one recorded candidate section has missing or invalid meeting "
+            "data, so the complete timetable choice cannot be compared.",
+        ),
+        (
+            "MIXED_BASELINE_REVIEW_REQUIRED",
+            "Registered and expected-plan rows are mixed, so there is no single "
+            "timetable baseline to compare against.",
+        ),
+        (
+            "COHORT_UNRESOLVED",
+            "The student's section cohort is unresolved, so eligible catalogue "
+            "sections cannot be selected safely.",
+        ),
+        (
+            "NOT_ON_FILE",
+            "No section for this course is recorded in the current catalogue snapshot; "
+            "this is not proof that the university does not offer it.",
+        ),
+        (
+            "SECTION_SNAPSHOT_TERM_MISMATCH",
+            "The section catalogue is the configured current snapshot, not the explicit "
+            "comparison term, so timetable fit cannot be certified.",
+        ),
+    ],
+)
+def test_course_comparison_projection_maps_known_reason_codes_to_fixed_text(
+    reason_code: str,
+    public_reason: str,
+) -> None:
+    boundary = RemoteToolBoundary(
+        scope=STUDENT_SCOPE,
+        identities=RemoteIdentityMap(nonce=FIXED),
+    )
+    result = _poisoned("course_choice_comparison")
+    result["candidates"][0]["timetable"] = {
+        "status": "NOT_DETERMINABLE",
+        "reason_code": reason_code.lower(),
+        "reason": f"Student {MINE}: {CANARIES['email']}",
+    }
+
+    timetable = boundary.project_tool_result("course_choice_comparison", result)["candidates"][0][
+        "timetable"
+    ]
+
+    assert timetable["reason_code"] == reason_code
+    assert timetable["reason"] == public_reason
+    assert str(MINE) not in json.dumps(timetable, ensure_ascii=False)
+    assert CANARIES["email"] not in json.dumps(timetable, ensure_ascii=False)
+
+
+def test_course_comparison_projection_drops_unknown_reason_code_and_text() -> None:
+    boundary = RemoteToolBoundary(
+        scope=STUDENT_SCOPE,
+        identities=RemoteIdentityMap(nonce=FIXED),
+    )
+    result = _poisoned("course_choice_comparison")
+    raw_timetable = {
+        "status": "NOT_DETERMINABLE",
+        "reason_code": f"PRIVATE_{MINE}_{CANARIES['email']}",
+        "reason": f"Student {MINE}: {CANARIES['latin_name']}",
+        "details": [{"instructor": CANARIES["latin_name"]}],
+    }
+    result["candidates"][0]["timetable"] = raw_timetable
+
+    timetable = boundary.project_tool_result("course_choice_comparison", result)["candidates"][0][
+        "timetable"
+    ]
+
+    assert timetable == {"status": "NOT_DETERMINABLE", "baseline_sections": []}
+    assert result["candidates"][0]["timetable"] is raw_timetable
+    assert result["candidates"][0]["timetable"]["reason"] == (
+        f"Student {MINE}: {CANARIES['latin_name']}"
+    )
 
 
 @pytest.mark.parametrize("tool", WITHHELD)

@@ -617,7 +617,7 @@ def test_only_one_of_two_simultaneous_retries_may_claim_the_turn(client):
     call the model, and the student gets two different answers to one question. The
     two in-memory copies below are exactly what two concurrent requests hold.
     """
-    from core.advisor_conversation_views import _resume_or_replay
+    from core.services.advisor_turn import REPLAYED, _resume_or_replay
 
     conversation = _conversation(MINE)
     _student(client, MINE)
@@ -635,12 +635,43 @@ def test_only_one_of_two_simultaneous_retries_may_claim_the_turn(client):
     second = AdvisorMessage.objects.get(idempotency_key="k-race")
     assert first.status == second.status == AdvisorMessage.STATUS_FAILED
 
-    won, response = _resume_or_replay(conversation, first, MINE, request_hash)
-    assert won is not None and response is None
+    won = _resume_or_replay(conversation, first, request_hash)
+    assert isinstance(won, AdvisorMessage), "the first request did not claim the turn"
 
-    lost, response = _resume_or_replay(conversation, second, MINE, request_hash)
-    assert lost is None, "both requests claimed the same turn and will both generate"
-    assert response.status_code == 200
+    lost = _resume_or_replay(conversation, second, request_hash)
+    assert not isinstance(lost, AdvisorMessage), (
+        "both requests claimed the same turn and will both generate"
+    )
+    assert lost.outcome == REPLAYED
+
+
+def test_only_one_of_two_simultaneous_stale_pending_retries_may_claim_the_turn(client):
+    """PENDING -> PENDING also needs a fencing value because status is unchanged."""
+    from django.utils import timezone
+
+    from core.services.advisor_turn import REPLAYED, STALE_GENERATION, _resume_or_replay
+
+    conversation = _conversation(MINE)
+    _student(client, MINE)
+    request_hash = hashlib.sha256("سؤال".encode()).hexdigest()
+    AdvisorMessage.objects.create(
+        conversation=conversation,
+        role=AdvisorMessage.ROLE_STUDENT,
+        content="سؤال",
+        idempotency_key="k-stale-race",
+        request_hash=request_hash,
+        status=AdvisorMessage.STATUS_PENDING,
+        generation_started_at=timezone.now() - STALE_GENERATION - timedelta(minutes=1),
+    )
+    first = AdvisorMessage.objects.get(idempotency_key="k-stale-race")
+    second = AdvisorMessage.objects.get(idempotency_key="k-stale-race")
+
+    won = _resume_or_replay(conversation, first, request_hash)
+    assert isinstance(won, AdvisorMessage)
+
+    lost = _resume_or_replay(conversation, second, request_hash)
+    assert not isinstance(lost, AdvisorMessage)
+    assert lost.outcome == REPLAYED
 
 
 def test_an_integrity_error_with_no_key_is_not_treated_as_a_retry(client):

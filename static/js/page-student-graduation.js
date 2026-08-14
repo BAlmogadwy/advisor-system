@@ -32,9 +32,16 @@
     if (label === 'Completed before the scenario') {
       return AR ? 'مجتاز قبل السيناريو' : 'Completed before the scenario';
     }
+    if (label.indexOf('Planning baseline ') === 0) {
+      const term = label.slice('Planning baseline '.length);
+      return AR ? `الفصل المرجعي للتخطيط ${term}` : `Planning baseline term ${term}`;
+    }
     if (label.indexOf('Current ') === 0) {
+      // Stored adviser presentations created before the baseline terminology
+      // changed still use this prefix. Read them without repeating the old,
+      // potentially false claim that the configured planning term is "current".
       const term = label.slice('Current '.length);
-      return AR ? `الفصل الحالي ${term}` : `Current term ${term}`;
+      return AR ? `الفصل المرجعي للتخطيط ${term}` : `Planning baseline term ${term}`;
     }
     if (label.indexOf('Projected ') === 0) {
       const term = label.slice('Projected '.length);
@@ -69,7 +76,7 @@
       pgTerminal: AR ? 'نهاية السلسلة' : 'chain end',
       pgHoverHint: AR ? 'مرّر لإبراز السلسلة' : 'hover to highlight a chain',
       pgPassed: AR ? 'مجتاز قبل السيناريو' : 'completed before the scenario',
-      pgStudying: AR ? 'مفترض اجتيازه هذا الفصل' : 'assumed passed this term',
+      pgStudying: AR ? 'مفترض اجتيازه في الفصل المرجعي للتخطيط' : 'assumed passed in the planning baseline term',
       pgOpen: AR ? 'مخطط في السيناريو' : 'planned in the scenario',
       pgLocked: AR ? 'غير محسوم' : 'unresolved',
       pgSameTermWarn: count => (AR

@@ -1674,6 +1674,16 @@ class AdvisorMessage(models.Model):
     # network failure cannot turn one question into two stored turns.
     idempotency_key = models.CharField(max_length=64, blank=True, default="", db_index=True)
 
+    # Server-owned provenance for channel-specific evidence boundaries. Unlike
+    # idempotency_key this is never copied from request JSON, so a web client
+    # cannot label a full-record answer as safe Telegram history.
+    generation_profile = models.CharField(
+        max_length=32,
+        blank=True,
+        default="",
+        editable=False,
+    )
+
     # sha256 of the request that produced this turn. The unique key alone cannot
     # tell a genuine retry from a different question sent under a reused key; with
     # this, the first is replayed and the second is refused.

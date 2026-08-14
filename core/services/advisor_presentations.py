@@ -9,6 +9,7 @@ database ids, model traces, seat counts, or internal reason codes.
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 KIND_TIMETABLE = "timetable_proposals"
@@ -20,6 +21,69 @@ _MAX_GRAPH_NODES = 160
 _MAX_GRAPH_EDGES = 360
 _MAX_UNRESOLVED = 80
 _MAX_SIMULATED_TERMS = 18
+
+_FALSE_MEDIA_INCAPABILITY = re.compile(
+    r"(?:\b(?:I|we)(?:\s+can(?:not|['’]t)|\s+(?:am|are)\s+(?:not\s+able|unable)\s+to|"
+    r"['’]m\s+(?:not\s+able|unable)\s+to)\s+"
+    r"(?:directly\s+)?(?:generate|send|create|display|attach|provide)"
+    r"(?:(?:\s*,\s*(?:(?:or|and)\s+)?|\s+(?:or|and)\s+)(?:directly\s+)?"
+    r"(?:generate|send|create|display|attach|provide))*\s+"
+    r"(?:(?:to\s+)?(?:you|the\s+student)\s+)?(?:an?|the|this)?\s*"
+    r"(?:(?:timetable|graduation[-\s]+plan)\s+)?(?:image|photo|map|picture)s?\b|"
+    r"(?:لا\s+أستطيع|ما\s+أقدر|لا\s+أقدر|ماني\s+قادر|مو\s+قادر|لا\s+يمكنني)\s+"
+    r"(?:إنشاء|أنشئ|اسوي|أسوي|إرسال|ارسل|أرسل|عرض|أعرض|إرفاق|ارفق|أرفق)"
+    r"(?:\s+أو\s+(?:إنشاء|أنشئ|أسوي|إرسال|أرسل|عرض|أعرض|إرفاق|أرفق))*"
+    r"(?:\s+(?:لك|لكم))?\s+"
+    r"(?:صورة|صور|خريطة|خرائط|مخطط))"
+    r"(?:\s+(?:of|containing|with|showing)\s+[^,;،؛.!?؟\n]*)?"
+    r"(?:\s+(?:to\s+you|here|in\s+(?:this|the)\s+(?:chat|channel)))?"
+    r"(?:\s+(?:because|due\s+to)\s+[^,;،؛.!?؟\n]*)?"
+    r"(?:\s*[,;،؛]\s*(?:but|however|لكن)\s+|\s*[.;،؛!?؟]\s*)?",
+    re.IGNORECASE,
+)
+
+_PROTECTED_MEDIA_CONTEXT = re.compile(
+    r"(?:\b(?:grade|mark|transcript|gpa|cgpa|score|failed[-\s]+course|"
+    r"course[-\s]+result|academic\s+(?:record|standing)|probation|warning)s?\b|"
+    r"(?:درجة|درجات|علامة|علامات|نتيجة|نتائج|كشف\s+الدرجات|"
+    r"السجل\s+الأكاديمي|الحالة\s+الأكاديمية|الوضع\s+الأكاديمي|"
+    r"المعدل(?:\s+التراكمي)?|رسوب|راسب|إنذار|تحذير))",
+    re.IGNORECASE,
+)
+
+
+def remove_false_media_incapability(text: str) -> str:
+    """Remove model claims contradicted by a structured presentation renderer."""
+    original = str(text or "")
+
+    def remove_claim(match: re.Match[str]) -> str:
+        # A valid timetable/graduation card disproves a generic media incapability
+        # claim, but it does not authorize grade, transcript, GPA, or other
+        # protected-record imagery. Preserve those refusals verbatim.
+        refusal = re.split(
+            r"[,،;؛]\s*(?:(?:but|however|لكن)\b)?",
+            original[match.start() :],
+            maxsplit=1,
+            flags=re.IGNORECASE,
+        )[0]
+        if _PROTECTED_MEDIA_CONTEXT.search(refusal):
+            return match.group(0)
+        return ""
+
+    cleaned = _FALSE_MEDIA_INCAPABILITY.sub(remove_claim, original)
+    cleaned = re.sub(r"[ \t]+(?=\n)", "", cleaned)
+    cleaned = re.sub(r"[ \t]{2,}", " ", cleaned)
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned).strip(" \t,;،؛")
+    if cleaned:
+        return cleaned
+
+    # Never let transport cleanup turn a complete answer into an empty one, and
+    # do not restore the false claim just to avoid silence. This neutral sentence
+    # is true for every accepted structured presentation even when optional
+    # Telegram media is disabled or later fails to render.
+    if re.search(r"[\u0600-\u06ff]", original):
+        return "تفاصيل الخطة موضحة في العرض المنظم."
+    return "The plan details are shown in the structured view."
 
 
 def _text(value: Any, limit: int = 240) -> str:
@@ -65,6 +129,20 @@ def _course_rows(value: Any, limit: int = _MAX_COURSES) -> list[dict[str, Any]]:
             }
         )
     return rows
+
+
+def _replacement_course(value: Any) -> dict[str, Any]:
+    """Whitelist one course descriptor used by a certified replacement card."""
+    if not isinstance(value, dict):
+        return {}
+    code = _text(value.get("course_code") or value.get("code"), 32).upper()
+    if not code:
+        return {}
+    return {
+        "course_code": code,
+        "course_name": _text(value.get("course_name") or value.get("name")),
+        "credits": _number(value.get("credits") or value.get("credit_hours")),
+    }
 
 
 def _normalise_graduation_presentation(payload: dict[str, Any]) -> dict[str, Any]:
@@ -168,11 +246,15 @@ def _normalise_graduation_presentation(payload: dict[str, Any]) -> dict[str, Any
         "program": _text(payload.get("program"), 32),
         "planning_term": _text(payload.get("planning_term"), 24),
         "simulation_completed": payload.get("simulation_completed") is True,
-        "estimated_terms_including_current": _optional_number(
-            payload.get("estimated_terms_including_current")
+        "estimated_terms_including_planning_baseline": _optional_number(
+            payload.get("estimated_terms_including_planning_baseline")
+            if payload.get("estimated_terms_including_planning_baseline") is not None
+            else payload.get("estimated_terms_including_current")
         ),
-        "lower_bound_terms_including_current": _number(
-            payload.get("lower_bound_terms_including_current")
+        "lower_bound_terms_including_planning_baseline": _number(
+            payload.get("lower_bound_terms_including_planning_baseline")
+            if payload.get("lower_bound_terms_including_planning_baseline") is not None
+            else payload.get("lower_bound_terms_including_current")
         ),
         "max_credits_per_term": _number(payload.get("max_credits_per_term")),
         "graph": {
@@ -262,6 +344,27 @@ def normalise_presentation(payload: Any) -> dict[str, Any]:
         if isinstance(row, dict)
     ]
 
+    replacement: dict[str, Any] = {}
+    raw_replacement = payload.get("replacement")
+    if isinstance(raw_replacement, dict):
+        removed = _replacement_course(raw_replacement.get("remove_course"))
+        added = _replacement_course(raw_replacement.get("add_course"))
+        if removed and added:
+            improvement = (
+                raw_replacement.get("academic_improvement")
+                if isinstance(raw_replacement.get("academic_improvement"), dict)
+                else {}
+            )
+            replacement = {
+                "remove_course": removed,
+                "add_course": added,
+                "outside_plan_addition": raw_replacement.get("outside_plan_addition") is True,
+                "academic_improvement": {
+                    "proven_improvement": improvement.get("proven_improvement") is True,
+                    "terms_saved": _optional_number(improvement.get("terms_saved")),
+                },
+            }
+
     alternatives = []
     for row in _items(payload.get("alternatives"), _MAX_ALTERNATIVES):
         if not isinstance(row, dict):
@@ -338,7 +441,7 @@ def normalise_presentation(payload: Any) -> dict[str, Any]:
         and not constraint_failures
     ):
         return {}
-    return {
+    presentation = {
         "kind": KIND_TIMETABLE,
         "planning_term": _text(payload.get("planning_term"), 24),
         "mode": mode,
@@ -360,6 +463,9 @@ def normalise_presentation(payload: Any) -> dict[str, Any]:
         "can_save": False,
         "can_register": False,
     }
+    if replacement:
+        presentation["replacement"] = replacement
+    return presentation
 
 
 def timetable_presentation_from_tool_results(
@@ -390,6 +496,148 @@ def timetable_presentation_from_tool_results(
                 "constraints_satisfied": result.get("constraints_satisfied"),
                 "constraint_failures": result.get("constraint_failures"),
                 "no_additional_courses": result.get("no_additional_courses"),
+            }
+        )
+    return {}
+
+
+def replacement_timetable_presentation_from_tool_results(
+    tool_results: list[dict[str, Any]] | tuple[dict[str, Any], ...] | None,
+) -> dict[str, Any]:
+    """Render the best certified replacement as complete timetable alternatives.
+
+    The academic service ranks certified replacements, so the first row is the
+    selected swap.  Every certified option already contains the retained sections
+    plus the added course and complete meeting facts.  Projecting that full set as
+    an alternative lets the existing web and Telegram renderers show the actual
+    clash-free result without leaking database section ids or duplicating retained
+    courses in a separate baseline block.
+    """
+    for result in reversed(list(tool_results or [])):
+        if not isinstance(result, dict):
+            continue
+        if result.get("tool") != "feasible_course_replacements" or not result.get("ok"):
+            continue
+
+        certified = _items(result.get("certified_replacements"), 1)
+        if not certified or not isinstance(certified[0], dict):
+            return {}
+        selected = certified[0]
+        timetable = selected.get("timetable")
+        if not isinstance(timetable, dict) or timetable.get("status") != "COMPLETE_CLASH_FREE":
+            return {}
+
+        alternatives = []
+        for option in _items(timetable.get("certified_options"), _MAX_ALTERNATIVES):
+            if not isinstance(option, dict):
+                continue
+            sections = [
+                row
+                for row in _items(option.get("complete_sections"), _MAX_COURSES)
+                if isinstance(row, dict)
+            ]
+            names = {
+                _text(row.get("course_code"), 32).upper(): _text(row.get("course_name"))
+                for row in sections
+                if _text(row.get("course_code"), 32)
+            }
+            courses = [
+                {
+                    "course_code": row.get("course_code"),
+                    "course_name": row.get("course_name"),
+                    "section": row.get("section"),
+                    "credits": row.get("credits"),
+                }
+                for row in sections
+            ]
+            meetings = [
+                {
+                    "course_code": row.get("course_code"),
+                    "course_name": names.get(_text(row.get("course_code"), 32).upper(), ""),
+                    "section": row.get("section"),
+                    "day": row.get("day"),
+                    "start": row.get("start"),
+                    "end": row.get("end"),
+                }
+                for row in _items(option.get("meetings"), _MAX_MEETINGS)
+                if isinstance(row, dict)
+            ]
+            course_keys = {
+                (
+                    _text(row.get("course_code"), 32).upper(),
+                    _text(row.get("section"), 32).upper(),
+                )
+                for row in sections
+                if _text(row.get("course_code"), 32) and _text(row.get("section"), 32)
+            }
+            meeting_keys = {
+                (
+                    _text(row.get("course_code"), 32).upper(),
+                    _text(row.get("section"), 32).upper(),
+                )
+                for row in meetings
+                if row.get("day") and row.get("start") and row.get("end")
+            }
+            if (
+                not courses
+                or len(course_keys) != len(courses)
+                or not meetings
+                or not course_keys.issubset(meeting_keys)
+            ):
+                continue
+            alternatives.append(
+                {
+                    "planner_options": option.get("planner_options"),
+                    "scheduled_courses": option.get("scheduled_courses"),
+                    "target_courses": option.get("target_courses"),
+                    "proposed_credit_hours": option.get("credit_hours"),
+                    "total_credit_hours": option.get("credit_hours"),
+                    "days_on_campus": option.get("days_on_campus"),
+                    "days": option.get("days"),
+                    "earliest_start": option.get("earliest_start"),
+                    "latest_end": option.get("latest_end"),
+                    "courses": courses,
+                    "meetings": meetings,
+                    "unplaced_courses": [],
+                }
+            )
+
+        if not alternatives:
+            return {}
+
+        removed = _replacement_course(selected.get("remove_course"))
+        added = _replacement_course(selected.get("add_course"))
+        resulting_credits = _number(alternatives[0].get("total_credit_hours"))
+        baseline_credits = max(
+            0,
+            resulting_credits - _number(added.get("credits")) + _number(removed.get("credits")),
+        )
+        baseline_kind = _text(result.get("baseline_kind"), 32).upper()
+        return normalise_presentation(
+            {
+                "kind": KIND_TIMETABLE,
+                "planning_term": (
+                    f"{_number(result.get('academic_year'))}/{_number(result.get('term'))}"
+                ),
+                "mode": "certified_replacement",
+                "baseline_kind": baseline_kind,
+                "baseline_credit_hours": baseline_credits,
+                "current_credit_hours": (baseline_credits if baseline_kind == "REGISTERED" else 0),
+                "expected_plan_credit_hours": (
+                    baseline_credits if baseline_kind == "EXPECTED_PLAN" else 0
+                ),
+                # The alternatives contain the complete modified timetable.  A
+                # separate baseline block would duplicate all retained courses.
+                "baseline_sections": [],
+                "alternatives": alternatives,
+                "must_take_courses": [added.get("course_code")] if added else [],
+                "constraints_satisfied": True,
+                "replacement": {
+                    "remove_course": removed,
+                    "add_course": added,
+                    "outside_plan_addition": selected.get("outside_plan_addition"),
+                    "academic_improvement": selected.get("academic_improvement"),
+                },
             }
         )
     return {}
@@ -432,17 +680,26 @@ def graduation_presentation_from_tool_results(
             for code, status in raw_status.items()
             if str(status).lower() == "passed" and _text(code, 32)
         }
-        current_rows = _course_rows(result.get("current_courses_assumed_passed"))
+        current_rows = _course_rows(
+            result.get("planning_baseline_courses_assumed_passed")
+            or result.get("current_courses_assumed_passed")
+        )
         current = {row["code"] for row in current_rows}
 
         future: dict[str, int] = {}
         future_names: dict[str, str] = {}
+        baseline_year = int(
+            result.get("planning_baseline_academic_year")
+            or result.get("scenario_academic_year")
+            or 0
+        )
+        baseline_term = int(
+            result.get("planning_baseline_term") or result.get("scenario_term") or 0
+        )
+        planning_term = f"{baseline_year}/{baseline_term}"
         band_labels = {
             "0": "Completed before the scenario",
-            "1": (
-                f"Current {int(result.get('scenario_academic_year') or 0)}/"
-                f"{int(result.get('scenario_term') or 0)}"
-            ),
+            "1": f"Planning baseline {planning_term}",
         }
         for planned in _items(result.get("term_plan"), _MAX_SIMULATED_TERMS):
             if not isinstance(planned, dict):
@@ -498,13 +755,15 @@ def graduation_presentation_from_tool_results(
             {
                 "kind": KIND_GRADUATION,
                 "program": result.get("program"),
-                "planning_term": band_labels["1"].removeprefix("Current "),
+                "planning_term": planning_term,
                 "simulation_completed": result.get("simulation_completed"),
-                "estimated_terms_including_current": result.get(
-                    "estimated_terms_including_current"
+                "estimated_terms_including_planning_baseline": result.get(
+                    "estimated_terms_including_planning_baseline",
+                    result.get("estimated_terms_including_current"),
                 ),
-                "lower_bound_terms_including_current": result.get(
-                    "lower_bound_terms_including_current"
+                "lower_bound_terms_including_planning_baseline": result.get(
+                    "lower_bound_terms_including_planning_baseline",
+                    result.get("lower_bound_terms_including_current"),
                 ),
                 "max_credits_per_term": result.get("max_credits_per_term"),
                 "graph": {

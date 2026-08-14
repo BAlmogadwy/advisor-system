@@ -59,6 +59,7 @@ INSTALLED_APPS = [
     "django.contrib.staticfiles",
     "core",
     "whatsapp_gateway",
+    "telegram_gateway",
     # New timetabling subsystem. Deliberately isolated from core's timetable
     # engine: shares no code, no tables and no state, so it cannot regress the
     # timetable in production use today. See docs/SCHEDULER-BLUEPRINT.md.
@@ -226,22 +227,126 @@ WHATSAPP_OTP_TTL_SECONDS = int(os.getenv("WHATSAPP_OTP_TTL_SECONDS", "300"))
 WHATSAPP_OTP_MAX_ATTEMPTS = int(os.getenv("WHATSAPP_OTP_MAX_ATTEMPTS", "5"))
 WHATSAPP_ALLOW_SUPER_ADMIN = os.getenv("WHATSAPP_ALLOW_SUPER_ADMIN", "false").lower() == "true"
 
-DEFAULT_FROM_EMAIL = os.getenv("DEFAULT_FROM_EMAIL", "advisor-bot@localhost")
+# Telegram Advisor Gateway. Keep credentials out of the repository.
+#
+# The channel is a TRANSPORT for the existing Student Advisor — it holds no prompt
+# and no model client of its own, and every one of these settings is either a
+# credential or a switch. See docs/TELEGRAM-ADVISOR-CHANNEL.md.
+#
+# Default OFF. A deployment that has not decided to run this feature must not
+# acquire a public webhook by upgrading.
+TELEGRAM_ADVISOR_ENABLED = os.getenv("TELEGRAM_ADVISOR_ENABLED", "false").lower() == "true"
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
+# Telegram echoes this in `X-Telegram-Bot-Api-Secret-Token` on every webhook call.
+# Unset means the webhook refuses everything — deliberately NOT relaxed under
+# DEBUG the way WHATSAPP_REQUIRE_SIGNATURE is, because "open in development" is a
+# default that travels.
+TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
+TELEGRAM_BOT_USERNAME = os.getenv("TELEGRAM_BOT_USERNAME", "")
+# Origin the linking URL is built from, e.g. https://advisor.example.edu. Without
+# it `/link` fails closed rather than sending a token pointing nowhere.
+TELEGRAM_PUBLIC_BASE_URL = os.getenv("TELEGRAM_PUBLIC_BASE_URL", "")
+TELEGRAM_LINK_TOKEN_TTL_SECONDS = int(os.getenv("TELEGRAM_LINK_TOKEN_TTL_SECONDS", "900"))
+# Linking is an account-security decision, so an old authenticated browser session
+# is not enough. The successful student login timestamp is stored in that exact
+# session and must still be within this window when the invitation is approved.
+TELEGRAM_LINK_AUTH_MAX_AGE_SECONDS = int(os.getenv("TELEGRAM_LINK_AUTH_MAX_AGE_SECONDS", "600"))
+# Bound the amount of normalized question text one chat can leave waiting in the
+# durable queue. The generation rate limit still governs model calls; this cap
+# protects storage when messages arrive faster than the worker can drain them.
+TELEGRAM_MAX_PENDING_PER_LINK = int(os.getenv("TELEGRAM_MAX_PENDING_PER_LINK", "10"))
+TELEGRAM_API_TIMEOUT_SECONDS = float(os.getenv("TELEGRAM_API_TIMEOUT_SECONDS", "30"))
+# Drain a newly committed queue job in the webhook process. Debugging only — a
+# turn can take ~90 s and Telegram redelivers anything it does not get a prompt
+# 200 for. Production must leave this false and run telegram_advisor_worker.
+# Pytest drains inline regardless of this value.
+TELEGRAM_DISPATCH_SYNC = os.getenv("TELEGRAM_DISPATCH_SYNC", "false").lower() == "true"
+# Separate privacy/operations switch for timetable images. A week grid is a
+# compact record of where a student is and when, and Telegram retains it as a
+# file. When enabled, the durable worker materialises only a typed photo recipe,
+# renders from the stored assistant message, and tracks photo progress separately
+# from the legacy-compatible text cursor. Keep the explicit default off for new
+# deployments.
+TELEGRAM_SEND_TIMETABLE_IMAGES = (
+    os.getenv("TELEGRAM_SEND_TIMETABLE_IMAGES", "false").lower() == "true"
+)
+# A graduation map reveals much more of a student's academic progression than a
+# weekly timetable. Keep it behind a second explicit consent/operations switch;
+# enabling timetable pictures must never silently broaden what leaves the
+# university surface.
+TELEGRAM_SEND_GRADUATION_IMAGES = (
+    os.getenv("TELEGRAM_SEND_GRADUATION_IMAGES", "false").lower() == "true"
+)
+# Optional local-development origin for the headless browser. It must stay on
+# loopback; a public hostname would expose the short-lived signed card URL. When
+# empty, the durable worker starts a card-only Django listener on an ephemeral
+# loopback port and serves only the renderer's exact source-asset allowlist.
+TELEGRAM_INTERNAL_BASE_URL = os.getenv("TELEGRAM_INTERNAL_BASE_URL", "")
+
+# The card renderer fetches over loopback, so the loopback Host must be allowed —
+# otherwise `CommonMiddleware` answers 400 DisallowedHost and the screenshot waits
+# 15 s for an attribute that will never appear. Added HERE rather than left to
+# DJANGO_ALLOWED_HOSTS because the operator sets that to the public hostname and
+# has no reason to guess that an internal fetch also needs a home.
+if TELEGRAM_SEND_TIMETABLE_IMAGES or TELEGRAM_SEND_GRADUATION_IMAGES:
+    for _loopback in ("127.0.0.1", "localhost"):
+        if _loopback not in ALLOWED_HOSTS:
+            ALLOWED_HOSTS.append(_loopback)
 
 # Email / SMTP (Gmail app-password). Credentials come from .env, never the repo.
-# Falls back to the console backend when no password is set, so dev works without
-# credentials and real mail starts the moment EMAIL_HOST_PASSWORD is filled in.
+# Local development may use the console backend, but production must never do so:
+# a console email contains the student's plaintext OTP and Render persists stdout
+# in service logs. A public production process therefore fails during settings
+# import unless an SMTP identity and credential are both present. Dedicated
+# worker/cron processes that cannot serve login routes may opt out explicitly;
+# they still default to SMTP rather than the console backend.
 EMAIL_HOST = os.getenv("EMAIL_HOST", "smtp.gmail.com")
 EMAIL_PORT = int(os.getenv("EMAIL_PORT", "587"))
 EMAIL_USE_TLS = os.getenv("EMAIL_USE_TLS", "true").lower() == "true"
 EMAIL_HOST_USER = os.getenv("EMAIL_HOST_USER", "")
 EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD", "")
 EMAIL_TIMEOUT = int(os.getenv("EMAIL_TIMEOUT", "20"))
-EMAIL_BACKEND = os.getenv(
-    "EMAIL_BACKEND",
-    "django.core.mail.backends.smtp.EmailBackend"
-    if EMAIL_HOST_PASSWORD
-    else "django.core.mail.backends.console.EmailBackend",
+_SMTP_EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
+_CONSOLE_EMAIL_BACKEND = "django.core.mail.backends.console.EmailBackend"
+EMAIL_BACKEND = os.getenv("EMAIL_BACKEND", "").strip() or (
+    _SMTP_EMAIL_BACKEND if EMAIL_HOST_PASSWORD or not DEBUG else _CONSOLE_EMAIL_BACKEND
+)
+ALLOW_NO_SMTP_PROCESS = os.getenv("ALLOW_NO_SMTP_PROCESS", "false").lower() == "true"
+DEFAULT_FROM_EMAIL = (
+    os.getenv("DEFAULT_FROM_EMAIL", "").strip()
+    or EMAIL_HOST_USER.strip()
+    or "advisor-bot@localhost"
+)
+
+
+def _require_production_smtp(
+    *,
+    debug: bool,
+    allow_no_smtp_process: bool,
+    backend: str,
+    host_user: str,
+    host_password: str,
+) -> None:
+    """Reject any public production process that could print OTPs to stdout."""
+
+    if debug or allow_no_smtp_process:
+        return
+    if backend != _SMTP_EMAIL_BACKEND:
+        raise ImproperlyConfigured(
+            "Production student OTP delivery requires Django's SMTP email backend."
+        )
+    if not host_user.strip() or not host_password:
+        raise ImproperlyConfigured(
+            "EMAIL_HOST_USER and EMAIL_HOST_PASSWORD are required in production."
+        )
+
+
+_require_production_smtp(
+    debug=DEBUG,
+    allow_no_smtp_process=ALLOW_NO_SMTP_PROCESS,
+    backend=EMAIL_BACKEND,
+    host_user=EMAIL_HOST_USER,
+    host_password=EMAIL_HOST_PASSWORD,
 )
 # Student OTP-login email domain (deterministic {student_id}@domain).
 STUDENT_EMAIL_DOMAIN = os.getenv("STUDENT_EMAIL_DOMAIN", "taibahu.edu.sa")

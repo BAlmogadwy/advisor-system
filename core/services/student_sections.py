@@ -261,20 +261,25 @@ def get_student_term_baseline(
 def append_unmapped_studying_courses(
     student_id: int | str,
     baseline: list[dict[str, object]],
+    *,
+    studying_rows: list[object] | None = None,
+    student_program: str | None = None,
+    credit_map: dict[str, int] | None = None,
 ) -> list[dict[str, object]]:
     """Keep registered-course totals honest when section mappings are partial."""
-    student_program = (
-        Student.objects.filter(student_id=student_id).values_list("program", flat=True).first()
-    )
+    if student_program is None and credit_map is None:
+        student_program = (
+            Student.objects.filter(student_id=student_id).values_list("program", flat=True).first()
+        )
 
-    credit_map: dict[str, int] = {}
-    if student_program:
+    resolved_credit_map: dict[str, int] = dict(credit_map or {})
+    if student_program and credit_map is None:
         for code, credits in ProgrammeRequirement.objects.filter(
             program__iexact=student_program,
         ).values_list("course_code", "credit_hours"):
             norm = normalize_code(code)
             if norm:
-                credit_map[norm] = credits or 0
+                resolved_credit_map[norm] = credits or 0
 
     seen_codes: set[str] = set()
     for row in baseline:
@@ -283,20 +288,24 @@ def append_unmapped_studying_courses(
             seen_codes.add(code)
 
     out = list(baseline)
-    studying_rows = (
-        StudentCourse.objects.filter(
-            student_id=student_id,
-            status__iexact="studying",
+    resolved_studying_rows = (
+        studying_rows
+        if studying_rows is not None
+        else list(
+            StudentCourse.objects.filter(
+                student_id=student_id,
+                status__iexact="studying",
+            )
+            .select_related("course")
+            .order_by("course__course_code")
         )
-        .select_related("course")
-        .order_by("course__course_code")
     )
-    for sc in studying_rows:
+    for sc in resolved_studying_rows:
         course = sc.course
         code = normalize_code(course.course_code)
         if not code or code in seen_codes:
             continue
-        credits = credit_map.get(code, course.credit_hours or 0)
+        credits = resolved_credit_map.get(code, course.credit_hours or 0)
         out.append(
             {
                 "course_code": course.course_code or code,

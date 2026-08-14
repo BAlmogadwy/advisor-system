@@ -483,6 +483,103 @@ def test_graduation_uses_planner_courses_as_current_without_persisting_passes(pl
     assert StudentTermSection.objects.filter(student_id=SID).count() == before_sections
 
 
+def _create_aligned_graduation_transition() -> tuple[int, str, str]:
+    """Create a term-7 current prerequisite and its term-8 dependant."""
+    from core.models import StudentTermSection, TermSection
+
+    student_id = 4509001  # joined in 1445; 1448/1 and 1448/2 align to levels 7 and 8
+    program = "TGRP"
+    prerequisite_code = "TGA701"
+    dependant_code = "TGB801"
+    Student.objects.create(
+        student_id=student_id,
+        name="Aligned Graduation Test",
+        program=program,
+        section="M",
+        total_earned_credits=90,
+        current_registered_credits=3,
+    )
+    for code, name, programme_term in (
+        (prerequisite_code, "Current prerequisite", 7),
+        (dependant_code, "Next-level dependant", 8),
+    ):
+        Course.objects.create(
+            course_code=code,
+            description=name,
+            credit_hours=3,
+        )
+        ProgrammeRequirement.objects.create(
+            program=program,
+            course_code=code,
+            course_name=name,
+            programme_term=programme_term,
+            credit_hours=3,
+            type="Mandatory",
+        )
+    Prerequisite.objects.create(
+        program=program,
+        course_code=dependant_code,
+        prerequisite_course_code=prerequisite_code,
+    )
+    section = TermSection.objects.create(
+        source_tag="expected",
+        course_code=prerequisite_code,
+        course_key=prerequisite_code,
+        section="M1",
+        course_name="Current prerequisite",
+    )
+    StudentTermSection.objects.create(
+        student_id=student_id,
+        academic_year="1448",
+        term="1",
+        term_section=section,
+        source="expected_timetable",
+    )
+    return student_id, prerequisite_code, dependant_code
+
+
+def test_graduation_first_projection_uses_passes_from_the_planning_baseline(plan):
+    from core.services.student_graduation import build_graduation_report
+
+    student_id, prerequisite_code, dependant_code = _create_aligned_graduation_transition()
+
+    report = build_graduation_report(student_id, 1448, 1)
+
+    assert report["planning_baseline_academic_year"] == 1448
+    assert report["planning_baseline_term"] == 1
+    assert (
+        report["planning_baseline_courses_assumed_passed"]
+        == report["current_courses_assumed_passed"]
+    )
+    assert [row["code"] for row in report["current_courses_assumed_passed"]] == [prerequisite_code]
+    assert report["term_plan"][0]["academic_year"] == 1448
+    assert report["term_plan"][0]["term"] == 2
+    assert dependant_code in report["term_plan"][0]["course_codes"]
+    assert prerequisite_code not in report["term_plan"][0]["course_codes"]
+
+
+def test_graduation_recommends_for_the_projected_term_not_the_baseline_term(plan, monkeypatch):
+    from core.services import student_graduation
+
+    student_id, _prerequisite_code, _dependant_code = _create_aligned_graduation_transition()
+    calls: list[tuple[int, int]] = []
+    real_recommender = student_graduation.recommend_next_courses_for_state
+
+    def record_recommender(student_id, year, term, **kwargs):
+        calls.append((year, term))
+        return real_recommender(student_id, year, term, **kwargs)
+
+    monkeypatch.setattr(
+        student_graduation,
+        "recommend_next_courses_for_state",
+        record_recommender,
+    )
+
+    student_graduation.build_graduation_report(student_id, 1448, 1)
+
+    assert calls[0] == (1448, 2)
+
+
 def test_every_simulated_term_respects_the_18_credit_cap(plan):
     from core.services.student_graduation import build_graduation_report
 
@@ -611,6 +708,46 @@ def test_current_term_what_if_rejects_unknown_removals_and_credit_overload(plan)
     assert "NOT_IN_CURRENT_TIMETABLE" in kinds
     assert "SCENARIO_EXCEEDS_CREDIT_CAP" in kinds
     assert g["what_if"]["scenario"] is None
+
+
+def test_current_term_what_if_does_not_treat_same_term_course_as_passed_prerequisite(plan):
+    from core.services.student_graduation import build_graduation_what_if
+
+    _add_what_if_fixture_courses()
+    _map_current_courses("TA101", "TFILL")
+    Course.objects.update_or_create(
+        course_code="TADD",
+        defaults={"description": "Requires Alpha first", "credit_hours": 3},
+    )
+    ProgrammeRequirement.objects.update_or_create(
+        program=PROG,
+        course_code="TADD",
+        defaults={
+            "course_name": "Requires Alpha first",
+            "programme_term": 2,
+            "credit_hours": 3,
+            "type": "Mandatory",
+        },
+    )
+    Prerequisite.objects.update_or_create(
+        program=PROG,
+        course_code="TADD",
+        prerequisite_course_code="TA101",
+    )
+
+    result = build_graduation_what_if(
+        SID,
+        1448,
+        1,
+        remove_current_courses=["TFILL"],
+        add_current_courses=["TADD"],
+    )
+
+    assert result["what_if"]["valid"] is False
+    assert {
+        (row.get("kind"), row.get("course_code"), tuple(row.get("missing_prerequisites") or []))
+        for row in result["what_if"]["validation_errors"]
+    } >= {("ADDED_COURSE_PREREQUISITES_UNMET", "TADD", ("TA101",))}
 
 
 def test_replacement_search_finds_only_proven_academic_improvements(plan):
@@ -790,6 +927,8 @@ def test_graduation_screen_names_the_scenario_and_does_not_promise_registration(
 
     assert "محاكاة لإكمال متطلبات الخطة" in body
     assert "ليست موعدًا رسميًا للتخرج" in body
+    assert "الفصل المرجعي للتخطيط" in body
+    assert "الفصل الحالي" not in body
     assert "18 ساعة/فصل رئيسي" in body
     assert "ماذا أستطيع أن أسجّل الآن؟" not in body
 
