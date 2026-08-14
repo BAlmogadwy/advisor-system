@@ -1,0 +1,40 @@
+from __future__ import annotations
+
+from pathlib import Path
+
+import yaml
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+WORKFLOW_PATH = PROJECT_ROOT / ".github" / "workflows" / "ci.yml"
+
+
+def _workflow() -> dict:
+    # BaseLoader preserves GitHub's literal ``on`` key instead of applying the
+    # YAML 1.1 boolean coercion used by PyYAML's SafeLoader.
+    document = yaml.load(WORKFLOW_PATH.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+    assert isinstance(document, dict)
+    return document
+
+
+def test_ci_runs_once_for_feature_prs_and_again_on_master() -> None:
+    triggers = _workflow()["on"]
+
+    assert triggers == {
+        "push": {"branches": ["master"]},
+        "pull_request": {"branches": ["master"]},
+    }
+
+
+def test_mypy_is_advisory_without_making_the_job_or_its_dependencies_fail() -> None:
+    typecheck = _workflow()["jobs"]["typecheck"]
+    mypy_step = next(step for step in typecheck["steps"] if step.get("run") == "mypy .")
+
+    assert "continue-on-error" not in typecheck
+    assert mypy_step["continue-on-error"] == "true"
+
+
+def test_only_the_non_web_test_runner_opts_out_of_production_smtp() -> None:
+    jobs = _workflow()["jobs"]
+
+    assert jobs["test"]["env"]["ALLOW_NO_SMTP_PROCESS"] == "true"
+    assert jobs["production-preflight"]["env"]["ALLOW_NO_SMTP_PROCESS"] == "false"

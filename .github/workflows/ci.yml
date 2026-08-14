@@ -2,7 +2,9 @@ name: ci
 
 on:
   push:
+    branches: [master]
   pull_request:
+    branches: [master]
 
 env:
   DJANGO_SETTINGS_MODULE: config.settings
@@ -36,7 +38,6 @@ jobs:
     # the backlog directly, starting with the top 6.
     name: typecheck (mypy, advisory)
     runs-on: ubuntu-latest
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -47,6 +48,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements-dev.txt
       - name: Mypy (non-blocking — output is visible but does not fail CI)
+        continue-on-error: true
         run: mypy .
 
   test:
@@ -55,6 +57,10 @@ jobs:
     env:
       DATABASE_URL: sqlite:////tmp/advisor-pytest-source.sqlite3
       ADVISOR_DB_PATH: /tmp/nonexistent-legacy-advisor.sqlite3
+      # Pytest is not a public web process. Some settings tests deliberately
+      # reload with DEBUG=false to prove unrelated production guards, so opt the
+      # runner out without weakening the production-preflight web contract.
+      ALLOW_NO_SMTP_PROCESS: 'true'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
