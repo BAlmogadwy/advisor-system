@@ -1456,6 +1456,140 @@ def test_a_short_answer_is_one_message():
     assert render_answer(answer="باقي لك ٣ مواد.") == ["باقي لك ٣ مواد."]
 
 
+def test_model_strong_markers_are_removed_from_arabic_and_english_answers():
+    from telegram_gateway.formatting import render_answer
+
+    answer = (
+        "**الخيار 1:** جدول بلا تعارض\n"
+        "- **1448/2:** DS321 وDS332\n"
+        "هل أسجل **DS491**؟ نعم،**إذا تحققت المتطلبات**.\n"
+        "Visit **https://example.edu/path**.\n"
+        "See **[student portal](https://example.edu/path)**.\n"
+        "**Assumptions:** **read-only scenario**"
+    )
+
+    assert render_answer(answer=answer) == [
+        "الخيار 1: جدول بلا تعارض\n"
+        "- 1448/2: DS321 وDS332\n"
+        "هل أسجل DS491؟ نعم،إذا تحققت المتطلبات.\n"
+        "Visit https://example.edu/path.\n"
+        "See [student portal](https://example.edu/path).\n"
+        "Assumptions: read-only scenario"
+    ]
+
+
+def test_strong_marker_cleanup_preserves_code_links_and_ambiguous_markers():
+    from telegram_gateway.formatting import render_answer
+
+    answer = (
+        r"Keep *single* _single_ [label](https://example.edu/a_b) `**code**` "
+        r"\**escaped** **unfinished"
+        "\n**first line\nsecond line**"
+        "\n```text\n**fenced code**\n```"
+        "\n__init__ CS__LAB__1 https://example.edu/__private__/file"
+        "\nCS**LAB**1 src/**/foo/**/bar https://example.edu/**private**/file"
+        "\n**/foo/** [portal](https://example.edu/find?q=**DS491**)"
+        "\nx.**y**.z 2+**3**+4"
+        "\nhttps://example.edu/(**DS491**) **DS*.csv**"
+    )
+
+    assert render_answer(answer=answer) == [answer]
+
+
+def test_unmatched_ticks_and_markers_do_not_hide_later_valid_strong_text():
+    from telegram_gateway.formatting import render_answer
+
+    answer = "before \\` **again**\n**unfinished then **valid**\nbefore ` **later**"
+
+    assert render_answer(answer=answer) == [
+        "before \\` again\n**unfinished then valid\nbefore ` later"
+    ]
+
+
+def test_strong_markers_can_wrap_protected_inline_code():
+    from telegram_gateway.formatting import render_answer
+
+    answer = "**Use `DS321` now** and **before `code` after** and **call `func(**kwargs)` now**."
+
+    assert render_answer(answer=answer) == [
+        "Use `DS321` now and before `code` after and call `func(**kwargs)` now."
+    ]
+
+
+def test_backslash_before_inline_code_close_does_not_unprotect_its_contents():
+    from telegram_gateway.formatting import render_answer
+
+    answer = "`x **literal**.\\` **outside**"
+
+    assert render_answer(answer=answer) == ["`x **literal**.\\` outside"]
+
+
+def test_longer_closing_fence_keeps_inner_markers_literal():
+    from telegram_gateway.formatting import render_answer
+
+    answer = "```text\n**fenced code**\n````\n**outside**"
+
+    assert render_answer(answer=answer) == ["```text\n**fenced code**\n````\noutside"]
+
+
+def test_backticks_inside_fence_do_not_close_it_early():
+    from telegram_gateway.formatting import render_answer
+
+    answer = (
+        "```text\n"
+        "some ``` literal\n"
+        "some ```` longer literal\n"
+        "**still fenced code**\n"
+        "```\n"
+        "**outside**"
+    )
+
+    assert render_answer(answer=answer) == [
+        "```text\nsome ``` literal\nsome ```` longer literal\n**still fenced code**\n```\noutside"
+    ]
+
+
+def test_line_start_triple_inline_code_does_not_shield_later_prose():
+    from telegram_gateway.formatting import render_answer
+
+    answer = "```code``` **outside**"
+
+    assert render_answer(answer=answer) == ["```code``` outside"]
+
+
+def test_nested_strong_cleanup_is_idempotent_without_a_depth_cap():
+    from telegram_gateway.formatting import render_answer
+
+    answer = "answer"
+    for _ in range(20):
+        answer = f"**level {answer} end**"
+
+    rendered = render_answer(answer=answer)
+
+    assert rendered == ["level " * 20 + "answer" + " end" * 20]
+    assert render_answer(answer=rendered[0]) == rendered
+
+
+def test_malformed_marker_sequence_is_preserved_instead_of_cross_paired():
+    from telegram_gateway.formatting import render_answer
+
+    answer = "**unfinished:**valid**"
+
+    assert render_answer(answer=answer) == [answer]
+
+
+def test_strong_markers_are_removed_before_message_chunking():
+    from telegram_gateway.formatting import render_answer
+
+    answer = "\n\n".join(f"**Section {index}:** " + ("word " * 20) for index in range(5))
+    chunks = render_answer(answer=answer, limit=80)
+
+    assert len(chunks) > 1
+    assert all(len(chunk) <= 80 for chunk in chunks)
+    assert all("**" not in chunk for chunk in chunks)
+    assert all(f"Section {index}:" in " ".join(chunks) for index in range(5))
+
+
 def test_an_empty_answer_sends_nothing():
     """Telegram rejects empty text, and a rejected send looks like an outage."""
     from telegram_gateway.formatting import render_answer, split_message
@@ -1466,15 +1600,16 @@ def test_an_empty_answer_sends_nothing():
 
 @CHANNEL_ON
 def test_telegram_formatting_is_never_interpreted(client, outbox):
-    """The answer is sent as plain text with no `parse_mode`, so an answer whose
-    own characters look like markup cannot change how the rest of it renders —
-    there is no escaping to get subtly wrong."""
+    """Only strong hints are unwrapped; no model markup is interpreted."""
     _link()
-    hostile = "المعدل *1.0* _تحذير_ [رابط](http://evil.example) `code` ~~شطب~~"
+    hostile = "**النتيجة:** المعدل *1.0* _تحذير_ [رابط](http://evil.example) `**code**` ~~شطب~~"
     with _adviser(answer=hostile):
         _post(client, _update(text="سؤال"))
 
-    assert hostile in " ".join(outbox.texts), "the answer was mangled by escaping"
+    rendered = " ".join(outbox.texts)
+    assert "النتيجة: المعدل" in rendered
+    assert "**النتيجة:**" not in rendered
+    assert "*1.0* _تحذير_ [رابط](http://evil.example) `**code**` ~~شطب~~" in rendered
     assert all("parse_mode" not in m for m in outbox.sent)
 
 
