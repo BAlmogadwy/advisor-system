@@ -34,6 +34,10 @@ EXPECTED_PUBLIC_ORIGIN = "https://advisor-system-v9zs.onrender.com"
 EXPECTED_PUBLIC_HOST = "advisor-system-v9zs.onrender.com"
 EXPECTED_NO_LEGACY_IMPORT_PATH = str(PurePosixPath("/", "tmp", "advisor-no-legacy-import.sqlite3"))
 EXPECTED_BUILD_COMMAND = "chmod +x build.sh && ./build.sh"
+EXPECTED_PLAYWRIGHT_BROWSERS_PATH = "0"
+EXPECTED_PLAYWRIGHT_INSTALL_COMMAND = (
+    "PLAYWRIGHT_BROWSERS_PATH=0 python -m playwright install chromium"
+)
 WEB_SERVICE_NAME = "advisor-system"
 WORKER_SERVICE_NAME = "advisor-telegram-worker"
 CRON_SERVICE_NAME = "advisor-purge-planner-drafts"
@@ -99,8 +103,8 @@ WEB_FIXED_ENV_VALUES = {
     "TELEGRAM_API_TIMEOUT_SECONDS": "30",
     "TELEGRAM_DISPATCH_SYNC": "false",
     "TELEGRAM_INTERNAL_BASE_URL": "",
-    "TELEGRAM_SEND_TIMETABLE_IMAGES": "false",
-    "TELEGRAM_SEND_GRADUATION_IMAGES": "false",
+    "TELEGRAM_SEND_TIMETABLE_IMAGES": "true",
+    "TELEGRAM_SEND_GRADUATION_IMAGES": "true",
     "LLM_BACKEND": "alibaba",
     "LOCAL_LLM_BASE_URL": "http://127.0.0.1:1234/v1",
     "LOCAL_LLM_MODEL": "",
@@ -229,12 +233,30 @@ def _python_version_errors(project_root: Path) -> list[str]:
     return errors
 
 
+def _playwright_build_errors(project_root: Path) -> list[str]:
+    """Require browser binaries to survive Render build-image promotion."""
+
+    build_script = project_root / "build.sh"
+    try:
+        lines = {line.strip() for line in build_script.read_text(encoding="utf-8").splitlines()}
+    except FileNotFoundError:
+        return ["build.sh is required for the Render image worker."]
+
+    if EXPECTED_PLAYWRIGHT_INSTALL_COMMAND not in lines:
+        return [
+            "build.sh must install Chromium with PLAYWRIGHT_BROWSERS_PATH=0 so the "
+            "running Render worker can resolve the browser binary."
+        ]
+    return []
+
+
 def validate_blueprint(
     document: Mapping[str, Any], *, project_root: Path = PROJECT_ROOT
 ) -> list[str]:
     """Return every production-contract violation in deterministic order."""
 
     errors = _python_version_errors(project_root)
+    errors.extend(_playwright_build_errors(project_root))
     services = _mapping_list(document.get("services"))
     databases = _mapping_list(document.get("databases"))
 
@@ -374,6 +396,14 @@ def validate_blueprint(
 
         if worker_env.get("DJANGO_DEBUG", {}).get("value") != "false":
             errors.append(f"{WORKER_SERVICE_NAME} must explicitly set DJANGO_DEBUG=false.")
+        if (
+            worker_env.get("PLAYWRIGHT_BROWSERS_PATH", {}).get("value")
+            != EXPECTED_PLAYWRIGHT_BROWSERS_PATH
+        ):
+            errors.append(
+                f"{WORKER_SERVICE_NAME}:PLAYWRIGHT_BROWSERS_PATH must be fixed to "
+                f"{EXPECTED_PLAYWRIGHT_BROWSERS_PATH!r}."
+            )
         if worker_env.get("ALLOW_NO_SMTP_PROCESS", {}).get("value") != "true":
             errors.append(
                 f"{WORKER_SERVICE_NAME} must explicitly opt out of web-only SMTP validation."

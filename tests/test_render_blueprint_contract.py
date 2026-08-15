@@ -247,14 +247,15 @@ def test_contract_requires_disabled_worker_standby(blueprint: Blueprint) -> None
     assert any("no-lease standby" in error for error in errors)
 
 
-def test_contract_requires_reviewed_live_rollout_and_keeps_images_off(
+def test_contract_requires_reviewed_live_rollout_and_both_image_exports(
     blueprint: Blueprint,
 ) -> None:
     changed = deepcopy(blueprint)
     web = _service(changed, "advisor-system")
     env = {entry["key"]: entry for entry in web["envVars"]}
     env["TELEGRAM_ADVISOR_ENABLED"]["value"] = "false"
-    env["TELEGRAM_SEND_TIMETABLE_IMAGES"]["value"] = "true"
+    env["TELEGRAM_SEND_TIMETABLE_IMAGES"]["value"] = "false"
+    env["TELEGRAM_SEND_GRADUATION_IMAGES"]["value"] = "false"
     env["ALIBABA_LLM_ALLOW_LIVE_REQUESTS"]["value"] = "false"
     env["STUDENT_ADVISOR_V2_ENABLED"]["value"] = "false"
 
@@ -262,8 +263,30 @@ def test_contract_requires_reviewed_live_rollout_and_keeps_images_off(
 
     assert any("TELEGRAM_ADVISOR_ENABLED" in error for error in errors)
     assert any("TELEGRAM_SEND_TIMETABLE_IMAGES" in error for error in errors)
+    assert any("TELEGRAM_SEND_GRADUATION_IMAGES" in error for error in errors)
     assert any("ALIBABA_LLM_ALLOW_LIVE_REQUESTS" in error for error in errors)
     assert any("STUDENT_ADVISOR_V2_ENABLED" in error for error in errors)
+
+
+def test_contract_keeps_playwright_browser_inside_the_deployed_worker(
+    blueprint: Blueprint, tmp_path: Path
+) -> None:
+    (tmp_path / ".python-version").write_text("3.11.9\n", encoding="utf-8")
+    (tmp_path / "build.sh").write_text(
+        "#!/usr/bin/env bash\npython -m playwright install chromium\n",
+        encoding="utf-8",
+    )
+    changed = deepcopy(blueprint)
+    worker = _service(changed, WORKER_SERVICE_NAME)
+    playwright_path = next(
+        item for item in worker["envVars"] if item["key"] == "PLAYWRIGHT_BROWSERS_PATH"
+    )
+    playwright_path["value"] = "/opt/render/.cache/ms-playwright"
+
+    errors = validate_blueprint(changed, project_root=tmp_path)
+
+    assert any("build.sh must install Chromium" in error for error in errors)
+    assert any("PLAYWRIGHT_BROWSERS_PATH" in error for error in errors)
 
 
 def test_contract_allows_sync_false_only_for_reviewed_secrets(blueprint: Blueprint) -> None:
