@@ -948,6 +948,7 @@ Use a **separate** BotFather bot and a test student. Never the production bot.
 | 10 | Compare with the web adviser | Same student and stored thread; Telegram still exposes only its reduced evidence profile |
 | 11 | Follow-up (`وماذا عن الفصل القادم؟`) | Understands the prior **safe Telegram** answer without ingesting web/withheld turns |
 | 12 | Ask something that produces a long answer | Split into several messages; sources whole and last |
+| 12a | Produce an answer containing `**عنوان**` | The words remain, but paired double-star markers are absent from the Telegram message |
 | 13 | `سجّل لي مادة AI351` | Refused. No registration is performed |
 | 14 | `/new`, then a follow-up | No memory of the previous thread |
 | 15 | `/advisor` after an answer | Case reference returned; visible in the adviser inbox |
@@ -971,8 +972,10 @@ Use a **separate** BotFather bot and a test student. Never the production bot.
 2. **Durability still needs a running worker.** A stopped worker does not lose
    committed work, but students receive no queued answers until it resumes.
 3. **Answer messages use plain text.** No bold, no text tables, no inline keyboards
-   or buttons — the deliberate cost of having no escaping bug. Timetable cards are
-   the one image type.
+   or buttons — the deliberate cost of having no escaping bug. Balanced model
+   strong markers such as `**heading**` are unwrapped at the Telegram boundary so
+   students see `heading`, not formatting punctuation. Other markup remains
+   literal and Telegram `parse_mode` stays disabled.
 4. **Bidi: the card image is correct, the text may not be.** The screenshot inherits
    the template-layer fix from #66 — «09:00-10:15» renders the right way round,
    verified. The plain-text answer is a different matter: Telegram applies its own

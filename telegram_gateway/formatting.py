@@ -4,10 +4,10 @@ Three problems, and the third is the one that bites.
 
 **Markup.** The answer is written by a model and contains course codes, policy
 references and bracketed ids. Sent under any Telegram parse mode those characters
-become syntax. The gateway sends plain text and sets no `parse_mode` at all, so
-there is no escaping to get subtly wrong — `escape_markdown_v2` exists here for a
-future caller that genuinely needs markup, and is tested, but nothing in the
-delivery path uses it.
+become syntax. The gateway sends plain text and sets no `parse_mode` at all. A
+small Telegram-only normaliser unwraps balanced strong-emphasis delimiters such
+as ``**heading**`` so model formatting hints do not appear as literal stars. It
+does not interpret links, code, single stars or unmatched delimiters.
 
 **Length.** Telegram refuses anything over 4096 characters, and truncation on a
 course adviser is not a cosmetic failure: the part that falls off the end is the
@@ -38,6 +38,8 @@ SAFE_CHUNK_CHARS = 3500
 #: Characters Telegram's MarkdownV2 treats as syntax. Reserved for a caller that
 #: opts into markup; the delivery path sends plain text.
 _MARKDOWN_V2_SPECIALS = r"_*[]()~`>#+-=|{}.!\\"
+_ABSOLUTE_URL = re.compile(r"https?://[^\s<>\"']+", flags=re.IGNORECASE)
+_URL_TRAILING_PUNCTUATION = frozenset(".,;:!?،؛؟)]}")
 
 
 def escape_markdown_v2(text: str) -> str:
@@ -49,6 +51,239 @@ def escape_markdown_v2(text: str) -> str:
     backslash in the answer eats the escape of whatever follows.
     """
     return re.sub(f"([{re.escape(_MARKDOWN_V2_SPECIALS)}])", r"\\\1", str(text or ""))
+
+
+def _is_escaped(text: str, position: int) -> bool:
+    """Whether the character at ``position`` follows an odd backslash run."""
+
+    backslashes = 0
+    cursor = position - 1
+    while cursor >= 0 and text[cursor] == "\\":
+        backslashes += 1
+        cursor -= 1
+    return bool(backslashes % 2)
+
+
+def _strong_marker_positions(text: str, *, protected: list[bool]) -> list[int]:
+    """Offsets of unescaped ``**`` runs, never a slice of a longer star run."""
+
+    positions: list[int] = []
+    cursor = 0
+    while cursor < len(text) - 1:
+        position = text.find("**", cursor)
+        if position < 0:
+            break
+        before_is_star = position > 0 and text[position - 1] == "*"
+        after = position + 2
+        after_is_star = after < len(text) and text[after] == "*"
+        if (
+            not before_is_star
+            and not after_is_star
+            and not _is_escaped(text, position)
+            and not protected[position]
+            and not protected[position + 1]
+        ):
+            positions.append(position)
+        cursor = position + 2
+    return positions
+
+
+def _matching_inline_backtick_run(
+    text: str,
+    delimiter: str,
+    start: int,
+) -> tuple[int, int] | None:
+    """Find an exact inline-code delimiter and return its complete run."""
+
+    position = text.find("`", start)
+    while position >= 0:
+        run_end = position + 1
+        while run_end < len(text) and text[run_end] == "`":
+            run_end += 1
+        run_length = run_end - position
+        # Backslashes are literal inside a Markdown code span; they do not escape
+        # its closing delimiter.
+        if run_length == len(delimiter):
+            return position, run_end
+        position = text.find("`", run_end)
+    return None
+
+
+def _has_fence_indent(text: str, position: int) -> bool:
+    line_start = text.rfind("\n", 0, position) + 1
+    indent = text[line_start:position]
+    return len(indent) <= 3 and not indent.strip(" ")
+
+
+def _is_fence_opener(text: str, opening: int, run_end: int) -> bool:
+    if run_end - opening < 3 or not _has_fence_indent(text, opening):
+        return False
+    line_end = text.find("\n", run_end)
+    if line_end < 0:
+        line_end = len(text)
+    return "`" not in text[run_end:line_end]
+
+
+def _matching_fence_run(text: str, minimum: int, start: int) -> tuple[int, int] | None:
+    """Find a CommonMark-style closing fence, never a backtick run in code."""
+
+    position = text.find("`", start)
+    while position >= 0:
+        run_end = position + 1
+        while run_end < len(text) and text[run_end] == "`":
+            run_end += 1
+        line_end = text.find("\n", run_end)
+        if line_end < 0:
+            line_end = len(text)
+        trailing = text[run_end:line_end]
+        if (
+            not _is_escaped(text, position)
+            and run_end - position >= minimum
+            and _has_fence_indent(text, position)
+            and not trailing.strip(" \t\r")
+        ):
+            return position, run_end
+        position = text.find("`", run_end)
+    return None
+
+
+def _matched_code_mask(text: str) -> list[bool]:
+    """Mark matched backtick regions whose literal contents must never change."""
+
+    protected = [False] * len(text)
+    cursor = 0
+    while cursor < len(text):
+        opening = text.find("`", cursor)
+        if opening < 0:
+            break
+        run_end = opening + 1
+        while run_end < len(text) and text[run_end] == "`":
+            run_end += 1
+        if _is_escaped(text, opening):
+            cursor = run_end
+            continue
+        delimiter = text[opening:run_end]
+        is_fence = _is_fence_opener(text, opening, run_end)
+        closing = (
+            _matching_fence_run(text, len(delimiter), run_end)
+            if is_fence
+            else _matching_inline_backtick_run(text, delimiter, run_end)
+        )
+        if closing is None:
+            if is_fence:
+                protected[opening:] = [True] * (len(text) - opening)
+                break
+            cursor = run_end
+            continue
+        _closing_start, closing_end = closing
+        protected[opening:closing_end] = [True] * (closing_end - opening)
+        cursor = closing_end
+    return protected
+
+
+def _protected_literal_mask(text: str) -> list[bool]:
+    """Protect code and absolute URLs from any output-only punctuation cleanup."""
+
+    protected = _matched_code_mask(text)
+    for match in _ABSOLUTE_URL.finditer(text):
+        start, end = match.span()
+        closing = text.rfind("**", start, end)
+        line_start = text.rfind("\n", 0, start) + 1
+        opening = text.rfind("**", line_start, start)
+        trailing = text[closing + 2 : end] if closing >= 0 else ""
+        has_outer_closing = (
+            opening >= line_start
+            and closing >= start
+            and not _is_escaped(text, opening)
+            and all(character in _URL_TRAILING_PUNCTUATION for character in trailing)
+            and _has_prose_boundaries(text, opening, closing, protected=protected)
+        )
+        if has_outer_closing:
+            # Preserve the URL itself while leaving its surrounding prose-level
+            # markers visible to the normaliser.
+            protected[start:closing] = [True] * (closing - start)
+            continue
+        protected[start:end] = [True] * (end - start)
+    return protected
+
+
+def _has_prose_boundaries(
+    text: str,
+    opening: int,
+    closing: int,
+    *,
+    protected: list[bool],
+) -> bool:
+    """Reject token-internal/path delimiters that only resemble emphasis."""
+
+    before = text[opening - 1] if opening else ""
+    after_position = closing + 2
+    after = text[after_position] if after_position < len(text) else ""
+    valid_before = not before or before.isspace() or before in "([{\"'“‘«،؛؟"
+    valid_after = not after or after.isspace() or after in ".,;:!?،؛؟)]}\"'”’»"
+    content_start = text[opening + 2]
+    content_end = text[closing - 1]
+    invalid_content_edges = "_/\\*"
+    has_unprotected_star = any(
+        text[position] == "*" and not protected[position]
+        for position in range(opening + 2, closing)
+    )
+    valid_content = (
+        not content_start.isspace()
+        and not content_end.isspace()
+        and content_start not in invalid_content_edges
+        and content_end not in invalid_content_edges
+        and not has_unprotected_star
+    )
+    return valid_before and valid_after and valid_content
+
+
+def _unwrap_strong_markers(text: str) -> str:
+    """Remove paired model strong markers without interpreting other markup.
+
+    Repeating passes handle nested strong spans while every successful
+    substitution makes the string shorter. Backtick code regions, escaped,
+    unmatched, multiline and whitespace-only pairs remain literal so ordinary
+    prose and course identifiers are never guessed at.
+    """
+
+    rendered = str(text or "")
+    while True:
+        protected = _protected_literal_mask(rendered)
+        positions = _strong_marker_positions(rendered, protected=protected)
+        parts: list[str] = []
+        cursor = 0
+        marker_index = 0
+        changed = False
+        while marker_index + 1 < len(positions):
+            opening = positions[marker_index]
+            closing = positions[marker_index + 1]
+            content = rendered[opening + 2 : closing]
+            if (
+                content
+                and not content[0].isspace()
+                and not content[-1].isspace()
+                and "\n" not in content
+                and "\r" not in content
+                and _has_prose_boundaries(
+                    rendered,
+                    opening,
+                    closing,
+                    protected=protected,
+                )
+            ):
+                parts.append(rendered[cursor:opening])
+                parts.append(content)
+                cursor = closing + 2
+                marker_index += 2
+                changed = True
+                continue
+            marker_index += 1
+        if not changed:
+            break
+        parts.append(rendered[cursor:])
+        rendered = "".join(parts)
+    return rendered
 
 
 def _split_oversized(block: str, limit: int) -> list[str]:
@@ -135,7 +370,7 @@ def render_answer(
     the card in chat messages, the student is pointed at the screen that already
     draws it.
     """
-    body = str(answer or "").strip()
+    body = _unwrap_strong_markers(str(answer or "").strip())
     if not body:
         return []
 
