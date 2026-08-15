@@ -38,3 +38,17 @@ def test_only_the_non_web_test_runner_opts_out_of_production_smtp() -> None:
 
     assert jobs["test"]["env"]["ALLOW_NO_SMTP_PROCESS"] == "true"
     assert jobs["production-preflight"]["env"]["ALLOW_NO_SMTP_PROCESS"] == "false"
+
+
+def test_production_health_probe_cannot_hang_the_release_gate() -> None:
+    preflight = _workflow()["jobs"]["production-preflight"]
+    health_step = next(
+        step
+        for step in preflight["steps"]
+        if step.get("name")
+        == "Boot the production web command and probe post-replacement database health"
+    )
+    command = health_step["run"]
+
+    assert "curl --connect-timeout 2 --max-time 3" in command
+    assert "for attempt in $(seq 1 30)" in command

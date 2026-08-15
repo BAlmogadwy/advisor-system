@@ -754,7 +754,7 @@ jobs:
           trap 'kill "$web_pid" 2>/dev/null || true' EXIT
           healthy=false
           for attempt in $(seq 1 30); do
-            if curl --fail --silent --show-error \
+            if curl --connect-timeout 2 --max-time 3 --fail --silent --show-error \
               --header 'Host: ci.example.invalid' \
               --header 'X-Forwarded-Proto: https' \
               http://127.0.0.1:8000/health/ >/tmp/advisor-health.json; then
