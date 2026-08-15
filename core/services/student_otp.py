@@ -77,16 +77,21 @@ def _hash(code: str) -> str:
     return hmac.new(settings.SECRET_KEY.encode(), code.encode(), hashlib.sha256).hexdigest()
 
 
-def _send_code(student_id: int, code: str) -> None:
+def _send_code(student_id: int, code: str, *, recipient_override: str = "") -> None:
     minutes = max(1, settings.STUDENT_OTP_TTL_SECONDS // 60)
     # Testing escape hatch: when STUDENT_OTP_REDIRECT_EMAIL is set, every code goes
     # there instead of the student's real mailbox (so testing never emails a student).
-    redirect_to = getattr(settings, "STUDENT_OTP_REDIRECT_EMAIL", "")
-    recipient = redirect_to or student_email(student_id)
-    if redirect_to:
-        logger.warning(
-            "student OTP for %s redirected to %s (testing mode)", student_id, redirect_to
-        )
+    # It deliberately retains precedence over a caller-specific override, preserving
+    # its existing global semantics for test environments that already use it.
+    global_redirect = str(getattr(settings, "STUDENT_OTP_REDIRECT_EMAIL", "") or "").strip()
+    explicit_redirect = str(recipient_override or "").strip()
+    intended_recipient = student_email(student_id)
+    recipient = global_redirect or explicit_redirect or intended_recipient
+    if recipient != intended_recipient:
+        # A redirect is operationally important, but neither side of that mapping
+        # belongs in logs: both the student id and the test receiver are personal
+        # identifiers. The email body carries the intended mailbox to the operator.
+        logger.warning("student OTP redirected to a testing inbox")
     send_mail(
         subject="رمز الدخول / Advisor login code",
         message=(
@@ -94,7 +99,11 @@ def _send_code(student_id: int, code: str) -> None:
             f"ينتهي خلال {minutes} دقيقة. لا تشارك هذا الرمز مع أحد.\n\n"
             f"Your login code is: {code}\n"
             f"It expires in {minutes} minutes. Do not share it with anyone."
-            + (f"\n\n[testing] intended for {student_email(student_id)}" if redirect_to else "")
+            + (
+                f"\n\n[testing] intended for {intended_recipient}"
+                if recipient != intended_recipient
+                else ""
+            )
         ),
         from_email=settings.DEFAULT_FROM_EMAIL,
         recipient_list=[recipient],
@@ -102,7 +111,7 @@ def _send_code(student_id: int, code: str) -> None:
     )
 
 
-def issue_otp(student_id: int, ip: str = "") -> None:
+def issue_otp(student_id: int, ip: str = "", *, recipient_override: str = "") -> None:
     """Generate + email a fresh code, invalidating prior unconsumed ones.
     Email is dispatched asynchronously by default so the request returns in
     constant time (no valid-ID timing oracle) and an SMTP outage never 500s.
@@ -126,9 +135,12 @@ def issue_otp(student_id: int, ip: str = "") -> None:
 
     def _dispatch() -> None:
         try:
-            _send_code(student_id, code)
+            _send_code(student_id, code, recipient_override=recipient_override)
         except Exception:  # noqa: BLE001 — never surface SMTP errors to the caller / 500
-            logger.exception("student OTP email failed for %s", student_id)
+            # SMTP exceptions can echo envelope recipients. Keep both the log
+            # message and its metadata identifier-free; delivery is deliberately
+            # best-effort and the caller receives the enumeration-safe response.
+            logger.error("student OTP email delivery failed")
 
     if getattr(settings, "STUDENT_OTP_ASYNC_EMAIL", True):
         threading.Thread(target=_dispatch, daemon=True).start()

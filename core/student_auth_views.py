@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timedelta
+from urllib.parse import urlsplit
 
 from django.conf import settings
 from django.contrib.auth import login
@@ -116,18 +117,66 @@ def _remember_next(request: HttpRequest) -> None:
 
 def _post_login_redirect(request: HttpRequest):
     """Where sign-in lands. `student_home` unless something asked for elsewhere."""
-    stored = request.session.pop(_NEXT_SESSION_KEY, None)
+    destination = _fresh_next_destination(request, consume=True)
+    return redirect(destination) if destination else redirect("student_home")
+
+
+def _fresh_next_destination(request: HttpRequest, *, consume: bool = False) -> str:
+    """Return the saved destination only while it belongs to this login attempt."""
+
+    stored = (
+        request.session.pop(_NEXT_SESSION_KEY, None)
+        if consume
+        else request.session.get(_NEXT_SESSION_KEY)
+    )
     if not isinstance(stored, dict):
-        return redirect("student_home")
+        return ""
     try:
         asked_at = datetime.fromisoformat(str(stored.get("at") or ""))
-    except ValueError:
-        return redirect("student_home")
-    if timezone.now() - asked_at > timedelta(seconds=_NEXT_MAX_AGE_SECONDS):
-        # Stale: this belongs to an abandoned attempt, not to whoever just signed in.
-        return redirect("student_home")
+        age = timezone.now() - asked_at
+    except (TypeError, ValueError):
+        return ""
+    if age < timedelta(0) or age > timedelta(seconds=_NEXT_MAX_AGE_SECONDS):
+        return ""
     destination = str(stored.get("url") or "")
-    return redirect(destination) if destination else redirect("student_home")
+    return destination[:500] if destination else ""
+
+
+def _telegram_link_otp_recipient(request: HttpRequest) -> str:
+    """Return the test inbox only for a fresh, live Telegram linking ceremony.
+
+    The saved ``next`` is treated as a hint, not authority: resolve it through
+    Django's URL configuration and re-check the opaque invitation immediately
+    before issuing the OTP. Invalid, expired, consumed, stale, disabled, and
+    non-link destinations all fail closed to ordinary student email delivery.
+    """
+
+    recipient = str(getattr(settings, "TELEGRAM_LINK_OTP_REDIRECT_EMAIL", "") or "").strip()
+    if not recipient:
+        return ""
+
+    destination = _fresh_next_destination(request)
+    if not destination:
+        return ""
+
+    from django.urls import Resolver404, resolve
+
+    try:
+        match = resolve(urlsplit(destination).path)
+    except (Resolver404, ValueError):
+        return ""
+    if match.url_name != "telegram_link_start":
+        return ""
+
+    token = str(match.kwargs.get("token") or "")
+    if not token:
+        return ""
+
+    from telegram_gateway import bot, linking
+
+    if not bot.is_enabled() or linking.peek_token(token) is None:
+        return ""
+    return recipient
 
 
 def _ip_throttled(request: HttpRequest, bucket: str, limit: int, window: int) -> bool:
@@ -205,7 +254,11 @@ def student_login_view(request: HttpRequest) -> HttpResponse:
 
     if exists:
         try:
-            issue_otp(student_id, _client_ip(request))
+            issue_otp(
+                student_id,
+                _client_ip(request),
+                recipient_override=_telegram_link_otp_recipient(request),
+            )
         except OTPError:
             # Rate-limited or send-failed: swallow silently so the response is
             # identical to the unknown-id / success paths (no enumeration branch).
