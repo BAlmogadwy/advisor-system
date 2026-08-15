@@ -1,13 +1,16 @@
 """Student OTP login + role/scope isolation (Phase A + B)."""
 
 import json
+import logging
 import re
+from datetime import timedelta
 
 import pytest
 from django.contrib.auth.models import Group, User
 from django.core import mail
 from django.test import Client, override_settings
 from django.urls import reverse
+from django.utils import timezone
 
 from core.authz import ROLE_ORDER
 from core.models import Student, StudentLoginOTP
@@ -23,6 +26,7 @@ from core.services.rbac import (
 LOCMEM = "django.core.mail.backends.locmem.EmailBackend"
 SID = 4901234
 OTHER = 4905678
+TELEGRAM_LINK_TEST_INBOX = "operator@example.invalid"
 pytestmark = pytest.mark.django_db
 
 
@@ -32,6 +36,7 @@ def _deterministic_env(settings):
     on it. Per-test @override_settings still wins over these defaults."""
     settings.STUDENT_LOGIN_NO_OTP = False
     settings.STUDENT_OTP_REDIRECT_EMAIL = ""
+    settings.TELEGRAM_LINK_OTP_REDIRECT_EMAIL = ""
 
 
 @pytest.fixture
@@ -162,6 +167,183 @@ def test_unknown_id_is_enumeration_resistant(students):
     assert r.status_code == 200 and b'name="code"' in r.content  # same OTP step as a real id
     assert mail.outbox == []  # but nothing was actually sent
     assert c.post("/student/login/verify/", {"code": "123456"}).status_code == 200  # cannot log in
+
+
+def _start_email_otp_login(client: Client, *, destination: str = "", ip: str) -> None:
+    if destination:
+        response = client.get(f"{reverse('student_login')}?next={destination}")
+        assert response.status_code == 200
+    mail.outbox = []
+    response = client.post(
+        reverse("student_login"),
+        {"student_id": str(SID)},
+        REMOTE_ADDR=ip,
+    )
+    assert response.status_code == 200
+    assert len(mail.outbox) == 1
+
+
+def _assert_private_redirect_warning(caplog) -> None:
+    warnings = [
+        record.getMessage()
+        for record in caplog.records
+        if record.name == "core.services.student_otp" and "redirected" in record.getMessage()
+    ]
+    assert warnings == ["student OTP redirected to a testing inbox"]
+    joined = " ".join(warnings).lower()
+    assert str(SID) not in joined
+    assert TELEGRAM_LINK_TEST_INBOX not in joined
+    assert f"{SID}@taibahu.edu.sa" not in joined
+
+
+@override_settings(
+    EMAIL_BACKEND=LOCMEM,
+    STUDENT_OTP_ASYNC_EMAIL=False,
+    STUDENT_OTP_REDIRECT_EMAIL="",
+    TELEGRAM_LINK_OTP_REDIRECT_EMAIL=TELEGRAM_LINK_TEST_INBOX,
+    TELEGRAM_ADVISOR_ENABLED=True,
+    ALLOWED_HOSTS=["testserver"],
+)
+def test_live_telegram_link_redirects_only_its_login_otp_and_names_intended_student(
+    students, caplog
+):
+    from telegram_gateway import linking
+
+    issued = linking.issue_link_token(telegram_user_id=70000001)
+    destination = reverse("telegram_link_start", args=[issued.raw_token])
+    client = Client()
+
+    with caplog.at_level(logging.WARNING, logger="core.services.student_otp"):
+        _start_email_otp_login(client, destination=destination, ip="10.21.0.1")
+
+    email = mail.outbox[-1]
+    assert email.to == [TELEGRAM_LINK_TEST_INBOX]
+    assert f"[testing] intended for {SID}@taibahu.edu.sa" in email.body
+    _assert_private_redirect_warning(caplog)
+
+
+@override_settings(
+    EMAIL_BACKEND=LOCMEM,
+    STUDENT_OTP_ASYNC_EMAIL=False,
+    STUDENT_OTP_REDIRECT_EMAIL="",
+    TELEGRAM_LINK_OTP_REDIRECT_EMAIL=TELEGRAM_LINK_TEST_INBOX,
+    TELEGRAM_ADVISOR_ENABLED=True,
+    ALLOWED_HOSTS=["testserver"],
+)
+def test_plain_student_login_is_isolated_from_telegram_link_otp_redirect(students):
+    client = Client()
+
+    _start_email_otp_login(client, ip="10.21.0.2")
+
+    assert mail.outbox[-1].to == [f"{SID}@taibahu.edu.sa"]
+    assert "[testing] intended for" not in mail.outbox[-1].body
+
+
+@pytest.mark.parametrize("invitation_state", ["invalid", "expired", "consumed", "disabled"])
+@override_settings(
+    EMAIL_BACKEND=LOCMEM,
+    STUDENT_OTP_ASYNC_EMAIL=False,
+    STUDENT_OTP_REDIRECT_EMAIL="",
+    TELEGRAM_LINK_OTP_REDIRECT_EMAIL=TELEGRAM_LINK_TEST_INBOX,
+    TELEGRAM_ADVISOR_ENABLED=True,
+    ALLOWED_HOSTS=["testserver"],
+)
+def test_unavailable_telegram_link_fails_closed_to_student_email(students, invitation_state):
+    from telegram_gateway import linking
+    from telegram_gateway.models import TelegramLinkToken
+
+    if invitation_state == "invalid":
+        raw_token = "not-a-real-invitation"
+    else:
+        issued = linking.issue_link_token(telegram_user_id=70000002)
+        raw_token = issued.raw_token
+        token = TelegramLinkToken.objects.filter(token_hash=linking.hash_token(raw_token))
+        if invitation_state == "expired":
+            token.update(expires_at=timezone.now() - timedelta(seconds=1))
+        elif invitation_state == "consumed":
+            token.update(consumed_at=timezone.now())
+    destination = reverse("telegram_link_start", args=[raw_token])
+    client = Client()
+
+    with override_settings(TELEGRAM_ADVISOR_ENABLED=invitation_state != "disabled"):
+        _start_email_otp_login(
+            client,
+            destination=destination,
+            ip={
+                "invalid": "10.21.0.3",
+                "expired": "10.21.0.4",
+                "consumed": "10.21.0.6",
+                "disabled": "10.21.0.7",
+            }[invitation_state],
+        )
+
+    assert mail.outbox[-1].to == [f"{SID}@taibahu.edu.sa"]
+
+
+@override_settings(
+    EMAIL_BACKEND=LOCMEM,
+    STUDENT_OTP_ASYNC_EMAIL=False,
+    STUDENT_OTP_REDIRECT_EMAIL="",
+    TELEGRAM_LINK_OTP_REDIRECT_EMAIL=TELEGRAM_LINK_TEST_INBOX,
+    TELEGRAM_ADVISOR_ENABLED=True,
+    ALLOWED_HOSTS=["testserver"],
+)
+def test_stale_telegram_link_login_attempt_fails_closed_to_student_email(students):
+    from telegram_gateway import linking
+
+    issued = linking.issue_link_token(telegram_user_id=70000003)
+    destination = reverse("telegram_link_start", args=[issued.raw_token])
+    client = Client()
+    assert client.get(f"{reverse('student_login')}?next={destination}").status_code == 200
+    session = client.session
+    stored = session["post_login_next"]
+    stored["at"] = (timezone.now() - timedelta(hours=2)).isoformat()
+    session["post_login_next"] = stored
+    session.save()
+
+    _start_email_otp_login(client, ip="10.21.0.5")
+
+    assert mail.outbox[-1].to == [f"{SID}@taibahu.edu.sa"]
+
+
+@override_settings(EMAIL_BACKEND=LOCMEM, STUDENT_OTP_ASYNC_EMAIL=False)
+def test_existing_global_otp_redirect_keeps_precedence_over_explicit_override(students, caplog):
+    mail.outbox = []
+    with (
+        override_settings(STUDENT_OTP_REDIRECT_EMAIL="global-test@example.invalid"),
+        caplog.at_level(logging.WARNING, logger="core.services.student_otp"),
+    ):
+        student_otp.issue_otp(SID, recipient_override=TELEGRAM_LINK_TEST_INBOX)
+
+    assert mail.outbox[-1].to == ["global-test@example.invalid"]
+    assert f"[testing] intended for {SID}@taibahu.edu.sa" in mail.outbox[-1].body
+    _assert_private_redirect_warning(caplog)
+
+
+@override_settings(
+    EMAIL_BACKEND=LOCMEM,
+    STUDENT_OTP_ASYNC_EMAIL=False,
+    STUDENT_OTP_REDIRECT_EMAIL="",
+)
+def test_otp_delivery_failure_log_contains_no_student_or_recipient_identifier(
+    students, caplog, monkeypatch
+):
+    def fail_delivery(*args, **kwargs):
+        raise RuntimeError(f"SMTP rejected {SID}@taibahu.edu.sa via {TELEGRAM_LINK_TEST_INBOX}")
+
+    monkeypatch.setattr(student_otp, "send_mail", fail_delivery)
+    with caplog.at_level(logging.ERROR, logger="core.services.student_otp"):
+        student_otp.issue_otp(SID, recipient_override=TELEGRAM_LINK_TEST_INBOX)
+
+    errors = [
+        record.getMessage()
+        for record in caplog.records
+        if record.name == "core.services.student_otp" and record.levelno >= logging.ERROR
+    ]
+    assert errors == ["student OTP email delivery failed"]
+    assert str(SID) not in caplog.text
+    assert f"{SID}@taibahu.edu.sa" not in caplog.text
+    assert TELEGRAM_LINK_TEST_INBOX not in caplog.text
 
 
 # ── security-fix regressions (from the adversarial review) ──

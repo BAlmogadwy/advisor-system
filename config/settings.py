@@ -358,6 +358,10 @@ STUDENT_OTP_ASYNC_EMAIL = os.getenv("STUDENT_OTP_ASYNC_EMAIL", "true").lower() =
 # TESTING ONLY: send every student OTP to this address instead of the student's real
 # university mailbox, so testing never emails an actual student. Leave EMPTY in production.
 STUDENT_OTP_REDIRECT_EMAIL = os.getenv("STUDENT_OTP_REDIRECT_EMAIL", "").strip()
+# TEMPORARY LINK-TEST CONTROL: redirect an OTP only when the login was entered
+# through a fresh, live Telegram-link invitation. Unlike the broad testing
+# redirect above, ordinary student logins continue to use the student's mailbox.
+TELEGRAM_LINK_OTP_REDIRECT_EMAIL = os.getenv("TELEGRAM_LINK_OTP_REDIRECT_EMAIL", "").strip()
 # TESTING ONLY: log a student in from the University ID alone, with NO code. This is a
 # full authentication bypass — it requires BOTH DEBUG and this explicit opt-in, exactly
 # like ALLOW_DEV_ROLE_SWITCH, and is inert in any production deployment (DEBUG=False).

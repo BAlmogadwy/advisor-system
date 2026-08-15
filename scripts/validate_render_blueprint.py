@@ -62,6 +62,9 @@ WEB_SECRET_KEYS = frozenset(
         "PORTAL_ADMIN_PASSWORD",
         "TELEGRAM_BOT_TOKEN",
         "TELEGRAM_WEBHOOK_SECRET",
+        # The temporary OTP test receiver is personally identifying operator
+        # configuration. It is manual, web-only, and never checked into YAML.
+        "TELEGRAM_LINK_OTP_REDIRECT_EMAIL",
         # The Alibaba endpoint contains a workspace identifier and is treated as
         # deployment-secret metadata alongside the bearer key.
         "ALIBABA_LLM_BASE_URL",
@@ -165,6 +168,13 @@ WORKER_OPTIONAL_EMPTY_ENV_KEYS = frozenset(
     {
         "TELEGRAM_INTERNAL_BASE_URL",
         "LOCAL_LLM_MODEL",
+    }
+)
+NON_WEB_FORBIDDEN_ENV_KEYS = frozenset(
+    {
+        # Non-web processes never serve student login and do not need to know
+        # the temporary acceptance-test inbox.
+        "TELEGRAM_LINK_OTP_REDIRECT_EMAIL",
     }
 )
 
@@ -357,6 +367,10 @@ def validate_blueprint(
                     "inherit an intentionally empty value."
                 )
 
+        for key in sorted(NON_WEB_FORBIDDEN_ENV_KEYS):
+            if key in worker_env:
+                errors.append(f"{WORKER_SERVICE_NAME}:{key} must remain web-only.")
+
         if worker_env.get("DJANGO_DEBUG", {}).get("value") != "false":
             errors.append(f"{WORKER_SERVICE_NAME} must explicitly set DJANGO_DEBUG=false.")
         if worker_env.get("ALLOW_NO_SMTP_PROCESS", {}).get("value") != "true":
@@ -370,6 +384,9 @@ def validate_blueprint(
 
     if cron:
         cron_env = _env_map(cron)
+        for key in sorted(NON_WEB_FORBIDDEN_ENV_KEYS):
+            if key in cron_env:
+                errors.append(f"{CRON_SERVICE_NAME}:{key} must remain web-only.")
         if cron.get("schedule") != "0 3 * * *":
             errors.append(f"{CRON_SERVICE_NAME} must retain its reviewed daily schedule.")
         if cron.get("startCommand") != EXPECTED_CRON_START_COMMAND:
