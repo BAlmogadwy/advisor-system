@@ -2,6 +2,7 @@
 
 Usage:
     python manage.py scrape_students --csv data/students_list.csv
+    python manage.py scrape_students --database-students
     python manage.py scrape_students --csv data/students_list.csv --concurrency 4 --save-html
     python manage.py scrape_students --csv data/students_list.csv \
         --empty-snapshot-year 1448 --empty-snapshot-term 1
@@ -21,10 +22,12 @@ from argparse import ArgumentParser
 from pathlib import Path
 from typing import Any, TypedDict
 
+from asgiref.sync import sync_to_async
 from django.conf import settings
 from django.core.management.base import BaseCommand, CommandError
 from tqdm import tqdm  # type: ignore[import-untyped]
 
+from core.services.scrape_student_source import ScrapeStudentRow, load_database_students
 from core.services.section_snapshot_guard import section_snapshot_operation_guard
 
 try:
@@ -492,8 +495,16 @@ class Command(BaseCommand):
     _shared: dict[str, Any]
 
     def add_arguments(self, parser: ArgumentParser) -> None:
-        parser.add_argument("--csv", required=True, help="Path to students_list.csv")
-        parser.add_argument("--concurrency", type=int, default=4)
+        source = parser.add_mutually_exclusive_group(required=True)
+        source.add_argument("--csv", help="Path to students_list.csv")
+        source.add_argument(
+            "--database-students",
+            action="store_true",
+            help="Scrape the reviewed current-student roster stored in the database",
+        )
+        parser.add_argument("--expected-database-student-count", type=int)
+        parser.add_argument("--expected-database-roster-sha256", default="")
+        parser.add_argument("--concurrency", type=int, choices=range(1, 9), default=4)
         parser.add_argument("--save-html", action="store_true")
         parser.add_argument("--max-retries", type=int, default=2)
         parser.add_argument("--debug-dir", default="data/debug_failures")
@@ -517,18 +528,30 @@ class Command(BaseCommand):
         )
 
     def handle(self, *args: Any, **options: Any) -> None:
+        concurrency = options.get("concurrency", 4)
+        if isinstance(concurrency, bool) or not isinstance(concurrency, int):
+            raise CommandError("--concurrency must be an integer between 1 and 8.")
+        if concurrency < 1 or concurrency > 8:
+            raise CommandError("--concurrency must be between 1 and 8.")
+        options["concurrency"] = concurrency
+        expected_count = options.get("expected_database_student_count")
+        expected_sha256 = str(options.get("expected_database_roster_sha256") or "").strip()
+        if not options.get("database_students") and (expected_count is not None or expected_sha256):
+            raise CommandError("Database roster expectations require --database-students.")
+        if expected_count is not None and expected_count < 1:
+            raise CommandError("--expected-database-student-count must be positive.")
+        if expected_sha256 and re.fullmatch(r"[0-9a-f]{64}", expected_sha256) is None:
+            raise CommandError(
+                "--expected-database-roster-sha256 must be a lowercase SHA-256 digest."
+            )
         empty_snapshot_year, empty_snapshot_term = _empty_snapshot_scope(options)
         options["empty_snapshot_year"] = empty_snapshot_year
         options["empty_snapshot_term"] = empty_snapshot_term
         if not HAS_PLAYWRIGHT:
-            self.stderr.write(
-                self.style.ERROR(
-                    "playwright is not installed. "
-                    "Install requirements-dev.txt for scraping:\n"
-                    "  pip install -r requirements-dev.txt"
-                )
+            raise CommandError(
+                "playwright is not installed. Install requirements-dev.txt for scraping: "
+                "pip install -r requirements-dev.txt"
             )
-            return
 
         # A scraper launched by ``start_batch_scrape`` begins while the launcher
         # still owns the non-blocking transition lock. Waiting here lets the
@@ -548,7 +571,6 @@ class Command(BaseCommand):
     # ──────────────────────────────────────────────────────────
 
     async def _run(self, options: dict[str, Any]) -> None:
-        csv_path = options["csv"]
         concurrency = options["concurrency"]
         max_retries = options["max_retries"]
         save_html = options["save_html"]
@@ -556,9 +578,22 @@ class Command(BaseCommand):
         empty_snapshot_year = str(options.get("empty_snapshot_year") or "")
         empty_snapshot_term = str(options.get("empty_snapshot_term") or "")
 
-        # Read CSV
-        students = self._read_csv(csv_path)
-        self.stdout.write(f"Loaded {len(students)} students from {csv_path}")
+        if options.get("database_students"):
+            students = await sync_to_async(load_database_students, thread_sensitive=True)(
+                expected_count=options.get("expected_database_student_count"),
+                expected_roster_sha256=str(options.get("expected_database_roster_sha256") or ""),
+            )
+            source_label = "the reviewed current-student database roster"
+        else:
+            csv_path = str(options.get("csv") or "").strip()
+            if not csv_path:
+                raise CommandError(
+                    "Choose exactly one student source: --csv or --database-students."
+                )
+            students = self._read_csv(csv_path)
+            source_label = csv_path
+        student_word = "student" if len(students) == 1 else "students"
+        self.stdout.write(f"Loaded {len(students)} {student_word} from {source_label}")
 
         os.makedirs(debug_dir, exist_ok=True)
         if save_html:
@@ -696,6 +731,11 @@ class Command(BaseCommand):
                 f"Done. {len(successful_outcomes)} succeeded, {len(failed_ids)} failed."
             )
         )
+        if failed_ids:
+            raise CommandError(
+                f"Student scrape completed with {len(failed_ids)} failed student(s); "
+                f"see {fail_path}."
+            )
 
     # ──────────────────────────────────────────────────────────
     # Per-student async worker
@@ -703,7 +743,7 @@ class Command(BaseCommand):
 
     async def _scrape_one(
         self,
-        student: dict,
+        student: ScrapeStudentRow,
         sem: asyncio.Semaphore,
         plan_sem: asyncio.Semaphore,
         relogin_lock: asyncio.Lock,
@@ -870,7 +910,7 @@ class Command(BaseCommand):
             return anchor_url
         return str(settings.PORTAL_LOGIN_URL)
 
-    def _read_csv(self, csv_path: str) -> list[dict]:
+    def _read_csv(self, csv_path: str) -> list[ScrapeStudentRow]:
         with open(csv_path, encoding="utf-8-sig", newline="") as f:
             reader = csv.DictReader(f)
             raw_rows = list(reader)
@@ -886,7 +926,7 @@ class Command(BaseCommand):
         if unexpected:
             raise RuntimeError(f"CSV contains unexpected columns: {unexpected}")
 
-        rows: list[dict[str, str]] = []
+        rows: list[ScrapeStudentRow] = []
         seen_students: dict[str, tuple[str, str, int]] = {}
         for line_number, raw in enumerate(raw_rows, start=2):
             if None in raw:
