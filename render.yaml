@@ -65,8 +65,11 @@ services:
         value: "900"
       - key: STUDENT_OTP_ASYNC_EMAIL
         value: "true"
+      # Optional, temporary full student-login acceptance-test routing. Configure
+      # manually on the WEB service only and remove immediately after testing.
+      # No receiver address belongs in source control or Blueprint sync.
       - key: STUDENT_OTP_REDIRECT_EMAIL
-        value: ""
+        sync: false
       # Optional, temporary acceptance-test routing. Configure manually on the
       # WEB service only, then remove immediately after the linking OTP test.
       # No receiver address belongs in source control or Blueprint sync.

@@ -795,6 +795,48 @@ uses the per-job text fallback described in §6.
       `last_error_message`
 - [ ] BotFather privacy mode **enabled**, join-groups **disabled**
 - [ ] Daily Render retention cron includes `purge_telegram_tokens --apply`
+- [ ] If ordinary student-portal or Advisor V2 OTP testing needs one operator
+      inbox, complete this entire temporary **global** redirect cycle in one
+      controlled window:
+  1. Immediately before entering the receiver value, record the authoritative
+     UTC start from the running web service as `global_redirect_started_at`:
+     `python manage.py shell -c "from django.utils import timezone; print(timezone.now().isoformat())"`.
+     Also record the intended test student ID(s) for the execution audit; cleanup
+     remains window-wide regardless. Then set `STUDENT_OTP_REDIRECT_EMAIL`
+     manually on the **`advisor-system` web service only**. `render.yaml`
+     intentionally declares the key as `sync:false`; never add/commit the receiver
+     value to the Blueprint, source control, a shared local env file, the worker,
+     or the cron service.
+  2. Deploy/restart the web service and verify the running setting is non-empty.
+     While set, **every** student login OTP is redirected, so keep the window
+     short and exercise only the recorded test IDs. Verify both portal login and
+     authenticated Advisor V2 access.
+  3. Immediately clear/remove the setting in Render and deploy/restart the web
+     service again.
+  4. Only after the empty-setting redeploy is live, verify the running web process
+     reports it empty and record the returned authoritative UTC end as
+     `global_redirect_ended_at`:
+     `python manage.py shell -c "from django.conf import settings; from django.utils import timezone; assert not settings.STUDENT_OTP_REDIRECT_EMAIL; print(timezone.now().isoformat())"`.
+  5. Because the global redirect affected any login during that effective
+     interval, invalidate **every** still-unconsumed OTP created within the exact
+     inclusive UTC window. Do not restrict this cleanup to the planned test IDs
+     (replace both fail-closed placeholders with the recorded values):
+
+     ```python
+     python manage.py shell
+     >>> from datetime import datetime
+     >>> from django.utils import timezone
+     >>> from core.models import StudentLoginOTP
+     >>> started_at = datetime.fromisoformat("<GLOBAL_REDIRECT_STARTED_AT>")
+     >>> ended_at = datetime.fromisoformat("<GLOBAL_REDIRECT_ENDED_AT>")
+     >>> assert timezone.is_aware(started_at) and timezone.is_aware(ended_at)
+     >>> assert started_at <= ended_at
+     >>> StudentLoginOTP.objects.filter(
+     ...     consumed=False,
+     ...     created_at__gte=started_at,
+     ...     created_at__lte=ended_at,
+     ... ).update(consumed=True)
+     ```
 - [ ] If the link-only OTP receiver is needed for acceptance testing, complete
       this entire temporary-control cycle; never leave it half-finished:
   1. Set `TELEGRAM_LINK_OTP_REDIRECT_EMAIL` manually on the
@@ -833,12 +875,21 @@ service, restart it, and suspend `advisor-telegram-worker`. The webhook then
 answers 404 and no queued answer is delivered. Queued rows remain durable for a
 controlled recovery; do not purge them as part of rollback.
 
-If a Telegram-link OTP acceptance test is interrupted, first clear/remove
-`TELEGRAM_LINK_OTP_REDIRECT_EMAIL` from the web service, deploy/restart, verify the
-running value is empty with the command in §9, and invalidate all unconsumed
-`StudentLoginOTP` rows belonging to the recorded acceptance-test student ID(s)
-with the scoped command there. Never invalidate other students' rows. This
-cleanup is required even when the Telegram channel itself is being disabled.
+If an OTP-redirect acceptance test is interrupted, first clear/remove both
+redirect settings from the web service and deploy/restart. Cleanup then depends
+on which control was effective:
+
+- **Global `STUDENT_OTP_REDIRECT_EMAIL`:** after runtime verification that it is
+  empty, record the authoritative UTC end and invalidate every unconsumed OTP in
+  the inclusive `global_redirect_started_at` → `global_redirect_ended_at` window
+  using §9. If the exact start was not preserved, choose a conservative earlier
+  UTC bound that certainly covers when the value could first have become
+  effective; never narrow global cleanup to the intended test IDs.
+- **Link-only `TELEGRAM_LINK_OTP_REDIRECT_EMAIL`:** after runtime verification
+  that it is empty, invalidate unconsumed OTPs only for the exact acceptance-test
+  student ID(s), using the scoped command in §9.
+
+This cleanup is required even when the Telegram channel itself is being disabled.
 
 For a broader adviser/provider rollback, also set
 `STUDENT_ADVISOR_V2_ENABLED=false` and

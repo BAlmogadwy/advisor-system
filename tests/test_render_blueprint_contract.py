@@ -96,6 +96,7 @@ def test_contract_requires_public_student_login_safety_settings(blueprint: Bluep
     changed = deepcopy(blueprint)
     web = _service(changed, "advisor-system")
     redirect = next(item for item in web["envVars"] if item["key"] == "STUDENT_OTP_REDIRECT_EMAIL")
+    redirect.pop("sync")
     redirect["value"] = "test-inbox@example.invalid"
     link_redirect = next(
         item for item in web["envVars"] if item["key"] == "TELEGRAM_LINK_OTP_REDIRECT_EMAIL"
@@ -115,27 +116,29 @@ def test_contract_requires_public_student_login_safety_settings(blueprint: Bluep
     assert any("EMAIL_HOST_PASSWORD" in error for error in errors)
 
 
+@pytest.mark.parametrize(
+    "redirect_key",
+    ["STUDENT_OTP_REDIRECT_EMAIL", "TELEGRAM_LINK_OTP_REDIRECT_EMAIL"],
+)
 @pytest.mark.parametrize("non_web_service", [WORKER_SERVICE_NAME, CRON_SERVICE_NAME])
-def test_contract_keeps_telegram_link_otp_redirect_manual_and_web_only(
-    blueprint: Blueprint, non_web_service: str
+def test_contract_keeps_otp_redirects_manual_and_web_only(
+    blueprint: Blueprint, non_web_service: str, redirect_key: str
 ) -> None:
     web = _service(blueprint, "advisor-system")
     target = _service(blueprint, non_web_service)
-    link_redirect = next(
-        item for item in web["envVars"] if item["key"] == "TELEGRAM_LINK_OTP_REDIRECT_EMAIL"
-    )
-    assert link_redirect == {"key": "TELEGRAM_LINK_OTP_REDIRECT_EMAIL", "sync": False}
-    assert "TELEGRAM_LINK_OTP_REDIRECT_EMAIL" not in {item["key"] for item in target["envVars"]}
+    redirect = next(item for item in web["envVars"] if item["key"] == redirect_key)
+    assert redirect == {"key": redirect_key, "sync": False}
+    assert redirect_key not in {item["key"] for item in target["envVars"]}
 
     changed = deepcopy(blueprint)
     changed_target = _service(changed, non_web_service)
     changed_target["envVars"].append(
         {
-            "key": "TELEGRAM_LINK_OTP_REDIRECT_EMAIL",
+            "key": redirect_key,
             "fromService": {
                 "name": "advisor-system",
                 "type": "web",
-                "envVarKey": "TELEGRAM_LINK_OTP_REDIRECT_EMAIL",
+                "envVarKey": redirect_key,
             },
         }
     )
@@ -143,9 +146,7 @@ def test_contract_keeps_telegram_link_otp_redirect_manual_and_web_only(
     errors = validate_blueprint(changed, project_root=PROJECT_ROOT)
 
     assert any(
-        non_web_service in error
-        and "TELEGRAM_LINK_OTP_REDIRECT_EMAIL" in error
-        and "web-only" in error
+        non_web_service in error and redirect_key in error and "web-only" in error
         for error in errors
     )
 

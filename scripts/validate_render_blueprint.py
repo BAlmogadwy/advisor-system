@@ -62,8 +62,9 @@ WEB_SECRET_KEYS = frozenset(
         "PORTAL_ADMIN_PASSWORD",
         "TELEGRAM_BOT_TOKEN",
         "TELEGRAM_WEBHOOK_SECRET",
-        # The temporary OTP test receiver is personally identifying operator
-        # configuration. It is manual, web-only, and never checked into YAML.
+        # Temporary OTP test receivers are personally identifying operator
+        # configuration. They are manual, web-only, and never checked into YAML.
+        "STUDENT_OTP_REDIRECT_EMAIL",
         "TELEGRAM_LINK_OTP_REDIRECT_EMAIL",
         # The Alibaba endpoint contains a workspace identifier and is treated as
         # deployment-secret metadata alongside the bearer key.
@@ -89,7 +90,6 @@ WEB_FIXED_ENV_VALUES = {
     "STUDENT_OTP_MAX_SENDS": "3",
     "STUDENT_OTP_SEND_WINDOW_SECONDS": "900",
     "STUDENT_OTP_ASYNC_EMAIL": "true",
-    "STUDENT_OTP_REDIRECT_EMAIL": "",
     "IP_FROM_XFF": "true",
     "TELEGRAM_ADVISOR_ENABLED": "true",
     "TELEGRAM_PUBLIC_BASE_URL": EXPECTED_PUBLIC_ORIGIN,
@@ -174,6 +174,7 @@ NON_WEB_FORBIDDEN_ENV_KEYS = frozenset(
     {
         # Non-web processes never serve student login and do not need to know
         # the temporary acceptance-test inbox.
+        "STUDENT_OTP_REDIRECT_EMAIL",
         "TELEGRAM_LINK_OTP_REDIRECT_EMAIL",
     }
 )
