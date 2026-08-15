@@ -43,8 +43,9 @@ WORKER_SERVICE_NAME = "advisor-telegram-worker"
 CRON_SERVICE_NAME = "advisor-purge-planner-drafts"
 EXPECTED_WEB_START_COMMAND = (
     "gunicorn config.wsgi --bind 0.0.0.0:$PORT --workers 1 "
-    "--worker-class gthread --threads 4 --timeout 120"
+    "--worker-class gthread --threads 4 --timeout 120 --no-control-socket"
 )
+EXPECTED_PROCFILE_WEB_COMMAND = f"web: {EXPECTED_WEB_START_COMMAND}"
 EXPECTED_WORKER_START_COMMAND = (
     "python manage.py telegram_advisor_worker --sleep 1 --max-attempts 3 --standby-when-disabled"
 )
@@ -257,6 +258,20 @@ def validate_blueprint(
 
     errors = _python_version_errors(project_root)
     errors.extend(_playwright_build_errors(project_root))
+    procfile_path = project_root / "Procfile"
+    try:
+        procfile_lines = {
+            line.strip()
+            for line in procfile_path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        }
+    except OSError:
+        procfile_lines = set()
+    if EXPECTED_PROCFILE_WEB_COMMAND not in procfile_lines:
+        errors.append(
+            "Procfile web command must match the reviewed Render Gunicorn command, "
+            "including --no-control-socket."
+        )
     services = _mapping_list(document.get("services"))
     databases = _mapping_list(document.get("databases"))
 

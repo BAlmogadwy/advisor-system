@@ -6,6 +6,7 @@ import yaml
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW_PATH = PROJECT_ROOT / ".github" / "workflows" / "ci.yml"
+PROCFILE_PATH = PROJECT_ROOT / "Procfile"
 
 
 def _workflow() -> dict:
@@ -52,3 +53,16 @@ def test_production_health_probe_cannot_hang_the_release_gate() -> None:
 
     assert "curl --connect-timeout 2 --max-time 3" in command
     assert "for attempt in $(seq 1 30)" in command
+    assert "gunicorn config.wsgi" in command
+    assert "--no-control-socket" in command
+
+
+def test_procfile_disables_the_gunicorn_control_socket() -> None:
+    web_command = next(
+        line
+        for line in PROCFILE_PATH.read_text(encoding="utf-8").splitlines()
+        if line.startswith("web:")
+    )
+
+    assert "--workers 1 --worker-class gthread --threads 4" in web_command
+    assert "--no-control-socket" in web_command

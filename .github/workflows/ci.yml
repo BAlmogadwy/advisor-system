@@ -749,7 +749,7 @@ jobs:
       - name: Boot the production web command and probe post-replacement database health
         run: |
           set -euo pipefail
-          PORT=8000 gunicorn config.wsgi --bind 127.0.0.1:8000 --workers 1 --worker-class gthread --threads 4 --timeout 120 >/tmp/advisor-gunicorn.log 2>&1 &
+          PORT=8000 gunicorn config.wsgi --bind 127.0.0.1:8000 --workers 1 --worker-class gthread --threads 4 --timeout 120 --no-control-socket >/tmp/advisor-gunicorn.log 2>&1 &
           web_pid=$!
           trap 'kill "$web_pid" 2>/dev/null || true' EXIT
           healthy=false
