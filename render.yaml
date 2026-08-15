@@ -12,8 +12,9 @@ services:
     buildCommand: chmod +x build.sh && ./build.sh
     # One process keeps the existing in-memory/IP throttles authoritative. gthread
     # still allows concurrent requests without splitting those counters between
-    # Gunicorn processes.
-    startCommand: gunicorn config.wsgi --bind 0.0.0.0:$PORT --workers 1 --worker-class gthread --threads 4 --timeout 120
+    # Gunicorn processes. Gunicorn 25.1's control thread can deadlock a gthread
+    # worker during fork (upstream #3509), so keep its control socket disabled.
+    startCommand: gunicorn config.wsgi --bind 0.0.0.0:$PORT --workers 1 --worker-class gthread --threads 4 --timeout 120 --no-control-socket
     envVars:
       - key: DJANGO_SECRET_KEY
         generateValue: true

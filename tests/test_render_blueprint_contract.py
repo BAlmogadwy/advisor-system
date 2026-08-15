@@ -247,6 +247,16 @@ def test_contract_requires_disabled_worker_standby(blueprint: Blueprint) -> None
     assert any("no-lease standby" in error for error in errors)
 
 
+def test_contract_requires_gunicorn_control_socket_mitigation(blueprint: Blueprint) -> None:
+    changed = deepcopy(blueprint)
+    web = _service(changed, "advisor-system")
+    web["startCommand"] = web["startCommand"].replace(" --no-control-socket", "")
+
+    errors = validate_blueprint(changed, project_root=PROJECT_ROOT)
+
+    assert any("gthread Gunicorn process" in error for error in errors)
+
+
 def test_contract_requires_reviewed_live_rollout_and_both_image_exports(
     blueprint: Blueprint,
 ) -> None:
