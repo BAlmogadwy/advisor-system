@@ -183,7 +183,7 @@ def test_handle_refuses_to_run_when_blocking_guard_unexpectedly_fails(
     run.assert_not_called()
 
 
-def test_missing_playwright_returns_before_acquiring_snapshot_guard(
+def test_missing_playwright_fails_before_acquiring_snapshot_guard(
     monkeypatch: MonkeyPatch,
 ) -> None:
     def unexpected_guard(*, blocking: bool):  # type: ignore[no-untyped-def]
@@ -195,9 +195,64 @@ def test_missing_playwright_returns_before_acquiring_snapshot_guard(
     monkeypatch.setattr(scrape_students, "section_snapshot_operation_guard", unexpected_guard)
     monkeypatch.setattr(command, "_run", run)
 
-    command.handle(csv="students.csv")
+    with pytest.raises(CommandError, match="playwright is not installed"):
+        command.handle(csv="students.csv")
 
     run.assert_not_called()
+
+
+def test_partial_student_failures_make_the_batch_process_fail(
+    monkeypatch: MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    class Page:
+        context = object()
+
+    async def login() -> tuple[object, object, Page]:
+        return object(), object(), Page()
+
+    command = scrape_students.Command()
+    monkeypatch.setattr(scrape_students, "BASE_DIR", tmp_path)
+    monkeypatch.setattr(scrape_students, "login_to_portal", login)
+    monkeypatch.setattr(scrape_students, "close_browser", AsyncMock())
+    monkeypatch.setattr(
+        command,
+        "_read_csv",
+        lambda path: [{"student_id": "4000001", "program": "DS", "section": "M"}],
+    )
+    monkeypatch.setattr(
+        command,
+        "_scrape_one",
+        AsyncMock(
+            return_value={
+                "student_id": "4000001",
+                "program": "DS",
+                "ok": False,
+                "verified_study_plan": False,
+                "verified_timetable": False,
+            }
+        ),
+    )
+
+    with pytest.raises(CommandError, match="1 failed student"):
+        asyncio.run(
+            command._run(
+                {
+                    "database_students": False,
+                    "csv": "students.csv",
+                    "concurrency": 1,
+                    "max_retries": 0,
+                    "save_html": False,
+                    "debug_dir": str(tmp_path / "debug"),
+                    "empty_snapshot_year": "",
+                    "empty_snapshot_term": "",
+                }
+            )
+        )
+
+    assert (tmp_path / "data" / "failed_scrapes.csv").read_text(encoding="utf-8") == (
+        "failed_student_id\n4000001\n"
+    )
 
 
 def test_worker_attributes_failure_when_its_page_cannot_be_created(
