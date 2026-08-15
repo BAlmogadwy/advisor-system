@@ -106,9 +106,9 @@ services:
       - key: TELEGRAM_INTERNAL_BASE_URL
         value: ""
       - key: TELEGRAM_SEND_TIMETABLE_IMAGES
-        value: "false"
+        value: "true"
       - key: TELEGRAM_SEND_GRADUATION_IMAGES
-        value: "false"
+        value: "true"
       - key: LLM_BACKEND
         value: alibaba
       - key: LOCAL_LLM_BASE_URL
@@ -183,6 +183,10 @@ services:
         value: "false"
       - key: PYTHON_VERSION
         value: "3.11.9"
+      # The build stores Chromium with the installed Playwright package. Render's
+      # shared build cache is not mounted in a running worker.
+      - key: PLAYWRIGHT_BROWSERS_PATH
+        value: "0"
       # This process cannot serve the public OTP routes. Keep production SMTP
       # fail-closed everywhere else without copying mail credentials into it.
       - key: ALLOW_NO_SMTP_PROCESS

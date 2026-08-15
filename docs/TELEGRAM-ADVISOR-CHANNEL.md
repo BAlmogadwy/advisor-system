@@ -425,9 +425,9 @@ the model turn.
 Graduation-plan maps require the independent
 `TELEGRAM_SEND_GRADUATION_IMAGES=true` switch. One image may show the planning
 baseline, completed/baseline/projected/unresolved course states, prerequisite
-links, requested scenario changes, and unresolved requirements. This flag stays
-off unless that broader export has been explicitly accepted; enabling timetable
-images alone does not enable it.
+links, requested scenario changes, and unresolved requirements. The production
+Blueprint enables both reviewed image exports; the two switches remain independent
+so either surface can be disabled during an incident.
 
 The materialized payload is a versioned manifest. For rolling-worker
 compatibility, its physical v2 list keeps up to four typed `timetable_photo`
@@ -567,8 +567,8 @@ Both were silent, and both are now pinned by tests:
 
 | Variable | Default | Notes |
 |---|---|---|
-| `TELEGRAM_SEND_TIMETABLE_IMAGES` | `false` | Explicit privacy/operations switch. Set on `advisor-system`; the worker inherits the exact value through `fromService` |
-| `TELEGRAM_SEND_GRADUATION_IMAGES` | `false` | Independent opt-in for the broader graduation-progress map; never implied by the timetable flag |
+| `TELEGRAM_SEND_TIMETABLE_IMAGES` | `false` | Safe application default. The reviewed production Blueprint sets `true` on `advisor-system`; the worker inherits it through `fromService` |
+| `TELEGRAM_SEND_GRADUATION_IMAGES` | `false` | Safe application default. Production explicitly sets `true`; the independent switch can be rolled back without changing timetable images |
 | `TELEGRAM_INTERNAL_BASE_URL` | `""` | Optional plain-HTTP IPv4-loopback override (`127.0.0.1` or `localhost`) for local development. Empty uses the worker's short-lived loopback origin; `::1` is rejected |
 
 ### Production: self-contained worker rendering
@@ -578,10 +578,11 @@ The durable worker renders against its own temporary loopback origin. Do not poi
 would send a bearer card token through the public edge and make availability of
 the image depend on another service.
 
-`build.sh` has run `playwright install chromium` since 2026-04-08. An earlier
-draft of this document said the opposite, and that error was worse than useless:
-it told an operator to expect exactly the symptom the real bugs produced, so
-`card render failed` would have been explained away instead of investigated.
+`build.sh` installs Chromium with `PLAYWRIGHT_BROWSERS_PATH=0`, and the worker
+retains that value at runtime. This is required on Render: `/opt/render/.cache`
+exists during the build but is not mounted into the promoted worker. Installing
+beside the Playwright Python package keeps the matching full Chromium, headless
+shell and FFmpeg binaries in the deployed environment.
 
 Two production hazards still apply to the worker-local **loopback fetch**, and
 both are pinned by tests:
@@ -739,8 +740,8 @@ cannot resolve blank cross-service values; Django's empty defaults preserve the
 worker's loopback renderer and disabled local-model behavior. Render ignores newly
 added `sync: false` variables when updating an
 existing Blueprint, so populate and verify every declared value on
-`advisor-system` before that sync. Set either image flag to true only after its
-disclosure and image smoke tests in §§9–11 are in place.
+`advisor-system` before that sync. Both reviewed image flags are enabled in the
+production Blueprint after the disclosure and live worker preflight were accepted.
 `STUDENT_ADVISOR_V2_ENABLED` still controls the web rollout; it does not downgrade
 `telegram_safe`, while the V2 iteration/call/token/timeout controls do govern the
 Telegram turn.
@@ -782,12 +783,12 @@ uses the per-job text fallback described in §6.
       and, if enabled, graduation-map course states, prerequisite links, scenario
       changes and unresolved requirements; plus Telegram retention/forwarding and
       that unlink cannot retract sent media
-- [ ] Initial production rollout is text-only:
-      `TELEGRAM_SEND_TIMETABLE_IMAGES=false` and
-      `TELEGRAM_SEND_GRADUATION_IMAGES=false` are set on `advisor-system` and
-      inherited by the worker. Leave `TELEGRAM_INTERNAL_BASE_URL` empty. Enable
-      either image switch only in a separately reviewed rollout after the worker
-      runtime passes the Chromium/Playwright preflight.
+- [ ] Reviewed image rollout is enabled:
+      `TELEGRAM_SEND_TIMETABLE_IMAGES=true` and
+      `TELEGRAM_SEND_GRADUATION_IMAGES=true` are set on `advisor-system` and
+      inherited by the worker. `PLAYWRIGHT_BROWSERS_PATH=0` is fixed on the worker,
+      and `TELEGRAM_INTERNAL_BASE_URL` remains empty. Require the worker's real
+      Chromium/loopback/assets preflight to pass before accepting queue work.
 - [ ] `TELEGRAM_ADVISOR_ENABLED=true` set on `advisor-system`; Blueprint synced so
       the worker inherits it, and both services restarted
 - [ ] `python manage.py telegram_webhook --set` completed
@@ -865,8 +866,8 @@ uses the per-job text fallback described in §6.
      ... ).update(consumed=True)
      ```
 - [ ] Smoke test with a test bot and a test student (§10)
-- [ ] Text-only smoke test returns the complete, untruncated answer and sends no
-      photo. Image ordering tests belong to the separately approved image rollout.
+- [ ] Image smoke tests return the complete, untruncated text first, then timetable
+      photo(s), and then one graduation map for a separate graduation request.
 
 ## 10. Rollback / disable
 
@@ -874,6 +875,12 @@ uses the per-job text fallback described in §6.
 service, restart it, and suspend `advisor-telegram-worker`. The webhook then
 answers 404 and no queued answer is delivered. Queued rows remain durable for a
 controlled recovery; do not purge them as part of rollback.
+
+**Image-only rollback:** set `TELEGRAM_SEND_TIMETABLE_IMAGES=false` and
+`TELEGRAM_SEND_GRADUATION_IMAGES=false` on `advisor-system`, then restart the web
+service and worker. Do not Blueprint-sync again while the checked-in contract still
+says `true`; first revert the manifest, validator, tests and this runbook, merge the
+rollback, and then sync. Materialized jobs retain their complete text fallback.
 
 If an OTP-redirect acceptance test is interrupted, first clear/remove both
 redirect settings from the web service and deploy/restart. Cleanup then depends
