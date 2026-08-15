@@ -1590,6 +1590,121 @@ def test_strong_markers_are_removed_before_message_chunking():
     assert all(f"Section {index}:" in " ".join(chunks) for index in range(5))
 
 
+def test_atx_heading_prefixes_are_removed_from_arabic_and_english_answers():
+    from telegram_gateway.formatting import render_answer
+
+    answer = (
+        "### الفصل الدراسي 1448/2\r\n"
+        "المقررات: IS251 وDS321\r\n"
+        "# Graduation summary\r\n"
+        "##\tEligibility\r\n"
+        "   ###### Assumptions"
+    )
+
+    rendered = render_answer(answer=answer)
+    assert rendered == [
+        "الفصل الدراسي 1448/2\r\nالمقررات: IS251 وDS321\r\nGraduation summary\r\n"
+        "Eligibility\r\nAssumptions"
+    ]
+    assert render_answer(answer=rendered[0]) == rendered
+
+
+def test_atx_heading_cleanup_preserves_code_urls_and_identifier_like_hashes():
+    from telegram_gateway.formatting import render_answer
+
+    answer = (
+        "    ### leading indented code\n"
+        "\t### tab-indented code\n"
+        "`### inline code`\n"
+        "```text\n### fenced code\n```\n"
+        "~~~text\n**tilde strong**\n### tilde-fenced code\n~~~\n"
+        "https://example.edu/plan#semester and [plan](https://example.edu/#term)\n"
+        "#DS491 ###AI351 ##/plan C:\\\\plans\\###\\term\n"
+        "# 4501789\n"
+        "# ٤٥٠١٧٨٩\n"
+        "\\### escaped heading\n"
+        "####### seven hashes\n"
+        "> ### quoted text\n"
+        "- ### list text\n"
+        "###\n"
+        "###   \n"
+        "~~~text\n### unclosed tilde fence"
+    )
+
+    assert render_answer(answer=answer) == [answer]
+
+
+@pytest.mark.parametrize("answer", ["\t### tab-indented code", "    ### four-space code"])
+def test_indented_code_is_preserved_across_repeated_rendering(answer):
+    from telegram_gateway.formatting import render_answer
+
+    first_render = render_answer(answer=answer)
+
+    assert first_render == [answer]
+    assert render_answer(answer=first_render[0]) == first_render
+
+
+@pytest.mark.parametrize(
+    ("answer", "expected_first"),
+    [
+        (("x" * 45) + "\n    ### code", "x" * 45),
+        (("x" * 44) + " \n    ### code", "x" * 44),
+    ],
+)
+def test_chunking_does_not_expose_an_indented_code_line_as_a_heading(answer, expected_first):
+    from telegram_gateway.formatting import render_answer
+
+    chunks = render_answer(answer=answer, limit=45)
+
+    assert chunks == [expected_first, "    ### code"]
+    assert [render_answer(answer=chunk, limit=45)[0] for chunk in chunks] == chunks
+
+
+def test_atx_heading_cleanup_happens_before_chunking_across_a_fence():
+    from telegram_gateway.formatting import render_answer
+
+    answer = "~~~text\n" + ("code word " * 12) + "\n### literal code\n~~~\n### Outside"
+    chunks = render_answer(answer=answer, limit=45)
+    rendered = "\n".join(chunks)
+
+    assert len(chunks) > 1
+    assert all(len(chunk) <= 45 for chunk in chunks)
+    assert "### literal code" in rendered
+    assert "### Outside" not in rendered
+    assert "Outside" in rendered
+
+
+def test_foreign_fence_openers_stay_inside_the_active_fence():
+    from telegram_gateway.formatting import render_answer
+
+    answers = (
+        "~~~text\n``` literal opener\n**literal strong**\n### literal heading\n~~~\n"
+        "### Outside\n**outside strong**",
+        "```text\n~~~ literal opener\n**literal strong**\n### literal heading\n```\n"
+        "### Outside\n**outside strong**",
+    )
+
+    for answer in answers:
+        rendered = render_answer(answer=answer)[0]
+        assert "**literal strong**\n### literal heading" in rendered
+        assert rendered.endswith("Outside\noutside strong")
+        assert "### Outside" not in rendered
+
+
+@CHANNEL_ON
+def test_atx_heading_cleanup_is_telegram_only(client, outbox):
+    raw_answer = "### الخطة المقترحة\n**Term 1:** DS321"
+    _link()
+
+    with _adviser(answer=raw_answer):
+        _post(client, _update(text="اعرض خطتي"))
+
+    stored = AdvisorMessage.objects.get(role=AdvisorMessage.ROLE_ASSISTANT)
+    assert stored.content == raw_answer
+    assert outbox.texts[-1] == "الخطة المقترحة\nTerm 1: DS321"
+    assert all("parse_mode" not in message for message in outbox.sent)
+
+
 def test_an_empty_answer_sends_nothing():
     """Telegram rejects empty text, and a rejected send looks like an outage."""
     from telegram_gateway.formatting import render_answer, split_message
