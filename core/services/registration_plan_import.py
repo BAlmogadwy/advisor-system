@@ -180,7 +180,8 @@ class Plan:
             f"{sum(len(v) for v in self.uncovered.values())} row(s) in "
             f"{len(self.uncovered)} course(s) with no section on file; "
             f"{len(self.time_disagreements)} section(s) whose times differ from the "
-            f"database; {len(self.problems)} problem(s)"
+            f"database; {len(self.notices)} notice(s); "
+            f"{len(self.problems)} problem(s)"
         )
 
     def check_conservation(self) -> None:

@@ -16,6 +16,8 @@ the specific defect it pins:
 
 from __future__ import annotations
 
+import re
+
 import pytest
 from django.db import IntegrityError, transaction
 from django.test import Client
@@ -343,8 +345,17 @@ def test_both_timetables_are_shown_when_both_exist(student_with_sections, monkey
     assert "My expected timetable" in body
     # Two independent grids, each with its own payload -- not one merged list.
     assert body.count('class="student-timetable-host"') == 2
-    assert 'id="studentHomeTimetableData-registered"' in body
-    assert 'id="studentHomeTimetableData-expected"' in body
+    # The BINDING, not just the two names. `page-student-home.js` selects
+    # `.student-timetable-host[data-meetings-id]` and looks the payload up by that
+    # id; drop or rename the attribute and every visual grid silently goes blank
+    # while the suite stays green, because nothing else in the page refers to it.
+    bindings = re.findall(r'data-meetings-id="([^"]+)"', body)
+    assert sorted(bindings) == [
+        "studentHomeTimetableData-expected",
+        "studentHomeTimetableData-registered",
+    ]
+    for payload_id in bindings:
+        assert f'id="{payload_id}"' in body, f"no JSON payload for host binding {payload_id}"
 
 
 def test_the_difference_between_the_two_is_stated(student_with_sections, monkeypatch):
@@ -370,20 +381,47 @@ def test_no_difference_card_without_both_snapshots(student_with_sections, monkey
     assert [p["kind"] for p in response.context["timetable_panels"]] == ["expected"]
 
 
-def test_a_staff_planner_mapping_is_never_shown_as_registration(student_with_sections, monkeypatch):
+def test_a_staff_planner_mapping_is_shown_as_a_forecast_never_a_registration(
+    student_with_sections, monkeypatch
+):
     """The mislabel: sources ``planner`` and ``auto_from_studying`` are written by
-    staff-only endpoints, and the screen used to title them "My weekly timetable"."""
+    staff-only endpoints, and the screen used to title them "My weekly timetable".
+
+    They ARE shown -- a department's assignment is information the student needs --
+    but under the forecast heading and its "not an actual registration" line.
+    Hiding them would be the other failure: the student would see nothing while
+    their department had them seated somewhere.
+    """
     _link(student_with_sections["SA101"], "planner")
     _link(student_with_sections["SB201"], "auto_from_studying")
 
     response = _home(monkeypatch)
     body = response.content.decode()
 
-    assert response.context["timetable_panels"] == []
+    assert [p["kind"] for p in response.context["timetable_panels"]] == ["expected"]
     assert response.context["has_registered_timetable"] is False
     assert "My registered timetable" not in body
-    assert "My expected timetable" not in body
-    assert "There is no registered timetable and no expected plan for this term." in body
+    assert "not an actual registration" in body
+
+
+def test_a_planner_edit_supersedes_the_imported_plan_on_the_students_own_screen(
+    student_with_sections, monkeypatch
+):
+    """Each writer replaces only its own class, so a planner save leaves the
+    imported plan underneath it. Picking EXPECTED unconditionally would show the
+    student seating their department had already moved them out of -- for ever,
+    because no writer removes an imported row except a re-import.
+    """
+    _link(student_with_sections["SA101"], PLAN_SOURCE)
+    _link(student_with_sections["SB201"], "planner")
+
+    response = _home(monkeypatch)
+
+    panel = response.context["timetable_panels"][0]
+    assert panel["kind"] == "expected"
+    assert {m["course_code"] for m in panel["meetings"]} == {"SB201"}, (
+        "the department's latest forecast wins; the superseded import is not shown"
+    )
 
 
 def test_expected_card_says_it_is_not_a_registration(student_with_sections, monkeypatch):
@@ -542,3 +580,189 @@ def test_group_availability_ignores_a_superseded_plan(student_with_sections):
     assert "SC" not in occupied_courses, (
         "the superseded plan must not occupy time the student did not register"
     )
+
+
+# ---------------------------------------------------------------------------
+# The decisions themselves. A `snapshot=` argument that no test names is a
+# decision anyone can reverse in a diff that stays green.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def recorded_snapshots(monkeypatch):
+    """Record every snapshot the code under test asks for."""
+    from core.services import student_sections
+
+    seen: list[str] = []
+    real = student_sections.get_student_term_baseline
+
+    def spy(*args, **kwargs):
+        seen.append(str(kwargs.get("snapshot")))
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(student_sections, "get_student_term_baseline", spy)
+    return seen
+
+
+def test_home_cards_ask_for_registrar_evidence(student_with_sections, recorded_snapshots):
+    """These cards assert credit hours and prerequisite satisfaction. A forecast
+    reaching them makes the system state a registration that does not exist."""
+    from core.services.student_home_cards import build_student_home_cards
+
+    _link(student_with_sections["SA101"], PLAN_SOURCE)
+    build_student_home_cards(student_id=SID, academic_year=int(YEAR), term=int(TERM))
+
+    assert recorded_snapshots == [str(Snapshot.REGISTERED)]
+
+
+def test_registered_credit_summary_asks_for_registrar_evidence(
+    student_with_sections, recorded_snapshots
+):
+    from core.services.student_sections import get_student_term_registration_summary
+
+    _link(student_with_sections["SA101"], PLAN_SOURCE)
+    result = get_student_term_registration_summary(SID, YEAR, TERM)
+
+    assert recorded_snapshots == [str(Snapshot.REGISTERED)]
+    # An expected-only term has no registered hours, and "no evidence" is the
+    # honest answer -- not zero, which is only true in one of the four cases the
+    # function's docstring lists.
+    assert result["known"] is False
+    assert result["value"] is None
+
+
+def test_the_recommendation_executor_asks_for_every_row(student_with_sections, recorded_snapshots):
+    """It is the deliberate side-by-side surface, so it takes ANY and splits by
+    class itself -- which is exactly the split that must not regress to a prefix
+    test, because that is how a staff mapping became a registration."""
+    from core.services.rbac import ROLE_STUDENT
+    from core.services.virtual_advisor_capabilities import _exec_recommend_courses
+
+    _link(student_with_sections["SA101"], "planner")
+
+    result = _exec_recommend_courses(
+        {},
+        {"role": ROLE_STUDENT, "student_id": SID},
+        {"academic_year": int(YEAR), "term": int(TERM)},
+    )
+
+    assert str(Snapshot.ANY) in recorded_snapshots
+    assert result["ok"] is True
+    codes_called_current = {row["course_code"] for row in result["already_in_current_timetable"]}
+    assert "SA101" not in codes_called_current, (
+        "a staff planner mapping is not a registration and must not be reported as one"
+    )
+    # The number the model is told the student is carrying. A staff mapping
+    # contributing to it is the same defect one layer down.
+    assert result["current_registered_credit_hours"] == 0
+
+
+def test_a_snapshot_must_be_the_enum_not_its_spelling(student_with_sections):
+    """`Snapshot` is a StrEnum, so `"registered"` would silently work while
+    `"any"` raised a bare KeyError from inside the snapshot module."""
+    with pytest.raises(TypeError):
+        get_student_term_baseline(SID, YEAR, TERM, snapshot="registered")
+    with pytest.raises(TypeError):
+        get_student_term_baseline(SID, YEAR, TERM, snapshot="any")
+
+
+# ---------------------------------------------------------------------------
+# The shape production actually has: a term holding ONLY an imported plan.
+# ---------------------------------------------------------------------------
+
+
+def test_exam_enrolment_still_works_on_a_plan_only_database(student_with_sections):
+    """The live database is exactly this shape -- 1525 rows, every one an imported
+    plan, not one registrar row. Scoping the exam queries to registrar evidence
+    emptied the whole pipeline: `build_section_enrollment` returned {} and the
+    caller fell back to one synthetic "ALL" bucket carrying a single gender,
+    mixing M and F students into one sitting on a gender-segregated campus.
+    """
+    from core.services.exam_timetable import build_section_enrollment
+
+    _link(student_with_sections["SA101"], PLAN_SOURCE)
+
+    result = build_section_enrollment({"SA101"})
+
+    assert [(row["section"], row["student_count"]) for row in result["SA101"]] == [("M1", 1)]
+
+
+def test_exam_enrolment_sets_resolve_per_student(student_with_sections):
+    """`build_enrolled_sets_with_meta` is the live path, and it must not count a
+    student twice when the plan and the registration name different sections."""
+    from core.services.exam_timetable import build_enrolled_sets_with_meta
+
+    planned = TermSection.objects.create(
+        source_tag="other",
+        course_name="SA101",
+        course_code="SA",
+        course_number="101",
+        course_key="SA101",
+        section="M2",
+    )
+    _link(student_with_sections["SA101"], "scraper_timetable")
+    _link(planned, PLAN_SOURCE)
+
+    enrolled, _meta = build_enrolled_sets_with_meta()
+
+    assert enrolled["SA101"] == {SID}
+
+
+def test_the_published_timetable_fallback_never_becomes_the_configured_terms_hours(
+    student_with_sections, monkeypatch
+):
+    """The fallback draws ANOTHER term's week when the configured one is empty.
+
+    Those rows belong to the panel and nowhere else. Letting them reach the
+    academic cards makes «الساعات المسجّلة» — a card labelled with the configured
+    term — report hours from a term the student has already finished, and drops
+    the courses they took then out of their own recommendations.
+    """
+    from core.services.student_home_cards import build_student_home_cards
+
+    # Registrar rows exist ONLY in an earlier term, which is the single published
+    # (year, term) in the database, so the fallback fires.
+    _link(student_with_sections["SA101"], "scraper_timetable", year="1447", term="2")
+
+    response = _home(monkeypatch)
+
+    assert response.context["timetable_is_fallback"] is True
+    assert [p["kind"] for p in response.context["timetable_panels"]] == ["registered"]
+    assert response.context["timetable_panels"][0]["academic_year"] == "1447"
+
+    cards = response.context["home_cards"]
+    assert cards["registered_hours"]["known"] is False, (
+        "the configured term holds no registration, and 1447/2's hours are not its hours"
+    )
+    assert cards["registered_hours"]["academic_year"] == YEAR
+
+    # And the cards service itself, asked directly about the configured term.
+    direct = build_student_home_cards(student_id=SID, academic_year=int(YEAR), term=int(TERM))
+    assert direct["registered_hours"]["known"] is False
+
+
+def test_the_two_timetables_have_distinct_accessible_names(student_with_sections, monkeypatch):
+    """Two grids on one page announced identically -- same region label, same
+    table caption, same disclosure -- leaves a screen-reader user unable to tell
+    the registrar's record from the forecast. Colour cannot carry that difference.
+    """
+    _link(student_with_sections["SA101"], PLAN_SOURCE)
+    _link(student_with_sections["SB201"], "scraper_timetable")
+
+    body = _home(monkeypatch).content.decode()
+
+    for name in (
+        'aria-label="My registered timetable by day and time"',
+        'aria-label="My expected timetable by day and time"',
+        "<summary>My registered timetable in detail</summary>",
+        "<summary>My expected timetable in detail</summary>",
+        'aria-label="My registered timetable details"',
+        'aria-label="My expected timetable details"',
+        "Your registered courses with day, start time, and end time",
+        "Your expected courses with day, start time, and end time",
+    ):
+        assert name in body, name
+
+    # And the JS-built agenda region, which the server cannot name for it.
+    assert re.search(r'data-agenda-label="My registered timetable by day"', body)
+    assert re.search(r'data-agenda-label="My expected timetable by day"', body)

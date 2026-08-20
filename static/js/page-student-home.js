@@ -37,6 +37,9 @@
           ? { SUN: 'الأحد', MON: 'الاثنين', TUE: 'الثلاثاء', WED: 'الأربعاء', THU: 'الخميس', FRI: 'الجمعة', SAT: 'السبت' }
           : { SUN: 'Sun', MON: 'Mon', TUE: 'Tue', WED: 'Wed', THU: 'Thu', FRI: 'Fri', SAT: 'Sat' },
         timeLabel: host.dataset.timeLabel || (arabic ? 'الوقت' : 'Time'),
+        // Distinct per panel, so the JS-built agenda region does not announce
+        // identically to the other timetable on the page.
+        agendaLabel: host.dataset.agendaLabel || undefined,
         emptyText: host.dataset.emptyMessage || (arabic ? 'لا توجد أوقات لعرضها.' : 'No meeting times to show.'),
         currentLabel: arabic ? 'مسجّل' : 'Registered',
         proposedLabel: arabic ? 'متوقع' : 'Expected',

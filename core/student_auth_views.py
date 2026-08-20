@@ -39,7 +39,8 @@ from core.services.student_sections import (
 )
 from core.services.student_unlock import build_unlock_report
 from core.services.timetable_provenance import baseline_sections
-from core.services.timetable_snapshots import Snapshot, SnapshotClass, partition
+from core.services.timetable_snapshots import Snapshot, forecast_rows
+from core.services.timetable_snapshots import select as select_snapshot
 from core.settings_views import load_defaults
 from core.sidebar_context import get_sidebar_context
 
@@ -577,14 +578,27 @@ def student_home_view(request: HttpRequest) -> HttpResponse:
     # old two-way split promoted the staff planner's own mappings — sources
     # `planner` and `auto_from_studying`, written by two staff-only endpoints in
     # core/planner_views.py — into the registered half, and this screen then titled
-    # them «جدولي الأسبوعي» with no disclaimer. WORKING rows are a department's
-    # working note about a student, not a claim to that student about themselves,
-    # so they are shown here as neither.
-    by_class = partition(configured_rows)
-    registered_configured_rows = by_class[SnapshotClass.REGISTRAR]
-    expected_rows = by_class[SnapshotClass.EXPECTED]
+    # them «جدولي الأسبوعي» with no disclaimer.
+    #
+    # The forecast card shows the department's LATEST forecast, not always the
+    # imported one. A planner save writes WORKING rows and, since each writer now
+    # replaces only its own class, the imported plan survives underneath it — so
+    # picking EXPECTED unconditionally would show a student the seating their
+    # department has already moved them out of, for ever, with no writer that ever
+    # removes it. `forecast_rows` applies the same precedence the advisor's
+    # EFFECTIVE resolution uses, which is also what keeps chat and this screen
+    # naming the same plan.
+    registered_configured_rows = select_snapshot(configured_rows, Snapshot.REGISTERED)
+    expected_rows = forecast_rows(configured_rows)
 
     tt_year, tt_term, tt_fallback = year, term, False
+    # These two are the CONFIGURED term's evidence and must stay bound to it. The
+    # fallback below re-reads another term for the panels only: the hours card and
+    # the recommendation filter are labelled with the configured term, so feeding
+    # them 1447/2's registrations under a 1448/1 label is a false statement about
+    # what the student is carrying now.
+    panel_registered_rows = registered_configured_rows
+    panel_expected_rows = expected_rows
     if not registered_configured_rows and not expected_rows:
         # Nothing at all in the configured term. Fall back to the one published
         # timetable in the database — but ONLY when the whole database holds exactly
@@ -612,21 +626,19 @@ def student_home_view(request: HttpRequest) -> HttpResponse:
             if mine and is_other_term:
                 tt_year, tt_term, tt_fallback = published_year, published_term, True
                 try:
-                    fallback_by_class = partition(
-                        visible_to_student(
-                            get_student_term_baseline(
-                                student_id,
-                                str(tt_year),
-                                str(tt_term),
-                                snapshot=Snapshot.ANY,
-                            )
+                    fallback_rows = visible_to_student(
+                        get_student_term_baseline(
+                            student_id,
+                            str(tt_year),
+                            str(tt_term),
+                            snapshot=Snapshot.ANY,
                         )
                     )
                 except Exception:  # noqa: BLE001
                     logger.exception("student fallback timetable failed for %s", student_id)
                 else:
-                    registered_configured_rows = fallback_by_class[SnapshotClass.REGISTRAR]
-                    expected_rows = fallback_by_class[SnapshotClass.EXPECTED]
+                    panel_registered_rows = select_snapshot(fallback_rows, Snapshot.REGISTERED)
+                    panel_expected_rows = forecast_rows(fallback_rows)
 
     def _panel(kind: str, panel_rows: list[dict]) -> dict:
         """One card: its own grid, its own agenda table, its own provenance.
@@ -665,12 +677,13 @@ def student_home_view(request: HttpRequest) -> HttpResponse:
         }
 
     # Registered first: it is what is true. The expected plan follows as the
-    # forecast it is compared against.
+    # forecast it is compared against. Built from the PANEL rows, which are the
+    # configured term's unless the fallback replaced them.
     timetable_panels = []
-    if registered_configured_rows:
-        timetable_panels.append(_panel("registered", registered_configured_rows))
-    if expected_rows:
-        timetable_panels.append(_panel("expected", expected_rows))
+    if panel_registered_rows:
+        timetable_panels.append(_panel("registered", panel_registered_rows))
+    if panel_expected_rows:
+        timetable_panels.append(_panel("expected", panel_expected_rows))
 
     registered_codes = list(
         dict.fromkeys(

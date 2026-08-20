@@ -37,6 +37,12 @@ def snapshot_class_filter(snapshot_class: SnapshotClass) -> Q:
     removes rows a screen is still showing. ``REGISTRAR`` and ``WORKING`` both
     exclude the expected prefix explicitly, so a source that somehow matched both
     lists cannot be caught by two classes at once.
+
+    ``WORKING`` names NULL explicitly. ``source`` is not nullable and no NULL exists
+    today, but SQL's ``NOT LIKE`` is NULL — not true — for a NULL column, so a NULL
+    row would match no class here while ``classify_source`` calls it WORKING in
+    Python. The two rules disagreeing is precisely the state in which a row belongs
+    to no writer and is never cleaned up again.
     """
     expected = Q(source__istartswith=EXPECTED_TIMETABLE_SOURCE_PREFIX)
     registrar = Q()
@@ -46,7 +52,7 @@ def snapshot_class_filter(snapshot_class: SnapshotClass) -> Q:
         return expected
     if snapshot_class is SnapshotClass.REGISTRAR:
         return registrar & ~expected
-    return ~expected & ~registrar
+    return Q(source__isnull=True) | (~expected & ~registrar)
 
 
 # Sections are gender-segregated and labelled with a leading gender tag, e.g.

@@ -33,8 +33,12 @@ staff planner's own scratch mappings -- ``planner``, ``auto_from_studying``, wri
 by two staff-only endpoints in ``core/planner_views.py`` -- to registrar evidence.
 The student home screen then titled them "My weekly timetable" with no disclaimer:
 a department's draft assignment, shown to the student as their registration. Naming
-``WORKING`` as its own class is what stops that, and it is why the student portal
-renders only ``REGISTRAR`` and ``EXPECTED`` rows.
+``WORKING`` as its own class is what stops that.
+
+It does NOT mean WORKING rows are hidden. They are a forecast, so they are shown
+and described as one -- see :func:`forecast_rows` and the WORKING branch of
+:func:`timetable_snapshot_kind`. What the class buys is that a department's draft
+can never be called a registration.
 
 WHY ``EFFECTIVE`` RESOLVES RATHER THAN REFUSES
 
@@ -177,6 +181,30 @@ def select(
     return [row for row in materialised if row_class(row) is wanted]
 
 
+def forecast_rows(rows: Iterable[Mapping[str, Any]]) -> list[Mapping[str, Any]]:
+    """The department's LATEST forecast for this term, registrar rows excluded.
+
+    ``EXPECTED`` and ``WORKING`` are both forecasts; they differ in who authored
+    them. When a term holds both, the later assertion wins — the same order
+    :data:`_EFFECTIVE_PRECEDENCE` uses — because each writer now replaces only its
+    own class, so an imported plan SURVIVES underneath a planner save that moved
+    the student. A screen that picked ``EXPECTED`` unconditionally would show
+    seating the department has already moved them out of, with no writer that ever
+    removes it, while the planner and the adviser showed the newer one.
+
+    Registrar rows are never returned: this answers "what is planned", and what is
+    recorded is a different question with a different card.
+    """
+    materialised = list(rows)
+    for candidate in _EFFECTIVE_PRECEDENCE:
+        if candidate is SnapshotClass.REGISTRAR:
+            continue
+        chosen = [row for row in materialised if row_class(row) is candidate]
+        if chosen:
+            return chosen
+    return []
+
+
 def partition(
     rows: Iterable[Mapping[str, Any]],
 ) -> dict[SnapshotClass, list[Mapping[str, Any]]]:
@@ -242,6 +270,7 @@ __all__ = [
     "classes_present",
     "classify_source",
     "effective_class",
+    "forecast_rows",
     "partition",
     "row_class",
     "select",

@@ -217,7 +217,16 @@ def resolve_current_term() -> tuple[str, str]:
     Mirrors the exam-timetable convention (``build_enrolled_sets`` orders by
     ``-academic_year, -term``) so "current timetable" means the same thing
     across screens, without the caller having to pick a term. Returns
-    ``("", "")`` when there is no registration data at all.
+    ``("", "")`` when there is no timetable data at all.
+
+    DELIBERATELY UNFILTERED BY PROVENANCE. A term that exists only as an imported
+    expected plan still counts as the latest term, because this screen is a
+    FORWARD-PLANNING tool: a registrar deciding where to open a new section is
+    asking about the term being planned, not the last one the registrar recorded.
+    Scoping this probe to registrar rows would answer for a term that has already
+    happened. The class question is settled per student inside
+    ``_load_meetings_by_student``, which is where it belongs -- one student may
+    have registered while another still has only the plan.
     """
     latest = (
         StudentTermSection.objects.order_by("-academic_year", "-term")

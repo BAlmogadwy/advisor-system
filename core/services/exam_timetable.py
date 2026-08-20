@@ -140,26 +140,41 @@ def _credit_pair_penalty(credits_on_day: list[int]) -> int:
 # ── 1. Enrolled sets ────────────────────────────────────────────
 
 
-def _registrar_only():
-    """Exam enrolment is a registrar claim, so it reads registrar rows only.
+def _effective_enrolment_ids(queryset) -> list[int]:
+    """Primary keys of the rows that count, resolved PER STUDENT.
 
     A term may now hold an imported expected plan beside the registrar's snapshot.
-    Unfiltered, every query in this module would union the two: a student would be
-    counted into a course they only planned, seated twice where the plan and the
-    registration name different sections of one course, and each of those wrong
-    numbers becomes a room size, an invigilator count and a sitting on a student's
-    own exam sheet. Nothing here has a mixed-baseline guard to catch it, and an
-    exam timetable is not a screen a student can correct.
+    Unfiltered, every query in this module unions the two: a student is counted
+    into a course they only planned, and counted TWICE where the plan and the
+    registration name different sections of one course. Each of those wrong numbers
+    becomes a room size, an invigilator count and a sitting on a student's own exam
+    sheet, and nothing in this module has a mixed-baseline guard to catch it.
 
-    An empty result is not a failure. Both callers fall back to
-    ``StudentCourse.status='studying'`` -- itself registrar-scraped -- when no
-    registrar sections are on file, which is the documented behaviour for a term
-    whose section mappings have not landed.
+    Registrar evidence wins WHERE IT EXISTS, per student -- not per query. A term
+    mid-registration legitimately holds students at different stages: A has
+    registered, B has only the plan. Scoping the whole query to registrar rows
+    would drop B entirely, which on this project's current data means dropping
+    EVERYONE: the live database holds 1525 rows, all `registration_plan_1448_t1`
+    and not one `scraper_timetable`. `build_enrolled_sets_with_meta` would return
+    `({}, {})` and `build_section_enrollment` would collapse every course into one
+    synthetic "ALL" bucket carrying a single gender -- mixing M and F students into
+    one sitting on a gender-segregated campus.
     """
-    from core.services.student_sections import snapshot_class_filter
-    from core.services.timetable_snapshots import SnapshotClass
+    from core.services.timetable_snapshots import classify_source, effective_class
 
-    return snapshot_class_filter(SnapshotClass.REGISTRAR)
+    by_student: dict[int, list[tuple[int, str]]] = defaultdict(list)
+    for pk, student_id, source in queryset.values_list("pk", "student_id", "source"):
+        by_student[int(student_id)].append((int(pk), str(source or "")))
+    keep: list[int] = []
+    for rows in by_student.values():
+        winner = effective_class({"source": source} for _pk, source in rows)
+        keep.extend(pk for pk, source in rows if classify_source(source) is winner)
+    return keep
+
+
+def _effective_enrolment(queryset):
+    """``queryset`` narrowed to the rows :func:`_effective_enrolment_ids` keeps."""
+    return queryset.filter(pk__in=_effective_enrolment_ids(queryset))
 
 
 def build_enrolled_sets(
@@ -185,18 +200,15 @@ def build_enrolled_sets(
     return enrolled
 
     latest = (
-        StudentTermSection.objects.filter(_registrar_only())
-        .order_by("-academic_year", "-term")
+        StudentTermSection.objects.order_by("-academic_year", "-term")
         .values_list("academic_year", "term")
         .first()
     )
 
     if latest is not None:
         ay, tm = latest
-        qs = (
-            StudentTermSection.objects.filter(academic_year=ay, term=tm)
-            .filter(_registrar_only())
-            .select_related("term_section")
+        qs = StudentTermSection.objects.filter(academic_year=ay, term=tm).select_related(
+            "term_section"
         )
 
         if programs:
@@ -214,7 +226,7 @@ def build_enrolled_sets(
         # the full course identifier matching Course.course_code is course_key
         # (e.g. "CS101"). Grouping by course_code would collapse every CS
         # course into one bucket and destroy the exam schedule.
-        rows = qs.values_list("term_section__course_key", "student_id")
+        rows = _effective_enrolment(qs).values_list("term_section__course_key", "student_id")
         enrolled: dict[str, set[int]] = defaultdict(set)
         for course_key, student_id in rows:
             enrolled[course_key].add(student_id)
@@ -256,8 +268,7 @@ def build_enrolled_sets_with_meta(
     source_codes = {str(code) for code, _desc, _sid, _program in rows}
     if not source_codes:
         latest = (
-            StudentTermSection.objects.filter(_registrar_only())
-            .order_by("-academic_year", "-term")
+            StudentTermSection.objects.order_by("-academic_year", "-term")
             .values_list("academic_year", "term")
             .first()
         )
@@ -265,10 +276,8 @@ def build_enrolled_sets_with_meta(
             return {}, {}
 
         ay, tm = latest
-        qs_sts = (
-            StudentTermSection.objects.filter(academic_year=ay, term=tm)
-            .filter(_registrar_only())
-            .select_related("term_section")
+        qs_sts = StudentTermSection.objects.filter(academic_year=ay, term=tm).select_related(
+            "term_section"
         )
         if programs:
             student_ids = set(
@@ -283,7 +292,7 @@ def build_enrolled_sets_with_meta(
 
         enrolled_sts: dict[str, set[int]] = defaultdict(set)
         meta_sts: dict[str, dict] = {}
-        for course_key, course_name, student_id in qs_sts.values_list(
+        for course_key, course_name, student_id in _effective_enrolment(qs_sts).values_list(
             "term_section__course_key",
             "term_section__course_name",
             "student_id",
@@ -1129,8 +1138,7 @@ def build_section_enrollment(
     # Latest (academic_year, term) that has any data — same approach as
     # build_enrolled_sets so we stay on the same dataset.
     latest = (
-        StudentTermSection.objects.filter(_registrar_only())
-        .order_by("-academic_year", "-term")
+        StudentTermSection.objects.order_by("-academic_year", "-term")
         .values_list("academic_year", "term")
         .first()
     )
@@ -1140,15 +1148,11 @@ def build_section_enrollment(
 
     if latest is not None:
         ay, tm = latest
-        qs = (
-            StudentTermSection.objects.filter(
-                academic_year=ay,
-                term=tm,
-                term_section__course_key__in=list(wanted),
-            )
-            .filter(_registrar_only())
-            .select_related("term_section")
-        )
+        qs = StudentTermSection.objects.filter(
+            academic_year=ay,
+            term=tm,
+            term_section__course_key__in=list(wanted),
+        ).select_related("term_section")
 
         if programs:
             student_ids = set(
@@ -1164,7 +1168,7 @@ def build_section_enrollment(
         # Group by (course_key, term_section_id) and count distinct students.
         # Also remember the section label so we can derive gender later.
         per_section: dict[tuple[str, int], dict[str, Any]] = {}
-        for row in qs.values(
+        for row in _effective_enrolment(qs).values(
             "term_section_id",
             "term_section__course_key",
             "term_section__section",

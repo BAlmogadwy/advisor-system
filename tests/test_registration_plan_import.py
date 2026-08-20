@@ -343,8 +343,15 @@ def test_expected_import_lands_beside_registrar_rows_without_replacing_them(
     assert plan.ok, plan.problems
     assert not any(p.code == "TARGET_TERM_HAS_REGISTRAR_ROWS" for p in plan.problems)
     assert any(n.code == "TARGET_TERM_HAS_REGISTRAR_ROWS" for n in plan.notices), plan.notices
+    # An operator must be able to SEE the notice. It is not a problem any more, so
+    # `summary()` is the only place a dry run would surface it.
+    assert "1 notice(s)" in plan.summary(), plan.summary()
 
-    apply_plan(plan, YEAR, TERM)
+    # The registrar row must not be inside the predicted delete scope either: the
+    # dry run's number is what an operator judges the blast radius from.
+    assert plan.replaces == 0
+    result = apply_plan(plan, YEAR, TERM)
+    assert result["removed"] == plan.replaces
 
     assert StudentTermSection.objects.filter(pk=real.pk).exists()
     assert set(
