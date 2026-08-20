@@ -35,8 +35,34 @@ interaction. Do not weaken or automate around those controls. If the tenant
 requires them, use a university-approved service account/API or an
 operator-assisted design approved by the university.
 
-After changing credentials or authentication policy, run a controlled
-single-student scrape before a full roster. CI and browser acceptance tests use
+### Checking the login chain without signing in
+
+```
+.venv/Scripts/python.exe scripts/probe_portal_sso.py
+```
+
+Every automated test of the SSO flow drives a fake page, so the suite stays green
+while the real portal renames a button — which is exactly how the previous
+`teachers_login.jsp` login kept passing its tests after the portal had moved. The
+probe walks the real chain as far as it can without authenticating: the pre-login
+page, the freshly keyed `authLogin` link, and the Microsoft page that link lands
+on. It reports which of the scraper's own selectors match, and checks that
+`PORTAL_ADMIN_USERNAME` has the UPN shape Entra needs.
+
+It never fills a credential field, never submits a form, never reads the
+password, and prints host names and match counts only — no dynamic key, OAuth
+state, nonce, or page content. Exit code 0 means the chain matches; 1 means the
+scraper cannot sign in as configured, and says which check failed.
+
+Run it first after any portal change, tenant policy change, or failed scrape. The
+half it cannot reach — username submit, home-realm discovery to
+`tufs.taibahu.edu.sa`, the ADFS credential form, the callback — needs a real
+sign-in, which is what the single-student scrape below is for.
+
+### After changing credentials or policy
+
+Run a controlled single-student scrape before a full roster: a one-row
+`students_list.csv` passed with `--csv`. CI and browser acceptance tests use
 mocked SSO states and never send live Microsoft credentials.
 
 ## Current-student scope
