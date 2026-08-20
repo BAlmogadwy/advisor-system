@@ -240,7 +240,9 @@ def edit_draft(
             # `select_for_update` is silently a no-op, this guard is the whole
             # defence. Refuse rather than overwrite: the caller re-reads and the
             # student is shown what the draft actually says.
-            raise DraftConflict("تغيّر هذا المخطط في نافذة أخرى. أعد تحميل الصفحة ثم حاول مرة أخرى.")
+            raise DraftConflict(
+                "تغيّرت مساحة التخطيط في نافذة أخرى. أعد تحميل الصفحة، ثم حاول مرة أخرى."
+            )
         locked.refresh_from_db()
         return locked
 
@@ -263,7 +265,7 @@ def issue_rebuild_token(draft: PlannerDraft) -> str:
         locked = _lock(draft)
         _require_live(locked)
         if locked.keep_current_sections:
-            raise DraftError("الاحتفاظ بالشُعب الحالية لا يحتاج إلى تأكيد.")
+            raise DraftError("الاحتفاظ بشُعب الجدول المرجعي لا يتطلب تأكيدًا.")
 
         raw = secrets.token_urlsafe(32)
         # Guarded on the version it is being bound to: a token must never be issued
@@ -275,7 +277,9 @@ def issue_rebuild_token(draft: PlannerDraft) -> str:
             rebuild_token_expires_at=timezone.now() + TOKEN_TTL,
         )
         if not updated:
-            raise DraftConflict("تغيّر هذا المخطط في نافذة أخرى. أعد تحميل الصفحة ثم حاول مرة أخرى.")
+            raise DraftConflict(
+                "تغيّرت مساحة التخطيط في نافذة أخرى. أعد تحميل الصفحة، ثم حاول مرة أخرى."
+            )
         draft.refresh_from_db()
     # Returned once. Only the hash is stored, so a database reader cannot confirm
     # a rebuild on the student's behalf.
@@ -404,7 +408,9 @@ def generate(draft: PlannerDraft, *, confirmation: Any = None) -> PlannerDraft:
 
         if not locked.keep_current_sections and not _confirmation_is_valid(locked, confirmation):
             raise ConfirmationRequired(
-                "إعادة البناء تتجاهل شُعبك الحالية في الاقتراح. يلزم التأكيد أولاً."
+                "ستُنشئ إعادة البناء جدولًا مقترحًا جديدًا من البداية، بدل الاحتفاظ "
+                "بالجدول المرجعي المعروض أعلاه، مع الإبقاء على الشُعب التي ثبّتها "
+                "يدويًا. يجب تأكيد هذا الإجراء أولًا."
             )
 
         # THE claim. One statement, so it is atomic on every backend: whoever moves
@@ -431,7 +437,7 @@ def generate(draft: PlannerDraft, *, confirmation: Any = None) -> PlannerDraft:
             # default, so a fixture, the admin, or any future writer can leave a row
             # that fails `int("")` two lines below — surfacing as a 500 rather than
             # as anything a caller can act on.
-            raise DraftError("هذا المخطط لا يحدّد الفصل الدراسي. ابدأ مخططًا جديدًا.")
+            raise DraftError("لم يُحدّد الفصل الدراسي لمساحة التخطيط. افتح أداة التخطيط من جديد.")
         baseline = get_student_term_baseline(
             locked.student_id, year, term, snapshot=Snapshot.EFFECTIVE
         )
@@ -450,6 +456,12 @@ def generate(draft: PlannerDraft, *, confirmation: Any = None) -> PlannerDraft:
                 # explicit courses were supplied; silently adding removed
                 # recommendations back here made the picker impossible to use.
                 include_recommendations=False,
+                # Use the exact provenance-resolved snapshot fingerprinted and
+                # stored below.  Without this override the adapter performs a
+                # second read, allowing a registrar scrape arriving between the
+                # two reads to make the solver use a different baseline from the
+                # one the draft says it used.
+                baseline_override=tuple(dict(row) for row in baseline),
             )
         )
 
@@ -501,18 +513,18 @@ def select_alternative(draft: PlannerDraft, key: Any) -> PlannerDraft:
         locked = _lock(draft)
         _require_live(locked)
         if not locked.has_current_generation:
-            raise DraftError("لا توجد جداول معروضة للاختيار منها الآن.")
+            raise DraftError("لا توجد جداول مقترحة معروضة للاختيار منها حاليًا.")
 
         offered = {str(a.get("key")) for a in locked.alternatives}
         if str(key) not in offered:
-            raise DraftError("هذا الجدول ليس من الخيارات المعروضة عليك.")
+            raise DraftError("هذا الجدول ليس ضمن الجداول المقترحة المعروضة حاليًا.")
 
         updated = PlannerDraft.objects.filter(
             pk=locked.pk, version=locked.version, generated_version=locked.generated_version
         ).update(selected_alternative=str(key), selected_at=timezone.now())
         if not updated:
             raise DraftConflict(
-                "تمّ استبدال هذه الجداول أثناء اختيارك. أعد تحميل الصفحة ثم اختر من جديد."
+                "تغيّرت الجداول المقترحة أثناء اختيارك. أعد تحميل الصفحة، ثم اختر من جديد."
             )
         locked.refresh_from_db()
         return locked
@@ -521,8 +533,8 @@ def select_alternative(draft: PlannerDraft, key: Any) -> PlannerDraft:
 def _require_live(draft: PlannerDraft) -> None:
     if not draft.is_live:
         raise DraftExpired(
-            "انتهت صلاحية هذا المخطط. ابدأ من جديد من قائمة مقرراتك — "
-            "فقد تكون الشُعب المطروحة قد تغيّرت منذ إنشائه."
+            "انتهت صلاحية مساحة التخطيط. افتح أداة التخطيط من جديد من قائمة "
+            "مقرراتك؛ فقد تكون بيانات الشُعب قد تغيّرت منذ فتح المساحة السابقة."
         )
 
 

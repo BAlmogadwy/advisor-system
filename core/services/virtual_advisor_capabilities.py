@@ -1891,7 +1891,7 @@ def _student_sections_context(
     if not codes:
         return {"ok": False, "error": "course_code (or course_codes) is required."}, {}
 
-    from core.models import Student
+    from core.models import Student, TermSection
 
     program = str(
         Student.objects.filter(student_id=student_id).values_list("program", flat=True).first()
@@ -1904,6 +1904,13 @@ def _student_sections_context(
             "reason": "PROGRAMME_UNRESOLVED",
         }, {}
     catalog = _catalog_for_courses(str(year), str(term), codes, gender, program)
+    global_section_counts = {
+        code: TermSection.objects.filter(
+            scenario__isnull=True,
+            course_key=code,
+        ).count()
+        for code in codes
+    }
     baseline = get_student_term_baseline(
         int(student_id), str(year), str(term), snapshot=Snapshot.EFFECTIVE
     )
@@ -1921,6 +1928,7 @@ def _student_sections_context(
         "gender": gender,
         "codes": codes,
         "catalog": catalog,
+        "global_section_counts": global_section_counts,
         "baseline": baseline,
         "baseline_kind": baseline_kind,
     }
@@ -1964,10 +1972,15 @@ def _exec_my_clash_free_sections(
             }
         )
         if not sections:
+            recorded_sections_on_file = int(c["global_section_counts"].get(code) or 0)
+            status = (
+                "NOT_MATCHING_STUDENT_PROFILE" if recorded_sections_on_file > 0 else "NOT_ON_FILE"
+            )
             results.append(
                 {
                     "course_code": code,
                     "sections_on_file": 0,
+                    "recorded_sections_on_file": recorded_sections_on_file,
                     "currently_registered_sections": (
                         baseline_sections_for_course if c["baseline_kind"] == "REGISTERED" else []
                     ),
@@ -1981,7 +1994,7 @@ def _exec_my_clash_free_sections(
                     "clashing": [],
                     # NOT "no sections available" — that claims the university offers
                     # none. Only 77 of 246 plan courses have any section on file.
-                    "status": "NOT_ON_FILE",
+                    "status": status,
                 }
             )
             continue
@@ -2028,6 +2041,7 @@ def _exec_my_clash_free_sections(
             {
                 "course_code": code,
                 "sections_on_file": len(sections),
+                "recorded_sections_on_file": int(c["global_section_counts"].get(code) or 0),
                 "currently_registered_sections": (
                     baseline_sections_for_course if c["baseline_kind"] == "REGISTERED" else []
                 ),
@@ -2051,9 +2065,12 @@ def _exec_my_clash_free_sections(
             "Compared against the stored baseline identified by baseline_kind. EXPECTED_PLAN "
             "is planning data, not registration; MIXED_REVIEW_REQUIRED must not be presented "
             "as one registered timetable. Sections carry NO term of their own, so never call these 'next "
-            "term's' sections. status NOT_ON_FILE means the section catalogue holds "
+            "term's' sections. status NOT_ON_FILE means the entire section catalogue holds "
             "nothing for that course - it does NOT mean the university offers none, and "
-            "must not be reported as 'no sections available'. A section marked "
+            "must not be reported as 'no sections available'. status "
+            "NOT_MATCHING_STUDENT_PROFILE means sections are recorded globally but none "
+            "match the student's programme and study cohort; do not describe those rows as "
+            "missing. A section marked "
             "is_current_section is registrar evidence; is_expected_plan_section is not. When "
             "checking another section of the same course, the current section is replaced "
             "before clash comparison. Seat counts are absent from this result, so never "
@@ -3691,7 +3708,9 @@ def build_default_registry() -> AdvisorCapabilityRegistry:
                 "both time ranges of every collision. Use for 'which section of X can I "
                 "take', 'does section F11 clash with my schedule', 'all the sections "
                 "clash, is that right'. status NOT_ON_FILE means no section is recorded "
-                "for that course; say exactly that, never 'no sections available'. There "
+                "for that course; say exactly that, never 'no sections available'. status "
+                "NOT_MATCHING_STUDENT_PROFILE means sections exist in the catalogue but none "
+                "match the student's programme and study cohort; state that distinction. There "
                 "are no seat counts, so call them recorded sections rather than available "
                 "sections, and never claim a section has room. Read baseline_kind first: "
                 "REGISTERED marks registrar evidence with is_current_section, while "

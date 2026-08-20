@@ -369,6 +369,7 @@ def test_clash_projection_keeps_section_evidence_without_people_or_rooms() -> No
                 {
                     "course_code": "CS285",
                     "sections_on_file": 3,
+                    "recorded_sections_on_file": 3,
                     "currently_registered_sections": ["M3"],
                     "status": "OK",
                     "clash_free": [
@@ -404,7 +405,17 @@ def test_clash_projection_keeps_section_evidence_without_people_or_rooms() -> No
                             ],
                         }
                     ],
-                }
+                },
+                {
+                    "course_code": "AI113",
+                    "sections_on_file": 0,
+                    "recorded_sections_on_file": 2,
+                    "status": "NOT_MATCHING_STUDENT_PROFILE",
+                    "programs": ["AI2", "DS2"],
+                    "available_capacity": 25,
+                    "clash_free": [],
+                    "clashing": [],
+                },
             ],
         },
     )
@@ -413,6 +424,7 @@ def test_clash_projection_keeps_section_evidence_without_people_or_rooms() -> No
     course = projected["courses"][0]
     assert course["course_code"] == "CS285"
     assert course["sections_on_file"] == 3
+    assert course["recorded_sections_on_file"] == 3
     assert course["currently_registered_sections"] == ["M3"]
     assert course["clash_free"][0] == {
         "section": "M3",
@@ -423,6 +435,15 @@ def test_clash_projection_keeps_section_evidence_without_people_or_rooms() -> No
         "is_current_section": True,
     }
     assert course["clashing"][0]["conflicts"][0]["conflicts_with"] == "CS113 M4"
+    filtered = projected["courses"][1]
+    assert filtered == {
+        "course_code": "AI113",
+        "sections_on_file": 0,
+        "recorded_sections_on_file": 2,
+        "status": "NOT_MATCHING_STUDENT_PROFILE",
+        "clash_free": [],
+        "clashing": [],
+    }
     sent = json.dumps(projected, ensure_ascii=False)
     assert CANARIES["name"] not in sent
     assert CANARIES["latin_name"] not in sent

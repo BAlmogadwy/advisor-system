@@ -51,6 +51,7 @@ from core.services.llm_backend import LLMError, UsageTotals, get_llm_client
 from core.services.llm_remote_privacy import fold_digits
 from core.services.policy_contract import requires_policy_contract
 from core.services.rbac import ROLE_STUDENT
+from core.services.student_helpers import normalize_code
 from core.services.virtual_advisor import (
     _answer_language,
     _answer_style,
@@ -104,13 +105,15 @@ clear, practical answer.
 
 Operating rules:
 - Answer in the language named in the latest user message.
-- Follow the supplied answer_style. For Arabic, speak like a clear Saudi academic
-  adviser and mirror the student's formality. In conversational Saudi Arabic, use
-  familiar wording such as «وش»، «تقدر»، «هالترم»، and «الحين» naturally when it
-  fits, without forcing slang, caricaturing the dialect, or repeating greetings.
-  In professional Saudi Arabic, use warm, direct standard Arabic without slang.
+- Follow the supplied answer_style. Understand colloquial Saudi Arabic in the
+  student's input, but write Arabic answers in clear, warm Modern Standard Arabic.
   Keep official academic terms, policy wording, citations, course codes, and
-  numbers precise. Do not drift into Egyptian, Levantine, or Maghrebi phrasing.
+  numbers precise. Do not use colloquial wording in the rendered answer.
+- Arabic terminology is fixed: REGISTERED is «الجدول المسجّل فعليًا», EXPECTED_PLAN
+  is «الجدول المتوقع», and any generated planning alternative is «الجدول المقترح».
+  Do not use «الحالي» as a substitute for registrar evidence. A section listed in
+  this system's catalogue is «شعبة مدرجة في بيانات النظام», not «شعبة مسجّلة»;
+  «مسجّلة» is reserved for the student's actual registration.
 - Use tools for every claim about this student's record, degree plan, prerequisites,
   recommendations, credit position, graduation outlook, adviser, or university rules.
 - You may call several tools and combine their evidence. Ask one short clarification only
@@ -173,8 +176,12 @@ Operating rules:
   currently_registered_sections/is_current_section are registrar evidence;
   expected_plan_sections/is_expected_plan_section are only planning evidence and must be
   called expected, never registered/current. Never report that section data is missing when
-  the tool returned sections_on_file greater than zero. Call catalogue rows "recorded
-  sections", not "available sections": this result has no seat-availability fact.
+  the tool returned sections_on_file greater than zero. NOT_MATCHING_STUDENT_PROFILE means
+  sections are recorded in the catalogue, but none match the student's programme and study
+  cohort; state that distinction and do not claim the course has no sections. Do not replace
+  verified section evidence with policy-guide commentary or a generic registrar referral.
+  Call catalogue rows "recorded sections", not "available sections": this result has no
+  seat-availability fact.
 - Recommendations are proposals shown in this system. This system NEVER registers a real
   course, saves/applies a university timetable, reserves a seat, or changes the main portal.
   If asked to register, save, apply, or confirm courses, explain that you can prepare and
@@ -638,7 +645,7 @@ def _normalise_timetable_proposal_args(
 _INTERNAL_OUTPUT_MARKERS = re.compile(
     r"(?:source_leaves_unresolved|decision_use|PROHIBITED_FOR_DECISION|"
     r"PARTIALLY_EVALUABLE|PERMITTED_WITH_USER_PROVIDED_INPUTS|EXPLANATORY_ONLY|"
-    r"reason_code|NOT_ON_FILE|OMITTED_IN_THIS_VARIANT|"
+    r"reason_code|NOT_ON_FILE|NOT_MATCHING_STUDENT_PROFILE|OMITTED_IN_THIS_VARIANT|"
     r"listed_as_prerequisite_for|sole_remaining_prerequisite(?:_for)?|"
     r"on_prerequisite_chain_of|build_timetable_proposal|recommend_courses|"
     r"course_choice_comparison|feasible_course_replacements|"
@@ -655,44 +662,102 @@ def _internal_output_markers(answer: str) -> list[str]:
     return sorted({match.group(0) for match in _INTERNAL_OUTPUT_MARKERS.finditer(answer or "")})
 
 
+def _prefer_arabic_course_names_in_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    """Localise course labels in one Arabic response without changing catalogue data."""
+    from core.services.student_sections import arabic_term_section_course_names
+
+    copied = copy.deepcopy(payload)
+    codes: set[str] = set()
+
+    def collect(value: Any) -> None:
+        if isinstance(value, dict):
+            candidate = normalize_code(value.get("course_code") or value.get("code") or "")
+            if re.fullmatch(r"[A-Z]{1,6}\d{1,4}", candidate):
+                codes.add(candidate)
+            name_map = value.get("nameOf")
+            if isinstance(name_map, dict):
+                codes.update(
+                    code
+                    for raw_code in name_map
+                    if re.fullmatch(r"[A-Z]{1,6}\d{1,4}", (code := normalize_code(raw_code)))
+                )
+            for child in value.values():
+                collect(child)
+        elif isinstance(value, list):
+            for child in value:
+                collect(child)
+
+    collect(copied)
+    arabic_names = arabic_term_section_course_names(codes)
+    if not arabic_names:
+        return copied
+
+    def apply(value: Any) -> None:
+        if isinstance(value, dict):
+            code = normalize_code(value.get("course_code") or value.get("code") or "")
+            arabic_name = arabic_names.get(code, "")
+            if arabic_name:
+                if "course_name" in value:
+                    value["course_name"] = arabic_name
+                if "name" in value:
+                    value["name"] = arabic_name
+            name_map = value.get("nameOf")
+            if isinstance(name_map, dict):
+                for raw_code in list(name_map):
+                    localised = arabic_names.get(normalize_code(raw_code), "")
+                    if localised:
+                        name_map[raw_code] = localised
+            for child in value.values():
+                apply(child)
+        elif isinstance(value, list):
+            for child in value:
+                apply(child)
+
+    apply(copied)
+    return copied
+
+
 def _humanise_internal_output_markers(answer: str, language: str) -> str:
     """Last-resort cleanup after a bounded rewrite still leaks schema labels."""
     replacements_ar = {
-        "source_leaves_unresolved": "المصدر يترك هذه النقطة غير محسومة",
-        "decision_use": "حدود استخدام الدليل",
-        "prohibited_for_decision": "لا يمكن استخدام القاعدة للحكم على الحالة الفردية",
-        "partially_evaluable": "يمكن التحقق من جزء من الحالة فقط",
-        "permitted_with_user_provided_inputs": "يتطلب التحقق بيانات يقدمها الطالب",
-        "explanatory_only": "قاعدة تفسيرية فقط",
+        "source_leaves_unresolved": "لم يحسم المصدر هذه النقطة",
+        "decision_use": "نطاق الاستفادة من الدليل",
+        "prohibited_for_decision": "لا تكفي هذه القاعدة للحكم على حالة الطالب",
+        "partially_evaluable": "لا يمكن التحقق إلا من جزء من الحالة",
+        "permitted_with_user_provided_inputs": "يتطلب التحقق بيانات إضافية من الطالب",
+        "explanatory_only": "هذه القاعدة للتوضيح فقط",
         "reason_code": "سبب النتيجة",
-        "not_on_file": "غير مسجل في بيانات النظام",
-        "omitted_in_this_variant": "غير مدرج في هذا البديل فقط",
+        "not_on_file": "غير مدرج في بيانات النظام",
+        "not_matching_student_profile": "لا يطابق برنامج الطالب أو شطر الدراسة",
+        "omitted_in_this_variant": "غير مدرج في هذا الخيار وحده",
         "listed_as_prerequisite_for": "مقررات تذكره كمتطلب سابق",
         "sole_remaining_prerequisite": "المتطلب السابق الوحيد المتبقي",
-        "sole_remaining_prerequisite_for": "مقررات لا يفصلها عن الفتح إلا هذا المتطلب",
-        "on_prerequisite_chain_of": "مقررات يقع ضمن سلسلة متطلباتها",
-        "build_timetable_proposal": "منشئ مقترح الجدول",
-        "recommend_courses": "محرك توصية المقررات",
+        "sole_remaining_prerequisite_for": (
+            "مقررات لم يتبق من متطلباتها السابقة غير المستوفاة سوى هذا المقرر"
+        ),
+        "on_prerequisite_chain_of": "مقررات يدخل هذا المقرر في سلسلة متطلباتها السابقة",
+        "build_timetable_proposal": "إنشاء جدول مقترح",
+        "recommend_courses": "إعداد توصية المقررات",
         "course_choice_comparison": "مقارنة خيارات المقررات",
         "feasible_course_replacements": "فحص الاستبدال الأكاديمي والجدولي",
         "graduation_progress": "محاكاة التقدم نحو التخرج",
-        "my_clash_free_sections": "فحص الشعب غير المتعارضة",
+        "my_clash_free_sections": "فحص تعارضات الشُعب",
         "my_timetable": "بيانات جدولك",
         "my_progress": "تقدمك الأكاديمي",
         "my_plan_by_term": "خطة المقررات حسب الفصل",
         "get_student_context": "بياناتك الأكاديمية",
         "lookup_course": "بيانات المقرر",
         "course_prerequisites": "متطلبات المقرر",
-        "why_course_locked": "تحليل سبب عدم إتاحة المقرر",
-        "policy_lookup": "مرجع السياسات",
+        "why_course_locked": "تحليل المتطلبات غير المستوفاة للمقرر",
+        "policy_lookup": "البحث في اللوائح المعتمدة",
         "my_advisor": "بيانات المرشد",
-        "max_credits": "الحد الأقصى للساعات",
-        "around_current": "البناء حول الجدول الحالي",
-        "from_scratch": "البناء من الصفر",
+        "max_credits": "بيانات الحد الأعلى للساعات",
+        "around_current": "إنشاء المقترح مع الإبقاء على الجدول المرجعي",
+        "from_scratch": "إنشاء المقترح من البداية",
         "must_take_courses": "المقررات المطلوبة في كل بديل",
         "pinned_sections": "قيود الشعب المثبّتة",
         "section_label": "رمز الشعبة",
-        "ambiguous_pin": "تثبيت شعبة يحتاج إلى توضيح",
+        "ambiguous_pin": "طلب تثبيت الشعبة غير مكتمل ويحتاج إلى توضيح",
     }
     replacements_en = {
         "source_leaves_unresolved": "the source leaves this point unresolved",
@@ -703,6 +768,7 @@ def _humanise_internal_output_markers(answer: str, language: str) -> str:
         "explanatory_only": "an explanatory rule only",
         "reason_code": "the reason",
         "not_on_file": "not recorded in this system's data",
+        "not_matching_student_profile": "not matched to the student's programme or study cohort",
         "omitted_in_this_variant": "omitted only from this alternative",
         "listed_as_prerequisite_for": "courses that list it as a prerequisite",
         "sole_remaining_prerequisite": "the sole remaining prerequisite",
@@ -751,11 +817,23 @@ def _humanise_internal_output_markers(answer: str, language: str) -> str:
         lambda match: replacements.get(match.group(0).lower(), "student-facing evidence"),
         text,
     )
-    return re.sub(r"`([^`\n]+)`", r"\1", text)
+    text = re.sub(r"`([^`\n]+)`", r"\1", text)
+    if language == "Arabic":
+        # Removing an internal marker from a sentence such as «السجل يحمل …» can
+        # leave two individually correct fragments joined into broken Arabic.
+        # Smooth the surrounding carrier phrase as part of the same last-resort
+        # sanitation pass; this text can reach the student when a bounded model
+        # rewrite leaks the marker twice.
+        text = re.sub(r"السجل\s+يحمل\s+(?=لم يحسم المصدر)", "", text)
+        text = text.replace(
+            f"{unresolved} و{prohibited}",
+            f"{unresolved}، و{prohibited}",
+        )
+    return text
 
 
 _SECTION_REQUEST_WORD_PATTERN = re.compile(
-    r"(?:\bsection\b|شعب(?:ة|ه|تي|تك|ته|تها|هم)?)", re.IGNORECASE
+    r"(?:\bsection\b|ش[ً-ْ]*عب(?:ة|ه|تي|تك|ته|تها|هم)?)", re.IGNORECASE
 )
 _SECTION_CODE_TOKEN_PATTERN = re.compile(r"\b[A-Z]\d{1,3}\b", re.IGNORECASE)
 
@@ -1296,13 +1374,19 @@ def _normalise_feasible_replacement_args(
 _SECTION_DATA_MISSING_CLAIM = re.compile(
     r"(?:لا\s+توجد\s+(?:شعب|بيانات)|"
     r"لا\s+(?:يحتوي|يوجد).*?(?:سجل|شعب)|"
-    r"ما\s+(?:فيه|عندنا)\s+(?:أي\s+)?(?:شعب|بيانات(?:\s+(?:عن|لـ?)\s+الشعب)?)|"
+    r"ما\s+(?:فيه|في|عندنا)\s+(?:أي\s+)?(?:شعب|بيانات(?:\s+(?:عن|لـ?)\s+الشعب)?)|"
     r"(?:الشعب|بيانات\s+الشعب).*?مو\s+(?:موجودة|مسجلة|متوفرة)|"
     r"غير\s+مسجل(?:ة|ه)?.*?(?:شعب|النظام)|"
     r"\bno\s+(?:recorded\s+)?sections?\b|"
     r"\bno\s+section\s+data\b|"
     r"\bnot\s+(?:recorded|on\s+file|in\s+the\s+system)\b|"
     r"\bNOT_ON_FILE\b)",
+    re.IGNORECASE | re.DOTALL,
+)
+
+_SECTION_POLICY_DIVERSION = re.compile(
+    r"(?:الدليل\s+الإرشادي.*?(?:لا|ما)\s+يذكر.*?(?:الشعب|الشُعب)|"
+    r"student\s+guide.*?(?:does\s+not|doesn't).*?(?:sections?|availability))",
     re.IGNORECASE | re.DOTALL,
 )
 
@@ -1318,53 +1402,25 @@ def _verified_section_results(tool_results: list[dict[str, Any]]) -> list[dict[s
 
 
 def _section_answer_contradicts_evidence(answer: str, tool_results: list[dict[str, Any]]) -> bool:
+    verified = _verified_section_results(tool_results)
     has_recorded_sections = any(
-        int(row.get("sections_on_file") or 0) > 0 for row in _verified_section_results(tool_results)
+        int(row.get("sections_on_file") or 0) > 0
+        or int(row.get("recorded_sections_on_file") or 0) > 0
+        for row in verified
     )
-    return has_recorded_sections and bool(_SECTION_DATA_MISSING_CLAIM.search(answer or ""))
+    missing_claim = has_recorded_sections and bool(_SECTION_DATA_MISSING_CLAIM.search(answer or ""))
+    policy_diversion = bool(verified) and bool(_SECTION_POLICY_DIVERSION.search(answer or ""))
+    return missing_claim or policy_diversion
 
 
 def _apply_saudi_register(answer: str, language: str, answer_style: str) -> str:
-    """Make deterministic Arabic fallbacks match the pinned Saudi register.
+    """Keep deterministic responses in the portal's formal university register.
 
-    These are exact, meaning-preserving phrase substitutions over text generated
-    by this module—not a free-form rewrite.  Safety fallbacks therefore keep the
-    same numbers, course codes, qualifications, and registration boundaries.
+    Saudi colloquial language is still recognised in student input, but output is
+    deliberately Modern Standard Arabic so labels, policy wording, and academic
+    distinctions remain consistent across the student portal.
     """
-    if language != "Arabic" or answer_style != "Conversational Saudi Arabic":
-        return answer
-    replacements = (
-        ("لم أتمكن من التحقق", "ما قدرت أتحقق"),
-        ("لذلك لن أعرض", "وعشان كذا ما راح أعرض"),
-        ("لا توجد شعبة", "ما فيه شعبة"),
-        ("موجودة بالفعل", "موجودة فعلًا"),
-        ("لا يظهر لها تعارض", "ما يظهر لها تعارض"),
-        ("لا يمكن إجراء", "ما نقدر نجري"),
-        ("لم تُشغّل محاكاة التغيير", "ما قدرنا نشغّل محاكاة التغيير"),
-        ("تعذر التحقق", "ما قدرنا نتحقق"),
-        ("لم يثبت البحث الأكاديمي المحدود وجود", "البحث الأكاديمي المحدود ما أثبت وجود"),
-        ("لا يتغير عدد الفصول المقدّر", "ما يتغيّر عدد الفصول المقدّر"),
-        ("لا يمكن إثبات أثر دقيق", "ما نقدر نثبت أثر دقيق"),
-        ("تقدّر المحاكاة أنك تحتاج إلى", "بحسب المحاكاة، باقي لك تقريبًا"),
-        ("لا يمكن إعطاء فصل إكمال دقيق", "ما نقدر نحدد فصل الإكمال بدقة"),
-        ("لأن المحاكاة لم تحسم", "لأن المحاكاة ما حسمت"),
-        ("ويفترض اجتياز جميع المقررات", "ويفترض إنك تجتاز كل المقررات"),
-        ("ولا يغيّر سجلك أو يسجل مقررات", "وما يغيّر سجلك ولا يسجل مقررات"),
-        ("هذا سيناريو للقراءة فقط", "هذا مجرد سيناريو للقراءة فقط"),
-        ("هذا افتراض أكاديمي للقراءة فقط", "هذا مجرد افتراض أكاديمي للقراءة فقط"),
-        (
-            "هذا فحص للجدول فقط؛ لم يسجّل النظام أو يغيّر أي شعبة",
-            "هذا فحص للجدول فقط؛ النظام ما سجّل ولا غيّر أي شعبة",
-        ),
-        ("هذا جدول متوقع وليس تسجيلًا فعليًا", "هذا جدول متوقع، مو تسجيلًا فعليًا"),
-        ("يجب فحص الشعب", "لازم نفحص الشعب"),
-        ("لم يتغير", "ما تغيّر"),
-        ("لا يتغير", "ما يتغيّر"),
-    )
-    styled = str(answer or "")
-    for formal, saudi in replacements:
-        styled = styled.replace(formal, saudi)
-    return styled
+    return str(answer or "")
 
 
 def _safe_section_answer(
@@ -1387,8 +1443,9 @@ def _safe_section_answer(
     baseline_kind = str(result.get("baseline_kind") or "REGISTERED")
     if baseline_kind == "MIXED_REVIEW_REQUIRED":
         answer = (
-            "تتضمن بيانات هذا الفصل تسجيلًا فعليًا وخطة متوقعة معًا، لذلك لا يمكن "
-            "إجراء فحص موثوق قبل مراجعة مصدر الجدول."
+            "تتضمن بيانات هذا الفصل صفوفًا من الجدول المسجّل فعليًا وصفوفًا من "
+            "الجدول المتوقع، ولم يتمكن النظام من فصل المصدرين لهذا الفحص. راجع "
+            "بيانات الجدولين قبل مقارنة الشُعب."
             if language == "Arabic"
             else "This term contains both registrar and expected-plan rows, so a reliable "
             "section comparison cannot be made until the timetable source is reviewed."
@@ -1401,6 +1458,8 @@ def _safe_section_answer(
             continue
         code = str(course.get("course_code") or "").strip()
         count = int(course.get("sections_on_file") or 0)
+        recorded_count = int(course.get("recorded_sections_on_file") or count)
+        status = str(course.get("status") or "").strip().upper()
         current = [
             str(value)
             for value in (
@@ -1422,29 +1481,42 @@ def _safe_section_answer(
         ]
         if language == "Arabic":
             if not count:
-                lines.append(f"لا توجد شعبة للمقرر {code} مسجلة في بيانات النظام.")
+                if status == "NOT_MATCHING_STUDENT_PROFILE" and recorded_count:
+                    lines.append(
+                        f"توجد للمقرر {code} شُعب مدرجة في بيانات النظام وعددها "
+                        f"{recorded_count}، لكنها لا تطابق برنامجك أو شطر الدراسة "
+                        "المسجّل في ملفك."
+                    )
+                else:
+                    lines.append(f"لا تظهر للمقرر {code} أي شعبة مدرجة في بيانات النظام.")
                 continue
             if current:
                 joined = "، ".join(current)
                 sentence = (
-                    f"الشعبة {joined} لمقرر {code} موجودة في جدولك المتوقع"
+                    f"الشعبة {joined} للمقرر {code} مدرجة في الجدول المتوقع"
                     if expected_baseline
-                    else f"الشعبة {joined} لمقرر {code} موجودة بالفعل في جدولك الحالي"
+                    else f"الشعبة {joined} للمقرر {code} مدرجة في الجدول المسجّل فعليًا"
                 )
                 if term:
                     sentence += f" للفصل {term}"
                 sentence += "."
                 lines.append(sentence)
                 if all(section in free for section in current):
-                    lines.append("وعند مقارنتها ببقية جدولك لا يظهر لها تعارض.")
+                    lines.append("ولا يظهر لها تعارض عند مقارنتها ببقية الجدول المرجعي.")
             else:
-                lines.append(f"يوجد للمقرر {code} عدد {count} من الشعب المسجلة في بيانات النظام.")
+                lines.append(f"عدد الشُعب المدرجة للمقرر {code} في بيانات النظام: {count}.")
             if clashing:
-                label = "جدولك المتوقع" if expected_baseline else "جدولك الحالي"
-                lines.append(f"الشعب التي تتعارض مع {label}: " + "، ".join(clashing) + ".")
+                label = "الجدول المتوقع" if expected_baseline else "الجدول المسجّل فعليًا"
+                lines.append(f"الشُعب التي تتعارض مع {label}: " + "، ".join(clashing) + ".")
         else:
             if not count:
-                lines.append(f"No section for {code} is recorded in this system's data.")
+                if status == "NOT_MATCHING_STUDENT_PROFILE" and recorded_count:
+                    lines.append(
+                        f"The system records {recorded_count} sections for {code}, but none "
+                        "match the programme or study cohort recorded in your profile."
+                    )
+                else:
+                    lines.append(f"No section for {code} is recorded in this system's data.")
                 continue
             if current:
                 joined = ", ".join(current)
@@ -1468,12 +1540,13 @@ def _safe_section_answer(
         return ""
     if expected_baseline:
         lines.append(
-            "هذا جدول متوقع وليس تسجيلًا فعليًا في بوابة الجامعة."
+            "الجدول المتوقع مخصص للتخطيط، ولا يُعد تسجيلًا فعليًا في بوابة الجامعة."
             if language == "Arabic"
             else "This is an expected plan, not actual registration in the university portal."
         )
     lines.append(
-        "هذا فحص للجدول فقط؛ لم يسجّل النظام أو يغيّر أي شعبة في بوابة الجامعة."
+        "يعتمد هذا الفحص على بيانات الشُعب المحفوظة في النظام، ولا يثبت توفر مقعد. "
+        "لم يسجّل النظام أي شعبة ولم يغيّر التسجيل في بوابة الجامعة."
         if language == "Arabic"
         else "This is a timetable check only; no section was registered or changed in the university portal."
     )
@@ -1485,11 +1558,11 @@ def _comparison_status_text(status: Any, language: str) -> str:
     if language == "Arabic":
         return {
             "passed": "مجتاز",
-            "studying": "تدرسه الآن",
+            "studying": "قيد الدراسة في سجلك",
             "open_now": "متطلباته السابقة مستوفاة",
-            "blocked": "متطلباته السابقة غير مكتملة",
-            "unknown": "الوضع غير محسوم من البيانات",
-        }.get(value, "الوضع غير محسوم من البيانات")
+            "blocked": "بعض متطلباته السابقة غير مستوفاة",
+            "unknown": "تعذّر تحديد حالته من البيانات المتاحة",
+        }.get(value, "تعذّر تحديد حالته من البيانات المتاحة")
     return {
         "passed": "already passed",
         "studying": "being studied now",
@@ -1513,8 +1586,8 @@ def _safe_course_comparison_answer(
         return ""
     if not result.get("ok"):
         answer = (
-            "ما قدرت أبني مقارنة موثوقة بين المقررات المحددة. اذكر من مقررين إلى أربعة "
-            "مقررات مختلفة برموزها، مثل: «آخذ AI331 ولا DS341؟»."
+            "تعذّر إعداد مقارنة موثوقة بين المقررات المحددة. اذكر رموز مقررين إلى "
+            "أربعة مقررات مختلفة، مثل: «هل أختار AI331 أم DS341؟»."
             if language == "Arabic"
             else (
                 "I could not build a reliable comparison for those choices. Name two to "
@@ -1529,12 +1602,14 @@ def _safe_course_comparison_answer(
     lines: list[str] = []
     if language == "Arabic":
         if verdict == "PREFERRED" and preferred:
-            lines.append(f"**الخلاصة:** {preferred} يتقدم حسب الهدف الذي طلبته والبيانات المتاحة.")
+            lines.append(
+                f"**الخلاصة:** يتقدّم {preferred} وفق الهدف الذي حددته والبيانات التي أمكن التحقق منها."
+            )
         elif verdict == "TIE":
             lines.append("**الخلاصة:** النتيجة متعادلة في الجوانب التي أمكن التحقق منها.")
         else:
             lines.append(
-                "**الخلاصة:** ما فيه مقرر أفضل في كل الجوانب من البيانات المتاحة؛ "
+                "**الخلاصة:** لا تثبت البيانات أن أحد المقررات أفضل في جميع الجوانب؛ "
                 "الاختيار يعتمد على أولويتك."
             )
     else:
@@ -1567,14 +1642,17 @@ def _safe_course_comparison_answer(
                     required = raw_missing.get("required")
                     if required is not None:
                         missing.append(
-                            f"شرط {int(required)} ساعة"
+                            f"يشترط إكمال {int(required)} ساعة معتمدة"
                             if language == "Arabic"
                             else f"{int(required)}-credit gate"
                         )
             elif str(raw_missing).strip():
                 missing.append(str(raw_missing).strip())
         if missing:
-            parts.append(("ينقصه: " if language == "Arabic" else "missing: ") + ", ".join(missing))
+            parts.append(
+                ("المتطلبات غير المستوفاة: " if language == "Arabic" else "missing: ")
+                + ", ".join(missing)
+            )
 
         recommendation = row.get("recommendation") or {}
         rec_state = str(recommendation.get("state") or "").upper()
@@ -1591,15 +1669,15 @@ def _safe_course_comparison_answer(
             )
         elif rec_state in {"ALREADY_IN_CURRENT_TIMETABLE", "CURRENT_BASELINE"}:
             parts.append(
-                "ضمن جدولك المسجل" if language == "Arabic" else "in the registered baseline"
+                "ضمن الجدول المسجّل فعليًا" if language == "Arabic" else "in the registered baseline"
             )
         elif rec_state in {"ALREADY_IN_EXPECTED_PLAN", "EXPECTED_BASELINE"}:
             parts.append(
-                "ضمن جدولك المتوقع" if language == "Arabic" else "in the expected-plan baseline"
+                "ضمن الجدول المتوقع" if language == "Arabic" else "in the expected-plan baseline"
             )
         elif rec_state:
             parts.append(
-                "ليس ضمن توصية النظام الحالية"
+                "ليس ضمن توصية النظام لهذه المقارنة"
                 if language == "Arabic"
                 else "not in the current system recommendation"
             )
@@ -1620,13 +1698,16 @@ def _safe_course_comparison_answer(
         chain = int(impact.get("chain_course_count") or 0)
         weighted = impact.get("weighted_downstream_score")
         parts.append(
-            f"يفتح مباشرة {direct}، ويمتد أثره في سلسلة {chain}"
+            (
+                "عدد المقررات التي تصبح متطلباتها السابقة مستوفاة مباشرةً بعد اجتيازه: "
+                f"{direct}، وعدد المقررات المتبقية التي يدخل في سلسلة متطلباتها: {chain}"
+            )
             if language == "Arabic"
             else f"directly unlocks {direct}; appears in a remaining chain of {chain}"
         )
         if weighted is not None:
             parts.append(
-                f"وزن أثر الخطة {float(weighted):.2f}"
+                f"مؤشر أثره في الخطة: {float(weighted):.2f}"
                 if language == "Arabic"
                 else f"plan-impact weight {float(weighted):.2f}"
             )
@@ -1635,7 +1716,7 @@ def _safe_course_comparison_answer(
         timetable_status = str(timetable.get("status") or "").upper()
         if timetable_status == "NOT_ON_FILE":
             parts.append(
-                "لا توجد له شعبة مسجلة في بيانات النظام"
+                "لا تظهر له شُعب في بيانات النظام"
                 if language == "Arabic"
                 else "no section is recorded in this system's data"
             )
@@ -1643,7 +1724,8 @@ def _safe_course_comparison_answer(
             recorded = int(timetable.get("sections_on_file") or 0)
             free = int(timetable.get("clash_free_count") or 0)
             parts.append(
-                f"الشعب المسجلة {recorded}، وغير المتعارضة منفردةً {free}"
+                f"عدد الشُعب المدرجة: {recorded}، وعدد الشُعب التي لا تتعارض "
+                f"مواعيدها منفردةً مع الجدول المرجعي: {free}"
                 if language == "Arabic"
                 else f"{recorded} recorded section(s), {free} individually clash-free"
             )
@@ -1669,7 +1751,7 @@ def _safe_course_comparison_answer(
                 )
             elif reason_code == "SECTION_SNAPSHOT_TERM_MISMATCH":
                 parts.append(
-                    "لا يمكن حسم التعارض لأن سجل الشعب الحالي لا يخص فصل المقارنة المطلوب"
+                    "لا يمكن حسم التعارض لأن بيانات الشُعب لا تخص فصل المقارنة المطلوب"
                     if language == "Arabic"
                     else (
                         "timetable fit is not determinable because the current section "
@@ -1678,7 +1760,7 @@ def _safe_course_comparison_answer(
                 )
             else:
                 parts.append(
-                    "لا يمكن حسم ملاءمة الجدول من البيانات المسجلة"
+                    "لا يمكن حسم ملاءمة الجدول من البيانات المتاحة"
                     if language == "Arabic"
                     else "timetable fit is not determinable from the recorded data"
                 )
@@ -1690,7 +1772,7 @@ def _safe_course_comparison_answer(
         ):
             terms = int(graduation["estimated_additional_terms"])
             parts.append(
-                f"محاكاة التخرج المكتملة: {terms} فصل إضافي"
+                f"محاكاة إكمال الخطة مكتملة؛ عدد الفصول الإضافية المقدّر: {terms}"
                 if language == "Arabic"
                 else f"completed graduation scenario: {terms} additional term(s)"
             )
@@ -1698,9 +1780,10 @@ def _safe_course_comparison_answer(
             lower = graduation.get("lower_bound_additional_terms")
             parts.append(
                 (
-                    f"محاكاة التخرج غير مكتملة؛ الحد الأدنى {int(lower)} فصل"
+                    "محاكاة إكمال الخطة غير مكتملة؛ الحد الأدنى المقدّر لعدد الفصول "
+                    f"الإضافية: {int(lower)}"
                     if lower is not None
-                    else "محاكاة التخرج غير مكتملة، فلا يمكن حسم فرق الفصول"
+                    else "محاكاة إكمال الخطة غير مكتملة؛ لذلك لا يمكن تحديد فرق الفصول"
                 )
                 if language == "Arabic"
                 else (
@@ -1713,9 +1796,10 @@ def _safe_course_comparison_answer(
 
     if language == "Arabic":
         lines.append(
-            "وزن أثر الخطة مؤشر تخطيطي داخل النظام، مو ترتيبًا رسميًا من الجامعة. "
-            "وفحص الشعب يعتمد على السجل الموجود لدينا، ولا يثبت توفر مقاعد أو صلاحية التسجيل. "
-            "المقارنة للقراءة فقط وما سجلت أو غيّرت أي مقرر."
+            "مؤشر أثر الخطة أداة تخطيط داخلية، وليس ترتيبًا رسميًا من الجامعة. "
+            "ويعتمد فحص الشُعب على البيانات المحفوظة في النظام؛ فلا يثبت توفر "
+            "مقاعد أو استيفاء جميع شروط التسجيل. هذه المقارنة للقراءة فقط، ولم "
+            "يسجّل النظام أي مقرر أو يغيّره."
         )
     else:
         lines.append(
@@ -1732,13 +1816,14 @@ def _replacement_timing_text(improvement: dict[str, Any], language: str) -> str:
     saved = improvement.get("terms_saved")
     if effect == "EARLIER" and saved is not None:
         return (
-            f"المحاكاة المكتملة تقدّر توفير {int(saved)} فصل دراسي"
+            "تشير المحاكاة المكتملة إلى تقليص المدة المتبقية بما يعادل "
+            f"{int(saved)} من الفصول الدراسية"
             if language == "Arabic"
             else f"the completed simulation estimates {int(saved)} term(s) saved"
         )
     if effect == "FORECAST_COMPLETED":
         return (
-            "السيناريو أكمل مسار تخرج لم تستطع المحاكاة المرجعية إكماله"
+            "تمكنت محاكاة السيناريو من إكمال مسار الخطة، بينما تعذّر ذلك في المحاكاة المرجعية"
             if language == "Arabic"
             else "the scenario completed a graduation path the baseline simulation could not complete"
         )
@@ -1746,18 +1831,18 @@ def _replacement_timing_text(improvement: dict[str, Any], language: str) -> str:
     improved = [str(code) for code in improvement.get("blockers_improved") or [] if str(code)]
     if resolved:
         return (
-            "أثبتت المحاكاة تحسن المسار بحل عوائق: " + "، ".join(resolved)
+            "أظهرت المحاكاة تحسن المسار بعد زوال العوائق الآتية: " + "، ".join(resolved)
             if language == "Arabic"
             else "the simulation proved improvement by resolving: " + ", ".join(resolved)
         )
     if improved:
         return (
-            "أثبتت المحاكاة تحسن عوائق: " + "، ".join(improved)
+            "أظهرت المحاكاة تحسنًا جزئيًا في العوائق الآتية: " + "، ".join(improved)
             if language == "Arabic"
             else "the simulation proved improvement to blockers: " + ", ".join(improved)
         )
     return (
-        "أثبتت محاكاة التخرج تحسن المسار الكامل"
+        "أظهرت محاكاة إكمال الخطة تحسنًا في المسار الأكاديمي الكامل"
         if language == "Arabic"
         else "the complete graduation simulation proved an academic improvement"
     )
@@ -1781,8 +1866,9 @@ def _safe_feasible_replacement_answer(
         return ""
     if not result.get("ok"):
         answer = (
-            "ما قدرت أشغّل فحص الاستبدال الموثوق، لذلك ما راح أقترح تبديلًا من غير "
-            "إثبات أكاديمي وجدول كامل غير متعارض. لم يتغير تسجيلك أو جدولك الفعلي."
+            "تعذّر تشغيل فحص الاستبدال الموثوق؛ لذلك لن أقترح استبدالًا من دون "
+            "دليل أكاديمي وجدول مكتمل بلا تعارضات. لم يتغيّر تسجيلك الفعلي ولا "
+            "الجدول المسجّل فعليًا."
             if language == "Arabic"
             else (
                 "I could not run the verified replacement check, so I will not suggest a "
@@ -1795,11 +1881,11 @@ def _safe_feasible_replacement_answer(
     baseline_kind = str(result.get("baseline_kind") or "").upper()
     if language == "Arabic":
         baseline_text = {
-            "REGISTERED": "جدولك المسجل",
-            "EXPECTED_PLAN": "جدولك المتوقع",
-            "EMPTY": "الجدول المرجعي الفارغ",
-            "MIXED_REVIEW_REQUIRED": "بيانات جدول مختلطة تحتاج مراجعة",
-        }.get(baseline_kind, "الجدول المرجعي المسجل في النظام")
+            "REGISTERED": "الجدول المسجّل فعليًا",
+            "EXPECTED_PLAN": "الجدول المتوقع",
+            "EMPTY": "عدم وجود مقررات في الجدول المرجعي",
+            "MIXED_REVIEW_REQUIRED": "بيانات الجدولين التي تحتاج إلى مراجعة",
+        }.get(baseline_kind, "الجدول المرجعي المحفوظ في النظام")
     else:
         baseline_text = {
             "REGISTERED": "your registered timetable",
@@ -1812,7 +1898,8 @@ def _safe_feasible_replacement_answer(
     lines: list[str] = []
     if certified:
         lines.append(
-            f"**الخلاصة:** وجدت {len(certified)} تبديلًا موثّقًا أكاديميًا وله جدول كامل غير متعارض مع {baseline_text}."
+            "**الخلاصة:** عدد الاستبدالات التي ثبت تحسنها أكاديميًا وأمكن إنشاء "
+            f"جدول مكتمل لها بلا تعارضات بالاستناد إلى {baseline_text}: {len(certified)}."
             if language == "Arabic"
             else (
                 f"**Conclusion:** I found {len(certified)} academically proven replacement(s) "
@@ -1837,15 +1924,16 @@ def _safe_feasible_replacement_answer(
             ]
             if language == "Arabic":
                 lines.append(
-                    f"{index}. **{removed} ← {added}**: "
+                    f"{index}. **استبدال {removed} بالمقرر {added}**: "
                     + _replacement_timing_text(improvement, language)
-                    + f". تحقّق المنشئ من {len(options)} خيار كامل"
-                    + (f"؛ أولها: {', '.join(sections)}" if sections else "")
+                    + f". عدد الجداول المقترحة المكتملة التي تحقق منها النظام: {len(options)}"
+                    + (f"؛ الشُعب في أول جدول: {', '.join(sections)}" if sections else "")
                     + "."
                 )
                 if row.get("outside_plan_addition"):
                     lines.append(
-                        f"   تنبيه: {added} خارج متطلبات الخطة المسجلة؛ تحسنه هنا متعلق بالمسار الأكاديمي المحاكى، ولا يعني أنه يعوّض متطلبًا من الخطة."
+                        f"   تنبيه: {added} غير مدرج ضمن متطلبات الخطة المحفوظة. "
+                        "الأثر الظاهر في المحاكاة لا يجعله بديلًا عن أحد متطلبات الخطة."
                     )
             else:
                 lines.append(
@@ -1862,7 +1950,11 @@ def _safe_feasible_replacement_answer(
     else:
         requested_remove = str(result.get("requested_remove_course") or "").upper()
         requested_add = str(result.get("requested_add_course") or "").upper()
-        exact = " → ".join(code for code in (requested_remove, requested_add) if code)
+        exact = (
+            f"استبدال {requested_remove} بالمقرر {requested_add}"
+            if requested_remove and requested_add
+            else requested_remove or requested_add
+        )
         rejections = [
             row for row in result.get("rejected_replacements") or [] if isinstance(row, dict)
         ]
@@ -1880,25 +1972,31 @@ def _safe_feasible_replacement_answer(
             for row in rejections
         )
         if language == "Arabic":
-            subject = f"للتبديل {exact}" if exact else "في البحث المطلوب"
+            subject = f"بالنسبة إلى {exact}: " if exact else ""
             if academic_rejected:
                 lines.append(
-                    f"**الخلاصة:** لم يثبت تحسن مسار التخرج {subject}، ولذلك لم أعتمده كتبديل أفضل ولم أبنِ عليه ادعاءً عن الجدول."
+                    f"**الخلاصة:** {subject}لم تثبت المحاكاة تحسن مسار إكمال الخطة؛ "
+                    "لذلك لم يعتمد النظام أي استبدال بوصفه أفضل، ولم تُستنتج منه "
+                    "ملاءمة الجدول."
                 )
             elif snapshot_term_mismatch:
                 lines.append(
-                    f"**الخلاصة:** لقطة الشعب المسجلة لا تخص الفصل المطلوب {subject}، لذلك أوقفت الفحص قبل محاكاة التحسن الأكاديمي ولم أوثّق جدولًا غير متعارض."
+                    f"**الخلاصة:** {subject}بيانات الشُعب المحفوظة لا تخص الفصل المطلوب؛ "
+                    "لذلك توقف الفحص، ولم يُعتمد جدول بلا تعارضات."
                 )
             elif "NOT_DETERMINABLE" in timetable_statuses:
                 lines.append(
-                    f"**الخلاصة:** وُجد جانب أكاديمي قابل للفحص، لكن بيانات الشعب أو الجدول لم تكفِ لتوثيق جدول كامل غير متعارض {subject}."
+                    f"**الخلاصة:** {subject}أمكن فحص الجانب الأكاديمي، لكن بيانات "
+                    "الشُعب أو الجدول لم تكفِ لاعتماد جدول مكتمل بلا تعارضات."
                 )
             else:
                 lines.append(
-                    f"**الخلاصة:** لم ينتج الفحص المحدود تبديلًا اجتاز معًا تحسن مسار التخرج والجدول الكامل غير المتعارض {subject}."
+                    f"**الخلاصة:** {subject}لم ينتج الفحص المحدود استبدالًا يجمع "
+                    "بين تحسن مسار إكمال الخطة وإمكان إنشاء جدول مكتمل بلا تعارضات."
                 )
             lines.append(
-                "هذه نتيجة بحث محدود في البيانات المسجلة، وليست إثباتًا بأنه لا يوجد أي ترتيب ممكن خارج النتائج التي فُحصت."
+                "تقتصر هذه النتيجة على البيانات والخيارات التي فُحصت، ولا تثبت عدم "
+                "وجود ترتيب آخر خارج نطاق البحث."
             )
         else:
             subject = f"for {exact}" if exact else "in the requested search"
@@ -1923,7 +2021,9 @@ def _safe_feasible_replacement_answer(
             )
 
     lines.append(
-        "فحص الجدول يستخدم لقطة الشعب المسجلة ويتجاهل السعة عمدًا؛ لذلك لا يثبت طرح الشعبة الآن أو توفر مقعد أو صلاحية التسجيل. النتيجة للقراءة فقط، ولم يُحذف أو يُضف أو يُسجل أي مقرر."
+        "يعتمد فحص الجدول على بيانات الشُعب المحفوظة في النظام، ولا تتضمن هذه "
+        "البيانات تأكيدًا لطرح الشعبة حاليًا أو لوجود مقعد شاغر أو لاستيفاء جميع "
+        "شروط التسجيل. النتيجة للقراءة فقط، ولم يُحذف أو يُضف أو يُسجّل أي مقرر."
         if language == "Arabic"
         else (
             "The timetable proof uses the recorded section snapshot and deliberately "
@@ -2227,15 +2327,23 @@ def _what_if_error_text(error: dict[str, Any], language: str) -> str:
     code = str(error.get("course_code") or "").strip()
     if language == "Arabic":
         messages = {
-            "NOT_IN_CURRENT_TIMETABLE": f"{code} ليس ضمن مقررات الفصل المرجعي للتخطيط.",
-            "ALREADY_IN_CURRENT_TIMETABLE": f"{code} موجود بالفعل في الفصل المرجعي للتخطيط.",
-            "ALREADY_PASSED": f"{code} مسجل كمقرر مجتاز.",
+            "NOT_IN_CURRENT_TIMETABLE": (
+                f"{code} ليس ضمن المقررات المرجعية المستخدمة في المحاكاة."
+            ),
+            "ALREADY_IN_CURRENT_TIMETABLE": (
+                f"{code} مدرج بالفعل ضمن المقررات المرجعية المستخدمة في المحاكاة."
+            ),
+            "ALREADY_PASSED": f"تظهر حالة {code} في السجل الأكاديمي على أنها «مجتاز».",
             "COURSE_NOT_ON_FILE": f"لا توجد بيانات مقرر موثوقة للرمز {code}.",
-            "COURSE_CREDITS_UNKNOWN": f"ساعات المقرر {code} غير معروفة.",
-            "ELECTIVE_PLACEHOLDER_NOT_A_COURSE": f"{code} خانة اختيارية وليست مقررًا محددًا.",
+            "COURSE_CREDITS_UNKNOWN": f"عدد الساعات المعتمدة للمقرر {code} غير معروف.",
+            "ELECTIVE_PLACEHOLDER_NOT_A_COURSE": (
+                f"{code} رمز لمتطلب اختياري، وليس رمزًا لمقرر محدد."
+            ),
             "SAME_COURSE_REMOVED_AND_ADDED": "لا يمكن حذف المقرر نفسه وإضافته في السيناريو ذاته.",
-            "SEARCH_CANNOT_BE_COMBINED_WITH_EXPLICIT_CHANGES": "لا يمكن جمع البحث التلقائي مع تغييرات صريحة في الطلب نفسه.",
-            "TOO_MANY_CHANGES": "عدد تغييرات الفصل المرجعي للتخطيط يتجاوز الحد المسموح للمحاكاة.",
+            "SEARCH_CANNOT_BE_COMBINED_WITH_EXPLICIT_CHANGES": (
+                "لا يمكن الجمع بين البحث التلقائي وتحديد تغييرات بعينها في الطلب نفسه."
+            ),
+            "TOO_MANY_CHANGES": "عدد التغييرات المطلوبة يتجاوز الحد الذي تسمح به المحاكاة.",
         }
         if kind == "SCENARIO_EXCEEDS_CREDIT_CAP":
             return (
@@ -2244,13 +2352,14 @@ def _what_if_error_text(error: dict[str, Any], language: str) -> str:
             )
         if kind == "ADDED_COURSE_PREREQUISITES_UNMET":
             missing = "، ".join(error.get("missing_prerequisites") or [])
-            return f"لا تتحقق المتطلبات المسجلة للمقرر {code}: {missing}."
+            return f"المتطلبات السابقة المدرجة للمقرر {code} غير مستوفاة: {missing}."
         if kind == "ADDED_COURSE_CREDIT_GATE_UNMET":
             return (
-                f"لا يتحقق شرط ساعات {code}: المطلوب {int(error.get('required') or 0)} "
-                f"والمتاح في السيناريو {int(error.get('effective') or 0)}."
+                f"شرط الساعات للمقرر {code} غير مستوفى: المطلوب "
+                f"{int(error.get('required') or 0)} ساعة معتمدة، بينما يحتسب السيناريو "
+                f"{int(error.get('effective') or 0)} ساعة."
             )
-        return messages.get(kind, "تعذر التحقق من تغيير الفصل المرجعي للتخطيط المطلوب.")
+        return messages.get(kind, "تعذّر التحقق من التغيير المطلوب في مقررات المحاكاة.")
 
     messages = {
         "NOT_IN_CURRENT_TIMETABLE": f"{code} is not in the planning-baseline timetable.",
@@ -2286,20 +2395,23 @@ def _comparison_effect_text(comparison: dict[str, Any], language: str) -> str:
     delta = comparison.get("term_difference")
     if language == "Arabic":
         if effect == "EARLIER":
-            return f"تقدّر المحاكاة الإكمال أبكر بمقدار {saved} فصل."
+            return f"تشير المحاكاة إلى تقليص المدة المتبقية بما يعادل {saved} من الفصول الدراسية."
         if effect == "LATER":
-            return f"تقدّر المحاكاة تأخر الإكمال بمقدار {abs(int(delta or 0))} فصل."
+            return (
+                "تشير المحاكاة إلى زيادة المدة المتبقية بما يعادل "
+                f"{abs(int(delta or 0))} من الفصول الدراسية."
+            )
         if effect == "SAME":
-            return "لا يتغير عدد الفصول المقدّر بين السيناريوهين."
+            return "لم يتغيّر العدد المقدّر للفصول الدراسية بين السيناريوهين."
         if effect == "FORECAST_COMPLETED":
-            return "التغيير يحل العوائق التي كانت تمنع اكتمال التقدير الآلي."
+            return "أزال التغيير العوائق التي كانت تمنع اكتمال المحاكاة."
         if effect == "FORECAST_BECAME_UNRESOLVED":
-            return "التغيير يجعل تقدير الإكمال غير محسوم بعد أن كان مكتملًا."
+            return "أصبحت مدة الإكمال غير قابلة للتقدير بعد أن كانت المحاكاة مكتملة."
         if effect == "UNRESOLVED_IMPROVEMENT":
-            return "التغيير يحسن عوائق مسجلة، لكنه لا يثبت تخرجًا أبكر بعد."
+            return "خفّف التغيير بعض العوائق المسجلة، لكنه لا يثبت إكمال الخطة في وقت أبكر."
         if effect == "UNRESOLVED_WORSE":
-            return "التغيير يضيف عوائق غير محسومة، لذلك هو أسوأ أكاديميًا في المحاكاة."
-        return "لا يمكن إثبات أثر دقيق على موعد التخرج من البيانات الحالية."
+            return "أضاف التغيير عوائق غير محسومة؛ ولذلك كانت نتيجته الأكاديمية أضعف في المحاكاة."
+        return "لا تكفي البيانات المتاحة لتحديد أثر دقيق في المدة المتبقية لإكمال الخطة."
 
     if effect == "EARLIER":
         return f"The scenario estimates completion {saved} term(s) earlier."
@@ -2334,9 +2446,9 @@ def _comparison_blocker_text(comparison: dict[str, Any], language: str) -> str:
     parts = []
     if language == "Arabic":
         if resolved:
-            parts.append("يحل: " + "، ".join(resolved) + ".")
+            parts.append("العوائق التي زالت: " + "، ".join(resolved) + ".")
         if improved:
-            parts.append("يحسن دون حسم كامل: " + "، ".join(improved) + ".")
+            parts.append("العوائق التي تحسنت جزئيًا: " + "، ".join(improved) + ".")
     else:
         if resolved:
             parts.append("Resolves: " + ", ".join(resolved) + ".")
@@ -2354,9 +2466,9 @@ def _safe_graduation_what_if_answer_base(language: str, what_if: dict[str, Any])
         ]
         if language == "Arabic":
             return (
-                "لم تُشغّل محاكاة التغيير لأن الطلب لم يجتز التحقق:\n- "
+                "لم تُشغّل المحاكاة لأن التغيير المطلوب لم يجتز التحقق:\n- "
                 + "\n- ".join(errors or ["تعذر التحقق من التغيير المطلوب."])
-                + "\nلم يتغير الجدول أو السجل الفعلي."
+                + "\nلم يتغيّر السجل الأكاديمي أو الجدول المسجّل فعليًا."
             )
         return (
             "The change was not simulated because it did not pass validation:\n- "
@@ -2370,29 +2482,31 @@ def _safe_graduation_what_if_answer_base(language: str, what_if: dict[str, Any])
         if language == "Arabic":
             if not replacements:
                 answer = (
-                    "لم يثبت البحث الأكاديمي المحدود وجود استبدال واحد مقابل واحد يحسن "
-                    "تقدير التخرج مقارنة بالجدول المرجعي للتخطيط. هذا لا يثبت استحالة وجود ترتيب آخر. "
+                    "لم يثبت البحث الأكاديمي المحدود وجود استبدال مباشر يحسّن تقدير "
+                    "التخرج مقارنة بالمقررات المرجعية المستخدمة في المحاكاة. ولا تثبت "
+                    "هذه النتيجة استحالة وجود ترتيب آخر. "
                 )
                 if partial_count:
                     answer += (
                         f"استبعد البحث {partial_count} استبدالًا حسّن عائقًا جزئيًا فقط، "
-                        "لأن مسار التخرج الكامل لم يتحسن. "
+                        "لأن المسار الكامل لإكمال الخطة لم يُظهر تحسنًا. "
                     )
-                return answer + "لم يتغير أي مقرر أو جدول فعلي."
-            lines = ["الاستبدالات التي أظهرت تحسنًا أكاديميًا في المحاكاة:"]
+                return answer + "لم يتغيّر أي مقرر أو الجدول المسجّل فعليًا."
+            lines = ["الاستبدالات التي أظهرت المحاكاة أنها تحسّن المسار الأكاديمي:"]
             for row in replacements:
                 removed = str((row.get("remove_course") or {}).get("code") or "")
                 added = str((row.get("add_course") or {}).get("code") or "")
                 comparison = row.get("comparison") or {}
                 lines.append(
-                    f"- {removed} ← {added}: "
+                    f"- استبدال {removed} بالمقرر {added}: "
                     + _comparison_effect_text(comparison, language)
                     + " "
                     + _comparison_blocker_text(comparison, language)
                 )
             lines.append(
-                "هذه مقارنة أكاديمية فقط؛ يجب فحص الشعب والتعارضات في أداة الجدول، ولا "
-                "يثبت ذلك توفر مقعد أو صلاحية التسجيل. لم يتغير جدولك الفعلي."
+                "هذه مقارنة أكاديمية فقط. يجب فحص الشُعب والتعارضات في أداة الجدول؛ "
+                "فالنتيجة لا تثبت توفر مقعد أو استيفاء جميع شروط التسجيل. لم يتغيّر "
+                "الجدول المسجّل فعليًا."
             )
             return "\n".join(lines)
         if not replacements:
@@ -2444,27 +2558,30 @@ def _safe_graduation_what_if_answer_base(language: str, what_if: dict[str, Any])
             change.append("حذف " + "، ".join(removed))
         if added:
             change.append("إضافة " + "، ".join(added))
-        lines = ["سيناريو الفصل المرجعي للتخطيط: " + " و".join(change) + "."]
+        lines = ["التغيير المفترض في مقررات المحاكاة: " + " و".join(change) + "."]
         lines.append(_comparison_effect_text(comparison, language))
         lines.append(
-            f"الحد الأدنى الإضافي: {baseline.get('lower_bound_additional_terms')} في "
-            f"الجدول المرجعي مقابل {scenario.get('lower_bound_additional_terms')} في السيناريو."
+            "الحد الأدنى المقدّر لعدد الفصول الإضافية: "
+            f"{baseline.get('lower_bound_additional_terms')} قبل التغيير، مقابل "
+            f"{scenario.get('lower_bound_additional_terms')} بعده."
         )
         if resolved:
-            lines.append("عوائق حُلّت في المحاكاة: " + "، ".join(resolved) + ".")
+            lines.append("عوائق زالت في المحاكاة: " + "، ".join(resolved) + ".")
         if improved:
             lines.append("عوائق تحسنت ولم تُحسم بالكامل: " + "، ".join(improved) + ".")
         if introduced:
             lines.append("عوائق جديدة: " + "، ".join(introduced) + ".")
         if outside:
             lines.append(
-                "المقرر "
+                "المقررات "
                 + "، ".join(outside)
-                + " خارج متطلبات الخطة؛ قد يؤثر في المتطلبات أو الساعات لكنه لا يكمل مقررًا من الخطة."
+                + " غير مدرجة ضمن متطلبات الخطة؛ وقد تؤثر في المتطلبات السابقة أو "
+                "الساعات المكتسبة، لكنها لا تحل محل مقررات الخطة."
             )
         lines.append(
-            "هذا افتراض أكاديمي للقراءة فقط. لم يُحذف أو يُضف أو يُسجل أي مقرر فعليًا، "
-            "ولا يثبت السيناريو توفر شعبة أو مقعد أو عدم وجود تعارض."
+            "هذا سيناريو أكاديمي افتراضي للقراءة فقط. لم يُحذف أو يُضف أو يُسجّل "
+            "أي مقرر فعليًا، ولا يثبت السيناريو وجود شعبة مطروحة أو مقعد شاغر أو "
+            "جدول بلا تعارضات."
         )
         return "\n".join(lines)
 
@@ -2554,22 +2671,24 @@ def _safe_graduation_answer(
     if language == "Arabic":
         if graduation.get("simulation_completed"):
             additional = int(graduation.get("estimated_additional_terms") or 0)
-            opening = f"تقدّر المحاكاة أنك تحتاج إلى {additional} فصول إضافية"
+            opening = f"عدد الفصول الدراسية الإضافية التي تقدّرها المحاكاة: {additional}"
             if has_baseline:
                 opening += (
-                    f"، أو {int(graduation.get('estimated_terms_including_planning_baseline') or additional)} "
-                    f"فصول باحتساب الفصل المرجعي للتخطيط{baseline_reference}"
+                    ". والإجمالي باحتساب فصل المقررات المرجعية المستخدمة في المحاكاة"
+                    f"{baseline_reference}: "
+                    f"{int(graduation.get('estimated_terms_including_planning_baseline') or additional)}"
                 )
             opening += "."
         else:
             additional = int(graduation.get("lower_bound_additional_terms") or 0)
-            opening = f"الحد الأدنى هو {additional} فصول إضافية"
+            opening = f"الحد الأدنى المقدّر لعدد الفصول الدراسية الإضافية: {additional}"
             if has_baseline:
                 opening += (
-                    f"، أو {int(graduation.get('lower_bound_terms_including_planning_baseline') or additional)} "
-                    f"فصول باحتساب الفصل المرجعي للتخطيط{baseline_reference}"
+                    ". والحد الأدنى الإجمالي باحتساب فصل المقررات المرجعية المستخدمة "
+                    f"في المحاكاة{baseline_reference}: "
+                    f"{int(graduation.get('lower_bound_terms_including_planning_baseline') or additional)}"
                 )
-            opening += "؛ لا يمكن إعطاء فصل إكمال دقيق لأن المحاكاة لم تحسم كل المتطلبات."
+            opening += ". لا يمكن تحديد فصل الإكمال بدقة لأن بعض متطلبات الخطة لم تُحسم في المحاكاة."
 
         blocker_lines = []
         for row in unresolved:
@@ -2581,15 +2700,18 @@ def _safe_graduation_answer(
                 if str(item).strip()
             ]
             if prereqs:
-                reasons.append("متطلبات سابقة غير مستوفاة: " + "، ".join(prereqs))
+                reasons.append("المتطلبات السابقة غير المستوفاة: " + "، ".join(prereqs))
             gate = row.get("credit_hour_gate")
             if isinstance(gate, dict):
                 reasons.append(
-                    f"شرط الساعات {int(gate.get('required') or 0)}؛ يصل السيناريو إلى "
-                    f"{int(gate.get('effective_in_scenario') or 0)} والمتبقي "
-                    f"{int(gate.get('remaining') or 0)}"
+                    f"شرط الساعات المعتمدة: {int(gate.get('required') or 0)}؛ "
+                    f"الساعات المحتسبة في السيناريو: "
+                    f"{int(gate.get('effective_in_scenario') or 0)}؛ "
+                    f"الساعات المتبقية لاستيفاء الشرط: {int(gate.get('remaining') or 0)}"
                 )
-            blocker_lines.append(f"- {code}: " + ("؛ ".join(reasons) or "متطلب غير محسوم"))
+            blocker_lines.append(
+                f"- {code}: " + ("؛ ".join(reasons) or "تعذّر حسم المتطلب من البيانات")
+            )
         blockers = "\n" + "\n".join(blocker_lines) if blocker_lines else ""
         term_lines = []
         for planned in graduation.get("term_plan") or []:
@@ -2604,12 +2726,14 @@ def _safe_graduation_answer(
             ]
             term_lines.append(
                 f"- {int(year)}/{int(term)}: "
-                + ("، ".join(codes) if codes else "فصل انتظار في هذه المحاكاة")
-                + f" ({int(planned.get('credits') or 0)} ساعة)"
+                + ("، ".join(codes) if codes else "لا توجد مقررات في هذا الفصل ضمن المحاكاة")
+                + f" (إجمالي الساعات: {int(planned.get('credits') or 0)})"
             )
-        term_plan = "\nالفصول المتوقعة:\n" + "\n".join(term_lines) if term_lines else ""
+        term_plan = (
+            "\nالتسلسل الفصلي الناتج عن المحاكاة:\n" + "\n".join(term_lines) if term_lines else ""
+        )
         baseline_assumption = (
-            " ويفترض اجتياز مقررات الفصل المرجعي للتخطيط: " + "، ".join(baseline_codes) + "."
+            " ويفترض اجتياز المقررات المرجعية الآتية: " + "، ".join(baseline_codes) + "."
             if baseline_codes
             else ""
         )
@@ -2617,10 +2741,11 @@ def _safe_graduation_answer(
             opening
             + blockers
             + term_plan
-            + f"\nهذا سيناريو للقراءة فقط بحد أقصى {cap} ساعة في كل فصل رئيس،"
+            + f"\nهذه محاكاة للقراءة فقط، وسقفها التخطيطي {cap} ساعة معتمدة لكل فصل رئيس،"
             + baseline_assumption
-            + " ويفترض اجتياز جميع المقررات من أول محاولة. لا يضمن الطرح المستقبلي "
-            "أو المقاعد أو أوقات الشعب أو صلاحية التسجيل، ولا يغيّر سجلك أو يسجل مقررات.",
+            + " كما تفترض اجتياز جميع المقررات من المحاولة الأولى. ولا تضمن طرح "
+            "المقررات مستقبلًا أو وجود مقاعد شاغرة أو أوقات الشُعب أو استيفاء جميع "
+            "شروط التسجيل، ولا تغيّر السجل الأكاديمي أو تسجّل أي مقرر.",
             language,
             answer_style,
         )
@@ -2820,8 +2945,9 @@ def _policy_grounding(question: str, tool_results: list[dict[str, Any]]) -> tupl
 def _citation_refusal(language: str, answer_style: str = "") -> str:
     if language == "Arabic":
         return _apply_saudi_register(
-            "لم أتمكن من التحقق من مرجع الإجابة في الأدلة المعتمدة، لذلك لن أعرض "
-            "معلومة غير موثقة. راجع مرشدك الأكاديمي أو عمادة القبول والتسجيل.",
+            "تعذّر التحقق من مرجع الإجابة في الأدلة المعتمدة؛ لذلك لن أعرض قاعدة "
+            "غير موثقة. راجع مرشدك الأكاديمي أو عمادة القبول والتسجيل للتحقق من "
+            "الحكم الرسمي.",
             language,
             answer_style,
         )
@@ -2839,15 +2965,10 @@ def _claims_portal_action(answer: str) -> bool:
 def _portal_boundary_response(language: str, answer_style: str = "") -> str:
     if language == "Arabic":
         answer = (
-            "أقدر أجهز لك مقترحًا دراسيًا ونراجعه معًا هنا، لكن النظام ما يسجل "
-            "المقررات ولا يحفظ أو يطبق جدولًا في بوابة الجامعة. إذا ناسبك المقترح، "
-            "لازم تدخل المقررات اللي اخترتها بنفسك في البوابة الرئيسية للجامعة."
-            if answer_style == "Conversational Saudi Arabic"
-            else (
-                "أستطيع إعداد مقترح دراسي ومراجعته معك هنا، لكن هذا النظام لا يسجل "
-                "المقررات ولا يحفظ أو يطبق جدولًا في بوابة الجامعة. إذا أعجبك المقترح، "
-                "فعليك إدخال المقررات التي اخترتها بنفسك في البوابة الرئيسية للجامعة."
-            )
+            "أستطيع إعداد جدول مقترح ومراجعته معك هنا، لكن هذا النظام لا يسجّل "
+            "المقررات ولا يحفظ الجدول المقترح أو يطبقه في بوابة الجامعة. إذا اخترت "
+            "أحد الجداول المقترحة، فأدخل مقرراته وشُعبه بنفسك في بوابة الجامعة "
+            "الرئيسية."
         )
         return answer
     return (
@@ -2899,7 +3020,14 @@ def answer_student_advisor_v2(
         )
 
     language = _answer_language(clean_question)
-    answer_style = _answer_style(clean_question)
+    # Colloquial Saudi Arabic remains accepted and fully parsed as input, but the
+    # student portal renders one consistent university register: clear MSA.
+    detected_answer_style = _answer_style(clean_question)
+    answer_style = (
+        "Formal Modern Standard Arabic for a Saudi academic context"
+        if language == "Arabic"
+        else detected_answer_style
+    )
     llm = llm_client or get_llm_client()
     resolved_model = llm.resolve_model(model)
     scope = principal.as_scope()
@@ -3207,8 +3335,11 @@ def answer_student_advisor_v2(
                         "content": (
                             "Revise the answer from the verified my_clash_free_sections "
                             "result already in this conversation; do not call another tool. "
-                            "Your draft falsely says the section data is missing even though "
-                            "sections_on_file is greater than zero. State any "
+                            "Your draft conflicts with the verified section status or diverts "
+                            "to policy-guide commentary. Use status and "
+                            "recorded_sections_on_file exactly. When status is "
+                            "NOT_MATCHING_STUDENT_PROFILE, say that sections are recorded but "
+                            "none match the student's programme and study cohort. State any "
                             "currently_registered_sections first, then distinguish recorded "
                             "clash-free and clashing sections. Do not infer seat availability "
                             "or claim that a registration/change was performed."
@@ -3511,6 +3642,8 @@ def answer_student_advisor_v2(
                         else tool_context
                     ),
                 )
+                if language == "Arabic":
+                    raw_local_result = _prefer_arabic_course_names_in_payload(raw_local_result)
                 provider_result = project_channel_tool_result(
                     call.name,
                     boundary.project_tool_result(call.name, raw_local_result),
@@ -3566,9 +3699,9 @@ def answer_student_advisor_v2(
     if not answer:
         if requires_feasible_replacement:
             answer = (
-                "ما قدرت أشغّل فحص الاستبدال الموثوق، لذلك ما راح أقترح تبديلًا من غير "
-                "إثبات أكاديمي وجدول كامل غير متعارض. جرّب الطلب مرة ثانية، ولم يتغير "
-                "تسجيلك أو جدولك الفعلي."
+                "تعذّر تشغيل فحص الاستبدال الموثوق؛ لذلك لن أقترح استبدالًا من دون "
+                "دليل أكاديمي وجدول مكتمل بلا تعارضات. أعد المحاولة، علمًا بأن "
+                "تسجيلك الفعلي والجدول المسجّل فعليًا لم يتغيّرا."
                 if language == "Arabic"
                 else (
                     "I could not run the verified replacement check, so I will not suggest "
@@ -3579,8 +3712,8 @@ def answer_student_advisor_v2(
             replacement_safe_fallback_used = True
         elif requires_course_comparison:
             answer = (
-                "ما قدرت أشغّل المقارنة الموثوقة بين المقررات المحددة، لذلك ما راح "
-                "أختار واحدًا من غير دليل. جرّب الطلب مرة ثانية مع رموز المقررات."
+                "تعذّر تشغيل المقارنة الموثوقة بين المقررات المحددة؛ لذلك لن أفضّل "
+                "مقررًا من دون دليل. أعد المحاولة مع ذكر رموز المقررات."
                 if language == "Arabic"
                 else (
                     "I could not run the verified comparison for those courses, so I will "
@@ -3597,6 +3730,8 @@ def answer_student_advisor_v2(
                     principal=principal,
                     context=tool_context,
                 )
+                if language == "Arabic":
+                    fallback_raw = _prefer_arabic_course_names_in_payload(fallback_raw)
                 try:
                     fallback_provider = project_channel_tool_result(
                         fallback_name,
@@ -3647,9 +3782,9 @@ def answer_student_advisor_v2(
 
     if constraint_input_refused:
         answer = (
-            "طلب تثبيت الشعبة غير واضح بما يكفي. اذكر مقررًا واحدًا وشعبة واحدة "
-            "لكل تثبيت، مثل: «ثبّت AI331 شعبة M2 وابنِ الجدول حولها». لم أبنِ "
-            "جدولًا من دون القيد المطلوب، ولم يتغير تسجيلك الفعلي."
+            "طلب تثبيت الشعبة غير مكتمل. اذكر مقررًا واحدًا وشعبة واحدة لكل طلب، "
+            "مثل: «ثبّت الشعبة M2 للمقرر AI331 وأنشئ الجدول المقترح مع الإبقاء "
+            "عليها». لم يُنشأ جدول من دون القيد المطلوب، ولم يتغيّر تسجيلك الفعلي."
             if language == "Arabic"
             else (
                 "The section pin is not specific enough. Name exactly one course and one "
@@ -3667,8 +3802,9 @@ def answer_student_advisor_v2(
             replacement_safe_fallback_used = True
         else:
             answer = (
-                "ما قدرت أشغّل فحص الاستبدال الموثوق، لذلك ما راح أقترح تبديلًا من غير "
-                "إثبات أكاديمي وجدول كامل غير متعارض. لم يتغير تسجيلك أو جدولك الفعلي."
+                "تعذّر تشغيل فحص الاستبدال الموثوق؛ لذلك لن أقترح استبدالًا من دون "
+                "دليل أكاديمي وجدول مكتمل بلا تعارضات. لم يتغيّر تسجيلك الفعلي ولا "
+                "الجدول المسجّل فعليًا."
                 if language == "Arabic"
                 else (
                     "I could not run the verified replacement check, so I will not suggest "
@@ -3686,8 +3822,8 @@ def answer_student_advisor_v2(
             comparison_safe_fallback_used = True
         else:
             answer = (
-                "ما قدرت أشغّل المقارنة الموثوقة بين المقررات المحددة، لذلك ما راح "
-                "أختار واحدًا من غير دليل. أعد إرسال رموز المقررات من اثنين إلى أربعة."
+                "تعذّر تشغيل المقارنة الموثوقة بين المقررات المحددة؛ لذلك لن أفضّل "
+                "مقررًا من دون دليل. أعد إرسال رموز مقررين إلى أربعة مقررات."
                 if language == "Arabic"
                 else (
                     "I could not run the verified comparison for those courses, so I will "
@@ -3727,8 +3863,9 @@ def answer_student_advisor_v2(
     missing_required_what_if = requires_graduation_what_if and not graduation_what_if
     if missing_required_what_if:
         answer = (
-            "تعذر تشغيل مقارنة التغيير المطلوب على مقررات الفصل المرجعي للتخطيط، لذلك لن أعرض "
-            "تقدير الجدول المرجعي وكأنه يجيب عن السيناريو. لم يتغير أي مقرر أو جدول فعلي."
+            "تعذّر تشغيل مقارنة التغيير المطلوب على المقررات المرجعية المستخدمة في "
+            "المحاكاة؛ لذلك لن أعرض التقدير المرجعي على أنه نتيجة للسيناريو المطلوب. "
+            "لم يتغيّر أي مقرر أو الجدول المسجّل فعليًا."
             if language == "Arabic"
             else (
                 "The requested planning-baseline course comparison could not be run, so I will "

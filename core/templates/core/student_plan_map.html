@@ -1,18 +1,18 @@
 {% extends "core/base.html" %}
 {% load static i18n %}{% get_current_language as LANGUAGE_CODE %}
 
-{% block title %}{% if LANGUAGE_CODE == 'ar' %}خريطة الخطة والمتطلبات{% else %}Plan and prerequisite map{% endif %}{% endblock %}
+{% block title %}{% if LANGUAGE_CODE == 'ar' %}خريطة متطلبات الخطة الدراسية{% else %}Plan and prerequisite map{% endif %}{% endblock %}
 
-{% block page_heading %}{% if LANGUAGE_CODE == 'ar' %}خريطة الخطة والمتطلبات{% else %}Plan and prerequisite map{% endif %}{% endblock %}
+{% block page_heading %}{% if LANGUAGE_CODE == 'ar' %}خريطة متطلبات الخطة الدراسية{% else %}Plan and prerequisite map{% endif %}{% endblock %}
 
 {% block page_chips %}
   <span class="ph-chip ph-chip-page">{% if LANGUAGE_CODE == 'ar' %}الرقم الجامعي{% else %}University ID{% endif %}: {{ student_id }}</span>
-  {% if student and student.program %}<span class="ph-chip ph-chip-context">{{ student.program }}</span>{% endif %}
-  <span class="ph-chip ph-chip-context">{{ academic_year }} — {% if LANGUAGE_CODE == 'ar' %}الفصل{% else %}Term{% endif %} {{ term }}</span>
+  {% if student and student.program %}<span class="ph-chip ph-chip-context student-program-chip">{{ student.program }}</span>{% endif %}
+  <span class="ph-chip ph-chip-context student-term-chip">{{ academic_year }} — {% if LANGUAGE_CODE == 'ar' %}الفصل الدراسي{% else %}Term{% endif %} {{ term }}</span>
 {% endblock %}
 
 {% block page_intro %}
-  <p class="mb-0">{% if LANGUAGE_CODE == 'ar' %}تتبّع علاقات المتطلبات في خطتك. هذه الخريطة للشرح الأكاديمي ولا تعرض الشعب أو المقاعد.{% else %}Trace prerequisite relationships across your plan. This academic map does not show sections or seats.{% endif %}</p>
+  <p class="mb-0">{% if LANGUAGE_CODE == 'ar' %}تتبّع علاقات المتطلبات السابقة بين مقررات خطتك. هذه الخريطة للشرح الأكاديمي فقط، ولا تعرض الشُعب المطروحة أو المقاعد المتوفرة.{% else %}Trace prerequisite relationships across your plan. This academic map does not show sections or seats.{% endif %}</p>
 {% endblock %}
 
 {% block content %}
@@ -20,10 +20,10 @@
   <a class="btn btn-outline-secondary" href="{% url 'student_courses' %}"><span aria-hidden="true">←</span> {% if LANGUAGE_CODE == 'ar' %}العودة إلى المقررات{% else %}Back to course guidance{% endif %}</a>
   {% if report %}
     <div class="student-map-counts" aria-label="{% if LANGUAGE_CODE == 'ar' %}ملخص حالة المقررات{% else %}Course status summary{% endif %}">
-      <span><i class="student-map-dot is-passed" aria-hidden="true"></i>{{ report.counts.passed }} {% if LANGUAGE_CODE == 'ar' %}مجتاز{% else %}passed{% endif %}</span>
-      {% if report.counts.studying %}<span><i class="student-map-dot is-studying" aria-hidden="true"></i>{{ report.counts.studying }} {% if LANGUAGE_CODE == 'ar' %}جارٍ{% else %}in progress{% endif %}</span>{% endif %}
-      <span><i class="student-map-dot is-open" aria-hidden="true"></i>{{ report.counts.open }} {% if LANGUAGE_CODE == 'ar' %}متاح{% else %}open{% endif %}</span>
-      <span><i class="student-map-dot is-locked" aria-hidden="true"></i>{{ report.counts.locked }} {% if LANGUAGE_CODE == 'ar' %}محجوب{% else %}blocked{% endif %}</span>
+      <span><i class="student-map-dot is-passed" aria-hidden="true"></i>{% if LANGUAGE_CODE == 'ar' %}المقررات المجتازة: {{ report.counts.passed }}{% else %}{{ report.counts.passed }} passed{% endif %}</span>
+      {% if report.counts.studying %}<span><i class="student-map-dot is-studying" aria-hidden="true"></i>{% if LANGUAGE_CODE == 'ar' %}المقررات قيد الدراسة: {{ report.counts.studying }}{% else %}{{ report.counts.studying }} in progress{% endif %}</span>{% endif %}
+      <span><i class="student-map-dot is-open" aria-hidden="true"></i>{% if LANGUAGE_CODE == 'ar' %}مقررات مستوفية المتطلبات: {{ report.counts.open }}{% else %}{{ report.counts.open }} open{% endif %}</span>
+      <span><i class="student-map-dot is-locked" aria-hidden="true"></i>{% if LANGUAGE_CODE == 'ar' %}مقررات غير مستوفية المتطلبات: {{ report.counts.locked }}{% else %}{{ report.counts.locked }} blocked{% endif %}</span>
     </div>
   {% endif %}
 </div>
@@ -33,29 +33,29 @@
   <div class="student-plan-map-intro">
     <div>
       <h2 class="student-section-title mb-1" id="student-plan-map-title">{% if LANGUAGE_CODE == 'ar' %}{{ report.program }} — خريطة المتطلبات{% else %}{{ report.program }} — prerequisite map{% endif %}</h2>
-      <p class="small text-secondary mb-0">{% if LANGUAGE_CODE == 'ar' %}كل مربع مقرر، والسهم يعني «متطلب سابق». على الشاشة الكبيرة، مرّر فوق مقرر لإبراز سلسلته. يُقرأ الرسم من اليسار إلى اليمين.{% else %}Each box is a course and each arrow means “is a prerequisite for”. On a larger screen, hover over a course to highlight its chain.{% endif %}</p>
+      <p class="small text-secondary mb-0">{% if LANGUAGE_CODE == 'ar' %}يمثل كل مربع مقررًا، ويتجه السهم من المتطلب السابق إلى المقرر الذي يعتمد عليه. على الشاشات الكبيرة، ضع المؤشر فوق المقرر لإبراز تسلسل متطلباته. يُقرأ الرسم من اليسار إلى اليمين.{% else %}Each box is a course and each arrow means “is a prerequisite for”. On a larger screen, hover over a course to highlight its chain.{% endif %}</p>
     </div>
   </div>
 
   <div id="scGraphWrap" data-auto-render="true">
     <div class="cpanel mt-3">
       <div class="cp-h">
-        <span class="cp-t">{% if LANGUAGE_CODE == 'ar' %}الخطة كاملة{% else %}Full plan{% endif %}</span>
+        <span class="cp-t">{% if LANGUAGE_CODE == 'ar' %}الخطة الدراسية الكاملة{% else %}Full plan{% endif %}</span>
         <div class="pg-modes" role="group" aria-label="{% if LANGUAGE_CODE == 'ar' %}نمط العرض{% else %}Layout mode{% endif %}">
           <button type="button" id="scPgTerm" class="pg-mode is-on" aria-pressed="true">{% if LANGUAGE_CODE == 'ar' %}حسب المستوى{% else %}By term{% endif %}</button>
-          <button type="button" id="scPgChain" class="pg-mode" aria-pressed="false">{% if LANGUAGE_CODE == 'ar' %}حسب السلسلة{% else %}By chain{% endif %}</button>
+          <button type="button" id="scPgChain" class="pg-mode" aria-pressed="false">{% if LANGUAGE_CODE == 'ar' %}حسب تسلسل المتطلبات{% else %}By chain{% endif %}</button>
         </div>
       </div>
       <div class="cp-b overflow-x student-plan-map-host" id="scGraph" dir="ltr" role="img"
-           aria-label="{% if LANGUAGE_CODE == 'ar' %}خريطة متطلبات برنامجك: {{ report.counts.passed }} مجتاز، {{ report.counts.studying }} جارٍ، {{ report.counts.open }} متاح، {{ report.counts.locked }} محجوب{% else %}Prerequisite map of your programme: {{ report.counts.passed }} passed, {{ report.counts.studying }} studying, {{ report.counts.open }} open, {{ report.counts.locked }} blocked{% endif %}">
+           aria-label="{% if LANGUAGE_CODE == 'ar' %}خريطة متطلبات برنامجك: المقررات المجتازة {{ report.counts.passed }}، المقررات قيد الدراسة {{ report.counts.studying }}، المقررات المستوفية للمتطلبات {{ report.counts.open }}، المقررات غير المستوفية للمتطلبات {{ report.counts.locked }}{% else %}Prerequisite map of your programme: {{ report.counts.passed }} passed, {{ report.counts.studying }} studying, {{ report.counts.open }} open, {{ report.counts.locked }} blocked{% endif %}">
       </div>
     </div>
-    <p class="small text-secondary mb-0 mt-2 student-map-device-note">{% if LANGUAGE_CODE == 'ar' %}على الهاتف، تتحول الخريطة تلقائيًا إلى قائمة مرتبة حسب المستوى لتسهيل القراءة.{% else %}On a phone, the same map becomes a term-by-term list for easier reading.{% endif %}</p>
+    <p class="small text-secondary mb-0 mt-2 student-map-device-note">{% if LANGUAGE_CODE == 'ar' %}على الهاتف، تُعرض الخريطة تلقائيًا في قائمة مرتبة حسب المستوى لتسهيل قراءتها.{% else %}On a phone, the same map becomes a term-by-term list for easier reading.{% endif %}</p>
   </div>
 </section>
 {% else %}
 <div class="card p-3">
-  <p class="mb-0">{% if LANGUAGE_CODE == 'ar' %}تعذّر إعداد خريطة خطتك الآن. حاول لاحقًا أو راجع مرشدك الأكاديمي.{% else %}We could not build your plan map right now. Please try again later or contact your academic advisor.{% endif %}</p>
+  <p class="mb-0">{% if LANGUAGE_CODE == 'ar' %}تعذّر إعداد خريطة متطلبات خطتك حاليًا. حاول مرة أخرى لاحقًا، أو تواصل مع مرشدك الأكاديمي.{% else %}We could not build your plan map right now. Please try again later or contact your academic advisor.{% endif %}</p>
 </div>
 {% endif %}
 {% endblock %}
@@ -64,7 +64,7 @@
 {% if report and report.graph and report.graph.items %}
   {{ report.graph|json_script:"scGraphData" }}
   <script>window.__STUDENT_GRAPH__ = JSON.parse(document.getElementById('scGraphData').textContent);</script>
-  <script src="{% static 'js/prereq-graph.js' %}?v=1"></script>
-  <script src="{% static 'js/page-student-graph.js' %}?v=3"></script>
+  <script src="{% static 'js/prereq-graph.js' %}?v=4"></script>
+  <script src="{% static 'js/page-student-graph.js' %}?v=5"></script>
 {% endif %}
 {% endblock %}

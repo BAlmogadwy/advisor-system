@@ -36,111 +36,117 @@
     : '';
 
   const T = {
-    thinking:  AR ? 'جارٍ تجهيز الإجابة…' : 'Preparing the answer…',
-    failed:    AR ? 'تعذر إكمال الإجابة. حاول مرة أخرى.' : 'Could not complete the answer. Please try again.',
-    abstained: AR ? 'لا تتوفر معلومات موثوقة كافية للإجابة.' : 'There is not enough verified information to answer.',
-    escalated: AR ? 'تم تجهيز الحالة لمراجعة المرشد الأكاديمي.' : 'Prepared for academic adviser review.',
+    thinking:  AR ? 'جارٍ إعداد الإجابة…' : 'Preparing the answer…',
+    failed:    AR ? 'لم نتمكّن من إعداد الإجابة.' : 'We could not complete the answer.',
+    interrupted: AR ? 'توقّف إعداد الإجابة قبل اكتمالها.' : 'Answer preparation stopped before it finished.',
+    abstained: AR ? 'لا تتوفر معلومات موثوقة كافية للإجابة عن هذا السؤال.' : 'There is not enough verified information to answer.',
+    escalated: AR ? 'تحتاج هذه الحالة إلى مراجعة المرشد الأكاديمي.' : 'Prepared for academic adviser review.',
     retry:     AR ? 'إعادة المحاولة' : 'Retry',
+    retryAnswer: AR ? 'إعادة محاولة إعداد الإجابة' : 'Retry preparing the answer',
     source:    AR ? 'المصدر' : 'Source',
     sources:   AR ? 'المصادر' : 'Sources',
-    details:   AR ? 'تفاصيل المصدر' : 'Source details',
-    policyId:  AR ? 'معرّف السياسة' : 'Policy ID',
-    policyIds: AR ? 'معرّفات السياسات' : 'Policy IDs',
-    effective: AR ? 'الفترة الفعالة' : 'Effective period',
-    approved:  AR ? 'حالة المصدر: معتمد' : 'Source status: approved',
+    details:   AR ? 'بيانات المصدر' : 'Source details',
+    policyId:  AR ? 'رمز القاعدة الأكاديمية' : 'Policy ID',
+    policyIds: AR ? 'رموز القواعد الأكاديمية' : 'Policy IDs',
+    effective: AR ? 'فترة سريان اللائحة' : 'Effective period',
+    approved:  AR ? 'المصدر معتمد' : 'Source status: approved',
     helpful:   AR ? 'هل كانت هذه الإجابة مفيدة؟' : 'Was this answer helpful?',
     yes:       AR ? 'نعم' : 'Yes',
     no:        AR ? 'لا' : 'No',
     thanks:    AR ? 'شكرًا لملاحظتك.' : 'Thank you for the feedback.',
     page:      AR ? 'ص' : 'p.',
-    untitled:  AR ? 'محادثة بدون عنوان' : 'Untitled conversation',
-    loadFail:  AR ? 'تعذر تحميل المحادثة.' : 'Could not load the conversation.',
+    untitled:  AR ? 'محادثة بلا عنوان' : 'Untitled conversation',
+    loadFail:  AR ? 'تعذّر تحميل المحادثة.' : 'Could not load the conversation.',
     me:        AR ? 'أنا' : 'Me',
-    sendFail:  AR ? 'تعذر إرسال سؤالك. حاول مرة أخرى.' : 'Could not send your question. Please try again.',
-    offline:   AR ? 'لا يوجد اتصال. سؤالك محفوظ، حاول مرة أخرى.' : 'No connection. Your question is kept — try again.',
-    why:       AR ? 'ما سبب عدم فائدة الإجابة؟' : 'Why was the answer not helpful?',
+    sendFail:  AR ? 'تعذّر إرسال السؤال. أعد المحاولة.' : 'Could not send your question. Please try again.',
+    offline:   AR ? 'لا يتوفر اتصال بالشبكة. بقي السؤال في خانة الكتابة؛ أعد المحاولة بعد عودة الاتصال.' : 'No connection. Your question is kept — try again.',
+    why:       AR ? 'لماذا لم تكن الإجابة مفيدة؟' : 'Why was the answer not helpful?',
     convList:  AR ? 'المحادثات' : 'Conversations',
 
-    timetableTitle: AR ? 'خيارات الجدول' : 'Timetable alternatives',
+    timetableTitle: AR ? 'الجداول المقترحة' : 'Timetable alternatives',
     planningOnly: AR
-      ? 'مقترحات للتخطيط فقط — لا يتم حفظ جدول أو تسجيل مقرر هنا.'
+      ? 'هذه جداول إرشادية فقط؛ لا يؤدي عرضها إلى حفظ جدول أو تسجيل مقرر في بوابة الجامعة.'
       : 'Planning proposals only — nothing is saved and no course is registered here.',
-    currentSections: AR ? 'الشعب الحالية المثبتة' : 'Current retained sections',
-    expectedSections: AR ? 'شُعب الخطة المتوقعة المثبتة' : 'Expected-plan sections retained',
-    plannerOption: AR ? 'خيار المخطط' : 'Planner option',
-    creditHours: AR ? 'ساعة' : 'credits',
-    meetings: AR ? 'المواعيد' : 'Meetings',
+    currentSections: AR ? 'الشُعب المحتفَظ بها من الجدول المسجّل فعليًا' : 'Current retained sections',
+    expectedSections: AR ? 'الشُعب المحتفَظ بها من الجدول المتوقع' : 'Expected-plan sections retained',
+    plannerOption: AR ? 'الجدول المقترح' : 'Planner option',
+    creditHours: AR ? 'الساعات المعتمدة' : 'credits',
+    courseCoverage: AR ? 'المقررات المدرجة' : 'Courses scheduled',
+    meetings: AR ? 'مواعيد المحاضرات' : 'Meetings',
     section: AR ? 'الشعبة' : 'section',
-    enforcedConstraints: AR ? 'قيود الجدول المطلوبة' : 'Requested timetable constraints',
-    mustTake: AR ? 'مقرر إلزامي' : 'Must take',
-    pinnedSection: AR ? 'شعبة مثبتة' : 'Pinned section',
-    constraintProblems: AR ? 'تعذر تحقيق القيود المطلوبة' : 'Requested constraints could not be satisfied',
+    enforcedConstraints: AR ? 'الشروط المطلوب مراعاتها عند إنشاء الجدول' : 'Requested timetable constraints',
+    mustTake: AR ? 'مقرر طُلب إدراجه في كل جدول مقترح' : 'Must take',
+    pinnedSection: AR ? 'الشعبة المحدّدة' : 'Pinned section',
+    constraintProblems: AR ? 'تعذّر إنشاء جدول يحقق الشروط المطلوبة' : 'Requested constraints could not be satisfied',
     noValidConstrainedOption: AR
-      ? 'لم يُعرض جدول جزئي على أنه صالح. عدّل القيد المطلوب ثم أعد المحاولة.'
+      ? 'لا يتوفر جدول يحقق جميع الشروط. لم يُعرض الجدول الجزئي على أنه خيار صالح؛ عدّل الشروط ثم أعد المحاولة.'
       : 'No partial timetable is presented as valid. Adjust the requested constraint and try again.',
-    unplaced: AR ? 'لم تُدرج في هذا الخيار' : 'Not placed in this option',
-    noAdditions: AR ? 'لا توجد إضافات في هذا الخيار.' : 'This option has no additions.',
+    unplaced: AR ? 'مقررات لم تُدرج في هذا الجدول المقترح' : 'Not placed in this option',
+    noAdditions: AR ? 'لا توجد مقررات جديدة في هذا الجدول المقترح.' : 'This option has no additions.',
     noAdditionalCourses: AR
-      ? 'تم الإبقاء على جدولك الحالي؛ لا يوجد مقرر إضافي مطلوب أو موصى به لبناء خيار جديد.'
+      ? 'أُبقي الجدول المسجّل فعليًا كما هو؛ فلا توجد مقررات إضافية طلبتها أو اقترحها النظام لإنشاء جدول مقترح آخر.'
       : 'Your current timetable is retained; there is no requested or recommended additional course to build into a new option.',
     noAdditionalExpectedCourses: AR
-      ? 'تم الإبقاء على جدولك المتوقع؛ لا يوجد مقرر إضافي مطلوب أو موصى به لبناء خيار جديد. هذه الخطة ليست تسجيلًا فعليًا.'
+      ? 'أُبقي الجدول المتوقع كما هو؛ فلا توجد مقررات إضافية طلبتها أو اقترحها النظام لإنشاء جدول مقترح آخر. الجدول المتوقع ليس تسجيلًا فعليًا.'
       : 'Your expected timetable is retained; there is no requested or recommended additional course to build into a new option. This plan is not actual registration.',
-    replaceCourse: AR ? 'استبدل' : 'Replace',
-    replaceWith: AR ? 'بـ' : 'with',
+    replaceCourse: AR ? 'استبدال' : 'Replace',
+    replaceWith: AR ? 'بالمقرر' : 'with',
     outsidePlanReplacement: AR
-      ? 'تنبيه: المقرر البديل خارج خطتك الدراسية المسجلة؛ تحقق من احتسابه في بوابة الجامعة.'
+      ? 'تنبيه: المقرر البديل غير مدرج في الخطة الدراسية المحفوظة في النظام؛ تحقّق عبر بوابة الجامعة من كيفية احتسابه ضمن متطلبات الخطة.'
       : 'Caution: the replacement course is outside your recorded study plan; verify how it will count in the university portal.',
 
-    graduationMapTitle: AR ? 'مسار السيناريو حتى إكمال الخطة' : 'Scenario path to plan completion',
+    graduationMapTitle: AR ? 'المسار التقديري حتى إكمال الخطة الدراسية' : 'Scenario path to plan completion',
     graduationMapComplete: AR
-      ? 'وصلت المحاكاة إلى جميع متطلبات الخطة. هذا تقدير تخطيطي وليس موعد تخرج رسميًا.'
+      ? 'يشمل هذا التقدير جميع متطلبات الخطة الدراسية. وهو مسار إرشادي، وليس موعدًا رسميًا للتخرج.'
       : 'The simulation reached every plan requirement. This is a planning estimate, not an official graduation date.',
     graduationMapIncomplete: AR
-      ? 'تعرض الخريطة ما استطاعت المحاكاة ترتيبه فقط، ثم تتوقف عند المتطلبات غير المحسومة؛ لذلك لا تمثل موعدًا نهائيًا للتخرج.'
+      ? 'تعرض الخريطة المقررات التي أمكن ترتيبها فقط، وتتوقف عند المتطلبات التي تعذّر حسمها؛ لذلك لا تمثل موعدًا نهائيًا للتخرج.'
       : 'The map shows only what the simulation could schedule, then stops at unresolved requirements; it is not a final graduation date.',
     graduationReadOnly: AR
-      ? 'سيناريو للقراءة فقط — لا يغيّر جدولك أو يسجل مقررات في بوابة الجامعة.'
+      ? 'هذا تقدير إرشادي فقط؛ لا يغيّر الجدول المسجّل فعليًا أو الجدول المتوقع، ولا يسجّل مقررات في بوابة الجامعة.'
       : 'Read-only scenario — it does not change your timetable or register courses in the university portal.',
-    scenarioTerms: AR ? 'حسب فصول السيناريو' : 'By scenario term',
-    prerequisiteChain: AR ? 'حسب سلسلة المتطلبات' : 'By prerequisite chain',
-    completedBefore: AR ? 'مجتاز قبل السيناريو' : 'Passed before scenario',
-    planningBaselineScenario: AR ? 'الفصل المرجعي للتخطيط' : 'Planning baseline term',
-    projectedScenario: AR ? 'فصل متوقع' : 'Projected term',
-    assumedBaseline: AR ? 'مفترض اجتيازه في الفصل المرجعي للتخطيط' : 'Assumed passed in the planning baseline term',
-    projectedCourse: AR ? 'مخطط في السيناريو' : 'Planned in scenario',
-    unresolvedCourse: AR ? 'غير محسوم' : 'Unresolved',
-    unresolvedRequirements: AR ? 'متطلبات لم تحسمها المحاكاة' : 'Requirements the simulation could not resolve',
-    missingPrerequisites: AR ? 'متطلبات سابقة ناقصة' : 'Missing prerequisites',
-    creditGate: AR ? 'شرط الساعات' : 'Credit requirement',
-    scenarioChange: AR ? 'تعديل الفصل المرجعي للتخطيط في هذا السيناريو' : 'Planning-baseline change in this scenario',
-    removed: AR ? 'حذف' : 'Removed',
-    added: AR ? 'إضافة' : 'Added',
-    maximumPerTerm: AR ? 'حد المحاكاة لكل فصل' : 'Simulation cap per term',
-    waitingTerm: AR ? 'لا مقررات مخططة' : 'no planned courses',
-    openFullMap: AR ? 'عرض الخريطة بحجم كامل' : 'Open full scenario map',
+    scenarioTerms: AR ? 'حسب الفصول التقديرية' : 'By scenario term',
+    prerequisiteChain: AR ? 'حسب سلسلة المتطلبات السابقة' : 'By prerequisite chain',
+    completedBefore: AR ? 'مجتاز قبل فصل البداية' : 'Passed before scenario',
+    planningBaselineScenario: AR ? 'فصل البداية' : 'Planning baseline term',
+    projectedScenario: AR ? 'فصل تقديري' : 'Projected term',
+    assumedBaseline: AR ? 'يُفترض اجتيازه بنهاية فصل البداية' : 'Assumed passed in the planning baseline term',
+    projectedCourse: AR ? 'مُدرج في فصل تقديري' : 'Planned in scenario',
+    unresolvedCourse: AR ? 'تعذّر تحديد فصل مناسب له' : 'Unresolved',
+    unresolvedRequirements: AR ? 'مقررات تعذّر إدراجها في الفصول التقديرية' : 'Requirements the simulation could not resolve',
+    missingPrerequisites: AR ? 'متطلبات سابقة غير مستوفاة' : 'Missing prerequisites',
+    creditGate: AR ? 'شرط الساعات المعتمدة' : 'Credit requirement',
+    scenarioChange: AR ? 'التغيير المفترض في فصل البداية' : 'Planning-baseline change in this scenario',
+    removed: AR ? 'المقررات المفترض حذفها:' : 'Removed',
+    added: AR ? 'المقررات المفترض إضافتها:' : 'Added',
+    maximumPerTerm: AR ? 'الحد الأعلى للساعات المعتمدة في كل فصل تقديري' : 'Simulation cap per term',
+    waitingTerm: AR ? 'لا توجد مقررات مدرجة في هذا الفصل التقديري' : 'no planned courses',
+    openFullMap: AR ? 'فتح الخريطة في عرض كامل' : 'Open full scenario map',
     closeFullMap: AR ? 'إغلاق العرض الكامل' : 'Close full-screen map',
+    moreScenarioCourses: function (count) {
+      return AR ? 'عرض مقررات إضافية (' + count + ')' : 'Show ' + count + ' more courses';
+    },
 
-    askHuman:  AR ? 'مراجعة المرشد الأكاديمي' : 'Ask an academic adviser',
-    sendCase:  AR ? 'إرسال الحالة للمرشد' : 'Send this case to an adviser',
+    askHuman:  AR ? 'طلب مراجعة من المرشد الأكاديمي' : 'Ask an academic adviser',
+    sendCase:  AR ? 'إرسال الحالة إلى المرشد الأكاديمي' : 'Send this case to an adviser',
     /* "may need" — never "has been approved" or "an adviser is looking at it".
        Nothing has been agreed at the point this is shown. */
-    mayNeed:   AR ? 'هذه الحالة قد تحتاج إلى مراجعة المرشد الأكاديمي.'
+    mayNeed:   AR ? 'قد تحتاج هذه الحالة إلى مراجعة المرشد الأكاديمي.'
                   : 'This case may need review by an academic adviser.',
-    willSend:  AR ? 'سيتم إرسال:' : 'What will be sent:',
-    wontSend:  AR ? 'لن يتم إرسال المحادثات الأخرى أو السجلات الداخلية للنظام.'
+    willSend:  AR ? 'ستُرسل المعلومات الآتية إلى المرشد الأكاديمي:' : 'What will be sent:',
+    wontSend:  AR ? 'لن تُرسل المحادثات الأخرى ولا السجلات الداخلية للنظام.'
                   : 'Your other conversations and the system’s internal records will not be sent.',
-    noteAsk:   AR ? 'هل ترغب في إضافة توضيح للمرشد؟' : 'Would you like to add anything for the adviser?',
+    noteAsk:   AR ? 'هل تريد إضافة توضيح للمرشد الأكاديمي؟' : 'Would you like to add anything for the adviser?',
     optional:  AR ? 'اختياري' : 'optional',
     confirm:   AR ? 'إرسال' : 'Send',
     cancel:    AR ? 'إلغاء' : 'Cancel',
-    caseSent:  AR ? 'تم إرسال الحالة للمرشد الأكاديمي' : 'Sent to an academic adviser',
+    caseSent:  AR ? 'أُرسلت الحالة إلى المرشد الأكاديمي' : 'Sent to an academic adviser',
     caseRef:   AR ? 'رقم الحالة' : 'Case number',
     caseState: AR ? 'الحالة' : 'Status',
     caseWhen:  AR ? 'تاريخ الإرسال' : 'Submitted',
     viewCase:  AR ? 'عرض الحالة' : 'View case',
     backToChat: AR ? 'العودة للمحادثة' : 'Back to the conversation',
-    caseFail:  AR ? 'تعذر إرسال الحالة. لم يتغير شيء في محادثتك.'
+    caseFail:  AR ? 'تعذّر إرسال الحالة. لم تتغيّر المحادثة.'
                   : 'Could not send the case. Nothing in your conversation changed.',
     adviserReply: AR ? 'رد المرشد الأكاديمي' : 'The adviser’s reply',
   };
@@ -151,12 +157,12 @@
      also mean rendering the stored evidence into the page, which is the one thing
      this screen must not do. */
   const SHARED_ITEMS = AR
-    ? [
+      ? [
         'سؤالك',
-        'إجابة المرشد الافتراضي',
+        'إجابة المرشد الذكي',
         'حالة الإجابة وسبب الإحالة',
-        'المصادر التي ظهرت مع الإجابة',
-        'المعلومات الناقصة المسجلة، إن وجدت',
+        'المصادر المعروضة مع الإجابة',
+        'المعلومات التي حُدّدت على أنها ناقصة، إن وجدت',
       ]
     : [
         'your question',
@@ -168,11 +174,11 @@
 
   const REASONS = [
     ['answer_incorrect',            AR ? 'الإجابة غير صحيحة'     : 'The answer is incorrect'],
-    ['did_not_understand_question', AR ? 'لم يفهم سؤالي'          : 'It misunderstood my question'],
-    ['information_outdated',        AR ? 'المعلومة غير محدثة'     : 'The information is outdated'],
-    ['missing_details',             AR ? 'الإجابة ناقصة'          : 'The answer is incomplete'],
-    ['citation_not_helpful',        AR ? 'المصدر غير مفيد'        : 'The source is not helpful'],
-    ['needed_human_adviser',        AR ? 'أحتاج إلى مرشد أكاديمي' : 'I need a human adviser'],
+    ['did_not_understand_question', AR ? 'الإجابة لا تتناول سؤالي' : 'It misunderstood my question'],
+    ['information_outdated',        AR ? 'المعلومات الواردة غير محدّثة' : 'The information is outdated'],
+    ['missing_details',             AR ? 'الإجابة لا تتضمن التفاصيل الكافية' : 'The answer is incomplete'],
+    ['citation_not_helpful',        AR ? 'المصدر لا يدعم الإجابة بوضوح' : 'The source is not helpful'],
+    ['needed_human_adviser',        AR ? 'أفضّل مراجعة مرشد أكاديمي' : 'I need a human adviser'],
   ];
 
   /* Statuses that carry a real answer beneath them. */
@@ -238,6 +244,12 @@
     if (className) node.className = className;
     if (text != null) node.textContent = text;
     return node;
+  }
+
+  function labelledValue(label, value) {
+    return AR
+      ? label + ': \u2066' + String(value) + '\u2069'
+      : String(value) + ' ' + label;
   }
 
   /* The conversation list is navigation, not part of the academic answer. Keeping
@@ -1190,7 +1202,11 @@
       const retained = el('details', 'sa-tt-current');
       const retainedLabel = baselineKind === 'EXPECTED_PLAN'
         ? T.expectedSections : T.currentSections;
-      retained.appendChild(el('summary', null, retainedLabel + ' (' + baseline.length + ')'));
+      retained.appendChild(el(
+        'summary',
+        null,
+        AR ? labelledValue(retainedLabel, baseline.length) : retainedLabel + ' (' + baseline.length + ')'
+      ));
       const list = el('div', 'sa-tt-current-list');
       baseline.forEach(function (course) {
         const row = el('div', 'sa-tt-current-row');
@@ -1229,8 +1245,10 @@
       const coverage = Number(option.scheduled_courses || 0) + '/' + Number(option.target_courses || 0);
       const credits = Number(option.total_credit_hours || option.proposed_credit_hours || 0);
       const meta = el('span', 'sa-tt-summary-meta');
-      meta.appendChild(ltrNode('span', 'sa-tt-coverage', coverage));
-      if (credits) meta.appendChild(el('span', 'sa-tt-credits', credits + ' ' + T.creditHours));
+      meta.appendChild(AR
+        ? el('span', 'sa-tt-coverage', labelledValue(T.courseCoverage, coverage))
+        : ltrNode('span', 'sa-tt-coverage', coverage));
+      if (credits) meta.appendChild(el('span', 'sa-tt-credits', labelledValue(T.creditHours, credits)));
       summary.appendChild(meta);
       details.appendChild(summary);
 
@@ -1283,14 +1301,14 @@
     const label = String(value || '');
     if (label === 'Completed before the scenario') return T.completedBefore;
     if (label.indexOf('Planning baseline ') === 0) {
-      return T.planningBaselineScenario + ' ' + label.slice('Planning baseline '.length);
+      return T.planningBaselineScenario + (AR ? ': ' : ' ') + label.slice('Planning baseline '.length);
     }
     if (label.indexOf('Current ') === 0) {
       // Backward compatibility for already stored presentation payloads.
-      return T.planningBaselineScenario + ' ' + label.slice('Current '.length);
+      return T.planningBaselineScenario + (AR ? ': ' : ' ') + label.slice('Current '.length);
     }
     if (label.indexOf('Projected ') === 0) {
-      return T.projectedScenario + ' ' + label.slice('Projected '.length);
+      return T.projectedScenario + (AR ? ': ' : ' ') + label.slice('Projected '.length);
     }
     return label;
   }
@@ -1302,24 +1320,26 @@
     return {
       termHeading: band,
       pgNoTermBand: T.waitingTerm,
-      pgGateTip: function (h) { return T.creditGate + ': ' + h + ' ' + T.creditHours; },
-      pgInferredTip: AR ? 'موضع مستنتج خارج ترتيب السيناريو' : 'position inferred outside the scenario order',
+      pgGateTip: function (h) {
+        return AR ? labelledValue(T.creditGate, h) : T.creditGate + ': ' + h + ' ' + T.creditHours;
+      },
+      pgInferredTip: AR ? 'موضع تقديري خارج الفصول المرتّبة' : 'position inferred outside the scenario order',
       pgTermTip: band,
       pgGate: T.creditGate,
-      pgInferred: AR ? 'موضع مستنتج' : 'inferred position',
-      pgFoundation: AR ? 'بداية السلسلة' : 'chain start',
-      pgIntermediate: AR ? 'وسط السلسلة' : 'chain middle',
-      pgTerminal: AR ? 'نهاية السلسلة' : 'chain end',
-      pgHoverHint: AR ? 'مرّر لإبراز السلسلة' : 'hover to highlight a chain',
+      pgInferred: AR ? 'موضع محدّد تقديريًا' : 'inferred position',
+      pgFoundation: AR ? 'بداية سلسلة المتطلبات' : 'chain start',
+      pgIntermediate: AR ? 'وسط سلسلة المتطلبات' : 'chain middle',
+      pgTerminal: AR ? 'نهاية سلسلة المتطلبات' : 'chain end',
+      pgHoverHint: AR ? 'مرّر على مقرر لإبراز سلسلة متطلباته' : 'hover to highlight a chain',
       pgPassed: T.completedBefore,
       pgStudying: T.assumedBaseline,
       pgOpen: T.projectedCourse,
       pgLocked: T.unresolvedCourse,
       pgSameTermWarn: function (n) {
-        return AR ? n + ' علاقة متطلبات داخل الفصل نفسه' : n + ' prerequisite relation(s) within one term';
+        return AR ? 'علاقات متطلبات سابقة داخل الفصل نفسه: ' + n + '.' : n + ' prerequisite relation(s) within one term';
       },
       pgBackwardWarn: function (n) {
-        return AR ? n + ' علاقة متطلبات بعد مقررها' : n + ' prerequisite relation(s) after their course';
+        return AR ? 'علاقات يظهر فيها المتطلب السابق بعد المقرر الذي يعتمد عليه: ' + n + '.' : n + ' prerequisite relation(s) after their course';
       },
     };
   }
@@ -1342,18 +1362,33 @@
     const statusClass = {
       passed: 'is-passed', studying: 'is-studying', open: 'is-open', locked: 'is-locked',
     };
+    const appendCourse = function (host, code) {
+      const status = (graph.statusOf && graph.statusOf[code]) || 'locked';
+      const item = el('span', 'sa-grad-course ' + (statusClass[status] || 'is-locked'));
+      item.title = ((graph.nameOf && graph.nameOf[code]) || code) + ' — ' + (statusText[status] || status);
+      item.appendChild(ltrNode('bdi', null, code));
+      host.appendChild(item);
+    };
     Array.from(byTerm.keys()).sort(function (a, b) { return a - b; }).forEach(function (term) {
       const section = el('section', 'sa-grad-mobile-term');
-      section.appendChild(el('h5', 'sa-grad-band-title', graduationBandLabel(labels[String(term)] || term)));
+      const codes = byTerm.get(term).sort();
+      section.appendChild(el(
+        'h5',
+        'sa-grad-band-title',
+        graduationBandLabel(labels[String(term)] || term) + ' (' + codes.length + ')'
+      ));
       const courses = el('div', 'sa-grad-mobile-courses');
-      byTerm.get(term).sort().forEach(function (code) {
-        const status = (graph.statusOf && graph.statusOf[code]) || 'locked';
-        const item = el('span', 'sa-grad-course ' + (statusClass[status] || 'is-locked'));
-        item.title = ((graph.nameOf && graph.nameOf[code]) || code) + ' — ' + (statusText[status] || status);
-        item.appendChild(ltrNode('bdi', null, code));
-        courses.appendChild(item);
-      });
+      const previewLimit = 10;
+      codes.slice(0, previewLimit).forEach(function (code) { appendCourse(courses, code); });
       section.appendChild(courses);
+      if (codes.length > previewLimit) {
+        const more = el('details', 'sa-grad-more');
+        more.appendChild(el('summary', null, T.moreScenarioCourses(codes.length - previewLimit)));
+        const remainder = el('div', 'sa-grad-mobile-courses');
+        codes.slice(previewLimit).forEach(function (code) { appendCourse(remainder, code); });
+        more.appendChild(remainder);
+        section.appendChild(more);
+      }
       host.appendChild(section);
     });
     return host;
@@ -1403,6 +1438,7 @@
       activeExpandedMapCloser = state ? closeThisMap
         : (activeExpandedMapCloser === closeThisMap ? null : activeExpandedMapCloser);
       if (state) {
+        if (!desktop.querySelector('.prereq-svg')) draw(selectedGraphMode);
         wrap.setAttribute('role', 'dialog');
         wrap.setAttribute('aria-modal', 'true');
       } else {
@@ -1482,7 +1518,9 @@
     if (presentation.max_credits_per_term) {
       toolbar.appendChild(el(
         'span', 'sa-tt-credits',
-        T.maximumPerTerm + ': ' + presentation.max_credits_per_term + ' ' + T.creditHours
+        AR
+          ? labelledValue(T.maximumPerTerm, presentation.max_credits_per_term)
+          : T.maximumPerTerm + ': ' + presentation.max_credits_per_term + ' ' + T.creditHours
       ));
     }
     panel.appendChild(toolbar);
@@ -1495,6 +1533,7 @@
     panel.appendChild(renderGraduationMobileList(graph, presentation.band_labels || {}));
     wrap.appendChild(panel);
 
+    let selectedGraphMode = 'term';
     const draw = function (mode) {
       if (!window.PrereqGraph) return;
       desktop.innerHTML = '';
@@ -1508,16 +1547,17 @@
       });
     };
     byTerm.addEventListener('click', function () {
+      selectedGraphMode = 'term';
       byTerm.classList.add('is-on'); byTerm.setAttribute('aria-pressed', 'true');
       byChain.classList.remove('is-on'); byChain.setAttribute('aria-pressed', 'false');
       draw('term');
     });
     byChain.addEventListener('click', function () {
+      selectedGraphMode = 'depth';
       byChain.classList.add('is-on'); byChain.setAttribute('aria-pressed', 'true');
       byTerm.classList.remove('is-on'); byTerm.setAttribute('aria-pressed', 'false');
       draw('depth');
     });
-    draw('term');
 
     const unresolved = Array.isArray(presentation.unresolved_requirements)
       ? presentation.unresolved_requirements : [];
@@ -1567,7 +1607,36 @@
     if (presentation) bubble.appendChild(presentation);
 
     const note = statusNote(message.status);
-    if (note && message.status !== 'COMPLETED') {
+    const canRetry = role === 'user' && !!message.retry_token;
+    if (canRetry) {
+      /* Keep recovery as one compact state. The old sentence instructed the
+         student to retry and was followed by a second, visually detached Retry
+         button. The alert now explains only what happened; the one action says
+         what can be done. Each button is described by its own turn so multiple
+         failed questions remain distinguishable to assistive technology. */
+      const retryState = el('div', 'sa-retry-state');
+      const retryStatus = el(
+        'p',
+        'sa-status sa-status-failed',
+        message.status === 'FAILED' ? T.failed : T.interrupted
+      );
+      retryStatus.id = 'sa-retry-status-' + String(message.id || 'turn').replace(/[^A-Za-z0-9_-]/g, '-');
+      retryStatus.setAttribute('role', 'alert');
+      retryStatus.setAttribute('aria-atomic', 'true');
+      retryState.appendChild(retryStatus);
+
+      const retry = el('button', 'sa-retry');
+      retry.type = 'button';
+      retry.setAttribute('aria-label', T.retryAnswer);
+      retry.setAttribute('aria-describedby', retryStatus.id);
+      const retryIcon = el('span', 'sa-retry-icon', '↻');
+      retryIcon.setAttribute('aria-hidden', 'true');
+      retry.appendChild(retryIcon);
+      retry.appendChild(el('span', 'sa-retry-label', T.retry));
+      retry.addEventListener('click', function () { send(message.content, message.retry_token); });
+      retryState.appendChild(retry);
+      bubble.appendChild(retryState);
+    } else if (note && message.status !== 'COMPLETED') {
       bubble.appendChild(el('p', 'sa-status sa-status-' + String(message.status).toLowerCase(), note));
     }
 
@@ -1593,13 +1662,6 @@
        turn instead of retyping it and creating a visual duplicate. Driven by the
        token rather than by the status: a turn abandoned mid-generation is stuck on
        PENDING, and it needs the same way out that a clean failure gets. */
-    if (role === 'user' && message.retry_token) {
-      const retry = el('button', 'btn btn-sm sa-retry', T.retry);
-      retry.type = 'button';
-      retry.addEventListener('click', function () { send(message.content, message.retry_token); });
-      bubble.appendChild(retry);
-    }
-
     article.appendChild(bubble);
     return article;
   }
@@ -1737,11 +1799,11 @@
     if (wait >= 90) {
       const minutes = Math.ceil(wait / 60);
       return AR
-        ? `لقد أرسلت أسئلة كثيرة. يمكنك المحاولة بعد ${minutes} دقيقة تقريبًا.`
+        ? `تم بلوغ الحد المؤقت لعدد الأسئلة. مدة الانتظار التقريبية بالدقائق: ${minutes}.`
         : `That is a lot of questions. You can try again in about ${minutes} minutes.`;
     }
     return AR
-      ? `لقد أرسلت أسئلة كثيرة. يمكنك المحاولة بعد ${wait} ثانية.`
+      ? `تم بلوغ الحد المؤقت لعدد الأسئلة. مدة الانتظار بالثواني: ${wait}.`
       : `That is a lot of questions. You can try again in ${wait} seconds.`;
   }
 

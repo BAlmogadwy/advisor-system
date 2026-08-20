@@ -232,6 +232,9 @@ def test_rebuilding_without_a_confirmation_is_refused(owner_client, world, draft
     response = _post(owner_client, "planner_draft_generate", draft)
     assert response.status_code == 428
     assert response.json()["needs_confirmation"] is True
+    message = response.json()["error"]
+    assert "بدل الاحتفاظ بالجدول المرجعي المعروض أعلاه" in message
+    assert "الإبقاء على الشُعب التي ثبّتها يدويًا" in message
 
 
 def test_a_posted_confirmed_flag_is_not_a_confirmation(owner_client, world, draft, monkeypatch):
@@ -708,6 +711,103 @@ def test_workspace_identifies_an_expected_plan_baseline(owner_client, world, dra
 
     assert workspace["timetable_kind"] == "EXPECTED_PLAN"
     assert {row["course_code"] for row in workspace["current_timetable"]} == {"CS113"}
+    assert workspace["registered_timetable"] == []
+    assert {row["course_code"] for row in workspace["expected_timetable"]} == {"CS113"}
+
+
+def test_workspace_keeps_coexisting_snapshots_separate_and_builds_from_registered(
+    owner_client, world, draft
+):
+    StudentTermSection.objects.create(
+        student_id=OWNER,
+        academic_year=draft.academic_year,
+        term=draft.term,
+        term_section=world[("CS113", "M1")],
+        source=f"registration_plan_{draft.academic_year}_t{draft.term}",
+    )
+    StudentTermSection.objects.create(
+        student_id=OWNER,
+        academic_year=draft.academic_year,
+        term=draft.term,
+        term_section=world[("AI221", "M1")],
+        source="scraper_timetable",
+    )
+
+    workspace = owner_client.get(_url("planner_draft_detail", draft)).json()["workspace"]
+
+    assert workspace["timetable_kind"] == "REGISTERED"
+    assert {row["course_code"] for row in workspace["current_timetable"]} == {"AI221"}
+    assert {row["course_code"] for row in workspace["registered_timetable"]} == {"AI221"}
+    assert {row["course_code"] for row in workspace["expected_timetable"]} == {"CS113"}
+
+
+def test_workspace_exposes_a_working_forecast_as_the_expected_timetable(owner_client, world, draft):
+    StudentTermSection.objects.create(
+        student_id=OWNER,
+        academic_year=draft.academic_year,
+        term=draft.term,
+        term_section=world[("AI221", "M1")],
+        source="planner",
+    )
+
+    workspace = owner_client.get(_url("planner_draft_detail", draft)).json()["workspace"]
+
+    assert workspace["timetable_kind"] == "EXPECTED_PLAN"
+    assert workspace["registered_timetable"] == []
+    assert {row["course_code"] for row in workspace["current_timetable"]} == {"AI221"}
+    assert {row["course_code"] for row in workspace["expected_timetable"]} == {"AI221"}
+
+
+def test_workspace_prefers_a_working_forecast_over_an_older_imported_plan(
+    owner_client, world, draft
+):
+    StudentTermSection.objects.create(
+        student_id=OWNER,
+        academic_year=draft.academic_year,
+        term=draft.term,
+        term_section=world[("CS113", "M1")],
+        source=f"registration_plan_{draft.academic_year}_t{draft.term}",
+    )
+    StudentTermSection.objects.create(
+        student_id=OWNER,
+        academic_year=draft.academic_year,
+        term=draft.term,
+        term_section=world[("AI221", "M1")],
+        source="planner",
+    )
+
+    workspace = owner_client.get(_url("planner_draft_detail", draft)).json()["workspace"]
+
+    assert workspace["timetable_kind"] == "EXPECTED_PLAN"
+    assert {row["course_code"] for row in workspace["current_timetable"]} == {"AI221"}
+    assert {row["course_code"] for row in workspace["expected_timetable"]} == {"AI221"}
+
+
+def test_generation_uses_the_same_registered_snapshot_that_it_fingerprints(
+    world, draft, monkeypatch
+):
+    StudentTermSection.objects.create(
+        student_id=OWNER,
+        academic_year=draft.academic_year,
+        term=draft.term,
+        term_section=world[("CS113", "M1")],
+        source=f"registration_plan_{draft.academic_year}_t{draft.term}",
+    )
+    StudentTermSection.objects.create(
+        student_id=OWNER,
+        academic_year=draft.academic_year,
+        term=draft.term,
+        term_section=world[("AI221", "M1")],
+        source="scraper_timetable",
+    )
+    seen = _stub_solver(monkeypatch, world)
+
+    generated = svc.generate(draft)
+
+    request = seen[0]
+    assert {row["course_code"] for row in request.baseline_override or ()} == {"AI221"}
+    assert {row["source"] for row in request.baseline_override or ()} == {"scraper_timetable"}
+    assert {row["course_code"] for row in generated.generated_inputs["baseline"]} == {"AI221"}
 
 
 def test_expected_plan_proposal_uses_neutral_and_expected_fields(world, monkeypatch):

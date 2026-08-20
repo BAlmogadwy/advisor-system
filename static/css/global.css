@@ -1965,26 +1965,26 @@ html body .btn:focus-visible {
 .pg-btn:disabled { opacity:0.3; pointer-events:none; }
 
 /* ── Prereq Dependency Graph ── */
-.prereq-svg { display:block;margin:0 auto }
-.pg-edge { fill:none;stroke:var(--teal);stroke-width:1.5;stroke-opacity:0.2;transition:all .35s var(--ease) }
+.prereq-svg { display:block;width:100%;height:auto;margin:0 auto }
+.pg-edge { fill:none;stroke:var(--teal);stroke-width:2;stroke-opacity:0.4;transition:all .35s var(--ease) }
 .pg-node { cursor:pointer }.pg-node rect{transition:all .35s var(--ease)}.pg-node text{transition:fill .35s var(--ease);pointer-events:none}
 .pg-node:hover rect{stroke-width:2;filter:drop-shadow(0 2px 8px color-mix(in srgb, var(--teal) 25%, transparent))}
 .pg-node.hl rect{stroke:var(--teal)!important;stroke-width:2.2}
 .pg-node.hl text{fill:var(--teal)!important}
-.pg-edge.hl{stroke:var(--teal);stroke-width:2.5;stroke-opacity:0.7}
-.pg-node.dm{opacity:0.12;transition:opacity .25s}.pg-edge.dm{opacity:0.04;transition:opacity .25s}
-.pg-legend{display:flex;align-items:center;gap:16px;padding:12px 16px 0;font-size:clamp(0.625rem, 0.601rem + 0.09vw, 0.6875rem);/* 10px → 11px */font-weight:600;color:var(--t3);font-family:var(--font-mono);letter-spacing:0.02em}
-.pg-legend-dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-inline-end:5px;vertical-align:middle;box-shadow:0 0 4px currentColor}
+.pg-edge.hl{stroke:var(--teal);stroke-width:3;stroke-opacity:0.9}
+.pg-node.dm{opacity:0.16;transition:opacity .25s}.pg-edge.dm{opacity:0.06;transition:opacity .25s}
+.pg-legend{display:flex;align-items:center;flex-wrap:wrap;gap:10px 18px;padding:14px 16px 2px;font-size:.75rem;line-height:1.45;font-weight:650;color:var(--t2);font-family:var(--font-mono);letter-spacing:0.01em}
+.pg-legend-dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-inline-end:6px;vertical-align:middle;box-shadow:0 0 5px currentColor}
 .pg-legend-dash{display:inline-block;width:12px;height:0;border-block-start:1.5px dashed var(--t3);margin-inline-end:5px;vertical-align:middle}
 
 /* term bands — the graph's vertical axis is the declared programme term */
 .pg-band{fill:transparent}
-.pg-band-alt{fill:color-mix(in srgb, var(--navy) 3%, transparent)}
-.pg-band-rule{stroke:color-mix(in srgb, var(--navy) 8%, transparent);stroke-width:1}
-.pg-gutter-rule{stroke:color-mix(in srgb, var(--navy) 10%, transparent);stroke-width:1}
-.pg-band-lbl{font-family:var(--font-mono);font-size:10px;font-weight:700;fill:var(--t3);letter-spacing:0.04em;text-transform:uppercase}
+.pg-band-alt{fill:color-mix(in srgb, var(--navy) 4.5%, transparent)}
+.pg-band-rule{stroke:color-mix(in srgb, var(--navy) 12%, transparent);stroke-width:1}
+.pg-gutter-rule{stroke:color-mix(in srgb, var(--navy) 15%, transparent);stroke-width:1.2}
+.pg-band-lbl{font-family:var(--font-mono);font-size:12px;font-weight:750;fill:var(--t2);letter-spacing:0.02em}
 .pg-band-lbl-empty{opacity:0.45}
-.pg-band-note{font-family:var(--font-mono);font-size:9px;font-weight:600;fill:var(--t3);opacity:0.4;letter-spacing:0.02em}
+.pg-band-note{font-family:var(--font-mono);font-size:11px;font-weight:650;fill:var(--t3);opacity:0.65;letter-spacing:0.01em}
 .pg-node-gate rect{stroke-dasharray:4 3}
 .pg-node-inferred rect{stroke-dasharray:5 3}
 .pg-edge-warn{stroke:#b45309;stroke-opacity:0.55;stroke-dasharray:5 4}
@@ -1999,8 +1999,8 @@ html body .btn:focus-visible {
 /* layout toggle */
 .pg-modes{display:flex;gap:2px;margin-inline-start:auto;padding:2px;border-radius:999px;background:color-mix(in srgb, var(--navy) 5%, transparent)}
 .pg-mode{
-  border:0;cursor:pointer;padding:4px 11px;border-radius:999px;background:transparent;
-  font-family:var(--font-mono);font-size:10px;font-weight:700;letter-spacing:0.02em;color:var(--t3);
+  min-height:32px;border:0;cursor:pointer;padding:6px 13px;border-radius:999px;background:transparent;
+  font-family:var(--font-mono);font-size:.72rem;font-weight:750;letter-spacing:0.01em;color:var(--t3);
   transition:all .25s var(--ease);
 }
 .pg-mode:hover{color:var(--t1)}
@@ -11347,6 +11347,7 @@ main[data-page="student-advisor"] > .content-wrap > .page-intro {
   min-height: 0;
   padding: 1.25rem clamp(.85rem, 3vw, 2.25rem);
   gap: 1rem;
+  overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior: contain;
   scroll-behavior: smooth;
@@ -11854,7 +11855,8 @@ html.sa-overlay-open { overflow: hidden; }
   padding: .25rem 0 .7rem;
   background: var(--card);
 }
-.sa-graduation-map.is-expanded .sa-grad-desktop { overflow-x: visible; }
+.sa-graduation-map.is-expanded .sa-grad-desktop { display: block; overflow-x: auto; }
+.sa-graduation-map.is-expanded .sa-grad-mobile { display: none; }
 .sa-graduation-map.is-expanded .sa-grad-panel { min-height: 60vh; }
 .sa-grad-result {
   margin: 0 0 .55rem;
@@ -11896,13 +11898,22 @@ html.sa-overlay-open { overflow: hidden; }
   border-bottom: 1px solid var(--line);
 }
 .sa-grad-toolbar .pg-modes { margin-inline-start: 0; }
+.sa-graduation-map:not(.is-expanded) .sa-grad-toolbar .pg-modes { display: none; }
+.sa-graduation-map.is-expanded .sa-grad-toolbar .pg-modes { display: flex; }
 .sa-grad-desktop {
+  display: none;
   min-width: 0;
   max-width: 100%;
   overflow-x: auto;
   padding: .45rem;
 }
-.sa-grad-mobile { display: none; }
+.sa-grad-mobile {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(13rem, 100%), 1fr));
+  align-items: start;
+  gap: .5rem;
+  padding: .55rem;
+}
 .sa-grad-blockers {
   margin-top: .55rem;
   overflow: hidden;
@@ -11930,8 +11941,13 @@ html.sa-overlay-open { overflow: hidden; }
   font-size: .8rem;
 }
 .sa-grad-blocker-reason { display: block; margin-top: .12rem; color: var(--t2); }
-.sa-grad-mobile-term { padding: .55rem .6rem; border-bottom: 1px solid var(--line); }
-.sa-grad-mobile-term:last-child { border-bottom: 0; }
+.sa-grad-mobile-term {
+  min-width: 0;
+  padding: .55rem .6rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+}
 .sa-grad-band-title { margin: 0 0 .35rem; color: var(--t2); font-size: .76rem; }
 .sa-grad-mobile-courses { display: flex; flex-wrap: wrap; gap: .3rem; }
 .sa-grad-course {
@@ -11948,11 +11964,19 @@ html.sa-overlay-open { overflow: hidden; }
 .sa-grad-course.is-passed { border-color: color-mix(in srgb, var(--success) 45%, var(--line)); color: var(--success); }
 .sa-grad-course.is-studying { border-color: color-mix(in srgb, var(--royal) 45%, var(--line)); color: var(--royal); }
 .sa-grad-course.is-open { border-color: color-mix(in srgb, var(--teal) 45%, var(--line)); color: var(--teal); }
+.sa-grad-more { margin-top: .45rem; }
+.sa-grad-more > summary {
+  min-height: 2.25rem;
+  padding: .35rem .45rem;
+  border-radius: var(--radius-sm);
+  color: var(--brand);
+  cursor: pointer;
+  font-size: .75rem;
+  font-weight: 700;
+}
+.sa-grad-more > .sa-grad-mobile-courses { padding-top: .4rem; }
 
 @media (max-width: 768px) {
-  .sa-grad-desktop,
-  .sa-grad-toolbar .pg-modes { display: none; }
-  .sa-grad-mobile { display: block; }
   .sa-grad-toolbar { justify-content: flex-end; }
 }
 
@@ -11963,6 +11987,50 @@ html.sa-overlay-open { overflow: hidden; }
 .sa-status-pending { color: var(--text-muted, #6b7280); font-style: italic; }
 .sa-status-abstained,
 .sa-status-escalated { color: var(--warning, #b54708); }
+
+/* A failed question is still the student's message, so its recovery action stays
+   inside that bubble as one compact unit instead of looking like a second reply. */
+.sa-retry-state {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: .5rem .75rem;
+  margin-top: .65rem;
+  padding-top: .6rem;
+  border-top: 1px solid color-mix(in srgb, var(--danger, #b42318) 24%, var(--line));
+}
+.sa-retry-state .sa-status {
+  flex: 1 1 13rem;
+  margin: 0;
+  line-height: 1.45;
+}
+.sa-retry-state .sa-retry {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  gap: .35rem;
+  min-height: 44px;
+  margin: 0;
+  padding: .48rem .78rem;
+  border: 1px solid color-mix(in srgb, var(--danger, #b42318) 42%, var(--line));
+  border-radius: .7rem;
+  background: color-mix(in srgb, var(--danger, #b42318) 6%, var(--card));
+  color: var(--danger, #b42318);
+  font: inherit;
+  font-size: .84rem;
+  font-weight: 750;
+  line-height: 1.2;
+  cursor: pointer;
+  touch-action: manipulation;
+  transition: border-color .15s ease, background-color .15s ease, transform .15s ease;
+}
+.sa-retry-state .sa-retry:hover {
+  border-color: color-mix(in srgb, var(--danger, #b42318) 64%, var(--line));
+  background: color-mix(in srgb, var(--danger, #b42318) 11%, var(--card));
+}
+.sa-retry-state .sa-retry:active { transform: translateY(1px); }
+.sa-retry-icon { font-size: 1rem; line-height: 1; }
 
 /* ── citations ── */
 .sa-citations {
@@ -12188,6 +12256,8 @@ html.sa-overlay-open { overflow: hidden; }
 
 @media (max-width: 359px) {
   .sa-main .va-examples { grid-template-columns: 1fr; }
+  .sa-retry-state .sa-status { flex-basis: 100%; }
+  .sa-retry-state .sa-retry { width: 100%; }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -12296,13 +12366,26 @@ html.sa-overlay-open { overflow: hidden; }
 .sp-tag.sp-tag-current { border-color: var(--line); background: var(--glass-bg); color: var(--t2); }
 .sp-requested { gap: .6rem; }
 .sp-requested-item {
-  display: grid; grid-template-columns: minmax(0, 1fr) minmax(150px, .9fr) auto;
-  align-items: center; gap: .5rem; padding-bottom: .6rem; border-bottom: 1px solid var(--line);
+  display: flex; flex-direction: column; align-items: stretch; gap: .55rem;
+  min-width: 0; padding: .15rem 0 .75rem; border-bottom: 1px solid var(--line);
 }
 .sp-requested-item:last-child { border-bottom: 0; }
-.sp-requested-label { min-width: 0; display: flex; flex-direction: column; }
+.sp-requested-label { min-width: 0; width: 100%; display: flex; flex-direction: column; gap: .12rem; }
 .sp-requested-title { display: flex; align-items: center; flex-wrap: wrap; gap: .35rem; }
-.sp-section-select { min-width: 0; }
+.sp-requested-label .sp-code { font-size: .95rem; }
+.sp-requested-label .sp-name {
+  display: block; max-width: 100%; font-size: .9rem; line-height: 1.5;
+  white-space: normal; overflow-wrap: break-word; word-break: normal;
+}
+.sp-requested-controls {
+  display: flex; align-items: stretch; flex-wrap: wrap; gap: .5rem; min-width: 0; width: 100%;
+}
+.sp-section-select {
+  flex: 1 1 15rem; width: auto; max-width: 100%; min-width: min(15rem, 100%); min-height: 44px;
+}
+html body .btn.sp-requested-remove {
+  flex: 0 0 auto; min-height: 44px; padding-inline: .75rem; white-space: nowrap;
+}
 .sp-section-select:disabled { opacity: .8; color: var(--t1); }
 .sp-fixed-label { color: var(--t2); text-decoration: none; cursor: default; }
 .sp-selection-note { margin: .75rem 0 0; color: var(--t2); font-size: .75rem; }
@@ -12425,8 +12508,9 @@ html.sa-overlay-open { overflow: hidden; }
 @media (max-width: 600px) {
   .sp-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .sp-modes { grid-template-columns: 1fr; }
-  .sp-requested-item { grid-template-columns: 1fr; }
-  .sp-requested-item .btn { justify-self: start; }
+  .sp-selection-panel { padding: .75rem; }
+  .sp-requested-controls { display: grid; grid-template-columns: minmax(0, 1fr); }
+  .sp-requested-remove { width: 100%; justify-content: center; }
   .sp-current-chip { flex: 1 1 calc(50% - .45rem); justify-content: space-between; }
   .sp-recorded-clear { width: 100%; margin-inline-start: 0; }
 }
@@ -12537,6 +12621,56 @@ html.sa-overlay-open { overflow: hidden; }
   align-items: center;
   justify-content: space-between;
   gap: .75rem;
+}
+.student-home-jumps,
+#student-home-summary,
+.student-timetable-comparison-card,
+.student-home-timetable-card,
+#student-home-recommendations {
+  scroll-margin-top: 1rem;
+}
+.student-timetable-comparison-card {
+  border-inline-start: 4px solid var(--teal);
+  background: color-mix(in srgb, var(--teal) 3%, var(--glass-bg-data));
+}
+.student-timetable-comparison-scope,
+.student-timetable-state {
+  display: inline-flex;
+  align-items: center;
+  width: max-content;
+  min-height: 25px;
+  padding: .18rem .5rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-size: .68rem;
+  font-weight: 800;
+  line-height: 1.2;
+}
+.student-timetable-comparison-scope {
+  flex: 0 0 auto;
+  color: var(--t2);
+  background: var(--glass-bg-header);
+}
+.student-home-timetable-card {
+  position: relative;
+  overflow: hidden;
+}
+.student-home-timetable-card--registered { border-inline-start: 4px solid var(--teal); }
+.student-home-timetable-card--expected { border-inline-start: 4px dashed var(--line-strong); }
+.student-timetable-card-title {
+  display: grid;
+  gap: .35rem;
+  min-width: 0;
+}
+.student-timetable-state--registered {
+  border-color: var(--teal-border);
+  background: var(--teal-dim);
+  color: var(--teal-deep);
+}
+.student-timetable-state--expected {
+  border-style: dashed;
+  background: var(--glass-bg-header);
+  color: var(--t2);
 }
 .student-summary-header {
   display: flex;
@@ -12728,13 +12862,36 @@ html.sa-overlay-open { overflow: hidden; }
   border-top: 1px solid var(--line);
   padding-top: .7rem;
 }
+.student-disclosure > summary,
 .student-timetable-exact > summary {
+  display: inline-flex;
+  align-items: center;
+  gap: .45rem;
   width: max-content;
   max-width: 100%;
+  min-height: 44px;
+  padding: .35rem .15rem;
   cursor: pointer;
   color: var(--brand);
   font-size: .8rem;
   font-weight: 750;
+  list-style: none;
+}
+.student-disclosure > summary::after,
+.student-timetable-exact > summary::after {
+  content: "⌄";
+  display: inline-block;
+  color: currentColor;
+  font-size: .95rem;
+  transition: transform .15s ease;
+}
+.student-disclosure[open] > summary::after,
+.student-timetable-exact[open] > summary::after { transform: rotate(180deg); }
+.student-disclosure > summary:focus-visible,
+.student-timetable-exact > summary:focus-visible {
+  border-radius: 6px;
+  outline: 2px solid var(--teal);
+  outline-offset: 2px;
 }
 .student-timetable-exact[open] > summary { margin-bottom: .65rem; }
 .student-timetable-table-scroll {
@@ -12863,7 +13020,12 @@ html.sa-overlay-open { overflow: hidden; }
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: .55rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
 }
+.student-course-list > li { min-width: 0; }
+.student-course-list > li > .student-course-row { height: 100%; }
 .student-course-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -12883,7 +13045,10 @@ html.sa-overlay-open { overflow: hidden; }
   transform: translateY(-1px);
   border-color: var(--teal-border);
   background: color-mix(in srgb, var(--teal) 5%, var(--glass-bg-data));
-  outline: none;
+}
+.student-course-row:focus-visible {
+  outline: 2px solid var(--teal);
+  outline-offset: 2px;
 }
 .student-course-code {
   width: max-content;
@@ -13009,10 +13174,21 @@ html.sa-overlay-open { overflow: hidden; }
 .student-map-dot.is-locked { background: var(--t4); }
 .student-plan-map-card { min-height: 480px; }
 .student-plan-map-intro { display: flex; align-items: start; justify-content: space-between; gap: 1rem; }
-.student-plan-map-host { min-height: 390px; }
+.student-plan-map-host {
+  min-height: 0;
+  max-width: 100%;
+  overflow-x: auto;
+  padding-block: 1rem;
+  scrollbar-gutter: stable;
+  overscroll-behavior-inline: contain;
+}
 
 @media (max-width: 768px) {
+  .page-header-chips .student-program-chip { display: none; }
+  .page-header-chips .student-term-chip { flex: 0 0 auto; }
   .student-summary-header { align-items: flex-start; flex-wrap: wrap; }
+  .student-home-section-head { align-items: flex-start; }
+  .student-timetable-comparison-card .student-home-section-head { flex-wrap: wrap; }
   .student-summary-advisor { min-height: 44px; padding: .45rem .7rem; font-size: .75rem; }
   .student-timetable-calendar { display: none; }
   .student-timetable-agenda { display: grid; gap: .65rem; }

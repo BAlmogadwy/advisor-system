@@ -249,14 +249,14 @@ def test_unlock_callout_distinguishes_direct_and_chain_impact(plan):
     c.force_login(u)
 
     body = c.get(reverse("student_courses"), headers={"accept-language": "ar"}).content.decode()
-    assert "أعلى أثر في سلسلة المتطلبات" in body
-    assert "يفتح مباشرةً <strong>1</strong>" in body
-    assert "سلسلة تضم <strong>2</strong>" in body
+    assert "مقرر مؤثر في تقدمك" in body
+    assert "لمقررات إضافية. عددها: <strong>1</strong>" in body
+    assert "مقررات متبقية أخرى. عددها: <strong>2</strong>" in body
     assert "أفضل خطوة تالية" not in body
 
 
 @override_settings(ALLOWED_HOSTS=["testserver"])
-def test_recommender_candidates_are_labelled_for_next_term(plan, monkeypatch):
+def test_next_term_eligible_courses_are_not_mislabelled_as_recommendations(plan, monkeypatch):
     real_builder = build_unlock_report
 
     def with_a_next_term_candidate(*args, **kwargs):
@@ -270,8 +270,13 @@ def test_recommender_candidates_are_labelled_for_next_term(plan, monkeypatch):
     c.force_login(u)
 
     body = c.get(reverse("student_courses"), headers={"accept-language": "ar"}).content.decode()
-    assert "مرشحة لخطة الفصل القادم" in body
-    assert "هذا الفصل" not in body
+    assert "ضمن نطاق التخطيط للفصل القادم" in body
+    assert "هذا تصنيف تخطيطي وليس توصية بالتسجيل" in body
+    assert "يفترض النظام اجتياز المقررات التي تظهر في سجلك الأكاديمي" in body
+    assert "بوصفها قيد الدراسة بنهاية الفصل الحالي" in body
+    assert "موصى بها للفصل القادم" not in body
+    assert "ظهرت ضمن توصية" not in body
+    assert "مناسبة للتخطيط لهذا الفصل" not in body
 
 
 @override_settings(ALLOWED_HOSTS=["testserver"])
@@ -301,7 +306,10 @@ def test_plan_map_uses_the_same_session_scoped_unlock_report(plan):
     c = Client()
     c.force_login(u)
 
-    r = c.get(f"{reverse('student_plan_map')}?student_id=4930002")
+    r = c.get(
+        f"{reverse('student_plan_map')}?student_id=4930002",
+        headers={"accept-language": "ar"},
+    )
     assert r.status_code == 200
     assert r.context["student_id"] == SID
     assert r.context["report"]["graph"] == build_unlock_report(SID, 1448, 1)["graph"]
@@ -309,6 +317,13 @@ def test_plan_map_uses_the_same_session_scoped_unlock_report(plan):
     assert 'id="scGraph"' in body
     assert 'data-auto-render="true"' in body
     assert "page-student-graph.js" in body
+    counts = r.context["report"]["counts"]
+    assert f"المقررات المجتازة: {counts['passed']}" in body
+    if counts["studying"]:
+        assert f"المقررات قيد الدراسة: {counts['studying']}" in body
+    assert f"مقررات مستوفية المتطلبات: {counts['open']}" in body
+    assert f"مقررات غير مستوفية المتطلبات: {counts['locked']}" in body
+    assert "محجوب" not in body
 
 
 @override_settings(ALLOWED_HOSTS=["testserver"])
@@ -899,6 +914,34 @@ def _render_arabic_graduation_page():
 
 
 @override_settings(ALLOWED_HOSTS=["testserver"])
+def test_arabic_graduation_page_prefers_the_university_section_name(plan):
+    from core.models import TermSection
+
+    TermSection.objects.create(
+        course_code="TA101",
+        course_key="TA101",
+        course_name="الاسم العربي المعتمد",
+        section="M99",
+    )
+
+    user = student_otp.provision_student_user(SID)
+    client = Client()
+    client.force_login(user)
+    arabic = client.get(
+        reverse("student_graduation"),
+        headers={"accept-language": "ar"},
+    ).content.decode()
+    english = client.get(
+        reverse("student_graduation"),
+        headers={"accept-language": "en"},
+    ).content.decode()
+
+    assert "الاسم العربي المعتمد" in arabic
+    assert "الاسم العربي المعتمد" not in english
+    assert "Alpha" in english
+
+
+@override_settings(ALLOWED_HOSTS=["testserver"])
 def test_incomplete_graduation_screen_promotes_the_verified_lower_bound(plan):
     """An unresolved forecast has no estimate; its useful result is the lower bound.
 
@@ -921,17 +964,22 @@ def test_incomplete_graduation_screen_promotes_the_verified_lower_bound(plan):
         rf'data-grad-result="lower-bound"[\s\S]{{0,800}}>\s*{lower_bound}\s*<',
         body,
     ), "the verified lower bound must be the promoted result, not buried in prose"
+    total_floor = grad["lower_bound_terms_including_planning_baseline"]
+    assert (
+        f"الحد الأدنى لإجمالي عدد الفصول، شاملًا فصل البداية: <strong>{total_floor}</strong>"
+    ) in body
+    assert f"<strong>{total_floor}</strong> فصول" not in body
 
 
 @override_settings(ALLOWED_HOSTS=["testserver"])
 def test_graduation_screen_names_the_scenario_and_does_not_promise_registration(plan):
     _response, body = _render_arabic_graduation_page()
 
-    assert "محاكاة لإكمال متطلبات الخطة" in body
-    assert "ليست موعدًا رسميًا للتخرج" in body
-    assert "الفصل المرجعي للتخطيط" in body
+    assert "تقدير آلي لإكمال متطلبات الخطة" in body
+    assert "ليس موعدًا رسميًا" in body
+    assert "الفصل الذي يبدأ منه التقدير" in body
     assert "الفصل الحالي" not in body
-    assert "18 ساعة/فصل رئيسي" in body
+    assert "18 ساعة معتمدة في كل فصل رئيسي" in body
     assert "ماذا أستطيع أن أسجّل الآن؟" not in body
 
 
@@ -1176,7 +1224,7 @@ def test_a_missing_course_reason_names_the_course_and_its_own_state(plan):
     body = _render()
     # TC301 is blocked by TB201, which is itself blocked by TA101.
     assert "TB201" in body
-    assert "محجوب هو نفسه" in body or "it is itself blocked" in body
+    assert "متطلباته غير مستوفاة أيضًا" in body or "it is itself blocked" in body
 
 
 @override_settings(ALLOWED_HOSTS=["testserver"])
@@ -1315,8 +1363,11 @@ def test_the_open_list_does_not_tell_the_student_they_may_register(gs_plan):
         "the Arabic page rendered in English, so every Arabic assertion below is vacuous"
     )
     assert "تستطيع تسجيلها الآن" not in ar_body, "the registration-permission heading is back"
-    assert "مقررات مستوفية المتطلبات أكاديميًا" in ar_body
-    assert "هذه أهلية أكاديمية وليست إتاحة للتسجيل" in ar_body
+    assert "مقررات استوفيت متطلباتها الأكاديمية" in ar_body
+    assert "استيفاء المتطلبات الأكاديمية لأغراض التخطيط فقط" in ar_body
+    assert "لا يعني ذلك أن المقرر مطروح في هذا الفصل" in ar_body
+    assert "أو أن التسجيل فيه متاح" in ar_body
+    assert "يفترض النظام اجتياز المقررات التي تظهر في سجلك الأكاديمي" in ar_body
 
     en_body = client.get(
         reverse("student_courses"), headers={"accept-language": "en"}

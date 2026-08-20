@@ -28,6 +28,17 @@ STUDENT_AUTHENTICATED_AT_SESSION_KEY = "student_authenticated_at"
 DEFAULT_RECENT_AUTH_SECONDS = 10 * 60
 
 
+def _minutes_ar(value: int) -> str:
+    minutes = int(value)
+    if minutes == 1:
+        return "دقيقة واحدة"
+    if minutes == 2:
+        return "دقيقتين"
+    if 3 <= minutes <= 10:
+        return f"{minutes} دقائق"
+    return f"{minutes} دقيقة"
+
+
 class OTPError(Exception):
     """Raised for rate-limit, send-failure, or account-conflict conditions."""
 
@@ -93,10 +104,10 @@ def _send_code(student_id: int, code: str, *, recipient_override: str = "") -> N
         # identifiers. The email body carries the intended mailbox to the operator.
         logger.warning("student OTP redirected to a testing inbox")
     send_mail(
-        subject="رمز الدخول / Advisor login code",
+        subject="رمز التحقق لتسجيل الدخول / Student portal verification code",
         message=(
-            f"رمز الدخول الخاص بك: {code}\n"
-            f"ينتهي خلال {minutes} دقيقة. لا تشارك هذا الرمز مع أحد.\n\n"
+            f"رمز التحقق لتسجيل الدخول إلى بوابة الطالب: {code}\n"
+            f"تنتهي صلاحية الرمز خلال {_minutes_ar(minutes)}. لا تشاركه مع أي شخص.\n\n"
             f"Your login code is: {code}\n"
             f"It expires in {minutes} minutes. Do not share it with anyone."
             + (

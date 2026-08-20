@@ -431,7 +431,7 @@ def test_answer_style_mirrors_saudi_register(question: str, expected: str):
     assert _answer_style(question) == expected
 
 
-def test_v2_pins_saudi_answer_style_in_the_model_message():
+def test_v2_pins_formal_arabic_answer_style_in_the_model_message():
     client = FakeClient(_answer_turn("أكيد، وش تحتاج؟"))
 
     result = answer_student_advisor_v2(
@@ -444,8 +444,9 @@ def test_v2_pins_saudi_answer_style_in_the_model_message():
 
     prompt = client.messages[0][-1]["content"]
     assert "answer_language: Arabic" in prompt
-    assert "answer_style: Conversational Saudi Arabic" in prompt
-    assert result["agent"]["answer_style"] == "Conversational Saudi Arabic"
+    expected_style = "Formal Modern Standard Arabic for a Saudi academic context"
+    assert f"answer_style: {expected_style}" in prompt
+    assert result["agent"]["answer_style"] == expected_style
 
 
 @pytest.mark.parametrize(
@@ -582,6 +583,26 @@ def test_saudi_safety_phrasing_is_still_detected():
         "ما فيه تعارض في شعبة M3.",
         [section_result],
     )
+    profile_filtered_result = {
+        "tool": "my_clash_free_sections",
+        "ok": True,
+        "courses": [
+            {
+                "course_code": "AI113",
+                "sections_on_file": 0,
+                "recorded_sections_on_file": 2,
+                "status": "NOT_MATCHING_STUDENT_PROFILE",
+            }
+        ],
+    }
+    assert _section_answer_contradicts_evidence(
+        "ما في شعب مسجلة لمادة AI113 في بيانات النظام حاليًا.",
+        [profile_filtered_result],
+    )
+    assert _section_answer_contradicts_evidence(
+        "الدليل الإرشادي للطالب ما يذكر قاعدة خاصة بالاستعلام عن الشعب.",
+        [profile_filtered_result],
+    )
 
     empty_recommendations = {
         "tool": "recommend_courses",
@@ -610,24 +631,20 @@ def test_saudi_safety_phrasing_is_still_detected():
     )
 
 
-def test_verified_fallback_can_use_conversational_saudi_without_changing_facts():
+def test_verified_fallback_remains_formal_for_any_arabic_input_register():
     formal = (
         "تقدّر المحاكاة أنك تحتاج إلى 3 فصول إضافية. "
         "الحد الأدنى هو فصلان، ولا يضمن الطرح المستقبلي أو المقاعد. "
         "هذا سيناريو للقراءة فقط، ولم يتغير سجلك."
     )
 
-    conversational = _apply_saudi_register(
+    unchanged = _apply_saudi_register(
         formal,
         "Arabic",
         "Conversational Saudi Arabic",
     )
 
-    assert conversational.startswith("بحسب المحاكاة، باقي لك تقريبًا 3 فصول إضافية")
-    assert "الحد الأدنى هو فصلان" in conversational
-    assert "لا يضمن الطرح المستقبلي أو المقاعد" in conversational
-    assert "هذا مجرد سيناريو للقراءة فقط" in conversational
-    assert "ما تغيّر سجلك" in conversational
+    assert unchanged == formal
     assert _apply_saudi_register(formal, "Arabic", "Professional Saudi Arabic") == formal
 
 
@@ -751,8 +768,55 @@ def test_section_contradiction_falls_back_to_verified_server_text(monkeypatch):
     )
 
     assert "M3" in result["answer"]
-    assert "موجودة فعلًا في جدولك الحالي" in result["answer"]
+    assert "الشعبة M3 للمقرر CS285 مدرجة في الجدول المسجّل فعليًا" in result["answer"]
     assert "لا توجد شعب" not in result["answer"]
+    assert result["agent"]["section_safe_fallback_used"] is True
+
+
+def test_profile_filtered_sections_are_explained_without_policy_diversion(monkeypatch):
+    tool_result = {
+        "tool": "my_clash_free_sections",
+        "ok": True,
+        "compared_against_term": "1448/1",
+        "baseline_kind": "REGISTERED",
+        "courses": [
+            {
+                "course_code": "AI113",
+                "sections_on_file": 0,
+                "recorded_sections_on_file": 2,
+                "currently_registered_sections": [],
+                "clash_free": [],
+                "clashing": [],
+                "status": "NOT_MATCHING_STUDENT_PROFILE",
+            }
+        ],
+    }
+    monkeypatch.setattr(
+        "core.services.student_advisor_v2.execute_student_v2_tool",
+        lambda name, arguments, *, principal, context=None: tool_result,
+    )
+    wrong = (
+        "ما في شعب مسجلة لمادة AI113 في بيانات النظام حاليًا. "
+        "الدليل الإرشادي للطالب ما يذكر قاعدة خاصة بالاستعلام عن الشعب."
+    )
+    client = FakeClient(
+        _tool_turn("my_clash_free_sections", {"course_code": "AI113"}),
+        _answer_turn(wrong),
+        _answer_turn(wrong),
+    )
+
+    result = answer_student_advisor_v2(
+        question="ما الشُعب المدرجة لمقرر AI113؟",
+        principal=_principal(),
+        academic_year=1448,
+        term=1,
+        llm_client=client,
+    )
+
+    assert "توجد للمقرر AI113 شُعب مدرجة في بيانات النظام وعددها 2" in result["answer"]
+    assert "لا تطابق برنامجك أو شطر الدراسة المسجّل في ملفك" in result["answer"]
+    assert "الدليل الإرشادي" not in result["answer"]
+    assert "توفر مقعد" in result["answer"]
     assert result["agent"]["section_safe_fallback_used"] is True
 
 
@@ -920,11 +984,13 @@ def test_persistent_internal_labels_are_humanised_without_shipping_schema_names(
     cleaned = _humanise_internal_output_markers(answer, "Arabic")
 
     assert _internal_output_markers(cleaned) == []
-    assert "المصدر يترك هذه النقطة غير محسومة" in cleaned
-    assert "غير مسجل في بيانات النظام" in cleaned
-    assert "منشئ مقترح الجدول" in cleaned
-    assert "الحد الأقصى للساعات" in cleaned
+    assert "لم يحسم المصدر هذه النقطة، ولا تكفي هذه القاعدة للحكم على حالة الطالب" in cleaned
+    assert "السبب غير مدرج في بيانات النظام" in cleaned
+    assert "إنشاء جدول مقترح" in cleaned
+    assert "بيانات الحد الأعلى للساعات=15" in cleaned
+    assert "إنشاء المقترح مع الإبقاء على الجدول المرجعي" in cleaned
     assert "المتطلب السابق الوحيد المتبقي" in cleaned
+    assert "السجل يحمل" not in cleaned
 
 
 def test_an_unresolved_policy_forces_one_bounded_uncertainty_revision(monkeypatch):
@@ -1040,7 +1106,7 @@ def _complete_graduation_result() -> dict[str, Any]:
         (
             "Arabic",
             "باقي 5 فصول بعد الفصل الحالي، أو 6 فصول شاملة فصلك الحالي.",
-            "الفصل المرجعي للتخطيط (1448/1)",
+            "فصل المقررات المرجعية المستخدمة في المحاكاة (1448/1)",
             ("الفصل الحالي", "فصلك الحالي"),
         ),
     ],
@@ -1590,10 +1656,20 @@ def test_replacement_cannot_answer_before_fresh_two_gate_evidence(monkeypatch):
     assert calls == [
         ("feasible_course_replacements", {"remove_course": "DS341", "add_course": "CS285"})
     ]
-    assert result["answer"].startswith("**الخلاصة:** وجدت 1 تبديلًا")
-    assert "توفير 1 فصل" in result["answer"]
+    assert result["answer"].startswith(
+        "**الخلاصة:** عدد الاستبدالات التي ثبت تحسنها أكاديميًا وأمكن إنشاء "
+        "جدول مكتمل لها بلا تعارضات بالاستناد إلى الجدول المسجّل فعليًا: 1."
+    )
+    assert (
+        "تشير المحاكاة المكتملة إلى تقليص المدة المتبقية بما يعادل "
+        "1 من الفصول الدراسية" in result["answer"]
+    )
     assert "CS285 M3" in result["answer"]
-    assert "لا يثبت" in result["answer"]
+    assert (
+        "لا تتضمن هذه البيانات تأكيدًا لطرح الشعبة حاليًا أو لوجود مقعد شاغر "
+        "أو لاستيفاء جميع شروط التسجيل" in result["answer"]
+    )
+    assert "النتيجة للقراءة فقط، ولم يُحذف أو يُضف أو يُسجّل أي مقرر." in result["answer"]
     assert result["presentation"]["kind"] == "timetable_proposals"
     assert result["presentation"]["replacement"]["add_course"]["course_code"] == "CS285"
     assert result["agent"]["replacement_grounding_required"] is True
@@ -1858,9 +1934,11 @@ def test_course_comparison_cannot_answer_before_fresh_evidence(monkeypatch):
             {"course_codes": ["AI331", "DS341"], "objective": "unlock_impact"},
         )
     ]
-    assert result["answer"].startswith("**الخلاصة:** AI331")
-    assert "مؤشر تخطيطي" in result["answer"]
-    assert "ما سجلت أو غيّرت" in result["answer"]
+    assert result["answer"].startswith(
+        "**الخلاصة:** يتقدّم AI331 وفق الهدف الذي حددته والبيانات التي أمكن التحقق منها."
+    )
+    assert "مؤشر أثر الخطة أداة تخطيط داخلية، وليس ترتيبًا رسميًا من الجامعة." in result["answer"]
+    assert "هذه المقارنة للقراءة فقط، ولم يسجّل النظام أي مقرر أو يغيّره." in result["answer"]
     assert result["agent"]["course_comparison_grounding_required"] is True
     assert result["agent"]["course_comparison_reprompted"] is True
     assert result["agent"]["course_comparison_safe_fallback_used"] is True
@@ -2134,7 +2212,7 @@ def test_arabic_allowed_load_or_missing_place_claim_uses_safe_summary(monkeypatc
 
     assert "الحد الأقصى المسموح" not in result["answer"]
     assert "مكان في الفصول" not in result["answer"]
-    assert "سيناريو للقراءة فقط" in result["answer"]
+    assert "هذه محاكاة للقراءة فقط" in result["answer"]
     assert result["agent"]["graduation_safe_fallback_used"] is True
 
 

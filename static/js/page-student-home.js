@@ -40,9 +40,9 @@
         // Distinct per panel, so the JS-built agenda region does not announce
         // identically to the other timetable on the page.
         agendaLabel: host.dataset.agendaLabel || undefined,
-        emptyText: host.dataset.emptyMessage || (arabic ? 'لا توجد أوقات لعرضها.' : 'No meeting times to show.'),
-        currentLabel: arabic ? 'مسجّل' : 'Registered',
-        proposedLabel: arabic ? 'متوقع' : 'Expected',
+        emptyText: host.dataset.emptyMessage || (arabic ? 'لا تتوفر مواعيد دراسية لعرضها في هذا الجدول.' : 'No meeting times to show.'),
+        currentLabel: arabic ? 'الجدول المسجّل فعليًا' : 'Registered',
+        proposedLabel: arabic ? 'الجدول المتوقع' : 'Expected',
         showCourseName: true,
         showSource: false,
       });

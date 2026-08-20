@@ -9,11 +9,11 @@
 
 {% block page_chips %}
   <span class="ph-chip ph-chip-page">{% if LANGUAGE_CODE == 'ar' %}الرقم الجامعي{% else %}University ID{% endif %}: {{ student_id }}</span>
-  {% if student and student.program %}<span class="ph-chip ph-chip-context">{{ student.program }}</span>{% endif %}
+  {% if student and student.program %}<span class="ph-chip ph-chip-context student-program-chip">{{ student.program }}</span>{% endif %}
 {% endblock %}
 
 {% block page_intro %}
-  <p class="mb-0">{% if LANGUAGE_CODE == 'ar' %}اسأل عن خطتك، متطلبات المقررات، أو أنظمة الجامعة — الإجابات مبنية على سجلك أنت وعلى الأنظمة المعتمدة.{% else %}Ask about your plan, prerequisites, or university regulations — answers come from your own record and the approved regulations.{% endif %}</p>
+  <p class="mb-0">{% if LANGUAGE_CODE == 'ar' %}اسأل عن خطتك الدراسية، أو متطلبات المقررات، أو اللوائح الأكاديمية. تعتمد الإجابات على بيانات سجلك واللوائح المعتمدة المتاحة للنظام.{% else %}Ask about your plan, prerequisites, or university regulations — answers come from your own record and the approved regulations.{% endif %}</p>
 {% endblock %}
 
 {% block content %}
@@ -54,7 +54,7 @@
         <span class="sa-workspace-mark" aria-hidden="true">AI</span>
         <div>
           <p class="sa-workspace-kicker">
-            {% if LANGUAGE_CODE == 'ar' %}المرشد الأكاديمي{% else %}Academic advisor{% endif %}
+            {% if LANGUAGE_CODE == 'ar' %}مساعد الإرشاد الأكاديمي{% else %}Academic advisor{% endif %}
             {% if student and student.program %}<span class="sa-workspace-program">{{ student.program }}</span>{% endif %}
           </p>
           <h2 id="saThreadTitle">{% if LANGUAGE_CODE == 'ar' %}محادثة جديدة{% else %}New conversation{% endif %}</h2>
@@ -83,18 +83,18 @@
       <div class="va-messages" id="saMessages" role="log" aria-busy="false">
         <div class="sa-empty-state" id="saEmptyState">
           <span class="sa-empty-mark" aria-hidden="true">AI</span>
-          <h3>{% if LANGUAGE_CODE == 'ar' %}كيف أقدر أساعدك اليوم؟{% else %}How can I help today?{% endif %}</h3>
+          <h3>{% if LANGUAGE_CODE == 'ar' %}كيف يمكنني مساعدتك اليوم؟{% else %}How can I help today?{% endif %}</h3>
           <p class="sa-muted" id="saWelcome">
-            {% if LANGUAGE_CODE == 'ar' %}اسألني عن خطتك، مقرراتك، أو الأنظمة المعتمدة. الإجابة مبنية على سجلك الأكاديمي.{% else %}Ask about your plan, courses, or approved regulations. Answers use your academic record.{% endif %}
+            {% if LANGUAGE_CODE == 'ar' %}اسأل عن خطتك الدراسية أو مقرراتك أو اللوائح الأكاديمية المعتمدة. تُبنى الإجابة على بيانات سجلك المتاحة للنظام.{% else %}Ask about your plan, courses, or approved regulations. Answers use your academic record.{% endif %}
           </p>
           <div class="va-examples" id="saExamples">
             {% if LANGUAGE_CODE == 'ar' %}
-              <button type="button" data-sa-example="كم ترم باقي لي تقريبًا لين أخلص متطلبات الخطة؟"><span aria-hidden="true">◎</span><strong>كم ترم باقي؟</strong></button>
-              <button type="button" data-sa-example="وش المقررات اللي أقدر آخذها هالترم؟"><span aria-hidden="true">＋</span><strong>وش أقدر آخذ؟</strong></button>
-              <button type="button" data-sa-example="أبغى جدول مقترح حول شعبي الحالية بدون تعارضات."><span aria-hidden="true">▦</span><strong>رتّب لي جدول</strong></button>
-              <button type="button" data-sa-example="جدولي الحالي فيه تعارضات؟"><span aria-hidden="true">⇄</span><strong>جدولي فيه تعارض؟</strong></button>
-              <button type="button" data-sa-example="فيه مقرر أقدر أبدله من جدولي الحالي عشان أتخرج أسرع؟"><span aria-hidden="true">↗</span><strong>أقدر أحسّن خطة تخرجي؟</strong></button>
-              <button type="button" data-sa-example="كم مرة أقدر أنسحب من مقرر؟"><span aria-hidden="true">↩</span><strong>كم مرة أنسحب؟</strong></button>
+              <button type="button" data-sa-example="ما المدة التقديرية المتبقية لإكمال متطلبات خطتي الدراسية؟"><span aria-hidden="true">◎</span><strong>المدة المتبقية لإكمال الخطة</strong></button>
+              <button type="button" data-sa-example="ما المقررات التي استوفيت متطلباتها الأكاديمية؟"><span aria-hidden="true">＋</span><strong>المقررات المستوفية للمتطلبات</strong></button>
+              <button type="button" data-sa-example="أنشئ لي جدولًا مقترحًا حول شُعبي المسجّلة فعليًا، من دون تعارض بين الأوقات المسجّلة."><span aria-hidden="true">▦</span><strong>إنشاء جدول مقترح</strong></button>
+              <button type="button" data-sa-example="هل توجد تعارضات زمنية في الجدول المسجّل فعليًا؟"><span aria-hidden="true">⇄</span><strong>فحص تعارضات الجدول المسجّل فعليًا</strong></button>
+              <button type="button" data-sa-example="هل يؤثر استبدال أحد مقررات الجدول المسجّل فعليًا في المسار التقديري لإكمال الخطة؟"><span aria-hidden="true">↗</span><strong>أثر المقررات في مسار الخطة</strong></button>
+              <button type="button" data-sa-example="ما الحد الأقصى لعدد مرات الانسحاب من مقرر؟"><span aria-hidden="true">↩</span><strong>الحد الأقصى لمرات الانسحاب</strong></button>
             {% else %}
               <button type="button" data-sa-example="Approximately how many terms remain until I complete my degree plan?"><span aria-hidden="true">◎</span><strong>Terms remaining</strong></button>
               <button type="button" data-sa-example="Which courses can I take this term?"><span aria-hidden="true">＋</span><strong>What can I take?</strong></button>
@@ -131,7 +131,7 @@
           so 30 lines above.)
         {% endcomment %}
         <textarea class="va-input" id="saQuestion" maxlength="1000" dir="auto" rows="1"
-                  placeholder="{% if LANGUAGE_CODE == 'ar' %}اكتب سؤالك…{% else %}Ask about your academic plan…{% endif %}" required></textarea>
+                  placeholder="{% if LANGUAGE_CODE == 'ar' %}اكتب سؤالك عن خطتك الأكاديمية…{% else %}Ask about your academic plan…{% endif %}" required></textarea>
         <button class="btn btn-primary" id="saSend" type="submit"
                 aria-label="{% if LANGUAGE_CODE == 'ar' %}إرسال السؤال{% else %}Send question{% endif %}"
                 title="{% if LANGUAGE_CODE == 'ar' %}إرسال السؤال{% else %}Send question{% endif %}">
@@ -159,6 +159,6 @@
     }
   };
 </script>
-<script src="{% static 'js/prereq-graph.js' %}?v=1"></script>
-<script src="{% static 'js/page-student-advisor.js' %}?v=25"></script>
+<script src="{% static 'js/prereq-graph.js' %}?v=4"></script>
+<script src="{% static 'js/page-student-advisor.js' %}?v=30"></script>
 {% endblock %}

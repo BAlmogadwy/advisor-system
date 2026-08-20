@@ -30,6 +30,11 @@ class ValidatedTimetableResponse(TypedDict):
     term: str
     current_registered_credits: int
     rows: list[dict[str, str]]
+    #: Courses the portal shows as REGISTERED but places on no weekday: a Program
+    #: Elective placeholder, a graduation project, a course taught elsewhere. They
+    #: carry a section and credits — and the portal counts those credits in its own
+    #: declared total — but there is no meeting to draw. See the validator.
+    unscheduled: list[dict[str, str]]
     schedule_state: str
 
 
@@ -184,14 +189,19 @@ def _parse_clock(value: str, label: str) -> datetime:
 def _validate_structured_rows(
     soup: BeautifulSoup,
     expected_registered_credits: int,
-) -> list[dict[str, str]]:
-    """Validate every physical timetable row, including continuations."""
+) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
+    """Validate every physical timetable row, including continuations.
+
+    Returns ``(meeting_rows, unscheduled_registrations)``. The second list is not
+    an error channel: it is the courses the portal registers on no weekday.
+    """
     target = _find_timetable_table(soup)
     if target is None:
         raise ValueError("Timetable course table could not be identified")
 
     current_course_key = ""
-    registered_courses: dict[str, tuple[str, int]] = {}
+    # course_key -> (section, credits, course_code, course_number, course_name)
+    registered_courses: dict[str, tuple[str, int, str, str, str]] = {}
     courses_with_meetings: set[str] = set()
     meeting_count = 0
 
@@ -238,11 +248,17 @@ def _validate_structured_rows(
                 raise ValueError("Timetable contains an invalid course code")
             credits = int(credits_text)
             previous = registered_courses.get(current_course_key)
-            if previous is not None and previous != (section, credits):
+            if previous is not None and previous[:2] != (section, credits):
                 raise ValueError(
                     f"Timetable registers {current_course_key} more than once inconsistently"
                 )
-            registered_courses[current_course_key] = (section, credits)
+            registered_courses[current_course_key] = (
+                section,
+                credits,
+                course_code,
+                course_number,
+                course_name,
+            )
             start_idx = 6
 
         if len(tds) <= start_idx + 9:
@@ -265,14 +281,34 @@ def _validate_structured_rows(
         courses_with_meetings.add(current_course_key)
         meeting_count += marked_days
 
-    if not registered_courses or meeting_count == 0:
+    if not registered_courses:
         raise ValueError("Timetable contains no structured meeting rows")
-    courses_without_meetings = set(registered_courses) - courses_with_meetings
-    if courses_without_meetings:
-        missing = ", ".join(sorted(courses_without_meetings))
-        raise ValueError(f"Timetable courses have no supported meeting day: {missing}")
 
-    declared_sum = sum(credits for _, credits in registered_courses.values())
+    # A course the portal registers but places on NO weekday used to be refused as
+    # a malformed response. It is not: it is how the portal shows a Program
+    # Elective placeholder («مقرر اختياري برنامج»), a graduation project, and a
+    # course taught elsewhere — a real section, real credits, and deliberately no
+    # day. Refusing it made every student holding one unscrapable, which on this
+    # programme is a large share of them.
+    #
+    # NOTHING about the completeness proof is weakened by accepting it. That proof
+    # is the credit reconciliation below: the portal's own declared total must
+    # equal the sum over unique registered courses, and an unscheduled course is
+    # counted there exactly like a scheduled one. Days were never what made the
+    # response provably complete.
+    unscheduled_courses = sorted(set(registered_courses) - courses_with_meetings)
+    unscheduled = [
+        {
+            "course_code": registered_courses[course_key][2],
+            "course_number": registered_courses[course_key][3],
+            "course_name": registered_courses[course_key][4],
+            "section": registered_courses[course_key][0],
+            "credits": str(registered_courses[course_key][1]),
+        }
+        for course_key in unscheduled_courses
+    ]
+
+    declared_sum = sum(entry[1] for entry in registered_courses.values())
     if declared_sum != expected_registered_credits:
         raise ValueError(
             "Timetable registered-credit total does not match its unique course rows "
@@ -282,7 +318,7 @@ def _validate_structured_rows(
     rows = _parse_rows(soup)
     if len(rows) != meeting_count:
         raise ValueError("Timetable meeting rows could not be parsed completely")
-    return rows
+    return rows, unscheduled
 
 
 def validate_timetable_response(
@@ -335,6 +371,7 @@ def validate_timetable_response(
             "term": "",
             "current_registered_credits": 0,
             "rows": [],
+            "unscheduled": [],
             "schedule_state": "confirmed_empty_current_schedule",
         }
 
@@ -358,7 +395,7 @@ def validate_timetable_response(
     if not year or not term:
         raise ValueError("Timetable academic year or term could not be parsed")
 
-    rows = _validate_structured_rows(soup, expected_registered_credits)
+    rows, unscheduled = _validate_structured_rows(soup, expected_registered_credits)
 
     return {
         "student_id": parsed_student_id,
@@ -366,6 +403,7 @@ def validate_timetable_response(
         "term": term,
         "current_registered_credits": expected_registered_credits,
         "rows": rows,
+        "unscheduled": unscheduled,
         "schedule_state": "complete_schedule",
     }
 
@@ -402,10 +440,18 @@ def _ensure_term_section(
     course_number: str,
     course_name: str,
     section: str,
-    meetings: list[dict[str, str]],
+    meetings: list[dict[str, str]] | None,
     source_tag: str = "scraper_timetable",
 ) -> int:
-    """Get or create a TermSection and replace its current meeting snapshot."""
+    """Get or create a TermSection and replace its current meeting snapshot.
+
+    ``meetings=None`` means LEAVE THE SNAPSHOT ALONE, and it is not the same as
+    ``[]``. An unscheduled registration — a Program Elective placeholder, a
+    graduation project — tells us the STUDENT is registered on no weekday; it says
+    nothing about the section. Passing ``[]`` there would compute an empty desired
+    set and delete every meeting the section has, so a scrape of one student would
+    erase timetable data another source had imported.
+    """
     now_str = datetime.now(UTC).isoformat()
     # Look up global (non-scenario) sections for imported/scraped data
     ts = TermSection.objects.filter(
@@ -438,6 +484,9 @@ def _ensure_term_section(
             str(getattr(meeting, "end_time", "") or ""),
             str(getattr(meeting, "room", "") or ""),
         )
+
+    if meetings is None:
+        return int(ts.id)
 
     desired = {meeting_key(meeting): meeting for meeting in meetings}
     existing = list(TermSectionMeeting.objects.filter(term_section=ts))
@@ -594,6 +643,48 @@ def ingest_student_timetable_html(
         )
         section_ids.append(ts_id)
 
+    # ── Pass 3 — registrations the portal places on no weekday ──────────────
+    # They carry a section and credits and are counted in the portal's own
+    # declared total, so leaving them out would under-record what the student is
+    # registered in — and the student portal already has a place to show them
+    # («مقررات بدون وقت محدد» / "Courses without a scheduled time"), because
+    # `get_student_term_baseline` emits a row for a section with no meetings.
+    for entry in validated_response.get("unscheduled", []) if validated_response else []:
+        course_key = f"{entry['course_code']}{entry['course_number']}".replace(" ", "").upper()
+        if not course_key:
+            continue
+        if study_plan_codes is not None:
+            is_external = course_key not in study_plan_codes
+        else:
+            from core.models import ProgrammeRequirement
+
+            is_external = not ProgrammeRequirement.objects.filter(
+                course_code=course_key,
+            ).exists()
+        if is_external:
+            course_obj = _ensure_external_course(
+                course_key=course_key,
+                course_code=entry["course_code"],
+                course_number=entry["course_number"],
+                course_name=entry.get("course_name", ""),
+                credits_str=entry.get("credits", ""),
+            )
+            _ensure_student_course_studying(student_id, course_obj)
+            if course_key not in external_created:
+                external_created.append(course_key)
+        section_ids.append(
+            _ensure_term_section(
+                course_key=course_key,
+                course_code=entry["course_code"],
+                course_number=entry["course_number"],
+                course_name=entry.get("course_name", ""),
+                section=entry.get("section", ""),
+                # None, not []: see `_ensure_term_section`.
+                meetings=None,
+                source_tag="external" if is_external else "scraper_timetable",
+            )
+        )
+
     replace_student_term_sections(
         student_id,
         year,
@@ -630,6 +721,9 @@ def ingest_student_timetable_html(
         "academic_year": year,
         "term": term,
         "parsed_rows": len(rows),
+        "unscheduled_registrations": len(
+            validated_response.get("unscheduled", []) if validated_response else []
+        ),
         "mapped_sections": len(section_ids),
         "missing_links": len(missing),
         "external_courses_created": len(external_created),

@@ -8,6 +8,8 @@ cannot support. Nothing but reading the page catches that.
 
 from __future__ import annotations
 
+import re
+
 import pytest
 from django.test import Client
 from django.urls import reverse
@@ -96,7 +98,7 @@ def test_a_gpa_below_the_table_shows_the_value_and_no_warning(student):
     `never_infer`, and the count it needs does not exist in the schema."""
     body = _page(gpa=1.75)
     assert "1.75" in body
-    assert "لا ينطبق تقدير عام على هذا المعدل في الجدول المعتمد." in body
+    assert "لا تتضمن لائحة التقديرات المعتمدة تقديرًا عامًا لهذا المعدل." in body
     for band in ("ممتاز", "جيد جداً", "مقبول"):
         assert band not in body, f"invented a band: {band}"
     for warning in ("إنذار", "تحذير", "خطر", "الفصل من الجامعة", "متعثر"):
@@ -117,9 +119,9 @@ def test_the_unlock_card_counts_only_what_this_course_alone_blocks(student):
     )
     body = _page()
     # SD301 now waits on SE101 too, so SA101 frees two, not three.
-    assert "يتيح لك مباشرةً 2" in body or "immediately frees 2" in body, (
-        "the count still promises a course that stays blocked"
-    )
+    assert (
+        "لمقررات إضافية. عددها: <strong>2</strong>" in body or "opens 2 additional courses" in body
+    ), "the count still promises a course that stays blocked"
 
 
 # ── the plan state ───────────────────────────────────────────────
@@ -127,18 +129,18 @@ def test_the_unlock_card_counts_only_what_this_course_alone_blocks(student):
 
 def test_the_states_are_mutually_exclusive_and_carry_no_denominator(student):
     body = _page()
-    assert "مستوفية للمتطلبات" in body
-    assert "يفصلها متطلب واحد" in body
-    assert "تحتاج أكثر من متطلب" in body
-    assert "متطلبات اختيارية لم يُحدّد مقررها" in body
+    assert "مستوفية للمتطلبات السابقة" in body
+    assert "متبقٍ لكل منها متطلب سابق واحد" in body
+    assert "متبقٍ لكل منها أكثر من متطلب سابق" in body
+    assert "خانات اختيارية لم يُحدّد مقررها بعد" in body
     # NO official denominator anywhere.
     assert "من أصل" not in body
-    assert "المتطلبات المصنفة في بيانات خطتك الحالية" in body
+    assert "إجمالي متطلبات الخطة التي أمكن تصنيفها من بياناتك" in body
 
 
 def test_placeholders_are_never_called_courses(student):
     body = _page()
-    slot_line = body[body.index("متطلبات اختيارية لم يُحدّد مقررها") :][:200]
+    slot_line = body[body.index("خانات اختيارية لم يُحدّد مقررها بعد") :][:200]
     for wrong in ("محجوب", "متاح", "مجتاز"):
         assert wrong not in slot_line, f"a placeholder was labelled {wrong}"
 
@@ -158,7 +160,8 @@ def test_no_term_is_claimed_for_the_recommendations(student):
     body = _page()
     assert "المقررات المقترحة للفصل القادم" not in body
     assert "المقررات المقترحة لك" in body
-    assert "بحسب بيانات الخطة الحالية" in body
+    assert "اقتراحات إرشادية مبنية على المقررات المتبقية في خطتك" in body
+    assert "والمتطلبات السابقة المستوفاة" in body
 
 
 def test_no_adviser_triage_signal_reaches_the_html(student):
@@ -182,13 +185,21 @@ def test_no_raw_template_syntax_reaches_the_student(student):
         assert marker not in body, marker
 
 
+def test_the_arabic_student_shell_names_the_portal_and_role(student):
+    body = _page()
+
+    assert re.search(r'class="logo-title">\s*بوابة الطالب\s*</div>', body)
+    assert re.search(r'class="u-rl">\s*طالب\s*</div>', body)
+    assert not re.search(r'class="u-rl">\s*student\s*</div>', body, re.IGNORECASE)
+
+
 def test_the_academic_summary_renders_each_fact_once(student):
     """The raw Student row and the evidence-backed home cards used to render two
     GPAs and two contradictory-looking registered-credit figures."""
     body = _page()
     assert body.count('class="k">المعدل التراكمي') == 1
-    assert body.count('class="k">ساعات هذا الفصل') == 1
-    assert 'class="k">الساعات المسجّلة' not in body
+    assert body.count('class="k">الساعات المسجّلة في هذا الفصل') == 1
+    assert 'class="k">الساعات المسجّلة</div>' not in body
     assert 'class="k">الحالة' not in body
 
 
@@ -316,7 +327,7 @@ def test_no_rows_for_the_configured_term_is_unknown_not_zero(student):
     assert card["source"] == "no_term_registration_evidence"
 
     body = _page()
-    hours_block = body[body.index("ساعات هذا الفصل") :][:400]
+    hours_block = body[body.index("الساعات المسجّلة في هذا الفصل") :][:500]
     assert "—" in hours_block, "an unknown figure was rendered as a number"
 
 

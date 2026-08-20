@@ -22,11 +22,11 @@
   const NARROW = '(max-width: 768px)';
   const T = {
     term: n => (AR ? `المستوى ${n}` : `Term ${n}`),
-    noTerm: AR ? 'بدون مستوى محدد' : 'no term set',
+    noTerm: AR ? 'مقررات لم يُحدّد مستواها' : 'no term set',
     passed: AR ? 'مجتاز' : 'passed',
-    studying: AR ? 'تدرسه الآن' : 'studying',
-    open: AR ? 'متاح الآن' : 'open now',
-    locked: AR ? 'محجوب' : 'blocked',
+    studying: AR ? 'قيد الدراسة حاليًا' : 'studying',
+    open: AR ? 'متطلباته مستوفاة' : 'open now',
+    locked: AR ? 'متطلباته غير مستوفاة' : 'blocked',
   };
   /* status -> existing pill classes; no new CSS */
   const PILL = {

@@ -371,6 +371,19 @@ def test_the_difference_between_the_two_is_stated(student_with_sections, monkeyp
     assert "Expected versus registered" in response.content.decode()
 
 
+def test_matching_course_lists_do_not_claim_the_exact_schedules_match(
+    student_with_sections, monkeypatch
+):
+    _link(student_with_sections["SA101"], PLAN_SOURCE)
+    _link(student_with_sections["SA101"], "scraper_timetable")
+
+    body = _home(monkeypatch, language="ar").content.decode()
+
+    assert "المقررات متطابقة في الجدولين" in body
+    assert "قد تختلف الشُعب أو أوقات المحاضرات" in body
+    assert "الجدولان متطابقان" not in body
+
+
 def test_no_difference_card_without_both_snapshots(student_with_sections, monkeypatch):
     _link(student_with_sections["SA101"], PLAN_SOURCE)
 
@@ -438,8 +451,17 @@ def test_arabic_headings(student_with_sections, monkeypatch):
 
     body = _home(monkeypatch, language="ar").content.decode()
 
-    assert "جدولي المسجّل" in body
-    assert "جدولي المتوقع" in body
+    assert "الجدول المسجّل فعليًا" in body
+    assert "الجدول المتوقع" in body
+    assert "وفق بيانات بوابة الجامعة" in body
+    assert "للتخطيط فقط" in body
+    assert body.index('id="student-home-comparison"') < body.index(
+        'id="student-home-timetable-registered"'
+    )
+    assert body.index('id="student-home-timetable-registered"') < body.index(
+        'id="student-home-timetable-expected"'
+    )
+    assert "مقارنة المقررات" in body
 
 
 # ---------------------------------------------------------------------------

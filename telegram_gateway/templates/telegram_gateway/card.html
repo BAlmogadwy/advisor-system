@@ -7,7 +7,7 @@
   {% comment %} The SAME semantic component and base stylesheet the thread uses. The
      scoped rules below change only density and contrast for a static Telegram
      image; timetable geometry remains in the shared WeekGrid renderer. {% endcomment %}
-  <link href="/telegram/card-assets/css/global.css?v=51" rel="stylesheet">
+  <link href="/telegram/card-assets/css/global.css?v=52" rel="stylesheet">
   <link href="/telegram/card-assets/css/bootstrap-compat.css?v=3" rel="stylesheet">
   <style>
     /* This is a Telegram artifact, not the desktop chat panel. At DPR 2 the
@@ -218,9 +218,10 @@
       padding: 7px 0 0;
     }
 
-    /* A graduation scenario is also a static adviser card here. Preserve the
-       exact shared prerequisite graph, but remove controls that cannot be used
-       in a Telegram image and force the desktop map at this narrow viewport. */
+    /* Telegram scales a photo to the chat width. A whole-program dependency SVG
+       can therefore be technically sharp yet unreadable. The interactive portal
+       keeps that map; the exported photo uses the same scenario evidence as a
+       term-by-term course list with type sized for Telegram compression. */
     #sa-card-root .sa-graduation-map {
       margin: 0;
       padding: 0;
@@ -228,19 +229,89 @@
     }
     #sa-card-root .sa-graduation-map .sa-grad-expand,
     #sa-card-root .sa-graduation-map .pg-modes { display: none !important; }
-    #sa-card-root .sa-graduation-map .sa-grad-mobile { display: none !important; }
-    #sa-card-root .sa-graduation-map .sa-grad-desktop {
-      display: block !important;
-      overflow: visible;
-      padding: 6px;
+    #sa-card-root .sa-graduation-map .sa-grad-mobile {
+      display: grid !important;
+      grid-template-columns: 1fr;
+      gap: 8px;
+      padding: 8px;
     }
-    #sa-card-root .sa-graduation-map .sa-grad-panel { overflow: visible; }
+    #sa-card-root .sa-graduation-map .sa-grad-desktop {
+      display: none !important;
+    }
+    #sa-card-root .sa-graduation-map .sa-grad-panel { overflow: hidden; }
     #sa-card-root .sa-graduation-map .sa-grad-toolbar {
       justify-content: flex-end;
       min-height: 34px;
       padding: 5px 8px;
     }
     #sa-card-root .sa-graduation-map .sa-grad-blockers { margin-bottom: 0; }
+    #sa-card-root .sa-grad-mobile-term {
+      padding: 8px 9px;
+      border-color: #cfdddf;
+      background: #f8fbfa;
+    }
+    #sa-card-root .sa-grad-band-title {
+      margin-bottom: 6px;
+      color: #273c50;
+      font-size: 13px;
+      font-weight: 800;
+    }
+    #sa-card-root .sa-grad-mobile-courses {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 5px;
+    }
+    #sa-card-root .sa-grad-course {
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr);
+      align-items: center;
+      gap: 6px;
+      min-width: 0;
+      padding: 5px 7px;
+      border-inline-start-width: 4px;
+      border-radius: 8px;
+      background: #ffffff;
+      font-size: 12px;
+      line-height: 1.25;
+    }
+    #sa-card-root .sa-grad-course bdi { color: #172b3f; font-weight: 850; }
+    #sa-card-root .sa-card-grad-course-name {
+      overflow: hidden;
+      color: #536879;
+      font-size: 9.5px;
+      font-weight: 600;
+      text-align: start;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    #sa-card-root .sa-grad-more { margin-top: 5px; }
+    #sa-card-root .sa-grad-more > summary { display: none; }
+    #sa-card-root .sa-grad-more > .sa-grad-mobile-courses { padding-top: 0; }
+    #sa-card-root .sa-card-grad-legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px 12px;
+      padding: 7px 9px;
+      border-top: 1px solid #cfdddf;
+      background: #f3f8f6;
+      color: #405569;
+      font-size: 11px;
+      font-weight: 700;
+    }
+    #sa-card-root .sa-card-grad-legend-item {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+    }
+    #sa-card-root .sa-card-grad-dot {
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      background: #7b8493;
+    }
+    #sa-card-root .sa-card-grad-dot.is-passed { background: #0a8e6e; }
+    #sa-card-root .sa-card-grad-dot.is-studying { background: #4056e3; }
+    #sa-card-root .sa-card-grad-dot.is-open { background: #00886e; }
   </style>
 </head>
 <body>
@@ -283,8 +354,8 @@
    normally supplies them, but this chrome-less page names its exact dependencies
    through the private, allowlisted asset route. {% endcomment %}
 <script src="/telegram/card-assets/js/shared-timetable.js?v=3"></script>
-<script src="/telegram/card-assets/js/prereq-graph.js?v=1"></script>
-<script src="/telegram/card-assets/js/page-student-advisor.js?v=25"></script>
+<script src="/telegram/card-assets/js/prereq-graph.js?v=4"></script>
+<script src="/telegram/card-assets/js/page-student-advisor.js?v=29"></script>
 <script>
   (function () {
     var IS_AR = {% if language == 'ar' %}true{% else %}false{% endif %};
@@ -318,6 +389,10 @@
     var node = render(data, '{% if language == "ar" %}ar{% else %}en{% endif %}');
     if (node) {
       root.appendChild(node);
+
+      if (data.kind === 'graduation_scenario') {
+        enhanceGraduationCard(node, data);
+      }
 
       /* One image per option. The card draws every alternative as a <details>
          with only the first open, which is right on a screen you can click but
@@ -585,6 +660,51 @@
           }
           list.appendChild(item);
         });
+      }
+
+      function enhanceGraduationCard(card, presentation) {
+        var graph = (presentation && presentation.graph) || {};
+        var names = graph.nameOf || {};
+        card.querySelectorAll('details.sa-grad-more').forEach(function (details) {
+          var primary = details.previousElementSibling;
+          var remainder = details.querySelector('.sa-grad-mobile-courses');
+          if (primary && primary.classList.contains('sa-grad-mobile-courses') && remainder) {
+            while (remainder.firstChild) primary.appendChild(remainder.firstChild);
+            details.remove();
+          } else {
+            details.open = true;
+          }
+        });
+        card.querySelectorAll('.sa-grad-course').forEach(function (course) {
+          var codeNode = course.querySelector('bdi');
+          var code = codeNode ? String(codeNode.textContent || '').trim() : '';
+          var name = String(names[code] || '').trim();
+          if (!name || name === code) return;
+          var label = document.createElement('span');
+          label.className = 'sa-card-grad-course-name';
+          label.setAttribute('dir', 'auto');
+          label.textContent = name;
+          course.appendChild(label);
+        });
+
+        var legend = document.createElement('div');
+        legend.className = 'sa-card-grad-legend';
+        var rows = IS_AR
+          ? [['is-passed', 'مجتاز قبل السيناريو'], ['is-studying', 'فصل البداية'],
+             ['is-open', 'مخطط في السيناريو'], ['', 'لم يُحدّد له فصل']]
+          : [['is-passed', 'Completed before scenario'], ['is-studying', 'Planning baseline'],
+             ['is-open', 'Planned in scenario'], ['', 'No term resolved']];
+        rows.forEach(function (row) {
+          var item = document.createElement('span');
+          item.className = 'sa-card-grad-legend-item';
+          var dot = document.createElement('span');
+          dot.className = 'sa-card-grad-dot' + (row[0] ? ' ' + row[0] : '');
+          item.appendChild(dot);
+          item.appendChild(document.createTextNode(row[1]));
+          legend.appendChild(item);
+        });
+        var panel = card.querySelector('.sa-grad-panel');
+        if (panel) panel.appendChild(legend);
       }
 
       function esc(value) {

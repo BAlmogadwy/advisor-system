@@ -33,7 +33,10 @@ from core.services.student_otp import (
     verify_otp,
 )
 from core.services.student_sections import (
+    arabic_term_section_course_names,
     get_student_term_baseline,
+    prefer_arabic_course_names_in_payload,
+    prefer_arabic_timetable_course_names,
     section_gender,
     student_gender,
 )
@@ -46,6 +49,10 @@ from core.sidebar_context import get_sidebar_context
 
 logger = logging.getLogger(__name__)
 _MODEL_BACKEND = "django.contrib.auth.backends.ModelBackend"
+
+
+def _request_prefers_arabic(request: HttpRequest) -> bool:
+    return str(getattr(request, "LANGUAGE_CODE", "") or "").lower().startswith("ar")
 
 
 def _client_ip(request: HttpRequest) -> str:
@@ -219,14 +226,20 @@ def student_login_view(request: HttpRequest) -> HttpResponse:
         return render(
             request,
             "core/student_login.html",
-            {"step": "id", "error": "أدخل رقمًا جامعيًا صحيحًا · Enter a valid University ID"},
+            {
+                "step": "id",
+                "error": "يرجى إدخال رقم جامعي صحيح.",
+            },
         )
 
     if _ip_throttled(request, "send", limit=8, window=900):
         return render(
             request,
             "core/student_login.html",
-            {"step": "id", "error": "محاولات كثيرة، حاول لاحقًا · Too many attempts, try later"},
+            {
+                "step": "id",
+                "error": "تم تجاوز العدد المسموح به من المحاولات. حاول مرة أخرى لاحقًا.",
+            },
         )
 
     student_id = int(raw)
@@ -245,7 +258,7 @@ def student_login_view(request: HttpRequest) -> HttpResponse:
                 "core/student_login.html",
                 {
                     "step": "id",
-                    "error": "تعذّر تسجيل الدخول لهذا الحساب · Login unavailable for this account",
+                    "error": "تعذّر تسجيل الدخول باستخدام هذا الحساب.",
                 },
             )
         login(request, user, backend=_MODEL_BACKEND)
@@ -287,7 +300,10 @@ def student_otp_verify_view(request: HttpRequest) -> HttpResponse:
         return render(
             request,
             "core/student_login.html",
-            {"step": "id", "error": "محاولات كثيرة، حاول لاحقًا · Too many attempts, try later"},
+            {
+                "step": "id",
+                "error": "تم تجاوز العدد المسموح به من المحاولات. حاول مرة أخرى لاحقًا.",
+            },
         )
 
     if student_id and verify_otp(student_id, code):
@@ -299,7 +315,7 @@ def student_otp_verify_view(request: HttpRequest) -> HttpResponse:
                 "core/student_login.html",
                 {
                     "step": "id",
-                    "error": "تعذّر تسجيل الدخول لهذا الحساب · Login unavailable for this account",
+                    "error": "تعذّر تسجيل الدخول باستخدام هذا الحساب.",
                 },
             )
         login(request, user, backend=_MODEL_BACKEND)
@@ -314,7 +330,7 @@ def student_otp_verify_view(request: HttpRequest) -> HttpResponse:
             "step": "otp",
             "student_id": str(student_id or ""),
             "email": f"{student_id}@{settings.STUDENT_EMAIL_DOMAIN}" if student_id else "",
-            "error": "رمز غير صحيح أو منتهي · Invalid or expired code",
+            "error": "رمز التحقق غير صحيح أو انتهت صلاحيته.",
         },
     )
 
@@ -367,7 +383,12 @@ def student_courses_view(request: HttpRequest) -> HttpResponse:
     defaults = load_defaults()
     year, term = int(defaults["academic_year"]), int(defaults["term"])
     try:
-        report = build_unlock_report(student_id, year, term)
+        report = build_unlock_report(
+            student_id,
+            year,
+            term,
+            prefer_arabic_names=_request_prefers_arabic(request),
+        )
     except Exception:  # noqa: BLE001 — the page must degrade, never 500
         logger.exception("unlock report failed for %s", student_id)
         report = None
@@ -416,7 +437,12 @@ def student_plan_map_view(request: HttpRequest) -> HttpResponse:
     defaults = load_defaults()
     year, term = int(defaults["academic_year"]), int(defaults["term"])
     try:
-        report = build_unlock_report(student_id, year, term)
+        report = build_unlock_report(
+            student_id,
+            year,
+            term,
+            prefer_arabic_names=_request_prefers_arabic(request),
+        )
     except Exception:  # noqa: BLE001 — the page must degrade, never 500
         logger.exception("student plan map failed for %s", student_id)
         report = None
@@ -455,6 +481,8 @@ def student_graduation_view(request: HttpRequest) -> HttpResponse:
     year, term = int(defaults["academic_year"]), int(defaults["term"])
     try:
         grad = build_graduation_report(student_id, year, term)
+        if grad and _request_prefers_arabic(request):
+            grad = prefer_arabic_course_names_in_payload(grad)
     except Exception:  # noqa: BLE001 — degrade, never 500
         logger.exception("graduation report failed for %s", student_id)
         grad = None
@@ -573,6 +601,8 @@ def student_home_view(request: HttpRequest) -> HttpResponse:
         ]
 
     configured_rows = visible_to_student(configured_rows)
+    if _request_prefers_arabic(request):
+        configured_rows = prefer_arabic_timetable_course_names(configured_rows)
 
     # Split by PROVENANCE CLASS, not by "is it the expected prefix or not". The
     # old two-way split promoted the staff planner's own mappings — sources
@@ -634,6 +664,8 @@ def student_home_view(request: HttpRequest) -> HttpResponse:
                             snapshot=Snapshot.ANY,
                         )
                     )
+                    if _request_prefers_arabic(request):
+                        fallback_rows = prefer_arabic_timetable_course_names(fallback_rows)
                 except Exception:  # noqa: BLE001
                     logger.exception("student fallback timetable failed for %s", student_id)
                 else:
@@ -745,6 +777,7 @@ def student_home_view(request: HttpRequest) -> HttpResponse:
             # not proof that the student registered those hours or is studying
             # those courses. Academic-summary cards use registrar evidence only.
             current_term_rows=registered_configured_rows,
+            prefer_arabic_names=_request_prefers_arabic(request),
         )
     except Exception:  # noqa: BLE001 — one card block degrades, the page does not
         logger.exception("student home cards failed for %s", student_id)
@@ -756,10 +789,14 @@ def student_home_view(request: HttpRequest) -> HttpResponse:
             "course_code", "description", "credit_hours"
         )
     }
+    arabic_recommendation_names = (
+        arabic_term_section_course_names(rec_codes) if _request_prefers_arabic(request) else {}
+    )
     recommendations = [
         {
             "code": code,
-            "name": course_info.get(code, {}).get("name", ""),
+            "name": arabic_recommendation_names.get(code)
+            or course_info.get(code, {}).get("name", ""),
             "credits": course_info.get(code, {}).get("credits"),
         }
         for code in rec_codes

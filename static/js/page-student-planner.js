@@ -33,56 +33,55 @@
   };
 
   const T = {
-    loading: AR ? 'جارٍ تحميل مساحة التخطيط…' : 'Loading your planning workspace…',
-    loadFail: AR ? 'تعذّر تحميل مساحة التخطيط.' : 'Could not load the planning workspace.',
-    editFail: AR ? 'تعذّر تحديث الاختيار.' : 'Could not update the selection.',
-    building: AR ? 'جارٍ بناء خيارات الجدول…' : 'Building timetable options…',
-    buildFail: AR ? 'تعذّر بناء خيارات الجدول.' : 'Could not build timetable options.',
-    chooseOne: AR ? 'اختر مقررًا واحدًا على الأقل أولًا.' : 'Choose at least one course first.',
-    anySection: AR ? 'أي شعبة مناسبة' : 'Any suitable section',
-    remove: AR ? 'إزالة' : 'Remove',
-    add: AR ? 'إضافة' : 'Add',
-    selected: AR ? 'مختار' : 'Selected',
-    inCurrent: AR ? 'في جدولك' : 'In your timetable',
-    fixedCurrent: AR ? 'شعبة حالية مثبتة' : 'Current section fixed',
-    proposed: AR ? 'مقترح' : 'Proposed',
+    loading: AR ? 'جارٍ تحميل أداة إنشاء الجداول المقترحة…' : 'Loading your planning workspace…',
+    loadFail: AR ? 'تعذّر تحميل أداة إنشاء الجداول المقترحة.' : 'Could not load the planning workspace.',
+    editFail: AR ? 'تعذّر تحديث مسودة التخطيط.' : 'Could not update the selection.',
+    building: AR ? 'جارٍ إنشاء جداول مقترحة…' : 'Building timetable options…',
+    buildFail: AR ? 'تعذّر إنشاء الجداول المقترحة.' : 'Could not build timetable options.',
+    chooseOne: AR ? 'حدّد مقررًا واحدًا على الأقل قبل إنشاء الجداول المقترحة.' : 'Choose at least one course first.',
+    anySection: AR ? 'اختيار الشعبة تلقائيًا' : 'Any suitable section',
+    remove: AR ? 'إزالة من المسودة' : 'Remove',
+    add: AR ? 'إضافة إلى المسودة' : 'Add',
+    selected: AR ? 'مضاف إلى المسودة' : 'Selected',
+    inCurrent: AR ? 'من الجدول المسجّل فعليًا' : 'In your timetable',
+    fixedCurrent: AR ? 'شعبة محتفَظ بها من الجدول المسجّل فعليًا' : 'Current section fixed',
+    proposed: AR ? 'من الجدول المقترح' : 'Proposed',
     recommended: AR ? 'موصى به' : 'Recommended',
-    ready: AR ? 'جاهز للتخطيط' : 'Ready to plan',
-    blocked: AR ? 'متطلب سابق ناقص' : 'Missing prerequisite',
-    notOffered: AR ? 'لا توجد شُعب في البيانات الحالية' : 'No sections in current data',
-    missing: AR ? 'الناقص' : 'Missing',
-    days: AR ? 'أيام حضور' : 'Campus days',
+    ready: AR ? 'متطلباته السابقة مستوفاة' : 'Ready to plan',
+    blocked: AR ? 'متطلباته السابقة غير مستوفاة' : 'Missing prerequisite',
+    notOffered: AR ? 'لا تتوفر بيانات مواعيد للشُعب' : 'No sections in current data',
+    missing: AR ? 'المتطلبات السابقة غير المستوفاة' : 'Missing',
+    days: AR ? 'أيام الحضور' : 'campus days',
     earliest: AR ? 'أول محاضرة' : 'Earliest class',
     latest: AR ? 'آخر محاضرة' : 'Latest class',
-    credits: AR ? 'ساعة' : 'credits',
-    details: AR ? 'تفاصيل المقررات والأوقات' : 'Course and time details',
-    copy: AR ? 'نسخ قائمة البوابة' : 'Copy portal checklist',
-    copied: AR ? 'نُسخت القائمة. لم يتم حفظ أو تسجيل أي شيء.' : 'Checklist copied. Nothing was saved or registered.',
-    copyFail: AR ? 'تعذّر النسخ تلقائيًا. حدّد القائمة وانسخها يدويًا.' : 'Automatic copy failed. Select and copy the checklist manually.',
-    option: AR ? 'الخيار' : 'Option',
-    coverage: AR ? 'تمت الجدولة' : 'Scheduled',
-    unscheduled: AR ? 'غير مجدول' : 'not scheduled',
-    complete: AR ? 'مكتمل' : 'Complete',
-    partial: AR ? 'جزئي' : 'Partial',
-    recordedTimesClear: AR ? 'لا تداخل بين الأوقات المسجّلة' : 'No overlap among recorded times',
-    optionMissing: AR ? 'لم يدخل في هذا الخيار' : 'Not placed in this option',
-    source: AR ? 'النوع' : 'Type',
-    hourUnit: AR ? 'ساعة' : 'credits',
+    credits: AR ? 'الساعات المعتمدة' : 'credits',
+    details: AR ? 'تفاصيل المقررات ومواعيدها' : 'Course and time details',
+    copy: AR ? 'نسخ قائمة المقررات والشُعب' : 'Copy portal checklist',
+    copied: AR ? 'نُسخت القائمة فقط، ولم يتغيّر تسجيلك في بوابة الجامعة.' : 'Checklist copied. Nothing was saved or registered.',
+    copyFail: AR ? 'تعذّر نسخ القائمة تلقائيًا. حدّد النص وانسخه يدويًا.' : 'Automatic copy failed. Select and copy the checklist manually.',
+    option: AR ? 'الجدول المقترح' : 'Option',
+    coverage: AR ? 'المقررات المدرجة' : 'Scheduled',
+    unscheduled: AR ? 'المقررات التي تعذّر إدراجها' : 'not scheduled',
+    complete: AR ? 'جميع المقررات مدرجة' : 'Complete',
+    partial: AR ? 'بعض المقررات غير مدرجة' : 'Partial',
+    recordedTimesClear: AR ? 'لا يوجد تعارض زمني في هذا الجدول المقترح' : 'No overlap among recorded times',
+    optionMissing: AR ? 'مقررات لم تُدرج في هذا الجدول المقترح' : 'Not placed in this option',
+    source: AR ? 'نوع الجدول' : 'Type',
     course: AR ? 'المقرر' : 'Course',
     section: AR ? 'الشعبة' : 'Section',
     day: AR ? 'اليوم' : 'Day',
     from: AR ? 'من' : 'From',
     to: AR ? 'إلى' : 'To',
     time: AR ? 'الوقت' : 'Time',
-    generated: AR ? 'تم إعداد خيارات مؤقتة على الشاشة.' : 'Temporary on-screen options are ready.',
-    none: AR ? 'لم يجد المخطط جدولًا كاملًا بهذه الاختيارات.' : 'The planner could not find a complete timetable for this selection.',
-    stale: AR ? 'تغيّر جدولك الحالي منذ بناء هذه الخيارات. أعد البناء لتحديثها.' : 'Your current timetable changed after these options were built. Build again to refresh them.',
-    expired: AR ? 'انتهت صلاحية مساحة التخطيط. افتح مخططًا جديدًا.' : 'This planning workspace expired. Open a new planner.',
+    generated: AR ? 'أصبحت الجداول المقترحة جاهزة للعرض، ولم يتغيّر تسجيلك في بوابة الجامعة.' : 'Temporary on-screen options are ready.',
+    none: AR ? 'تعذّر إنشاء جدول مقترح يضم جميع المقررات المحدّدة.' : 'The planner could not find a complete timetable for this selection.',
+    stale: AR ? 'تغيّر جدولك المسجّل فعليًا منذ إنشاء هذه الجداول المقترحة. أنشئها من جديد لتحديثها.' : 'Your current timetable changed after these options were built. Build again to refresh them.',
+    expired: AR ? 'انتهت صلاحية جلسة التخطيط. ارجع إلى صفحة إنشاء الجدول لبدء جلسة جديدة.' : 'This planning workspace expired. Open a new planner.',
     freshWarning: AR
-      ? 'سيعرض النظام اقتراحًا قد يستخدم شُعبًا مختلفة عن شُعبك الحالية. لن يتغيّر تسجيلك الحقيقي.'
+      ? 'قد تستخدم الجداول المقترحة شُعبًا مختلفة عن شُعب جدولك المسجّل فعليًا. لن يتغيّر تسجيلك في بوابة الجامعة.'
       : 'The system may propose sections different from your current ones. Your real registration will not change.',
-    confirmReady: AR ? 'تم التأكيد. يمكنك الآن بناء الخيارات.' : 'Confirmed. You can now build the options.',
-    refreshPrompt: AR ? 'غيّرت اختيارك. اضغط «بناء خيارات الجدول» لعرض اقتراح جديد.' : 'Your selection changed. Build timetable options to see a new proposal.',
+    confirmReady: AR ? 'تم التأكيد. يمكنك الآن إنشاء الجداول المقترحة.' : 'Confirmed. You can now build the options.',
+    refreshPrompt: AR ? 'تغيّرت اختياراتك. اختر «إنشاء الجداول المقترحة» لعرض جداول محدّثة.' : 'Your selection changed. Build timetable options to see a new proposal.',
     sun: AR ? 'الأحد' : 'Sun', mon: AR ? 'الاثنين' : 'Mon', tue: AR ? 'الثلاثاء' : 'Tue',
     wed: AR ? 'الأربعاء' : 'Wed', thu: AR ? 'الخميس' : 'Thu', fri: AR ? 'الجمعة' : 'Fri', sat: AR ? 'السبت' : 'Sat',
   };
@@ -94,7 +93,6 @@
   let activeOptionIndex = 0;
   let confirmation = null;
   let busy = false;
-  let mixedBaseline = false;
 
   function csrf() {
     const token = document.querySelector('[name=csrfmiddlewaretoken]');
@@ -126,7 +124,7 @@
   function setBusy(state) {
     busy = state;
     root.classList.toggle('is-busy', state);
-    els.generate.disabled = state || mixedBaseline || effectiveCodes().length === 0;
+    els.generate.disabled = state || effectiveCodes().length === 0;
     els.generate.setAttribute('aria-busy', state ? 'true' : 'false');
   }
   function node(tag, className, text) {
@@ -134,6 +132,12 @@
     if (className) item.className = className;
     if (text != null) item.textContent = String(text);
     return item;
+  }
+  function metric(label, value) {
+    return AR ? label + ': ' + value : value + ' ' + label;
+  }
+  function labelledValue(label, value) {
+    return AR ? label + ': ' + value : label + ' ' + value;
   }
   function ltr(value) { return '\u2066' + String(value == null ? '' : value) + '\u2069'; }
   function bdi(value, className) {
@@ -187,81 +191,53 @@
   function renderCurrent(workspace) {
     const timetableKind = String(workspace.timetable_kind || 'REGISTERED').toUpperCase();
     const expected = timetableKind === 'EXPECTED_PLAN';
-    mixedBaseline = timetableKind === 'MIXED_REVIEW_REQUIRED';
-    els.keep.disabled = mixedBaseline;
-    els.rebuild.disabled = mixedBaseline;
-    root.classList.toggle('has-mixed-timetable-baseline', mixedBaseline);
-    if (mixedBaseline) {
-      els.keep.checked = false;
-      els.rebuild.checked = false;
-      els.generate.disabled = true;
-      els.currentHeading.textContent = AR ? 'بيانات الجدول تحتاج مراجعة' : 'Timetable data needs review';
+    if (expected) {
+      els.currentHeading.textContent = AR ? 'الجدول المتوقع' : 'Your expected timetable';
       els.currentSubtitle.textContent = AR
-        ? 'تتضمن بيانات هذا الفصل تسجيلًا فعليًا وخطة متوقعة معًا. أُوقف البناء حتى لا تُعامل الخطة المتوقعة كتسجيل حقيقي.'
-        : 'This term contains both registrar and expected-plan rows. Building is paused so the expected plan is not treated as real registration.';
-      els.currentEmpty.textContent = AR
-        ? 'لا يمكن اعتماد خط أساس للجدول قبل مراجعة مصدر البيانات.'
-        : 'No timetable baseline can be trusted until its source is reviewed.';
-      els.currentDetailsSummary.textContent = AR
-        ? 'عرض الصفوف التي تحتاج مراجعة'
-        : 'Show rows requiring review';
-      els.keepTitle.textContent = AR ? 'البناء حول هذه الصفوف متوقف' : 'Build-around is paused';
-      els.keepHelp.textContent = AR
-        ? 'لا يمكن تثبيت صفوف من مصدرين مختلفين على أنها جدول حالي واحد.'
-        : 'Rows from two provenance classes cannot be fixed as one current timetable.';
-      T.inCurrent = AR ? 'مصدر مختلط' : 'Mixed source';
-      T.fixedCurrent = AR ? 'صف يحتاج مراجعة' : 'Row needs review';
-      T.stale = AR
-        ? 'تغيّرت بيانات الجدول المختلطة. يلزم مراجعة المصدر قبل البناء.'
-        : 'The mixed timetable data changed. Its source must be reviewed before building.';
-      T.freshWarning = T.stale;
-    } else if (expected) {
-      els.currentHeading.textContent = AR ? 'جدولك المتوقع' : 'Your expected timetable';
-      els.currentSubtitle.textContent = AR
-        ? 'خطة متوقعة للعرض فقط وليست تسجيلًا فعليًا في بوابة الجامعة.'
+        ? 'هذا جدول إرشادي مبني على بيانات الخطة المتوقعة، وليس الجدول المسجّل فعليًا في بوابة الجامعة.'
         : 'A planning-only expected timetable, not actual registration in the university portal.';
       els.currentEmpty.textContent = AR
-        ? 'لا توجد اجتماعات في الجدول المتوقع لهذا الفصل.'
+        ? 'لا تتوفر في بياناتنا مواعيد للجدول المتوقع في هذا الفصل.'
         : 'No meetings are recorded in the expected timetable for this term.';
       els.currentDetailsSummary.textContent = AR
-        ? 'عرض الجدول الأسبوعي المتوقع'
+        ? 'عرض مواعيد الجدول المتوقع'
         : 'Show expected weekly timetable';
       els.keepTitle.textContent = AR
-        ? 'ابنِ حول شُعبي المتوقعة'
+        ? 'الاحتفاظ بشُعب الجدول المتوقع'
         : 'Build around my expected sections';
       els.keepHelp.textContent = AR
-        ? 'يثبّت شُعب الخطة المتوقعة ويضع الاختيارات الأخرى حول أوقاتها؛ ولا يسجّل أي مقرر.'
+        ? 'تُبقي الأداة شُعب الجدول المتوقع عند إنشاء الجداول المقترحة، وتضيف المقررات الأخرى في مواعيد لا تتعارض معها. لا يسجّل هذا الإجراء أي مقرر.'
         : 'Fixes the expected-plan sections and fits other choices around them; nothing is registered.';
-      T.inCurrent = AR ? 'في جدولك المتوقع' : 'In your expected timetable';
-      T.fixedCurrent = AR ? 'شعبة متوقعة مثبتة' : 'Expected section fixed';
+      T.inCurrent = AR ? 'من الجدول المتوقع' : 'In your expected timetable';
+      T.fixedCurrent = AR ? 'شعبة محتفَظ بها من الجدول المتوقع' : 'Expected section fixed';
       T.stale = AR
-        ? 'تغيّر جدولك المتوقع منذ بناء هذه الخيارات. أعد البناء لتحديثها.'
+        ? 'تغيّر الجدول المتوقع منذ إنشاء هذه الجداول المقترحة. أنشئها من جديد لتحديثها.'
         : 'Your expected timetable changed after these options were built. Build again to refresh them.';
       T.freshWarning = AR
-        ? 'سيعرض النظام اقتراحًا قد يستخدم شُعبًا مختلفة عن جدولك المتوقع. لن يتغيّر أي تسجيل حقيقي.'
+        ? 'قد تستخدم الجداول المقترحة شُعبًا مختلفة عن شُعب الجدول المتوقع. لن يتغيّر تسجيلك في بوابة الجامعة.'
         : 'The system may propose sections different from your expected timetable. No real registration will change.';
     } else {
-      els.currentHeading.textContent = AR ? 'جدولك الحالي' : 'Your current timetable';
+      els.currentHeading.textContent = AR ? 'الجدول المسجّل فعليًا' : 'Your current timetable';
       els.currentSubtitle.textContent = AR
-        ? 'مرجع للعرض فقط؛ لا يغيّر المخطط تسجيلك الحالي.'
+        ? 'تستخدم أداة إنشاء الجداول هذا الجدول مرجعًا فقط، ولا تغيّر تسجيلك في بوابة الجامعة.'
         : 'Shown only as a reference; the planner never changes your current registration.';
       els.currentEmpty.textContent = AR
-        ? 'لا توجد اجتماعات حالية مسجلة لهذا الفصل في بياناتنا.'
+        ? 'لا تتوفر في بياناتنا مواعيد للجدول المسجّل فعليًا في هذا الفصل.'
         : 'No current meetings are recorded for this term in our data.';
       els.currentDetailsSummary.textContent = AR
-        ? 'عرض الجدول الأسبوعي الحالي'
+        ? 'عرض مواعيد الجدول المسجّل فعليًا'
         : 'Show current weekly timetable';
-      els.keepTitle.textContent = AR ? 'ابنِ حول شُعبي الحالية' : 'Build around my current sections';
+      els.keepTitle.textContent = AR ? 'الاحتفاظ بشُعب الجدول المسجّل فعليًا' : 'Build around my current sections';
       els.keepHelp.textContent = AR
-        ? 'يثبّت شُعبك الحالية ويضع الاختيارات الأخرى حول أوقاتها المسجّلة.'
+        ? 'تُبقي الأداة شُعب الجدول المسجّل فعليًا عند إنشاء الجداول المقترحة، وتضيف المقررات الأخرى في مواعيد لا تتعارض معها.'
         : 'Fixes your current sections and fits other choices around their recorded times.';
-      T.inCurrent = AR ? 'في جدولك' : 'In your timetable';
-      T.fixedCurrent = AR ? 'شعبة حالية مثبتة' : 'Current section fixed';
+      T.inCurrent = AR ? 'من الجدول المسجّل فعليًا' : 'In your timetable';
+      T.fixedCurrent = AR ? 'شعبة محتفَظ بها من الجدول المسجّل فعليًا' : 'Current section fixed';
       T.stale = AR
-        ? 'تغيّر جدولك الحالي منذ بناء هذه الخيارات. أعد البناء لتحديثها.'
+        ? 'تغيّر جدولك المسجّل فعليًا منذ إنشاء هذه الجداول المقترحة. أنشئها من جديد لتحديثها.'
         : 'Your current timetable changed after these options were built. Build again to refresh them.';
       T.freshWarning = AR
-        ? 'سيعرض النظام اقتراحًا قد يستخدم شُعبًا مختلفة عن شُعبك الحالية. لن يتغيّر تسجيلك الحقيقي.'
+        ? 'قد تستخدم الجداول المقترحة شُعبًا مختلفة عن شُعب جدولك المسجّل فعليًا. لن يتغيّر تسجيلك في بوابة الجامعة.'
         : 'The system may propose sections different from your current ones. Your real registration will not change.';
     }
     const rows = workspace.current_timetable || [];
@@ -308,10 +284,12 @@
       if (course.recommended) title.appendChild(node('span', 'sp-tag sp-tag-rec', T.recommended));
       if (fixedCurrent) title.appendChild(node('span', 'sp-tag sp-tag-current', T.inCurrent));
       main.appendChild(title);
-      main.appendChild(node('span', 'sp-name', course.course_name || ''));
+      const courseName = node('span', 'sp-name', course.course_name || '');
+      courseName.dir = 'auto';
+      main.appendChild(courseName);
       const meta = node('div', 'sp-course-meta');
       meta.appendChild(node('span', 'sp-tag ' + (course.status === 'ready' ? 'sp-tag-ready' : 'sp-tag-blocked'), statusLabel(course)));
-      meta.appendChild(node('span', 'sp-muted', String(course.credits || 0) + ' ' + T.credits));
+      meta.appendChild(node('span', 'sp-muted', metric(T.credits, String(course.credits || 0))));
       if ((course.missing_prerequisites || []).length) {
         meta.appendChild(node('span', 'sp-muted', T.missing + ': ' + course.missing_prerequisites.join(', ')));
       }
@@ -343,12 +321,18 @@
       labelLine.appendChild(bdi(code, 'sp-code'));
       if (fixedCurrent) labelLine.appendChild(node('span', 'sp-tag sp-tag-current', T.fixedCurrent));
       label.appendChild(labelLine);
-      if (course.course_name) label.appendChild(node('span', 'sp-name', course.course_name));
+      if (course.course_name) {
+        const courseName = node('span', 'sp-name', course.course_name);
+        courseName.dir = 'auto';
+        label.appendChild(courseName);
+      }
       item.appendChild(label);
+
+      const controls = node('div', 'sp-requested-controls');
 
       const select = document.createElement('select');
       select.className = 'form-select form-select-sm sp-section-select';
-      select.setAttribute('aria-label', (AR ? 'الشعبة المفضلة لمقرر ' : 'Preferred section for ') + code);
+      select.setAttribute('aria-label', (AR ? 'اختيار شعبة محددة للمقرر ' : 'Preferred section for ') + code);
       const any = document.createElement('option');
       any.value = '';
       any.textContent = T.anySection;
@@ -367,15 +351,17 @@
       });
       select.disabled = busy || fixedCurrent || !(course.sections || []).length;
       select.addEventListener('change', () => pinSection(code, select.value));
-      item.appendChild(select);
+      controls.appendChild(select);
 
       if (!fixedCurrent) {
-        const remove = node('button', 'btn btn-sm btn-link text-danger', T.remove);
+        const remove = node('button', 'btn btn-sm btn-link text-danger sp-requested-remove', T.remove);
         remove.type = 'button';
+        remove.setAttribute('aria-label', T.remove + ': ' + code);
         remove.disabled = busy;
         remove.addEventListener('click', () => toggleCourse(code));
-        item.appendChild(remove);
+        controls.appendChild(remove);
       }
+      item.appendChild(controls);
       els.requested.appendChild(item);
     });
     els.courseCount.textContent = String(codes.length);
@@ -447,7 +433,7 @@
   function checklist(option) {
     const lines = (option.courses || []).map((course) => course.course_code + ' — ' + course.section);
     const heading = AR
-      ? 'قائمة نقل يدوية إلى بوابة الجامعة (ليست تسجيلًا):'
+      ? 'قائمة مرجعية للتحقق منها وإدخالها يدويًا في بوابة الجامعة (نسخها لا يسجّل أي مقرر):'
       : 'Manual university-portal checklist (not a registration):';
     return heading + '\n' + lines.join('\n');
   }
@@ -465,7 +451,7 @@
         if (!document.execCommand('copy')) throw new Error('copy refused');
         area.remove();
       }
-      button.textContent = AR ? 'تم النسخ' : 'Copied';
+      button.textContent = AR ? 'نُسخت القائمة' : 'Copied';
       say(T.copied);
       setTimeout(() => { button.textContent = originalLabel; }, 1800);
     } catch (_) {
@@ -499,7 +485,7 @@
     const resultCoverage = coverage(option);
     const coverageLine = node('div', 'sp-option-coverage');
     coverageLine.appendChild(node('span', resultCoverage.complete ? 'sp-tag sp-tag-ready' : 'sp-tag sp-tag-warning', resultCoverage.complete ? T.complete : T.partial));
-    coverageLine.appendChild(node('span', 'sp-muted', T.coverage + ' ' + resultCoverage.scheduled + '/' + resultCoverage.target + ' · ' + String(option.credit_hours || 0) + ' ' + T.hourUnit));
+    coverageLine.appendChild(node('span', 'sp-muted', labelledValue(T.coverage, resultCoverage.scheduled + '/' + resultCoverage.target) + ' · ' + metric(T.credits, String(option.credit_hours || 0))));
     title.appendChild(coverageLine);
     header.appendChild(title);
     const copy = node('button', 'btn btn-sm btn-outline-primary', T.copy + ' (' + resultCoverage.scheduled + '/' + resultCoverage.target + ')');
@@ -526,7 +512,7 @@
     appendOptionMissing(card, option);
     const grid = node('div', 'sp-week sp-option-week');
     grid.tabIndex = 0;
-    renderWeek(grid, option.meetings || [], AR ? 'لا توجد أوقات لعرضها.' : 'No meeting times to show.');
+    renderWeek(grid, option.meetings || [], AR ? 'لا يحتوي هذا الجدول المقترح على مواعيد دراسية قابلة للعرض.' : 'No meeting times to show.');
     card.appendChild(grid);
     card.appendChild(node('p', 'sp-scroll-hint', AR ? 'مرّر أفقيًا لعرض بقية الأيام عند الحاجة.' : 'Scroll horizontally to see the remaining days when needed.'));
     card.appendChild(renderDetails(option, index));
@@ -540,9 +526,9 @@
     button.setAttribute('aria-pressed', index === activeOptionIndex ? 'true' : 'false');
     button.appendChild(node('strong', 'sp-option-choice-title', optionLabel(option, index)));
     button.appendChild(node('span', resultCoverage.complete ? 'sp-tag sp-tag-ready' : 'sp-tag sp-tag-warning', resultCoverage.complete ? T.complete : T.partial));
-    button.appendChild(node('span', 'sp-option-choice-coverage', T.coverage + ' ' + resultCoverage.scheduled + '/' + resultCoverage.target));
-    button.appendChild(node('span', 'sp-muted', String(option.credit_hours || 0) + ' ' + T.hourUnit + ' · ' + String(option.days_on_campus || 0) + ' ' + T.days));
-    if ((option.unplaced || []).length) button.appendChild(node('span', 'sp-option-choice-missing', T.unscheduled + ' ' + option.unplaced.length));
+    button.appendChild(node('span', 'sp-option-choice-coverage', labelledValue(T.coverage, resultCoverage.scheduled + '/' + resultCoverage.target)));
+    button.appendChild(node('span', 'sp-muted', metric(T.credits, String(option.credit_hours || 0)) + ' · ' + metric(T.days, String(option.days_on_campus || 0))));
+    if ((option.unplaced || []).length) button.appendChild(node('span', 'sp-option-choice-missing', labelledValue(T.unscheduled, option.unplaced.length)));
     button.addEventListener('click', () => {
       activeOptionIndex = index;
       renderOptions(options, false);
@@ -560,7 +546,7 @@
     if (!rows.length) {
       els.optionsEmpty.textContent = data && data.draft && data.draft.has_current_generation
         ? T.none
-        : (AR ? 'ابنِ الخيارات لعرض الجداول الممكنة هنا.' : 'Build options to see possible timetables here.');
+        : (AR ? 'أنشئ الجداول المقترحة لعرضها هنا.' : 'Build options to see possible timetables here.');
       return;
     }
     rows.forEach((option, index) => els.options.appendChild(renderOptionChoice(option, index, rows)));
@@ -576,7 +562,9 @@
     (draft.requested || []).forEach((row) => { if (row.fixed_section_id) fixedSections[row.course_code] = row.fixed_section_id; });
     els.term.textContent = draft.academic_year + '/' + draft.term;
     els.term.dir = 'ltr';
-    els.creditCeiling.textContent = String(workspace.credit_ceiling || '—') + (workspace.credit_ceiling ? ' ' + T.hourUnit : '');
+    els.creditCeiling.textContent = workspace.credit_ceiling
+      ? (AR ? String(workspace.credit_ceiling) : metric(T.credits, String(workspace.credit_ceiling)))
+      : '—';
     els.keep.checked = !!draft.keep_current_sections;
     els.rebuild.checked = !draft.keep_current_sections;
     renderCurrent(workspace);

@@ -92,11 +92,15 @@ class _Page:
         self._html = html
         self._explode = explode
         self.visited: list[str] = []
+        # `is_logged_out` reads the URL and fails closed when it cannot, so the
+        # fake has to carry one or every case would look logged out.
+        self.url = "about:blank"
 
     async def goto(self, url: str, **kwargs) -> None:
         if self._explode:
             raise RuntimeError("network down")
         self.visited.append(url)
+        self.url = url
 
     async def content(self) -> str:
         return self._html
@@ -105,29 +109,49 @@ class _Page:
         return False
 
 
-AUTHENTICATED = '<html><body><a href="staffWelcomePage.do">Home</a></body></html>'
-SIGN_IN = '<html><body><a href="staffLogin.do?ex=preLogin">Sign in</a></body></html>'
-#: Carries the success marker AND is a service page — the shape the two-sided gate
-#: exists for.
-SERVICE_PAGE = (
-    "<html><head><title>نظام الخدمات "
-    "الالكترونية</title></head>"
-    '<body><a href="signOut.do">Sign out</a></body></html>'
+#: The enquiry page the scraper actually needs: it carries the form.
+ENQUIRY_PAGE = (
+    '<html><body><a href="signOut.do">Sign out</a>'
+    '<form><input name="StudentNumber"><input name="send"></form></body></html>'
 )
+#: A sign-in page. Note it also carries `signOut.do` in the shared navigation —
+#: which is exactly why a navigation marker cannot decide this.
+SIGN_IN = (
+    '<html><body><a href="signOut.do">Sign out</a>'
+    '<a href="staffLogin.do?ex=preLogin">Sign in</a>'
+    '<input name="loginfmt"></body></html>'
+)
+#: Authenticated-looking, but WITHOUT the enquiry form. A session that cannot load
+#: the form cannot scrape, so this is not live for our purposes.
+WELCOME_ONLY = '<html><body><a href="staffWelcomePage.do">Home</a></body></html>'
 
 
 @pytest.mark.parametrize(
     ("html", "live"),
     [
-        (AUTHENTICATED, True),
+        (ENQUIRY_PAGE, True),
         (SIGN_IN, False),
-        (SERVICE_PAGE, False),
+        (WELCOME_ONLY, False),
         ("", False),
     ],
 )
-def test_liveness_uses_the_two_sided_gate(html: str, live: bool):
+def test_liveness_is_decided_by_the_enquiry_form(html: str, live: bool):
+    """Not by a navigation marker. `signOut.do` appears on sign-in pages too, and
+    the question that matters is whether the scrape's next page will load."""
     page = _Page(html)
     assert asyncio.run(page_shows_live_session(page)) is live
+
+
+def test_liveness_is_checked_against_the_enquiry_page_not_the_sign_in_page():
+    """THE bug that threw away a real operator sign-in: the check navigated to
+    `PORTAL_LOGIN_URL`, which renders a sign-in form whether or not you hold a
+    session, so a freshly minted session always reported "not live"."""
+    from django.conf import settings
+
+    page = _Page(ENQUIRY_PAGE)
+    assert asyncio.run(page_shows_live_session(page)) is True
+    assert page.visited == [settings.STUDENT_PLAN_URL]
+    assert settings.PORTAL_LOGIN_URL not in page.visited
 
 
 def test_a_network_failure_is_not_a_live_session():
@@ -147,7 +171,7 @@ def test_session_is_live_closes_the_page_it_opened():
 
     class Context:
         async def new_page(self):
-            return Page(AUTHENTICATED)
+            return Page(ENQUIRY_PAGE)
 
     assert asyncio.run(portal_session.session_is_live(Context())) is True
     assert closed == [True]

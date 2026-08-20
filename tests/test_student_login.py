@@ -457,8 +457,8 @@ def test_student_home_renders_empty_states(students):
     assert r.context["timetable_panels"] == []
     body = r.content.decode()
     assert (
-        "There is no registered timetable and no expected plan for this term." in body
-        or "لا يوجد جدول" in body
+        "We do not yet have registered or expected timetable data for this term." in body
+        or "لا تتوفر لدينا بعد بيانات جدول" in body
     )
 
 

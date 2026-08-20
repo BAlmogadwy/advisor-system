@@ -12,6 +12,7 @@ from __future__ import annotations
 import os
 import struct
 from collections.abc import Callable, Iterable
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, TypeAlias
 
 os.environ.setdefault("DJANGO_ALLOW_ASYNC_UNSAFE", "1")
@@ -82,12 +83,13 @@ class TelegramCardBrowserTests(LiveServerTestCase):
         presentation: dict[str, Any],
         *,
         option_index: int | None = None,
+        content: str = "Here is your timetable.",
     ) -> Page:
         conversation = AdvisorConversation.objects.create(student_id=7990001)
         message = AdvisorMessage.objects.create(
             conversation=conversation,
             role=AdvisorMessage.ROLE_ASSISTANT,
-            content="Here is your timetable.",
+            content=content,
             presentation=presentation,
             status=AdvisorMessage.STATUS_COMPLETED,
         )
@@ -283,7 +285,29 @@ class TelegramCardBrowserTests(LiveServerTestCase):
         self.assertEqual(png_width, 1440)
         self.assertLess(png_height, 1300)
 
-    def test_graduation_card_renders_the_shared_map_and_marks_itself_ready(self) -> None:
+    def test_graduation_card_renders_a_readable_term_list_and_marks_itself_ready(self) -> None:
+        completed = [
+            "AI201",
+            "AI221",
+            "BIOL101",
+            "CHEM101",
+            "CS103",
+            "CS111",
+            "CS112",
+            "ENGL101",
+            "ENGL102",
+            "ENGL103",
+            "GS101",
+            "GS102",
+            "MATH101",
+            "MATH203",
+            "PHYS101",
+            "PHYS103",
+            "STAT101",
+            "STAT201",
+        ]
+        projected = ["DS225", "DS341", "DS433", "DS487", "DS491", "FE1"]
+        all_codes = completed + projected
         presentation = {
             "kind": KIND_GRADUATION,
             "program": "DS2",
@@ -292,8 +316,10 @@ class TelegramCardBrowserTests(LiveServerTestCase):
             "lower_bound_terms_including_planning_baseline": 2,
             "max_credits_per_term": 18,
             "band_labels": {
+                "0": "Completed before the scenario",
                 "1": "Planning baseline 1448/1",
                 "2": "Projected 1448/2",
+                "3": "Projected 1449/1",
             },
             "graph": {
                 "items": [
@@ -302,32 +328,67 @@ class TelegramCardBrowserTests(LiveServerTestCase):
                         "prerequisite_course_code": "DS225",
                     }
                 ],
-                "termOf": {"DS225": 1, "DS341": 2},
-                "nameOf": {"DS225": "Data Mining", "DS341": "Data Governance"},
-                "statusOf": {"DS225": "studying", "DS341": "open"},
-                "extraNodes": ["DS225", "DS341"],
+                "termOf": {
+                    **dict.fromkeys(completed, 0),
+                    "DS225": 1,
+                    "DS341": 2,
+                    "DS433": 2,
+                    "DS487": 3,
+                    "DS491": 3,
+                    "FE1": 3,
+                },
+                "nameOf": {
+                    **{code: f"مقرر مجتاز {code}" for code in completed},
+                    "DS225": "تنقيب البيانات",
+                    "DS341": "حوكمة البيانات",
+                    "DS433": "تحليلات البيانات الضخمة",
+                    "DS487": "مستودعات البيانات",
+                    "DS491": "مشروع التخرج",
+                    "FE1": "مقرر اختياري حر",
+                },
+                "statusOf": {
+                    **dict.fromkeys(completed, "passed"),
+                    "DS225": "studying",
+                    **dict.fromkeys(projected[1:], "open"),
+                },
+                "extraNodes": all_codes,
             },
             "unresolved_requirements": [],
             "read_only": True,
         }
 
-        page = self._open_card(presentation)
+        page = self._open_card(presentation, content="هذا مسار تقديري لإكمال الخطة.")
 
         root = page.locator("#sa-card-root")
         self.assertEqual(root.get_attribute("data-card-ready"), "1")
         self.assertEqual(page.locator(".sa-graduation-map").count(), 1)
         self.assertEqual(page.locator(".sa-timetable").count(), 0)
         self.assertIn("DS341", page.locator(".sa-graduation-map").inner_text())
-        self.assertEqual(page.locator(".sa-graduation-map .prereq-svg").count(), 1)
-        self.assertTrue(page.locator(".sa-grad-desktop").is_visible())
-        self.assertFalse(page.locator(".sa-grad-mobile").is_visible())
+        self.assertFalse(page.locator(".sa-grad-desktop").is_visible())
+        self.assertTrue(page.locator(".sa-grad-mobile").is_visible())
         self.assertFalse(page.locator(".sa-grad-expand").is_visible())
         self.assertFalse(page.locator(".sa-grad-toolbar .pg-modes").is_visible())
+        self.assertEqual(page.locator(".sa-card-grad-legend").count(), 1)
+        self.assertEqual(page.locator(".sa-grad-course").count(), len(all_codes))
+        self.assertEqual(page.locator("details.sa-grad-more").count(), 0)
+        first_course = page.locator(".sa-grad-course").first
+        self.assertGreaterEqual(
+            float(first_course.evaluate("node => parseFloat(getComputedStyle(node).fontSize)")),
+            12,
+        )
+        self.assertIn(
+            "تنقيب البيانات",
+            page.locator(".sa-grad-course", has_text="DS225")
+            .locator(".sa-card-grad-course-name")
+            .inner_text(),
+        )
         dimensions = root.evaluate(
             "node => ({clientWidth: node.clientWidth, scrollWidth: node.scrollWidth})"
         )
         self.assertLessEqual(dimensions["scrollWidth"], dimensions["clientWidth"] + 1)
         png = root.screenshot(type="png")
+        if capture_path := os.getenv("CODEX_CAPTURE_TELEGRAM_GRADUATION_CARD"):
+            Path(capture_path).write_bytes(png)
         png_width, png_height = struct.unpack(">II", png[16:24])
         self.assertEqual(png_width, 1440)
         self.assertLess(png_height, 3000)

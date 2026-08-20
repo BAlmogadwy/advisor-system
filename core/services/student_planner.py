@@ -358,7 +358,8 @@ def build_student_options(request: PlannerRequest) -> dict[str, Any]:
         # straight to the student. The cause is chained for the log; the student
         # gets the thing they can act on.
         raise PlannerUnavailable(
-            "تعذّر تحديد الشطر (طلاب/طالبات) في ملفك، ولا يصحّ تخمينه. راجع القسم لتحديث بياناتك."
+            "تعذّر تحديد شطر الدراسة (طلاب أو طالبات) من بيانات ملفك، ولا يمكن "
+            "افتراضه. راجع القسم الأكاديمي لتحديث بياناتك."
         ) from exc
 
     program = str(
@@ -367,8 +368,8 @@ def build_student_options(request: PlannerRequest) -> dict[str, Any]:
     ).strip()
     if not program:
         raise PlannerUnavailable(
-            "لا يوجد برنامج دراسي مسجَّل في ملفك، فلا توجد خطة يمكن البناء عليها. "
-            "راجع القسم لتحديث بياناتك."
+            "لا يظهر برنامج دراسي في ملفك، لذلك لا يمكن تحديد الخطة التي سيُبنى "
+            "عليها الجدول المقترح. راجع القسم الأكاديمي لتحديث بياناتك."
         )
     credits = _course_credits(program)
     for raw_code, raw_credits in request.course_credits_override:
@@ -785,7 +786,8 @@ def validate_draft_selection(
         student_gender_strict(student_id)
     except UnknownStudentGender as exc:
         raise DraftRejected(
-            "تعذّر تحديد الشطر (طلاب/طالبات) في ملفك، ولا يصحّ تخمينه. راجع القسم لتحديث بياناتك."
+            "تعذّر تحديد شطر الدراسة (طلاب أو طالبات) من بيانات ملفك، ولا يمكن "
+            "افتراضه. راجع القسم الأكاديمي لتحديث بياناتك."
         ) from exc
 
     program = str(
@@ -800,7 +802,7 @@ def validate_draft_selection(
         if not code:
             continue
         if code not in permitted:
-            raise DraftRejected(f"المقرر {code} ليس ضمن المقررات المتاحة لك.")
+            raise DraftRejected(f"المقرر {code} غير مدرج في بيانات خطتك الدراسية.")
         if code not in codes:
             codes.append(code)
 
@@ -810,25 +812,29 @@ def validate_draft_selection(
     ):
         code = normalize_code(str(raw_code))
         if code not in codes:
-            raise DraftRejected(f"حُدِّدت شعبة للمقرر {code} وهو غير مُدرَج ضمن اختيارك.")
+            raise DraftRejected(f"حُدّدت شعبة للمقرر {code}، لكنه غير مدرج ضمن مقررات اختيارك.")
         try:
             section_id = int(raw_id)
         except (TypeError, ValueError) as exc:
-            raise DraftRejected(f"الشعبة المحدَّدة للمقرر {code} غير صالحة.") from exc
+            raise DraftRejected(f"معرّف الشعبة المحددة للمقرر {code} غير صالح.") from exc
 
         section = TermSection.objects.filter(id=section_id, scenario__isnull=True).first()
         if section is None:
-            raise DraftRejected(f"الشعبة المحدَّدة للمقرر {code} غير موجودة.")
+            raise DraftRejected(f"الشعبة المحددة للمقرر {code} غير موجودة في بيانات الشعب.")
         actual = normalize_code(
             section.course_key or f"{section.course_code}{section.course_number}"
         )
         if actual != code:
-            raise DraftRejected(f"الشعبة المحدَّدة للمقرر {code} تخصّ المقرر {actual}.")
+            raise DraftRejected(
+                f"الشعبة المحددة للمقرر {code} مدرجة في بيانات النظام تحت المقرر {actual}."
+            )
         # THE canonical answer, shared with every other surface. Spelling the rule
         # out here — "the label starts with M" — would mean a change to section
         # coding splitting the planner and the chat apart without a failing test.
         if not section_is_available_to_student(section, student_id=student_id):
-            raise DraftRejected(f"الشعبة {section.section} من {code} غير متاحة لك.")
+            raise DraftRejected(
+                f"الشعبة {section.section} من {code} لا تتوافق مع شطر الدراسة المسجّل في ملفك."
+            )
         pinned[code] = section_id
 
     return codes, pinned

@@ -267,7 +267,8 @@ def _parse_and_validate_student_response(
     }
     structured_course_codes = {
         normalize_code(f"{row['course_code']}{row['course_number']}")
-        for row in validated_timetable["rows"]
+        for bucket in ("rows", "unscheduled")
+        for row in validated_timetable[bucket]
     }
     if (
         not structured_course_codes

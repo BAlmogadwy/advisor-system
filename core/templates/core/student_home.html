@@ -7,14 +7,14 @@
 
 {% block page_chips %}
   <span class="ph-chip ph-chip-page">{% if LANGUAGE_CODE == 'ar' %}الرقم الجامعي{% else %}University ID{% endif %}: <bdi dir="ltr">{{ student_id }}</bdi></span>
-  {% if student and student.program %}<span class="ph-chip ph-chip-context"><bdi dir="ltr">{{ student.program }}</bdi></span>{% endif %}
-  <span class="ph-chip ph-chip-context"><bdi dir="ltr">{{ academic_year }}</bdi> — {% if LANGUAGE_CODE == 'ar' %}الفصل{% else %}Term{% endif %} <bdi dir="ltr">{{ term }}</bdi></span>
+  {% if student and student.program %}<span class="ph-chip ph-chip-context student-program-chip"><bdi dir="ltr">{{ student.program }}</bdi></span>{% endif %}
+  <span class="ph-chip ph-chip-context student-term-chip"><bdi dir="ltr">{{ academic_year }}</bdi> — {% if LANGUAGE_CODE == 'ar' %}الفصل الدراسي{% else %}Term{% endif %} <bdi dir="ltr">{{ term }}</bdi></span>
 {% endblock %}
 
 {% block page_intro %}
   <p class="student-home-intro mb-0">
     {% if student %}<bdi class="student-home-name" dir="auto">{{ student.name }}</bdi><span aria-hidden="true">—</span>{% endif %}
-    {% if LANGUAGE_CODE == 'ar' %}سجلك الأكاديمي، جدولك لهذا الفصل، والمقررات المقترحة لك.{% else %}Your academic record, this term's timetable, and your recommended courses.{% endif %}
+    {% if LANGUAGE_CODE == 'ar' %}استعرض سجلك الأكاديمي، وقارن الجدول المسجّل فعليًا بالجدول المتوقع، واطّلع على المقررات المقترحة بناءً على خطتك.{% else %}Review your academic record, compare your registered and expected timetables, and see your suggested courses.{% endif %}
   </p>
 {% endblock %}
 
@@ -25,15 +25,23 @@
   redirect (bouncing to the login view would loop straight back here).{% endcomment %}
   <div class="card p-3">
     <h6 class="mb-2">{% if LANGUAGE_CODE == 'ar' %}الحساب غير مرتبط{% else %}Account not linked{% endif %}</h6>
-    <p class="mb-2">{% if LANGUAGE_CODE == 'ar' %}هذا الحساب غير مرتبط بسجل طالب. يرجى التواصل مع القبول والتسجيل.{% else %}This account is not linked to a student record. Please contact the registrar.{% endif %}</p>
+    <p class="mb-2">{% if LANGUAGE_CODE == 'ar' %}هذا الحساب غير مرتبط بسجل أكاديمي لطالب. يرجى التواصل مع عمادة القبول والتسجيل.{% else %}This account is not linked to a student record. Please contact the registrar.{% endif %}</p>
     <form method="post" action="/logout/">{% csrf_token %}
       <button type="submit" class="btn btn-sm btn-outline-secondary">{% if LANGUAGE_CODE == 'ar' %}تسجيل الخروج{% else %}Log out{% endif %}</button>
     </form>
   </div>
 {% else %}
 
+<nav class="student-course-jumps student-home-jumps mb-3" aria-label="{% if LANGUAGE_CODE == 'ar' %}أقسام الصفحة{% else %}Page sections{% endif %}">
+  <a href="#student-home-summary">{% if LANGUAGE_CODE == 'ar' %}الملخص الأكاديمي{% else %}Academic summary{% endif %}</a>
+  {% if has_registered_timetable and has_expected_timetable %}<a href="#student-home-comparison">{% if LANGUAGE_CODE == 'ar' %}مقارنة الجدولين{% else %}Compare timetables{% endif %}</a>{% endif %}
+  {% if has_registered_timetable %}<a href="#student-home-timetable-registered">{% if LANGUAGE_CODE == 'ar' %}الجدول المسجّل فعليًا{% else %}Registered timetable{% endif %}</a>{% endif %}
+  {% if has_expected_timetable %}<a href="#student-home-timetable-expected">{% if LANGUAGE_CODE == 'ar' %}الجدول المتوقع{% else %}Expected timetable{% endif %}</a>{% endif %}
+  <a href="#student-home-recommendations">{% if LANGUAGE_CODE == 'ar' %}المقررات المقترحة{% else %}Suggested courses{% endif %}</a>
+</nav>
+
 {# ── Academic summary ── #}
-<section class="card student-summary-card p-3 mb-3" aria-labelledby="student-summary-title">
+<section class="card student-summary-card p-3 mb-3" id="student-home-summary" aria-labelledby="student-summary-title">
   <div class="student-summary-header mb-2">
     <h2 class="student-section-title mb-0" id="student-summary-title">{% if LANGUAGE_CODE == 'ar' %}الملخص الأكاديمي{% else %}Academic summary{% endif %}</h2>
     <a class="student-summary-advisor" href="{% url 'student_advisor' %}">{% if LANGUAGE_CODE == 'ar' %}اسأل المرشد الذكي{% else %}Ask the AI advisor{% endif %} <span aria-hidden="true">↗</span></a>
@@ -53,7 +61,7 @@
       {% if home_cards and home_cards.gpa.classified %}
         <div class="small text-secondary" dir="auto">
           {% if LANGUAGE_CODE == 'ar' %}التقدير العام: {{ home_cards.gpa.band_ar }}{% else %}General estimate: {{ home_cards.gpa.band_en }}{% endif %}
-          {% if home_cards.gpa.source.page %}<span class="text-secondary" title="{{ home_cards.gpa.source.title_ar }} — {{ home_cards.gpa.source.policy_id }}">· {% if LANGUAGE_CODE == 'ar' %}المصدر{% else %}source{% endif %} {% if LANGUAGE_CODE == 'ar' %}ص{% else %}p.{% endif %} {{ home_cards.gpa.source.page }}</span>{% endif %}
+          {% if home_cards.gpa.source.page %}<span class="text-secondary" title="{{ home_cards.gpa.source.title_ar }} — {{ home_cards.gpa.source.policy_id }}">· {% if LANGUAGE_CODE == 'ar' %}وفق لائحة التقديرات (ص. {{ home_cards.gpa.source.page }}){% else %}source p. {{ home_cards.gpa.source.page }}{% endif %}</span>{% endif %}
         </div>
       {% elif home_cards and home_cards.gpa.note_ar %}
         <div class="small text-secondary" dir="auto">{{ home_cards.gpa.note_ar }}</div>
@@ -61,7 +69,7 @@
     </div>
 
     <div class="kpi">
-      <div class="k">{% if LANGUAGE_CODE == 'ar' %}الساعات المكتسبة{% else %}Earned credits{% endif %}</div>
+      <div class="k">{% if LANGUAGE_CODE == 'ar' %}الساعات المعتمدة المكتسبة{% else %}Earned credits{% endif %}</div>
       <div class="v">{% if student %}{{ student.total_earned_credits|default_if_none:"—" }}{% else %}—{% endif %}</div>
       <div class="small text-secondary" dir="auto">
         {% if LANGUAGE_CODE == 'ar' %}بحسب السجل الأكاديمي{% else %}From your academic record{% endif %}
@@ -69,24 +77,24 @@
     </div>
 
     <div class="kpi">
-      <div class="k">{% if LANGUAGE_CODE == 'ar' %}ساعات هذا الفصل{% else %}This term's hours{% endif %}</div>
+      <div class="k">{% if LANGUAGE_CODE == 'ar' %}الساعات المسجّلة في هذا الفصل{% else %}Registered timetable hours{% endif %}</div>
       <div class="v">{% if home_cards and home_cards.registered_hours.known %}{{ home_cards.registered_hours.value }}{% else %}—{% endif %}</div>
-      <div class="small text-secondary" dir="auto"><span dir="ltr">{{ academic_year }}/{{ term }}</span> · {% if LANGUAGE_CODE == 'ar' %}بحسب بيانات جدول هذا الفصل{% else %}from this term's timetable data{% endif %}</div>
+      <div class="small text-secondary" dir="auto"><span dir="ltr">{{ academic_year }}/{{ term }}</span> · {% if LANGUAGE_CODE == 'ar' %}وفق أحدث بيانات التسجيل المستوردة من بوابة الجامعة{% else %}from the latest registration data imported from the university portal{% endif %}</div>
     </div>
 
     <div class="kpi">
       <div class="k">{% if LANGUAGE_CODE == 'ar' %}المقررات المجتازة{% else %}Passed plan courses{% endif %}</div>
       <div class="v">{% if home_cards %}{{ home_cards.plan_state.passed }}{% else %}—{% endif %}</div>
       <div class="small text-secondary" dir="auto">
-        {% if LANGUAGE_CODE == 'ar' %}ضمن بيانات خطتك الحالية{% else %}In your current plan data{% endif %}
+        {% if LANGUAGE_CODE == 'ar' %}بحسب بيانات خطتك الدراسية{% else %}Based on the courses in your plan data{% endif %}
       </div>
     </div>
   </div>
 
   {% if home_cards and home_cards.unlock %}
     <div class="student-next-step mt-2" dir="auto">
-      <span class="student-next-step-label">{% if LANGUAGE_CODE == 'ar' %}خطوة عالية الأثر{% else %}High-impact next step{% endif %}</span>
-      <span>{% if LANGUAGE_CODE == 'ar' %}اجتياز <strong dir="ltr">{{ home_cards.unlock.course_code }}</strong> يتيح لك مباشرةً {{ home_cards.unlock.frees_now_count }} من المقررات التي كانت تنتظر هذا المقرر وحده.{% else %}Passing <strong dir="ltr">{{ home_cards.unlock.course_code }}</strong> immediately frees {{ home_cards.unlock.frees_now_count }} courses that were waiting on this one alone.{% endif %}</span>
+      <span class="student-next-step-label">{% if LANGUAGE_CODE == 'ar' %}مقرر مؤثر في تقدمك{% else %}A course that opens new options{% endif %}</span>
+      <span>{% if LANGUAGE_CODE == 'ar' %}اجتياز <strong dir="ltr">{{ home_cards.unlock.course_code }}</strong> يستوفي آخر متطلب سابق متبقٍ لمقررات إضافية. عددها: <strong>{{ home_cards.unlock.frees_now_count }}</strong>.{% else %}Passing <strong dir="ltr">{{ home_cards.unlock.course_code }}</strong> opens {{ home_cards.unlock.frees_now_count }} additional courses that are waiting on this prerequisite alone.{% endif %}</span>
     </div>
   {% endif %}
 
@@ -96,7 +104,7 @@
      while being a subset of it, so the tiles appeared to sum to more courses than
      the plan holds. `blocked_deeper` is the remainder.
   {% endcomment %}
-  <details class="mt-2">
+  <details class="student-disclosure mt-2">
     <summary class="small text-secondary">{% if LANGUAGE_CODE == 'ar' %}تفصيل حالات المقررات{% else %}Course-state breakdown{% endif %}</summary>
     <div class="table-wrap mt-2">
       <table class="table table-sm mb-0" aria-label="{% if LANGUAGE_CODE == 'ar' %}تفصيل حالات مقررات الخطة{% else %}Plan course-state breakdown{% endif %}">
@@ -107,14 +115,14 @@
            NOT «متاحة للتسجيل». The service establishes prerequisites only — not
              section publication, not capacity, not permission.
           {% endcomment %}
-          <tr><td dir="auto">{% if LANGUAGE_CODE == 'ar' %}مستوفية للمتطلبات{% else %}Prerequisites met{% endif %}</td><td class="text-end">{{ home_cards.plan_state.open }}</td></tr>
-          <tr><td dir="auto">{% if LANGUAGE_CODE == 'ar' %}يفصلها متطلب واحد{% else %}One prerequisite away{% endif %}</td><td class="text-end">{{ home_cards.plan_state.one_step }}</td></tr>
-          <tr><td dir="auto">{% if LANGUAGE_CODE == 'ar' %}تحتاج أكثر من متطلب{% else %}Needs more than one{% endif %}</td><td class="text-end">{{ home_cards.plan_state.blocked_deeper }}</td></tr>
+          <tr><td dir="auto">{% if LANGUAGE_CODE == 'ar' %}مستوفية للمتطلبات السابقة{% else %}Prerequisites met{% endif %}</td><td class="text-end">{{ home_cards.plan_state.open }}</td></tr>
+          <tr><td dir="auto">{% if LANGUAGE_CODE == 'ar' %}متبقٍ لكل منها متطلب سابق واحد{% else %}One prerequisite away{% endif %}</td><td class="text-end">{{ home_cards.plan_state.one_step }}</td></tr>
+          <tr><td dir="auto">{% if LANGUAGE_CODE == 'ar' %}متبقٍ لكل منها أكثر من متطلب سابق{% else %}Needs more than one{% endif %}</td><td class="text-end">{{ home_cards.plan_state.blocked_deeper }}</td></tr>
           {% comment %}
            Counted APART. A placeholder is not a course in any state — it is a
              choice not yet made.
           {% endcomment %}
-          <tr><td dir="auto">{% if LANGUAGE_CODE == 'ar' %}متطلبات اختيارية لم يُحدّد مقررها{% else %}Elective requirements not yet chosen{% endif %}</td><td class="text-end">{{ home_cards.plan_state.placeholder_total }}</td></tr>
+          <tr><td dir="auto">{% if LANGUAGE_CODE == 'ar' %}خانات اختيارية لم يُحدّد مقررها بعد{% else %}Elective requirements not yet chosen{% endif %}</td><td class="text-end">{{ home_cards.plan_state.placeholder_total }}</td></tr>
         </tbody>
       </table>
       {% if home_cards.plan_state.reconciles %}
@@ -124,13 +132,39 @@
            declared programme-plan size. That needs their exact curriculum edition.
         {% endcomment %}
         <p class="small text-secondary mb-0 mt-1" dir="auto">
-          {% if LANGUAGE_CODE == 'ar' %}المتطلبات المصنفة في بيانات خطتك الحالية: {{ home_cards.plan_state.classified_requirement_total }}{% else %}Requirements classified in your current plan data: {{ home_cards.plan_state.classified_requirement_total }}{% endif %}
+          {% if LANGUAGE_CODE == 'ar' %}إجمالي متطلبات الخطة التي أمكن تصنيفها من بياناتك: {{ home_cards.plan_state.classified_requirement_total }}{% else %}Requirements classified in your current plan data: {{ home_cards.plan_state.classified_requirement_total }}{% endif %}
         </p>
       {% endif %}
     </div>
   </details>
   {% endif %}
 </section>
+
+{# Compare course membership before the two long grids. Section and time changes remain visible in the detailed timetables below. #}
+{% if has_registered_timetable and has_expected_timetable %}
+<section class="card student-timetable-comparison-card p-3 mb-3" id="student-home-comparison" aria-labelledby="student-timetable-diff-title">
+  <div class="student-home-section-head mb-2">
+    <h2 class="student-section-title mb-0" id="student-timetable-diff-title">{% if LANGUAGE_CODE == 'ar' %}مقارنة المقررات بين الجدول المتوقع والجدول المسجّل فعليًا{% else %}Expected versus registered course lists{% endif %}</h2>
+    <span class="student-timetable-comparison-scope">{% if LANGUAGE_CODE == 'ar' %}المقررات فقط{% else %}Courses only{% endif %}</span>
+  </div>
+  {% if expected_not_registered %}
+    <p class="mb-2" dir="auto">
+      {% if LANGUAGE_CODE == 'ar' %}مقررات تظهر في الجدول المتوقع ولا تظهر في الجدول المسجّل فعليًا:{% else %}In the expected timetable, but not in your registered timetable:{% endif %}
+      {% for code in expected_not_registered %}<bdi dir="ltr">{{ code }}</bdi>{% if not forloop.last %}<span>، </span>{% endif %}{% endfor %}
+    </p>
+  {% endif %}
+  {% if registered_not_expected %}
+    <p class="mb-2" dir="auto">
+      {% if LANGUAGE_CODE == 'ar' %}مقررات تظهر في الجدول المسجّل فعليًا ولا تظهر في الجدول المتوقع:{% else %}In your registered timetable, but not in the expected timetable:{% endif %}
+      {% for code in registered_not_expected %}<bdi dir="ltr">{{ code }}</bdi>{% if not forloop.last %}<span>، </span>{% endif %}{% endfor %}
+    </p>
+  {% endif %}
+  {% if not expected_not_registered and not registered_not_expected %}
+    <p class="mb-2" dir="auto">{% if LANGUAGE_CODE == 'ar' %}المقررات متطابقة في الجدولين، لكن قد تختلف الشُعب أو أوقات المحاضرات؛ راجع تفاصيل كل جدول أدناه.{% else %}The course lists match. Sections or meeting times may still differ; review both timetables below.{% endif %}</p>
+  {% endif %}
+  <p class="student-guidance-note mb-0 mt-2" dir="auto">{% if LANGUAGE_CODE == 'ar' %}هذه المقارنة للإرشاد فقط ولا تغيّر تسجيلك. أي تعديل يتم عبر بوابة الجامعة.{% else %}This comparison is guidance only and does not change your registration. Make any changes in the university portal.{% endif %}</p>
+</section>
+{% endif %}
 
 {% comment %}My timetables.
 
@@ -141,28 +175,33 @@
   only carry one heading, and that heading would misdescribe half its cells.
 {% endcomment %}
 {% for panel in timetable_panels %}
-<section class="card student-home-timetable-card p-3 mb-3" aria-labelledby="student-timetable-title-{{ panel.kind }}">
+<section class="card student-home-timetable-card student-home-timetable-card--{{ panel.kind }} p-3 mb-3" id="student-home-timetable-{{ panel.kind }}" aria-labelledby="student-timetable-title-{{ panel.kind }}">
   <div class="student-home-section-head mb-2">
-    <h2 class="student-section-title mb-0" id="student-timetable-title-{{ panel.kind }}">
-      {% if panel.kind == 'expected' %}
-        {% if LANGUAGE_CODE == 'ar' %}جدولي المتوقع{% else %}My expected timetable{% endif %}
-      {% else %}
-        {% if LANGUAGE_CODE == 'ar' %}جدولي المسجّل{% else %}My registered timetable{% endif %}
-      {% endif %}
-    </h2>
+    <div class="student-timetable-card-title">
+      <h2 class="student-section-title mb-0" id="student-timetable-title-{{ panel.kind }}">
+        {% if panel.kind == 'expected' %}
+          {% if LANGUAGE_CODE == 'ar' %}الجدول المتوقع{% else %}My expected timetable{% endif %}
+        {% else %}
+          {% if LANGUAGE_CODE == 'ar' %}الجدول المسجّل فعليًا{% else %}My registered timetable{% endif %}
+        {% endif %}
+      </h2>
+      <span class="student-timetable-state student-timetable-state--{{ panel.kind }}">
+        {% if panel.kind == 'expected' %}{% if LANGUAGE_CODE == 'ar' %}للتخطيط فقط{% else %}Planning only{% endif %}{% else %}{% if LANGUAGE_CODE == 'ar' %}وفق بيانات بوابة الجامعة{% else %}University registration{% endif %}{% endif %}
+      </span>
+    </div>
     <span class="badge {% if panel.kind == 'expected' %}text-bg-secondary{% else %}text-bg-primary{% endif %}"><bdi dir="ltr">{{ panel.academic_year }}/{{ panel.term }}</bdi></span>
   </div>
   {% if panel.kind == 'expected' %}
     <p class="small text-secondary" dir="auto">
-      {% if LANGUAGE_CODE == 'ar' %}هذه خطة متوقعة وليست تسجيلاً فعلياً. راجعها هنا، ثم سجّل المقررات التي تختارها بنفسك في بوابة الجامعة الرئيسية.{% else %}This is an expected plan, not an actual registration. Review it here, then register the courses you choose yourself in the university's main portal.{% endif %}
+      {% if LANGUAGE_CODE == 'ar' %}يعرض هذا الجدول المقررات المتوقع دراستها وفق بيانات الخطة، ولا يُعدّ تسجيلًا رسميًا. يتم التسجيل الفعلي عبر بوابة الجامعة.{% else %}This is an expected plan, not an actual registration. Review it here, then register the courses you choose yourself in the university's main portal.{% endif %}
     </p>
   {% else %}
     <p class="small text-secondary" dir="auto">
-      {% if LANGUAGE_CODE == 'ar' %}هذا ما سجّلته الجامعة لك فعلياً.{% else %}This is what the university has actually recorded for you.{% endif %}
+      {% if LANGUAGE_CODE == 'ar' %}يعرض هذا الجدول المقررات المسجّلة فعليًا وفق آخر بيانات مستوردة من بوابة الجامعة.{% else %}This is what the university has actually recorded for you.{% endif %}
     </p>
   {% endif %}
   {% if panel.is_fallback %}
-    <p class="small text-secondary"><span dir="auto">{% if LANGUAGE_CODE == 'ar' %}لا يوجد شيء في الفصل الحالي (<bdi dir="ltr">{{ academic_year }}/{{ term }}</bdi>)، لذا يُعرض جدولك من آخر جدول منشور.{% else %}Nothing is on file for the current term (<bdi dir="ltr">{{ academic_year }}/{{ term }}</bdi>), so this is your schedule from the most recently published timetable.{% endif %}</span></p>
+    <p class="small text-secondary"><span dir="auto">{% if LANGUAGE_CODE == 'ar' %}لا تتوفر بيانات للفصل الحالي (<bdi dir="ltr">{{ academic_year }}/{{ term }}</bdi>)؛ لذلك يظهر آخر جدول متاح في بياناتك.{% else %}No data is available for the current term (<bdi dir="ltr">{{ academic_year }}/{{ term }}</bdi>), so this is your schedule from the most recently published timetable.{% endif %}</span></p>
   {% endif %}
   {% if panel.timetable %}
     <div
@@ -172,17 +211,17 @@
       dir="{% if LANGUAGE_CODE == 'ar' %}rtl{% else %}ltr{% endif %}"
       data-language="{{ LANGUAGE_CODE|default:'en' }}"
       data-time-label="{% if LANGUAGE_CODE == 'ar' %}الوقت{% else %}Time{% endif %}"
-      data-empty-message="{% if LANGUAGE_CODE == 'ar' %}لا توجد أوقات لعرضها.{% else %}No meeting times to show.{% endif %}"
-      data-agenda-label="{% if LANGUAGE_CODE == 'ar' %}جدولي {% if panel.kind == 'expected' %}{% if LANGUAGE_CODE == 'ar' %}المتوقع{% else %}expected{% endif %}{% else %}{% if LANGUAGE_CODE == 'ar' %}المسجّل{% else %}registered{% endif %}{% endif %} حسب اليوم{% else %}My {% if panel.kind == 'expected' %}{% if LANGUAGE_CODE == 'ar' %}المتوقع{% else %}expected{% endif %}{% else %}{% if LANGUAGE_CODE == 'ar' %}المسجّل{% else %}registered{% endif %}{% endif %} timetable by day{% endif %}"
-      aria-label="{% if LANGUAGE_CODE == 'ar' %}جدولي {% if panel.kind == 'expected' %}{% if LANGUAGE_CODE == 'ar' %}المتوقع{% else %}expected{% endif %}{% else %}{% if LANGUAGE_CODE == 'ar' %}المسجّل{% else %}registered{% endif %}{% endif %} حسب اليوم والوقت{% else %}My {% if panel.kind == 'expected' %}{% if LANGUAGE_CODE == 'ar' %}المتوقع{% else %}expected{% endif %}{% else %}{% if LANGUAGE_CODE == 'ar' %}المسجّل{% else %}registered{% endif %}{% endif %} timetable by day and time{% endif %}"
+      data-empty-message="{% if LANGUAGE_CODE == 'ar' %}لا تتوفر مواعيد دراسية لعرضها في هذا الجدول.{% else %}No meeting times to show.{% endif %}"
+      data-agenda-label="{% if LANGUAGE_CODE == 'ar' %}{% if panel.kind == 'expected' %}الجدول المتوقع حسب اليوم{% else %}الجدول المسجّل فعليًا حسب اليوم{% endif %}{% else %}My {% if panel.kind == 'expected' %}expected{% else %}registered{% endif %} timetable by day{% endif %}"
+      aria-label="{% if LANGUAGE_CODE == 'ar' %}{% if panel.kind == 'expected' %}الجدول المتوقع حسب اليوم والوقت{% else %}الجدول المسجّل فعليًا حسب اليوم والوقت{% endif %}{% else %}My {% if panel.kind == 'expected' %}expected{% else %}registered{% endif %} timetable by day and time{% endif %}"
     ></div>
     {{ panel.meetings|json_script:panel.data_id }}
 
     <details class="student-timetable-exact mt-3">
-      <summary>{% if LANGUAGE_CODE == 'ar' %}تفاصيل جدولي {% if panel.kind == 'expected' %}{% if LANGUAGE_CODE == 'ar' %}المتوقع{% else %}expected{% endif %}{% else %}{% if LANGUAGE_CODE == 'ar' %}المسجّل{% else %}registered{% endif %}{% endif %}{% else %}My {% if panel.kind == 'expected' %}{% if LANGUAGE_CODE == 'ar' %}المتوقع{% else %}expected{% endif %}{% else %}{% if LANGUAGE_CODE == 'ar' %}المسجّل{% else %}registered{% endif %}{% endif %} timetable in detail{% endif %}</summary>
-      <div class="student-timetable-table-scroll" dir="{% if LANGUAGE_CODE == 'ar' %}rtl{% else %}ltr{% endif %}" tabindex="0" role="region" aria-label="{% if LANGUAGE_CODE == 'ar' %}تفاصيل جدولي {% if panel.kind == 'expected' %}{% if LANGUAGE_CODE == 'ar' %}المتوقع{% else %}expected{% endif %}{% else %}{% if LANGUAGE_CODE == 'ar' %}المسجّل{% else %}registered{% endif %}{% endif %}{% else %}My {% if panel.kind == 'expected' %}{% if LANGUAGE_CODE == 'ar' %}المتوقع{% else %}expected{% endif %}{% else %}{% if LANGUAGE_CODE == 'ar' %}المسجّل{% else %}registered{% endif %}{% endif %} timetable details{% endif %}">
+      <summary>{% if LANGUAGE_CODE == 'ar' %}{% if panel.kind == 'expected' %}تفاصيل الجدول المتوقع{% else %}تفاصيل الجدول المسجّل فعليًا{% endif %}{% else %}My {% if panel.kind == 'expected' %}expected{% else %}registered{% endif %} timetable in detail{% endif %}</summary>
+      <div class="student-timetable-table-scroll" dir="{% if LANGUAGE_CODE == 'ar' %}rtl{% else %}ltr{% endif %}" tabindex="0" role="region" aria-label="{% if LANGUAGE_CODE == 'ar' %}{% if panel.kind == 'expected' %}تفاصيل الجدول المتوقع{% else %}تفاصيل الجدول المسجّل فعليًا{% endif %}{% else %}My {% if panel.kind == 'expected' %}expected{% else %}registered{% endif %} timetable details{% endif %}">
         <table class="student-timetable-table" dir="{% if LANGUAGE_CODE == 'ar' %}rtl{% else %}ltr{% endif %}">
-          <caption class="sr-only">{% if LANGUAGE_CODE == 'ar' %}مقررات جدولي {% if panel.kind == 'expected' %}{% if LANGUAGE_CODE == 'ar' %}المتوقع{% else %}expected{% endif %}{% else %}{% if LANGUAGE_CODE == 'ar' %}المسجّل{% else %}registered{% endif %}{% endif %} مع اليوم ووقت البداية والنهاية{% else %}Your {% if panel.kind == 'expected' %}{% if LANGUAGE_CODE == 'ar' %}المتوقع{% else %}expected{% endif %}{% else %}{% if LANGUAGE_CODE == 'ar' %}المسجّل{% else %}registered{% endif %}{% endif %} courses with day, start time, and end time{% endif %}</caption>
+          <caption class="sr-only">{% if LANGUAGE_CODE == 'ar' %}{% if panel.kind == 'expected' %}مقررات الجدول المتوقع{% else %}مقررات الجدول المسجّل فعليًا{% endif %} مع اليوم ووقت البداية والنهاية{% else %}Your {% if panel.kind == 'expected' %}expected{% else %}registered{% endif %} courses with day, start time, and end time{% endif %}</caption>
           <thead>
             <tr>
               <th scope="col">{% if LANGUAGE_CODE == 'ar' %}المقرر{% else %}Course{% endif %}</th>
@@ -191,7 +230,7 @@
               <th scope="col">{% if LANGUAGE_CODE == 'ar' %}من{% else %}From{% endif %}</th>
               <th scope="col">{% if LANGUAGE_CODE == 'ar' %}إلى{% else %}To{% endif %}</th>
               <th scope="col">{% if LANGUAGE_CODE == 'ar' %}المكان{% else %}Room{% endif %}</th>
-              <th scope="col">{% if LANGUAGE_CODE == 'ar' %}المدرس{% else %}Instructor{% endif %}</th>
+              <th scope="col">{% if LANGUAGE_CODE == 'ar' %}عضو هيئة التدريس{% else %}Instructor{% endif %}</th>
             </tr>
           </thead>
           <tbody>
@@ -224,7 +263,8 @@
   {% endif %}
 
   {% if panel.unscheduled %}
-    <h3 class="student-home-subtitle mt-3">{% if LANGUAGE_CODE == 'ar' %}مقررات بدون وقت محدد{% else %}Courses without a scheduled time{% endif %}</h3>
+    <h3 class="student-home-subtitle mt-3">{% if LANGUAGE_CODE == 'ar' %}مقررات لا تتوفر مواعيدها في البيانات{% else %}Courses without a scheduled time{% endif %}</h3>
+    <p class="small text-secondary mb-2">{% if LANGUAGE_CODE == 'ar' %}هذه المقررات مدرجة في الجدول، لكن أوقات محاضراتها غير متوفرة في البيانات الحالية.{% else %}The course is in the timetable, but its meeting time is not available in the current data.{% endif %}</p>
     <ul class="student-home-unscheduled">
       {% for r in panel.unscheduled %}
         <li><bdi dir="ltr">{{ r.course_code }}</bdi>{% if r.section %}<span aria-hidden="true"> — </span><bdi dir="ltr">{{ r.section }}</bdi>{% endif %}</li>
@@ -235,35 +275,11 @@
 {% empty %}
 <section class="card student-home-timetable-card p-3 mb-3" aria-labelledby="student-timetable-title-empty">
   <div class="student-home-section-head mb-2">
-    <h2 class="student-section-title mb-0" id="student-timetable-title-empty">{% if LANGUAGE_CODE == 'ar' %}جدولي{% else %}My timetable{% endif %}</h2>
+    <h2 class="student-section-title mb-0" id="student-timetable-title-empty">{% if LANGUAGE_CODE == 'ar' %}الجداول الدراسية{% else %}My timetable{% endif %}</h2>
   </div>
-  <p class="mb-0">{% if LANGUAGE_CODE == 'ar' %}لا يوجد جدول مسجّل ولا خطة متوقعة لهذا الفصل.{% else %}There is no registered timetable and no expected plan for this term.{% endif %}</p>
+  <p class="mb-0">{% if LANGUAGE_CODE == 'ar' %}لا تتوفر حاليًا بيانات للجدول المسجّل فعليًا أو الجدول المتوقع لهذا الفصل.{% else %}We do not yet have registered or expected timetable data for this term.{% endif %}</p>
 </section>
 {% endfor %}
-
-{# The difference between the two, stated once, only when both exist. #}
-{% if has_registered_timetable and has_expected_timetable %}
-<section class="card p-3 mb-3" aria-labelledby="student-timetable-diff-title">
-  <h2 class="student-section-title mb-2" id="student-timetable-diff-title">{% if LANGUAGE_CODE == 'ar' %}الفرق بين المتوقع والمسجّل{% else %}Expected versus registered{% endif %}</h2>
-  {% if expected_not_registered %}
-    <p class="mb-2" dir="auto">
-      {% if LANGUAGE_CODE == 'ar' %}في خطتك المتوقعة ولم تُسجَّل بعد:{% else %}In your expected plan, not registered yet:{% endif %}
-      {% for code in expected_not_registered %}<bdi dir="ltr">{{ code }}</bdi>{% if not forloop.last %}<span>، </span>{% endif %}{% endfor %}
-    </p>
-  {% endif %}
-  {% if registered_not_expected %}
-    <p class="mb-2" dir="auto">
-      {% if LANGUAGE_CODE == 'ar' %}مسجّلة ولم تكن في خطتك المتوقعة:{% else %}Registered, but not in your expected plan:{% endif %}
-      {% for code in registered_not_expected %}<bdi dir="ltr">{{ code }}</bdi>{% if not forloop.last %}<span>، </span>{% endif %}{% endfor %}
-    </p>
-  {% endif %}
-  {% if not expected_not_registered and not registered_not_expected %}
-    <p class="mb-0" dir="auto">{% if LANGUAGE_CODE == 'ar' %}تسجيلك يطابق خطتك المتوقعة في المقررات.{% else %}Your registration matches your expected plan, course for course.{% endif %}</p>
-  {% else %}
-    <p class="student-guidance-note mb-0 mt-2" dir="auto">{% if LANGUAGE_CODE == 'ar' %}هذه مقارنة للقراءة فقط. التسجيل الفعلي يتم في بوابة الجامعة الرئيسية.{% else %}This comparison is read-only. Actual registration happens in the university's main portal.{% endif %}</p>
-  {% endif %}
-</section>
-{% endif %}
 
 {# ── Recommended courses ── #}
 <section class="card p-3" id="student-home-recommendations" aria-labelledby="student-recommendations-title">
@@ -277,18 +293,20 @@
     <h2 class="student-section-title mb-0" id="student-recommendations-title">{% if LANGUAGE_CODE == 'ar' %}المقررات المقترحة لك{% else %}Suggested for you{% endif %}</h2>
     <span class="badge text-bg-primary">{{ recommendations|length }}</span>
   </div>
-  <p class="small text-secondary mb-2" dir="auto">{% if LANGUAGE_CODE == 'ar' %}بحسب بيانات الخطة الحالية.{% else %}Based on your current plan data.{% endif %}</p>
+  <p class="small text-secondary mb-2" dir="auto">{% if LANGUAGE_CODE == 'ar' %}اقتراحات إرشادية مبنية على المقررات المتبقية في خطتك والمتطلبات السابقة المستوفاة.{% else %}Suggestions based on the courses and prerequisites in your plan data.{% endif %}</p>
   {% if recommendations %}
-    <div class="student-course-list" role="list">
+    <ul class="student-course-list">
       {% for r in recommendations %}
-        <a class="student-course-row" role="listitem" href="{% url 'student_course_detail_page' r.code %}">
-          <span class="student-course-code"><bdi dir="ltr">{{ r.code }}</bdi></span>
-          <span class="student-course-name" dir="auto">{{ r.name|default:"—" }}</span>
-          {% if r.credits is not None %}<span class="student-course-credits"><strong dir="ltr">{{ r.credits }}</strong> {% if LANGUAGE_CODE == 'ar' %}ساعات{% else %}credits{% endif %}</span>{% endif %}
-          <span class="badge text-bg-secondary student-course-status">{% if LANGUAGE_CODE == 'ar' %}التفاصيل{% else %}Details{% endif %}</span>
-        </a>
+        <li>
+          <a class="student-course-row" href="{% url 'student_course_detail_page' r.code %}">
+            <span class="student-course-code"><bdi dir="ltr">{{ r.code }}</bdi></span>
+            <span class="student-course-name" dir="auto">{{ r.name|default:"—" }}</span>
+            {% if r.credits is not None %}<span class="student-course-credits">{% if LANGUAGE_CODE == 'ar' %}الساعات المعتمدة: <strong dir="ltr">{{ r.credits }}</strong>{% else %}<strong dir="ltr">{{ r.credits }}</strong> credits{% endif %}</span>{% endif %}
+            <span class="badge text-bg-secondary student-course-status">{% if LANGUAGE_CODE == 'ar' %}عرض التفاصيل{% else %}View details{% endif %}</span>
+          </a>
+        </li>
       {% endfor %}
-    </div>
+    </ul>
   {% elif recommendations_already_current or recommendations_already_expected %}
   {% comment %}
     BOTH statements, not an either/or. This was an `elif` chain, so a student
@@ -300,22 +318,22 @@
     the student cannot otherwise tell which of them they still have to act on.
   {% endcomment %}
     {% if recommendations_already_current %}
-    <p class="student-home-empty mb-0" dir="auto">{% if LANGUAGE_CODE == 'ar' %}هذه المقررات المقترحة مسجّلة لديك بالفعل، فلا يكررها النظام:{% else %}These recommended courses are already registered, so the system does not repeat them:{% endif %}
+    <p class="student-home-empty mb-0" dir="auto">{% if LANGUAGE_CODE == 'ar' %}المقررات المقترحة الآتية موجودة بالفعل في الجدول المسجّل فعليًا، لذلك لم تُعرض مرة أخرى ضمن الاقتراحات:{% else %}These recommended courses are already registered, so the system does not repeat them:{% endif %}
       {% for code in recommendations_already_current %}<bdi dir="ltr">{{ code }}</bdi>{% if not forloop.last %}<span>، </span>{% endif %}{% endfor %}</p>
     {% endif %}
     {% if recommendations_already_expected %}
-    <p class="student-home-empty mb-0 mt-2" dir="auto">{% if LANGUAGE_CODE == 'ar' %}هذه المقررات المقترحة موجودة في جدولك المتوقع فقط، فلا يكررها النظام. وجودها هناك لا يعني أنها مسجّلة في بوابة الجامعة:{% else %}These recommended courses are in your expected timetable only, so the system does not repeat them. Being there does not mean they are registered in the university portal:{% endif %}
+    <p class="student-home-empty mb-0 mt-2" dir="auto">{% if LANGUAGE_CODE == 'ar' %}المقررات المقترحة الآتية موجودة في الجدول المتوقع فقط، لذلك لم تُعرض مرة أخرى ضمن الاقتراحات. ظهورها في الجدول المتوقع لا يعني أنها مسجّلة في بوابة الجامعة:{% else %}These recommended courses are in your expected timetable only, so the system does not repeat them. Being there does not mean they are registered in the university portal:{% endif %}
       {% for code in recommendations_already_expected %}<bdi dir="ltr">{{ code }}</bdi>{% if not forloop.last %}<span>، </span>{% endif %}{% endfor %}</p>
     {% endif %}
   {% else %}
-    <p class="student-home-empty mb-0">{% if LANGUAGE_CODE == 'ar' %}لا توجد توصية جديدة من النظام حاليًا.{% else %}There is no new system recommendation at the moment.{% endif %}</p>
+    <p class="student-home-empty mb-0">{% if LANGUAGE_CODE == 'ar' %}لا توجد مقررات إضافية مقترحة حاليًا.{% else %}There are no additional suggested courses at the moment.{% endif %}</p>
   {% endif %}
-  <p class="student-guidance-note mb-0 mt-3" dir="auto">{% if LANGUAGE_CODE == 'ar' %}هذه توصية إرشادية للقراءة فقط. لا يحفظ هذا النظام جدولًا ولا يسجّل مقررات؛ تحقّق من الشعب ثم طبّق اختيارك في بوابة الجامعة الرئيسية.{% else %}This is read-only guidance. This system neither saves a timetable nor registers courses; verify sections and apply your choice in the university's main portal.{% endif %}</p>
+  <p class="student-guidance-note mb-0 mt-3" dir="auto">{% if LANGUAGE_CODE == 'ar' %}هذه الاقتراحات للإرشاد فقط؛ لا تحفظ جدولًا ولا تسجّل أي مقرر. تحقّق من الشُعب المطروحة وشروط التسجيل، ثم أكمل التسجيل عبر بوابة الجامعة.{% else %}These suggestions are read-only guidance. This portal does not save a timetable and does not register courses; verify available sections and complete registration in the university's main portal.{% endif %}</p>
 </section>
 
 {% endif %}{# /unlinked #}
 {% endblock %}
 
 {% block extra_js %}
-<script src="{% static 'js/page-student-home.js' %}?v=2" defer></script>
+<script src="{% static 'js/page-student-home.js' %}?v=3" defer></script>
 {% endblock %}

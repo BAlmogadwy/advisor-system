@@ -1186,6 +1186,7 @@ def _project_my_clash_free_sections(result: dict[str, Any], _: RemoteIdentityMap
             raw,
             "course_code",
             "sections_on_file",
+            "recorded_sections_on_file",
             "currently_registered_sections",
             "expected_plan_sections",
             "baseline_sections",

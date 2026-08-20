@@ -1,7 +1,7 @@
 {% extends "core/base.html" %}
 {% load i18n %}{% get_current_language as LANGUAGE_CODE %}
 
-{% block title %}{% if LANGUAGE_CODE == 'ar' %}دخول الطلاب — بوابة الطالب{% else %}Student Portal Login{% endif %}{% endblock %}
+{% block title %}{% if LANGUAGE_CODE == 'ar' %}تسجيل دخول الطالب — بوابة الطالب{% else %}Student Portal Login{% endif %}{% endblock %}
 
 {% block extra_css %}{# Reuses the shared LOGIN section of static/css/global.css. #}{% endblock %}
 
@@ -16,22 +16,22 @@
       <h1 class="login-title">{% if LANGUAGE_CODE == 'ar' %}بوابة الطالب{% else %}Student Portal{% endif %}</h1>
       <p class="login-sub">
         {% if step == "otp" %}
-          {% if LANGUAGE_CODE == 'ar' %}أدخل الرمز المرسل إلى بريدك الجامعي{% else %}Enter the code sent to your university email{% endif %}
+          {% if LANGUAGE_CODE == 'ar' %}أدخل رمز التحقق المرسل إلى بريدك الجامعي{% else %}Enter the code sent to your university email{% endif %}
         {% else %}
-          {% if LANGUAGE_CODE == 'ar' %}سجّل الدخول برقمك الجامعي{% else %}Sign in with your University ID{% endif %}
+          {% if LANGUAGE_CODE == 'ar' %}أدخل رقمك الجامعي لتلقي رمز التحقق{% else %}Sign in with your University ID{% endif %}
         {% endif %}
       </p>
 
       {% if no_otp_mode %}
         <div class="login-alert" role="alert">
-          {% if LANGUAGE_CODE == 'ar' %}وضع اختبار: الدخول بالرقم الجامعي فقط بدون رمز تحقق{% else %}TESTING MODE — signing in with the University ID only, no verification code{% endif %}
+          {% if LANGUAGE_CODE == 'ar' %}وضع الاختبار: تسجيل الدخول بالرقم الجامعي فقط، من دون رمز تحقق{% else %}TESTING MODE — signing in with the University ID only, no verification code{% endif %}
         </div>
       {% endif %}
       <div aria-live="polite" aria-atomic="true">
         {% if error %}<div class="login-alert" role="alert">{{ error }}</div>{% endif %}
         {% if sent %}
           <div class="alert alert-info" role="status">
-            {% if LANGUAGE_CODE == 'ar' %}إذا كان الرقم صحيحًا، فقد أُرسل رمز إلى <span dir="ltr">{{ email }}</span>{% else %}If the ID is valid, a code has been sent to <span dir="ltr">{{ email }}</span>{% endif %}
+            {% if LANGUAGE_CODE == 'ar' %}إذا كان الرقم الجامعي مسجّلًا لدينا، فقد أُرسل رمز التحقق إلى <span dir="ltr">{{ email }}</span>{% else %}If the ID is valid, a code has been sent to <span dir="ltr">{{ email }}</span>{% endif %}
           </div>
         {% endif %}
       </div>
@@ -48,13 +48,13 @@
           </div>
           <button type="submit" class="neu-btn" id="loginBtn">
             <span class="neu-btn-spinner" aria-hidden="true"></span>
-            <span class="neu-btn-text">{% if LANGUAGE_CODE == 'ar' %}تحقّق ودخول{% else %}Verify &amp; sign in{% endif %}</span>
+            <span class="neu-btn-text">{% if LANGUAGE_CODE == 'ar' %}التحقق وتسجيل الدخول{% else %}Verify &amp; sign in{% endif %}</span>
           </button>
         </form>
         {% comment %}Always shown (never conditioned on the ID), so it states the
         throttle rule without revealing whether a particular ID exists.{% endcomment %}
         <p class="login-sub">
-          {% if LANGUAGE_CODE == 'ar' %}لم يصلك الرمز؟ يُسمح بثلاثة رموز فقط كل ١٥ دقيقة — انتظر قليلًا ثم أعد المحاولة.{% else %}No code? Only 3 codes are allowed per 15 minutes — please wait a few minutes before trying again.{% endif %}
+          {% if LANGUAGE_CODE == 'ar' %}يمكن طلب ثلاثة رموز كحد أقصى خلال ١٥ دقيقة. إذا لم يصلك الرمز، فانتظر بضع دقائق قبل إعادة المحاولة.{% else %}No code? Only 3 codes are allowed per 15 minutes — please wait a few minutes before trying again.{% endif %}
         </p>
         <p class="login-sub">
           <a href="{% url 'student_login' %}">{% if LANGUAGE_CODE == 'ar' %}استخدام رقم آخر{% else %}Use a different ID{% endif %}</a>
@@ -75,11 +75,11 @@
             <span class="neu-btn-text">{% if LANGUAGE_CODE == 'ar' %}إرسال الرمز{% else %}Send code{% endif %}</span>
           </button>
         </form>
-        <p class="login-sub">{% if LANGUAGE_CODE == 'ar' %}سيصلك رمز الدخول على بريدك الجامعي{% else %}A login code will be emailed to your university address{% endif %}</p>
+        <p class="login-sub">{% if LANGUAGE_CODE == 'ar' %}سيُرسل رمز التحقق إلى بريدك الجامعي.{% else %}A login code will be emailed to your university address{% endif %}</p>
       {% endif %}
 
       <p class="login-sub">
-        <a href="{% url 'login' %}">{% if LANGUAGE_CODE == 'ar' %}دخول المرشدين{% else %}Staff sign in{% endif %}</a>
+        <a href="{% url 'login' %}">{% if LANGUAGE_CODE == 'ar' %}تسجيل دخول المرشدين والموظفين{% else %}Staff sign in{% endif %}</a>
       </p>
     </div>
 
@@ -98,8 +98,8 @@
 
   <!-- Theme toggle (bottom-right corner) -->
   <button type="button" class="login-theme-toggle" id="loginThemeToggle"
-    title="{% if LANGUAGE_CODE == 'ar' %}تبديل الوضع الداكن{% else %}Toggle dark mode{% endif %}"
-    aria-label="{% if LANGUAGE_CODE == 'ar' %}تبديل الوضع الداكن{% else %}Toggle dark mode{% endif %}">
+    title="{% if LANGUAGE_CODE == 'ar' %}التبديل بين الوضعين الفاتح والداكن{% else %}Toggle dark mode{% endif %}"
+    aria-label="{% if LANGUAGE_CODE == 'ar' %}التبديل بين الوضعين الفاتح والداكن{% else %}Toggle dark mode{% endif %}">
     <span class="lt-icon-light" aria-hidden="true"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg></span>
     <span class="lt-icon-dark" aria-hidden="true"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg></span>
   </button>

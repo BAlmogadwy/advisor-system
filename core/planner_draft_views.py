@@ -53,7 +53,11 @@ from .sidebar_context import get_sidebar_context
 logger = logging.getLogger(__name__)
 
 
-def _names(codes: set[str]) -> dict[str, str]:
+def _request_prefers_arabic(request: HttpRequest) -> bool:
+    return str(getattr(request, "LANGUAGE_CODE", "") or "").lower().startswith("ar")
+
+
+def _names(codes: set[str], *, prefer_arabic_names: bool = False) -> dict[str, str]:
     """Course titles, from the resolver the adviser already uses.
 
     It searches four places — the course table, the programme plan, the elective
@@ -63,10 +67,15 @@ def _names(codes: set[str]) -> dict[str, str]:
     """
     from .services.virtual_advisor import _course_names
 
-    return _course_names(codes)
+    names = _course_names(codes)
+    if prefer_arabic_names:
+        from .services.student_sections import arabic_term_section_course_names
+
+        names.update(arabic_term_section_course_names(codes))
+    return names
 
 
-def _workspace_json(draft: Any) -> dict[str, Any]:
+def _workspace_json(draft: Any, *, prefer_arabic_names: bool = False) -> dict[str, Any]:
     """Student-safe facts needed to build a proposal on screen.
 
     This is deliberately not the staff planner catalogue.  Identity and term come
@@ -80,10 +89,12 @@ def _workspace_json(draft: Any) -> dict[str, Any]:
     from core.services.student_sections import (
         gender_section_filter,
         get_student_term_baseline,
+        prefer_arabic_timetable_course_names,
         student_gender_strict,
         timetable_snapshot_kind,
     )
-    from core.services.timetable_snapshots import Snapshot
+    from core.services.timetable_snapshots import Snapshot, forecast_rows
+    from core.services.timetable_snapshots import select as select_snapshot_rows
 
     student = Student.objects.filter(student_id=draft.student_id).values("program").first() or {}
     program = str(student.get("program") or "").strip()
@@ -140,7 +151,10 @@ def _workspace_json(draft: Any) -> dict[str, Any]:
     except Exception:
         recommended = set()
     requested = {normalize_code(code) for code in (draft.course_codes or [])}
-    names = _names(permitted | requested | recommended)
+    names = _names(
+        permitted | requested | recommended,
+        prefer_arabic_names=prefer_arabic_names,
+    )
 
     catalog: list[dict[str, Any]] = []
     for code in permitted | requested | recommended:
@@ -215,29 +229,50 @@ def _workspace_json(draft: Any) -> dict[str, Any]:
         )
     )
 
-    baseline = get_student_term_baseline(
-        draft.student_id, draft.academic_year, draft.term, snapshot=Snapshot.EFFECTIVE
+    # Read the term once, then keep its two student-facing snapshots separate.
+    # The planner baseline follows the same precedence as every clash/occupancy
+    # reader: registrar evidence wins when it exists; an expected plan is only a
+    # fallback when no registrar snapshot has been recorded.  In particular,
+    # legitimate coexistence is not a mixed baseline and must never disable the
+    # planner.
+    timetable_rows = get_student_term_baseline(
+        draft.student_id, draft.academic_year, draft.term, snapshot=Snapshot.ANY
     )
-    current = [
-        {
-            "course_code": str(row.get("course_code") or row.get("course_key") or ""),
-            "course_name": str(row.get("course_name") or ""),
-            "section": str(row.get("section") or ""),
-            "credits": int(row.get("credits") or 0),
-            "day": str(row.get("day") or ""),
-            "start": str(row.get("start_time") or ""),
-            "end": str(row.get("end_time") or ""),
-        }
-        for row in baseline
+    if prefer_arabic_names:
+        timetable_rows = prefer_arabic_timetable_course_names(timetable_rows)
+    registered_rows = [
+        dict(row) for row in select_snapshot_rows(timetable_rows, Snapshot.REGISTERED)
     ]
+    expected_rows = [dict(row) for row in forecast_rows(timetable_rows)]
+    baseline = [dict(row) for row in select_snapshot_rows(timetable_rows, Snapshot.EFFECTIVE)]
+
+    def public_timetable(rows: list[dict[str, object]]) -> list[dict[str, object]]:
+        return [
+            {
+                "course_code": str(row.get("course_code") or row.get("course_key") or ""),
+                "course_name": str(row.get("course_name") or ""),
+                "section": str(row.get("section") or ""),
+                "credits": int(row.get("credits") or 0),
+                "day": str(row.get("day") or ""),
+                "start": str(row.get("start_time") or ""),
+                "end": str(row.get("end_time") or ""),
+            }
+            for row in rows
+        ]
+
+    current = public_timetable(baseline)
     return {
         "program": program,
         "credit_ceiling": credit_ceiling(int(draft.term)),
         "catalog": catalog,
         "current_timetable": current,
+        # Explicit siblings make the provenance contract inspectable without
+        # asking the browser to infer it from a merged list.  `current_timetable`
+        # remains the single build baseline for compatibility with the UI.
+        "registered_timetable": public_timetable(registered_rows),
+        "expected_timetable": public_timetable(expected_rows),
         "timetable_kind": {
             "expected": "EXPECTED_PLAN",
-            "mixed": "MIXED_REVIEW_REQUIRED",
             "registered": "REGISTERED",
             "empty": "EMPTY",
         }[timetable_snapshot_kind(baseline)],
@@ -318,7 +353,7 @@ def _alternative_json(
     }
 
 
-def _draft_json(draft: Any) -> dict[str, Any]:
+def _draft_json(draft: Any, *, prefer_arabic_names: bool = False) -> dict[str, Any]:
     codes = list(draft.course_codes or [])
     pins = dict(draft.fixed_sections or {})
     inputs = draft.generated_inputs or {}
@@ -330,7 +365,8 @@ def _draft_json(draft: Any) -> dict[str, Any]:
             str(c.get("course_code") or "")
             for a in (draft.alternatives or [])
             for c in a.get("courses", [])
-        }
+        },
+        prefer_arabic_names=prefer_arabic_names,
     )
 
     return {
@@ -383,7 +419,10 @@ def _draft_json(draft: Any) -> dict[str, Any]:
             }
             for u in unplaced
         ],
-        "workspace": _workspace_json(draft),
+        "workspace": _workspace_json(
+            draft,
+            prefer_arabic_names=prefer_arabic_names,
+        ),
     }
 
 
@@ -396,13 +435,21 @@ def _draft_json(draft: Any) -> dict[str, Any]:
 #: A closed vocabulary in, one sentence out, and an unknown code says only what is
 #: actually known.
 UNPLACED_AR: dict[str, str] = {
-    "NOT_ON_FILE": "لا توجد شُعب مسجَّلة لهذا المقرر في بياناتنا. راجع بوابة التسجيل للتأكد.",
-    "ALL_SECTIONS_CLASH": "كل الشُعب المسجّلة في بياناتنا لهذا المقرر تتعارض مع بقية جدولك.",
-    "OMITTED_IN_THIS_VARIANT": "لم يضع هذا الخيار المقرر؛ قارنه بخيار آخر قد يتضمنه.",
+    "NOT_ON_FILE": (
+        "لا تظهر لهذا المقرر شُعب في بيانات الشعب المتاحة للنظام. تحقّق من بوابة التسجيل."
+    ),
+    "ALL_SECTIONS_CLASH": (
+        "تتعارض مواعيد كل الشُعب المدرجة لهذا المقرر في بيانات النظام مع موعد آخر "
+        "في هذا الجدول المقترح."
+    ),
+    "MEETING_DATA_INCOMPLETE": (
+        "بيانات مواعيد إحدى شُعب هذا المقرر ناقصة أو غير صالحة؛ لذلك تعذّر التحقق من التعارضات."
+    ),
+    "OMITTED_IN_THIS_VARIANT": ("لا يتضمن هذا الجدول المقترح المقرر؛ قد يتضمنه جدول مقترح آخر."),
     "PREREQUISITES": "لم تُستوفَ متطلبات هذا المقرر السابقة بعد.",
-    "DID_NOT_FIT": "لم يتّسع له الجدول مع بقية المقررات ضمن الحدود المتاحة.",
+    "DID_NOT_FIT": "لم يتمكّن النظام من إضافته مع بقية المقررات ضمن قيود الجدول المحددة.",
 }
-UNPLACED_AR_DEFAULT = "تعذّر وضع هذا المقرر في الجدول."
+UNPLACED_AR_DEFAULT = "تعذّرت إضافة هذا المقرر إلى الجدول المقترح."
 
 
 def _refused(exc: Exception, status: int = 409) -> JsonResponse:
@@ -513,7 +560,7 @@ def draft_detail_view(request: HttpRequest, draft_id: str) -> JsonResponse:
     if over:
         return over
     draft = owned_draft(principal.student_id, draft_id)
-    return JsonResponse(_draft_json(draft))
+    return JsonResponse(_draft_json(draft, prefer_arabic_names=_request_prefers_arabic(request)))
 
 
 @require_POST
@@ -548,7 +595,7 @@ def draft_edit_view(request: HttpRequest, draft_id: str) -> JsonResponse:
         # Another tab moved the draft between our read and our write. 409 with the
         # reason, so the screen reloads instead of silently overwriting.
         return _refused(exc, status=409)
-    return JsonResponse(_draft_json(draft))
+    return JsonResponse(_draft_json(draft, prefer_arabic_names=_request_prefers_arabic(request)))
 
 
 @require_POST
@@ -577,8 +624,9 @@ def draft_confirm_rebuild_view(request: HttpRequest, draft_id: str) -> JsonRespo
             "version": draft.version,
             # Said plainly, because this is the sentence the student is agreeing to.
             "warning": (
-                "سيقترح النظام جدولًا جديدًا قد يتضمّن شُعبًا غير التي سجّلت فيها. "
-                "لن يتغيّر تسجيلك الفعلي؛ هذا اقتراح فقط."
+                "سيُنشئ النظام جدولًا مقترحًا جديدًا قد يستخدم شُعبًا مختلفة عن "
+                "الشُعب في الجدول المسجّل فعليًا. لن يتغيّر تسجيلك الفعلي؛ فالجدول "
+                "الجديد مقترح للتخطيط فقط."
             ),
         }
     )
@@ -637,7 +685,7 @@ def draft_generate_view(request: HttpRequest, draft_id: str) -> JsonResponse:
         # A replay: this version was already generated, and the result came from
         # storage rather than the solver. It has been paid for once already.
         _refund_budget(PLANNING, principal.student_id)
-    return JsonResponse(_draft_json(draft))
+    return JsonResponse(_draft_json(draft, prefer_arabic_names=_request_prefers_arabic(request)))
 
 
 @require_POST
@@ -654,8 +702,8 @@ def draft_select_view(request: HttpRequest, draft_id: str) -> JsonResponse:
     return JsonResponse(
         {
             "error": (
-                "لا يحفظ هذا المخطط الجداول. انسخ قائمة المقررات والشُعب ثم "
-                "أدخلها بنفسك في بوابة الجامعة الرئيسية."
+                "لا تحفظ أداة التخطيط الجدول المقترح في بوابة الجامعة. انسخ قائمة "
+                "المقررات والشُعب، ثم أدخلها بنفسك في بوابة الجامعة الرئيسية."
             ),
             "code": "TIMETABLE_SAVE_DISABLED",
         },
@@ -668,7 +716,7 @@ def student_timetable_start_view(request: HttpRequest):
     """Open a new, short-lived planning workspace for the signed-in student."""
     principal = _principal(request)
     if principal is None:
-        raise PermissionDenied("This page is for signed-in students.")
+        raise PermissionDenied("هذه الصفحة متاحة للطلاب الذين سجّلوا دخولهم فقط.")
     try:
         draft = create_draft(
             student_id=principal.student_id,
@@ -700,7 +748,7 @@ def student_planner_page(request: HttpRequest, draft_id: str):
     if principal is None:
         # An HTML route, so an HTML answer: a JsonResponse here would render as a
         # line of JSON in the browser window where a page should be.
-        raise PermissionDenied("This page is for signed-in students.")
+        raise PermissionDenied("هذه الصفحة متاحة للطلاب الذين سجّلوا دخولهم فقط.")
     draft = owned_draft(principal.student_id, draft_id)
     return render(
         request,

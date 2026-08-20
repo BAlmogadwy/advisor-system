@@ -851,7 +851,13 @@ def test_new_capabilities_are_student_reachable():
         assert ROLE_STUDENT in reg[name].allowed_roles, f"{name} is not reachable by a student"
 
 
-def _section_with(course_key: str, section: str, meetings: list[tuple[str, str, str]]):
+def _section_with(
+    course_key: str,
+    section: str,
+    meetings: list[tuple[str, str, str]],
+    *,
+    program: str = "AI",
+):
     from core.models import TermSection, TermSectionMeeting, TermSectionProgram
 
     ts = TermSection.objects.create(
@@ -861,7 +867,7 @@ def _section_with(course_key: str, section: str, meetings: list[tuple[str, str, 
         section=section,
         available_capacity=25,
     )
-    TermSectionProgram.objects.create(term_section=ts, program="AI")
+    TermSectionProgram.objects.create(term_section=ts, program=program)
     for day, start, end in meetings:
         TermSectionMeeting.objects.create(
             term_section=ts,
@@ -931,6 +937,34 @@ def test_a_course_with_no_sections_is_not_on_file_not_unavailable():
     )
     assert out["courses"][0]["status"] == "NOT_ON_FILE"
     assert "NOT_ON_FILE" in out["note"] and "no sections available" in out["note"]
+
+
+def test_recorded_sections_outside_student_profile_are_not_reported_as_missing():
+    from core.models import Student
+    from core.services.rbac import ROLE_SUPER_ADMIN
+    from core.services.virtual_advisor_capabilities import get_default_registry
+
+    Student.objects.create(student_id=SID, name="S", program="AI", section="M")
+    _section_with(
+        "AI113",
+        "M6",
+        [("MON", "09:00", "10:15")],
+        program="AI2",
+    )
+
+    out = get_default_registry().execute(
+        "my_clash_free_sections",
+        {"student_id": SID, "course_code": "AI113"},
+        scope={"role": ROLE_SUPER_ADMIN},
+        ctx={"academic_year": 1448, "term": 1},
+    )
+
+    course = out["courses"][0]
+    assert course["status"] == "NOT_MATCHING_STUDENT_PROFILE"
+    assert course["sections_on_file"] == 0
+    assert course["recorded_sections_on_file"] == 1
+    assert course["clash_free"] == []
+    assert "programme and study cohort" in out["note"]
 
 
 def test_a_current_section_is_marked_and_does_not_clash_with_itself():

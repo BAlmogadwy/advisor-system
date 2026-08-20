@@ -137,10 +137,14 @@ class Command(BaseCommand):
         self.stdout.write("Verifying the captured session from a fresh browser…")
         if not asyncio.run(_verify(state)):
             raise CommandError(
-                "The captured session did not work from a fresh browser, so it was "
-                "NOT saved. This usually means the portal issued a session bound to "
-                "that window. Try again, and complete the sign-in fully before the "
-                "window is touched."
+                "You signed in successfully, but the captured session did not load "
+                "the student-enquiry page from a fresh browser, so it was NOT saved.\n"
+                "\n"
+                "That means the cookies Playwright captured are not enough on their "
+                "own — the portal may bind the session to something outside cookie "
+                "storage. Re-run with --keep-open and check whether the enquiry page\n"
+                f"  {settings.STUDENT_PLAN_URL}\n"
+                "loads in the window you signed in with. Nothing was written."
             )
 
         path = save_state(state)

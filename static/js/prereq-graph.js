@@ -15,22 +15,22 @@
   /* Fallbacks so a caller may pass only the strings it cares about. */
   const DEFAULT_T = {
     termHeading: n => (IS_AR ? `المستوى ${n}` : `Term ${n}`),
-    pgNoTermBand: IS_AR ? 'لا مقررات' : 'no courses',
-    pgGateTip: h => (IS_AR ? `بوابة: ${h} ساعة معتمدة` : `Gate: ${h} credit hours`),
-    pgInferredTip: IS_AR ? 'المستوى مُستنتج' : 'term inferred',
+    pgNoTermBand: IS_AR ? 'مقررات لم يُحدّد مستواها' : 'no courses',
+    pgGateTip: h => (IS_AR ? `شرط الساعات المعتمدة: ${h}` : `Gate: ${h} credit hours`),
+    pgInferredTip: IS_AR ? 'المستوى غير محدّد في الخطة؛ وُضع تقديريًا' : 'term inferred',
     pgTermTip: n => (IS_AR ? `المستوى ${n}` : `Term ${n}`),
-    pgGate: IS_AR ? 'بوابة ساعات' : 'credit-hour gate',
-    pgInferred: IS_AR ? 'مستوى مُستنتج' : 'term inferred',
-    pgFoundation: IS_AR ? 'أساسي' : 'foundation',
-    pgIntermediate: IS_AR ? 'وسيط' : 'intermediate',
-    pgTerminal: IS_AR ? 'نهائي' : 'terminal',
-    pgHoverHint: IS_AR ? 'مرّر لإبراز السلسلة' : 'hover to highlight a chain',
+    pgGate: IS_AR ? 'شرط الساعات المعتمدة' : 'credit-hour gate',
+    pgInferred: IS_AR ? 'المستوى محدّد تقديريًا' : 'term inferred',
+    pgFoundation: IS_AR ? 'بداية سلسلة المتطلبات' : 'foundation',
+    pgIntermediate: IS_AR ? 'وسط سلسلة المتطلبات' : 'intermediate',
+    pgTerminal: IS_AR ? 'نهاية سلسلة المتطلبات' : 'terminal',
+    pgHoverHint: IS_AR ? 'مرّر على مقرر لإبراز سلسلة متطلباته' : 'hover to highlight a chain',
     pgPassed: IS_AR ? 'مجتاز' : 'passed',
-    pgStudying: IS_AR ? 'تدرسه الآن' : 'studying now',
-    pgOpen: IS_AR ? 'متاح الآن' : 'open now',
-    pgLocked: IS_AR ? 'محجوب' : 'blocked',
-    pgSameTermWarn: n => (IS_AR ? `${n} متطلب في نفس المستوى` : `${n} prerequisite(s) in the same term`),
-    pgBackwardWarn: n => (IS_AR ? `${n} متطلب بعد مقرره` : `${n} prerequisite(s) after their course`),
+    pgStudying: IS_AR ? 'قيد الدراسة حاليًا' : 'studying now',
+    pgOpen: IS_AR ? 'متطلباته مستوفاة' : 'open now',
+    pgLocked: IS_AR ? 'متطلباته غير مستوفاة' : 'blocked',
+    pgSameTermWarn: n => (IS_AR ? `علاقات متطلبات سابقة داخل المستوى نفسه: ${n}.` : `${n} prerequisite(s) in the same term`),
+    pgBackwardWarn: n => (IS_AR ? `علاقات يظهر فيها المتطلب السابق بعد المقرر الذي يعتمد عليه: ${n}.` : `${n} prerequisite(s) after their course`),
   };
 
   const PG_GATE_RE = /^\s*(\d+)\s*\(\s*HOURS?\s*\)\s*$/i;
@@ -228,11 +228,13 @@
     const hasDeclaredTerm = [...all].some(c => Number.isFinite(termOf[c]));
     const byTerm = o.mode !== 'depth' && hasDeclaredTerm;
 
-    /* geometry constants (needed before measuring either layout) */
-    const nH = 34, gX = 20, padY = 22, emptyH = 26, padX = 24, rW = 14;
-    const TERM_GUTTER = 78;
+    /* Keep the map legible at normal desktop zoom.  The SVG may scroll when a
+       chain is genuinely wide, but course codes must never be shrunk into
+       thumbnail-sized labels just to force the whole plan into one viewport. */
+    const nH = 42, gX = 24, padY = 13, emptyH = 32, padX = 28, rW = 16;
+    const TERM_GUTTER = 104;
     const maxChars = Math.max(...[...all].map(c => c.length));
-    const nW = Math.max(72, maxChars * 8 + 20);
+    const nW = Math.max(92, maxChars * 9 + 26);
     const slotW = sl => (sl.kind === 'node' ? nW : rW);
 
     /* An edge is a "warn" (unsatisfiable as declared) only when BOTH endpoints
@@ -243,10 +245,9 @@
       return { f, t, warn: !inf.has(f) && !inf.has(t) && rowMap[f] >= rowMap[t] };
     });
 
-    /* Measure BOTH layouts up front so the two modes can share one width — and
-       therefore one on-screen scale.  Without this the term view (fewer nodes
-       per row, so narrower) stretches to the same panel width as the chain view
-       and its nodes/text come out visibly larger. */
+    /* Measure the active layout only.  Sharing the chain view's (usually much
+       wider) viewBox with the term view made the default map about half-size on
+       screen even though there was ample room around it. */
     const naturalContentW = (rowMap, inf) => {
       const vals = [...all].map(c => rowMap[c]);
       const { slots: sl } = pgBuildSlots(edgesFor(rowMap, inf), rowMap, Math.min(...vals), Math.max(...vals), all);
@@ -259,15 +260,11 @@
     };
     const termLayout = pgTermRows(all, dependents, termOf);
     const depthLayout = pgDepthRows(all, prereqs);
-    const totalInner = Math.max(
-      TERM_GUTTER + naturalContentW(termLayout.row, termLayout.inferred),
-      naturalContentW(depthLayout.row, depthLayout.inferred),
-    );
-    const svgW = Math.max(480, padX * 2 + totalInner);
 
     /* active layout */
     const { row, inferred } = byTerm ? termLayout : depthLayout;
     const gutter = byTerm ? TERM_GUTTER : 0;
+    const svgW = Math.max(560, padX * 2 + gutter + naturalContentW(row, inferred));
 
     /* bands: every row from min..max, so a term with no linked course still
        occupies the axis instead of silently collapsing */
@@ -303,15 +300,15 @@
       });
     });
 
-    /* Cap the up-scale so a narrow term graph doesn't zoom nodes/text bigger
-       than the chain view: at most PG_MAX_SCALE viewBox-units → screen px. */
-    const PG_MAX_SCALE = 1.35;
+    /* Grow modestly on a large panel, but never shrink below the natural width.
+       A wide chain remains readable inside the host's horizontal scroller. */
+    const PG_MAX_SCALE = 1.25;
     const pgMaxW = Math.round(svgW * PG_MAX_SCALE);
-    let s = `<svg class="prereq-svg w-100" viewBox="0 0 ${svgW} ${svgH}" style="height:auto;max-width:${pgMaxW}px" role="img">`;
+    let s = `<svg class="prereq-svg" viewBox="0 0 ${svgW} ${svgH}" style="min-width:${svgW}px;max-width:${pgMaxW}px;height:auto" role="img">`;
     s += '<defs>';
-    s += `<marker id="pgA" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="var(--teal)" opacity="0.5"/></marker>`;
-    s += `<marker id="pgAW" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#b45309" opacity="0.8"/></marker>`;
-    s += `<filter id="nSh"><feDropShadow dx="0" dy="2" stdDeviation="4" flood-color="rgba(17,17,68,0.07)"/></filter>`;
+    s += `<marker id="pgA" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto"><polygon points="0 0,10 4,0 8" fill="var(--teal)" opacity="0.78"/></marker>`;
+    s += `<marker id="pgAW" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto"><polygon points="0 0,10 4,0 8" fill="#b45309" opacity="0.9"/></marker>`;
+    s += `<filter id="nSh"><feDropShadow dx="0" dy="2" stdDeviation="3" flood-color="rgba(17,17,68,0.12)"/></filter>`;
     s += '</defs>';
 
     /* term bands + gutter labels */
@@ -375,14 +372,14 @@
         anyGate = true;
         fl = 'rgba(180,83,9,0.07)'; st = 'rgba(180,83,9,0.30)'; tc = '#b45309';
         rx = nH / 2; dash = ' stroke-dasharray="4 3"'; cls += ' pg-node-gate';
-        label = IS_AR ? `${gate[1]} ساعة` : `${gate[1]} hrs`;
+        label = IS_AR ? `الساعات المعتمدة: ${gate[1]}` : `${gate[1]} hrs`;
       } else if (statusOf[c]) {
         /* personalised: the student's own progress outranks the structural role */
         const S = {
-          passed:   ['rgba(10,142,110,0.20)', 'rgba(10,142,110,0.55)', '#08654e'],
-          studying: ['rgba(64,86,227,0.16)',  'rgba(64,86,227,0.50)',  '#3548c9'],
+          passed:   ['rgba(10,142,110,0.24)', 'rgba(10,142,110,0.72)', '#075f49'],
+          studying: ['rgba(64,86,227,0.20)',  'rgba(64,86,227,0.68)',  '#3043bd'],
           open:     ['rgba(255,255,255,0.92)', '#0a8e6e',              'var(--navy)'],
-          locked:   ['rgba(120,124,150,0.06)', 'rgba(120,124,150,0.26)', '#6b7280'],
+          locked:   ['rgba(120,124,150,0.09)', 'rgba(120,124,150,0.42)', '#596173'],
         }[statusOf[c]];
         if (S) { fl = S[0]; st = S[1]; tc = S[2]; cls += ' pg-node-' + statusOf[c]; }
         if (statusOf[c] === 'open') { cls += ' pg-node-open'; }
@@ -399,8 +396,8 @@
       else if (isInferred) bits.push(t.pgInferredTip);
       else if (typeof termOf[c] === 'number') bits.push(t.pgTermTip(termOf[c]));
       s += `<g class="${cls}" data-c="${pgEsc(c)}"><title>${pgEsc(bits.join(' — '))}</title>`
-        + `<rect x="${p.x - nW / 2}" y="${p.y - nH / 2}" width="${nW}" height="${nH}" rx="${rx}" fill="${fl}" stroke="${st}" stroke-width="${statusOf[c] === 'open' ? 2 : 1.2}"${dash} filter="url(#nSh)"/>`
-        + `<text x="${p.x}" y="${p.y + 1}" text-anchor="middle" dominant-baseline="middle" fill="${tc}" font-family="var(--font-mono)" font-size="11" font-weight="700">${pgEsc(label)}</text></g>`;
+        + `<rect x="${p.x - nW / 2}" y="${p.y - nH / 2}" width="${nW}" height="${nH}" rx="${rx}" fill="${fl}" stroke="${st}" stroke-width="${statusOf[c] === 'open' ? 2.4 : 1.6}"${dash} filter="url(#nSh)"/>`
+        + `<text x="${p.x}" y="${p.y + 1}" text-anchor="middle" dominant-baseline="middle" fill="${tc}" font-family="var(--font-mono)" font-size="13" font-weight="750">${pgEsc(label)}</text></g>`;
     });
     s += '</svg>';
 

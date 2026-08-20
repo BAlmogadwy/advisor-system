@@ -175,7 +175,7 @@ class EndToEndTests(StaticLiveServerTestCase):
         page.wait_for_selector(".sa-preview")
         preview = page.locator(".sa-preview").inner_text()
         assert "سؤالك" in preview
-        assert "لن يتم إرسال المحادثات الأخرى" in preview
+        assert "لن تُرسل المحادثات الأخرى" in preview
 
         page.fill(".sa-preview-note", "أحتاج قرارًا قبل نهاية الأسبوع.")
         page.click(".sa-preview-send")

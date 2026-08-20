@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import re
+from collections import Counter, defaultdict
+from copy import deepcopy
+
 from django.db.models import Q
 
 from core.models import (
@@ -27,6 +31,107 @@ from core.services.timetable_snapshots import (
 from core.services.timetable_snapshots import (
     timetable_snapshot_kind as _timetable_snapshot_kind,
 )
+
+_ARABIC_LETTER_RE = re.compile(r"[\u0621-\u064a]")
+
+
+def arabic_term_section_course_names(course_codes: object) -> dict[str, str]:
+    """Return Arabic course names observed in authoritative section data.
+
+    ``Course.description`` is retained as the catalogue's original-language
+    value.  Student Arabic pages may prefer this separate map without rewriting
+    either table or making an English response lose its English name.  When
+    several sections carry spelling variants, the name used by the most sections
+    wins; ties are deterministic.
+    """
+    codes = {
+        normalize_code(value)
+        for value in (course_codes if isinstance(course_codes, list | tuple | set) else [])
+        if normalize_code(value)
+    }
+    if not codes:
+        return {}
+
+    predicate = Q()
+    for code in sorted(codes):
+        predicate |= Q(course_key__iexact=code)
+
+    candidates: dict[str, Counter[str]] = defaultdict(Counter)
+    for raw_code, raw_name in TermSection.objects.filter(
+        predicate,
+        scenario__isnull=True,
+    ).values_list("course_key", "course_name"):
+        code = normalize_code(raw_code)
+        name = " ".join(str(raw_name or "").split())
+        if code in codes and name and _ARABIC_LETTER_RE.search(name):
+            candidates[code][name] += 1
+
+    return {
+        code: sorted(counts, key=lambda name: (-counts[name], len(name), name))[0]
+        for code, counts in candidates.items()
+        if counts
+    }
+
+
+def prefer_arabic_timetable_course_names(rows: list[dict]) -> list[dict]:
+    """Copy timetable rows, preferring Arabic names without mutating stored data."""
+    names = arabic_term_section_course_names(
+        [row.get("course_key") or row.get("course_code") or "" for row in rows]
+    )
+    return [
+        {
+            **row,
+            "course_name": names.get(
+                normalize_code(row.get("course_key") or row.get("course_code") or "")
+            )
+            or row.get("course_name")
+            or "",
+        }
+        for row in rows
+    ]
+
+
+def prefer_arabic_course_names_in_payload(payload: dict) -> dict:
+    """Copy a nested student payload and prefer authoritative Arabic names.
+
+    Graduation and advisor payloads carry course objects at several depths.  A
+    recursive presentation adapter keeps their academic calculations untouched
+    while applying the same locale rule as timetable rows.
+    """
+    copied = deepcopy(payload)
+    codes: set[str] = set()
+
+    def collect(value: object) -> None:
+        if isinstance(value, dict):
+            code = normalize_code(value.get("course_code") or value.get("code") or "")
+            if code:
+                codes.add(code)
+            for child in value.values():
+                collect(child)
+        elif isinstance(value, list):
+            for child in value:
+                collect(child)
+
+    collect(copied)
+    names = arabic_term_section_course_names(codes)
+
+    def apply(value: object) -> None:
+        if isinstance(value, dict):
+            code = normalize_code(value.get("course_code") or value.get("code") or "")
+            arabic_name = names.get(code, "")
+            if arabic_name:
+                if "name" in value:
+                    value["name"] = arabic_name
+                if "course_name" in value:
+                    value["course_name"] = arabic_name
+            for child in value.values():
+                apply(child)
+        elif isinstance(value, list):
+            for child in value:
+                apply(child)
+
+    apply(copied)
+    return copied
 
 
 def snapshot_class_filter(snapshot_class: SnapshotClass) -> Q:

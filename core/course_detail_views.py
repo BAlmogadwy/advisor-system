@@ -30,6 +30,11 @@ from .sidebar_context import get_sidebar_context
 logger = logging.getLogger(__name__)
 
 
+def _prefer_arabic_course_names(request: HttpRequest) -> bool:
+    """Use the university's Arabic section names on the Arabic student UI."""
+    return str(getattr(request, "LANGUAGE_CODE", "")).lower().startswith("ar")
+
+
 @require_GET
 def course_detail_view(request: HttpRequest, course_code: str) -> JsonResponse:
     """What this course is, what it requires, and where this student stands.
@@ -47,7 +52,11 @@ def course_detail_view(request: HttpRequest, course_code: str) -> JsonResponse:
         return over
 
     try:
-        detail = build_course_detail(principal.student_id, course_code)
+        detail = build_course_detail(
+            principal.student_id,
+            course_code,
+            prefer_arabic_names=_prefer_arabic_course_names(request),
+        )
     except CourseDetailUnavailable as exc:
         # A refusal with a sentence the student can act on, not a 500 and not a
         # report built from whichever programme sorted first.
@@ -125,7 +134,11 @@ def course_detail_page(request: HttpRequest, course_code: str):
         return _throttled_page(request, over)
 
     try:
-        detail = build_course_detail(principal.student_id, course_code)
+        detail = build_course_detail(
+            principal.student_id,
+            course_code,
+            prefer_arabic_names=_prefer_arabic_course_names(request),
+        )
     except CourseDetailUnavailable as exc:
         return render(
             request,

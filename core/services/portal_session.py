@@ -106,31 +106,44 @@ def has_session() -> bool:
     return True
 
 
-async def page_shows_live_session(page: Any) -> bool:
-    """Navigate ``page`` to the portal and report whether a session is live.
+#: The enquiry form the scraper fills for every student. Its presence is the
+#: strongest available proof that a session is usable — stronger than any
+#: navigation marker, because it is literally the thing the scrape needs next.
+_ENQUIRY_FORM_MARKER = 'name="StudentNumber"'
 
-    Asks the portal rather than reading cookie expiry, and uses the SAME two-sided
-    gate the login does: ``signOut.do`` appears in the portal's shared navigation
-    on pages that are not a session, so the success marker alone would call a
-    service page a live login.
+
+async def page_shows_live_session(page: Any) -> bool:
+    """Navigate ``page`` to a page that REQUIRES a session, and report the answer.
+
+    THE URL MATTERS AND WAS WRONG
+
+    This used to navigate to ``PORTAL_LOGIN_URL`` — `staffLogin.do?ex=preLogin`,
+    the SIGN-IN ENTRY PAGE. That page renders a sign-in form whether or not you
+    hold a session, so the check reported "not live" for a session that had just
+    been minted successfully, and `portal_login` threw away a real sign-in an
+    operator had just completed by hand. Measured, not theorised: the attended
+    login printed "Signed in." and the verification then failed.
+
+    So liveness is decided on ``STUDENT_PLAN_URL``, the student-enquiry page the
+    scraper actually uses, and the proof is the enquiry form itself. A session that
+    can load that form is a session that can scrape; anything weaker is a proxy for
+    the question rather than the question.
 
     Takes a PAGE rather than a context so a caller that already has one — the
     scrape's session anchor, for instance — does not open a second just to ask.
     """
-    from core.services.portal_scraper import (
-        is_logged_out_html,
-        is_staff_login_success_html,
-        safe_page_content,
-    )
+    from core.services.portal_scraper import is_logged_out, is_logged_out_html, safe_page_content
 
     try:
         await page.goto(
-            str(getattr(settings, "PORTAL_LOGIN_URL", "")),
+            str(getattr(settings, "STUDENT_PLAN_URL", "")),
             wait_until="domcontentloaded",
             timeout=30000,
         )
+        if await is_logged_out(page):
+            return False
         html = await safe_page_content(page)
-        return is_staff_login_success_html(html) and not is_logged_out_html(html)
+        return _ENQUIRY_FORM_MARKER in html and not is_logged_out_html(html)
     except Exception:
         return False
 

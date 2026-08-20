@@ -311,7 +311,11 @@ class AdvisorBrowserTests(StaticLiveServerTestCase):
 
     # ── 6. a failed turn is visible and recoverable ─────────────
     def test_failed_turn_is_marked_and_offers_retry(self):
-        page = self._page()
+        page = self._page(
+            locale="ar",
+            extra_http_headers={"Accept-Language": "ar"},
+            viewport={"width": 425, "height": 812},
+        )
         with mock.patch(
             "core.services.student_advisor_v2.answer_student_advisor",
             side_effect=RuntimeError("model down"),
@@ -323,8 +327,21 @@ class AdvisorBrowserTests(StaticLiveServerTestCase):
 
         failed = page.locator('.va-message-user[data-status="FAILED"]')
         assert failed.count() == 1
-        # A bare Retry button with no explanation is not a reported failure.
-        assert failed.locator(".sa-status-failed").inner_text().strip() != ""
+        status = failed.locator(".sa-retry-state .sa-status-failed")
+        retry = failed.locator(".sa-retry-state .sa-retry")
+        # Explain the failure once, then offer one explicit action. The previous
+        # message also told the student to retry, duplicating the button below it.
+        assert status.inner_text().strip() == "لم نتمكّن من إعداد الإجابة."
+        assert retry.locator(".sa-retry-label").inner_text().strip() == "إعادة المحاولة"
+        assert status.get_attribute("role") == "alert"
+        assert status.get_attribute("aria-atomic") == "true"
+        assert retry.get_attribute("aria-describedby") == status.get_attribute("id")
+        assert retry.get_attribute("aria-label") == "إعادة محاولة إعداد الإجابة"
+        assert retry.bounding_box()["height"] >= 44
+        state_box = failed.locator(".sa-retry-state").bounding_box()
+        retry_box = retry.bounding_box()
+        assert retry_box["x"] >= state_box["x"]
+        assert retry_box["x"] + retry_box["width"] <= state_box["x"] + state_box["width"] + 1
 
         # And it survives a reload — a failure the student cannot come back to is a
         # lost question.
@@ -622,9 +639,9 @@ class AdvisorBrowserTests(StaticLiveServerTestCase):
         card = page.locator(".sa-timetable")
         assert card.get_attribute("dir") == "rtl"
         replacement = page.locator(".sa-tt-replacement")
-        assert "استبدل DS341 بـ CS211" in " ".join(replacement.inner_text().split())
+        assert "استبدال DS341 بالمقرر CS211" in " ".join(replacement.inner_text().split())
         assert page.locator(".sa-tt-replacement-caution").count() == 0
-        assert "خيار المخطط" in page.locator(".sa-tt-option-name").inner_text()
+        assert "الجدول المقترح" in page.locator(".sa-tt-option-name").inner_text()
         assert page.locator(".sa-tt-option-name bdi").get_attribute("dir") == "ltr"
         assert page.locator(".sa-tt-time").get_attribute("dir") == "ltr"
         assert page.locator(".sa-tt-time").inner_text() == "10:30–11:45"
@@ -632,6 +649,7 @@ class AdvisorBrowserTests(StaticLiveServerTestCase):
 
     def test_graduation_scenario_renders_the_shared_tree_and_mobile_term_list(self):
         conversation = AdvisorConversation.objects.create(student_id=MINE)
+        wide_history = [f"EL{index:02d}" for index in range(14)]
         self._turn(
             conversation,
             answer="The scenario needs at least three terms and still has one unresolved requirement.",
@@ -662,14 +680,20 @@ class AdvisorBrowserTests(StaticLiveServerTestCase):
                             "prerequisite_course_code": "DS225",
                         },
                     ],
-                    "termOf": {"CS113": 0, "DS225": 1, "DS341": 2},
+                    "termOf": {
+                        "CS113": 0,
+                        "DS225": 1,
+                        "DS341": 2,
+                        **dict.fromkeys(wide_history, 0),
+                    },
                     "nameOf": {"DS341": "Data Governance"},
                     "statusOf": {
                         "CS113": "passed",
                         "DS225": "studying",
                         "DS341": "open",
+                        **dict.fromkeys(wide_history, "passed"),
                     },
-                    "extraNodes": ["CS113", "DS225", "DS341"],
+                    "extraNodes": ["CS113", "DS225", "DS341", *wide_history],
                 },
                 "unresolved_requirements": [
                     {
@@ -684,16 +708,19 @@ class AdvisorBrowserTests(StaticLiveServerTestCase):
         )
         page = self._page(viewport={"width": 1280, "height": 900})
         self._open(page, f"?c={conversation.id}")
-        page.wait_for_selector(".sa-graduation-map .prereq-svg")
+        page.wait_for_selector(".sa-graduation-map .sa-grad-mobile")
 
         card = page.locator(".sa-graduation-map")
         assert "Scenario path to plan completion" in card.inner_text()
         assert "not a final graduation date" in card.inner_text()
         assert page.locator(".sa-grad-toolbar .pg-mode").count() == 2
-        svg_text = page.locator(".prereq-svg").text_content()
-        assert "Planning baseline term 1448/1" in svg_text
-        assert "Current term 1448/1" not in svg_text
-        assert "Projected term 1448/2" in svg_text
+        assert page.locator(".sa-grad-mobile").is_visible()
+        assert not page.locator(".sa-grad-desktop").is_visible()
+        assert page.locator(".prereq-svg").count() == 0
+        assert page.locator(".sa-grad-more").count() == 1
+        assert not page.locator(".sa-grad-more").get_attribute("open")
+        messages = page.locator(".va-messages")
+        assert messages.evaluate("node => node.scrollWidth - node.clientWidth") <= 1
         assert "DS492" in page.locator(".sa-grad-blockers").inner_text()
         assert "MATH204" in page.locator(".sa-grad-blockers").inner_text()
         assert "register courses" in card.inner_text()
@@ -702,11 +729,21 @@ class AdvisorBrowserTests(StaticLiveServerTestCase):
         expand = page.locator(".sa-grad-expand")
         assert expand.get_attribute("aria-expanded") == "false"
         expand.click()
+        page.wait_for_selector(".sa-grad-desktop .prereq-svg")
         assert card.evaluate("node => node.classList.contains('is-expanded')")
         assert page.get_attribute("html", "class").find("sa-overlay-open") >= 0
+        assert page.locator(".sa-grad-desktop").is_visible()
+        assert not page.locator(".sa-grad-mobile").is_visible()
+        svg_text = page.locator(".prereq-svg").text_content()
+        assert "Planning baseline term 1448/1" in svg_text
+        assert "Current term 1448/1" not in svg_text
+        assert "Projected term 1448/2" in svg_text
         page.keyboard.press("Escape")
         assert expand.get_attribute("aria-expanded") == "false"
         assert not card.evaluate("node => node.classList.contains('is-expanded')")
+        assert page.locator(".sa-grad-mobile").is_visible()
+        assert not page.locator(".sa-grad-desktop").is_visible()
+        assert messages.evaluate("node => node.scrollWidth - node.clientWidth") <= 1
 
         page.set_viewport_size({"width": 375, "height": 812})
         assert page.locator(".sa-grad-mobile").is_visible()
@@ -876,7 +913,7 @@ class AdvisorBrowserTests(StaticLiveServerTestCase):
         composer.fill("First line\nSecond line\nThird line")
         assert composer.bounding_box()["height"] > initial_height
 
-    def test_arabic_empty_state_uses_natural_saudi_starter_questions(self):
+    def test_arabic_empty_state_uses_formal_starter_questions(self):
         page = self._page(
             locale="ar",
             extra_http_headers={"Accept-Language": "ar"},
@@ -886,16 +923,16 @@ class AdvisorBrowserTests(StaticLiveServerTestCase):
         )
         self._open(page)
 
-        assert page.locator("#saEmptyState h3").inner_text() == "كيف أقدر أساعدك اليوم؟"
+        assert page.locator("#saEmptyState h3").inner_text() == "كيف يمكنني مساعدتك اليوم؟"
         examples = page.locator("#saExamples [data-sa-example]")
         prompts = examples.evaluate_all("nodes => nodes.map(node => node.dataset.saExample)")
         assert prompts == [
-            "كم ترم باقي لي تقريبًا لين أخلص متطلبات الخطة؟",
-            "وش المقررات اللي أقدر آخذها هالترم؟",
-            "أبغى جدول مقترح حول شعبي الحالية بدون تعارضات.",
-            "جدولي الحالي فيه تعارضات؟",
-            "فيه مقرر أقدر أبدله من جدولي الحالي عشان أتخرج أسرع؟",
-            "كم مرة أقدر أنسحب من مقرر؟",
+            "ما المدة التقديرية المتبقية لإكمال متطلبات خطتي الدراسية؟",
+            "ما المقررات التي استوفيت متطلباتها الأكاديمية؟",
+            "أنشئ لي جدولًا مقترحًا حول شُعبي المسجّلة فعليًا، من دون تعارض بين الأوقات المسجّلة.",
+            "هل توجد تعارضات زمنية في الجدول المسجّل فعليًا؟",
+            "هل يؤثر استبدال أحد مقررات الجدول المسجّل فعليًا في المسار التقديري لإكمال الخطة؟",
+            "ما الحد الأقصى لعدد مرات الانسحاب من مقرر؟",
         ]
 
     def test_new_answer_thinks_then_reveals_prose_before_evidence(self):

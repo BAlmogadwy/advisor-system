@@ -30,22 +30,22 @@
   function localiseBand(value) {
     const label = String(value == null ? '' : value);
     if (label === 'Completed before the scenario') {
-      return AR ? 'مجتاز قبل السيناريو' : 'Completed before the scenario';
+      return AR ? 'مجتاز قبل فصل البداية' : 'Completed before the scenario';
     }
     if (label.indexOf('Planning baseline ') === 0) {
       const term = label.slice('Planning baseline '.length);
-      return AR ? `الفصل المرجعي للتخطيط ${term}` : `Planning baseline term ${term}`;
+      return AR ? `فصل البداية: ${term}` : `Planning baseline term ${term}`;
     }
     if (label.indexOf('Current ') === 0) {
       // Stored adviser presentations created before the baseline terminology
       // changed still use this prefix. Read them without repeating the old,
       // potentially false claim that the configured planning term is "current".
       const term = label.slice('Current '.length);
-      return AR ? `الفصل المرجعي للتخطيط ${term}` : `Planning baseline term ${term}`;
+      return AR ? `فصل البداية: ${term}` : `Planning baseline term ${term}`;
     }
     if (label.indexOf('Projected ') === 0) {
       const term = label.slice('Projected '.length);
-      return AR ? `فصل متوقع ${term}` : `Projected term ${term}`;
+      return AR ? `فصل تقديري: ${term}` : `Projected term ${term}`;
     }
     return label;
   }
@@ -55,35 +55,35 @@
     if (Object.prototype.hasOwnProperty.call(bandLabels, key)) {
       return localiseBand(bandLabels[key]);
     }
-    return AR ? `فصل السيناريو ${number}` : `Scenario term ${number}`;
+    return AR ? `الفصل التقديري: ${number}` : `Scenario term ${number}`;
   }
 
   function graphStrings() {
     return {
       termHeading: bandLabel,
-      pgNoTermBand: AR ? 'خارج ترتيب السيناريو' : 'Outside the scenario order',
+      pgNoTermBand: AR ? 'خارج الفصول التي شملها التقدير' : 'Outside the scenario order',
       pgGateTip: hours => (AR
-        ? `شرط الساعات المعتمدة: ${hours} ساعة`
+        ? `شرط الساعات المعتمدة: ${hours}`
         : `Credit-hour requirement: ${hours} credits`),
       pgInferredTip: AR
-        ? 'موضع مستنتج خارج ترتيب السيناريو'
+        ? 'موضع تقديري خارج الفصول المرتّبة'
         : 'Position inferred outside the scenario order',
       pgTermTip: bandLabel,
-      pgGate: AR ? 'شرط ساعات' : 'credit-hour requirement',
-      pgInferred: AR ? 'موضع مستنتج' : 'inferred position',
-      pgFoundation: AR ? 'بداية السلسلة' : 'chain start',
-      pgIntermediate: AR ? 'وسط السلسلة' : 'chain middle',
-      pgTerminal: AR ? 'نهاية السلسلة' : 'chain end',
-      pgHoverHint: AR ? 'مرّر لإبراز السلسلة' : 'hover to highlight a chain',
-      pgPassed: AR ? 'مجتاز قبل السيناريو' : 'completed before the scenario',
-      pgStudying: AR ? 'مفترض اجتيازه في الفصل المرجعي للتخطيط' : 'assumed passed in the planning baseline term',
-      pgOpen: AR ? 'مخطط في السيناريو' : 'planned in the scenario',
-      pgLocked: AR ? 'غير محسوم' : 'unresolved',
+      pgGate: AR ? 'شرط الساعات المعتمدة' : 'credit-hour requirement',
+      pgInferred: AR ? 'موضع محدّد تقديريًا' : 'inferred position',
+      pgFoundation: AR ? 'بداية سلسلة المتطلبات' : 'chain start',
+      pgIntermediate: AR ? 'وسط سلسلة المتطلبات' : 'chain middle',
+      pgTerminal: AR ? 'نهاية سلسلة المتطلبات' : 'chain end',
+      pgHoverHint: AR ? 'مرّر على مقرر لإبراز سلسلة متطلباته' : 'hover to highlight a chain',
+      pgPassed: AR ? 'مجتاز قبل فصل البداية' : 'completed before the scenario',
+      pgStudying: AR ? 'يُفترض اجتيازه بنهاية فصل البداية' : 'assumed passed in the planning baseline term',
+      pgOpen: AR ? 'مُدرج في فصل تقديري' : 'planned in the scenario',
+      pgLocked: AR ? 'تعذّر تحديد فصل مناسب له' : 'unresolved',
       pgSameTermWarn: count => (AR
-        ? `${count} علاقة متطلبات داخل الفصل نفسه`
+        ? `علاقات متطلبات سابقة داخل الفصل نفسه: ${count}.`
         : `${count} prerequisite relation(s) within one scenario term`),
       pgBackwardWarn: count => (AR
-        ? `${count} علاقة متطلبات بعد مقررها`
+        ? `علاقات يظهر فيها المتطلب السابق بعد المقرر الذي يعتمد عليه: ${count}.`
         : `${count} prerequisite relation(s) scheduled after their course`),
     };
   }
@@ -108,7 +108,7 @@
     if (!host.hasAttribute('aria-label')) {
       host.setAttribute(
         'aria-label',
-        AR ? 'خريطة مسار سيناريو التخرج' : 'Graduation scenario path map'
+        AR ? 'خريطة المسار التقديري حتى إكمال الخطة الدراسية' : 'Graduation scenario path map'
       );
     }
 

@@ -173,7 +173,11 @@ def gpa_band(gpa: float | None) -> dict[str, Any]:
     from core.services.policy_store import get_policy_store
 
     if gpa is None:
-        return {"gpa": None, "band_ar": "", "note_ar": "لا يوجد معدل تراكمي مسجّل في النظام."}
+        return {
+            "gpa": None,
+            "band_ar": "",
+            "note_ar": "لا يظهر معدل تراكمي في البيانات المتاحة للنظام.",
+        }
 
     store = get_policy_store()
     record = next((r for r in store.records if r.get("policy_id") == _BANDS_POLICY), None)
@@ -205,7 +209,9 @@ def gpa_band(gpa: float | None) -> dict[str, Any]:
     return {
         "gpa": gpa,
         "band_ar": band_ar,
-        "note_ar": "" if band_ar else "لا ينطبق تقدير عام على هذا المعدل في الجدول المعتمد.",
+        "note_ar": (
+            "" if band_ar else "لا تتضمن لائحة التقديرات المعتمدة تقديرًا عامًا لهذا المعدل."
+        ),
         "citation": {
             "policy_id": _BANDS_POLICY,
             "page": source.get("page"),
@@ -315,6 +321,7 @@ def build_student_home_cards(
     term: int,
     *,
     current_term_rows: list[dict[str, Any]] | None = None,
+    prefer_arabic_names: bool = False,
 ) -> dict[str, Any]:
     """Everything the student home screen shows, decided here.
 
@@ -365,6 +372,7 @@ def build_student_home_cards(
         int(academic_year),
         int(term),
         additional_studying_codes=current_codes,
+        prefer_arabic_names=prefer_arabic_names,
     )
     buckets = progress_buckets(report)
     student = Student.objects.filter(student_id=int(student_id)).values("gpa").first() or {}

@@ -71,6 +71,7 @@ def build_unlock_report(
     additional_studying_codes: set[str] | None = None,
     excluded_studying_codes: set[str] | None = None,
     registered_credits_override: int | None = None,
+    prefer_arabic_names: bool = False,
     _prerequisite_map: dict[str, list[str]] | None = None,
     _query_cache: dict[object, object] | None = None,
 ) -> dict:
@@ -130,7 +131,7 @@ def build_unlock_report(
     names_key = ("course_names", program.strip().upper())
     cached_names = _query_cache.get(names_key) if _query_cache is not None else None
     if isinstance(cached_names, dict) and codes <= set(cached_names):
-        names = cached_names
+        names = dict(cached_names)
     else:
         names = {
             normalize_code(k): (v or "")
@@ -139,7 +140,11 @@ def build_unlock_report(
             )
         }
         if _query_cache is not None:
-            _query_cache[names_key] = names
+            _query_cache[names_key] = dict(names)
+    if prefer_arabic_names:
+        from core.services.student_sections import arabic_term_section_course_names
+
+        names.update(arabic_term_section_course_names(codes))
 
     # ── one pass: classify every plan course ──
     info: dict[str, dict] = {}

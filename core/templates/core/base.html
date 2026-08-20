@@ -9,21 +9,21 @@
     (function(){var t=localStorage.getItem('theme');if(!t){t=window.matchMedia('(prefers-color-scheme:dark)').matches?'dark':'light'}document.documentElement.setAttribute('data-theme',t)})();
   </script>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <meta name="description" content="{% if LANGUAGE_CODE == 'ar' %}لوحة تحكم المرشد الأكاديمي — جامعة طيبة{% else %}Academic Advisor Dashboard — Taibah University{% endif %}">
+  <meta name="description" content="{% if LANGUAGE_CODE == 'ar' %}منصة الإرشاد الأكاديمي — جامعة طيبة{% else %}Academic Advisor Dashboard — Taibah University{% endif %}">
   <meta name="theme-color" content="#0A8E6E">
   <meta name="color-scheme" content="light dark">
-  <title>{% block title %}{% if LANGUAGE_CODE == 'ar' %}لوحة تحكم المرشد{% else %}Advisor Dashboard{% endif %}{% endblock %}</title>
+  <title>{% block title %}{% if LANGUAGE_CODE == 'ar' %}منصة الإرشاد الأكاديمي{% else %}Advisor Dashboard{% endif %}{% endblock %}</title>
   {# SVG favicon — teal graduation cap matching brand #}
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%230A8E6E'/%3E%3Cpath d='M16 7L4 13l12 6 12-6z' fill='%23fff' opacity='.9'/%3E%3Cpath d='M8 16v5c0 2 3.6 4 8 4s8-2 8-4v-5' fill='none' stroke='%23fff' stroke-width='1.5' stroke-linecap='round'/%3E%3Cline x1='28' y1='13' x2='28' y2='21' stroke='%23fff' stroke-width='1.5' stroke-linecap='round'/%3E%3C/svg%3E">
   {# Preconnect for faster Google Fonts loading #}
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="{% static 'css/global.css' %}?v=51" rel="stylesheet">
+  <link href="{% static 'css/global.css' %}?v=58" rel="stylesheet">
   <link href="{% static 'css/bootstrap-compat.css' %}?v=3" rel="stylesheet">
   {% block extra_css %}{% endblock %}
 </head>
 <body{% if embed_mode %} class="embed-mode"{% endif %}>
-<a href="#main-content" class="skip-link">{% if LANGUAGE_CODE == 'ar' %}تخطي إلى المحتوى{% else %}Skip to content{% endif %}</a>
+<a href="#main-content" class="skip-link">{% if LANGUAGE_CODE == 'ar' %}الانتقال إلى المحتوى الرئيس{% else %}Skip to content{% endif %}</a>
 <div class="color-mesh"></div>
 <div class="side-decor side-decor-r" aria-hidden="true"></div>
 {% block body %}
@@ -34,7 +34,7 @@
     <header class="page-header" role="banner">
       <div class="page-header-left">
         <h1 {% block page_h1_attrs %}class="page-header-module"{% endblock %}>{% block page_heading %}{% endblock %}</h1>
-        <div class="page-header-chips" aria-label="{% if LANGUAGE_CODE == 'ar' %}معلومات الصفحة{% else %}Page information{% endif %}">
+        <div class="page-header-chips" aria-label="{% if LANGUAGE_CODE == 'ar' %}بيانات الصفحة{% else %}Page information{% endif %}">
           {% block page_chips %}{% endblock %}
         </div>
       </div>
@@ -44,8 +44,8 @@
     </header>
     <div class="page-intro">{% block page_intro %}{% endblock %}</div>
     {% block content %}{% endblock %}
-    <footer class="system-footer" aria-label="{% if LANGUAGE_CODE == 'ar' %}معلومات المنصة{% else %}System attribution{% endif %}">
-      <span>{% if LANGUAGE_CODE == 'ar' %}منصة الذكاء للإرشاد الأكاديمي{% else %}Academic Advising Intelligence Platform{% endif %}</span>
+    <footer class="system-footer" aria-label="{% if LANGUAGE_CODE == 'ar' %}بيانات المنصة{% else %}System attribution{% endif %}">
+      <span>{% if LANGUAGE_CODE == 'ar' %}المنصة الذكية للإرشاد الأكاديمي{% else %}Academic Advising Intelligence Platform{% endif %}</span>
       <span class="system-footer-sep" aria-hidden="true"></span>
       <span>{% if LANGUAGE_CODE == 'ar' %}تصميم وتطوير <strong>د. بسام المجدوي</strong>{% else %}Concept, design, and implementation by <strong>Dr. Bassam Almogadwy</strong>{% endif %}</span>
     </footer>
@@ -59,7 +59,7 @@
 </button>
 <script src="{% static 'js/shared-utils.js' %}?v=2"></script>
 <script src="{% static 'js/shared-timetable.js' %}?v=3"></script>
-<script src="{% static 'js/student-timetable.js' %}?v=3"></script>
+<script src="{% static 'js/student-timetable.js' %}?v=4"></script>
 <script src="{% static 'js/notify.js' %}?v=2"></script>
 <script src="{% static 'js/safe-fetch.js' %}?v=2"></script>
 <script src="{% static 'js/dialog.js' %}?v=2"></script>

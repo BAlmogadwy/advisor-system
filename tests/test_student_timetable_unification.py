@@ -231,6 +231,53 @@ def test_shared_adapter_supplies_a_mobile_agenda_to_the_planner():
     )
 
 
+def test_planner_does_not_disable_legitimate_snapshot_coexistence():
+    planner = PLANNER_PAGE_JS.read_text(encoding="utf-8")
+
+    assert "mixedBaseline" not in planner
+    assert "MIXED_REVIEW_REQUIRED" not in planner
+    assert "Building is paused" not in planner
+
+
+def test_planner_arabic_copy_calls_registration_evidence_what_it_is():
+    planner = PLANNER_PAGE_JS.read_text(encoding="utf-8")
+
+    for phrase in (
+        "نسخ قائمة المقررات والشُعب",
+        "نوع الجدول",
+        "متطلباته السابقة مستوفاة",
+        "المقررات المدرجة",
+        "أيام الحضور",
+        "المقررات التي تعذّر إدراجها",
+        "تعذّر إنشاء جدول مقترح يضم جميع المقررات المحدّدة.",
+        "قائمة مرجعية للتحقق منها وإدخالها يدويًا في بوابة الجامعة (نسخها لا يسجّل أي مقرر):",
+        "الجدول المسجّل فعليًا",
+        "لا تتوفر في بياناتنا مواعيد للجدول المسجّل فعليًا في هذا الفصل.",
+        "عرض مواعيد الجدول المسجّل فعليًا",
+        "الاحتفاظ بشُعب الجدول المسجّل فعليًا",
+        "الجدول المتوقع",
+        "لا تتوفر في بياناتنا مواعيد للجدول المتوقع في هذا الفصل.",
+        "عرض مواعيد الجدول المتوقع",
+        "الاحتفاظ بشُعب الجدول المتوقع",
+        "الجدول المقترح",
+    ):
+        assert phrase in planner
+
+    for literal_translation in (
+        "المصدر",
+        "المقررات المجدولة",
+        "جدولك الحالي",
+        "شُعبي الحالية",
+        "تسجيلك الحقيقي",
+        "نسخ قائمة التسجيل",
+        "خيارات الجدول",
+        "ابنِ الخيارات",
+        "أي شعبة مناسبة",
+        "احتفظ بشُعبي المسجّلة",
+    ):
+        assert literal_translation not in planner
+
+
 def test_shared_sources_keep_the_complete_week_overlaps_and_exact_minutes():
     engine = WEEK_GRID_JS.read_text(encoding="utf-8")
     adapter = STUDENT_TIMETABLE_JS.read_text(encoding="utf-8")
