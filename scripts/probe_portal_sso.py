@@ -122,8 +122,25 @@ def credential_shape(username: str, password: str) -> Finding:
     return Finding("credentials configured", True, "username looks like a UPN")
 
 
-async def _observe() -> tuple[dict[str, int], list[str]]:
-    """Walk the live chain and return (selector counts, notes)."""
+#: Recorded when a selector raises during observation. Deliberately negative:
+#: a zero would satisfy every `none` expectation and read as a clean run.
+SELECTOR_ERROR = -1
+
+
+async def count_or_error(locator: object) -> int:
+    """Match count, or :data:`SELECTOR_ERROR` if the locator raises.
+
+    A malformed selector, a detached frame or a navigation mid-probe all raise
+    here. Scoring those as 0 would mark all five fail-closed selectors OK.
+    """
+    try:
+        return int(await locator.count())  # type: ignore[attr-defined]
+    except Exception:
+        return SELECTOR_ERROR
+
+
+async def _observe() -> tuple[dict[str, int], list[str], list[Finding]]:
+    """Walk the live chain and return (selector counts, notes, host findings)."""
     from django.conf import settings
     from playwright.async_api import async_playwright
 
@@ -131,6 +148,7 @@ async def _observe() -> tuple[dict[str, int], list[str]]:
 
     notes: list[str] = []
     counts: dict[str, int] = {}
+    checks: list[Finding] = []
     login_url = str(settings.PORTAL_LOGIN_URL)
     notes.append(f"portal pre-login: {host_of(login_url)}")
 
@@ -141,21 +159,21 @@ async def _observe() -> tuple[dict[str, int], list[str]]:
         await page.goto(login_url, wait_until="domcontentloaded", timeout=45000)
 
         html = await ps.safe_page_content(page)
-        notes.append(
-            f"pre-login page reads as logged out: {ps.is_logged_out_html(html)} (must be True)"
+        detectors_agree = ps.is_logged_out_html(html) and not ps.is_staff_login_success_html(html)
+        checks.append(
+            Finding(
+                "detectors read the sign-in page as signed out",
+                detectors_agree,
+                f"logged_out={ps.is_logged_out_html(html)} "
+                f"signed_in={ps.is_staff_login_success_html(html)}",
+            )
         )
-        notes.append(
-            "pre-login page reads as signed in: "
-            f"{ps.is_staff_login_success_html(html)} (must be False)"
-        )
-        if not ps.is_logged_out_html(html) or ps.is_staff_login_success_html(html):
-            notes.append("!! the logged-out detectors disagree with the real sign-in page")
 
         link = page.locator(ps._PORTAL_SSO_LINK_SELECTOR)
         counts["portal SSO link"] = await link.count()
         if counts["portal SSO link"] < 1:
             notes.append("!! the portal's authLogin link was not found; the chain stops here")
-            return counts, notes
+            return counts, notes, checks
 
         await link.first.click()
         try:
@@ -165,20 +183,27 @@ async def _observe() -> tuple[dict[str, int], list[str]]:
 
         current = page.url
         notes.append(f"sign-in page: {host_of(current)}")
-        notes.append(
-            f"recognised as a Microsoft sign-in host: {ps._is_microsoft_login_url(current)}"
+        accepted = ps._is_microsoft_login_url(current) or ps._is_taibah_adfs_url(current)
+        # A FINDING, not a note. The tenant can move the sign-in host — b2clogin, a
+        # new federation endpoint, login.microsoft.us — to a page that still carries
+        # `#i0116`, `#idSIButton9` and none of the forbidden selectors. Every
+        # selector expectation would pass while the scraper refuses the host on the
+        # very next run, and a probe that printed that as a note exited 0 saying the
+        # chain matched.
+        checks.append(
+            Finding(
+                "sign-in host is one the scraper accepts",
+                accepted,
+                f"{host_of(current)} "
+                + ("accepted" if accepted else "would be REFUSED by the scraper"),
+            )
         )
-        if not ps._is_microsoft_login_url(current) and not ps._is_taibah_adfs_url(current):
-            notes.append("!! the link landed on a host the scraper would refuse")
 
         for name, (attr, _expectation) in EMAIL_STEP_EXPECTATIONS.items():
             if name == "portal SSO link":
                 continue
-            try:
-                counts[name] = await page.locator(getattr(ps, attr)).count()
-            except Exception:
-                counts[name] = -1
-        return counts, notes
+            counts[name] = await count_or_error(page.locator(getattr(ps, attr)))
+        return counts, notes, checks
     finally:
         await browser.close()
         await playwright.stop()
@@ -195,7 +220,7 @@ def main() -> int:
 
     from django.conf import settings
 
-    counts, notes = asyncio.run(_observe())
+    counts, notes, host_checks = asyncio.run(_observe())
     for note in notes:
         print(note)
 
@@ -212,7 +237,7 @@ def main() -> int:
     print("\nconfiguration:")
     print(f"  {'OK  ' if credentials.ok else 'FAIL'}  {credentials.name}: {credentials.detail}")
 
-    findings = [credentials, *selector_findings]
+    findings = [credentials, *host_checks, *selector_findings]
     failed = [f for f in findings if not f.ok]
     print(
         "\nNo credential field was filled. The second half of the chain "

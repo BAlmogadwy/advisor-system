@@ -287,6 +287,9 @@ def test_sso_login_fails_closed_for_unsupported_states(
 def test_initial_sso_failure_closes_browser_and_playwright(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Unattended path: a failed sign-in must not leak a browser process."""
+    monkeypatch.setattr(portal_scraper.settings, "PORTAL_UNATTENDED_LOGIN", True, raising=False)
+
     class Page:
         pass
 
@@ -338,3 +341,132 @@ def test_initial_sso_failure_closes_browser_and_playwright(
 
     assert browser.closed is True
     assert playwright.stopped is True
+
+
+def test_a_missing_saved_session_closes_browser_and_playwright(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Session path: the same cleanup, for the failure an operator will actually
+    hit — no `portal_login` has been run yet, so there is nothing to reuse."""
+    from core.services import portal_session
+
+    monkeypatch.setattr(portal_scraper.settings, "PORTAL_UNATTENDED_LOGIN", False, raising=False)
+    monkeypatch.setattr(
+        portal_session,
+        "load_state",
+        lambda: (_ for _ in ()).throw(portal_session.PortalSessionError("no session")),
+    )
+
+    class Context:
+        async def new_page(self):
+            raise AssertionError("a page must not be opened without a session")
+
+    class Browser:
+        def __init__(self) -> None:
+            self.closed = False
+
+        async def new_context(self, **kwargs):
+            raise AssertionError("a context must not be created without a session")
+
+        async def close(self) -> None:
+            self.closed = True
+
+    class Chromium:
+        def __init__(self, browser: Browser) -> None:
+            self.browser = browser
+
+        async def launch(self, *, headless: bool) -> Browser:
+            return self.browser
+
+    class Playwright:
+        def __init__(self, browser: Browser) -> None:
+            self.chromium = Chromium(browser)
+            self.stopped = False
+
+        async def stop(self) -> None:
+            self.stopped = True
+
+    class Starter:
+        def __init__(self, playwright: Playwright) -> None:
+            self.playwright = playwright
+
+        async def start(self) -> Playwright:
+            return self.playwright
+
+    browser = Browser()
+    playwright = Playwright(browser)
+    monkeypatch.setattr(portal_scraper, "async_playwright", lambda: Starter(playwright))
+
+    with pytest.raises(portal_session.PortalSessionError, match="portal_login"):
+        asyncio.run(portal_scraper.login_to_portal())
+
+    assert browser.closed is True
+    assert playwright.stopped is True
+
+
+def test_the_scraper_never_reads_a_password_on_the_session_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The whole point of the attended design: no credential is submitted by the
+    scraper, so a tenant that enforces MFA is satisfied once by a person instead of
+    refused on every run — and a wrong password can never be typed at all."""
+    from core.services import portal_session
+
+    monkeypatch.setattr(portal_scraper.settings, "PORTAL_UNATTENDED_LOGIN", False, raising=False)
+    monkeypatch.setattr(portal_session, "load_state", lambda: {"cookies": [{"name": "x"}]})
+
+    async def _live(_context) -> bool:
+        return True
+
+    monkeypatch.setattr(portal_session, "session_is_live", _live)
+
+    def _must_not_run(*args, **kwargs):
+        raise AssertionError("the scraper submitted credentials on the session path")
+
+    monkeypatch.setattr(portal_scraper, "authenticate_portal_page", _must_not_run)
+
+    class Page:
+        pass
+
+    class Context:
+        async def new_page(self):
+            return Page()
+
+    class Browser:
+        def __init__(self) -> None:
+            self.storage_state_used = None
+
+        async def new_context(self, **kwargs):
+            self.storage_state_used = kwargs.get("storage_state")
+            return Context()
+
+        async def close(self) -> None:
+            pass
+
+    class Chromium:
+        def __init__(self, browser: Browser) -> None:
+            self.browser = browser
+
+        async def launch(self, *, headless: bool) -> Browser:
+            return self.browser
+
+    class Playwright:
+        def __init__(self, browser: Browser) -> None:
+            self.chromium = Chromium(browser)
+
+        async def stop(self) -> None:
+            pass
+
+    class Starter:
+        def __init__(self, playwright: Playwright) -> None:
+            self.playwright = playwright
+
+        async def start(self) -> Playwright:
+            return self.playwright
+
+    browser = Browser()
+    monkeypatch.setattr(portal_scraper, "async_playwright", lambda: Starter(Playwright(browser)))
+
+    asyncio.run(portal_scraper.login_to_portal())
+
+    assert browser.storage_state_used == {"cookies": [{"name": "x"}]}

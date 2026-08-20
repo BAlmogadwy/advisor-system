@@ -369,6 +369,11 @@ def test_relogin_is_coalesced_without_closing_unrelated_workers(
     }
     authenticate = AsyncMock()
     monkeypatch.setattr(portal_scraper, "authenticate_portal_page", authenticate)
+    # Coalescing is a property of the LOCK and the generation counter, not of how
+    # the session is obtained, so it is exercised on the unattended path where the
+    # sign-in is a single mockable call. The attended path's own recovery
+    # behaviour is covered in tests/test_portal_sso_hardening.py.
+    monkeypatch.setattr(scrape_students.settings, "PORTAL_UNATTENDED_LOGIN", True, raising=False)
 
     async def relogin_twice() -> tuple[int, int]:
         lock = asyncio.Lock()
@@ -413,6 +418,9 @@ def test_failed_relogin_is_attempted_once_and_closes_candidate_page(
     }
     authenticate = AsyncMock(side_effect=RuntimeError("SSO callback failed"))
     monkeypatch.setattr(portal_scraper, "authenticate_portal_page", authenticate)
+    # Same reasoning as the coalescing test: the retry/cleanup contract is about
+    # the lock and the candidate page, not about how the session is obtained.
+    monkeypatch.setattr(scrape_students.settings, "PORTAL_UNATTENDED_LOGIN", True, raising=False)
 
     async def relogin_twice() -> tuple[object, object]:
         lock = asyncio.Lock()

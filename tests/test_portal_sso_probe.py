@@ -172,3 +172,57 @@ def test_credential_shape_names_which_variable_is_empty():
 
     assert "PORTAL_ADMIN_PASSWORD" in credential_shape("a@b.sa", "").detail
     assert "PORTAL_ADMIN_USERNAME" in credential_shape("", "pw").detail
+
+
+# ---------------------------------------------------------------------------
+# The probe's own failure modes. A probe that reports success for a chain it
+# never verified is worse than no probe: it is a green light nobody earned.
+# ---------------------------------------------------------------------------
+
+
+def test_a_selector_that_raises_is_recorded_as_an_error_not_a_zero():
+    """`count_or_error` is what stops a raising locator from scoring 0, which
+    would mark all five fail-closed selectors "OK, expected 0"."""
+    import asyncio
+
+    from scripts.probe_portal_sso import SELECTOR_ERROR, count_or_error
+
+    class Raises:
+        async def count(self):
+            raise RuntimeError("malformed selector")
+
+    class Counts:
+        async def count(self):
+            return 3
+
+    assert asyncio.run(count_or_error(Raises())) == SELECTOR_ERROR
+    assert asyncio.run(count_or_error(Counts())) == 3
+
+
+def test_the_error_sentinel_can_never_satisfy_a_zero_expectation():
+    from scripts.probe_portal_sso import SELECTOR_ERROR
+
+    assert SELECTOR_ERROR != 0, "a zero sentinel would read as a clean fail-closed selector"
+    counts = _all_good()
+    for name, (_attr, expectation) in EMAIL_STEP_EXPECTATIONS.items():
+        if expectation != "none":
+            continue
+        probe = dict(counts)
+        probe[name] = SELECTOR_ERROR
+        assert {f.name for f in evaluate(probe) if not f.ok} == {name}
+
+
+def test_a_refused_sign_in_host_fails_the_probe():
+    """The tenant can move sign-in to a host the scraper rejects — b2clogin, a new
+    federation endpoint — that still carries `#i0116`, `#idSIButton9` and none of
+    the forbidden selectors. Every selector expectation passes; the probe must
+    still fail, or it prints "the chain matches" for a login that cannot work.
+    """
+    from scripts.probe_portal_sso import Finding
+
+    selector_findings = evaluate(_all_good())
+    assert all(f.ok for f in selector_findings)
+
+    host_check = Finding("sign-in host is one the scraper accepts", False, "would be REFUSED")
+    findings = [host_check, *selector_findings]
+    assert [f for f in findings if not f.ok] == [host_check]

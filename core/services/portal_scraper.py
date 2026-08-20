@@ -55,6 +55,19 @@ _MICROSOFT_KMSI_SELECTOR = (
 _MICROSOFT_KMSI_NO_SELECTOR = "#idBtn_Back:visible"
 _MICROSOFT_CREDENTIAL_ERROR_SELECTOR = "#usernameError:visible, #passwordError:visible"
 _MICROSOFT_POLICY_ERROR_SELECTOR = "#service_exception_message:visible, #idTD_Error:visible"
+#: Interactive states this scraper can RECOGNISE. It is not the full set, and it
+#: cannot be: consent, terms of use, MFA registration ("More information
+#: required"), a forced password change and Conditional Access / device-compliance
+#: interrupts each render their own page, and none of them can be confirmed
+#: against the live tenant without first reaching that state with real
+#: credentials — so adding ids for them would be guessing, which is how a selector
+#: comes to match nothing and be trusted anyway.
+#:
+#: The BACKSTOP for everything not listed here is the stall timer: a page that
+#: exposes no control this scraper can act on stops making progress and raises
+#: `PortalInteractiveAuthenticationRequired`. That path is covered by
+#: tests/test_portal_sso_hardening.py, and its message says the diagnosis is drawn
+#: from absence of progress rather than from seeing an MFA control — because it is.
 _MICROSOFT_INTERACTIVE_SELECTOR = ", ".join(
     (
         "#idDiv_SAOTCS_Proofs:visible",
@@ -65,8 +78,22 @@ _MICROSOFT_INTERACTIVE_SELECTOR = ", ".join(
         "#wlspispSolutionElement:visible",
     )
 )
-_TAIBAH_ADFS_USERNAME_SELECTOR = '#userNameInput:visible, input[name="UserName"]:visible'
-_TAIBAH_ADFS_PASSWORD_SELECTOR = '#passwordInput:visible, input[name="Password"]:visible'
+# Same guards as the Microsoft credential selectors, for the same reason. ADFS
+# serves home-realm discovery and the credential form from one `#authArea` and
+# toggles between them; a theme that hides the inactive half by moving it off
+# screen rather than with `display:none` would leave these matching on the
+# provider-chooser page, because `:visible` does not exclude an off-screen or
+# zero-opacity input.
+_TAIBAH_ADFS_USERNAME_SELECTOR = (
+    '#userNameInput:not([aria-hidden="true"]):not([tabindex="-1"]):not(.moveOffScreen):visible, '
+    'input[name="UserName"]:not([aria-hidden="true"]):not([tabindex="-1"]):not('
+    ".moveOffScreen):visible"
+)
+_TAIBAH_ADFS_PASSWORD_SELECTOR = (
+    '#passwordInput:not([aria-hidden="true"]):not([tabindex="-1"]):not(.moveOffScreen):visible, '
+    'input[name="Password"]:not([aria-hidden="true"]):not([tabindex="-1"]):not('
+    ".moveOffScreen):visible"
+)
 _TAIBAH_ADFS_ACTIVE_DIRECTORY_SELECTOR = (
     '#bySelection .idp[role="button"][onclick*="AD AUTHORITY"]:visible'
 )
@@ -469,7 +496,11 @@ async def authenticate_portal_page(
 
     await _safe_goto(page, str(getattr(settings, "PORTAL_LOGIN_URL", "")))
     initial_html = await safe_page_content(page)
-    if is_staff_login_success_html(initial_html):
+    # The SAME two-sided gate the loop uses. A one-sided check here was the more
+    # dangerous of the two: it runs against the page the scraper lands on before
+    # any sign-in, so a service page carrying the portal's `signOut.do` nav link
+    # would have returned "already signed in" and skipped authentication entirely.
+    if is_staff_login_success_html(initial_html) and not is_logged_out_html(initial_html):
         return
 
     try:
@@ -483,6 +514,14 @@ async def authenticate_portal_page(
 
     deadline = time.monotonic() + (resolved_timeout_ms / 1000.0)
     last_progress = time.monotonic()
+    # A fixed 30s stall budget silently CAPPED the operator's configured timeout:
+    # with the 120s default, a sign-in that was still redirecting — ADFS posting
+    # back to Microsoft, Microsoft to the portal reply URL, the portal building the
+    # staff session — was abandoned at 30s, because no branch after the credential
+    # steps ever refreshed `last_progress`. A successful handshake was thrown away
+    # and reported as an interactive-sign-in requirement.
+    stall_budget = min(_SSO_STALLED_SECONDS, (resolved_timeout_ms / 1000.0) / 2)
+    last_url = ""
     username_submitted = False
     password_submitted = False
     other_account_selected = False
@@ -493,9 +532,21 @@ async def authenticate_portal_page(
     while time.monotonic() < deadline:
         current_url = str(getattr(page, "url", "") or "")
 
+        # A redirect in flight IS progress. This is the only thing that advances the
+        # stall clock through the callback chain, where nothing is clicked at all.
+        if current_url != last_url:
+            last_url = current_url
+            last_progress = time.monotonic()
+
         if _is_portal_url(current_url):
             html = await safe_page_content(page, retries=1)
-            if is_staff_login_success_html(html):
+            # Two-sided, deliberately. `is_staff_login_success_html` is a bare
+            # substring test for `staffWelcomePage.do` / `signOut.do`, and the
+            # portal's shared navigation puts those links on pages that are NOT an
+            # authenticated session. `is_logged_out_html` treats the same two
+            # substrings as an override, so the pair only agrees on a real session —
+            # which is why the check has to be both, not either.
+            if is_staff_login_success_html(html) and not is_logged_out_html(html):
                 logger.info("Microsoft SSO established the portal staff session.")
                 return
         elif (
@@ -523,8 +574,41 @@ async def authenticate_portal_page(
                     "step; the unattended scraper cannot complete it."
                 )
 
+            # Resolved TOGETHER, before either is acted on. Microsoft's converged
+            # sign-in ships the password input in the DOM of the EMAIL page, moved
+            # off screen, and `:visible` does not exclude an off-screen or
+            # zero-opacity input — only `display:none` makes it invisible. So the
+            # whole protection against typing the password into the email step used
+            # to rest on the literal class name `moveOffScreen` inside
+            # `_MICROSOFT_PASSWORD_SELECTOR`. The day Microsoft renames or
+            # tenant-brands that class away, the password branch (evaluated first)
+            # would fill and submit the real password with `loginfmt` still empty —
+            # on every scrape and every session recovery, each one counting as a
+            # failed sign-in against Entra smart lockout and ADFS extranet lockout.
+            #
+            # A CSS class is not a safety mechanism. The ordering rule is: while a
+            # username field is on screen and unsubmitted, this is the email step,
+            # whatever else the DOM happens to contain.
+            username_field = await _visible_locator(page, _MICROSOFT_USERNAME_SELECTOR)
+            password_field = await _visible_locator(page, _MICROSOFT_PASSWORD_SELECTOR)
+            at_email_step = username_field is not None and not username_submitted
+
+            # Never while a credential field is still waiting to be filled. The
+            # selector includes `[data-bind*="Kmsi"]`, a substring match on a
+            # knockout binding rather than a stable id, and some tenants render the
+            # keep-me-signed-in control inline on the sign-in view — where this
+            # branch would win the ordering, click "No", and leave the password
+            # never typed until the stall timer fired.
+            #
+            # Gated on the FIELDS rather than on a submitted-flag: the credential
+            # step may have been ADFS (no Microsoft password at all), or Entra may
+            # go straight here from a session cookie the shared context still
+            # carries, and both must still be able to decline persistence.
+            credential_step_pending = at_email_step or (
+                password_field is not None and not password_submitted
+            )
             kmsi = await _visible_locator(page, _MICROSOFT_KMSI_SELECTOR)
-            if kmsi is not None and not kmsi_handled:
+            if kmsi is not None and not kmsi_handled and not credential_step_pending:
                 # Choose "No" so the scraper does not create a persistent Microsoft
                 # browser login beyond this isolated Playwright context.
                 kmsi_no = await _required_visible_locator(page, _MICROSOFT_KMSI_NO_SELECTOR)
@@ -534,17 +618,6 @@ async def authenticate_portal_page(
                 await asyncio.sleep(_SSO_POLL_SECONDS)
                 continue
 
-            password_field = await _visible_locator(page, _MICROSOFT_PASSWORD_SELECTOR)
-            if password_field is not None and not password_submitted:
-                await _fill_auth_locator(password_field, password)
-                submit = await _required_visible_locator(page, _MICROSOFT_SUBMIT_SELECTOR)
-                await _click_auth_locator(submit)
-                password_submitted = True
-                last_progress = time.monotonic()
-                await asyncio.sleep(_SSO_POLL_SECONDS)
-                continue
-
-            username_field = await _visible_locator(page, _MICROSOFT_USERNAME_SELECTOR)
             if username_field is not None and not username_submitted:
                 await _fill_auth_locator(username_field, username)
                 submit = await _required_visible_locator(page, _MICROSOFT_SUBMIT_SELECTOR)
@@ -554,11 +627,29 @@ async def authenticate_portal_page(
                 await asyncio.sleep(_SSO_POLL_SECONDS)
                 continue
 
+            if password_field is not None and not password_submitted and not at_email_step:
+                await _fill_auth_locator(password_field, password)
+                submit = await _required_visible_locator(page, _MICROSOFT_SUBMIT_SELECTOR)
+                await _click_auth_locator(submit)
+                password_submitted = True
+                last_progress = time.monotonic()
+                await asyncio.sleep(_SSO_POLL_SECONDS)
+                continue
+
             other_account = await _visible_locator(page, _MICROSOFT_OTHER_ACCOUNT_SELECTOR)
             if other_account is not None and not other_account_selected:
+                # Clicking "Use another account" restarts the sign-in from scratch,
+                # so every credential latch has to come off with it. Resetting only
+                # `username_submitted` left the restarted sequence dead-ended at the
+                # next step: Entra shows this picker after the ADFS round-trip, and
+                # with `password_submitted` still latched the re-entered account
+                # would never be given a password.
                 await _click_auth_locator(other_account)
                 other_account_selected = True
                 username_submitted = False
+                password_submitted = False
+                adfs_provider_selected = False
+                adfs_submitted = False
                 last_progress = time.monotonic()
                 await asyncio.sleep(_SSO_POLL_SECONDS)
                 continue
@@ -591,14 +682,26 @@ async def authenticate_portal_page(
                 await asyncio.sleep(_SSO_POLL_SECONDS)
                 continue
 
-        if time.monotonic() - last_progress >= _SSO_STALLED_SECONDS:
+        if time.monotonic() - last_progress >= stall_budget:
+            # A stall on an identity-provider host is REPORTED as an interactive
+            # requirement because that is overwhelmingly what it is — consent, terms
+            # of use, ProofUp, a device-compliance interrupt: real interactive
+            # states that expose none of the six controls in
+            # `_MICROSOFT_INTERACTIVE_SELECTOR`. It is a diagnosis from absence of
+            # progress, though, not from evidence, and the message says so, because
+            # the same silence is what a re-rendered form or a slow first paint
+            # looks like.
             if _is_microsoft_login_url(current_url):
                 raise PortalInteractiveAuthenticationRequired(
-                    "Microsoft SSO is waiting for an unsupported interactive sign-in step."
+                    "Microsoft SSO stopped making progress and exposed no control this "
+                    "scraper can act on. That is usually an interactive step it must not "
+                    "automate around (consent, terms of use, MFA registration, device "
+                    "compliance); it can also be a sign-in form Microsoft re-rendered."
                 )
             if _is_taibah_adfs_url(current_url):
                 raise PortalInteractiveAuthenticationRequired(
-                    "Taibah federated sign-in is waiting for an unsupported interactive step."
+                    "Taibah federated sign-in stopped making progress and exposed no "
+                    "control this scraper can act on."
                 )
             raise PortalAuthenticationError(
                 "The Taibah SSO callback did not establish an authenticated staff session."
@@ -613,13 +716,39 @@ async def login_to_portal(
     admin_username: str | None = None,
     admin_password: str | None = None,
 ) -> tuple[Playwright, Browser, Page]:
+    """Open an authenticated portal browser.
+
+    BY DEFAULT this REUSES a session a person signed in for, via
+    ``manage.py portal_login``. It types nothing: no password is read, no
+    credential is submitted, and a tenant that requires MFA, consent or device
+    compliance is satisfied once by the person rather than refused on every run.
+
+    ``PORTAL_UNATTENDED_LOGIN`` switches back to the scraper driving Entra itself.
+    That path is kept, and tested, for an account the university has approved for
+    unattended use — but it holds a staff password in the environment and every
+    automated mis-step counts against smart lockout, so it is opt-in.
+    """
+    from core.services.portal_session import PortalSessionError, load_state, session_is_live
+
+    unattended = bool(getattr(settings, "PORTAL_UNATTENDED_LOGIN", False))
     playwright = await async_playwright().start()
     browser: Browser | None = None
     try:
         browser = await playwright.chromium.launch(headless=True)
-        context = await browser.new_context()
-        page = await context.new_page()
-        await authenticate_portal_page(page, admin_username, admin_password)
+        if unattended:
+            context = await browser.new_context()
+            page = await context.new_page()
+            await authenticate_portal_page(page, admin_username, admin_password)
+        else:
+            context = await browser.new_context(storage_state=load_state())
+            # Proven by USE. Cookie expiry says when a cookie stops being sent, not
+            # whether the portal still honours the session — and a scrape that
+            # discovers this on student 400 of 400 has wasted the whole run.
+            if not await session_is_live(context):
+                raise PortalSessionError(
+                    "The saved portal session is no longer accepted by the portal."
+                )
+            page = await context.new_page()
     except Exception:
         if browser is not None:
             try:
@@ -664,7 +793,15 @@ async def navigate_to_student_study_plan(
         raise RuntimeError("SESSION_LOGGED_OUT_HTML")
 
     await _safe_goto(page, settings.STUDENT_PLAN_URL)
-    if is_logged_out_html(await safe_page_content(page)):
+    # BOTH detectors, after the navigation. The URL detector is the only one
+    # that knows the identity-provider hosts; the content detector matches just
+    # two sign-in pages, so a Microsoft account picker, a "Stay signed in?"
+    # page, an MFA interrupt or the ADFS->Entra auto-POST all read as NOT logged
+    # out and the scrape proceeds into them. It then times out waiting for a
+    # form, and the failure handler saves the page — which on those pages means
+    # writing the flow token, canary, OAuth context or SAML assertion to
+    # data/debug_failures/. Checking the URL here is what keeps that off disk.
+    if await is_logged_out(page) or is_logged_out_html(await safe_page_content(page)):
         raise RuntimeError("SESSION_LOGGED_OUT_HTML")
     await page.locator('input[name="StudentNumber"]').wait_for(state="visible", timeout=30000)
     await page.fill('input[name="StudentNumber"]', str(student_id))
@@ -687,7 +824,15 @@ async def navigate_to_student_timetable(
         raise RuntimeError("SESSION_LOGGED_OUT_HTML")
 
     await _safe_goto(page, settings.STUDENT_TIMETABLE_URL)
-    if is_logged_out_html(await safe_page_content(page)):
+    # BOTH detectors, after the navigation. The URL detector is the only one
+    # that knows the identity-provider hosts; the content detector matches just
+    # two sign-in pages, so a Microsoft account picker, a "Stay signed in?"
+    # page, an MFA interrupt or the ADFS->Entra auto-POST all read as NOT logged
+    # out and the scrape proceeds into them. It then times out waiting for a
+    # form, and the failure handler saves the page — which on those pages means
+    # writing the flow token, canary, OAuth context or SAML assertion to
+    # data/debug_failures/. Checking the URL here is what keeps that off disk.
+    if await is_logged_out(page) or is_logged_out_html(await safe_page_content(page)):
         raise RuntimeError("SESSION_LOGGED_OUT_HTML")
     await page.locator('input[name="StudentNumber"]').wait_for(state="visible", timeout=30000)
     await page.fill('input[name="StudentNumber"]', str(student_id))

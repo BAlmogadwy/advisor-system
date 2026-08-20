@@ -9,20 +9,34 @@ logger = logging.getLogger(__name__)
 
 
 def _is_logout_or_service_page(html: str) -> bool:
+    """Is this a sign-in / service page rather than student data?
+
+    ONE definition, borrowed from the scraper rather than restated. This function
+    gained the SSO markers when the portal moved to Entra, but not the
+    authenticated-marker override that ``portal_scraper.is_logged_out_html`` uses
+    — so the two detectors answered opposite things about the same HTML. The
+    portal's shared navigation puts ``staffLogin.do?ex=preLogin`` on authenticated
+    pages too, so an authenticated study plan matched here and
+    ``parse_study_plan`` returned no rows for a page that was full of them: a
+    student silently scraped as having an empty plan.
+    """
     if not html:
         return True
-    lowered = html.casefold()
+    from core.services.portal_scraper import is_logged_out_html
+
+    # The SSO markers go through the shared detector, which applies the
+    # authenticated-marker override. That override is the whole point: without it
+    # this function called an authenticated study plan a sign-in page.
+    if is_logged_out_html(html):
+        return True
+    # Markers this parser owns. The two `*_login.jsp` pages belong to the RETIRED
+    # portal, which no authenticated page links to any more, and the graduated-
+    # student page is a service surface rather than a sign-in — so none of them
+    # needs the override, and each on its own is enough to reject a response.
     return (
-        "<title>نظام الخدمات الالكترونية</title>" in html
-        or "teachers_login.jsp" in html
+        "teachers_login.jsp" in html
         or "student_login.jsp" in html
         or "services4GraduatedStudent.do" in html
-        or "stafflogin.do?ex=prelogin" in lowered
-        or "stafflogin.do?ex=authlogin" in lowered
-        or 'name="loginfmt"' in lowered
-        or 'id="i0116"' in lowered
-        or 'id="usernameinput"' in lowered
-        or 'id="passwordinput"' in lowered
     )
 
 
