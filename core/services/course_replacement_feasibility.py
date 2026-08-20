@@ -25,6 +25,7 @@ from core.services.student_graduation import (
 from core.services.student_helpers import normalize_code
 from core.services.student_planner import PlannerRequest, PlannerUnavailable, build_student_options
 from core.services.student_sections import get_student_term_baseline, timetable_snapshot_kind
+from core.services.timetable_snapshots import Snapshot
 
 MAX_ACADEMIC_RESULTS_TO_CERTIFY = 20
 MAX_CERTIFIED_REPLACEMENTS = 5
@@ -522,7 +523,10 @@ def find_feasible_course_replacements(
     requested_remove = normalize_code(remove_course or "")
     requested_add = normalize_code(add_course or "")
     raw_baseline = [
-        dict(row) for row in get_student_term_baseline(sid, str(year), str(term_number))
+        dict(row)
+        for row in get_student_term_baseline(
+            sid, str(year), str(term_number), snapshot=Snapshot.EFFECTIVE
+        )
     ]
     baseline_kind_raw = timetable_snapshot_kind(raw_baseline)
     baseline_kind = {

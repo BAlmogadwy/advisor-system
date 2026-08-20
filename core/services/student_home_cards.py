@@ -332,11 +332,19 @@ def build_student_home_cards(
         student_gender,
     )
     from core.services.student_unlock import build_unlock_report
+    from core.services.timetable_snapshots import Snapshot
 
     if current_term_rows is None:
         try:
+            # REGISTRAR evidence only. These are academic-summary cards: they state
+            # what the student is carrying, and the caller that passes rows in passes
+            # exactly this class for the same reason. An imported plan reaching here
+            # would make the cards assert hours nobody registered.
             current_term_rows = get_student_term_baseline(
-                int(student_id), str(academic_year), str(term)
+                int(student_id),
+                str(academic_year),
+                str(term),
+                snapshot=Snapshot.REGISTERED,
             )
             gender = student_gender(student_id)
             if gender:

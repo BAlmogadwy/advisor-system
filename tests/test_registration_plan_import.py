@@ -315,9 +315,17 @@ def test_the_same_physical_section_can_be_recorded_in_two_terms(world: SectionWo
     ) == {("1447", "2"), (YEAR, TERM)}
 
 
-def test_expected_import_refuses_to_replace_real_target_term_rows(
+def test_expected_import_lands_beside_registrar_rows_without_replacing_them(
     world: SectionWorld,
 ) -> None:
+    """This used to refuse outright, and the refusal was right at the time: a term
+    held one snapshot, so writing the plan meant destroying the registration.
+
+    Both snapshots now coexist, and importing a corrected plan into an
+    already-registered term is the case the expected-versus-registered comparison
+    exists for. So the import proceeds, the registrar row is untouched, and the
+    operator is told what they are importing into rather than blocked.
+    """
     real = StudentTermSection.objects.create(
         student_id=700001,
         academic_year=YEAR,
@@ -332,11 +340,25 @@ def test_expected_import_refuses_to_replace_real_target_term_rows(
         TERM,
     )
 
-    assert not plan.ok
-    assert any(p.code == "TARGET_TERM_HAS_REGISTRAR_ROWS" for p in plan.problems)
-    with pytest.raises(ValueError, match="failed validation"):
-        apply_plan(plan, YEAR, TERM)
+    assert plan.ok, plan.problems
+    assert not any(p.code == "TARGET_TERM_HAS_REGISTRAR_ROWS" for p in plan.problems)
+    assert any(n.code == "TARGET_TERM_HAS_REGISTRAR_ROWS" for n in plan.notices), plan.notices
+    # An operator must be able to SEE the notice. It is not a problem any more, so
+    # `summary()` is the only place a dry run would surface it.
+    assert "1 notice(s)" in plan.summary(), plan.summary()
+
+    # The registrar row must not be inside the predicted delete scope either: the
+    # dry run's number is what an operator judges the blast radius from.
+    assert plan.replaces == 0
+    result = apply_plan(plan, YEAR, TERM)
+    assert result["removed"] == plan.replaces
+
     assert StudentTermSection.objects.filter(pk=real.pk).exists()
+    assert set(
+        StudentTermSection.objects.filter(
+            student_id=700001, academic_year=YEAR, term=TERM
+        ).values_list("source", flat=True)
+    ) == {"scraper_timetable", f"registration_plan_{YEAR}_t{TERM}"}
 
 
 def test_a_registration_with_no_student_id_is_refused(world: SectionWorld) -> None:
@@ -636,11 +658,16 @@ def test_reimport_removes_stale_links_for_students_now_only_on_nonphysical_rows(
     ).exists()
 
 
-def test_nonphysical_workbook_student_still_blocks_a_registrar_collision(
+def test_a_nonphysical_workbook_student_never_loses_registrar_rows(
     world: SectionWorld,
 ) -> None:
-    """No-link students are still in scope, so real registrar evidence protects
-    them from expected-plan replacement just like students receiving links.
+    """A student in the workbook with no placeable row is still in the replacement
+    scope, so their EXPECTED rows are cleared. Their registrar rows are not: the
+    scope is a class scope, and the plan importer owns exactly one class.
+
+    This is the strongest form of the protection the old refusal provided, kept
+    once the refusal itself became unnecessary -- the delete can no longer reach a
+    registrar row, so nothing has to be blocked to keep one safe.
     """
     real = StudentTermSection.objects.create(
         student_id=700001,
@@ -648,6 +675,13 @@ def test_nonphysical_workbook_student_still_blocks_a_registrar_collision(
         term=TERM,
         term_section=world["solo"],
         source="scraper_timetable",
+    )
+    stale_plan = StudentTermSection.objects.create(
+        student_id=700001,
+        academic_year=YEAR,
+        term=TERM,
+        term_section=world["solo"],
+        source=f"registration_plan_{YEAR}_t{TERM}",
     )
     plan = build_plan(
         _rosters(),
@@ -658,11 +692,12 @@ def test_nonphysical_workbook_student_still_blocks_a_registrar_collision(
 
     assert plan.students == set()
     assert plan.replacement_scope == {700001}
-    assert not plan.ok
-    assert any(p.code == "TARGET_TERM_HAS_REGISTRAR_ROWS" for p in plan.problems)
-    with pytest.raises(ValueError, match="failed validation"):
-        apply_plan(plan, YEAR, TERM)
+    assert plan.ok, plan.problems
+
+    apply_plan(plan, YEAR, TERM)
+
     assert StudentTermSection.objects.filter(pk=real.pk).exists()
+    assert not StudentTermSection.objects.filter(pk=stale_plan.pk).exists()
 
 
 def test_applying_reconciles_observed_programmes_for_old_and_new_sections(

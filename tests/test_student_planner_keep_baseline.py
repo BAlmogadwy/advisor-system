@@ -88,7 +88,8 @@ def _request(*codes: str, keep: bool = True, cap: int = 18) -> PlannerRequest:
 def test_keep_mode_solves_only_additions_and_returns_the_complete_week(monkeypatch):
     baseline = _baseline()
     monkeypatch.setattr(
-        "core.services.student_planner.get_student_term_baseline", lambda *_args: baseline
+        "core.services.student_planner.get_student_term_baseline",
+        lambda *_args, **_kwargs: baseline,
     )
     calls = []
 
@@ -137,7 +138,8 @@ def test_keep_mode_solves_only_additions_and_returns_the_complete_week(monkeypat
 
 def test_no_additions_returns_one_meaningful_baseline_without_running_solver(monkeypatch):
     monkeypatch.setattr(
-        "core.services.student_planner.get_student_term_baseline", lambda *_args: _baseline()
+        "core.services.student_planner.get_student_term_baseline",
+        lambda *_args, **_kwargs: _baseline(),
     )
 
     def forbidden(**_kwargs):
@@ -160,7 +162,8 @@ def test_no_additions_returns_one_meaningful_baseline_without_running_solver(mon
 
 def test_a_consumed_total_cap_keeps_baseline_and_marks_addition_unplaced(monkeypatch):
     monkeypatch.setattr(
-        "core.services.student_planner.get_student_term_baseline", lambda *_args: _baseline()
+        "core.services.student_planner.get_student_term_baseline",
+        lambda *_args, **_kwargs: _baseline(),
     )
 
     def forbidden(**_kwargs):
@@ -179,7 +182,8 @@ def test_a_consumed_total_cap_keeps_baseline_and_marks_addition_unplaced(monkeyp
 
 def test_keep_variants_preserve_planner_names_and_option_specific_unplaced(monkeypatch):
     monkeypatch.setattr(
-        "core.services.student_planner.get_student_term_baseline", lambda *_args: _baseline()
+        "core.services.student_planner.get_student_term_baseline",
+        lambda *_args, **_kwargs: _baseline(),
     )
     proposed = _mapping()
     monkeypatch.setattr(
@@ -223,7 +227,8 @@ def test_keep_variants_preserve_planner_names_and_option_specific_unplaced(monke
 
 def test_rebuild_filters_zero_mapping_options_but_keeps_global_reasons(monkeypatch):
     monkeypatch.setattr(
-        "core.services.student_planner.get_student_term_baseline", lambda *_args: _baseline()
+        "core.services.student_planner.get_student_term_baseline",
+        lambda *_args, **_kwargs: _baseline(),
     )
     proposed = _mapping()
     calls = []

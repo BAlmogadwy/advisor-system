@@ -98,6 +98,7 @@ def timetable_student(monkeypatch):
             academic_year=YEAR,
             term=TERM,
             term_section=term_section,
+            source="scraper_timetable",
         )
 
     monkeypatch.setattr(
@@ -155,8 +156,8 @@ def _plain(markup: str) -> str:
 def test_home_has_shared_visual_data_and_an_exact_semantic_fallback(timetable_student):
     body = _home(timetable_student)
 
-    assert re.search(r'<[^>]+\bid="studentHomeTimetable"[^>]*>', body)
-    payload = _json_script(body, "studentHomeTimetableData")
+    assert re.search(r'<[^>]+\bid="studentHomeTimetable-registered"[^>]*>', body)
+    payload = _json_script(body, "studentHomeTimetableData-registered")
     expected = {(code, day, start, end) for code, _section, day, start, end in MEETINGS}
     assert expected <= _meeting_tuples(payload)
 
@@ -198,7 +199,7 @@ def test_arabic_direction_is_explicit_on_visual_and_semantic_timetables(timetabl
     body = _home(timetable_student, language="ar")
     planner = PLANNER_PAGE_JS.read_text(encoding="utf-8")
 
-    host = re.search(r'<[^>]+\bid="studentHomeTimetable"[^>]*>', body)
+    host = re.search(r'<[^>]+\bid="studentHomeTimetable-registered"[^>]*>', body)
     assert host and re.search(r'\bdir="rtl"', host.group(0))
 
     tables = re.findall(r"<table\b.*?</table>", body, flags=re.DOTALL | re.IGNORECASE)

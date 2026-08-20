@@ -701,11 +701,10 @@ def _exec_recommend_courses(
     from core.models import ElectiveCourse, ProgrammeRequirement, Student
     from core.services.credit_policy import credit_policy_evidence
     from core.services.recommender import recommend_next_courses
-    from core.services.student_sections import (
-        EXPECTED_TIMETABLE_SOURCE_PREFIX,
-        get_student_term_baseline,
-    )
+    from core.services.student_sections import get_student_term_baseline
     from core.services.timetable_provenance import baseline_sections
+    from core.services.timetable_snapshots import Snapshot, forecast_rows
+    from core.services.timetable_snapshots import select as select_snapshot
     from core.services.virtual_advisor import _course_names
 
     student_id, error = _resolve_scoped_student_id(args, scope)
@@ -716,20 +715,20 @@ def _exec_recommend_courses(
         return {"ok": False, "error": error}
 
     codes = recommend_next_courses(int(student_id), int(year), int(term))
-    baseline = get_student_term_baseline(int(student_id), str(year), str(term))
-    registered_baseline = [
-        row
-        for row in baseline
-        if not str(row.get("source") or "")
-        .strip()
-        .lower()
-        .startswith(EXPECTED_TIMETABLE_SOURCE_PREFIX)
-    ]
-    expected_baseline = [
-        row
-        for row in baseline
-        if str(row.get("source") or "").strip().lower().startswith(EXPECTED_TIMETABLE_SOURCE_PREFIX)
-    ]
+    baseline = get_student_term_baseline(
+        int(student_id), str(year), str(term), snapshot=Snapshot.ANY
+    )
+    # Split by PROVENANCE CLASS. This used to be a local prefix test — anything not
+    # `registration_plan_*` counted as registration — which put a staff planner
+    # mapping into `registered_baseline`, so `already_in_current_timetable` and
+    # `current_registered_credit_hours` reported a registration the student never
+    # made, while the payload's own note tells the model that only
+    # `already_in_expected_plan` may not be called current. The fetch above asks for
+    # ANY precisely so this split can be made properly, here, once.
+    registered_baseline = select_snapshot(baseline, Snapshot.REGISTERED)
+    # WORKING rows land in the FORECAST half, never the registered one: they are a
+    # department's assertion about the student, not the registrar's.
+    expected_baseline = forecast_rows(baseline)
     current_codes = list(
         dict.fromkeys(
             normalize_code(row.get("course_code") or "")
@@ -1547,6 +1546,7 @@ def _exec_my_timetable(
         get_student_term_baseline,
         student_gender,
     )
+    from core.services.timetable_snapshots import Snapshot
 
     student_id, error = _resolve_scoped_student_id(args, scope)
     if error:
@@ -1555,7 +1555,9 @@ def _exec_my_timetable(
     if error:
         return {"ok": False, "error": error}
 
-    rows = get_student_term_baseline(int(student_id), str(year), str(term))
+    rows = get_student_term_baseline(
+        int(student_id), str(year), str(term), snapshot=Snapshot.EFFECTIVE
+    )
     if not rows:
         from core.models import StudentTermSection
 
@@ -1566,7 +1568,9 @@ def _exec_my_timetable(
         )
         if len(published) == 1:
             year, term = published[0]
-            rows = get_student_term_baseline(int(student_id), str(year), str(term))
+            rows = get_student_term_baseline(
+                int(student_id), str(year), str(term), snapshot=Snapshot.EFFECTIVE
+            )
 
     gender = student_gender(int(student_id))
     if gender:
@@ -1859,6 +1863,7 @@ def _student_sections_context(
         get_student_term_baseline,
         student_gender_strict,
     )
+    from core.services.timetable_snapshots import Snapshot
 
     student_id, error = _resolve_scoped_student_id(args, scope)
     if error:
@@ -1899,7 +1904,9 @@ def _student_sections_context(
             "reason": "PROGRAMME_UNRESOLVED",
         }, {}
     catalog = _catalog_for_courses(str(year), str(term), codes, gender, program)
-    baseline = get_student_term_baseline(int(student_id), str(year), str(term))
+    baseline = get_student_term_baseline(
+        int(student_id), str(year), str(term), snapshot=Snapshot.EFFECTIVE
+    )
     baseline_kind = _timetable_baseline_kind(baseline)
     if baseline_kind == "MIXED_REVIEW_REQUIRED":
         return _mixed_timetable_error(
@@ -2174,6 +2181,7 @@ def _exec_build_my_timetable(
         build_timetable_facts,
         verify,
     )
+    from core.services.timetable_snapshots import Snapshot
 
     student_id, error = _resolve_scoped_student_id(args, scope)
     if error:
@@ -2233,7 +2241,9 @@ def _exec_build_my_timetable(
     ]
     asked = list(dict.fromkeys(wanted + recommended))
 
-    baseline = get_student_term_baseline(int(student_id), str(year), str(term))
+    baseline = get_student_term_baseline(
+        int(student_id), str(year), str(term), snapshot=Snapshot.EFFECTIVE
+    )
     baseline_kind = _timetable_baseline_kind(baseline)
     if baseline_kind == "MIXED_REVIEW_REQUIRED":
         return _mixed_timetable_error(
@@ -2415,6 +2425,7 @@ def _exec_build_timetable_proposal(
     )
     from core.services.student_sections import get_student_term_baseline
     from core.services.timetable_provenance import baseline_sections
+    from core.services.timetable_snapshots import Snapshot
     from core.services.virtual_advisor import _course_names
 
     student_id, error = _resolve_scoped_student_id(args, scope)
@@ -2614,7 +2625,9 @@ def _exec_build_timetable_proposal(
     ]
     recommended = [code for code in recommended if code and code in permitted]
 
-    baseline = get_student_term_baseline(int(student_id), str(year), str(term))
+    baseline = get_student_term_baseline(
+        int(student_id), str(year), str(term), snapshot=Snapshot.EFFECTIVE
+    )
     baseline_kind = _timetable_baseline_kind(baseline)
     if baseline_kind == "MIXED_REVIEW_REQUIRED":
         return _mixed_timetable_error(

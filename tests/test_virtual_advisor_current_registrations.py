@@ -535,6 +535,7 @@ def test_registered_credit_hours_counts_each_course_once():
         academic_year="1448",
         term="1",
         term_section=ts,
+        source="scraper_timetable",
     )
 
     out = get_default_registry().execute(
@@ -892,6 +893,7 @@ def test_clash_free_sections_separates_fitting_from_colliding():
         academic_year="1448",
         term="1",
         term_section=busy,
+        source="scraper_timetable",
     )
     _section_with("ZZ200", "M1", [("SUN", "08:30", "09:45")])  # overlaps
     _section_with("ZZ200", "M2", [("MON", "08:00", "09:15")])  # free
@@ -946,12 +948,14 @@ def test_a_current_section_is_marked_and_does_not_clash_with_itself():
         academic_year="1448",
         term="1",
         term_section=busy,
+        source="scraper_timetable",
     )
     StudentTermSection.objects.create(
         student_id=SID,
         academic_year="1448",
         term="1",
         term_section=current,
+        source="scraper_timetable",
     )
 
     out = get_default_registry().execute(

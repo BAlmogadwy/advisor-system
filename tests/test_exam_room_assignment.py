@@ -84,6 +84,7 @@ def _make_students_and_courses() -> None:
                 academic_year="1447",
                 term="2",
                 term_section=ts,
+                source="scraper_timetable",
             )
 
     # Split M students 15/15 across M1/M2 for each course
@@ -521,6 +522,7 @@ def _make_rebalance_fixture() -> tuple[list[str], list[str]]:
                     academic_year="1447",
                     term="2",
                     term_section=ts,
+                    source="scraper_timetable",
                 )
                 student_id += 1
         for label in ("F1", "F2"):
@@ -540,6 +542,7 @@ def _make_rebalance_fixture() -> tuple[list[str], list[str]]:
                     academic_year="1447",
                     term="2",
                     term_section=ts,
+                    source="scraper_timetable",
                 )
                 student_id += 1
 

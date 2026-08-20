@@ -12584,9 +12584,23 @@ html.sa-overlay-open { overflow: hidden; }
   border-inline-start-color: var(--brand);
   background: color-mix(in srgb, var(--surface) 86%, var(--brand) 14%);
 }
-#studentHomeTimetable .student-timetable-block--current {
+/* The student portal's own weighting. It used to hang off #studentHomeTimetable,
+   which no longer exists: the portal now renders one host per snapshot
+   (#studentHomeTimetable-registered / -expected). Left orphaned, the registered
+   grid fell through to the neutral grey `--current` rule while the expected grid
+   kept the brand accent — the emphasis exactly inverted, with the forecast
+   looking like the fact. Keyed on the card class so it survives the next rename. */
+.student-home-timetable-card .student-timetable-block--current {
   border-inline-start-color: var(--brand);
   background: color-mix(in srgb, var(--surface) 92%, var(--brand) 8%);
+}
+/* The forecast reads as secondary: dashed edge, no brand fill. Colour is not the
+   only carrier — the card heading and its "not an actual registration" line say
+   it in words, and the agenda table repeats it for anyone who cannot see either. */
+.student-home-timetable-card .student-timetable-block--proposed {
+  border-inline-start-color: var(--t3);
+  border-inline-start-style: dashed;
+  background: color-mix(in srgb, var(--surface) 94%, var(--t2) 6%);
 }
 .student-timetable-block-section {
   color: var(--t3);

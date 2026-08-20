@@ -32,6 +32,7 @@ from core.services.student_sections import (
     get_student_term_baseline,
 )
 from core.services.student_unlock import build_unlock_report
+from core.services.timetable_snapshots import Snapshot
 
 DEFAULT_MAX_CREDITS_PER_TERM = RECOMMENDED_MAX_CREDITS
 MAX_SIMULATED_TERMS = 24
@@ -78,7 +79,7 @@ def _current_course_state(
     rows = append_unmapped_studying_courses(
         student_id,
         (
-            get_student_term_baseline(student_id, str(year), str(term))
+            get_student_term_baseline(student_id, str(year), str(term), snapshot=Snapshot.EFFECTIVE)
             if baseline_rows is None
             else baseline_rows
         ),

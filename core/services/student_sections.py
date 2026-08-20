@@ -14,8 +14,46 @@ from core.services.section_programmes import (
     reconcile_observed_section_programs,
 )
 from core.services.student_helpers import normalize_code
+from core.services.timetable_snapshots import (
+    EXPECTED_TIMETABLE_SOURCE_PREFIX,
+    REGISTRAR_SOURCES,
+    Snapshot,
+    SnapshotClass,
+    classify_source,
+)
+from core.services.timetable_snapshots import (
+    select as select_snapshot_rows,
+)
+from core.services.timetable_snapshots import (
+    timetable_snapshot_kind as _timetable_snapshot_kind,
+)
 
-EXPECTED_TIMETABLE_SOURCE_PREFIX = "registration_plan_"
+
+def snapshot_class_filter(snapshot_class: SnapshotClass) -> Q:
+    """The database predicate matching one provenance class.
+
+    Deliberately mirrors :func:`timetable_snapshots.classify_source` rather than
+    re-deriving the rule: a delete that classifies rows differently from the reader
+    removes rows a screen is still showing. ``REGISTRAR`` and ``WORKING`` both
+    exclude the expected prefix explicitly, so a source that somehow matched both
+    lists cannot be caught by two classes at once.
+
+    ``WORKING`` names NULL explicitly. ``source`` is not nullable and no NULL exists
+    today, but SQL's ``NOT LIKE`` is NULL — not true — for a NULL column, so a NULL
+    row would match no class here while ``classify_source`` calls it WORKING in
+    Python. The two rules disagreeing is precisely the state in which a row belongs
+    to no writer and is never cleaned up again.
+    """
+    expected = Q(source__istartswith=EXPECTED_TIMETABLE_SOURCE_PREFIX)
+    registrar = Q()
+    for value in sorted(REGISTRAR_SOURCES):
+        registrar |= Q(source__iexact=value)
+    if snapshot_class is SnapshotClass.EXPECTED:
+        return expected
+    if snapshot_class is SnapshotClass.REGISTRAR:
+        return registrar & ~expected
+    return Q(source__isnull=True) | (~expected & ~registrar)
+
 
 # Sections are gender-segregated and labelled with a leading gender tag, e.g.
 # "M7", "F3" (first character is the cohort gender). A student (Student.section
@@ -149,32 +187,34 @@ def ensure_student_section_schema() -> None:
 
 
 def timetable_snapshot_kind(rows: list[dict[str, object]]) -> str:
-    """Classify timetable rows without confusing a plan with registration.
-
-    Imported registration plans deliberately share ``StudentTermSection`` with
-    registrar snapshots so every existing timetable renderer can use them. Their
-    provenance is still authoritative: ``registration_plan_*`` means expected,
-    while every other source is registration evidence. A mixed snapshot is named
-    explicitly instead of silently choosing the more reassuring interpretation.
-    """
-    sources = {
-        str(row.get("source") or "").strip().lower()
-        for row in rows
-        if str(row.get("source") or "").strip()
-    }
-    if not sources:
-        return "empty" if not rows else "registered"
-    expected = {source for source in sources if source.startswith(EXPECTED_TIMETABLE_SOURCE_PREFIX)}
-    if expected == sources:
-        return "expected"
-    if expected:
-        return "mixed"
-    return "registered"
+    """Kept as a re-export so the modules that refuse on ``"mixed"`` keep importing
+    it from here. The rule itself lives in ``timetable_snapshots``."""
+    return _timetable_snapshot_kind(rows)
 
 
 def get_student_term_baseline(
-    student_id: int | str, academic_year: str, term: str
+    student_id: int | str,
+    academic_year: str,
+    term: str,
+    *,
+    snapshot: Snapshot,
 ) -> list[dict[str, object]]:
+    """One student's term, one row per MEETING, restricted to ``snapshot``.
+
+    ``snapshot`` is keyword-only and REQUIRED. A term may now hold an expected plan
+    and the registrar's snapshot at the same time, and the two say different things
+    about the same student; there is no default that is right for both a screen
+    asserting "you are registered in" and a solver asking "when are you busy". A
+    call site that has not chosen fails with ``TypeError`` rather than receiving
+    whichever set happens to be larger. See ``core.services.timetable_snapshots``.
+
+    The rows are filtered in Python rather than by ``source`` in the query on
+    purpose: ``Snapshot.EFFECTIVE`` is a decision about the whole set — registrar
+    evidence supersedes a forecast for the same term — and cannot be expressed as a
+    row predicate without first knowing which classes the term holds.
+    """
+    if not isinstance(snapshot, Snapshot):
+        raise TypeError(f"snapshot must be a Snapshot, got {snapshot!r}")
     sts_qs = (
         StudentTermSection.objects.filter(
             student_id=student_id,
@@ -255,7 +295,7 @@ def get_student_term_baseline(
                     "source": sts.source or "mapped",
                 }
             )
-    return out
+    return [dict(row) for row in select_snapshot_rows(out, snapshot)]
 
 
 def append_unmapped_studying_courses(
@@ -362,7 +402,15 @@ def get_student_term_registration_summary(
     # section sets. ``None`` means "load them"; an explicit empty list remains
     # honest no-evidence, not a request to fetch again.
     rows = (
-        get_student_term_baseline(student_id, str(academic_year), str(term))
+        get_student_term_baseline(
+            student_id,
+            str(academic_year),
+            str(term),
+            # The function is named for registered credit hours and its result is
+            # rendered under a label asserting the configured term. An expected plan
+            # counted here would report hours the student has not registered.
+            snapshot=Snapshot.REGISTERED,
+        )
         if baseline_rows is None
         else baseline_rows
     )
@@ -405,31 +453,51 @@ def replace_student_term_sections(
     replace_all_global: bool = False,
     replace_source_across_terms: str = "",
 ) -> dict[str, int]:
+    """Replace this student's links FOR THE PROVENANCE CLASS ``source`` belongs to.
+
+    A writer may only destroy its own kind. That is the whole rule, and it is what
+    lets an expected plan and the registrar's snapshot occupy one term together.
+
+    Before, the scrape branch deleted ``Q(source=<scraper>) | Q(year, term)`` — the
+    second half matching EVERY source for the scraped term, so the first scrape of
+    a planned term deleted that term's imported plan. It was written deliberately
+    ("when their own term is scraped, the same-term branch replaces them") under the
+    old one-snapshot-per-term rule. Under the new rule the plan is not superseded by
+    being scraped; it is the forecast the registration is compared against, and
+    deleting it destroys the comparison the student portal exists to show.
+
+    ``replace_all_global`` still ignores class and clears every global link the
+    student has. It is the maintenance path, not a writer path.
+    """
     from django.db import transaction
 
+    if replace_source_across_terms and replace_source_across_terms != source:
+        # The across-terms sweep is now derived from ``source``'s class. A caller
+        # naming a different source here would sweep a class it is not writing —
+        # which is the exact defect this rewrite removes, re-entered by argument.
+        raise ValueError(
+            "replace_source_across_terms must equal source "
+            f"({replace_source_across_terms!r} != {source!r})"
+        )
+    written_class = classify_source(source)
     normalized_section_ids = list(dict.fromkeys(int(section_id) for section_id in term_section_ids))
     with transaction.atomic():
         current_rows = StudentTermSection.objects.filter(
             student_id=student_id,
             term_section__scenario__isnull=True,
         )
-        if replace_source_across_terms:
-            # A registrar scrape is the authoritative CURRENT snapshot, but a
-            # registration-plan import is an expected FUTURE snapshot. Refresh
-            # every older row written by this scraper plus every row for the term
-            # that has now become current. Future plans for other terms survive;
-            # when their own term is scraped, the same-term branch replaces them.
-            current_rows = current_rows.filter(
-                Q(source=replace_source_across_terms)
-                | Q(academic_year=str(academic_year), term=str(term))
-            )
-        elif not replace_all_global:
-            # Planner calls remain term-scoped: planning another term must not
-            # erase the student's actual current registration snapshot.
-            current_rows = current_rows.filter(
-                academic_year=str(academic_year),
-                term=str(term),
-            )
+        if not replace_all_global:
+            current_rows = current_rows.filter(snapshot_class_filter(written_class))
+            if not replace_source_across_terms:
+                # Term-scoped by default: planning another term must not erase this
+                # term's rows of the same class.
+                current_rows = current_rows.filter(
+                    academic_year=str(academic_year),
+                    term=str(term),
+                )
+            # ``replace_source_across_terms`` keeps its meaning for the registrar
+            # scrape — the newest scrape is the authoritative snapshot, so an older
+            # scraped term is stale and goes. It no longer reaches other classes.
         affected_section_ids = set(current_rows.values_list("term_section_id", flat=True))
         affected_section_ids.update(normalized_section_ids)
         current_rows.delete()
@@ -462,16 +530,28 @@ def clear_student_section_snapshot(
     academic_year: str = "",
     term: str = "",
 ) -> dict[str, int]:
-    """Clear one student's scraped snapshot and an explicitly current plan.
+    """Clear one student's REGISTRAR snapshot. The expected plan always survives.
 
-    The timetable service supplies no year/term metadata when a verified student
-    has no summer timetable. Student-facing readers treat the latest link as
-    current, so retaining an older ``scraper_timetable`` link would falsely
-    present a prior schedule as today's registration. Expected next-term rows
-    written by ``import_registration_plan`` normally remain. When an operator
-    explicitly supplies the current academic year and term, expected links for
-    that exact term are also stale and are cleared. Other expected terms, shared
-    ``TermSection`` rows, meetings, and scenario assignments always remain.
+    Called when the portal confirms a verified student has no current schedule. The
+    timetable service supplies no year/term metadata in that case, and student-facing
+    readers treat the latest link as current, so retaining an older registrar link
+    would present a prior schedule as today's registration.
+
+    WHAT CHANGED, AND WHY
+
+    This used to ALSO delete the expected plan for an explicitly supplied current
+    term, on the reasoning that once that term is current an unregistered plan is
+    stale. Under the one-snapshot-per-term rule that was the only way to stop a
+    forecast being read as a registration. It is now exactly backwards: "the plan
+    said five courses, the registrar recorded none" is the single most useful thing
+    the expected-versus-registered comparison can tell a student or an adviser, and
+    it is only expressible if the plan is still there to compare against. An empty
+    registrar snapshot is now represented by the ABSENCE of registrar rows, which is
+    unambiguous, rather than by deleting the other snapshot.
+
+    The year/term arguments are kept, and still validated together, because callers
+    pass them and because they remain the record of which term was confirmed empty.
+    Shared ``TermSection`` rows, meetings and scenario assignments always remain.
     """
     from django.db import transaction
 
@@ -485,14 +565,7 @@ def clear_student_section_snapshot(
             student_id=student_id,
             term_section__scenario__isnull=True,
         )
-        removable = Q(source="scraper_timetable")
-        if normalized_year and normalized_term:
-            removable |= Q(
-                academic_year=normalized_year,
-                term=normalized_term,
-                source__startswith=EXPECTED_TIMETABLE_SOURCE_PREFIX,
-            )
-        rows = rows.filter(removable)
+        rows = rows.filter(snapshot_class_filter(SnapshotClass.REGISTRAR))
         affected_section_ids = set(rows.values_list("term_section_id", flat=True))
         deleted = rows.delete()[0]
         reconcile_observed_section_programs(affected_section_ids)

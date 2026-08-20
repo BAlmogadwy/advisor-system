@@ -70,6 +70,7 @@ from core.services.student_sections import (
     append_unmapped_studying_courses,
     get_student_term_baseline,
 )
+from core.services.timetable_snapshots import Snapshot
 from core.services.virtual_advisor_capabilities import get_default_registry
 
 logger = logging.getLogger(__name__)
@@ -995,7 +996,9 @@ def _current_term_registrations(student_id: int, passed: set[str]) -> dict[str, 
         academic_year, term = latest
         baseline = [
             row
-            for row in get_student_term_baseline(student_id, academic_year, term)
+            for row in get_student_term_baseline(
+                student_id, academic_year, term, snapshot=Snapshot.REGISTERED
+            )
             if str(row.get("source") or "") == "scraper_timetable"
         ]
     else:

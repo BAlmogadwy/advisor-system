@@ -37,6 +37,7 @@ from core.services.student_sections import (
     section_is_available_to_student,
     student_gender_strict,
 )
+from core.services.timetable_snapshots import Snapshot
 from core.services.virtual_advisor_capabilities import _translate_unplaced
 
 #: A course with no credit hours recorded still has to be given a weight, or the
@@ -401,7 +402,9 @@ def build_student_options(request: PlannerRequest) -> dict[str, Any]:
     baseline = (
         [dict(row) for row in request.baseline_override]
         if request.baseline_override is not None
-        else get_student_term_baseline(student_id, str(request.year), str(request.term))
+        else get_student_term_baseline(
+            student_id, str(request.year), str(request.term), snapshot=Snapshot.EFFECTIVE
+        )
     )
     current_mappings = _baseline_mappings(baseline) if request.keep_current_sections else []
     current_codes = {

@@ -35,6 +35,7 @@ from core.services.timetable_autoplace import (
     WEEKDAYS,
     placeable_slots,
 )
+from core.services.timetable_snapshots import classify_source, effective_class
 
 # Safety bound on a single group query — registrar groups are small; this guards
 # against an accidental paste of the entire cohort.
@@ -152,13 +153,22 @@ def _load_meetings_by_student(
 ) -> tuple[dict[int, list[tuple[str, int, int, str, str]]], set[int]]:
     """Load each student's weekly meetings for the term in one prefetch query.
 
-    Reads ``StudentTermSection`` (the student's registered sections) joined to
-    their ``TermSectionMeeting`` times. Sections are included regardless of
-    scenario ownership — the student is booked at those times either way.
+    Reads ``StudentTermSection`` joined to their ``TermSectionMeeting`` times.
+    Sections are included regardless of scenario ownership — the student is booked
+    at those times either way.
+
+    RESOLVED PER STUDENT, NOT PER QUERY. A term may hold both the registrar's
+    snapshot and an expected plan, and this screen answers "when is this group
+    free", so it needs one week per student rather than the union of two. The
+    resolution is :attr:`Snapshot.EFFECTIVE` — registrar evidence supersedes a
+    forecast for the same term — applied INDIVIDUALLY, because different students
+    in one group are legitimately at different stages: A has registered, B has only
+    the plan. Taking the union instead would book A into planned slots they did not
+    register, and shrink the group's free time with meetings nobody will attend.
 
     Returns ``(meetings_by_student, enrolled_ids)`` where ``enrolled_ids`` is
-    the set of students with at least one registered section this term (used to
-    distinguish "no schedule" from an unknown ID).
+    the set of students with at least one section this term (used to distinguish
+    "no schedule" from an unknown ID).
     """
     rows = (
         StudentTermSection.objects.filter(
@@ -169,9 +179,17 @@ def _load_meetings_by_student(
         .select_related("term_section")
         .prefetch_related("term_section__meetings")
     )
+    by_student: dict[int, list[StudentTermSection]] = defaultdict(list)
+    for sts in rows:
+        by_student[sts.student_id].append(sts)
+    resolved: list[StudentTermSection] = []
+    for student_rows in by_student.values():
+        winner = effective_class({"source": r.source} for r in student_rows)
+        resolved.extend(r for r in student_rows if classify_source(r.source) is winner)
+
     meetings_by_student: dict[int, list[tuple[str, int, int, str, str]]] = defaultdict(list)
     enrolled: set[int] = set()
-    for sts in rows:
+    for sts in resolved:
         enrolled.add(sts.student_id)
         ts = sts.term_section
         course = str(ts.course_code or ts.course_key or "")
@@ -199,7 +217,16 @@ def resolve_current_term() -> tuple[str, str]:
     Mirrors the exam-timetable convention (``build_enrolled_sets`` orders by
     ``-academic_year, -term``) so "current timetable" means the same thing
     across screens, without the caller having to pick a term. Returns
-    ``("", "")`` when there is no registration data at all.
+    ``("", "")`` when there is no timetable data at all.
+
+    DELIBERATELY UNFILTERED BY PROVENANCE. A term that exists only as an imported
+    expected plan still counts as the latest term, because this screen is a
+    FORWARD-PLANNING tool: a registrar deciding where to open a new section is
+    asking about the term being planned, not the last one the registrar recorded.
+    Scoping this probe to registrar rows would answer for a term that has already
+    happened. The class question is settled per student inside
+    ``_load_meetings_by_student``, which is where it belongs -- one student may
+    have registered while another still has only the plan.
     """
     latest = (
         StudentTermSection.objects.order_by("-academic_year", "-term")

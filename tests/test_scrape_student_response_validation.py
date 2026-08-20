@@ -538,7 +538,14 @@ def test_confirmed_empty_summer_timetable_is_a_valid_zero_course_snapshot() -> N
     assert stale_regular_row.status == "not_taken"
 
 
-def test_confirmed_empty_explicit_term_replaces_matching_plan_only() -> None:
+def test_confirmed_empty_clears_the_registrar_snapshot_and_keeps_every_plan() -> None:
+    """A confirmed-empty term used to delete that term's expected plan too.
+
+    It no longer does. "The plan said these courses and the registrar recorded
+    none" is the most useful thing the comparison can say, and it is only
+    expressible while the plan is still there -- an empty registration is now
+    represented by the absence of registrar rows, not by deleting the forecast.
+    """
     _seed_last_known_state()
     current_plan_section = TermSection.objects.create(
         course_code="CP",
@@ -581,9 +588,14 @@ def test_confirmed_empty_explicit_term_replaces_matching_plan_only() -> None:
 
     assert result["academic_year"] == "1448"
     assert result["term"] == "1"
-    assert result["deleted_student_section_links"] == 2
-    assert not StudentTermSection.objects.filter(pk=current_plan_link.pk).exists()
+    # Only the stale registrar link from 1447/2 goes. Both plans survive: the one
+    # for the term just confirmed empty, and the one for a later term.
+    assert result["deleted_student_section_links"] == 1
+    assert StudentTermSection.objects.filter(pk=current_plan_link.pk).exists()
     assert StudentTermSection.objects.filter(pk=future_plan_link.pk).exists()
+    assert not StudentTermSection.objects.filter(
+        student_id=_STUDENT_ID, source="scraper_timetable"
+    ).exists()
     assert TermSection.objects.filter(pk=current_plan_section.pk).exists()
 
 
@@ -699,10 +711,14 @@ def test_complete_student_response_reaches_the_existing_persistence_path() -> No
     )
     assert current_course.status == "studying"
 
+    # The term now holds BOTH snapshots, so the registrar row must be asked for by
+    # source. An unqualified `.get()` here is the shape of every downstream defect
+    # this change guards against: it reads whichever row it happens to find.
     current_link = StudentTermSection.objects.get(
         student_id=_STUDENT_ID,
         academic_year="1448",
         term="1",
+        source="scraper_timetable",
     )
     assert current_link.term_section.course_key == "VX101"
     assert current_link.term_section.section == "M7"
@@ -711,7 +727,10 @@ def test_complete_student_response_reaches_the_existing_persistence_path() -> No
         term_section__course_key="ZZ999",
     ).exists()
     assert StudentTermSection.objects.filter(pk=future_link.pk).exists()
-    assert not StudentTermSection.objects.filter(pk=superseded_link.pk).exists()
+    # The plan for the scraped term SURVIVES the scrape. It used to be deleted, on
+    # the reasoning that a scraped term is no longer a forecast; keeping it is what
+    # makes "planned SP201, registered VX101" visible instead of silently resolved.
+    assert StudentTermSection.objects.filter(pk=superseded_link.pk).exists()
     assert TermSectionMeeting.objects.filter(
         term_section=current_link.term_section,
         day="SUN",

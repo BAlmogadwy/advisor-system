@@ -16,6 +16,7 @@ from core.services.student_sections import (
     append_unmapped_studying_courses,
     get_student_term_baseline,
 )
+from core.services.timetable_snapshots import Snapshot
 
 pytestmark = pytest.mark.django_db
 
@@ -80,7 +81,7 @@ def test_partial_section_mapping_keeps_unmapped_studying_courses_in_baseline() -
 
     baseline = append_unmapped_studying_courses(
         student.student_id,
-        get_student_term_baseline(student.student_id, "1447", "2"),
+        get_student_term_baseline(student.student_id, "1447", "2", snapshot=Snapshot.ANY),
     )
 
     by_code = {row["course_key"]: row for row in baseline}
@@ -136,7 +137,7 @@ def test_scenario_owned_sections_do_not_become_registered_baseline() -> None:
 
     baseline = append_unmapped_studying_courses(
         student.student_id,
-        get_student_term_baseline(student.student_id, "1447", "2"),
+        get_student_term_baseline(student.student_id, "1447", "2", snapshot=Snapshot.ANY),
     )
 
     assert baseline == [

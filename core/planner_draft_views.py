@@ -83,6 +83,7 @@ def _workspace_json(draft: Any) -> dict[str, Any]:
         student_gender_strict,
         timetable_snapshot_kind,
     )
+    from core.services.timetable_snapshots import Snapshot
 
     student = Student.objects.filter(student_id=draft.student_id).values("program").first() or {}
     program = str(student.get("program") or "").strip()
@@ -214,7 +215,9 @@ def _workspace_json(draft: Any) -> dict[str, Any]:
         )
     )
 
-    baseline = get_student_term_baseline(draft.student_id, draft.academic_year, draft.term)
+    baseline = get_student_term_baseline(
+        draft.student_id, draft.academic_year, draft.term, snapshot=Snapshot.EFFECTIVE
+    )
     current = [
         {
             "course_code": str(row.get("course_code") or row.get("course_key") or ""),

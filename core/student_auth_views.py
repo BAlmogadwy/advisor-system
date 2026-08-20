@@ -33,14 +33,14 @@ from core.services.student_otp import (
     verify_otp,
 )
 from core.services.student_sections import (
-    EXPECTED_TIMETABLE_SOURCE_PREFIX,
     get_student_term_baseline,
     section_gender,
     student_gender,
-    timetable_snapshot_kind,
 )
 from core.services.student_unlock import build_unlock_report
 from core.services.timetable_provenance import baseline_sections
+from core.services.timetable_snapshots import Snapshot, forecast_rows
+from core.services.timetable_snapshots import select as select_snapshot
 from core.settings_views import load_defaults
 from core.sidebar_context import get_sidebar_context
 
@@ -544,8 +544,16 @@ def student_home_view(request: HttpRequest) -> HttpResponse:
     # so with two generations loaded its meetings could belong to either and a past
     # term would be drawn with another term's times; in that case show nothing
     # rather than something plausible and wrong. The label always names the term.
+    #
+    # ``Snapshot.ANY`` because this screen is the one surface that deliberately
+    # presents both snapshots at once. Every other reader picks a single class; here
+    # the rows are partitioned below and each class gets its OWN card with its own
+    # heading, so nothing is ever merged into one grid that could not say which
+    # meeting was registered and which was only planned.
     try:
-        configured_rows = get_student_term_baseline(student_id, str(year), str(term))
+        configured_rows = get_student_term_baseline(
+            student_id, str(year), str(term), snapshot=Snapshot.ANY
+        )
     except Exception:  # noqa: BLE001
         logger.exception("student timetable load failed for %s", student_id)
         configured_rows = []
@@ -565,17 +573,39 @@ def student_home_view(request: HttpRequest) -> HttpResponse:
         ]
 
     configured_rows = visible_to_student(configured_rows)
-    registered_configured_rows = [
-        row
-        for row in configured_rows
-        if not str(row.get("source") or "")
-        .strip()
-        .lower()
-        .startswith(EXPECTED_TIMETABLE_SOURCE_PREFIX)
-    ]
-    rows = list(configured_rows)
+
+    # Split by PROVENANCE CLASS, not by "is it the expected prefix or not". The
+    # old two-way split promoted the staff planner's own mappings — sources
+    # `planner` and `auto_from_studying`, written by two staff-only endpoints in
+    # core/planner_views.py — into the registered half, and this screen then titled
+    # them «جدولي الأسبوعي» with no disclaimer.
+    #
+    # The forecast card shows the department's LATEST forecast, not always the
+    # imported one. A planner save writes WORKING rows and, since each writer now
+    # replaces only its own class, the imported plan survives underneath it — so
+    # picking EXPECTED unconditionally would show a student the seating their
+    # department has already moved them out of, for ever, with no writer that ever
+    # removes it. `forecast_rows` applies the same precedence the advisor's
+    # EFFECTIVE resolution uses, which is also what keeps chat and this screen
+    # naming the same plan.
+    registered_configured_rows = select_snapshot(configured_rows, Snapshot.REGISTERED)
+    expected_rows = forecast_rows(configured_rows)
+
     tt_year, tt_term, tt_fallback = year, term, False
-    if not rows:
+    # These two are the CONFIGURED term's evidence and must stay bound to it. The
+    # fallback below re-reads another term for the panels only: the hours card and
+    # the recommendation filter are labelled with the configured term, so feeding
+    # them 1447/2's registrations under a 1448/1 label is a false statement about
+    # what the student is carrying now.
+    panel_registered_rows = registered_configured_rows
+    panel_expected_rows = expected_rows
+    if not registered_configured_rows and not expected_rows:
+        # Nothing at all in the configured term. Fall back to the one published
+        # timetable in the database — but ONLY when the whole database holds exactly
+        # one (year, term). TermSection carries no year/term of its own, so with two
+        # generations loaded its meetings could belong to either and a past term
+        # would be drawn with another term's times; in that case show nothing rather
+        # than something plausible and wrong. The label always names the term.
         published = list(
             StudentTermSection.objects.filter(term_section__scenario__isnull=True)
             .values_list("academic_year", "term")
@@ -596,35 +626,64 @@ def student_home_view(request: HttpRequest) -> HttpResponse:
             if mine and is_other_term:
                 tt_year, tt_term, tt_fallback = published_year, published_term, True
                 try:
-                    rows = visible_to_student(
-                        get_student_term_baseline(student_id, str(tt_year), str(tt_term))
+                    fallback_rows = visible_to_student(
+                        get_student_term_baseline(
+                            student_id,
+                            str(tt_year),
+                            str(tt_term),
+                            snapshot=Snapshot.ANY,
+                        )
                     )
                 except Exception:  # noqa: BLE001
                     logger.exception("student fallback timetable failed for %s", student_id)
-                    rows = []
-    tt_snapshot_kind = timetable_snapshot_kind(rows)
-    timetable, unscheduled = _weekly_timetable(rows)
-    timetable_meetings = [
-        {
-            "course_code": meeting.get("course_code") or "",
-            "course_name": meeting.get("course_name") or "",
-            "section": meeting.get("section") or "",
-            "day": day["code"],
-            "start_time": meeting.get("start_time") or "",
-            "end_time": meeting.get("end_time") or "",
-            "room": meeting.get("room") or "",
-            "instructor": meeting.get("instructor") or "",
-            "source": (
-                "planned"
-                if tt_snapshot_kind == "expected"
-                else "mixed"
-                if tt_snapshot_kind == "mixed"
-                else "current"
-            ),
+                else:
+                    panel_registered_rows = select_snapshot(fallback_rows, Snapshot.REGISTERED)
+                    panel_expected_rows = forecast_rows(fallback_rows)
+
+    def _panel(kind: str, panel_rows: list[dict]) -> dict:
+        """One card: its own grid, its own agenda table, its own provenance.
+
+        Each meeting carries the class of the rows it was built from. The previous
+        payload stamped every meeting with the kind of the WHOLE snapshot, so in a
+        term holding both, a genuinely registered lecture and a merely planned one
+        were both labelled "mixed" and the grid could not tell them apart. A panel
+        is built from one class, so its label is a fact about every cell in it.
+        """
+        panel_timetable, panel_unscheduled = _weekly_timetable(panel_rows)
+        return {
+            "kind": kind,
+            "dom_id": f"studentHomeTimetable-{kind}",
+            "data_id": f"studentHomeTimetableData-{kind}",
+            "academic_year": tt_year,
+            "term": tt_term,
+            "is_fallback": tt_fallback,
+            "timetable": panel_timetable,
+            "unscheduled": panel_unscheduled,
+            "meetings": [
+                {
+                    "course_code": meeting.get("course_code") or "",
+                    "course_name": meeting.get("course_name") or "",
+                    "section": meeting.get("section") or "",
+                    "day": day["code"],
+                    "start_time": meeting.get("start_time") or "",
+                    "end_time": meeting.get("end_time") or "",
+                    "room": meeting.get("room") or "",
+                    "instructor": meeting.get("instructor") or "",
+                    "source": "planned" if kind == "expected" else "current",
+                }
+                for day in panel_timetable
+                for meeting in day["meetings"]
+            ],
         }
-        for day in timetable
-        for meeting in day["meetings"]
-    ]
+
+    # Registered first: it is what is true. The expected plan follows as the
+    # forecast it is compared against. Built from the PANEL rows, which are the
+    # configured term's unless the fallback replaced them.
+    timetable_panels = []
+    if panel_registered_rows:
+        timetable_panels.append(_panel("registered", panel_registered_rows))
+    if panel_expected_rows:
+        timetable_panels.append(_panel("expected", panel_expected_rows))
 
     registered_codes = list(
         dict.fromkeys(
@@ -634,17 +693,26 @@ def student_home_view(request: HttpRequest) -> HttpResponse:
         )
     )
     registered_code_set = set(registered_codes)
-    expected_rows = [
-        row
-        for row in configured_rows
-        if str(row.get("source") or "").strip().lower().startswith(EXPECTED_TIMETABLE_SOURCE_PREFIX)
-    ]
     expected_code_set = {
         normalize_code(row.get("course_code") or "")
         for row in baseline_sections(expected_rows)
         if normalize_code(row.get("course_code") or "")
     }
     timetable_code_set = registered_code_set | expected_code_set
+
+    # What the plan said and the registrar did not record. Only meaningful when BOTH
+    # snapshots exist: with no registration on file, every planned course would list
+    # here and read as an accusation rather than a difference.
+    expected_not_registered = (
+        sorted(expected_code_set - registered_code_set)
+        if registered_code_set and expected_code_set
+        else []
+    )
+    registered_not_expected = (
+        sorted(registered_code_set - expected_code_set)
+        if registered_code_set and expected_code_set
+        else []
+    )
 
     try:
         all_rec_codes = list(
@@ -711,12 +779,15 @@ def student_home_view(request: HttpRequest) -> HttpResponse:
             "timetable_year": tt_year,
             "timetable_term": tt_term,
             "timetable_is_fallback": tt_fallback,
-            "timetable_snapshot_kind": tt_snapshot_kind,
-            "timetable_is_expected": tt_snapshot_kind == "expected",
-            "timetable_is_mixed": tt_snapshot_kind == "mixed",
-            "timetable": timetable,
-            "timetable_meetings": timetable_meetings,
-            "unscheduled": unscheduled,
+            # One entry per snapshot the student actually has, already separated.
+            # There is deliberately no merged `timetable`/`timetable_meetings` pair
+            # any more: a single list could only be rendered under a single heading,
+            # and that heading would have to lie about one of the two snapshots.
+            "timetable_panels": timetable_panels,
+            "has_registered_timetable": bool(registered_configured_rows),
+            "has_expected_timetable": bool(expected_rows),
+            "expected_not_registered": expected_not_registered,
+            "registered_not_expected": registered_not_expected,
             "recommendations": recommendations,
             "recommendations_already_current": recommendations_already_current,
             "recommendations_already_expected": recommendations_already_expected,

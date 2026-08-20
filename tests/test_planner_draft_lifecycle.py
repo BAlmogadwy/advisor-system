@@ -796,7 +796,16 @@ def test_expected_plan_legacy_builder_keeps_expected_provenance(world, monkeypat
     assert remote["retained_sections"][0]["source"] == "EXPECTED_PLAN"
 
 
-def test_mixed_timetable_sources_fail_closed_across_student_tools(world, monkeypatch):
+def test_coexisting_plan_and_registrar_rows_resolve_to_the_registrar_snapshot(world, monkeypatch):
+    """These three tools used to fail closed on a term holding both snapshots.
+
+    Failing closed was right while a term holding both meant something had gone
+    wrong. A term now holds both by design, so the tools resolve instead: registrar
+    evidence supersedes a forecast for the same term, and the plan's course must not
+    appear anywhere the payload calls a registration. The refusal itself is kept and
+    is still exercised by the test below -- it just cannot be reached by two
+    snapshots legitimately coexisting.
+    """
     from core.services.rbac import ROLE_STUDENT
     from core.services.virtual_advisor_capabilities import (
         _exec_build_timetable_proposal,
@@ -822,10 +831,6 @@ def test_mixed_timetable_sources_fail_closed_across_student_tools(world, monkeyp
         "core.services.recommender.recommend_next_courses", lambda *_args, **_kwargs: []
     )
 
-    def should_not_build(_request):
-        raise AssertionError("a mixed baseline must be refused before the planner runs")
-
-    monkeypatch.setattr("core.services.student_planner.build_student_options", should_not_build)
     scope = {"role": ROLE_STUDENT, "student_id": OWNER}
     ctx = {"academic_year": 1448, "term": 1}
     results = [
@@ -835,11 +840,78 @@ def test_mixed_timetable_sources_fail_closed_across_student_tools(world, monkeyp
     ]
 
     for result in results:
-        assert result["ok"] is False
-        assert result["reason"] == "MIXED_TIMETABLE_SOURCES"
-        assert result["baseline_kind"] == "MIXED_REVIEW_REQUIRED"
-        assert "meetings" not in result
-        assert "baseline_sections" not in result
+        # Success is spelled differently across these three executors; what matters
+        # is that none of them refused and none reported an unresolvable baseline.
+        assert result.get("ok", True) is True, result
+        assert result.get("reason") != "MIXED_TIMETABLE_SOURCES", result
+        assert result.get("baseline_kind") in (None, "REGISTERED"), result
+
+    timetable = results[0]
+    on_screen = {row["course_code"] for row in timetable["meetings"]}
+    assert on_screen == {"AI221"}, (
+        "the registrar snapshot supersedes the forecast for the same term, so the "
+        "planned-only course must not appear in a timetable the payload calls current"
+    )
+    assert timetable["schedule_kind"] == "REGISTERED"
+    assert timetable["is_expected_plan"] is False
+
+
+def test_a_mixed_baseline_handed_to_a_tool_is_still_refused(world, monkeypatch):
+    """The fail-closed path must stay alive even though the snapshot reader can no
+    longer produce a mixed set. It is the backstop for any future caller that
+    assembles rows itself, which is exactly how the original defect arrived."""
+    from core.services.rbac import ROLE_STUDENT
+    from core.services.virtual_advisor_capabilities import _exec_my_timetable
+
+    mixed = [
+        {
+            "course_code": "CS113",
+            "course_key": "CS113",
+            "course_name": "Planned",
+            "section": "M1",
+            "credits": 3,
+            "day": "SUN",
+            "start_time": "09:00",
+            "end_time": "10:15",
+            "room": "R1",
+            "instructor": "Staff",
+            "term_section_id": world[("CS113", "M1")].id,
+            "source": "registration_plan_1448_t1",
+        },
+        {
+            "course_code": "AI221",
+            "course_key": "AI221",
+            "course_name": "Registered",
+            "section": "M1",
+            "credits": 3,
+            "day": "MON",
+            "start_time": "09:00",
+            "end_time": "10:15",
+            "room": "R2",
+            "instructor": "Staff",
+            "term_section_id": world[("AI221", "M1")].id,
+            "source": "scraper_timetable",
+        },
+    ]
+    monkeypatch.setattr(
+        "core.services.student_sections.get_student_term_baseline",
+        lambda *_args, **_kwargs: [dict(row) for row in mixed],
+    )
+
+    result = _exec_my_timetable(
+        {},
+        {"role": ROLE_STUDENT, "student_id": OWNER},
+        {
+            "academic_year": 1448,
+            "term": 1,
+        },
+    )
+
+    assert result["ok"] is False
+    assert result["reason"] == "MIXED_TIMETABLE_SOURCES"
+    assert result["schedule_kind"] == "MIXED_REVIEW_REQUIRED"
+    assert "meetings" not in result
+    assert "baseline_sections" not in result
 
 
 def test_a_course_the_student_never_asked_for_is_marked_as_added(

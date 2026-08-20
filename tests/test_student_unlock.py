@@ -469,6 +469,7 @@ def test_graduation_uses_planner_courses_as_current_without_persisting_passes(pl
         academic_year="1448",
         term="1",
         term_section=section,
+        source="scraper_timetable",
     )
     before_courses = StudentCourse.objects.filter(student_id=SID).count()
     before_sections = StudentTermSection.objects.filter(student_id=SID).count()
@@ -644,6 +645,7 @@ def _map_current_courses(*codes: str):
             academic_year="1448",
             term="1",
             term_section=section,
+            source="scraper_timetable",
         )
 
 
@@ -979,7 +981,11 @@ def test_home_shows_the_published_timetable_and_names_its_term(plan):
         term_section=ts, day="MON", start_time="09:00", end_time="10:15", room="R1"
     )
     StudentTermSection.objects.create(
-        student_id=SID, academic_year="1447", term="2", term_section=ts
+        student_id=SID,
+        academic_year="1447",
+        term="2",
+        term_section=ts,
+        source="scraper_timetable",
     )
     u = student_otp.provision_student_user(SID)
     c = Client()
@@ -987,7 +993,9 @@ def test_home_shows_the_published_timetable_and_names_its_term(plan):
     r = c.get("/student/")
     assert r.context["timetable_is_fallback"] is True
     assert (r.context["timetable_year"], r.context["timetable_term"]) == ("1447", "2")
-    assert r.context["timetable"], "the fallback must actually render meetings"
+    assert r.context["timetable_panels"][0]["timetable"], (
+        "the fallback must actually render meetings"
+    )
     ts.delete()
 
 
@@ -1004,7 +1012,11 @@ def test_no_fallback_when_two_timetables_are_loaded(plan):
             term_section=ts, day="MON", start_time="09:00", end_time="10:15", room="R1"
         )
         StudentTermSection.objects.create(
-            student_id=SID, academic_year=yr, term=tm_, term_section=ts
+            student_id=SID,
+            academic_year=yr,
+            term=tm_,
+            term_section=ts,
+            source="scraper_timetable",
         )
         made.append(ts)
     u = student_otp.provision_student_user(SID)
@@ -1012,7 +1024,7 @@ def test_no_fallback_when_two_timetables_are_loaded(plan):
     c.force_login(u)
     r = c.get("/student/")
     assert r.context["timetable_is_fallback"] is False  # ambiguous -> refuse to guess
-    assert r.context["timetable"] == []
+    assert r.context["timetable_panels"] == []
     for ts in made:
         ts.delete()
 
