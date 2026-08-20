@@ -490,6 +490,45 @@ def _process_student(
 # ------------------------------------------------------------------
 
 
+async def _redactable_page_content(page: Any) -> str:
+    """Page HTML, unless the page is an identity provider — then just its host.
+
+    A debug dump is written whenever a student fails, and the page it dumps is
+    whatever the worker was parked on. If the session dropped mid-scrape that can
+    be a Microsoft or ADFS page, and those carry live secrets in the markup: the
+    Entra `$Config` blob holds the flow token, canary and OAuth request context,
+    and the ADFS->Entra interstitial holds a signed SAML assertion in a hidden
+    `wresult` field. Any of them landing in `data/debug_failures/` is a credential
+    on disk, in a directory nobody treats as sensitive.
+
+    So the host decides. Only the portal's own pages are ever written out; anything
+    else is reduced to its scheme and host, which is all a debugger needs to know
+    ("we ended up at Microsoft") and carries nothing.
+    """
+    from urllib.parse import urlsplit
+
+    from core.services.portal_scraper import _is_portal_url
+
+    url = str(getattr(page, "url", "") or "")
+    if url and not _is_portal_url(url):
+        try:
+            parsed = urlsplit(url)
+            where = f"{parsed.scheme}://{parsed.hostname or '<none>'}"
+        except ValueError:
+            where = "<unparseable>"
+        return "\n".join(
+            (
+                "<REDACTED_NON_PORTAL_PAGE>",
+                f"host: {where}",
+                "The scrape ended on a page outside the portal, so its markup was not",
+                "saved: identity-provider pages carry flow tokens, OAuth context and",
+                "SAML assertions in the HTML.",
+                "",
+            )
+        )
+    return await safe_page_content(page)
+
+
 class Command(BaseCommand):
     help = "Scrape student study plans and timetables from the university portal"
     _shared: dict[str, Any]
@@ -820,6 +859,15 @@ class Command(BaseCommand):
 
                     except RuntimeError as exc:
                         if "SESSION_LOGGED_OUT_HTML" in str(exc):
+                            # Guarded like the timeout branch below. Without this,
+                            # the LAST attempt drove a complete Microsoft + ADFS
+                            # sign-in — up to PORTAL_SSO_TIMEOUT_MS, holding the
+                            # concurrency semaphore — and then `continue` fell
+                            # straight out of the exhausted loop and threw the
+                            # session away. A whole handshake, and a sign-in
+                            # attempt against the staff account, spent on nothing.
+                            if attempt == max_retries:
+                                raise
                             session_generation = await self._force_relogin(
                                 relogin_lock,
                                 observed_generation=session_generation,
@@ -989,26 +1037,31 @@ class Command(BaseCommand):
             logger.warning("Session expired — performing re-login")
             previous_anchor = self._shared.get("page")
             page = None
-            from core.services.portal_scraper import (
-                _safe_goto,
-                _safe_wait_network,
-                is_logged_out_html,
-                is_staff_login_success_html,
+            from core.services.portal_scraper import authenticate_portal_page
+            from core.services.portal_session import (
+                PortalSessionError,
+                page_shows_live_session,
             )
+
+            unattended = bool(getattr(settings, "PORTAL_UNATTENDED_LOGIN", False))
 
             try:
                 page = await self._shared["context"].new_page()  # type: ignore[attr-defined]
-                await _safe_goto(page, settings.PORTAL_LOGIN_URL)
-                await page.wait_for_selector('input[name="userName"]', timeout=60000)
-                await page.fill('input[name="userName"]', settings.PORTAL_ADMIN_USERNAME)
-                await page.fill('input[name="password"]', settings.PORTAL_ADMIN_PASSWORD)
-                await page.click('input[name="submit"]')
-                await _safe_wait_network(page, timeout_ms=30000)
-                login_html = await safe_page_content(page)
-                if is_logged_out_html(login_html) or not is_staff_login_success_html(login_html):
-                    raise RuntimeError(
-                        "Portal re-login failed: authenticated staff markers missing"
-                    )
+                if unattended:
+                    await authenticate_portal_page(page)
+                else:
+                    # A person minted this session, so the scraper cannot mint
+                    # another. One re-check, because "session expired" can also be
+                    # a transient portal hiccup and the cookies may still be good —
+                    # and if they are not, stop the run with the one instruction
+                    # that fixes it rather than failing student by student.
+                    # Checked on the anchor page we just opened rather than on a
+                    # scratch one: the anchor has to end up on the portal anyway.
+                    if not await page_shows_live_session(page):
+                        raise PortalSessionError(
+                            "The saved portal session stopped being accepted part-way "
+                            "through the scrape."
+                        )
             except Exception as exc:
                 failure = str(exc) or exc.__class__.__name__
                 self._shared["session_recovery_failed_generation"] = current_generation
@@ -1049,7 +1102,7 @@ class Command(BaseCommand):
             html = "<NO_PAGE_CREATED>"
         else:
             try:
-                html = await safe_page_content(page)
+                html = await _redactable_page_content(page)
             except Exception:
                 html = "<FAILED>"
         debug_path = Path(debug_dir)

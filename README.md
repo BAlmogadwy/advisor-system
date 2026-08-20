@@ -139,7 +139,12 @@ the `advisor-block` card pattern. RTL-aware (Arabic + English).
 
 ## Security
 
-- Do not hardcode portal credentials — use `.env`
+- The scraper does not hold a portal password. An operator signs in once with
+  `manage.py portal_login`; the saved session is reused and is gitignored.
+- `.portal_session.json` is a live credential — never copy it to a server. If it
+  leaks, sign out of the portal to invalidate it.
+- The opt-in unattended path (`PORTAL_UNATTENDED_LOGIN`) fails closed when
+  Microsoft requires MFA, CAPTCHA, device approval, or any interactive step.
 - Rotate any leaked credentials immediately
 - `import_old/config/settings.py` is a historical reference only
 - Build endpoint throttled (3/2min in production, 20/2min in dev)

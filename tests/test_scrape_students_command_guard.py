@@ -346,23 +346,6 @@ def test_relogin_is_coalesced_without_closing_unrelated_workers(
             self.context = context
             self.closed = False
 
-        async def wait_for_selector(self, selector: str, timeout: int) -> None:
-            assert selector in {
-                'input[name="userName"]',
-                'input[name="StudentNumber"]',
-            }
-            assert timeout == 60000
-
-        async def fill(self, selector: str, value: str) -> None:
-            assert selector in {'input[name="userName"]', 'input[name="password"]'}
-            assert isinstance(value, str)
-
-        async def click(self, selector: str) -> None:
-            assert selector == 'input[name="submit"]'
-
-        async def content(self) -> str:
-            return '<html><body><a href="signOut.do">Logout</a></body></html>'
-
         async def close(self) -> None:
             self.closed = True
 
@@ -384,10 +367,13 @@ def test_relogin_is_coalesced_without_closing_unrelated_workers(
         "page": old_anchor,
         "session_generation": 0,
     }
-    safe_goto = AsyncMock()
-    safe_wait_network = AsyncMock()
-    monkeypatch.setattr(portal_scraper, "_safe_goto", safe_goto)
-    monkeypatch.setattr(portal_scraper, "_safe_wait_network", safe_wait_network)
+    authenticate = AsyncMock()
+    monkeypatch.setattr(portal_scraper, "authenticate_portal_page", authenticate)
+    # Coalescing is a property of the LOCK and the generation counter, not of how
+    # the session is obtained, so it is exercised on the unattended path where the
+    # sign-in is a single mockable call. The attended path's own recovery
+    # behaviour is covered in tests/test_portal_sso_hardening.py.
+    monkeypatch.setattr(scrape_students.settings, "PORTAL_UNATTENDED_LOGIN", True, raising=False)
 
     async def relogin_twice() -> tuple[int, int]:
         lock = asyncio.Lock()
@@ -400,8 +386,7 @@ def test_relogin_is_coalesced_without_closing_unrelated_workers(
     assert old_anchor.closed is True
     assert unrelated_worker.closed is False
     assert context.login_page.closed is False
-    safe_goto.assert_awaited_once()
-    safe_wait_network.assert_awaited_once()
+    authenticate.assert_awaited_once_with(context.login_page)
 
 
 def test_failed_relogin_is_attempted_once_and_closes_candidate_page(
@@ -411,20 +396,6 @@ def test_failed_relogin_is_attempted_once_and_closes_candidate_page(
         def __init__(self, context: object) -> None:
             self.context = context
             self.closed = False
-
-        async def wait_for_selector(self, selector: str, timeout: int) -> None:
-            assert selector == 'input[name="userName"]'
-            assert timeout == 60000
-
-        async def fill(self, selector: str, value: str) -> None:
-            assert selector in {'input[name="userName"]', 'input[name="password"]'}
-            assert isinstance(value, str)
-
-        async def click(self, selector: str) -> None:
-            assert selector == 'input[name="submit"]'
-
-        async def content(self) -> str:
-            return "<html><body>Public portal landing page</body></html>"
 
         async def close(self) -> None:
             self.closed = True
@@ -445,8 +416,11 @@ def test_failed_relogin_is_attempted_once_and_closes_candidate_page(
         "page": FakePage(context),
         "session_generation": 0,
     }
-    monkeypatch.setattr(portal_scraper, "_safe_goto", AsyncMock())
-    monkeypatch.setattr(portal_scraper, "_safe_wait_network", AsyncMock())
+    authenticate = AsyncMock(side_effect=RuntimeError("SSO callback failed"))
+    monkeypatch.setattr(portal_scraper, "authenticate_portal_page", authenticate)
+    # Same reasoning as the coalescing test: the retry/cleanup contract is about
+    # the lock and the candidate page, not about how the session is obtained.
+    monkeypatch.setattr(scrape_students.settings, "PORTAL_UNATTENDED_LOGIN", True, raising=False)
 
     async def relogin_twice() -> tuple[object, object]:
         lock = asyncio.Lock()
@@ -463,4 +437,5 @@ def test_failed_relogin_is_attempted_once_and_closes_candidate_page(
 
     assert context.created == 1
     assert context.login_page.closed is True
+    authenticate.assert_awaited_once_with(context.login_page)
     assert all(isinstance(result, scrape_students.PortalSessionRecoveryError) for result in results)

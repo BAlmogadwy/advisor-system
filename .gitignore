@@ -65,3 +65,6 @@ datadump.json
 
 # Per-student advisor evaluation outputs are generated and may contain student IDs.
 evals/advisor/live_batch_results_*.json
+
+# Operator-minted portal session (a live credential, never committed)
+.portal_session.json

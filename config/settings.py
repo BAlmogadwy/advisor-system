@@ -377,7 +377,8 @@ NEO4J_USERNAME = os.getenv("NEO4J_USERNAME", "neo4j")
 NEO4J_PASSWORD = os.getenv("NEO4J_PASSWORD", "")
 NEO4J_DATABASE = os.getenv("NEO4J_DATABASE", "neo4j")
 
-# Portal credentials for scraper/runtime commands
+# Portal credentials for scraper/runtime commands. The username is the full
+# university Microsoft UPN/email used by Entra ID, not the retired portal ID.
 PORTAL_ADMIN_USERNAME = os.getenv("PORTAL_ADMIN_USERNAME", "")
 PORTAL_ADMIN_PASSWORD = os.getenv("PORTAL_ADMIN_PASSWORD", "")
 
@@ -386,7 +387,32 @@ ADMIN_USERNAME = PORTAL_ADMIN_USERNAME
 ADMIN_PASSWORD = PORTAL_ADMIN_PASSWORD
 
 # Portal URLs (kept for compatibility with migrated/legacy scraper modules)
-PORTAL_LOGIN_URL = "https://eas.taibahu.edu.sa/TaibahReg/teachers_login.jsp"
+PORTAL_LOGIN_URL = os.getenv(
+    "PORTAL_LOGIN_URL",
+    "https://eas.taibahu.edu.sa/TaibahReg/staffLogin.do?ex=preLogin",
+)
+PORTAL_SSO_TIMEOUT_MS = int(os.getenv("PORTAL_SSO_TIMEOUT_MS", "120000"))
+
+# Where the operator-minted portal session lives. An attended `portal_login`
+# writes it; the scraper reuses it. It is a live credential, so it is kept out
+# of version control and is never copied to a server.
+PORTAL_SESSION_STATE_PATH = os.getenv(
+    "PORTAL_SESSION_STATE_PATH", str(BASE_DIR / ".portal_session.json")
+)
+
+# Let the scraper drive Microsoft Entra ITSELF with PORTAL_ADMIN_PASSWORD,
+# instead of reusing a session a person signed in for.
+#
+# OFF by default and it should stay off for a human staff account: an
+# unattended sign-in cannot answer MFA, consent or a Conditional Access
+# interrupt, and every automated mis-step counts against Entra smart lockout
+# and ADFS extranet lockout. Turn it on only for an account the university has
+# approved for unattended use.
+PORTAL_UNATTENDED_LOGIN = os.getenv("PORTAL_UNATTENDED_LOGIN", "false").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+}
 STUDENT_PLAN_URL = "https://eas.taibahu.edu.sa/TaibahReg/studentStudyPlanEnquiryEng.do?ex=preEx"
 STUDENT_TIMETABLE_URL = "https://eas.taibahu.edu.sa/TaibahReg/studentSchedualEnquiry.do?ex=preEx"
 
