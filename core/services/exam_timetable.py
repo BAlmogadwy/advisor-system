@@ -140,6 +140,28 @@ def _credit_pair_penalty(credits_on_day: list[int]) -> int:
 # ── 1. Enrolled sets ────────────────────────────────────────────
 
 
+def _registrar_only():
+    """Exam enrolment is a registrar claim, so it reads registrar rows only.
+
+    A term may now hold an imported expected plan beside the registrar's snapshot.
+    Unfiltered, every query in this module would union the two: a student would be
+    counted into a course they only planned, seated twice where the plan and the
+    registration name different sections of one course, and each of those wrong
+    numbers becomes a room size, an invigilator count and a sitting on a student's
+    own exam sheet. Nothing here has a mixed-baseline guard to catch it, and an
+    exam timetable is not a screen a student can correct.
+
+    An empty result is not a failure. Both callers fall back to
+    ``StudentCourse.status='studying'`` -- itself registrar-scraped -- when no
+    registrar sections are on file, which is the documented behaviour for a term
+    whose section mappings have not landed.
+    """
+    from core.services.student_sections import snapshot_class_filter
+    from core.services.timetable_snapshots import SnapshotClass
+
+    return snapshot_class_filter(SnapshotClass.REGISTRAR)
+
+
 def build_enrolled_sets(
     programs: list[str] | None = None,
     sections: list[str] | None = None,
@@ -163,15 +185,18 @@ def build_enrolled_sets(
     return enrolled
 
     latest = (
-        StudentTermSection.objects.order_by("-academic_year", "-term")
+        StudentTermSection.objects.filter(_registrar_only())
+        .order_by("-academic_year", "-term")
         .values_list("academic_year", "term")
         .first()
     )
 
     if latest is not None:
         ay, tm = latest
-        qs = StudentTermSection.objects.filter(academic_year=ay, term=tm).select_related(
-            "term_section"
+        qs = (
+            StudentTermSection.objects.filter(academic_year=ay, term=tm)
+            .filter(_registrar_only())
+            .select_related("term_section")
         )
 
         if programs:
@@ -231,7 +256,8 @@ def build_enrolled_sets_with_meta(
     source_codes = {str(code) for code, _desc, _sid, _program in rows}
     if not source_codes:
         latest = (
-            StudentTermSection.objects.order_by("-academic_year", "-term")
+            StudentTermSection.objects.filter(_registrar_only())
+            .order_by("-academic_year", "-term")
             .values_list("academic_year", "term")
             .first()
         )
@@ -239,8 +265,10 @@ def build_enrolled_sets_with_meta(
             return {}, {}
 
         ay, tm = latest
-        qs_sts = StudentTermSection.objects.filter(academic_year=ay, term=tm).select_related(
-            "term_section"
+        qs_sts = (
+            StudentTermSection.objects.filter(academic_year=ay, term=tm)
+            .filter(_registrar_only())
+            .select_related("term_section")
         )
         if programs:
             student_ids = set(
@@ -1101,7 +1129,8 @@ def build_section_enrollment(
     # Latest (academic_year, term) that has any data — same approach as
     # build_enrolled_sets so we stay on the same dataset.
     latest = (
-        StudentTermSection.objects.order_by("-academic_year", "-term")
+        StudentTermSection.objects.filter(_registrar_only())
+        .order_by("-academic_year", "-term")
         .values_list("academic_year", "term")
         .first()
     )
@@ -1111,11 +1140,15 @@ def build_section_enrollment(
 
     if latest is not None:
         ay, tm = latest
-        qs = StudentTermSection.objects.filter(
-            academic_year=ay,
-            term=tm,
-            term_section__course_key__in=list(wanted),
-        ).select_related("term_section")
+        qs = (
+            StudentTermSection.objects.filter(
+                academic_year=ay,
+                term=tm,
+                term_section__course_key__in=list(wanted),
+            )
+            .filter(_registrar_only())
+            .select_related("term_section")
+        )
 
         if programs:
             student_ids = set(

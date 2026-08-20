@@ -32,6 +32,7 @@ from core.services.student_sections import (
     timetable_snapshot_kind,
 )
 from core.services.student_unlock import build_unlock_report
+from core.services.timetable_snapshots import Snapshot
 
 TOOL_NAME = "course_choice_comparison"
 SUPPORTED_OBJECTIVES = frozenset({"balanced", "graduation", "unlock_impact", "timetable_fit"})
@@ -725,7 +726,9 @@ def compare_course_choices(
         objective,
     )
 
-    baseline = get_student_term_baseline(sid, str(year), str(term_number))
+    baseline = get_student_term_baseline(
+        sid, str(year), str(term_number), snapshot=Snapshot.EFFECTIVE
+    )
     baseline_kind = _baseline_kind(baseline)
     query_cache: dict[object, object] = {}
     unlock_report = build_unlock_report(sid, year, term_number)

@@ -40,6 +40,7 @@ from core.services.student_sections import (
     student_gender,
     student_gender_strict,
 )
+from core.services.timetable_snapshots import Snapshot
 from core.settings_views import load_defaults
 from core.sidebar_context import get_sidebar_context
 
@@ -203,7 +204,7 @@ def _planner_context_inner(
     program = str(student_summary["program"] or "").strip()
     gender = student_gender(student_id_int)
 
-    baseline = get_student_term_baseline(student_id, year, term)
+    baseline = get_student_term_baseline(student_id, year, term, snapshot=Snapshot.EFFECTIVE)
     if not baseline:
         # Auto-repair: build current snapshot mappings from studying courses when possible.
         studying_codes_qs = (
@@ -238,7 +239,9 @@ def _planner_context_inner(
                     replace_student_term_sections(
                         student_id, year, term, mapped_ids, source="auto_from_studying"
                     )
-                    baseline = get_student_term_baseline(student_id, year, term)
+                    baseline = get_student_term_baseline(
+                        student_id, year, term, snapshot=Snapshot.EFFECTIVE
+                    )
                 except Exception:
                     logger.warning(
                         "Auto-map sections failed for student %s", student_id, exc_info=True

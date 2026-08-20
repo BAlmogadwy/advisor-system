@@ -454,9 +454,12 @@ def test_student_home_renders_empty_states(students):
     c.force_login(u)
     r = c.get("/student/")
     assert r.status_code == 200
-    assert r.context["timetable"] == []
+    assert r.context["timetable_panels"] == []
     body = r.content.decode()
-    assert "No registered timetable" in body or "لا يوجد جدول" in body
+    assert (
+        "There is no registered timetable and no expected plan for this term." in body
+        or "لا يوجد جدول" in body
+    )
 
 
 @override_settings(ALLOWED_HOSTS=["testserver"])
@@ -477,7 +480,11 @@ def test_portal_renders_populated_and_hides_other_gender(students):
             instructor="Dr X",
         )
         StudentTermSection.objects.create(
-            student_id=SID, academic_year="1448", term="1", term_section=ts
+            student_id=SID,
+            academic_year="1448",
+            term="1",
+            term_section=ts,
+            source="scraper_timetable",
         )
         made.append(ts)
     u = student_otp.provision_student_user(SID)

@@ -477,6 +477,14 @@ class TermSectionMeeting(models.Model):
 
 
 class StudentTermSection(models.Model):
+    """One link from a student to a section, for one term, from one source.
+
+    ``source`` is not decoration: it is the difference between "the registrar
+    recorded this" and "an approved plan forecast this", and
+    ``core.services.timetable_snapshots`` is the only place that decides which is
+    which. See that module before reading a row's meaning off this table.
+    """
+
     student_id = models.IntegerField()
     academic_year = models.TextField()
     term = models.TextField()
@@ -492,15 +500,29 @@ class StudentTermSection(models.Model):
     class Meta:
         db_table = "student_term_sections"
         constraints = [
+            # ``source`` is part of the key BECAUSE a term may now hold both an
+            # expected plan and the registrar's snapshot at once. Without it the
+            # second snapshot cannot store the section the first one already
+            # names — which is every section the student actually registered in
+            # from the plan they were given, i.e. exactly the overlap the student
+            # portal exists to show. Two rows of the SAME source for one section
+            # remain impossible, which is the property the old key was protecting.
             models.UniqueConstraint(
-                fields=["student_id", "academic_year", "term", "term_section"],
-                name="ux_sts_student_term_section",
+                fields=["student_id", "academic_year", "term", "term_section", "source"],
+                name="ux_sts_student_term_section_source",
             ),
         ]
         indexes = [
             models.Index(
                 fields=["student_id"],
                 name="ix_sts_student",
+            ),
+            # Every snapshot read is (student, year, term) then a filter on class.
+            # With two snapshots per term the row count per student doubles, so the
+            # term is worth indexing rather than scanned out of the student's rows.
+            models.Index(
+                fields=["student_id", "academic_year", "term"],
+                name="ix_sts_student_term",
             ),
         ]
 

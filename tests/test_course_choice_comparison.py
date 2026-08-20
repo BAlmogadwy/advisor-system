@@ -68,7 +68,7 @@ def _install_public_service_fakes(
     baseline_rows = list(baseline or [])
     monkeypatch.setattr(
         "core.services.course_choice_comparison.get_student_term_baseline",
-        lambda *_args: baseline_rows,
+        lambda *_args, **_kwargs: baseline_rows,
     )
     monkeypatch.setattr(
         "core.services.course_choice_comparison.build_unlock_report",
@@ -275,8 +275,11 @@ def test_graduation_objective_uses_only_complete_forecasts(
 def test_mixed_baseline_disables_only_timetable_dimension(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    # Genuinely mixed means REGISTRAR evidence beside a forecast. It used to be
+    # written with `mapped`, but a `mapped` row is a staff mapping -- a forecast
+    # too -- so the pair said the same thing twice and there was nothing to refuse.
     mixed = [
-        {"course_code": "AI100", "section": "M1", "source": "mapped"},
+        {"course_code": "AI100", "section": "M1", "source": "scraper_timetable"},
         {
             "course_code": "AI200",
             "section": "M2",

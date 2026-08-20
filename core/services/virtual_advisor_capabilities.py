@@ -706,6 +706,7 @@ def _exec_recommend_courses(
         get_student_term_baseline,
     )
     from core.services.timetable_provenance import baseline_sections
+    from core.services.timetable_snapshots import Snapshot
     from core.services.virtual_advisor import _course_names
 
     student_id, error = _resolve_scoped_student_id(args, scope)
@@ -716,7 +717,9 @@ def _exec_recommend_courses(
         return {"ok": False, "error": error}
 
     codes = recommend_next_courses(int(student_id), int(year), int(term))
-    baseline = get_student_term_baseline(int(student_id), str(year), str(term))
+    baseline = get_student_term_baseline(
+        int(student_id), str(year), str(term), snapshot=Snapshot.ANY
+    )
     registered_baseline = [
         row
         for row in baseline
@@ -1547,6 +1550,7 @@ def _exec_my_timetable(
         get_student_term_baseline,
         student_gender,
     )
+    from core.services.timetable_snapshots import Snapshot
 
     student_id, error = _resolve_scoped_student_id(args, scope)
     if error:
@@ -1555,7 +1559,9 @@ def _exec_my_timetable(
     if error:
         return {"ok": False, "error": error}
 
-    rows = get_student_term_baseline(int(student_id), str(year), str(term))
+    rows = get_student_term_baseline(
+        int(student_id), str(year), str(term), snapshot=Snapshot.EFFECTIVE
+    )
     if not rows:
         from core.models import StudentTermSection
 
@@ -1566,7 +1572,9 @@ def _exec_my_timetable(
         )
         if len(published) == 1:
             year, term = published[0]
-            rows = get_student_term_baseline(int(student_id), str(year), str(term))
+            rows = get_student_term_baseline(
+                int(student_id), str(year), str(term), snapshot=Snapshot.EFFECTIVE
+            )
 
     gender = student_gender(int(student_id))
     if gender:
@@ -1859,6 +1867,7 @@ def _student_sections_context(
         get_student_term_baseline,
         student_gender_strict,
     )
+    from core.services.timetable_snapshots import Snapshot
 
     student_id, error = _resolve_scoped_student_id(args, scope)
     if error:
@@ -1899,7 +1908,9 @@ def _student_sections_context(
             "reason": "PROGRAMME_UNRESOLVED",
         }, {}
     catalog = _catalog_for_courses(str(year), str(term), codes, gender, program)
-    baseline = get_student_term_baseline(int(student_id), str(year), str(term))
+    baseline = get_student_term_baseline(
+        int(student_id), str(year), str(term), snapshot=Snapshot.EFFECTIVE
+    )
     baseline_kind = _timetable_baseline_kind(baseline)
     if baseline_kind == "MIXED_REVIEW_REQUIRED":
         return _mixed_timetable_error(
@@ -2174,6 +2185,7 @@ def _exec_build_my_timetable(
         build_timetable_facts,
         verify,
     )
+    from core.services.timetable_snapshots import Snapshot
 
     student_id, error = _resolve_scoped_student_id(args, scope)
     if error:
@@ -2233,7 +2245,9 @@ def _exec_build_my_timetable(
     ]
     asked = list(dict.fromkeys(wanted + recommended))
 
-    baseline = get_student_term_baseline(int(student_id), str(year), str(term))
+    baseline = get_student_term_baseline(
+        int(student_id), str(year), str(term), snapshot=Snapshot.EFFECTIVE
+    )
     baseline_kind = _timetable_baseline_kind(baseline)
     if baseline_kind == "MIXED_REVIEW_REQUIRED":
         return _mixed_timetable_error(
@@ -2415,6 +2429,7 @@ def _exec_build_timetable_proposal(
     )
     from core.services.student_sections import get_student_term_baseline
     from core.services.timetable_provenance import baseline_sections
+    from core.services.timetable_snapshots import Snapshot
     from core.services.virtual_advisor import _course_names
 
     student_id, error = _resolve_scoped_student_id(args, scope)
@@ -2614,7 +2629,9 @@ def _exec_build_timetable_proposal(
     ]
     recommended = [code for code in recommended if code and code in permitted]
 
-    baseline = get_student_term_baseline(int(student_id), str(year), str(term))
+    baseline = get_student_term_baseline(
+        int(student_id), str(year), str(term), snapshot=Snapshot.EFFECTIVE
+    )
     baseline_kind = _timetable_baseline_kind(baseline)
     if baseline_kind == "MIXED_REVIEW_REQUIRED":
         return _mixed_timetable_error(

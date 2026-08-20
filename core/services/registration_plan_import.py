@@ -23,9 +23,15 @@ WHAT THIS WRITES INTO, AND WHY IT REFUSES SO MUCH
 distinguish the expected plan (for example ``registration_plan_1448_t1``) from
 the registrar scrape (``scraper_timetable``). The student home screen, adviser
 chat and expected-versus-registered comparison all read it, so one wrong link
-propagates into three surfaces and contradicts nothing that would notice. A later
-scrape preserves future plan rows and replaces them only when that planned term
-itself becomes the current registrar snapshot.
+propagates into three surfaces and contradicts nothing that would notice.
+
+Both snapshots now COEXIST for the same term. A scrape of a planned term used to
+delete that term's plan rows; it no longer does, because "the plan said five
+courses and the registrar recorded three" is the comparison this table exists to
+support, and it is only expressible while both halves are present. Each writer
+deletes only rows of its own provenance class -- see
+``core.services.timetable_snapshots`` -- and ``source`` is part of the uniqueness
+key so the two snapshots can name the same section.
 
 A data-integrity review of the first version found four of its seven claimed
 properties violated. Each is now enforced by the mechanism rather than asserted
@@ -119,6 +125,11 @@ class Plan:
     uncovered: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
     time_disagreements: list[dict[str, Any]] = field(default_factory=list)
     problems: list[Problem] = field(default_factory=list)
+    #: Things the operator must SEE but which do not stop an apply. Separate from
+    #: ``problems`` because ``ok`` is defined as "no problems", so anything appended
+    #: there blocks the import — which is how a report meant to inform an operator
+    #: about registrar rows in the target term became a refusal to import at all.
+    notices: list[Problem] = field(default_factory=list)
 
     #: Conservation. Every detail row is accounted for by exactly one of these and
     #: `check_conservation` proves it. Without a rows-read counter, openpyxl's
@@ -521,29 +532,49 @@ def build_plan(
 
 
 def count_rows_to_replace(plan: Plan, academic_year: str, term: str) -> int:
-    """Existing rows an apply would DELETE. Computed by the same code that reports."""
+    """Existing rows an apply would DELETE. Computed by the same code that reports.
+
+    Scoped to the EXPECTED class by the same predicate the delete uses, so the
+    number the dry run prints cannot drift from the rows the apply removes.
+    """
     from core.models import StudentTermSection
+    from core.services.student_sections import snapshot_class_filter
+    from core.services.timetable_snapshots import SnapshotClass
 
     scope = plan.replacement_scope
     if not scope:
         return 0
-    return StudentTermSection.objects.filter(
-        student_id__in=sorted(scope),
-        academic_year=str(academic_year),
-        term=str(term),
-        source__startswith="registration_plan_",
-    ).count()
+    return (
+        StudentTermSection.objects.filter(
+            student_id__in=sorted(scope),
+            academic_year=str(academic_year),
+            term=str(term),
+        )
+        .filter(snapshot_class_filter(SnapshotClass.EXPECTED))
+        .count()
+    )
 
 
 def _check_target_registered_collisions(plan: Plan, academic_year: str, term: str) -> None:
-    """An expected-plan import must never replace registrar evidence.
+    """Report registrar rows already present for the target term. NOT a failure.
 
-    Re-running an import is allowed to replace an earlier ``registration_plan_*``
-    snapshot. Once a real scrape exists for the target term, however, the term is
-    no longer an expected-only workspace and importing a plan would turn actual
-    registration back into a forecast. Refuse before the operator reaches apply.
+    This used to be a hard refusal: "once a real scrape exists for the target term
+    ... importing a plan would turn actual registration back into a forecast".
+    That was true while a term could hold one snapshot, because writing the plan
+    meant destroying whatever was there.
+
+    It no longer is. ``apply_plan`` deletes only rows of the EXPECTED class, and the
+    uniqueness key now carries ``source``, so registrar rows are untouched by an
+    import and the two snapshots sit side by side. Importing a corrected plan into
+    an already-registered term is the case the expected-versus-registered comparison
+    is FOR, and refusing it would block the feature at its most useful moment.
+
+    The count is still reported, as a notice, because an operator importing into a
+    registered term should know that is what they are doing.
     """
     from core.models import StudentTermSection
+    from core.services.student_sections import snapshot_class_filter
+    from core.services.timetable_snapshots import SnapshotClass
 
     scope = plan.replacement_scope
     if not scope:
@@ -553,15 +584,16 @@ def _check_target_registered_collisions(plan: Plan, academic_year: str, term: st
         academic_year=str(academic_year),
         term=str(term),
         term_section__scenario__isnull=True,
-    ).exclude(source__startswith="registration_plan_")
+    ).exclude(snapshot_class_filter(SnapshotClass.EXPECTED))
     sample = list(registered.values_list("student_id", "source")[:5])
     if sample:
-        plan.problems.append(
+        plan.notices.append(
             Problem(
                 f"term {academic_year}/{term}",
                 "TARGET_TERM_HAS_REGISTRAR_ROWS",
                 f"{registered.count()} non-plan row(s) already exist for students in this "
-                f"import (sample: {sample}); an expected plan may not replace them",
+                f"import (sample: {sample}); they are preserved and the imported plan "
+                f"will sit beside them as the expected snapshot",
             )
         )
 
@@ -594,6 +626,8 @@ def apply_plan(plan: Plan, academic_year: str, term: str) -> dict[str, int]:
 
     from core.models import StudentTermSection
     from core.services.section_programmes import reconcile_observed_section_programs
+    from core.services.student_sections import snapshot_class_filter
+    from core.services.timetable_snapshots import SnapshotClass
 
     if not plan.ok:
         raise ValueError("refusing to apply a plan that failed validation")
@@ -620,12 +654,12 @@ def apply_plan(plan: Plan, academic_year: str, term: str) -> dict[str, int]:
             term=str(term),
             term_section__scenario__isnull=True,
         )
-        registered_rows = target_rows.exclude(source__startswith="registration_plan_")
-        if registered_rows.exists():
-            raise ValueError(
-                "refusing to replace registrar rows with an expected registration plan"
-            )
-        rows_to_replace = target_rows.filter(source__startswith="registration_plan_")
+        # The refusal that used to stand here — "refusing to replace registrar rows
+        # with an expected registration plan" — guarded a delete that could reach
+        # them. This delete cannot: it is scoped by the same class predicate the
+        # reader uses, and ``source`` is part of the uniqueness key, so registrar
+        # rows for this term survive an import and are compared against it instead.
+        rows_to_replace = target_rows.filter(snapshot_class_filter(SnapshotClass.EXPECTED))
         affected_section_ids = set(rows_to_replace.values_list("term_section_id", flat=True))
         affected_section_ids.update(int(link["term_section_id"]) for link in plan.links)
         removed = rows_to_replace.delete()[0]

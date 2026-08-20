@@ -294,6 +294,12 @@ def test_replacing_student_sections_reconciles_only_observed_global_links() -> N
             academic_year="1448",
             term="1",
             term_section=old,
+            # Explicitly registrar-class, because the write under test is a
+            # registrar refresh and a writer now replaces only its own class. The
+            # model default is "manual", which is a staff WORKING mapping a scrape
+            # has no business deleting -- and leaving it here would mean `old` was
+            # never touched, so nothing about reconciliation would be exercised.
+            source="scraper_timetable",
         )
     TermSectionProgram.objects.create(
         term_section=old,

@@ -348,6 +348,7 @@ def generation_is_stale(draft: PlannerDraft) -> bool:
     which made it a value that described the problem instead of detecting it.
     """
     from core.services.student_sections import get_student_term_baseline
+    from core.services.timetable_snapshots import Snapshot
 
     if not draft.has_current_generation:
         return False
@@ -363,7 +364,9 @@ def generation_is_stale(draft: PlannerDraft) -> bool:
         course_codes=list(inputs.get("course_codes") or []),
         fixed_sections=dict(inputs.get("fixed_sections") or {}),
         keep_current_sections=bool(inputs.get("keep_current_sections")),
-        baseline=get_student_term_baseline(draft.student_id, draft.academic_year, draft.term),
+        baseline=get_student_term_baseline(
+            draft.student_id, draft.academic_year, draft.term, snapshot=Snapshot.EFFECTIVE
+        ),
     )
     return current != stored
 
@@ -389,6 +392,7 @@ def generate(draft: PlannerDraft, *, confirmation: Any = None) -> PlannerDraft:
     student can retry without asking for permission a second time.
     """
     from core.services.student_sections import get_student_term_baseline
+    from core.services.timetable_snapshots import Snapshot
 
     with transaction.atomic():
         locked = _lock(draft)
@@ -428,7 +432,9 @@ def generate(draft: PlannerDraft, *, confirmation: Any = None) -> PlannerDraft:
             # that fails `int("")` two lines below — surfacing as a 500 rather than
             # as anything a caller can act on.
             raise DraftError("هذا المخطط لا يحدّد الفصل الدراسي. ابدأ مخططًا جديدًا.")
-        baseline = get_student_term_baseline(locked.student_id, year, term)
+        baseline = get_student_term_baseline(
+            locked.student_id, year, term, snapshot=Snapshot.EFFECTIVE
+        )
 
         result = build_student_options(
             PlannerRequest(

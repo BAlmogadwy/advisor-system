@@ -253,7 +253,11 @@ def _register(student_id, code, year, term, credits=3, section="M1", meetings=3)
             end_time=f"{10 + i:02d}:00",
         )
     StudentTermSection.objects.create(
-        student_id=student_id, academic_year=str(year), term=str(term), term_section=ts
+        student_id=student_id,
+        academic_year=str(year),
+        term=str(term),
+        term_section=ts,
+        source="scraper_timetable",
     )
     return ts
 

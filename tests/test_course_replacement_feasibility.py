@@ -119,7 +119,9 @@ def test_lower_ranked_academic_swap_is_certified_after_first_five_fail(monkeypat
     pairs = [_academic_pair("OLD", f"ADD{index}") for index in range(1, 7)]
     search = _search_payload(pairs, ["OLD"])
     calls = []
-    monkeypatch.setattr(service, "get_student_term_baseline", lambda *_: [_baseline_row("OLD", 1)])
+    monkeypatch.setattr(
+        service, "get_student_term_baseline", lambda *_a, **_k: [_baseline_row("OLD", 1)]
+    )
 
     def fake_graduation(*args, **kwargs):
         calls.append(deepcopy(kwargs))
@@ -161,7 +163,7 @@ def test_exact_pair_keeps_every_other_section_and_strips_database_ids(monkeypatc
     baseline = [_baseline_row("DROP", 10, day="SUN"), _baseline_row("KEEP", 11, day="MON")]
     pair = _academic_pair("DROP", "ADD")
     search = _search_payload([pair], ["DROP", "KEEP"])
-    monkeypatch.setattr(service, "get_student_term_baseline", lambda *_: deepcopy(baseline))
+    monkeypatch.setattr(service, "get_student_term_baseline", lambda *_a, **_k: deepcopy(baseline))
 
     def fake_graduation(*args, **kwargs):
         if kwargs.get("search_better_replacements"):
@@ -218,12 +220,14 @@ def test_incomplete_academic_baseline_cannot_be_called_clash_free(monkeypatch):
 
     pair = _academic_pair("DROP", "ADD")
     search = _search_payload([pair], ["DROP", "UNMAPPED"])
-    monkeypatch.setattr(service, "get_student_term_baseline", lambda *_: [_baseline_row("DROP", 1)])
+    monkeypatch.setattr(
+        service, "get_student_term_baseline", lambda *_a, **_k: [_baseline_row("DROP", 1)]
+    )
     monkeypatch.setattr(service, "build_graduation_what_if", lambda *a, **kw: deepcopy(search))
     monkeypatch.setattr(
         service,
         "build_student_options",
-        lambda *_: pytest.fail("planner must not run with an incomplete retained baseline"),
+        lambda *_a, **_k: pytest.fail("planner must not run with an incomplete retained baseline"),
     )
 
     result = service.find_feasible_course_replacements(SID, 1448, 1)
@@ -243,7 +247,7 @@ def test_unmapped_removed_course_still_blocks_complete_timetable_certification(m
     monkeypatch.setattr(
         service,
         "get_student_term_baseline",
-        lambda *_: [_baseline_row("KEEP", 2, day="MON")],
+        lambda *_a, **_k: [_baseline_row("KEEP", 2, day="MON")],
     )
 
     def fake_graduation(*args, **kwargs):
@@ -264,7 +268,7 @@ def test_unmapped_removed_course_still_blocks_complete_timetable_certification(m
     monkeypatch.setattr(
         service,
         "build_student_options",
-        lambda *_: pytest.fail("an unmapped removal target must fail before Planner"),
+        lambda *_a, **_k: pytest.fail("an unmapped removal target must fail before Planner"),
     )
 
     result = service.find_feasible_course_replacements(
@@ -290,13 +294,13 @@ def test_malformed_retained_meeting_cannot_be_certified(monkeypatch):
     monkeypatch.setattr(
         service,
         "get_student_term_baseline",
-        lambda *_: [_baseline_row("DROP", 1), malformed],
+        lambda *_a, **_k: [_baseline_row("DROP", 1), malformed],
     )
     monkeypatch.setattr(service, "build_graduation_what_if", lambda *a, **kw: deepcopy(search))
     monkeypatch.setattr(
         service,
         "build_student_options",
-        lambda *_: pytest.fail("planner must not run with malformed retained meeting data"),
+        lambda *_a, **_k: pytest.fail("planner must not run with malformed retained meeting data"),
     )
 
     result = service.find_feasible_course_replacements(SID, 1448, 1)
@@ -315,7 +319,7 @@ def test_solver_output_is_independently_rechecked_for_clashes(monkeypatch):
     monkeypatch.setattr(
         service,
         "get_student_term_baseline",
-        lambda *_: [
+        lambda *_a, **_k: [
             _baseline_row("DROP", 1, day="SUN"),
             _baseline_row("KEEP", 2, day="MON"),
         ],
@@ -326,7 +330,7 @@ def test_solver_output_is_independently_rechecked_for_clashes(monkeypatch):
     monkeypatch.setattr(
         service,
         "build_student_options",
-        lambda *_: {"alternatives": [overlapping], "unplaced": []},
+        lambda *_a, **_k: {"alternatives": [overlapping], "unplaced": []},
     )
 
     result = service.find_feasible_course_replacements(SID, 1448, 1)
@@ -349,7 +353,7 @@ def test_partial_catalogue_meeting_evidence_cannot_be_certified(monkeypatch):
     monkeypatch.setattr(
         service,
         "get_student_term_baseline",
-        lambda *_: [
+        lambda *_a, **_k: [
             _baseline_row("DROP", 1, day="SUN"),
             _baseline_row("KEEP", 2, day="MON"),
         ],
@@ -360,7 +364,7 @@ def test_partial_catalogue_meeting_evidence_cannot_be_certified(monkeypatch):
     monkeypatch.setattr(
         service,
         "build_student_options",
-        lambda *_: {"alternatives": [option], "unplaced": []},
+        lambda *_a, **_k: {"alternatives": [option], "unplaced": []},
     )
 
     result = service.find_feasible_course_replacements(SID, 1448, 1)
@@ -390,7 +394,7 @@ def test_malformed_proposed_meeting_cannot_be_certified(
     monkeypatch.setattr(
         service,
         "get_student_term_baseline",
-        lambda *_: [
+        lambda *_a, **_k: [
             _baseline_row("DROP", 1, day="SUN"),
             _baseline_row("KEEP", 2, day="TUE"),
         ],
@@ -401,7 +405,7 @@ def test_malformed_proposed_meeting_cannot_be_certified(
     monkeypatch.setattr(
         service,
         "build_student_options",
-        lambda *_: {"alternatives": [option], "unplaced": []},
+        lambda *_a, **_k: {"alternatives": [option], "unplaced": []},
     )
 
     result = service.find_feasible_course_replacements(SID, 1448, 1)
@@ -416,9 +420,13 @@ def test_mixed_registration_and_expected_plan_snapshot_fails_closed(monkeypatch)
     from core.services import course_replacement_feasibility as service
 
     registered = _baseline_row("A", 1)
-    registered["source"] = "mapped"
+    # Registrar evidence, not `mapped`: a staff mapping is a forecast like the
+    # plan is, so pairing the two is not the contradiction this test is about.
+    registered["source"] = "scraper_timetable"
     expected = _baseline_row("B", 2)
-    monkeypatch.setattr(service, "get_student_term_baseline", lambda *_: [registered, expected])
+    monkeypatch.setattr(
+        service, "get_student_term_baseline", lambda *_a, **_k: [registered, expected]
+    )
 
     result = service.find_feasible_course_replacements(SID, 1448, 1)
 
@@ -437,7 +445,7 @@ def test_remove_only_filter_is_sent_into_academic_search_not_post_filtered(monke
     monkeypatch.setattr(
         service,
         "get_student_term_baseline",
-        lambda *_: [_baseline_row("DROP", 1), _baseline_row("OTHER", 2, day="MON")],
+        lambda *_a, **_k: [_baseline_row("DROP", 1), _baseline_row("OTHER", 2, day="MON")],
     )
 
     def fake_graduation(*args, **kwargs):
@@ -448,7 +456,7 @@ def test_remove_only_filter_is_sent_into_academic_search_not_post_filtered(monke
     monkeypatch.setattr(
         service,
         "build_student_options",
-        lambda *_: {"alternatives": [_planner_option("OTHER", "ADD")], "unplaced": []},
+        lambda *_a, **_k: {"alternatives": [_planner_option("OTHER", "ADD")], "unplaced": []},
     )
 
     result = service.find_feasible_course_replacements(SID, 1448, 1, remove_course="drop")
@@ -464,12 +472,14 @@ def test_service_performs_no_database_writes(monkeypatch):
 
     pair = _academic_pair("OLD", "ADD")
     search = _search_payload([pair], ["OLD"])
-    monkeypatch.setattr(service, "get_student_term_baseline", lambda *_: [_baseline_row("OLD", 1)])
+    monkeypatch.setattr(
+        service, "get_student_term_baseline", lambda *_a, **_k: [_baseline_row("OLD", 1)]
+    )
     monkeypatch.setattr(service, "build_graduation_what_if", lambda *a, **kw: deepcopy(search))
     monkeypatch.setattr(
         service,
         "build_student_options",
-        lambda *_: {"alternatives": [_planner_option("ADD")], "unplaced": []},
+        lambda *_a, **_k: {"alternatives": [_planner_option("ADD")], "unplaced": []},
     )
 
     with CaptureQueriesContext(connection) as captured:
@@ -503,9 +513,11 @@ def test_planner_server_baseline_override_uses_adapter_without_loading_snapshot(
         )
     monkeypatch.setattr(
         "core.services.student_planner.get_student_term_baseline",
-        lambda *_: pytest.fail("stored snapshot must not replace the server override"),
+        lambda *_a, **_k: pytest.fail("stored snapshot must not replace the server override"),
     )
-    monkeypatch.setattr("core.services.student_planner.student_gender_strict", lambda *_: "M")
+    monkeypatch.setattr(
+        "core.services.student_planner.student_gender_strict", lambda *_a, **_k: "M"
+    )
     seen = {}
 
     def fake_solver(**kwargs):
