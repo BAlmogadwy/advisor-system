@@ -255,6 +255,14 @@ def _mutation_queries(queries: CaptureQueriesContext) -> list[str]:
         pytest.param(
             _valid_timetable_html().replace(
                 "<body>",
+                '<body><a href="staffLogin.do?ex=preLogin">Microsoft SSO</a>',
+                1,
+            ),
+            id="portal-sso-login-response",
+        ),
+        pytest.param(
+            _valid_timetable_html().replace(
+                "<body>",
                 '<body><a href="services4GraduatedStudent.do">Service</a>',
                 1,
             ),

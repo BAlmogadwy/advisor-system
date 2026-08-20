@@ -139,7 +139,10 @@ the `advisor-block` card pattern. RTL-aware (Arabic + English).
 
 ## Security
 
-- Do not hardcode portal credentials — use `.env`
+- Do not hardcode portal credentials — use `.env`; the scraper username is the
+  full university Microsoft UPN/email used by the staff portal's Entra SSO.
+- The unattended scraper fails closed when Microsoft requires MFA, CAPTCHA,
+  device approval, or another interactive sign-in step.
 - Rotate any leaked credentials immediately
 - `import_old/config/settings.py` is a historical reference only
 - Build endpoint throttled (3/2min in production, 20/2min in dev)

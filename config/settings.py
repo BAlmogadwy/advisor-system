@@ -377,7 +377,8 @@ NEO4J_USERNAME = os.getenv("NEO4J_USERNAME", "neo4j")
 NEO4J_PASSWORD = os.getenv("NEO4J_PASSWORD", "")
 NEO4J_DATABASE = os.getenv("NEO4J_DATABASE", "neo4j")
 
-# Portal credentials for scraper/runtime commands
+# Portal credentials for scraper/runtime commands. The username is the full
+# university Microsoft UPN/email used by Entra ID, not the retired portal ID.
 PORTAL_ADMIN_USERNAME = os.getenv("PORTAL_ADMIN_USERNAME", "")
 PORTAL_ADMIN_PASSWORD = os.getenv("PORTAL_ADMIN_PASSWORD", "")
 
@@ -386,7 +387,11 @@ ADMIN_USERNAME = PORTAL_ADMIN_USERNAME
 ADMIN_PASSWORD = PORTAL_ADMIN_PASSWORD
 
 # Portal URLs (kept for compatibility with migrated/legacy scraper modules)
-PORTAL_LOGIN_URL = "https://eas.taibahu.edu.sa/TaibahReg/teachers_login.jsp"
+PORTAL_LOGIN_URL = os.getenv(
+    "PORTAL_LOGIN_URL",
+    "https://eas.taibahu.edu.sa/TaibahReg/staffLogin.do?ex=preLogin",
+)
+PORTAL_SSO_TIMEOUT_MS = int(os.getenv("PORTAL_SSO_TIMEOUT_MS", "120000"))
 STUDENT_PLAN_URL = "https://eas.taibahu.edu.sa/TaibahReg/studentStudyPlanEnquiryEng.do?ex=preEx"
 STUDENT_TIMETABLE_URL = "https://eas.taibahu.edu.sa/TaibahReg/studentSchedualEnquiry.do?ex=preEx"
 

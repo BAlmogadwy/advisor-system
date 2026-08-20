@@ -24,6 +24,10 @@ services:
       # which takes precedence over .python-version. Pin both surfaces.
       - key: PYTHON_VERSION
         value: "3.11.9"
+      # The dashboard launches the student scraper as a child of this web
+      # service, so it must resolve the browser installed beside Playwright.
+      - key: PLAYWRIGHT_BROWSERS_PATH
+        value: "0"
       - key: ALLOW_NO_SMTP_PROCESS
         value: "false"
       - key: DJANGO_ALLOWED_HOSTS

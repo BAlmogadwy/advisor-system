@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from urllib.parse import urlsplit
 
 from django.conf import settings
 
@@ -31,6 +32,57 @@ except ImportError:
     HAS_PLAYWRIGHT = False
 
 logger = logging.getLogger(__name__)
+
+_PORTAL_HOST = "eas.taibahu.edu.sa"
+_MICROSOFT_LOGIN_HOST = "login.microsoftonline.com"
+_TAIBAH_ADFS_HOST = "tufs.taibahu.edu.sa"
+_PORTAL_SSO_LINK_SELECTOR = 'a[href*="staffLogin.do?ex=authLogin"]:visible'
+_MICROSOFT_USERNAME_SELECTOR = (
+    '#i0116:not([aria-hidden="true"]):not([tabindex="-1"]):not(.moveOffScreen):visible, '
+    'input[name="loginfmt"]:not([aria-hidden="true"]):not([tabindex="-1"]):not('
+    ".moveOffScreen):visible"
+)
+_MICROSOFT_PASSWORD_SELECTOR = (
+    '#i0118:not([aria-hidden="true"]):not([tabindex="-1"]):not(.moveOffScreen):visible, '
+    'input[name="passwd"]:not([aria-hidden="true"]):not([tabindex="-1"]):not('
+    ".moveOffScreen):visible"
+)
+_MICROSOFT_SUBMIT_SELECTOR = "#idSIButton9:visible"
+_MICROSOFT_OTHER_ACCOUNT_SELECTOR = '#otherTile:visible, [data-test-id="otherTile"]:visible'
+_MICROSOFT_KMSI_SELECTOR = (
+    '#KmsiDescription:visible, #KmsiCheckboxField:visible, [data-bind*="Kmsi"]:visible'
+)
+_MICROSOFT_KMSI_NO_SELECTOR = "#idBtn_Back:visible"
+_MICROSOFT_CREDENTIAL_ERROR_SELECTOR = "#usernameError:visible, #passwordError:visible"
+_MICROSOFT_POLICY_ERROR_SELECTOR = "#service_exception_message:visible, #idTD_Error:visible"
+_MICROSOFT_INTERACTIVE_SELECTOR = ", ".join(
+    (
+        "#idDiv_SAOTCS_Proofs:visible",
+        "#idTxtBx_SAOTCC_OTC:visible",
+        'input[name="otc"]:visible',
+        '[data-bind*="PhoneAppNotification"]:visible',
+        "#idRichContext_DisplaySign:visible",
+        "#wlspispSolutionElement:visible",
+    )
+)
+_TAIBAH_ADFS_USERNAME_SELECTOR = '#userNameInput:visible, input[name="UserName"]:visible'
+_TAIBAH_ADFS_PASSWORD_SELECTOR = '#passwordInput:visible, input[name="Password"]:visible'
+_TAIBAH_ADFS_ACTIVE_DIRECTORY_SELECTOR = (
+    '#bySelection .idp[role="button"][onclick*="AD AUTHORITY"]:visible'
+)
+_TAIBAH_ADFS_SUBMIT_SELECTOR = "#submitButton:visible"
+_TAIBAH_ADFS_CREDENTIAL_ERROR_SELECTOR = "#error:visible, #errorText:visible"
+_SSO_POLL_SECONDS = 0.25
+_SSO_STALLED_SECONDS = 30.0
+
+
+class PortalAuthenticationError(RuntimeError):
+    """The Taibah/Microsoft sign-in did not establish a portal session."""
+
+
+class PortalInteractiveAuthenticationRequired(PortalAuthenticationError):
+    """Microsoft requires an interactive step that an unattended scrape cannot perform."""
+
 
 # ------------------------------------------------------------------
 # Safe HTML utilities
@@ -59,9 +111,19 @@ async def is_logged_out(page: Page) -> bool:
         if getattr(page, "is_closed", lambda: False)():
             return True
         try:
-            if page.url == "about:blank":
+            current_url = str(page.url or "")
+            lowered_url = current_url.casefold()
+            if current_url == "about:blank":
                 return True
-            if "teachers_login.jsp" in page.url or "student_login.jsp" in page.url:
+            if "teachers_login.jsp" in lowered_url or "student_login.jsp" in lowered_url:
+                return True
+            if _is_microsoft_login_url(current_url):
+                return True
+            if _is_taibah_adfs_url(current_url):
+                return True
+            if "stafflogin.do?ex=prelogin" in lowered_url:
+                return True
+            if "stafflogin.do?ex=authlogin" in lowered_url:
                 return True
         except Exception:
             return True
@@ -74,12 +136,25 @@ def is_logged_out_html(html: str) -> bool:
     if not html:
         return False
     lowered = html.casefold()
+    authenticated = "staffwelcomepage.do" in lowered or "signout.do" in lowered
     if "<title>نظام الخدمات الالكترونية</title>" in html:
         return True
     if (
         "teachers_login.jsp" in html
         and "student_login.jsp" in html
         and "services4GraduatedStudent.do" in html
+    ):
+        return True
+    if not authenticated and any(
+        marker in lowered
+        for marker in (
+            "stafflogin.do?ex=prelogin",
+            "stafflogin.do?ex=authlogin",
+            'name="loginfmt"',
+            'id="i0116"',
+            'id="usernameinput"',
+            'id="passwordinput"',
+        )
     ):
         return True
     if any(
@@ -103,6 +178,42 @@ def is_staff_login_success_html(html: str) -> bool:
     # Public/login pages contain much of the same Arabic navigation text as the
     # staff landing page. These authenticated links are the reliable boundary.
     return "staffWelcomePage.do" in html or "signOut.do" in html
+
+
+def _hostname(url: str) -> str:
+    try:
+        return (urlsplit(url).hostname or "").casefold()
+    except ValueError:
+        return ""
+
+
+def _is_trusted_https_url(url: str, allowed_hosts: set[str]) -> bool:
+    try:
+        parsed = urlsplit(url)
+        host = (parsed.hostname or "").casefold()
+        return (
+            parsed.scheme.casefold() == "https"
+            and host in allowed_hosts
+            and parsed.port in {None, 443}
+        )
+    except ValueError:
+        return False
+
+
+def _is_microsoft_login_url(url: str) -> bool:
+    return _is_trusted_https_url(url, {_MICROSOFT_LOGIN_HOST})
+
+
+def _is_taibah_adfs_url(url: str) -> bool:
+    return _is_trusted_https_url(url, {_TAIBAH_ADFS_HOST})
+
+
+def _is_portal_url(url: str) -> bool:
+    configured_host = _hostname(str(getattr(settings, "PORTAL_LOGIN_URL", "")))
+    allowed_hosts = {_PORTAL_HOST}
+    if configured_host:
+        allowed_hosts.add(configured_host)
+    return _is_trusted_https_url(url, allowed_hosts)
 
 
 # ------------------------------------------------------------------
@@ -287,32 +398,242 @@ async def _wait_for_timetable_results(page: Page, timeout_ms: int = 60000) -> No
 # ------------------------------------------------------------------
 
 
+async def _visible_locator(page: Page, selector: str) -> Locator | None:
+    """Return the first visible match without waiting or exposing page text."""
+    try:
+        locator = page.locator(selector)
+        if await locator.count() < 1:
+            return None
+        candidate = locator.first
+        if await candidate.is_visible():
+            return candidate
+    except Exception:
+        # Microsoft authorize URLs contain one-time state and nonce values. Do
+        # not log a Playwright exception that could include the current URL.
+        pass
+    return None
+
+
+async def _required_visible_locator(page: Page, selector: str) -> Locator:
+    locator = await _visible_locator(page, selector)
+    if locator is None:
+        raise PortalAuthenticationError("Microsoft SSO did not expose the expected action.")
+    return locator
+
+
+async def _click_auth_locator(locator: Locator) -> None:
+    try:
+        await locator.click()
+    except Exception:
+        raise PortalAuthenticationError("Microsoft SSO browser interaction failed.") from None
+
+
+async def _fill_auth_locator(locator: Locator, value: str) -> None:
+    try:
+        await locator.fill(value)
+    except Exception:
+        raise PortalAuthenticationError("Microsoft SSO browser interaction failed.") from None
+
+
+async def authenticate_portal_page(
+    page: Page,
+    admin_username: str | None = None,
+    admin_password: str | None = None,
+    *,
+    timeout_ms: int | None = None,
+) -> None:
+    """Establish a Taibah staff session through Microsoft Entra ID.
+
+    The portal creates a short-lived, keyed SSO link on every pre-login page, so
+    the link must be clicked rather than reconstructed. Microsoft controls are
+    selected by stable IDs/names instead of translated button labels.
+    """
+
+    username = str(
+        getattr(settings, "PORTAL_ADMIN_USERNAME", "") if admin_username is None else admin_username
+    ).strip()
+    password = str(
+        getattr(settings, "PORTAL_ADMIN_PASSWORD", "") if admin_password is None else admin_password
+    )
+    if not username or not password:
+        raise PortalAuthenticationError(
+            "Microsoft SSO credentials are not configured. Set the portal username "
+            "to the full university Microsoft account and provide its password."
+        )
+
+    resolved_timeout_ms = int(
+        timeout_ms if timeout_ms is not None else getattr(settings, "PORTAL_SSO_TIMEOUT_MS", 120000)
+    )
+    if resolved_timeout_ms < 1000:
+        raise PortalAuthenticationError("Microsoft SSO timeout must be at least 1000 ms.")
+
+    await _safe_goto(page, str(getattr(settings, "PORTAL_LOGIN_URL", "")))
+    initial_html = await safe_page_content(page)
+    if is_staff_login_success_html(initial_html):
+        return
+
+    try:
+        sso_link = page.locator(_PORTAL_SSO_LINK_SELECTOR).first
+        await sso_link.wait_for(state="visible", timeout=min(30000, resolved_timeout_ms))
+        await sso_link.click()
+    except Exception:
+        raise PortalAuthenticationError(
+            "The Taibah portal did not provide its Microsoft unified-login link."
+        ) from None
+
+    deadline = time.monotonic() + (resolved_timeout_ms / 1000.0)
+    last_progress = time.monotonic()
+    username_submitted = False
+    password_submitted = False
+    other_account_selected = False
+    kmsi_handled = False
+    adfs_provider_selected = False
+    adfs_submitted = False
+
+    while time.monotonic() < deadline:
+        current_url = str(getattr(page, "url", "") or "")
+
+        if _is_portal_url(current_url):
+            html = await safe_page_content(page, retries=1)
+            if is_staff_login_success_html(html):
+                logger.info("Microsoft SSO established the portal staff session.")
+                return
+        elif (
+            current_url != "about:blank"
+            and not _is_microsoft_login_url(current_url)
+            and not _is_taibah_adfs_url(current_url)
+        ):
+            raise PortalAuthenticationError(
+                "Microsoft SSO redirected to an unexpected sign-in host."
+            )
+
+        if _is_microsoft_login_url(current_url):
+            if await _visible_locator(page, _MICROSOFT_CREDENTIAL_ERROR_SELECTOR):
+                raise PortalAuthenticationError(
+                    "Microsoft SSO rejected the configured username or password."
+                )
+            if await _visible_locator(page, _MICROSOFT_POLICY_ERROR_SELECTOR):
+                raise PortalAuthenticationError(
+                    "Microsoft SSO rejected the unattended sign-in because of account "
+                    "or university tenant policy."
+                )
+            if await _visible_locator(page, _MICROSOFT_INTERACTIVE_SELECTOR):
+                raise PortalInteractiveAuthenticationRequired(
+                    "Microsoft SSO requires MFA, CAPTCHA, or another interactive verification "
+                    "step; the unattended scraper cannot complete it."
+                )
+
+            kmsi = await _visible_locator(page, _MICROSOFT_KMSI_SELECTOR)
+            if kmsi is not None and not kmsi_handled:
+                # Choose "No" so the scraper does not create a persistent Microsoft
+                # browser login beyond this isolated Playwright context.
+                kmsi_no = await _required_visible_locator(page, _MICROSOFT_KMSI_NO_SELECTOR)
+                await _click_auth_locator(kmsi_no)
+                kmsi_handled = True
+                last_progress = time.monotonic()
+                await asyncio.sleep(_SSO_POLL_SECONDS)
+                continue
+
+            password_field = await _visible_locator(page, _MICROSOFT_PASSWORD_SELECTOR)
+            if password_field is not None and not password_submitted:
+                await _fill_auth_locator(password_field, password)
+                submit = await _required_visible_locator(page, _MICROSOFT_SUBMIT_SELECTOR)
+                await _click_auth_locator(submit)
+                password_submitted = True
+                last_progress = time.monotonic()
+                await asyncio.sleep(_SSO_POLL_SECONDS)
+                continue
+
+            username_field = await _visible_locator(page, _MICROSOFT_USERNAME_SELECTOR)
+            if username_field is not None and not username_submitted:
+                await _fill_auth_locator(username_field, username)
+                submit = await _required_visible_locator(page, _MICROSOFT_SUBMIT_SELECTOR)
+                await _click_auth_locator(submit)
+                username_submitted = True
+                last_progress = time.monotonic()
+                await asyncio.sleep(_SSO_POLL_SECONDS)
+                continue
+
+            other_account = await _visible_locator(page, _MICROSOFT_OTHER_ACCOUNT_SELECTOR)
+            if other_account is not None and not other_account_selected:
+                await _click_auth_locator(other_account)
+                other_account_selected = True
+                username_submitted = False
+                last_progress = time.monotonic()
+                await asyncio.sleep(_SSO_POLL_SECONDS)
+                continue
+
+        if _is_taibah_adfs_url(current_url):
+            if await _visible_locator(page, _TAIBAH_ADFS_CREDENTIAL_ERROR_SELECTOR):
+                raise PortalAuthenticationError(
+                    "Taibah federated sign-in rejected the configured username or password."
+                )
+
+            active_directory = await _visible_locator(page, _TAIBAH_ADFS_ACTIVE_DIRECTORY_SELECTOR)
+            if active_directory is not None and not adfs_provider_selected:
+                # Taibah also exposes an explicitly non-working experimental
+                # provider. Select only the reviewed on-prem Active Directory path.
+                await _click_auth_locator(active_directory)
+                adfs_provider_selected = True
+                last_progress = time.monotonic()
+                await asyncio.sleep(_SSO_POLL_SECONDS)
+                continue
+
+            adfs_username = await _visible_locator(page, _TAIBAH_ADFS_USERNAME_SELECTOR)
+            adfs_password = await _visible_locator(page, _TAIBAH_ADFS_PASSWORD_SELECTOR)
+            if adfs_username is not None and adfs_password is not None and not adfs_submitted:
+                await _fill_auth_locator(adfs_username, username)
+                await _fill_auth_locator(adfs_password, password)
+                submit = await _required_visible_locator(page, _TAIBAH_ADFS_SUBMIT_SELECTOR)
+                await _click_auth_locator(submit)
+                adfs_submitted = True
+                last_progress = time.monotonic()
+                await asyncio.sleep(_SSO_POLL_SECONDS)
+                continue
+
+        if time.monotonic() - last_progress >= _SSO_STALLED_SECONDS:
+            if _is_microsoft_login_url(current_url):
+                raise PortalInteractiveAuthenticationRequired(
+                    "Microsoft SSO is waiting for an unsupported interactive sign-in step."
+                )
+            if _is_taibah_adfs_url(current_url):
+                raise PortalInteractiveAuthenticationRequired(
+                    "Taibah federated sign-in is waiting for an unsupported interactive step."
+                )
+            raise PortalAuthenticationError(
+                "The Taibah SSO callback did not establish an authenticated staff session."
+            )
+
+        await asyncio.sleep(_SSO_POLL_SECONDS)
+
+    raise PortalAuthenticationError("Microsoft SSO timed out before portal login completed.")
+
+
 async def login_to_portal(
     admin_username: str | None = None,
     admin_password: str | None = None,
 ) -> tuple[Playwright, Browser, Page]:
-    admin_username = admin_username or settings.PORTAL_ADMIN_USERNAME
-    admin_password = admin_password or settings.PORTAL_ADMIN_PASSWORD
-
     playwright = await async_playwright().start()
-    browser = await playwright.chromium.launch(headless=True)
-    context = await browser.new_context()
-    page = await context.new_page()
-
-    await _safe_goto(page, settings.PORTAL_LOGIN_URL)
-    await page.fill('input[name="userName"]', admin_username)
-    await page.fill('input[name="password"]', admin_password)
-    await page.click('input[name="submit"]')
-
-    await _safe_wait_network(page, timeout_ms=30000)
-
-    html = await safe_page_content(page)
-    if is_logged_out_html(html):
-        raise RuntimeError("Login failed — still logged out.")
-    if not is_staff_login_success_html(html):
-        raise RuntimeError("Login failed — success markers not found on staff landing page.")
+    browser: Browser | None = None
+    try:
+        browser = await playwright.chromium.launch(headless=True)
+        context = await browser.new_context()
+        page = await context.new_page()
+        await authenticate_portal_page(page, admin_username, admin_password)
+    except Exception:
+        if browser is not None:
+            try:
+                await browser.close()
+            except Exception:
+                logger.debug("Browser cleanup after SSO failure failed", exc_info=True)
+        try:
+            await playwright.stop()
+        except Exception:
+            logger.debug("Playwright cleanup after SSO failure failed", exc_info=True)
+        raise
 
     logger.info("Admin login successful.")
+    assert browser is not None
     return playwright, browser, page
 
 

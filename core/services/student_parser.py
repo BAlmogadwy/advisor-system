@@ -11,11 +11,18 @@ logger = logging.getLogger(__name__)
 def _is_logout_or_service_page(html: str) -> bool:
     if not html:
         return True
+    lowered = html.casefold()
     return (
         "<title>نظام الخدمات الالكترونية</title>" in html
         or "teachers_login.jsp" in html
         or "student_login.jsp" in html
         or "services4GraduatedStudent.do" in html
+        or "stafflogin.do?ex=prelogin" in lowered
+        or "stafflogin.do?ex=authlogin" in lowered
+        or 'name="loginfmt"' in lowered
+        or 'id="i0116"' in lowered
+        or 'id="usernameinput"' in lowered
+        or 'id="passwordinput"' in lowered
     )
 
 

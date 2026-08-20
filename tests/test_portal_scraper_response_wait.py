@@ -10,6 +10,7 @@ from core.services import portal_scraper
 from core.services.portal_scraper import (
     _wait_for_plan_results,
     create_fresh_page_from_context,
+    is_logged_out,
     is_logged_out_html,
     is_staff_login_success_html,
 )
@@ -44,6 +45,50 @@ class _ServicePage:
 )
 def test_service_pages_are_treated_as_expired_portal_sessions(html: str) -> None:
     assert is_logged_out_html(html) is True
+
+
+@pytest.mark.parametrize(
+    "html",
+    [
+        '<html><a href="staffLogin.do?ex=preLogin">Staff login</a></html>',
+        ('<html><a href="staffLogin.do?ex=authLogin&amp;key=dynamic">الدخول الموحد</a></html>'),
+        '<html><input id="i0116" name="loginfmt" type="email"></html>',
+        (
+            '<html><input id="userNameInput" name="UserName">'
+            '<input id="passwordInput" name="Password" type="password"></html>'
+        ),
+    ],
+)
+def test_sso_pages_are_treated_as_expired_portal_sessions(html: str) -> None:
+    assert is_logged_out_html(html) is True
+
+
+def test_authenticated_staff_marker_wins_over_public_navigation_link() -> None:
+    html = (
+        '<html><a href="signOut.do">Logout</a><a href="staffLogin.do?ex=preLogin">Login</a></html>'
+    )
+
+    assert is_logged_out_html(html) is False
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://eas.taibahu.edu.sa/TaibahReg/staffLogin.do?ex=preLogin",
+        "https://eas.taibahu.edu.sa/TaibahReg/staffLogin.do?ex=authLogin&key=dynamic",
+        "https://login.microsoftonline.com/tenant/oauth2/v2.0/authorize",
+        "https://tufs.taibahu.edu.sa/adfs/ls/?opaque=federation-state",
+    ],
+)
+def test_sso_urls_are_treated_as_logged_out(url: str) -> None:
+    class Page:
+        def __init__(self, page_url: str) -> None:
+            self.url = page_url
+
+        def is_closed(self) -> bool:
+            return False
+
+    assert asyncio.run(is_logged_out(Page(url))) is True  # type: ignore[arg-type]
 
 
 def test_staff_login_success_requires_an_authenticated_link() -> None:

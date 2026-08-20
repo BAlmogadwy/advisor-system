@@ -989,26 +989,11 @@ class Command(BaseCommand):
             logger.warning("Session expired — performing re-login")
             previous_anchor = self._shared.get("page")
             page = None
-            from core.services.portal_scraper import (
-                _safe_goto,
-                _safe_wait_network,
-                is_logged_out_html,
-                is_staff_login_success_html,
-            )
+            from core.services.portal_scraper import authenticate_portal_page
 
             try:
                 page = await self._shared["context"].new_page()  # type: ignore[attr-defined]
-                await _safe_goto(page, settings.PORTAL_LOGIN_URL)
-                await page.wait_for_selector('input[name="userName"]', timeout=60000)
-                await page.fill('input[name="userName"]', settings.PORTAL_ADMIN_USERNAME)
-                await page.fill('input[name="password"]', settings.PORTAL_ADMIN_PASSWORD)
-                await page.click('input[name="submit"]')
-                await _safe_wait_network(page, timeout_ms=30000)
-                login_html = await safe_page_content(page)
-                if is_logged_out_html(login_html) or not is_staff_login_success_html(login_html):
-                    raise RuntimeError(
-                        "Portal re-login failed: authenticated staff markers missing"
-                    )
+                await authenticate_portal_page(page)
             except Exception as exc:
                 failure = str(exc) or exc.__class__.__name__
                 self._shared["session_recovery_failed_generation"] = current_generation
