@@ -1,12 +1,23 @@
 {# core/base.html — shared base for all pages #}
 {% load i18n static %}{% get_current_language as LANGUAGE_CODE %}
 <!doctype html>
-<html lang="{{ LANGUAGE_CODE }}" dir="{% if LANGUAGE_CODE == 'ar' %}rtl{% else %}ltr{% endif %}">
+<html lang="{{ LANGUAGE_CODE }}" dir="{% if LANGUAGE_CODE == 'ar' %}rtl{% else %}ltr{% endif %}" data-portal="{% if request.path|slice:":9" == "/student/" %}student{% else %}staff{% endif %}">
 <head>
   <meta charset="utf-8" />
   <script>
     /* Anti-flash: apply saved theme before any CSS paints */
-    (function(){var t=localStorage.getItem('theme');if(!t){t=window.matchMedia('(prefers-color-scheme:dark)').matches?'dark':'light'}document.documentElement.setAttribute('data-theme',t)})();
+    (function(){
+      var root = document.documentElement;
+      var studentPortal = root.getAttribute('data-portal') === 'student';
+      var storageKey = studentPortal ? 'student-theme' : 'theme';
+      var t = null;
+      try { t = localStorage.getItem(storageKey); } catch (e) {}
+      if (t !== 'dark' && t !== 'light') {
+        t = studentPortal ? 'light' : (window.matchMedia('(prefers-color-scheme:dark)').matches ? 'dark' : 'light');
+      }
+      root.setAttribute('data-theme-storage-key', storageKey);
+      root.setAttribute('data-theme', t);
+    })();
   </script>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="description" content="{% if LANGUAGE_CODE == 'ar' %}منصة الإرشاد الأكاديمي — جامعة طيبة{% else %}Academic Advisor Dashboard — Taibah University{% endif %}">
@@ -47,7 +58,7 @@
     <footer class="system-footer" aria-label="{% if LANGUAGE_CODE == 'ar' %}بيانات المنصة{% else %}System attribution{% endif %}">
       <span>{% if LANGUAGE_CODE == 'ar' %}المنصة الذكية للإرشاد الأكاديمي{% else %}Academic Advising Intelligence Platform{% endif %}</span>
       <span class="system-footer-sep" aria-hidden="true"></span>
-      <span>{% if LANGUAGE_CODE == 'ar' %}تصميم وتطوير <strong>د. بسام المجدوي</strong>{% else %}Concept, design, and implementation by <strong>Dr. Bassam Almogadwy</strong>{% endif %}</span>
+      <span>{% if LANGUAGE_CODE == 'ar' %}تصميم وتطوير <strong>د. بسام المغذوي</strong>{% else %}Concept, design, and implementation by <strong>Dr. Bassam Almogadwy</strong>{% endif %}</span>
     </footer>
     </div><!-- /.content-wrap -->
   </main>

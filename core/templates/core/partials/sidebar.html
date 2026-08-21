@@ -420,7 +420,8 @@
     var current = document.documentElement.getAttribute('data-theme') || 'light';
     var next = current === 'dark' ? 'light' : 'dark';
     document.documentElement.setAttribute('data-theme', next);
-    localStorage.setItem('theme', next);
+    var storageKey = document.documentElement.getAttribute('data-theme-storage-key') || 'theme';
+    try { localStorage.setItem(storageKey, next); } catch (e) {}
     syncIcons();
   });
 })();

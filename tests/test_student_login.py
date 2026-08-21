@@ -5,6 +5,7 @@ import logging
 import re
 
 import pytest
+from django.conf import settings
 from django.contrib.auth.models import Group, User
 from django.core import mail
 from django.test import Client, override_settings
@@ -169,6 +170,66 @@ def test_role_and_scope(students):
     assert get_user_role(u) == ROLE_STUDENT
     assert ROLE_ORDER[ROLE_STUDENT] < ROLE_ORDER[ROLE_ADVISOR]
     assert get_user_scope(u)["student_id"] == SID
+
+
+def test_student_logout_redirects_to_student_login(students):
+    client = Client()
+    student = student_otp.provision_student_user(SID)
+    client.force_login(student)
+
+    response = client.post(reverse("logout"))
+
+    assert response.status_code == 302
+    assert response.headers["Location"] == reverse("student_login")
+    assert "_auth_user_id" not in client.session
+
+
+def test_staff_logout_still_redirects_to_staff_login():
+    client = Client()
+    staff = User.objects.create_user(username="logout-advisor", password="unused")
+    client.force_login(staff)
+
+    response = client.post(reverse("logout"))
+
+    assert response.status_code == 302
+    assert response.headers["Location"] == reverse("login")
+    assert "_auth_user_id" not in client.session
+
+
+def test_student_portal_defaults_to_arabic_and_its_own_light_theme():
+    client = Client()
+
+    response = client.get(reverse("student_login"), HTTP_ACCEPT_LANGUAGE="en-US,en;q=0.9")
+    html = response.content.decode()
+
+    assert '<html lang="ar" dir="rtl" data-portal="student">' in html
+    assert "var storageKey = studentPortal ? 'student-theme' : 'theme';" in html
+    assert "t = studentPortal ? 'light'" in html
+    assert response.cookies[settings.LANGUAGE_COOKIE_NAME].value == "ar"
+
+
+def test_shared_footer_uses_the_correct_arabic_name():
+    template = (settings.BASE_DIR / "core/templates/core/base.html").read_text(encoding="utf-8")
+
+    assert "تصميم وتطوير <strong>د. بسام المغذوي</strong>" in template
+    assert "د. بسام المجدوي" not in template
+
+
+def test_student_explicit_language_choice_is_respected():
+    client = Client()
+    client.cookies[settings.LANGUAGE_COOKIE_NAME] = "en"
+
+    response = client.get(reverse("student_login"))
+
+    assert '<html lang="en" dir="ltr" data-portal="student">' in response.content.decode()
+
+
+def test_staff_login_keeps_the_existing_language_and_theme_defaults():
+    response = Client().get(reverse("login"), HTTP_ACCEPT_LANGUAGE="en-US,en;q=0.9")
+    html = response.content.decode()
+
+    assert '<html lang="en" dir="ltr" data-portal="staff">' in html
+    assert "var storageKey = studentPortal ? 'student-theme' : 'theme';" in html
 
 
 @override_settings(
@@ -414,7 +475,7 @@ def test_student_home_renders_empty_states(students):
     body = r.content.decode()
     assert (
         "We do not yet have registered or expected timetable data for this term." in body
-        or "لا تتوفر لدينا بعد بيانات جدول" in body
+        or "لا تتوفر حاليًا بيانات للجدول المسجّل فعليًا أو الجدول المتوقع لهذا الفصل." in body
     )
 
 

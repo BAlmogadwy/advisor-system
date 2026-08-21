@@ -7,7 +7,12 @@ from django.shortcuts import redirect, render
 from django.views.decorators.cache import never_cache
 from django.views.decorators.http import require_http_methods, require_POST
 
-from core.services.rbac import ensure_role_groups, ensure_scope_schema
+from core.services.rbac import (
+    ROLE_STUDENT,
+    ensure_role_groups,
+    ensure_scope_schema,
+    get_user_role,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -60,5 +65,13 @@ def login_view(request: HttpRequest) -> HttpResponse:
 
 @require_POST
 def logout_view(request: HttpRequest) -> HttpResponse:
+    destination = "login"
+    if request.user.is_authenticated:
+        try:
+            if get_user_role(request.user) == ROLE_STUDENT:
+                destination = "student_login"
+        except Exception:
+            # A role lookup failure must not prevent a user from logging out.
+            logger.exception("Unable to resolve logout destination; using staff login")
     logout(request)
-    return redirect("login")
+    return redirect(destination)
