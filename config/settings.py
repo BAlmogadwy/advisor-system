@@ -72,6 +72,8 @@ MIDDLEWARE = [
     "django.contrib.sessions.middleware.SessionMiddleware",
     # Must be after SessionMiddleware and before CommonMiddleware.
     "django.middleware.locale.LocaleMiddleware",
+    # Student pages default to Arabic when no explicit language cookie exists.
+    "core.middleware.StudentPortalDefaultsMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",

@@ -13,6 +13,7 @@ import json
 import re
 
 import pytest
+from django.conf import settings
 from django.test import Client
 from django.urls import reverse
 
@@ -136,6 +137,9 @@ def test_arabic_student_routes_prefer_the_university_section_name(client_as_stud
     arabic_page = client_as_student.get(
         page_url, headers={"accept-language": "ar"}
     ).content.decode()
+    # The student portal defaults to Arabic regardless of browser headers.
+    # Choosing English through Django's language switcher persists this cookie.
+    client_as_student.cookies[settings.LANGUAGE_COOKIE_NAME] = "en"
     english_api = client_as_student.get(api_url, headers={"accept-language": "en"}).json()
 
     assert arabic_api["course_name"] == "اسم المقرر المعتمد"
@@ -441,7 +445,7 @@ def test_the_planner_action_is_worded_as_planning_never_permission(client_as_stu
     """
     _passed("CA101")
     body = _page(client_as_student, "CB201").content.decode()
-    assert "does not register you" in body or "لا يسجّلك" in body, "the disclaimer is missing"
+    assert "does not register you" in body or "لن يسجّلك" in body, "the disclaimer is missing"
     for permission in ("يمكنك تسجيل", "eligible", "you may register", "you can register"):
         assert permission not in body, f"the screen implied permission: {permission}"
 
