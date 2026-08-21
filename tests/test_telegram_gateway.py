@@ -737,8 +737,49 @@ def test_confirm_is_reachable_from_the_chat_end_to_end(client, outbox):
     outbox.sent.clear()
     _post(client, _update(update_id=2, text=f"/confirm {code}"))
 
-    assert outbox.texts == [messages.LINK_CONFIRMED]
+    assert outbox.texts == [messages.LINK_CONFIRMED, messages.STARTER_QUESTIONS]
     assert linking.active_link_for_chat(CHAT).student_id == MINE
+
+
+@CHANNEL_ON
+def test_linked_help_reuses_the_confirmation_starter_questions(client, outbox):
+    _link()
+
+    _post(client, _update(text="/help"))
+
+    assert outbox.texts == [messages.HELP_LINKED, messages.STARTER_QUESTIONS]
+    assert messages.STARTER_QUESTIONS.splitlines()[2:] == [
+        "١. ما المقررات التي يوصي بها النظام لي لهذا الفصل؟",
+        "٢. ما المقررات المتبقية لي، وأيّها استوفيت متطلباته الأكاديمية؟",
+        "٣. ما المقرر الأعلى أثرًا في فتح مقررات أخرى في خطتي، ولماذا؟",
+        "٤. لماذا مقرر [رمز المقرر] مقفل لدي، وما المتطلبات التي تنقصني؟",
+        (
+            "٥. قارن بين [رمز المقرر الأول] و[رمز المقرر الثاني] حسب المتطلبات "
+            "وتأثيرهما في خطتي وملاءمتهما لجدولي."
+        ),
+        "٦. اعرض جدولي لهذا الفصل، ووضّح هل بياناته تسجيل فعلي أم جدول متوقع.",
+        "٧. هل توجد تعارضات زمنية في جدولي لهذا الفصل؟",
+        "٨. ما الشُعب المدرجة لمقرر [رمز المقرر]، وأيّها لا يتعارض مع جدولي؟",
+        (
+            "٩. أنشئ لي عدة خيارات لجدول مقترح من دون تعارضات، مع الإبقاء على "
+            "الشُعب الموجودة في جدولي كما هي."
+        ),
+        ("١٠. ما المدة التقديرية المتبقية لإكمال خطتي بدءًا من مقررات الفصل التي يوصي بها النظام؟"),
+        ("١١. بناءً على جدولي المسجّل فعليًا، ما المدة التقديرية المتبقية لإكمال خطتي؟"),
+        (
+            "١٢. إذا حذفت [رمز المقرر] من جدولي المسجّل فعليًا، فهل تتغير الخطة "
+            "التقديرية أو عدد الفصول المتبقية؟"
+        ),
+    ]
+    unsupported_claims = (
+        "مقاعد متاحة",
+        "المقاعد المتاحة",
+        "سجّل لي",
+        "سجل لي",
+        "أضف لي",
+        "احذف لي",
+    )
+    assert all(claim not in messages.STARTER_QUESTIONS for claim in unsupported_claims)
 
 
 @CHANNEL_ON
