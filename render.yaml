@@ -127,7 +127,7 @@ services:
       - key: ALIBABA_LLM_API_KEY
         sync: false
       - key: ALIBABA_LLM_MODEL
-        value: qwen3.7-max
+        value: qwen3.7-plus
       - key: ALIBABA_LLM_ENABLE_THINKING
         value: "false"
       - key: ALIBABA_LLM_TIMEOUT_SECONDS

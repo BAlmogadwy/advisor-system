@@ -1288,7 +1288,7 @@ def _context_summary(context: dict[str, Any]) -> dict[str, Any]:
 def _assistant_prefill_for_client(llm: Any, model: str) -> str | None:
     """The prefill, or None when the provider will not accept one.
 
-    The model name is not enough. `qwen3.7-max` on Model Studio is the same
+    The model name is not enough. `qwen3.7-plus` on Model Studio is the same
     family as the local build and takes the same `<think>` suppression, but the
     OpenAI-compatible endpoint does not accept a trailing assistant turn at all
     and the client raises rather than silently discarding it. Deciding from the

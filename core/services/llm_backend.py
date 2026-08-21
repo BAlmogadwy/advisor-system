@@ -239,7 +239,7 @@ class LLMEndpointConfig:
     enable_thinking: bool = False
     #: Local Qwen builds are fed a `<think></think>` prefill to suppress hidden
     #: reasoning. That is a property of the SERVER, not of the model name — a
-    #: remote model called `qwen3.7-max` would match the name heuristic and be
+    #: remote model called `qwen3.7-plus` would match the name heuristic and be
     #: sent a prefill no compatibility test has approved.
     supports_assistant_prefill: bool = True
     #: Remote backends never discover a model; see the module docstring.

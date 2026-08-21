@@ -42,7 +42,7 @@ ALIBABA = {
     "LLM_BACKEND": "alibaba",
     "ALIBABA_LLM_BASE_URL": GOOD_URL,
     "ALIBABA_LLM_API_KEY": KEY,
-    "ALIBABA_LLM_MODEL": "qwen3.7-max",
+    "ALIBABA_LLM_MODEL": "qwen3.7-plus",
     # The egress kill switch is ON for the transport tests in this file, and the
     # tests are still offline: `conftest.forbid_llm_network` blocks the socket
     # repo-wide and each test installs its own fake over it. Enabling the flag
@@ -76,7 +76,7 @@ def _ok(payload: dict, url: str = GOOD_URL):
 
 
 ANSWER = {
-    "model": "qwen3.7-max",
+    "model": "qwen3.7-plus",
     "choices": [{"message": {"content": "نعم"}, "finish_reason": "stop"}],
     "usage": {"prompt_tokens": 10, "completion_tokens": 2, "total_tokens": 12},
 }
@@ -327,7 +327,7 @@ def test_health_reports_a_region_and_never_a_hostname():
     assert "maas.aliyuncs.com" not in body
     assert KEY not in body
     assert health["provider"] == "alibaba-model-studio"
-    assert health["model"] == "qwen3.7-max"
+    assert health["model"] == "qwen3.7-plus"
 
 
 def test_a_retry_log_names_the_region_not_the_host(monkeypatch, caplog):

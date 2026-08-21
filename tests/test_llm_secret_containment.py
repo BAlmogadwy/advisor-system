@@ -67,7 +67,7 @@ ALIBABA = {
     "LLM_BACKEND": "alibaba",
     "ALIBABA_LLM_BASE_URL": GOOD_URL,
     "ALIBABA_LLM_API_KEY": SENTINEL_KEY,
-    "ALIBABA_LLM_MODEL": "qwen3.7-max",
+    "ALIBABA_LLM_MODEL": "qwen3.7-plus",
     # The egress kill switch is ON for the transport tests in this file, and the
     # tests are still offline: `conftest.forbid_llm_network` blocks the socket
     # repo-wide and each test installs its own fake over it. Enabling the flag
@@ -133,7 +133,7 @@ def test_the_key_is_absent_from_a_401_error_and_its_logs(caplog, monkeypatch):
 
     with caplog.at_level(logging.DEBUG):
         with pytest.raises(LLMAuthenticationError) as caught:
-            client.chat([{"role": "user", "content": "hi"}], model="qwen3.7-max")
+            client.chat([{"role": "user", "content": "hi"}], model="qwen3.7-plus")
 
     assert SENTINEL_KEY not in str(caught.value)
     assert SENTINEL_KEY not in repr(caught.value)
