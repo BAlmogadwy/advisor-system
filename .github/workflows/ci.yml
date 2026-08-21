@@ -198,7 +198,10 @@ jobs:
       EMAIL_HOST_USER: ci-smtp@example.invalid
       EMAIL_HOST_PASSWORD: ci-only-not-a-real-smtp-credential
       ALLOW_NO_SMTP_PROCESS: 'false'
-      STUDENT_OTP_ASYNC_EMAIL: 'true'
+      STUDENT_OTP_SENDGRID_ENABLED: 'true'
+      STUDENT_OTP_ASYNC_EMAIL: 'false'
+      SENDGRID_API_KEY: ci-only-invalid-sendgrid-api-key-do-not-deploy
+      SENDGRID_FROM_EMAIL: ci-sender@example.invalid
       TELEGRAM_ADVISOR_ENABLED: 'false'
       TELEGRAM_SEND_TIMETABLE_IMAGES: 'false'
       TELEGRAM_SEND_GRADUATION_IMAGES: 'false'
