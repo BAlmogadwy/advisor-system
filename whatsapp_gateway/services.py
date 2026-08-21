@@ -22,6 +22,7 @@ from core.services.rbac import (
     get_user_role,
     get_user_scope,
 )
+from core.services.student_identity import student_email
 from core.services.virtual_advisor import answer_virtual_advisor
 from whatsapp_gateway.models import (
     WhatsAppConversation,
@@ -84,7 +85,10 @@ def _student_email(student: Student) -> str:
         return email
     domain = str(getattr(settings, "WHATSAPP_STUDENT_EMAIL_DOMAIN", "") or "").strip()
     if domain:
-        return f"{student.student_id}@{domain.lstrip('@')}"
+        try:
+            return student_email(student.student_id, domain=domain)
+        except ValueError:
+            return ""
     return ""
 
 

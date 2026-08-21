@@ -12,6 +12,8 @@ from __future__ import annotations
 import html
 import json
 import re
+import shutil
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -302,3 +304,72 @@ def test_shared_sources_keep_the_complete_week_overlaps_and_exact_minutes():
     assert "meeting.start" in adapter
     assert "meeting.end" in adapter
     assert "<time" in adapter
+
+
+@pytest.mark.skipif(
+    shutil.which("node") is None, reason="Node.js is required for the renderer contract"
+)
+def test_student_grid_splits_only_a_long_week_wide_empty_interval() -> None:
+    script = r"""
+const fs = require('fs');
+global.window = global;
+eval(fs.readFileSync('static/js/shared-timetable.js', 'utf8'));
+const blocks = [
+  {day:'SUN', start:'08:00', end:'09:00', code:'EARLY'},
+  {day:'MON', start:'10:00', end:'11:00', code:'MID'},
+  {day:'TUE', start:'20:00', end:'21:30', code:'LATE'},
+];
+const common = {
+  mode:'blocks', blocks, days:['SUN','MON','TUE'], step:5, labelStep:60,
+  padMinutes:0, compressGapMinutes:180, gapLabel:'NO MEETINGS',
+  timeColumnWidth:60, dayMinWidth:124, minWidth:720,
+  cellHtml:(meeting) => meeting.code,
+};
+const compact = WeekGrid.renderWeekGrid({...common, compressGaps:true});
+const full = WeekGrid.renderWeekGrid({...common, compressGaps:false});
+const sevenDays = WeekGrid.renderWeekGrid({...common, days:['SUN','MON','TUE','WED','THU','FRI','SAT'], compressGaps:true});
+process.stdout.write(JSON.stringify({compact, full, sevenDays}));
+"""
+    result = subprocess.run(
+        [shutil.which("node") or "node", "-e", script],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    rendered = json.loads(result.stdout)
+    compact = rendered["compact"]
+    full = rendered["full"]
+
+    assert 'data-segment-count="2"' in compact
+    assert 'data-gap-start="660"' in compact  # 11:00
+    assert 'data-gap-end="1200"' in compact  # 20:00
+    assert "NO MEETINGS" in compact
+    assert compact.count("EARLY") == compact.count("MID") == compact.count("LATE") == 1
+    assert 'data-start-minute="480"' in compact
+    assert 'data-end-minute="1290"' in compact
+
+    assert "wg-segmented" not in full
+    assert "wg-time-break" not in full
+    assert 'data-range-start="480"' in full
+    assert 'data-range-end="1320"' in full
+    assert "min-width:720px" in compact
+    assert "min-width:928px" in rendered["sevenDays"]
+
+
+def test_student_adapter_opts_into_honest_gap_compression_and_stronger_cards() -> None:
+    adapter = STUDENT_TIMETABLE_JS.read_text(encoding="utf-8")
+    css = GLOBAL_CSS.read_text(encoding="utf-8")
+
+    assert "compressGaps: opts.compressGaps !== false" in adapter
+    assert "labelStep: opts.labelStep == null ? 60" in adapter
+    assert "majorHeight: opts.majorHeight == null ? 72" in adapter
+    assert "dayMinWidth: opts.dayMinWidth == null ? 124" in adapter
+    assert "student-timetable-block-time" in adapter
+    assert "لا توجد محاضرات مجدولة خلال هذه الفترة" in adapter
+    assert ".student-timetable-calendar .wg-time-break" in css
+    assert ".student-timetable-calendar .wg-filled.student-timetable-block" in css
+    assert ".student-timetable-calendar .student-timetable-block--current" in css
+    assert ".student-timetable-calendar .student-timetable-block--proposed" in css
+    assert ".student-timetable-agenda { display: none" not in css
+    assert "clip-path: inset(50%)" in css

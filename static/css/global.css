@@ -12709,14 +12709,88 @@ html body .btn.sp-requested-remove {
   outline: 2px solid var(--teal);
   outline-offset: 3px;
 }
-.student-timetable-calendar .wg-blocks { min-width: 680px; }
+.student-timetable-calendar .wg-blocks {
+  min-width: 720px;
+  border-color: var(--line-strong);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--line) 82%, var(--t3) 18%);
+  box-shadow: 0 5px 16px rgba(17, 17, 68, .06);
+}
+.student-timetable-calendar .wg-segmented {
+  display: grid;
+  gap: .35rem;
+  min-width: 720px;
+}
+.student-timetable-calendar .wg-segmented .wg-blocks {
+  width: 100%;
+  min-width: 0;
+}
+.student-timetable-calendar .wg-blocks .wg-h {
+  background: var(--glass-bg-header);
+  color: var(--t1);
+  font-size: .72rem;
+  font-weight: 800;
+  letter-spacing: .015em;
+}
+.student-timetable-calendar .wg-blocks .wg-cor { color: var(--t2); }
+.student-timetable-calendar .wg-blocks .wg-t {
+  background: var(--glass-bg-header);
+  color: var(--t2);
+  font-size: .68rem;
+  font-weight: 700;
+}
+.student-timetable-calendar .wg-blocks .wg-cell {
+  background: color-mix(in srgb, var(--glass-bg-data) 94%, var(--t2) 6%);
+}
+.student-timetable-calendar .wg-time-break {
+  display: grid;
+  grid-template-columns: minmax(24px, 1fr) auto auto minmax(24px, 1fr);
+  align-items: center;
+  gap: .55rem;
+  min-height: 42px;
+  padding: .3rem .6rem;
+  color: var(--t2);
+  font-size: .7rem;
+  font-weight: 750;
+  line-height: 1.35;
+  text-align: center;
+}
+.student-timetable-calendar .wg-time-break::before,
+.student-timetable-calendar .wg-time-break::after {
+  content: "";
+  height: 1px;
+  background: repeating-linear-gradient(90deg, var(--line-strong) 0 6px, transparent 6px 11px);
+}
+.student-timetable-calendar .wg-time-break-label { white-space: nowrap; }
+.student-timetable-calendar .wg-time-break-range {
+  padding: .15rem .4rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--glass-bg-header);
+  color: var(--t1);
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.student-timetable-calendar .wg-filled.student-timetable-block {
+  justify-content: flex-start;
+  gap: .14rem;
+  padding: .34rem .42rem;
+  border: 1px solid var(--line-strong);
+  border-inline-start-width: 4px;
+  border-radius: 7px;
+  box-shadow: 0 3px 10px rgba(17, 17, 68, .10);
+}
 .student-timetable-calendar .student-timetable-block--current {
-  border-inline-start-color: #64748b;
-  background: color-mix(in srgb, var(--surface) 90%, var(--t2) 10%);
+  border-color: color-mix(in srgb, var(--teal) 42%, var(--line));
+  border-inline-start-color: var(--teal);
+  background: color-mix(in srgb, var(--surface) 82%, var(--teal) 18%);
 }
 .student-timetable-calendar .student-timetable-block--proposed {
-  border-inline-start-color: var(--brand);
-  background: color-mix(in srgb, var(--surface) 86%, var(--brand) 14%);
+  border-color: color-mix(in srgb, var(--t3) 40%, var(--line));
+  border-inline-start-color: var(--t3);
+  border-inline-start-style: dashed;
+  background: color-mix(in srgb, var(--surface) 91%, var(--t2) 9%);
 }
 /* The student portal's own weighting. It used to hang off #studentHomeTimetable,
    which no longer exists: the portal now renders one host per snapshot
@@ -12725,8 +12799,9 @@ html body .btn.sp-requested-remove {
    kept the brand accent — the emphasis exactly inverted, with the forecast
    looking like the fact. Keyed on the card class so it survives the next rename. */
 .student-home-timetable-card .student-timetable-block--current {
-  border-inline-start-color: var(--brand);
-  background: color-mix(in srgb, var(--surface) 92%, var(--brand) 8%);
+  border-color: color-mix(in srgb, var(--teal) 46%, var(--line));
+  border-inline-start-color: var(--teal);
+  background: color-mix(in srgb, var(--surface) 80%, var(--teal) 20%);
 }
 /* The forecast reads as secondary: dashed edge, no brand fill. Colour is not the
    only carrier — the card heading and its "not an actual registration" line say
@@ -12734,13 +12809,19 @@ html body .btn.sp-requested-remove {
 .student-home-timetable-card .student-timetable-block--proposed {
   border-inline-start-color: var(--t3);
   border-inline-start-style: dashed;
-  background: color-mix(in srgb, var(--surface) 94%, var(--t2) 6%);
+  background: color-mix(in srgb, var(--surface) 92%, var(--t2) 8%);
 }
 .student-timetable-block-section {
-  color: var(--t3);
+  flex: 0 0 auto;
+  padding: .08rem .28rem;
+  border: 1px solid color-mix(in srgb, var(--t3) 30%, var(--line));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--surface) 78%, transparent);
+  color: var(--t2);
   font-family: var(--font-mono);
-  font-size: .62rem;
-  line-height: 1.1;
+  font-size: .65rem;
+  font-weight: 750;
+  line-height: 1.2;
 }
 .student-timetable-block-head {
   display: flex;
@@ -12749,29 +12830,51 @@ html body .btn.sp-requested-remove {
   gap: .3rem;
   min-width: 0;
 }
-.student-timetable-block > .wg-meta {
+.student-timetable-calendar .student-timetable-block > .wg-meta {
   display: block;
+  color: var(--t1);
+  font-size: .68rem;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
   text-align: start;
+}
+.student-timetable-calendar .student-timetable-block .wg-cid {
+  color: var(--t1);
+  font-size: .78rem;
+  font-weight: 850;
 }
 .student-timetable-block-name {
   display: -webkit-box;
   overflow: hidden;
   color: var(--t2);
-  font-size: .57rem;
-  line-height: 1.15;
+  font-size: .65rem;
+  font-weight: 600;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
 }
 .student-timetable-block-source {
   overflow: hidden;
-  color: var(--t3);
-  font-size: .52rem;
+  color: var(--t2);
+  font-size: .58rem;
   font-weight: 750;
   line-height: 1.1;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.student-timetable-agenda { display: none; }
+.student-timetable-agenda {
+  position: absolute !important;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  clip-path: inset(50%);
+  border: 0;
+  white-space: nowrap;
+}
 .student-timetable-day {
   overflow: hidden;
   border: 1px solid var(--line);
@@ -13191,7 +13294,20 @@ html body .btn.sp-requested-remove {
   .student-timetable-comparison-card .student-home-section-head { flex-wrap: wrap; }
   .student-summary-advisor { min-height: 44px; padding: .45rem .7rem; font-size: .75rem; }
   .student-timetable-calendar { display: none; }
-  .student-timetable-agenda { display: grid; gap: .65rem; }
+  .student-timetable-agenda {
+    position: static !important;
+    display: grid;
+    width: auto;
+    height: auto;
+    padding: 0;
+    margin: 0;
+    overflow: visible;
+    clip: auto;
+    clip-path: none;
+    border: 0;
+    gap: .65rem;
+    white-space: normal;
+  }
   .sp-week .student-timetable-agenda { margin-top: .1rem; }
   .sp-scroll-hint { display: none; }
   .student-course-jumps { gap: .35rem; }
@@ -13362,6 +13478,61 @@ html body .btn.sp-requested-remove {
   font-size: .8rem;
   line-height: 1.55;
 }
+.student-grad-expected-comparison {
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--teal) 34%, var(--line));
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--teal) 5%, var(--card));
+}
+.student-grad-expected-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: .75rem;
+  padding: .8rem;
+  border-bottom: 1px solid var(--line);
+}
+.student-grad-expected-heading h3 {
+  margin: 0 0 .25rem;
+  color: var(--t1);
+  font-size: .92rem;
+  font-weight: 850;
+}
+.student-grad-expected-heading p {
+  color: var(--t2);
+  font-size: .8rem;
+  line-height: 1.65;
+}
+.student-grad-expected-courses {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: .45rem;
+  margin: 0;
+  padding: .7rem .8rem;
+  list-style: none;
+}
+.student-grad-expected-courses li {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: .12rem .5rem;
+  padding: .55rem .6rem;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--glass-bg-data);
+}
+.student-grad-expected-courses bdi { color: var(--teal); font-size: .8rem; font-weight: 850; }
+.student-grad-expected-courses span { overflow: hidden; color: var(--t1); font-size: .76rem; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
+.student-grad-expected-courses small { grid-column: 1 / -1; color: var(--t3); font-size: .68rem; }
+.student-grad-expected-impact {
+  margin-inline: .8rem;
+  padding: .65rem .75rem;
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--teal) 9%, var(--glass-bg-data));
+  color: var(--t1);
+  font-size: .82rem;
+  line-height: 1.6;
+}
+.student-grad-expected-comparison > .student-guidance-note { margin-inline: .8rem; margin-bottom: .8rem !important; }
 .student-grad-blockers {
   overflow: hidden;
   border: 1px solid color-mix(in srgb, var(--warning) 35%, var(--line));
@@ -13398,7 +13569,13 @@ html body .btn.sp-requested-remove {
 .student-grad-blocker-title { align-items: baseline; justify-content: flex-start; margin-bottom: .3rem; }
 .student-grad-blocker-title bdi { color: var(--teal); font-weight: 800; }
 .student-grad-blocker-title span { overflow: hidden; color: var(--t1); font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
-.student-grad-path-heading { align-items: flex-start; }
+.student-grad-path {
+  display: flex;
+  flex-direction: column;
+}
+.student-grad-path-heading { order: 0; align-items: flex-start; }
+.student-grad-map-details { order: 1; }
+.student-grad-timeline { order: 2; }
 .student-grad-timeline {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -13467,6 +13644,8 @@ html body .btn.sp-requested-remove {
   .student-grad-support-grid,
   .student-grad-blocker-list,
   .student-grad-timeline { grid-template-columns: 1fr; }
+  .student-grad-expected-heading { flex-direction: column; }
+  .student-grad-expected-courses { grid-template-columns: 1fr; }
   .student-grad-map-details { display: none; }
   .student-page-actions { align-items: stretch; flex-direction: column; }
   .student-page-actions .btn { width: 100%; }

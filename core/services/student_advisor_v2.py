@@ -51,6 +51,12 @@ from core.services.llm_backend import LLMError, UsageTotals, get_llm_client
 from core.services.llm_remote_privacy import fold_digits
 from core.services.policy_contract import requires_policy_contract
 from core.services.rbac import ROLE_STUDENT
+from core.services.student_graduation import (
+    RECOMMENDED_CURRENT_TERM as _GRADUATION_RECOMMENDED_CURRENT_TERM,
+)
+from core.services.student_graduation import (
+    REGISTERED_TIMETABLE as _GRADUATION_REGISTERED_TIMETABLE,
+)
 from core.services.student_helpers import normalize_code
 from core.services.virtual_advisor import (
     _answer_language,
@@ -256,9 +262,11 @@ Operating rules:
   is needed without elapsed-term evidence.
 - graduation_progress is a read-only scenario, not a promised graduation date. State both
   estimated_additional_terms and estimated_terms_including_planning_baseline when a planning-
-  baseline timetable exists. The configured baseline can be an expected next-term plan, so
-  never call it the student's actual current term. Explain that it assumes every baseline and
-  simulated course is passed first time,
+  baseline exists. planning_baseline_kind is authoritative: recommended_current_term means
+  the system's recommendations for its configured current term and is not registration;
+  registered_timetable means the student's actual registered timetable. Never flatten one
+  into the other. Explain that the scenario assumes every baseline and simulated course is
+  passed first time,
   uses at most 18 credits in each main term, and cannot guarantee future offerings, seats,
   section times, or registration permission. If simulation_completed is false, do not give
   simulated_terms_examined as a completion estimate; report lower_bound_additional_terms and
@@ -267,7 +275,10 @@ Operating rules:
   arrangement, or that a course has no available time, place, section, or offering. The
   18-credit value is the scenario cap, never the university's "maximum allowed" load.
 - For a question about skipping, adding, or replacing a course in the planning baseline, call
-  graduation_progress with remove_current_courses and/or add_current_courses. For "is there
+  graduation_progress with remove_current_courses and/or add_current_courses. Plain graduation
+  forecasting starts from recommended_current_term. "Based on my current/registered timetable"
+  and drop/withdraw questions use registered_timetable. A skip explicitly from the recommended
+  plan stays on recommended_current_term. For "is there
   any baseline course I can replace to improve graduation", use search_better_replacements.
   Report the returned baseline-versus-scenario comparison. An UNRESOLVED_IMPROVEMENT means
   recorded blockers improved; it does not prove an earlier graduation term and must not be
@@ -881,17 +892,18 @@ _COURSE_CODE_EXPR = r"[A-Z]{2,6}\s*-?\s*\d{1,4}"
 _COURSE_CODE_TOKEN_PATTERN = re.compile(rf"\b{_COURSE_CODE_EXPR}\b", re.IGNORECASE)
 _CURRENT_COURSE_CHANGE_PATTERN = re.compile(
     r"(?:\b(?:do\s+not|don['’]t|did\s+not|didn['’]t|not)\s+take\b|"
-    r"\b(?:skip|drop|remove|replace|swap|defer)\b|\binstead\s+of\b|"
+    r"\b(?:skip|drop(?:ped|ping)?|remove|replace|swap|defer|withdraw|withdrew|cancel)\b|\binstead\s+of\b|"
     r"(?:ما\s*(?:آخذ|اخذ|أخذت|اخذت|خذت|نزلت|أنزل|انزل|باخذ|بآخذ|بنزل)|"
     r"(?:ماني|مو)\s*(?:ماخذ|آخذ|اخذ|باخذ|بآخذ|منزل)|لم\s+(?:آخذ|اخذ|أنزل|انزل)|"
     r"بدل|بدال|استبدل|أستبدل|استبدال|أبدل|ابدل|أغير|اغير|"
     r"أحذف|احذف|حذف|أشيل|اشيل|شيل|شلت|أكنسل|اكنسل|ألغي|الغي|"
-    r"أؤجل|اؤجل|تأجيل|أترك|اترك))",
+    r"أؤجل|اؤجل|تأجيل|أترك|اترك|انسحب|أنسحب|انسحبت|سحبت|إسقاط|اسقاط))",
     re.IGNORECASE,
 )
 _OPEN_REPLACEMENT_PATTERN = re.compile(
-    r"(?:\b(?:which|what|any)\s+(?:current\s+)?course\b.*\b(?:replace|swap)\b|"
+    r"(?:\b(?:which|what|any|a)\s+(?:current\s+)?course\b.*\b(?:replace|swap)\b|"
     r"\b(?:replace|swap)\b.*\b(?:which|what|any)\s+(?:current\s+)?course\b|"
+    r"\b(?:replace|swap)\b.*\ba\s+current\s+course\b|"
     r"(?:أي|اي|وش|فيه|هناك|يوجد).*?(?:مقرر|مادة).*?"
     r"(?:استبدل|أستبدل|أبدل|ابدل|أغير|اغير|أشيل|اشيل)|"
     r"(?:استبدل|أستبدل|أبدل|ابدل|أغير|اغير|أشيل|اشيل).*?"
@@ -1213,16 +1225,82 @@ _ARABIC_OMISSION_PATTERN = re.compile(
     rf"(?:ما\s*(?:آخذ|اخذ|أخذت|اخذت|خذت|نزلت|أنزل|انزل|باخذ|بآخذ|بنزل)|"
     rf"(?:ماني|مو)\s*(?:ماخذ|آخذ|اخذ|باخذ|بآخذ|منزل)|"
     rf"لم\s+(?:آخذ|اخذ|أنزل|انزل)|أحذف|احذف|حذف|أشيل|اشيل|شيل|شلت|"
-    rf"أكنسل|اكنسل|ألغي|الغي|أؤجل|اؤجل|أترك|اترك)\s+"
+    rf"أكنسل|اكنسل|ألغي|الغي|أؤجل|اؤجل|أترك|اترك|"
+    rf"انسحب(?:ت)?\s+من|أنسحب(?:ت)?\s+من)\s+"
     rf"(?:مقرر\s+|مادة\s+)?(?P<remove>\b{_COURSE_CODE_EXPR}\b)",
     re.IGNORECASE,
 )
 _ENGLISH_OMISSION_PATTERN = re.compile(
     rf"\b(?:do\s+not|don['’]t|did\s+not|didn['’]t)\s+take\s+"
     rf"(?P<remove>{_COURSE_CODE_EXPR})\b|"
-    rf"\b(?:skip|drop|remove|defer)\s+(?P<remove_action>{_COURSE_CODE_EXPR})\b",
+    rf"\b(?:skip|drop(?:ped|ping)?|remove|defer|cancel|withdraw|withdrew)\s+(?:from\s+)?"
+    rf"(?:course\s+)?(?P<remove_action>{_COURSE_CODE_EXPR})\b",
     re.IGNORECASE,
 )
+
+_GRADUATION_REGISTERED_BASELINE_PATTERN = re.compile(
+    r"(?:\b(?:my|the)\s+(?:actual(?:ly)?\s+)?(?:current|registered)\s+"
+    r"(?:time\s*table|schedule|courses?)\b|"
+    r"\bbased\s+on\s+(?:what\s+i(?:'m|\s+am)\s+registered\s+in|"
+    r"(?:(?:my|the)\s+)?(?:current|registered)\s+(?:time\s*table|schedule))\b|"
+    r"\b(?:actually\s+)?registered\s+(?:time\s*table|schedule|courses?)\b|"
+    r"\b(?:my|a|the)\s+current\s+(?:registered\s+)?course\b|"
+    r"(?:جدول(?:ي|ك|ه|ها|هم)?\s+(?:الحالي|المسج[ّ]?ل(?:\s+فعلي[ّ]?ا)?|الفعلي)|"
+    r"الجدول\s+(?:الحالي|المسج[ّ]?ل(?:\s+فعلي[ّ]?ا)?|الفعلي)|"
+    r"بناء[ً\s]*على\s+(?:جدول(?:ي|ك)?|المقررات)\s+(?:الحالي|المسج[ّ]?ل|الفعلي)|"
+    r"المقررات\s+(?:المسج[ّ]?لة\s+فعلي[ّ]?ا|التي\s+(?:سجلتها|سجّلتها))))",
+    re.IGNORECASE,
+)
+_GRADUATION_RECOMMENDED_BASELINE_PATTERN = re.compile(
+    r"(?:\b(?:recommended|suggested|proposed|expected)\s+"
+    r"(?:(?:current[-\s]?term|this[-\s]?term|term)\s+)?(?:courses?|plan|time\s*table|schedule)\b|"
+    r"\bcurrent[-\s]?term\s+recommendations?\b|"
+    r"(?:المقررات\s+(?:الموصى\s+بها|المقترحة|المتوقعة)|"
+    r"(?:الخطة|الجدول)\s+(?:الموصى\s+بها|المقترح(?:ة)?|المتوقع(?:ة)?)|"
+    r"توصيات\s+(?:النظام|الفصل|هذا\s+الفصل)|"
+    r"مقررات\s+الفصل\s+(?:الحالي\s+)?الموصى\s+بها))",
+    re.IGNORECASE,
+)
+_GRADUATION_DROP_WITHDRAW_PATTERN = re.compile(
+    r"(?:\b(?:drop(?:ped|ping)?|withdraw(?:n|ing)?|withdrew|cancel(?:led|ing)?)\b|"
+    r"(?:انسحب|أنسحب|انسحبت|سحبت|إسقاط|اسقاط|أكنسل|اكنسل|ألغي|الغي))",
+    re.IGNORECASE,
+)
+_GRADUATION_REMOVE_PATTERN = re.compile(
+    r"(?:\bremove\b|(?:أحذف|احذف|حذف|أشيل|اشيل|شيل|شلت))",
+    re.IGNORECASE,
+)
+_ENGLISH_ADDITION_PATTERN = re.compile(
+    rf"\b(?:add|take|include|enrol|enroll|register)\s+"
+    rf"(?:course\s+)?(?P<add>{_COURSE_CODE_EXPR})\b",
+    re.IGNORECASE,
+)
+_ARABIC_ADDITION_PATTERN = re.compile(
+    rf"(?:آخذ|اخذ|أخذ|أنزل|انزل|أضيف|اضيف|أحط|احط)\s+"
+    rf"(?:مقرر\s+|مادة\s+)?(?P<add>\b{_COURSE_CODE_EXPR}\b)",
+    re.IGNORECASE,
+)
+
+
+def _graduation_planning_baseline_kind(question: str) -> str:
+    """Choose the scenario's source from student-authored wording only.
+
+    The remote model may suggest a tool argument, but it cannot decide whether a
+    hypothetical course is a recommendation or registrar evidence.  Action words
+    that imply an actual registration change (drop/withdraw) win; otherwise an
+    explicit source phrase wins, and future-plan wording defaults to the system's
+    current-term recommendations.
+    """
+    text = str(question or "")
+    if _GRADUATION_DROP_WITHDRAW_PATTERN.search(text):
+        return _GRADUATION_REGISTERED_TIMETABLE
+    if _GRADUATION_REGISTERED_BASELINE_PATTERN.search(text):
+        return _GRADUATION_REGISTERED_TIMETABLE
+    if _GRADUATION_RECOMMENDED_BASELINE_PATTERN.search(text):
+        return _GRADUATION_RECOMMENDED_CURRENT_TERM
+    if _GRADUATION_REMOVE_PATTERN.search(text):
+        return _GRADUATION_REGISTERED_TIMETABLE
+    return _GRADUATION_RECOMMENDED_CURRENT_TERM
 
 
 def _normalise_course_code(value: Any) -> str:
@@ -1240,13 +1318,12 @@ def _normalise_graduation_scenario_args(
     current registration, prerequisites, plan membership, and the 18-hour cap.
     """
     text = str(question or "")
-    normalised = dict(arguments or {})
-    for key in ("remove_current_courses", "add_current_courses"):
-        values = normalised.get(key)
-        if isinstance(values, list):
-            normalised[key] = [
-                code for code in (_normalise_course_code(value) for value in values) if code
-            ]
+    # Build from the student's own words. In particular, a model cannot inject a
+    # scenario into a plain "when will I graduate?" question, redirect it to an
+    # arbitrary term, or choose registered evidence instead of recommendations.
+    normalised: dict[str, Any] = {
+        "planning_baseline_kind": _graduation_planning_baseline_kind(text)
+    }
 
     for pattern in (
         _ARABIC_INSTEAD_PATTERN,
@@ -1303,6 +1380,13 @@ def _normalise_graduation_scenario_args(
                     normalised.pop("add_current_courses", None)
             normalised.pop("search_better_replacements", None)
             return normalised, "explicit_omission"
+
+    addition = _ARABIC_ADDITION_PATTERN.search(text) or _ENGLISH_ADDITION_PATTERN.search(text)
+    if addition:
+        added = _normalise_course_code(addition.groupdict().get("add"))
+        if added:
+            normalised["add_current_courses"] = [added]
+            return normalised, "explicit_addition"
 
     return normalised, ""
 
@@ -2171,11 +2255,35 @@ def _mislabels_planning_baseline_as_current(answer: str, graduation: dict[str, A
     """
     if not graduation:
         return False
+    baseline_kind = str(graduation.get("planning_baseline_kind") or "")
+    candidate_text = str(answer or "")
+    if baseline_kind == _GRADUATION_RECOMMENDED_CURRENT_TERM and re.search(
+        r"(?:\b(?:baseline|scenario|forecast|plan)\b[^.?!]{0,80}"
+        r"\b(?:actual(?:ly)?\s+registered|registered\s+(?:time\s*table|schedule))\b|"
+        r"(?:الأساس|المحاكاة|السيناريو|الخطة)[^.؟!]{0,80}"
+        r"(?:الجدول\s+المسج[ّ]?ل\s+فعلي[ّ]?ا|المقررات\s+المسج[ّ]?لة\s+فعلي[ّ]?ا))",
+        candidate_text,
+        re.IGNORECASE,
+    ):
+        return True
+    if baseline_kind == _GRADUATION_REGISTERED_TIMETABLE:
+        # Calling a registrar-backed baseline the current registered timetable is
+        # accurate. Still reject the opposite provenance claim.
+        return bool(
+            re.search(
+                r"(?:\b(?:baseline|scenario|forecast|plan)\b[^.?!]{0,80}"
+                r"\b(?:recommended|suggested)\s+(?:courses?|plan|time\s*table)\b|"
+                r"(?:الأساس|المحاكاة|السيناريو|الخطة)[^.؟!]{0,80}"
+                r"(?:المقررات\s+الموصى\s+بها|الجدول\s+المقترح))",
+                candidate_text,
+                re.IGNORECASE,
+            )
+        )
     year = graduation.get("planning_baseline_academic_year")
     term = graduation.get("planning_baseline_term")
     if year is None or term is None:
         return False
-    candidate = _PLANNING_BASELINE_CURRENT_TERM_CONTRAST.sub("", answer or "")
+    candidate = _PLANNING_BASELINE_CURRENT_TERM_CONTRAST.sub("", candidate_text)
     target = rf"{re.escape(str(year))}\s*/\s*{re.escape(str(term))}"
     if re.search(
         rf"{_PLANNING_BASELINE_CURRENT_TERM_ASSIGNMENT.pattern}\s*{target}\b",
@@ -2457,7 +2565,84 @@ def _comparison_blocker_text(comparison: dict[str, Any], language: str) -> str:
     return " ".join(parts)
 
 
-def _safe_graduation_what_if_answer_base(language: str, what_if: dict[str, Any]) -> str:
+def _graduation_baseline_label(kind: Any, language: str) -> str:
+    value = str(kind or "")
+    if language == "Arabic":
+        if value == _GRADUATION_RECOMMENDED_CURRENT_TERM:
+            return "مقررات الفصل الحالي الموصى بها من النظام"
+        if value == _GRADUATION_REGISTERED_TIMETABLE:
+            return "الجدول المسجّل فعليًا"
+        return "المقررات المرجعية المستخدمة في المحاكاة"
+    if value == _GRADUATION_RECOMMENDED_CURRENT_TERM:
+        return "the system's current-term recommended courses"
+    if value == _GRADUATION_REGISTERED_TIMETABLE:
+        return "the actual registered timetable"
+    return "the planning baseline"
+
+
+def _format_plan_position(position: Any, language: str) -> str:
+    if not isinstance(position, dict):
+        return "غير مدرج" if language == "Arabic" else "not scheduled"
+    year = position.get("academic_year")
+    term = position.get("term")
+    period = f"{year}/{term}" if year is not None and term is not None else "—"
+    if position.get("baseline"):
+        return f"الفصل المرجعي ({period})" if language == "Arabic" else f"baseline term ({period})"
+    return period
+
+
+def _term_plan_change_text(comparison: dict[str, Any], language: str) -> str:
+    """Render the independently computed term-by-term plan delta.
+
+    Timing and placement are separate claims: an unchanged term count can still
+    move courses between terms. Always state both rather than treating SAME as an
+    unchanged plan.
+    """
+    changed = comparison.get("plan_changed")
+    rows = [row for row in comparison.get("term_plan_changes") or [] if isinstance(row, dict)]
+    if changed is False:
+        return (
+            "لم يتغيّر توزيع المقررات على الفصول في الخطة الناتجة."
+            if language == "Arabic"
+            else "The resulting term-by-term course plan is unchanged."
+        )
+    if changed is not True:
+        return (
+            "لم تُرجع المحاكاة فرقًا موثّقًا لتوزيع المقررات على الفصول."
+            if language == "Arabic"
+            else "The simulation did not return a verified term-by-term plan delta."
+        )
+
+    if language == "Arabic":
+        lines = ["تغيّر توزيع المقررات على الفصول في الخطة الناتجة:"]
+        for row in rows:
+            code = str(row.get("code") or "").strip() or "مقرر"
+            before = _format_plan_position(row.get("before"), language)
+            after = _format_plan_position(row.get("after"), language)
+            suffix = " وأصبح غير محسوم" if row.get("became_unresolved") else ""
+            lines.append(f"- {code}: من {before} إلى {after}{suffix}.")
+        if len(lines) == 1:
+            lines.append("- تغيّر الترتيب، لكن تفاصيل المقررات المنقولة غير متاحة.")
+        return "\n".join(lines)
+
+    lines = ["The resulting term-by-term course plan changes:"]
+    for row in rows:
+        code = str(row.get("code") or "").strip() or "Course"
+        before = _format_plan_position(row.get("before"), language)
+        after = _format_plan_position(row.get("after"), language)
+        suffix = " and becomes unresolved" if row.get("became_unresolved") else ""
+        lines.append(f"- {code}: {before} → {after}{suffix}.")
+    if len(lines) == 1:
+        lines.append("- The ordering changed, but no per-course delta was returned.")
+    return "\n".join(lines)
+
+
+def _safe_graduation_what_if_answer_base(
+    language: str,
+    what_if: dict[str, Any],
+    planning_baseline_kind: str = "",
+) -> str:
+    baseline_label = _graduation_baseline_label(planning_baseline_kind, language)
     if not what_if.get("valid"):
         errors = [
             _what_if_error_text(error, language)
@@ -2503,6 +2688,7 @@ def _safe_graduation_what_if_answer_base(language: str, what_if: dict[str, Any])
                     + " "
                     + _comparison_blocker_text(comparison, language)
                 )
+                lines.append(_term_plan_change_text(comparison, language))
             lines.append(
                 "هذه مقارنة أكاديمية فقط. يجب فحص الشُعب والتعارضات في أداة الجدول؛ "
                 "فالنتيجة لا تثبت توفر مقعد أو استيفاء جميع شروط التسجيل. لم يتغيّر "
@@ -2533,6 +2719,7 @@ def _safe_graduation_what_if_answer_base(language: str, what_if: dict[str, Any])
                 + " "
                 + _comparison_blocker_text(comparison, language)
             )
+            lines.append(_term_plan_change_text(comparison, language))
         lines.append(
             "This is an academic comparison only. Check sections and clashes with the "
             "timetable tool; it does not prove seat availability or registration permission. "
@@ -2558,8 +2745,12 @@ def _safe_graduation_what_if_answer_base(language: str, what_if: dict[str, Any])
             change.append("حذف " + "، ".join(removed))
         if added:
             change.append("إضافة " + "، ".join(added))
-        lines = ["التغيير المفترض في مقررات المحاكاة: " + " و".join(change) + "."]
+        lines = [
+            "مصدر مقررات البداية: " + baseline_label + ".",
+            "التغيير المفترض في مقررات المحاكاة: " + " و".join(change) + ".",
+        ]
         lines.append(_comparison_effect_text(comparison, language))
+        lines.append(_term_plan_change_text(comparison, language))
         lines.append(
             "الحد الأدنى المقدّر لعدد الفصول الإضافية: "
             f"{baseline.get('lower_bound_additional_terms')} قبل التغيير، مقابل "
@@ -2590,8 +2781,12 @@ def _safe_graduation_what_if_answer_base(language: str, what_if: dict[str, Any])
         change.append("remove " + ", ".join(removed))
     if added:
         change.append("add " + ", ".join(added))
-    lines = ["Planning-baseline scenario: " + " and ".join(change) + "."]
+    lines = [
+        "Starting-course source: " + baseline_label + ".",
+        "Planning-baseline scenario: " + " and ".join(change) + ".",
+    ]
     lines.append(_comparison_effect_text(comparison, language))
+    lines.append(_term_plan_change_text(comparison, language))
     lines.append(
         f"Additional-term lower bound: {baseline.get('lower_bound_additional_terms')} for "
         f"the baseline timetable versus {scenario.get('lower_bound_additional_terms')} for the scenario."
@@ -2619,9 +2814,10 @@ def _safe_graduation_what_if_answer(
     language: str,
     what_if: dict[str, Any],
     answer_style: str = "",
+    planning_baseline_kind: str = "",
 ) -> str:
     return _apply_saudi_register(
-        _safe_graduation_what_if_answer_base(language, what_if),
+        _safe_graduation_what_if_answer_base(language, what_if, planning_baseline_kind),
         language,
         answer_style,
     )
@@ -2646,9 +2842,16 @@ def _safe_graduation_answer(
 
     what_if = graduation.get("what_if")
     if isinstance(what_if, dict):
-        return _safe_graduation_what_if_answer(language, what_if, answer_style)
+        return _safe_graduation_what_if_answer(
+            language,
+            what_if,
+            answer_style,
+            str(graduation.get("planning_baseline_kind") or ""),
+        )
 
     has_baseline = bool(graduation.get("planning_baseline_courses_assumed_passed"))
+    baseline_kind = str(graduation.get("planning_baseline_kind") or "")
+    baseline_label = _graduation_baseline_label(baseline_kind, language)
     baseline_year = graduation.get("planning_baseline_academic_year")
     baseline_term = graduation.get("planning_baseline_term")
     baseline_reference = (
@@ -2674,8 +2877,7 @@ def _safe_graduation_answer(
             opening = f"عدد الفصول الدراسية الإضافية التي تقدّرها المحاكاة: {additional}"
             if has_baseline:
                 opening += (
-                    ". والإجمالي باحتساب فصل المقررات المرجعية المستخدمة في المحاكاة"
-                    f"{baseline_reference}: "
+                    ". والإجمالي باحتساب فصل " + baseline_label + f"{baseline_reference}: "
                     f"{int(graduation.get('estimated_terms_including_planning_baseline') or additional)}"
                 )
             opening += "."
@@ -2684,8 +2886,9 @@ def _safe_graduation_answer(
             opening = f"الحد الأدنى المقدّر لعدد الفصول الدراسية الإضافية: {additional}"
             if has_baseline:
                 opening += (
-                    ". والحد الأدنى الإجمالي باحتساب فصل المقررات المرجعية المستخدمة "
-                    f"في المحاكاة{baseline_reference}: "
+                    ". والحد الأدنى الإجمالي باحتساب فصل "
+                    + baseline_label
+                    + f"{baseline_reference}: "
                     f"{int(graduation.get('lower_bound_terms_including_planning_baseline') or additional)}"
                 )
             opening += ". لا يمكن تحديد فصل الإكمال بدقة لأن بعض متطلبات الخطة لم تُحسم في المحاكاة."
@@ -2733,7 +2936,11 @@ def _safe_graduation_answer(
             "\nالتسلسل الفصلي الناتج عن المحاكاة:\n" + "\n".join(term_lines) if term_lines else ""
         )
         baseline_assumption = (
-            " ويفترض اجتياز المقررات المرجعية الآتية: " + "، ".join(baseline_codes) + "."
+            " ويفترض اجتياز مقررات "
+            + baseline_label
+            + " الآتية: "
+            + "، ".join(baseline_codes)
+            + "."
             if baseline_codes
             else ""
         )
@@ -2757,7 +2964,7 @@ def _safe_graduation_answer(
             opening += (
                 ", or "
                 f"{int(graduation.get('estimated_terms_including_planning_baseline') or additional)} "
-                f"terms including the planning baseline{baseline_reference}"
+                f"terms including {baseline_label}{baseline_reference}"
             )
         opening += "."
     else:
@@ -2767,7 +2974,7 @@ def _safe_graduation_answer(
             opening += (
                 ", or "
                 f"{int(graduation.get('lower_bound_terms_including_planning_baseline') or additional)} "
-                f"terms including the planning baseline{baseline_reference}"
+                f"terms including {baseline_label}{baseline_reference}"
             )
         opening += "; no exact completion term can be given because requirements remain unresolved."
 
@@ -2809,7 +3016,11 @@ def _safe_graduation_answer(
         )
     term_plan = "\nProjected terms:\n" + "\n".join(term_lines) if term_lines else ""
     baseline_assumption = (
-        " It assumes these planning-baseline courses pass: " + ", ".join(baseline_codes) + "."
+        " It assumes these courses from "
+        + baseline_label
+        + " pass: "
+        + ", ".join(baseline_codes)
+        + "."
         if baseline_codes
         else ""
     )
@@ -2885,9 +3096,13 @@ def student_v2_tool_schemas() -> list[dict[str, Any]]:
         parameters = function.get("parameters") or {}
         properties = parameters.get("properties") or {}
         properties.pop("student_id", None)
-        if name in {"course_choice_comparison", "feasible_course_replacements"}:
+        if name in {
+            "course_choice_comparison",
+            "feasible_course_replacements",
+            "graduation_progress",
+        }:
             # These evidence checks are bound to trusted local term context; the
-            # model cannot choose a different timetable baseline.
+            # model cannot choose a different timetable/scenario term.
             properties.pop("academic_year", None)
             properties.pop("term", None)
         required = parameters.get("required")
@@ -2913,7 +3128,11 @@ def execute_student_v2_tool(
         return {"tool": name, "ok": False, "error": "Tool arguments must be an object."}
     # Identity is session-owned even if a non-schema-compliant model sends it.
     arguments = {key: value for key, value in arguments.items() if key != "student_id"}
-    if name in {"course_choice_comparison", "feasible_course_replacements"}:
+    if name in {
+        "course_choice_comparison",
+        "feasible_course_replacements",
+        "graduation_progress",
+    }:
         # Defense in depth for callers that bypass schema-guided generation.
         arguments.pop("academic_year", None)
         arguments.pop("term", None)
@@ -2997,15 +3216,22 @@ def answer_student_advisor_v2(
     if not clean_question:
         raise ValueError("question is required")
 
-    if academic_year is None or term is None:
-        from core.settings_views import load_defaults
+    from core.settings_views import load_defaults
 
-        defaults = load_defaults()
+    defaults = load_defaults()
+    if academic_year is None or term is None:
         academic_year = (
             academic_year if academic_year is not None else int(defaults["academic_year"])
         )
         term = term if term is not None else int(defaults["term"])
     tool_context = {"academic_year": int(academic_year), "term": int(term)}
+    # Graduation forecasts always begin at the site's literal current term. The
+    # planning/import term can intentionally diverge (for example while staff
+    # prepare next term), and must not silently move a student's graduation start.
+    graduation_tool_context = {
+        "academic_year": int(defaults["currentYear"]),
+        "term": int(defaults["currentTerm"]),
+    }
     comparison_tool_context = {
         **tool_context,
         "section_snapshot_academic_year": int(academic_year),
@@ -3079,7 +3305,11 @@ def answer_student_advisor_v2(
                 f"answer_language: {language}\n"
                 f"answer_style: {answer_style}\n"
                 f"configured_planning_term_hijri: {academic_year}/{term}\n"
+                "graduation_system_current_term_hijri: "
+                f"{graduation_tool_context['academic_year']}/{graduation_tool_context['term']}\n"
                 "Use this configured term unless the student explicitly asks about another. "
+                "Graduation scenarios use graduation_system_current_term_hijri and the "
+                "deterministic planning_baseline_kind; do not substitute the planning/import term. "
                 "Do not ask for a Gregorian year.\n"
                 f"student_question: {clean_question}" + policy_prompt
             ),
@@ -3639,6 +3869,8 @@ def answer_student_advisor_v2(
                         if call.name == "course_choice_comparison"
                         else replacement_tool_context
                         if call.name == "feasible_course_replacements"
+                        else graduation_tool_context
+                        if call.name == "graduation_progress"
                         else tool_context
                     ),
                 )

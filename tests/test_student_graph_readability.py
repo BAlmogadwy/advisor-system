@@ -3,6 +3,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 GRAPH_JS = ROOT / "static" / "js" / "prereq-graph.js"
 STUDENT_GRAPH_JS = ROOT / "static" / "js" / "page-student-graph.js"
+STUDENT_GRADUATION_JS = ROOT / "static" / "js" / "page-student-graduation.js"
 GLOBAL_CSS = ROOT / "static" / "css" / "global.css"
 
 
@@ -29,3 +30,15 @@ def test_narrow_screen_still_uses_the_accessible_term_list() -> None:
     assert "if (narrow) drawList(); else drawSvg();" in student_renderer
     assert "host.setAttribute('role', 'region')" in student_renderer
     assert 'role="listitem"' in student_renderer
+
+
+def test_graduation_map_focuses_on_the_remaining_prerequisite_path() -> None:
+    renderer = STUDENT_GRADUATION_JS.read_text(encoding="utf-8")
+    styles = GLOBAL_CSS.read_text(encoding="utf-8")
+
+    assert "function focusRemainingPath(source)" in renderer
+    assert "statuses[code] !== 'passed'" in renderer
+    assert "statuses[edge.prerequisite_course_code] === 'passed'" in renderer
+    assert "const graph = focusRemainingPath(sourceGraph)" in renderer
+    assert ".student-grad-map-details { order: 1; }" in styles
+    assert ".student-grad-timeline { order: 2; }" in styles

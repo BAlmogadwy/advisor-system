@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timedelta
-from urllib.parse import urlsplit
 
 from django.conf import settings
 from django.contrib.auth import login
@@ -22,9 +21,10 @@ from core.models import Course, Student, StudentTermSection
 from core.services.advisor_presentations import graduation_presentation_from_tool_results
 from core.services.rbac import ROLE_STUDENT, get_user_scope
 from core.services.recommender import recommend_next_courses
-from core.services.student_graduation import build_graduation_report
+from core.services.student_graduation import RECOMMENDED_CURRENT_TERM, build_graduation_report
 from core.services.student_helpers import normalize_code
 from core.services.student_home_cards import build_student_home_cards, progress_buckets
+from core.services.student_identity import normalize_student_id, student_email
 from core.services.student_otp import (
     OTPError,
     issue_otp,
@@ -149,43 +149,6 @@ def _fresh_next_destination(request: HttpRequest, *, consume: bool = False) -> s
     return destination[:500] if destination else ""
 
 
-def _telegram_link_otp_recipient(request: HttpRequest) -> str:
-    """Return the test inbox only for a fresh, live Telegram linking ceremony.
-
-    The saved ``next`` is treated as a hint, not authority: resolve it through
-    Django's URL configuration and re-check the opaque invitation immediately
-    before issuing the OTP. Invalid, expired, consumed, stale, disabled, and
-    non-link destinations all fail closed to ordinary student email delivery.
-    """
-
-    recipient = str(getattr(settings, "TELEGRAM_LINK_OTP_REDIRECT_EMAIL", "") or "").strip()
-    if not recipient:
-        return ""
-
-    destination = _fresh_next_destination(request)
-    if not destination:
-        return ""
-
-    from django.urls import Resolver404, resolve
-
-    try:
-        match = resolve(urlsplit(destination).path)
-    except (Resolver404, ValueError):
-        return ""
-    if match.url_name != "telegram_link_start":
-        return ""
-
-    token = str(match.kwargs.get("token") or "")
-    if not token:
-        return ""
-
-    from telegram_gateway import bot, linking
-
-    if not bot.is_enabled() or linking.peek_token(token) is None:
-        return ""
-    return recipient
-
-
 def _ip_throttled(request: HttpRequest, bucket: str, limit: int, window: int) -> bool:
     key = f"student_otp:{bucket}:{_client_ip(request)}"
     n = cache.get(key, 0)
@@ -212,17 +175,13 @@ def student_login_view(request: HttpRequest) -> HttpResponse:
         return redirect("dashboard")
 
     if request.method == "GET":
-        return render(
-            request,
-            "core/student_login.html",
-            {
-                "step": "id",
-                "no_otp_mode": getattr(settings, "STUDENT_LOGIN_NO_OTP", False),
-            },
-        )
+        return render(request, "core/student_login.html", {"step": "id"})
 
     raw = str(request.POST.get("student_id", "")).strip()
-    if not raw.isdigit():
+    try:
+        student_id = normalize_student_id(raw)
+        email = student_email(student_id)
+    except ValueError:
         return render(
             request,
             "core/student_login.html",
@@ -242,36 +201,11 @@ def student_login_view(request: HttpRequest) -> HttpResponse:
             },
         )
 
-    student_id = int(raw)
     exists = Student.objects.filter(student_id=student_id).exists()
-
-    # TESTING BYPASS: sign in from the Uni ID alone, no code. Double-guarded by
-    # DEBUG + STUDENT_LOGIN_NO_OTP (settings resolves it to False whenever DEBUG is
-    # off), so it cannot be switched on in production by env alone.
-    if getattr(settings, "STUDENT_LOGIN_NO_OTP", False) and exists:
-        logger.warning("STUDENT_LOGIN_NO_OTP: signing in %s WITHOUT a code (testing)", student_id)
-        try:
-            user = provision_student_user(student_id)
-        except OTPError:
-            return render(
-                request,
-                "core/student_login.html",
-                {
-                    "step": "id",
-                    "error": "تعذّر تسجيل الدخول باستخدام هذا الحساب.",
-                },
-            )
-        login(request, user, backend=_MODEL_BACKEND)
-        mark_student_authentication(request)
-        return _post_login_redirect(request)
 
     if exists:
         try:
-            issue_otp(
-                student_id,
-                _client_ip(request),
-                recipient_override=_telegram_link_otp_recipient(request),
-            )
+            issue_otp(student_id, _client_ip(request))
         except OTPError:
             # Rate-limited or send-failed: swallow silently so the response is
             # identical to the unknown-id / success paths (no enumeration branch).
@@ -283,8 +217,8 @@ def student_login_view(request: HttpRequest) -> HttpResponse:
         "core/student_login.html",
         {
             "step": "otp",
-            "student_id": raw,
-            "email": f"{raw}@{settings.STUDENT_EMAIL_DOMAIN}",
+            "student_id": str(student_id),
+            "email": email,
             "sent": True,  # template renders the bilingual "code sent" notice
         },
     )
@@ -329,7 +263,7 @@ def student_otp_verify_view(request: HttpRequest) -> HttpResponse:
         {
             "step": "otp",
             "student_id": str(student_id or ""),
-            "email": f"{student_id}@{settings.STUDENT_EMAIL_DOMAIN}" if student_id else "",
+            "email": student_email(student_id) if student_id else "",
             "error": "رمز التحقق غير صحيح أو انتهت صلاحيته.",
         },
     )
@@ -478,9 +412,16 @@ def student_graduation_view(request: HttpRequest) -> HttpResponse:
         )
 
     defaults = load_defaults()
-    year, term = int(defaults["academic_year"]), int(defaults["term"])
+    year = int(defaults.get("currentYear") or defaults["academic_year"])
+    configured_term = defaults.get("currentTerm")
+    term = int(configured_term if configured_term is not None else defaults["term"])
     try:
-        grad = build_graduation_report(student_id, year, term)
+        grad = build_graduation_report(
+            student_id,
+            year,
+            term,
+            planning_baseline_kind=RECOMMENDED_CURRENT_TERM,
+        )
         if grad and _request_prefers_arabic(request):
             grad = prefer_arabic_course_names_in_payload(grad)
     except Exception:  # noqa: BLE001 — degrade, never 500

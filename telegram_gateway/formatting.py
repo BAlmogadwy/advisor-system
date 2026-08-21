@@ -39,12 +39,21 @@ SAFE_CHUNK_CHARS = 3500
 #: Characters Telegram's MarkdownV2 treats as syntax. Reserved for a caller that
 #: opts into markup; the delivery path sends plain text.
 _MARKDOWN_V2_SPECIALS = r"_*[]()~`>#+-=|{}.!\\"
+_INTERNAL_POLICY_ID = re.compile(
+    r"(?<!\w)\[(?:[A-Z][A-Z0-9_-]*\.)+[A-Z0-9_.-]+\]",
+)
 _ABSOLUTE_URL = re.compile(r"https?://[^\s<>\"']+", flags=re.IGNORECASE)
 _URL_TRAILING_PUNCTUATION = frozenset(".,;:!?،؛؟)]}")
 _ATX_HEADING_PREFIX = re.compile(
     r"^ {0,3}(?P<marker>#{1,6})[ \t]+(?=\S)",
     flags=re.MULTILINE,
 )
+
+
+def _strip_internal_policy_ids(text: str) -> str:
+    """Hide citation-validator ids; readable source rows are appended separately."""
+    cleaned = _INTERNAL_POLICY_ID.sub("", str(text or ""))
+    return re.sub(r"[ \t]+([،,:;.؟?!])", r"\1", cleaned)
 
 
 def escape_markdown_v2(text: str) -> str:
@@ -449,7 +458,9 @@ def render_answer(
     # Normalise before trimming transport padding, and never remove horizontal
     # indentation that made a heading-looking line code rather than prose.
     body = _trim_transport_edges(
-        _unwrap_atx_heading_prefixes(_unwrap_strong_markers(str(answer or "")))
+        _strip_internal_policy_ids(
+            _unwrap_atx_heading_prefixes(_unwrap_strong_markers(str(answer or "")))
+        )
     )
     if not body:
         return []

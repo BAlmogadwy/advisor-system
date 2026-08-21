@@ -23,7 +23,11 @@ from core.services.course_detail import (
 from core.services.course_priority import program_downstream_importance_scores
 from core.services.planner_builder import DAY_MAP, Meeting, _catalog_for_courses, _overlap
 from core.services.recommender import recommend_next_courses
-from core.services.student_graduation import build_graduation_report, build_graduation_what_if
+from core.services.student_graduation import (
+    REGISTERED_TIMETABLE,
+    build_graduation_report,
+    build_graduation_what_if,
+)
 from core.services.student_helpers import normalize_code
 from core.services.student_sections import (
     UnknownStudentGender,
@@ -477,6 +481,7 @@ def _graduation_evidence(
             student_id,
             academic_year,
             term,
+            planning_baseline_kind=REGISTERED_TIMETABLE,
             remove_current_courses=remove_codes,
             add_current_courses=add_codes,
             search_better_replacements=False,
@@ -786,6 +791,7 @@ def compare_course_choices(
         sid,
         year,
         term_number,
+        planning_baseline_kind=REGISTERED_TIMETABLE,
         _query_cache=query_cache,
     )
     if not graduation_baseline:

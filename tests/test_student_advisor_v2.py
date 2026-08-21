@@ -143,6 +143,12 @@ def test_v2_surface_is_small_self_scoped_and_read_only():
         "add_current_courses",
         "search_better_replacements",
     } <= set(graduation_properties)
+    assert graduation_properties["planning_baseline_kind"]["enum"] == [
+        "recommended_current_term",
+        "registered_timetable",
+    ]
+    assert "academic_year" not in graduation_properties
+    assert "term" not in graduation_properties
     comparison_schema = next(
         schema for schema in schemas if schema["function"]["name"] == "course_choice_comparison"
     )
@@ -1160,12 +1166,42 @@ def test_graduation_current_wording_guard_ignores_unrelated_current_fact():
         is False
     )
     assert "planning baseline (1448/1)" in _safe_graduation_answer("English", [graduation])
-
     assert (
         _mislabels_planning_baseline_as_current(
             "The planning baseline is not your current term.", graduation
         )
         is False
+    )
+
+
+def test_graduation_baseline_guard_distinguishes_recommendations_from_registration():
+    recommended = {
+        **_complete_graduation_result(),
+        "planning_baseline_kind": "recommended_current_term",
+    }
+    registered = {
+        **_complete_graduation_result(),
+        "planning_baseline_kind": "registered_timetable",
+    }
+
+    assert (
+        _mislabels_planning_baseline_as_current(
+            "The scenario uses the actual registered timetable.", recommended
+        )
+        is True
+    )
+    assert (
+        _mislabels_planning_baseline_as_current(
+            "The scenario uses the actual registered timetable for the current term.",
+            registered,
+        )
+        is False
+    )
+    assert (
+        _mislabels_planning_baseline_as_current(
+            "The scenario uses the recommended courses.", registered
+        )
+        is True
     )
 
 
@@ -1383,6 +1419,7 @@ def test_graduation_question_cannot_answer_before_calling_the_scenario(monkeypat
         "If I take MATH204 instead of DS341, will graduation be affected?",
         "Based on my current timetable, is there any course I can replace to improve graduation?",
         "إذا لم آخذ DS341 هذا الفصل، هل سيؤثر ذلك على تخرجي؟",
+        "لو انسحبت من DS341، هل سيتأخر تخرجي؟",
         "لو أخذت MATH204 بدل DS341 هل يتأخر التخرج؟",
         "هل فيه مقرر أقدر أستبدله عشان أتخرج أفضل؟",
     ],
@@ -2021,8 +2058,179 @@ def test_graduation_scenario_arguments_follow_explicit_student_wording(
 ):
     arguments, normalisation = _normalise_graduation_scenario_args(question, model_arguments)
 
-    assert arguments == expected
+    assert {k: v for k, v in arguments.items() if k != "planning_baseline_kind"} == expected
+    assert arguments["planning_baseline_kind"] in {
+        "recommended_current_term",
+        "registered_timetable",
+    }
     assert normalisation == reason
+
+
+@pytest.mark.parametrize(
+    ("question", "expected_kind", "expected_change"),
+    [
+        (
+            "When will I graduate?",
+            "recommended_current_term",
+            {},
+        ),
+        (
+            "Based on my current timetable, when will I graduate?",
+            "registered_timetable",
+            {},
+        ),
+        (
+            "بناءً على جدولي المسجل فعليًا، متى أتخرج؟",
+            "registered_timetable",
+            {},
+        ),
+        (
+            "If I dropped DS341, would my graduation plan change?",
+            "registered_timetable",
+            {"remove_current_courses": ["DS341"]},
+        ),
+        (
+            "If I withdrew from DS341, would graduation be delayed?",
+            "registered_timetable",
+            {"remove_current_courses": ["DS341"]},
+        ),
+        (
+            "If I skip DS341 from the recommended plan, when will I graduate?",
+            "recommended_current_term",
+            {"remove_current_courses": ["DS341"]},
+        ),
+        (
+            "If I add MATH204 to the recommended courses, when will I graduate?",
+            "recommended_current_term",
+            {"add_current_courses": ["MATH204"]},
+        ),
+    ],
+)
+def test_graduation_baseline_is_deterministic_from_student_wording(
+    question: str,
+    expected_kind: str,
+    expected_change: dict[str, Any],
+) -> None:
+    arguments, _ = _normalise_graduation_scenario_args(
+        question,
+        {
+            "planning_baseline_kind": "wrong-model-choice",
+            "academic_year": 1440,
+            "term": 3,
+            "remove_current_courses": ["FAKE100"],
+            "add_current_courses": ["FAKE200"],
+            "search_better_replacements": True,
+        },
+    )
+
+    assert arguments == {
+        "planning_baseline_kind": expected_kind,
+        **expected_change,
+    }
+
+
+def test_plain_graduation_uses_literal_system_current_term_and_strips_model_scenario(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        "core.settings_views.load_defaults",
+        lambda: {
+            "academic_year": 1450,
+            "term": 2,
+            "currentYear": 1448,
+            "currentTerm": 1,
+        },
+    )
+    calls: list[tuple[dict[str, Any], dict[str, Any]]] = []
+
+    def fake_execute(name, arguments, **kwargs):
+        assert name == "graduation_progress"
+        calls.append((dict(arguments), dict(kwargs["context"])))
+        return {
+            **_complete_graduation_result(),
+            "planning_baseline_kind": "recommended_current_term",
+        }
+
+    monkeypatch.setattr("core.services.student_advisor_v2.execute_student_v2_tool", fake_execute)
+    client = FakeClient(
+        _tool_turn(
+            "graduation_progress",
+            {
+                "academic_year": 1440,
+                "term": 3,
+                "planning_baseline_kind": "registered_timetable",
+                "remove_current_courses": ["FAKE100"],
+            },
+        ),
+        _answer_turn(
+            "The scenario estimates 5 additional terms, or 6 terms including the "
+            "system's current-term recommended courses (1448/1)."
+        ),
+    )
+
+    answer_student_advisor_v2(
+        question="When will I graduate?",
+        principal=_principal(),
+        academic_year=1450,
+        term=2,
+        llm_client=client,
+    )
+
+    assert calls == [
+        (
+            {"planning_baseline_kind": "recommended_current_term"},
+            {"academic_year": 1448, "term": 1},
+        )
+    ]
+
+
+def test_safe_what_if_states_term_count_and_independent_term_plan_delta() -> None:
+    result = {
+        "tool": "graduation_progress",
+        "ok": True,
+        "planning_baseline_kind": "registered_timetable",
+        "what_if": {
+            "mode": "explicit_changes",
+            "valid": True,
+            "validation_errors": [],
+            "removed_current_courses": [{"code": "DS341"}],
+            "added_current_courses": [],
+            "outside_plan_additions": [],
+            "baseline": {"lower_bound_additional_terms": 4},
+            "scenario": {"lower_bound_additional_terms": 4},
+            "comparison": {
+                "timing_effect": "SAME",
+                "term_difference": 0,
+                "terms_saved": 0,
+                "plan_changed": True,
+                "term_plan_changes": [
+                    {
+                        "code": "DS341",
+                        "before": {
+                            "academic_year": 1448,
+                            "term": 1,
+                            "sequence": 0,
+                            "baseline": True,
+                        },
+                        "after": {
+                            "academic_year": 1448,
+                            "term": 2,
+                            "sequence": 1,
+                            "baseline": False,
+                        },
+                        "became_unresolved": False,
+                    }
+                ],
+            },
+        },
+    }
+
+    answer = _safe_graduation_answer("English", [result])
+
+    assert "actual registered timetable" in answer
+    assert "estimated number of terms is unchanged" in answer
+    assert "term-by-term course plan changes" in answer
+    assert "DS341: baseline term (1448/1) → 1448/2" in answer
 
 
 def test_colloquial_arabic_omission_overrides_reversed_model_arguments(monkeypatch):
@@ -2054,10 +2262,21 @@ def test_colloquial_arabic_omission_overrides_reversed_model_arguments(monkeypat
         llm_client=client,
     )
 
-    assert executed == [("graduation_progress", {"remove_current_courses": ["DS225"]})]
+    assert executed == [
+        (
+            "graduation_progress",
+            {
+                "planning_baseline_kind": "recommended_current_term",
+                "remove_current_courses": ["DS225"],
+            },
+        )
+    ]
     assert result["agent"]["tools_called"][0] == {
         "name": "graduation_progress",
-        "arguments": {"remove_current_courses": ["DS225"]},
+        "arguments": {
+            "planning_baseline_kind": "recommended_current_term",
+            "remove_current_courses": ["DS225"],
+        },
         "scenario_normalization": "explicit_omission",
     }
 
@@ -2098,7 +2317,10 @@ def test_current_course_what_if_normalises_initial_baseline_call(monkeypatch):
 
     assert executed[-1] == (
         "graduation_progress",
-        {"remove_current_courses": ["DS341"]},
+        {
+            "planning_baseline_kind": "recommended_current_term",
+            "remove_current_courses": ["DS341"],
+        },
     )
     assert "DS341 is not in the planning-baseline timetable" in result["answer"]
     assert result["agent"]["graduation_what_if_required"] is True
@@ -2329,7 +2551,11 @@ def test_replacement_search_answer_does_not_claim_timetable_feasibility(monkeypa
     assert result["agent"]["tools_called"] == [
         {
             "name": "graduation_progress",
-            "arguments": {"search_better_replacements": True},
+            "arguments": {
+                "planning_baseline_kind": "registered_timetable",
+                "search_better_replacements": True,
+            },
+            "scenario_normalization": "open_replacement_search",
         }
     ]
     assert result["agent"]["iterations"] == 1

@@ -95,14 +95,6 @@ def test_contract_rejects_missing_web_health_check(blueprint: Blueprint) -> None
 def test_contract_requires_public_student_login_safety_settings(blueprint: Blueprint) -> None:
     changed = deepcopy(blueprint)
     web = _service(changed, "advisor-system")
-    redirect = next(item for item in web["envVars"] if item["key"] == "STUDENT_OTP_REDIRECT_EMAIL")
-    redirect.pop("sync")
-    redirect["value"] = "test-inbox@example.invalid"
-    link_redirect = next(
-        item for item in web["envVars"] if item["key"] == "TELEGRAM_LINK_OTP_REDIRECT_EMAIL"
-    )
-    link_redirect.pop("sync")
-    link_redirect["value"] = "unreviewed@example.invalid"
     ip_mode = next(item for item in web["envVars"] if item["key"] == "IP_FROM_XFF")
     ip_mode["value"] = "false"
     smtp_password = next(item for item in web["envVars"] if item["key"] == "EMAIL_HOST_PASSWORD")
@@ -110,44 +102,33 @@ def test_contract_requires_public_student_login_safety_settings(blueprint: Bluep
 
     errors = validate_blueprint(changed, project_root=PROJECT_ROOT)
 
-    assert any("STUDENT_OTP_REDIRECT_EMAIL" in error for error in errors)
-    assert any("TELEGRAM_LINK_OTP_REDIRECT_EMAIL" in error for error in errors)
     assert any("IP_FROM_XFF" in error for error in errors)
     assert any("EMAIL_HOST_PASSWORD" in error for error in errors)
 
 
 @pytest.mark.parametrize(
-    "redirect_key",
-    ["STUDENT_OTP_REDIRECT_EMAIL", "TELEGRAM_LINK_OTP_REDIRECT_EMAIL"],
+    "retired_key",
+    [
+        "STUDENT_LOGIN_NO_OTP",
+        "STUDENT_OTP_REDIRECT_EMAIL",
+        "TELEGRAM_LINK_OTP_REDIRECT_EMAIL",
+    ],
 )
-@pytest.mark.parametrize("non_web_service", [WORKER_SERVICE_NAME, CRON_SERVICE_NAME])
-def test_contract_keeps_otp_redirects_manual_and_web_only(
-    blueprint: Blueprint, non_web_service: str, redirect_key: str
+@pytest.mark.parametrize("service_name", ["advisor-system", WORKER_SERVICE_NAME, CRON_SERVICE_NAME])
+def test_contract_rejects_retired_student_auth_testing_controls_on_every_service(
+    blueprint: Blueprint, service_name: str, retired_key: str
 ) -> None:
-    web = _service(blueprint, "advisor-system")
-    target = _service(blueprint, non_web_service)
-    redirect = next(item for item in web["envVars"] if item["key"] == redirect_key)
-    assert redirect == {"key": redirect_key, "sync": False}
-    assert redirect_key not in {item["key"] for item in target["envVars"]}
+    target = _service(blueprint, service_name)
+    assert retired_key not in {item["key"] for item in target["envVars"]}
 
     changed = deepcopy(blueprint)
-    changed_target = _service(changed, non_web_service)
-    changed_target["envVars"].append(
-        {
-            "key": redirect_key,
-            "fromService": {
-                "name": "advisor-system",
-                "type": "web",
-                "envVarKey": redirect_key,
-            },
-        }
-    )
+    changed_target = _service(changed, service_name)
+    changed_target["envVars"].append({"key": retired_key, "value": "true"})
 
     errors = validate_blueprint(changed, project_root=PROJECT_ROOT)
 
     assert any(
-        non_web_service in error and redirect_key in error and "web-only" in error
-        for error in errors
+        service_name in error and retired_key in error and "retired" in error for error in errors
     )
 
 

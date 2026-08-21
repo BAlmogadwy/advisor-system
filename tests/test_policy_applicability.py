@@ -217,6 +217,36 @@ def test_the_default_role_is_background_not_direct():
     assert roles["background_policy_evidence"][0]["role"] == BACKGROUND_ONLY
 
 
+def test_ordinary_load_question_excludes_expected_graduate_request_rule():
+    roles = _roles("هل أستطيع إضافة 19 ساعة؟")
+    direct = {row["policy_id"] for row in roles["direct_policy_evidence"]}
+    irrelevant = {row["policy_id"] for row in roles["irrelevant_policy_evidence"]}
+
+    assert "TU.LOAD.SEMESTER_RANGE" in direct
+    assert "TU.LOAD.EXPECTED_GRADUATE_REQUEST" not in direct
+    assert "TU.LOAD.EXPECTED_GRADUATE_REQUEST" in irrelevant
+
+
+def test_expected_graduate_rule_requires_explicit_question_or_matching_status():
+    store = get_policy_store()
+    ordinary = store.lookup(query="هل أستطيع إضافة 19 ساعة؟", limit=8)
+    by_status = classify(
+        ordinary["policies"],
+        question="هل أستطيع إضافة 19 ساعة؟",
+        topics=ordinary["matched_topics"],
+        store=store,
+        student_status="GRADUATION EXPECTED",
+    )
+    explicit = _roles("أنا متوقع التخرج، كيف أقدم طلب تسجيل المقررات؟")
+
+    assert "TU.LOAD.EXPECTED_GRADUATE_REQUEST" in {
+        row["policy_id"] for row in by_status["direct_policy_evidence"]
+    }
+    assert "TU.LOAD.EXPECTED_GRADUATE_REQUEST" in {
+        row["policy_id"] for row in explicit["direct_policy_evidence"]
+    }
+
+
 def test_every_returned_policy_carries_a_role_and_a_reason():
     for policy in sum(
         (
@@ -331,6 +361,29 @@ def test_a_governed_question_still_offers_citations():
     citable = {c["policy_id"] for c in result["citable"]}
     direct = {p["policy_id"] for p in result["direct_policy_evidence"]}
     assert citable == direct and citable
+
+
+def test_active_student_load_lookup_does_not_cite_expected_graduate_rule():
+    from core.models import Student
+    from core.services.virtual_advisor_capabilities import ROLE_STUDENT, build_default_registry
+
+    student = Student.objects.create(
+        student_id=4500001,
+        name="Student",
+        program="AI",
+        section="M",
+        status="ACTIVE",
+    )
+    result = build_default_registry().execute(
+        "policy_lookup",
+        {"query": "هل استطيع اضافة 19 ساعة؟", "limit": 8},
+        scope={"role": ROLE_STUDENT, "student_id": student.student_id},
+    )
+
+    assert {row["policy_id"] for row in result["citable"]} == {"TU.LOAD.SEMESTER_RANGE"}
+    assert "TU.LOAD.EXPECTED_GRADUATE_REQUEST" in {
+        row["policy_id"] for row in result["irrelevant_policy_evidence"]
+    }
 
 
 def test_the_index_reloads_when_asked():

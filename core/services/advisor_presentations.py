@@ -241,10 +241,23 @@ def _normalise_graduation_presentation(payload: dict[str, Any]) -> dict[str, Any
             }
         )
 
+    baseline_kind = _text(payload.get("planning_baseline_kind"), 32).lower()
+    if baseline_kind not in {"recommended_current_term", "registered_timetable"}:
+        # Legacy presentations predate explicit provenance and were built from
+        # the registered timetable. Preserve that meaning rather than silently
+        # relabelling an older card as a recommendation.
+        baseline_kind = "registered_timetable"
+
     return {
         "kind": KIND_GRADUATION,
         "program": _text(payload.get("program"), 32),
         "planning_term": _text(payload.get("planning_term"), 24),
+        "planning_baseline_kind": baseline_kind,
+        "planning_baseline_credits": _number(
+            payload.get("planning_baseline_credits")
+            if payload.get("planning_baseline_credits") is not None
+            else payload.get("registered_credits_at_planning_baseline")
+        ),
         "simulation_completed": payload.get("simulation_completed") is True,
         "estimated_terms_including_planning_baseline": _optional_number(
             payload.get("estimated_terms_including_planning_baseline")
@@ -697,9 +710,25 @@ def graduation_presentation_from_tool_results(
             result.get("planning_baseline_term") or result.get("scenario_term") or 0
         )
         planning_term = f"{baseline_year}/{baseline_term}"
+        baseline_kind = _text(result.get("planning_baseline_kind"), 32).lower()
+        legacy_baseline = baseline_kind not in {
+            "recommended_current_term",
+            "registered_timetable",
+        }
+        if legacy_baseline:
+            baseline_kind = "registered_timetable"
+        recommended_baseline = baseline_kind == "recommended_current_term"
         band_labels = {
             "0": "Completed before the scenario",
-            "1": f"Planning baseline {planning_term}",
+            "1": (
+                f"Recommended starting term {planning_term}"
+                if recommended_baseline
+                else (
+                    f"Planning baseline {planning_term}"
+                    if legacy_baseline
+                    else f"Registered timetable {planning_term}"
+                )
+            ),
         }
         for planned in _items(result.get("term_plan"), _MAX_SIMULATED_TERMS):
             if not isinstance(planned, dict):
@@ -725,7 +754,7 @@ def graduation_presentation_from_tool_results(
         term_of.update({code: 1 for code in current})
         term_of.update(future)
         status_of = {code: "passed" for code in passed}
-        status_of.update({code: "studying" for code in current})
+        status_of.update({code: "open" if recommended_baseline else "studying" for code in current})
         status_of.update({code: "open" for code in future})
         name_of = {
             _text(code, 32).upper(): _text(name)
@@ -756,6 +785,11 @@ def graduation_presentation_from_tool_results(
                 "kind": KIND_GRADUATION,
                 "program": result.get("program"),
                 "planning_term": planning_term,
+                "planning_baseline_kind": baseline_kind,
+                "planning_baseline_credits": result.get(
+                    "planning_baseline_credits",
+                    result.get("registered_credits_at_planning_baseline"),
+                ),
                 "simulation_completed": result.get("simulation_completed"),
                 "estimated_terms_including_planning_baseline": result.get(
                     "estimated_terms_including_planning_baseline",

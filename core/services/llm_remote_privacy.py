@@ -539,7 +539,8 @@ def _project_graduation_summary(summary: Any) -> dict[str, Any] | None:
         "estimated_terms_including_planning_baseline",
         "lower_bound_additional_terms",
         "lower_bound_terms_including_planning_baseline",
-        "registered_credits_at_planning_baseline",
+        "planning_baseline_kind",
+        "planning_baseline_credits",
     )
     out["planning_baseline_courses_assumed_passed"] = _course_rows(
         summary.get("planning_baseline_courses_assumed_passed")
@@ -551,6 +552,23 @@ def _project_graduation_summary(summary: Any) -> dict[str, Any] | None:
     out["unresolved_requirements"] = _course_rows(
         summary.get("unresolved_requirements"), *_GRADUATION_BLOCKER_FIELDS
     )
+    return out
+
+
+def _project_term_plan_changes(changes: Any) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    for change in changes or []:
+        if not isinstance(change, dict):
+            continue
+        projected = _keep(change, "code", "became_unresolved")
+        for side in ("before", "after"):
+            position = change.get(side)
+            projected[side] = (
+                _keep(position, "academic_year", "term", "sequence", "baseline")
+                if isinstance(position, dict)
+                else None
+            )
+        out.append(projected)
     return out
 
 
@@ -573,7 +591,9 @@ def _project_graduation_comparison(comparison: Any) -> dict[str, Any] | None:
         "baseline_planning_credits",
         "scenario_planning_credits",
         "planning_credit_change",
+        "plan_changed",
     )
+    out["term_plan_changes"] = _project_term_plan_changes(comparison.get("term_plan_changes"))
     out["blockers_resolved"] = _course_rows(
         comparison.get("blockers_resolved"), *_GRADUATION_BLOCKER_FIELDS
     )
@@ -612,6 +632,8 @@ def _project_graduation_what_if(what_if: Any) -> dict[str, Any] | None:
         "unproven_blocker_progress_pairs",
         "no_proven_improvement",
         "note",
+        "planning_baseline_kind",
+        "planning_baseline_credits",
     )
     out["validation_errors"] = _course_rows(
         what_if.get("validation_errors"),
@@ -682,6 +704,8 @@ def _project_graduation_progress(result: dict[str, Any], _: RemoteIdentityMap) -
             "gpa",
             "planning_baseline_academic_year",
             "planning_baseline_term",
+            "planning_baseline_kind",
+            "planning_baseline_credits",
             "minimum_terms_by_prerequisites",
             "minimum_terms_by_credit_capacity_after_planning_baseline",
             "lower_bound_additional_terms",
@@ -695,7 +719,7 @@ def _project_graduation_progress(result: dict[str, Any], _: RemoteIdentityMap) -
             "productive_terms_planned",
             "plan_completion_in_planning_baseline_possible",
             "passed_credits_in_plan",
-            "registered_credits_at_planning_baseline",
+            "plan_changed",
             "simulation_assumptions",
         )
     )
@@ -722,6 +746,7 @@ def _project_graduation_progress(result: dict[str, Any], _: RemoteIdentityMap) -
         *_GRADUATION_BLOCKER_FIELDS,
     )
     out["what_if"] = _project_graduation_what_if(result.get("what_if"))
+    out["term_plan_changes"] = _project_term_plan_changes(result.get("term_plan_changes"))
     out["term_plan"] = []
     for term in result.get("term_plan") or []:
         if not isinstance(term, dict):

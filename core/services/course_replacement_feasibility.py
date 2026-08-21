@@ -20,6 +20,7 @@ from core.models import Course
 from core.services.planner_builder import DAY_MAP, Meeting, _overlap
 from core.services.student_graduation import (
     DEFAULT_MAX_CREDITS_PER_TERM,
+    REGISTERED_TIMETABLE,
     build_graduation_what_if,
 )
 from core.services.student_helpers import normalize_code
@@ -157,6 +158,7 @@ def _explicit_pair(
         student_id,
         academic_year,
         term,
+        planning_baseline_kind=REGISTERED_TIMETABLE,
         remove_current_courses=[remove_code],
         add_current_courses=[add_code],
         max_credits_per_term=cap,
@@ -204,6 +206,7 @@ def _academic_pairs(
             student_id,
             academic_year,
             term,
+            planning_baseline_kind=REGISTERED_TIMETABLE,
             search_better_replacements=True,
             max_credits_per_term=cap,
             max_replacement_results=MAX_ACADEMIC_RESULTS_TO_CERTIFY,
@@ -250,6 +253,7 @@ def _academic_pairs(
         student_id,
         academic_year,
         term,
+        planning_baseline_kind=REGISTERED_TIMETABLE,
         search_better_replacements=True,
         max_credits_per_term=cap,
         max_replacement_results=MAX_ACADEMIC_RESULTS_TO_CERTIFY,

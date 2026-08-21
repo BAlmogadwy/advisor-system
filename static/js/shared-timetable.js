@@ -9,6 +9,8 @@
  *                 dir (or direction), cellHtml(block), bg(block).
  * Block options:  step (default 5), labelStep (default 30), majorHeight
  *                 (pixel height per labelled interval, default 42),
+ *                 compressGaps, compressGapMinutes (default 180), gapLabel,
+ *                 timeColumnWidth, dayMinWidth, minWidth,
  *                 accent(block), cellClass(block).
  * Table options:  step (default 30), pick(existing, incoming).
  *
@@ -184,6 +186,7 @@
       days: days,
       step: step,
       labelStep: labelStep,
+      padMinutes: pad,
       startMin: startMin,
       endMin: endMin,
       startsByDay: startsByDay,
@@ -194,6 +197,68 @@
   function _hhmm(minutes) {
     return String(Math.floor(minutes / 60)).padStart(2, '0') + ':' +
       String(minutes % 60).padStart(2, '0');
+  }
+
+  /* Split a long teaching day only where the whole timetable is empty.  Every
+   * meeting remains on an ordinary linear clock inside its segment; the omitted
+   * interval is printed between segments, so compression cannot be mistaken for
+   * adjacent classes.  This is opt-in because the shared table renderer and
+   * non-student cards retain their established full-range geometry. */
+  function _blockSegments(prepared, opts) {
+    var full = [{ startMin: prepared.startMin, endMin: prepared.endMin }];
+    if (!opts.compressGaps) return full;
+
+    var threshold = _positiveNumber(opts.compressGapMinutes, 180);
+    var intervals = [];
+    Object.keys(prepared.blocksByDay || {}).forEach(function (day) {
+      (prepared.blocksByDay[day] || []).forEach(function (block) {
+        intervals.push({ startMin: block._st, endMin: block._en });
+      });
+    });
+    intervals.sort(function (a, b) {
+      return (a.startMin - b.startMin) || (a.endMin - b.endMin);
+    });
+    if (intervals.length < 2) return full;
+
+    var groups = [];
+    var current = null;
+    intervals.forEach(function (interval) {
+      if (!current) {
+        current = { startMin: interval.startMin, endMin: interval.endMin };
+        return;
+      }
+      if (interval.startMin - current.endMin >= threshold) {
+        groups.push(current);
+        current = { startMin: interval.startMin, endMin: interval.endMin };
+        return;
+      }
+      current.endMin = Math.max(current.endMin, interval.endMin);
+    });
+    if (current) groups.push(current);
+    if (groups.length < 2) return full;
+
+    var pad = opts.segmentPadMinutes == null
+      ? prepared.padMinutes : Math.max(0, Number(opts.segmentPadMinutes) || 0);
+    var windowStep = prepared.labelStep;
+    var segments = groups.map(function (group) {
+      return {
+        startMin: Math.max(0, Math.floor((group.startMin - pad) / windowStep) * windowStep),
+        endMin: Math.min(24 * 60, Math.ceil((group.endMin + pad) / windowStep) * windowStep)
+      };
+    });
+
+    /* Rounding or caller-supplied padding can close a candidate break. Merge it
+     * back rather than displaying a false or zero-length gap. */
+    var merged = [];
+    segments.forEach(function (segment) {
+      var previous = merged[merged.length - 1];
+      if (previous && segment.startMin <= previous.endMin) {
+        previous.endMin = Math.max(previous.endMin, segment.endMin);
+      } else {
+        merged.push(segment);
+      }
+    });
+    return merged.length > 1 ? merged : full;
   }
 
   /* `table` mode keeps its established scaffold and collision-pick behaviour. */
@@ -237,13 +302,13 @@
   }
 
   /* Visual clock grid. Five-minute rows retain exact meeting boundaries while
-   * labels and strong grid rules remain comfortably spaced at 30 minutes. */
-  function _renderBlocks(opts, prepared) {
+   * labels and strong grid rules use the caller's readable label interval. */
+  function _renderBlockSegment(opts, prepared, segment) {
     var days = prepared.days;
     var dayLabels = opts.dayLabels || {};
     var step = prepared.step;
     var labelStep = prepared.labelStep;
-    var rows = Math.ceil((prepared.endMin - prepared.startMin) / step);
+    var rows = Math.ceil((segment.endMin - segment.startMin) / step);
     var cellHtml = opts.cellHtml || function () { return ''; };
     var bgOf = opts.bg || function () { return ''; };
     var accentOf = opts.accent || function () { return ''; };
@@ -252,11 +317,19 @@
     var dirAttr = dir ? ' dir="' + dir + '"' : '';
     var majorHeight = _positiveNumber(opts.majorHeight, 42);
     var rowHeight = majorHeight / Math.max(1, labelStep / step);
+    var timeColumnWidth = _positiveNumber(opts.timeColumnWidth, 50);
+    var dayMinWidth = Math.max(0, Number(opts.dayMinWidth) || 0);
+    var requestedMinWidth = Math.max(0, Number(opts.minWidth) || 0);
+    var gridMinWidth = Math.max(requestedMinWidth, timeColumnWidth + (days.length * dayMinWidth));
     var gridStyle = '--wg-days:' + days.length + ';' +
       '--wg-step:' + step + ';--wg-label-step:' + labelStep + ';' +
+      'grid-template-columns:' + timeColumnWidth + 'px repeat(' + days.length +
+      ',minmax(' + dayMinWidth + 'px,1fr));' +
+      (gridMinWidth ? 'min-width:' + gridMinWidth + 'px;' : '') +
       'grid-template-rows:28px repeat(' + rows + ',' + rowHeight + 'px);row-gap:0;';
 
-    var html = '<div class="wg-blocks" style="' + gridStyle + '" aria-hidden="true"' + dirAttr + '>';
+    var html = '<div class="wg-blocks wg-block-segment" data-range-start="' + segment.startMin +
+      '" data-range-end="' + segment.endMin + '" style="' + gridStyle + '" aria-hidden="true"' + dirAttr + '>';
     html += '<div class="wg-h wg-cor" style="grid-row:1;grid-column:1">' + (opts.timeLabel || '') + '</div>';
     days.forEach(function (day, dayIndex) {
       html += '<div class="wg-h wg-dh" style="grid-row:1;grid-column:' + (dayIndex + 2) + '">' +
@@ -265,7 +338,7 @@
 
     var labelRows = Math.max(1, Math.round(labelStep / step));
     for (var row = 0; row < rows; row += 1) {
-      var minute = prepared.startMin + (row * step);
+      var minute = segment.startMin + (row * step);
       if (minute % labelStep === 0) {
         html += '<div class="wg-t wg-major" data-minute="' + minute + '" style="grid-row:' +
           (row + 2) + ' / span ' + Math.min(labelRows, rows - row) + ';grid-column:1">' +
@@ -275,7 +348,7 @@
 
     days.forEach(function (day, dayIndex) {
       for (var row = 0; row < rows; row += 1) {
-        var minute = prepared.startMin + (row * step);
+        var minute = segment.startMin + (row * step);
         var major = minute % labelStep === 0;
         var majorStyle = major ? ';box-shadow:inset 0 1px 0 var(--line)' : '';
         html += '<div class="wg-cell ' + (major ? 'wg-major' : 'wg-minor') + '" data-minute="' + minute +
@@ -285,8 +358,9 @@
 
     days.forEach(function (day, dayIndex) {
       (prepared.blocksByDay[day] || []).forEach(function (meeting) {
-        var startRow = Math.floor((meeting._st - prepared.startMin) / step) + 2;
-        var endRow = Math.ceil((meeting._en - prepared.startMin) / step) + 2;
+        if (meeting._en <= segment.startMin || meeting._st >= segment.endMin) return;
+        var startRow = Math.floor((meeting._st - segment.startMin) / step) + 2;
+        var endRow = Math.ceil((meeting._en - segment.startMin) / step) + 2;
         var span = Math.max(1, endRow - startRow);
         var lane = meeting._lane || 0;
         var laneCount = meeting._laneCount || 1;
@@ -309,6 +383,28 @@
     });
     html += '</div>';
     return html;
+  }
+
+  function _renderBlocks(opts, prepared) {
+    var segments = _blockSegments(prepared, opts);
+    if (segments.length === 1) return _renderBlockSegment(opts, prepared, segments[0]);
+
+    var dir = _direction(opts);
+    var dirAttr = dir ? ' dir="' + dir + '"' : '';
+    var html = '<div class="wg-segmented" data-segment-count="' + segments.length +
+      '" aria-hidden="true"' + dirAttr + '>';
+    segments.forEach(function (segment, index) {
+      html += _renderBlockSegment(opts, prepared, segment);
+      if (index >= segments.length - 1) return;
+      var gapStart = segment.endMin;
+      var gapEnd = segments[index + 1].startMin;
+      html += '<div class="wg-time-break" data-gap-start="' + gapStart +
+        '" data-gap-end="' + gapEnd + '" data-gap-minutes="' + (gapEnd - gapStart) + '">' +
+        (opts.gapLabel ? '<span class="wg-time-break-label">' + opts.gapLabel + '</span>' : '') +
+        '<span class="wg-time-break-range"><bdi dir="ltr">' + _hhmm(gapStart) + '–' +
+        _hhmm(gapEnd) + '</bdi></span></div>';
+    });
+    return html + '</div>';
   }
 
   function renderWeekGrid(options) {

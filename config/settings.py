@@ -348,24 +348,14 @@ _require_production_smtp(
     host_user=EMAIL_HOST_USER,
     host_password=EMAIL_HOST_PASSWORD,
 )
-# Student OTP-login email domain (deterministic {student_id}@domain).
+# Student OTP-login email domain. The canonical cohort-aware local-part rule is
+# implemented centrally in core.services.student_identity.student_email.
 STUDENT_EMAIL_DOMAIN = os.getenv("STUDENT_EMAIL_DOMAIN", "taibahu.edu.sa")
 STUDENT_OTP_TTL_SECONDS = int(os.getenv("STUDENT_OTP_TTL_SECONDS", "600"))  # code lifetime
 STUDENT_OTP_MAX_ATTEMPTS = int(os.getenv("STUDENT_OTP_MAX_ATTEMPTS", "5"))  # verify tries per code
 STUDENT_OTP_MAX_SENDS = int(os.getenv("STUDENT_OTP_MAX_SENDS", "3"))  # codes per window per id
 STUDENT_OTP_SEND_WINDOW_SECONDS = int(os.getenv("STUDENT_OTP_SEND_WINDOW_SECONDS", "900"))
 STUDENT_OTP_ASYNC_EMAIL = os.getenv("STUDENT_OTP_ASYNC_EMAIL", "true").lower() == "true"
-# TESTING ONLY: send every student OTP to this address instead of the student's real
-# university mailbox, so testing never emails an actual student. Leave EMPTY in production.
-STUDENT_OTP_REDIRECT_EMAIL = os.getenv("STUDENT_OTP_REDIRECT_EMAIL", "").strip()
-# TEMPORARY LINK-TEST CONTROL: redirect an OTP only when the login was entered
-# through a fresh, live Telegram-link invitation. Unlike the broad testing
-# redirect above, ordinary student logins continue to use the student's mailbox.
-TELEGRAM_LINK_OTP_REDIRECT_EMAIL = os.getenv("TELEGRAM_LINK_OTP_REDIRECT_EMAIL", "").strip()
-# TESTING ONLY: log a student in from the University ID alone, with NO code. This is a
-# full authentication bypass — it requires BOTH DEBUG and this explicit opt-in, exactly
-# like ALLOW_DEV_ROLE_SWITCH, and is inert in any production deployment (DEBUG=False).
-STUDENT_LOGIN_NO_OTP = DEBUG and os.getenv("STUDENT_LOGIN_NO_OTP", "").lower() == "true"
 # Behind a trusted reverse proxy (e.g. Render), derive the client IP from the
 # right-most X-Forwarded-For entry (the one the proxy appended, unspoofable).
 # Leave off for direct/dev, where REMOTE_ADDR is the real peer.

@@ -14,8 +14,40 @@
 
   if (!presentation || !details || !host || !termButton || !chainButton) return;
 
-  const graph = presentation.graph || {};
+  const sourceGraph = presentation.graph || {};
+
+  /* A completed student's whole history can put forty passed courses in one
+     "before baseline" row and reduce the actual remaining chain to thumbnail
+     size. Keep every unfinished node plus its immediate completed prerequisites.
+     Older completed ancestry remains in the progress record: it no longer blocks
+     a remaining course and does not need to crowd this decision-focused map. */
+  function focusRemainingPath(source) {
+    const items = Array.isArray(source.items) ? source.items : [];
+    const statuses = source.statusOf || {};
+    const allNodes = Array.isArray(source.extraNodes) ? source.extraNodes : [];
+    const kept = new Set(allNodes.filter(code => statuses[code] !== 'passed'));
+    items.forEach(edge => {
+      if (kept.has(edge.course_code) && statuses[edge.prerequisite_course_code] === 'passed') {
+        kept.add(edge.prerequisite_course_code);
+      }
+    });
+    const pick = values => Object.fromEntries(
+      Object.entries(values || {}).filter(([code]) => kept.has(code))
+    );
+    return {
+      items: items.filter(edge => (
+        kept.has(edge.course_code) && kept.has(edge.prerequisite_course_code)
+      )),
+      termOf: pick(source.termOf),
+      nameOf: pick(source.nameOf),
+      statusOf: pick(statuses),
+      extraNodes: Array.from(kept),
+    };
+  }
+
+  const graph = focusRemainingPath(sourceGraph);
   const bandLabels = presentation.band_labels || {};
+  const baselineKind = presentation.planning_baseline_kind || 'registered_timetable';
   const AR = (document.documentElement.lang || '').toLowerCase().startsWith('ar');
   const MOBILE_QUERY = '(max-width: 768px)';
 
@@ -31,6 +63,16 @@
     const label = String(value == null ? '' : value);
     if (label === 'Completed before the scenario') {
       return AR ? 'مجتاز قبل فصل البداية' : 'Completed before the scenario';
+    }
+    if (label.indexOf('Recommended starting term ') === 0) {
+      const term = label.slice('Recommended starting term '.length);
+      return AR
+        ? `المقررات الموصى بها لفصل البداية: ${term}`
+        : `Recommended starting-term courses ${term}`;
+    }
+    if (label.indexOf('Registered timetable ') === 0) {
+      const term = label.slice('Registered timetable '.length);
+      return AR ? `الجدول المسجّل لفصل البداية: ${term}` : `Registered timetable ${term}`;
     }
     if (label.indexOf('Planning baseline ') === 0) {
       const term = label.slice('Planning baseline '.length);
@@ -76,8 +118,10 @@
       pgTerminal: AR ? 'نهاية سلسلة المتطلبات' : 'chain end',
       pgHoverHint: AR ? 'مرّر على مقرر لإبراز سلسلة متطلباته' : 'hover to highlight a chain',
       pgPassed: AR ? 'مجتاز قبل فصل البداية' : 'completed before the scenario',
-      pgStudying: AR ? 'يُفترض اجتيازه بنهاية فصل البداية' : 'assumed passed in the planning baseline term',
-      pgOpen: AR ? 'مُدرج في فصل تقديري' : 'planned in the scenario',
+      pgStudying: AR ? 'مسجّل فعليًا، ويُفترض اجتيازه' : 'registered; assumed passed by term end',
+      pgOpen: baselineKind === 'recommended_current_term'
+        ? (AR ? 'مقرر مقترح في المسار' : 'proposed in the scenario')
+        : (AR ? 'مُدرج في فصل تقديري' : 'planned in the scenario'),
       pgLocked: AR ? 'تعذّر تحديد فصل مناسب له' : 'unresolved',
       pgSameTermWarn: count => (AR
         ? `علاقات متطلبات سابقة داخل الفصل نفسه: ${count}.`

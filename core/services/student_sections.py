@@ -33,6 +33,20 @@ from core.services.timetable_snapshots import (
 )
 
 _ARABIC_LETTER_RE = re.compile(r"[\u0621-\u064a]")
+_ARABIC_PLAN_NAME_BY_ENGLISH = {
+    "ARTIFICIAL INTELLIGENCE FOR CYBERSECURITY": "الذكاء الاصطناعي للأمن السيبراني",
+    "COMPUTER NETWORKS": "شبكات الحاسب",
+    "COMPUTING ETHICS AND SOCIETY": "الحوسبة وأخلاقيات المهنة والمجتمع",
+    "GRADUATION PROJECT I": "مشروع التخرج (1)",
+    "GRADUATION PROJECT II": "مشروع التخرج (2)",
+    "INTRO TO PARALLEL COMPUTING": "مقدمة في الحوسبة المتوازية",
+    "INTRODUCTION TO PARALLEL COMPUTING": "مقدمة في الحوسبة المتوازية",
+    "OPERATING SYSTEMS": "نظم التشغيل",
+    "PROGRAM ELECTIVE I": "مقرر اختياري في البرنامج (1)",
+    "PROGRAM ELECTIVE COURSE I": "مقرر اختياري في البرنامج (1)",
+    "PROGRAM ELECTIVE COURSE II": "مقرر اختياري في البرنامج (2)",
+    "PROGRAM ELECTIVE COURSE III": "مقرر اختياري في البرنامج (3)",
+}
 
 
 def arabic_term_section_course_names(course_codes: object) -> dict[str, str]:
@@ -114,6 +128,22 @@ def prefer_arabic_course_names_in_payload(payload: dict) -> dict:
 
     collect(copied)
     names = arabic_term_section_course_names(codes)
+    program = str(copied.get("program") or "").strip()
+    if program:
+        for raw_code, raw_name in ProgrammeRequirement.objects.filter(
+            program__iexact=program,
+            course_code__in=codes,
+        ).values_list("course_code", "course_name"):
+            code = normalize_code(raw_code)
+            plan_name = " ".join(str(raw_name or "").split())
+            if not code or code in names or not plan_name:
+                continue
+            if _ARABIC_LETTER_RE.search(plan_name):
+                names[code] = plan_name
+                continue
+            translated = _ARABIC_PLAN_NAME_BY_ENGLISH.get(plan_name.upper())
+            if translated:
+                names[code] = translated
 
     def apply(value: object) -> None:
         if isinstance(value, dict):

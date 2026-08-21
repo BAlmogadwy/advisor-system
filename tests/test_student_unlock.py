@@ -414,6 +414,23 @@ def test_graduation_progress_uses_the_plan_not_the_registrar_total(plan):
     assert g["remaining_courses"] == 4
 
 
+def test_graduation_uses_the_programme_course_name_when_a_code_has_multiple_identities(plan):
+    """The AI and AI2 plans both use AI492 for different courses."""
+    from core.services.student_graduation import build_graduation_report
+
+    Course.objects.filter(course_code="TA101").update(description="Wrong shared-code name")
+    ProgrammeRequirement.objects.filter(program=PROG, course_code="TA101").update(
+        course_name="Correct programme course"
+    )
+
+    report = build_graduation_report(SID, 1448, 1)
+    planned = {
+        course["code"]: course["name"] for term in report["term_plan"] for course in term["courses"]
+    }
+
+    assert planned["TA101"] == "Correct programme course"
+
+
 def test_graduation_lower_bound_keeps_the_prerequisite_chain(plan):
     """A -> B -> C cannot be done in fewer than 3 terms however many she takes."""
     from core.services.student_graduation import build_graduation_report
@@ -474,9 +491,9 @@ def test_stateful_recommender_respects_simulated_credit_hour_gate(plan):
     assert "TCAP" in at_gate
 
 
-def test_graduation_uses_planner_courses_as_current_without_persisting_passes(plan):
+def test_registered_graduation_mode_uses_registrar_courses_without_persisting_passes(plan):
     from core.models import StudentTermSection, TermSection
-    from core.services.student_graduation import build_graduation_report
+    from core.services.student_graduation import REGISTERED_TIMETABLE, build_graduation_report
 
     section = TermSection.objects.create(course_code="TA101", course_name="Alpha", section="M1")
     StudentTermSection.objects.create(
@@ -489,14 +506,181 @@ def test_graduation_uses_planner_courses_as_current_without_persisting_passes(pl
     before_courses = StudentCourse.objects.filter(student_id=SID).count()
     before_sections = StudentTermSection.objects.filter(student_id=SID).count()
 
-    g = build_graduation_report(SID, 1448, 1)
+    g = build_graduation_report(
+        SID,
+        1448,
+        1,
+        planning_baseline_kind=REGISTERED_TIMETABLE,
+    )
 
+    assert g["planning_baseline_kind"] == REGISTERED_TIMETABLE
+    assert g["planning_baseline_credits"] == 3
     assert [course["code"] for course in g["current_courses_assumed_passed"]] == ["TA101"]
     assert "TA101" in {course["code"] for course in g["in_progress"]}
     assert all("TA101" not in planned_term["course_codes"] for planned_term in g["term_plan"])
     assert g["registered_credits_now"] == 3
     assert StudentCourse.objects.filter(student_id=SID).count() == before_courses
     assert StudentTermSection.objects.filter(student_id=SID).count() == before_sections
+
+
+def test_default_graduation_baseline_uses_current_term_recommendations_not_registration(
+    plan, monkeypatch
+):
+    from core.services import student_graduation
+
+    aligned_student_id = 4800001  # joined in 1448, so 1448/1 is programme term 1
+    Student.objects.create(
+        student_id=aligned_student_id,
+        name="Recommended Baseline",
+        program=PROG,
+        section="M",
+        total_earned_credits=100,
+        current_registered_credits=15,
+    )
+    StudentCourse.objects.create(
+        student_id=aligned_student_id,
+        course=Course.objects.get(course_code="TA101"),
+        status="studying",
+        programme_term=1,
+    )
+
+    def registration_must_not_be_read(*_args, **_kwargs):
+        raise AssertionError("default graduation planning read a timetable snapshot")
+
+    monkeypatch.setattr(
+        student_graduation,
+        "get_student_term_baseline",
+        registration_must_not_be_read,
+    )
+
+    report = student_graduation.build_graduation_report(aligned_student_id, 1448, 1)
+
+    assert report["planning_baseline_kind"] == student_graduation.RECOMMENDED_CURRENT_TERM
+    assert report["planning_baseline_credits"] == 3
+    assert [row["code"] for row in report["planning_baseline_courses_assumed_passed"]] == ["TA101"]
+
+
+def _map_expected_courses(*codes: str):
+    from core.models import StudentTermSection, TermSection
+
+    for index, code in enumerate(codes, start=1):
+        section = TermSection.objects.create(
+            source_tag="expected",
+            course_code=code,
+            course_key=code,
+            course_name=Course.objects.get(course_code=code).description,
+            section=f"M{index + 20}",
+        )
+        StudentTermSection.objects.create(
+            student_id=SID,
+            academic_year="1448",
+            term="1",
+            term_section=section,
+            source="registration_plan_1448_t1",
+        )
+
+
+def test_registered_baseline_excludes_expected_and_working_rows_and_has_separate_cache(plan):
+    from core.models import StudentTermSection, TermSection
+    from core.services.student_graduation import (
+        RECOMMENDED_CURRENT_TERM,
+        REGISTERED_TIMETABLE,
+        build_graduation_report,
+    )
+
+    _map_current_courses("TA101")
+    _map_expected_courses("TCAP")
+    working_section = TermSection.objects.create(
+        course_code="TB201",
+        course_key="TB201",
+        course_name="Beta",
+        section="M30",
+    )
+    StudentTermSection.objects.create(
+        student_id=SID,
+        academic_year="1448",
+        term="1",
+        term_section=working_section,
+        source="planner",
+    )
+    # StudentCourse studying is scraped registrar evidence when its section is
+    # missing, so registered mode keeps it as a conservative fallback.
+    StudentCourse.objects.create(
+        student_id=SID,
+        course=Course.objects.get(course_code="TC301"),
+        status="studying",
+        programme_term=5,
+    )
+
+    query_cache = {}
+    recommended = build_graduation_report(
+        SID,
+        1448,
+        1,
+        planning_baseline_kind=RECOMMENDED_CURRENT_TERM,
+        _query_cache=query_cache,
+    )
+    registered = build_graduation_report(
+        SID,
+        1448,
+        1,
+        planning_baseline_kind=REGISTERED_TIMETABLE,
+        _query_cache=query_cache,
+    )
+
+    assert recommended["planning_baseline_kind"] == RECOMMENDED_CURRENT_TERM
+    assert registered["planning_baseline_kind"] == REGISTERED_TIMETABLE
+    registered_codes = {
+        row["code"] for row in registered["planning_baseline_courses_assumed_passed"]
+    }
+    assert registered_codes == {"TA101", "TC301"}
+    assert "TCAP" not in registered_codes
+    assert "TB201" not in registered_codes
+
+
+def test_graduation_compares_registered_baseline_with_expected_additions(plan):
+    from core.services.student_graduation import (
+        RECOMMENDED_CURRENT_TERM,
+        REGISTERED_TIMETABLE,
+        build_expected_plan_graduation_comparison,
+        build_graduation_report,
+    )
+
+    _map_current_courses("TA101")
+    _map_expected_courses("TA101", "TCAP")
+    baseline = build_graduation_report(SID, 1448, 1)
+    comparison = build_expected_plan_graduation_comparison(
+        SID,
+        1448,
+        1,
+        baseline_report=baseline,
+    )
+
+    assert baseline["planning_baseline_kind"] == RECOMMENDED_CURRENT_TERM
+    assert comparison["scenario_report"]["planning_baseline_kind"] == REGISTERED_TIMETABLE
+    assert [row["code"] for row in comparison["additional_courses"]] == ["TCAP"]
+    assert comparison["registered_course_count"] == 1
+    assert comparison["registered_credits"] == 3
+    assert comparison["expected_total_course_count"] == 2
+    assert comparison["expected_total_credits"] == 6
+    assert comparison["scenario_available"] is True
+    assert comparison["scenario_report"]["registered_credits_at_planning_baseline"] == 6
+
+
+@override_settings(ALLOWED_HOSTS=["testserver"])
+def test_graduation_screen_uses_recommended_default_and_makes_no_registration_claim(plan):
+    from core.services.student_graduation import RECOMMENDED_CURRENT_TERM
+
+    _map_current_courses("TA101")
+    _map_expected_courses("TA101", "TCAP")
+
+    response, body = _render_arabic_graduation_page()
+
+    assert response.context["grad"]["planning_baseline_kind"] == RECOMMENDED_CURRENT_TERM
+    assert "expected_plan_comparison" not in response.context
+    assert "المقررات التي يوصي بها النظام للفصل المضبوط حاليًا" in body
+    assert "المقررات المسجّلة فعليًا في فصل البداية" not in body
+    assert "نسبة مقررات الخطة المجتازة" in body
 
 
 def _create_aligned_graduation_transition() -> tuple[int, str, str]:
@@ -574,7 +758,7 @@ def test_graduation_first_projection_uses_passes_from_the_planning_baseline(plan
     assert prerequisite_code not in report["term_plan"][0]["course_codes"]
 
 
-def test_graduation_recommends_for_the_projected_term_not_the_baseline_term(plan, monkeypatch):
+def test_graduation_recommends_for_the_baseline_then_each_projected_term(plan, monkeypatch):
     from core.services import student_graduation
 
     student_id, _prerequisite_code, _dependant_code = _create_aligned_graduation_transition()
@@ -593,7 +777,7 @@ def test_graduation_recommends_for_the_projected_term_not_the_baseline_term(plan
 
     student_graduation.build_graduation_report(student_id, 1448, 1)
 
-    assert calls[0] == (1448, 2)
+    assert calls[:2] == [(1448, 1), (1448, 2)]
 
 
 def test_every_simulated_term_respects_the_18_credit_cap(plan):
@@ -666,7 +850,7 @@ def _map_current_courses(*codes: str):
 
 def test_current_term_replacement_rolls_into_graduation_without_database_writes(plan):
     from core.models import StudentTermSection
-    from core.services.student_graduation import build_graduation_what_if
+    from core.services.student_graduation import REGISTERED_TIMETABLE, build_graduation_what_if
 
     _add_what_if_fixture_courses()
     _map_current_courses("TA101", "TFILL")
@@ -684,6 +868,9 @@ def test_current_term_replacement_rolls_into_graduation_without_database_writes(
     )
     what_if = g["what_if"]
 
+    assert g["planning_baseline_kind"] == REGISTERED_TIMETABLE
+    assert what_if["baseline"]["planning_baseline_kind"] == REGISTERED_TIMETABLE
+    assert what_if["scenario"]["planning_baseline_kind"] == REGISTERED_TIMETABLE
     assert what_if["valid"] is True
     assert [row["code"] for row in what_if["removed_current_courses"]] == ["TFILL"]
     assert [row["code"] for row in what_if["added_current_courses"]] == ["TX999"]
@@ -873,6 +1060,93 @@ def test_earlier_complete_forecast_is_a_proven_replacement_improvement():
     assert comparison["improvement_basis"] == "COMPLETE_FORECAST"
 
 
+def test_comparison_reports_course_moves_when_total_term_count_is_unchanged():
+    from core.services.student_graduation import _compare_reports
+
+    common = {
+        "planning_baseline_academic_year": 1448,
+        "planning_baseline_term": 1,
+        "planning_baseline_courses_assumed_passed": [],
+        "simulation_completed": True,
+        "estimated_additional_terms": 2,
+        "lower_bound_additional_terms": 2,
+        "unresolved_requirements": [],
+    }
+    baseline = {
+        **common,
+        "term_plan": [
+            {
+                "sequence": 1,
+                "academic_year": 1448,
+                "term": 2,
+                "course_codes": ["TA101"],
+            },
+            {
+                "sequence": 2,
+                "academic_year": 1449,
+                "term": 1,
+                "course_codes": ["TB201"],
+            },
+        ],
+    }
+    scenario = {
+        **common,
+        "term_plan": [
+            {
+                "sequence": 1,
+                "academic_year": 1448,
+                "term": 2,
+                "course_codes": ["TB201"],
+            },
+            {
+                "sequence": 2,
+                "academic_year": 1449,
+                "term": 1,
+                "course_codes": ["TA101"],
+            },
+        ],
+    }
+
+    comparison = _compare_reports(baseline, scenario, [])
+
+    assert comparison["timing_effect"] == "SAME"
+    assert comparison["plan_changed"] is True
+    assert comparison["term_plan_changes"] == [
+        {
+            "code": "TA101",
+            "before": {
+                "academic_year": 1448,
+                "term": 2,
+                "sequence": 1,
+                "baseline": False,
+            },
+            "after": {
+                "academic_year": 1449,
+                "term": 1,
+                "sequence": 2,
+                "baseline": False,
+            },
+            "became_unresolved": False,
+        },
+        {
+            "code": "TB201",
+            "before": {
+                "academic_year": 1449,
+                "term": 1,
+                "sequence": 2,
+                "baseline": False,
+            },
+            "after": {
+                "academic_year": 1448,
+                "term": 2,
+                "sequence": 1,
+                "baseline": False,
+            },
+            "became_unresolved": False,
+        },
+    ]
+
+
 def test_graduation_surfaces_the_credit_hour_gate(plan):
     from core.services.student_graduation import build_graduation_report
 
@@ -885,7 +1159,7 @@ def test_graduation_surfaces_the_credit_hour_gate(plan):
 
 
 def test_studying_courses_are_not_counted_as_finished(plan):
-    from core.services.student_graduation import build_graduation_report
+    from core.services.student_graduation import REGISTERED_TIMETABLE, build_graduation_report
 
     StudentCourse.objects.update_or_create(
         student_id=SID,
@@ -895,7 +1169,17 @@ def test_studying_courses_are_not_counted_as_finished(plan):
     g = build_graduation_report(SID, 1448, 1)
     assert g["plan_courses_passed"] == 0  # still has to pass it
     assert g["remaining_courses"] == 4
-    assert len(g["in_progress"]) == 1
+    assert g["in_progress"] == []  # default recommendations do not inherit studying rows
+
+    registered = build_graduation_report(
+        SID,
+        1448,
+        1,
+        planning_baseline_kind=REGISTERED_TIMETABLE,
+    )
+    assert registered["plan_courses_passed"] == 0
+    assert registered["remaining_courses"] == 4
+    assert [row["code"] for row in registered["in_progress"]] == ["TA101"]
 
 
 def _render_arabic_graduation_page():
@@ -942,6 +1226,18 @@ def test_arabic_graduation_page_prefers_the_university_section_name(plan):
 
 
 @override_settings(ALLOWED_HOSTS=["testserver"])
+def test_arabic_graduation_page_localises_known_plan_names_without_a_section(plan):
+    ProgrammeRequirement.objects.filter(program=PROG, course_code="TA101").update(
+        course_name="PROGRAM ELECTIVE COURSE II"
+    )
+
+    _response, arabic = _render_arabic_graduation_page()
+
+    assert "مقرر اختياري في البرنامج (2)" in arabic
+    assert "PROGRAM ELECTIVE COURSE II" not in arabic
+
+
+@override_settings(ALLOWED_HOSTS=["testserver"])
 def test_incomplete_graduation_screen_promotes_the_verified_lower_bound(plan):
     """An unresolved forecast has no estimate; its useful result is the lower bound.
 
@@ -980,16 +1276,33 @@ def test_graduation_screen_names_the_scenario_and_does_not_promise_registration(
     assert "الفصل الذي يبدأ منه التقدير" in body
     assert "الفصل الحالي" not in body
     assert "18 ساعة معتمدة في كل فصل رئيسي" in body
+    assert "الفصل الفردي أو الزوجي الموافق لمستواه في الخطة" in body
+    assert "تم إدراج جميع المقررات المتبقية" in body
+    assert "مسار تقديري مكتمل" not in body
+    assert '<details class="student-grad-map-details mt-3" id="sgMapDetails" open>' in body
     assert "ماذا أستطيع أن أسجّل الآن؟" not in body
 
 
 @override_settings(ALLOWED_HOSTS=["testserver"])
-def test_graduation_screen_lists_every_current_course_assumed_passed(plan):
-    _map_current_courses("TA101", "TCAP")
+def test_graduation_screen_lists_recommended_baseline_and_ignores_registered_rows(
+    plan, monkeypatch
+):
+    from core.models import StudentTermSection
+    from core.services.student_graduation import RECOMMENDED_CURRENT_TERM
+
+    # SID joined in 1449. Align the configured term to its programme term 1 so
+    # the real recommender produces TA101, while the registrar snapshot says TCAP.
+    monkeypatch.setattr(
+        "core.student_auth_views.load_defaults",
+        lambda: {"academic_year": "1449", "term": "1", "currentYear": 1449, "currentTerm": 1},
+    )
+    _map_current_courses("TCAP")
+    StudentTermSection.objects.filter(student_id=SID).update(academic_year="1449")
 
     response, body = _render_arabic_graduation_page()
     assumed = response.context["grad"]["current_courses_assumed_passed"]
-    assert {course["code"] for course in assumed} == {"TA101", "TCAP"}
+    assert response.context["grad"]["planning_baseline_kind"] == RECOMMENDED_CURRENT_TERM
+    assert {course["code"] for course in assumed} == {"TA101"}
     for course in assumed:
         assert course["code"] in body, (
             f"{course['code']} affects the forecast but is absent from its visible assumptions"

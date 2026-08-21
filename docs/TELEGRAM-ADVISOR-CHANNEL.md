@@ -123,14 +123,8 @@ directions:
                                                   ── server → chat → browser ──
 3. Student opens it. Not signed in → redirect into the EXISTING student login
    flow (/student/login/, Uni ID → email OTP) with a validated ?next= back here.
-   During the temporary production acceptance test only,
-   `TELEGRAM_LINK_OTP_REDIRECT_EMAIL` may route that OTP to the test operator.
-   The server re-resolves the saved destination and rechecks that its invitation
-   is fresh and live before applying the override; ordinary student login,
-   invalid/expired invitations, and stale login attempts still use the student's
-   university mailbox. `STUDENT_OTP_REDIRECT_EMAIL` remains the separate global
-   testing override and takes precedence when configured. Clear the link-only
-   setting immediately after acceptance testing.
+   OTP delivery always uses the student's canonical university mailbox. There is
+   no login bypass and no global or Telegram-link recipient override.
 4. Signed in → a confirmation page showing the full privacy notice and one button.
    There is NO student field on that form.
 5. POST → approve_link():  APPROVES, BINDS NOTHING.
@@ -796,75 +790,13 @@ uses the per-job text fallback described in §6.
       `last_error_message`
 - [ ] BotFather privacy mode **enabled**, join-groups **disabled**
 - [ ] Daily Render retention cron includes `purge_telegram_tokens --apply`
-- [ ] If ordinary student-portal or Advisor V2 OTP testing needs one operator
-      inbox, complete this entire temporary **global** redirect cycle in one
-      controlled window:
-  1. Immediately before entering the receiver value, record the authoritative
-     UTC start from the running web service as `global_redirect_started_at`:
-     `python manage.py shell -c "from django.utils import timezone; print(timezone.now().isoformat())"`.
-     Also record the intended test student ID(s) for the execution audit; cleanup
-     remains window-wide regardless. Then set `STUDENT_OTP_REDIRECT_EMAIL`
-     manually on the **`advisor-system` web service only**. `render.yaml`
-     intentionally declares the key as `sync:false`; never add/commit the receiver
-     value to the Blueprint, source control, a shared local env file, the worker,
-     or the cron service.
-  2. Deploy/restart the web service and verify the running setting is non-empty.
-     While set, **every** student login OTP is redirected, so keep the window
-     short and exercise only the recorded test IDs. Verify both portal login and
-     authenticated Advisor V2 access.
-  3. Immediately clear/remove the setting in Render and deploy/restart the web
-     service again.
-  4. Only after the empty-setting redeploy is live, verify the running web process
-     reports it empty and record the returned authoritative UTC end as
-     `global_redirect_ended_at`:
-     `python manage.py shell -c "from django.conf import settings; from django.utils import timezone; assert not settings.STUDENT_OTP_REDIRECT_EMAIL; print(timezone.now().isoformat())"`.
-  5. Because the global redirect affected any login during that effective
-     interval, invalidate **every** still-unconsumed OTP created within the exact
-     inclusive UTC window. Do not restrict this cleanup to the planned test IDs
-     (replace both fail-closed placeholders with the recorded values):
-
-     ```python
-     python manage.py shell
-     >>> from datetime import datetime
-     >>> from django.utils import timezone
-     >>> from core.models import StudentLoginOTP
-     >>> started_at = datetime.fromisoformat("<GLOBAL_REDIRECT_STARTED_AT>")
-     >>> ended_at = datetime.fromisoformat("<GLOBAL_REDIRECT_ENDED_AT>")
-     >>> assert timezone.is_aware(started_at) and timezone.is_aware(ended_at)
-     >>> assert started_at <= ended_at
-     >>> StudentLoginOTP.objects.filter(
-     ...     consumed=False,
-     ...     created_at__gte=started_at,
-     ...     created_at__lte=ended_at,
-     ... ).update(consumed=True)
-     ```
-- [ ] If the link-only OTP receiver is needed for acceptance testing, complete
-      this entire temporary-control cycle; never leave it half-finished:
-  1. Set `TELEGRAM_LINK_OTP_REDIRECT_EMAIL` manually on the
-     **`advisor-system` web service only**, and record the exact acceptance-test
-     student ID(s). `render.yaml` intentionally declares the key as `sync:false`;
-     never add/commit the receiver **value** to the Blueprint, source control, a
-     shared local env file, the worker, or the cron service.
-  2. Deploy/restart the web service, verify the setting is non-empty in that web
-     process, and run only the Telegram linking OTP test. Ordinary login must
-     still address the student's university mailbox.
-  3. Immediately clear/remove the setting in Render and deploy/restart the web
-     service again.
-  4. Verify the running web process reports it empty:
-     `python manage.py shell -c "from django.conf import settings; assert not settings.TELEGRAM_LINK_OTP_REDIRECT_EMAIL; print('empty')"`.
-  5. Invalidate still-unconsumed codes for only the recorded acceptance-test
-     student ID(s). Never invalidate other students' login attempts. OTP rows do
-     not retain which receiver was used, so the operator must supply the IDs
-     recorded in step 1 (replace the fail-closed placeholder before running):
-
-     ```python
-     python manage.py shell
-     >>> from core.models import StudentLoginOTP
-     >>> test_student_ids = [<TEST_STUDENT_ID>]  # exact ID(s) recorded in step 1
-     >>> StudentLoginOTP.objects.filter(
-     ...     student_id__in=test_student_ids, consumed=False
-     ... ).update(consumed=True)
-     ```
+- [ ] Remove the retired `STUDENT_LOGIN_NO_OTP`, `STUDENT_OTP_REDIRECT_EMAIL`, and
+      `TELEGRAM_LINK_OTP_REDIRECT_EMAIL` variables from the Render dashboard. The
+      application ignores them, and the Blueprint validator rejects reintroducing
+      them.
+- [ ] Run automated OTP acceptance tests only with Django's in-memory email
+      backend. A live smoke test must use the test student's real university
+      mailbox; the production service has no alternate OTP receiver.
 - [ ] Smoke test with a test bot and a test student (§10)
 - [ ] Image smoke tests return the complete, untruncated text first, then timetable
       photo(s), and then one graduation map for a separate graduation request.
@@ -882,21 +814,9 @@ service and worker. Do not Blueprint-sync again while the checked-in contract st
 says `true`; first revert the manifest, validator, tests and this runbook, merge the
 rollback, and then sync. Materialized jobs retain their complete text fallback.
 
-If an OTP-redirect acceptance test is interrupted, first clear/remove both
-redirect settings from the web service and deploy/restart. Cleanup then depends
-on which control was effective:
-
-- **Global `STUDENT_OTP_REDIRECT_EMAIL`:** after runtime verification that it is
-  empty, record the authoritative UTC end and invalidate every unconsumed OTP in
-  the inclusive `global_redirect_started_at` → `global_redirect_ended_at` window
-  using §9. If the exact start was not preserved, choose a conservative earlier
-  UTC bound that certainly covers when the value could first have become
-  effective; never narrow global cleanup to the intended test IDs.
-- **Link-only `TELEGRAM_LINK_OTP_REDIRECT_EMAIL`:** after runtime verification
-  that it is empty, invalidate unconsumed OTPs only for the exact acceptance-test
-  student ID(s), using the scoped command in §9.
-
-This cleanup is required even when the Telegram channel itself is being disabled.
+The old OTP bypass and recipient-redirect settings are retired. Remove any stale
+copies from the Render dashboard during rollback as well; current code ignores
+them and never routes an OTP away from the canonical student mailbox.
 
 For a broader adviser/provider rollback, also set
 `STUDENT_ADVISOR_V2_ENABLED=false` and

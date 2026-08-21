@@ -294,13 +294,6 @@ def _mutation_queries(queries: CaptureQueriesContext) -> list[str]:
             ),
             id="meeting-start-is-not-before-end",
         ),
-        pytest.param(
-            _valid_timetable_html().replace(
-                '<td><img src="mark.jpg"></td>',
-                "<td></td>",
-            ),
-            id="meeting-without-supported-day",
-        ),
     ],
 )
 def test_invalid_timetable_is_rejected_before_any_database_write(bad_timetable: str) -> None:

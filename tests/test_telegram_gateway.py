@@ -1456,6 +1456,30 @@ def test_a_short_answer_is_one_message():
     assert render_answer(answer="باقي لك ٣ مواد.") == ["باقي لك ٣ مواد."]
 
 
+def test_internal_policy_ids_are_hidden_but_readable_sources_remain():
+    from telegram_gateway.formatting import render_answer
+
+    class _Citation:
+        document_title = "الدليل الإرشادي للطالب والطالبة"
+        edition = "1447"
+        page = "23"
+
+    rendered = "\n".join(
+        render_answer(
+            answer=(
+                "الحد الأعلى هو 19 وحدة، ص 23 [TU.LOAD.SEMESTER_RANGE]. "
+                "وهذا [NOT.A.REAL.POLICY] لا ينبغي أن يظهر أيضًا."
+            ),
+            citations=[_Citation()],
+        )
+    )
+
+    assert "19 وحدة، ص 23." in rendered
+    assert "[TU." not in rendered and "[NOT." not in rendered
+    assert "المصادر:" in rendered
+    assert "الدليل الإرشادي للطالب والطالبة، 1447، ص 23" in rendered
+
+
 def test_model_strong_markers_are_removed_from_arabic_and_english_answers():
     from telegram_gateway.formatting import render_answer
 

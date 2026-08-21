@@ -1439,6 +1439,8 @@ def _exec_graduation_progress(
 ) -> dict[str, Any]:
     """How far from graduating plus a read-only 18-credit term scenario."""
     from core.services.student_graduation import (
+        RECOMMENDED_CURRENT_TERM,
+        REGISTERED_TIMETABLE,
         build_graduation_report,
         build_graduation_what_if,
     )
@@ -1446,6 +1448,13 @@ def _exec_graduation_progress(
     student_id, error = _resolve_scoped_student_id(args, scope)
     if error:
         return {"ok": False, "error": error}
+
+    planning_baseline_kind = str(args.get("planning_baseline_kind") or RECOMMENDED_CURRENT_TERM)
+    if planning_baseline_kind not in {
+        RECOMMENDED_CURRENT_TERM,
+        REGISTERED_TIMETABLE,
+    }:
+        return {"ok": False, "error": "Unsupported graduation planning baseline."}
     year, term, error = _ctx_year_term(args, ctx)
     if error:
         return {"ok": False, "error": error}
@@ -1460,17 +1469,34 @@ def _exec_graduation_progress(
             int(student_id),
             int(year),
             int(term),
+            planning_baseline_kind=planning_baseline_kind,
             remove_current_courses=[str(code) for code in remove_courses],
             add_current_courses=[str(code) for code in add_courses],
             search_better_replacements=search_replacements,
         )
     else:
-        g = build_graduation_report(int(student_id), int(year), int(term))
+        g = build_graduation_report(
+            int(student_id),
+            int(year),
+            int(term),
+            planning_baseline_kind=planning_baseline_kind,
+        )
     if not g:
         return {"ok": False, "error": f"No degree plan found for student {student_id}."}
+    what_if = g.get("what_if")
+    comparison = what_if.get("comparison") if isinstance(what_if, dict) else None
+    comparison = comparison if isinstance(comparison, dict) else {}
     return {
         "student_id": int(student_id),
         "program": g["program"],
+        "planning_baseline_kind": g.get("planning_baseline_kind", planning_baseline_kind),
+        "planning_baseline_credits": int(
+            g.get(
+                "planning_baseline_credits",
+                g.get("registered_credits_at_planning_baseline") or 0,
+            )
+            or 0
+        ),
         "planning_baseline_academic_year": g["planning_baseline_academic_year"],
         "planning_baseline_term": g["planning_baseline_term"],
         "scenario_academic_year": int(year),
@@ -1520,14 +1546,19 @@ def _exec_graduation_progress(
         "registered_credits_at_planning_baseline": g["registered_credits_at_planning_baseline"],
         "registered_credits_now": g["registered_credits_now"],
         "courses_in_progress": g["in_progress"],
-        "what_if": g.get("what_if"),
+        "what_if": what_if,
+        # Promote the plan delta for simple clients while preserving it inside
+        # what_if.comparison as the authoritative structured comparison.
+        "plan_changed": comparison.get("plan_changed"),
+        "term_plan_changes": comparison.get("term_plan_changes") or [],
         "note": (
             "Registrar credits include courses outside the plan, so they are not a "
             "fraction of the plan total. The estimate repeatedly runs the existing "
             "course recommender one main term ahead, assumes the selected planning-"
-            "baseline Planner courses pass, then rolls each simulated term forward "
-            "in memory only. The planning baseline may be an expected next-term plan, "
-            "so it must not be described as the student's actual current term. "
+            "baseline courses pass, then rolls each simulated term forward in memory "
+            "only. planning_baseline_kind states whether those starting courses are "
+            "system recommendations or the student's actual registered timetable; "
+            "the two sources must not be conflated. "
             "It uses an 18-credit maximum for every simulated term and does not "
             "guarantee offerings, seats, or first-attempt passes. final_term_possible "
             "means the PLAN could be finished in the planning-baseline term; graduation "
@@ -3072,11 +3103,24 @@ def _exec_policy_lookup(
     # to supply a course-repetition percentage.
     from core.services.policy_applicability import classify
 
+    student_status = None
+    if _scope_role(scope) == ROLE_STUDENT:
+        from core.models import Student
+
+        own_student_id = (scope or {}).get("student_id")
+        if own_student_id is not None:
+            student_status = (
+                Student.objects.filter(student_id=own_student_id)
+                .values_list("status", flat=True)
+                .first()
+            )
+
     roles = classify(
         result["policies"],
         question=query or topic or "",
         topics=result.get("matched_topics") or [],
         store=store,
+        student_status=student_status,
     )
     result["question_concepts"] = roles["question_concepts"]
     result["direct_policy_evidence"] = roles["direct_policy_evidence"]
@@ -3570,6 +3614,8 @@ def build_default_registry() -> AdvisorCapabilityRegistry:
                 "GPA, any unmet credit-hour gate, and a read-only term-by-term scenario. The "
                 "scenario assumes the selected planning-baseline Planner courses pass, repeatedly calls the existing "
                 "recommender one main term ahead, and uses at most 18 credits in every term. "
+                "The planning_baseline_kind explicitly distinguishes current-term system "
+                "recommendations from the student's actual registered timetable. "
                 "It can compare read-only planning-baseline add/remove scenarios or search for a "
                 "one-course replacement that has a proven academic improvement. Use for "
                 "'when will I graduate', 'what if I do not take DS341', 'what if I replace "
@@ -3584,6 +3630,15 @@ def build_default_registry() -> AdvisorCapabilityRegistry:
                     },
                     "academic_year": {"type": "integer"},
                     "term": {"type": "integer"},
+                    "planning_baseline_kind": {
+                        "type": "string",
+                        "enum": ["recommended_current_term", "registered_timetable"],
+                        "description": (
+                            "Starting-course provenance. recommended_current_term uses the "
+                            "system's recommendations for its current term; registered_timetable "
+                            "uses only the student's actual registered timetable."
+                        ),
+                    },
                     "remove_current_courses": {
                         "type": "array",
                         "items": {"type": "string"},

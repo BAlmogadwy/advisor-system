@@ -71,14 +71,14 @@ def test_student_linking_fails_closed_without_verified_email_source() -> None:
 @override_settings(WHATSAPP_STUDENT_EMAIL_DOMAIN="students.uni.edu")
 def test_student_scope_limits_generic_find_students_query(monkeypatch: pytest.MonkeyPatch) -> None:
     linked = Student.objects.create(
-        student_id=4450002,
+        student_id=4550002,
         name="Linked Student",
         program="AI",
         section="F",
         total_earned_credits=90,
     )
     Student.objects.create(
-        student_id=4450003,
+        student_id=4550003,
         name="Other Student",
         program="AI",
         section="F",
@@ -86,13 +86,20 @@ def test_student_scope_limits_generic_find_students_query(monkeypatch: pytest.Mo
     )
 
     monkeypatch.setattr("whatsapp_gateway.services._generate_otp", lambda: "123456")
-    monkeypatch.setattr("whatsapp_gateway.services.send_mail", lambda *args, **kwargs: 1)
+    sent: dict[str, object] = {}
+
+    def fake_send_mail(subject, message, from_email, recipient_list, fail_silently=False):
+        sent["recipients"] = recipient_list
+        return 1
+
+    monkeypatch.setattr("whatsapp_gateway.services.send_mail", fake_send_mail)
 
     start_link_challenge(
         wa_id="966500000003",
         phone_number="966500000003",
         university_id=str(linked.student_id),
     )
+    assert sent["recipients"] == [f"tu{linked.student_id}@students.uni.edu"]
     link = verify_link_otp(wa_id="966500000003", otp="123456")
 
     result = find_students_tool({"min_earned_credits": 0}, scope=scope_for_link(link))

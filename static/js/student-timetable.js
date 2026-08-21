@@ -10,8 +10,8 @@
  * instructor, and source (`current`, `proposed`, `baseline`, or `planned`).
  *
  * Options: lang/locale, dir, dayLabels, timeLabel, emptyText, agendaLabel,
- * days, padMinutes, majorHeight, showCourseName, showSource, currentLabel,
- * proposedLabel.
+ * days, padMinutes, labelStep, majorHeight, compressGaps,
+ * compressGapMinutes, showCourseName, showSource, currentLabel, proposedLabel.
  * The output always pairs an aria-hidden visual calendar with an exact,
  * semantic day-by-day agenda. All meeting and option text is escaped.
  */
@@ -31,12 +31,14 @@
     en: {
       days: { SUN: 'Sunday', MON: 'Monday', TUE: 'Tuesday', WED: 'Wednesday', THU: 'Thursday', FRI: 'Friday', SAT: 'Saturday' },
       time: 'Time', empty: 'No scheduled meetings.', agenda: 'Weekly agenda by day',
-      current: 'Current', proposed: 'Proposed'
+      current: 'Current', proposed: 'Proposed',
+      gap: 'No scheduled meetings during this interval'
     },
     ar: {
       days: { SUN: 'الأحد', MON: 'الاثنين', TUE: 'الثلاثاء', WED: 'الأربعاء', THU: 'الخميس', FRI: 'الجمعة', SAT: 'السبت' },
       time: 'الوقت', empty: 'لا تتوفر مواعيد دراسية لعرضها في هذا الجدول.', agenda: 'تفاصيل الجدول الأسبوعي مرتبة حسب اليوم',
-      current: 'الجدول المسجّل فعليًا', proposed: 'الجدول المقترح'
+      current: 'الجدول المسجّل فعليًا', proposed: 'الجدول المقترح',
+      gap: 'لا توجد محاضرات مجدولة خلال هذه الفترة'
     }
   };
 
@@ -128,7 +130,8 @@
       emptyText: opts.emptyText == null ? defaults.empty : opts.emptyText,
       agendaLabel: opts.agendaLabel == null ? defaults.agenda : opts.agendaLabel,
       currentLabel: opts.currentLabel == null ? defaults.current : opts.currentLabel,
-      proposedLabel: opts.proposedLabel == null ? defaults.proposed : opts.proposedLabel
+      proposedLabel: opts.proposedLabel == null ? defaults.proposed : opts.proposedLabel,
+      gapLabel: opts.gapLabel == null ? defaults.gap : opts.gapLabel
     };
   }
 
@@ -190,8 +193,16 @@
       dayLabels: safeDayLabels,
       timeLabel: esc(text.timeLabel),
       dir: text.dir,
-      padMinutes: opts.padMinutes,
-      majorHeight: opts.majorHeight == null ? 32 : opts.majorHeight,
+      padMinutes: opts.padMinutes == null ? 0 : opts.padMinutes,
+      labelStep: opts.labelStep == null ? 60 : opts.labelStep,
+      majorHeight: opts.majorHeight == null ? 72 : opts.majorHeight,
+      timeColumnWidth: opts.timeColumnWidth == null ? 60 : opts.timeColumnWidth,
+      dayMinWidth: opts.dayMinWidth == null ? 124 : opts.dayMinWidth,
+      minWidth: opts.minWidth == null ? 720 : opts.minWidth,
+      compressGaps: opts.compressGaps !== false,
+      compressGapMinutes: opts.compressGapMinutes,
+      segmentPadMinutes: opts.segmentPadMinutes,
+      gapLabel: esc(text.gapLabel),
       cellClass: function (meeting) {
         return 'student-timetable-block student-timetable-block--' + meeting.source;
       },
@@ -199,7 +210,8 @@
         var block = '<span class="student-timetable-block-head"><bdi dir="ltr" class="wg-cid">' +
           esc(meeting.course_code || '—') + '</bdi>';
         if (meeting.section) block += '<bdi dir="ltr" class="student-timetable-block-section">' + esc(meeting.section) + '</bdi>';
-        block += '</span><time class="wg-meta" dir="ltr">' + esc(meeting.start) + '–' + esc(meeting.end) + '</time>';
+        block += '</span><time class="wg-meta student-timetable-block-time" dir="ltr">' +
+          esc(meeting.start) + '–' + esc(meeting.end) + '</time>';
         if (opts.showCourseName !== false && meeting.course_name) {
           block += '<span class="student-timetable-block-name" dir="auto">' + esc(meeting.course_name) + '</span>';
         }

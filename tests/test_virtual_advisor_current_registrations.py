@@ -619,13 +619,116 @@ def test_graduation_progress_returns_the_fields_the_report_computes():
         "registered_credits_at_planning_baseline",
         "planning_baseline_academic_year",
         "planning_baseline_term",
+        "planning_baseline_kind",
+        "planning_baseline_credits",
         "planning_baseline_courses_assumed_passed",
         "estimated_terms_including_planning_baseline",
         "courses_in_progress",
+        "plan_changed",
+        "term_plan_changes",
     ):
         assert field in out, f"{field} is computed by the report and still dropped"
     # Plan completion is not graduation — that is a University Council decision.
     assert "Council" in out["note"]
+    assert out["planning_baseline_kind"] == "recommended_current_term"
+    assert out["planning_baseline_credits"] == out["registered_credits_at_planning_baseline"]
+
+
+def test_graduation_what_if_exposes_registered_provenance_and_plan_delta() -> None:
+    from core.services.rbac import ROLE_SUPER_ADMIN
+    from core.services.virtual_advisor_capabilities import get_default_registry
+
+    _make_retake_student()
+    out = get_default_registry().execute(
+        "graduation_progress",
+        {
+            "student_id": SID,
+            "planning_baseline_kind": "registered_timetable",
+            "remove_current_courses": ["CS372"],
+        },
+        scope={"role": ROLE_SUPER_ADMIN},
+        ctx={"academic_year": 1447, "term": 2},
+    )
+
+    comparison = out["what_if"]["comparison"]
+    assert out["planning_baseline_kind"] == "registered_timetable"
+    assert comparison["baseline_planning_credits"] == 16
+    assert out["planning_baseline_credits"] == comparison["scenario_planning_credits"] == 12
+    assert out["plan_changed"] is comparison["plan_changed"]
+    assert out["term_plan_changes"] == comparison["term_plan_changes"]
+
+
+def test_graduation_remote_projection_keeps_safe_baseline_and_plan_delta() -> None:
+    from core.services.llm_remote_privacy import (
+        RemoteIdentityMap,
+        project_tool_result_for_remote,
+    )
+
+    raw = {
+        "tool": "graduation_progress",
+        "ok": True,
+        "planning_baseline_kind": "registered_timetable",
+        "planning_baseline_credits": 15,
+        "registered_credits_at_planning_baseline": 999,
+        "plan_changed": True,
+        "term_plan_changes": [
+            {
+                "code": "DS341",
+                "before": {
+                    "academic_year": 1448,
+                    "term": 1,
+                    "sequence": 0,
+                    "baseline": True,
+                    "student_name": "must not cross",
+                },
+                "after": {
+                    "academic_year": 1448,
+                    "term": 2,
+                    "sequence": 1,
+                    "baseline": False,
+                },
+                "became_unresolved": False,
+                "student_email": "must not cross",
+            }
+        ],
+        "what_if": {
+            "mode": "explicit_changes",
+            "valid": True,
+            "comparison": {
+                "timing_effect": "SAME",
+                "plan_changed": True,
+                "term_plan_changes": [
+                    {
+                        "code": "DS341",
+                        "before": {
+                            "academic_year": 1448,
+                            "term": 1,
+                            "sequence": 0,
+                            "baseline": True,
+                        },
+                        "after": {
+                            "academic_year": 1448,
+                            "term": 2,
+                            "sequence": 1,
+                            "baseline": False,
+                        },
+                        "became_unresolved": False,
+                    }
+                ],
+            },
+        },
+    }
+
+    projected = project_tool_result_for_remote("graduation_progress", raw, RemoteIdentityMap())
+
+    assert projected["planning_baseline_kind"] == "registered_timetable"
+    assert projected["planning_baseline_credits"] == 15
+    assert "registered_credits_at_planning_baseline" not in projected
+    assert projected["plan_changed"] is True
+    assert projected["term_plan_changes"][0]["code"] == "DS341"
+    assert projected["what_if"]["comparison"]["plan_changed"] is True
+    assert "student_name" not in str(projected)
+    assert "student_email" not in str(projected)
 
 
 def test_why_course_locked_answers_the_forward_direction():

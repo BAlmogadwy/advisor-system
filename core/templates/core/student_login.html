@@ -22,11 +22,6 @@
         {% endif %}
       </p>
 
-      {% if no_otp_mode %}
-        <div class="login-alert" role="alert">
-          {% if LANGUAGE_CODE == 'ar' %}وضع الاختبار: تسجيل الدخول بالرقم الجامعي فقط، من دون رمز تحقق{% else %}TESTING MODE — signing in with the University ID only, no verification code{% endif %}
-        </div>
-      {% endif %}
       <div aria-live="polite" aria-atomic="true">
         {% if error %}<div class="login-alert" role="alert">{{ error }}</div>{% endif %}
         {% if sent %}

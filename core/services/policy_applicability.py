@@ -37,6 +37,7 @@ BACKGROUND — which withholds the ability to state a rule rather than guessing 
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any
 
@@ -46,6 +47,22 @@ DIRECT_SUPPORT = "DIRECT_SUPPORT"
 BACKGROUND_ONLY = "BACKGROUND_ONLY"
 CONFLICTING = "CONFLICTING"
 IRRELEVANT = "IRRELEVANT"
+
+_EXPECTED_GRADUATE_POLICY_ID = "TU.LOAD.EXPECTED_GRADUATE_REQUEST"
+_EXPECTED_GRADUATE_STATUS = "GRADUATION EXPECTED"
+_EXPECTED_GRADUATE_QUESTION = re.compile(
+    r"(?:متوقع\w*\s+(?:ال)?تخرج\w*|expected\s+graduat\w*|graduation\s+expected)",
+    re.IGNORECASE,
+)
+
+
+def _expected_graduate_rule_applies(question: str, student_status: str | None) -> bool:
+    """Whether the special request rule is about this question or this student."""
+    status = str(student_status or "").strip().upper()
+    return status == _EXPECTED_GRADUATE_STATUS or bool(
+        _EXPECTED_GRADUATE_QUESTION.search(str(question or ""))
+    )
+
 
 #: A claim is NORMATIVE when it tells the student what the institution requires,
 #: permits, forbids, means, or where to go. Only DIRECT_SUPPORT may ground one.
@@ -267,6 +284,7 @@ def classify(
     topics: list[str],
     store: Any,
     index: ApplicabilityIndex | None = None,
+    student_status: str | None = None,
 ) -> dict[str, Any]:
     """Sort retrieved policies into roles. Returns the three collections plus a trace.
 
@@ -294,6 +312,22 @@ def classify(
             "action": entry.get("action"),
             "claim_types": entry.get("claim_types") or [],
         }
+
+        # This special request rule shares the broad ``credit_load`` concept with
+        # the ordinary 12–19 range. Concept equality alone previously promoted its
+        # unresolved 16-hour clause into every load answer, even when the linked
+        # student's registrar status was simply ACTIVE.
+        if policy_id == _EXPECTED_GRADUATE_POLICY_ID and not _expected_graduate_rule_applies(
+            question,
+            student_status,
+        ):
+            annotated["role"] = IRRELEVANT
+            annotated["role_reason"] = (
+                "applies only to an expected-graduate question or a student whose "
+                "registrar status is GRADUATION EXPECTED"
+            )
+            irrelevant.append(annotated)
+            continue
 
         # A record superseded by a higher authority never grounds a claim, whatever
         # its concept: the store already knows a different source governs.
