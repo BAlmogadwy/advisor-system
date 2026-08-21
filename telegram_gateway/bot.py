@@ -440,7 +440,7 @@ def _handle_confirm(inbound: InboundMessage) -> list[str]:
         # answer, because distinguishing them says whether an approval exists for
         # a chat, which is what somebody holding a forwarded link wants to know.
         return [messages.CONFIRM_INVALID]
-    return [messages.LINK_CONFIRMED]
+    return [messages.LINK_CONFIRMED, messages.STARTER_QUESTIONS]
 
 
 def _handle_unlink(inbound: InboundMessage) -> list[str]:
@@ -546,7 +546,7 @@ def handle_command(inbound: InboundMessage, link: TelegramLink | None) -> list[s
         return [messages.NEEDS_LINK]
 
     if command == "/help":
-        return [messages.HELP_LINKED]
+        return [messages.HELP_LINKED, messages.STARTER_QUESTIONS]
     if command in {"/link", "/confirm"}:
         return [messages.ALREADY_LINKED]
     if command == "/unlink":
