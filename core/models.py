@@ -550,7 +550,23 @@ class UserScope(models.Model):
 
 class StudentLoginOTP(models.Model):
     """One-time email code for student login. The code itself is never stored —
-    only a salted SHA-256 hash. Short-lived, single-use, attempt-capped."""
+    only a salted SHA-256 hash. Short-lived, single-use, attempt-capped.
+
+    ``consumed`` is also the activation gate.  A provider-backed replacement is
+    created consumed and becomes usable only after the provider accepts it; this
+    lets a failed resend leave the previously delivered code usable.
+    """
+
+    class DeliveryChannel(models.TextChoices):
+        SMTP = "smtp", "SMTP"
+        SENDGRID = "sendgrid", "Twilio SendGrid"
+
+    class DeliveryStatus(models.TextChoices):
+        PENDING = "pending", "Pending"
+        ACCEPTED = "accepted", "Accepted"
+        FAILED = "failed", "Failed"
+        CANCELLED = "cancelled", "Cancelled"
+        SKIPPED = "skipped", "Historical / unknown"
 
     student_id = models.IntegerField(db_index=True)
     code_hash = models.CharField(max_length=64)
@@ -559,6 +575,28 @@ class StudentLoginOTP(models.Model):
     attempts = models.IntegerField(default=0)
     consumed = models.BooleanField(default=False)
     request_ip = models.CharField(max_length=64, blank=True, default="")
+    delivery_channel = models.CharField(
+        max_length=16,
+        choices=DeliveryChannel.choices,
+        default=DeliveryChannel.SMTP,
+        db_default=DeliveryChannel.SMTP,
+    )
+    delivery_status = models.CharField(
+        max_length=16,
+        choices=DeliveryStatus.choices,
+        default=DeliveryStatus.PENDING,
+        # The retained database default exists for the old web process during a
+        # rolling deploy. Those rows predate delivery receipts, so do not claim
+        # they are pending SendGrid work that the new process may cancel.
+        db_default=DeliveryStatus.SKIPPED,
+    )
+    delivery_finished_at = models.DateTimeField(null=True, blank=True)
+    provider_message_id = models.CharField(
+        max_length=255,
+        blank=True,
+        default="",
+        db_default="",
+    )
 
     class Meta:
         db_table = "core_student_login_otp"

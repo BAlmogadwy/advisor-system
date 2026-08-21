@@ -24,9 +24,22 @@
 
       <div aria-live="polite" aria-atomic="true">
         {% if error %}<div class="login-alert" role="alert">{{ error }}</div>{% endif %}
-        {% if sent %}
+        {% if send_limited %}
+          <div class="login-alert" role="alert">
+            {% if LANGUAGE_CODE == 'ar' %}تم تجاوز العدد المسموح به من طلبات الإرسال. حاول مرة أخرى لاحقًا.{% else %}Too many code requests. Please try again later.{% endif %}
+          </div>
+        {% elif resent %}
+          <div class="alert alert-info otp-delivery-notice" role="status">
+            {% if LANGUAGE_CODE == 'ar' %}استلمنا طلبك لإرسال رمز جديد إلى <span dir="ltr">{{ email }}</span>. استخدم الرمز الصادر عن آخر طلب إرسال ناجح. إذا لم تصلك الرسالة الجديدة، فقد يظل الرمز السابق صالحًا حتى انتهاء صلاحيته.{% else %}We received your request for a new code at <span dir="ltr">{{ email }}</span>. Use the code from your most recent successful request. If the new email does not arrive, the previous code may remain valid until it expires.{% endif %}
+          </div>
+        {% elif sent %}
           <div class="alert alert-info" role="status">
-            {% if LANGUAGE_CODE == 'ar' %}إذا كان الرقم الجامعي مسجّلًا لدينا، فقد أُرسل رمز التحقق إلى <span dir="ltr">{{ email }}</span>{% else %}If the ID is valid, a code has been sent to <span dir="ltr">{{ email }}</span>{% endif %}
+            {% if LANGUAGE_CODE == 'ar' %}استلمنا طلبك لإرسال رمز التحقق إلى <span dir="ltr">{{ email }}</span>. إذا كان الرقم الجامعي مسجّلًا لدينا، فأدخل الرمز عند وصوله.{% else %}We received your request for a verification code at <span dir="ltr">{{ email }}</span>. If the ID is registered, enter the code when it arrives.{% endif %}
+          </div>
+        {% endif %}
+        {% if resend_too_soon %}
+          <div class="alert alert-info otp-delivery-notice" role="status">
+            {% if LANGUAGE_CODE == 'ar' %}لم يحن موعد إعادة الإرسال بعد. سيُتاح الزر تلقائيًا عند انتهاء العدّ التنازلي.{% else %}Resend is not available yet. The button will activate automatically when the countdown ends.{% endif %}
           </div>
         {% endif %}
       </div>
@@ -46,10 +59,49 @@
             <span class="neu-btn-text">{% if LANGUAGE_CODE == 'ar' %}التحقق وتسجيل الدخول{% else %}Verify &amp; sign in{% endif %}</span>
           </button>
         </form>
+        {% comment %}The resend form carries only a CSRF token. Identity, address,
+        provider, and deadline are all read from the server-owned session.{% endcomment %}
+        <div class="otp-resend-block">
+          <p class="otp-resend-hint">
+            {% if LANGUAGE_CODE == 'ar' %}لم يصلك الرمز؟ يمكنك طلب رمز جديد بعد انتهاء العدّ التنازلي.{% else %}Didn’t receive the code? You can request a new one after the countdown.{% endif %}
+          </p>
+          <form method="post" action="{% url 'student_otp_resend' %}" class="otp-resend-form">
+            {% csrf_token %}
+            <button type="submit" class="neu-btn otp-resend-btn" id="otpResendBtn"
+                    data-remaining="{{ resend_seconds|default:0 }}"
+                    data-deadline-ms="{{ resend_deadline_ms|default:0 }}"
+                    aria-describedby="otpResendStatus"
+                    {% if resend_seconds %}disabled aria-disabled="true"{% else %}aria-disabled="false"{% endif %}>
+              <span class="otp-resend-btn-label">
+                {% if resend_seconds %}
+                  {% if LANGUAGE_CODE == 'ar' %}إعادة إرسال الرمز بعد {{ resend_seconds }} ثانية{% else %}Resend code in {{ resend_seconds }} seconds{% endif %}
+                {% else %}
+                  {% if LANGUAGE_CODE == 'ar' %}إعادة إرسال الرمز{% else %}Resend code{% endif %}
+                {% endif %}
+              </span>
+            </button>
+          </form>
+          <p class="otp-resend-countdown">
+            <span id="otpResendCountdown" aria-hidden="true">
+              {% if resend_seconds %}
+                {% if LANGUAGE_CODE == 'ar' %}يتاح طلب رمز جديد خلال {{ resend_seconds }} ثانية.{% else %}You can request a new code in {{ resend_seconds }} seconds.{% endif %}
+              {% else %}
+                {% if LANGUAGE_CODE == 'ar' %}يمكنك الآن طلب رمز جديد.{% else %}You can request a new code now.{% endif %}
+              {% endif %}
+            </span>
+            <span class="sr-only" id="otpResendStatus" role="status" aria-live="polite" aria-atomic="true">
+              {% if resend_seconds %}
+                {% if LANGUAGE_CODE == 'ar' %}يتاح طلب رمز جديد خلال {{ resend_seconds }} ثانية.{% else %}You can request a new code in {{ resend_seconds }} seconds.{% endif %}
+              {% else %}
+                {% if LANGUAGE_CODE == 'ar' %}يمكنك الآن طلب رمز جديد.{% else %}You can request a new code now.{% endif %}
+              {% endif %}
+            </span>
+          </p>
+        </div>
         {% comment %}Always shown (never conditioned on the ID), so it states the
         throttle rule without revealing whether a particular ID exists.{% endcomment %}
-        <p class="login-sub">
-          {% if LANGUAGE_CODE == 'ar' %}يمكن طلب ثلاثة رموز كحد أقصى خلال ١٥ دقيقة. إذا لم يصلك الرمز، فانتظر بضع دقائق قبل إعادة المحاولة.{% else %}No code? Only 3 codes are allowed per 15 minutes — please wait a few minutes before trying again.{% endif %}
+        <p class="login-sub otp-request-limit">
+          {% if LANGUAGE_CODE == 'ar' %}يمكن طلب ثلاثة رموز كحد أقصى خلال ١٥ دقيقة. استخدم الرمز الصادر عن آخر طلب إرسال ناجح. إذا لم تصلك الرسالة الجديدة، فقد يظل الرمز السابق صالحًا حتى انتهاء صلاحيته.{% else %}Only 3 codes are allowed per 15 minutes. Use the code from your most recent successful request. If the new email does not arrive, the previous code may remain valid until it expires.{% endif %}
         </p>
         <p class="login-sub">
           <a href="{% url 'student_login' %}">{% if LANGUAGE_CODE == 'ar' %}استخدام رقم آخر{% else %}Use a different ID{% endif %}</a>
@@ -107,6 +159,72 @@
       form.addEventListener('submit', function() {
         btn.disabled = true;
         btn.classList.add('is-loading');
+      });
+    }
+
+    /* The server owns the real cooldown. This countdown is presentation only;
+       an early or scripted POST remains blocked by the resend view. */
+    var resendBtn = document.getElementById('otpResendBtn');
+    if (resendBtn) {
+      var remaining = Math.max(0, parseInt(resendBtn.getAttribute('data-remaining') || '0', 10));
+      var countdownEndsAt = parseInt(resendBtn.getAttribute('data-deadline-ms') || '0', 10);
+      if (!countdownEndsAt) countdownEndsAt = Date.now() + (remaining * 1000);
+      var label = resendBtn.querySelector('.otp-resend-btn-label');
+      var countdown = document.getElementById('otpResendCountdown');
+      var countdownStatus = document.getElementById('otpResendStatus');
+      var isArabic = document.documentElement.lang === 'ar';
+      var lastAnnounced = null;
+      var numberFormat;
+      try { numberFormat = new Intl.NumberFormat(isArabic ? 'ar-SA-u-nu-arab' : 'en'); } catch (e) {}
+      var formatNumber = function(value) {
+        return numberFormat ? numberFormat.format(value) : String(value);
+      };
+      var renderCountdown = function() {
+        remaining = Math.max(0, Math.ceil((countdownEndsAt - Date.now()) / 1000));
+        if (remaining > 0) {
+          resendBtn.disabled = true;
+          resendBtn.setAttribute('aria-disabled', 'true');
+          label.textContent = isArabic
+            ? 'إعادة إرسال الرمز بعد ' + formatNumber(remaining) + ' ثانية'
+            : 'Resend code in ' + formatNumber(remaining) + ' seconds';
+          var waitingText = isArabic
+            ? 'يتاح طلب رمز جديد خلال ' + formatNumber(remaining) + ' ثانية.'
+            : 'You can request a new code in ' + formatNumber(remaining) + ' seconds.';
+          countdown.textContent = waitingText;
+          /* Announce meaningful milestones without making a screen reader speak
+             on every one-second visual update. */
+          if (lastAnnounced === null || remaining % 10 === 0 || remaining === 5) {
+            countdownStatus.textContent = waitingText;
+            lastAnnounced = remaining;
+          }
+          return;
+        }
+        resendBtn.disabled = false;
+        resendBtn.setAttribute('aria-disabled', 'false');
+        label.textContent = isArabic ? 'إعادة إرسال الرمز' : 'Resend code';
+        var readyText = isArabic
+          ? 'يمكنك الآن طلب رمز جديد.'
+          : 'You can request a new code now.';
+        countdown.textContent = readyText;
+        if (lastAnnounced !== 0) {
+          countdownStatus.textContent = readyText;
+          lastAnnounced = 0;
+        }
+      };
+      renderCountdown();
+      if (remaining > 0) {
+        var resendTimer = window.setInterval(function() {
+          renderCountdown();
+          if (remaining <= 0) window.clearInterval(resendTimer);
+        }, 1000);
+      }
+      window.addEventListener('pageshow', renderCountdown);
+      document.addEventListener('visibilitychange', function() {
+        if (!document.hidden) renderCountdown();
+      });
+      resendBtn.closest('form').addEventListener('submit', function() {
+        resendBtn.disabled = true;
+        resendBtn.setAttribute('aria-disabled', 'true');
       });
     }
 

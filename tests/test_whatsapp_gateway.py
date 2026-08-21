@@ -7,10 +7,12 @@ from django.test import Client, override_settings
 
 from core.models import AcademicAdvisor, Student
 from core.services.rbac import ROLE_STUDENT
+from core.services.sendgrid_email import SendGridDeliveryError
+from core.services.student_otp import provision_student_user
 from core.services.virtual_advisor import find_students_tool
 from whatsapp_gateway.models import WhatsAppMessageLog, WhatsAppOtpChallenge, WhatsAppUserLink
 from whatsapp_gateway.services import (
-    IdentityResolutionError,
+    OtpChallengeError,
     process_inbound_text,
     scope_for_link,
     start_link_challenge,
@@ -32,13 +34,13 @@ def test_advisor_otp_linking_creates_active_whatsapp_scope(monkeypatch: pytest.M
 
     monkeypatch.setattr("whatsapp_gateway.services._generate_otp", lambda: "123456")
 
-    def fake_send_mail(subject, message, from_email, recipient_list, fail_silently=False):
+    def fake_sendgrid(to_email, subject, message):
         sent["subject"] = subject
         sent["message"] = message
-        sent["recipients"] = recipient_list
-        return 1
+        sent["recipient"] = to_email
+        return "safe-message-id"
 
-    monkeypatch.setattr("whatsapp_gateway.services.send_mail", fake_send_mail)
+    monkeypatch.setattr("whatsapp_gateway.services.send_transactional_email", fake_sendgrid)
 
     challenge = start_link_challenge(
         wa_id="966500000001",
@@ -48,7 +50,7 @@ def test_advisor_otp_linking_creates_active_whatsapp_scope(monkeypatch: pytest.M
 
     assert challenge.email_masked == "a***5@uni.edu"
     assert challenge.otp_hash != "123456"
-    assert sent["recipients"] == ["advisor75@uni.edu"]
+    assert sent["recipient"] == "advisor75@uni.edu"
 
     link = verify_link_otp(wa_id="966500000001", otp="123456")
     assert link.status == WhatsAppUserLink.STATUS_ACTIVE
@@ -57,18 +59,87 @@ def test_advisor_otp_linking_creates_active_whatsapp_scope(monkeypatch: pytest.M
     assert scope_for_link(link)["advisor_id"] == "75"
 
 
-def test_student_linking_fails_closed_without_verified_email_source() -> None:
+def test_student_linking_uses_canonical_university_email_source(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     Student.objects.create(student_id=4450001, name="Student One", program="AI")
+    sent: dict[str, object] = {}
 
-    with pytest.raises(IdentityResolutionError, match="Student email is not configured"):
+    def fake_sendgrid(to_email, subject, message):
+        sent["recipient"] = to_email
+        return "safe-message-id"
+
+    monkeypatch.setattr("whatsapp_gateway.services.send_transactional_email", fake_sendgrid)
+
+    challenge = start_link_challenge(
+        wa_id="966500000002",
+        phone_number="966500000002",
+        university_id="4450001",
+    )
+
+    assert challenge.email_masked == "4***1@taibahu.edu.sa"
+    assert sent["recipient"] == "4450001@taibahu.edu.sa"
+
+
+def test_provisioned_student_with_blank_user_email_uses_canonical_mailbox(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    student = Student.objects.create(student_id=4550004, name="Student Two", program="AI")
+    user = provision_student_user(student.student_id)
+    assert user.email == ""
+    sent: dict[str, object] = {}
+
+    def fake_sendgrid(to_email, subject, message):
+        sent["recipient"] = to_email
+        return "safe-message-id"
+
+    monkeypatch.setattr("whatsapp_gateway.services.send_transactional_email", fake_sendgrid)
+
+    challenge = start_link_challenge(
+        wa_id="966500000004",
+        phone_number="966500000004",
+        university_id=str(student.student_id),
+    )
+
+    assert challenge.resolved_role == ROLE_STUDENT
+    assert challenge.resolved_user_id == user.id
+    assert challenge.resolved_student_id == student.student_id
+    assert sent["recipient"] == f"tu{student.student_id}@taibahu.edu.sa"
+
+
+def test_sendgrid_failure_leaves_no_usable_whatsapp_challenge_or_pii(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    advisor_email = "private-advisor@uni.edu"
+    AcademicAdvisor.objects.create(
+        advisor_id="76",
+        full_name="Private Advisor",
+        email=advisor_email,
+        department="AI",
+    )
+    monkeypatch.setattr("whatsapp_gateway.services._generate_otp", lambda: "654321")
+
+    def fail_sendgrid(to_email, subject, message):
+        raise SendGridDeliveryError("provider_rejected")
+
+    monkeypatch.setattr("whatsapp_gateway.services.send_transactional_email", fail_sendgrid)
+
+    with pytest.raises(OtpChallengeError) as captured:
         start_link_challenge(
             wa_id="966500000002",
             phone_number="966500000002",
-            university_id="4450001",
+            university_id="76",
         )
 
+    public_error = str(captured.value)
+    assert public_error == "Unable to send a verification code. Try again later."
+    assert advisor_email not in public_error
+    assert "654321" not in public_error
+    assert "provider_rejected" not in public_error
+    assert WhatsAppOtpChallenge.objects.count() == 0
 
-@override_settings(WHATSAPP_STUDENT_EMAIL_DOMAIN="students.uni.edu")
+
+@override_settings(STUDENT_EMAIL_DOMAIN="students.uni.edu")
 def test_student_scope_limits_generic_find_students_query(monkeypatch: pytest.MonkeyPatch) -> None:
     linked = Student.objects.create(
         student_id=4550002,
@@ -88,18 +159,18 @@ def test_student_scope_limits_generic_find_students_query(monkeypatch: pytest.Mo
     monkeypatch.setattr("whatsapp_gateway.services._generate_otp", lambda: "123456")
     sent: dict[str, object] = {}
 
-    def fake_send_mail(subject, message, from_email, recipient_list, fail_silently=False):
-        sent["recipients"] = recipient_list
-        return 1
+    def fake_sendgrid(to_email, subject, message):
+        sent["recipient"] = to_email
+        return "safe-message-id"
 
-    monkeypatch.setattr("whatsapp_gateway.services.send_mail", fake_send_mail)
+    monkeypatch.setattr("whatsapp_gateway.services.send_transactional_email", fake_sendgrid)
 
     start_link_challenge(
         wa_id="966500000003",
         phone_number="966500000003",
         university_id=str(linked.student_id),
     )
-    assert sent["recipients"] == [f"tu{linked.student_id}@students.uni.edu"]
+    assert sent["recipient"] == f"tu{linked.student_id}@students.uni.edu"
     link = verify_link_otp(wa_id="966500000003", otp="123456")
 
     result = find_students_tool({"min_earned_credits": 0}, scope=scope_for_link(link))

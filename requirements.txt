@@ -2,7 +2,7 @@
 # Django 5.2.16 patch release — resolves pip-audit findings PYSEC-2026-2090/
 # 2091/2092 (fixed in 5.2.16), on top of the earlier PYSEC-2026-50/54/55 and
 # 197-201 fixes. Routine patch-level bump within the 5.2.x line; no API changes.
-Django==5.2.16
+Django==5.2.17
 # python-dotenv 1.2.2 — resolves CVE-2026-28684. Patch-level bump.
 python-dotenv==1.2.2
 
@@ -18,6 +18,11 @@ gunicorn==25.1.0
 
 # ── App dependencies ──
 beautifulsoup4==4.14.3
+# Official Twilio SendGrid SDK for student verification email delivery.
+sendgrid==6.12.5
+# The adapter relies on this SDK transport's timeout propagation and response
+# header contract; pin the transitive dependency so production cannot drift.
+python-http-client==3.3.7
 # Direct runtime dependency used by the adviser policy store.  Keep this
 # explicit so a clean production install does not rely on dev tooling pulling
 # it in transitively.

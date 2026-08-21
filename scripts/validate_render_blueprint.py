@@ -51,7 +51,8 @@ EXPECTED_WORKER_START_COMMAND = (
 )
 EXPECTED_CRON_START_COMMAND = (
     "python manage.py purge_planner_drafts --apply && "
-    "python manage.py purge_telegram_tokens --apply"
+    "python manage.py purge_telegram_tokens --apply && "
+    "python manage.py purge_student_login_otps --apply"
 )
 EXPECTED_PREDEPLOY_COMMAND = (
     "python manage.py migrate --noinput && "
@@ -61,8 +62,8 @@ EXPECTED_PREDEPLOY_COMMAND = (
 )
 WEB_SECRET_KEYS = frozenset(
     {
-        "EMAIL_HOST_USER",
-        "EMAIL_HOST_PASSWORD",
+        "SENDGRID_API_KEY",
+        "SENDGRID_FROM_EMAIL",
         "PORTAL_ADMIN_USERNAME",
         "PORTAL_ADMIN_PASSWORD",
         "TELEGRAM_BOT_TOKEN",
@@ -81,17 +82,19 @@ WEB_FIXED_ENV_VALUES = {
     "DJANGO_ALLOWED_HOSTS": EXPECTED_PUBLIC_HOST,
     "CSRF_TRUSTED_ORIGINS": EXPECTED_PUBLIC_ORIGIN,
     "ADVISOR_DB_PATH": EXPECTED_NO_LEGACY_IMPORT_PATH,
-    "EMAIL_HOST": "smtp.gmail.com",
-    "EMAIL_PORT": "587",
-    "EMAIL_USE_TLS": "true",
-    "EMAIL_TIMEOUT": "20",
-    "EMAIL_BACKEND": "django.core.mail.backends.smtp.EmailBackend",
+    "SENDGRID_FROM_NAME": "بوابة الطالب",
+    "SENDGRID_TIMEOUT_SECONDS": "3",
+    "SENDGRID_MAX_SUBMISSIONS": "4700",
+    "SENDGRID_SUBMISSION_WINDOW_SECONDS": "86400",
+    "STUDENT_OTP_SENDGRID_ENABLED": "true",
+    "STUDENT_OTP_RESEND_DELAY_SECONDS": "50",
+    "STUDENT_OTP_RESPONSE_FLOOR_SECONDS": "3.5",
     "STUDENT_EMAIL_DOMAIN": "taibahu.edu.sa",
     "STUDENT_OTP_TTL_SECONDS": "600",
     "STUDENT_OTP_MAX_ATTEMPTS": "5",
     "STUDENT_OTP_MAX_SENDS": "3",
     "STUDENT_OTP_SEND_WINDOW_SECONDS": "900",
-    "STUDENT_OTP_ASYNC_EMAIL": "true",
+    "STUDENT_OTP_ASYNC_EMAIL": "false",
     "IP_FROM_XFF": "true",
     "TELEGRAM_ADVISOR_ENABLED": "true",
     "TELEGRAM_PUBLIC_BASE_URL": EXPECTED_PUBLIC_ORIGIN,
@@ -126,6 +129,24 @@ WEB_FIXED_ENV_VALUES = {
     "STUDENT_ADVISOR_V2_MAX_TOKENS": "1800",
     "STUDENT_ADVISOR_V2_TOOL_TIMEOUT_SECONDS": "75",
 }
+
+# Student email delivery belongs only to the public web process. Neither
+# secrets nor non-secret controls may be copied into the Telegram worker or the
+# retention cron.
+STUDENT_EMAIL_WEB_ONLY_ENV_KEYS = frozenset(
+    {
+        "SENDGRID_API_KEY",
+        "SENDGRID_FROM_EMAIL",
+        "SENDGRID_FROM_NAME",
+        "SENDGRID_TIMEOUT_SECONDS",
+        "SENDGRID_MAX_SUBMISSIONS",
+        "SENDGRID_SUBMISSION_WINDOW_SECONDS",
+        "STUDENT_OTP_SENDGRID_ENABLED",
+        "STUDENT_OTP_RESEND_DELAY_SECONDS",
+        "STUDENT_OTP_RESPONSE_FLOOR_SECONDS",
+        "STUDENT_OTP_ASYNC_EMAIL",
+    }
+)
 
 # These values affect the worker's ability to execute an adviser turn or its
 # safety/runtime bounds.  The web service owns them; the worker must reference
@@ -320,6 +341,9 @@ def validate_blueprint(
             errors.append(f"{name} contains duplicate environment-variable keys.")
         for key in sorted(RETIRED_STUDENT_AUTH_ENV_KEYS.intersection(keys)):
             errors.append(f"{name}:{key} is a retired student-auth testing control.")
+        if name != WEB_SERVICE_NAME:
+            for key in sorted(STUDENT_EMAIL_WEB_ONLY_ENV_KEYS.intersection(keys)):
+                errors.append(f"{name}:{key} is web-only student email configuration.")
         if _env_map(service).get("PYTHON_VERSION", {}).get("value") != EXPECTED_PYTHON_VERSION:
             errors.append(
                 f"{name}:PYTHON_VERSION must match .python-version at {EXPECTED_PYTHON_VERSION!r}."
@@ -418,7 +442,7 @@ def validate_blueprint(
             )
         if worker_env.get("ALLOW_NO_SMTP_PROCESS", {}).get("value") != "true":
             errors.append(
-                f"{WORKER_SERVICE_NAME} must explicitly opt out of web-only SMTP validation."
+                f"{WORKER_SERVICE_NAME} must explicitly opt out of web-only email validation."
             )
         if worker.get("startCommand") != EXPECTED_WORKER_START_COMMAND:
             errors.append(
@@ -435,7 +459,7 @@ def validate_blueprint(
             errors.append(f"{CRON_SERVICE_NAME} must explicitly set DJANGO_DEBUG=false.")
         if cron_env.get("ALLOW_NO_SMTP_PROCESS", {}).get("value") != "true":
             errors.append(
-                f"{CRON_SERVICE_NAME} must explicitly opt out of web-only SMTP validation."
+                f"{CRON_SERVICE_NAME} must explicitly opt out of web-only email validation."
             )
         if any(entry.get("sync") is False for entry in _env_entries(cron)):
             errors.append(f"{CRON_SERVICE_NAME} must not receive independent secret values.")

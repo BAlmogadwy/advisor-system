@@ -97,13 +97,56 @@ def test_contract_requires_public_student_login_safety_settings(blueprint: Bluep
     web = _service(changed, "advisor-system")
     ip_mode = next(item for item in web["envVars"] if item["key"] == "IP_FROM_XFF")
     ip_mode["value"] = "false"
-    smtp_password = next(item for item in web["envVars"] if item["key"] == "EMAIL_HOST_PASSWORD")
-    smtp_password.pop("sync")
+    sendgrid_key = next(item for item in web["envVars"] if item["key"] == "SENDGRID_API_KEY")
+    sendgrid_key.pop("sync")
 
     errors = validate_blueprint(changed, project_root=PROJECT_ROOT)
 
     assert any("IP_FROM_XFF" in error for error in errors)
-    assert any("EMAIL_HOST_PASSWORD" in error for error in errors)
+    assert any("SENDGRID_API_KEY" in error for error in errors)
+
+
+@pytest.mark.parametrize("secret_key", ["SENDGRID_API_KEY", "SENDGRID_FROM_EMAIL"])
+@pytest.mark.parametrize("service_name", [WORKER_SERVICE_NAME, CRON_SERVICE_NAME])
+def test_contract_keeps_sendgrid_secrets_value_free_and_web_only(
+    blueprint: Blueprint, secret_key: str, service_name: str
+) -> None:
+    web_entry = next(
+        item
+        for item in _service(blueprint, "advisor-system")["envVars"]
+        if item["key"] == secret_key
+    )
+    assert web_entry == {"key": secret_key, "sync": False}
+    assert secret_key not in {item["key"] for item in _service(blueprint, service_name)["envVars"]}
+
+    leaked_value = deepcopy(blueprint)
+    leaked_entry = next(
+        item
+        for item in _service(leaked_value, "advisor-system")["envVars"]
+        if item["key"] == secret_key
+    )
+    leaked_entry["value"] = "must-never-be-in-yaml"
+
+    copied_to_non_web = deepcopy(blueprint)
+    _service(copied_to_non_web, service_name)["envVars"].append(
+        {
+            "key": secret_key,
+            "fromService": {
+                "name": "advisor-system",
+                "type": "web",
+                "envVarKey": secret_key,
+            },
+        }
+    )
+
+    assert any(
+        secret_key in error and "must not contain" in error
+        for error in validate_blueprint(leaked_value, project_root=PROJECT_ROOT)
+    )
+    assert any(
+        secret_key in error and "web-only" in error
+        for error in validate_blueprint(copied_to_non_web, project_root=PROJECT_ROOT)
+    )
 
 
 @pytest.mark.parametrize(
@@ -283,19 +326,19 @@ def test_contract_keeps_playwright_browser_inside_the_deployed_worker(
 def test_contract_allows_sync_false_only_for_reviewed_secrets(blueprint: Blueprint) -> None:
     changed = deepcopy(blueprint)
     web = _service(changed, "advisor-system")
-    timeout = next(item for item in web["envVars"] if item["key"] == "EMAIL_TIMEOUT")
-    password = next(item for item in web["envVars"] if item["key"] == "EMAIL_HOST_PASSWORD")
+    timeout = next(item for item in web["envVars"] if item["key"] == "SENDGRID_TIMEOUT_SECONDS")
+    api_key = next(item for item in web["envVars"] if item["key"] == "SENDGRID_API_KEY")
     timeout.pop("value")
     timeout["sync"] = False
-    password["value"] = "must-never-be-in-yaml"
+    api_key["value"] = "must-never-be-in-yaml"
 
     errors = validate_blueprint(changed, project_root=PROJECT_ROOT)
 
-    assert any("EMAIL_TIMEOUT is not a secret" in error for error in errors)
-    assert any("EMAIL_HOST_PASSWORD must not contain" in error for error in errors)
+    assert any("SENDGRID_TIMEOUT_SECONDS is not a secret" in error for error in errors)
+    assert any("SENDGRID_API_KEY must not contain" in error for error in errors)
 
 
-def test_contract_requires_web_smtp_and_async_otp_without_exposing_it_to_workers(
+def test_contract_requires_web_sendgrid_and_synchronous_otp_without_exposing_it_to_workers(
     blueprint: Blueprint,
 ) -> None:
     changed = deepcopy(blueprint)
@@ -303,15 +346,28 @@ def test_contract_requires_web_smtp_and_async_otp_without_exposing_it_to_workers
     worker = _service(changed, WORKER_SERVICE_NAME)
     web_env = {entry["key"]: entry for entry in web["envVars"]}
     worker_env = {entry["key"]: entry for entry in worker["envVars"]}
-    web_env["STUDENT_OTP_ASYNC_EMAIL"]["value"] = "false"
+    assert web_env["SENDGRID_TIMEOUT_SECONDS"]["value"] == "3"
+    assert web_env["SENDGRID_MAX_SUBMISSIONS"]["value"] == "4700"
+    assert web_env["SENDGRID_SUBMISSION_WINDOW_SECONDS"]["value"] == "86400"
+    assert web_env["STUDENT_OTP_ASYNC_EMAIL"]["value"] == "false"
+    assert web_env["STUDENT_OTP_RESPONSE_FLOOR_SECONDS"]["value"] == "3.5"
+    web_env["STUDENT_OTP_ASYNC_EMAIL"]["value"] = "true"
+    web_env["STUDENT_OTP_RESPONSE_FLOOR_SECONDS"]["value"] = "0"
+    web_env["STUDENT_OTP_SENDGRID_ENABLED"]["value"] = "false"
+    web_env["SENDGRID_MAX_SUBMISSIONS"]["value"] = "4701"
+    web_env["SENDGRID_SUBMISSION_WINDOW_SECONDS"]["value"] = "1"
     web_env["ALLOW_NO_SMTP_PROCESS"]["value"] = "true"
     worker_env["ALLOW_NO_SMTP_PROCESS"]["value"] = "false"
 
     errors = validate_blueprint(changed, project_root=PROJECT_ROOT)
 
     assert any("STUDENT_OTP_ASYNC_EMAIL" in error for error in errors)
+    assert any("STUDENT_OTP_RESPONSE_FLOOR_SECONDS" in error for error in errors)
+    assert any("STUDENT_OTP_SENDGRID_ENABLED" in error for error in errors)
+    assert any("SENDGRID_MAX_SUBMISSIONS" in error for error in errors)
+    assert any("SENDGRID_SUBMISSION_WINDOW_SECONDS" in error for error in errors)
     assert any("ALLOW_NO_SMTP_PROCESS" in error for error in errors)
-    assert any("web-only SMTP validation" in error for error in errors)
+    assert any("web-only email validation" in error for error in errors)
 
 
 def test_contract_rejects_cross_region_database_usage(blueprint: Blueprint) -> None:
@@ -323,52 +379,130 @@ def test_contract_rejects_cross_region_database_usage(blueprint: Blueprint) -> N
     assert any("run beside the database" in error for error in errors)
 
 
-def test_public_production_process_requires_smtp_credentials() -> None:
-    with pytest.raises(ImproperlyConfigured, match="EMAIL_HOST_USER"):
-        project_settings._require_production_smtp(
+def test_public_production_process_requires_sendgrid_to_be_enabled() -> None:
+    with pytest.raises(ImproperlyConfigured, match="STUDENT_OTP_SENDGRID_ENABLED"):
+        project_settings._require_production_sendgrid(
             debug=False,
             allow_no_smtp_process=False,
-            backend="django.core.mail.backends.smtp.EmailBackend",
-            host_user="",
-            host_password="",
-        )
-
-    with pytest.raises(ImproperlyConfigured, match="SMTP email backend"):
-        project_settings._require_production_smtp(
-            debug=False,
-            allow_no_smtp_process=False,
-            backend="django.core.mail.backends.console.EmailBackend",
-            host_user="advisor@example.invalid",
-            host_password="ci-only-password",
+            enabled=False,
+            api_key="",
+            from_email="",
         )
 
 
-def test_non_web_production_process_can_explicitly_omit_smtp() -> None:
-    project_settings._require_production_smtp(
+@pytest.mark.parametrize(
+    ("api_key", "from_email", "missing_setting"),
+    [
+        ("", "verified-sender@example.invalid", "SENDGRID_API_KEY"),
+        ("SG.ci-only", "", "SENDGRID_FROM_EMAIL"),
+    ],
+)
+def test_public_production_process_requires_sendgrid_credentials(
+    api_key: str, from_email: str, missing_setting: str
+) -> None:
+    with pytest.raises(ImproperlyConfigured, match=missing_setting):
+        project_settings._require_production_sendgrid(
+            debug=False,
+            allow_no_smtp_process=False,
+            enabled=True,
+            api_key=api_key,
+            from_email=from_email,
+        )
+
+
+def test_public_production_process_accepts_complete_sendgrid_configuration() -> None:
+    project_settings._require_production_sendgrid(
         debug=False,
-        allow_no_smtp_process=True,
-        backend="django.core.mail.backends.smtp.EmailBackend",
-        host_user="",
-        host_password="",
+        allow_no_smtp_process=False,
+        enabled=True,
+        api_key="SG.ci-only",
+        from_email="verified-sender@example.invalid",
+        async_email=False,
     )
 
 
-def _production_settings_env(*, allow_no_smtp_process: bool) -> dict[str, str]:
+def test_public_production_process_rejects_async_sendgrid_delivery() -> None:
+    with pytest.raises(ImproperlyConfigured, match="STUDENT_OTP_ASYNC_EMAIL"):
+        project_settings._require_production_sendgrid(
+            debug=False,
+            allow_no_smtp_process=False,
+            enabled=True,
+            api_key="SG.ci-only",
+            from_email="verified-sender@example.invalid",
+            async_email=True,
+        )
+
+
+@pytest.mark.parametrize(
+    ("max_submissions", "window_seconds", "setting_name"),
+    [
+        (0, 86_400, "SENDGRID_MAX_SUBMISSIONS"),
+        (4700, 0, "SENDGRID_SUBMISSION_WINDOW_SECONDS"),
+    ],
+)
+def test_public_production_process_rejects_disabled_sendgrid_budget(
+    max_submissions: int, window_seconds: int, setting_name: str
+) -> None:
+    with pytest.raises(ImproperlyConfigured, match=setting_name):
+        project_settings._require_production_sendgrid(
+            debug=False,
+            allow_no_smtp_process=False,
+            enabled=True,
+            api_key="SG.ci-only",
+            from_email="verified-sender@example.invalid",
+            max_submissions=max_submissions,
+            submission_window_seconds=window_seconds,
+        )
+
+
+def test_retention_cron_includes_student_login_otp_purge(blueprint: Blueprint) -> None:
+    cron = _service(blueprint, CRON_SERVICE_NAME)
+    assert "purge_student_login_otps --apply" in cron["startCommand"]
+
+    changed = deepcopy(blueprint)
+    changed_cron = _service(changed, CRON_SERVICE_NAME)
+    changed_cron["startCommand"] = changed_cron["startCommand"].replace(
+        " && python manage.py purge_student_login_otps --apply", ""
+    )
+
+    errors = validate_blueprint(changed, project_root=PROJECT_ROOT)
+    assert any("reviewed retention command" in error for error in errors)
+
+
+def test_non_web_production_process_can_explicitly_omit_sendgrid() -> None:
+    project_settings._require_production_sendgrid(
+        debug=False,
+        allow_no_smtp_process=True,
+        enabled=False,
+        api_key="",
+        from_email="",
+    )
+
+
+def _production_settings_env(
+    *,
+    allow_no_smtp_process: bool,
+    sendgrid_enabled: bool = False,
+    api_key: str = "",
+    from_email: str = "",
+    async_email: bool = False,
+) -> dict[str, str]:
     env = os.environ.copy()
     env.update(
         {
             "DJANGO_DEBUG": "false",
             "DJANGO_SECRET_KEY": "ci-only-settings-import-secret-1234567890",
-            "EMAIL_BACKEND": "django.core.mail.backends.smtp.EmailBackend",
-            "EMAIL_HOST_USER": "",
-            "EMAIL_HOST_PASSWORD": "",
+            "STUDENT_OTP_SENDGRID_ENABLED": "true" if sendgrid_enabled else "false",
+            "SENDGRID_API_KEY": api_key,
+            "SENDGRID_FROM_EMAIL": from_email,
+            "STUDENT_OTP_ASYNC_EMAIL": "true" if async_email else "false",
             "ALLOW_NO_SMTP_PROCESS": "true" if allow_no_smtp_process else "false",
         }
     )
     return env
 
 
-def test_real_web_settings_import_fails_closed_without_smtp() -> None:
+def test_real_web_settings_import_fails_closed_when_sendgrid_is_disabled() -> None:
     completed = subprocess.run(  # noqa: S603 - fixed interpreter and fixed import.
         [sys.executable, "-c", "import config.settings"],
         cwd=PROJECT_ROOT,
@@ -379,10 +513,47 @@ def test_real_web_settings_import_fails_closed_without_smtp() -> None:
     )
 
     assert completed.returncode != 0
-    assert "EMAIL_HOST_USER and EMAIL_HOST_PASSWORD" in completed.stderr
+    assert "STUDENT_OTP_SENDGRID_ENABLED" in completed.stderr
 
 
-def test_real_non_web_settings_import_requires_an_explicit_smtp_opt_out() -> None:
+def test_real_web_settings_import_fails_closed_without_sendgrid_credentials() -> None:
+    completed = subprocess.run(  # noqa: S603 - fixed interpreter and fixed import.
+        [sys.executable, "-c", "import config.settings"],
+        cwd=PROJECT_ROOT,
+        env=_production_settings_env(
+            allow_no_smtp_process=False,
+            sendgrid_enabled=True,
+        ),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert completed.returncode != 0
+    assert "SENDGRID_API_KEY, SENDGRID_FROM_EMAIL" in completed.stderr
+
+
+def test_real_web_settings_import_fails_closed_when_async_email_is_enabled() -> None:
+    completed = subprocess.run(  # noqa: S603 - fixed interpreter and fixed import.
+        [sys.executable, "-c", "import config.settings"],
+        cwd=PROJECT_ROOT,
+        env=_production_settings_env(
+            allow_no_smtp_process=False,
+            sendgrid_enabled=True,
+            api_key="SG.ci-only",
+            from_email="verified-sender@example.invalid",
+            async_email=True,
+        ),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert completed.returncode != 0
+    assert "STUDENT_OTP_ASYNC_EMAIL" in completed.stderr
+
+
+def test_real_non_web_settings_import_requires_an_explicit_email_opt_out() -> None:
     completed = subprocess.run(  # noqa: S603 - fixed interpreter and fixed import.
         [sys.executable, "-c", "import config.settings"],
         cwd=PROJECT_ROOT,

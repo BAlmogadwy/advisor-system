@@ -34,11 +34,16 @@ def test_mypy_is_advisory_without_making_the_job_or_its_dependencies_fail() -> N
     assert mypy_step["continue-on-error"] == "true"
 
 
-def test_only_the_non_web_test_runner_opts_out_of_production_smtp() -> None:
+def test_production_preflight_uses_isolated_sendgrid_contract() -> None:
     jobs = _workflow()["jobs"]
+    preflight_env = jobs["production-preflight"]["env"]
 
     assert jobs["test"]["env"]["ALLOW_NO_SMTP_PROCESS"] == "true"
-    assert jobs["production-preflight"]["env"]["ALLOW_NO_SMTP_PROCESS"] == "false"
+    assert preflight_env["ALLOW_NO_SMTP_PROCESS"] == "false"
+    assert preflight_env["STUDENT_OTP_SENDGRID_ENABLED"] == "true"
+    assert preflight_env["STUDENT_OTP_ASYNC_EMAIL"] == "false"
+    assert preflight_env["SENDGRID_API_KEY"] == "ci-only-invalid-sendgrid-api-key-do-not-deploy"
+    assert preflight_env["SENDGRID_FROM_EMAIL"] == "ci-sender@example.invalid"
 
 
 def test_production_health_probe_cannot_hang_the_release_gate() -> None:

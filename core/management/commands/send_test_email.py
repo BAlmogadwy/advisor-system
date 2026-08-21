@@ -1,56 +1,46 @@
-"""Send a test email to verify SMTP (Gmail app-password) is configured.
+"""Send a data-free test email through Twilio SendGrid.
 
-    python manage.py send_test_email --to you@example.com
-
-With EMAIL_HOST_PASSWORD unset it uses the console backend (prints to the log);
-once the app-password is in .env it sends real mail via smtp.gmail.com.
+python manage.py send_test_email --to you@example.com
 """
 
 from django.conf import settings
-from django.core.mail import send_mail
-from django.core.management.base import BaseCommand
+from django.core.management.base import BaseCommand, CommandError
+
+from core.services.sendgrid_email import SendGridDeliveryError, send_transactional_email
 
 
 class Command(BaseCommand):
-    help = "Send a test email to confirm the SMTP configuration works."
+    help = "Send a data-free test email to confirm Twilio SendGrid delivery."
 
     def add_arguments(self, parser):
         parser.add_argument(
             "--to",
-            default=getattr(settings, "EMAIL_HOST_USER", "") or "alfalak51@gmail.com",
-            help="Recipient address (defaults to EMAIL_HOST_USER).",
+            required=True,
+            help="Recipient address. The command never prints it.",
         )
 
     def handle(self, *args, **options):
-        to = options["to"]
-        backend = settings.EMAIL_BACKEND.rsplit(".", 2)[-2]
+        to = str(options["to"] or "").strip()
+        enabled = bool(getattr(settings, "STUDENT_OTP_SENDGRID_ENABLED", False))
         self.stdout.write(
-            f"backend={backend}  host={settings.EMAIL_HOST}:{settings.EMAIL_PORT}  "
-            f"tls={settings.EMAIL_USE_TLS}  user={settings.EMAIL_HOST_USER or '(unset)'}  "
-            f"password={'set' if settings.EMAIL_HOST_PASSWORD else 'MISSING'}"
+            "provider=sendgrid "
+            f"enabled={'true' if enabled else 'false'} "
+            f"api_key={'set' if settings.SENDGRID_API_KEY else 'missing'} "
+            f"from_email={'set' if settings.SENDGRID_FROM_EMAIL else 'missing'} "
+            f"timeout_seconds={settings.SENDGRID_TIMEOUT_SECONDS}"
         )
-        if backend == "smtp" and not settings.EMAIL_HOST_PASSWORD:
-            self.stderr.write(
-                self.style.WARNING(
-                    "SMTP backend but no password — set EMAIL_HOST_PASSWORD in .env."
-                )
-            )
+        if not enabled:
+            raise CommandError("SendGrid student email is disabled.")
         try:
-            sent = send_mail(
-                subject="Advisor system — SMTP test",
-                message="If you can read this, the OTP email pipeline works.",
-                from_email=settings.DEFAULT_FROM_EMAIL,
-                recipient_list=[to],
-                fail_silently=False,
+            message_id = send_transactional_email(
+                to,
+                "Advisor system — SendGrid delivery test",
+                "This is a delivery test. It contains no student data or verification code.",
             )
-        except Exception as exc:  # noqa: BLE001 — surface the real SMTP error to the operator
-            self.stderr.write(self.style.ERROR(f"send failed: {type(exc).__name__}: {exc}"))
-            self.stderr.write(
-                "Common cause: wrong/blank Gmail app-password, or 2-Step Verification off."
-            )
-            raise SystemExit(1) from exc
+        except SendGridDeliveryError:
+            raise CommandError("SendGrid did not accept the test message.") from None
         self.stdout.write(
             self.style.SUCCESS(
-                f"send_mail returned {sent} — check {to} (or the console log above)."
+                f"SendGrid accepted the test message; message_id={message_id or 'not-returned'}."
             )
         )

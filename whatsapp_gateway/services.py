@@ -8,7 +8,6 @@ from typing import Any
 
 from django.conf import settings
 from django.contrib.auth import get_user_model
-from django.core.mail import send_mail
 from django.db import transaction
 from django.utils import timezone
 
@@ -22,6 +21,7 @@ from core.services.rbac import (
     get_user_role,
     get_user_scope,
 )
+from core.services.sendgrid_email import SendGridDeliveryError, send_transactional_email
 from core.services.student_identity import student_email
 from core.services.virtual_advisor import answer_virtual_advisor
 from whatsapp_gateway.models import (
@@ -83,13 +83,11 @@ def _student_email(student: Student) -> str:
     email = str(getattr(student, "email", "") or "").strip()
     if email:
         return email
-    domain = str(getattr(settings, "WHATSAPP_STUDENT_EMAIL_DOMAIN", "") or "").strip()
-    if domain:
-        try:
-            return student_email(student.student_id, domain=domain)
-        except ValueError:
-            return ""
-    return ""
+    domain = str(getattr(settings, "STUDENT_EMAIL_DOMAIN", "taibahu.edu.sa") or "").strip()
+    try:
+        return student_email(student.student_id, domain=domain)
+    except ValueError:
+        return ""
 
 
 def resolve_university_identity(university_id: str) -> ResolvedIdentity:
@@ -118,10 +116,35 @@ def resolve_university_identity(university_id: str) -> ResolvedIdentity:
             getattr(settings, "WHATSAPP_ALLOW_SUPER_ADMIN", False)
         ):
             raise IdentityResolutionError("Super admin WhatsApp access is disabled.")
+        scope = get_user_scope(user)
+        if role == ROLE_STUDENT:
+            # Web OTP provisioning intentionally leaves ``User.email`` empty and
+            # binds the immutable student identity on UserScope.  Resolve that
+            # binding before reading a generic User email so an existing portal
+            # account cannot disable WhatsApp linking or redirect its OTP away
+            # from the cohort-aware university mailbox.
+            scoped_student_id = scope.get("student_id")
+            scoped_student = (
+                Student.objects.filter(student_id=scoped_student_id).first()
+                if scoped_student_id is not None
+                else None
+            )
+            email = _student_email(scoped_student) if scoped_student is not None else ""
+            if not scoped_student or not email:
+                raise IdentityResolutionError(
+                    "This student account is not linked to a valid university record."
+                )
+            return ResolvedIdentity(
+                university_id=uid,
+                role=ROLE_STUDENT,
+                email=email,
+                user_id=int(user.id),
+                student_id=int(scoped_student.student_id),
+            )
+
         email = str(getattr(user, "email", "") or "").strip()
         if not email:
             raise IdentityResolutionError("This user does not have a registered email address.")
-        scope = get_user_scope(user)
         departments = ",".join(str(x).strip().upper() for x in scope.get("departments", []))
         return ResolvedIdentity(
             university_id=uid,
@@ -169,36 +192,43 @@ def start_link_challenge(
     now = timezone.now()
     expires_at = now + timedelta(seconds=int(getattr(settings, "WHATSAPP_OTP_TTL_SECONDS", 300)))
 
-    with transaction.atomic():
-        WhatsAppOtpChallenge.objects.filter(
-            wa_id=wa_id,
-            status=WhatsAppOtpChallenge.STATUS_PENDING,
-        ).update(status=WhatsAppOtpChallenge.STATUS_EXPIRED)
-        challenge = WhatsAppOtpChallenge.objects.create(
-            wa_id=wa_id,
-            phone_number=phone_number,
-            university_id=identity.university_id,
-            resolved_role=identity.role,
-            resolved_user_id=identity.user_id,
-            resolved_student_id=identity.student_id,
-            resolved_advisor_id=identity.advisor_id,
-            resolved_departments=identity.departments,
-            email_masked=mask_email(identity.email),
-            otp_hash=_hash_otp(wa_id=wa_id, otp=otp),
-            expires_at=expires_at,
+    try:
+        with transaction.atomic():
+            WhatsAppOtpChallenge.objects.filter(
+                wa_id=wa_id,
+                status=WhatsAppOtpChallenge.STATUS_PENDING,
+            ).update(status=WhatsAppOtpChallenge.STATUS_EXPIRED)
+            challenge = WhatsAppOtpChallenge.objects.create(
+                wa_id=wa_id,
+                phone_number=phone_number,
+                university_id=identity.university_id,
+                resolved_role=identity.role,
+                resolved_user_id=identity.user_id,
+                resolved_student_id=identity.student_id,
+                resolved_advisor_id=identity.advisor_id,
+                resolved_departments=identity.departments,
+                email_masked=mask_email(identity.email),
+                otp_hash=_hash_otp(wa_id=wa_id, otp=otp),
+                expires_at=expires_at,
+            )
+        # Keep provider admission outside the challenge transaction. The shared
+        # SendGrid counter must commit before the network request and must not be
+        # rolled back when delivery fails (the provider may still have counted an
+        # ambiguous timeout against its allowance).
+        send_transactional_email(
+            identity.email,
+            "Your WhatsApp advisor verification code",
+            (
+                "Use this code to link WhatsApp to your university advisor account:\n\n"
+                f"{otp}\n\n"
+                "This code expires in 5 minutes. If you did not request it, ignore this email."
+            ),
         )
-
-    send_mail(
-        "Your WhatsApp advisor verification code",
-        (
-            "Use this code to link WhatsApp to your university advisor account:\n\n"
-            f"{otp}\n\n"
-            "This code expires in 5 minutes. If you did not request it, ignore this email."
-        ),
-        settings.DEFAULT_FROM_EMAIL,
-        [identity.email],
-        fail_silently=False,
-    )
+    except SendGridDeliveryError:
+        # The provider adapter has already collapsed the failure to a safe code.
+        # Do not surface recipients, message contents, or provider response bodies.
+        WhatsAppOtpChallenge.objects.filter(pk=challenge.pk).delete()
+        raise OtpChallengeError("Unable to send a verification code. Try again later.") from None
     return challenge
 
 
