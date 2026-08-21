@@ -35,6 +35,46 @@ RESTORE_OK C:\...\runtime\release_snapshots\release_candidate_YYYYMMDD_HHMMSS
 3. Run smoke checks (`/health`, login, report summary, key exports).
 4. If failed, stop app, restore snapshot, rerun smoke checks.
 
+## Configure student OTP email with Twilio SendGrid
+
+Student verification email uses SendGrid only. In the Render **web service**:
+
+1. Verify the sender identity in Twilio SendGrid.
+2. Set `SENDGRID_API_KEY` and `SENDGRID_FROM_EMAIL` as secret values.
+3. Confirm `SENDGRID_FROM_NAME=بوابة الطالب`, then set
+   `STUDENT_OTP_SENDGRID_ENABLED=true` and restart the web service.
+4. Keep `SENDGRID_TIMEOUT_SECONDS=3`, `STUDENT_OTP_ASYNC_EMAIL=false`, and
+   `STUDENT_OTP_RESPONSE_FLOOR_SECONDS=3.5`. Delivery completes synchronously;
+   the common response floor reduces the ordinary timing difference between
+   registered and unregistered ID responses.
+5. With Essentials 50K active, keep `SENDGRID_MAX_SUBMISSIONS=4700` and
+   `SENDGRID_SUBMISSION_WINDOW_SECONDS=86400`. This covers up to three requests
+   for each of the 1,527 current students plus a small operational reserve. The
+   durable allowance is shared by student-login OTPs, WhatsApp link OTPs, and
+   manual test messages; submission attempts count before the network call.
+   Monitor monthly SendGrid usage before raising it, and update the checked-in
+   Render Blueprint and its validator together so the dashboard cannot drift.
+6. Run `python manage.py send_test_email --to <operator-controlled-address>`,
+   then complete real OTP sign-ins for one `44…@taibahu.edu.sa` student and one
+   `tu45/46/47…@taibahu.edu.sa` student. Confirm delivery and successful login
+   for both address formats before opening student testing.
+7. After those SendGrid checks pass, delete the obsolete Gmail/SMTP variables
+   from the existing Render web service: `EMAIL_HOST`, `EMAIL_PORT`,
+   `EMAIL_USE_TLS`, `EMAIL_HOST_USER`, `EMAIL_HOST_PASSWORD`, `EMAIL_TIMEOUT`,
+   `EMAIL_BACKEND`, and any old `DEFAULT_FROM_EMAIL`. Render preserves dashboard
+   variables omitted from the Blueprint, so this cleanup is manual and must not
+   happen before the SendGrid smoke tests succeed.
+
+The daily retention job removes student-login OTP rows 24 hours after they
+expire. It reports counts only and never prints student IDs, code hashes,
+request-address fingerprints, recipients, or provider receipts.
+
+Do not put the key, sender address, or SendGrid controls on the Telegram worker
+or retention cron. The application refuses to start its public production web
+process when SendGrid is disabled or either required value is missing. To stop
+email safely during an incident, disable the Render web service rather than
+enabling Django's console email backend, which could expose OTPs in hosted logs.
+
 ## CI required gates
 - lint (ruff)
 - typecheck (mypy)

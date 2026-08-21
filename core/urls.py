@@ -163,6 +163,7 @@ from .student_auth_views import (
     student_graduation_view,
     student_home_view,
     student_login_view,
+    student_otp_resend_view,
     student_otp_verify_view,
     student_plan_map_view,
 )
@@ -256,6 +257,7 @@ urlpatterns = [
     path("logout/", logout_view, name="logout"),
     # Student OTP login (Uni ID -> email code); separate from advisor password login.
     path("student/login/", student_login_view, name="student_login"),
+    path("student/login/resend/", student_otp_resend_view, name="student_otp_resend"),
     path("student/login/verify/", student_otp_verify_view, name="student_otp_verify"),
     path(
         "student/",

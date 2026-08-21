@@ -4,13 +4,20 @@ Separate from the advisor password login. No self-registration, no passwords.
 
 from __future__ import annotations
 
+import hashlib
+import hmac
+import ipaddress
 import logging
+import math
+import time
+from collections.abc import Callable
 from datetime import datetime, timedelta
+from functools import wraps
+from typing import Any
 
 from django.conf import settings
 from django.contrib.auth import login
 from django.contrib.auth.decorators import login_required
-from django.core.cache import cache
 from django.http import HttpRequest, HttpResponse
 from django.shortcuts import redirect, render
 from django.utils import timezone
@@ -18,6 +25,7 @@ from django.views.decorators.cache import never_cache
 from django.views.decorators.http import require_http_methods, require_POST
 
 from core.models import Course, Student, StudentTermSection
+from core.services import rate_limit
 from core.services.advisor_presentations import graduation_presentation_from_tool_results
 from core.services.rbac import ROLE_STUDENT, get_user_scope
 from core.services.recommender import recommend_next_courses
@@ -26,6 +34,7 @@ from core.services.student_helpers import normalize_code
 from core.services.student_home_cards import build_student_home_cards, progress_buckets
 from core.services.student_identity import normalize_student_id, student_email
 from core.services.student_otp import (
+    CHANNEL_SENDGRID,
     OTPError,
     issue_otp,
     mark_student_authentication,
@@ -59,7 +68,7 @@ def _client_ip(request: HttpRequest) -> str:
     # Behind a trusted proxy, the right-most XFF entry is the one the proxy appended
     # (a client cannot forge it). Otherwise trust only the direct peer (REMOTE_ADDR).
     if getattr(settings, "IP_FROM_XFF", False):
-        xff = request.META.get("HTTP_X_FORWARDED_FOR", "")
+        xff = str(request.META.get("HTTP_X_FORWARDED_FOR", "") or "")
         if xff:
             return xff.split(",")[-1].strip()[:64]
     return (request.META.get("REMOTE_ADDR", "") or "")[:64]
@@ -78,6 +87,112 @@ _NEXT_SESSION_KEY = "post_login_next"
 #: How long a remembered destination stays usable. A login is a few minutes of
 #: work; anything older belongs to a session somebody walked away from.
 _NEXT_MAX_AGE_SECONDS = 600
+
+
+# The browser never sends the student identity back during the OTP step.  The
+# internal id is kept separately from the values used to render the generic
+# response so known and unknown ids follow exactly the same visible flow.
+_OTP_STUDENT_SESSION_KEY = "otp_student_id"
+_OTP_DISPLAY_ID_SESSION_KEY = "otp_display_student_id"
+_OTP_DISPLAY_EMAIL_SESSION_KEY = "otp_display_email"
+_OTP_RESEND_AT_SESSION_KEY = "otp_resend_available_at"
+
+
+def _otp_response_floor_seconds() -> float:
+    try:
+        configured = float(getattr(settings, "STUDENT_OTP_RESPONSE_FLOOR_SECONDS", 3.5))
+    except (TypeError, ValueError):
+        configured = 3.5
+    return max(0.0, configured)
+
+
+def _monotonic_now() -> float:
+    return time.monotonic()
+
+
+def _sleep_seconds(seconds: float) -> None:
+    time.sleep(seconds)
+
+
+def _with_otp_response_floor(
+    view: Callable[..., HttpResponse],
+) -> Callable[..., HttpResponse]:
+    """Hold OTP POST responses to one minimum duration for known/unknown IDs."""
+
+    @wraps(view)
+    def wrapped(request: HttpRequest, *args: Any, **kwargs: Any) -> HttpResponse:
+        if request.method != "POST":
+            return view(request, *args, **kwargs)
+        started_at = _monotonic_now()
+        try:
+            return view(request, *args, **kwargs)
+        finally:
+            remaining = _otp_response_floor_seconds() - max(0.0, _monotonic_now() - started_at)
+            if remaining > 0:
+                _sleep_seconds(remaining)
+
+    return wrapped
+
+
+def _resend_delay_seconds() -> int:
+    """Return the server-enforced resend delay (50 seconds by default)."""
+
+    try:
+        configured = int(getattr(settings, "STUDENT_OTP_RESEND_DELAY_SECONDS", 50))
+    except (TypeError, ValueError):
+        configured = 50
+    return max(1, configured)
+
+
+def _now_timestamp() -> float:
+    """Small seam for deterministic cooldown boundary tests."""
+
+    return timezone.now().timestamp()
+
+
+def _start_otp_step(request: HttpRequest, *, student_id: int, email: str, exists: bool) -> None:
+    """Persist the OTP step without exposing whether the student exists."""
+
+    request.session[_OTP_STUDENT_SESSION_KEY] = student_id if exists else 0
+    request.session[_OTP_DISPLAY_ID_SESSION_KEY] = str(student_id)
+    request.session[_OTP_DISPLAY_EMAIL_SESSION_KEY] = str(email)
+    request.session[_OTP_RESEND_AT_SESSION_KEY] = _now_timestamp() + _resend_delay_seconds()
+
+
+def _clear_otp_step(request: HttpRequest) -> None:
+    for key in (
+        _OTP_STUDENT_SESSION_KEY,
+        _OTP_DISPLAY_ID_SESSION_KEY,
+        _OTP_DISPLAY_EMAIL_SESSION_KEY,
+        _OTP_RESEND_AT_SESSION_KEY,
+    ):
+        request.session.pop(key, None)
+
+
+def _otp_step_context(request: HttpRequest, **extra: Any) -> dict[str, Any] | None:
+    """Build one enumeration-safe OTP view context from the server-owned session."""
+
+    display_id = str(request.session.get(_OTP_DISPLAY_ID_SESSION_KEY, "") or "")
+    display_email = str(request.session.get(_OTP_DISPLAY_EMAIL_SESSION_KEY, "") or "")
+    if not display_id or not display_email:
+        return None
+    try:
+        available_at = float(str(request.session.get(_OTP_RESEND_AT_SESSION_KEY)))
+    except (TypeError, ValueError):
+        # Sessions that began just before this feature was deployed must still
+        # wait; a missing deadline must never turn into an immediate resend.
+        available_at = _now_timestamp() + _resend_delay_seconds()
+        request.session[_OTP_RESEND_AT_SESSION_KEY] = available_at
+    now = _now_timestamp()
+    remaining = max(0, math.ceil(available_at - now))
+    return {
+        "step": "otp",
+        "student_id": display_id,
+        "email": display_email,
+        "resend_seconds": remaining,
+        "resend_deadline_ms": math.ceil(available_at * 1000),
+        **extra,
+    }
 
 
 def _remember_next(request: HttpRequest) -> None:
@@ -122,7 +237,7 @@ def _remember_next(request: HttpRequest) -> None:
     }
 
 
-def _post_login_redirect(request: HttpRequest):
+def _post_login_redirect(request: HttpRequest) -> HttpResponse:
     """Where sign-in lands. `student_home` unless something asked for elsewhere."""
     destination = _fresh_next_destination(request, consume=True)
     return redirect(destination) if destination else redirect("student_home")
@@ -150,15 +265,43 @@ def _fresh_next_destination(request: HttpRequest, *, consume: bool = False) -> s
 
 
 def _ip_throttled(request: HttpRequest, bucket: str, limit: int, window: int) -> bool:
-    key = f"student_otp:{bucket}:{_client_ip(request)}"
-    n = cache.get(key, 0)
-    if n >= limit:
-        return True
-    cache.set(key, n + 1, window)
-    return False
+    """Spend from a durable OTP budget without persisting the client address.
+
+    ``limit`` and ``window`` remain in the signature while callers/tests migrate,
+    but the authoritative values live beside every other durable budget in
+    ``core.services.rate_limit.LIMITS``. Both student send routes pass ``send`` and
+    therefore share one database row across workers and restarts.
+    """
+
+    del limit, window
+    budgets = {
+        "send": rate_limit.STUDENT_OTP_SEND,
+        "verify": rate_limit.STUDENT_OTP_VERIFY,
+    }
+    try:
+        durable_budget = budgets[bucket]
+    except KeyError as exc:
+        raise ValueError(f"unsupported student OTP rate-limit bucket: {bucket}") from exc
+
+    raw_ip = _client_ip(request).strip()
+    try:
+        normalized_ip = ipaddress.ip_address(raw_ip).compressed.lower()
+    except ValueError:
+        # REMOTE_ADDR is server-owned and XFF is used only behind the configured
+        # trusted proxy. Still canonicalise unexpected values rather than placing
+        # them (or an empty string) directly into the durable table.
+        normalized_ip = raw_ip.casefold() or "unknown"
+    digest = hmac.new(
+        str(settings.SECRET_KEY).encode("utf-8"),
+        normalized_ip.encode("utf-8"),
+        hashlib.sha256,
+    ).digest()
+    subject = int.from_bytes(digest, "big", signed=False)
+    return not rate_limit.consume(durable_budget, subject).allowed
 
 
 @never_cache
+@_with_otp_response_floor
 @require_http_methods(["GET", "POST"])
 def student_login_view(request: HttpRequest) -> HttpResponse:
     # Recorded before the already-authenticated shortcut, so a signed-in student
@@ -175,6 +318,7 @@ def student_login_view(request: HttpRequest) -> HttpResponse:
         return redirect("dashboard")
 
     if request.method == "GET":
+        _clear_otp_step(request)
         return render(request, "core/student_login.html", {"step": "id"})
 
     raw = str(request.POST.get("student_id", "")).strip()
@@ -205,29 +349,100 @@ def student_login_view(request: HttpRequest) -> HttpResponse:
 
     if exists:
         try:
-            issue_otp(student_id, _client_ip(request))
+            issue_otp(
+                student_id,
+                _client_ip(request),
+                channel=CHANNEL_SENDGRID,
+                min_interval_seconds=_resend_delay_seconds(),
+            )
         except OTPError:
             # Rate-limited or send-failed: swallow silently so the response is
             # identical to the unknown-id / success paths (no enumeration branch).
             pass
-    # Advance to OTP step regardless (enumeration-resistant). Only a real id got a code.
-    request.session["otp_student_id"] = student_id if exists else 0
+    # Advance to OTP step regardless (enumeration-resistant). Only a real id got a
+    # code, while both branches remember the same display state and cooldown.
+    _start_otp_step(request, student_id=student_id, email=email, exists=exists)
     return render(
         request,
         "core/student_login.html",
-        {
-            "step": "otp",
-            "student_id": str(student_id),
-            "email": email,
-            "sent": True,  # template renders the bilingual "code sent" notice
-        },
+        _otp_step_context(request, sent=True),
     )
 
 
 @never_cache
+@_with_otp_response_floor
+@require_POST
+def student_otp_resend_view(request: HttpRequest) -> HttpResponse:
+    """Request a fresh code after the server-owned cooldown has elapsed.
+
+    The form intentionally carries no identity or provider fields.  Both the
+    internal id and display-only values come from Django's server-owned session,
+    so a browser cannot redirect a code or choose a delivery provider.
+    """
+
+    context = _otp_step_context(request)
+    if context is None:
+        return redirect("student_login")
+
+    try:
+        available_at = float(str(request.session.get(_OTP_RESEND_AT_SESSION_KEY)))
+    except (TypeError, ValueError):
+        # `_otp_step_context` repairs a missing/invalid deadline.
+        available_at = _now_timestamp() + _resend_delay_seconds()
+        request.session[_OTP_RESEND_AT_SESSION_KEY] = available_at
+
+    if _now_timestamp() < available_at:
+        return render(
+            request,
+            "core/student_login.html",
+            _otp_step_context(request, resend_too_soon=True),
+        )
+
+    # Use the same per-IP budget as the first send.  This check happens only after
+    # the cooldown gate, so early POSTs consume neither an email send nor quota.
+    if _ip_throttled(request, "send", limit=8, window=900):
+        request.session[_OTP_RESEND_AT_SESSION_KEY] = _now_timestamp() + _resend_delay_seconds()
+        return render(
+            request,
+            "core/student_login.html",
+            _otp_step_context(request, send_limited=True),
+        )
+
+    try:
+        student_id = int(request.session.get(_OTP_STUDENT_SESSION_KEY, 0) or 0)
+    except (TypeError, ValueError):
+        student_id = 0
+
+    if student_id:
+        try:
+            issue_otp(
+                student_id,
+                _client_ip(request),
+                channel=CHANNEL_SENDGRID,
+                min_interval_seconds=_resend_delay_seconds(),
+            )
+        except OTPError:
+            # Keep the visible result identical to the unknown-id and successful
+            # branches.  A new request can fail for quota or delivery reasons.
+            pass
+
+    # Every accepted known/unknown request begins a new server-owned cooldown.
+    request.session[_OTP_RESEND_AT_SESSION_KEY] = _now_timestamp() + _resend_delay_seconds()
+    return render(
+        request,
+        "core/student_login.html",
+        _otp_step_context(request, resent=True),
+    )
+
+
+@never_cache
+@_with_otp_response_floor
 @require_POST
 def student_otp_verify_view(request: HttpRequest) -> HttpResponse:
-    student_id = int(request.session.get("otp_student_id", 0) or 0)
+    try:
+        student_id = int(request.session.get(_OTP_STUDENT_SESSION_KEY, 0) or 0)
+    except (TypeError, ValueError):
+        student_id = 0
     code = str(request.POST.get("code", "")).strip()
 
     if _ip_throttled(request, "verify", limit=15, window=900):
@@ -254,18 +469,19 @@ def student_otp_verify_view(request: HttpRequest) -> HttpResponse:
             )
         login(request, user, backend=_MODEL_BACKEND)
         mark_student_authentication(request)
-        request.session.pop("otp_student_id", None)
+        _clear_otp_step(request)
         return _post_login_redirect(request)
 
+    context = _otp_step_context(
+        request,
+        error="رمز التحقق غير صحيح أو انتهت صلاحيته.",
+    )
+    if context is None:
+        return redirect("student_login")
     return render(
         request,
         "core/student_login.html",
-        {
-            "step": "otp",
-            "student_id": str(student_id or ""),
-            "email": student_email(student_id) if student_id else "",
-            "error": "رمز التحقق غير صحيح أو انتهت صلاحيته.",
-        },
+        context,
     )
 
 

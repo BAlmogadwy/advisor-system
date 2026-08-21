@@ -4,6 +4,13 @@ from core.services import llm_backend, rbac
 
 
 @pytest.fixture(autouse=True)
+def _disable_otp_response_floor_in_tests(settings) -> None:  # noqa: PT004
+    """Production deliberately waits 3.5 s; ordinary tests must never sleep."""
+
+    settings.STUDENT_OTP_RESPONSE_FLOOR_SECONDS = 0
+
+
+@pytest.fixture(autouse=True)
 def _reset_rbac_flags() -> None:  # noqa: PT004
     """Reset module-level flags so ensure_role_groups() re-creates groups after
     each test's transaction rollback."""

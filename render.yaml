@@ -10,9 +10,9 @@ services:
     healthCheckPath: /health/
     preDeployCommand: python manage.py migrate --noinput && python manage.py createcachetable --database default && python manage.py normalise_exam_runs && python manage.py purge_rate_limit_buckets
     buildCommand: chmod +x build.sh && ./build.sh
-    # One process keeps the existing in-memory/IP throttles authoritative. gthread
-    # still allows concurrent requests without splitting those counters between
-    # Gunicorn processes. Gunicorn 25.1's control thread can deadlock a gthread
+    # One process keeps the remaining in-memory throttles authoritative; student
+    # OTP request limits are durable database counters shared across processes.
+    # gthread still allows concurrent requests. Gunicorn 25.1's control thread can deadlock a gthread
     # worker during fork (upstream #3509), so keep its control socket disabled.
     startCommand: gunicorn config.wsgi --bind 0.0.0.0:$PORT --workers 1 --worker-class gthread --threads 4 --timeout 120 --no-control-socket
     envVars:
@@ -42,22 +42,28 @@ services:
       # workstation database during a fresh PostgreSQL bootstrap.
       - key: ADVISOR_DB_PATH
         value: /tmp/advisor-no-legacy-import.sqlite3
-      # Student sign-in is email-OTP based. Credentials stay server-side and
-      # must be populated on the existing web service before launch.
-      - key: EMAIL_HOST
-        value: smtp.gmail.com
-      - key: EMAIL_PORT
-        value: "587"
-      - key: EMAIL_USE_TLS
+      # Student verification mail is delivered only through Twilio SendGrid.
+      # Blueprint sync never carries the API key or verified From identity.
+      - key: SENDGRID_API_KEY
+        sync: false
+      - key: SENDGRID_FROM_EMAIL
+        sync: false
+      - key: SENDGRID_FROM_NAME
+        value: بوابة الطالب
+      - key: SENDGRID_TIMEOUT_SECONDS
+        value: "3"
+      # Essentials 50K launch cap: three requests per 1,527 current students,
+      # plus a small operational reserve. All SendGrid callers share it.
+      - key: SENDGRID_MAX_SUBMISSIONS
+        value: "4700"
+      - key: SENDGRID_SUBMISSION_WINDOW_SECONDS
+        value: "86400"
+      - key: STUDENT_OTP_SENDGRID_ENABLED
         value: "true"
-      - key: EMAIL_HOST_USER
-        sync: false
-      - key: EMAIL_HOST_PASSWORD
-        sync: false
-      - key: EMAIL_TIMEOUT
-        value: "20"
-      - key: EMAIL_BACKEND
-        value: django.core.mail.backends.smtp.EmailBackend
+      - key: STUDENT_OTP_RESEND_DELAY_SECONDS
+        value: "50"
+      - key: STUDENT_OTP_RESPONSE_FLOOR_SECONDS
+        value: "3.5"
       - key: STUDENT_EMAIL_DOMAIN
         value: taibahu.edu.sa
       - key: STUDENT_OTP_TTL_SECONDS
@@ -69,7 +75,7 @@ services:
       - key: STUDENT_OTP_SEND_WINDOW_SECONDS
         value: "900"
       - key: STUDENT_OTP_ASYNC_EMAIL
-        value: "true"
+        value: "false"
       - key: IP_FROM_XFF
         value: "true"
       # Used only by explicit staff scraper operations; never sent to a client.
@@ -182,8 +188,8 @@ services:
       # shared build cache is not mounted in a running worker.
       - key: PLAYWRIGHT_BROWSERS_PATH
         value: "0"
-      # This process cannot serve the public OTP routes. Keep production SMTP
-      # fail-closed everywhere else without copying mail credentials into it.
+      # This process cannot serve the public OTP routes. Keep production email
+      # validation fail-closed elsewhere without copying SendGrid into it.
       - key: ALLOW_NO_SMTP_PROCESS
         value: "true"
       - key: DJANGO_ALLOWED_HOSTS
@@ -351,9 +357,9 @@ services:
 
   # Retention is a SCHEDULE, not a side effect of deploying. The release chain
   # above still runs migrations and the rate-limit sweep. Planner drafts and
-  # terminal Telegram jobs hold student data, and how long either survives must
-  # not depend on how often anyone ships. QUEUED/RUNNING Telegram jobs are never
-  # retention candidates.
+  # terminal Telegram jobs and expired login challenges hold student data, and
+  # how long any of them survives must not depend on how often anyone ships.
+  # QUEUED/RUNNING Telegram jobs are never retention candidates.
   #
   # 03:00 UTC is 06:00 in Riyadh: after the overnight quiet, before the day starts.
   - type: cron
@@ -365,7 +371,7 @@ services:
     autoDeployTrigger: checksPass
     schedule: "0 3 * * *"
     buildCommand: chmod +x build.sh && ./build.sh
-    startCommand: python manage.py purge_planner_drafts --apply && python manage.py purge_telegram_tokens --apply
+    startCommand: python manage.py purge_planner_drafts --apply && python manage.py purge_telegram_tokens --apply && python manage.py purge_student_login_otps --apply
     envVars:
       - key: DJANGO_SECRET_KEY
         fromService:

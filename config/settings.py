@@ -224,7 +224,6 @@ WHATSAPP_REQUIRE_SIGNATURE = (
 )
 WHATSAPP_ACCESS_TOKEN = os.getenv("WHATSAPP_ACCESS_TOKEN", "")
 WHATSAPP_PHONE_NUMBER_ID = os.getenv("WHATSAPP_PHONE_NUMBER_ID", "")
-WHATSAPP_STUDENT_EMAIL_DOMAIN = os.getenv("WHATSAPP_STUDENT_EMAIL_DOMAIN", "")
 WHATSAPP_OTP_TTL_SECONDS = int(os.getenv("WHATSAPP_OTP_TTL_SECONDS", "300"))
 WHATSAPP_OTP_MAX_ATTEMPTS = int(os.getenv("WHATSAPP_OTP_MAX_ATTEMPTS", "5"))
 WHATSAPP_ALLOW_SUPER_ADMIN = os.getenv("WHATSAPP_ALLOW_SUPER_ADMIN", "false").lower() == "true"
@@ -295,14 +294,32 @@ if TELEGRAM_SEND_TIMETABLE_IMAGES or TELEGRAM_SEND_GRADUATION_IMAGES:
         if _loopback not in ALLOWED_HOSTS:
             ALLOWED_HOSTS.append(_loopback)
 
-# Email / SMTP (Gmail app-password). Credentials come from .env, never the repo.
-# Local development may use the console backend, but production must never do so:
-# a console email contains the student's plaintext OTP and Render persists stdout
-# in service logs. A public production process therefore fails during settings
-# import unless an SMTP identity and credential are both present. Dedicated
-# worker/cron processes that cannot serve login routes may opt out explicitly;
-# they still default to SMTP rather than the console backend.
-EMAIL_HOST = os.getenv("EMAIL_HOST", "smtp.gmail.com")
+# Twilio SendGrid is the production student-email transport.  It is disabled by
+# default so a local checkout never opens an external socket accidentally.
+SENDGRID_API_KEY = os.getenv("SENDGRID_API_KEY", "").strip()
+SENDGRID_FROM_EMAIL = os.getenv("SENDGRID_FROM_EMAIL", "").strip()
+SENDGRID_FROM_NAME = os.getenv("SENDGRID_FROM_NAME", "بوابة الطالب").strip() or "بوابة الطالب"
+SENDGRID_TIMEOUT_SECONDS = int(os.getenv("SENDGRID_TIMEOUT_SECONDS", "3"))
+# Shared by student login, WhatsApp account linking, and the manual delivery
+# check. Essentials 50K launch cap: three requests per current student plus a
+# small operational reserve. Monitor monthly usage before raising it.
+SENDGRID_MAX_SUBMISSIONS = int(os.getenv("SENDGRID_MAX_SUBMISSIONS", "4700"))
+SENDGRID_SUBMISSION_WINDOW_SECONDS = int(os.getenv("SENDGRID_SUBMISSION_WINDOW_SECONDS", "86400"))
+STUDENT_OTP_SENDGRID_ENABLED = os.getenv("STUDENT_OTP_SENDGRID_ENABLED", "false").lower() == "true"
+STUDENT_OTP_RESEND_DELAY_SECONDS = int(os.getenv("STUDENT_OTP_RESEND_DELAY_SECONDS", "50"))
+STUDENT_OTP_RESPONSE_FLOOR_SECONDS = max(
+    0.0, float(os.getenv("STUDENT_OTP_RESPONSE_FLOOR_SECONDS", "3.5"))
+)
+# Production delivery must finish its provider/state transition before the
+# request can be lost to a deploy or worker restart.  Keep the setting for
+# explicit local compatibility, but the production guard below rejects it.
+STUDENT_OTP_ASYNC_EMAIL = os.getenv("STUDENT_OTP_ASYNC_EMAIL", "false").lower() == "true"
+
+# Django's email settings remain for harmless local/dev compatibility with
+# management commands and tests. Production OTP delivery does not use them.
+# The non-debug default remains SMTP (pointing at localhost) instead of console,
+# so an accidental legacy call cannot print a plaintext OTP into hosted logs.
+EMAIL_HOST = os.getenv("EMAIL_HOST", "localhost")
 EMAIL_PORT = int(os.getenv("EMAIL_PORT", "587"))
 EMAIL_USE_TLS = os.getenv("EMAIL_USE_TLS", "true").lower() == "true"
 EMAIL_HOST_USER = os.getenv("EMAIL_HOST_USER", "")
@@ -313,42 +330,58 @@ _CONSOLE_EMAIL_BACKEND = "django.core.mail.backends.console.EmailBackend"
 EMAIL_BACKEND = os.getenv("EMAIL_BACKEND", "").strip() or (
     _SMTP_EMAIL_BACKEND if EMAIL_HOST_PASSWORD or not DEBUG else _CONSOLE_EMAIL_BACKEND
 )
+# Historical environment-variable name retained so existing worker/cron settings
+# do not drift during deployment. It now means that the process cannot serve the
+# public student-email routes and therefore does not need SendGrid credentials.
 ALLOW_NO_SMTP_PROCESS = os.getenv("ALLOW_NO_SMTP_PROCESS", "false").lower() == "true"
 DEFAULT_FROM_EMAIL = (
-    os.getenv("DEFAULT_FROM_EMAIL", "").strip()
-    or EMAIL_HOST_USER.strip()
-    or "advisor-bot@localhost"
+    os.getenv("DEFAULT_FROM_EMAIL", "").strip() or SENDGRID_FROM_EMAIL or "advisor-bot@localhost"
 )
 
 
-def _require_production_smtp(
+def _require_production_sendgrid(
     *,
     debug: bool,
     allow_no_smtp_process: bool,
-    backend: str,
-    host_user: str,
-    host_password: str,
+    enabled: bool,
+    api_key: str,
+    from_email: str,
+    async_email: bool = False,
+    max_submissions: int = 4700,
+    submission_window_seconds: int = 86_400,
 ) -> None:
-    """Reject any public production process that could print OTPs to stdout."""
+    """Require the sole production OTP transport on every public web process."""
 
     if debug or allow_no_smtp_process:
         return
-    if backend != _SMTP_EMAIL_BACKEND:
+    if not enabled:
+        raise ImproperlyConfigured("STUDENT_OTP_SENDGRID_ENABLED must be true in production.")
+    if async_email:
+        raise ImproperlyConfigured("STUDENT_OTP_ASYNC_EMAIL must be false in production.")
+    missing = []
+    if not api_key.strip():
+        missing.append("SENDGRID_API_KEY")
+    if not from_email.strip():
+        missing.append("SENDGRID_FROM_EMAIL")
+    if missing:
         raise ImproperlyConfigured(
-            "Production student OTP delivery requires Django's SMTP email backend."
+            ", ".join(missing) + " are required for production student OTP delivery."
         )
-    if not host_user.strip() or not host_password:
-        raise ImproperlyConfigured(
-            "EMAIL_HOST_USER and EMAIL_HOST_PASSWORD are required in production."
-        )
+    if max_submissions < 1:
+        raise ImproperlyConfigured("SENDGRID_MAX_SUBMISSIONS must be positive.")
+    if submission_window_seconds < 1:
+        raise ImproperlyConfigured("SENDGRID_SUBMISSION_WINDOW_SECONDS must be positive.")
 
 
-_require_production_smtp(
+_require_production_sendgrid(
     debug=DEBUG,
     allow_no_smtp_process=ALLOW_NO_SMTP_PROCESS,
-    backend=EMAIL_BACKEND,
-    host_user=EMAIL_HOST_USER,
-    host_password=EMAIL_HOST_PASSWORD,
+    enabled=STUDENT_OTP_SENDGRID_ENABLED,
+    api_key=SENDGRID_API_KEY,
+    from_email=SENDGRID_FROM_EMAIL,
+    async_email=STUDENT_OTP_ASYNC_EMAIL,
+    max_submissions=SENDGRID_MAX_SUBMISSIONS,
+    submission_window_seconds=SENDGRID_SUBMISSION_WINDOW_SECONDS,
 )
 # Student OTP-login email domain. The canonical cohort-aware local-part rule is
 # implemented centrally in core.services.student_identity.student_email.
@@ -357,7 +390,6 @@ STUDENT_OTP_TTL_SECONDS = int(os.getenv("STUDENT_OTP_TTL_SECONDS", "600"))  # co
 STUDENT_OTP_MAX_ATTEMPTS = int(os.getenv("STUDENT_OTP_MAX_ATTEMPTS", "5"))  # verify tries per code
 STUDENT_OTP_MAX_SENDS = int(os.getenv("STUDENT_OTP_MAX_SENDS", "3"))  # codes per window per id
 STUDENT_OTP_SEND_WINDOW_SECONDS = int(os.getenv("STUDENT_OTP_SEND_WINDOW_SECONDS", "900"))
-STUDENT_OTP_ASYNC_EMAIL = os.getenv("STUDENT_OTP_ASYNC_EMAIL", "true").lower() == "true"
 # Behind a trusted reverse proxy (e.g. Render), derive the client IP from the
 # right-most X-Forwarded-For entry (the one the proxy appended, unspoofable).
 # Leave off for direct/dev, where REMOTE_ADDR is the real peer.
@@ -529,6 +561,12 @@ LOGGING = {
             "class": "logging.StreamHandler",
             "formatter": "verbose",
         },
+        # The SendGrid transport's dependency logs request payloads and
+        # Authorization headers at DEBUG.  OTPs, recipients, and API keys must
+        # never reach application logs even if another logger becomes verbose.
+        "discard_vendor_email": {
+            "class": "logging.NullHandler",
+        },
     },
     "loggers": {
         "django": {
@@ -544,6 +582,16 @@ LOGGING = {
         "django.security": {
             "handlers": ["console"],
             "level": "DEBUG" if DEBUG else "WARNING",
+            "propagate": False,
+        },
+        "python_http_client.client": {
+            "handlers": ["discard_vendor_email"],
+            "level": "WARNING",
+            "propagate": False,
+        },
+        "sendgrid": {
+            "handlers": ["discard_vendor_email"],
+            "level": "WARNING",
             "propagate": False,
         },
     },

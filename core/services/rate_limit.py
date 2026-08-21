@@ -28,6 +28,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import timedelta
 
+from django.conf import settings
 from django.db import transaction
 from django.db.models import F
 from django.utils import timezone
@@ -45,6 +46,9 @@ TELEGRAM_COMMAND = "telegram_command"
 TELEGRAM_INGRESS = "telegram_ingress"
 TELEGRAM_LINK = "telegram_link"
 TELEGRAM_REFUSAL_NOTICE = "telegram_refusal_notice"
+STUDENT_OTP_SEND = "student_otp_send"
+STUDENT_OTP_VERIFY = "student_otp_verify"
+SENDGRID_SUBMISSION = "sendgrid_submission"
 
 #: (max_calls, window_seconds), justified where they are used.
 LIMITS: dict[str, tuple[int, int]] = {
@@ -98,6 +102,22 @@ LIMITS: dict[str, tuple[int, int]] = {
     # would turn the limiter into an unlimited Bot API sender. One notice is
     # enough to explain the refusal; subsequent overload is acknowledged silently.
     TELEGRAM_REFUSAL_NOTICE: (1, 600),
+    # Every OTP send entry point spends the same per-client allowance. The view
+    # HMACs the normalized client address before it reaches this durable table, so
+    # the limiter does not create another copy of the raw address merely to count
+    # it.
+    # This is deliberately a coarse shared-NAT backstop, not the abuse limit: the
+    # per-student OTP limit and the global provider budget are the tighter gates.
+    # A university campus can legitimately place many students behind one IP.
+    STUDENT_OTP_SEND: (2000, 900),
+    # Verification is cheap but still needs a durable, cross-thread backstop in
+    # addition to the five-attempt cap on each individual challenge.
+    STUDENT_OTP_VERIFY: (5000, 900),
+    # Essentials 50K launch cap: three requests per 1,527 current students plus
+    # a small operational reserve. The adapter supplies deployment-configured
+    # values at runtime; this default also makes retention aware of the longest
+    # normal counter window.
+    SENDGRID_SUBMISSION: (4700, 86_400),
 }
 
 
@@ -116,8 +136,31 @@ def consume(budget: str, student_id: int, *, now=None) -> Decision:
     itself.
     """
     max_calls, window_seconds = LIMITS[budget]
+    return consume_configured(
+        budget,
+        student_id,
+        max_calls=max_calls,
+        window_seconds=window_seconds,
+        now=now,
+    )
+
+
+def consume_configured(
+    budget: str,
+    identity: int | str,
+    *,
+    max_calls: int,
+    window_seconds: int,
+    now=None,
+) -> Decision:
+    """Spend from an explicitly sized durable, cross-process budget."""
+
+    max_calls = int(max_calls)
+    window_seconds = int(window_seconds)
+    if max_calls < 1 or window_seconds < 1:
+        raise ValueError("rate-limit size and window must be positive")
     now = now or timezone.now()
-    key = f"{budget}:{student_id}"
+    key = f"{budget}:{identity}"
 
     with transaction.atomic():
         bucket, created = RateLimitBucket.objects.select_for_update().get_or_create(
@@ -188,7 +231,12 @@ def _retention() -> timedelta:
     Hard-coding a day was safe only for as long as no window exceeded one — which
     is exactly the assumption the previous sweep made and lost.
     """
-    return timedelta(seconds=max(window for _calls, window in LIMITS.values()) * 2)
+    windows = [window for _calls, window in LIMITS.values()]
+    try:
+        windows.append(int(getattr(settings, "SENDGRID_SUBMISSION_WINDOW_SECONDS", 86_400)))
+    except (TypeError, ValueError):
+        pass
+    return timedelta(seconds=max(window for window in windows if window > 0) * 2)
 
 
 def purge_expired(older_than: timedelta | None = None) -> int:

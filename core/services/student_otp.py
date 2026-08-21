@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import ipaddress
 import logging
 import secrets
 import threading
@@ -17,18 +18,28 @@ from datetime import timedelta
 from django.conf import settings
 from django.contrib.auth.models import Group, User
 from django.core.mail import send_mail
-from django.db import transaction
+from django.db import close_old_connections, transaction
 from django.http import HttpRequest
 from django.utils import timezone
 
-from core.models import StudentLoginOTP
+from core.models import Student, StudentLoginOTP
 from core.services.rbac import ROLE_NAMES, ROLE_STUDENT, ensure_role_groups, set_user_scope
+from core.services.sendgrid_email import send_transactional_email
 from core.services.student_identity import normalize_student_id, student_email
 
 logger = logging.getLogger(__name__)
 
 STUDENT_AUTHENTICATED_AT_SESSION_KEY = "student_authenticated_at"
 DEFAULT_RECENT_AUTH_SECONDS = 10 * 60
+CHANNEL_SMTP = "smtp"
+CHANNEL_SENDGRID = "sendgrid"
+
+_DELIVERY_PENDING = StudentLoginOTP.DeliveryStatus.PENDING
+_DELIVERY_ACCEPTED = StudentLoginOTP.DeliveryStatus.ACCEPTED
+_DELIVERY_FAILED = StudentLoginOTP.DeliveryStatus.FAILED
+_DELIVERY_CANCELLED = StudentLoginOTP.DeliveryStatus.CANCELLED
+_SUPPORTED_CHANNELS = {CHANNEL_SMTP, CHANNEL_SENDGRID}
+_OTP_SUBJECT = "رمز التحقق لتسجيل الدخول / Student portal verification code"
 
 
 def _minutes_ar(value: int) -> str:
@@ -87,61 +98,281 @@ def _hash(code: str) -> str:
     return hmac.new(settings.SECRET_KEY.encode(), code.encode(), hashlib.sha256).hexdigest()
 
 
-def _send_code(student_id: int, code: str) -> None:
+def _request_ip_fingerprint(ip: str) -> str:
+    """Return a domain-separated HMAC without retaining the network address."""
+
+    raw = str(ip or "").strip()
+    if not raw:
+        return ""
+    try:
+        normalized = ipaddress.ip_address(raw).compressed.lower()
+    except ValueError:
+        # Direct service callers may supply a proxy-specific token rather than an
+        # address. It still must never be persisted in plaintext.
+        normalized = raw.lower()
+    payload = f"student-login-otp-request-ip\0{normalized}".encode()
+    return hmac.new(settings.SECRET_KEY.encode("utf-8"), payload, hashlib.sha256).hexdigest()
+
+
+def _otp_body(code: str) -> str:
     minutes = max(1, settings.STUDENT_OTP_TTL_SECONDS // 60)
-    recipient = student_email(student_id)
+    return (
+        f"رمز التحقق لتسجيل الدخول إلى بوابة الطالب: {code}\n"
+        f"تنتهي صلاحية الرمز خلال {_minutes_ar(minutes)}. لا تشاركه مع أي شخص.\n\n"
+        f"Your login code is: {code}\n"
+        f"It expires in {minutes} minutes. Do not share it with anyone."
+    )
+
+
+def _send_code(student_id: int, code: str) -> None:
+    """Legacy SMTP adapter retained only for local/test compatibility."""
+
     send_mail(
-        subject="رمز التحقق لتسجيل الدخول / Student portal verification code",
-        message=(
-            f"رمز التحقق لتسجيل الدخول إلى بوابة الطالب: {code}\n"
-            f"تنتهي صلاحية الرمز خلال {_minutes_ar(minutes)}. لا تشاركه مع أي شخص.\n\n"
-            f"Your login code is: {code}\n"
-            f"It expires in {minutes} minutes. Do not share it with anyone."
-        ),
+        subject=_OTP_SUBJECT,
+        message=_otp_body(code),
         from_email=settings.DEFAULT_FROM_EMAIL,
-        recipient_list=[recipient],
+        recipient_list=[student_email(student_id)],
         fail_silently=False,
     )
 
 
-def issue_otp(student_id: int | str, ip: str = "") -> None:
-    """Generate + email a fresh code, invalidating prior unconsumed ones.
-    Email is dispatched asynchronously by default so the request returns in
-    constant time (no valid-ID timing oracle) and an SMTP outage never 500s.
-    Raises OTPError('too_many_requests') when the send window is exhausted."""
+def _send_code_sendgrid(student_id: int, code: str) -> str:
+    return send_transactional_email(
+        student_email(student_id),
+        _OTP_SUBJECT,
+        _otp_body(code),
+    )
+
+
+def _lock_student(student_id: int) -> bool:
+    """Lock the stable identity row used to serialize this student's OTP state."""
+
+    try:
+        Student.objects.select_for_update().only("student_id").get(student_id=student_id)
+    except Student.DoesNotExist:
+        return False
+    return True
+
+
+def _mark_delivery_failed(student_id: int, otp_id: int) -> None:
+    now = timezone.now()
+    with transaction.atomic():
+        _lock_student(student_id)
+        StudentLoginOTP.objects.filter(
+            pk=otp_id,
+            student_id=student_id,
+            delivery_status=_DELIVERY_PENDING,
+        ).update(
+            consumed=True,
+            delivery_status=_DELIVERY_FAILED,
+            delivery_finished_at=now,
+            provider_message_id="",
+        )
+
+
+def _finish_smtp_delivery(student_id: int, otp_id: int) -> None:
+    now = timezone.now()
+    with transaction.atomic():
+        _lock_student(student_id)
+        StudentLoginOTP.objects.filter(
+            pk=otp_id,
+            student_id=student_id,
+            delivery_status=_DELIVERY_PENDING,
+        ).update(
+            delivery_status=_DELIVERY_ACCEPTED,
+            delivery_finished_at=now,
+        )
+
+
+def _accept_sendgrid_delivery(student_id: int, otp_id: int, message_id: str) -> None:
+    """Atomically make an accepted provider-backed code the sole active code."""
+
+    now = timezone.now()
+    with transaction.atomic():
+        if not _lock_student(student_id):
+            StudentLoginOTP.objects.filter(
+                pk=otp_id,
+                delivery_status=_DELIVERY_PENDING,
+            ).update(
+                consumed=True,
+                delivery_status=_DELIVERY_CANCELLED,
+                delivery_finished_at=now,
+            )
+            return
+
+        candidate = (
+            StudentLoginOTP.objects.select_for_update()
+            .filter(pk=otp_id, student_id=student_id)
+            .first()
+        )
+        # A successful verification may have cancelled this pending replacement
+        # while its HTTP request was in flight.  Never resurrect it afterwards.
+        if candidate is None or candidate.delivery_status != _DELIVERY_PENDING:
+            return
+
+        StudentLoginOTP.objects.filter(
+            student_id=student_id,
+            delivery_status=_DELIVERY_PENDING,
+        ).exclude(pk=otp_id).update(
+            consumed=True,
+            delivery_status=_DELIVERY_CANCELLED,
+            delivery_finished_at=now,
+        )
+
+        if candidate.expires_at <= now:
+            # The provider did accept the mail, but an unusually slow response
+            # must not activate a code whose validity window has already ended.
+            candidate.delivery_status = _DELIVERY_ACCEPTED
+            candidate.delivery_finished_at = now
+            candidate.provider_message_id = message_id
+            candidate.consumed = True
+            candidate.save(
+                update_fields=[
+                    "delivery_status",
+                    "delivery_finished_at",
+                    "provider_message_id",
+                    "consumed",
+                ]
+            )
+            return
+
+        # Preserve the old usable code until this exact request has a 202.  Once
+        # it does, replacement and activation happen under the same student lock.
+        StudentLoginOTP.objects.filter(student_id=student_id, consumed=False).exclude(
+            pk=otp_id
+        ).update(consumed=True)
+        candidate.delivery_status = _DELIVERY_ACCEPTED
+        candidate.delivery_finished_at = now
+        candidate.provider_message_id = message_id
+        candidate.consumed = False
+        candidate.save(
+            update_fields=[
+                "delivery_status",
+                "delivery_finished_at",
+                "provider_message_id",
+                "consumed",
+            ]
+        )
+
+
+def _dispatch_code(*, student_id: int, otp_id: int, code: str, channel: str) -> None:
+    """Send and persist the receipt without exposing delivery details to callers."""
+
+    close_old_connections()
+    try:
+        # A newer request or a successful verification can cancel a queued worker
+        # before it opens an external connection.
+        if not StudentLoginOTP.objects.filter(
+            pk=otp_id,
+            student_id=student_id,
+            delivery_status=_DELIVERY_PENDING,
+        ).exists():
+            return
+        if channel == CHANNEL_SENDGRID:
+            message_id = _send_code_sendgrid(student_id, code)
+            _accept_sendgrid_delivery(student_id, otp_id, message_id)
+        else:
+            _send_code(student_id, code)
+            _finish_smtp_delivery(student_id, otp_id)
+    except Exception:  # noqa: BLE001 - provider errors must never reach the request/log
+        try:
+            _mark_delivery_failed(student_id, otp_id)
+        except Exception:  # noqa: BLE001 - still do not log DB/provider exception details
+            logger.error("student OTP delivery state update failed")
+        logger.error("student OTP email delivery failed")
+    finally:
+        close_old_connections()
+
+
+def issue_otp(
+    student_id: int | str,
+    ip: str = "",
+    *,
+    channel: str = CHANNEL_SMTP,
+    min_interval_seconds: int = 0,
+) -> None:
+    """Create and dispatch a code under a per-student serialization lock.
+
+    SMTP remains an explicit local/test compatibility channel.  Production views
+    select SendGrid.  SendGrid candidates start inactive and replace an existing
+    active code only after Mail Send returns HTTP 202.
+    """
+
     try:
         student_id = normalize_student_id(student_id)
     except ValueError as exc:
         raise OTPError("invalid_student_id") from exc
+    channel = str(channel or "").strip().lower()
+    if channel not in _SUPPORTED_CHANNELS:
+        raise OTPError("unsupported_channel")
+    try:
+        min_interval_seconds = max(0, int(min_interval_seconds))
+    except (TypeError, ValueError) as exc:
+        raise OTPError("invalid_interval") from exc
 
     now = timezone.now()
     window_start = now - timedelta(seconds=settings.STUDENT_OTP_SEND_WINDOW_SECONDS)
-    recent = StudentLoginOTP.objects.filter(
-        student_id=student_id, created_at__gte=window_start
-    ).count()
-    if recent >= settings.STUDENT_OTP_MAX_SENDS:
-        raise OTPError("too_many_requests")
-
     code = f"{secrets.randbelow(1_000_000):06d}"
-    StudentLoginOTP.objects.filter(student_id=student_id, consumed=False).update(consumed=True)
-    StudentLoginOTP.objects.create(
-        student_id=student_id,
-        code_hash=_hash(code),
-        expires_at=now + timedelta(seconds=settings.STUDENT_OTP_TTL_SECONDS),
-        request_ip=(ip or "")[:64],
-    )
+    with transaction.atomic():
+        if not _lock_student(student_id):
+            raise OTPError("invalid_student_id")
+
+        recent_otps = StudentLoginOTP.objects.filter(
+            student_id=student_id,
+            created_at__gte=window_start,
+        )
+        if recent_otps.count() >= settings.STUDENT_OTP_MAX_SENDS:
+            raise OTPError("too_many_requests")
+        if min_interval_seconds:
+            latest_created_at = (
+                StudentLoginOTP.objects.filter(student_id=student_id)
+                .order_by("-created_at")
+                .values_list("created_at", flat=True)
+                .first()
+            )
+            if latest_created_at is not None:
+                age = (now - latest_created_at).total_seconds()
+                if age < min_interval_seconds:
+                    raise OTPError("too_soon")
+
+        # Only the newest not-yet-finished request is allowed to activate.  This
+        # does not touch a previously accepted active code.
+        StudentLoginOTP.objects.filter(
+            student_id=student_id,
+            delivery_status=_DELIVERY_PENDING,
+        ).update(
+            consumed=True,
+            delivery_status=_DELIVERY_CANCELLED,
+            delivery_finished_at=now,
+        )
+
+        activate_before_delivery = channel == CHANNEL_SMTP
+        if activate_before_delivery:
+            StudentLoginOTP.objects.filter(student_id=student_id, consumed=False).update(
+                consumed=True
+            )
+        candidate = StudentLoginOTP.objects.create(
+            student_id=student_id,
+            code_hash=_hash(code),
+            expires_at=now + timedelta(seconds=settings.STUDENT_OTP_TTL_SECONDS),
+            request_ip=_request_ip_fingerprint(ip),
+            consumed=not activate_before_delivery,
+            delivery_channel=channel,
+            delivery_status=_DELIVERY_PENDING,
+        )
 
     def _dispatch() -> None:
-        try:
-            _send_code(student_id, code)
-        except Exception:  # noqa: BLE001 — never surface SMTP errors to the caller / 500
-            # SMTP exceptions can echo envelope recipients. Keep both the log
-            # message and its metadata identifier-free; delivery is deliberately
-            # best-effort and the caller receives the enumeration-safe response.
-            logger.error("student OTP email delivery failed")
+        _dispatch_code(
+            student_id=student_id,
+            otp_id=candidate.pk,
+            code=code,
+            channel=channel,
+        )
 
     if getattr(settings, "STUDENT_OTP_ASYNC_EMAIL", True):
-        threading.Thread(target=_dispatch, daemon=True).start()
+        # If a caller wrapped issuance in a wider transaction, do not let a worker
+        # race a row that is not committed yet.
+        transaction.on_commit(lambda: threading.Thread(target=_dispatch, daemon=True).start())
     else:
         _dispatch()
 
@@ -156,6 +387,8 @@ def verify_otp(student_id: int | str, code: str) -> bool:
 
     now = timezone.now()
     with transaction.atomic():
+        if not _lock_student(student_id):
+            return False
         otp = (
             StudentLoginOTP.objects.select_for_update()
             .filter(student_id=student_id, consumed=False, expires_at__gt=now)
@@ -172,6 +405,19 @@ def verify_otp(student_id: int | str, code: str) -> bool:
         ok = hmac.compare_digest(otp.code_hash, _hash(str(code).strip()))
         otp.consumed = ok
         otp.save(update_fields=["attempts", "consumed"])
+        if ok:
+            # A replacement request may already be waiting on SendGrid while the
+            # student submits the previous valid code.  Cancel it under the same
+            # stable student lock so its late 202 cannot change the login code.
+            StudentLoginOTP.objects.filter(
+                student_id=student_id,
+                delivery_channel=CHANNEL_SENDGRID,
+                delivery_status=_DELIVERY_PENDING,
+            ).update(
+                consumed=True,
+                delivery_status=_DELIVERY_CANCELLED,
+                delivery_finished_at=now,
+            )
         return ok
 
 
