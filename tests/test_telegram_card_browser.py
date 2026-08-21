@@ -285,7 +285,9 @@ class TelegramCardBrowserTests(LiveServerTestCase):
         self.assertEqual(png_width, 1440)
         self.assertLess(png_height, 1300)
 
-    def test_graduation_card_renders_a_readable_term_list_and_marks_itself_ready(self) -> None:
+    def test_graduation_card_renders_a_readable_prerequisite_tree_and_marks_itself_ready(
+        self,
+    ) -> None:
         completed = [
             "AI201",
             "AI221",
@@ -316,10 +318,10 @@ class TelegramCardBrowserTests(LiveServerTestCase):
             "lower_bound_terms_including_planning_baseline": 2,
             "max_credits_per_term": 18,
             "band_labels": {
-                "0": "Completed before the scenario",
-                "1": "Planning baseline 1448/1",
-                "2": "Projected 1448/2",
-                "3": "Projected 1449/1",
+                "0": "مجتاز قبل فصل البداية",
+                "1": "فصل البداية: 1448/1",
+                "2": "فصل تقديري: 1448/2",
+                "3": "فصل تقديري: 1449/1",
             },
             "graph": {
                 "items": [
@@ -364,24 +366,31 @@ class TelegramCardBrowserTests(LiveServerTestCase):
         self.assertEqual(page.locator(".sa-graduation-map").count(), 1)
         self.assertEqual(page.locator(".sa-timetable").count(), 0)
         self.assertIn("DS341", page.locator(".sa-graduation-map").inner_text())
-        self.assertFalse(page.locator(".sa-grad-desktop").is_visible())
-        self.assertTrue(page.locator(".sa-grad-mobile").is_visible())
+        self.assertTrue(page.locator(".sa-grad-desktop").is_visible())
+        self.assertFalse(page.locator(".sa-grad-mobile").is_visible())
         self.assertFalse(page.locator(".sa-grad-expand").is_visible())
         self.assertFalse(page.locator(".sa-grad-toolbar .pg-modes").is_visible())
-        self.assertEqual(page.locator(".sa-card-grad-legend").count(), 1)
-        self.assertEqual(page.locator(".sa-grad-course").count(), len(all_codes))
-        self.assertEqual(page.locator("details.sa-grad-more").count(), 0)
-        first_course = page.locator(".sa-grad-course").first
+        tree = page.locator(".sa-grad-desktop .prereq-svg")
+        self.assertEqual(tree.count(), 1)
+        self.assertEqual(page.locator(".sa-grad-desktop .pg-node").count(), len(projected))
+        self.assertEqual(page.locator(".sa-grad-desktop .pg-edge").count(), 1)
+        self.assertEqual(page.locator(".sa-grad-desktop .pg-node", has_text="AI201").count(), 0)
+        self.assertEqual(page.locator(".sa-card-grad-pruned").count(), 1)
+        self.assertIn("18", page.locator(".sa-card-grad-pruned").inner_text())
+        first_course = page.locator(".sa-grad-desktop .pg-node text").first
         self.assertGreaterEqual(
             float(first_course.evaluate("node => parseFloat(getComputedStyle(node).fontSize)")),
-            12,
+            12.0,
         )
         self.assertIn(
             "تنقيب البيانات",
-            page.locator(".sa-grad-course", has_text="DS225")
-            .locator(".sa-card-grad-course-name")
-            .inner_text(),
+            page.locator(".sa-grad-desktop .pg-node[data-c='DS225'] title").text_content(),
         )
+        label_boxes = page.locator(".sa-grad-desktop .pg-band-lbl").evaluate_all(
+            "nodes => nodes.map(node => node.getBoundingClientRect())"
+        )
+        self.assertTrue(label_boxes)
+        self.assertTrue(all(box["left"] >= 0 for box in label_boxes))
         dimensions = root.evaluate(
             "node => ({clientWidth: node.clientWidth, scrollWidth: node.scrollWidth})"
         )

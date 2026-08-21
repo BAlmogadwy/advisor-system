@@ -232,7 +232,10 @@
        chain is genuinely wide, but course codes must never be shrunk into
        thumbnail-sized labels just to force the whole plan into one viewport. */
     const nH = 42, gX = 24, padY = 13, emptyH = 32, padX = 28, rW = 16;
-    const TERM_GUTTER = 104;
+    const requestedTermGutter = Number(o.termGutter);
+    const TERM_GUTTER = Number.isFinite(requestedTermGutter)
+      ? Math.max(80, Math.min(220, requestedTermGutter))
+      : 104;
     const maxChars = Math.max(...[...all].map(c => c.length));
     const nW = Math.max(92, maxChars * 9 + 26);
     const slotW = sl => (sl.kind === 'node' ? nW : rW);
