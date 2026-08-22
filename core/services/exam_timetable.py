@@ -207,8 +207,13 @@ def build_enrolled_sets(
 
     if latest is not None:
         ay, tm = latest
-        qs = StudentTermSection.objects.filter(academic_year=ay, term=tm).select_related(
-            "term_section"
+        qs = (
+            StudentTermSection.objects.filter(academic_year=ay, term=tm)
+            # Another branch's sections never size a room here: those stored
+            # links are not this campus' enrolments.
+            .exclude(term_section__section__istartswith="YM")
+            .exclude(term_section__section__istartswith="YF")
+            .select_related("term_section")
         )
 
         if programs:
@@ -276,8 +281,13 @@ def build_enrolled_sets_with_meta(
             return {}, {}
 
         ay, tm = latest
-        qs_sts = StudentTermSection.objects.filter(academic_year=ay, term=tm).select_related(
-            "term_section"
+        qs_sts = (
+            StudentTermSection.objects.filter(academic_year=ay, term=tm)
+            # Another branch's sections never size a room here: those stored
+            # links are not this campus' enrolments.
+            .exclude(term_section__section__istartswith="YM")
+            .exclude(term_section__section__istartswith="YF")
+            .select_related("term_section")
         )
         if programs:
             student_ids = set(
@@ -1148,11 +1158,18 @@ def build_section_enrollment(
 
     if latest is not None:
         ay, tm = latest
-        qs = StudentTermSection.objects.filter(
-            academic_year=ay,
-            term=tm,
-            term_section__course_key__in=list(wanted),
-        ).select_related("term_section")
+        qs = (
+            StudentTermSection.objects.filter(
+                academic_year=ay,
+                term=tm,
+                term_section__course_key__in=list(wanted),
+            )
+            # Another branch's sections never size a room here: those stored
+            # links are not this campus' enrolments.
+            .exclude(term_section__section__istartswith="YM")
+            .exclude(term_section__section__istartswith="YF")
+            .select_related("term_section")
+        )
 
         if programs:
             student_ids = set(

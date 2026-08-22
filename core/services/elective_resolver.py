@@ -126,10 +126,19 @@ def _get_timetable_courses(
     term: str | None = None,
 ) -> set[str]:
     """Return course codes from a verified global scraper snapshot only."""
-    snapshots = StudentTermSection.objects.filter(
-        student_id=student_id,
-        source="scraper_timetable",
-        term_section__scenario__isnull=True,
+    snapshots = (
+        StudentTermSection.objects.filter(
+            student_id=student_id,
+            source="scraper_timetable",
+            term_section__scenario__isnull=True,
+        )
+        .exclude(
+            # Another branch's sections are not evidence of this student's study
+            # here. Without this, elective resolution and academic_state disagreed
+            # about whether the same student occupies an elective slot.
+            term_section__section__istartswith="YM"
+        )
+        .exclude(term_section__section__istartswith="YF")
     )
     if academic_year is None or term is None:
         latest = (

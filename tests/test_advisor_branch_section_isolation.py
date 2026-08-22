@@ -335,3 +335,44 @@ def test_snapshot_writer_drops_other_branch_section_ids(
             "term_section__section", flat=True
         )
     ) == {"M1"}
+
+
+def test_every_reader_of_a_stored_link_agrees_the_other_branch_is_excluded(
+    branch_section_world: dict[str, Any],
+) -> None:
+    """One student, one stored other-branch link, four independent readers.
+
+    The exclusion first landed on the student-facing timetable only, so a
+    student whose timetable screen showed nothing was still booked solid on the
+    group-availability screen, still occupied an elective slot in the resolver,
+    and was still sized into an exam room - four surfaces disagreeing about the
+    same person. A rule enforced on some readers of a row is not a rule.
+    """
+    from core.services.elective_resolver import _get_timetable_courses
+    from core.services.group_availability import _load_meetings_by_student
+    from core.services.planner_builder import _catalog_for_courses
+
+    student = branch_section_world["students"]["M"]
+    sections = branch_section_world["sections"]
+    StudentTermSection.objects.create(
+        student_id=student.student_id,
+        academic_year="1448",
+        term="1",
+        term_section=sections["YM4"],
+        source="scraper_timetable",
+    )
+
+    meetings, _enrolled = _load_meetings_by_student([student.student_id], "1448", "1")
+    assert meetings.get(student.student_id, []) == []
+
+    assert _get_timetable_courses(student.student_id, academic_year="1448", term="1") == set()
+
+    baseline = get_student_term_baseline(student.student_id, "1448", "1", snapshot=Snapshot.ANY)
+    assert _section_labels(baseline) == set()
+
+    # The staff build path takes no student, and used to skip the filter
+    # entirely on that branch - which is where an unscoped catalogue would
+    # quietly re-offer the sections every other reader had stopped showing.
+    catalogue = _catalog_for_courses("1448", "1", [COURSE_CODE], "", None)
+    offered = {str(row["section"]).upper() for row in catalogue.get(COURSE_CODE, [])}
+    assert offered == {"M1", "M0", "F1", "F0"}
