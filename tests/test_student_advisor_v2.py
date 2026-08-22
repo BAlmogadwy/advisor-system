@@ -2210,6 +2210,58 @@ def test_the_hypothetical_absence_phrasing_reaches_the_model_branch():
     assert normalisation == "model_direction_for_student_named_courses"
 
 
+def test_a_model_that_never_calls_a_tool_still_gets_the_what_if_answered(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The production failure mode: two identical live turns on identical
+    code, one answered and one refused, because the what-if evidence waited
+    on the model CHOOSING to call a tool whose name and arguments were
+    already fully determined server-side.  The prefetch executes it
+    deterministically; a model that answers prose without a single tool
+    call no longer ends at the missing-what-if refusal."""
+    graduation = {
+        "tool": "graduation_progress",
+        "ok": True,
+        "planning_baseline_kind": "registered_timetable",
+        "simulation_completed": True,
+        "lower_bound_additional_terms": 2,
+        "what_if": {
+            "mode": "explicit_changes",
+            "valid": True,
+            "removed_current_courses": [{"code": "DS225"}],
+            "added_current_courses": [],
+            "comparison": {"timing_effect": "SAME", "term_difference": 0},
+            "baseline": {"lower_bound_additional_terms": 2},
+            "scenario": {"lower_bound_additional_terms": 2},
+        },
+        "what_if_alternate_baseline": None,
+    }
+    executed = []
+
+    def fake_execute(name, arguments, **kwargs):
+        executed.append((name, dict(arguments)))
+        return graduation
+
+    monkeypatch.setattr("core.services.student_advisor_v2.execute_student_v2_tool", fake_execute)
+    client = FakeClient(_answer_turn("سيتم التحقق من ذلك."))
+
+    result = answer_student_advisor_v2(
+        question="لو حذفت مقرر DS225 هل يؤثر على تخرجي؟",
+        principal=_principal(),
+        academic_year=1448,
+        term=1,
+        llm_client=client,
+    )
+
+    assert executed and executed[0][0] == "graduation_progress"
+    assert executed[0][1]["remove_current_courses"] == ["DS225"]
+    agent = result["agent"]
+    assert agent["graduation_what_if_prefetched"] is True
+    assert agent["graduation_what_if_missing"] is False
+    assert "تعذّر تشغيل مقارنة التغيير المطلوب" not in result["answer"]
+    assert "DS225" in result["answer"]
+
+
 def test_model_direction_is_accepted_for_a_student_named_course():
     """The LLM-intention path.  «ما عاد عندي» is a phrasing no surface form
     covers; the model understood it, and its DIRECTION is admissible because
@@ -2485,15 +2537,23 @@ def test_colloquial_arabic_omission_overrides_reversed_model_arguments(monkeypat
         llm_client=client,
     )
 
-    assert executed == [
-        (
-            "graduation_progress",
-            {
-                "planning_baseline_kind": "recommended_current_term",
-                "remove_current_courses": ["DS225"],
-            },
-        )
-    ]
+    # TWO executions of the SAME normalised arguments: the deterministic
+    # prefetch (the what-if evidence no longer waits on the model choosing
+    # to call) and the model's own call, whose reversed direction is still
+    # overridden by the student's wording - the point this test pins.
+    assert (
+        executed
+        == [
+            (
+                "graduation_progress",
+                {
+                    "planning_baseline_kind": "recommended_current_term",
+                    "remove_current_courses": ["DS225"],
+                },
+            )
+        ]
+        * 2
+    )
     assert result["agent"]["tools_called"][0] == {
         "name": "graduation_progress",
         "arguments": {
