@@ -4497,6 +4497,73 @@ def answer_student_advisor_v2(
         required_exact_fact_tools.add("build_timetable_proposal")
     if requires_graduation_what_if:
         required_exact_fact_tools.add("graduation_progress")
+
+    # A graduation what-if whose scenario is written in the student's own
+    # words is fully determined server-side: the classifier names the tool
+    # and the extractor names the arguments - the model contributes only
+    # PROSE.  Begging the model to make that call (and reprompting when it
+    # forgot) left the answer hostage to tool-call nondeterminism: two
+    # identical live turns on identical code, one answered and one refused.
+    # Like the policy seed: execute it, seed the verified evidence, and the
+    # one-agent loop stays in control of the wording, never of whether the
+    # evidence exists.  Isolated like every enhancement - a seeding failure
+    # leaves the turn exactly where it was before this block existed.
+    graduation_what_if_prefetched = False
+    if requires_graduation_what_if:
+        try:
+            seeded_args, _seed_reason = _normalise_graduation_scenario_args(
+                clean_question,
+                {},
+                prior_course_names=prior_course_names,
+                allow_prior_scenario=True,
+            )
+            if any(
+                seeded_args.get(key)
+                for key in (
+                    "remove_current_courses",
+                    "add_current_courses",
+                    "search_better_replacements",
+                )
+            ):
+                raw_seed = execute_student_v2_tool(
+                    "graduation_progress",
+                    seeded_args,
+                    principal=principal,
+                    context=graduation_tool_context,
+                )
+                if raw_seed.get("ok") and isinstance(raw_seed.get("what_if"), dict):
+                    if language == "Arabic":
+                        raw_seed = _prefer_arabic_course_names_in_payload(raw_seed)
+                    seed_provider = project_channel_tool_result(
+                        "graduation_progress",
+                        boundary.project_tool_result("graduation_progress", raw_seed),
+                        profile=channel_profile,
+                    )
+                    seed_local = project_channel_tool_result(
+                        "graduation_progress", raw_seed, profile=channel_profile
+                    )
+                    local_results.append(seed_local)
+                    validation_results.append(seed_provider)
+                    provider_evidence_for_audit.append(("graduation_progress", seed_provider))
+                    messages.append(
+                        {
+                            "role": "user",
+                            "content": (
+                                "verified_graduation_scenario_evidence: "
+                                + json.dumps(
+                                    seed_provider,
+                                    ensure_ascii=False,
+                                    separators=(",", ":"),
+                                    default=str,
+                                )
+                            ),
+                        }
+                    )
+                    graduation_what_if_prefetched = True
+        except Exception:
+            logging.getLogger(__name__).exception(
+                "Graduation what-if prefetch failed; the loop continues without it"
+            )
     timetable_reprompted = False
     timetable_format_reprompted = False
     timetable_variant_reprompted = False
@@ -5688,6 +5755,7 @@ def answer_student_advisor_v2(
             "graduation_what_if_required": requires_graduation_what_if,
             "graduation_tool_reprompted": graduation_tool_reprompted,
             "graduation_what_if_reprompted": graduation_what_if_reprompted,
+            "graduation_what_if_prefetched": graduation_what_if_prefetched,
             "graduation_what_if_missing": missing_required_what_if,
             "graduation_reprompted": graduation_reprompted,
             "graduation_safe_fallback_used": graduation_safe_fallback_used,
