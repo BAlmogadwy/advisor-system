@@ -79,6 +79,16 @@ EXACT_FACT_TOOLS = frozenset(
         "graduation_progress",
         "build_timetable_proposal",
         "present_prior_artifact",
+        # Both return typed student facts, which is the stated admission rule.
+        # my_clash_free_sections is the ONLY tool that lists the sections of a
+        # named course, so while it sat outside this set an answer built on it
+        # received no checks at all - an invented code, section, time and room
+        # in one sentence returned zero violations. That is the open defect
+        # where the adviser invents sections and attributes them to "the
+        # system". lookup_course likewise returns typed code/name/credits.
+        # Free-form tools such as policy_lookup stay out, per the rule above.
+        "my_clash_free_sections",
+        "lookup_course",
     }
 )
 
@@ -508,7 +518,11 @@ def _course_codes_in_text(text: str) -> set[str]:
 def _section_labels_in_timetable(rows: list[dict[str, Any]]) -> set[str]:
     labels: set[str] = set()
     for row in rows:
-        if row.get("tool") not in {"my_timetable", "build_timetable_proposal"}:
+        if row.get("tool") not in {
+            "my_timetable",
+            "build_timetable_proposal",
+            "my_clash_free_sections",
+        }:
             continue
 
         def visit(value: Any) -> None:
@@ -517,6 +531,14 @@ def _section_labels_in_timetable(rows: list[dict[str, Any]]) -> set[str]:
                     if key in {"section", "section_label", "from_section", "to_section"}:
                         if child:
                             labels.add(str(child).strip().upper())
+                    elif key in {
+                        "currently_registered_sections",
+                        "expected_plan_sections",
+                        "baseline_sections",
+                    } and isinstance(child, list):
+                        # These carry bare label strings rather than rows, so
+                        # the key-based walk below would never reach them.
+                        labels.update(str(item).strip().upper() for item in child if item)
                     else:
                         visit(child)
             elif isinstance(value, list):
@@ -905,6 +927,28 @@ def _has_words(clause: str, words: tuple[str, ...]) -> bool:
     return any(_fold(word) in folded for word in words)
 
 
+def _course_count_after_term_disambiguation(
+    clause: str, count_figures: set[float], term_figures: set[float]
+) -> set[float]:
+    """Drop a "course count" that is really a TERM count written label-first.
+
+    «فصل المقررات المرجعية ...: 6» labels six TERMS, but the generic
+    reverse-order course counter sees «مقررات» before the number and would
+    relabel the same six as a plan-course count.
+
+    Both figure checks read the same clause, so this disambiguation has to be
+    identical in both or one will reject the very answer the other accepts -
+    which is how the server's own deterministic graduation answer came to fail
+    its own validator and abstain.
+    """
+    if term_figures and not (
+        _COURSE_COUNT_FIGURE.search(_NOT_A_FIGURE.sub(" ", clause or ""))
+        or _COURSE_COUNT_PAIR.search(_NOT_A_FIGURE.sub(" ", clause or ""))
+    ):
+        return set()
+    return count_figures
+
+
 def _exact_figure_mismatch(answer: str, rows: list[dict[str, Any]]) -> bool:
     """Whether an explicitly typed count/credit/term figure contradicts evidence.
 
@@ -918,8 +962,10 @@ def _exact_figure_mismatch(answer: str, rows: list[dict[str, Any]]) -> bool:
 
     for clause in _clauses(answer):
         credit_figures = _credit_figures(clause)
-        count_figures = _course_count_figures(clause)
         term_figures = _term_figures(clause)
+        count_figures = _course_count_after_term_disambiguation(
+            clause, _course_count_figures(clause), term_figures
+        )
         percent_figures = _figures(_PERCENT_FIGURE, clause)
 
         if credit_figures and _has_words(clause, _TIMETABLE_WORDS) and timetables:
@@ -1011,9 +1057,21 @@ def _exact_figure_mismatch(answer: str, rows: list[dict[str, Any]]) -> bool:
                     return True
             if credit_figures:
                 expected = set()
+                gate_clause = _has_words(clause, ("الشرط", "شرط", "استيفاء", "gate", "requirement"))
                 for row in graduations:
                     if _has_words(clause, _REMAINING_WORDS):
                         expected |= _number_set(row.get("credits_remaining_in_plan"))
+                        # A gate sentence states the gate's OWN shortfall, not
+                        # the plan's. _metric_claim_mismatch already carves this
+                        # out; without the same carve-out here the server's
+                        # blocker line rejected itself.
+                        if gate_clause:
+                            expected |= _numeric_values_for_keys(
+                                row.get("credit_hour_gates")
+                                or row.get("unresolved_requirements")
+                                or [],
+                                {"remaining"},
+                            )
                     elif _has_words(clause, _EARNED_WORDS):
                         expected |= _number_set(
                             row.get("credits_earned_registrar"), row.get("passed_credits_in_plan")
@@ -1583,14 +1641,7 @@ def _metric_claim_mismatch(answer: str, rows: list[dict[str, Any]]) -> bool:
         credit_figures = _credit_figures(clause)
         term_figures = _term_figures(clause)
         percent_figures = _figures(_PERCENT_FIGURE, clause)
-        if term_figures and not (
-            _COURSE_COUNT_FIGURE.search(_NOT_A_FIGURE.sub(" ", clause or ""))
-            or _COURSE_COUNT_PAIR.search(_NOT_A_FIGURE.sub(" ", clause or ""))
-        ):
-            # «فصل المقررات المرجعية ...: 6» labels six TERMS. The generic
-            # reverse-order course counter sees «مقررات» before the number and
-            # otherwise relabels the same six as a plan-course count.
-            count_figures = set()
+        count_figures = _course_count_after_term_disambiguation(clause, count_figures, term_figures)
 
         if progress_rows and count_figures:
             bucket = _progress_bucket(clause)
@@ -1659,7 +1710,13 @@ def _metric_claim_mismatch(answer: str, rows: list[dict[str, Any]]) -> bool:
                 if expected and not credit_figures <= expected:
                     return True
                 continue
-            if _has_words(clause, _POST_BASELINE_WORDS + _REMAINING_WORDS):
+            # _POST_BASELINE_WORDS alone, exactly as the count branch above
+            # does it.  Adding _REMAINING_WORDS here made the first condition a
+            # superset of the second, so credits_remaining_in_plan became
+            # unreachable and every true «الساعات المتبقية» sentence was
+            # measured against a field graduation_progress never emits - an
+            # empty expected set, which fails closed on a correct answer.
+            if _has_words(clause, _POST_BASELINE_WORDS):
                 field = "credits_remaining_after_planning_baseline"
             elif _has_words(clause, _REMAINING_WORDS):
                 field = "credits_remaining_in_plan"

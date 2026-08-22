@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from core.models import AdvisorConversation, AdvisorMessage, Student
@@ -253,3 +255,41 @@ def test_grounding_refusal_turn_persists_abstention_and_clears_presentation(monk
     assert assistant.final_disposition == "ABSTAIN"
     assert assistant.reason_codes == ["OUTPUT_NOT_GROUNDED"]
     assert assistant.presentation == {}
+
+
+def test_a_prior_card_reaches_a_remote_provider_without_the_academic_record():
+    """The follow-up card is projected, not echoed whole.
+
+    graduation_progress's own projector sends a remote provider aggregate
+    counts and deliberately withholds scenario_graph. The prior-presentation
+    card is built from the UNPROJECTED local result, so re-sending it verbatim
+    on every later turn would deliver through the side door the per-course
+    passed/studying map the front door refuses.
+    """
+    from core.services.llm_remote_privacy import project_prior_presentation
+
+    card = {
+        "kind": "graduation_scenario",
+        "program": "AI",
+        "planning_term": "1448/1",
+        "graph": {
+            "nameOf": {"CS111": "Programming"},
+            "termOf": {"CS111": 1},
+            "statusOf": {"CS111": "passed", "MATH101": "passed", "AI331": "open"},
+            "items": [{"id": "CS111"}],
+            "extraNodes": ["GS311"],
+        },
+    }
+
+    projected = project_prior_presentation(card)
+    graph = projected["graph"]
+
+    # What the re-render legitimately needs survives ...
+    assert graph["nameOf"] == {"CS111": "Programming"}
+    assert graph["termOf"] == {"CS111": 1}
+    assert projected["program"] == "AI"
+    # ... and the student's academic record does not.
+    assert "statusOf" not in graph
+    assert "items" not in graph
+    assert "extraNodes" not in graph
+    assert "passed" not in json.dumps(projected, ensure_ascii=False)

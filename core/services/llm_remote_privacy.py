@@ -1892,6 +1892,61 @@ def _project_find_students(result: dict[str, Any], identities: RemoteIdentityMap
     return out
 
 
+def project_prior_presentation(presentation: Any) -> dict[str, Any]:
+    """The previous turn's card, reduced to what a re-rendering needs.
+
+    A follow-up such as «حط أسماء المقررات لا الرموز» must be answered from the
+    card the student already saw, or the model invents the names. That needs the
+    code-to-name map and the plan term of each node - nothing else.
+
+    ``statusOf`` is the student's academic record: which courses they have
+    passed, are studying, or have still to take, over every node in the plan.
+    ``_project_graduation_progress`` deliberately withholds it, sending only
+    aggregate counts, so echoing it back here on every later turn would hand the
+    provider through the side door precisely what the front door refuses.
+    ``items`` and ``extraNodes`` describe the whole plan graph and no
+    model-facing consumer reads them.
+    """
+    if not isinstance(presentation, dict):
+        return {}
+    kept = _keep(
+        presentation,
+        "kind",
+        "program",
+        "planning_term",
+        "planning_baseline_kind",
+        "planning_baseline_credits",
+        "simulation_completed",
+        "estimated_terms_including_planning_baseline",
+        "lower_bound_terms_including_planning_baseline",
+        "max_credits_per_term",
+        "mode",
+        "baseline_kind",
+        "current_credit_hours",
+        "expected_plan_credit_hours",
+    )
+    graph = presentation.get("graph")
+    if isinstance(graph, dict):
+        name_of = graph.get("nameOf")
+        term_of = graph.get("termOf")
+        kept["graph"] = {
+            "nameOf": (
+                {str(k): str(v) for k, v in name_of.items()} if isinstance(name_of, dict) else {}
+            ),
+            "termOf": (
+                {str(k): v for k, v in term_of.items() if isinstance(v, int)}
+                if isinstance(term_of, dict)
+                else {}
+            ),
+        }
+    for key in ("current_sections", "expected_plan_sections", "rows"):
+        if isinstance(presentation.get(key), list):
+            kept[key] = _course_rows(
+                presentation.get(key), "course_code", "course_name", "section", "credits"
+            )
+    return kept
+
+
 PROJECTORS = {
     "lookup_course": _project_lookup_course,
     "course_prerequisites": _project_course_prerequisites,

@@ -3604,6 +3604,76 @@ def test_repair_cannot_bypass_citation_or_internal_marker_gates(monkeypatch):
     assert "AI1" in result["answer"]
 
 
+def test_an_empty_repair_body_is_a_failed_repair_not_a_clean_one(monkeypatch):
+    """A repair that says nothing has not fixed anything.
+
+    Blank text short-circuits check_answer before the evidence postconditions
+    run, so an empty repair would otherwise discard the violating answer, ship
+    nothing, and record the turn as a clean "repaired" PASS with the student's
+    timetable card still attached beside the silence.
+    """
+    monkeypatch.setattr(
+        "core.services.student_advisor_v2.execute_student_v2_tool",
+        lambda name, arguments, **kwargs: _exact_timetable_result(),
+    )
+    client = RepairClient(
+        _tool_turn("my_timetable", {}),
+        _answer_turn("جدولك يحتوي على AI331 في الشعبة F11."),
+        repair="   ",
+    )
+
+    result = answer_student_advisor_v2(
+        question="اعرض لي جدولي المسجل حاليًا.",
+        principal=_principal(),
+        academic_year=1448,
+        term=1,
+        llm_client=client,
+    )
+
+    assert result["agent"]["evidence_validation_outcome"] != "repaired"
+    assert result["answer"].strip()
+    # The verified facts survive; the fabricated section does not.
+    assert "AI1" in result["answer"]
+    assert "F11" not in result["answer"]
+
+
+def test_a_blank_answer_is_never_recorded_as_a_pass(monkeypatch):
+    """An answer that was never written must not be filed as a good one.
+
+    check_answer reports no violations for blank text, which is right - a claim
+    nobody made cannot contradict evidence - so without a terminal guard the
+    turn lands as PASS/COMPLETED, and derive_outcome then denies the student
+    the human review that an abstention would have granted.
+    """
+    monkeypatch.setattr(
+        "core.services.student_advisor_v2.execute_student_v2_tool",
+        lambda name, arguments, **kwargs: _exact_timetable_result(),
+    )
+    # Every turn the model is given, including any re-prompt and the forced
+    # final rescue, produces nothing.
+    client = RepairClient(
+        _tool_turn("my_timetable", {}),
+        _answer_turn("   "),
+        _answer_turn("   "),
+        _answer_turn("   "),
+        _answer_turn("   "),
+        repair="   ",
+    )
+
+    result = answer_student_advisor_v2(
+        question="اعرض لي جدولي المسجل حاليًا.",
+        principal=_principal(),
+        academic_year=1448,
+        term=1,
+        llm_client=client,
+    )
+
+    assert result["agent"]["evidence_validation_outcome"] == "abstained"
+    assert result["agent"]["grounding_refused"] is True
+    assert "لم أتمكن" in result["answer"]
+    assert result["presentation"] is None
+
+
 def test_unverifiable_answer_abstains_instead_of_shipping_invented_facts(monkeypatch):
     """The terminal branch: nothing verifiable exists, so nothing is asserted.
 
@@ -3699,6 +3769,110 @@ def test_progress_graduation_figures_and_phase_are_not_interchangeable():
         wrong_phase,
         tool_results=[graduation],
         question="كم متبقي للخطة؟",
+        required_tools={"graduation_progress"},
+    )
+
+
+def test_section_listing_evidence_is_inside_the_boundary():
+    """The tool that lists a course's sections must be checkable.
+
+    my_clash_free_sections is the only tool that answers "which sections does
+    this course have". While it sat outside EXACT_FACT_TOOLS every relational
+    check was gated off for section questions, so an answer inventing a code, a
+    section, a day, a time and a room returned zero violations - the open defect
+    where the adviser invents sections and attributes them to "the system".
+    """
+    evidence = {
+        "tool": "my_clash_free_sections",
+        "ok": True,
+        "results": [
+            {
+                "course_code": "AI331",
+                "currently_registered_sections": ["M6"],
+                "clash_free": [
+                    {"section": "M1", "meetings": ["SUN 09:00-10:15"]},
+                ],
+            }
+        ],
+    }
+    question = "ما شعب AI331 المتاحة لي؟"
+
+    invented = "مقرر ZZ999 له الشعبة W2 يوم الاثنين 10:00-11:15 في القاعة X9."
+    assert UNSUPPORTED_ACADEMIC_FACT in check_answer(
+        invented,
+        tool_results=[evidence],
+        question=question,
+        required_tools={"my_clash_free_sections"},
+    )
+
+    # A section quoted from the payload's bare-string lists is real evidence,
+    # not an invention: coverage must not be bought by refusing true answers.
+    truthful = "مقرر AI331 له الشعبة M1 يوم SUN من 09:00 إلى 10:15، وأنت في الشعبة M6."
+    assert (
+        check_answer(
+            truthful,
+            tool_results=[evidence],
+            question=question,
+            required_tools={"my_clash_free_sections"},
+        )
+        == []
+    )
+
+
+def test_the_servers_own_graduation_answer_passes_its_own_validator():
+    """A deterministic server-authored answer must never fail the checker.
+
+    Both figure checks read the same clause. When only one of them disambiguated
+    «فصل المقررات المرجعية ...: 3» - three TERMS, not three courses - the safe
+    graduation answer was rejected by the very gate that was supposed to protect
+    it, so repair regenerated the same text, the fallback returned the same text,
+    and every incomplete simulation abstained after paying for an extra call.
+    """
+    graduation = {
+        "tool": "graduation_progress",
+        "ok": True,
+        "plan_courses_passed": 32,
+        "plan_courses_total": 48,
+        "courses_remaining": 16,
+        "credits_remaining_in_plan": 48,
+        "estimated_additional_terms": 2,
+        "estimated_terms_including_planning_baseline": 3,
+        "lower_bound_additional_terms": 2,
+        "lower_bound_terms_including_planning_baseline": 3,
+        "simulation_completed": True,
+        "credit_hour_gates": [{"code": "GS311", "required": 60, "remaining": 12}],
+    }
+
+    term_labelled_first = (
+        "الإجمالي باحتساب فصل المقررات المرجعية المستخدمة في المحاكاة (1448/1): 3."
+    )
+    gate_shortfall = "الساعات المتبقية لاستيفاء الشرط: 12."
+    plan_remainder = "الساعات المتبقية في خطتك 48 ساعة معتمدة."
+
+    # A single sentence legitimately omits the rest of the graduation contract,
+    # so completeness codes are expected here; what must never appear is a
+    # figure mismatch against the evidence the sentence was built from.
+    for sentence in (term_labelled_first, gate_shortfall, plan_remainder):
+        assert EXACT_ACADEMIC_FIGURE_MISMATCH not in check_answer(
+            sentence,
+            tool_results=[graduation],
+            question="كم متبقي للتخرج؟",
+            required_tools={"graduation_progress"},
+        ), sentence
+
+    # The disambiguation must not become a blanket amnesty: a genuinely wrong
+    # course count in the same shape is still caught.
+    assert EXACT_ACADEMIC_FIGURE_MISMATCH in check_answer(
+        "أنجزت 99 مقررًا من الخطة.",
+        tool_results=[graduation],
+        question="كم متبقي للتخرج؟",
+        required_tools={"graduation_progress"},
+    )
+    # And a gate figure that matches no gate is still caught.
+    assert EXACT_ACADEMIC_FIGURE_MISMATCH in check_answer(
+        "الساعات المتبقية لاستيفاء الشرط: 7.",
+        tool_results=[graduation],
+        question="كم متبقي للتخرج؟",
         required_tools={"graduation_progress"},
     )
 

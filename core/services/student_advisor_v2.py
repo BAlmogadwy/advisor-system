@@ -61,7 +61,7 @@ from core.services.answer_consistency import (
 )
 from core.services.arabic_text import normalise as normalise_arabic_text
 from core.services.llm_backend import LLMError, UsageTotals, get_llm_client
-from core.services.llm_remote_privacy import fold_digits
+from core.services.llm_remote_privacy import fold_digits, project_prior_presentation
 from core.services.policy_contract import requires_policy_contract
 from core.services.rbac import ROLE_STUDENT
 from core.services.student_graduation import (
@@ -3934,11 +3934,23 @@ def answer_student_advisor_v2(
     ]
     prior_presentation_evidence: dict[str, Any] = {}
     if verified_prior_presentation:
+        # A remote provider gets the card through a whitelist, never whole.
+        # The card is built from the UNPROJECTED local result, so putting it
+        # straight into the prompt would hand an external model the per-course
+        # academic record that graduation_progress's own projector withholds -
+        # and the message sanitiser only redacts names and long digit runs, it
+        # performs no per-capability projection. Local backends keep the full
+        # card, exactly as they keep full tool results.
+        provider_presentation = (
+            project_prior_presentation(verified_prior_presentation)
+            if boundary.is_remote
+            else verified_prior_presentation
+        )
         prior_presentation_evidence = {
             "tool": PRIOR_PRESENTATION_TOOL,
             "ok": True,
             "view": "source_artifact",
-            "presentation": verified_prior_presentation,
+            "presentation": provider_presentation,
             "read_only": True,
         }
         validation_results.append(prior_presentation_evidence)
@@ -3952,7 +3964,7 @@ def answer_student_advisor_v2(
     prior_presentation_prompt = (
         "\nverified_prior_presentation: "
         + json.dumps(
-            verified_prior_presentation,
+            prior_presentation_evidence.get("presentation") or {},
             ensure_ascii=False,
             separators=(",", ":"),
             default=str,
@@ -5058,7 +5070,14 @@ def answer_student_advisor_v2(
                 answer_model_revision = (
                     getattr(repaired, "model_revision", "") or answer_model_revision
                 )
-                repaired_candidate = finalize_candidate(corrected_answer)
+                # An empty body is a FAILED repair, never a clean one.  Blank
+                # text short-circuits check_answer before the postconditions
+                # run, so accepting it here would discard the violating answer,
+                # ship nothing, and record the turn as "repaired" with the
+                # student's card still attached.
+                repaired_candidate = (
+                    finalize_candidate(corrected_answer) if corrected_answer else None
+                )
             except Exception as exc:  # fail closed on any correction-path fault
                 evidence_validation_repair_error = type(exc).__name__
 
@@ -5095,6 +5114,26 @@ def answer_student_advisor_v2(
                 }
                 evidence_validation_outcome = "abstained"
                 grounding_refused = True
+
+    # Nothing may ship as an answer when there is no answer.  check_answer
+    # returns no violations for blank text - correctly, since a claim that was
+    # never made cannot contradict evidence - so an empty body would otherwise
+    # be recorded as a clean PASS, and derive_outcome would then deny the
+    # student the human review that a refusal grants them.  Every route that
+    # can produce one ends here, including the forced-final rescue that runs
+    # out of inference budget before it writes anything.
+    if not str(chosen["text"]).strip():
+        chosen = {
+            "text": _evidence_abstention(language),
+            "citation_refused": False,
+            "portal_claim_refused": False,
+            "section_fallback": False,
+            "graduation_fallback": False,
+            "internal_sanitized": False,
+            "policy_uncertainty_failed": False,
+        }
+        evidence_validation_outcome = "abstained"
+        grounding_refused = True
 
     answer = str(chosen["text"])
     citation_refused = bool(chosen["citation_refused"])
