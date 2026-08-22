@@ -49,8 +49,8 @@ def _check(answer, results=(TIMETABLE,)):
 
 
 def test_every_check_has_a_code_and_they_are_unique() -> None:
-    assert len(ALL_CHECKS) == 10
-    assert len(set(ALL_CHECKS)) == 10
+    assert len(ALL_CHECKS) == 14
+    assert len(set(ALL_CHECKS)) == 14
 
 
 # ── 1 / 2: the timetable's own shape ─────────────────────────────────────────

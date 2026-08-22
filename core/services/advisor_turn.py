@@ -55,7 +55,11 @@ from core.services.advisor_escalation import (
     escalation_reason,
     may_escalate,
 )
-from core.services.advisor_history import load_profiled_history, load_visible_history
+from core.services.advisor_history import (
+    load_latest_profile_presentation,
+    load_profiled_history,
+    load_visible_history,
+)
 from core.services.advisor_principal import AdvisorPrincipal, IdentityError
 from core.services.rate_limit import ESCALATION, GENERATION
 from core.services.rate_limit import consume as spend_budget
@@ -310,10 +314,17 @@ def run_advisor_turn(
         else:
             history = load_visible_history(conversation, exclude_message_id=student_message.pk)
 
+        prior_presentation = load_latest_profile_presentation(
+            conversation,
+            channel_profile=str(channel_profile or ""),
+            exclude_message_id=student_message.pk,
+        )
+
         result = answer_student_advisor(
             question=question,
             principal=principal,
             history=project_history(history, profile=channel_profile),
+            prior_presentation=prior_presentation,
             channel_profile=channel_profile,
         )
     except ValueError as exc:
@@ -503,6 +514,11 @@ def persist_answer(
     appearing beside a claim.
     """
     from core.models import AdvisorMessageCitation
+    from core.services.advisor_evidence_audit import (
+        normalise_evidence_audit,
+        normalise_model_revision,
+        normalise_prompt_version,
+    )
     from core.services.advisor_outcome import derive_outcome
     from core.services.advisor_presentations import normalise_presentation
     from core.services.virtual_advisor import _claimed_citations
@@ -521,6 +537,11 @@ def persist_answer(
     status = AdvisorMessage.STATUS_COMPLETED
     if outcome.disposition in {FinalDisposition.ABSTAIN, FinalDisposition.ESCALATE}:
         status = AdvisorMessage.STATUS_ABSTAINED
+    stored_presentation = (
+        {}
+        if bool(agent.get("grounding_refused"))
+        else normalise_presentation(result.get("presentation"))
+    )
 
     with transaction.atomic():
         assistant = AdvisorMessage.objects.create(
@@ -528,18 +549,21 @@ def persist_answer(
             in_reply_to=student_message,
             role=AdvisorMessage.ROLE_ASSISTANT,
             content=answer,
-            presentation=normalise_presentation(result.get("presentation")),
+            presentation=stored_presentation,
             grounding_state=str(agent.get("policy_grounding") or ""),
             final_disposition=outcome.disposition,
             reason_codes=outcome.reason_codes,
             missing_information=outcome.missing_information,
             outcome_schema_version=outcome.schema_version,
             model_name=str(result.get("model") or ""),
+            model_revision=normalise_model_revision(agent.get("model_revision")),
             route=(
                 AdvisorMessage.ROUTE_AGENT
                 if agent.get("loop_used")
                 else AdvisorMessage.ROUTE_SEEDED_FALLBACK
             ),
+            prompt_version=normalise_prompt_version(agent.get("prompt_version")),
+            evidence_audit=normalise_evidence_audit(agent.get("evidence_audit")),
             status=status,
         )
         for claim in claimed:

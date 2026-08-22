@@ -1,0 +1,33 @@
+meta:
+  purpose: >-
+    Two production-derived postconditions over typed evidence. They constrain exact
+    academic facts and presentation rows, never conversational wording or intent
+    phrases.
+  version: 1
+
+contracts:
+  remaining_plan_progress:
+    profile: graduation_summary
+    source_tool: graduation_progress
+    require:
+    - passed_course_counts
+    - passed_credit_counts
+    - total_course_counts
+    - total_credit_counts
+    - remaining_course_counts
+    - remaining_credit_counts
+    verify:
+    - progress_figures
+
+  timetable_proposal:
+    profile: timetable_proposal
+    source_tool: build_timetable_proposal
+    require:
+    - matching_structured_presentation
+    verify:
+    - course_codes
+    - section_labels
+    - meeting_times
+    - course_section_rows
+    - course_time_rows
+    - meeting_rows

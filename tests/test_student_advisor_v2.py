@@ -9,6 +9,12 @@ from django.test import override_settings
 
 from core.models import Student
 from core.services.advisor_principal import AdvisorPrincipal
+from core.services.answer_consistency import (
+    EXACT_ACADEMIC_FIGURE_MISMATCH,
+    REQUESTED_EVIDENCE_OMITTED,
+    UNSUPPORTED_ACADEMIC_FACT,
+    check_answer,
+)
 from core.services.llm_backend import ChatResult, LLMTimeout, ToolCallRequest, ToolChatResult
 from core.services.policy_contract import requires_policy_contract
 from core.services.rbac import ROLE_STUDENT
@@ -118,6 +124,21 @@ class FakeClient:
 
     def chat(self, messages, **kwargs):  # pragma: no cover - rescue path is not used here
         raise AssertionError("forced final answer was not expected")
+
+
+class RepairClient(FakeClient):
+    def __init__(self, *turns: ToolChatResult, repair: str):
+        super().__init__(*turns)
+        self.repair = repair
+        self.repair_messages: list[list[dict[str, Any]]] = []
+
+    def chat(self, messages, **kwargs):
+        self.repair_messages.append(messages)
+        return ChatResult(
+            content=self.repair,
+            model="test-model",
+            usage={"prompt_tokens": 7, "completion_tokens": 5, "total_tokens": 12},
+        )
 
 
 def test_v2_surface_is_small_self_scoped_and_read_only():
@@ -3436,3 +3457,589 @@ def test_feature_flag_selects_v2_generator(monkeypatch):
         lambda **kwargs: expected,
     )
     assert answer_student_advisor(question="hello", principal=_principal()) is expected
+
+
+def _exact_timetable_result() -> dict[str, Any]:
+    courses = (
+        ("AI1", "M6", "SUN", "14:30", "15:45", "M7"),
+        ("AI433", "M6", "MON", "13:00", "14:15", "M6"),
+        ("CS424", "M9", "TUE", "10:30", "11:45", "T07"),
+        ("GS104", "M18", "WED", "08:00", "09:15", "G12"),
+        ("MGT405", "M7", "THU", "10:50", "12:30", "L03"),
+    )
+    return {
+        "tool": "my_timetable",
+        "ok": True,
+        "academic_year": 1448,
+        "term": 1,
+        "schedule_kind": "REGISTERED",
+        "is_expected_plan": False,
+        "registered_course_count": 5,
+        "registered_credit_hours": 14,
+        "meetings": [
+            {
+                "course_code": code,
+                "section": section,
+                "day": day,
+                "start": start,
+                "end": end,
+                "room": room,
+            }
+            for code, section, day, start, end, room in courses
+        ],
+    }
+
+
+def _natural_exact_timetable_answer() -> str:
+    return (
+        "يحتوي جدولك المسجّل فعليًا على 5 مقررات بإجمالي 14 ساعة: "
+        "AI1 في الشعبة M6 الساعة 14:30 في القاعة M7، وAI433، وCS424، "
+        "وGS104، وMGT405."
+    )
+
+
+def test_exact_timetable_no_tool_answer_is_reprompted_before_shipping(monkeypatch):
+    monkeypatch.setattr(
+        "core.services.student_advisor_v2.execute_student_v2_tool",
+        lambda name, arguments, **kwargs: _exact_timetable_result(),
+    )
+    client = FakeClient(
+        _answer_turn("لقد عرضته لك بالفعل."),
+        _tool_turn("my_timetable", {}),
+        _answer_turn(_natural_exact_timetable_answer()),
+    )
+
+    result = answer_student_advisor_v2(
+        question="اعرض لي جدولي المسجل حاليًا قبل أن تبني أي بدائل.",
+        principal=_principal(),
+        academic_year=1448,
+        term=1,
+        llm_client=client,
+    )
+
+    assert result["answer"].startswith("يحتوي جدولك")
+    assert result["agent"]["evidence_tool_reprompted"] is True
+    assert result["agent"]["evidence_validation_outcome"] == "passed"
+
+
+def test_correct_tool_but_ignored_result_gets_one_bounded_repair(monkeypatch):
+    monkeypatch.setattr(
+        "core.services.student_advisor_v2.execute_student_v2_tool",
+        lambda name, arguments, **kwargs: _exact_timetable_result(),
+    )
+    client = RepairClient(
+        _tool_turn("my_timetable", {}),
+        _answer_turn("لقد عرضته لك بالفعل."),
+        repair=_natural_exact_timetable_answer(),
+    )
+
+    result = answer_student_advisor_v2(
+        question="اعرض لي جدولي المسجل حاليًا.",
+        principal=_principal(),
+        academic_year=1448,
+        term=1,
+        llm_client=client,
+    )
+
+    assert result["answer"].startswith("يحتوي جدولك")
+    assert result["agent"]["evidence_validation_repair_attempted"] is True
+    assert result["agent"]["evidence_validation_outcome"] == "repaired"
+    assert REQUESTED_EVIDENCE_OMITTED in result["agent"]["evidence_validation_violations"]
+    assert len(client.repair_messages) == 1
+
+
+def test_fabricated_timetable_facts_are_replaced_by_verified_fallback(monkeypatch):
+    monkeypatch.setattr(
+        "core.services.student_advisor_v2.execute_student_v2_tool",
+        lambda name, arguments, **kwargs: _exact_timetable_result(),
+    )
+    fabricated = "جدولك يحتوي على AI331 في الشعبة F11 الساعة 09:00 في القاعة X99 مع الدكتور أحمد."
+    client = RepairClient(
+        _tool_turn("my_timetable", {}),
+        _answer_turn(fabricated),
+        repair=fabricated,
+    )
+
+    result = answer_student_advisor_v2(
+        question="اعرض لي جدولي المسجل حاليًا.",
+        principal=_principal(),
+        academic_year=1448,
+        term=1,
+        llm_client=client,
+    )
+
+    assert result["agent"]["evidence_validation_outcome"] == "verified_fallback"
+    assert UNSUPPORTED_ACADEMIC_FACT in result["agent"]["evidence_validation_violations"]
+    assert "AI331" not in result["answer"]
+    assert "F11" not in result["answer"]
+    assert "AI1" in result["answer"]
+    assert "14 ساعة" in result["answer"]
+
+
+def test_repair_cannot_bypass_citation_or_internal_marker_gates(monkeypatch):
+    monkeypatch.setattr(
+        "core.services.student_advisor_v2.execute_student_v2_tool",
+        lambda name, arguments, **kwargs: _exact_timetable_result(),
+    )
+    unsafe_repair = (
+        _natural_exact_timetable_answer() + " السبب الداخلي NOT_ON_FILE. [TU.FAKE.POLICY]"
+    )
+    client = RepairClient(
+        _tool_turn("my_timetable", {}),
+        _answer_turn("لقد عرضته لك بالفعل."),
+        repair=unsafe_repair,
+    )
+
+    result = answer_student_advisor_v2(
+        question="اعرض لي جدولي المسجل حاليًا.",
+        principal=_principal(),
+        academic_year=1448,
+        term=1,
+        llm_client=client,
+    )
+
+    assert result["agent"]["evidence_validation_outcome"] == "verified_fallback"
+    assert "TU.FAKE.POLICY" not in result["answer"]
+    assert "NOT_ON_FILE" not in result["answer"]
+    assert "AI1" in result["answer"]
+
+
+def test_unverifiable_answer_abstains_instead_of_shipping_invented_facts(monkeypatch):
+    """The terminal branch: nothing verifiable exists, so nothing is asserted.
+
+    When the required evidence tool fails there is no repair worth attempting and
+    no verified fallback to render.  The student must receive the abstention, not
+    the model's unverifiable draft.  Recording the turn as an abstention while
+    still showing that draft would reproduce exactly the production failure this
+    boundary exists to stop: a wrong answer filed as a safe one.
+    """
+    monkeypatch.setattr(
+        "core.services.student_advisor_v2.execute_student_v2_tool",
+        lambda name, arguments, **kwargs: {
+            "tool": name,
+            "ok": False,
+            "error": "Capability unavailable.",
+        },
+    )
+    fabricated = "جدولك يحتوي على AI331 في الشعبة F11 الساعة 09:00 في القاعة X99 بإجمالي 14 ساعة."
+    client = RepairClient(
+        _tool_turn("my_timetable", {}),
+        _answer_turn(fabricated),
+        # The failed capability is re-prompted once; the model repeats its draft.
+        _answer_turn(fabricated),
+        repair=fabricated,
+    )
+
+    result = answer_student_advisor_v2(
+        question="اعرض لي جدولي المسجل حاليًا.",
+        principal=_principal(),
+        academic_year=1448,
+        term=1,
+        llm_client=client,
+    )
+
+    assert result["agent"]["evidence_validation_outcome"] == "abstained"
+    assert result["agent"]["grounding_refused"] is True
+    # The abstention is what the STUDENT reads, not merely what the row records.
+    assert "لم أتمكن" in result["answer"]
+    assert "AI331" not in result["answer"]
+    assert "F11" not in result["answer"]
+    assert "X99" not in result["answer"]
+    assert "14" not in result["answer"]
+    assert result["presentation"] is None
+    assert result["agent"]["evidence_audit"]["validation"]["outcome"] == "abstained"
+
+
+def test_changed_credit_total_fails_but_natural_arabic_exact_facts_pass():
+    evidence = _exact_timetable_result()
+    changed = "يحتوي الجدول المسجّل فعليًا على 5 مقررات بإجمالي 12 ساعة."
+
+    assert EXACT_ACADEMIC_FIGURE_MISMATCH in check_answer(
+        changed,
+        tool_results=[evidence],
+        question="اعرض جدولي",
+        required_tools={"my_timetable"},
+    )
+    assert (
+        check_answer(
+            _natural_exact_timetable_answer(),
+            tool_results=[evidence],
+            question="اعرض جدولي",
+            required_tools={"my_timetable"},
+        )
+        == []
+    )
+
+
+def test_progress_graduation_figures_and_phase_are_not_interchangeable():
+    graduation = {
+        "tool": "graduation_progress",
+        "ok": True,
+        "plan_courses_passed": 41,
+        "plan_courses_total": 53,
+        "courses_remaining": 12,
+        "credits_remaining_in_plan": 31,
+        "credits_earned_registrar": 126,
+        "estimated_additional_terms": 1,
+        "estimated_terms_including_planning_baseline": 2,
+    }
+    fabricated = (
+        "أنجزت 32 من 40 مقررًا، وبقي 8 مقررات و24 ساعة، والساعات المكتسبة: 96، "
+        "وتحتاج إلى فصلين إضافيين بإجمالي 3 فصول."
+    )
+    wrong_phase = "بعد اجتياز مقررات البداية، سيبقى 12 مقررًا و31 ساعة متبقية."
+
+    assert EXACT_ACADEMIC_FIGURE_MISMATCH in check_answer(
+        fabricated,
+        tool_results=[graduation],
+        question="كم متبقي للخطة؟",
+        required_tools={"graduation_progress"},
+    )
+    assert EXACT_ACADEMIC_FIGURE_MISMATCH in check_answer(
+        wrong_phase,
+        tool_results=[graduation],
+        question="كم متبقي للخطة؟",
+        required_tools={"graduation_progress"},
+    )
+
+
+def test_timetable_proposal_cannot_invent_not_on_file_sections_or_meetings():
+    proposal = {
+        "tool": "build_timetable_proposal",
+        "ok": True,
+        "alternatives": [
+            {
+                "option": "A1",
+                "planner_options": ["A1"],
+                "courses": [],
+                "meetings": [],
+                "unplaced_courses": [{"course_code": "AI331", "reason_code": "NOT_ON_FILE"}],
+            }
+        ],
+    }
+    invented = "الخيار A1 يضع AI331 في الشعبة F01 الساعة 09:00 في القاعة X1 مع الدكتور أحمد."
+
+    assert UNSUPPORTED_ACADEMIC_FACT in check_answer(
+        invented,
+        tool_results=[proposal],
+        question="ابن جدولا مقترحا",
+    )
+
+
+def test_recommendation_allows_an_individual_verified_course_credit():
+    recommendation = {
+        "tool": "recommend_courses",
+        "ok": True,
+        "recommendation_count": 2,
+        "recommendations": [
+            {"course_code": "AI331", "credit_hours": 3},
+            {"course_code": "CS372", "credit_hours": 4},
+        ],
+    }
+
+    assert (
+        check_answer(
+            "توصية النظام تتضمن AI331، وهو مقرر من 3 ساعات.",
+            tool_results=[recommendation],
+            question="ما توصية النظام؟",
+        )
+        == []
+    )
+
+
+def test_negative_instructor_disclaimer_is_not_treated_as_an_invention():
+    evidence = _exact_timetable_result()
+
+    assert (
+        check_answer(
+            "يظهر AI1 في الشعبة M6، لكن اسم المحاضر غير مسجل في البيانات المعروضة.",
+            tool_results=[evidence],
+            question="من يدرس AI1؟",
+        )
+        == []
+    )
+
+
+def test_named_course_change_follow_up_cannot_return_unchanged_graduation_baseline(
+    monkeypatch,
+):
+    baseline = _complete_graduation_result()
+    calls: list[dict[str, Any]] = []
+
+    def execute(name, arguments, **kwargs):
+        calls.append(dict(arguments))
+        return baseline
+
+    monkeypatch.setattr("core.services.student_advisor_v2.execute_student_v2_tool", execute)
+    client = FakeClient(
+        _tool_turn("graduation_progress", {}),
+        _answer_turn("الخطة المرجعية لم تتغير، وما زال STAT301 ضمن مقررات البداية."),
+        _answer_turn("الخطة المرجعية لم تتغير، وما زال STAT301 ضمن مقررات البداية."),
+        _answer_turn("الخطة المرجعية لم تتغير، وما زال STAT301 ضمن مقررات البداية."),
+    )
+
+    result = answer_student_advisor_v2(
+        question="لو أحذف الاحتمالات والإحصاء وأضيف ذكاء الأعمال",
+        principal=_principal(),
+        academic_year=1448,
+        term=1,
+        llm_client=client,
+    )
+
+    assert calls == [{"planning_baseline_kind": "registered_timetable"}]
+    assert result["agent"]["graduation_what_if_required"] is True
+    assert result["agent"]["graduation_what_if_missing"] is True
+    assert "تعذّر تشغيل مقارنة التغيير المطلوب" in result["answer"]
+    assert "STAT301" not in result["answer"]
+    assert result["presentation"] is None
+
+
+def test_schedule_relations_reject_a_meeting_swapped_between_real_courses():
+    evidence = _exact_timetable_result()
+    swapped = (
+        "Registered timetable: AI1, section M6, Monday 13:00-14:15, room M6. "
+        "AI433, section M6, Sunday 14:30-15:45, room M7."
+    )
+
+    assert UNSUPPORTED_ACADEMIC_FACT in check_answer(
+        swapped,
+        tool_results=[evidence],
+        question="Show my registered timetable.",
+        required_tools={"my_timetable"},
+    )
+
+
+def test_exact_timetable_contract_rejects_a_partial_one_of_five_answer():
+    assert REQUESTED_EVIDENCE_OMITTED in check_answer(
+        "The registered timetable includes AI1.",
+        tool_results=[_exact_timetable_result()],
+        question="Show every registered course.",
+        required_tools={"my_timetable"},
+    )
+
+
+@pytest.mark.parametrize(
+    "claim",
+    (
+        "You need 2 additional terms.",
+        "You have passed 12 courses from the plan.",
+    ),
+)
+def test_graduation_metrics_cannot_relabel_another_real_value(claim):
+    evidence = {
+        "tool": "graduation_progress",
+        "ok": True,
+        "plan_courses_passed": 41,
+        "plan_courses_total": 53,
+        "courses_remaining": 12,
+        "credits_remaining_in_plan": 31,
+        "credits_earned_registrar": 126,
+        "estimated_additional_terms": 1,
+        "estimated_terms_including_planning_baseline": 2,
+    }
+
+    assert EXACT_ACADEMIC_FIGURE_MISMATCH in check_answer(
+        claim,
+        tool_results=[evidence],
+        question="When will I graduate?",
+        required_tools={"graduation_progress"},
+    )
+
+
+def test_unrelated_exploratory_timetable_does_not_own_policy_completeness():
+    policy = {
+        "tool": "policy_lookup",
+        "ok": True,
+        "direct_policy_evidence": [
+            {
+                "policy_id": "TU.LOAD.SEMESTER_RANGE",
+                "text": "The regulatory maximum is 19 credits.",
+            }
+        ],
+    }
+
+    assert (
+        check_answer(
+            "The regulatory maximum is 19 credits.",
+            tool_results=[policy, _exact_timetable_result()],
+            question="What is the regulatory maximum?",
+            required_tools=set(),
+        )
+        == []
+    )
+
+
+def test_matching_graduation_card_fulfils_the_exact_list_contract_relationally():
+    evidence = _complete_graduation_result()
+    matching = {
+        "kind": "graduation_scenario",
+        "estimated_terms_including_planning_baseline": 6,
+        "removed_current_courses": [],
+        "added_current_courses": [],
+        "graph": {
+            "extraNodes": ["DS331", "MATH204", "CS211"],
+            "termOf": {"DS331": 2, "MATH204": 2, "CS211": 3},
+        },
+    }
+    swapped_terms = {
+        **matching,
+        "graph": {
+            **matching["graph"],
+            "termOf": {"DS331": 3, "MATH204": 2, "CS211": 2},
+        },
+    }
+    answer = "The verified graduation scenario is displayed in the card."
+
+    assert (
+        check_answer(
+            answer,
+            tool_results=[evidence],
+            question="Show my graduation plan.",
+            required_tools={"graduation_progress"},
+            presentation=matching,
+        )
+        == []
+    )
+    assert REQUESTED_EVIDENCE_OMITTED in check_answer(
+        answer,
+        tool_results=[evidence],
+        question="Show my graduation plan.",
+        required_tools={"graduation_progress"},
+        presentation=swapped_terms,
+    )
+
+
+def test_matching_proposal_card_fulfils_course_section_contract_but_swap_does_not():
+    evidence = {
+        "tool": "build_timetable_proposal",
+        "ok": True,
+        "alternatives": [
+            {
+                "option": "A1",
+                "courses": [{"course_code": "CS211", "section": "M2"}],
+                "meetings": [],
+                "unplaced_courses": [],
+            }
+        ],
+    }
+    card = {
+        "kind": "timetable_proposals",
+        "alternatives": [
+            {
+                "planner_options": ["A1"],
+                "courses": [{"course_code": "CS211", "section": "M2"}],
+                "unplaced_courses": [],
+            }
+        ],
+    }
+    answer = "The verified proposal is displayed in the timetable card."
+
+    assert (
+        check_answer(
+            answer,
+            tool_results=[evidence],
+            question="Build a proposed timetable.",
+            required_tools={"build_timetable_proposal"},
+            presentation=card,
+        )
+        == []
+    )
+    card["alternatives"][0]["courses"][0]["section"] = "M9"
+    assert REQUESTED_EVIDENCE_OMITTED in check_answer(
+        answer,
+        tool_results=[evidence],
+        question="Build a proposed timetable.",
+        required_tools={"build_timetable_proposal"},
+        presentation=card,
+    )
+
+
+def test_prior_artifact_course_name_must_keep_its_typed_term_relation():
+    evidence = {
+        "tool": "present_prior_artifact",
+        "ok": True,
+        "view": "course_names_by_term",
+        "terms": [
+            {
+                "term_index": 2,
+                "term_label": "الفصل المتوقع 1448/2",
+                "courses": [{"course_code": "DS321", "course_name": "ذكاء الأعمال"}],
+            },
+            {
+                "term_index": 3,
+                "term_label": "الفصل المتوقع 1449/1",
+                "courses": [{"course_code": "STAT301", "course_name": "الاحتمالات والإحصاء"}],
+            },
+        ],
+    }
+
+    assert (
+        check_answer(
+            ("الفصل المتوقع 1448/2: ذكاء الأعمال.\nالفصل المتوقع 1449/1: الاحتمالات والإحصاء."),
+            tool_results=[evidence],
+            question="ضع أسماء المقررات بدل الرموز.",
+            required_tools={"present_prior_artifact"},
+        )
+        == []
+    )
+    assert UNSUPPORTED_ACADEMIC_FACT in check_answer(
+        ("الفصل المتوقع 1449/1: ذكاء الأعمال.\nالفصل المتوقع 1449/1: الاحتمالات والإحصاء."),
+        tool_results=[evidence],
+        question="ضع أسماء المقررات بدل الرموز.",
+        required_tools={"present_prior_artifact"},
+    )
+
+
+def test_prior_graduation_card_can_be_rendered_with_names_instead_of_codes(monkeypatch):
+    prior = {
+        "kind": "graduation_scenario",
+        "program": "AI",
+        "planning_term": "1448/1",
+        "planning_baseline_kind": "registered_timetable",
+        "simulation_completed": True,
+        "estimated_terms_including_planning_baseline": 2,
+        "lower_bound_terms_including_planning_baseline": 2,
+        "max_credits_per_term": 18,
+        "graph": {
+            "items": [],
+            "extraNodes": ["STAT301", "DS321"],
+            "termOf": {"STAT301": 1, "DS321": 2},
+            "nameOf": {
+                "STAT301": "الاحتمالات والإحصاء",
+                "DS321": "ذكاء الأعمال",
+            },
+            "statusOf": {"STAT301": "studying", "DS321": "open"},
+        },
+        "band_labels": {
+            "1": "الفصل المرجعي 1448/1",
+            "2": "الفصل التقديري 1448/2",
+        },
+        "unresolved_requirements": [],
+        "removed_current_courses": [],
+        "added_current_courses": [],
+    }
+    answer = (
+        "الفصل المرجعي 1448/1:\n- الاحتمالات والإحصاء\n\nالفصل التقديري 1448/2:\n- ذكاء الأعمال"
+    )
+    client = FakeClient(
+        _tool_turn("present_prior_artifact", {"view": "course_names_by_term"}),
+        _answer_turn(answer),
+    )
+    monkeypatch.setattr(
+        "core.services.student_advisor_v2.execute_student_v2_tool",
+        lambda *_args, **_kwargs: pytest.fail("the prior-artifact transform is server-local"),
+    )
+
+    result = answer_student_advisor_v2(
+        question="حط أسماء المقررات بدل الرموز.",
+        principal=_principal(),
+        academic_year=1448,
+        term=1,
+        llm_client=client,
+        prior_presentation=prior,
+    )
+
+    assert result["answer"] == answer
+    assert result["agent"]["evidence_validation_outcome"] == "passed"
+    assert result["agent"]["tools_called"][-1]["name"] == "present_prior_artifact"
+    assert "present_prior_artifact" in {schema["function"]["name"] for schema in client.schemas[0]}

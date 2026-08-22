@@ -438,6 +438,19 @@ def _prerequisite_ready(kind: str, academic_status: str) -> bool | None:
     return None
 
 
+def _report_status(report: dict[str, Any], code: str) -> str:
+    """Read the unlock report's closed status vocabulary for one requirement."""
+    for bucket, status in (
+        ("done", "passed"),
+        ("in_progress", "studying"),
+        ("open_courses", "open_now"),
+        ("locked_courses", "blocked"),
+    ):
+        if any(row.get("code") == code for row in report.get(bucket) or []):
+            return status
+    return "unknown"
+
+
 def _graduation_evidence(
     *,
     student_id: int,
@@ -446,6 +459,7 @@ def _graduation_evidence(
     term: int,
     baseline_report: dict[str, Any],
     candidate_meta: dict[str, tuple[str, str]],
+    academic_code_by_candidate: dict[str, str] | None = None,
     query_cache: dict[object, object] | None = None,
 ) -> dict[str, dict[str, Any]]:
     """Build one-choice scenarios over the same non-candidate baseline.
@@ -460,11 +474,13 @@ def _graduation_evidence(
         for row in baseline_report.get("planning_baseline_courses_assumed_passed") or []
         if normalize_code(row.get("code"))
     }
-    compared_current = current_codes & set(codes)
+    candidate_codes = academic_code_by_candidate or {code: code for code in codes}
+    compared_current = current_codes & set(candidate_codes.values())
     out: dict[str, dict[str, Any]] = {}
 
     for code in codes:
         kind, academic_status = candidate_meta[code]
+        academic_code = candidate_codes[code]
         if kind == KIND_ELECTIVE_SLOT:
             out[code] = _graduation_unavailable("ELECTIVE_PLACEHOLDER")
             continue
@@ -474,9 +490,12 @@ def _graduation_evidence(
         if academic_status == "passed":
             out[code] = _graduation_unavailable("ALREADY_PASSED")
             continue
+        if academic_status == "studying" and academic_code != code:
+            out[code] = _graduation_unavailable("ALREADY_STUDYING")
+            continue
 
-        remove_codes = sorted(compared_current - {code})
-        add_codes = [] if code in current_codes else [code]
+        remove_codes = sorted(compared_current - {academic_code})
+        add_codes = [] if academic_code in current_codes else [academic_code]
         scenario = build_graduation_what_if(
             student_id,
             academic_year,
@@ -716,6 +735,7 @@ def compare_course_choices(
     *,
     objective: str = "balanced",
     timetable_evidence_available: bool = True,
+    academic_state: Any | None = None,
 ) -> dict[str, Any]:
     """Compare exact course choices without mutating any persisted state.
 
@@ -736,7 +756,16 @@ def compare_course_choices(
     )
     baseline_kind = _baseline_kind(baseline)
     query_cache: dict[object, object] = {}
-    unlock_report = build_unlock_report(sid, year, term_number)
+    unlock_report = build_unlock_report(
+        sid,
+        year,
+        term_number,
+        additional_studying_codes=(
+            set(academic_state.registered_requirement_course_codes)
+            if academic_state is not None
+            else None
+        ),
+    )
     program = str(unlock_report.get("program") or "").strip()
     if not program:
         raise ValueError("Student programme or degree-plan data is not recorded.")
@@ -777,10 +806,22 @@ def compare_course_choices(
             for code in codes
         }
 
+    academic_code_by_candidate = (
+        {
+            code: (
+                requirements[0]
+                if len(requirements := academic_state.requirement_course_codes_for(code)) == 1
+                else code
+            )
+            for code in codes
+        }
+        if academic_state is not None
+        else {code: code for code in codes}
+    )
     detail_by_code = {
         code: build_course_detail(
             sid,
-            code,
+            academic_code_by_candidate[code],
             academic_year=str(year),
             term=str(term_number),
             report=unlock_report,
@@ -805,11 +846,20 @@ def compare_course_choices(
             baseline_report=graduation_baseline,
             candidate_meta={
                 code: (
-                    str(detail_by_code[code].get("kind") or "NOT_IN_PLAN"),
-                    str(detail_by_code[code].get("your_status") or "unknown"),
+                    (
+                        KIND_COURSE
+                        if academic_code_by_candidate[code] != code
+                        else str(detail_by_code[code].get("kind") or "NOT_IN_PLAN")
+                    ),
+                    (
+                        _report_status(unlock_report, academic_code_by_candidate[code])
+                        if academic_code_by_candidate[code] != code
+                        else str(detail_by_code[code].get("your_status") or "unknown")
+                    ),
                 )
                 for code in codes
             },
+            academic_code_by_candidate=academic_code_by_candidate,
             query_cache=query_cache,
         )
 
@@ -818,19 +868,43 @@ def compare_course_choices(
         for row in baseline
         if normalize_code(row.get("course_key") or row.get("course_code"))
     }
+    registered_equivalents = (
+        set(academic_state.registered_or_equivalent_course_codes)
+        if academic_state is not None
+        else set()
+    )
+    expected_equivalents = (
+        set(academic_state.expected_or_equivalent_course_codes)
+        if academic_state is not None
+        else set()
+    )
     candidates: list[dict[str, Any]] = []
     for code in codes:
         detail = detail_by_code[code]
-        kind = str(detail.get("kind") or "NOT_IN_PLAN")
-        academic_status = str(detail.get("your_status") or "unknown")
-        dependent = (unlock_report.get("dependents") or {}).get(code) or {}
-        if code in baseline_codes and baseline_kind == "REGISTERED":
+        academic_code = academic_code_by_candidate[code]
+        is_concrete_alias = academic_code != code
+        kind = KIND_COURSE if is_concrete_alias else str(detail.get("kind") or "NOT_IN_PLAN")
+        academic_status = (
+            _report_status(unlock_report, academic_code)
+            if is_concrete_alias
+            else str(detail.get("your_status") or "unknown")
+        )
+        if code in registered_equivalents and academic_code in set(
+            academic_state.registered_requirement_course_codes if academic_state is not None else ()
+        ):
+            academic_status = "studying"
+        dependent = (unlock_report.get("dependents") or {}).get(academic_code) or {}
+        if code in registered_equivalents or (
+            academic_state is None and code in baseline_codes and baseline_kind == "REGISTERED"
+        ):
             recommendation_state = "ALREADY_IN_CURRENT_TIMETABLE"
-        elif code in baseline_codes and baseline_kind == "EXPECTED_PLAN":
+        elif code in expected_equivalents or (
+            academic_state is None and code in baseline_codes and baseline_kind == "EXPECTED_PLAN"
+        ):
             recommendation_state = "ALREADY_IN_EXPECTED_PLAN"
         elif code in baseline_codes and baseline_kind == "MIXED_REVIEW_REQUIRED":
             recommendation_state = "BASELINE_SOURCE_REVIEW_REQUIRED"
-        elif code in recommendation_rank:
+        elif code in recommendation_rank or academic_code in recommendation_rank:
             recommendation_state = "RECOMMENDED"
         else:
             recommendation_state = "NOT_RECOMMENDED"
@@ -838,21 +912,36 @@ def compare_course_choices(
         candidates.append(
             {
                 "course_code": code,
-                "course_name": str(detail.get("course_name") or ""),
-                "credit_hours": detail.get("credit_hours"),
+                "requirement_course_code": academic_code,
+                "course_name": (
+                    academic_state.course(code).metadata.course_name
+                    if is_concrete_alias
+                    and academic_state is not None
+                    and academic_state.course(code) is not None
+                    else str(detail.get("course_name") or "")
+                ),
+                "credit_hours": (
+                    academic_state.course(code).metadata.credit_hours
+                    if is_concrete_alias
+                    and academic_state is not None
+                    and academic_state.course(code) is not None
+                    else detail.get("credit_hours")
+                ),
                 "kind": kind,
                 "academic_status": academic_status,
                 "prerequisite_ready": _prerequisite_ready(kind, academic_status),
-                "missing_prerequisites": _structured_missing_prerequisites(unlock_report, code),
+                "missing_prerequisites": _structured_missing_prerequisites(
+                    unlock_report, academic_code
+                ),
                 "recommendation": {
                     "state": recommendation_state,
-                    "rank": recommendation_rank.get(code),
+                    "rank": recommendation_rank.get(code) or recommendation_rank.get(academic_code),
                 },
                 "impact": {
                     "direct_unlock_count": len(dependent.get("waiting_only_on_this") or []),
                     "chain_course_count": int(dependent.get("on_chain_of_count") or 0),
                     "weighted_downstream_score": (
-                        importance.get(code) if kind == KIND_COURSE else None
+                        importance.get(academic_code) if kind == KIND_COURSE else None
                     ),
                     "weighted_score_method": (
                         WEIGHTED_SCORE_METHOD if kind == KIND_COURSE else None

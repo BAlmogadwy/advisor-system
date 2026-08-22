@@ -190,15 +190,32 @@ def snapshot_class_filter(snapshot_class: SnapshotClass) -> Q:
     return Q(source__isnull=True) | (~expected & ~registrar)
 
 
-# Sections are gender-segregated and labelled with a leading gender tag, e.g.
-# "M7", "F3" (first character is the cohort gender). A student (Student.section
-# is "M" or "F") may only see/take sections of their own gender. Labels without
-# an M/F prefix are treated as ungendered and shown to everyone.
+# Sections at the student's branch are gender-segregated and labelled with a
+# leading gender tag, e.g. "M7" and "F3".  "YM*" and "YF*" are NOT alternate
+# spellings of those cohorts: they belong to another university branch and must
+# never enter this portal's student catalogues or proposals.  A genuinely shared
+# label such as "ONLINE" remains available to both cohorts.
+
+OTHER_BRANCH_SECTION_COHORT = "OTHER_BRANCH"
+
+
+def is_other_branch_section_label(section_label: object) -> bool:
+    """Whether ``section_label`` names the excluded YM/YF branch."""
+    label = str(section_label or "").strip().upper()
+    return label.startswith(("YM", "YF"))
 
 
 def section_gender(section_label: str) -> str:
-    """Return 'M'/'F' for a gendered section label (e.g. 'M7'/'F3'), else ''."""
+    """Classify the cohort encoded in a section label.
+
+    Returns ``M``/``F`` for this branch, ``OTHER_BRANCH`` for ``YM*``/``YF*``,
+    and ``""`` only for genuinely shared labels.  The explicit other-branch
+    sentinel is important: several visibility readers intentionally accept
+    ``""`` as shared, so collapsing YM/YF to blank would leak those sections.
+    """
     s = (section_label or "").strip().upper()
+    if is_other_branch_section_label(s):
+        return OTHER_BRANCH_SECTION_COHORT
     return s[0] if s[:1] in ("M", "F") else ""
 
 
@@ -220,23 +237,23 @@ class UnknownStudentGender(Exception):
 def gender_section_filter(gender: str) -> Q:
     """Build a Q() keeping only sections a ``gender`` student may take.
 
-    Keeps the student's own gender sections PLUS any ungendered section (open to
-    all). An unknown/blank gender returns an all-pass Q() so callers never
-    accidentally hide every section. Used by both the planner's section catalog
-    (display) and the build (scheduling) so they can never disagree.
+    Keeps the student's own gender sections PLUS genuinely ungendered sections.
+    YM/YF rows belong to another branch and are excluded for every caller,
+    including a staff catalogue with no student in scope.
 
-    CAUTION — the all-pass branch is only safe when NO student was named. If a
-    student WAS named and their gender could not be resolved, all-pass shows the
-    other cohort's sections. Every real global section is gendered (415 F, 303 M,
-    zero ungendered), so that failure is total rather than partial. Callers acting
-    on behalf of a specific student must use :func:`student_gender_strict`, which
-    refuses instead of guessing.
+    Blank gender means the intentional staff/no-student view and returns every
+    local-branch/shared section. An invalid non-blank gender fails closed. Callers
+    acting on behalf of a named student must first use
+    :func:`student_gender_strict`, which refuses an unresolved student cohort.
     """
     g = (gender or "").strip().upper()
+    other_branch = Q(section__istartswith="YM") | Q(section__istartswith="YF")
+    if not g:
+        return ~other_branch
     if g not in ("M", "F"):
-        return Q()
+        return Q(pk__in=[])
     gendered = Q(section__istartswith="M") | Q(section__istartswith="F")
-    return Q(section__istartswith=g) | ~gendered
+    return (Q(section__istartswith=g) | ~gendered) & ~other_branch
 
 
 def section_is_available_to_student(section: object, *, student_id: int | str) -> bool:
@@ -247,10 +264,10 @@ def section_is_available_to_student(section: object, *, student_id: int | str) -
     answers the same question for a queryset; this answers it for a row, and the
     two deliberately share `section_gender` so they cannot drift apart.
 
-    The rule that must not be re-implemented anywhere else: a section's cohort is
-    the leading letter of its label, and a label with neither M nor F is open to
-    everyone. Spelling that out at a call site would mean a change to section
-    coding silently splitting the surfaces apart.
+    The rule that must not be re-implemented anywhere else: M/F sections must
+    match ``Student.section``, YM/YF sections are always excluded as another
+    branch, and a genuinely shared label is open to everyone. Spelling that out
+    at a call site would let a later coding change split the surfaces apart.
 
     Refuses rather than guesses for an unresolvable student, for the same reason
     `student_gender_strict` does: every real section is gendered, so an all-pass
@@ -361,10 +378,17 @@ def get_student_term_baseline(
         .prefetch_related("term_section__meetings")
     )
 
-    # Get student's program for credit lookup
-    student_program = (
-        Student.objects.filter(student_id=student_id).values_list("program", flat=True).first()
+    # Student.section is the authoritative local cohort.  Keep the raw foreign-
+    # branch rows in storage for audit, but never promote them into a student-
+    # facing baseline.  Filtering before ``select_snapshot_rows`` is essential:
+    # if the only registrar rows are YM/YF, the student's valid expected snapshot
+    # must remain selectable rather than being hidden by unusable registrar data.
+    student_profile = (
+        Student.objects.filter(student_id=student_id).values("program", "section").first() or {}
     )
+    student_program = student_profile.get("program")
+    raw_student_cohort = str(student_profile.get("section") or "").strip().upper()
+    student_cohort = raw_student_cohort if raw_student_cohort in ("M", "F") else ""
 
     # Build a credit lookup from programme_requirements
     credit_map: dict[str, int] = {}
@@ -383,6 +407,11 @@ def get_student_term_baseline(
         "term_section__section",
     ):
         ts = sts.term_section
+        section_cohort = section_gender(ts.section or "")
+        if section_cohort == OTHER_BRANCH_SECTION_COHORT:
+            continue
+        if student_cohort and section_cohort and section_cohort != student_cohort:
+            continue
         course_key_norm = _section_course_key(ts)
         credits = credit_map.get(course_key_norm, 0)
 
@@ -602,7 +631,9 @@ def replace_student_term_sections(
     deleting it destroys the comparison the student portal exists to show.
 
     ``replace_all_global`` still ignores class and clears every global link the
-    student has. It is the maintenance path, not a writer path.
+    student has. It is the maintenance path, not a writer path. YM/YF section ids
+    are always discarded because they belong to another branch; the returned
+    ``excluded_other_branch`` count makes that decision observable to importers.
     """
     from django.db import transaction
 
@@ -615,7 +646,15 @@ def replace_student_term_sections(
             f"({replace_source_across_terms!r} != {source!r})"
         )
     written_class = classify_source(source)
-    normalized_section_ids = list(dict.fromkeys(int(section_id) for section_id in term_section_ids))
+    requested_section_ids = list(dict.fromkeys(int(section_id) for section_id in term_section_ids))
+    other_branch_ids = set(
+        TermSection.objects.filter(pk__in=requested_section_ids)
+        .filter(Q(section__istartswith="YM") | Q(section__istartswith="YF"))
+        .values_list("pk", flat=True)
+    )
+    normalized_section_ids = [
+        section_id for section_id in requested_section_ids if section_id not in other_branch_ids
+    ]
     with transaction.atomic():
         current_rows = StudentTermSection.objects.filter(
             student_id=student_id,
@@ -656,7 +695,10 @@ def replace_student_term_sections(
         )
         reconcile_observed_section_programs(affected_section_ids)
 
-    return {"inserted": len(normalized_section_ids)}
+    return {
+        "inserted": len(normalized_section_ids),
+        "excluded_other_branch": len(other_branch_ids),
+    }
 
 
 def clear_student_section_snapshot(

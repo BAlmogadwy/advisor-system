@@ -117,6 +117,10 @@ class ChatResult:
     content: str
     model: str
     usage: dict[str, Any]
+    # Provider-returned deployment/version fingerprint only. Blank when the
+    # compatible endpoint does not expose one; the client never manufactures it
+    # from the requested model alias.
+    model_revision: str = ""
 
 
 @dataclass(frozen=True)
@@ -144,6 +148,22 @@ class ToolChatResult:
     model: str
     usage: dict[str, Any]
     assistant_message: dict[str, Any]
+    model_revision: str = ""
+
+
+def _provider_model_revision(payload: dict[str, Any]) -> str:
+    """Return an actual provider revision/fingerprint when one was supplied.
+
+    OpenAI-compatible services do not agree on the response key. These three are
+    all explicit response metadata; the requested model name is intentionally not
+    a fallback because an alias such as ``qwen3.7-plus`` is not a revision.
+    """
+
+    for key in ("model_revision", "model_version", "system_fingerprint"):
+        value = payload.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ""
 
 
 @dataclass
@@ -902,6 +922,7 @@ class OpenAICompatibleLLMClient:
             content=content,
             model=str(data.get("model") or resolved_model),
             usage=data.get("usage") if isinstance(data.get("usage"), dict) else {},
+            model_revision=_provider_model_revision(data),
         )
 
     def chat_with_tools(
@@ -969,6 +990,7 @@ class OpenAICompatibleLLMClient:
             model=str(data.get("model") or resolved_model),
             usage=data.get("usage") if isinstance(data.get("usage"), dict) else {},
             assistant_message=assistant_message,
+            model_revision=_provider_model_revision(data),
         )
 
     def _raise_for_empty(

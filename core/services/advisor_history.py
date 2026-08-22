@@ -145,3 +145,40 @@ def load_profiled_history(
                     }
                 )
     return turns[-max_messages:]
+
+
+def load_latest_profile_presentation(
+    conversation: Any,
+    *,
+    channel_profile: str = "",
+    exclude_message_id: Any = None,
+) -> dict[str, Any]:
+    """Newest normalized presentation produced under this channel profile.
+
+    The artifact is deliberately loaded separately from prose history.  It is a
+    bounded, already student-visible view model, not a raw tool result, and its
+    provenance is the generation profile on the question the assistant answered.
+    This prevents a Telegram follow-up from inheriting a richer web artifact (or
+    vice versa) while still allowing ordinary multi-turn transformations such as
+    replacing course codes with the names already present in a graduation card.
+    """
+    from core.services.advisor_presentations import normalise_presentation
+
+    profile = str(channel_profile or "")
+    messages = (
+        conversation.messages.filter(
+            role=AdvisorMessage.ROLE_ASSISTANT,
+            status__in=_SETTLED,
+            in_reply_to__isnull=False,
+        )
+        .exclude(pk=exclude_message_id)
+        .select_related("in_reply_to")
+        .order_by("-sequence", "-created_at")
+    )
+    for message in messages:
+        if str(message.in_reply_to.generation_profile or "") != profile:
+            continue
+        presentation = normalise_presentation(message.presentation)
+        if presentation:
+            return presentation
+    return {}

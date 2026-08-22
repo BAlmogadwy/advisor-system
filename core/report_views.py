@@ -192,6 +192,7 @@ def _build_student_plan_payload(
     student_id: int,
     *,
     prerequisite_map: dict[str, list[str]] | None = None,
+    additional_studying_codes: set[str] | None = None,
 ) -> tuple[dict | None, JsonResponse | None]:
     program = get_student_program(student_id)
     if not program:
@@ -200,6 +201,16 @@ def _build_student_plan_payload(
         )
 
     passed, studying, failed = get_student_course_status_sets(student_id)
+    studying |= {
+        normalize_code(code)
+        for code in (additional_studying_codes or set())
+        if normalize_code(code)
+    }
+    # A completed requirement stays completed if its course is being retaken.
+    # A failed requirement with current registrar evidence is now being studied;
+    # do not count it simultaneously in both plan-status buckets.
+    studying -= passed
+    failed -= passed | studying
     satisfied_pool = passed | studying
     importance_scores = _program_importance_scores(program)
     prerequisites_by_course = (

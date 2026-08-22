@@ -1,0 +1,47 @@
+meta:
+  purpose: >-
+    Executable multi-turn canaries for evidence-boundary failures that cannot be
+    represented by the canonical single-turn planner batch.
+  version: 1
+
+questions:
+- id: EB01
+  category: graduation_course_name_follow_up
+  question_ar: لو أحذف الاحتمالات والإحصاء وأضيف ذكاء الأعمال، كيف تتغير خطة تخرجي؟
+  expected_tool: graduation_progress
+  expected_arguments:
+    planning_baseline_kind: registered_timetable
+    remove_current_courses:
+    - STAT301
+    add_current_courses:
+    - DS321
+  prior_presentation:
+    kind: graduation_scenario
+    program: AI
+    planning_term: 1448/1
+    planning_baseline_kind: registered_timetable
+    planning_baseline_credits: 9
+    simulation_completed: true
+    estimated_terms_including_planning_baseline: 3
+    lower_bound_terms_including_planning_baseline: 3
+    max_credits_per_term: 18
+    graph:
+      items: []
+      extraNodes:
+      - STAT301
+      - DS321
+      termOf:
+        STAT301: 1
+        DS321: 2
+      nameOf:
+        STAT301: الاحتمالات والإحصاء
+        DS321: ذكاء الأعمال
+      statusOf:
+        STAT301: studying
+        DS321: open
+    band_labels:
+      '1': الفصل المرجعي 1448/1
+      '2': الفصل التقديري التالي
+    unresolved_requirements: []
+    removed_current_courses: []
+    added_current_courses: []

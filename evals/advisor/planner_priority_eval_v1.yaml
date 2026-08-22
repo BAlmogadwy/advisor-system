@@ -419,6 +419,18 @@ cases:
   expected_action: null
   policy_contract:
     mode: data_only
+  answer_evidence_contract:
+    source_tool: my_timetable
+    require:
+    - all_registration_course_codes
+    - all_registration_sections
+    - all_course_section_rows
+    verify:
+    - course_codes
+    - section_labels
+    - credit_quantities
+    - course_section_rows
+    - course_time_rows
   must_assert:
   - Show only current registered sections.
   - Report missing times, rooms, or instructors as missing.

@@ -108,7 +108,7 @@ Rules:
 - Use only the verified_context JSON supplied by the university system.
 - When verified_context includes tool_results, treat them as authoritative query results.
 - If a requested fact is missing from verified_context, say that the system data does not show it.
-- current_term_registrations (when present) is the authoritative list of courses the student is registered in this term, with section labels and retake flags; the "studying" list is plan-status only and omits courses the student passed before and is now retaking.
+- current_term_registrations (when present) is the authoritative section-level list of courses registered this term. The "studying" list is plan-readiness state overlaid with current registrar evidence; it excludes EXPECTED-plan rows and can omit a previously passed course being retaken, so never use it as the section list.
 - course_evidence.failed and failed_results are recorded unsuccessful outcomes. A failed course may still appear in current_term_registrations when it is being retaken; describe the current registration separately from the historical result.
 - Terms are independent: never subtract the current term's registered credits from another term's capacity. current_term_registrations belongs to its own academic_year/term; recommendations target the planning term in term_context.
 - TWO credit limits, never conflate them. max_recommended_credit_hours is where THIS SYSTEM stops suggesting courses; regulatory_max_credit_hours is what the university lets the student REGISTER, and it is higher. The recommendation list is capped at the first — present it as a suggestion, never as the registration ceiling. If asked how many hours they may register, answer with the regulatory range, not the suggestion cap.
@@ -134,7 +134,7 @@ Rules:
 - When evidence is sufficient, STOP calling tools and give the final answer.
 - If the question is ambiguous (which student, which course, which term), ask ONE short clarifying question instead of guessing.
 - Academic years are Hijri (e.g. 1448), never Gregorian. Tools default to the configured current year/term — omit academic_year/term arguments unless the user explicitly names a different term.
-- For what a student is registered in or taking NOW, read course_evidence.current_term_registrations from get_student_context — it is section-level and includes retakes. The plan-status "studying" list omits courses the student passed before and is now retaking; never present it as the registration list.
+- For what a student is registered in or taking NOW, read course_evidence.current_term_registrations from get_student_context — it is section-level and includes retakes. The "studying" list is plan-readiness state overlaid with current registrar evidence, excludes EXPECTED-plan rows, and omits previously passed courses being retaken; never present it as the registration list.
 - course_evidence.failed and failed_results are recorded unsuccessful outcomes. A failed course may still appear in current_term_registrations when it is being retaken; describe the current registration separately from the historical result.
 - Terms are independent: never subtract the current term's registered credits from another term's capacity or limit. current_term_registrations belongs to its own academic_year/term; recommendations target the planning term.
 - TWO credit limits, never conflate them. max_recommended_credit_hours is where THIS SYSTEM stops suggesting courses; regulatory_max_credit_hours is what the university lets the student REGISTER, and it is higher. The recommendation list is capped at the first — present it as a suggestion, never as the registration ceiling. If asked how many hours they may register, answer with the regulatory range, not the suggestion cap.
@@ -1078,8 +1078,42 @@ def build_verified_student_context(
 
     program = str(student.get("program") or "").strip().upper()
     passed, studying, failed = get_student_course_status_sets(student_id)
-    completed_or_current = passed | studying
     current_registrations = _current_term_registrations(int(student_id), passed)
+    from core.services.academic_state import AcademicStateUnavailable, build_student_academic_state
+
+    def academic_state_for(state_year: object, state_term: object):
+        if state_year is None or state_term is None:
+            return None
+        try:
+            return build_student_academic_state(int(student_id), str(state_year), str(state_term))
+        except AcademicStateUnavailable:
+            # Preserve the previous context behavior for an incomplete profile.
+            # The ordinary programme queries below will return empty evidence.
+            return None
+
+    # CURRENT registrar state and the requested PLANNING term are independent.
+    # When they differ, current readiness comes only from the former and expected
+    # recommendation suppression only from the latter.
+    current_state_year = current_registrations.get("academic_year")
+    current_state_term = current_registrations.get("term")
+    current_academic_state = academic_state_for(current_state_year, current_state_term)
+    if academic_year is None or term is None:
+        planning_academic_state = current_academic_state
+    elif (
+        current_academic_state is not None
+        and str(academic_year) == str(current_state_year)
+        and str(term) == str(current_state_term)
+    ):
+        planning_academic_state = current_academic_state
+    else:
+        planning_academic_state = academic_state_for(academic_year, term)
+
+    if current_academic_state is not None:
+        studying |= set(current_academic_state.registered_requirement_course_codes)
+        # Completion remains completion for a current retake. The section-level
+        # registration block carries that separate current fact.
+        studying -= passed
+    completed_or_current = passed | studying
     failed_result_candidates = list(
         StudentCourse.objects.filter(student_id=student_id, status__in=("failed", "studying"))
         .select_related("course")
@@ -1119,8 +1153,33 @@ def build_verified_student_context(
     ]
 
     recommendations: list[str] = []
+    recommendations_suppressed_registered: list[str] = []
+    recommendations_suppressed_expected: list[str] = []
     if academic_year is not None and term is not None:
-        recommendations = recommend_next_courses(student_id, academic_year, term)
+        raw_recommendations = recommend_next_courses(student_id, academic_year, term)
+        registered_equivalents = (
+            set(current_academic_state.registered_or_equivalent_course_codes)
+            if current_academic_state is not None
+            else set()
+        )
+        expected_equivalents = (
+            set(planning_academic_state.expected_or_equivalent_course_codes)
+            if planning_academic_state is not None
+            else set()
+        )
+        recommendations_suppressed_registered = [
+            code for code in raw_recommendations if code in registered_equivalents
+        ]
+        recommendations_suppressed_expected = [
+            code
+            for code in raw_recommendations
+            if code not in registered_equivalents and code in expected_equivalents
+        ]
+        recommendations = [
+            code
+            for code in raw_recommendations
+            if code not in registered_equivalents and code not in expected_equivalents
+        ]
 
     all_codes = {
         normalize_code(row.get("course_code"))
@@ -1131,7 +1190,15 @@ def build_verified_student_context(
     all_codes.update(studying)
     all_codes.update(failed_evidence)
     all_codes.update(recommendations)
+    all_codes.update(recommendations_suppressed_registered)
+    all_codes.update(recommendations_suppressed_expected)
     names = _course_names(all_codes)
+    for state in (current_academic_state, planning_academic_state):
+        if state is None:
+            continue
+        for course in state.courses:
+            if course.metadata.course_name:
+                names[course.course_code] = course.metadata.course_name
 
     prereq_rows = list(
         Prerequisite.objects.filter(program=program, course_code__in=recommendations).values(
@@ -1203,6 +1270,26 @@ def build_verified_student_context(
                 for row in failed_result_rows[:_MAX_CONTEXT_COURSES]
             ],
             "current_term_registrations": current_registrations,
+            "registered_requirement_course_codes": (
+                list(current_academic_state.registered_requirement_course_codes)
+                if current_academic_state is not None
+                else []
+            ),
+            "registered_or_equivalent_course_codes": (
+                list(current_academic_state.registered_or_equivalent_course_codes)
+                if current_academic_state is not None
+                else []
+            ),
+            "expected_plan_course_codes": (
+                list(planning_academic_state.expected_course_codes)
+                if planning_academic_state is not None
+                else []
+            ),
+            "expected_plan_requirement_aliases": (
+                list(planning_academic_state.expected_or_equivalent_course_codes)
+                if planning_academic_state is not None
+                else []
+            ),
             "remaining_requirements": _compact_course_rows(remaining_rows, names),
             "remaining_requirement_count": len(remaining_rows),
             # Exact plan totals, so the model never has to assume a
@@ -1227,6 +1314,10 @@ def build_verified_student_context(
             }
             for code in recommendations
         ],
+        "recommendation_suppression": {
+            "already_registered_or_equivalent": recommendations_suppressed_registered,
+            "already_expected_or_equivalent": recommendations_suppressed_expected,
+        },
         "recommendation_policy": credit_policy_evidence(
             recommended_credit_hours=sum(
                 plan_credit_map[code] for code in recommendations if code in plan_credit_map
