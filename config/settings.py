@@ -282,17 +282,19 @@ TELEGRAM_DISPATCH_SYNC = os.getenv("TELEGRAM_DISPATCH_SYNC", "false").lower() ==
 # compact record of where a student is and when, and Telegram retains it as a
 # file. When enabled, the durable worker materialises only a typed photo recipe,
 # renders from the stored assistant message, and tracks photo progress separately
-# from the legacy-compatible text cursor. Keep the explicit default off for new
-# deployments.
+# from the legacy-compatible text cursor.
+# Default ON (owner decision 2026-08-22): production has run with both image
+# kinds enabled since launch, and a fresh environment silently downgrading to
+# text-only cards was the surprise, not the picture.  The env vars remain the
+# per-deployment off switches.
 TELEGRAM_SEND_TIMETABLE_IMAGES = (
-    os.getenv("TELEGRAM_SEND_TIMETABLE_IMAGES", "false").lower() == "true"
+    os.getenv("TELEGRAM_SEND_TIMETABLE_IMAGES", "true").lower() == "true"
 )
 # A graduation map reveals much more of a student's academic progression than a
-# weekly timetable. Keep it behind a second explicit consent/operations switch;
-# enabling timetable pictures must never silently broaden what leaves the
-# university surface.
+# weekly timetable, so it keeps its own independent switch: turning timetable
+# pictures off must never silently decide graduation pictures, or vice versa.
 TELEGRAM_SEND_GRADUATION_IMAGES = (
-    os.getenv("TELEGRAM_SEND_GRADUATION_IMAGES", "false").lower() == "true"
+    os.getenv("TELEGRAM_SEND_GRADUATION_IMAGES", "true").lower() == "true"
 )
 # Optional local-development origin for the headless browser. It must stay on
 # loopback; a public hostname would expose the short-lived signed card URL. When

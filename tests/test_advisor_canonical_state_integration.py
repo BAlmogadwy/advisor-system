@@ -204,7 +204,12 @@ def test_student_context_reconciles_readiness_and_recommendations_without_mergin
     assert evidence["studying"] == ["AI1"]
     assert evidence["registered_requirement_course_codes"] == ["AI1"]
     assert evidence["expected_plan_course_codes"] == ["AI2"]
-    assert "AI463" in evidence["registered_or_equivalent_course_codes"]
+    equivalents = {row["code"]: row["basis"] for row in evidence["registered_or_equivalent"]}
+    # This fixture registers the PLACEHOLDER itself; the concrete option is
+    # only a suppression target of the occupied slot.  The two bases differ,
+    # and «مسجل» may only be worded from "registered".
+    assert equivalents["AI1"] == "registered"
+    assert equivalents["AI463"] == "equivalent_slot_occupied"
     assert "AI464" in evidence["expected_plan_requirement_aliases"]
     remaining = {row["course_code"] for row in evidence["remaining_requirements"]}
     assert "AI1" not in remaining

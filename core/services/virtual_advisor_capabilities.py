@@ -29,6 +29,7 @@ services import models that would otherwise create import cycles.
 from __future__ import annotations
 
 import logging
+import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
@@ -422,6 +423,71 @@ def _exec_get_student_context(
     return {"ok": True, "student_context": context}
 
 
+_CODE_SHAPE = re.compile(r"[A-Za-z]{2,6}\s*-?\s*\d{1,4}\Z")
+
+
+def _split_code(code: str) -> tuple[str, str]:
+    letters = "".join(ch for ch in code if ch.isalpha())
+    digits = "".join(ch for ch in code if ch.isdigit())
+    return letters, digits
+
+
+def _letter_edit_distance(a: str, b: str) -> int:
+    """Plain Levenshtein over two short letter prefixes (length <= 6)."""
+    if a == b:
+        return 0
+    previous = list(range(len(b) + 1))
+    for i, ca in enumerate(a, 1):
+        current = [i]
+        for j, cb in enumerate(b, 1):
+            current.append(
+                min(
+                    previous[j] + 1,
+                    current[j - 1] + 1,
+                    previous[j - 1] + (ca != cb),
+                )
+            )
+        previous = current
+    return previous[-1]
+
+
+def _did_you_mean(unknown_code: str) -> list[dict[str, Any]]:
+    """Letter-part repairs with EXACTLY matching digits, nothing else.
+
+    «MATE243» is a typo of MATH243 - same digits, one letter wrong - and
+    suggesting the repair as DATA turns the model's typo-help instinct from
+    the audited speculation («ربما تقصد DS225», which does not exist) into a
+    grounded correction.  Digit-differing tokens get NO suggestion by design:
+    CS202 is one edit from both CS201 and CS212, and a nearest-neighbour
+    guess there is exactly the invented-guidance class this replaces.
+    """
+    from core.services.course_catalogue import known_courses
+
+    letters, digits = _split_code(unknown_code)
+    if not letters or not digits:
+        return []
+    # The distance budget scales with the prefix: a 2-letter prefix at
+    # distance 2 shares NO letter with its "repair" - CS202 drew EE202 and
+    # QZ202 from the live catalogue, which is the invented-guidance class
+    # again wearing the resolver's clothes.  distance <= len-1 keeps at
+    # least one typed letter alive in every suggestion.
+    max_distance = min(2, len(letters) - 1)
+    if max_distance < 1:
+        return []
+    candidates: list[dict[str, Any]] = []
+    for code, name in known_courses():
+        cand_letters, cand_digits = _split_code(code)
+        if cand_digits != digits:
+            continue
+        distance = _letter_edit_distance(letters, cand_letters)
+        if 0 < distance <= max_distance:
+            candidates.append(
+                {"candidate_code": code, "candidate_name": name, "distance": distance}
+            )
+    candidates.sort(key=lambda row: (row["distance"], row["candidate_code"]))
+    return candidates[:3]
+
+
 def _exec_lookup_course(
     args: dict[str, Any], scope: dict[str, Any], ctx: dict[str, Any]
 ) -> dict[str, Any]:
@@ -434,14 +500,32 @@ def _exec_lookup_course(
     if not query:
         return {"ok": False, "error": "query is required."}
     program = str(args.get("program") or "").strip().upper()
+    if not program and str(scope.get("role") or "") == ROLE_STUDENT:
+        # A student's lookup defaults to THEIR programme — for NAME searches
+        # only.  Unscoped, a DS2 student's fuzzy search ranged over all 488
+        # courses of every programme - cross-programme search stays available,
+        # but as the model's explicit argument, not the accident of omitting
+        # one.  An EXACT code is different: whether it exists is a fact about
+        # the catalogue, not about the asker.  Scoping the exact branch made
+        # 418 of 490 real codes "unknown" to an AI student and then offered
+        # global-catalogue repairs for them - the machine-made version of the
+        # audited «ربما تقصد DS225».
+        from core.services.student_helpers import get_student_program
+
+        student_id, _error = _resolve_scoped_student_id(args, scope)
+        if student_id is not None:
+            program = str(get_student_program(student_id) or "").strip().upper()
 
     matches: dict[str, dict[str, Any]] = {}
 
-    exact = normalize_code(query)
+    # Fold Arabic-Indic digits and strip separators BEFORE matching: the
+    # catalogue rows are ASCII, and «MATH-243» / «MATH٢٤٣» are the same
+    # question as MATH243, not unknown codes.
+    from core.services.course_catalogue import known_course_codes, normalise_catalogue_code
+
+    exact = normalise_catalogue_code(query)
     if exact:
         req_qs = ProgrammeRequirement.objects.filter(course_code__iexact=exact)
-        if program:
-            req_qs = req_qs.filter(program=program)
         for row in req_qs.values(
             "course_code", "course_name", "program", "programme_term", "credit_hours"
         )[:_MAX_COURSE_MATCHES]:
@@ -459,10 +543,30 @@ def _exec_lookup_course(
             if prog and prog not in entry["programs"]:
                 entry["programs"].append(prog)
 
+    # A code can live ONLY in the Course table (no requirement row anywhere,
+    # no elective row).  Without this branch such a code exact-matched nothing
+    # and looked unknown despite being on the existence floor.
+    if exact and exact not in matches:
+        for row in Course.objects.filter(course_code__iexact=exact).values(
+            "course_code", "description", "credit_hours"
+        )[:_MAX_COURSE_MATCHES]:
+            code = normalize_code(row["course_code"])
+            matches.setdefault(
+                code,
+                {
+                    "course_code": code,
+                    "course_name": str(row.get("description") or "").strip(),
+                    "credit_hours": row.get("credit_hours"),
+                    "programs": [],
+                },
+            )
+
     name_query = Q(course_name__icontains=query)
     req_qs = ProgrammeRequirement.objects.filter(name_query)
     if program:
-        req_qs = req_qs.filter(program=program)
+        # The variant mapping (AI2→AI) the elective branch already applies:
+        # versioned programmes share the department catalogue.
+        req_qs = req_qs.filter(program__in=programme_variants(program))
     for row in req_qs.values(
         "course_code", "course_name", "program", "programme_term", "credit_hours"
     )[: _MAX_COURSE_MATCHES * 3]:
@@ -505,11 +609,14 @@ def _exec_lookup_course(
     # plan placeholder. Omitting that catalogue made lookup_course say AI463 did
     # not exist while recommend_courses correctly linked it to AI1.
     if len(matches) < _MAX_COURSE_MATCHES:
-        elective_qs = ElectiveCourse.objects.filter(
-            Q(course_code__iexact=exact) | Q(course_name__icontains=query)
-        )
+        # The EXACT-code arm stays catalogue-wide, like the requirement branch
+        # above: whether a code exists is not a fact about the asker.  Only
+        # the fuzzy name arm takes the programme default.
+        name_arm = Q(course_name__icontains=query)
         if program:
-            elective_qs = elective_qs.filter(programme__in=programme_variants(program))
+            name_arm &= Q(programme__in=programme_variants(program))
+        elective_filter = Q(course_code__iexact=exact) | name_arm if exact else name_arm
+        elective_qs = ElectiveCourse.objects.filter(elective_filter)
         for row in elective_qs.values(
             "id", "course_code", "course_name", "programme", "credit_hours"
         )[: _MAX_COURSE_MATCHES * 3]:
@@ -552,12 +659,29 @@ def _exec_lookup_course(
             if len(matches) >= _MAX_COURSE_MATCHES:
                 break
 
-    return {
+    result: dict[str, Any] = {
         "ok": True,
         "query": query,
         "match_count": len(matches),
         "courses": list(matches.values()),
     }
+    if (
+        exact
+        and _CODE_SHAPE.match(query)
+        and exact not in matches
+        and exact not in known_course_codes()
+    ):
+        # The student named a code NO authority recognises.  Say so as DATA:
+        # the unresolved token (an echo the answer checker deliberately never
+        # mines as evidence) plus at most three letter-repair candidates that
+        # DO exist.  The floor's own catalogue is the existence authority
+        # here, NOT this function's matches: a code can be real and still
+        # produce no match rows (another programme's elective, a bare Course
+        # row), and "unknown" from this tool licenses the model to deny the
+        # course exists.
+        result["unknown_query"] = exact
+        result["did_you_mean"] = _did_you_mean(exact)
+    return result
 
 
 #: Re-exported so this module's callers keep their import, but there is now ONE
