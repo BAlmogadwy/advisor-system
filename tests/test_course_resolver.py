@@ -259,18 +259,125 @@ def test_a_two_letter_prefix_repair_keeps_at_least_one_typed_letter():
     ]
 
 
-def test_a_separator_in_the_stored_code_cannot_become_a_false_unknown():
-    """A catalogue row stored as «AI-463» exact-matches nothing (the row side
-    of the fold is a known follow-up), but its floor key AI463 must keep the
-    lookup from DECLARING the code unknown - that guard is what stands
-    between "silent empty" and a licensed denial."""
+def test_a_separator_in_the_stored_code_still_finds_its_row():
+    """The row side of the fold: the exact arms compare the RAW stored value,
+    so a row stored as «AI-463» or with Arabic-Indic digits matched nothing -
+    a silent empty for a code the floor recognises.  The miss-path fallback
+    scans with the floor's own normalisation and emits the floor-key
+    spelling."""
     _seed()
     Course.objects.create(course_code="AI-463", description="Applied AI", credit_hours=3)
+    ProgrammeRequirement.objects.create(
+        program="AI",
+        course_code="PHYS٢١٠",
+        course_name="Physics II",
+        type="Mandatory",
+        programme_term=2,
+        credit_hours=3,
+    )
     from core.services.course_catalogue import invalidate_cache
 
     invalidate_cache()
-    result = _lookup("AI463")
 
+    hyphen = _lookup("AI463")
+    assert "unknown_query" not in hyphen
+    assert hyphen["match_count"] == 1
+    assert hyphen["courses"][0]["course_code"] == "AI463"
+    assert hyphen["courses"][0]["course_name"] == "Applied AI"
+
+    arabic = _lookup("PHYS210")
+    assert "unknown_query" not in arabic
+    assert arabic["match_count"] == 1
+    row = arabic["courses"][0]
+    assert row["course_code"] == "PHYS210"
+    assert row["course_name"] == "Physics II"
+    assert row["programs"] == ["AI"]
+
+
+def test_a_separator_stored_elective_keeps_its_placeholder_link():
+    """The elective arm of the fallback, with the link that is its point:
+    «AI463» means nothing to a student without «AI1».  A separator-stored
+    elective found WITHOUT fulfills_elective_slots would re-open, for these
+    rows, the recommend_courses divergence the elective branch closed - and
+    this arm was the one surviving mutation of the fallback's first review."""
+    from core.models import ElectiveCourse, ElectiveTermMapping
+
+    _seed()
+    elective = ElectiveCourse.objects.create(
+        course_code="AI-990",
+        course_name="Vision Elective",
+        programme="AI",
+        category="Program Elective",
+        credit_hours=3,
+    )
+    ElectiveTermMapping.objects.create(
+        academic_year="1448",
+        term=1,
+        programme="AI",
+        placeholder_code="AI1",
+        elective=elective,
+    )
+    from core.services.course_catalogue import invalidate_cache
+
+    invalidate_cache()
+    result = _lookup("AI990", program="AI")
+
+    assert "unknown_query" not in result
+    assert result["match_count"] == 1
+    row = result["courses"][0]
+    assert row["course_code"] == "AI990"
+    assert row["course_name"] == "Vision Elective"
+    assert row["programs"] == ["AI"]
+    assert row["fulfills_elective_slots"] == ["AI1"]
+
+
+def test_a_name_search_with_results_skips_the_fallback_scan():
+    """The perf gate: an English NAME search folds its own text to a truthy
+    "exact" that is never a matches key, and without the gate every such
+    lookup paid three unfiltered table scans.  A search WITH results and a
+    non-code-shaped query must not touch the fallback tables."""
+    from django.db import connection
+    from django.test.utils import CaptureQueriesContext
+
+    _seed()
+    from core.services.course_catalogue import invalidate_cache
+
+    invalidate_cache()
+    _lookup("warm")  # warm the catalogue cache outside the measured window
+
+    with CaptureQueriesContext(connection) as ctx:
+        result = _lookup("Discrete", program="AI")
+    assert result["match_count"] >= 1
+    table = ProgrammeRequirement._meta.db_table
+    scans = [q["sql"] for q in ctx.captured_queries if table in q["sql"]]
+    assert scans, "the name arm must have queried the requirement table"
+    # The name arm queries the requirement table WITH a filter; the fallback
+    # scan is the unfiltered read of every row.  No captured requirement
+    # query may be filterless.
+    assert all("WHERE" in sql.upper() for sql in scans)
+
+
+def test_a_stale_floor_still_blocks_a_false_unknown():
+    """The catalogue-floor guard's own pin.  In the cache-TTL window after an
+    uninvalidated delete, the fallback scan misses (the rows are gone) but
+    the warm floor still recognises the code - and the lookup must answer
+    empty, never DECLARE unknown: "unknown" licenses the model to deny the
+    course exists, and a licence issued from a 60-second race is still a
+    licence."""
+    _seed()
+    from core.services.course_catalogue import invalidate_cache, known_course_codes
+
+    invalidate_cache()
+    assert "MATH243" in known_course_codes()  # warm the floor
+
+    from core.models import ElectiveCourse
+
+    Course.objects.all().delete()
+    ProgrammeRequirement.objects.all().delete()
+    ElectiveCourse.objects.all().delete()  # deliberately NOT invalidated
+
+    result = _lookup("MATH243")
+    assert result["match_count"] == 0
     assert "unknown_query" not in result
     assert "did_you_mean" not in result
 

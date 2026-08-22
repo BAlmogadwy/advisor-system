@@ -659,6 +659,91 @@ def _exec_lookup_course(
             if len(matches) >= _MAX_COURSE_MATCHES:
                 break
 
+    if exact and exact not in matches and (_CODE_SHAPE.match(query) is not None or not matches):
+        # The row side of the fold.  The three exact arms above compare the
+        # database's RAW stored value, so a row stored as «AI-463» or
+        # «MATH٢٤٣» matches nothing even though the existence floor knows its
+        # normalised key - the lookup answered a silent empty for a code it
+        # would refuse to call unknown.  A python-side scan over the same
+        # three tables (1120 rows live), with the floor's own normalisation.
+        # The gate keeps it off the hot path: it runs for code-shaped queries
+        # and for searches that found NOTHING - an English NAME search with
+        # results folds its own text to a truthy "exact" that is never a
+        # matches key, and without the gate it paid three unfiltered scans
+        # per lookup.  The emitted course_code is the FLOOR key spelling: it
+        # is what the student typed and what the answer checker will accept.
+        for row in ProgrammeRequirement.objects.values(
+            "course_code", "course_name", "program", "credit_hours"
+        ):
+            if normalise_catalogue_code(row["course_code"]) != exact:
+                continue
+            entry = matches.setdefault(
+                exact,
+                {
+                    "course_code": exact,
+                    "course_name": str(row.get("course_name") or "").strip(),
+                    "credit_hours": row.get("credit_hours"),
+                    "programs": [],
+                },
+            )
+            prog = str(row.get("program") or "").strip().upper()
+            if prog and prog not in entry["programs"]:
+                entry["programs"].append(prog)
+        for row in ElectiveCourse.objects.values(
+            "id", "course_code", "course_name", "programme", "credit_hours"
+        ):
+            if normalise_catalogue_code(row["course_code"]) != exact:
+                continue
+            entry = matches.setdefault(
+                exact,
+                {
+                    "course_code": exact,
+                    "course_name": str(row.get("course_name") or "").strip(),
+                    "credit_hours": row.get("credit_hours"),
+                    "programs": [],
+                },
+            )
+            prog = str(row.get("programme") or "").strip().upper()
+            if prog and prog not in entry["programs"]:
+                entry["programs"].append(prog)
+            # The placeholder link is the whole point of the elective table
+            # (`AI463` means nothing to a student without `AI1`) - a
+            # separator-stored elective found WITHOUT it would re-open, for
+            # these rows, the recommend_courses divergence the elective
+            # branch above was written to close.
+            mapping_qs = ElectiveTermMapping.objects.filter(elective_id=row["id"])
+            raw_year, raw_term = ctx.get("academic_year"), ctx.get("term")
+            if raw_year not in (None, "") and raw_term not in (None, ""):
+                try:
+                    requested_term = int(raw_term)
+                except (TypeError, ValueError):
+                    requested_term = None
+                if requested_term is not None:
+                    mapping_qs = mapping_qs.filter(academic_year=str(raw_year), term=requested_term)
+            if program:
+                mapping_qs = mapping_qs.filter(programme__in=programme_variants(program))
+            placeholders = sorted(
+                {
+                    normalize_code(slot)
+                    for slot in mapping_qs.values_list("placeholder_code", flat=True)
+                    if normalize_code(slot)
+                }
+            )
+            if placeholders:
+                existing = set(entry.get("fulfills_elective_slots") or [])
+                entry["fulfills_elective_slots"] = sorted(existing | set(placeholders))
+        if exact not in matches:
+            for row in Course.objects.values("course_code", "description", "credit_hours"):
+                if normalise_catalogue_code(row["course_code"]) != exact:
+                    continue
+                matches[exact] = {
+                    "course_code": exact,
+                    "course_name": str(row.get("description") or "").strip(),
+                    "credit_hours": row.get("credit_hours"),
+                    "programs": [],
+                }
+                break
+
     result: dict[str, Any] = {
         "ok": True,
         "query": query,
