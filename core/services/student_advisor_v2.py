@@ -2834,23 +2834,42 @@ def _what_if_alternate_lines(
             if isinstance(summary, dict)
             else None
         )
-        return {
-            str(row.get("code") or "")
-            for row in rows or []
-            if isinstance(row, dict) and row.get("code")
-        }
+        # Prose-safe spellings only: a malformed stored code must not cross
+        # into the answer text, where the checker's miner cannot see it and
+        # the safe answer would refuse itself.
+        codes: set[str] = set()
+        for row in rows or []:
+            if not isinstance(row, dict):
+                continue
+            cleaned = re.sub(r"[^A-Za-z0-9]", "", str(row.get("code") or "")).upper()
+            if cleaned:
+                codes.add(cleaned)
+        return codes
 
-    extra = sorted(_codes(alt_baseline) - _codes(primary_what_if.get("baseline") or {}))[:3]
+    # SYMMETRIC: the review proved the one-directional set is EMPTY in the
+    # default orientation (primary = recommended holds the extra course), so
+    # the live answer showed two disagreeing numbers and never said why.
+    alt_codes = _codes(alt_baseline)
+    primary_codes = _codes(primary_what_if.get("baseline") or {})
+    includes = sorted(alt_codes - primary_codes)[:3]
+    excludes = sorted(primary_codes - alt_codes)[:3]
     if language == "Arabic":
         heading = "المقارنة نفسها وفق " + label
-        if extra:
-            heading += " (وتشمل " + "، ".join(extra) + ")"
+        clauses = []
+        if includes:
+            clauses.append("وتشمل " + "، ".join(includes))
+        if excludes:
+            clauses.append("ولا تشمل " + "، ".join(excludes))
+        if clauses:
+            heading += " (" + "؛ ".join(clauses) + ")"
         lines = [heading + ":"]
-        lines.append(
-            "الحد الأدنى المقدّر لعدد الفصول الإضافية: "
-            f"{alt_baseline.get('lower_bound_additional_terms')} قبل التغيير، مقابل "
-            f"{alt_scenario.get('lower_bound_additional_terms')} بعده."
-        )
+        alt_lb_before = alt_baseline.get("lower_bound_additional_terms")
+        alt_lb_after = alt_scenario.get("lower_bound_additional_terms")
+        if alt_lb_before is not None and alt_lb_after is not None:
+            lines.append(
+                "الحد الأدنى المقدّر لعدد الفصول الإضافية: "
+                f"{alt_lb_before} قبل التغيير، مقابل {alt_lb_after} بعده."
+            )
         alt_est_before = alt_baseline.get("estimated_additional_terms")
         alt_est_after = alt_scenario.get("estimated_additional_terms")
         if alt_est_before is not None and alt_est_after is not None:
@@ -2860,18 +2879,27 @@ def _what_if_alternate_lines(
             )
         return lines
     heading = "The same comparison on " + label
-    if extra:
-        heading += " (which includes " + ", ".join(extra) + ")"
+    clauses = []
+    if includes:
+        clauses.append("which includes " + ", ".join(includes))
+    if excludes:
+        clauses.append("which excludes " + ", ".join(excludes))
+    if clauses:
+        heading += " (" + "; ".join(clauses) + ")"
     lines = [heading + ":"]
-    lines.append(
-        f"Additional-term lower bound: {alt_baseline.get('lower_bound_additional_terms')} "
-        f"before the change versus {alt_scenario.get('lower_bound_additional_terms')} after."
-    )
+    alt_lb_before = alt_baseline.get("lower_bound_additional_terms")
+    alt_lb_after = alt_scenario.get("lower_bound_additional_terms")
+    if alt_lb_before is not None and alt_lb_after is not None:
+        lines.append(
+            f"Additional-term lower bound: {alt_lb_before} "
+            f"before the change versus {alt_lb_after} after."
+        )
     alt_est_before = alt_baseline.get("estimated_additional_terms")
     alt_est_after = alt_scenario.get("estimated_additional_terms")
     if alt_est_before is not None and alt_est_after is not None:
         lines.append(
-            f"Full estimate: {alt_est_before} additional terms before the change "
+            f"Full estimate: {alt_est_before} additional "
+            f"term{'s' if alt_est_before != 1 else ''} before the change "
             f"versus {alt_est_after} after."
         )
     return lines
@@ -2992,11 +3020,13 @@ def _safe_graduation_what_if_answer_base(
         ]
         lines.append(_comparison_effect_text(comparison, language))
         lines.append(_term_plan_change_text(comparison, language))
-        lines.append(
-            "الحد الأدنى المقدّر لعدد الفصول الإضافية: "
-            f"{baseline.get('lower_bound_additional_terms')} قبل التغيير، مقابل "
-            f"{scenario.get('lower_bound_additional_terms')} بعده."
-        )
+        lb_before = baseline.get("lower_bound_additional_terms")
+        lb_after = scenario.get("lower_bound_additional_terms")
+        if lb_before is not None and lb_after is not None:
+            lines.append(
+                "الحد الأدنى المقدّر لعدد الفصول الإضافية: "
+                f"{lb_before} قبل التغيير، مقابل {lb_after} بعده."
+            )
         # The verdict figure the student actually asked for.  Quoting only
         # the lower bound beside a longer term plan read as a contradiction
         # in the owner's live test.
@@ -3039,15 +3069,19 @@ def _safe_graduation_what_if_answer_base(
     ]
     lines.append(_comparison_effect_text(comparison, language))
     lines.append(_term_plan_change_text(comparison, language))
-    lines.append(
-        f"Additional-term lower bound: {baseline.get('lower_bound_additional_terms')} for "
-        f"the baseline timetable versus {scenario.get('lower_bound_additional_terms')} for the scenario."
-    )
+    lb_before = baseline.get("lower_bound_additional_terms")
+    lb_after = scenario.get("lower_bound_additional_terms")
+    if lb_before is not None and lb_after is not None:
+        lines.append(
+            f"Additional-term lower bound: {lb_before} for "
+            f"the baseline timetable versus {lb_after} for the scenario."
+        )
     est_before = baseline.get("estimated_additional_terms")
     est_after = scenario.get("estimated_additional_terms")
     if est_before is not None and est_after is not None:
         lines.append(
-            f"Full estimate: {est_before} additional terms before the change "
+            f"Full estimate: {est_before} additional "
+            f"term{'s' if est_before != 1 else ''} before the change "
             f"versus {est_after} after."
         )
     if resolved:

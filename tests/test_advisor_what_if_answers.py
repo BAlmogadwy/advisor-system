@@ -88,13 +88,13 @@ def chained_plan() -> None:
     )
 
 
-def _what_if_payload() -> dict:
+def _what_if_payload(kind: str | None = "registered_timetable") -> dict:
+    args: dict = {"remove_current_courses": ["TG102"]}
+    if kind is not None:
+        args["planning_baseline_kind"] = kind
     return get_default_registry().execute(
         "graduation_progress",
-        {
-            "remove_current_courses": ["TG102"],
-            "planning_baseline_kind": "registered_timetable",
-        },
+        args,
         scope={"role": ROLE_STUDENT, "student_id": SID},
         ctx={"academic_year": YEAR, "term": TERM},
     )
@@ -195,6 +195,159 @@ def test_the_composed_answer_carries_both_baselines_and_survives_the_checker(
     assert "TG104" in answer
     assert "التقدير الكامل" in answer
     assert _check(answer, payload) == []
+
+
+def test_the_default_orientation_names_the_course_the_registered_side_lacks(
+    divergent_plan: None,
+) -> None:
+    """The review's blocking find: in the DEFAULT orientation the primary is
+    the recommended baseline - the one WITH the extra course - and the
+    one-directional set was empty, so the live answer showed two disagreeing
+    numbers and never said why.  The clause is symmetric now: the registered
+    alternate is described as EXCLUDING the course."""
+    payload = _what_if_payload(kind=None)
+    alternate = payload.get("what_if_alternate_baseline")
+
+    assert isinstance(alternate, dict)
+    assert alternate["planning_baseline_kind"] == "registered_timetable"
+    answer = _safe_graduation_answer("Arabic", [payload], "")
+    assert "ولا تشمل TG104" in answer
+    assert _check(answer, payload) == []
+
+
+@pytest.fixture
+def matched_plan() -> None:
+    """Registered {TG102} and recommended {TG102} - the same set, and the
+    change VALIDATES on both sides, so only the differ guard can suppress
+    the alternate."""
+    student = Student.objects.create(
+        student_id=SID,
+        registration_no=str(SID),
+        name="What-if student",
+        program="TG",
+        section="M",
+        status="active",
+    )
+    courses = {}
+    for code, programme_term in (("TG101", 1), ("TG102", 1), ("TG103", 2)):
+        courses[code] = Course.objects.create(
+            course_code=code, description=f"Course {code}", credit_hours=3
+        )
+        ProgrammeRequirement.objects.create(
+            program="TG",
+            course_code=code,
+            course_name=f"Course {code}",
+            type="Mandatory",
+            programme_term=programme_term,
+            credit_hours=3,
+        )
+    Prerequisite.objects.create(program="TG", course_code="TG103", prerequisite_course_code="TG102")
+    StudentCourse.objects.create(student=student, course=courses["TG101"], status="passed")
+    section = TermSection.objects.create(
+        course_code="TG102",
+        course_number="TG102",
+        course_key="TG102",
+        course_name="Course TG102",
+        section="M1",
+        available_capacity=30,
+        registered_count=10,
+    )
+    StudentTermSection.objects.create(
+        student_id=SID,
+        academic_year=str(YEAR),
+        term=str(TERM),
+        term_section=section,
+        source="scraper_timetable",
+    )
+
+
+def test_matching_baselines_suppress_the_alternate_via_the_differ_guard(
+    matched_plan: None,
+) -> None:
+    payload = _what_if_payload()
+    alt_probe = get_default_registry().execute(
+        "graduation_progress",
+        {
+            "remove_current_courses": ["TG102"],
+            "planning_baseline_kind": "recommended_current_term",
+        },
+        scope={"role": ROLE_STUDENT, "student_id": SID},
+        ctx={"academic_year": YEAR, "term": TERM},
+    )
+    # The suppression must come from the DIFFER guard, not from validity.
+    assert alt_probe["what_if"]["valid"] is True
+    assert payload.get("what_if_alternate_baseline") is None
+
+
+def test_a_producer_without_display_rows_cannot_disable_the_feature(
+    divergent_plan: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The review's fragility find: two ABSENT course lists compared equal
+    and silently suppressed the alternate.  With the rows stripped, the
+    credit totals still establish the difference."""
+    from core.services import student_graduation as sg
+
+    real = sg.build_graduation_what_if
+
+    def stripped(*args, **kwargs):
+        result = real(*args, **kwargs)
+        what_if = result.get("what_if") if isinstance(result, dict) else None
+        if isinstance(what_if, dict):
+            for side in ("baseline", "scenario"):
+                summary = what_if.get(side)
+                if isinstance(summary, dict):
+                    summary.pop("planning_baseline_courses_assumed_passed", None)
+        return result
+
+    monkeypatch.setattr(sg, "build_graduation_what_if", stripped)
+    payload = _what_if_payload()
+    assert isinstance(payload.get("what_if_alternate_baseline"), dict)
+
+
+def test_the_differing_courses_clause_caps_at_three() -> None:
+    from core.services.student_advisor_v2 import _what_if_alternate_lines
+
+    alternate = {
+        "planning_baseline_kind": "recommended_current_term",
+        "what_if": {
+            "valid": True,
+            "baseline": {
+                "lower_bound_additional_terms": 1,
+                "planning_baseline_courses_assumed_passed": [{"code": f"TG9{i}"} for i in range(5)],
+            },
+            "scenario": {"lower_bound_additional_terms": 2},
+        },
+    }
+    lines = _what_if_alternate_lines("Arabic", alternate, {"baseline": {}})
+    heading = lines[0]
+    assert sum(1 for i in range(5) if f"TG9{i}" in heading) == 3
+
+
+def test_the_primary_section_keeps_its_own_full_estimate_line(divergent_plan: None) -> None:
+    """The owner's presentation fix is deletable-free no more: the string
+    appears once in the PRIMARY section and once in the alternate, so a
+    composer that drops the primary line fails the count."""
+    payload = _what_if_payload()
+    arabic = _safe_graduation_answer("Arabic", [payload], "")
+    assert arabic.count("التقدير الكامل") == 2
+    english = _safe_graduation_answer("English", [payload], "")
+    assert english.count("Full estimate:") == 2
+
+
+def test_a_missing_lower_bound_never_prints_the_word_none() -> None:
+    from core.services.student_advisor_v2 import _safe_graduation_what_if_answer_base
+
+    what_if = {
+        "valid": True,
+        "removed_current_courses": [{"code": "TG102"}],
+        "added_current_courses": [],
+        "comparison": {},
+        "baseline": {"lower_bound_additional_terms": None},
+        "scenario": {"lower_bound_additional_terms": 2},
+    }
+    for language in ("Arabic", "English"):
+        answer = _safe_graduation_what_if_answer_base(language, what_if, "registered_timetable")
+        assert "None" not in answer, language
 
 
 def test_a_wrong_figure_in_the_alternate_section_still_flags(divergent_plan: None) -> None:

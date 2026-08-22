@@ -2033,7 +2033,26 @@ def _exec_graduation_progress(
                     if isinstance(row, dict) and row.get("code")
                 )
 
-            if _baseline_codes(other_what_if) != _baseline_codes(what_if):
+            def _baseline_credits(container: dict[str, Any]) -> int:
+                baseline = container.get("baseline") if isinstance(container, dict) else None
+                if not isinstance(baseline, dict):
+                    return -1
+                try:
+                    return int(baseline.get("planning_baseline_credits") or 0)
+                except (TypeError, ValueError):
+                    return -1
+
+            other_codes = _baseline_codes(other_what_if)
+            primary_codes = _baseline_codes(what_if)
+            # Course sets decide; the credit totals are the fallback so a
+            # producer that stops emitting the display rows cannot silently
+            # disable the whole feature by making two ABSENT lists compare
+            # equal.
+            if other_codes and primary_codes:
+                baselines_differ = other_codes != primary_codes
+            else:
+                baselines_differ = _baseline_credits(other_what_if) != _baseline_credits(what_if)
+            if baselines_differ:
                 what_if_alternate = {
                     "planning_baseline_kind": other_kind,
                     "what_if": other_what_if,
