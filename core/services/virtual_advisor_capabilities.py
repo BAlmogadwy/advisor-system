@@ -2010,10 +2010,15 @@ def _exec_graduation_progress(
             else RECOMMENDED_CURRENT_TERM
         )
         # The alternate is an ENHANCEMENT on top of a primary result the
-        # student is already owed.  Un-isolated, any exception here rode up
-        # to the registry's catch-all and turned the whole call into
-        # ok:False - the successful primary simulation died with the
-        # optional second one, and the turn could only refuse.
+        # student is already owed.  The try covers the WHOLE alternate
+        # path - the second simulation AND the payload comparison after
+        # it - because un-isolated, any exception here rode up to the
+        # registry's catch-all and turned the call into ok:False: the
+        # successful primary died with the optional second one and the
+        # turn could only refuse.  Safe to swallow while the project
+        # runs WITHOUT ATOMIC_REQUESTS (autocommit): if that ever turns
+        # on, a swallowed DatabaseError would poison the request
+        # transaction for every later query.
         try:
             g_other = build_graduation_what_if(
                 int(student_id),
@@ -2023,52 +2028,54 @@ def _exec_graduation_progress(
                 remove_current_courses=[str(code) for code in remove_courses],
                 add_current_courses=[str(code) for code in add_courses],
             )
+            other_what_if = (g_other or {}).get("what_if")
+            if isinstance(other_what_if, dict) and other_what_if.get("valid"):
+
+                def _baseline_codes(container: dict[str, Any]) -> frozenset[str]:
+                    baseline = container.get("baseline") if isinstance(container, dict) else None
+                    rows = (
+                        baseline.get("planning_baseline_courses_assumed_passed")
+                        if isinstance(baseline, dict)
+                        else None
+                    )
+                    return frozenset(
+                        str(row.get("code") or "")
+                        for row in rows or []
+                        if isinstance(row, dict) and row.get("code")
+                    )
+
+                def _baseline_credits(container: dict[str, Any]) -> int:
+                    baseline = container.get("baseline") if isinstance(container, dict) else None
+                    if not isinstance(baseline, dict):
+                        return -1
+                    try:
+                        return int(baseline.get("planning_baseline_credits") or 0)
+                    except (TypeError, ValueError):
+                        return -1
+
+                other_codes = _baseline_codes(other_what_if)
+                primary_codes = _baseline_codes(what_if)
+                # Course sets decide; the credit totals are the fallback so a
+                # producer that stops emitting the display rows cannot silently
+                # disable the whole feature by making two ABSENT lists compare
+                # equal.
+                if other_codes and primary_codes:
+                    baselines_differ = other_codes != primary_codes
+                else:
+                    baselines_differ = _baseline_credits(other_what_if) != _baseline_credits(
+                        what_if
+                    )
+                if baselines_differ:
+                    what_if_alternate = {
+                        "planning_baseline_kind": other_kind,
+                        "what_if": other_what_if,
+                    }
         except Exception:
             logger.exception(
                 "Alternate-baseline what-if failed for student %s; answering on the primary only",
                 student_id,
             )
-            g_other = None
-        other_what_if = (g_other or {}).get("what_if")
-        if isinstance(other_what_if, dict) and other_what_if.get("valid"):
-
-            def _baseline_codes(container: dict[str, Any]) -> frozenset[str]:
-                baseline = container.get("baseline") if isinstance(container, dict) else None
-                rows = (
-                    baseline.get("planning_baseline_courses_assumed_passed")
-                    if isinstance(baseline, dict)
-                    else None
-                )
-                return frozenset(
-                    str(row.get("code") or "")
-                    for row in rows or []
-                    if isinstance(row, dict) and row.get("code")
-                )
-
-            def _baseline_credits(container: dict[str, Any]) -> int:
-                baseline = container.get("baseline") if isinstance(container, dict) else None
-                if not isinstance(baseline, dict):
-                    return -1
-                try:
-                    return int(baseline.get("planning_baseline_credits") or 0)
-                except (TypeError, ValueError):
-                    return -1
-
-            other_codes = _baseline_codes(other_what_if)
-            primary_codes = _baseline_codes(what_if)
-            # Course sets decide; the credit totals are the fallback so a
-            # producer that stops emitting the display rows cannot silently
-            # disable the whole feature by making two ABSENT lists compare
-            # equal.
-            if other_codes and primary_codes:
-                baselines_differ = other_codes != primary_codes
-            else:
-                baselines_differ = _baseline_credits(other_what_if) != _baseline_credits(what_if)
-            if baselines_differ:
-                what_if_alternate = {
-                    "planning_baseline_kind": other_kind,
-                    "what_if": other_what_if,
-                }
+            what_if_alternate = None
     return {
         "student_id": int(student_id),
         "program": g["program"],
