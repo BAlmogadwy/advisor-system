@@ -1266,7 +1266,21 @@ _ARABIC_REVERSED_INSTEAD_PATTERN = re.compile(
 #: «لو حذفت CS424» is a scenario; bare «حذفت CS424» may be a record statement
 #: («حذفت CS424 الترم الماضي») and stays un-extracted — the model and the
 #: what-if reprompt still own the ambiguous phrasings.
-_ARABIC_CONDITIONAL_PAST = r"(?:لو|إذا|اذا|ماذا\s+لو|افترض(?:نا)?)\s+[^.؟?!]{0,40}?"
+#:
+#: The review of the first spelling measured three leaks, closed here:
+#: «لو سمحت» is POLITENESS, «ولو/حتى لو» are CONCESSIVE — neither makes the
+#: past tense a scenario, so «لو سمحت، حذفت CS424 الترم الماضي» extracted a
+#: phantom simulation of a record statement.  The window also stopped only
+#: at sentence punctuation, so a marker in a DIFFERENT clause reached the
+#: verb — the clause the marker governs ends at a comma too.  And the
+#: window now refuses to cross a negator word (ما/لم/مو/لن/ليس) at any
+#: distance: «لو ما كنت حذفت» must be blocked, never direction-flipped.
+#: Over-blocking is safe by design: a genuine hypothetical this gate
+#: refuses falls through to the model-intention branch, not to the refusal.
+_ARABIC_CONDITIONAL_PAST = (
+    r"(?:(?<!و)(?<!حتى )لو(?!\s*سمحت)|إذا|اذا|ماذا\s+لو|في\s+حال|افترض(?:نا)?)"
+    r"\s+(?:(?!(?:ما|لم|مو|لن|ليس)\s)[^.؟?!،؛:\n]){0,40}?"
+)
 
 _ARABIC_OMISSION_PATTERN = re.compile(
     # Every verb needs BOTH agreements. «لو حذفت CS424» is the NATURAL
@@ -1280,13 +1294,22 @@ _ARABIC_OMISSION_PATTERN = re.compile(
     # really-dropped course cannot become a phantom scenario.
     rf"(?:ما\s*(?:آخذ|اخذ|أخذت|اخذت|خذت|نزلت|أنزل|انزل|باخذ|بآخذ|بنزل)|"
     rf"(?:ماني|مو)\s*(?:ماخذ|آخذ|اخذ|باخذ|بآخذ|منزل)|"
-    rf"لم\s+(?:آخذ|اخذ|أنزل|انزل)|أحذف|احذف|حذف|أشيل|اشيل|شيل|شلت|"
-    rf"أكنسل|اكنسل|ألغي|الغي|أؤجل|اؤجل|أترك|اترك|"
+    # «لم آخذ» negates a TAKE verb, which IS the omission; «لم أحذف» negates
+    # a REMOVE verb, which is its inverse - so the remove-direction verbs
+    # carry the negation guard while the negated-take group stays open.
+    rf"لم\s+(?:آخذ|اخذ|أنزل|انزل)|"
+    # The bare stems get a not-mid-word guard of their own: with «أحذف»
+    # blocked by the negation lookbehind, the engine happily backtracked
+    # into the bare «حذف» INSIDE the same word, one character past every
+    # guard - «لم أحذف» extracted through the hole.
+    rf"(?<!ما )(?<!ما)(?<!لم )(?<!لم)(?<!مو )(?<!مو)"
+    rf"(?:أحذف|احذف|(?<![ء-ي])حذف|أشيل|اشيل|(?<![ء-ي])شيل|شلت|"
+    rf"أكنسل|اكنسل|ألغي|الغي|أؤجل|اؤجل|أترك|اترك)|"
     rf"انسحب(?:ت)?\s+من|أنسحب(?:ت)?\s+من|"
     rf"{_ARABIC_CONDITIONAL_PAST}"
     # «لو ما حذفت» inverts the direction; blocked, not flipped - the model
     # owns the double-negative phrasings.
-    rf"(?<!ما )(?<!لم )"
+    rf"(?<!ما )(?<!ما)(?<!لم )(?<!لم)(?<!مو )(?<!مو)"
     rf"(?:حذفت|ألغيت|الغيت|لغيت|كنسلت|أجلت|اجلت|تركت|سحبت|أسقطت|اسقطت))\s+"
     rf"(?:مقرر\s+|مادة\s+)?(?P<remove>\b{_COURSE_CODE_EXPR}\b)",
     re.IGNORECASE,
@@ -1344,7 +1367,7 @@ _ARABIC_ADDITION_PATTERN = re.compile(
     # OMISSION pattern is consulted first and consumes them.
     rf"(?:آخذ|اخذ|أخذ|أنزل|انزل|أضيف|اضيف|أحط|احط|"
     rf"{_ARABIC_CONDITIONAL_PAST}"
-    rf"(?<!ما )(?<!لم )"
+    rf"(?<!ما )(?<!ما)(?<!لم )(?<!لم)(?<!مو )(?<!مو)"
     rf"(?:أخذت|اخذت|خذيت|نزلت|أضفت|اضفت|حطيت))\s+"
     rf"(?:مقرر\s+|مادة\s+)?(?P<add>\b{_COURSE_CODE_EXPR}\b)",
     re.IGNORECASE,

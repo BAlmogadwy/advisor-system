@@ -2204,14 +2204,28 @@ def _metric_claim_mismatch(answer: str, rows: list[dict[str, Any]]) -> bool:
                 clause,
                 ("إضاف", "اضاف", "بعد فصل", "بعد الفصل", "additional", "after"),
             )
+            # The clause's OWN metric words outrank the completeness
+            # heuristic in BOTH term branches: «الحد الأدنى المقدّر لعدد
+            # الفصول الإضافية: 1» names the lower bound explicitly, and
+            # binding it to the estimate because the simulation completed
+            # measured the safe composer's truthful lower-bound line
+            # against the wrong field.  The two-figure branch had the same
+            # defect one branch up: «الحد الأدنى: 2 فصل إضافي، أي 3 فصول
+            # بما فيها الفصل الحالي» quoted both lower_bound_* values
+            # exactly and was refused.
+            lower_bound_clause = _has_words(
+                clause,
+                ("الحد الأدنى", "على الأقل", "lower bound", "at least", "minimum"),
+            )
             if len(explicit_term_matches) >= 2 and including and has_additional_label:
+                use_lower = lower_bound_clause or not complete
                 additional_field = (
-                    "estimated_additional_terms" if complete else "lower_bound_additional_terms"
+                    "lower_bound_additional_terms" if use_lower else "estimated_additional_terms"
                 )
                 including_field = (
-                    "estimated_terms_including_planning_baseline"
-                    if complete
-                    else "lower_bound_terms_including_planning_baseline"
+                    "lower_bound_terms_including_planning_baseline"
+                    if use_lower
+                    else "estimated_terms_including_planning_baseline"
                 )
                 first = _number_set(explicit_term_matches[0].group(1))
                 last = _number_set(explicit_term_matches[-1].group(1))
@@ -2220,15 +2234,6 @@ def _metric_claim_mismatch(answer: str, rows: list[dict[str, Any]]) -> bool:
                 if not last <= _graduation_metric_values(graduation_rows, including_field):
                     return True
                 continue
-            # The clause's OWN metric words outrank the completeness
-            # heuristic: «الحد الأدنى المقدّر لعدد الفصول الإضافية: 1» names
-            # the lower bound explicitly, and binding it to the estimate
-            # because the simulation completed measured the safe composer's
-            # truthful lower-bound line against the wrong field.
-            lower_bound_clause = _has_words(
-                clause,
-                ("الحد الأدنى", "على الأقل", "lower bound", "at least", "minimum"),
-            )
             if lower_bound_clause:
                 field = (
                     "lower_bound_terms_including_planning_baseline"

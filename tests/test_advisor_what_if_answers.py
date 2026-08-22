@@ -162,6 +162,121 @@ def test_the_stated_difference_between_the_sides_is_a_supported_figure() -> None
     assert run(unsupported) != []
 
 
+def test_the_two_figure_lower_bound_sentence_binds_to_its_own_words() -> None:
+    """The review's reproduction on a completed single report: «الحد
+    الأدنى: 2 فصل إضافي، أي 3 فصول بما فيها الفصل الحالي» quoted both
+    lower_bound_* values exactly and was refused, because the two-figure
+    branch chose its fields from the completeness heuristic alone."""
+    payload = {
+        "tool": "graduation_progress",
+        "ok": True,
+        "simulation_completed": True,
+        "estimated_additional_terms": 3,
+        "lower_bound_additional_terms": 2,
+        "estimated_terms_including_planning_baseline": 4,
+        "lower_bound_terms_including_planning_baseline": 3,
+    }
+
+    def run(answer: str) -> list[str]:
+        return check_answer(
+            answer,
+            tool_results=[payload],
+            question="كم فصلاً يتبقى لتخرجي؟",
+            required_tools=set(),
+            known_course_codes=_CATALOGUE,
+        )
+
+    truthful_lower = "تحتاج على الأقل 2 فصل إضافي، أي 3 فصول بما فيها الفصل الحالي."
+    truthful_estimate = "تحتاج 3 فصول إضافية، أي 4 فصول بما فيها الفصل الحالي."
+    wrong_lower = "تحتاج على الأقل 3 فصول إضافية، أي 4 فصول بما فيها الفصل الحالي."
+    assert run(truthful_lower) == []
+    assert run(truthful_estimate) == []
+    assert run(wrong_lower) != []
+
+
+def test_english_lower_bound_words_bind_the_lower_bound_field() -> None:
+    """«على الأقل» / "at least" / "minimum" are load-bearing entries of the
+    lower-bound word list, not decoration around «الحد الأدنى»."""
+    payload = {
+        "tool": "graduation_progress",
+        "ok": True,
+        "simulation_completed": True,
+        "estimated_additional_terms": 3,
+        "lower_bound_additional_terms": 2,
+    }
+
+    def run(answer: str) -> list[str]:
+        return check_answer(
+            answer,
+            tool_results=[payload],
+            question="How many terms remain?",
+            required_tools=set(),
+            known_course_codes=_CATALOGUE,
+        )
+
+    assert run("You need at least 2 additional terms.") == []
+    assert run("You need at least 5 additional terms.") != []
+
+
+def test_a_baseline_side_value_is_supported_on_its_own() -> None:
+    """The sides are load-bearing, not just their difference: before=2 with
+    after=5 puts the difference at 3 and the top level at 5, so only the
+    side read makes the truthful «كان الحد الأدنى 2 قبل التغيير» pass."""
+    payload = {
+        "tool": "graduation_progress",
+        "ok": True,
+        "simulation_completed": True,
+        "lower_bound_additional_terms": 5,
+        "what_if": {
+            "valid": True,
+            "baseline": {"lower_bound_additional_terms": 2},
+            "scenario": {"lower_bound_additional_terms": 5},
+        },
+    }
+
+    def run(answer: str) -> list[str]:
+        return check_answer(
+            answer,
+            tool_results=[payload],
+            question="لو حذفت مقرر TG102 هل يؤثر على تخرجي؟",
+            required_tools=set(),
+            known_course_codes=_CATALOGUE,
+        )
+
+    assert run("كان الحد الأدنى للفصول الإضافية 2 قبل التغيير.") == []
+    assert run("كان الحد الأدنى للفصول الإضافية 4 قبل التغيير.") != []
+
+
+def test_an_improvement_difference_is_supported_in_absolute_value() -> None:
+    """A scenario that SAVES a term states the difference too — the sides
+    are 3 then 2, the difference the answer speaks is 1, and only the
+    absolute value supports it; a signed difference would refuse every
+    improvement sentence."""
+    payload = {
+        "tool": "graduation_progress",
+        "ok": True,
+        "simulation_completed": True,
+        "lower_bound_additional_terms": 2,
+        "what_if": {
+            "valid": True,
+            "baseline": {"lower_bound_additional_terms": 3},
+            "scenario": {"lower_bound_additional_terms": 2},
+        },
+    }
+
+    def run(answer: str) -> list[str]:
+        return check_answer(
+            answer,
+            tool_results=[payload],
+            question="لو حذفت مقرر TG102 هل يؤثر على تخرجي؟",
+            required_tools=set(),
+            known_course_codes=_CATALOGUE,
+        )
+
+    assert run("ينخفض الحد الأدنى للفصول الإضافية بمقدار 1 فصل بعد التغيير.") == []
+    assert run("ينخفض الحد الأدنى للفصول الإضافية بمقدار 4 فصول بعد التغيير.") != []
+
+
 def test_a_wrong_before_figure_in_the_comparison_still_flags(chained_plan: None) -> None:
     """Two-sided: admitting the baseline's figures must not admit inventions."""
     payload = _what_if_payload()

@@ -2107,6 +2107,12 @@ def test_course_comparison_cannot_answer_before_fresh_evidence(monkeypatch):
             {"add_current_courses": ["MATH204"]},
             "explicit_addition",
         ),
+        (
+            "في حال حذفت CS424 متى أتخرج؟",
+            {},
+            {"remove_current_courses": ["CS424"]},
+            "explicit_omission",
+        ),
     ],
 )
 def test_graduation_scenario_arguments_follow_explicit_student_wording(
@@ -2132,8 +2138,33 @@ def test_graduation_scenario_arguments_follow_explicit_student_wording(
         "أخذت CS111 الترم الماضي، متى أتخرج؟",
         "حذفت CS424 من البوابة، متى أتخرج؟",
         # A negated conditional inverts the direction; it is blocked, not
-        # flipped - the model owns double negatives.
+        # flipped - the model owns double negatives.  The review measured
+        # five shapes that slipped the first two lookbehinds.
         "لو ما حذفت CS424 هل أتخرج في وقتي؟",
+        "لو لم أحذف CS424 هل أتخرج أسرع؟",
+        "لو ماحذفت CS424 هل أتخرج أسرع؟",
+        "لو ما كنت حذفت CS424 هل أتخرج؟",
+        "لو لم أكن حذفت CS424 هل أتخرج؟",
+        "لو مو حذفت CS424 وش يصير؟",
+        "لو ما أضفت CS424 وش يصير؟",
+        "لو ما حطيت CS424 وش يصير؟",
+        # FUSED negation: the window temper needs the space after the
+        # negator, so the verb-adjacent lookbehind is the only guard here.
+        "لو ماأضفت CS424 وش يصير؟",
+        "لو ماحطيت CS424 وش يصير؟",
+        # «لو سمحت» is POLITENESS and «ولو/حتى لو» are CONCESSIVE - the
+        # review proved each of these extracted a phantom simulation of a
+        # record statement, with no downstream correction because this
+        # extractor is the sole authority.
+        "لو سمحت، حذفت CS424 الترم الماضي فمتى أتخرج؟",
+        "لو سمحت أخبرني، أنا أخذت CS111 وأبغى أعرف تخرجي",
+        "لو سمحت\nحذفت CS424 الترم الماضي",
+        "ولو أني حذفت CS424 من قبل، ما زلت أحتاجه؟",
+        "حتى لو كان صعباً، أنا أخذت CS111 بالفعل",
+        "شكراً لو سمحت؛ حذفت CS424 قبل سنة",
+        # A marker whose clause ENDS before the verb: the comma is the
+        # boundary of what the conditional governs.
+        "لو تكرمت، أخذت CS111 العام الماضي فمتى أتخرج؟",
     ],
 )
 def test_past_tense_without_a_conditional_is_a_record_not_a_scenario(question):
