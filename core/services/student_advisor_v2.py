@@ -1262,12 +1262,32 @@ _ARABIC_REVERSED_INSTEAD_PATTERN = re.compile(
     rf"(?P<add>\b{_COURSE_CODE_EXPR}\b)",
     re.IGNORECASE,
 )
+#: Conditional markers that turn a PAST-tense verb into a hypothetical.
+#: «لو حذفت CS424» is a scenario; bare «حذفت CS424» may be a record statement
+#: («حذفت CS424 الترم الماضي») and stays un-extracted — the model and the
+#: what-if reprompt still own the ambiguous phrasings.
+_ARABIC_CONDITIONAL_PAST = r"(?:لو|إذا|اذا|ماذا\s+لو|افترض(?:نا)?)\s+[^.؟?!]{0,40}?"
+
 _ARABIC_OMISSION_PATTERN = re.compile(
+    # Every verb needs BOTH agreements. «لو حذفت CS424» is the NATURAL
+    # conditional phrasing, and the first list carried only the
+    # imperative/present forms — the change CLASSIFIER matched «حذف» as a
+    # bare substring while this extractor required «حذف » with a space, so a
+    # live turn was flagged as a what-if and then extracted nothing: the
+    # tool ran bare, and the honest refusal was the only reachable answer.
+    # (The fourth occurrence of the one-grammatical-form disease.)  The past
+    # forms are gated behind a conditional so a record statement about a
+    # really-dropped course cannot become a phantom scenario.
     rf"(?:ما\s*(?:آخذ|اخذ|أخذت|اخذت|خذت|نزلت|أنزل|انزل|باخذ|بآخذ|بنزل)|"
     rf"(?:ماني|مو)\s*(?:ماخذ|آخذ|اخذ|باخذ|بآخذ|منزل)|"
     rf"لم\s+(?:آخذ|اخذ|أنزل|انزل)|أحذف|احذف|حذف|أشيل|اشيل|شيل|شلت|"
     rf"أكنسل|اكنسل|ألغي|الغي|أؤجل|اؤجل|أترك|اترك|"
-    rf"انسحب(?:ت)?\s+من|أنسحب(?:ت)?\s+من)\s+"
+    rf"انسحب(?:ت)?\s+من|أنسحب(?:ت)?\s+من|"
+    rf"{_ARABIC_CONDITIONAL_PAST}"
+    # «لو ما حذفت» inverts the direction; blocked, not flipped - the model
+    # owns the double-negative phrasings.
+    rf"(?<!ما )(?<!لم )"
+    rf"(?:حذفت|ألغيت|الغيت|لغيت|كنسلت|أجلت|اجلت|تركت|سحبت|أسقطت|اسقطت))\s+"
     rf"(?:مقرر\s+|مادة\s+)?(?P<remove>\b{_COURSE_CODE_EXPR}\b)",
     re.IGNORECASE,
 )
@@ -1317,7 +1337,15 @@ _ENGLISH_ADDITION_PATTERN = re.compile(
     re.IGNORECASE,
 )
 _ARABIC_ADDITION_PATTERN = re.compile(
-    rf"(?:آخذ|اخذ|أخذ|أنزل|انزل|أضيف|اضيف|أحط|احط)\s+"
+    # Past forms too — «لو أخذت CS424» is an addition scenario — but ONLY
+    # under a conditional: bare «أخذت CS111» is the commonest way to state a
+    # past record, and extracting it would simulate adding an already-passed
+    # course.  Safe against negated forms (ما أخذت / ما نزلت) because the
+    # OMISSION pattern is consulted first and consumes them.
+    rf"(?:آخذ|اخذ|أخذ|أنزل|انزل|أضيف|اضيف|أحط|احط|"
+    rf"{_ARABIC_CONDITIONAL_PAST}"
+    rf"(?<!ما )(?<!لم )"
+    rf"(?:أخذت|اخذت|خذيت|نزلت|أضفت|اضفت|حطيت))\s+"
     rf"(?:مقرر\s+|مادة\s+)?(?P<add>\b{_COURSE_CODE_EXPR}\b)",
     re.IGNORECASE,
 )

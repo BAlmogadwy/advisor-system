@@ -2072,6 +2072,41 @@ def test_course_comparison_cannot_answer_before_fresh_evidence(monkeypatch):
             },
             "explicit_replacement",
         ),
+        # Past tense under a conditional - the NATURAL «لو …» phrasing.  A
+        # live 2026-08-22 turn asked exactly the first of these and got the
+        # deterministic refusal: the change classifier matched «حذف» as a
+        # substring of «حذفت» while this extractor required «حذف » with a
+        # space, so the turn was flagged as a what-if that extracted nothing.
+        (
+            "لو حذفت مقرر CS424 هل يؤثر على تخرجي؟",
+            {},
+            {"remove_current_courses": ["CS424"]},
+            "explicit_omission",
+        ),
+        (
+            "إذا ألغيت CS424 هذا الترم متى أتخرج؟",
+            {},
+            {"remove_current_courses": ["CS424"]},
+            "explicit_omission",
+        ),
+        (
+            "لو كنسلت DS341 هل يتأخر تخرجي؟",
+            {},
+            {"remove_current_courses": ["DS341"]},
+            "explicit_omission",
+        ),
+        (
+            "لو سحبت مقرر CS424 وش يصير على تخرجي؟",
+            {},
+            {"remove_current_courses": ["CS424"]},
+            "explicit_omission",
+        ),
+        (
+            "لو أخذت مقرر MATH204 هذا الترم هل أتخرج أبكر؟",
+            {},
+            {"add_current_courses": ["MATH204"]},
+            "explicit_addition",
+        ),
     ],
 )
 def test_graduation_scenario_arguments_follow_explicit_student_wording(
@@ -2085,6 +2120,29 @@ def test_graduation_scenario_arguments_follow_explicit_student_wording(
         "registered_timetable",
     }
     assert normalisation == reason
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        # Bare past tense is how students STATE their record - extracting it
+        # would simulate re-adding a passed course or dropping one that is
+        # not in the baseline.  Only a conditional makes past tense a
+        # scenario.
+        "أخذت CS111 الترم الماضي، متى أتخرج؟",
+        "حذفت CS424 من البوابة، متى أتخرج؟",
+        # A negated conditional inverts the direction; it is blocked, not
+        # flipped - the model owns double negatives.
+        "لو ما حذفت CS424 هل أتخرج في وقتي؟",
+    ],
+)
+def test_past_tense_without_a_conditional_is_a_record_not_a_scenario(question):
+    arguments, normalisation = _normalise_graduation_scenario_args(question, {})
+
+    assert "remove_current_courses" not in arguments
+    assert "add_current_courses" not in arguments
+    assert "search_better_replacements" not in arguments
+    assert normalisation == ""
 
 
 @pytest.mark.parametrize(
