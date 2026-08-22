@@ -3923,8 +3923,10 @@ def answer_student_advisor_v2(
         if language == "Arabic"
         else detected_answer_style
     )
-    llm = llm_client or get_llm_client()
-    resolved_model = llm.resolve_model(model)
+    # Identity BEFORE any model touch: resolve_model can reach the provider
+    # (the local backend lists /v1/models), and a vanished roster row must
+    # fail closed as the student-facing 409 without a single network call -
+    # not surface as a provider error after one.
     scope = principal.as_scope()
     student_record = Student.objects.filter(student_id=principal.student_id).values("name").first()
     if student_record is None:
@@ -3932,6 +3934,8 @@ def answer_student_advisor_v2(
         # 409 and refunds the generation allowance. Calling a model without the
         # roster row would silently turn a personal adviser into a generic chatbot.
         raise ValueError("No student record exists for the authenticated principal.")
+    llm = llm_client or get_llm_client()
+    resolved_model = llm.resolve_model(model)
     student_name = str(student_record.get("name") or "").strip()
     boundary = boundary_for_scope(
         scope,
