@@ -238,6 +238,43 @@ def test_letter_distance_three_is_not_a_repair():
     assert _did_you_mean("MXYZ243") == []
 
 
+def test_a_two_letter_prefix_repair_keeps_at_least_one_typed_letter():
+    """The review's live-DB sweep: 1306 of 2427 two-letter-prefix fabrications
+    drew a "repair" sharing NOT ONE letter with what was typed - CS202 got
+    EE202 and QZ202.  The distance budget scales with the prefix, so a
+    2-letter prefix affords one edit and QZ113 gets nothing, while XS113
+    (S survives) still repairs."""
+    _seed()
+    for code in ("CS113", "DS113", "IS113"):
+        Course.objects.create(course_code=code, description=f"{code} course", credit_hours=3)
+    from core.services.course_catalogue import invalidate_cache
+    from core.services.virtual_advisor_capabilities import _did_you_mean
+
+    invalidate_cache()
+    assert _did_you_mean("QZ113") == []
+    assert [row["candidate_code"] for row in _did_you_mean("XS113")] == [
+        "CS113",
+        "DS113",
+        "IS113",
+    ]
+
+
+def test_a_separator_in_the_stored_code_cannot_become_a_false_unknown():
+    """A catalogue row stored as «AI-463» exact-matches nothing (the row side
+    of the fold is a known follow-up), but its floor key AI463 must keep the
+    lookup from DECLARING the code unknown - that guard is what stands
+    between "silent empty" and a licensed denial."""
+    _seed()
+    Course.objects.create(course_code="AI-463", description="Applied AI", credit_hours=3)
+    from core.services.course_catalogue import invalidate_cache
+
+    invalidate_cache()
+    result = _lookup("AI463")
+
+    assert "unknown_query" not in result
+    assert "did_you_mean" not in result
+
+
 def test_at_most_three_candidates_survive_and_ties_break_by_code():
     """Pins the advertised cap.  Four catalogue codes sit at distance 1 from
     XS113; exactly three come back, in code order."""
@@ -275,6 +312,9 @@ def test_the_projection_validates_and_caps_the_resolver_rows_independently():
             "not-a-row",
             {"candidate_code": 7, "candidate_name": "typed wrong", "distance": 1},
             {"candidate_code": "MATH243", "candidate_name": "ok", "distance": "1"},
+            # bool IS an int to isinstance - the boundary must not let a
+            # True cross where a distance belongs.
+            {"candidate_code": "BOOL1", "candidate_name": "bool", "distance": True},
             *well_formed,
         ],
     }

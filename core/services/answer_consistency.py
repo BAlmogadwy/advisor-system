@@ -2342,7 +2342,12 @@ def _tool_contract_complete(
         # add - the same escape my_timetable and recommend_courses have.
         blocking = {
             _normalise_course_token(entry.get("course_code"))
-            for key in ("constraint_failures", "unplaced")
+            # "unplaced_courses" is the key the executor actually writes at
+            # top level; a first spelling read "unplaced", which exists only
+            # on the planner's INTERNAL result - so the branch inverted, the
+            # dishonest silence passed and the truthful disclosure was
+            # refused.  The executor-payload key parity test pins this.
+            for key in ("constraint_failures", "unplaced_courses")
             for entry in row.get(key) or []
             if isinstance(entry, dict) and entry.get("course_code")
         }

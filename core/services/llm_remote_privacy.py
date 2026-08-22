@@ -485,6 +485,7 @@ def _project_lookup_course(result: dict[str, Any], _: RemoteIdentityMap) -> dict
             and isinstance(entry.get("candidate_code"), str)
             and isinstance(entry.get("candidate_name"), str)
             and isinstance(entry.get("distance"), int)
+            and not isinstance(entry.get("distance"), bool)
         ][:3]
     return out
 

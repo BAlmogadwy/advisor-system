@@ -230,6 +230,45 @@ def test_presenting_one_alternative_whole_satisfies_the_contract() -> None:
     assert REQUESTED_EVIDENCE_OMITTED in run(partial)
 
 
+def test_a_zero_alternative_build_with_unplaced_courses_must_name_them() -> None:
+    """Executor-payload key parity, the review's blocking find on the fix
+    itself: the top-level key the executor writes is `unplaced_courses`; a
+    first spelling scanned `unplaced`, which exists only on the planner's
+    INTERNAL result - so the branch inverted, the dishonest silence passed
+    and the truthful disclosure was refused."""
+    payload = {
+        "tool": "build_timetable_proposal",
+        "ok": True,
+        "baseline_kind": "REGISTERED",
+        "baseline_sections": [],
+        "alternatives": [],
+        "constraint_failures": [],
+        "unplaced_courses": [
+            {
+                "course_code": "REQ101",
+                "course_name": "REQ101 test course",
+                "reason_code": "ALL_SECTIONS_CLASH",
+                "reason": "Every section clashes with the retained baseline.",
+            }
+        ],
+    }
+    catalogue = frozenset({"REQ101"})
+
+    def run(answer: str) -> list[str]:
+        return check_answer(
+            answer,
+            tool_results=[payload],
+            question="ابني لي جدول جديد",
+            required_tools={"build_timetable_proposal"},
+            known_course_codes=catalogue,
+        )
+
+    named = "تعذّر إدراج REQ101 لأن جميع شعبه تتعارض مع جدولك الحالي."
+    hidden = "لا توجد مقررات يمكن إضافتها هذا الفصل."
+    assert REQUESTED_EVIDENCE_OMITTED not in run(named)
+    assert REQUESTED_EVIDENCE_OMITTED in run(hidden)
+
+
 def test_a_blocked_build_must_name_the_blocking_course() -> None:
     """Zero alternatives WITH a constraint failure: the truthful answer names
     what blocked the build; silence about it stays an omission."""

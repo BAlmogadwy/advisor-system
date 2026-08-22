@@ -466,13 +466,21 @@ def _did_you_mean(unknown_code: str) -> list[dict[str, Any]]:
     letters, digits = _split_code(unknown_code)
     if not letters or not digits:
         return []
+    # The distance budget scales with the prefix: a 2-letter prefix at
+    # distance 2 shares NO letter with its "repair" - CS202 drew EE202 and
+    # QZ202 from the live catalogue, which is the invented-guidance class
+    # again wearing the resolver's clothes.  distance <= len-1 keeps at
+    # least one typed letter alive in every suggestion.
+    max_distance = min(2, len(letters) - 1)
+    if max_distance < 1:
+        return []
     candidates: list[dict[str, Any]] = []
     for code, name in known_courses():
         cand_letters, cand_digits = _split_code(code)
         if cand_digits != digits:
             continue
         distance = _letter_edit_distance(letters, cand_letters)
-        if 0 < distance <= 2:
+        if 0 < distance <= max_distance:
             candidates.append(
                 {"candidate_code": code, "candidate_name": name, "distance": distance}
             )
