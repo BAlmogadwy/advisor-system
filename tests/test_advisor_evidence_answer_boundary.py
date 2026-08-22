@@ -293,3 +293,87 @@ def test_a_prior_card_reaches_a_remote_provider_without_the_academic_record():
     assert "items" not in graph
     assert "extraNodes" not in graph
     assert "passed" not in json.dumps(projected, ensure_ascii=False)
+
+
+def test_a_card_from_another_term_is_not_evidence_about_this_one():
+    """The lookback is bounded by the term being answered, not by recency alone.
+
+    A card is admitted as verified evidence and the postcondition checker then
+    measures the answer against it. Without a term bound, a student who ran a
+    scenario last term and later asks «اعرضها بالأسماء» gets last term's plan
+    rendered as this term's answer - passing the gate built to stop that.
+    """
+    conversation = AdvisorConversation.objects.create(student_id=SID)
+    question = _question(conversation, WEB_PROFILE, "old scenario")
+    AdvisorMessage.objects.create(
+        conversation=conversation,
+        in_reply_to=question,
+        role=AdvisorMessage.ROLE_ASSISTANT,
+        content="last term's card",
+        presentation={
+            "kind": "graduation_scenario",
+            "program": "AI",
+            "planning_term": "1447/2",
+            "planning_baseline_kind": "registered_timetable",
+            "graph": {
+                "nameOf": {"CS111": "Programming"},
+                "termOf": {"CS111": 1},
+                "extraNodes": ["CS111"],
+            },
+        },
+        status=AdvisorMessage.STATUS_COMPLETED,
+    )
+
+    stale = load_latest_profile_presentation(
+        conversation, channel_profile=WEB_PROFILE, planning_term="1447/2"
+    )
+    assert stale["planning_term"] == "1447/2"
+
+    assert (
+        load_latest_profile_presentation(
+            conversation, channel_profile=WEB_PROFILE, planning_term="1448/1"
+        )
+        == {}
+    )
+
+
+def test_the_presentation_lookback_is_bounded_and_skips_this_questions_own_answer():
+    """An unbounded per-turn scan grows with the student's own conversation.
+
+    It also has to exclude the answer to THIS question, which means excluding
+    by in_reply_to - filtering on the assistant row's own pk never matched
+    anything, because the caller passes the student message's id.
+    """
+    conversation = AdvisorConversation.objects.create(student_id=SID)
+    for index in range(14):
+        question = _question(conversation, WEB_PROFILE, f"question {index}")
+        _answer(
+            conversation,
+            question,
+            course_code=f"OLD{index:03d}",
+            status=AdvisorMessage.STATUS_COMPLETED,
+        )
+
+    current = _question(conversation, WEB_PROFILE, "the question being answered now")
+    _answer(conversation, current, course_code="SELF999", status=AdvisorMessage.STATUS_COMPLETED)
+
+    loaded = load_latest_profile_presentation(
+        conversation, channel_profile=WEB_PROFILE, exclude_message_id=current.pk
+    )
+    codes = {
+        row["course_code"]
+        for alternative in loaded.get("alternatives", [])
+        for row in alternative.get("courses", [])
+    }
+    assert "SELF999" not in codes
+
+    # Nothing older than the window is reachable, however long the conversation.
+    assert (
+        load_latest_profile_presentation(
+            conversation,
+            channel_profile=WEB_PROFILE,
+            max_messages=1,
+            exclude_message_id=current.pk,
+        )
+        != {}
+    )

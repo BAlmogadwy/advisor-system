@@ -3911,6 +3911,16 @@ def answer_student_advisor_v2(
         known_names=(student_name,) if len(student_name) >= 3 else (),
     )
     verified_prior_presentation = normalise_presentation(prior_presentation)
+    # A card is admitted to this turn as verified evidence, and the
+    # postcondition checker then measures the answer against it. A card built
+    # for another term is not evidence about this one: without this bound, a
+    # student who ran a scenario last term and later asks «اعرضها بالأسماء»
+    # gets last term's plan rendered as this term's answer, passing the very
+    # gate that exists to stop exactly that.
+    if verified_prior_presentation:
+        card_term = str(verified_prior_presentation.get("planning_term") or "").strip()
+        if card_term and card_term != f"{academic_year}/{term}":
+            verified_prior_presentation = {}
     prior_course_names = _prior_presentation_course_names(verified_prior_presentation)
 
     # Policy retrieval is local and cheap, and must not depend on whether either a

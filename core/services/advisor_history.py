@@ -152,6 +152,8 @@ def load_latest_profile_presentation(
     *,
     channel_profile: str = "",
     exclude_message_id: Any = None,
+    planning_term: str = "",
+    max_messages: int = 12,
 ) -> dict[str, Any]:
     """Newest normalized presentation produced under this channel profile.
 
@@ -161,24 +163,44 @@ def load_latest_profile_presentation(
     This prevents a Telegram follow-up from inheriting a richer web artifact (or
     vice versa) while still allowing ordinary multi-turn transformations such as
     replacing course codes with the names already present in a graduation card.
+
+    ``planning_term`` binds the card to the term now being answered.  A card is
+    admitted to this turn as verified evidence, and the postcondition checker
+    then measures the answer against it, so an unbounded lookback would let a
+    snapshot from a term the student has since left support a claim about the
+    current one - last term's plan rendered as this term's answer, passing the
+    very gate meant to prevent it.  A blank value keeps the caller's previous
+    unbounded behaviour rather than silently dropping every card.
+
+    ``max_messages`` bounds the scan.  A conversation has no size cap, and this
+    runs on every turn: without a bound, a student's own long conversation makes
+    each later turn load more full answer bodies and presentation JSON than the
+    last, to find at most one row.
     """
     from core.services.advisor_presentations import normalise_presentation
 
     profile = str(channel_profile or "")
+    wanted_term = str(planning_term or "").strip()
     messages = (
         conversation.messages.filter(
             role=AdvisorMessage.ROLE_ASSISTANT,
             status__in=_SETTLED,
             in_reply_to__isnull=False,
+            # The profile is a server-owned column on the question, so this
+            # belongs in the query rather than in a Python loop that has to
+            # load every settled answer to discard most of them.
+            in_reply_to__generation_profile=profile,
         )
-        .exclude(pk=exclude_message_id)
-        .select_related("in_reply_to")
-        .order_by("-sequence", "-created_at")
+        .exclude(in_reply_to_id=exclude_message_id)
+        .only("presentation", "sequence", "created_at")
+        .order_by("-sequence", "-created_at")[:max_messages]
     )
     for message in messages:
-        if str(message.in_reply_to.generation_profile or "") != profile:
-            continue
         presentation = normalise_presentation(message.presentation)
-        if presentation:
-            return presentation
+        if not presentation:
+            continue
+        if wanted_term and str(presentation.get("planning_term") or "") != wanted_term:
+            # A card for another term is not evidence about this one.
+            continue
+        return presentation
     return {}
