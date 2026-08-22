@@ -335,6 +335,95 @@ def test_v2_model_sees_only_projected_tools_results_and_no_web_history(monkeypat
     assert "2.86" not in result_evidence and "failed" not in result_evidence
 
 
+class _RemoteClient(_Client):
+    backend = "alibaba"
+
+
+def test_the_prefetched_what_if_crosses_the_remote_boundary_projected(monkeypatch):
+    """The prefetch is a NEW egress path: its seeded evidence message is
+    appended after sanitise_messages ran, so the projection call inside the
+    prefetch is the ONLY thing standing between the raw executor payload -
+    student id, scenario graph and all - and the remote provider.  The
+    approval round proved that dropping that one argument sent the raw
+    payload with the suite green; this is the missing pin, and it also pins
+    that the message is appended at all (without it the model never sees
+    the evidence it is asked to narrate)."""
+    raw = {
+        "tool": "graduation_progress",
+        "ok": True,
+        "student_id": SID,
+        "program": "CS",
+        "planning_baseline_kind": "registered_timetable",
+        "planning_baseline_academic_year": 1448,
+        "planning_baseline_term": 1,
+        "simulation_completed": True,
+        "lower_bound_additional_terms": 2,
+        "scenario_graph": {"secret": "RAWONLY"},
+        "what_if": {
+            "mode": "explicit_changes",
+            "valid": True,
+            "removed_current_courses": [{"code": "DS341"}],
+            "added_current_courses": [],
+            "comparison": {"timing_effect": "SAME", "term_difference": 0},
+            "baseline": {"lower_bound_additional_terms": 2},
+            "scenario": {"lower_bound_additional_terms": 2},
+        },
+        "what_if_alternate_baseline": None,
+    }
+    monkeypatch.setattr(
+        "core.services.student_advisor_v2.execute_student_v2_tool",
+        lambda *args, **kwargs: raw,
+    )
+    client = _RemoteClient(_answer_turn("سيصلك الرد."))
+
+    result = answer_student_advisor_v2(
+        question="لو حذفت مقرر DS341 هل يؤثر على تخرجي؟",
+        principal=_principal(),
+        academic_year=1448,
+        term=1,
+        llm_client=client,
+    )
+
+    assert result["agent"]["graduation_what_if_prefetched"] is True
+    transcript = json.dumps(client.messages, ensure_ascii=False)
+    assert "verified_graduation_scenario_evidence" in transcript
+    assert "DS341" in transcript
+    assert str(SID) not in transcript
+    assert "scenario_graph" not in transcript
+    assert "RAWONLY" not in transcript
+
+
+def test_a_prefetch_failure_leaves_the_turn_standing(monkeypatch):
+    """Isolation pin, same rule as every enhancement: a seeding failure
+    leaves the turn exactly where it was before the prefetch existed."""
+
+    def exploding_execute(*args, **kwargs):
+        raise RuntimeError("simulation blew up during the seed")
+
+    monkeypatch.setattr(
+        "core.services.student_advisor_v2.execute_student_v2_tool", exploding_execute
+    )
+    # With the seed gone the what-if reprompt fires, so the scripted model
+    # needs a turn for every re-ask before the loop settles.
+    client = _Client(
+        _answer_turn("سيصلك الرد."),
+        _answer_turn("سيصلك الرد."),
+        _answer_turn("سيصلك الرد."),
+        _answer_turn("سيصلك الرد."),
+    )
+
+    result = answer_student_advisor_v2(
+        question="لو حذفت مقرر DS341 هل يؤثر على تخرجي؟",
+        principal=_principal(),
+        academic_year=1448,
+        term=1,
+        llm_client=client,
+    )
+
+    assert isinstance(result, dict)
+    assert result["agent"]["graduation_what_if_prefetched"] is False
+
+
 @override_settings(STUDENT_ADVISOR_V2_ENABLED=False)
 def test_telegram_profile_never_downgrades_to_the_legacy_runtime(monkeypatch):
     expected = {"ok": True, "answer": "v2"}
