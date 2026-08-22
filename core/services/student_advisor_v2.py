@@ -2809,10 +2809,114 @@ def _term_plan_change_text(comparison: dict[str, Any], language: str) -> str:
     return "\n".join(lines)
 
 
+def _what_if_alternate_lines(
+    language: str,
+    alternate: dict[str, Any] | None,
+    primary_what_if: dict[str, Any],
+) -> list[str]:
+    """The owner's two-answer rule, second half: when the registered and
+    recommended baselines disagree, the same change is compared against the
+    OTHER baseline too, and the answer says which courses make the baselines
+    differ.  Empty when the executor attached nothing (baselines identical,
+    or the change does not validate on the other side)."""
+    if not isinstance(alternate, dict):
+        return []
+    alt_what_if = alternate.get("what_if")
+    if not isinstance(alt_what_if, dict) or not alt_what_if.get("valid"):
+        return []
+    label = _graduation_baseline_label(alternate.get("planning_baseline_kind"), language)
+    alt_baseline = alt_what_if.get("baseline") or {}
+    alt_scenario = alt_what_if.get("scenario") or {}
+
+    def _codes(summary: Any) -> set[str]:
+        rows = (
+            summary.get("planning_baseline_courses_assumed_passed")
+            if isinstance(summary, dict)
+            else None
+        )
+        # Prose-safe spellings only, in the CHECKER'S normalisation (fold
+        # Arabic-Indic digits, then strip - an inline strip-first turned
+        # «AI٤٩١» into a bare AI, the third occurrence of the class the
+        # shared helper exists for).  A code the answer miner cannot see as
+        # a course token is dropped rather than printed: interpolated, it
+        # either reads as a fabrication to the student or makes the safe
+        # answer refuse itself.
+        from core.services.answer_consistency import _COURSE_TOKEN
+        from core.services.course_catalogue import normalise_catalogue_code
+
+        codes: set[str] = set()
+        for row in rows or []:
+            if not isinstance(row, dict):
+                continue
+            cleaned = normalise_catalogue_code(row.get("code"))
+            if cleaned and _COURSE_TOKEN.fullmatch(cleaned):
+                codes.add(cleaned)
+        return codes
+
+    # SYMMETRIC: the review proved the one-directional set is EMPTY in the
+    # default orientation (primary = recommended holds the extra course), so
+    # the live answer showed two disagreeing numbers and never said why.
+    alt_codes = _codes(alt_baseline)
+    primary_codes = _codes(primary_what_if.get("baseline") or {})
+    includes = sorted(alt_codes - primary_codes)[:3]
+    excludes = sorted(primary_codes - alt_codes)[:3]
+    if language == "Arabic":
+        heading = "المقارنة نفسها وفق " + label
+        clauses = []
+        if includes:
+            clauses.append("وتشمل " + "، ".join(includes))
+        if excludes:
+            clauses.append("ولا تشمل " + "، ".join(excludes))
+        if clauses:
+            heading += " (" + "؛ ".join(clauses) + ")"
+        lines = [heading + ":"]
+        alt_lb_before = alt_baseline.get("lower_bound_additional_terms")
+        alt_lb_after = alt_scenario.get("lower_bound_additional_terms")
+        if alt_lb_before is not None and alt_lb_after is not None:
+            lines.append(
+                "الحد الأدنى المقدّر لعدد الفصول الإضافية: "
+                f"{alt_lb_before} قبل التغيير، مقابل {alt_lb_after} بعده."
+            )
+        alt_est_before = alt_baseline.get("estimated_additional_terms")
+        alt_est_after = alt_scenario.get("estimated_additional_terms")
+        if alt_est_before is not None and alt_est_after is not None:
+            lines.append(
+                f"التقدير الكامل: {alt_est_before} من الفصول الإضافية قبل التغيير، "
+                f"مقابل {alt_est_after} بعده."
+            )
+        return lines
+    heading = "The same comparison on " + label
+    clauses = []
+    if includes:
+        clauses.append("which includes " + ", ".join(includes))
+    if excludes:
+        clauses.append("which excludes " + ", ".join(excludes))
+    if clauses:
+        heading += " (" + "; ".join(clauses) + ")"
+    lines = [heading + ":"]
+    alt_lb_before = alt_baseline.get("lower_bound_additional_terms")
+    alt_lb_after = alt_scenario.get("lower_bound_additional_terms")
+    if alt_lb_before is not None and alt_lb_after is not None:
+        lines.append(
+            f"Additional-term lower bound: {alt_lb_before} "
+            f"before the change versus {alt_lb_after} after."
+        )
+    alt_est_before = alt_baseline.get("estimated_additional_terms")
+    alt_est_after = alt_scenario.get("estimated_additional_terms")
+    if alt_est_before is not None and alt_est_after is not None:
+        lines.append(
+            f"Full estimate: {alt_est_before} additional "
+            f"term{'s' if alt_est_before != 1 else ''} before the change "
+            f"versus {alt_est_after} after."
+        )
+    return lines
+
+
 def _safe_graduation_what_if_answer_base(
     language: str,
     what_if: dict[str, Any],
     planning_baseline_kind: str = "",
+    alternate: dict[str, Any] | None = None,
 ) -> str:
     baseline_label = _graduation_baseline_label(planning_baseline_kind, language)
     if not what_if.get("valid"):
@@ -2923,11 +3027,23 @@ def _safe_graduation_what_if_answer_base(
         ]
         lines.append(_comparison_effect_text(comparison, language))
         lines.append(_term_plan_change_text(comparison, language))
-        lines.append(
-            "الحد الأدنى المقدّر لعدد الفصول الإضافية: "
-            f"{baseline.get('lower_bound_additional_terms')} قبل التغيير، مقابل "
-            f"{scenario.get('lower_bound_additional_terms')} بعده."
-        )
+        lb_before = baseline.get("lower_bound_additional_terms")
+        lb_after = scenario.get("lower_bound_additional_terms")
+        if lb_before is not None and lb_after is not None:
+            lines.append(
+                "الحد الأدنى المقدّر لعدد الفصول الإضافية: "
+                f"{lb_before} قبل التغيير، مقابل {lb_after} بعده."
+            )
+        # The verdict figure the student actually asked for.  Quoting only
+        # the lower bound beside a longer term plan read as a contradiction
+        # in the owner's live test.
+        est_before = baseline.get("estimated_additional_terms")
+        est_after = scenario.get("estimated_additional_terms")
+        if est_before is not None and est_after is not None:
+            lines.append(
+                f"التقدير الكامل: {est_before} من الفصول الإضافية قبل التغيير، "
+                f"مقابل {est_after} بعده."
+            )
         if resolved:
             lines.append("عوائق زالت في المحاكاة: " + "، ".join(resolved) + ".")
         if improved:
@@ -2941,6 +3057,7 @@ def _safe_graduation_what_if_answer_base(
                 + " غير مدرجة ضمن متطلبات الخطة؛ وقد تؤثر في المتطلبات السابقة أو "
                 "الساعات المكتسبة، لكنها لا تحل محل مقررات الخطة."
             )
+        lines.extend(_what_if_alternate_lines(language, alternate, what_if))
         lines.append(
             "هذا سيناريو أكاديمي افتراضي للقراءة فقط. لم يُحذف أو يُضف أو يُسجّل "
             "أي مقرر فعليًا، ولا يثبت السيناريو وجود شعبة مطروحة أو مقعد شاغر أو "
@@ -2959,10 +3076,21 @@ def _safe_graduation_what_if_answer_base(
     ]
     lines.append(_comparison_effect_text(comparison, language))
     lines.append(_term_plan_change_text(comparison, language))
-    lines.append(
-        f"Additional-term lower bound: {baseline.get('lower_bound_additional_terms')} for "
-        f"the baseline timetable versus {scenario.get('lower_bound_additional_terms')} for the scenario."
-    )
+    lb_before = baseline.get("lower_bound_additional_terms")
+    lb_after = scenario.get("lower_bound_additional_terms")
+    if lb_before is not None and lb_after is not None:
+        lines.append(
+            f"Additional-term lower bound: {lb_before} for "
+            f"the baseline timetable versus {lb_after} for the scenario."
+        )
+    est_before = baseline.get("estimated_additional_terms")
+    est_after = scenario.get("estimated_additional_terms")
+    if est_before is not None and est_after is not None:
+        lines.append(
+            f"Full estimate: {est_before} additional "
+            f"term{'s' if est_before != 1 else ''} before the change "
+            f"versus {est_after} after."
+        )
     if resolved:
         lines.append("Blockers resolved in the simulation: " + ", ".join(resolved) + ".")
     if improved:
@@ -2975,6 +3103,7 @@ def _safe_graduation_what_if_answer_base(
             + " is outside the degree-plan requirements. It can affect prerequisites or earned "
             "credits, but does not complete a plan course."
         )
+    lines.extend(_what_if_alternate_lines(language, alternate, what_if))
     lines.append(
         "This is a read-only academic assumption. No course was removed, added, or registered, "
         "and the scenario does not prove section availability, seats, or a clash-free timetable."
@@ -2987,9 +3116,10 @@ def _safe_graduation_what_if_answer(
     what_if: dict[str, Any],
     answer_style: str = "",
     planning_baseline_kind: str = "",
+    alternate: dict[str, Any] | None = None,
 ) -> str:
     return _apply_saudi_register(
-        _safe_graduation_what_if_answer_base(language, what_if, planning_baseline_kind),
+        _safe_graduation_what_if_answer_base(language, what_if, planning_baseline_kind, alternate),
         language,
         answer_style,
     )
@@ -3014,11 +3144,13 @@ def _safe_graduation_answer(
 
     what_if = graduation.get("what_if")
     if isinstance(what_if, dict):
+        alternate = graduation.get("what_if_alternate_baseline")
         return _safe_graduation_what_if_answer(
             language,
             what_if,
             answer_style,
             str(graduation.get("planning_baseline_kind") or ""),
+            alternate if isinstance(alternate, dict) else None,
         )
 
     has_baseline = bool(graduation.get("planning_baseline_courses_assumed_passed"))

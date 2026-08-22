@@ -835,6 +835,18 @@ def _project_graduation_progress(result: dict[str, Any], _: RemoteIdentityMap) -
         *_GRADUATION_BLOCKER_FIELDS,
     )
     out["what_if"] = _project_graduation_what_if(result.get("what_if"))
+    # The alternate-baseline comparison (the owner's two-answer rule) is the
+    # same shape under a kind tag; dropped silently, the remote model could
+    # not compose the second half of the answer.
+    alternate = result.get("what_if_alternate_baseline")
+    out["what_if_alternate_baseline"] = (
+        {
+            "planning_baseline_kind": str(alternate.get("planning_baseline_kind") or ""),
+            "what_if": _project_graduation_what_if(alternate.get("what_if")),
+        }
+        if isinstance(alternate, dict)
+        else None
+    )
     out["term_plan_changes"] = _project_term_plan_changes(result.get("term_plan_changes"))
     out["term_plan"] = []
     for term in result.get("term_plan") or []:

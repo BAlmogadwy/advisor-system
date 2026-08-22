@@ -1322,24 +1322,19 @@ def _exact_figure_mismatch(answer: str, rows: list[dict[str, Any]]) -> bool:
                     # with only the top level mined the deterministic safe
                     # composer's own truthful comparison failed this check
                     # and the turn abstained.
-                    what_if = row.get("what_if") if isinstance(row.get("what_if"), dict) else {}
-                    sides = [
-                        side
-                        for side in (what_if.get("baseline"), what_if.get("scenario"))
-                        if isinstance(side, dict)
-                    ]
-                    for side in sides:
-                        expected |= _number_set(*(side.get(key) for key in term_keys))
-                    if len(sides) == 2:
-                        for key in term_keys:
-                            before, after = sides[0].get(key), sides[1].get(key)
-                            if (
-                                isinstance(before, int | float)
-                                and isinstance(after, int | float)
-                                and not isinstance(before, bool)
-                                and not isinstance(after, bool)
-                            ):
-                                expected.add(float(abs(after - before)))
+                    for sides in _graduation_what_if_side_pairs(row):
+                        for side in sides:
+                            expected |= _number_set(*(side.get(key) for key in term_keys))
+                        if len(sides) == 2:
+                            for key in term_keys:
+                                before, after = sides[0].get(key), sides[1].get(key)
+                                if (
+                                    isinstance(before, int | float)
+                                    and isinstance(after, int | float)
+                                    and not isinstance(before, bool)
+                                    and not isinstance(after, bool)
+                                ):
+                                    expected.add(float(abs(after - before)))
                 if expected and not term_figures <= expected:
                     return True
     return False
@@ -2061,24 +2056,42 @@ def _graduation_metric_values(rows: list[dict[str, Any]], field: str) -> set[flo
     for row in rows:
         if row.get("tool") != "graduation_progress" or not row.get("ok"):
             continue
-        what_if = row.get("what_if") if isinstance(row.get("what_if"), dict) else {}
+        for sides in _graduation_what_if_side_pairs(row):
+            for side in sides:
+                values |= _number_set(side.get(field))
+            if len(sides) == 2:
+                before, after = sides[0].get(field), sides[1].get(field)
+                if (
+                    isinstance(before, int | float)
+                    and isinstance(after, int | float)
+                    and not isinstance(before, bool)
+                    and not isinstance(after, bool)
+                ):
+                    values.add(float(abs(after - before)))
+    return values
+
+
+def _graduation_what_if_side_pairs(row: dict[str, Any]) -> list[list[dict[str, Any]]]:
+    """(baseline, scenario) summary pairs from the primary what-if AND the
+    alternate-baseline what-if the executor attaches beside it - the owner's
+    two-answer rule quotes BOTH baselines' figures in one answer."""
+    alternate = row.get("what_if_alternate_baseline")
+    containers = [
+        row.get("what_if"),
+        alternate.get("what_if") if isinstance(alternate, dict) else None,
+    ]
+    pairs: list[list[dict[str, Any]]] = []
+    for container in containers:
+        if not isinstance(container, dict):
+            continue
         sides = [
             side
-            for side in (what_if.get("baseline"), what_if.get("scenario"))
+            for side in (container.get("baseline"), container.get("scenario"))
             if isinstance(side, dict)
         ]
-        for side in sides:
-            values |= _number_set(side.get(field))
-        if len(sides) == 2:
-            before, after = sides[0].get(field), sides[1].get(field)
-            if (
-                isinstance(before, int | float)
-                and isinstance(after, int | float)
-                and not isinstance(before, bool)
-                and not isinstance(after, bool)
-            ):
-                values.add(float(abs(after - before)))
-    return values
+        if sides:
+            pairs.append(sides)
+    return pairs
 
 
 def _metric_claim_mismatch(answer: str, rows: list[dict[str, Any]]) -> bool:
