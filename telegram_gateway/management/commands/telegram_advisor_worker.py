@@ -338,12 +338,20 @@ class Command(BaseCommand):
                 validate_worker_image_runtime()
             except ImageRuntimeValidationError as exc:
                 raise CommandError(
-                    "Telegram timetable images are enabled, but the worker image "
-                    f"runtime failed preflight ({exc.code}). Refusing to consume jobs."
+                    "Telegram image cards are enabled (they default ON), but the worker "
+                    f"image runtime failed preflight ({exc.code}). Refusing to consume "
+                    "jobs rather than silently downgrade to text-only cards. Either "
+                    "install the renderer (python -m playwright install chromium) or "
+                    "explicitly set TELEGRAM_SEND_TIMETABLE_IMAGES and "
+                    "TELEGRAM_SEND_GRADUATION_IMAGES to false."
                 ) from None
             except Exception:
                 raise CommandError(
-                    "Telegram timetable images are enabled, but the worker image "
-                    "runtime failed preflight (image_runtime_unavailable). "
-                    "Refusing to consume jobs."
+                    "Telegram image cards are enabled (they default ON), but the worker "
+                    "image runtime failed preflight (image_runtime_unavailable). "
+                    "Refusing to consume jobs rather than silently downgrade to "
+                    "text-only cards. Either install the renderer "
+                    "(python -m playwright install chromium) or explicitly set "
+                    "TELEGRAM_SEND_TIMETABLE_IMAGES and "
+                    "TELEGRAM_SEND_GRADUATION_IMAGES to false."
                 ) from None

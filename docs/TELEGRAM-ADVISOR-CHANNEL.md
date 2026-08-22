@@ -561,8 +561,8 @@ Both were silent, and both are now pinned by tests:
 
 | Variable | Default | Notes |
 |---|---|---|
-| `TELEGRAM_SEND_TIMETABLE_IMAGES` | `false` | Safe application default. The reviewed production Blueprint sets `true` on `advisor-system`; the worker inherits it through `fromService` |
-| `TELEGRAM_SEND_GRADUATION_IMAGES` | `false` | Safe application default. Production explicitly sets `true`; the independent switch can be rolled back without changing timetable images |
+| `TELEGRAM_SEND_TIMETABLE_IMAGES` | `true` | Default ON (owner decision 2026-08-22): a fresh environment silently downgrading to text-only cards was the surprise, not the picture. Any value other than `true` disables. The production Blueprint still pins `true` on `advisor-system`; the worker inherits it through `fromService` |
+| `TELEGRAM_SEND_GRADUATION_IMAGES` | `true` | Default ON (owner decision 2026-08-22). The independent switch can still be rolled back without changing timetable images |
 | `TELEGRAM_INTERNAL_BASE_URL` | `""` | Optional plain-HTTP IPv4-loopback override (`127.0.0.1` or `localhost`) for local development. Empty uses the worker's short-lived loopback origin; `::1` is rejected |
 
 ### Production: self-contained worker rendering

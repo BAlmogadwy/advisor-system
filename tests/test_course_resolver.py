@@ -177,6 +177,112 @@ def test_the_remote_projection_carries_the_resolver_fields():
     ]
 
 
+def test_a_students_exact_lookup_of_a_cross_programme_code_is_not_unknown():
+    """The P0 an adversarial review caught before merge: the programme
+    default leaked into the EXACT-code branch, so 418 of 490 real codes were
+    "unknown" to an AI student - and then offered global-catalogue repairs,
+    machine-generating the audited «ربما تقصد DS225».  Existence is a fact
+    about the catalogue, not about the asker."""
+    _seed()
+    result = _lookup("CS201")  # a CS-programme course; the student is AI
+
+    assert result["match_count"] >= 1
+    assert "unknown_query" not in result
+    assert "did_you_mean" not in result
+    row = next(r for r in result["courses"] if r["course_code"] == "CS201")
+    assert "CS" in row["programs"]
+
+
+def test_a_code_living_only_in_the_course_table_is_not_unknown():
+    """No requirement row anywhere, no elective row - the code still exists,
+    and "unknown" from this tool licenses the model to deny it does."""
+    _seed()
+    Course.objects.create(course_code="GS111", description="Study Skills", credit_hours=2)
+    from core.services.course_catalogue import invalidate_cache
+
+    invalidate_cache()
+    result = _lookup("GS111")
+
+    assert "unknown_query" not in result
+    assert result["match_count"] >= 1
+    assert result["courses"][0]["course_name"] == "Study Skills"
+
+
+def test_hyphen_and_arabic_digit_spellings_resolve_to_the_catalogue_row():
+    """«MATH-243» and «MATH٢٤٣» are the same question as MATH243.  The first
+    spelling reported both as unknown - the Arabic-Indic class the checker's
+    normaliser learned long before the resolver did."""
+    _seed()
+    for spelling in ("MATH-243", "MATH٢٤٣"):
+        result = _lookup(spelling, program="AI")
+        assert result["match_count"] >= 1, spelling
+        assert "unknown_query" not in result, spelling
+
+
+def test_the_resolver_never_offers_the_code_itself():
+    """distance > 0 is load-bearing now that real codes can reach the helper
+    catalogue-wide: a distance-0 "repair" would be the tool contradicting
+    itself about a code it just failed to match."""
+    _seed()
+    from core.services.virtual_advisor_capabilities import _did_you_mean
+
+    assert _did_you_mean("MATH243") == []
+
+
+def test_letter_distance_three_is_not_a_repair():
+    """MXYZ243 is three letter edits from MATH243 - beyond repair, an
+    invention.  Pins the advertised distance <= 2 bound."""
+    _seed()
+    from core.services.virtual_advisor_capabilities import _did_you_mean
+
+    assert _did_you_mean("MXYZ243") == []
+
+
+def test_at_most_three_candidates_survive_and_ties_break_by_code():
+    """Pins the advertised cap.  Four catalogue codes sit at distance 1 from
+    XS113; exactly three come back, in code order."""
+    _seed()
+    for code in ("CS113", "DS113", "IS113", "MS113"):
+        Course.objects.create(course_code=code, description=f"{code} course", credit_hours=3)
+    from core.services.course_catalogue import invalidate_cache
+    from core.services.virtual_advisor_capabilities import _did_you_mean
+
+    invalidate_cache()
+    rows = _did_you_mean("XS113")
+    assert [row["candidate_code"] for row in rows] == ["CS113", "DS113", "IS113"]
+
+
+def test_the_projection_validates_and_caps_the_resolver_rows_independently():
+    """The projector is the privacy boundary; it must hold even against a
+    producer that stops behaving - malformed rows drop, extras cap at 3."""
+    from core.services.llm_remote_privacy import (
+        RemoteIdentityMap,
+        project_tool_result_for_remote,
+    )
+
+    well_formed = [
+        {"candidate_code": f"C{i}", "candidate_name": f"Course {i}", "distance": 1}
+        for i in range(5)
+    ]
+    payload = {
+        "tool": "lookup_course",
+        "ok": True,
+        "query": "MATE243",
+        "match_count": 0,
+        "courses": [],
+        "unknown_query": "MATE243",
+        "did_you_mean": [
+            "not-a-row",
+            {"candidate_code": 7, "candidate_name": "typed wrong", "distance": 1},
+            {"candidate_code": "MATH243", "candidate_name": "ok", "distance": "1"},
+            *well_formed,
+        ],
+    }
+    out = project_tool_result_for_remote("lookup_course", payload, RemoteIdentityMap())
+
+    assert out["did_you_mean"] == well_formed[:3]
+
+
 def test_a_student_lookup_defaults_to_their_own_programme():
     """Unscoped, a fuzzy search ranged over every programme's catalogue."""
     _seed()

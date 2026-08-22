@@ -218,7 +218,8 @@ _install_card_request_log_redaction()
 
 
 def timetable_images_enabled() -> bool:
-    """Whether to send timetable pictures. Read at call time, default off.
+    """Whether to send timetable pictures. Read at call time, default ON
+    (owner decision 2026-08-22); any value other than "true" disables.
 
     Separate from `TELEGRAM_ADVISOR_ENABLED` on purpose: a picture of a week grid
     is a compact record of where a student is and when, it is stored on Telegram's
@@ -229,7 +230,8 @@ def timetable_images_enabled() -> bool:
 
 
 def graduation_images_enabled() -> bool:
-    """Whether to export graduation-plan maps to Telegram, default off.
+    """Whether to export graduation-plan maps to Telegram, default ON
+    (owner decision 2026-08-22); any value other than "true" disables.
 
     This is deliberately independent from timetable images because the map
     contains a substantially broader academic-progress snapshot.

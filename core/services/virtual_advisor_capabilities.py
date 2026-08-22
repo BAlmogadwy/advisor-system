@@ -493,10 +493,15 @@ def _exec_lookup_course(
         return {"ok": False, "error": "query is required."}
     program = str(args.get("program") or "").strip().upper()
     if not program and str(scope.get("role") or "") == ROLE_STUDENT:
-        # A student's lookup defaults to THEIR programme.  Unscoped, a DS2
-        # student's fuzzy search ranged over all 488 courses of every
-        # programme - cross-programme search stays available, but as the
-        # model's explicit argument, not the accident of omitting one.
+        # A student's lookup defaults to THEIR programme — for NAME searches
+        # only.  Unscoped, a DS2 student's fuzzy search ranged over all 488
+        # courses of every programme - cross-programme search stays available,
+        # but as the model's explicit argument, not the accident of omitting
+        # one.  An EXACT code is different: whether it exists is a fact about
+        # the catalogue, not about the asker.  Scoping the exact branch made
+        # 418 of 490 real codes "unknown" to an AI student and then offered
+        # global-catalogue repairs for them - the machine-made version of the
+        # audited «ربما تقصد DS225».
         from core.services.student_helpers import get_student_program
 
         student_id, _error = _resolve_scoped_student_id(args, scope)
@@ -505,11 +510,14 @@ def _exec_lookup_course(
 
     matches: dict[str, dict[str, Any]] = {}
 
-    exact = normalize_code(query)
+    # Fold Arabic-Indic digits and strip separators BEFORE matching: the
+    # catalogue rows are ASCII, and «MATH-243» / «MATH٢٤٣» are the same
+    # question as MATH243, not unknown codes.
+    from core.services.course_catalogue import known_course_codes, normalise_catalogue_code
+
+    exact = normalise_catalogue_code(query)
     if exact:
         req_qs = ProgrammeRequirement.objects.filter(course_code__iexact=exact)
-        if program:
-            req_qs = req_qs.filter(program=program)
         for row in req_qs.values(
             "course_code", "course_name", "program", "programme_term", "credit_hours"
         )[:_MAX_COURSE_MATCHES]:
@@ -527,10 +535,30 @@ def _exec_lookup_course(
             if prog and prog not in entry["programs"]:
                 entry["programs"].append(prog)
 
+    # A code can live ONLY in the Course table (no requirement row anywhere,
+    # no elective row).  Without this branch such a code exact-matched nothing
+    # and looked unknown despite being on the existence floor.
+    if exact and exact not in matches:
+        for row in Course.objects.filter(course_code__iexact=exact).values(
+            "course_code", "description", "credit_hours"
+        )[:_MAX_COURSE_MATCHES]:
+            code = normalize_code(row["course_code"])
+            matches.setdefault(
+                code,
+                {
+                    "course_code": code,
+                    "course_name": str(row.get("description") or "").strip(),
+                    "credit_hours": row.get("credit_hours"),
+                    "programs": [],
+                },
+            )
+
     name_query = Q(course_name__icontains=query)
     req_qs = ProgrammeRequirement.objects.filter(name_query)
     if program:
-        req_qs = req_qs.filter(program=program)
+        # The variant mapping (AI2→AI) the elective branch already applies:
+        # versioned programmes share the department catalogue.
+        req_qs = req_qs.filter(program__in=programme_variants(program))
     for row in req_qs.values(
         "course_code", "course_name", "program", "programme_term", "credit_hours"
     )[: _MAX_COURSE_MATCHES * 3]:
@@ -573,11 +601,14 @@ def _exec_lookup_course(
     # plan placeholder. Omitting that catalogue made lookup_course say AI463 did
     # not exist while recommend_courses correctly linked it to AI1.
     if len(matches) < _MAX_COURSE_MATCHES:
-        elective_qs = ElectiveCourse.objects.filter(
-            Q(course_code__iexact=exact) | Q(course_name__icontains=query)
-        )
+        # The EXACT-code arm stays catalogue-wide, like the requirement branch
+        # above: whether a code exists is not a fact about the asker.  Only
+        # the fuzzy name arm takes the programme default.
+        name_arm = Q(course_name__icontains=query)
         if program:
-            elective_qs = elective_qs.filter(programme__in=programme_variants(program))
+            name_arm &= Q(programme__in=programme_variants(program))
+        elective_filter = Q(course_code__iexact=exact) | name_arm if exact else name_arm
+        elective_qs = ElectiveCourse.objects.filter(elective_filter)
         for row in elective_qs.values(
             "id", "course_code", "course_name", "programme", "credit_hours"
         )[: _MAX_COURSE_MATCHES * 3]:
@@ -626,11 +657,20 @@ def _exec_lookup_course(
         "match_count": len(matches),
         "courses": list(matches.values()),
     }
-    if exact and _CODE_SHAPE.match(query) and exact not in matches:
-        # The student named a code this system does not recognise.  Say so as
-        # DATA: the unresolved token (an echo the answer checker deliberately
-        # never mines as evidence) plus at most three letter-repair
-        # candidates that DO exist.
+    if (
+        exact
+        and _CODE_SHAPE.match(query)
+        and exact not in matches
+        and exact not in known_course_codes()
+    ):
+        # The student named a code NO authority recognises.  Say so as DATA:
+        # the unresolved token (an echo the answer checker deliberately never
+        # mines as evidence) plus at most three letter-repair candidates that
+        # DO exist.  The floor's own catalogue is the existence authority
+        # here, NOT this function's matches: a code can be real and still
+        # produce no match rows (another programme's elective, a bare Course
+        # row), and "unknown" from this tool licenses the model to deny the
+        # course exists.
         result["unknown_query"] = exact
         result["did_you_mean"] = _did_you_mean(exact)
     return result

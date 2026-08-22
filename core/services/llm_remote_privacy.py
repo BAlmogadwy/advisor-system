@@ -468,12 +468,24 @@ def _project_lookup_course(result: dict[str, Any], _: RemoteIdentityMap) -> dict
     # production model - unable to correct a typo the local path could.
     if "unknown_query" in result:
         out["unknown_query"] = str(result.get("unknown_query") or "")
-        out["did_you_mean"] = _course_rows(
-            result.get("did_you_mean"),
-            "candidate_code",
-            "candidate_name",
-            "distance",
-        )
+        # Element-typed and capped INDEPENDENTLY of the producer, like every
+        # other row list at this boundary: the resolver emits at most three
+        # str/str/int rows today, but the projector is the privacy boundary
+        # and must hold even against a producer that stops behaving.
+        out["did_you_mean"] = [
+            {
+                "candidate_code": entry["candidate_code"],
+                "candidate_name": entry["candidate_name"],
+                "distance": entry["distance"],
+            }
+            for entry in (
+                result.get("did_you_mean") if isinstance(result.get("did_you_mean"), list) else []
+            )
+            if isinstance(entry, dict)
+            and isinstance(entry.get("candidate_code"), str)
+            and isinstance(entry.get("candidate_name"), str)
+            and isinstance(entry.get("distance"), int)
+        ][:3]
     return out
 
 

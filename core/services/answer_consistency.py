@@ -658,9 +658,18 @@ def _section_labels_in_timetable(rows: list[dict[str, Any]]) -> set[str]:
                         "expected_plan_sections",
                         "baseline_sections",
                     } and isinstance(child, list):
-                        # These carry bare label strings rather than rows, so
-                        # the key-based walk below would never reach them.
-                        labels.update(str(item).strip().upper() for item in child if item)
+                        # my_timetable carries bare label strings here, which
+                        # the key-based walk below would never reach.
+                        # build_timetable_proposal carries full ROWS under the
+                        # same key - stringifying those minted garbage labels
+                        # AND skipped the walk that would have found their
+                        # real "section" keys, so quoting the student's own
+                        # baseline read as an invention.
+                        for item in child:
+                            if isinstance(item, dict | list):
+                                visit(item)
+                            elif item:
+                                labels.add(str(item).strip().upper())
                     else:
                         visit(child)
             elif isinstance(value, list):
@@ -1554,6 +1563,46 @@ def _schedule_evidence(
                     )
                 )
         elif tool == "build_timetable_proposal":
+            # The payload's OWN baseline: «ابني لي جدول جديد» around a full
+            # current registration returns zero alternatives and the whole
+            # answer speaks about baseline_sections - which this miner never
+            # read, so every truthful clock claim about the student's existing
+            # week was refused as unsupported and the turn always abstained.
+            baseline_kind = str(row.get("baseline_kind") or "").strip().upper() or "REGISTERED"
+            for item in row.get("baseline_sections") or []:
+                if not isinstance(item, dict):
+                    continue
+                code = _normalise_course_token(item.get("course_code"))
+                section = str(item.get("section") or "").strip().upper()
+                if not code:
+                    continue
+                registrations.add((baseline_kind, code, section))
+                for meeting in item.get("meetings") or []:
+                    # The provenance helper flattens meetings to the
+                    # "SUN 09:00-10:15" spelling; dicts stay handled for the
+                    # projector's shape, symmetric with my_clash_free_sections.
+                    if isinstance(meeting, dict):
+                        day = str(meeting.get("day") or "")
+                        start = str(meeting.get("start") or meeting.get("start_time") or "")
+                        end = str(meeting.get("end") or meeting.get("end_time") or "")
+                    else:
+                        parsed = _MEETING_STRING.match(str(meeting or ""))
+                        if not parsed:
+                            continue
+                        day, start, end = parsed.groups()
+                    if not (day and start and end):
+                        continue
+                    meetings.add(
+                        (
+                            baseline_kind,
+                            code,
+                            section,
+                            _canonical_day(day),
+                            start.strip(),
+                            end.strip(),
+                            str(item.get("room") or "").strip().upper(),
+                        )
+                    )
             for index, alternative in enumerate(row.get("alternatives") or [], start=1):
                 if not isinstance(alternative, dict):
                     continue
@@ -2266,17 +2315,41 @@ def _tool_contract_complete(
         return recommended <= answer_codes
 
     if tool == "build_timetable_proposal":
-        expected = {
-            _normalise_course_token(course.get("course_code"))
+        # One alternative, presented WHOLE - its placed courses and the ones
+        # it could not place - is a complete, honest answer.  The first
+        # contract demanded the union of every code across EVERY alternative,
+        # which no natural answer satisfies, and returned False outright for
+        # a zero-alternative build - the everyday «ابني لي جدول جديد» around a
+        # full registration - making abstention the only possible outcome of
+        # a correct build.  Verified against three live production turns on
+        # 2026-08-22, all abstained on this branch.
+        alternative_codes = [
+            {
+                _normalise_course_token(course.get("course_code"))
+                for course in [
+                    *(alternative.get("courses") or []),
+                    *(alternative.get("unplaced_courses") or []),
+                ]
+                if isinstance(course, dict) and course.get("course_code")
+            }
             for alternative in row.get("alternatives") or []
             if isinstance(alternative, dict)
-            for course in [
-                *(alternative.get("courses") or []),
-                *(alternative.get("unplaced_courses") or []),
-            ]
-            if isinstance(course, dict) and course.get("course_code")
+        ]
+        if any(codes for codes in alternative_codes):
+            return any(codes and codes <= answer_codes for codes in alternative_codes)
+        # Nothing could be built.  The truthful answer names what blocked it;
+        # with nothing blocking either, it says plainly there is nothing to
+        # add - the same escape my_timetable and recommend_courses have.
+        blocking = {
+            _normalise_course_token(entry.get("course_code"))
+            for key in ("constraint_failures", "unplaced")
+            for entry in row.get(key) or []
+            if isinstance(entry, dict) and entry.get("course_code")
         }
-        return bool(expected) and expected <= answer_codes
+        blocking.discard("")
+        if blocking:
+            return blocking <= answer_codes
+        return any(_fold(word) in _fold(answer) for word in _EMPTY_EVIDENCE_WORDS)
 
     if tool == "present_prior_artifact":
         if row.get("view") == "source_artifact":
@@ -2312,7 +2385,10 @@ _ECHO_KEYS = frozenset(
         # for naming the real course in a correction - «لعلك تقصد MATH243» -
         # while the unknown token itself stays inadmissible.  A resolver that
         # ever emits non-catalogue candidates would re-open the laundering
-        # hole; tests/test_course_resolver.py pins that it cannot.
+        # hole.  That cannot skew: the resolver's index and the floor are two
+        # views of ONE cached load (candidates are keys of the very mapping
+        # the floor is built from), and tests/test_course_catalogue.py pins
+        # the subset through the resolver's real output.
     }
 )
 
@@ -2387,6 +2463,21 @@ def _policy_figure_mismatch(answer: str, tool_results: list[dict[str, Any]] | No
     that name a policy id whose TEXT is in this turn's evidence: the id is the
     claim of provenance, so the named source is the only admissible authority
     for the figures in its clause.
+
+    Bound PER FIGURE KIND, and a kind is bound only when the cited policy's
+    own text carries a figure of that kind.  The first spelling bound every
+    kind unconditionally: 51 of the 81 policies in the store contain no digit
+    at all, so ANY figure beside them flagged, and a credit-cap citation
+    flagged the course count and progress percentage sharing its sentence -
+    figures the policy never speaks about.  A policy with credit figures
+    still binds every credit figure in its clause, so one true figure cannot
+    vouch for a second invented one of the same kind.
+
+    Accepted limits, both owned by the claim layer (PR-2b), not by widening
+    this clause window: a figure separated from its citation by a clause
+    boundary is not bound, and when one clause cites several policies their
+    numbers pool - per-id attribution inside one clause is claim extraction,
+    not lexical scope.
     """
     texts = _policy_texts_by_id(tool_results)
     if not texts:
@@ -2395,20 +2486,21 @@ def _policy_figure_mismatch(answer: str, tool_results: list[dict[str, Any]] | No
         cited = [policy_id for policy_id in texts if policy_id and policy_id in clause]
         if not cited:
             continue
-        claimed = (
-            _credit_figures(clause)
-            | _course_count_figures(clause)
-            | _term_figures(clause)
-            | _figures(_PERCENT_FIGURE, clause)
+        policy_blob = " ".join(texts[policy_id] for policy_id in cited).translate(
+            _ARABIC_INDIC_DIGITS
         )
-        if not claimed:
-            continue
-        allowed: set[float] = set()
-        for policy_id in cited:
-            folded = texts[policy_id].translate(_ARABIC_INDIC_DIGITS)
-            allowed |= {float(match.group(1)) for match in _TAIL_NUMBER.finditer(folded)}
-        if not claimed <= allowed:
-            return True
+        # Membership stays against the policy's RAW numbers: a policy that
+        # writes its figure without a unit word still vouches for it once the
+        # kind itself is bound by a typed occurrence.
+        allowed = {float(match.group(1)) for match in _TAIL_NUMBER.finditer(policy_blob)}
+        for policy_kind_figures, claimed in (
+            (_credit_figures(policy_blob), _credit_figures(clause)),
+            (_course_count_figures(policy_blob), _course_count_figures(clause)),
+            (_term_figures(policy_blob), _term_figures(clause)),
+            (_figures(_PERCENT_FIGURE, policy_blob), _figures(_PERCENT_FIGURE, clause)),
+        ):
+            if claimed and policy_kind_figures and not claimed <= allowed:
+                return True
     return False
 
 

@@ -534,3 +534,66 @@ def test_a_cited_policy_figure_must_come_from_that_policy():
     # checks own it, and double-claiming would refuse ordinary prose.
     uncited = "عادة تكون الدراسة الصيفية أقصر من الفصل العادي."
     assert _clean(uncited, question="كم ساعة أسجل بالصيف؟", tools=[policy]) == []
+
+
+def test_the_policy_binding_covers_only_figure_kinds_the_policy_speaks_about():
+    """The measured false-positive surface of the first spelling.
+
+    51 of the 81 policies in the store contain no digit at all, so binding
+    every kind unconditionally flagged ANY figure beside them; and a
+    credit-cap citation flagged the true course count and progress
+    percentage sharing its sentence.  A kind is bound only when the cited
+    policy's own text carries a figure of that kind - the audited
+    wrong-summer-hours class stays caught by the subset test above.
+    """
+    from core.services.answer_consistency import POLICY_FIGURE_MISMATCH
+
+    digitless_policy = {
+        "tool": "policy_lookup",
+        "ok": True,
+        "direct_policy_evidence": [
+            {
+                "policy_id": "TU.REG.WITHDRAW.1",
+                "rule": "Withdrawal requires the academic advisor's approval.",
+                "statement_ar": "يشترط للانسحاب موافقة المرشد الأكاديمي.",
+            }
+        ],
+    }
+    # A policy with no digits can vouch for nothing - and can refute nothing.
+    # The figure beside it is registrar fact, owned by the other checks.
+    assert POLICY_FIGURE_MISMATCH not in _clean(
+        "وفق [TU.REG.WITHDRAW.1] يلزمك موافقة مرشدك، وأنت مسجّل حاليًا في 6 ساعات.",
+        question="كيف أنسحب من مقرر؟",
+        tools=[digitless_policy],
+    )
+
+    credit_policy = {
+        "tool": "policy_lookup",
+        "ok": True,
+        "direct_policy_evidence": [
+            {
+                "policy_id": "TU.LOAD.SUMMER.9",
+                "rule": "Summer load is capped at 9 credit hours.",
+                "statement_ar": "الحد الأعلى للعبء الصيفي تسع (9) ساعات معتمدة.",
+            }
+        ],
+    }
+    # Course COUNT and progress PERCENT beside a CREDIT policy: kinds the
+    # policy never speaks about stay unbound.
+    assert POLICY_FIGURE_MISMATCH not in _clean(
+        "وفق [TU.LOAD.SUMMER.9] يمكنك أخذ 3 مقررات بحد 9 ساعات معتمدة.",
+        question="كم آخذ بالصيف؟",
+        tools=[credit_policy],
+    )
+    assert POLICY_FIGURE_MISMATCH not in _clean(
+        "وفق [TU.LOAD.SUMMER.9] الحد 9 ساعات، ونسبة إنجازك 62%.",
+        question="كم آخذ بالصيف؟",
+        tools=[credit_policy],
+    )
+    # The kind the policy DOES speak about stays bound in the same sentence
+    # shape - the audited class does not escape through the gate.
+    assert POLICY_FIGURE_MISMATCH in _clean(
+        "وفق [TU.LOAD.SUMMER.9] يمكنك تسجيل 12 ساعة معتمدة في الصيف.",
+        question="كم آخذ بالصيف؟",
+        tools=[credit_policy],
+    )
