@@ -1989,6 +1989,55 @@ def _exec_graduation_progress(
     what_if = g.get("what_if")
     comparison = what_if.get("comparison") if isinstance(what_if, dict) else None
     comparison = comparison if isinstance(comparison, dict) else {}
+
+    # The owner's two-answer rule: when the registered timetable and the
+    # system's recommended term DISAGREE, one baseline answers "given what
+    # you actually enrolled in" and the other "given what the system
+    # advises" - the same read-only function, the other parameter.  The
+    # alternate is attached only when the same change VALIDATES against the
+    # other baseline (the dropped course must be in it) and the two
+    # baselines genuinely differ; otherwise it would restate the primary.
+    what_if_alternate: dict[str, Any] | None = None
+    if (
+        (remove_courses or add_courses)
+        and not search_replacements
+        and isinstance(what_if, dict)
+        and what_if.get("valid")
+    ):
+        other_kind = (
+            REGISTERED_TIMETABLE
+            if planning_baseline_kind == RECOMMENDED_CURRENT_TERM
+            else RECOMMENDED_CURRENT_TERM
+        )
+        g_other = build_graduation_what_if(
+            int(student_id),
+            int(year),
+            int(term),
+            planning_baseline_kind=other_kind,
+            remove_current_courses=[str(code) for code in remove_courses],
+            add_current_courses=[str(code) for code in add_courses],
+        )
+        other_what_if = (g_other or {}).get("what_if")
+        if isinstance(other_what_if, dict) and other_what_if.get("valid"):
+
+            def _baseline_codes(container: dict[str, Any]) -> frozenset[str]:
+                baseline = container.get("baseline") if isinstance(container, dict) else None
+                rows = (
+                    baseline.get("planning_baseline_courses_assumed_passed")
+                    if isinstance(baseline, dict)
+                    else None
+                )
+                return frozenset(
+                    str(row.get("code") or "")
+                    for row in rows or []
+                    if isinstance(row, dict) and row.get("code")
+                )
+
+            if _baseline_codes(other_what_if) != _baseline_codes(what_if):
+                what_if_alternate = {
+                    "planning_baseline_kind": other_kind,
+                    "what_if": other_what_if,
+                }
     return {
         "student_id": int(student_id),
         "program": g["program"],
@@ -2050,6 +2099,7 @@ def _exec_graduation_progress(
         "registered_credits_now": g["registered_credits_now"],
         "courses_in_progress": g["in_progress"],
         "what_if": what_if,
+        "what_if_alternate_baseline": what_if_alternate,
         # Promote the plan delta for simple clients while preserving it inside
         # what_if.comparison as the authoritative structured comparison.
         "plan_changed": comparison.get("plan_changed"),

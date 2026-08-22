@@ -110,6 +110,163 @@ def _check(answer: str, payload: dict) -> list[str]:
     )
 
 
+def test_identical_baselines_attach_no_alternate(chained_plan: None) -> None:
+    """When the registered set IS the recommended set, a second simulation
+    would restate the first - the executor attaches nothing."""
+    payload = _what_if_payload()
+    assert payload.get("what_if_alternate_baseline") is None
+
+
+@pytest.fixture
+def divergent_plan() -> None:
+    """Registered {TG102}; the recommender would pick {TG102, TG104} - the
+    owner's two-answer shape.  The recommender only offers courses whose
+    declared plan-term PARITY matches the calendar term (1448/1 is odd), so
+    the due courses are declared in odd terms here."""
+    student = Student.objects.create(
+        student_id=SID,
+        registration_no=str(SID),
+        name="What-if student",
+        program="TG",
+        section="M",
+        status="active",
+    )
+    courses = {}
+    for code, programme_term in (("TG101", 1), ("TG102", 1), ("TG104", 1), ("TG103", 2)):
+        courses[code] = Course.objects.create(
+            course_code=code, description=f"Course {code}", credit_hours=3
+        )
+        ProgrammeRequirement.objects.create(
+            program="TG",
+            course_code=code,
+            course_name=f"Course {code}",
+            type="Mandatory",
+            programme_term=programme_term,
+            credit_hours=3,
+        )
+    Prerequisite.objects.create(program="TG", course_code="TG103", prerequisite_course_code="TG102")
+    StudentCourse.objects.create(student=student, course=courses["TG101"], status="passed")
+    section = TermSection.objects.create(
+        course_code="TG102",
+        course_number="TG102",
+        course_key="TG102",
+        course_name="Course TG102",
+        section="M1",
+        available_capacity=30,
+        registered_count=10,
+    )
+    StudentTermSection.objects.create(
+        student_id=SID,
+        academic_year=str(YEAR),
+        term=str(TERM),
+        term_section=section,
+        source="scraper_timetable",
+    )
+
+
+def test_divergent_baselines_run_the_same_change_on_both(divergent_plan: None) -> None:
+    """The owner's rule: same function, the other parameter.  The alternate
+    carries the OTHER baseline kind, a valid what-if of the SAME change, and
+    the course that makes the baselines differ."""
+    payload = _what_if_payload()
+    alternate = payload.get("what_if_alternate_baseline")
+
+    assert isinstance(alternate, dict)
+    assert alternate["planning_baseline_kind"] == "recommended_current_term"
+    alt_what_if = alternate["what_if"]
+    assert alt_what_if["valid"] is True
+    alt_codes = {
+        row["code"] for row in alt_what_if["baseline"]["planning_baseline_courses_assumed_passed"]
+    }
+    primary_codes = {
+        row["code"]
+        for row in payload["what_if"]["baseline"]["planning_baseline_courses_assumed_passed"]
+    }
+    assert "TG104" in alt_codes - primary_codes
+
+
+def test_the_composed_answer_carries_both_baselines_and_survives_the_checker(
+    divergent_plan: None,
+) -> None:
+    payload = _what_if_payload()
+    answer = _safe_graduation_answer("Arabic", [payload], "")
+
+    assert "المقارنة نفسها وفق" in answer
+    assert "TG104" in answer
+    assert "التقدير الكامل" in answer
+    assert _check(answer, payload) == []
+
+
+def test_a_wrong_figure_in_the_alternate_section_still_flags(divergent_plan: None) -> None:
+    """Two-sided: admitting the second baseline's figures must not admit
+    inventions inside its section."""
+    payload = _what_if_payload()
+    answer = _safe_graduation_answer("Arabic", [payload], "")
+    alt_before = payload["what_if_alternate_baseline"]["what_if"]["baseline"][
+        "lower_bound_additional_terms"
+    ]
+    marker = f"{alt_before} قبل التغيير"
+    assert answer.count(marker) >= 1
+    wrong = answer.replace(marker, "9 قبل التغيير", 1)
+    if wrong == answer:
+        pytest.fail("the alternate section must state its baseline lower bound")
+    assert _check(wrong, payload) != []
+
+
+def test_alternate_baseline_figures_are_supported_on_their_own() -> None:
+    """Checker-side: the alternate's sides are admissible values of the same
+    metric.  1 and 2 appear NOWHERE in the primary pair (5, 5), so only the
+    alternate read supports the truthful sentence."""
+    payload = {
+        "tool": "graduation_progress",
+        "ok": True,
+        "simulation_completed": True,
+        "lower_bound_additional_terms": 5,
+        "what_if": {
+            "valid": True,
+            "baseline": {"lower_bound_additional_terms": 5},
+            "scenario": {"lower_bound_additional_terms": 5},
+        },
+        "what_if_alternate_baseline": {
+            "planning_baseline_kind": "recommended_current_term",
+            "what_if": {
+                "valid": True,
+                "baseline": {"lower_bound_additional_terms": 1},
+                "scenario": {"lower_bound_additional_terms": 2},
+            },
+        },
+    }
+
+    def run(answer: str) -> list[str]:
+        return check_answer(
+            answer,
+            tool_results=[payload],
+            question="لو حذفت مقرر TG102 هل يؤثر على تخرجي؟",
+            required_tools=set(),
+            known_course_codes=_CATALOGUE,
+        )
+
+    truthful = "وفق المقررات الموصى بها، الحد الأدنى للفصول الإضافية 1 قبل التغيير مقابل 2 بعده."
+    invented = "وفق المقررات الموصى بها، الحد الأدنى للفصول الإضافية 3 قبل التغيير مقابل 7 بعده."
+    assert run(truthful) == []
+    assert run(invented) != []
+
+
+def test_the_projection_carries_the_alternate_baseline(divergent_plan: None) -> None:
+    from core.services.llm_remote_privacy import (
+        RemoteIdentityMap,
+        project_tool_result_for_remote,
+    )
+
+    payload = _what_if_payload()
+    out = project_tool_result_for_remote("graduation_progress", payload, RemoteIdentityMap())
+
+    alternate = out.get("what_if_alternate_baseline")
+    assert isinstance(alternate, dict)
+    assert alternate["planning_baseline_kind"] == "recommended_current_term"
+    assert isinstance(alternate.get("what_if"), dict)
+
+
 def test_the_scenario_really_disagrees_with_its_baseline(chained_plan: None) -> None:
     payload = _what_if_payload()
     what_if = payload["what_if"]
