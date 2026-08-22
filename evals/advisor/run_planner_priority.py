@@ -19,13 +19,16 @@ and reviewed without carrying an identifier that the review does not need.
 from __future__ import annotations
 
 import argparse
+import copy
 import json
 import os
 import pathlib
 import statistics
 import sys
 import time
+from contextlib import nullcontext
 from typing import Any
+from unittest.mock import patch
 
 import django
 import yaml
@@ -36,7 +39,10 @@ django.setup()
 
 from django.conf import settings  # noqa: E402
 
+from core.services import student_advisor_v2 as student_advisor_v2_module  # noqa: E402
+from core.services.advisor_presentations import normalise_presentation  # noqa: E402
 from core.services.advisor_principal import AdvisorPrincipal  # noqa: E402
+from core.services.advisor_remote_boundary import boundary_for_scope as build_boundary  # noqa: E402
 from core.services.llm_backend import BACKEND_LOCAL, get_llm_client  # noqa: E402
 from core.services.rbac import ROLE_STUDENT  # noqa: E402
 from core.services.student_advisor_v2 import (  # noqa: E402
@@ -55,6 +61,7 @@ BATCHES = {
     # from quietly falling back to the older executable-batch vocabulary.
     "planner_priority": None,
     "graduation_what_if": HERE / "graduation_what_if_batch.yaml",
+    "evidence_boundary_canary": HERE / "fixtures" / "evidence_boundary_canaries_v1.yaml",
 }
 
 #: The opaque reference that appears in the artefact. The real number stays in the
@@ -130,6 +137,92 @@ def _tool_names(calls: Any) -> list[str]:
         if name:
             names.append(str(name))
     return names
+
+
+class _ProviderEvidenceTrace:
+    """Capture the exact role=tool payloads passed to a provider client.
+
+    ``agent.tool_results`` are deliberately richer local records. Re-projecting
+    those after the turn is only an approximation and may use a different identity
+    map. This proxy observes the already-projected messages at the final call seam,
+    without changing transport behaviour or retaining user/system prose.
+    """
+
+    def __init__(self, delegate: Any) -> None:
+        self._delegate = delegate
+        self.provider_tool_results: list[dict[str, Any]] = []
+        self._seen_tool_messages: set[tuple[str, str]] = set()
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._delegate, name)
+
+    def _capture(self, messages: Any) -> None:
+        for message in messages or []:
+            if not isinstance(message, dict) or message.get("role") != "tool":
+                continue
+            content = message.get("content")
+            serialized = content if isinstance(content, str) else json.dumps(content, default=str)
+            marker = (str(message.get("tool_call_id") or ""), serialized)
+            if marker in self._seen_tool_messages:
+                continue
+            self._seen_tool_messages.add(marker)
+            try:
+                payload = json.loads(serialized)
+            except (TypeError, ValueError):
+                continue
+            if isinstance(payload, dict):
+                self.provider_tool_results.append(payload)
+
+    def chat_with_tools(self, messages: Any, **kwargs: Any) -> Any:
+        self._capture(messages)
+        return self._delegate.chat_with_tools(messages, **kwargs)
+
+    def chat(self, messages: Any, **kwargs: Any) -> Any:
+        self._capture(messages)
+        return self._delegate.chat(messages, **kwargs)
+
+
+class _ProjectionTraceBoundary:
+    """Observe the exact projection returned by the real request-scoped boundary."""
+
+    def __init__(self, delegate: Any, sink: list[dict[str, Any]]) -> None:
+        self._delegate = delegate
+        self._sink = sink
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._delegate, name)
+
+    def project_tool_result(self, tool_name: str, result: dict[str, Any]) -> dict[str, Any]:
+        projected = self._delegate.project_tool_result(tool_name, result)
+        self._sink.append(copy.deepcopy(projected))
+        return projected
+
+    def refusal_result(self, tool_name: str) -> dict[str, Any]:
+        projected = self._delegate.refusal_result(tool_name)
+        self._sink.append(copy.deepcopy(projected))
+        return projected
+
+
+def _prior_presentation_for_case(case: dict[str, Any]) -> dict[str, Any] | None:
+    """Return one bounded, normalized prior UI artifact for V2's typed input."""
+
+    raw = case.get("prior_presentation")
+    if raw is None:
+        return None
+    presentation = normalise_presentation(raw)
+    if not presentation:
+        raise ValueError(f"{case.get('id')}: prior_presentation is not renderable")
+    content = json.dumps(
+        presentation,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    # Keep canaries compact enough to inspect in a trace. The application normalizer
+    # already bounds every collection; this is an additional eval-artifact bound.
+    if len(content) > 12000:
+        raise ValueError(f"{case.get('id')}: prior_presentation exceeds the eval bound")
+    return presentation
 
 
 def main() -> None:
@@ -216,11 +309,13 @@ def main() -> None:
             stopped_for = f"provider-call budget reached ({totals['provider_calls']})"
             break
 
-        client = MockProvider() if args.mock else get_llm_client()
+        raw_client = MockProvider(backend=backend) if args.mock else get_llm_client()
+        client = _ProviderEvidenceTrace(raw_client)
         question = str(case.get("question_ar") or case.get("ar") or "").strip()
         if not question:
             raise SystemExit(f"{case['id']}: no question")
         started = time.perf_counter()
+        projected_tool_results: list[dict[str, Any]] = []
         try:
             answer = (
                 answer_student_advisor_v2
@@ -230,14 +325,41 @@ def main() -> None:
             client_arg = (
                 {"llm_client": client} if args.advisor_version == "v2" else {"client": client}
             )
-            payload = answer(
-                question=question,
-                principal=principal,
-                academic_year=args.year,
-                term=args.term,
-                model=requested_model,
-                **client_arg,
-            )
+            prior_presentation = _prior_presentation_for_case(case)
+            if prior_presentation is not None:
+                if args.advisor_version != "v2":
+                    raise ValueError(
+                        f"{case['id']}: prior_presentation requires --advisor-version v2"
+                    )
+                client_arg["prior_presentation"] = prior_presentation
+            if args.advisor_version == "v2":
+
+                def traced_boundary(
+                    *boundary_args: Any,
+                    _sink: list[dict[str, Any]] = projected_tool_results,
+                    **boundary_kwargs: Any,
+                ) -> Any:
+                    return _ProjectionTraceBoundary(
+                        build_boundary(*boundary_args, **boundary_kwargs),
+                        _sink,
+                    )
+
+                boundary_context = patch.object(
+                    student_advisor_v2_module,
+                    "boundary_for_scope",
+                    side_effect=traced_boundary,
+                )
+            else:
+                boundary_context = nullcontext()
+            with boundary_context:
+                payload = answer(
+                    question=question,
+                    principal=principal,
+                    academic_year=args.year,
+                    term=args.term,
+                    model=requested_model,
+                    **client_arg,
+                )
             error = None
         except Exception as exc:  # noqa: BLE001 - one bad row must not end the batch
             payload, error = {}, f"{type(exc).__name__}: {exc}"
@@ -314,6 +436,15 @@ def main() -> None:
             # actually ship — the adviser seeds it before the model sees the question.
             "verified_context_evidence": agent.get("verified_context_evidence") or [],
             "tool_results": agent.get("tool_results") or [],
+            # Exact provider-visible evidence captured at the request-scoped
+            # projection boundary. Answer scoring must use this field, never the
+            # richer local tool_results collection.
+            "provider_tool_results": (
+                projected_tool_results
+                if args.advisor_version == "v2"
+                else client.provider_tool_results
+            ),
+            "provider_message_tool_results": client.provider_tool_results,
             "output_violations": agent.get("output_violations") or [],
             # The text that TRIPPED the postconditions, sanitised at the boundary and
             # capped. Without it a violation is a code with no evidence: two paid
@@ -326,6 +457,11 @@ def main() -> None:
             "boundary_refusals": agent.get("boundary_refusals"),
             "data_part": payload.get("data_part"),
             "policy_part": payload.get("policy_part"),
+            # A proposal answer may be concise because the structured card carries
+            # the rows.  Persist the whitelisted presentation so the scorer can
+            # prove it matches the same tool result instead of rewarding plausible
+            # prose for a card that was absent or stale.
+            "presentation": payload.get("presentation"),
             "usage": {
                 "prompt_tokens": prompt,
                 "completion_tokens": completion,

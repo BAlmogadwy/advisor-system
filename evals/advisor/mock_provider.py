@@ -206,7 +206,35 @@ def _render(results: list[dict[str, Any]], question: str) -> str:
                 f"عدد المقررات المتاحة {counts.get('open')} والمقفلة {counts.get('locked')}."
             )
         elif tool == "my_timetable":
-            lines.append(f"عدد المحاضرات المسجلة: {len(row.get('meetings') or [])}.")
+            registrations = [
+                registration
+                for registration in (row.get("registrations") or [])
+                if registration.get("course_code") and registration.get("section")
+            ]
+            # Remote projection intentionally uses meeting rows rather than the
+            # richer local registrations collection. Render the exact visible rows
+            # in either mode; never reach back to the local agent result.
+            if not registrations:
+                registrations = list(
+                    {
+                        (str(meeting["course_code"]), str(meeting["section"])): {
+                            "course_code": meeting["course_code"],
+                            "section": meeting["section"],
+                        }
+                        for meeting in (row.get("meetings") or [])
+                        if isinstance(meeting, dict)
+                        and meeting.get("course_code")
+                        and meeting.get("section")
+                    }.values()
+                )
+            if registrations:
+                rendered = [
+                    f"{registration['course_code']} شعبة {registration['section']}"
+                    for registration in registrations
+                ]
+                lines.append("المقررات والشعب في الجدول: " + "، ".join(rendered) + ".")
+            else:
+                lines.append(f"عدد المحاضرات المسجلة: {len(row.get('meetings') or [])}.")
         else:
             lines.append(f"نتيجة {tool} متوفرة.")
     lines.append("هذا اقتراح تخطيطي ولا يمثل تسجيلًا رسميًا.")

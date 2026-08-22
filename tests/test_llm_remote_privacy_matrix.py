@@ -815,3 +815,32 @@ def test_every_row_of_the_matrix_is_load_bearing(tool: str) -> None:
     assert "name" in leaked and "email" in leaked, (
         f"the canaries are not detectable in a {tool} payload, so its green row means nothing"
     )
+
+
+def test_new_list_fields_are_element_typed_not_container_typed():
+    """A dict smuggled into a whitelisted code list must not cross by reference.
+
+    The module's premise is fails-closed-by-construction; these fields were
+    held open by producer discipline alone - every producer happens to emit
+    list[str] today, and nothing enforced it.
+    """
+    from core.services.llm_remote_privacy import project_tool_result_for_remote
+
+    hostile = {
+        "tool": "my_progress",
+        "ok": True,
+        "registered_requirement_course_codes": [
+            "AI1",
+            {"code": "AI1", "student_name": "Ahmed Canary", "national_id": "1098765432"},
+        ],
+        "expected_plan_course_codes": [{"gpa": 3.42}],
+        "expected_plan_requirement_aliases": [["nested", 4400123]],
+    }
+    out = project_tool_result_for_remote("my_progress", hostile, RemoteIdentityMap())
+    encoded = json.dumps(out, ensure_ascii=False)
+
+    assert out["registered_requirement_course_codes"] == ["AI1"]
+    assert out["expected_plan_course_codes"] == []
+    assert out["expected_plan_requirement_aliases"] == []
+    for needle in ("Ahmed Canary", "1098765432", "3.42", "4400123"):
+        assert needle not in encoded, needle

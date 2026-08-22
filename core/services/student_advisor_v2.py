@@ -18,6 +18,7 @@ from __future__ import annotations
 import copy
 import json
 import re
+import time
 from typing import Any
 
 from django.conf import settings
@@ -39,16 +40,30 @@ from core.services.advisor_channel_privacy import (
     project_tool_schemas as project_channel_tool_schemas,
 )
 from core.services.advisor_channel_privacy import system_prompt as channel_system_prompt
+from core.services.advisor_evidence_audit import (
+    STUDENT_V2_PROMPT_VERSION,
+    build_evidence_audit,
+)
+from core.services.advisor_intent import owning_capability
 from core.services.advisor_presentations import (
     graduation_presentation_from_tool_results,
+    normalise_presentation,
     remove_false_media_incapability,
     replacement_timetable_presentation_from_tool_results,
     timetable_presentation_from_tool_results,
 )
 from core.services.advisor_principal import AdvisorPrincipal
 from core.services.advisor_remote_boundary import boundary_for_scope
+from core.services.answer_consistency import (
+    EXACT_FACT_TOOLS,
+    REQUIRED_EVIDENCE_MISSING,
+    UNSUPPORTED_ACADEMIC_FACT,
+    check_answer,
+)
+from core.services.arabic_text import normalise as normalise_arabic_text
+from core.services.course_catalogue import known_course_codes as _known_course_codes
 from core.services.llm_backend import LLMError, UsageTotals, get_llm_client
-from core.services.llm_remote_privacy import fold_digits
+from core.services.llm_remote_privacy import fold_digits, project_prior_presentation
 from core.services.policy_contract import requires_policy_contract
 from core.services.rbac import ROLE_STUDENT
 from core.services.student_graduation import (
@@ -104,6 +119,12 @@ FORBIDDEN_STUDENT_V2_TOOLS = frozenset(
     }
 )
 
+# Runtime-only view over a previously persisted, normalized presentation.  It is
+# not a database capability and accepts no identity or free-form arguments.  The
+# model chooses it when a follow-up asks to transform the card the student already
+# saw; the server, not the model, performs the course-name/term mapping.
+PRIOR_PRESENTATION_TOOL = "present_prior_artifact"
+
 SYSTEM_PROMPT = """You are one conversational academic adviser for a university student.
 You are not a collection of roles and you do not classify the student into a chatbot mode.
 Understand the student's goal, gather the minimum verified evidence needed, and give a
@@ -122,6 +143,9 @@ Operating rules:
   «مسجّلة» is reserved for the student's actual registration.
 - Use tools for every claim about this student's record, degree plan, prerequisites,
   recommendations, credit position, graduation outlook, adviser, or university rules.
+- When verified_prior_presentation is supplied and the student asks to reformat or
+  explain that existing card, call present_prior_artifact. Choose the bounded view
+  that matches the request; do not reconstruct its rows from conversation prose.
 - You may call several tools and combine their evidence. Ask one short clarification only
   when an essential course, term, or choice is genuinely missing.
 - "Best section" is not defined without a course and a preference. If either is missing,
@@ -900,6 +924,13 @@ _CURRENT_COURSE_CHANGE_PATTERN = re.compile(
     r"أؤجل|اؤجل|تأجيل|أترك|اترك|انسحب|أنسحب|انسحبت|سحبت|إسقاط|اسقاط))",
     re.IGNORECASE,
 )
+_DIRECT_COURSE_CHANGE_ACTION_PATTERN = re.compile(
+    r"(?:\b(?:skip|drop(?:ped|ping)?|remove|replace|swap|defer|withdraw|withdrew|cancel)\b|"
+    r"استبدل|أستبدل|استبدال|أبدل|ابدل|أغير|اغير|"
+    r"أحذف|احذف|حذف|أشيل|اشيل|شيل|شلت|أكنسل|اكنسل|ألغي|الغي|"
+    r"أؤجل|اؤجل|تأجيل|أترك|اترك|انسحب|أنسحب|انسحبت|سحبت|إسقاط|اسقاط)",
+    re.IGNORECASE,
+)
 _OPEN_REPLACEMENT_PATTERN = re.compile(
     r"(?:\b(?:which|what|any|a)\s+(?:current\s+)?course\b.*\b(?:replace|swap)\b|"
     r"\b(?:replace|swap)\b.*\b(?:which|what|any)\s+(?:current\s+)?course\b|"
@@ -1308,7 +1339,11 @@ def _normalise_course_code(value: Any) -> str:
 
 
 def _normalise_graduation_scenario_args(
-    question: str, arguments: dict[str, Any]
+    question: str,
+    arguments: dict[str, Any],
+    *,
+    prior_course_names: dict[str, str] | None = None,
+    allow_prior_scenario: bool = False,
 ) -> tuple[dict[str, Any], str]:
     """Correct explicit scenario direction before the read-only tool executes.
 
@@ -1387,6 +1422,38 @@ def _normalise_graduation_scenario_args(
         if added:
             normalised["add_current_courses"] = [added]
             return normalised, "explicit_addition"
+
+    # A same-profile normalized presentation may supply the course identity for a
+    # follow-up that uses the displayed Arabic/English name instead of repeating
+    # its code.  Direction still comes from the model only inside the already
+    # established graduation what-if contract, and every selected code must have
+    # its exact displayed name in the current question.  This is bounded artifact
+    # authorization, not permission to inherit arbitrary codes from prose history.
+    if allow_prior_scenario and prior_course_names:
+        folded_question = normalise_arabic_text(text).lower()
+        mentioned = {
+            _normalise_course_code(code)
+            for code, name in prior_course_names.items()
+            if str(name or "").strip()
+            and normalise_arabic_text(str(name)).lower() in folded_question
+        }
+
+        def selected(field: str) -> list[str]:
+            value = arguments.get(field)
+            if not isinstance(value, list):
+                return []
+            codes = [_normalise_course_code(item) for item in value if item]
+            return list(dict.fromkeys(code for code in codes if code))[:1]
+
+        removed = selected("remove_current_courses")
+        added = selected("add_current_courses")
+        selected_codes = set(removed + added)
+        if selected_codes and selected_codes <= mentioned and not (set(removed) & set(added)):
+            if removed:
+                normalised["remove_current_courses"] = removed
+            if added:
+                normalised["add_current_courses"] = added
+            return normalised, "prior_presentation_named_courses"
 
     return normalised, ""
 
@@ -3036,6 +3103,589 @@ def _safe_graduation_answer(
     )
 
 
+def _required_exact_fact_tools(
+    question: str,
+    *,
+    graduation_required: bool,
+    allow_owner: bool,
+) -> set[str]:
+    """High-confidence evidence obligations, without narrowing conversational tools.
+
+    V2 still advertises its whole read-only surface and the model still chooses the
+    first tool.  This is only a postcondition: when the established intent vocabulary
+    says an exact timetable/progress capability owns the request, a prose-only answer
+    cannot be shipped.  Graduation already has its own explicit grounding detector.
+    Recommendation answers are validated whenever the model selects that capability;
+    they are not routed here through a new Arabic phrase list.
+    """
+    required: set[str] = set()
+    if allow_owner:
+        owner = owning_capability(question)
+        if owner in EXACT_FACT_TOOLS:
+            required.add(str(owner))
+    if graduation_required:
+        required.add("graduation_progress")
+    return required
+
+
+def _prior_presentation_tool_schema() -> dict[str, Any]:
+    """A bounded semantic transform over an already normalized student card."""
+    return {
+        "type": "function",
+        "function": {
+            "name": PRIOR_PRESENTATION_TOOL,
+            "description": (
+                "Render the verified prior structured card in a bounded textual view. "
+                "Use only for a follow-up about that card; it does not reread the record."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "view": {
+                        "type": "string",
+                        "enum": ["course_names_by_term", "course_names_by_option"],
+                    }
+                },
+                "required": ["view"],
+                "additionalProperties": False,
+            },
+        },
+    }
+
+
+def _prior_presentation_view(
+    presentation: dict[str, Any], arguments: dict[str, Any]
+) -> dict[str, Any]:
+    """Deterministically derive a compact view; never return the artifact wholesale."""
+    view = str(arguments.get("view") or "").strip()
+    if set(arguments) - {"view"}:
+        return {
+            "tool": PRIOR_PRESENTATION_TOOL,
+            "ok": False,
+            "error": "Only the requested bounded view is accepted.",
+        }
+
+    if view == "course_names_by_term" and presentation.get("kind") == "graduation_scenario":
+        graph = presentation.get("graph") if isinstance(presentation.get("graph"), dict) else {}
+        term_of = graph.get("termOf") if isinstance(graph.get("termOf"), dict) else {}
+        name_of = graph.get("nameOf") if isinstance(graph.get("nameOf"), dict) else {}
+        labels = (
+            presentation.get("band_labels")
+            if isinstance(presentation.get("band_labels"), dict)
+            else {}
+        )
+        grouped: dict[int, list[dict[str, str]]] = {}
+        for raw_code in graph.get("extraNodes") or []:
+            code = str(raw_code or "").strip().upper()
+            if not code or code not in term_of:
+                continue
+            try:
+                band = int(term_of[code])
+            except (TypeError, ValueError):
+                continue
+            grouped.setdefault(band, []).append(
+                {
+                    "course_code": code,
+                    "course_name": str(name_of.get(code) or "").strip(),
+                }
+            )
+        return {
+            "tool": PRIOR_PRESENTATION_TOOL,
+            "ok": bool(grouped),
+            "view": view,
+            "terms": [
+                {
+                    "term_index": band,
+                    "term_label": str(labels.get(str(band)) or f"Term {band}").strip(),
+                    "courses": sorted(grouped[band], key=lambda item: item["course_code"]),
+                }
+                for band in sorted(grouped)
+            ],
+            "read_only": True,
+        }
+
+    if view == "course_names_by_option" and presentation.get("kind") == "timetable_proposals":
+        options: list[dict[str, Any]] = []
+        for index, alternative in enumerate(presentation.get("alternatives") or [], start=1):
+            if not isinstance(alternative, dict):
+                continue
+            names = [
+                {
+                    "course_code": str(course.get("course_code") or "").strip().upper(),
+                    "course_name": str(course.get("course_name") or "").strip(),
+                }
+                for course in alternative.get("courses") or []
+                if isinstance(course, dict) and str(course.get("course_code") or "").strip()
+            ]
+            options.append(
+                {
+                    "option": "+".join(alternative.get("planner_options") or []) or f"A{index}",
+                    "courses": names,
+                }
+            )
+        return {
+            "tool": PRIOR_PRESENTATION_TOOL,
+            "ok": bool(options),
+            "view": view,
+            "options": options,
+            "read_only": True,
+        }
+
+    return {
+        "tool": PRIOR_PRESENTATION_TOOL,
+        "ok": False,
+        "error": "That view is not available for the verified prior presentation.",
+    }
+
+
+def _prior_presentation_course_names(presentation: dict[str, Any]) -> dict[str, str]:
+    names: dict[str, str] = {}
+    graph = presentation.get("graph") if isinstance(presentation.get("graph"), dict) else {}
+    for code, name in (
+        graph.get("nameOf") if isinstance(graph.get("nameOf"), dict) else {}
+    ).items():
+        clean_code = _normalise_course_code(code)
+        clean_name = str(name or "").strip()
+        if clean_code and clean_name:
+            names[clean_code] = clean_name
+    for alternative in presentation.get("alternatives") or []:
+        if not isinstance(alternative, dict):
+            continue
+        for course in alternative.get("courses") or []:
+            if not isinstance(course, dict):
+                continue
+            code = _normalise_course_code(course.get("course_code"))
+            name = str(course.get("course_name") or "").strip()
+            if code and name:
+                names[code] = name
+    return names
+
+
+def _verified_fact_tool_names(tool_results: list[dict[str, Any]]) -> set[str]:
+    return {
+        str(row.get("tool") or "")
+        for row in tool_results
+        if isinstance(row, dict)
+        and row.get("ok")
+        and str(row.get("tool") or "") in EXACT_FACT_TOOLS
+    }
+
+
+def _display_number(value: Any) -> str:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return str(value or "")
+    return str(int(number)) if number.is_integer() else str(number)
+
+
+def _safe_timetable_fact_fragment(language: str, row: dict[str, Any]) -> str:
+    meetings = [meeting for meeting in (row.get("meetings") or []) if isinstance(meeting, dict)]
+    registrations = [
+        registration
+        for registration in (row.get("registrations") or [])
+        if isinstance(registration, dict) and str(registration.get("course_code") or "").strip()
+    ]
+    expected = bool(row.get("is_expected_plan")) or row.get("schedule_kind") == "EXPECTED_PLAN"
+    count = row.get("expected_course_count" if expected else "registered_course_count")
+    credits = row.get("expected_credit_hours" if expected else "registered_credit_hours")
+    if count is None:
+        count = (
+            len(registrations)
+            if registrations
+            else len(
+                {
+                    (str(meeting.get("course_code") or ""), str(meeting.get("section") or ""))
+                    for meeting in meetings
+                    if meeting.get("course_code")
+                }
+            )
+        )
+
+    groups: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    for registration in registrations:
+        code = str(registration.get("course_code") or "").strip()
+        section = str(registration.get("section") or "").strip()
+        groups.setdefault((code, section), [])
+    for meeting in meetings:
+        code = str(meeting.get("course_code") or "").strip()
+        section = str(meeting.get("section") or "").strip()
+        if code:
+            groups.setdefault((code, section), []).append(meeting)
+
+    if language == "Arabic":
+        kind = "الجدول المتوقع" if expected else "الجدول المسجّل فعليًا"
+        opening = f"بحسب البيانات الموثقة، {kind} يحتوي على {_display_number(count)} مقررات"
+        if credits is not None:
+            opening += f" بإجمالي {_display_number(credits)} ساعة"
+        lines = [opening + "."]
+        for (code, section), course_meetings in groups.items():
+            details: list[str] = []
+            for meeting in course_meetings:
+                when = " ".join(
+                    value
+                    for value in (
+                        str(meeting.get("day") or "").strip(),
+                        "-".join(
+                            value
+                            for value in (
+                                str(
+                                    meeting.get("start") or meeting.get("start_time") or ""
+                                ).strip(),
+                                str(meeting.get("end") or meeting.get("end_time") or "").strip(),
+                            )
+                            if value
+                        ),
+                    )
+                    if value
+                ).strip()
+                room = str(meeting.get("room") or "").strip()
+                details.append(when + (f"، القاعة {room}" if room else ""))
+            section_text = f" — الشعبة {section}" if section else ""
+            suffix = (
+                f": {'؛ '.join(detail for detail in details if detail)}"
+                if any(details)
+                else ": وقت اللقاء غير مسجل في البيانات المعروضة"
+            )
+            lines.append(f"- {code}{section_text}{suffix}")
+        if expected:
+            lines.append("هذا جدول متوقع للتخطيط، وليس تسجيلًا فعليًا في بوابة الجامعة.")
+        return "\n".join(lines)
+
+    kind = "expected timetable" if expected else "registered timetable"
+    opening = f"The verified {kind} contains {_display_number(count)} courses"
+    if credits is not None:
+        opening += f" totaling {_display_number(credits)} credits"
+    lines = [opening + "."]
+    for (code, section), course_meetings in groups.items():
+        details = []
+        for meeting in course_meetings:
+            day = str(meeting.get("day") or "").strip()
+            start = str(meeting.get("start") or meeting.get("start_time") or "").strip()
+            end = str(meeting.get("end") or meeting.get("end_time") or "").strip()
+            room = str(meeting.get("room") or "").strip()
+            detail = " ".join(value for value in (day, f"{start}-{end}".strip("-")) if value)
+            details.append(detail + (f", room {room}" if room else ""))
+        section_text = f" — section {section}" if section else ""
+        suffix = (
+            f": {'; '.join(detail for detail in details if detail)}"
+            if any(details)
+            else ": meeting time is not recorded in the displayed data"
+        )
+        lines.append(f"- {code}{section_text}{suffix}")
+    if expected:
+        lines.append("This is an expected planning timetable, not actual portal registration.")
+    return "\n".join(lines)
+
+
+def _safe_recommendation_fact_fragment(language: str, row: dict[str, Any]) -> str:
+    recommended = [item for item in (row.get("recommendations") or []) if isinstance(item, dict)]
+    current = [
+        item for item in (row.get("already_in_current_timetable") or []) if isinstance(item, dict)
+    ]
+    expected = [
+        item for item in (row.get("already_in_expected_plan") or []) if isinstance(item, dict)
+    ]
+
+    def item_text(item: dict[str, Any]) -> str:
+        code = str(item.get("course_code") or "").strip()
+        name = str(item.get("course_name") or "").strip()
+        credits = item.get("credit_hours")
+        text = code + (f" — {name}" if name else "")
+        if credits is not None:
+            text += (
+                f" — {_display_number(credits)} ساعات"
+                if language == "Arabic"
+                else f" — {_display_number(credits)} credits"
+            )
+        return text
+
+    if language == "Arabic":
+        lines = (
+            ["توصية النظام الجديدة لهذا الفصل:", *(f"- {item_text(item)}" for item in recommended)]
+            if recommended
+            else ["لا توجد توصية جديدة من النظام لهذا الفصل."]
+        )
+        if current:
+            lines.extend(
+                ["المقررات الموجودة أصلًا في الجدول المسجّل فعليًا:"]
+                + [f"- {item_text(item)}" for item in current]
+            )
+        if expected:
+            lines.extend(
+                ["المقررات الموجودة أصلًا في الجدول المتوقع:"]
+                + [f"- {item_text(item)}" for item in expected]
+            )
+        return "\n".join(lines)
+
+    lines = (
+        [
+            "The system's new recommendations for this term:",
+            *(f"- {item_text(item)}" for item in recommended),
+        ]
+        if recommended
+        else ["The system has no new course recommendation for this term."]
+    )
+    if current:
+        lines.extend(
+            ["Already in the registered timetable:"] + [f"- {item_text(item)}" for item in current]
+        )
+    if expected:
+        lines.extend(
+            ["Already in the expected timetable:"] + [f"- {item_text(item)}" for item in expected]
+        )
+    return "\n".join(lines)
+
+
+def _safe_progress_fact_fragment(language: str, row: dict[str, Any]) -> str:
+    counts = row.get("counts") if isinstance(row.get("counts"), dict) else {}
+    open_rows = [
+        item for item in (row.get("prerequisites_satisfied") or []) if isinstance(item, dict)
+    ]
+    blocked_rows = [
+        item for item in (row.get("prerequisite_blocked") or []) if isinstance(item, dict)
+    ]
+    open_codes = [str(item.get("code") or "").strip() for item in open_rows if item.get("code")]
+    blocked_codes = [
+        str(item.get("code") or "").strip() for item in blocked_rows if item.get("code")
+    ]
+    open_count = counts.get("open", len(open_codes))
+    blocked_count = counts.get("locked", len(blocked_codes))
+    if language == "Arabic":
+        lines = [
+            "بحسب بيانات التقدم الموثقة: "
+            f"{_display_number(open_count)} مقررات مستوفية للمتطلبات المسجلة، و"
+            f"{_display_number(blocked_count)} مقررات محجوبة بمتطلبات."
+        ]
+        if open_codes:
+            lines.append("المقررات المستوفية للمتطلبات: " + "، ".join(open_codes) + ".")
+        if blocked_codes:
+            lines.append("المقررات المحجوبة: " + "، ".join(blocked_codes) + ".")
+        lines.append("استيفاء المتطلبات لا يثبت طرح شعبة أو وجود مقعد أو السماح بالتسجيل.")
+        return "\n".join(lines)
+    lines = [
+        "The verified progress record shows "
+        f"{_display_number(open_count)} prerequisite-ready courses and "
+        f"{_display_number(blocked_count)} prerequisite-blocked courses."
+    ]
+    if open_codes:
+        lines.append("Prerequisite-ready: " + ", ".join(open_codes) + ".")
+    if blocked_codes:
+        lines.append("Blocked: " + ", ".join(blocked_codes) + ".")
+    lines.append(
+        "Prerequisite readiness does not prove offering, seats, or registration permission."
+    )
+    return "\n".join(lines)
+
+
+def _safe_prior_presentation_fragment(language: str, row: dict[str, Any]) -> str:
+    """Render only the bounded view returned by ``present_prior_artifact``."""
+    view = str(row.get("view") or "")
+    if view == "course_names_by_term":
+        lines: list[str] = []
+        for term_row in row.get("terms") or []:
+            if not isinstance(term_row, dict):
+                continue
+            label = str(term_row.get("term_label") or "").strip()
+            names = [
+                str(course.get("course_name") or course.get("course_code") or "").strip()
+                for course in term_row.get("courses") or []
+                if isinstance(course, dict)
+                and str(course.get("course_name") or course.get("course_code") or "").strip()
+            ]
+            if not names:
+                continue
+            if language == "Arabic":
+                lines.append(f"{label}:\n" + "\n".join(f"- {name}" for name in names))
+            else:
+                lines.append(f"{label}:\n" + "\n".join(f"- {name}" for name in names))
+        return "\n\n".join(lines)
+
+    if view == "course_names_by_option":
+        lines = []
+        for option in row.get("options") or []:
+            if not isinstance(option, dict):
+                continue
+            label = str(option.get("option") or "").strip()
+            names = [
+                str(course.get("course_name") or course.get("course_code") or "").strip()
+                for course in option.get("courses") or []
+                if isinstance(course, dict)
+                and str(course.get("course_name") or course.get("course_code") or "").strip()
+            ]
+            if names:
+                lines.append(f"{label}:\n" + "\n".join(f"- {name}" for name in names))
+        return "\n\n".join(lines)
+    return ""
+
+
+def _safe_timetable_proposal_fact_fragment(language: str, row: dict[str, Any]) -> str:
+    """Complete deterministic text for provider-visible proposal alternatives."""
+    blocks: list[str] = []
+    for index, alternative in enumerate(row.get("alternatives") or [], start=1):
+        if not isinstance(alternative, dict):
+            continue
+        option_names = [
+            str(value).strip().upper()
+            for value in alternative.get("planner_options") or []
+            if str(value).strip()
+        ]
+        option = str(alternative.get("option") or "").strip().upper()
+        label = "+".join(option_names) or option or f"A{index}"
+        meetings_by_course: dict[tuple[str, str], list[dict[str, Any]]] = {}
+        for meeting in alternative.get("meetings") or []:
+            if not isinstance(meeting, dict):
+                continue
+            key = (
+                str(meeting.get("course_code") or "").strip().upper(),
+                str(meeting.get("section") or "").strip().upper(),
+            )
+            meetings_by_course.setdefault(key, []).append(meeting)
+
+        lines = [f"الخيار {label}:" if language == "Arabic" else f"Option {label}:"]
+        for course in alternative.get("courses") or []:
+            if not isinstance(course, dict):
+                continue
+            code = str(course.get("course_code") or "").strip().upper()
+            section = str(course.get("section") or "").strip().upper()
+            if not code:
+                continue
+            name = str(course.get("course_name") or "").strip()
+            detail_rows = []
+            for meeting in meetings_by_course.get((code, section), []):
+                day = str(meeting.get("day") or "").strip()
+                start = str(meeting.get("start") or "").strip()
+                end = str(meeting.get("end") or "").strip()
+                detail_rows.append(
+                    " ".join(value for value in (day, f"{start}-{end}".strip("-")) if value)
+                )
+            if language == "Arabic":
+                text = f"- {code}" + (f" — {name}" if name else "")
+                text += f" — الشعبة {section}" if section else ""
+                if detail_rows:
+                    text += ": " + "؛ ".join(detail_rows)
+            else:
+                text = f"- {code}" + (f" — {name}" if name else "")
+                text += f" — section {section}" if section else ""
+                if detail_rows:
+                    text += ": " + "; ".join(detail_rows)
+            lines.append(text)
+        for course in alternative.get("unplaced_courses") or []:
+            if not isinstance(course, dict):
+                continue
+            code = str(course.get("course_code") or "").strip().upper()
+            reason = str(course.get("reason") or "").strip()
+            if code:
+                lines.append(
+                    f"- لم يُدرج {code}: {reason}"
+                    if language == "Arabic"
+                    else f"- {code} was not placed: {reason}"
+                )
+        blocks.append("\n".join(lines))
+    if not blocks:
+        return ""
+    tail = (
+        "هذه بدائل مقترحة للقراءة فقط، ولا تغيّر تسجيلك الفعلي."
+        if language == "Arabic"
+        else "These are read-only proposals and do not change actual registration."
+    )
+    return "\n\n".join([*blocks, tail])
+
+
+def _verified_evidence_fallback(
+    language: str,
+    tool_results: list[dict[str, Any]],
+    answer_style: str,
+    *,
+    preferred_tools: set[str] | None = None,
+) -> str:
+    """A deterministic answer assembled only from provider-visible exact facts."""
+    latest: dict[str, dict[str, Any]] = {}
+    for row in tool_results:
+        tool = str(row.get("tool") or "") if isinstance(row, dict) else ""
+        if tool in EXACT_FACT_TOOLS and row.get("ok"):
+            latest[tool] = row
+
+    selected = set(preferred_tools) & set(latest) if preferred_tools is not None else set(latest)
+    if preferred_tools is not None and not selected:
+        return ""
+    fragments: list[str] = []
+    for tool in (
+        "my_timetable",
+        "recommend_courses",
+        "my_progress",
+        "graduation_progress",
+        "build_timetable_proposal",
+        PRIOR_PRESENTATION_TOOL,
+    ):
+        if tool not in selected:
+            continue
+        row = latest[tool]
+        if tool == "my_timetable":
+            fragment = _safe_timetable_fact_fragment(language, row)
+        elif tool == "recommend_courses":
+            fragment = _safe_recommendation_fact_fragment(language, row)
+        elif tool == "my_progress":
+            fragment = _safe_progress_fact_fragment(language, row)
+        elif tool == "build_timetable_proposal":
+            fragment = _safe_timetable_proposal_fact_fragment(language, row)
+        elif tool == PRIOR_PRESENTATION_TOOL:
+            fragment = _safe_prior_presentation_fragment(language, row)
+        else:
+            fragment = _safe_graduation_answer(language, tool_results, answer_style)
+        if fragment:
+            fragments.append(fragment)
+    return "\n\n".join(fragments)
+
+
+def _evidence_abstention(language: str, channel_profile: str = "") -> str:
+    # A dead-end "try again" loops the student into a second identical
+    # failure.  The safe path terminates at a human - but the hand-off must
+    # name a control that EXISTS on the reader's surface.  The web screen's
+    # escalation button is labelled «طلب مراجعة من المرشد الأكاديمي»;
+    # Telegram has no buttons at all, only the /advisor command.
+    from core.services.advisor_channel_privacy import is_telegram_safe_profile
+
+    if is_telegram_safe_profile(channel_profile):
+        if language == "Arabic":
+            return (
+                "لم أتمكن من إعداد إجابة يمكن التحقق من حقائقها الأكاديمية مقابل "
+                "بيانات هذه المحادثة؛ لذلك لن أعرض أرقامًا أو مقررات غير مؤكدة. "
+                "أرسل الأمر /advisor لإحالة سؤالك إلى مرشدك الأكاديمي."
+            )
+        return (
+            "I could not produce an answer whose academic facts could be verified "
+            "against this turn's evidence, so I will not show unconfirmed courses or "
+            "figures. Send the /advisor command to refer your question to your "
+            "academic adviser."
+        )
+    if language == "Arabic":
+        return (
+            "لم أتمكن من إعداد إجابة يمكن التحقق من حقائقها الأكاديمية مقابل بيانات "
+            "هذه المحادثة؛ لذلك لن أعرض أرقامًا أو مقررات غير مؤكدة. يمكنك إحالة "
+            "سؤالك إلى مرشدك الأكاديمي من زر «طلب مراجعة من المرشد الأكاديمي» "
+            "بجانب هذه الرسالة، وسيصله نص سؤالك كما كتبته."
+        )
+    return (
+        "I could not produce an answer whose academic facts could be verified against "
+        "this turn's evidence, so I will not show unconfirmed courses or figures. "
+        "You can refer this question to your academic adviser using the review-request "
+        "button beside this message, and they will receive it as you wrote it."
+    )
+
+
+def _evidence_repair_instruction(violations: list[str]) -> str:
+    return (
+        "Revise the answer once using only the verified tool results already present in "
+        "this conversation; do not call another tool. Actually present the requested "
+        "record rather than saying it was shown elsewhere. Every course code, section, "
+        "course count, credit total, progress count, percentage, and graduation-term "
+        "figure must match that structured evidence exactly. Remove unsupported facts, "
+        "preserve REGISTERED versus EXPECTED_PLAN, and keep the surrounding explanation "
+        "natural and concise. Validation codes: " + ", ".join(violations)
+    )
+
+
 def _unresolved_policy_ids(tool_results: list[dict[str, Any]]) -> list[str]:
     ids: list[str] = []
     for result in tool_results:
@@ -3070,6 +3720,20 @@ def _max_iterations() -> int:
 
 def _max_calls() -> int:
     return max(1, int(getattr(settings, "STUDENT_ADVISOR_V2_MAX_TOOL_CALLS", 8)))
+
+
+def _inference_ceiling() -> int:
+    """Hard cap including no-tool rescue and the one evidence repair.
+
+    The ordinary tool loop owns ``_max_iterations`` calls.  One slot is available
+    for the existing no-tool rescue and one is reserved exclusively for the final
+    evidence repair, so neither a timeout path nor a fallback can silently create
+    an unbounded second agent loop.
+    """
+    configured = getattr(settings, "STUDENT_ADVISOR_V2_MAX_INFERENCE_CALLS", None)
+    if configured is not None:
+        return max(2, int(configured))
+    return _max_iterations() + 2
 
 
 def _max_tokens() -> int:
@@ -3204,6 +3868,7 @@ def answer_student_advisor_v2(
     academic_year: int | None = None,
     term: int | None = None,
     history: Any = None,
+    prior_presentation: Any = None,
     model: str | None = None,
     llm_client: Any = None,
     channel_profile: str = "",
@@ -3246,6 +3911,10 @@ def answer_student_advisor_v2(
         )
 
     language = _answer_language(clean_question)
+    # The timer starts BEFORE the catalogue read: the cold-cache query is the
+    # one cost this feature adds, and it must be inside turn_ms.
+    turn_started = time.monotonic()
+    known_course_codes = _known_course_codes()
     # Colloquial Saudi Arabic remains accepted and fully parsed as input, but the
     # student portal renders one consistent university register: clear MSA.
     detected_answer_style = _answer_style(clean_question)
@@ -3254,8 +3923,10 @@ def answer_student_advisor_v2(
         if language == "Arabic"
         else detected_answer_style
     )
-    llm = llm_client or get_llm_client()
-    resolved_model = llm.resolve_model(model)
+    # Identity BEFORE any model touch: resolve_model can reach the provider
+    # (the local backend lists /v1/models), and a vanished roster row must
+    # fail closed as the student-facing 409 without a single network call -
+    # not surface as a provider error after one.
     scope = principal.as_scope()
     student_record = Student.objects.filter(student_id=principal.student_id).values("name").first()
     if student_record is None:
@@ -3263,12 +3934,26 @@ def answer_student_advisor_v2(
         # 409 and refunds the generation allowance. Calling a model without the
         # roster row would silently turn a personal adviser into a generic chatbot.
         raise ValueError("No student record exists for the authenticated principal.")
+    llm = llm_client or get_llm_client()
+    resolved_model = llm.resolve_model(model)
     student_name = str(student_record.get("name") or "").strip()
     boundary = boundary_for_scope(
         scope,
         backend=str(getattr(llm, "backend", "local")),
         known_names=(student_name,) if len(student_name) >= 3 else (),
     )
+    verified_prior_presentation = normalise_presentation(prior_presentation)
+    # A card is admitted to this turn as verified evidence, and the
+    # postcondition checker then measures the answer against it. A card built
+    # for another term is not evidence about this one: without this bound, a
+    # student who ran a scenario last term and later asks «اعرضها بالأسماء»
+    # gets last term's plan rendered as this term's answer, passing the very
+    # gate that exists to stop exactly that.
+    if verified_prior_presentation:
+        card_term = str(verified_prior_presentation.get("planning_term") or "").strip()
+        if card_term and card_term != f"{academic_year}/{term}":
+            verified_prior_presentation = {}
+    prior_course_names = _prior_presentation_course_names(verified_prior_presentation)
 
     # Policy retrieval is local and cheap, and must not depend on whether either a
     # classifier or the model recognises the regulation hidden in colloquial Arabic.
@@ -3281,17 +3966,61 @@ def answer_student_advisor_v2(
         boundary.project_tool_result("policy_lookup", policy_result),
         profile=channel_profile,
     )
+    # The post-answer validator compares claims to exactly what the provider saw,
+    # never to the richer local result.  Otherwise an invented private field could
+    # be accepted merely because it happens to match a value that was not sent.
+    validation_results: list[dict[str, Any]] = [projected_policy]
+    provider_policy_evidence = _policy_evidence_for_prompt(projected_policy)
+    provider_evidence_for_audit: list[tuple[str, dict[str, Any]]] = [
+        ("policy_lookup", provider_policy_evidence)
+    ]
+    prior_presentation_evidence: dict[str, Any] = {}
+    if verified_prior_presentation:
+        # A remote provider gets the card through a whitelist, never whole.
+        # The card is built from the UNPROJECTED local result, so putting it
+        # straight into the prompt would hand an external model the per-course
+        # academic record that graduation_progress's own projector withholds -
+        # and the message sanitiser only redacts names and long digit runs, it
+        # performs no per-capability projection. Local backends keep the full
+        # card, exactly as they keep full tool results.
+        provider_presentation = (
+            project_prior_presentation(verified_prior_presentation)
+            if boundary.is_remote
+            else verified_prior_presentation
+        )
+        prior_presentation_evidence = {
+            "tool": PRIOR_PRESENTATION_TOOL,
+            "ok": True,
+            "view": "source_artifact",
+            "presentation": provider_presentation,
+            "read_only": True,
+        }
+        validation_results.append(prior_presentation_evidence)
+        provider_evidence_for_audit.append((PRIOR_PRESENTATION_TOOL, prior_presentation_evidence))
     policy_prompt = "\nverified_policy_evidence: " + json.dumps(
-        _policy_evidence_for_prompt(projected_policy),
+        provider_policy_evidence,
         ensure_ascii=False,
         separators=(",", ":"),
         default=str,
+    )
+    prior_presentation_prompt = (
+        "\nverified_prior_presentation: "
+        + json.dumps(
+            prior_presentation_evidence.get("presentation") or {},
+            ensure_ascii=False,
+            separators=(",", ":"),
+            default=str,
+        )
+        if verified_prior_presentation
+        else ""
     )
 
     schemas = project_channel_tool_schemas(
         boundary.tool_schemas(student_v2_tool_schemas()),
         profile=channel_profile,
     )
+    if verified_prior_presentation:
+        schemas.append(_prior_presentation_tool_schema())
     advertised = {str((schema.get("function") or {}).get("name") or "") for schema in schemas}
     messages: list[dict[str, Any]] = [
         {
@@ -3311,7 +4040,7 @@ def answer_student_advisor_v2(
                 "Graduation scenarios use graduation_system_current_term_hijri and the "
                 "deterministic planning_baseline_kind; do not substitute the planning/import term. "
                 "Do not ask for a Gregorian year.\n"
-                f"student_question: {clean_question}" + policy_prompt
+                f"student_question: {clean_question}" + policy_prompt + prior_presentation_prompt
             ),
         },
     ]
@@ -3322,17 +4051,22 @@ def answer_student_advisor_v2(
     tools_called: list[dict[str, Any]] = []
     seen: dict[str, dict[str, Any]] = {}
     total_calls = 0
+    inference_calls = 0
+    inference_ceiling = _inference_ceiling()
     answer = ""
     answer_model = resolved_model
+    answer_model_revision = ""
     iterations = 0
     tool_turn_error = ""
     fallback_seeded = False
+    exact_fact_owner = owning_capability(clean_question)
     requires_feasible_replacement = _requires_feasible_course_replacements(clean_question)
     requires_course_comparison = (
         _requires_course_choice_comparison(clean_question) and not requires_feasible_replacement
     )
     requires_timetable_proposal = (
         _requires_timetable_proposal(clean_question)
+        and exact_fact_owner != "my_timetable"
         and not requires_course_comparison
         and not requires_feasible_replacement
     )
@@ -3351,11 +4085,43 @@ def answer_student_advisor_v2(
         and not requires_course_comparison
         and not requires_feasible_replacement
     )
+    folded_question_for_prior = normalise_arabic_text(clean_question).lower()
+    names_from_prior_in_question = any(
+        normalise_arabic_text(name).lower() in folded_question_for_prior
+        for name in prior_course_names.values()
+        if str(name or "").strip()
+    )
+    graduation_change_follow_up = bool(
+        _CURRENT_COURSE_CHANGE_PATTERN.search(clean_question)
+        and not _REPLACEMENT_TIMETABLE_PROOF_PATTERN.search(clean_question)
+        and (
+            _COURSE_CODE_TOKEN_PATTERN.search(clean_question)
+            or names_from_prior_in_question
+            or _DIRECT_COURSE_CHANGE_ACTION_PATTERN.search(clean_question)
+        )
+    )
     requires_graduation_what_if = (
-        _requires_graduation_what_if(clean_question)
+        (_requires_graduation_what_if(clean_question) or graduation_change_follow_up)
         and not requires_course_comparison
         and not requires_feasible_replacement
     )
+    required_exact_fact_tools = _required_exact_fact_tools(
+        clean_question,
+        graduation_required=requires_graduation_progress,
+        allow_owner=not any(
+            (
+                requires_timetable_proposal,
+                requires_section_check,
+                requires_course_comparison,
+                requires_feasible_replacement,
+                requires_graduation_what_if,
+            )
+        ),
+    )
+    if requires_timetable_proposal:
+        required_exact_fact_tools.add("build_timetable_proposal")
+    if requires_graduation_what_if:
+        required_exact_fact_tools.add("graduation_progress")
     timetable_reprompted = False
     timetable_format_reprompted = False
     timetable_variant_reprompted = False
@@ -3375,10 +4141,19 @@ def answer_student_advisor_v2(
     internal_output_reprompted = False
     internal_output_sanitized = False
     constraint_input_refused = False
+    evidence_tool_reprompted = False
+    evidence_validation_repair_attempted = False
+    evidence_validation_repair_error = ""
+    evidence_validation_initial: list[str] = []
+    evidence_validation_after_repair: list[str] = []
+    evidence_validation_outcome = "not_applicable"
 
     for iteration in range(_max_iterations()):
         iterations = iteration + 1
+        if inference_calls >= inference_ceiling - 1:
+            break
         try:
+            inference_calls += 1
             turn = llm.chat_with_tools(
                 messages,
                 tools=schemas,
@@ -3394,6 +4169,7 @@ def answer_student_advisor_v2(
             break
         usage.add(turn.usage)
         answer_model = turn.model or answer_model
+        answer_model_revision = getattr(turn, "model_revision", "") or answer_model_revision
         if not turn.tool_calls:
             candidate = str(turn.content or "").strip()
             has_timetable_evidence = any(
@@ -3417,6 +4193,36 @@ def answer_student_advisor_v2(
                 row.get("tool") == "feasible_course_replacements" and row.get("ok")
                 for row in local_results
             )
+            missing_exact_fact_tools = required_exact_fact_tools - _verified_fact_tool_names(
+                validation_results
+            )
+            # Graduation has a richer scenario-specific acquisition correction
+            # immediately below; leave it to that existing specialised gate.
+            missing_exact_fact_tools.discard("graduation_progress")
+            # Timetable proposals likewise have constraint/format-aware acquisition
+            # just below.  Keep this set for final fulfillment, but do not replace
+            # that richer reprompt with the generic exact-record instruction.
+            missing_exact_fact_tools.discard("build_timetable_proposal")
+            if candidate and missing_exact_fact_tools and not evidence_tool_reprompted:
+                # Initial tool choice remains conversational.  This fires only after
+                # the model attempts to finish an exact-record request without the
+                # established owning evidence, and gives it one bounded acquisition
+                # correction rather than shipping fluent but unverifiable prose.
+                messages.append(turn.assistant_message)
+                messages.append(
+                    {
+                        "role": "user",
+                        "content": (
+                            "This exact student-record question still lacks its required "
+                            "verified evidence. Call the missing read-only capability now, "
+                            "then answer from its returned fields. Missing capabilities: "
+                            + ", ".join(sorted(missing_exact_fact_tools))
+                            + ". Do not answer from memory or conversation history."
+                        ),
+                    }
+                )
+                evidence_tool_reprompted = True
+                continue
             if (
                 candidate
                 and requires_feasible_replacement
@@ -3762,6 +4568,8 @@ def answer_student_advisor_v2(
                 effective_arguments, scenario_normalization = _normalise_graduation_scenario_args(
                     clean_question,
                     model_arguments,
+                    prior_course_names=prior_course_names,
+                    allow_prior_scenario=requires_graduation_what_if,
                 )
             elif call.name == "course_choice_comparison":
                 effective_arguments, comparison_normalizations = _normalise_course_comparison_args(
@@ -3807,7 +4615,9 @@ def answer_student_advisor_v2(
                     ),
                 }
             )
-            if call.name not in advertised or call.name not in STUDENT_V2_TOOL_NAMES:
+            if call.name not in advertised or (
+                call.name not in STUDENT_V2_TOOL_NAMES and call.name != PRIOR_PRESENTATION_TOOL
+            ):
                 messages.append(
                     _tool_message(call.id, {"ok": False, "error": "Capability unavailable."})
                 )
@@ -3834,6 +4644,8 @@ def answer_student_advisor_v2(
                     boundary.project_tool_result(call.name, local_result),
                     profile=channel_profile,
                 )
+                validation_results.append(provider_result)
+                provider_evidence_for_audit.append((call.name, provider_result))
                 local_result = project_channel_tool_result(
                     call.name, local_result, profile=channel_profile
                 )
@@ -3848,7 +4660,26 @@ def answer_student_advisor_v2(
                 default=str,
             )
             if cache_key in seen:
-                messages.append(_tool_message(call.id, seen[cache_key]))
+                cached_provider_result = seen[cache_key]
+                if call.name == PRIOR_PRESENTATION_TOOL and cached_provider_result.get("ok"):
+                    required_exact_fact_tools.add(PRIOR_PRESENTATION_TOOL)
+                provider_evidence_for_audit.append((call.name, cached_provider_result))
+                messages.append(_tool_message(call.id, cached_provider_result))
+                continue
+
+            if call.name == PRIOR_PRESENTATION_TOOL:
+                local_result = _prior_presentation_view(
+                    verified_prior_presentation,
+                    dict(effective_arguments),
+                )
+                provider_result = copy.deepcopy(local_result)
+                local_results.append(local_result)
+                validation_results.append(provider_result)
+                provider_evidence_for_audit.append((call.name, provider_result))
+                seen[cache_key] = provider_result
+                if provider_result.get("ok"):
+                    required_exact_fact_tools.add(PRIOR_PRESENTATION_TOOL)
+                messages.append(_tool_message(call.id, provider_result))
                 continue
 
             try:
@@ -3889,6 +4720,8 @@ def answer_student_advisor_v2(
                 provider_result = boundary.refusal_result(call.name)
 
             local_results.append(local_result)
+            validation_results.append(provider_result)
+            provider_evidence_for_audit.append((call.name, provider_result))
             seen[cache_key] = provider_result
             messages.append(_tool_message(call.id, provider_result))
 
@@ -3976,6 +4809,8 @@ def answer_student_advisor_v2(
                     fallback_name, fallback_raw, profile=channel_profile
                 )
                 local_results.append(fallback_local)
+                validation_results.append(fallback_provider)
+                provider_evidence_for_audit.append((fallback_name, fallback_provider))
                 tools_called.append(
                     {
                         "name": fallback_name,
@@ -4002,15 +4837,28 @@ def answer_student_advisor_v2(
                     ),
                 }
             )
-            forced = llm.chat(
-                boundary.sanitise_messages(messages),
-                model=resolved_model,
-                max_tokens=_max_tokens(),
-                assistant_prefill=_assistant_prefill_for_client(llm, resolved_model),
-            )
-            usage.add(forced.usage)
-            answer = forced.content
-            answer_model = forced.model or answer_model
+            if inference_calls < inference_ceiling - 1:
+                inference_calls += 1
+                try:
+                    forced = llm.chat(
+                        boundary.sanitise_messages(messages),
+                        model=resolved_model,
+                        max_tokens=_max_tokens(),
+                        assistant_prefill=_assistant_prefill_for_client(llm, resolved_model),
+                    )
+                except Exception:  # fail closed like the tool loop, not open
+                    # A provider fault here leaves answer empty; the terminal
+                    # blank-answer guard converts that into an abstention.  The
+                    # previous unguarded call let an LLMError escape the whole
+                    # function instead of reaching the evidence pipeline.
+                    forced = None
+                if forced is not None:
+                    usage.add(forced.usage)
+                    answer = forced.content
+                    answer_model = forced.model or answer_model
+                    answer_model_revision = (
+                        getattr(forced, "model_revision", "") or answer_model_revision
+                    )
 
     if constraint_input_refused:
         answer = (
@@ -4117,19 +4965,16 @@ def answer_student_advisor_v2(
         answer = safe_graduation
         graduation_safe_fallback_used = True
 
-    if _internal_output_markers(answer):
-        answer = _humanise_internal_output_markers(answer, language)
-        answer = _apply_saudi_register(answer, language, answer_style)
-        internal_output_sanitized = True
-
     presentation = (
         replacement_timetable_presentation_from_tool_results(local_results)
         or graduation_presentation_from_tool_results(local_results)
         or timetable_presentation_from_tool_results(local_results)
     )
-    if presentation:
-        answer = remove_false_media_incapability(answer)
-
+    if missing_required_what_if:
+        # An unchanged baseline card would visually contradict the fail-closed text
+        # and was the exact production failure: the requested remove/add delta was
+        # empty, yet the old baseline plan was still rendered as the answer.
+        presentation = None
     # Recommendation/context tools legitimately carry the approved credit-load
     # figures and their backing policy id. Convert that embedded provenance to the
     # same citable shape as policy_lookup before validating the answer; otherwise a
@@ -4140,19 +4985,224 @@ def answer_student_advisor_v2(
         local_results.append(credit_evidence)
 
     citations = _retrieved_citations(local_results)
-    citation_bad = _bad_citations(answer, citations)
-    fabricated = _fabricated_policy_ids(answer, citations)
-    citation_refused = bool(citation_bad or fabricated)
-    if citation_refused:
-        if safe_graduation and not requires_policy_contract(clean_question):
-            answer = safe_graduation
-            graduation_safe_fallback_used = True
-        else:
-            answer = _citation_refusal(language, answer_style)
+    unresolved_policy_ids = _unresolved_policy_ids(local_results)
 
-    portal_claim_refused = _claims_portal_action(answer)
-    if portal_claim_refused:
-        answer = _portal_boundary_response(language, answer_style)
+    # ── one terminal candidate pipeline ─────────────────────────────────
+    #
+    # Original prose, the one bounded repair, and deterministic fallbacks all pass
+    # through this same function.  A regenerated sentence therefore cannot bypass
+    # a marker/citation/portal/specialized gate that the first draft faced.
+    def finalize_candidate(candidate: str) -> dict[str, Any]:
+        text = str(candidate or "").strip()
+        used_section_fallback = False
+        used_graduation_fallback = False
+        sanitized_internal = False
+
+        if (
+            requires_section_check
+            and safe_section
+            and _section_answer_contradicts_evidence(text, local_results)
+        ):
+            text = safe_section
+            used_section_fallback = True
+
+        baseline_label_wrong = any(
+            row.get("tool") == "graduation_progress"
+            and row.get("ok")
+            and _mislabels_planning_baseline_as_current(text, row)
+            for row in local_results
+        )
+        if missing_required_what_if:
+            # ``answer`` already holds the deterministic missing-scenario refusal.
+            text = answer
+            used_graduation_fallback = True
+        elif safe_graduation and (
+            graduation_what_if
+            or incomplete_graduation
+            or baseline_label_wrong
+            or _graduation_revision_facts(text, local_results)
+            or _GRADUATION_UNSUPPORTED_INFERENCE.search(text or "")
+        ):
+            text = safe_graduation
+            used_graduation_fallback = True
+
+        if _internal_output_markers(text):
+            text = _humanise_internal_output_markers(text, language)
+            text = _apply_saudi_register(text, language, answer_style)
+            sanitized_internal = True
+        if presentation:
+            text = remove_false_media_incapability(text)
+
+        citation_failed = bool(
+            _bad_citations(text, citations) or _fabricated_policy_ids(text, citations)
+        )
+        if citation_failed:
+            if safe_graduation and not requires_policy_contract(clean_question):
+                text = safe_graduation
+                citation_failed = False
+                used_graduation_fallback = True
+            else:
+                text = _citation_refusal(language, answer_style)
+
+        portal_failed = _claims_portal_action(text)
+        if portal_failed:
+            text = _portal_boundary_response(language, answer_style)
+
+        violations = check_answer(
+            text,
+            tool_results=validation_results,
+            question=clean_question,
+            required_tools=required_exact_fact_tools,
+            presentation=presentation,
+            known_course_codes=known_course_codes,
+        )
+        policy_uncertainty_failed = bool(
+            not citation_failed
+            and requires_policy_contract(clean_question)
+            and unresolved_policy_ids
+            and not _UNCERTAINTY_MARKERS.search(text)
+        )
+        if policy_uncertainty_failed:
+            violations = list(dict.fromkeys([*violations, UNSUPPORTED_ACADEMIC_FACT]))
+
+        return {
+            "text": text,
+            "violations": violations,
+            "citation_refused": citation_failed,
+            "portal_claim_refused": portal_failed,
+            "section_fallback": used_section_fallback,
+            "graduation_fallback": used_graduation_fallback,
+            "internal_sanitized": sanitized_internal,
+            "policy_uncertainty_failed": policy_uncertainty_failed,
+        }
+
+    initial_candidate = finalize_candidate(answer)
+    evidence_validation_initial = list(initial_candidate["violations"])
+    chosen = initial_candidate
+    grounding_refused = False
+
+    if missing_required_what_if:
+        # The requested delta was never proven.  Keep the specific server-authored
+        # refusal, but record it as an evidence abstention rather than a PASS.
+        evidence_validation_outcome = "abstained"
+        grounding_refused = True
+    elif not evidence_validation_initial:
+        evidence_validation_outcome = "passed" if required_exact_fact_tools else "not_applicable"
+    else:
+        corrected_answer = ""
+        repaired_candidate: dict[str, Any] | None = None
+        if (
+            REQUIRED_EVIDENCE_MISSING not in evidence_validation_initial
+            and inference_calls < inference_ceiling
+        ):
+            evidence_validation_repair_attempted = True
+            try:
+                inference_calls += 1
+                repaired = llm.chat(
+                    boundary.sanitise_messages(
+                        [
+                            *messages,
+                            {"role": "assistant", "content": initial_candidate["text"]},
+                            {
+                                "role": "user",
+                                "content": _evidence_repair_instruction(
+                                    evidence_validation_initial
+                                ),
+                            },
+                        ]
+                    ),
+                    model=resolved_model,
+                    max_tokens=_max_tokens(),
+                    assistant_prefill=_assistant_prefill_for_client(llm, resolved_model),
+                )
+                usage.add(repaired.usage)
+                corrected_answer = str(repaired.content or "").strip()
+                answer_model = repaired.model or answer_model
+                answer_model_revision = (
+                    getattr(repaired, "model_revision", "") or answer_model_revision
+                )
+                # An empty body is a FAILED repair, never a clean one.  Blank
+                # text short-circuits check_answer before the postconditions
+                # run, so accepting it here would discard the violating answer,
+                # ship nothing, and record the turn as "repaired" with the
+                # student's card still attached.
+                repaired_candidate = (
+                    finalize_candidate(corrected_answer) if corrected_answer else None
+                )
+            except Exception as exc:  # fail closed on any correction-path fault
+                evidence_validation_repair_error = type(exc).__name__
+
+        evidence_validation_after_repair = (
+            list(repaired_candidate["violations"])
+            if repaired_candidate is not None
+            else list(evidence_validation_initial)
+        )
+        if repaired_candidate is not None and not evidence_validation_after_repair:
+            chosen = repaired_candidate
+            evidence_validation_outcome = "repaired"
+        else:
+            verified_fallback = _verified_evidence_fallback(
+                language,
+                validation_results,
+                answer_style,
+                # An empty required set means "no single owning tool", not "no
+                # fallback".  Passing the empty set made the middle tier
+                # unreachable for section/comparison/replacement/what-if
+                # questions, which then fell straight from violation to
+                # abstention.  The FRAGMENT LIBRARY IS FROZEN: adding a new
+                # _safe_*_fragment is an owner decision, so this only makes
+                # the existing fragments reachable.
+                preferred_tools=(set(required_exact_fact_tools) or None),
+            )
+            fallback_candidate = (
+                finalize_candidate(verified_fallback) if verified_fallback else None
+            )
+            if fallback_candidate is not None and not fallback_candidate["violations"]:
+                chosen = fallback_candidate
+                evidence_validation_outcome = "verified_fallback"
+            else:
+                chosen = {
+                    "text": _evidence_abstention(language, channel_profile),
+                    "citation_refused": False,
+                    "portal_claim_refused": False,
+                    "section_fallback": False,
+                    "graduation_fallback": False,
+                    "internal_sanitized": False,
+                    "policy_uncertainty_failed": False,
+                }
+                evidence_validation_outcome = "abstained"
+                grounding_refused = True
+
+    # Nothing may ship as an answer when there is no answer.  check_answer
+    # returns no violations for blank text - correctly, since a claim that was
+    # never made cannot contradict evidence - so an empty body would otherwise
+    # be recorded as a clean PASS, and derive_outcome would then deny the
+    # student the human review that a refusal grants them.  Every route that
+    # can produce one ends here, including the forced-final rescue that runs
+    # out of inference budget before it writes anything.
+    if not str(chosen["text"]).strip():
+        chosen = {
+            "text": _evidence_abstention(language, channel_profile),
+            "citation_refused": False,
+            "portal_claim_refused": False,
+            "section_fallback": False,
+            "graduation_fallback": False,
+            "internal_sanitized": False,
+            "policy_uncertainty_failed": False,
+        }
+        evidence_validation_outcome = "abstained"
+        grounding_refused = True
+
+    answer = str(chosen["text"])
+    citation_refused = bool(chosen["citation_refused"])
+    portal_claim_refused = bool(chosen["portal_claim_refused"])
+    section_safe_fallback_used = section_safe_fallback_used or bool(chosen["section_fallback"])
+    graduation_safe_fallback_used = graduation_safe_fallback_used or bool(
+        chosen["graduation_fallback"]
+    )
+    internal_output_sanitized = internal_output_sanitized or bool(chosen["internal_sanitized"])
+    if grounding_refused:
+        presentation = None
 
     policy_required, grounding = _policy_grounding(clean_question, local_results)
     cited_policy_ids = [
@@ -4172,6 +5222,8 @@ def answer_student_advisor_v2(
         "presentation": presentation,
         "agent": {
             "version": "student-v2",
+            "prompt_version": STUDENT_V2_PROMPT_VERSION,
+            "model_revision": answer_model_revision,
             "answer_style": answer_style,
             "loop_used": True,
             "iterations": iterations,
@@ -4181,6 +5233,7 @@ def answer_student_advisor_v2(
             "policy_prefetched": policy_prefetched,
             "policy_grounding": grounding,
             "citation_refused": citation_refused,
+            "grounding_refused": grounding_refused,
             "portal_claim_refused": portal_claim_refused,
             "tool_turn_error": tool_turn_error,
             "fallback_seeded": fallback_seeded,
@@ -4211,6 +5264,25 @@ def answer_student_advisor_v2(
             "internal_output_reprompted": internal_output_reprompted,
             "internal_output_sanitized": internal_output_sanitized,
             "constraint_input_refused": constraint_input_refused,
+            "evidence_tool_reprompted": evidence_tool_reprompted,
+            "evidence_validation_outcome": evidence_validation_outcome,
+            "evidence_validation_repair_attempted": evidence_validation_repair_attempted,
+            "evidence_validation_repair_error": evidence_validation_repair_error,
+            "inference_calls": inference_calls,
+            "inference_ceiling": inference_ceiling,
+            "evidence_validation_violations": evidence_validation_initial,
+            "evidence_validation_violations_after_repair": (evidence_validation_after_repair),
+            "evidence_audit": build_evidence_audit(
+                provider_evidence=provider_evidence_for_audit,
+                validation_outcome=evidence_validation_outcome,
+                violations=evidence_validation_initial,
+                violations_after_repair=evidence_validation_after_repair,
+                repair_attempted=evidence_validation_repair_attempted,
+                inference_calls=inference_calls,
+                prompt_tokens=int(usage.as_dict().get("prompt_tokens") or 0),
+                completion_tokens=int(usage.as_dict().get("completion_tokens") or 0),
+                turn_ms=int((time.monotonic() - turn_started) * 1000),
+            ),
             "read_only": True,
             "portal_action": "student_manual_only",
         },
@@ -4228,6 +5300,7 @@ def answer_student_advisor(**kwargs: Any) -> dict[str, Any]:
 
     legacy_kwargs = dict(kwargs)
     legacy_kwargs.pop("channel_profile", None)
+    legacy_kwargs.pop("prior_presentation", None)
     return answer_virtual_advisor(**legacy_kwargs)
 
 

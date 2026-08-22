@@ -949,12 +949,20 @@ def test_an_arabic_indic_identifier_does_not_slip_past_the_gate(roster) -> None:
 @override_settings(LLM_BACKEND="local")
 def test_a_clean_answer_is_never_touched(roster) -> None:
     """The gate must not fire on ordinary prose. Course codes, credit hours,
-    times, pages and academic years all contain digits and none is an identity."""
+    pages and academic years all contain digits and none is an identity.
+
+    The original fixture also asserted «الأحد 09:00» beside the course code -
+    a meeting-time claim with zero schedule evidence in the turn, which is the
+    exact shape of the audited fabricated-timetable failure.  The evidence
+    postconditions now challenge that on this path too, so the identity-gate
+    assertion keeps every digit shape EXCEPT the ungrounded meeting time, and
+    a companion test below pins the new behaviour explicitly.
+    """
     _seed_courses()
-    clean = "مقرر AI221 بثلاث ساعات، الأحد 09:00، والحد 19 ساعة معتمدة، صفحة 28."
+    clean = "مقرر AI221 بثلاث ساعات، والحد 19 ساعة معتمدة، صفحة 28."
     client = _ScriptedAnswers([clean])
     payload = va.answer_virtual_advisor(
-        question="وش عندي بكرة الأحد؟",
+        question="كم ساعة مقرر AI221؟",
         principal=_principal(),
         academic_year=1448,
         term=1,
@@ -962,6 +970,27 @@ def test_a_clean_answer_is_never_touched(roster) -> None:
     )
     assert payload["answer"] == clean
     assert payload["agent"].get("output_violations") is None
+
+
+def test_an_ungrounded_meeting_time_is_challenged_on_the_legacy_path_too(roster) -> None:
+    """A schedule claim without schedule evidence no longer ships from legacy.
+
+    Any environment without the V2 flag - a preview, a rollback - runs this
+    path, and it used to skip the evidence postconditions entirely because
+    check_answer was called without question=.  That silent bypass is how the
+    audited fabrications would return on the next rollback.
+    """
+    _seed_courses()
+    fabricated = "مقرر AI221 بثلاث ساعات، الأحد 09:00، والحد 19 ساعة معتمدة."
+    client = _ScriptedAnswers([fabricated, fabricated])
+    payload = va.answer_virtual_advisor(
+        question="وش عندي بكرة الأحد؟",
+        principal=_principal(),
+        academic_year=1448,
+        term=1,
+        client=client,
+    )
+    assert payload["answer"] != fabricated
 
 
 # ── 6. the factory ───────────────────────────────────────────────
@@ -1088,3 +1117,28 @@ def test_a_prefill_IS_sent_to_a_provider_that_accepts_one(roster) -> None:
         client=Recording([], backend="local"),
     )
     assert seen and seen[0] is not None
+
+
+def test_a_staff_grounding_refusal_does_not_tell_the_adviser_to_ask_the_adviser(
+    roster,
+) -> None:
+    """The staff console's reader IS an adviser.
+
+    The legacy path's evidence postconditions now run for staff turns too, and
+    the original refusal text told the reader to «راجع مرشدك الأكاديمي» - a
+    hand-off to themselves.  Staff refusals point at the dedicated screens
+    instead.  This is also the first test that arms the postcondition battery
+    in staff mode at all.
+    """
+    _seed_courses()
+    fabricated = "محاضرة AI221 للطالب يوم الأحد الساعة 09:00."
+    client = _ScriptedAnswers([fabricated, fabricated])
+    payload = va.answer_virtual_advisor(
+        question="متى محاضرة AI221 لطالبي؟",
+        principal=AdvisorPrincipal(role=ROLE_ADVISOR, student_id=MINE, advisor_id="A100"),
+        academic_year=1448,
+        term=1,
+        client=client,
+    )
+    assert payload["answer"] != fabricated
+    assert "مرشدك الأكاديمي" not in payload["answer"]

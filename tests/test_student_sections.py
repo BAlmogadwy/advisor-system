@@ -178,7 +178,7 @@ def test_gender_section_filter_restricts_to_student_cohort() -> None:
     female = Student.objects.create(
         student_id=700002, registration_no="700002", name="F", program="CS", section="F"
     )
-    for sec in ("M5", "M6", "F1", "F2", "ONLINE1"):
+    for sec in ("M5", "M6", "F1", "F2", "YM4", "YF4", "ONLINE1"):
         TermSection.objects.create(
             course_code="CS999", course_number="", course_key="CS999", section=sec
         )
@@ -193,6 +193,8 @@ def test_gender_section_filter_restricts_to_student_cohort() -> None:
     # pure helpers
     assert section_gender("M5") == "M"
     assert section_gender("F1") == "F"
+    assert section_gender("YM4") == "OTHER_BRANCH"
+    assert section_gender("YF4") == "OTHER_BRANCH"
     assert section_gender("ONLINE1") == ""  # ungendered
     assert student_gender(male.student_id) == "M"
     assert student_gender(female.student_id) == "F"
@@ -202,5 +204,56 @@ def test_gender_section_filter_restricts_to_student_cohort() -> None:
     assert secs("M") == {"M5", "M6", "ONLINE1"}
     # a female student sees only F* sections (+ ungendered), never M*
     assert secs("F") == {"F1", "F2", "ONLINE1"}
-    # unknown/blank gender => no restriction (fail open, never hide everything)
+    # A staff/no-student catalogue may see both local cohorts, but never the other
+    # branch. An invalid explicit cohort fails closed.
     assert secs("") == {"M5", "M6", "F1", "F2", "ONLINE1"}
+    assert secs("X") == set()
+
+
+def test_student_section_eligibility_refuses_unknown_student_and_other_branch() -> None:
+    from core.services.student_sections import (
+        UnknownStudentGender,
+        section_is_available_to_student,
+    )
+
+    male = Student.objects.create(
+        student_id=700003,
+        registration_no="700003",
+        name="M",
+        program="CS",
+        section="M",
+    )
+    other_branch = TermSection.objects.create(
+        course_code="CS999",
+        course_number="",
+        course_key="CS999",
+        section="YM4",
+    )
+
+    # Other-branch rejection occurs before programme membership can make the row
+    # eligible, and an unknown student's cohort is never guessed.
+    assert not section_is_available_to_student(other_branch, student_id=male.student_id)
+    with pytest.raises(UnknownStudentGender):
+        section_is_available_to_student(other_branch, student_id=799999)
+
+
+def test_section_label_normalisers_agree_everywhere():
+    """The checker's local copy and the canonical helper must never drift.
+
+    answer_consistency deliberately avoids importing Django modules, so it
+    carries a byte-for-byte local copy of this rule; this parity test is what
+    makes that a copy rather than a fork.  The corpus covers the " M1" spacing
+    class from issue #54 and the F01 leading-zero class from the production
+    audit - the zero must SURVIVE normalisation, because F01 was an invention
+    to flag, not a spelling of F1 to forgive.
+    """
+    from core.services.answer_consistency import _normalise_section_label
+    from core.services.student_sections import normalize_section_label
+
+    corpus = [" M1", "M 1", "m1", "F01", " f01 ", "YM4", " ym 4", "", None, "ONLINE"]
+    for raw in corpus:
+        assert normalize_section_label(raw) == _normalise_section_label(raw), raw
+
+    assert normalize_section_label(" M1") == "M1"
+    assert normalize_section_label("F01") == "F01"
+    assert normalize_section_label("F01") != normalize_section_label("F1")

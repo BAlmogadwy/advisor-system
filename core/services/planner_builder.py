@@ -249,10 +249,13 @@ def _catalog_for_courses(
     # value came from a student profile and must fail closed.
     if program is not None:
         qs = filter_sections_for_program(qs, program)
-    if gender:
-        # Gender-segregated: only schedule the student into their own cohort's
-        # sections (plus any ungendered section).
-        qs = qs.filter(gender_section_filter(gender))
+    # Always applied, including for a staff build with no student in scope.
+    # gender_section_filter's blank branch exists precisely to exclude the
+    # other branch's YM/YF sections from an unscoped catalogue; skipping the
+    # call entirely made that branch unreachable, so the staff build path went
+    # on offering other-branch sections after every student-facing read had
+    # stopped. A gendered value additionally narrows to the student's cohort.
+    qs = qs.filter(gender_section_filter(gender))
     rows = list(
         qs.order_by("course_code", "course_number", "section").values_list(
             "id",

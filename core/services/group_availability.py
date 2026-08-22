@@ -176,6 +176,12 @@ def _load_meetings_by_student(
             academic_year=str(academic_year),
             term=str(term),
         )
+        # The other branch's sections are not this student's commitments. Stored
+        # links to them survive from earlier scrapes, and without this filter a
+        # student whose timetable screen shows nothing was still booked solid
+        # here - two screens contradicting each other about the same person.
+        .exclude(term_section__section__istartswith="YM")
+        .exclude(term_section__section__istartswith="YF")
         .select_related("term_section")
         .prefetch_related("term_section__meetings")
     )

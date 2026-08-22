@@ -205,7 +205,11 @@ VIRTUAL_ADVISOR_TOOL_TURN_TIMEOUT_SECONDS = float(
 # Student Advisor V2: one read-only academic agent, with no timetable, section,
 # registration, save, apply, or university-portal mutation capability.  Off until
 # its focused evaluation wins against the current student adviser.
-STUDENT_ADVISOR_V2_ENABLED = os.getenv("STUDENT_ADVISOR_V2_ENABLED", "false").lower() == "true"
+# Default ON: render.yaml already sets this true for the live service, so the
+# default only governs environments WITHOUT the variable - previews, rollbacks,
+# new services - which are exactly where the unguarded legacy path must not
+# silently become the student's adviser again.
+STUDENT_ADVISOR_V2_ENABLED = os.getenv("STUDENT_ADVISOR_V2_ENABLED", "true").lower() == "true"
 STUDENT_ADVISOR_V2_MAX_TOOL_ITERATIONS = int(
     os.getenv("STUDENT_ADVISOR_V2_MAX_TOOL_ITERATIONS", "4")
 )

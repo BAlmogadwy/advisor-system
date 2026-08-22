@@ -48,6 +48,7 @@ from enum import Enum
 from typing import Any
 
 from core.services.llm_backend import LLMPrivacyError
+from core.services.student_sections import is_other_branch_section_label
 
 logger = logging.getLogger(__name__)
 
@@ -261,11 +262,32 @@ def _keep(source: dict[str, Any], *names: str) -> dict[str, Any]:
     return {name: source[name] for name in names if name in source}
 
 
+def _code_list(value: Any, cap: int = 50) -> list[str]:
+    """Element-typed string list - the same discipline the sibling fields get.
+
+    _keep copies values BY REFERENCE, so a list field whitelisted through it
+    would carry dict elements (and whatever a compromised producer put in
+    them) to the provider unfiltered.  Fifty is far above any real payload.
+    """
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if isinstance(item, str)][:cap]
+
+
 def _envelope(result: dict[str, Any]) -> dict[str, Any]:
     """`ok`/`error`/`tool` are control flow, not data. `error` is included
     because the model must know a call failed — the executors' error strings are
     fixed messages about arguments and scope, not about people."""
     return _keep(result, "tool", "ok", "error")
+
+
+def _typed_rows(rows: list[dict[str, Any]], *list_fields: str) -> list[dict[str, Any]]:
+    """Element-type named list fields inside already-whitelisted rows."""
+    for row in rows:
+        for name in list_fields:
+            if name in row:
+                row[name] = _code_list(row[name])
+    return rows
 
 
 def _course_rows(rows: Any, *fields: str) -> list[dict[str, Any]]:
@@ -351,6 +373,7 @@ _COURSE_REPLACEMENT_PUBLIC_LIMITATIONS = frozenset(
         "Capacity is deliberately ignored because the snapshot does not reserve a seat. No result proves a live seat.",
         "This is read-only planning. It does not register, drop, replace, or save any course or timetable.",
         "A clash-free result does not establish registration permission, equivalence, or an approved exception.",
+        "Mapped elective aliases that fulfil the same programme requirement are not an academic course replacement.",
     }
 )
 
@@ -427,25 +450,59 @@ def _project_lookup_course(result: dict[str, Any], _: RemoteIdentityMap) -> dict
     keeps that true when somebody adds `created_by` or `last_edited_by`."""
     out = _envelope(result)
     out.update(_keep(result, "query", "match_count"))
-    out["courses"] = _course_rows(
-        result.get("courses"), "course_code", "course_name", "credit_hours", "programs"
+    out["courses"] = _typed_rows(
+        _course_rows(
+            result.get("courses"),
+            "course_code",
+            "course_name",
+            "credit_hours",
+            "programs",
+            "fulfills_elective_slots",
+        ),
+        "programs",
+        "fulfills_elective_slots",
     )
     return out
 
 
 def _project_course_prerequisites(result: dict[str, Any], _: RemoteIdentityMap) -> dict[str, Any]:
     out = _envelope(result)
-    out.update(_keep(result, "course_code", "note", "is_elective_placeholder"))
-    out["options"] = _course_rows(
-        result.get("options"), "course_code", "course_name", "credit_hours", "prerequisites"
+    out.update(
+        _keep(
+            result,
+            "course_code",
+            "note",
+            "is_elective_placeholder",
+            "is_concrete_elective",
+            "academic_year",
+            "term",
+        )
+    )
+    out["options"] = _typed_rows(
+        _course_rows(
+            result.get("options"), "course_code", "course_name", "credit_hours", "prerequisites"
+        ),
+        "prerequisites",
     )
     per_program = result.get("per_program")
     if isinstance(per_program, list):
-        out["per_program"] = [
-            _keep(row, "program", "prerequisites", "course_name", "programme_term", "credit_hours")
-            for row in per_program
-            if isinstance(row, dict)
-        ]
+        out["per_program"] = _typed_rows(
+            [
+                _keep(
+                    row,
+                    "program",
+                    "prerequisites",
+                    "course_name",
+                    "programme_term",
+                    "credit_hours",
+                    "fulfills_elective_slots",
+                )
+                for row in per_program
+                if isinstance(row, dict)
+            ],
+            "prerequisites",
+            "fulfills_elective_slots",
+        )
     return out
 
 
@@ -490,6 +547,13 @@ def _project_my_progress(result: dict[str, Any], _: RemoteIdentityMap) -> dict[s
             "renamed_fields",
             "note",
         )
+    )
+    out["registered_requirement_course_codes"] = _code_list(
+        result.get("registered_requirement_course_codes")
+    )
+    out["expected_plan_course_codes"] = _code_list(result.get("expected_plan_course_codes"))
+    out["expected_plan_requirement_aliases"] = _code_list(
+        result.get("expected_plan_requirement_aliases")
     )
     top = result.get("most_useful_course_to_pass")
     out["most_useful_course_to_pass"] = (
@@ -792,6 +856,7 @@ def _project_why_course_locked(result: dict[str, Any], _: RemoteIdentityMap) -> 
         _keep(
             result,
             "course_code",
+            "requirement_course_code",
             "course_name",
             "status",
             "prerequisites_satisfied",
@@ -805,6 +870,12 @@ def _project_why_course_locked(result: dict[str, Any], _: RemoteIdentityMap) -> 
             "on_prerequisite_chain_of_count",
             "forward_relations_note",
         )
+    )
+    out["registered_evidence_course_codes"] = _code_list(
+        result.get("registered_evidence_course_codes")
+    )
+    out["expected_plan_evidence_course_codes"] = _code_list(
+        result.get("expected_plan_evidence_course_codes")
     )
     out["listed_as_prerequisite_for"] = _course_rows(
         result.get("listed_as_prerequisite_for"),
@@ -830,7 +901,16 @@ def _project_my_plan_by_term(result: dict[str, Any], _: RemoteIdentityMap) -> di
     `missing_prereqs` already live and where the next operator-facing field will.
     """
     out = _envelope(result)
-    out.update(_keep(result, "program"))
+    out.update(
+        _keep(
+            result,
+            "program",
+        )
+    )
+    out["registered_requirement_course_codes"] = _code_list(
+        result.get("registered_requirement_course_codes")
+    )
+    out["expected_plan_course_codes"] = _code_list(result.get("expected_plan_course_codes"))
     terms = result.get("terms")
     if isinstance(terms, list):
         out["terms"] = [
@@ -873,17 +953,27 @@ def _project_recommend_courses(result: dict[str, Any], _: RemoteIdentityMap) -> 
     out["recommendations"] = _course_rows(
         result.get("recommendations"), "course_code", "course_name", "credit_hours", "prerequisites"
     )
-    out["already_in_current_timetable"] = _course_rows(
-        result.get("already_in_current_timetable"),
-        "course_code",
-        "course_name",
-        "credit_hours",
+    out["already_in_current_timetable"] = _typed_rows(
+        _course_rows(
+            result.get("already_in_current_timetable"),
+            "course_code",
+            "course_name",
+            "credit_hours",
+            "match_kind",
+            "evidence_course_codes",
+        ),
+        "evidence_course_codes",
     )
-    out["already_in_expected_plan"] = _course_rows(
-        result.get("already_in_expected_plan"),
-        "course_code",
-        "course_name",
-        "credit_hours",
+    out["already_in_expected_plan"] = _typed_rows(
+        _course_rows(
+            result.get("already_in_expected_plan"),
+            "course_code",
+            "course_name",
+            "credit_hours",
+            "match_kind",
+            "evidence_course_codes",
+        ),
+        "evidence_course_codes",
     )
     return out
 
@@ -922,6 +1012,7 @@ def _project_course_choice_comparison(
         row = _keep(
             raw,
             "course_code",
+            "requirement_course_code",
             "course_name",
             "credit_hours",
             "kind",
@@ -964,7 +1055,7 @@ def _project_course_choice_comparison(
         row["timetable"]["baseline_sections"] = [
             str(section)
             for section in raw_timetable.get("baseline_sections") or []
-            if isinstance(section, str)
+            if isinstance(section, str) and not is_other_branch_section_label(section)
         ]
         graduation = raw.get("graduation") or {}
         row["graduation"] = _keep(
@@ -1042,11 +1133,22 @@ def _project_feasible_course_replacements(
             "blockers_improved",
             "blockers_introduced",
             "status",
+            "reason_code",
+            "requirement_course_codes",
         )
-        for key in ("blockers_resolved", "blockers_improved", "blockers_introduced"):
+        for key in (
+            "blockers_resolved",
+            "blockers_improved",
+            "blockers_introduced",
+            # Same discipline as its three neighbours; while untyped, a dict
+            # smuggled into this list crossed the boundary by reference.
+            "requirement_course_codes",
+        ):
             projected[key] = [
                 str(code) for code in projected.get(key) or [] if isinstance(code, str)
             ][:50]
+        if not isinstance(projected.get("reason_code"), str):
+            projected.pop("reason_code", None)
         return projected
 
     def option(value: dict[str, Any]) -> dict[str, Any]:
@@ -1076,12 +1178,12 @@ def _project_feasible_course_replacements(
                 ],
             }
             for row in value.get("complete_sections") or []
-            if isinstance(row, dict)
+            if isinstance(row, dict) and not is_other_branch_section_label(row.get("section"))
         ]
         projected["meetings"] = [
             _keep(row, "course_code", "section", "day", "start", "end")
             for row in value.get("meetings") or []
-            if isinstance(row, dict)
+            if isinstance(row, dict) and not is_other_branch_section_label(row.get("section"))
         ]
         return projected
 
@@ -1172,6 +1274,8 @@ def _project_my_clash_free_sections(result: dict[str, Any], _: RemoteIdentityMap
         for raw in rows:
             if not isinstance(raw, dict):
                 continue
+            if is_other_branch_section_label(raw.get("section")):
+                continue
             row = _keep(
                 raw,
                 "section",
@@ -1219,6 +1323,20 @@ def _project_my_clash_free_sections(result: dict[str, Any], _: RemoteIdentityMap
         )
         course["clash_free"] = section_rows(raw.get("clash_free"), include_conflicts=False)
         course["clashing"] = section_rows(raw.get("clashing"), include_conflicts=True)
+        if isinstance(raw.get("indeterminate"), list):
+            course["indeterminate"] = section_rows(
+                raw.get("indeterminate"), include_conflicts=False
+            )
+        for section_list_field in (
+            "currently_registered_sections",
+            "expected_plan_sections",
+            "baseline_sections",
+        ):
+            values = course.get(section_list_field)
+            if isinstance(values, list):
+                course[section_list_field] = [
+                    value for value in values if not is_other_branch_section_label(value)
+                ]
         out["courses"].append(course)
     sections = result.get("sections")
     if isinstance(sections, list):
@@ -1245,7 +1363,7 @@ def _project_my_clash_free_sections(result: dict[str, Any], _: RemoteIdentityMap
                 ],
             }
             for row in sections
-            if isinstance(row, dict)
+            if isinstance(row, dict) and not is_other_branch_section_label(row.get("section"))
         ]
     return out
 
@@ -1280,6 +1398,8 @@ def _project_build_my_timetable(result: dict[str, Any], _: RemoteIdentityMap) ->
             "baseline_kind",
             "student_requested_courses",
             "system_recommended_courses",
+            "system_recommendations_suppressed_registered",
+            "system_recommendations_suppressed_expected",
             "retained_sections",
             "new_sections",
             "fixed_sections",
@@ -1293,6 +1413,23 @@ def _project_build_my_timetable(result: dict[str, Any], _: RemoteIdentityMap) ->
             "tool",
         )
     )
+    for field_name in ("retained_sections", "new_sections", "fixed_sections"):
+        rows = out.get(field_name)
+        if isinstance(rows, list):
+            out[field_name] = [
+                row
+                for row in rows
+                if isinstance(row, dict) and not is_other_branch_section_label(row.get("section"))
+            ]
+    replacements = out.get("section_replacements")
+    if isinstance(replacements, list):
+        out["section_replacements"] = [
+            row
+            for row in replacements
+            if isinstance(row, dict)
+            and not is_other_branch_section_label(row.get("from_section"))
+            and not is_other_branch_section_label(row.get("to_section"))
+        ]
     return out
 
 
@@ -1309,6 +1446,8 @@ def _project_build_timetable_proposal(
             "baseline_kind",
             "student_requested_courses",
             "system_recommended_courses",
+            "system_recommendations_suppressed_registered",
+            "system_recommendations_suppressed_expected",
             "baseline_credit_hours",
             "current_credit_hours",
             "expected_plan_credit_hours",
@@ -1347,6 +1486,7 @@ def _project_build_timetable_proposal(
             if isinstance(row, dict)
             and str(row.get("course_code") or "").strip()
             and str(row.get("section_label") or row.get("section") or "").strip()
+            and not is_other_branch_section_label(row.get("section_label") or row.get("section"))
         ]
 
     failures = result.get("constraint_failures")
@@ -1354,7 +1494,7 @@ def _project_build_timetable_proposal(
         out["constraint_failures"] = [
             _keep(row, "course_code", "section_label", "reason")
             for row in failures[:20]
-            if isinstance(row, dict)
+            if isinstance(row, dict) and not is_other_branch_section_label(row.get("section_label"))
         ]
 
     def safe_sections(value: Any) -> list[dict[str, Any]]:
@@ -1366,7 +1506,7 @@ def _project_build_timetable_proposal(
                 "meetings": [str(item) for item in (row.get("meetings") or [])],
             }
             for row in value
-            if isinstance(row, dict)
+            if isinstance(row, dict) and not is_other_branch_section_label(row.get("section"))
         ]
 
     for section_field in ("baseline_sections", "current_sections", "expected_plan_sections"):
@@ -1395,12 +1535,12 @@ def _project_build_timetable_proposal(
             safe["courses"] = [
                 _keep(row, "course_code", "course_name", "section", "credits")
                 for row in (alternative.get("courses") or [])
-                if isinstance(row, dict)
+                if isinstance(row, dict) and not is_other_branch_section_label(row.get("section"))
             ]
             safe["meetings"] = [
                 _keep(row, "course_code", "course_name", "section", "day", "start", "end")
                 for row in (alternative.get("meetings") or [])
-                if isinstance(row, dict)
+                if isinstance(row, dict) and not is_other_branch_section_label(row.get("section"))
             ]
             safe["unplaced_courses"] = [
                 _keep(row, "course_code", "course_name", "reason_code", "reason")
@@ -1453,7 +1593,51 @@ def _project_my_timetable(result: dict[str, Any], _: RemoteIdentityMap) -> dict[
                 "room",
             )
             for m in meetings
-            if isinstance(m, dict)
+            if isinstance(m, dict) and not is_other_branch_section_label(m.get("section"))
+        ]
+    registrations = result.get("registrations")
+    if isinstance(registrations, list):
+        # Registration identity is the authoritative course list.  Meeting rows
+        # are deliberately separate because a valid registration can have no
+        # recorded time yet; dropping this list made the remote model (and the
+        # post-answer validator) believe an unscheduled registered course did not
+        # exist at all.
+        out["registrations"] = [
+            _keep(
+                row,
+                "course_code",
+                "course_name",
+                "section",
+                "credits",
+                "meeting_count",
+                "scheduled",
+            )
+            for row in registrations
+            if isinstance(row, dict) and not is_other_branch_section_label(row.get("section"))
+        ]
+        expected = (
+            bool(out.get("is_expected_plan"))
+            or str(out.get("schedule_kind") or "").upper() == "EXPECTED_PLAN"
+        )
+        count_field = "expected_course_count" if expected else "registered_course_count"
+        credit_field = "expected_credit_hours" if expected else "registered_credit_hours"
+        out[count_field] = len(out["registrations"])
+        registration_credits = [
+            row.get("credits") for row in out["registrations"] if row.get("credits") is not None
+        ]
+        if len(registration_credits) == len(out["registrations"]):
+            out[credit_field] = sum(registration_credits)
+    courses_without_a_time = result.get("courses_without_a_time")
+    if isinstance(courses_without_a_time, list):
+        allowed_unscheduled = {
+            str(row.get("course_code") or "").strip().upper()
+            for row in out.get("registrations") or []
+            if isinstance(row, dict) and not row.get("scheduled")
+        }
+        out["courses_without_a_time"] = [
+            str(code).strip().upper()
+            for code in courses_without_a_time
+            if str(code).strip().upper() in allowed_unscheduled
         ]
     return out
 
@@ -1623,8 +1807,20 @@ def _project_get_student_context(
     failed = evidence.get("failed") if isinstance(evidence, dict) else None
     failed_results = evidence.get("failed_results") if isinstance(evidence, dict) else None
     projected_evidence: dict[str, Any] = {
-        "passed": evidence.get("passed") if isinstance(evidence.get("passed"), list) else [],
-        "studying": evidence.get("studying") if isinstance(evidence.get("studying"), list) else [],
+        # _code_list element-types every code list: the container check alone
+        # copied whatever the elements were, by reference, to the provider.
+        "passed": _code_list(evidence.get("passed"), cap=200),
+        "studying": _code_list(evidence.get("studying"), cap=200),
+        "registered_requirement_course_codes": _code_list(
+            evidence.get("registered_requirement_course_codes")
+        ),
+        "registered_or_equivalent_course_codes": _code_list(
+            evidence.get("registered_or_equivalent_course_codes"), cap=200
+        ),
+        "expected_plan_course_codes": _code_list(evidence.get("expected_plan_course_codes")),
+        "expected_plan_requirement_aliases": _code_list(
+            evidence.get("expected_plan_requirement_aliases")
+        ),
         "failed": [code for code in failed if isinstance(code, str)]
         if isinstance(failed, list)
         else [],
@@ -1657,7 +1853,12 @@ def _project_get_student_context(
                 "registered_credit_hours",
             ),
             "registrations": _course_rows(
-                registrations.get("registrations"),
+                [
+                    row
+                    for row in (registrations.get("registrations") or [])
+                    if isinstance(row, dict)
+                    and not is_other_branch_section_label(row.get("section"))
+                ],
                 "course_code",
                 "course_name",
                 "section",
@@ -1708,6 +1909,13 @@ def _project_get_student_context(
             "credit_hours",
             "prerequisites",
         ),
+        "recommendation_suppression": _keep(
+            context.get("recommendation_suppression")
+            if isinstance(context.get("recommendation_suppression"), dict)
+            else {},
+            "already_registered_or_equivalent",
+            "already_expected_or_equivalent",
+        ),
         "recommendation_policy": projected_policy,
         "limits": context.get("limits") if isinstance(context.get("limits"), dict) else {},
     }
@@ -1737,6 +1945,61 @@ def _project_find_students(result: dict[str, Any], identities: RemoteIdentityMap
             if isinstance(row, dict)
         ]
     return out
+
+
+def project_prior_presentation(presentation: Any) -> dict[str, Any]:
+    """The previous turn's card, reduced to what a re-rendering needs.
+
+    A follow-up such as «حط أسماء المقررات لا الرموز» must be answered from the
+    card the student already saw, or the model invents the names. That needs the
+    code-to-name map and the plan term of each node - nothing else.
+
+    ``statusOf`` is the student's academic record: which courses they have
+    passed, are studying, or have still to take, over every node in the plan.
+    ``_project_graduation_progress`` deliberately withholds it, sending only
+    aggregate counts, so echoing it back here on every later turn would hand the
+    provider through the side door precisely what the front door refuses.
+    ``items`` and ``extraNodes`` describe the whole plan graph and no
+    model-facing consumer reads them.
+    """
+    if not isinstance(presentation, dict):
+        return {}
+    kept = _keep(
+        presentation,
+        "kind",
+        "program",
+        "planning_term",
+        "planning_baseline_kind",
+        "planning_baseline_credits",
+        "simulation_completed",
+        "estimated_terms_including_planning_baseline",
+        "lower_bound_terms_including_planning_baseline",
+        "max_credits_per_term",
+        "mode",
+        "baseline_kind",
+        "current_credit_hours",
+        "expected_plan_credit_hours",
+    )
+    graph = presentation.get("graph")
+    if isinstance(graph, dict):
+        name_of = graph.get("nameOf")
+        term_of = graph.get("termOf")
+        kept["graph"] = {
+            "nameOf": (
+                {str(k): str(v) for k, v in name_of.items()} if isinstance(name_of, dict) else {}
+            ),
+            "termOf": (
+                {str(k): v for k, v in term_of.items() if isinstance(v, int)}
+                if isinstance(term_of, dict)
+                else {}
+            ),
+        }
+    for key in ("current_sections", "expected_plan_sections", "rows"):
+        if isinstance(presentation.get(key), list):
+            kept[key] = _course_rows(
+                presentation.get(key), "course_code", "course_name", "section", "credits"
+            )
+    return kept
 
 
 PROJECTORS = {

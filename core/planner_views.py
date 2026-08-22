@@ -464,10 +464,12 @@ def planner_sections_catalog_view(request: HttpRequest) -> JsonResponse:
         # (M/F) sections. Gender is derived server-side from Student.section.
         #
         # When a student IS named their cohort must resolve, or we refuse: falling
-        # back to "" produced an all-pass filter and showed the other cohort. 722 of
-        # the 3,807 ids in StudentTermSection have no Student row, so this is not a
-        # theoretical branch. With no student named, all-pass is the intended
-        # behaviour — that is staff browsing the whole catalogue.
+        # back to "" produced an all-pass filter and showed the other cohort.
+        # (Historically 722 of 3,807 StudentTermSection ids had no Student row;
+        # today's data has none - this refusal is why that stayed harmless.)
+        # With no student named, the blank-gender filter still excludes the
+        # other branch's YM/YF sections - that is staff browsing the local
+        # catalogue, not an all-pass.
         if student_id:
             try:
                 gender = student_gender_strict(student_id)

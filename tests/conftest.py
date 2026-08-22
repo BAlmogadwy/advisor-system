@@ -11,6 +11,22 @@ def _disable_otp_response_floor_in_tests(settings) -> None:  # noqa: PT004
 
 
 @pytest.fixture(autouse=True)
+def _reset_course_catalogue_cache() -> None:  # noqa: PT004
+    """The existence floor's catalogue is a process-global TTL cache.
+
+    Without this, one test's warm read on an empty database disabled the
+    floor for every later test in the same process, and rows created inside a
+    rolled-back test transaction leaked into other tests' catalogues - proven
+    order-dependence.  Every test starts cold.
+    """
+    from core.services.course_catalogue import invalidate_cache
+
+    invalidate_cache()
+    yield
+    invalidate_cache()
+
+
+@pytest.fixture(autouse=True)
 def _reset_rbac_flags() -> None:  # noqa: PT004
     """Reset module-level flags so ensure_role_groups() re-creates groups after
     each test's transaction rollback."""

@@ -1674,9 +1674,9 @@ class AdvisorMessage(models.Model):
     """One turn: its student-visible body and an optional safe view model.
 
     Raw tool results and judge traces are deliberately absent: they name database
-    tables, quote row counts and cohort statistics, and belong in an operator
-    audit record rather than in something rendered to the person who asked. The
-    presentation field accepts only a server-whitelisted student display snapshot.
+    tables, quote row counts and cohort statistics. ``evidence_audit`` retains only
+    redacted hashes and closed outcome categories, and the presentation field
+    accepts only a server-whitelisted student display snapshot.
     """
 
     ROLE_STUDENT = "STUDENT"
@@ -1729,6 +1729,11 @@ class AdvisorMessage(models.Model):
     model_revision = models.CharField(max_length=120, blank=True, default="")
     route = models.CharField(max_length=24, choices=ROUTE_CHOICES, blank=True, default="")
     prompt_version = models.CharField(max_length=40, blank=True, default="")
+
+    #: Redacted operator provenance only. This never contains the prompt, answer,
+    #: tool arguments or tool results: only closed categories and sha256 hashes of
+    #: the typed provider-visible evidence. Old and non-assistant rows are ``{}``.
+    evidence_audit = models.JSONField(default=dict, blank=True)
 
     # Set by the client per send. A retry after a dropped response reuses it, so a
     # network failure cannot turn one question into two stored turns.

@@ -685,7 +685,7 @@ def ingest_student_timetable_html(
             )
         )
 
-    replace_student_term_sections(
+    replace_result = replace_student_term_sections(
         student_id,
         year,
         term,
@@ -724,7 +724,8 @@ def ingest_student_timetable_html(
         "unscheduled_registrations": len(
             validated_response.get("unscheduled", []) if validated_response else []
         ),
-        "mapped_sections": len(section_ids),
+        "mapped_sections": int(replace_result.get("inserted") or 0),
+        "excluded_other_branch_sections": int(replace_result.get("excluded_other_branch") or 0),
         "missing_links": len(missing),
         "external_courses_created": len(external_created),
         "external_courses": external_created,

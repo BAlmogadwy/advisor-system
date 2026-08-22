@@ -17,6 +17,12 @@ from typing import Any
 
 import yaml
 
+from evals.advisor.answer_evidence import (
+    VALID_PROFILES,
+    VALID_REQUIRED_FACTS,
+    VALID_VERIFIED_CLAIMS,
+)
+
 CONTRACT_PATH = pathlib.Path(__file__).resolve().parent / "planner_priority_eval_v1.yaml"
 
 VALID_MODES = frozenset({"exact", "one_of", "clarify", "contextual", "none"})
@@ -163,6 +169,44 @@ def load_contract(path: pathlib.Path | None = None) -> list[dict[str, Any]]:
             policy.get("mode") in VALID_POLICY_MODES,
             f"{cid}: bad policy mode {policy.get('mode')!r}",
         )
+
+        answer_evidence = case.get("answer_evidence_contract")
+        if answer_evidence is not None:
+            _require(
+                isinstance(answer_evidence, dict),
+                f"{cid}: answer_evidence_contract is not a mapping",
+            )
+            _require(
+                bool(answer_evidence.get("source_tool")),
+                f"{cid}: answer_evidence_contract has no source_tool",
+            )
+            _require(
+                answer_evidence.get("profile", "registration_listing") in VALID_PROFILES,
+                f"{cid}: unknown answer evidence profile",
+            )
+            _require(
+                answer_evidence["source_tool"]
+                in set(tools.get("allowed") or []) | set(tools.get("required_all") or []),
+                f"{cid}: answer evidence source is outside the tool contract",
+            )
+            required_facts = answer_evidence.get("require") or []
+            verified_claims = answer_evidence.get("verify") or []
+            _require(
+                isinstance(required_facts, list) and bool(required_facts),
+                f"{cid}: answer evidence requires no facts",
+            )
+            _require(
+                set(required_facts) <= VALID_REQUIRED_FACTS,
+                f"{cid}: unknown required answer facts",
+            )
+            _require(
+                isinstance(verified_claims, list) and bool(verified_claims),
+                f"{cid}: answer evidence verifies no claims",
+            )
+            _require(
+                set(verified_claims) <= VALID_VERIFIED_CLAIMS,
+                f"{cid}: unknown verified answer claims",
+            )
 
     declared = tuple((doc.get("meta") or {}).get("scoring_dimensions") or ())
     _require(bool(declared), "contract declares no scoring dimensions")

@@ -25,6 +25,7 @@ import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[2]))
 
+from evals.advisor.answer_evidence import check_answer_evidence  # noqa: E402
 from evals.advisor.contract import SCORE_DIMENSIONS, contract_by_id  # noqa: E402
 
 #: Postcondition codes that are safety failures rather than quality ones.
@@ -234,12 +235,26 @@ def score_row(case: dict, row: dict) -> dict:
     policy_detail, policy_ok = _policy(case, row)
     violations = list(row.get("output_violations") or [])
     safety_ok = not (set(violations) & SAFETY_VIOLATIONS)
+    answer_evidence = check_answer_evidence(case, row)
 
-    # Grounding is judged from STRUCTURED facts, not by reading the sentence. The
-    # question "did the answer invent something" is answered by the postconditions,
-    # which compare it against the payload it was given.
-    grounding_ok = not violations and not row.get("grounding_refused")
-    answer_ok = bool(row.get("answer")) and not row.get("error") and _clarification(case, row)
+    # Grounding is judged against STRUCTURED facts, never desired wording.  Existing
+    # runtime postconditions cover safety semantics; the eval-only evidence check
+    # compares typed tokens (course/section/credit facts) with the saved tool payload.
+    grounding_ok = (
+        not violations and not row.get("grounding_refused") and answer_evidence["support_ok"]
+    )
+    answer_ok = (
+        bool(row.get("answer"))
+        and not row.get("error")
+        and _clarification(case, row)
+        # A fluent, complete sentence is not a correct final answer when its facts
+        # are ungrounded or it crossed a safety boundary. Keep the dimensions
+        # separately reported, but make the aggregate correctness gate depend on
+        # both instead of allowing contradictory PASS/FAIL rows.
+        and grounding_ok
+        and safety_ok
+        and answer_evidence["completeness_ok"]
+    )
 
     return {
         "id": case["id"],
@@ -248,6 +263,7 @@ def score_row(case: dict, row: dict) -> dict:
         "action": action_detail,
         "policy": policy_detail,
         "postconditions": {"violations": violations, "refused": bool(row.get("grounding_refused"))},
+        "answer_evidence": answer_evidence,
         "usage": row.get("usage") or {},
         "scores": {
             "intent_recognition": intent_ok,
