@@ -7,9 +7,14 @@ compute the PLANNED term before calling the recommender and documents the
 cursor bug as fixed - but the ledger item stayed open, and a stale line
 reference is not evidence either way.  These tests ARE the evidence: they
 assert the correct totals for the two smallest scenarios with known answers.
-If the off-by-one still exists anywhere on the path - the second call site,
-the +1 for the baseline term, the rendering of len(term_plan) - one of these
-goes red and points at it.
+If the off-by-one returns on this path - the loop cursor, the +1 for the
+baseline term, the lower-bound floors - one of these goes red and points at
+it.  Two scope notes, learned in review: the RECOMMENDED_CURRENT_TERM branch
+(the default elsewhere) is guarded by tests/test_student_unlock.py's
+call-argument assertions, not by this file; and the recommender gates
+candidates on programme-term PARITY, so these fixtures are parity-aligned by
+construction - shifting the cohort digits or the calendar term by one changes
+the right answers.
 """
 
 from __future__ import annotations
@@ -107,6 +112,14 @@ def test_a_student_finishing_in_the_baseline_term_needs_zero_additional_terms():
     assert report["simulation_completed"] is True
     assert report["estimated_additional_terms"] == 0
     assert report["estimated_terms_including_planning_baseline"] == 1
+    # The lower bound is a floor on the SAME quantity, and a floor above the
+    # estimate is self-contradictory.  chain_floor used to count the baseline
+    # term's own in-progress courses - the one variant of the audited
+    # off-by-one that was still live, and the branch REAL students hit most:
+    # elective placeholders leave the estimate None, so the surfaces fall
+    # through to exactly these fields.
+    assert report["lower_bound_additional_terms"] == 0
+    assert report["lower_bound_terms_including_planning_baseline"] == 1
 
 
 def test_one_remaining_unregistered_course_needs_exactly_one_future_term():
