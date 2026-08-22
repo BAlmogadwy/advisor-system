@@ -478,8 +478,18 @@ def build_graduation_report(
     plan_total = len(done) + len(remaining)
     passed_credits = sum(int(course.get("credits") or 0) for course in done)
 
+    remaining_after_baseline = [
+        course for course in remaining if course["code"] not in current_codes
+    ]
     chain_floor = max([course["steps"] for course in locked if course["steps"]] or [0])
-    if not chain_floor and remaining:
+    if not chain_floor and remaining_after_baseline:
+        # The floor answers "how many terms BEYOND the baseline can this not go
+        # below".  Flooring on `remaining` counted the baseline term's own
+        # in-progress courses, so a student whose registered term completes the
+        # plan carried a "verified minimum" of one additional term beside an
+        # estimate of zero - a lower bound above the estimate, and one term too
+        # long in exactly the audited P0's wording.  capacity_floor already
+        # excluded the baseline; the two floors now agree about what counts.
         chain_floor = 1
 
     simulation = _simulate_future_terms(
@@ -497,9 +507,6 @@ def build_graduation_report(
         recommender_courses=recommender_courses,
     )
 
-    remaining_after_baseline = [
-        course for course in remaining if course["code"] not in current_codes
-    ]
     credits_after_baseline = sum(
         int(course.get("credits") or 0) for course in remaining_after_baseline
     )
