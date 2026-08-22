@@ -35,6 +35,16 @@ RESTORE_OK C:\...\runtime\release_snapshots\release_candidate_YYYYMMDD_HHMMSS
 3. Run smoke checks (`/health`, login, report summary, key exports).
 4. If failed, stop app, restore snapshot, rerun smoke checks.
 
+## Production web domains
+
+The Render web service accepts the direct Render hostname plus both custom-domain
+forms: `smartacademicadviser.online` and `www.smartacademicadviser.online`.
+Keep all three in `DJANGO_ALLOWED_HOSTS` and their HTTPS origins in
+`CSRF_TRUSTED_ORIGINS`. These exact values are pinned in `render.yaml` and its
+deployment-contract validator so a Blueprint sync cannot restore the old
+Render-only configuration. `TELEGRAM_PUBLIC_BASE_URL` intentionally remains the
+direct Render origin until Telegram is cut over separately.
+
 ## Configure student OTP email with Twilio SendGrid
 
 Student verification email uses SendGrid only. In the Render **web service**:

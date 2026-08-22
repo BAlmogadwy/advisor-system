@@ -31,9 +31,9 @@ services:
       - key: ALLOW_NO_SMTP_PROCESS
         value: "false"
       - key: DJANGO_ALLOWED_HOSTS
-        value: advisor-system-v9zs.onrender.com
+        value: advisor-system-v9zs.onrender.com,smartacademicadviser.online,www.smartacademicadviser.online
       - key: CSRF_TRUSTED_ORIGINS
-        value: https://advisor-system-v9zs.onrender.com
+        value: https://advisor-system-v9zs.onrender.com,https://smartacademicadviser.online,https://www.smartacademicadviser.online
       - key: DATABASE_URL
         fromDatabase:
           name: advisor-system-db

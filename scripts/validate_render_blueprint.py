@@ -31,7 +31,14 @@ EXPECTED_AUTO_DEPLOY_TRIGGER = "checksPass"
 EXPECTED_SERVICE_PLAN = "starter"
 EXPECTED_NUM_INSTANCES = 1
 EXPECTED_PUBLIC_ORIGIN = "https://advisor-system-v9zs.onrender.com"
-EXPECTED_PUBLIC_HOST = "advisor-system-v9zs.onrender.com"
+EXPECTED_DJANGO_ALLOWED_HOSTS = (
+    "advisor-system-v9zs.onrender.com,smartacademicadviser.online,www.smartacademicadviser.online"
+)
+EXPECTED_CSRF_TRUSTED_ORIGINS = (
+    "https://advisor-system-v9zs.onrender.com,"
+    "https://smartacademicadviser.online,"
+    "https://www.smartacademicadviser.online"
+)
 EXPECTED_NO_LEGACY_IMPORT_PATH = str(PurePosixPath("/", "tmp", "advisor-no-legacy-import.sqlite3"))
 EXPECTED_BUILD_COMMAND = "chmod +x build.sh && ./build.sh"
 EXPECTED_PLAYWRIGHT_BROWSERS_PATH = "0"
@@ -79,8 +86,8 @@ WEB_FIXED_ENV_VALUES = {
     "PYTHON_VERSION": EXPECTED_PYTHON_VERSION,
     "PLAYWRIGHT_BROWSERS_PATH": EXPECTED_PLAYWRIGHT_BROWSERS_PATH,
     "ALLOW_NO_SMTP_PROCESS": "false",
-    "DJANGO_ALLOWED_HOSTS": EXPECTED_PUBLIC_HOST,
-    "CSRF_TRUSTED_ORIGINS": EXPECTED_PUBLIC_ORIGIN,
+    "DJANGO_ALLOWED_HOSTS": EXPECTED_DJANGO_ALLOWED_HOSTS,
+    "CSRF_TRUSTED_ORIGINS": EXPECTED_CSRF_TRUSTED_ORIGINS,
     "ADVISOR_DB_PATH": EXPECTED_NO_LEGACY_IMPORT_PATH,
     "SENDGRID_FROM_NAME": "بوابة الطالب",
     "SENDGRID_TIMEOUT_SECONDS": "3",
