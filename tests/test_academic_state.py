@@ -370,3 +370,124 @@ def test_missing_student_or_programme_refuses_instead_of_using_global_metadata()
     student = _student(991_008, programme="")
     with pytest.raises(AcademicStateUnavailable, match="has no programme"):
         build_student_academic_state(student.student_id, "1448", "1")
+
+
+def test_a_mapping_written_for_another_term_or_year_is_not_evidence_for_this_one() -> None:
+    """The mapping is scoped to the exact year AND term, and both must hold.
+
+    Either scoping term could be deleted from the query with every test still
+    green, because no fixture ever put a competing mapping for the SAME
+    placeholder in another term. Without the bound, a term-2 mapping proves a
+    term-1 registration: the slot counts as satisfied by a course the student
+    is not taking this term.
+    """
+    student = _student(991_010, programme="AI")
+    _course("AI1")
+    _requirement(
+        "AI",
+        "AI1",
+        credits=3,
+        name="Programme Elective I",
+        requirement_type="Program Elective",
+        programme_term=7,
+    )
+    this_term = ElectiveCourse.objects.create(
+        course_code="AI463",
+        course_name="This term's option",
+        programme="AI",
+        category="Program Elective",
+        credit_hours=3,
+    )
+    other_term = ElectiveCourse.objects.create(
+        course_code="AI471",
+        course_name="Next term's option",
+        programme="AI",
+        category="Program Elective",
+        credit_hours=3,
+    )
+    other_year = ElectiveCourse.objects.create(
+        course_code="AI472",
+        course_name="Last year's option",
+        programme="AI",
+        category="Program Elective",
+        credit_hours=3,
+    )
+    ElectiveTermMapping.objects.create(
+        academic_year="1448",
+        term=1,
+        programme="AI",
+        placeholder_code="AI1",
+        elective=this_term,
+    )
+    # Same placeholder, different term and different year: neither authorises
+    # anything about 1448/1.
+    ElectiveTermMapping.objects.create(
+        academic_year="1448",
+        term=2,
+        programme="AI",
+        placeholder_code="AI1",
+        elective=other_term,
+    )
+    ElectiveTermMapping.objects.create(
+        academic_year="1447",
+        term=1,
+        programme="AI",
+        placeholder_code="AI1",
+        elective=other_year,
+    )
+
+    state = build_student_academic_state(student.student_id, "1448", "1")
+    slot = state.course("AI1")
+
+    assert slot is not None
+    assert [option.course_code for option in slot.elective_options] == ["AI463"]
+
+    # And a registration in the other term's option does not satisfy this term.
+    _link(student, _section("AI471", "M6"), source="scraper_timetable")
+    state = build_student_academic_state(student.student_id, "1448", "1")
+    slot = state.course("AI1")
+    assert slot is not None
+    assert slot.registration_confirmed_for_requirement is False
+
+
+def test_a_lowercase_mapping_row_still_resolves_the_equivalence() -> None:
+    """The importer's spelling must not decide whether a student is registered.
+
+    The placeholder set beside this lookup is built with program__iexact, but
+    the mapping lookup itself was case-exact against a TextField. A row written
+    as 'ai' matched nothing while the requirement it belongs to matched fine,
+    so the whole equivalence vanished silently - the student's registered
+    elective simply stopped counting, with no error anywhere.
+    """
+    student = _student(991_011, programme="AI")
+    _course("AI1")
+    _requirement(
+        "AI",
+        "AI1",
+        credits=3,
+        name="Programme Elective I",
+        requirement_type="Program Elective",
+        programme_term=7,
+    )
+    elective = ElectiveCourse.objects.create(
+        course_code="AI463",
+        course_name="Natural Language Processing",
+        programme="ai",
+        category="Program Elective",
+        credit_hours=3,
+    )
+    ElectiveTermMapping.objects.create(
+        academic_year="1448",
+        term=1,
+        programme="ai",
+        placeholder_code="ai1",
+        elective=elective,
+    )
+    _link(student, _section("AI463", "M6"), source="scraper_timetable")
+
+    state = build_student_academic_state(student.student_id, "1448", "1")
+    slot = state.course("AI1")
+
+    assert slot is not None
+    assert [option.course_code for option in slot.elective_options] == ["AI463"]
+    assert slot.registration_confirmed_for_requirement is True

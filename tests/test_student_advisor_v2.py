@@ -3927,6 +3927,43 @@ def test_section_listing_evidence_is_inside_the_boundary():
     )
 
 
+def test_a_fallback_that_fails_validation_abstains_rather_than_shipping(monkeypatch):
+    """The last gate before abstention has to be a gate.
+
+    The fallback is server-authored, so it should never violate - but the
+    branch exists exactly for the case where it does, and dropping its
+    violations check was invisible to every test. Without it the fallback ships
+    whatever it produced, and the abstention below it becomes unreachable.
+    """
+    monkeypatch.setattr(
+        "core.services.student_advisor_v2.execute_student_v2_tool",
+        lambda name, arguments, **kwargs: _exact_timetable_result(),
+    )
+    monkeypatch.setattr(
+        "core.services.student_advisor_v2._verified_evidence_fallback",
+        lambda *args, **kwargs: "جدولك يحتوي على ZZ999 في الشعبة W7 الساعة 08:00.",
+    )
+    fabricated = "جدولك يحتوي على AI331 في الشعبة F11."
+    client = RepairClient(
+        _tool_turn("my_timetable", {}),
+        _answer_turn(fabricated),
+        repair=fabricated,
+    )
+
+    result = answer_student_advisor_v2(
+        question="اعرض لي جدولي المسجل حاليًا.",
+        principal=_principal(),
+        academic_year=1448,
+        term=1,
+        llm_client=client,
+    )
+
+    assert result["agent"]["evidence_validation_outcome"] == "abstained"
+    assert "ZZ999" not in result["answer"]
+    assert "W7" not in result["answer"]
+    assert "لم أتمكن" in result["answer"]
+
+
 def test_the_servers_own_graduation_answer_passes_its_own_validator():
     """A deterministic server-authored answer must never fail the checker.
 

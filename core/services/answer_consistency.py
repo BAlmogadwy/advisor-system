@@ -1498,13 +1498,28 @@ _RECOMMENDATION_BUCKET_WORDS: tuple[tuple[str, tuple[str, ...]], ...] = (
     (
         "REGISTERED",
         (
+            # Both agreements. «مقرر» is masculine singular and takes «موجود»,
+            # while the non-human plural «مقررات» takes «موجودة». The adviser
+            # writes both, and with only the feminine listed the whole bucket
+            # check was silently inert for every singular masculine sentence.
             "موجودة أصلا في الجدول المسجل",
             "موجوده اصلا في الجدول المسجل",
+            "موجود أصلا في الجدول المسجل",
+            "موجود اصلا في الجدول المسجل",
             "already in the registered timetable",
             "already registered",
         ),
     ),
-    ("EXPECTED_PLAN", ("موجودة أصلا في الجدول المتوقع", "already in the expected")),
+    (
+        "EXPECTED_PLAN",
+        (
+            "موجودة أصلا في الجدول المتوقع",
+            "موجوده اصلا في الجدول المتوقع",
+            "موجود أصلا في الجدول المتوقع",
+            "موجود اصلا في الجدول المتوقع",
+            "already in the expected",
+        ),
+    ),
     ("RECOMMENDED", _RECOMMENDATION_WORDS),
 )
 

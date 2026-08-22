@@ -12,6 +12,8 @@ from core.services.advisor_evidence_audit import (
     build_evidence_audit,
     evidence_sha256,
     normalise_evidence_audit,
+    normalise_model_revision,
+    normalise_prompt_version,
 )
 from core.services.advisor_principal import AdvisorPrincipal
 from core.services.advisor_turn import CREATED, run_advisor_turn
@@ -298,3 +300,51 @@ def test_old_and_manually_created_rows_have_a_safe_empty_default():
 
     message.refresh_from_db()
     assert message.evidence_audit == {}
+
+
+def test_the_build_side_rejects_a_plausible_snake_case_non_tool():
+    """The whitelist is closed on purpose, and both sides must honour it.
+
+    The module says why: «student_4400000» is a perfectly valid snake-case
+    string and is not a tool name. Only the persistence side was tested, so the
+    build side could be relaxed to a syntactic check - letting an opaque student
+    reference into transient telemetry - with every test still green.
+    """
+    audit = build_evidence_audit(
+        provider_evidence=[
+            ("my_timetable", {"tool": "my_timetable", "ok": True}),
+            ("student_4400000", {"tool": "student_4400000", "ok": True}),
+            ("internal_debug_dump", {"secret": "x"}),
+        ],
+        validation_outcome="passed",
+    )
+
+    assert audit["tool_names"] == ["my_timetable"]
+    assert [row["tool"] for row in audit["evidence_hashes"]] == ["my_timetable"]
+    assert "4400000" not in json.dumps(audit)
+
+
+@pytest.mark.parametrize(
+    "prose",
+    [
+        "جدولك يحتوي على AI331 في الشعبة M6 وقد اجتزت CS111 بتقدير ممتاز",
+        "The student passed MATH101 with 95 and is registered in AI331.",
+        "has spaces and, punctuation!",
+    ],
+)
+def test_the_revision_fields_take_a_token_or_nothing(prose: str):
+    """They are documented as never carrying prose, and nothing checked it.
+
+    Both normalisers could be reduced to truncating passthroughs undetected,
+    which would drop the first 120 characters of an Arabic answer - grades and
+    course codes included - into the audit column, the second academic-record
+    store this module exists to avoid.
+    """
+    assert normalise_model_revision(prose) == ""
+    assert normalise_prompt_version(prose) == ""
+    # A real revision token still survives.
+    assert normalise_model_revision("qwen3.7-plus/2026-08-01") == "qwen3.7-plus/2026-08-01"
+    assert normalise_prompt_version(STUDENT_V2_PROMPT_VERSION) == STUDENT_V2_PROMPT_VERSION
+    # Over-long tokens are refused rather than truncated into something new.
+    assert normalise_prompt_version("v" * 41) == ""
+    assert normalise_model_revision("v" * 121) == ""

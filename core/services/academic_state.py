@@ -28,6 +28,8 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any
 
+from django.db.models import Q
+
 from core.models import (
     Course,
     ElectiveCourse,
@@ -515,12 +517,23 @@ def _load_elective_options(
     }
     if not allowed_placeholders:
         return ()
+    # iexact per variant, not __in. The placeholder set beside this is built
+    # with program__iexact, and these are TextFields holding whatever the
+    # importer wrote: a mapping row spelled 'ai' matched nothing here while the
+    # requirement it belongs to matched fine, silently dropping the whole
+    # equivalence rather than failing where anyone would see it.
+    programme_match = Q()
+    for variant in variants:
+        programme_match |= Q(programme__iexact=variant)
+    placeholder_match = Q()
+    for placeholder in allowed_placeholders:
+        placeholder_match |= Q(placeholder_code__iexact=placeholder)
     rows = (
         ElectiveTermMapping.objects.filter(
-            programme__in=variants,
+            programme_match,
+            placeholder_match,
             academic_year=academic_year,
             term=term_number,
-            placeholder_code__in=allowed_placeholders,
         )
         .select_related("elective")
         .order_by("placeholder_code", "elective__course_code")

@@ -376,3 +376,52 @@ def test_every_reader_of_a_stored_link_agrees_the_other_branch_is_excluded(
     catalogue = _catalog_for_courses("1448", "1", [COURSE_CODE], "", None)
     offered = {str(row["section"]).upper() for row in catalogue.get(COURSE_CODE, [])}
     assert offered == {"M1", "M0", "F1", "F0"}
+
+
+def test_the_baseline_drops_the_other_cohort_and_the_other_branch_independently(
+    branch_section_world: dict[str, Any],
+) -> None:
+    """Two filters, each load-bearing on its own.
+
+    The existing case links only M1/YM4/YF4 for an M student, so the
+    cross-cohort filter never has a local F row to reject, and the
+    other-branch filter is masked by the cross-cohort one - either could be
+    deleted with the suite still green. This pins them separately: an M student
+    linked to the F cohort's own section, and a student whose cohort is blank,
+    where the cross-cohort test short-circuits and the branch rule is the only
+    thing left standing.
+    """
+    sections = branch_section_world["sections"]
+    male = branch_section_world["students"]["M"]
+    for section in (sections["M1"], sections["F1"]):
+        StudentTermSection.objects.create(
+            student_id=male.student_id,
+            academic_year="1448",
+            term="1",
+            term_section=section,
+            source="scraper_timetable",
+        )
+
+    rows = get_student_term_baseline(male.student_id, "1448", "1", snapshot=Snapshot.REGISTERED)
+    assert _section_labels(rows) == {"M1"}
+
+    cohortless = Student.objects.create(
+        student_id=9701903,
+        registration_no="9701903",
+        name="Student with no recorded cohort",
+        program="AI",
+        section="",
+        status="active",
+    )
+    StudentTermSection.objects.create(
+        student_id=cohortless.student_id,
+        academic_year="1448",
+        term="1",
+        term_section=sections["YM4"],
+        source="scraper_timetable",
+    )
+
+    rows = get_student_term_baseline(
+        cohortless.student_id, "1448", "1", snapshot=Snapshot.REGISTERED
+    )
+    assert _section_labels(rows) == set()

@@ -20,6 +20,7 @@ from core.services.answer_consistency import (
     PREREQ_TO_REGISTRATION_LEAP,
     RETAINED_ADD_CONTRADICTION,
     SEAT_CLAIM,
+    UNSUPPORTED_ACADEMIC_FACT,
     UNSUPPORTED_RECOMMENDATION,
     UNSUPPORTED_STUDENT_REQUEST,
     check_answer,
@@ -702,3 +703,75 @@ def test_the_term_being_planned_is_not_a_retained_load() -> None:
     # The term does not shield a real claim sharing the clause.
     assert CREDIT_CAP_CONTRADICTION in _credit("لديك حاليًا 12 ساعة في الفصل 1448/1.")
     assert CREDIT_CAP_CONTRADICTION not in _credit("لديك حاليًا 15 ساعة في الفصل 1448/1.")
+
+
+def test_a_registered_claim_is_not_supported_by_an_expected_plan_row():
+    """REGISTERED and EXPECTED_PLAN are the distinction this module exists for.
+
+    The relation checks compare a claimed schedule kind against the evidence
+    row's own kind, and every part of that comparison was untested: the kind
+    classifier and the kind comparison could both be collapsed to a constant
+    without a single test noticing. A student told they are REGISTERED in a
+    course they have only PLANNED is the original production failure.
+    """
+    expected_row = {
+        "tool": "my_timetable",
+        "ok": True,
+        "schedule_kind": "EXPECTED_PLAN",
+        "registrations": [{"course_code": "AI331", "section": "M6"}],
+    }
+
+    assert UNSUPPORTED_ACADEMIC_FACT in check_answer(
+        "في الجدول المسجل لديك AI331 في الشعبة M6.",
+        tool_results=[expected_row],
+        question="جدولي؟",
+        required_tools=set(),
+    )
+    # The same true row, correctly labelled, must still pass.
+    assert (
+        check_answer(
+            "في الجدول المتوقع لديك AI331 في الشعبة M6.",
+            tool_results=[expected_row],
+            question="جدولي؟",
+            required_tools=set(),
+        )
+        == []
+    )
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    [
+        "المقرر AI433 موجود أصلا في الجدول المسجل لديك.",
+        "المقررات AI433 موجودة أصلا في الجدول المسجل.",
+    ],
+)
+def test_a_recommendation_cannot_be_relabelled_as_an_existing_registration(sentence: str):
+    """Both Arabic agreements, or the check is inert for half the answers.
+
+    «مقرر» is masculine singular and takes «موجود»; the non-human plural
+    «مقررات» takes «موجودة». Only the feminine was listed, so every singular
+    masculine sentence - the ordinary way to write about one course - passed
+    the bucket check untouched.
+    """
+    recommendation = {
+        "tool": "recommend_courses",
+        "ok": True,
+        "recommendation_count": 1,
+        "recommendations": [{"course_code": "AI433", "credit_hours": 3}],
+        "already_in_current_timetable": [{"course_code": "AI331"}],
+    }
+
+    assert UNSUPPORTED_ACADEMIC_FACT in check_answer(
+        sentence, tool_results=[recommendation], question="ماذا أسجل؟", required_tools=set()
+    )
+    # The course that really is already registered keeps its true label.
+    assert (
+        check_answer(
+            "المقرر AI331 موجود أصلا في الجدول المسجل لديك.",
+            tool_results=[recommendation],
+            question="ماذا أسجل؟",
+            required_tools=set(),
+        )
+        == []
+    )
