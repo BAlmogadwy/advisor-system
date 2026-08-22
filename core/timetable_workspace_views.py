@@ -687,6 +687,23 @@ def tw_scenario_slots_update_view(request: HttpRequest, scenario_id: int) -> Jso
 
     lab_slots = payload.get("lab_slot_config")
 
+    # Enforce the prayer-window invariant the whole engine relies on: no lecture
+    # slot may start in 11:30-12:59, no lab in 11:10-12:59. The default grid is
+    # prayer-compliant by construction and every placement stage assumes it (the
+    # runtime per-meeting prayer check was dropped on that basis), so a
+    # hand-edited grid that violates it is rejected here rather than silently
+    # producing non-compliant boards.
+    from core.services.timetable_validation import (
+        SlotGridPrayerError,
+        assert_slot_grid_prayer_compliant,
+    )
+
+    effective_lab = lab_slots if isinstance(lab_slots, list) else scenario.lab_slot_config
+    try:
+        assert_slot_grid_prayer_compliant(slots, effective_lab)
+    except SlotGridPrayerError as exc:
+        return _err(str(exc), code="VALIDATION_PRAYER", status=400)
+
     scenario.slot_config = slots
     update_fields = ["slot_config", "updated_at"]
     if isinstance(lab_slots, list):
