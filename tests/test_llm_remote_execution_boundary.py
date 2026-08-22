@@ -1117,3 +1117,28 @@ def test_a_prefill_IS_sent_to_a_provider_that_accepts_one(roster) -> None:
         client=Recording([], backend="local"),
     )
     assert seen and seen[0] is not None
+
+
+def test_a_staff_grounding_refusal_does_not_tell_the_adviser_to_ask_the_adviser(
+    roster,
+) -> None:
+    """The staff console's reader IS an adviser.
+
+    The legacy path's evidence postconditions now run for staff turns too, and
+    the original refusal text told the reader to «راجع مرشدك الأكاديمي» - a
+    hand-off to themselves.  Staff refusals point at the dedicated screens
+    instead.  This is also the first test that arms the postcondition battery
+    in staff mode at all.
+    """
+    _seed_courses()
+    fabricated = "محاضرة AI221 للطالب يوم الأحد الساعة 09:00."
+    client = _ScriptedAnswers([fabricated, fabricated])
+    payload = va.answer_virtual_advisor(
+        question="متى محاضرة AI221 لطالبي؟",
+        principal=AdvisorPrincipal(role=ROLE_ADVISOR, student_id=MINE, advisor_id="A100"),
+        academic_year=1448,
+        term=1,
+        client=client,
+    )
+    assert payload["answer"] != fabricated
+    assert "مرشدك الأكاديمي" not in payload["answer"]

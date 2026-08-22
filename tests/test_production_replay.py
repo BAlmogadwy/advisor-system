@@ -219,3 +219,245 @@ def test_the_telegram_channel_profile_gets_the_same_boundary(monkeypatch):
         "verified_fallback",
         "abstained",
     }
+
+
+ADVERSARIAL_CASES = [
+    # (name, answer, question, expected violations)
+    # An acceptance review of the first floor implementation found each of
+    # these either escaping (fabrications in the model's own formatting) or
+    # being refused (true refusals) - every row here was a live defect once.
+    (
+        "english refusal passes",
+        "I cannot confirm that AI1 meets at 08:00; I have no timetable data for you.",
+        "when is AI1?",
+        [],
+    ),
+    (
+        "english fabrication flags",
+        "Your AI1 lecture is on Sunday at 08:00.",
+        "when is AI1?",
+        [UNSUPPORTED_ACADEMIC_FACT],
+    ),
+    (
+        "bidun does not launder a schedule",
+        "محاضرة AI1 يوم الأحد الساعة 08:00 بدون تعارض مع بقية جدولك.",
+        "جدولي؟",
+        [UNSUPPORTED_ACADEMIC_FACT],
+    ),
+    (
+        "proclitic wala refusal passes",
+        "بيانات جدولك غير متوفرة الآن، ولا أستطيع تأكيد أن AI1 الساعة 08:00.",
+        "جدولي؟",
+        [],
+    ),
+    (
+        "bullet layout cannot split code from time",
+        "جدولك هذا الفصل\n**الأحد**\n- AI1 — 08:00 إلى 09:15\n**الاثنين**\n- AI433 — 10:00",
+        "جدولي؟",
+        [UNSUPPORTED_ACADEMIC_FACT],
+    ),
+    (
+        "invented sections need no time beside them",
+        "مقرر AI331 مطروح في الشعبتين M3 وW2 حسب النظام.",
+        "شعب AI331؟",
+        [UNSUPPORTED_ACADEMIC_FACT],
+    ),
+    (
+        "question echo does not launder a recommendation",
+        "مقرر MATE243 مقرر إجباري في خطتك، والشعبة M1 مفتوحة، وأنصحك بتسجيله.",
+        "متى محاضرة MATE243؟",
+        [UNSUPPORTED_ACADEMIC_FACT],
+    ),
+    (
+        "spaced code is still a code",
+        "ستدرس لاحقًا CS 202 ضمن مسار البرمجة.",
+        "ما القادم؟",
+        [UNSUPPORTED_ACADEMIC_FACT],
+    ),
+    (
+        "arabic-indic digits in a real code pass",
+        "مقرر MATH٢٤٣ من مقررات الخطة.",
+        "ماذا أدرس؟",
+        [],
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    ("name", "answer", "question", "expected"),
+    ADVERSARIAL_CASES,
+    ids=[row[0] for row in ADVERSARIAL_CASES],
+)
+def test_adversarial_review_corpus(name, answer, question, expected):
+    assert _clean(answer, question=question) == expected
+
+
+def test_the_applied_change_wording_is_a_mutation_claim():
+    """«تم تطبيق التعديل المطلوب على جدولك» - the production ledger's wording.
+
+    The adviser mutates nothing, so an affirmative mutation claim is
+    unconditionally false; the original phrase list simply lacked this
+    spelling and its siblings.
+    """
+    from core.services.answer_consistency import CLAIMED_PLANNER_MUTATION
+
+    for wording in (
+        "تم تطبيق التعديل المطلوب على جدولك بنجاح",
+        "تم تحديث الجدول بنجاح.",
+        "أضفت المقرر إلى جدولك.",
+        "The requested timetable change has been applied successfully.",
+    ):
+        assert CLAIMED_PLANNER_MUTATION in _clean(wording, question="بدل الشعبة"), wording
+
+
+def test_a_not_found_echo_cannot_prove_a_course_exists():
+    """ok:True tool rows that ECHO the model's argument are not evidence.
+
+    "Look the invented code up, get not-found, assert it anyway" was the
+    audited CS202/CS212 model behaviour: course_prerequisites answers a failed
+    lookup with the argument echoed beside "Course not found", and
+    my_clash_free_sections keeps a NOT_ON_FILE row for the code it could not
+    find.  Mining those as existence evidence let the model launder any
+    invention by looking it up first.  policy_lookup is free-form and must
+    contribute nothing at all.
+    """
+    fabricated = "مقرر MATE243 من المقررات الإجبارية في خطتك هذا الفصل."
+    echoes = [
+        {
+            "tool": "course_prerequisites",
+            "ok": True,
+            "course_code": "MATE243",
+            "per_program": [],
+            "options": [],
+            "note": "Course not found in any programme plan.",
+        },
+        {
+            "tool": "my_clash_free_sections",
+            "ok": True,
+            "courses": [{"course_code": "MATE243", "status": "NOT_ON_FILE", "clash_free": []}],
+        },
+        {"tool": "policy_lookup", "ok": True, "applies_to": ["MATE243"]},
+    ]
+    for echo in echoes:
+        assert UNSUPPORTED_ACADEMIC_FACT in _clean(
+            fabricated, question="ماذا أدرس؟", tools=[echo]
+        ), echo["tool"]
+
+    # A RESOLVED row is real evidence: the same sentence about a course the
+    # prerequisites tool actually found must pass even off-catalogue.
+    resolved = {
+        "tool": "course_prerequisites",
+        "ok": True,
+        "course_code": "XX999",
+        "per_program": [{"program": "AI", "prerequisites": ["AI331"]}],
+    }
+    assert (
+        _clean(
+            "مقرر XX999 من المقررات الإجبارية في خطتك هذا الفصل.",
+            question="ماذا أدرس؟",
+            tools=[resolved],
+        )
+        == []
+    )
+
+
+def test_room_codes_and_admin_times_are_not_academic_claims():
+    """LIB826 is a room and office hours are not a meeting.
+
+    29 real rooms are course-code shaped and in no catalogue; deadlines and
+    office-hour windows carry clock tokens beside course codes.  Both were
+    refused as fabrications by the first floor/obligation implementation.
+    """
+    assert _clean("القاعة LIB826 مغلقة اليوم للصيانة.", question="أين المحاضرة؟") == []
+    assert (
+        _clean(
+            "مقرر CS323 من متطلبات خطتك، وساعات مكتبي من 09:00 إلى 11:00.",
+            question="متى أراجعك؟",
+        )
+        == []
+    )
+    assert (
+        _clean(
+            "يمكنك حذف مقرر CS323 حتى الساعة 23:59 من يوم الخميس وفق اللائحة.",
+            question="متى آخر موعد للحذف؟",
+        )
+        == []
+    )
+    # The admin-time exemption must not swallow a MEETING claim.
+    assert UNSUPPORTED_ACADEMIC_FACT in _clean(
+        "محاضرة CS323 يوم الأحد من 09:00 إلى 10:15.",
+        question="متى المحاضرة؟",
+    )
+
+
+def test_the_review_mutants_stay_dead():
+    """Each block below kills one mutation an independent run proved surviving."""
+    # M10: a clock token with NO course code near it must not trip the
+    # schedule obligation.
+    assert _clean("تبدأ محاضرتك الأولى الساعة 09:00 غالبًا.", question="متى أبدأ؟") == []
+
+    # M9: «القاعة M7» stays a room even while a real section is named.
+    clash_free = {
+        "tool": "my_clash_free_sections",
+        "ok": True,
+        "courses": [
+            {
+                "course_code": "AI331",
+                "status": "OK",
+                "clash_free": [{"section": "M6", "meetings": ["SUN 09:00-10:15"]}],
+            }
+        ],
+    }
+    # No meeting claim here on purpose: the clash-free payload carries no
+    # rooms, so pairing a room WITH a time would be an unsupported meeting
+    # relation (correctly refused).  This pins only that «القاعة M7» is read
+    # as a room, never as a claimed section.
+    assert (
+        _clean(
+            "مقرر AI331 له الشعبة M6، والمحاضرة في القاعة M7.",
+            question="أين المحاضرة؟",
+            tools=[clash_free],
+        )
+        == []
+    )
+
+    # M5: build_my_timetable and feasible_course_replacements are
+    # schedule-bearing - their presence satisfies the obligation.
+    for tool in ("build_my_timetable", "feasible_course_replacements"):
+        assert (
+            _clean(
+                "محاضرة AI331 يوم الأحد الساعة 09:00.",
+                question="جدولي؟",
+                tools=[
+                    clash_free | {"tool": tool},
+                ],
+            )
+            == []
+        ), tool
+
+    # M11: a bare section label inside an evidence list must not become a
+    # course code.
+    row = {"tool": "my_timetable", "ok": True, "course_codes": ["M6"]}
+    from core.services.answer_consistency import _course_codes_in_evidence
+
+    assert "M6" not in _course_codes_in_evidence(row)
+
+    # M3/M4: payload figures are the graduation-shaped keys, compared as a
+    # SUBSET - one matching number cannot vouch for a second invented one,
+    # and True is not the number 1.
+    comparison = {
+        "tool": "course_choice_comparison",
+        "ok": True,
+        "direct_unlock_count": 5,
+        "proven": True,
+    }
+    assert "exact_academic_figure_mismatch" in _clean(
+        "بعد اجتيازه تنفتح لك 5 مقررات ويتبقى لتخرجك 99 فصلًا.",
+        question="قارن لي.",
+        tools=[comparison],
+    )
+    assert "exact_academic_figure_mismatch" in _clean(
+        "يتبقى لتخرجك فصل دراسي واحد 1 فقط.",
+        question="كم يتبقى؟",
+        tools=[{"tool": "course_choice_comparison", "ok": True, "proven": True}],
+    )

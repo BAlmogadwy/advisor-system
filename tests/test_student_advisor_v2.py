@@ -3890,13 +3890,18 @@ def test_section_listing_evidence_is_inside_the_boundary():
     section, a day, a time and a room returned zero violations - the open defect
     where the adviser invents sections and attributes them to "the system".
     """
+    # The executor's REAL payload shape - key "courses", never "results".  An
+    # earlier fixture used "results" and was the only test of the evidence
+    # arm, so the arm read the wrong key in production and stayed green: a
+    # test written to the bug it existed to prevent.
     evidence = {
         "tool": "my_clash_free_sections",
         "ok": True,
-        "results": [
+        "courses": [
             {
                 "course_code": "AI331",
                 "currently_registered_sections": ["M6"],
+                "status": "OK",
                 "clash_free": [
                     {"section": "M1", "meetings": ["SUN 09:00-10:15"]},
                 ],
@@ -3935,6 +3940,51 @@ def test_section_listing_evidence_is_inside_the_boundary():
         tool_results=[evidence],
         question=question,
         required_tools={"my_clash_free_sections"},
+    )
+
+
+def test_a_real_time_attributed_to_the_wrong_section_is_a_false_relation():
+    """The relation arm's unique job: real values, wrong pairing.
+
+    Every VALUE here exists in the payload - both sections, both times - so
+    the value-set checks pass and only the section-to-meeting RELATION is
+    fabricated.  This is the probe that exposed the arm as dead code: it read
+    payload key "results" while the executor emits "courses", so this exact
+    answer returned zero violations against a real payload.
+    """
+    evidence = {
+        "tool": "my_clash_free_sections",
+        "ok": True,
+        "courses": [
+            {
+                "course_code": "AI331",
+                "status": "OK",
+                "clash_free": [
+                    {"section": "M1", "meetings": ["SUN 09:00-10:15"]},
+                    {"section": "M2", "meetings": ["MON 11:00-12:15"]},
+                ],
+            }
+        ],
+    }
+    question = "ما شعب AI331؟"
+
+    swapped = "الشعبة M1 لمقرر AI331 تجتمع يوم الاثنين من 11:00 إلى 12:15."
+    assert UNSUPPORTED_ACADEMIC_FACT in check_answer(
+        swapped,
+        tool_results=[evidence],
+        question=question,
+        required_tools={"my_clash_free_sections"},
+    )
+
+    correct = "الشعبة M1 لمقرر AI331 تجتمع يوم الأحد من 09:00 إلى 10:15."
+    assert (
+        check_answer(
+            correct,
+            tool_results=[evidence],
+            question=question,
+            required_tools={"my_clash_free_sections"},
+        )
+        == []
     )
 
 

@@ -3638,22 +3638,39 @@ def _verified_evidence_fallback(
     return "\n\n".join(fragments)
 
 
-def _evidence_abstention(language: str) -> str:
+def _evidence_abstention(language: str, channel_profile: str = "") -> str:
     # A dead-end "try again" loops the student into a second identical
-    # failure.  The safe path terminates at a human: the escalation control on
-    # this same screen routes the question to the student's academic adviser.
+    # failure.  The safe path terminates at a human - but the hand-off must
+    # name a control that EXISTS on the reader's surface.  The web screen's
+    # escalation button is labelled «طلب مراجعة من المرشد الأكاديمي»;
+    # Telegram has no buttons at all, only the /advisor command.
+    from core.services.advisor_channel_privacy import is_telegram_safe_profile
+
+    if is_telegram_safe_profile(channel_profile):
+        if language == "Arabic":
+            return (
+                "لم أتمكن من إعداد إجابة يمكن التحقق من حقائقها الأكاديمية مقابل "
+                "بيانات هذه المحادثة؛ لذلك لن أعرض أرقامًا أو مقررات غير مؤكدة. "
+                "أرسل الأمر /advisor لإحالة سؤالك إلى مرشدك الأكاديمي."
+            )
+        return (
+            "I could not produce an answer whose academic facts could be verified "
+            "against this turn's evidence, so I will not show unconfirmed courses or "
+            "figures. Send the /advisor command to refer your question to your "
+            "academic adviser."
+        )
     if language == "Arabic":
         return (
             "لم أتمكن من إعداد إجابة يمكن التحقق من حقائقها الأكاديمية مقابل بيانات "
             "هذه المحادثة؛ لذلك لن أعرض أرقامًا أو مقررات غير مؤكدة. يمكنك إحالة "
-            "سؤالك إلى مرشدك الأكاديمي من خيار «إحالة إلى المرشد» بجانب هذه "
-            "الرسالة، وسيصله نص سؤالك كما كتبته."
+            "سؤالك إلى مرشدك الأكاديمي من زر «طلب مراجعة من المرشد الأكاديمي» "
+            "بجانب هذه الرسالة، وسيصله نص سؤالك كما كتبته."
         )
     return (
         "I could not produce an answer whose academic facts could be verified against "
         "this turn's evidence, so I will not show unconfirmed courses or figures. "
-        "You can refer this question to your academic adviser using the escalation "
-        "option beside this message, and they will receive it as you wrote it."
+        "You can refer this question to your academic adviser using the review-request "
+        "button beside this message, and they will receive it as you wrote it."
     )
 
 
@@ -3894,8 +3911,10 @@ def answer_student_advisor_v2(
         )
 
     language = _answer_language(clean_question)
-    known_course_codes = _known_course_codes()
+    # The timer starts BEFORE the catalogue read: the cold-cache query is the
+    # one cost this feature adds, and it must be inside turn_ms.
     turn_started = time.monotonic()
+    known_course_codes = _known_course_codes()
     # Colloquial Saudi Arabic remains accepted and fully parsed as input, but the
     # student portal renders one consistent university register: clear MSA.
     detected_answer_style = _answer_style(clean_question)
@@ -5139,7 +5158,7 @@ def answer_student_advisor_v2(
                 evidence_validation_outcome = "verified_fallback"
             else:
                 chosen = {
-                    "text": _evidence_abstention(language),
+                    "text": _evidence_abstention(language, channel_profile),
                     "citation_refused": False,
                     "portal_claim_refused": False,
                     "section_fallback": False,
@@ -5159,7 +5178,7 @@ def answer_student_advisor_v2(
     # out of inference budget before it writes anything.
     if not str(chosen["text"]).strip():
         chosen = {
-            "text": _evidence_abstention(language),
+            "text": _evidence_abstention(language, channel_profile),
             "citation_refused": False,
             "portal_claim_refused": False,
             "section_fallback": False,

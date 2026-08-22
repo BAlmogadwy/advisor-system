@@ -38,6 +38,19 @@ from core.utils import parse_json_body as _parse_json_body
 from core.utils import validate_import_path
 
 
+def _invalidate_course_catalogue() -> None:
+    """The adviser's existence floor caches the catalogue per process.
+
+    Every view that writes Course/ProgrammeRequirement/ElectiveCourse rows
+    must drop that cache, or a just-imported course reads as an invented one
+    to the answer checker until the TTL expires.  Called on ENTRY as well -
+    cheap, and it also covers the delete view's early-exit paths.
+    """
+    from core.services.course_catalogue import invalidate_cache
+
+    invalidate_cache()
+
+
 @role_required(ROLE_SUPER_ADMIN)
 @require_GET
 def db_admin_page(request: HttpRequest) -> HttpResponse:
@@ -190,6 +203,7 @@ def db_preview_delete_program_catalog_view(request: HttpRequest) -> JsonResponse
 @role_required(ROLE_SUPER_ADMIN)
 @require_POST
 def db_delete_program_catalog_view(request: HttpRequest) -> JsonResponse:
+    _invalidate_course_catalogue()
     payload, err = _parse_json_body(request)
     if err:
         return err
@@ -230,6 +244,7 @@ def db_delete_program_catalog_view(request: HttpRequest) -> JsonResponse:
 @role_required(ROLE_SUPER_ADMIN)
 @require_POST
 def db_import_program_plan_view(request: HttpRequest) -> JsonResponse:
+    _invalidate_course_catalogue()
     payload, err = _parse_json_body(request)
     if err:
         return err
@@ -286,6 +301,7 @@ def db_import_program_plan_view(request: HttpRequest) -> JsonResponse:
 @role_required(ROLE_SUPER_ADMIN)
 @require_POST
 def db_import_legacy_exact_view(request: HttpRequest) -> JsonResponse:
+    _invalidate_course_catalogue()
     payload, err = _parse_json_body(request)
     if err:
         return err
@@ -583,6 +599,7 @@ def db_preview_oracle_plan_view(request: HttpRequest) -> JsonResponse:
 @role_required(ROLE_SUPER_ADMIN)
 @require_POST
 def db_import_oracle_plan_view(request: HttpRequest) -> JsonResponse:
+    _invalidate_course_catalogue()
     payload, err = _parse_json_body(request)
     if err:
         return err
@@ -774,6 +791,7 @@ def elective_catalogue_import_view(request: HttpRequest) -> JsonResponse:
     Expects JSON body: ``{"programme": "AI", "content": "...tsv..."}``
     TSV columns: Code, Name, Req (prerequisites), Cat, T, L, C
     """
+    _invalidate_course_catalogue()
     payload, err = _parse_json_body(request)
     if err:
         return err

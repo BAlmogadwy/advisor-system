@@ -1606,6 +1606,19 @@ _GROUNDING_REFUSAL_EN = (
     "and Registration."
 )
 
+#: The staff console's reader IS an adviser, so "check with your academic
+#: adviser" is nonsense there.  Same refusal, staff-addressed.
+_GROUNDING_REFUSAL_STAFF_AR = (
+    "لم أتمكن من التحقق من الأرقام والمعرّفات الواردة في هذه الإجابة مقابل "
+    "السجلات المعتمدة، ولذلك لن أعرضها. راجع الشاشات المتخصصة (الخطة، الجدول، "
+    "التقارير) أو سجلات عمادة القبول والتسجيل للقيمة الرسمية."
+)
+_GROUNDING_REFUSAL_STAFF_EN = (
+    "I could not verify the identifiers in this answer against the approved "
+    "records, so I will not show it. Use the dedicated screens (plan, "
+    "timetable, reports) or the Deanship records for the official value."
+)
+
 
 #: The deterministic answer when a rule was asked for and none governs it. It
 #: does NOT say "the university has no such rule" — the store's silence is a fact
@@ -3245,11 +3258,11 @@ def answer_virtual_advisor(
             logger.error("Refusing an answer that failed the output contract: %s", remaining)
             telemetry["grounding_refused"] = True
             telemetry["output_violations_after_retry"] = remaining
-            answer = (
-                _GROUNDING_REFUSAL_AR
-                if _answer_language(question) == "Arabic"
-                else _GROUNDING_REFUSAL_EN
-            )
+            arabic = _answer_language(question) == "Arabic"
+            if is_student:
+                answer = _GROUNDING_REFUSAL_AR if arabic else _GROUNDING_REFUSAL_EN
+            else:
+                answer = _GROUNDING_REFUSAL_STAFF_AR if arabic else _GROUNDING_REFUSAL_STAFF_EN
         else:
             answer = corrected_answer
 

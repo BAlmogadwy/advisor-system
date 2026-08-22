@@ -16,29 +16,37 @@ from __future__ import annotations
 import time
 
 _CACHE: tuple[float, frozenset[str]] | None = None
-_TTL_SECONDS = 600.0
+_TTL_SECONDS = 60.0
 
 
 def known_course_codes() -> frozenset[str]:
-    """Every recognised course code, normalized, cached for ten minutes.
+    """Every recognised course code, normalized, cached for one minute.
 
-    Cached because the floor runs on every candidate answer of every turn and
-    the set changes only on imports.
+    Cached because the floor runs on every candidate answer of every turn.
+    The TTL is short and every catalogue-writing admin view invalidates
+    explicitly, so an operator import is visible to the floor immediately.
     """
     global _CACHE
     now = time.monotonic()
     if _CACHE is not None and now - _CACHE[0] < _TTL_SECONDS:
         return _CACHE[1]
-    from core.models import Course, ElectiveCourse, ProgrammeRequirement
-    from core.services.student_helpers import normalize_code
+    import re
 
+    from core.models import Course, ElectiveCourse, ProgrammeRequirement
+
+    # The CHECKER'S normalisation, not student_helpers.normalize_code: the
+    # floor compares with answer_consistency._normalise_course_token, which
+    # strips hyphens, while normalize_code keeps them - a hyphenated catalogue
+    # row would be permanently "invented".  Spelled inline (strip everything
+    # non-alphanumeric, uppercase) rather than imported, and a parity test in
+    # tests/test_production_replay.py holds the two spellings together.
     codes: set[str] = set()
     for queryset in (
         Course.objects.values_list("course_code", flat=True),
         ProgrammeRequirement.objects.values_list("course_code", flat=True),
         ElectiveCourse.objects.values_list("course_code", flat=True),
     ):
-        codes.update(normalize_code(value) for value in queryset if value)
+        codes.update(re.sub(r"[^A-Za-z0-9]", "", str(value)).upper() for value in queryset if value)
     codes.discard("")
     frozen = frozenset(codes)
     _CACHE = (now, frozen)
@@ -46,6 +54,12 @@ def known_course_codes() -> frozenset[str]:
 
 
 def invalidate_cache() -> None:
-    """Test hook: force the next read to hit the database."""
+    """Force the next read to hit the database.
+
+    Called by every admin view that imports or deletes catalogue rows, and by
+    an autouse test fixture - the cache is a process global, so without the
+    fixture a warm empty-DB read from one test disabled the floor for every
+    later test in the process, and rolled-back rows leaked across tests.
+    """
     global _CACHE
     _CACHE = None

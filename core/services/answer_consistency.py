@@ -132,11 +132,36 @@ _COURSE_CODE = re.compile(r"(?<![A-Za-z0-9])[A-Za-z]{2,4}-?\d{3}(?![0-9])")
 
 #: «شعبة M2» / "section M2" — a label only counts when a section word introduces it,
 #: because "M2" alone is two characters and appears inside ordinary words.
-#: A standalone negation word opening or inside the clause.  Anchored on
-#: whitespace/starts so «إلى»-folded-to-«الا» can never satisfy it.
+#: A standalone negation word opening or inside the paragraph, word-anchored:
+#: the first version used the substring negator list, and folding «الأحد»
+#: yields «الاحد», whose substring «لا» made every Sunday sentence read as
+#: negated and the whole check inert.  (An earlier comment blamed «إلى»; the
+#: real culprit was the day name.)
 _NEGATED_SCHEDULE_CLAUSE = re.compile(
-    r"(?:^|\s)(?:لا|لن|لم|ليس|ليست|تعذر|يتعذر|دون|بدون)\s"
-    r"|(?:cannot|can't|not|no|unable)",
+    # Deliberately NOT the preposition pair "دون/بدون" - «بدون تعارض» is
+    # ordinary timetable prose and one such word laundered a whole fabricated
+    # schedule.  Proclitic forms («ولا أستطيع»), «غير», the apology and the
+    # referral openers are all honest-refusal shapes.  «لا تنس» ("don't
+    # forget") is grammatical negation wrapping an AFFIRMATIVE reminder, so it
+    # is carved back out.  The English branch uses real word boundaries; two
+    # earlier revisions wrote them as literal backspace bytes (a shell heredoc
+    # and then a non-raw string) and every English refusal near a code and a
+    # time was refused as a fabrication.
+    r"(?:^|\s)(?!لا\s*تنس)(?:[وف]?لا|لن|لم|ليس|ليست|تعذر|يتعذر|غير|أعتذر|اعتذر)\s"
+    r"|(?:^|\s)(?:يرجى\s+مراجعة|راجع)\s"
+    r"|\b(?:cannot|can't|not|no|unable)\b",
+    re.IGNORECASE,
+)
+
+#: Administrative-time spans - office hours, registration windows, deadlines.
+#: A clock token inside one is not a meeting claim, and «حتى الساعة 23:59»
+#: beside a course code is ordinary true policy prose.  The span removes the
+#: introducing phrase plus everything to the end of its clause segment.
+_ADMIN_TIME_SPAN = re.compile(
+    r"(?:ساعات\s+(?:ال)?مكتب\w*|فترة\s+التسجيل|فترة\s+الحذف|آخر\s+موعد"
+    r"|حتى\s+الساعة|قبل\s+الساعة|موعد\s+أقصاه"
+    r"|office\s+hours|registration\s+(?:window|period)|deadline)"
+    r"[^.!?؟;؛\n]{0,60}",
     re.IGNORECASE,
 )
 
@@ -154,7 +179,7 @@ _SCHEDULE_TOOLS = frozenset(
 )
 
 _SECTION_NEAR = re.compile(
-    r"(?:شعب[ةه]?|الشعب[ةه]?|section)\s*[:\-]?\s*([A-Za-z]{1,2}\d{1,2}[A-Za-z]?)\b",
+    r"(?:شعب[ةه]?|الشعب[ةه]?|section)\s*[:\-]?\s*([A-Za-z]{1,2}\d{1,3}[A-Za-z]?)\b",
     re.IGNORECASE,
 )
 
@@ -212,10 +237,24 @@ _PLANNER_MUTATION_PHRASES = (
     "حفظت الخيار",
     "تم حفظ الخيار",
     "عدّلت المسودة",
+    # The production ledger's wording for "the change was applied", none of
+    # which the original list matched.  A mutation claim is unconditionally
+    # false - the adviser mutates nothing - so breadth here has no
+    # false-positive cost on true answers.
+    "تم تطبيق التعديل",
+    "تم التعديل على جدول",
+    "تم تحديث الجدول",
+    "تم تحديث جدولك",
+    "أضفت المقرر",
+    "اضفت المقرر",
+    "نفذت طلبك",
+    "نفّذت طلبك",
     "i saved the option",
     "i have saved",
     "the draft has been updated",
     "i updated the draft",
+    "has been applied",
+    "change was applied",
 )
 _REQUEST_PROVENANCE = ("طلبت", "الذي طلبته", "التي طلبتها", "you requested", "you asked for")
 _RECOMMEND_PROVENANCE = (
@@ -318,7 +357,20 @@ _INLINE_BULLET = re.compile(r"(?=\s[-*•–—]\s)")
 #: `_COURSE_CODE` deliberately excludes (`AI1`, `GSE1`). Used only to decide whether a
 #: number has already been spoken for — for that question `AI1` counts, because
 #: «AI1 3 ساعات» is a statement about AI1 no matter how the catalogue spells it.
-_COURSE_TOKEN = re.compile(r"(?<![A-Za-z0-9])[A-Za-z]{2,4}-?\d{1,3}(?![A-Za-z0-9])")
+#: Two spellings: the glued form in any case, and a spaced/hyphenated form
+#: restricted to UPPERCASE letters - «CS 202» is a spelling models emit
+#: constantly and it escaped the existence floor, but an unrestricted space
+#: made ordinary English prose («at 08:00», «no 3») parse as course tokens.
+#: Arabic-Indic digits are accepted and folded by _normalise_course_token.
+_COURSE_TOKEN = re.compile(
+    # A trailing colon disqualifies the token: without that, the spaced form
+    # parsed the day-and-hour of every meeting string («SUN 14:30») as a
+    # course code SUN14 and the server's own timetable fallback refused
+    # itself.
+    r"(?<![A-Za-z0-9])"
+    r"(?:[A-Za-z]{2,4}-?|[A-Z]{2,4}[ ])"
+    r"[0-9٠-٩۰-۹]{1,3}(?![A-Za-z0-9:])"
+)
 
 #: Numbers that are already something else, removed before any figure is read.
 #: `_fold` erases the punctuation that makes them recognisable — «09:00» becomes
@@ -505,8 +557,17 @@ def _credit_sources(
 
 
 def _normalise_course_token(value: Any) -> str:
-    """One comparison spelling for an academic course identifier."""
-    return re.sub(r"[^A-Za-z0-9]", "", str(value or "")).upper()
+    """One comparison spelling for an academic course identifier.
+
+    Arabic-Indic digits fold to ASCII FIRST: stripping them instead turned
+    «MATH٢٤٣» into "MATH", which is in no catalogue, so every Arabic-Indic
+    spelling of a REAL code was refused as an invention.
+    """
+    folded = str(value or "").translate(_ARABIC_INDIC_DIGITS)
+    return re.sub(r"[^A-Za-z0-9]", "", folded).upper()
+
+
+_ARABIC_INDIC_DIGITS = str.maketrans("٠١٢٣٤٥٦٧٨٩۰۱۲۳۴۵۶۷۸۹", "01234567890123456789")
 
 
 def _successful_exact_fact_rows(
@@ -555,6 +616,9 @@ def _course_codes_in_evidence(value: Any, *, parent_key: str = "") -> set[str]:
                 continue
             codes |= _course_codes_in_evidence(child, parent_key=key)
     elif isinstance(value, list):
+        if parent_key in _ECHO_KEYS:
+            # A suggestion or request-echo list is never course evidence.
+            return codes
         for child in value:
             if isinstance(child, str):
                 # Payloads such as course_prerequisites carry bare code lists
@@ -619,7 +683,8 @@ def _normalise_section_label(value: Any) -> str:
 
 
 _COHORT_SECTION_TOKEN = re.compile(
-    r"(?<![A-Za-z0-9])((?:Y[MF]|[MF])\d{1,2})(?![A-Za-z0-9])",
+    # Three digits: F116-F119 are real labels in the live catalogue.
+    r"(?<![A-Za-z0-9])((?:Y[MF]|[MF])\d{1,3})(?![A-Za-z0-9])",
     re.IGNORECASE,
 )
 # Every other figure reader in this module accepts Arabic-Indic digits; this one
@@ -647,7 +712,12 @@ _DISPLAY_TERM_INDEX = re.compile(
     re.IGNORECASE,
 )
 _INSTRUCTOR_MARKER = re.compile(
-    r"(?:الدكتور(?:ة)?|د\.|المحاضر(?:ة)?|المدرس(?:ة)?|instructor|teacher|taught\s+by)",
+    # «المحاضر» is the lecturer; «المحاضرة» is, in this domain, almost always
+    # THE LECTURE - «المحاضرة في القاعة M7» named no person, and the optional
+    # feminine made every lecture sentence an instructor claim that then
+    # failed for lack of a name.  A female lecturer is still caught through
+    # «الدكتورة» / «المدرسة» / the explicit English words.
+    r"(?:الدكتور(?:ة)?|د\.|المحاضر(?!ة)|المدرس(?:ة)?|instructor|teacher|taught\s+by)",
     re.IGNORECASE,
 )
 
@@ -708,7 +778,11 @@ def _unsupported_timetable_values(answer: str, rows: list[dict[str, Any]]) -> bo
         room.upper() for row in timetable_rows for room in _values_for_key(row, "room") if room
     }
     claimed_rooms = {match.group(1).upper() for match in _ROOM_NEAR.finditer(answer or "")}
-    if claimed_rooms - evidence_rooms:
+    # An evidence set that RECORDS no rooms cannot refute a room claim - the
+    # clash-free payload carries meetings without rooms, and refusing every
+    # true room mention beside it would be the checker inventing an authority
+    # the payload never had.
+    if evidence_rooms and claimed_rooms - evidence_rooms:
         return True
 
     instructor_relations: set[tuple[str, str, str]] = set()
@@ -965,22 +1039,6 @@ def _term_figures(clause: str) -> set[float]:
     )
 
 
-def _numeric_leaves(value: Any) -> set[float]:
-    """Every numeric value carried anywhere in a payload."""
-    found: set[float] = set()
-    if isinstance(value, bool):
-        return found
-    if isinstance(value, int | float):
-        found.add(float(value))
-    elif isinstance(value, dict):
-        for child in value.values():
-            found |= _numeric_leaves(child)
-    elif isinstance(value, list):
-        for child in value:
-            found |= _numeric_leaves(child)
-    return found
-
-
 def _numeric_values_for_keys(value: Any, keys: set[str]) -> set[float]:
     found: set[float] = set()
     if isinstance(value, dict):
@@ -1149,13 +1207,34 @@ def _exact_figure_mismatch(answer: str, rows: list[dict[str, Any]]) -> bool:
             # The exemption is figures-present-in-evidence, for THIS branch
             # only; label-to-value relations remain _metric_claim_mismatch's
             # job whenever real graduation evidence exists.
-            payload_figures = _numeric_leaves(
+            # Graduation-SHAPED keys only, not every numeric leaf: a payload
+            # also carries the academic year, the term, ranks and search
+            # counters, and "every leaf" meant any small integer in a personal
+            # graduation claim was laundered - a 1448/1 row alone supported
+            # «يتبقى لتخرجك فصل واحد».
+            payload_figures = _numeric_values_for_keys(
                 [
                     row
                     for row in rows
                     if row.get("tool")
                     in {"feasible_course_replacements", "course_choice_comparison"}
-                ]
+                ],
+                {
+                    "terms_saved",
+                    "term_difference",
+                    "estimated_additional_terms",
+                    "estimated_terms_including_planning_baseline",
+                    "lower_bound_additional_terms",
+                    "lower_bound_terms_including_planning_baseline",
+                    "direct_unlock_count",
+                    "on_prerequisite_chain_of_count",
+                    "sole_remaining_prerequisite_count",
+                    "chain_course_count",
+                    "clash_free_count",
+                    "clashing_count",
+                    "sections_on_file",
+                    "credit_hours",
+                },
             )
             figures = credit_figures | count_figures | term_figures | percent_figures
             if not (payload_figures and figures <= payload_figures):
@@ -1517,13 +1596,21 @@ def _schedule_evidence(
             # student's registration, so they carry their own kind.  A row the
             # payload itself marks as the student's current section addition-
             # ally supports a REGISTERED claim.
-            for result in row.get("results") or []:
+            #
+            # The payload key is "courses" - the executor and the remote
+            # projector both spell it that way.  A first version read
+            # "results", which exists in no real payload, so the whole arm was
+            # dead code and its only test was written to the same wrong shape.
+            # "indeterminate" rows are recorded sections too (their meeting
+            # data is merely incomplete); quoting one must not read as an
+            # invention.
+            for result in row.get("courses") or []:
                 if not isinstance(result, dict):
                     continue
                 code = _normalise_course_token(result.get("course_code"))
                 if not code:
                     continue
-                for bucket in ("clash_free", "clashing"):
+                for bucket in ("clash_free", "clashing", "indeterminate"):
                     for entry in result.get(bucket) or []:
                         if not isinstance(entry, dict):
                             continue
@@ -1534,10 +1621,20 @@ def _schedule_evidence(
                         if entry.get("is_current_section"):
                             registrations.add(("REGISTERED", code, section))
                         for meeting in entry.get("meetings") or []:
-                            parsed = _MEETING_STRING.match(str(meeting or ""))
-                            if not parsed:
+                            # Two spellings cross this seam: the executor's
+                            # flattened "SUN 09:00-10:15" strings and the
+                            # legacy projector's {day, start, end} dicts.
+                            if isinstance(meeting, dict):
+                                day = str(meeting.get("day") or "")
+                                start = str(meeting.get("start") or "")
+                                end = str(meeting.get("end") or "")
+                            else:
+                                parsed = _MEETING_STRING.match(str(meeting or ""))
+                                if not parsed:
+                                    continue
+                                day, start, end = parsed.groups()
+                            if not (day and start and end):
                                 continue
-                            day, start, end = parsed.groups()
                             for kind in (
                                 ("SECTIONS", "REGISTERED")
                                 if entry.get("is_current_section")
@@ -1551,7 +1648,7 @@ def _schedule_evidence(
                                         _canonical_day(day),
                                         start.strip(),
                                         end.strip(),
-                                        "",
+                                        str(entry.get("room") or "").strip().upper(),
                                     )
                                 )
     return registrations, meetings
@@ -1598,11 +1695,42 @@ def _schedule_relation_mismatch(answer: str, rows: list[dict[str, Any]]) -> bool
             # even with both tools' evidence present and both lines true.
             active_kind = ""
         for clause in _clauses(line):
-            codes = list(_COURSE_TOKEN.finditer(clause))
-            for index, code_match in enumerate(codes):
-                code = _normalise_course_token(code_match.group(0))
-                end = codes[index + 1].start() if index + 1 < len(codes) else len(clause)
-                segment = clause[code_match.start() : end]
+            # Attribution windows.  Arabic writes the section BEFORE the course
+            # («الشعبة M1 لمقرر AI331»), so a window opening AT the code loses
+            # the leading section and a real time attributed to the wrong
+            # section reads as clean.  But blindly extending every window
+            # backwards leaks the PREVIOUS item's trailing attributes into the
+            # next code.  The list comma is the real item boundary: split into
+            # comma chunks first; a chunk with one code owns the whole chunk,
+            # and only a multi-code comma-free chunk falls back to trailing
+            # windows.
+            segments: list[tuple[str, str]] = []
+            for chunk in re.split(r"[،,]", clause):
+                chunk_codes = list(_COURSE_TOKEN.finditer(chunk))
+                if not chunk_codes:
+                    # "AI1, section M6, Monday 13:00" - English apposition puts
+                    # the attributes in codeless chunks that belong to the
+                    # code before them.
+                    if segments:
+                        code, text = segments[-1]
+                        segments[-1] = (code, text + " " + chunk)
+                    continue
+                if len(chunk_codes) == 1:
+                    segments.append((_normalise_course_token(chunk_codes[0].group(0)), chunk))
+                    continue
+                for index, code_match in enumerate(chunk_codes):
+                    end = (
+                        chunk_codes[index + 1].start()
+                        if index + 1 < len(chunk_codes)
+                        else len(chunk)
+                    )
+                    segments.append(
+                        (
+                            _normalise_course_token(code_match.group(0)),
+                            chunk[code_match.start() : end],
+                        )
+                    )
+            for code, segment in segments:
                 claimed_kind = _schedule_kind_from_text(segment) or active_kind
                 sections = {match.group(1).upper() for match in _SECTION_NEAR.finditer(segment)}
                 if not sections:
@@ -1632,7 +1760,9 @@ def _schedule_relation_mismatch(answer: str, rows: list[dict[str, Any]]) -> bool
                             continue
                         if days and day not in days:
                             continue
-                        if rooms and room not in rooms:
+                        # room == "" means the payload did not record one -
+                        # a blank is no evidence AGAINST any claimed room.
+                        if rooms and room and room not in rooms:
                             continue
                         if len(times) >= 2 and (start, finish) != (times[0], times[1]):
                             continue
@@ -2163,6 +2293,61 @@ def _tool_contract_complete(
     return _tool_signature_present(answer, row)
 
 
+#: Payload keys that ECHO a request argument or carry a suggestion, never a
+#: resolved record.  A code under one of these is not proof the code exists -
+#: three executors echo the model's own unvalidated argument inside an ok:True
+#: envelope, and "look the invented code up, get not-found, assert it anyway"
+#: was the audited CS202/CS212 model behaviour.
+_ECHO_KEYS = frozenset(
+    {
+        "query",
+        "unknown_query",
+        "did_you_mean",
+        "candidate_courses_considered",
+        "requested_remove_course",
+        "requested_add_course",
+    }
+)
+
+_UNRESOLVED_STATUSES = frozenset({"NOT_ON_FILE", "NOT_MATCHING_STUDENT_PROFILE"})
+
+
+def _floor_evidence_codes(rows: list[dict[str, Any]]) -> set[str]:
+    """Codes an exact-fact payload RESOLVED, never merely repeated.
+
+    course_prerequisites answers a not-found lookup with the model's own
+    argument echoed beside "Course not found in any programme plan", and
+    my_clash_free_sections keeps a NOT_ON_FILE row for the code it could not
+    find.  Mining those as existence evidence let the model launder any
+    invention by looking it up first.  Free-form tools contribute nothing
+    here: policy_lookup's applies_to must not prove a course exists.
+    """
+    codes: set[str] = set()
+    for row in rows:
+        tool = str(row.get("tool") or "")
+        pruned: dict[str, Any] = {}
+        for key, value in row.items():
+            if key in _ECHO_KEYS:
+                continue
+            if key == "courses" and tool == "my_clash_free_sections":
+                value = [
+                    entry
+                    for entry in (value or [])
+                    if isinstance(entry, dict)
+                    and str(entry.get("status") or "") not in _UNRESOLVED_STATUSES
+                ]
+            pruned[key] = value
+        if (
+            tool == "course_prerequisites"
+            and not pruned.get("per_program")
+            and not pruned.get("options")
+        ):
+            # The whole row is a not-found echo of the model's argument.
+            continue
+        codes |= _course_codes_in_evidence(pruned)
+    return codes
+
+
 def _evidence_postcondition_violations(
     answer: str,
     *,
@@ -2190,37 +2375,85 @@ def _evidence_postcondition_violations(
     # gated check was silent and the turn recorded not_applicable.
     if known_course_codes:
         # Existence floor: a course code must exist SOMEWHERE - the catalogue,
-        # this turn's evidence (external-service courses live outside the
-        # catalogue), or the student's own question (repeating a code to say it
-        # does not exist is how a correct answer refutes it).  Support for a
-        # CLAIM about the code remains the relational checks' job.
-        all_evidence_codes = set().union(
-            set(), *(_course_codes_in_evidence(row) for row in successful_rows)
-        )
+        # a code an exact-fact payload RESOLVED this turn, or the student's own
+        # question (repeating a code to say it does not exist is how a correct
+        # answer refutes it).  Support for a CLAIM about the code remains the
+        # relational checks' job.  An empty catalogue disables the floor by
+        # design: a freshly-provisioned environment with zero imported courses
+        # would otherwise refuse every code, and the DB-verified fact is that
+        # the three-table union covers every live code (0 outside it).
+        #
+        # Room codes are subtracted: 29 real rooms (LIB826, GF3, ...) are
+        # course-code shaped and in no catalogue, and «القاعة LIB826 مغلقة»
+        # is an ordinary true sentence.
+        floor_evidence = _floor_evidence_codes(rows)
         question_codes = _course_codes_in_text(question)
-        for code in _course_codes_in_text(answer):
-            if (
-                code not in known_course_codes
-                and code not in all_evidence_codes
-                and code not in question_codes
-            ):
+        room_codes = {
+            _normalise_course_token(match.group(1)) for match in _ROOM_NEAR.finditer(answer or "")
+        }
+        flagged = False
+        for clause in _clauses(answer):
+            for code in _course_codes_in_text(clause):
+                if code in known_course_codes or code in floor_evidence or code in room_codes:
+                    continue
+                if code in question_codes:
+                    # The student's own token may be repeated to refute or
+                    # question it - but an AFFIRMATIVE claim about it is not
+                    # laundered by the student having typed it first.  The
+                    # audited MATE243 answer was exactly that: the student
+                    # asked about the code and the adviser recommended it.
+                    folded = _fold(clause)
+                    affirmative = any(_fold(word) in folded for word in _ACADEMIC_STATE_WORDS)
+                    negated = any(_fold(word) in folded for word in _CLAIM_NEGATORS)
+                    if not affirmative or negated:
+                        continue
                 violations.append(UNSUPPORTED_ACADEMIC_FACT)
+                flagged = True
+                break
+            if flagged:
                 break
 
     if not any(str(row.get("tool") or "") in _SCHEDULE_TOOLS for row in successful_rows):
-        # A meeting-time claim with no schedule-bearing evidence in the whole
-        # turn.  This is the structural defence for the fabricated-timetable
-        # class built from REAL codes in FALSE relations: with no tool row the
-        # relational checks have nothing to compare and stay silent by design,
-        # so the obligation must attach to the CLAIM.  An explicitly negated
-        # clause is exempt - refusing while repeating the asked time is honest.
-        for clause in _clauses(answer):
-            if not (_course_codes_in_text(clause) and _CLOCK_TOKEN.search(clause)):
+        # A meeting-time OR section claim with no schedule-bearing evidence in
+        # the whole turn.  This is the structural defence for the fabricated-
+        # timetable class built from REAL codes in FALSE relations: with no
+        # tool row the relational checks have nothing to compare and stay
+        # silent by design, so the obligation attaches to the CLAIM.
+        #
+        # The scope is the PARAGRAPH, not the clause: a model's own markdown
+        # («**الأحد** / AI1 08:00» on separate lines) splits the code and the
+        # time into different clauses, and clause scope made the list format a
+        # bypass while the same content as one sentence was caught.  Sections
+        # carry the same obligation - an invented «W2» needs no time beside it.
+        # An explicitly negated paragraph is exempt: refusing while repeating
+        # the asked time is honest.  Section tokens the student typed are
+        # exempt like question codes on the floor.  Administrative times -
+        # office hours, registration windows, deadlines («حتى الساعة 23:59») -
+        # are not meeting claims: those spans are removed before the clock
+        # search, because a deadline beside a course code is ordinary true
+        # policy prose.
+        question_sections = {
+            _normalise_section_label(match.group(1))
+            for match in _COHORT_SECTION_TOKEN.finditer(question or "")
+        }
+        for paragraph in re.split(r"\n\s*\n", answer or ""):
+            if not _course_codes_in_text(paragraph):
                 continue
-            # Word-boundary negation, NOT the substring negator list: folding
-            # normalises «إلى» to «الا», whose substring «لا » made every
-            # time-range sentence read as negated and this check inert.
-            if _NEGATED_SCHEDULE_CLAUSE.search(_fold(clause)):
+            claimed_sections = (
+                {
+                    _normalise_section_label(match.group(1))
+                    for match in _COHORT_SECTION_TOKEN.finditer(paragraph)
+                }
+                - {
+                    _normalise_section_label(match.group(1))
+                    for match in _ROOM_NEAR.finditer(paragraph)
+                }
+                - question_sections
+            )
+            without_admin_times = _ADMIN_TIME_SPAN.sub(" ", paragraph)
+            if not (_CLOCK_TOKEN.search(without_admin_times) or claimed_sections):
+                continue
+            if _NEGATED_SCHEDULE_CLAUSE.search(_fold(paragraph)):
                 continue
             violations.append(UNSUPPORTED_ACADEMIC_FACT)
             break
@@ -2412,11 +2645,10 @@ def check_answer(
     if phrase and _affirmative(text, phrase):
         found.append(CLAIMED_REGISTRATION_MUTATION)
 
-    # V2 opts into the evidence-to-answer postcondition by supplying the current
-    # question.  Legacy callers intentionally keep their established behaviour
-    # until they can pass the same provider-visible evidence and fulfillment
-    # contract; silently applying completeness without those inputs would turn a
-    # safety improvement into a legacy-regression lottery.
+    # A caller opts into the evidence-to-answer postcondition by supplying the
+    # current question.  Both adviser paths now do - the legacy agent passes
+    # question= and the catalogue too, so a preview or rollback environment
+    # running the legacy path keeps the same floor.
     if question is not None:
         found.extend(
             _evidence_postcondition_violations(
