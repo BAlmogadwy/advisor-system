@@ -2834,15 +2834,22 @@ def _what_if_alternate_lines(
             if isinstance(summary, dict)
             else None
         )
-        # Prose-safe spellings only: a malformed stored code must not cross
-        # into the answer text, where the checker's miner cannot see it and
-        # the safe answer would refuse itself.
+        # Prose-safe spellings only, in the CHECKER'S normalisation (fold
+        # Arabic-Indic digits, then strip - an inline strip-first turned
+        # «AI٤٩١» into a bare AI, the third occurrence of the class the
+        # shared helper exists for).  A code the answer miner cannot see as
+        # a course token is dropped rather than printed: interpolated, it
+        # either reads as a fabrication to the student or makes the safe
+        # answer refuse itself.
+        from core.services.answer_consistency import _COURSE_TOKEN
+        from core.services.course_catalogue import normalise_catalogue_code
+
         codes: set[str] = set()
         for row in rows or []:
             if not isinstance(row, dict):
                 continue
-            cleaned = re.sub(r"[^A-Za-z0-9]", "", str(row.get("code") or "")).upper()
-            if cleaned:
+            cleaned = normalise_catalogue_code(row.get("code"))
+            if cleaned and _COURSE_TOKEN.fullmatch(cleaned):
                 codes.add(cleaned)
         return codes
 

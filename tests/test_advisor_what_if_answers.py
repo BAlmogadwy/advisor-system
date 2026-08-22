@@ -213,6 +213,8 @@ def test_the_default_orientation_names_the_course_the_registered_side_lacks(
     answer = _safe_graduation_answer("Arabic", [payload], "")
     assert "ولا تشمل TG104" in answer
     assert _check(answer, payload) == []
+    english = _safe_graduation_answer("English", [payload], "")
+    assert "which excludes TG104" in english
 
 
 @pytest.fixture
@@ -332,6 +334,50 @@ def test_the_primary_section_keeps_its_own_full_estimate_line(divergent_plan: No
     assert arabic.count("التقدير الكامل") == 2
     english = _safe_graduation_answer("English", [payload], "")
     assert english.count("Full estimate:") == 2
+
+
+def test_prose_codes_fold_and_the_unminable_are_dropped() -> None:
+    """The reviewer's R1/R2: «AI٤٩١» must fold to AI491 (not print a bare
+    AI), and a code whose cleaned spelling the answer miner cannot see as a
+    course token must be dropped rather than interpolated - printed, it
+    reads as a fabrication or makes the safe answer refuse itself."""
+    from core.services.student_advisor_v2 import _what_if_alternate_lines
+
+    alternate = {
+        "planning_baseline_kind": "recommended_current_term",
+        "what_if": {
+            "valid": True,
+            "baseline": {
+                "lower_bound_additional_terms": 1,
+                "planning_baseline_courses_assumed_passed": [
+                    {"code": "AI٤٩١"},
+                    {"code": "ZZ 101"},
+                    {"code": "<b>QQ202</b>"},
+                ],
+            },
+            "scenario": {"lower_bound_additional_terms": 2},
+        },
+    }
+    heading = _what_if_alternate_lines("Arabic", alternate, {"baseline": {}})[0]
+    assert "AI491" in heading
+    assert "ZZ101" in heading
+    assert "QQ202" not in heading and "BQQ202B" not in heading
+
+
+def test_a_single_additional_term_reads_singular_in_english() -> None:
+    from core.services.student_advisor_v2 import _safe_graduation_what_if_answer_base
+
+    what_if = {
+        "valid": True,
+        "removed_current_courses": [{"code": "TG102"}],
+        "added_current_courses": [],
+        "comparison": {},
+        "baseline": {"lower_bound_additional_terms": 1, "estimated_additional_terms": 1},
+        "scenario": {"lower_bound_additional_terms": 2, "estimated_additional_terms": 2},
+    }
+    answer = _safe_graduation_what_if_answer_base("English", what_if, "registered_timetable")
+    assert "1 additional term before" in answer
+    assert "1 additional terms" not in answer
 
 
 def test_a_missing_lower_bound_never_prints_the_word_none() -> None:
