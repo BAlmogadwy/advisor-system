@@ -3102,13 +3102,20 @@ def test_images_fail_closed_when_nothing_configures_them(settings):
     assert images_enabled() is False
 
 
-def test_the_image_setting_defaults_to_off_in_settings():
-    """And the settings module's own default is `false`, with the strict idiom."""
+def test_the_image_settings_default_to_on_with_the_strict_idiom():
+    """Default ON (owner decision 2026-08-22), still with the strict idiom.
+
+    Production has run with both image kinds enabled since launch; a fresh
+    environment silently downgrading to text-only cards was the surprise, not
+    the picture.  The strict `== "true"` idiom stays so any non-"true" env
+    value still switches a kind off deliberately, and each kind keeps its own
+    independent switch.
+    """
     from pathlib import Path
 
     source = Path("config/settings.py").read_text(encoding="utf-8")
-    assert 'os.getenv("TELEGRAM_SEND_TIMETABLE_IMAGES", "false").lower() == "true"' in source
-    assert 'os.getenv("TELEGRAM_SEND_GRADUATION_IMAGES", "false").lower() == "true"' in source
+    assert 'os.getenv("TELEGRAM_SEND_TIMETABLE_IMAGES", "true").lower() == "true"' in source
+    assert 'os.getenv("TELEGRAM_SEND_GRADUATION_IMAGES", "true").lower() == "true"' in source
 
 
 @CHANNEL_ON
