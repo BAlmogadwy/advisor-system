@@ -949,12 +949,20 @@ def test_an_arabic_indic_identifier_does_not_slip_past_the_gate(roster) -> None:
 @override_settings(LLM_BACKEND="local")
 def test_a_clean_answer_is_never_touched(roster) -> None:
     """The gate must not fire on ordinary prose. Course codes, credit hours,
-    times, pages and academic years all contain digits and none is an identity."""
+    pages and academic years all contain digits and none is an identity.
+
+    The original fixture also asserted «الأحد 09:00» beside the course code -
+    a meeting-time claim with zero schedule evidence in the turn, which is the
+    exact shape of the audited fabricated-timetable failure.  The evidence
+    postconditions now challenge that on this path too, so the identity-gate
+    assertion keeps every digit shape EXCEPT the ungrounded meeting time, and
+    a companion test below pins the new behaviour explicitly.
+    """
     _seed_courses()
-    clean = "مقرر AI221 بثلاث ساعات، الأحد 09:00، والحد 19 ساعة معتمدة، صفحة 28."
+    clean = "مقرر AI221 بثلاث ساعات، والحد 19 ساعة معتمدة، صفحة 28."
     client = _ScriptedAnswers([clean])
     payload = va.answer_virtual_advisor(
-        question="وش عندي بكرة الأحد؟",
+        question="كم ساعة مقرر AI221؟",
         principal=_principal(),
         academic_year=1448,
         term=1,
@@ -962,6 +970,27 @@ def test_a_clean_answer_is_never_touched(roster) -> None:
     )
     assert payload["answer"] == clean
     assert payload["agent"].get("output_violations") is None
+
+
+def test_an_ungrounded_meeting_time_is_challenged_on_the_legacy_path_too(roster) -> None:
+    """A schedule claim without schedule evidence no longer ships from legacy.
+
+    Any environment without the V2 flag - a preview, a rollback - runs this
+    path, and it used to skip the evidence postconditions entirely because
+    check_answer was called without question=.  That silent bypass is how the
+    audited fabrications would return on the next rollback.
+    """
+    _seed_courses()
+    fabricated = "مقرر AI221 بثلاث ساعات، الأحد 09:00، والحد 19 ساعة معتمدة."
+    client = _ScriptedAnswers([fabricated, fabricated])
+    payload = va.answer_virtual_advisor(
+        question="وش عندي بكرة الأحد؟",
+        principal=_principal(),
+        academic_year=1448,
+        term=1,
+        client=client,
+    )
+    assert payload["answer"] != fabricated
 
 
 # ── 6. the factory ───────────────────────────────────────────────

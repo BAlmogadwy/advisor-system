@@ -3926,6 +3926,17 @@ def test_section_listing_evidence_is_inside_the_boundary():
         == []
     )
 
+    # And the tool's admission bought TIME verification, not only code
+    # verification - the original fix stopped at the code check, so a real
+    # section at an invented time still passed every clock comparison.
+    fabricated_time = "الشعبة M1 لمقرر AI331 تبدأ الساعة 11:30."
+    assert UNSUPPORTED_ACADEMIC_FACT in check_answer(
+        fabricated_time,
+        tool_results=[evidence],
+        question=question,
+        required_tools={"my_clash_free_sections"},
+    )
+
 
 def test_a_fallback_that_fails_validation_abstains_rather_than_shipping(monkeypatch):
     """The last gate before abstention has to be a gate.

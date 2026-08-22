@@ -215,6 +215,12 @@ def test_persistence_rewhitelists_transient_audit_metadata():
             "violations_after_repair": [],
         },
         "repair": {"attempted": False, "result": "not_attempted"},
+        "cost": {
+            "inference_calls": 0,
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "turn_ms": 0,
+        },
     }
     assert str(SID) not in encoded
     assert "AI463" not in encoded
@@ -348,3 +354,67 @@ def test_the_revision_fields_take_a_token_or_nothing(prose: str):
     # Over-long tokens are refused rather than truncated into something new.
     assert normalise_prompt_version("v" * 41) == ""
     assert normalise_model_revision("v" * 121) == ""
+
+
+def test_cost_counters_are_clamped_integers_never_content():
+    """The cost block is counters only, re-whitelisted like everything else.
+
+    A future caller that puts prose, floats-with-meaning, or negative numbers
+    into the transient shape must find them clamped at persistence - the audit
+    column stays free of content by construction, not by caller discipline.
+    """
+    audit = build_evidence_audit(
+        provider_evidence=[("my_timetable", {"tool": "my_timetable", "ok": True})],
+        validation_outcome="passed",
+        inference_calls=3,
+        prompt_tokens=1200,
+        completion_tokens=450,
+        turn_ms=15750,
+    )
+    assert audit["cost"] == {
+        "inference_calls": 3,
+        "prompt_tokens": 1200,
+        "completion_tokens": 450,
+        "turn_ms": 15750,
+    }
+
+    cleaned = normalise_evidence_audit(
+        {
+            **audit,
+            "cost": {
+                "inference_calls": "AI463 registered",
+                "prompt_tokens": -50,
+                "completion_tokens": 12.9,
+                "turn_ms": 10**15,
+                "note": "must vanish",
+            },
+        }
+    )
+    assert cleaned["cost"] == {
+        "inference_calls": 0,
+        "prompt_tokens": 0,
+        "completion_tokens": 12,
+        "turn_ms": 1_000_000_000,
+    }
+    assert "note" not in cleaned["cost"]
+    assert "AI463" not in json.dumps(cleaned)
+
+
+def test_every_student_reachable_capability_is_auditable():
+    """A turn's tool use must be recordable for every tool a student can reach.
+
+    build_evidence_audit silently skips an unlisted name, so a capability
+    outside this list persists tool_names: [] - indistinguishable from a
+    no-tool turn, which blinds the quality screen and the weekly outcome
+    series to exactly the turns most worth reading.
+    """
+    from core.services.advisor_evidence_audit import AUDITABLE_TOOL_NAMES
+    from core.services.rbac import ROLE_STUDENT
+    from core.services.virtual_advisor_capabilities import get_default_registry
+
+    student_tools = {
+        name
+        for name, capability in get_default_registry().capabilities.items()
+        if ROLE_STUDENT in capability.allowed_roles
+    }
+    assert student_tools - AUDITABLE_TOOL_NAMES == set()

@@ -34,6 +34,7 @@ from core.services.advisor_remote_boundary import (
     boundary_for_scope,
 )
 from core.services.answer_consistency import check_answer
+from core.services.course_catalogue import known_course_codes
 from core.services.course_classifier import parse_course_result
 from core.services.credit_policy import credit_policy_evidence
 from core.services.llm_backend import (
@@ -1519,6 +1520,7 @@ def _output_contract_violations(
     tool_results: list[dict[str, Any]] | None = None,
     action: dict[str, Any] | None = None,
     context: dict[str, Any] | None = None,
+    question: str | None = None,
 ) -> list[str]:
     """What is wrong with this answer, as a list of codes. Empty means shippable.
 
@@ -1570,7 +1572,21 @@ def _output_contract_violations(
     # answer agree with the facts it was given — but they share the retry, the
     # re-validation and the refusal below, because a turn with two gates has two
     # places for a violation to be handled differently.
-    violations.extend(check_answer(text, tool_results=tool_results, action=action, context=context))
+    # question= opts this path into the evidence postconditions.  Without it
+    # the whole postcondition block is skipped, and any environment that runs
+    # the legacy path - a preview env, a rollback, a service without the V2
+    # flag - silently reverts to the exact code that produced the audited
+    # fabrications.
+    violations.extend(
+        check_answer(
+            text,
+            tool_results=tool_results,
+            action=action,
+            context=context,
+            question=question,
+            known_course_codes=known_course_codes(),
+        )
+    )
 
     return violations
 
@@ -3150,6 +3166,7 @@ def answer_virtual_advisor(
         evidence_texts=evidence_texts,
         boundary=boundary,
         is_student=is_student,
+        question=question,
         tool_results=tool_results,
         # `recommendation_policy` lives here, not in the tool results, and the credit
         # check needs it to tell an advisory cap from a contradiction.
@@ -3214,6 +3231,7 @@ def answer_virtual_advisor(
                 evidence_texts=evidence_texts,
                 boundary=boundary,
                 is_student=is_student,
+                question=question,
                 # The SAME evidence. Re-validating without it would check the
                 # corrected answer against nothing, and the retry would launder
                 # every consistency violation away.

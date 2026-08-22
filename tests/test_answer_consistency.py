@@ -15,9 +15,12 @@ from core.services.answer_consistency import (
     CLAIMED_PLANNER_MUTATION,
     CLAIMED_REGISTRATION_MUTATION,
     CREDIT_CAP_CONTRADICTION,
+    EXACT_FACT_TOOLS,
+    FREE_FORM_TOOLS,
     INVENTED_OPTION_CONTENTS,
     NOT_ON_FILE_TO_NOT_OFFERED,
     PREREQ_TO_REGISTRATION_LEAP,
+    REQUESTED_EVIDENCE_OMITTED,
     RETAINED_ADD_CONTRADICTION,
     SEAT_CLAIM,
     UNSUPPORTED_ACADEMIC_FACT,
@@ -771,6 +774,232 @@ def test_a_recommendation_cannot_be_relabelled_as_an_existing_registration(sente
             "المقرر AI331 موجود أصلا في الجدول المسجل لديك.",
             tool_results=[recommendation],
             question="ماذا أسجل؟",
+            required_tools=set(),
+        )
+        == []
+    )
+
+
+def test_every_student_tool_is_classified_exactly_once():
+    """A capability cannot land outside the boundary by omission.
+
+    my_clash_free_sections sat outside EXACT_FACT_TOOLS for one release and the
+    invented-sections defect shipped through the gap. Every student-reachable
+    tool must be deliberately in exactly one set - checked or free-form with a
+    stated reason - so the NEXT capability added fails this test instead of
+    silently joining the unchecked side.
+    """
+    from core.services.rbac import ROLE_STUDENT
+    from core.services.virtual_advisor_capabilities import get_default_registry
+
+    registry = get_default_registry().capabilities
+    student_tools = {
+        name for name, capability in registry.items() if ROLE_STUDENT in capability.allowed_roles
+    }
+    # Staff-only prose/aggregate surfaces, each excluded deliberately: their
+    # answers are adviser-facing analysis, not student academic-fact claims.
+    staff_prose = {
+        "find_students",
+        "graduation_shortfall",
+        "portfolio_triage",
+        "aggregate_demand",
+        "get_student_context",
+    }
+    classified = set(EXACT_FACT_TOOLS) | set(FREE_FORM_TOOLS)
+
+    assert student_tools - classified == set()
+    # Total over the registry: every capability, any role, lands somewhere.
+    assert set(registry) - classified - staff_prose == set()
+    assert set(EXACT_FACT_TOOLS) & set(FREE_FORM_TOOLS) == set()
+
+
+def test_a_course_code_that_exists_nowhere_is_flagged_even_with_no_tool_row():
+    """The catalogue floor runs outside the evidence gate.
+
+    The audited no-tool fabrications - an invented numbering guide, CS202,
+    MATE243 - shipped on turns where no exact-fact tool ran, so every gated
+    check was silent and the turn recorded PASS. Existence needs no evidence
+    row to verify: the catalogue is the authority.
+    """
+    catalogue = frozenset({"MATH243", "CS323", "AI331"})
+
+    fabricated = "ننصحك بمقرر MATE243 لأنه أساسي في خطتك."
+    assert UNSUPPORTED_ACADEMIC_FACT in check_answer(
+        fabricated,
+        tool_results=[],
+        question="ماذا أدرس؟",
+        required_tools=set(),
+        known_course_codes=catalogue,
+    )
+
+    # Repeating the student's own token to refute it is how a CORRECT answer
+    # says the course does not exist.
+    refutation = "لا يوجد مقرر باسم MATE243 في النظام؛ لعلك تقصد MATH243."
+    assert (
+        check_answer(
+            refutation,
+            tool_results=[],
+            question="متى محاضرة MATE243؟",
+            required_tools=set(),
+            known_course_codes=catalogue,
+        )
+        == []
+    )
+
+    # A real catalogue course needs no tool row to be NAMED (support for
+    # claims about it is the relational checks' job, not the floor's).
+    real = "مقرر AI331 من مقررات الخطة."
+    assert (
+        check_answer(
+            real,
+            tool_results=[],
+            question="ماذا أدرس؟",
+            required_tools=set(),
+            known_course_codes=catalogue,
+        )
+        == []
+    )
+
+
+def test_a_meeting_time_claim_needs_schedule_evidence_in_the_turn():
+    """Real codes in false relations need a structural defence.
+
+    The worst audited fabrication was a full timetable built from REAL course
+    codes - invisible to any catalogue check, and the relational checks are
+    silent by design when the tool was never called. The obligation therefore
+    attaches to the CLAIM: a course-plus-clock-time clause requires a
+    schedule-bearing row somewhere in the turn.
+    """
+    catalogue = frozenset({"AI331", "CS323"})
+
+    fabricated = "محاضرة AI331 يوم الأحد من الساعة 09:00 إلى 10:15."
+    assert UNSUPPORTED_ACADEMIC_FACT in check_answer(
+        fabricated,
+        tool_results=[],
+        question="متى محاضراتي؟",
+        required_tools=set(),
+        known_course_codes=catalogue,
+    )
+
+    # An explicitly negated clause is honest refusal, not a schedule claim.
+    negated = "لا أستطيع تأكيد أن AI331 تبدأ الساعة 09:00 دون قراءة جدولك."
+    assert (
+        check_answer(
+            negated,
+            tool_results=[],
+            question="هل AI331 الساعة 09:00؟",
+            required_tools=set(),
+            known_course_codes=catalogue,
+        )
+        == []
+    )
+
+    # With a schedule row present, the relational checks own the question.
+    timetable = {
+        "tool": "my_timetable",
+        "ok": True,
+        "registrations": [{"course_code": "AI331", "section": "M6"}],
+        "meetings": [
+            {
+                "course_code": "AI331",
+                "section": "M6",
+                "day": "SUN",
+                "start": "09:00",
+                "end": "10:15",
+                "room": "B204",
+            }
+        ],
+    }
+    supported = "محاضرة AI331 يوم الأحد من الساعة 09:00 إلى 10:15."
+    assert (
+        check_answer(
+            supported,
+            tool_results=[timetable],
+            question="متى محاضراتي؟",
+            required_tools=set(),
+            known_course_codes=catalogue,
+        )
+        == []
+    )
+
+
+def test_every_required_tool_must_contribute_not_just_one_of_them():
+    """all(), not any(): one satisfied contract cannot launder another's absence.
+
+    When a question requires two exact-fact tools, an answer that renders only
+    one tool's signature used to pass the completeness gate if the all() were
+    weakened - "the timetable is shown" excused the missing graduation card.
+    """
+    timetable = {
+        "tool": "my_timetable",
+        "ok": True,
+        "schedule_kind": "REGISTERED",
+        "registered_credit_hours": 14,
+        "registrations": [
+            {"course_code": "AI331", "section": "M6"},
+            {"course_code": "CS323", "section": "M9"},
+        ],
+    }
+    graduation = {
+        "tool": "graduation_progress",
+        "ok": True,
+        "plan_courses_passed": 32,
+        "plan_courses_total": 48,
+        "courses_remaining": 16,
+        "credits_remaining_in_plan": 48,
+        "estimated_additional_terms": 2,
+        "estimated_terms_including_planning_baseline": 3,
+        "lower_bound_additional_terms": 2,
+        "lower_bound_terms_including_planning_baseline": 3,
+        "simulation_completed": True,
+    }
+    timetable_only = (
+        "في الجدول المسجل لديك AI331 في الشعبة M6 وCS323 في الشعبة M9، بإجمالي 14 ساعة معتمدة."
+    )
+
+    assert REQUESTED_EVIDENCE_OMITTED in check_answer(
+        timetable_only,
+        tool_results=[timetable, graduation],
+        question="اعرض جدولي وكم متبقي لتخرجي؟",
+        required_tools={"my_timetable", "graduation_progress"},
+    )
+
+    both = (
+        timetable_only + "\n"
+        "ولتخرجك: أنجزت 32 من 48 مقررًا، وبقي 16 مقررًا و48 ساعة، "
+        "والإجمالي المقدر 3 فصول باحتساب الفصل الحالي."
+    )
+    assert (
+        check_answer(
+            both,
+            tool_results=[timetable, graduation],
+            question="اعرض جدولي وكم متبقي لتخرجي؟",
+            required_tools={"my_timetable", "graduation_progress"},
+        )
+        == []
+    )
+
+
+def test_open_and_locked_are_different_facts_about_a_course():
+    """A locked course called ready is the prerequisite leap in bucket form."""
+    progress = {
+        "tool": "my_progress",
+        "ok": True,
+        "prerequisites_satisfied": [{"course_code": "AI331"}],
+        "prerequisite_blocked": [{"course_code": "CS424"}],
+    }
+
+    assert UNSUPPORTED_ACADEMIC_FACT in check_answer(
+        "المقرر CS424 مفتوح لك ومتطلباته مستوفاة.",
+        tool_results=[progress],
+        question="ما المقررات الجاهزة؟",
+        required_tools=set(),
+    )
+    assert (
+        check_answer(
+            "المقرر AI331 مستوفٍ لمتطلباته. أما CS424 فهو محجوب حاليًا.",
+            tool_results=[progress],
+            question="ما المقررات الجاهزة؟",
             required_tools=set(),
         )
         == []

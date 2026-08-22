@@ -235,3 +235,25 @@ def test_student_section_eligibility_refuses_unknown_student_and_other_branch() 
     assert not section_is_available_to_student(other_branch, student_id=male.student_id)
     with pytest.raises(UnknownStudentGender):
         section_is_available_to_student(other_branch, student_id=799999)
+
+
+def test_section_label_normalisers_agree_everywhere():
+    """The checker's local copy and the canonical helper must never drift.
+
+    answer_consistency deliberately avoids importing Django modules, so it
+    carries a byte-for-byte local copy of this rule; this parity test is what
+    makes that a copy rather than a fork.  The corpus covers the " M1" spacing
+    class from issue #54 and the F01 leading-zero class from the production
+    audit - the zero must SURVIVE normalisation, because F01 was an invention
+    to flag, not a spelling of F1 to forgive.
+    """
+    from core.services.answer_consistency import _normalise_section_label
+    from core.services.student_sections import normalize_section_label
+
+    corpus = [" M1", "M 1", "m1", "F01", " f01 ", "YM4", " ym 4", "", None, "ONLINE"]
+    for raw in corpus:
+        assert normalize_section_label(raw) == _normalise_section_label(raw), raw
+
+    assert normalize_section_label(" M1") == "M1"
+    assert normalize_section_label("F01") == "F01"
+    assert normalize_section_label("F01") != normalize_section_label("F1")

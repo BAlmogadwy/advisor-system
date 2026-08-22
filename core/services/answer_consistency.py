@@ -89,6 +89,34 @@ EXACT_FACT_TOOLS = frozenset(
         # Free-form tools such as policy_lookup stay out, per the rule above.
         "my_clash_free_sections",
         "lookup_course",
+        # The remaining typed student tools.  Each returns exact facts about
+        # named courses, and while any of them sat outside this set an answer
+        # built on it received no postconditions at all - the same hole the
+        # my_clash_free_sections admission closed for section questions.
+        "my_plan_by_term",
+        "course_prerequisites",
+        "course_choice_comparison",
+        "feasible_course_replacements",
+        "course_eligibility",
+        "build_my_timetable",
+    }
+)
+
+#: Tools deliberately OUTSIDE the exact-fact postconditions, each for a stated
+#: reason - never by omission.  A parity test asserts that every student-reachable
+#: capability is in exactly one of these two sets, so the next capability added
+#: cannot silently land unchecked.
+FREE_FORM_TOOLS = frozenset(
+    {
+        # Identity/context surface; its prose fields are not exact-fact claims.
+        "get_student_context",
+        # Narrative prerequisite explanation; its typed core is covered by
+        # course_prerequisites and my_progress.
+        "why_course_locked",
+        # Policy text is verified by the citation contract, not by token relations.
+        "policy_lookup",
+        # A yes/no adviser-assignment fact with no academic tokens.
+        "my_advisor",
     }
 )
 
@@ -104,6 +132,27 @@ _COURSE_CODE = re.compile(r"(?<![A-Za-z0-9])[A-Za-z]{2,4}-?\d{3}(?![0-9])")
 
 #: «شعبة M2» / "section M2" — a label only counts when a section word introduces it,
 #: because "M2" alone is two characters and appears inside ordinary words.
+#: A standalone negation word opening or inside the clause.  Anchored on
+#: whitespace/starts so «إلى»-folded-to-«الا» can never satisfy it.
+_NEGATED_SCHEDULE_CLAUSE = re.compile(
+    r"(?:^|\s)(?:لا|لن|لم|ليس|ليست|تعذر|يتعذر|دون|بدون)\s"
+    r"|(?:cannot|can't|not|no|unable)",
+    re.IGNORECASE,
+)
+
+#: Every tool whose payload can carry a day, clock time, room, or section
+#: meeting.  A clause asserting a meeting needs a row from one of these.
+_SCHEDULE_TOOLS = frozenset(
+    {
+        "my_timetable",
+        "build_timetable_proposal",
+        "my_clash_free_sections",
+        "build_my_timetable",
+        # Its alternatives embed proposal-shaped courses/meetings rows.
+        "feasible_course_replacements",
+    }
+)
+
 _SECTION_NEAR = re.compile(
     r"(?:شعب[ةه]?|الشعب[ةه]?|section)\s*[:\-]?\s*([A-Za-z]{1,2}\d{1,2}[A-Za-z]?)\b",
     re.IGNORECASE,
@@ -507,6 +556,16 @@ def _course_codes_in_evidence(value: Any, *, parent_key: str = "") -> set[str]:
             codes |= _course_codes_in_evidence(child, parent_key=key)
     elif isinstance(value, list):
         for child in value:
+            if isinstance(child, str):
+                # Payloads such as course_prerequisites carry bare code lists
+                # ("prerequisites": ["CS111"]).  A true answer quoting them was
+                # invisible to this miner and got refused as an invention.
+                # Suggestion keys (a future resolver's did_you_mean) must NOT be
+                # routed through here - they are not evidence of anything.
+                token = _normalise_course_token(child)
+                if token and _COURSE_TOKEN.fullmatch(child.strip()):
+                    codes.add(token)
+                continue
             codes |= _course_codes_in_evidence(child, parent_key=parent_key)
     return codes
 
@@ -518,12 +577,9 @@ def _course_codes_in_text(text: str) -> set[str]:
 def _section_labels_in_timetable(rows: list[dict[str, Any]]) -> set[str]:
     labels: set[str] = set()
     for row in rows:
-        if row.get("tool") not in {
-            "my_timetable",
-            "build_timetable_proposal",
-            "my_clash_free_sections",
-        }:
-            continue
+        # Every row given here is already exact-fact evidence; a section label
+        # carried by ANY of them (a replacement option, a comparison row) is a
+        # recorded fact, and quoting it must not read as an invention.
 
         def visit(value: Any) -> None:
             if isinstance(value, dict):
@@ -547,6 +603,19 @@ def _section_labels_in_timetable(rows: list[dict[str, Any]]) -> set[str]:
 
         visit(row)
     return labels
+
+
+def _normalise_section_label(value: Any) -> str:
+    """One spelling for a section label: trimmed, upper, internal spaces removed.
+
+    Issue #54's three classifiers disagree on " M1" precisely because each one
+    normalises privately.  This mirrors student_sections.normalize_section_label
+    and a parity test holds the two together.  Leading zeros are deliberately
+    NOT folded: the audited production F01-F04 were inventions inside a fully
+    fabricated table (98 real labels, none zero-padded), so F01 must stay
+    distinct from F1 and be flagged, not whitelisted.
+    """
+    return "".join(str(value or "").split()).upper()
 
 
 _COHORT_SECTION_TOKEN = re.compile(
@@ -598,9 +667,7 @@ def _values_for_key(value: Any, key_name: str) -> list[str]:
 
 
 def _unsupported_timetable_values(answer: str, rows: list[dict[str, Any]]) -> bool:
-    timetable_rows = [
-        row for row in rows if row.get("tool") in {"my_timetable", "build_timetable_proposal"}
-    ]
+    timetable_rows = [row for row in rows if row.get("tool") in _SCHEDULE_TOOLS]
     if not timetable_rows:
         return False
 
@@ -898,6 +965,22 @@ def _term_figures(clause: str) -> set[float]:
     )
 
 
+def _numeric_leaves(value: Any) -> set[float]:
+    """Every numeric value carried anywhere in a payload."""
+    found: set[float] = set()
+    if isinstance(value, bool):
+        return found
+    if isinstance(value, int | float):
+        found.add(float(value))
+    elif isinstance(value, dict):
+        for child in value.values():
+            found |= _numeric_leaves(child)
+    elif isinstance(value, list):
+        for child in value:
+            found |= _numeric_leaves(child)
+    return found
+
+
 def _numeric_values_for_keys(value: Any, keys: set[str]) -> set[float]:
     found: set[float] = set()
     if isinstance(value, dict):
@@ -1057,7 +1140,26 @@ def _exact_figure_mismatch(answer: str, rows: list[dict[str, Any]]) -> bool:
             and (credit_figures or count_figures or term_figures or percent_figures)
             and _has_words(clause, _PERSONAL_GRADUATION_CLAIM_WORDS)
         ):
-            return True
+            # Comparison and replacement payloads carry their own server-
+            # computed graduation-shaped numbers (terms_saved, unlock counts,
+            # estimated additional terms per option).  Quoting one of those IS
+            # a supported claim even with no graduation_progress row in the
+            # turn - refusing them made the server's own safe summaries fail
+            # this validator the moment their tools joined EXACT_FACT_TOOLS.
+            # The exemption is figures-present-in-evidence, for THIS branch
+            # only; label-to-value relations remain _metric_claim_mismatch's
+            # job whenever real graduation evidence exists.
+            payload_figures = _numeric_leaves(
+                [
+                    row
+                    for row in rows
+                    if row.get("tool")
+                    in {"feasible_course_replacements", "course_choice_comparison"}
+                ]
+            )
+            figures = credit_figures | count_figures | term_figures | percent_figures
+            if not (payload_figures and figures <= payload_figures):
+                return True
         if graduations and graduation_context:
             if count_figures:
                 expected = set()
@@ -1410,7 +1512,55 @@ def _schedule_evidence(
                             str(item.get("room") or "").strip().upper(),
                         )
                     )
+        elif tool == "my_clash_free_sections":
+            # Recorded sections are facts about the CATALOGUE, not about the
+            # student's registration, so they carry their own kind.  A row the
+            # payload itself marks as the student's current section addition-
+            # ally supports a REGISTERED claim.
+            for result in row.get("results") or []:
+                if not isinstance(result, dict):
+                    continue
+                code = _normalise_course_token(result.get("course_code"))
+                if not code:
+                    continue
+                for bucket in ("clash_free", "clashing"):
+                    for entry in result.get(bucket) or []:
+                        if not isinstance(entry, dict):
+                            continue
+                        section = _normalise_section_label(entry.get("section"))
+                        if not section:
+                            continue
+                        registrations.add(("SECTIONS", code, section))
+                        if entry.get("is_current_section"):
+                            registrations.add(("REGISTERED", code, section))
+                        for meeting in entry.get("meetings") or []:
+                            parsed = _MEETING_STRING.match(str(meeting or ""))
+                            if not parsed:
+                                continue
+                            day, start, end = parsed.groups()
+                            for kind in (
+                                ("SECTIONS", "REGISTERED")
+                                if entry.get("is_current_section")
+                                else ("SECTIONS",)
+                            ):
+                                meetings.add(
+                                    (
+                                        kind,
+                                        code,
+                                        section,
+                                        _canonical_day(day),
+                                        start.strip(),
+                                        end.strip(),
+                                        "",
+                                    )
+                                )
     return registrations, meetings
+
+
+#: "SUN 09:00-10:15" - the flattened meeting spelling my_clash_free_sections uses.
+_MEETING_STRING = re.compile(
+    r"\s*([A-Za-z]{3,9})\s+([0-2]?[0-9]:[0-5][0-9])\s*-\s*([0-2]?[0-9]:[0-5][0-9])\s*\Z"
+)
 
 
 def _kind_matches(claimed: str, actual: str) -> bool:
@@ -2020,6 +2170,7 @@ def _evidence_postcondition_violations(
     tool_results: list[dict[str, Any]] | None,
     required_tools: Iterable[str] | None,
     presentation: dict[str, Any] | None,
+    known_course_codes: frozenset[str] | None = None,
 ) -> list[str]:
     rows = _successful_exact_fact_rows(tool_results)
     required = {str(tool) for tool in (required_tools or ()) if str(tool) in EXACT_FACT_TOOLS}
@@ -2028,6 +2179,51 @@ def _evidence_postcondition_violations(
 
     if required - present:
         violations.append(REQUIRED_EVIDENCE_MISSING)
+
+    successful_rows = [
+        row for row in (tool_results or []) if isinstance(row, dict) and row.get("ok")
+    ]
+
+    # The two checks below deliberately run OUTSIDE the exact-fact rows gate.
+    # The audited no-tool fabrications - an invented numbering guide, MATE243,
+    # CS202/CS212 - shipped on turns where no exact-fact tool ran, so every
+    # gated check was silent and the turn recorded not_applicable.
+    if known_course_codes:
+        # Existence floor: a course code must exist SOMEWHERE - the catalogue,
+        # this turn's evidence (external-service courses live outside the
+        # catalogue), or the student's own question (repeating a code to say it
+        # does not exist is how a correct answer refutes it).  Support for a
+        # CLAIM about the code remains the relational checks' job.
+        all_evidence_codes = set().union(
+            set(), *(_course_codes_in_evidence(row) for row in successful_rows)
+        )
+        question_codes = _course_codes_in_text(question)
+        for code in _course_codes_in_text(answer):
+            if (
+                code not in known_course_codes
+                and code not in all_evidence_codes
+                and code not in question_codes
+            ):
+                violations.append(UNSUPPORTED_ACADEMIC_FACT)
+                break
+
+    if not any(str(row.get("tool") or "") in _SCHEDULE_TOOLS for row in successful_rows):
+        # A meeting-time claim with no schedule-bearing evidence in the whole
+        # turn.  This is the structural defence for the fabricated-timetable
+        # class built from REAL codes in FALSE relations: with no tool row the
+        # relational checks have nothing to compare and stay silent by design,
+        # so the obligation must attach to the CLAIM.  An explicitly negated
+        # clause is exempt - refusing while repeating the asked time is honest.
+        for clause in _clauses(answer):
+            if not (_course_codes_in_text(clause) and _CLOCK_TOKEN.search(clause)):
+                continue
+            # Word-boundary negation, NOT the substring negator list: folding
+            # normalises «إلى» to «الا», whose substring «لا » made every
+            # time-range sentence read as negated and this check inert.
+            if _NEGATED_SCHEDULE_CLAUSE.search(_fold(clause)):
+                continue
+            violations.append(UNSUPPORTED_ACADEMIC_FACT)
+            break
 
     if rows:
         if _unsupported_answer_codes(answer, question, rows):
@@ -2048,12 +2244,29 @@ def _evidence_postcondition_violations(
         if _prior_artifact_relation_mismatch(answer, rows):
             violations.append(UNSUPPORTED_ACADEMIC_FACT)
 
-        timetable_sections = _section_labels_in_timetable(rows)
-        named_sections = {match.group(1).upper() for match in _SECTION_NEAR.finditer(answer or "")}
-        question_sections = {
-            match.group(1).upper() for match in _SECTION_NEAR.finditer(question or "")
+        timetable_sections = {
+            _normalise_section_label(label) for label in _section_labels_in_timetable(rows)
         }
-        if named_sections - timetable_sections - question_sections:
+
+        def sections_in(text: str) -> set[str]:
+            # Both spellings: labels introduced by a section word AND bare
+            # cohort tokens.  F01-F04 shipped as bare table cells, which the
+            # section-word pattern never saw.  Room tokens are subtracted so
+            # "القاعة M7" stays a room.
+            named = {
+                _normalise_section_label(match.group(1))
+                for match in _SECTION_NEAR.finditer(text or "")
+            }
+            named |= {
+                _normalise_section_label(match.group(1))
+                for match in _COHORT_SECTION_TOKEN.finditer(text or "")
+            } - {
+                _normalise_section_label(match.group(1))
+                for match in _ROOM_NEAR.finditer(text or "")
+            }
+            return named
+
+        if sections_in(answer) - timetable_sections - sections_in(question):
             violations.append(UNSUPPORTED_ACADEMIC_FACT)
 
         if _exact_figure_mismatch(answer, rows):
@@ -2091,6 +2304,7 @@ def check_answer(
     question: str | None = None,
     required_tools: Iterable[str] | None = None,
     presentation: dict[str, Any] | None = None,
+    known_course_codes: frozenset[str] | None = None,
 ) -> list[str]:
     """Every consistency violation in this answer, as codes. Empty means shippable.
 
@@ -2211,6 +2425,7 @@ def check_answer(
                 tool_results=tool_results,
                 required_tools=required_tools,
                 presentation=presentation,
+                known_course_codes=known_course_codes,
             )
         )
 

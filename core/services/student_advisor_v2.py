@@ -18,6 +18,7 @@ from __future__ import annotations
 import copy
 import json
 import re
+import time
 from typing import Any
 
 from django.conf import settings
@@ -60,6 +61,7 @@ from core.services.answer_consistency import (
     check_answer,
 )
 from core.services.arabic_text import normalise as normalise_arabic_text
+from core.services.course_catalogue import known_course_codes as _known_course_codes
 from core.services.llm_backend import LLMError, UsageTotals, get_llm_client
 from core.services.llm_remote_privacy import fold_digits, project_prior_presentation
 from core.services.policy_contract import requires_policy_contract
@@ -3637,16 +3639,21 @@ def _verified_evidence_fallback(
 
 
 def _evidence_abstention(language: str) -> str:
+    # A dead-end "try again" loops the student into a second identical
+    # failure.  The safe path terminates at a human: the escalation control on
+    # this same screen routes the question to the student's academic adviser.
     if language == "Arabic":
         return (
             "لم أتمكن من إعداد إجابة يمكن التحقق من حقائقها الأكاديمية مقابل بيانات "
-            "هذه المحادثة؛ لذلك لن أعرض أرقامًا أو مقررات غير مؤكدة. أعد المحاولة "
-            "ليقرأ النظام السجل الموثق من جديد."
+            "هذه المحادثة؛ لذلك لن أعرض أرقامًا أو مقررات غير مؤكدة. يمكنك إحالة "
+            "سؤالك إلى مرشدك الأكاديمي من خيار «إحالة إلى المرشد» بجانب هذه "
+            "الرسالة، وسيصله نص سؤالك كما كتبته."
         )
     return (
         "I could not produce an answer whose academic facts could be verified against "
         "this turn's evidence, so I will not show unconfirmed courses or figures. "
-        "Please try again so the system can reread the verified record."
+        "You can refer this question to your academic adviser using the escalation "
+        "option beside this message, and they will receive it as you wrote it."
     )
 
 
@@ -3887,6 +3894,8 @@ def answer_student_advisor_v2(
         )
 
     language = _answer_language(clean_question)
+    known_course_codes = _known_course_codes()
+    turn_started = time.monotonic()
     # Colloquial Saudi Arabic remains accepted and fully parsed as input, but the
     # student portal renders one consistent university register: clear MSA.
     detected_answer_style = _answer_style(clean_question)
@@ -4807,18 +4816,26 @@ def answer_student_advisor_v2(
             )
             if inference_calls < inference_ceiling - 1:
                 inference_calls += 1
-                forced = llm.chat(
-                    boundary.sanitise_messages(messages),
-                    model=resolved_model,
-                    max_tokens=_max_tokens(),
-                    assistant_prefill=_assistant_prefill_for_client(llm, resolved_model),
-                )
-                usage.add(forced.usage)
-                answer = forced.content
-                answer_model = forced.model or answer_model
-                answer_model_revision = (
-                    getattr(forced, "model_revision", "") or answer_model_revision
-                )
+                try:
+                    forced = llm.chat(
+                        boundary.sanitise_messages(messages),
+                        model=resolved_model,
+                        max_tokens=_max_tokens(),
+                        assistant_prefill=_assistant_prefill_for_client(llm, resolved_model),
+                    )
+                except Exception:  # fail closed like the tool loop, not open
+                    # A provider fault here leaves answer empty; the terminal
+                    # blank-answer guard converts that into an abstention.  The
+                    # previous unguarded call let an LLMError escape the whole
+                    # function instead of reaching the evidence pipeline.
+                    forced = None
+                if forced is not None:
+                    usage.add(forced.usage)
+                    answer = forced.content
+                    answer_model = forced.model or answer_model
+                    answer_model_revision = (
+                        getattr(forced, "model_revision", "") or answer_model_revision
+                    )
 
     if constraint_input_refused:
         answer = (
@@ -5014,6 +5031,7 @@ def answer_student_advisor_v2(
             question=clean_question,
             required_tools=required_exact_fact_tools,
             presentation=presentation,
+            known_course_codes=known_course_codes,
         )
         policy_uncertainty_failed = bool(
             not citation_failed
@@ -5104,7 +5122,14 @@ def answer_student_advisor_v2(
                 language,
                 validation_results,
                 answer_style,
-                preferred_tools=set(required_exact_fact_tools),
+                # An empty required set means "no single owning tool", not "no
+                # fallback".  Passing the empty set made the middle tier
+                # unreachable for section/comparison/replacement/what-if
+                # questions, which then fell straight from violation to
+                # abstention.  The FRAGMENT LIBRARY IS FROZEN: adding a new
+                # _safe_*_fragment is an owner decision, so this only makes
+                # the existing fragments reachable.
+                preferred_tools=(set(required_exact_fact_tools) or None),
             )
             fallback_candidate = (
                 finalize_candidate(verified_fallback) if verified_fallback else None
@@ -5230,6 +5255,10 @@ def answer_student_advisor_v2(
                 violations=evidence_validation_initial,
                 violations_after_repair=evidence_validation_after_repair,
                 repair_attempted=evidence_validation_repair_attempted,
+                inference_calls=inference_calls,
+                prompt_tokens=int(usage.as_dict().get("prompt_tokens") or 0),
+                completion_tokens=int(usage.as_dict().get("completion_tokens") or 0),
+                turn_ms=int((time.monotonic() - turn_started) * 1000),
             ),
             "read_only": True,
             "portal_action": "student_manual_only",

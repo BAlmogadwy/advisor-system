@@ -491,3 +491,49 @@ def test_a_lowercase_mapping_row_still_resolves_the_equivalence() -> None:
     assert slot is not None
     assert [option.course_code for option in slot.elective_options] == ["AI463"]
     assert slot.registration_confirmed_for_requirement is True
+
+
+def test_expected_evidence_never_enters_the_registered_equivalent_set() -> None:
+    """The suppression sets keep their snapshots apart, on one student.
+
+    Every earlier fixture built a registrar-only world, so unioning the
+    expected codes into registered_or_equivalent_course_codes survived the
+    whole suite - and that union is precisely the REGISTERED/EXPECTED collapse
+    this module exists to prevent, in the one place a recommender reads.
+    """
+    student = _student(991_020, programme="AI")
+    _course("AI331")
+    _requirement("AI", "AI331", credits=3, name="NLP", programme_term=7)
+    _course("CS424")
+    _requirement("AI", "CS424", credits=3, name="Vision", programme_term=8)
+    _link(student, _section("AI331", "M6"), source="scraper_timetable")
+    _link(student, _section("CS424", "M9"), source="registration_plan_1448_t1")
+
+    state = build_student_academic_state(student.student_id, "1448", "1")
+
+    assert "AI331" in state.registered_or_equivalent_course_codes
+    assert "CS424" not in state.registered_or_equivalent_course_codes
+    assert "CS424" in state.expected_or_equivalent_course_codes
+    assert "AI331" not in state.expected_or_equivalent_course_codes
+
+
+def test_an_unrecognised_cohort_value_never_becomes_the_students_cohort() -> None:
+    """Student.section is scraped text; only M and F are cohorts.
+
+    Passing an arbitrary value through would hand every downstream
+    cohort-scoped filter a token that matches nothing - or worse, the other
+    branch's prefix - as if it were an authoritative cohort.
+    """
+    student = _student(991_021, programme="AI")
+    student.section = "X9"
+    student.save(update_fields=["section"])
+    _course("AI331")
+    _requirement("AI", "AI331", credits=3, name="NLP", programme_term=7)
+
+    state = build_student_academic_state(student.student_id, "1448", "1")
+    assert state.cohort == ""
+
+    student.section = " f "
+    student.save(update_fields=["section"])
+    state = build_student_academic_state(student.student_id, "1448", "1")
+    assert state.cohort == "F"

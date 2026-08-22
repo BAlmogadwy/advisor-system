@@ -45,6 +45,11 @@ AUDITABLE_TOOL_NAMES = frozenset(
         "policy_lookup",
         "my_advisor",
         "present_prior_artifact",
+        # Student-reachable via the legacy adviser path and the registry;
+        # while absent from this list their turns persisted tool_names: [],
+        # indistinguishable from a turn that called no tool at all.
+        "build_my_timetable",
+        "course_eligibility",
     }
 )
 
@@ -110,6 +115,10 @@ def build_evidence_audit(
     violations: list[str] | tuple[str, ...] = (),
     violations_after_repair: list[str] | tuple[str, ...] = (),
     repair_attempted: bool = False,
+    inference_calls: int = 0,
+    prompt_tokens: int = 0,
+    completion_tokens: int = 0,
+    turn_ms: int = 0,
 ) -> dict[str, Any]:
     """Build the transient audit shape from the exact payloads the provider saw."""
 
@@ -146,7 +155,24 @@ def build_evidence_audit(
                 outcome=outcome,
             ),
         },
+        # Cost/latency counters, never content.  These exist so a later
+        # feature that adds inference calls has a measured BASELINE to be
+        # judged against, and so the quality screen can read cost without a
+        # second telemetry store.
+        "cost": {
+            "inference_calls": _count(inference_calls),
+            "prompt_tokens": _count(prompt_tokens),
+            "completion_tokens": _count(completion_tokens),
+            "turn_ms": _count(turn_ms),
+        },
     }
+
+
+def _count(value: Any) -> int:
+    """A non-negative integer counter, or zero - never content, never floats."""
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        return 0
+    return max(0, min(int(value), 1_000_000_000))
 
 
 def normalise_evidence_audit(value: Any) -> dict[str, Any]:
@@ -179,6 +205,8 @@ def normalise_evidence_audit(value: Any) -> dict[str, Any]:
 
     raw_repair = value.get("repair")
     raw_repair = raw_repair if isinstance(raw_repair, Mapping) else {}
+    raw_cost = value.get("cost")
+    raw_cost = raw_cost if isinstance(raw_cost, Mapping) else {}
     attempted = raw_repair.get("attempted") is True
     final_violations = _closed_categories(raw_validation.get("violations_after_repair"))
     repair_result = _repair_result(
@@ -198,6 +226,12 @@ def normalise_evidence_audit(value: Any) -> dict[str, Any]:
             "violations_after_repair": final_violations,
         },
         "repair": {"attempted": attempted, "result": repair_result},
+        "cost": {
+            "inference_calls": _count(raw_cost.get("inference_calls")),
+            "prompt_tokens": _count(raw_cost.get("prompt_tokens")),
+            "completion_tokens": _count(raw_cost.get("completion_tokens")),
+            "turn_ms": _count(raw_cost.get("turn_ms")),
+        },
     }
 
 

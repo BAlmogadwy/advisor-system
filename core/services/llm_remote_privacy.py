@@ -262,11 +262,32 @@ def _keep(source: dict[str, Any], *names: str) -> dict[str, Any]:
     return {name: source[name] for name in names if name in source}
 
 
+def _code_list(value: Any, cap: int = 50) -> list[str]:
+    """Element-typed string list - the same discipline the sibling fields get.
+
+    _keep copies values BY REFERENCE, so a list field whitelisted through it
+    would carry dict elements (and whatever a compromised producer put in
+    them) to the provider unfiltered.  Fifty is far above any real payload.
+    """
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if isinstance(item, str)][:cap]
+
+
 def _envelope(result: dict[str, Any]) -> dict[str, Any]:
     """`ok`/`error`/`tool` are control flow, not data. `error` is included
     because the model must know a call failed — the executors' error strings are
     fixed messages about arguments and scope, not about people."""
     return _keep(result, "tool", "ok", "error")
+
+
+def _typed_rows(rows: list[dict[str, Any]], *list_fields: str) -> list[dict[str, Any]]:
+    """Element-type named list fields inside already-whitelisted rows."""
+    for row in rows:
+        for name in list_fields:
+            if name in row:
+                row[name] = _code_list(row[name])
+    return rows
 
 
 def _course_rows(rows: Any, *fields: str) -> list[dict[str, Any]]:
@@ -429,11 +450,15 @@ def _project_lookup_course(result: dict[str, Any], _: RemoteIdentityMap) -> dict
     keeps that true when somebody adds `created_by` or `last_edited_by`."""
     out = _envelope(result)
     out.update(_keep(result, "query", "match_count"))
-    out["courses"] = _course_rows(
-        result.get("courses"),
-        "course_code",
-        "course_name",
-        "credit_hours",
+    out["courses"] = _typed_rows(
+        _course_rows(
+            result.get("courses"),
+            "course_code",
+            "course_name",
+            "credit_hours",
+            "programs",
+            "fulfills_elective_slots",
+        ),
         "programs",
         "fulfills_elective_slots",
     )
@@ -453,24 +478,31 @@ def _project_course_prerequisites(result: dict[str, Any], _: RemoteIdentityMap) 
             "term",
         )
     )
-    out["options"] = _course_rows(
-        result.get("options"), "course_code", "course_name", "credit_hours", "prerequisites"
+    out["options"] = _typed_rows(
+        _course_rows(
+            result.get("options"), "course_code", "course_name", "credit_hours", "prerequisites"
+        ),
+        "prerequisites",
     )
     per_program = result.get("per_program")
     if isinstance(per_program, list):
-        out["per_program"] = [
-            _keep(
-                row,
-                "program",
-                "prerequisites",
-                "course_name",
-                "programme_term",
-                "credit_hours",
-                "fulfills_elective_slots",
-            )
-            for row in per_program
-            if isinstance(row, dict)
-        ]
+        out["per_program"] = _typed_rows(
+            [
+                _keep(
+                    row,
+                    "program",
+                    "prerequisites",
+                    "course_name",
+                    "programme_term",
+                    "credit_hours",
+                    "fulfills_elective_slots",
+                )
+                for row in per_program
+                if isinstance(row, dict)
+            ],
+            "prerequisites",
+            "fulfills_elective_slots",
+        )
     return out
 
 
@@ -512,12 +544,16 @@ def _project_my_progress(result: dict[str, Any], _: RemoteIdentityMap) -> dict[s
             "term",
             "counts",
             "elective_slots",
-            "registered_requirement_course_codes",
-            "expected_plan_course_codes",
-            "expected_plan_requirement_aliases",
             "renamed_fields",
             "note",
         )
+    )
+    out["registered_requirement_course_codes"] = _code_list(
+        result.get("registered_requirement_course_codes")
+    )
+    out["expected_plan_course_codes"] = _code_list(result.get("expected_plan_course_codes"))
+    out["expected_plan_requirement_aliases"] = _code_list(
+        result.get("expected_plan_requirement_aliases")
     )
     top = result.get("most_useful_course_to_pass")
     out["most_useful_course_to_pass"] = (
@@ -833,9 +869,13 @@ def _project_why_course_locked(result: dict[str, Any], _: RemoteIdentityMap) -> 
             "sole_remaining_prerequisite_count",
             "on_prerequisite_chain_of_count",
             "forward_relations_note",
-            "registered_evidence_course_codes",
-            "expected_plan_evidence_course_codes",
         )
+    )
+    out["registered_evidence_course_codes"] = _code_list(
+        result.get("registered_evidence_course_codes")
+    )
+    out["expected_plan_evidence_course_codes"] = _code_list(
+        result.get("expected_plan_evidence_course_codes")
     )
     out["listed_as_prerequisite_for"] = _course_rows(
         result.get("listed_as_prerequisite_for"),
@@ -865,10 +905,12 @@ def _project_my_plan_by_term(result: dict[str, Any], _: RemoteIdentityMap) -> di
         _keep(
             result,
             "program",
-            "registered_requirement_course_codes",
-            "expected_plan_course_codes",
         )
     )
+    out["registered_requirement_course_codes"] = _code_list(
+        result.get("registered_requirement_course_codes")
+    )
+    out["expected_plan_course_codes"] = _code_list(result.get("expected_plan_course_codes"))
     terms = result.get("terms")
     if isinstance(terms, list):
         out["terms"] = [
@@ -911,20 +953,26 @@ def _project_recommend_courses(result: dict[str, Any], _: RemoteIdentityMap) -> 
     out["recommendations"] = _course_rows(
         result.get("recommendations"), "course_code", "course_name", "credit_hours", "prerequisites"
     )
-    out["already_in_current_timetable"] = _course_rows(
-        result.get("already_in_current_timetable"),
-        "course_code",
-        "course_name",
-        "credit_hours",
-        "match_kind",
+    out["already_in_current_timetable"] = _typed_rows(
+        _course_rows(
+            result.get("already_in_current_timetable"),
+            "course_code",
+            "course_name",
+            "credit_hours",
+            "match_kind",
+            "evidence_course_codes",
+        ),
         "evidence_course_codes",
     )
-    out["already_in_expected_plan"] = _course_rows(
-        result.get("already_in_expected_plan"),
-        "course_code",
-        "course_name",
-        "credit_hours",
-        "match_kind",
+    out["already_in_expected_plan"] = _typed_rows(
+        _course_rows(
+            result.get("already_in_expected_plan"),
+            "course_code",
+            "course_name",
+            "credit_hours",
+            "match_kind",
+            "evidence_course_codes",
+        ),
         "evidence_course_codes",
     )
     return out
@@ -1088,10 +1136,19 @@ def _project_feasible_course_replacements(
             "reason_code",
             "requirement_course_codes",
         )
-        for key in ("blockers_resolved", "blockers_improved", "blockers_introduced"):
+        for key in (
+            "blockers_resolved",
+            "blockers_improved",
+            "blockers_introduced",
+            # Same discipline as its three neighbours; while untyped, a dict
+            # smuggled into this list crossed the boundary by reference.
+            "requirement_course_codes",
+        ):
             projected[key] = [
                 str(code) for code in projected.get(key) or [] if isinstance(code, str)
             ][:50]
+        if not isinstance(projected.get("reason_code"), str):
+            projected.pop("reason_code", None)
         return projected
 
     def option(value: dict[str, Any]) -> dict[str, Any]:
@@ -1750,22 +1807,20 @@ def _project_get_student_context(
     failed = evidence.get("failed") if isinstance(evidence, dict) else None
     failed_results = evidence.get("failed_results") if isinstance(evidence, dict) else None
     projected_evidence: dict[str, Any] = {
-        "passed": evidence.get("passed") if isinstance(evidence.get("passed"), list) else [],
-        "studying": evidence.get("studying") if isinstance(evidence.get("studying"), list) else [],
-        "registered_requirement_course_codes": evidence.get("registered_requirement_course_codes")
-        if isinstance(evidence.get("registered_requirement_course_codes"), list)
-        else [],
-        "registered_or_equivalent_course_codes": evidence.get(
-            "registered_or_equivalent_course_codes"
-        )
-        if isinstance(evidence.get("registered_or_equivalent_course_codes"), list)
-        else [],
-        "expected_plan_course_codes": evidence.get("expected_plan_course_codes")
-        if isinstance(evidence.get("expected_plan_course_codes"), list)
-        else [],
-        "expected_plan_requirement_aliases": evidence.get("expected_plan_requirement_aliases")
-        if isinstance(evidence.get("expected_plan_requirement_aliases"), list)
-        else [],
+        # _code_list element-types every code list: the container check alone
+        # copied whatever the elements were, by reference, to the provider.
+        "passed": _code_list(evidence.get("passed"), cap=200),
+        "studying": _code_list(evidence.get("studying"), cap=200),
+        "registered_requirement_course_codes": _code_list(
+            evidence.get("registered_requirement_course_codes")
+        ),
+        "registered_or_equivalent_course_codes": _code_list(
+            evidence.get("registered_or_equivalent_course_codes"), cap=200
+        ),
+        "expected_plan_course_codes": _code_list(evidence.get("expected_plan_course_codes")),
+        "expected_plan_requirement_aliases": _code_list(
+            evidence.get("expected_plan_requirement_aliases")
+        ),
         "failed": [code for code in failed if isinstance(code, str)]
         if isinstance(failed, list)
         else [],

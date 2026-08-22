@@ -199,6 +199,22 @@ def snapshot_class_filter(snapshot_class: SnapshotClass) -> Q:
 OTHER_BRANCH_SECTION_COHORT = "OTHER_BRANCH"
 
 
+def normalize_section_label(value: object) -> str:
+    """One spelling for a section label: trimmed, upper, inner spaces removed.
+
+    Issue #54's three cohort classifiers disagree on " M1" precisely because
+    each normalises privately; every comparison of section labels must go
+    through here (answer_consistency mirrors this with a local copy plus a
+    parity test, to stay import-free of Django).
+
+    Leading zeros are deliberately NOT folded: the audited production F01-F04
+    were inventions inside a fully fabricated timetable table - the catalogue's
+    98 real labels contain no zero-padded form - so F01 must stay distinct from
+    F1 and be flagged by the answer checker, never whitelisted by a fold.
+    """
+    return "".join(str(value or "").split()).upper()
+
+
 def is_other_branch_section_label(section_label: object) -> bool:
     """Whether ``section_label`` names the excluded YM/YF branch."""
     label = str(section_label or "").strip().upper()
@@ -302,10 +318,11 @@ def section_is_available_to_student(section: object, *, student_id: int | str) -
 def student_gender_strict(student_id: int | str) -> str:
     """Return the student's cohort, or raise rather than fall back to all-pass.
 
-    ``student_gender`` returns "" for a student with no ``Student`` row — and 722 of
-    the 3,807 ids in ``StudentTermSection`` are exactly that. Feeding that "" into
-    ``gender_section_filter`` produces an all-pass filter, so a student whose record
-    is missing would be shown the other cohort's sections.
+    ``student_gender`` returns "" for a student with no ``Student`` row. Feeding
+    that "" into ``gender_section_filter`` returns the whole local catalogue, so a
+    student whose record is missing would be shown the other cohort's sections.
+    (When this rule was written, 722 of the then-3,807 ``StudentTermSection`` ids
+    had no ``Student`` row; today's data has none — the guard is why.)
 
     Use this wherever the query is on behalf of a NAMED student. Keep plain
     ``student_gender`` only for staff browsing with no student in scope, where
