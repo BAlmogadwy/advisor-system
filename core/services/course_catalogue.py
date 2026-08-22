@@ -17,6 +17,13 @@ a candidate the floor does not recognise cannot exist — not by test, by
 construction.  They were two independently-warmed caches once, and in the skew
 window after an uninvalidated write the resolver could vouch for a code the
 floor had already dropped.
+
+One consumer sits deliberately OUTSIDE this property: lookup_course's
+separator-row fallback scans the live tables, not this cache, so in the TTL
+window after an uninvalidated INSERT it can surface a row the warm floor
+does not know yet.  That is the safe direction - the row genuinely exists,
+and the model cannot cause an insert - but it means "rows are keys of the
+floor's mapping" holds for the resolver's candidates, not for that scan.
 """
 
 from __future__ import annotations
