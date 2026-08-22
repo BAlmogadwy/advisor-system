@@ -1493,6 +1493,45 @@ def _normalise_graduation_scenario_args(
                 normalised["add_current_courses"] = added
             return normalised, "prior_presentation_named_courses"
 
+    if allow_prior_scenario:
+        # The model's INTENTION is admissible where the surface patterns are
+        # silent - fenced by what the «ما أخذت» incident actually taught: the
+        # tested models misread DIRECTION, they never invented courses.  So
+        # direction may come from the model, while every course must be one
+        # the student NAMED in this very question, and a question that is not
+        # a what-if at all (allow_prior_scenario False) still cannot receive
+        # an injected scenario.  Surface forms above stay the first
+        # authority; this branch is what makes the next phrasing no regex
+        # has ever seen work because the model understood it.  Without it
+        # the what-if reprompt was self-defeating: it demanded scenario
+        # arguments this function then discarded, so a missed surface form
+        # could only ever end in the refusal.  The answer path restates the
+        # assumed change, so a misread direction is visible, not silent.
+        question_codes = {_normalise_course_code(code) for code in _comparison_course_codes(text)}
+        question_codes.discard("")
+
+        def model_selected(field: str) -> list[str]:
+            value = arguments.get(field)
+            if not isinstance(value, list):
+                return []
+            codes = [_normalise_course_code(item) for item in value if item]
+            return list(dict.fromkeys(code for code in codes if code))
+
+        model_removed = model_selected("remove_current_courses")
+        model_added = model_selected("add_current_courses")
+        chosen = set(model_removed + model_added)
+        if chosen and chosen <= question_codes and not (set(model_removed) & set(model_added)):
+            if model_removed:
+                normalised["remove_current_courses"] = model_removed
+            if model_added:
+                normalised["add_current_courses"] = model_added
+            return normalised, "model_direction_for_student_named_courses"
+        if not chosen and bool(arguments.get("search_better_replacements")) and not question_codes:
+            # An open "is there anything better?" names no code; the model
+            # may select the bounded search the service itself performs.
+            normalised["search_better_replacements"] = True
+            return normalised, "model_open_replacement_search"
+
     return normalised, ""
 
 

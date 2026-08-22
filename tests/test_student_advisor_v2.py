@@ -2145,6 +2145,85 @@ def test_past_tense_without_a_conditional_is_a_record_not_a_scenario(question):
     assert normalisation == ""
 
 
+def test_model_direction_is_accepted_for_a_student_named_course():
+    """The LLM-intention path.  «ما عاد عندي» is a phrasing no surface form
+    covers; the model understood it, and its DIRECTION is admissible because
+    every course it selected is one the student named in this question.
+    Without this branch the what-if reprompt was self-defeating: it demanded
+    scenario arguments this function then discarded."""
+    arguments, normalisation = _normalise_graduation_scenario_args(
+        "وش راح يصير لو ما عاد عندي CS424 هذا الترم؟",
+        {"remove_current_courses": ["CS424"]},
+        allow_prior_scenario=True,
+    )
+
+    assert arguments["remove_current_courses"] == ["CS424"]
+    assert normalisation == "model_direction_for_student_named_courses"
+
+
+def test_a_model_selected_course_the_student_never_named_is_discarded():
+    """The rail the «ما أخذت» incident justifies keeping: the model may read
+    direction, it may not introduce a course."""
+    arguments, normalisation = _normalise_graduation_scenario_args(
+        "وش راح يصير لو ما عاد عندي CS424 هذا الترم؟",
+        {"remove_current_courses": ["CS999"]},
+        allow_prior_scenario=True,
+    )
+
+    assert "remove_current_courses" not in arguments
+    assert normalisation == ""
+
+
+def test_a_plain_question_cannot_receive_an_injected_scenario():
+    """allow_prior_scenario is the what-if classifier's verdict about the
+    QUESTION; a plain "when do I graduate" keeps its original protection
+    even when the model volunteers scenario arguments."""
+    arguments, normalisation = _normalise_graduation_scenario_args(
+        "متى أتخرج؟ وأنا مسجل CS424 حالياً.",
+        {"remove_current_courses": ["CS424"]},
+        allow_prior_scenario=False,
+    )
+
+    assert "remove_current_courses" not in arguments
+    assert normalisation == ""
+
+
+def test_a_direction_conflict_from_the_model_is_discarded():
+    arguments, normalisation = _normalise_graduation_scenario_args(
+        "وش راح يصير لو غيرت وضع CS424 هذا الترم؟",
+        {"remove_current_courses": ["CS424"], "add_current_courses": ["CS424"]},
+        allow_prior_scenario=True,
+    )
+
+    assert "remove_current_courses" not in arguments
+    assert "add_current_courses" not in arguments
+    assert normalisation == ""
+
+
+def test_the_surface_form_outranks_a_wrong_model_direction():
+    """When the student's own words state the direction, a contradicting
+    model interpretation loses - the regex fast-path is first authority."""
+    arguments, normalisation = _normalise_graduation_scenario_args(
+        "لو حذفت مقرر CS424 هل يؤثر على تخرجي؟",
+        {"add_current_courses": ["CS424"]},
+        allow_prior_scenario=True,
+    )
+
+    assert arguments["remove_current_courses"] == ["CS424"]
+    assert normalisation == "explicit_omission"
+
+
+def test_the_model_may_select_the_open_search_when_no_code_is_named():
+    arguments, normalisation = _normalise_graduation_scenario_args(
+        "هل من الأفضل تغيير شيء في مقرراتي حتى أتخرج أبكر؟",
+        {"search_better_replacements": True},
+        allow_prior_scenario=True,
+    )
+
+    assert arguments.get("search_better_replacements") is True
+    assert normalisation in {"model_open_replacement_search", "open_replacement_search"}
+
+
 @pytest.mark.parametrize(
     ("question", "expected_kind", "expected_change"),
     [
