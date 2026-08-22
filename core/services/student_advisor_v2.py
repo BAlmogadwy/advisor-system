@@ -2810,6 +2810,74 @@ def _term_plan_change_text(comparison: dict[str, Any], language: str) -> str:
     return "\n".join(lines)
 
 
+def _what_if_verdict_phrase(comparison: dict[str, Any], language: str) -> str:
+    """The plain answer to «هل يؤثر؟», derived STRICTLY from the comparison
+    fields the simulation computed - never from prose judgement.  Empty for
+    the unresolved effect kinds, whose nuance the effect line owns."""
+    effect = str((comparison or {}).get("timing_effect") or "")
+    delta = abs(int(comparison.get("term_difference") or 0)) if comparison else 0
+    saved = int(comparison.get("terms_saved") or 0) if comparison else 0
+    exact_available = (
+        bool(comparison.get("exact_timing_comparison_available", True)) if comparison else True
+    )
+    if language == "Arabic":
+        if effect == "SAME":
+            return "لا يغيّر تقدير موعد تخرجك" if exact_available else ""
+        if effect == "LATER":
+            return f"يؤخّر تقدير تخرجك بمقدار {delta} من الفصول" if delta else "يؤخّر تقدير تخرجك"
+        if effect == "EARLIER":
+            return f"يقدّم تقدير تخرجك بمقدار {saved} من الفصول" if saved else "يقدّم تقدير تخرجك"
+        return ""
+    if effect == "SAME":
+        return "does not change your estimated graduation" if exact_available else ""
+    if effect == "LATER":
+        return (
+            f"delays your estimated graduation by {delta} term{'s' if delta != 1 else ''}"
+            if delta
+            else "delays your estimated graduation"
+        )
+    if effect == "EARLIER":
+        return (
+            f"brings your estimated graduation forward by {saved} term{'s' if saved != 1 else ''}"
+            if saved
+            else "brings your estimated graduation forward"
+        )
+    return ""
+
+
+def _what_if_verdict_line(
+    language: str,
+    change_text: str,
+    comparison: dict[str, Any],
+    baseline_label: str,
+    alternate: dict[str, Any] | None,
+) -> str:
+    """One opening sentence that actually answers the question, per baseline.
+
+    The owner's live read of the first shipped shape: an unscoped «لم
+    يتغيّر…» at the top followed by a section whose numbers DO change read
+    as a wrong sentence.  The verdict names each baseline beside its own
+    outcome, so the two sections can no longer contradict each other."""
+    primary = _what_if_verdict_phrase(comparison, language)
+    if not primary:
+        return ""
+    alt_clause = ""
+    alt_what_if = alternate.get("what_if") if isinstance(alternate, dict) else None
+    if isinstance(alt_what_if, dict) and alt_what_if.get("valid"):
+        alt_phrase = _what_if_verdict_phrase(alt_what_if.get("comparison") or {}, language)
+        if alt_phrase:
+            alt_label = _graduation_baseline_label(
+                alternate.get("planning_baseline_kind"), language
+            )
+            if language == "Arabic":
+                alt_clause = f"؛ أما وفق {alt_label} ف{alt_phrase}"
+            else:
+                alt_clause = f"; on {alt_label} it {alt_phrase}"
+    if language == "Arabic":
+        return f"الخلاصة: وفق {baseline_label}، {change_text} {primary}{alt_clause}."
+    return f"Bottom line: on {baseline_label}, {change_text} {primary}{alt_clause}."
+
+
 def _what_if_alternate_lines(
     language: str,
     alternate: dict[str, Any] | None,
@@ -2879,14 +2947,18 @@ def _what_if_alternate_lines_unguarded(
     includes = sorted(alt_codes - primary_codes)[:3]
     excludes = sorted(primary_codes - alt_codes)[:3]
     if language == "Arabic":
-        heading = "المقارنة نفسها وفق " + label
         clauses = []
         if includes:
             clauses.append("وتشمل " + "، ".join(includes))
         if excludes:
             clauses.append("ولا تشمل " + "، ".join(excludes))
+        # The connective says WHY a second comparison exists at all - two
+        # sections with different numbers and no stated reason read as a
+        # contradiction in the owner's live test.
+        heading = "وبما أن مقررات البداية أعلاه تختلف عن " + label
         if clauses:
             heading += " (" + "؛ ".join(clauses) + ")"
+        heading += "، فهذه المقارنة نفسها وفقها"
         lines = [heading + ":"]
         alt_lb_before = alt_baseline.get("lower_bound_additional_terms")
         alt_lb_after = alt_scenario.get("lower_bound_additional_terms")
@@ -2903,14 +2975,15 @@ def _what_if_alternate_lines_unguarded(
                 f"مقابل {alt_est_after} بعده."
             )
         return lines
-    heading = "The same comparison on " + label
     clauses = []
     if includes:
         clauses.append("which includes " + ", ".join(includes))
     if excludes:
         clauses.append("which excludes " + ", ".join(excludes))
+    heading = "Because the starting courses above differ from " + label
     if clauses:
         heading += " (" + "; ".join(clauses) + ")"
+    heading += ", the same comparison on it"
     lines = [heading + ":"]
     alt_lb_before = alt_baseline.get("lower_bound_additional_terms")
     alt_lb_after = alt_scenario.get("lower_bound_additional_terms")
@@ -3039,11 +3112,22 @@ def _safe_graduation_what_if_answer_base(
             change.append("حذف " + "، ".join(removed))
         if added:
             change.append("إضافة " + "، ".join(added))
-        lines = [
-            "مصدر مقررات البداية: " + baseline_label + ".",
-            "التغيير المفترض في مقررات المحاكاة: " + " و".join(change) + ".",
-        ]
-        lines.append(_comparison_effect_text(comparison, language))
+        change_text = " و".join(change)
+        lines = []
+        verdict = _what_if_verdict_line(
+            language, change_text, comparison, baseline_label, alternate
+        )
+        if verdict:
+            lines.append(verdict)
+        lines.extend(
+            [
+                "مصدر مقررات البداية: " + baseline_label + ".",
+                "التغيير المفترض في مقررات المحاكاة: " + change_text + ".",
+            ]
+        )
+        # Scoped to its own baseline: unscoped, this sentence read as the
+        # GLOBAL verdict and contradicted the alternate section below it.
+        lines.append("وفق " + baseline_label + ": " + _comparison_effect_text(comparison, language))
         lines.append(_term_plan_change_text(comparison, language))
         lb_before = baseline.get("lower_bound_additional_terms")
         lb_after = scenario.get("lower_bound_additional_terms")
@@ -3084,15 +3168,29 @@ def _safe_graduation_what_if_answer_base(
         return "\n".join(lines)
 
     change = []
+    verdict_change = []
     if removed:
         change.append("remove " + ", ".join(removed))
+        verdict_change.append("removing " + ", ".join(removed))
     if added:
         change.append("add " + ", ".join(added))
-    lines = [
-        "Starting-course source: " + baseline_label + ".",
-        "Planning-baseline scenario: " + " and ".join(change) + ".",
-    ]
-    lines.append(_comparison_effect_text(comparison, language))
+        verdict_change.append("adding " + ", ".join(added))
+    lines = []
+    verdict = _what_if_verdict_line(
+        language, " and ".join(verdict_change), comparison, baseline_label, alternate
+    )
+    if verdict:
+        lines.append(verdict)
+    lines.extend(
+        [
+            "Starting-course source: " + baseline_label + ".",
+            "Planning-baseline scenario: " + " and ".join(change) + ".",
+        ]
+    )
+    effect_text = _comparison_effect_text(comparison, language)
+    if effect_text[:1].isupper():
+        effect_text = effect_text[0].lower() + effect_text[1:]
+    lines.append("On " + baseline_label + ": " + effect_text)
     lines.append(_term_plan_change_text(comparison, language))
     lb_before = baseline.get("lower_bound_additional_terms")
     lb_after = scenario.get("lower_bound_additional_terms")
