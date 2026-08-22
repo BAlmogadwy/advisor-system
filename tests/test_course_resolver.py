@@ -259,18 +259,62 @@ def test_a_two_letter_prefix_repair_keeps_at_least_one_typed_letter():
     ]
 
 
-def test_a_separator_in_the_stored_code_cannot_become_a_false_unknown():
-    """A catalogue row stored as «AI-463» exact-matches nothing (the row side
-    of the fold is a known follow-up), but its floor key AI463 must keep the
-    lookup from DECLARING the code unknown - that guard is what stands
-    between "silent empty" and a licensed denial."""
+def test_a_separator_in_the_stored_code_still_finds_its_row():
+    """The row side of the fold: the exact arms compare the RAW stored value,
+    so a row stored as «AI-463» or with Arabic-Indic digits matched nothing -
+    a silent empty for a code the floor recognises.  The miss-path fallback
+    scans with the floor's own normalisation and emits the floor-key
+    spelling."""
     _seed()
     Course.objects.create(course_code="AI-463", description="Applied AI", credit_hours=3)
+    ProgrammeRequirement.objects.create(
+        program="AI",
+        course_code="PHYS٢١٠",
+        course_name="Physics II",
+        type="Mandatory",
+        programme_term=2,
+        credit_hours=3,
+    )
     from core.services.course_catalogue import invalidate_cache
 
     invalidate_cache()
-    result = _lookup("AI463")
 
+    hyphen = _lookup("AI463")
+    assert "unknown_query" not in hyphen
+    assert hyphen["match_count"] == 1
+    assert hyphen["courses"][0]["course_code"] == "AI463"
+    assert hyphen["courses"][0]["course_name"] == "Applied AI"
+
+    arabic = _lookup("PHYS210")
+    assert "unknown_query" not in arabic
+    assert arabic["match_count"] == 1
+    row = arabic["courses"][0]
+    assert row["course_code"] == "PHYS210"
+    assert row["course_name"] == "Physics II"
+    assert row["programs"] == ["AI"]
+
+
+def test_a_stale_floor_still_blocks_a_false_unknown():
+    """The catalogue-floor guard's own pin.  In the cache-TTL window after an
+    uninvalidated delete, the fallback scan misses (the rows are gone) but
+    the warm floor still recognises the code - and the lookup must answer
+    empty, never DECLARE unknown: "unknown" licenses the model to deny the
+    course exists, and a licence issued from a 60-second race is still a
+    licence."""
+    _seed()
+    from core.services.course_catalogue import invalidate_cache, known_course_codes
+
+    invalidate_cache()
+    assert "MATH243" in known_course_codes()  # warm the floor
+
+    from core.models import ElectiveCourse
+
+    Course.objects.all().delete()
+    ProgrammeRequirement.objects.all().delete()
+    ElectiveCourse.objects.all().delete()  # deliberately NOT invalidated
+
+    result = _lookup("MATH243")
+    assert result["match_count"] == 0
     assert "unknown_query" not in result
     assert "did_you_mean" not in result
 

@@ -659,6 +659,62 @@ def _exec_lookup_course(
             if len(matches) >= _MAX_COURSE_MATCHES:
                 break
 
+    if exact and exact not in matches:
+        # The row side of the fold.  The three exact arms above compare the
+        # database's RAW stored value, so a row stored as «AI-463» or
+        # «MATH٢٤٣» matches nothing even though the existence floor knows its
+        # normalised key - the lookup answered a silent empty for a code it
+        # would refuse to call unknown.  A python-side scan over the same
+        # three tables, with the floor's own normalisation, on the miss path
+        # only (~500 rows).  The emitted course_code is the FLOOR key
+        # spelling: it is what the student typed and what the answer checker
+        # will accept.
+        for row in ProgrammeRequirement.objects.values(
+            "course_code", "course_name", "program", "credit_hours"
+        ):
+            if normalise_catalogue_code(row["course_code"]) != exact:
+                continue
+            entry = matches.setdefault(
+                exact,
+                {
+                    "course_code": exact,
+                    "course_name": str(row.get("course_name") or "").strip(),
+                    "credit_hours": row.get("credit_hours"),
+                    "programs": [],
+                },
+            )
+            prog = str(row.get("program") or "").strip().upper()
+            if prog and prog not in entry["programs"]:
+                entry["programs"].append(prog)
+        for row in ElectiveCourse.objects.values(
+            "course_code", "course_name", "programme", "credit_hours"
+        ):
+            if normalise_catalogue_code(row["course_code"]) != exact:
+                continue
+            entry = matches.setdefault(
+                exact,
+                {
+                    "course_code": exact,
+                    "course_name": str(row.get("course_name") or "").strip(),
+                    "credit_hours": row.get("credit_hours"),
+                    "programs": [],
+                },
+            )
+            prog = str(row.get("programme") or "").strip().upper()
+            if prog and prog not in entry["programs"]:
+                entry["programs"].append(prog)
+        if exact not in matches:
+            for row in Course.objects.values("course_code", "description", "credit_hours"):
+                if normalise_catalogue_code(row["course_code"]) != exact:
+                    continue
+                matches[exact] = {
+                    "course_code": exact,
+                    "course_name": str(row.get("description") or "").strip(),
+                    "credit_hours": row.get("credit_hours"),
+                    "programs": [],
+                }
+                break
+
     result: dict[str, Any] = {
         "ok": True,
         "query": query,
