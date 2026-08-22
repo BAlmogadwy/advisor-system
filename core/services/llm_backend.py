@@ -35,6 +35,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import threading
 import time
 from dataclasses import dataclass, field
 from typing import Any
@@ -582,6 +583,58 @@ _RETRY_BACKOFF_SECONDS = (0.5, 1.5)
 _MAX_HONOURED_RETRY_AFTER = 10.0
 
 
+# ── circuit breaker ──────────────────────────────────────────────────
+#
+# One instance, four gthreads: during a provider incident every thread parks in
+# urlopen for the full timeout-times-retries worst case, and /health/ goes down
+# with the chat.  The breaker converts an ongoing incident into an immediate
+# LLMUnavailable, which the adviser's existing degradation paths already handle
+# (verified fallback / abstention with escalation hand-off).  Process-local
+# state is sufficient on a single instance; the Telegram worker keeps its own.
+_BREAKER_THRESHOLD = 5
+_BREAKER_WINDOW_SECONDS = 60.0
+_BREAKER_OPEN_SECONDS = 60.0
+_BREAKER_LOCK = threading.Lock()
+#: backend -> [consecutive_failures, window_started_monotonic, open_until_monotonic]
+_BREAKER_STATE: dict[str, list[float]] = {}
+
+
+def _breaker_guard(backend: str) -> None:
+    """Raise immediately while the breaker for this backend is open."""
+    with _BREAKER_LOCK:
+        state = _BREAKER_STATE.get(backend)
+        if state and time.monotonic() < state[2]:
+            raise LLMUnavailable(
+                f"{backend} circuit breaker is open after repeated failures; "
+                "retrying automatically shortly."
+            )
+
+
+def _breaker_record(backend: str, *, failed: bool) -> None:
+    with _BREAKER_LOCK:
+        if not failed:
+            _BREAKER_STATE.pop(backend, None)
+            return
+        now = time.monotonic()
+        state = _BREAKER_STATE.setdefault(backend, [0.0, now, 0.0])
+        if now - state[1] > _BREAKER_WINDOW_SECONDS:
+            state[0], state[1] = 0.0, now
+        state[0] += 1
+        if state[0] >= _BREAKER_THRESHOLD:
+            state[2] = now + _BREAKER_OPEN_SECONDS
+            logger.error(
+                "llm circuit breaker OPEN backend=%s failures=%d",
+                backend,
+                int(state[0]),
+            )
+
+
+def reset_circuit_breaker() -> None:
+    """Test hook: forget every breaker's state."""
+    with _BREAKER_LOCK:
+        _BREAKER_STATE.clear()
+
+
 class OpenAICompatibleLLMClient:
     """One client, configured for whichever OpenAI-compatible endpoint is in use."""
 
@@ -681,6 +734,7 @@ class OpenAICompatibleLLMClient:
                 "outbound requests to this provider are disabled "
                 "(ALIBABA_LLM_ALLOW_LIVE_REQUESTS is not true)."
             )
+        _breaker_guard(self.config.backend)
         body = json.dumps(payload).encode("utf-8") if payload is not None else None
         expected_host = (urlparse(self.config.base_url).hostname or "").lower()
         effective_timeout = timeout_seconds if timeout_seconds else self.config.timeout_seconds
@@ -741,13 +795,18 @@ class OpenAICompatibleLLMClient:
                 )
             else:
                 try:
-                    return json.loads(text)
+                    parsed = json.loads(text)
                 except json.JSONDecodeError as exc:
                     raise LLMInvalidResponse(
                         f"{self.config.provider} returned invalid JSON."
                     ) from exc
+                _breaker_record(self.config.backend, failed=False)
+                return parsed
 
             if not retryable or attempt == attempts - 1:
+                # One FINAL failure per call, not one per attempt: the breaker
+                # measures incidents, and a single call's retries are one.
+                _breaker_record(self.config.backend, failed=True)
                 raise last
             delay = (
                 wait
@@ -893,6 +952,7 @@ class OpenAICompatibleLLMClient:
         temperature: float = 0.2,
         max_tokens: int | None = None,
         assistant_prefill: str | None = None,
+        timeout_seconds: float | None = None,
     ) -> ChatResult:
         resolved_model = self.resolve_model(model)
         request_messages = list(messages)
@@ -909,7 +969,7 @@ class OpenAICompatibleLLMClient:
 
         payload = self._base_payload(resolved_model, max_tokens, temperature)
         payload["messages"] = request_messages
-        data = self._request("POST", "/chat/completions", payload)
+        data = self._request("POST", "/chat/completions", payload, timeout_seconds=timeout_seconds)
 
         choices = data.get("choices") or []
         first = choices[0] if choices and isinstance(choices[0], dict) else {}

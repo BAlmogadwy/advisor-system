@@ -3674,6 +3674,52 @@ def test_a_blank_answer_is_never_recorded_as_a_pass(monkeypatch):
     assert result["presentation"] is None
 
 
+def test_an_exhausted_turn_budget_lands_on_verified_facts_not_abstention(monkeypatch):
+    """A clock is not a grounding failure.
+
+    When the wall-clock budget runs out after evidence was gathered, the turn
+    must answer from that evidence - the verified fallback - rather than burn
+    a repair call it cannot fund or abstain as if the facts were unprovable.
+    """
+    monkeypatch.setattr(
+        "core.services.student_advisor_v2.execute_student_v2_tool",
+        lambda name, arguments, **kwargs: _exact_timetable_result(),
+    )
+    clock = {"now": 1000.0}
+    monkeypatch.setattr("core.services.student_advisor_v2.time.monotonic", lambda: clock["now"])
+
+    class SlowThenFabricating(RepairClient):
+        def chat_with_tools(self, messages, *, tools, **kwargs):
+            result = super().chat_with_tools(messages, tools=tools, **kwargs)
+            # Each provider round trip consumes half the budget.
+            clock["now"] += 35.0
+            return result
+
+    client = SlowThenFabricating(
+        _tool_turn("my_timetable", {}),
+        _answer_turn("جدولك يحتوي على AI331 في الشعبة F11."),
+        repair="جدولك يحتوي على AI331 في الشعبة F11.",
+    )
+
+    result = answer_student_advisor_v2(
+        question="اعرض لي جدولي المسجل حاليًا.",
+        principal=_principal(),
+        academic_year=1448,
+        term=1,
+        llm_client=client,
+    )
+
+    assert result["agent"]["turn_budget_exhausted"] is True
+    # The fabricated draft failed validation and the repair was unfundable -
+    # the verified evidence still answers the student.
+    assert result["agent"]["evidence_validation_outcome"] == "verified_fallback"
+    assert result["agent"]["evidence_validation_repair_attempted"] is False
+    assert "F11" not in result["answer"]
+    assert "AI1" in result["answer"]
+    # No repair call was made after exhaustion.
+    assert client.repair_messages == []
+
+
 def test_unverifiable_answer_abstains_instead_of_shipping_invented_facts(monkeypatch):
     """The terminal branch: nothing verifiable exists, so nothing is asserted.
 

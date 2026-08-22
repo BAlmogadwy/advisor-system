@@ -1011,3 +1011,33 @@ def test_a_missing_message_id_is_not_found(client):
     _student(client, MINE)
     url = reverse("advisor_message_feedback", args=[str(uuid.uuid4())])
     assert _post(client, url, {"rating": "HELPFUL"}).status_code == 404
+
+
+def test_a_fourth_concurrent_turn_gets_an_honest_busy_answer(client):
+    """Three generation slots; the fourth caller is told, not queued.
+
+    One instance, four gthreads: admitting every caller into generation left
+    zero threads for /health/ during a slow-provider window, converting an
+    incident into a site outage.  The 503 body is Arabic and actionable.
+    """
+    from core import advisor_conversation_views as views
+
+    _student(client, MINE)
+    conversation = AdvisorConversation.objects.create(student_id=MINE)
+
+    slots = views._GENERATION_SLOTS
+    acquired = [slots.acquire(blocking=False) for _ in range(3)]
+    assert all(acquired)
+    try:
+        response = _post(
+            client,
+            reverse("advisor_conversation_send", args=[str(conversation.id)]),
+            {"message": "سؤال"},
+        )
+        assert response.status_code == 503
+        assert "مشغولة" in response.json()["error"]
+        # Nothing was persisted for the refused attempt.
+        assert AdvisorMessage.objects.filter(conversation=conversation).count() == 0
+    finally:
+        for _ in range(3):
+            slots.release()

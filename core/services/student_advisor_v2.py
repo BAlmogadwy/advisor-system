@@ -3861,6 +3861,22 @@ def _portal_boundary_response(language: str, answer_style: str = "") -> str:
     )
 
 
+def _turn_budget_seconds() -> float:
+    """The wall-clock budget for one adviser turn.
+
+    Call COUNTS were the wrong unit: the worst case per call is the provider
+    timeout times its retries, and gunicorn's own --timeout plus the edge sit
+    at fixed seconds.  Exhaustion is routed toward the verified fallback, not
+    abstention - a clock is not a grounding failure.
+    """
+    from django.conf import settings
+
+    try:
+        return max(15.0, float(getattr(settings, "STUDENT_ADVISOR_V2_TURN_BUDGET_SECONDS", 60)))
+    except (TypeError, ValueError):
+        return 60.0
+
+
 def answer_student_advisor_v2(
     *,
     question: str,
@@ -3914,6 +3930,8 @@ def answer_student_advisor_v2(
     # The timer starts BEFORE the catalogue read: the cold-cache query is the
     # one cost this feature adds, and it must be inside turn_ms.
     turn_started = time.monotonic()
+    turn_deadline = turn_started + _turn_budget_seconds()
+    turn_budget_exhausted = False
     known_course_codes = _known_course_codes()
     # Colloquial Saudi Arabic remains accepted and fully parsed as input, but the
     # student portal renders one consistent university register: clear MSA.
@@ -4152,6 +4170,14 @@ def answer_student_advisor_v2(
         iterations = iteration + 1
         if inference_calls >= inference_ceiling - 1:
             break
+        remaining_budget = turn_deadline - time.monotonic()
+        if remaining_budget < 8.0:
+            # Answer from the evidence already gathered rather than start a
+            # call the clock cannot fund.  The forced-final and repair gates
+            # below make the same check, so exhaustion converges on the
+            # verified fallback, never a surprise abstention.
+            turn_budget_exhausted = True
+            break
         try:
             inference_calls += 1
             turn = llm.chat_with_tools(
@@ -4159,7 +4185,7 @@ def answer_student_advisor_v2(
                 tools=schemas,
                 model=resolved_model,
                 max_tokens=_max_tokens(),
-                timeout_seconds=_tool_timeout(),
+                timeout_seconds=min(_tool_timeout(), remaining_budget),
             )
         except LLMError as exc:
             # A slow/unsupported tool turn must not discard the student's whole
@@ -4837,13 +4863,17 @@ def answer_student_advisor_v2(
                     ),
                 }
             )
-            if inference_calls < inference_ceiling - 1:
+            remaining_budget = turn_deadline - time.monotonic()
+            if remaining_budget < 8.0:
+                turn_budget_exhausted = True
+            elif inference_calls < inference_ceiling - 1:
                 inference_calls += 1
                 try:
                     forced = llm.chat(
                         boundary.sanitise_messages(messages),
                         model=resolved_model,
                         max_tokens=_max_tokens(),
+                        timeout_seconds=min(_tool_timeout(), remaining_budget),
                         assistant_prefill=_assistant_prefill_for_client(llm, resolved_model),
                     )
                 except Exception:  # fail closed like the tool loop, not open
@@ -5091,9 +5121,13 @@ def answer_student_advisor_v2(
     else:
         corrected_answer = ""
         repaired_candidate: dict[str, Any] | None = None
+        remaining_budget = turn_deadline - time.monotonic()
+        if remaining_budget < 8.0:
+            turn_budget_exhausted = True
         if (
             REQUIRED_EVIDENCE_MISSING not in evidence_validation_initial
             and inference_calls < inference_ceiling
+            and not turn_budget_exhausted
         ):
             evidence_validation_repair_attempted = True
             try:
@@ -5265,6 +5299,7 @@ def answer_student_advisor_v2(
             "internal_output_sanitized": internal_output_sanitized,
             "constraint_input_refused": constraint_input_refused,
             "evidence_tool_reprompted": evidence_tool_reprompted,
+            "turn_budget_exhausted": turn_budget_exhausted,
             "evidence_validation_outcome": evidence_validation_outcome,
             "evidence_validation_repair_attempted": evidence_validation_repair_attempted,
             "evidence_validation_repair_error": evidence_validation_repair_error,

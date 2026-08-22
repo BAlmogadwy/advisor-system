@@ -161,7 +161,13 @@ ALIBABA_LLM_MODEL = os.getenv("ALIBABA_LLM_MODEL", "")
 ALIBABA_LLM_ENABLE_THINKING = os.getenv("ALIBABA_LLM_ENABLE_THINKING", "false").lower() == "true"
 ALIBABA_LLM_TIMEOUT_SECONDS = float(os.getenv("ALIBABA_LLM_TIMEOUT_SECONDS", "75"))
 ALIBABA_LLM_MAX_TOKENS = int(os.getenv("ALIBABA_LLM_MAX_TOKENS", "3000"))
-ALIBABA_LLM_MAX_RETRIES = int(os.getenv("ALIBABA_LLM_MAX_RETRIES", "2"))
+# One retry, not two: retries mostly cover 429/5xx, which the circuit breaker
+# now handles better than a second 75-second re-timeout does, and each retry
+# multiplies the worst-case turn on a single-instance service.
+STUDENT_ADVISOR_V2_TURN_BUDGET_SECONDS = float(
+    os.getenv("STUDENT_ADVISOR_V2_TURN_BUDGET_SECONDS", "60")
+)
+ALIBABA_LLM_MAX_RETRIES = int(os.getenv("ALIBABA_LLM_MAX_RETRIES", "1"))
 
 # THE EGRESS KILL SWITCH. The transport refuses every Alibaba network request
 # unless this is explicitly true — regardless of LLM_BACKEND, regardless of which

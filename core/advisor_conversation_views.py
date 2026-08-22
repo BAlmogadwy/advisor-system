@@ -19,6 +19,7 @@ how provenance drifts without anyone noticing.
 from __future__ import annotations
 
 import logging
+import threading
 import uuid
 from typing import Any
 
@@ -281,6 +282,14 @@ def _turn_json(result: advisor_turn.TurnResult, **extra: Any) -> dict[str, Any]:
     }
 
 
+#: gunicorn runs one instance with four gthreads.  Admitting all four into
+#: adviser generation leaves none for /health/ or any other route during a slow
+#: provider window, so a provider incident becomes a full site outage.  Three
+#: concurrent turns; the fourth caller gets an honest busy answer instead of a
+#: queued multi-minute wait.  Process-local is correct on a single instance.
+_GENERATION_SLOTS = threading.BoundedSemaphore(3)
+
+
 @require_POST
 def conversation_post_message_view(request: HttpRequest, conversation_id: str) -> JsonResponse:
     """Ask a question and persist the whole turn.
@@ -293,6 +302,18 @@ def conversation_post_message_view(request: HttpRequest, conversation_id: str) -
     principal = _principal(request)
     if principal is None:
         return _forbidden()
+    if not _GENERATION_SLOTS.acquire(blocking=False):
+        return JsonResponse(
+            {"error": ("الخدمة مشغولة حاليًا بعدد كبير من الأسئلة؛ الرجاء المحاولة بعد لحظات.")},
+            status=503,
+        )
+    try:
+        return _post_message_locked(request, principal, conversation_id)
+    finally:
+        _GENERATION_SLOTS.release()
+
+
+def _post_message_locked(request: HttpRequest, principal, conversation_id: str) -> JsonResponse:
     conversation = _owned_conversation(principal, conversation_id)
 
     payload, err = _body(request)

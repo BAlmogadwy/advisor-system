@@ -35,3 +35,10 @@ repos:
         exclude: ^policies/sources/
       - id: trailing-whitespace
         exclude: ^policies/sources/
+  - repo: local
+    hooks:
+      - id: no-control-characters
+        name: no control characters in source
+        entry: python scripts/check_control_chars.py
+        language: system
+        types: [text]

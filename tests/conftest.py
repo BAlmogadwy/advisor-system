@@ -11,6 +11,19 @@ def _disable_otp_response_floor_in_tests(settings) -> None:  # noqa: PT004
 
 
 @pytest.fixture(autouse=True)
+def _reset_llm_circuit_breaker() -> None:  # noqa: PT004
+    """The breaker is process-global by design; tests must each start closed.
+
+    Without this, five parametrized failure cases open the breaker and the
+    sixth test's first attempt is refused before it reaches the fake - the
+    retry matrix then counts the wrong number of attempts.
+    """
+    llm_backend.reset_circuit_breaker()
+    yield
+    llm_backend.reset_circuit_breaker()
+
+
+@pytest.fixture(autouse=True)
 def _reset_course_catalogue_cache() -> None:  # noqa: PT004
     """The existence floor's catalogue is a process-global TTL cache.
 

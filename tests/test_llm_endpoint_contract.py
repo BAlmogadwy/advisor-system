@@ -632,3 +632,65 @@ def _never_reached():
         raise URLError("no network in tests")
 
     return _open
+
+
+def test_the_circuit_breaker_opens_after_five_incidents_and_recloses(monkeypatch):
+    """Five FINAL failures inside the window open the breaker for a minute.
+
+    During a provider incident every gthread used to park in urlopen for the
+    full timeout-times-retries worst case, taking /health/ down with the chat.
+    Open means an immediate LLMUnavailable - the adviser's degradation paths
+    already speak that language.  Retries within one call count as ONE
+    incident, and a success closes the window.
+    """
+    fake = _failing(503)
+    monkeypatch.setattr(llm_backend, "_http_open", fake)
+    monkeypatch.setattr(llm_backend.time, "sleep", lambda _: None)
+    clock = {"now": 1000.0}
+    monkeypatch.setattr(llm_backend.time, "monotonic", lambda: clock["now"])
+
+    with override_settings(**ALIBABA):
+        client = OpenAICompatibleLLMClient(endpoint_config("alibaba"))
+        for _ in range(5):
+            with pytest.raises(LLMUnavailable):
+                client.chat([{"role": "user", "content": "hi"}])
+        attempts_before = fake.state["calls"]
+        # 5 incidents x 3 attempts each - the breaker counted incidents.
+        assert attempts_before == 15
+
+        # Open: the next call is refused without touching the network.
+        with pytest.raises(LLMUnavailable):
+            client.chat([{"role": "user", "content": "hi"}])
+        assert fake.state["calls"] == attempts_before
+
+        # After the open window the provider is tried again.
+        clock["now"] += 61.0
+        with pytest.raises(LLMUnavailable):
+            client.chat([{"role": "user", "content": "hi"}])
+        assert fake.state["calls"] == attempts_before + 3
+
+
+def test_a_success_resets_the_breaker_count(monkeypatch):
+    calls = {"n": 0}
+
+    def flaky(request, *args, **kwargs):  # noqa: ARG001
+        calls["n"] += 1
+        raise TimeoutError
+
+    monkeypatch.setattr(llm_backend, "_http_open", flaky)
+    monkeypatch.setattr(llm_backend.time, "sleep", lambda _: None)
+    with override_settings(**ALIBABA):
+        client = OpenAICompatibleLLMClient(endpoint_config("alibaba"))
+        for _ in range(4):
+            with pytest.raises(LLMTimeout):
+                client.chat([{"role": "user", "content": "hi"}])
+        # One success wipes the four-strike count...
+        monkeypatch.setattr(llm_backend, "_http_open", _ok(ANSWER))
+        client.chat([{"role": "user", "content": "hi"}])
+        # ...so four MORE failures still do not open the breaker.
+        monkeypatch.setattr(llm_backend, "_http_open", flaky)
+        before = calls["n"]
+        for _ in range(4):
+            with pytest.raises(LLMTimeout):
+                client.chat([{"role": "user", "content": "hi"}])
+        assert calls["n"] > before  # network was reached, breaker closed

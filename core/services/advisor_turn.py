@@ -478,9 +478,12 @@ def paired_answer(
 
 
 #: How long a turn may sit PENDING before we accept that whatever was generating it
-#: is gone. Generously longer than the slowest model call, because resuming a turn
-#: that IS still running would answer it twice.
-STALE_GENERATION = timedelta(minutes=15)
+#: is gone - because resuming a turn that IS still running would answer it twice.
+#: Sized to the TURN's ceiling, not one model call's: the adviser turn carries a
+#: 60-second wall-clock budget, so three minutes is already generous, and the
+#: previous fifteen left an edge-killed question replaying its own empty PENDING
+#: row at the student for a quarter of an hour.
+STALE_GENERATION = timedelta(minutes=3)
 
 
 def is_resumable(message: AdvisorMessage) -> bool:

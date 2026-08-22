@@ -135,7 +135,7 @@ services:
       - key: ALIBABA_LLM_MAX_TOKENS
         value: "3000"
       - key: ALIBABA_LLM_MAX_RETRIES
-        value: "2"
+        value: "1"
       - key: ALIBABA_LLM_ALLOW_LIVE_REQUESTS
         value: "true"
       - key: VIRTUAL_ADVISOR_AGENT_LOOP_ENABLED
