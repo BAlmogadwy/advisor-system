@@ -281,6 +281,88 @@ def test_matching_baselines_suppress_the_alternate_via_the_differ_guard(
     assert payload.get("what_if_alternate_baseline") is None
 
 
+def test_an_alternate_failure_never_kills_the_primary_answer(
+    divergent_plan: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The alternate is an enhancement.  Un-isolated, an exception in it
+    rode up to the registry's catch-all and turned the WHOLE call into
+    ok:False - the student lost the primary simulation they were owed and
+    the turn could only refuse."""
+    from core.services import student_graduation as sg
+
+    real = sg.build_graduation_what_if
+    calls = {"n": 0}
+
+    def exploding_second(*args, **kwargs):
+        calls["n"] += 1
+        if calls["n"] > 1:
+            raise RuntimeError("production-data edge in the alternate baseline")
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(sg, "build_graduation_what_if", exploding_second)
+    payload = _what_if_payload()
+
+    assert payload.get("ok", True) is True
+    assert isinstance(payload.get("what_if"), dict)
+    assert payload["what_if"]["valid"] is True
+    assert payload.get("what_if_alternate_baseline") is None
+
+
+def test_a_malformed_alternate_payload_never_kills_the_primary_answer(
+    divergent_plan: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Path (b) from the approval: the try must cover the whole alternate
+    PATH, not just the call - a malformed second payload used to raise
+    inside the differ comparison, three lines after the guarded call, and
+    ride to the same catch-all."""
+    from core.services import student_graduation as sg
+
+    real = sg.build_graduation_what_if
+    calls = {"n": 0}
+
+    def malformed_second(*args, **kwargs):
+        calls["n"] += 1
+        result = real(*args, **kwargs)
+        if calls["n"] > 1 and isinstance(result.get("what_if"), dict):
+            result["what_if"]["baseline"]["planning_baseline_courses_assumed_passed"] = 42
+        return result
+
+    monkeypatch.setattr(sg, "build_graduation_what_if", malformed_second)
+    payload = _what_if_payload()
+
+    assert payload.get("ok", True) is True
+    assert isinstance(payload.get("what_if"), dict)
+    assert payload["what_if"]["valid"] is True
+
+
+def test_a_composer_alternate_failure_costs_only_the_second_section() -> None:
+    """The symmetric guard in the last-line-of-defence composer: a malformed
+    alternate loses its section, never the whole safe answer."""
+    from core.services.student_advisor_v2 import _safe_graduation_what_if_answer_base
+
+    what_if = {
+        "valid": True,
+        "removed_current_courses": [{"code": "TG102"}],
+        "added_current_courses": [],
+        "comparison": {},
+        "baseline": {"lower_bound_additional_terms": 1},
+        "scenario": {"lower_bound_additional_terms": 2},
+    }
+    malformed_alternate = {
+        "planning_baseline_kind": "recommended_current_term",
+        "what_if": {
+            "valid": True,
+            "baseline": {"planning_baseline_courses_assumed_passed": 42},
+            "scenario": {},
+        },
+    }
+    answer = _safe_graduation_what_if_answer_base(
+        "Arabic", what_if, "registered_timetable", malformed_alternate
+    )
+    assert "TG102" in answer
+    assert "الحد الأدنى" in answer
+
+
 def test_a_producer_without_display_rows_cannot_disable_the_feature(
     divergent_plan: None, monkeypatch: pytest.MonkeyPatch
 ) -> None:

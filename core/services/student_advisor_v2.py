@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import copy
 import json
+import logging
 import re
 import time
 from typing import Any
@@ -2810,6 +2811,23 @@ def _term_plan_change_text(comparison: dict[str, Any], language: str) -> str:
 
 
 def _what_if_alternate_lines(
+    language: str,
+    alternate: dict[str, Any] | None,
+    primary_what_if: dict[str, Any],
+) -> list[str]:
+    """Exception-isolated wrapper: this section is an ENHANCEMENT inside the
+    last-line-of-defence composer, and a failure here must cost the answer
+    its second section, never the whole safe answer."""
+    try:
+        return _what_if_alternate_lines_unguarded(language, alternate, primary_what_if)
+    except Exception:
+        logging.getLogger(__name__).exception(
+            "Alternate-baseline section failed; composing the primary only"
+        )
+        return []
+
+
+def _what_if_alternate_lines_unguarded(
     language: str,
     alternate: dict[str, Any] | None,
     primary_what_if: dict[str, Any],
