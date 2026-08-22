@@ -461,3 +461,76 @@ def test_the_review_mutants_stay_dead():
         question="كم يتبقى؟",
         tools=[{"tool": "course_choice_comparison", "ok": True, "proven": True}],
     )
+
+
+def test_a_cited_policy_figure_must_come_from_that_policy():
+    """Class I from the audit: a wrong summer-hours figure with a REAL citation.
+
+    The citation contract proved the id existed; nothing proved the number
+    beside it was what the policy says.  The clause naming the id claims its
+    provenance, so the named source is the only admissible authority for that
+    clause's figures.
+    """
+    from core.services.answer_consistency import POLICY_FIGURE_MISMATCH
+
+    policy = {
+        "tool": "policy_lookup",
+        "ok": True,
+        "direct_policy_evidence": [
+            {
+                "policy_id": "TU.REG.SUMMER.1",
+                "rule": "Summer registration is capped at 10 credit hours.",
+                "statement_ar": "الحد الأعلى للتسجيل في الفصل الصيفي عشر ساعات (10) معتمدة.",
+            }
+        ],
+    }
+
+    # The credit-cap spelling is already owned by the legacy cap check when
+    # policy evidence is present - EITHER code refusing it is correct.
+    fabricated_cap = "الحد الأعلى في الفصل الصيفي هو 12 ساعة معتمدة. [TU.REG.SUMMER.1]"
+    assert _clean(fabricated_cap, question="كم ساعة أسجل بالصيف؟", tools=[policy]) != []
+
+    truthful = "الحد الأعلى في الفصل الصيفي هو 10 ساعات معتمدة. [TU.REG.SUMMER.1]"
+    assert _clean(truthful, question="كم ساعة أسجل بالصيف؟", tools=[policy]) == []
+
+    # The NEW binding owns what the cap check never saw: non-cap figure kinds
+    # beside a citation.  Two courses in the policy text, three in the answer.
+    count_policy = {
+        "tool": "policy_lookup",
+        "ok": True,
+        "direct_policy_evidence": [
+            {
+                "policy_id": "TU.REG.SUMMER.2",
+                "rule": "At most 2 courses may be taken in the summer term.",
+                "statement_ar": "يسمح بتسجيل مقررين (2) كحد أقصى في الفصل الصيفي.",
+            }
+        ],
+    }
+    assert POLICY_FIGURE_MISMATCH in _clean(
+        "يمكنك تسجيل 3 مقررات في الفصل الصيفي وفق [TU.REG.SUMMER.2].",
+        question="كم مقررًا أسجل بالصيف؟",
+        tools=[count_policy],
+    )
+    assert (
+        _clean(
+            "يمكنك تسجيل 2 مقررات كحد أقصى في الفصل الصيفي وفق [TU.REG.SUMMER.2].",
+            question="كم مقررًا أسجل بالصيف؟",
+            tools=[count_policy],
+        )
+        == []
+    )
+
+    # SUBSET, not overlap: one true figure must not vouch for a second
+    # invented one in the same cited clause.  A citation clause speaks with
+    # the policy's numbers only - personal-progress figures belong in their
+    # own sentence, which is also how honest prose reads.
+    assert POLICY_FIGURE_MISMATCH in _clean(
+        "يسمح لك بتسجيل 2 مقررات صيفًا وسيتبقى أمامك 9 مقررات وفق [TU.REG.SUMMER.2].",
+        question="كم مقررًا أسجل بالصيف؟",
+        tools=[count_policy],
+    )
+
+    # A figure in an UNCITED clause is not this check's business - other
+    # checks own it, and double-claiming would refuse ordinary prose.
+    uncited = "عادة تكون الدراسة الصيفية أقصر من الفصل العادي."
+    assert _clean(uncited, question="كم ساعة أسجل بالصيف؟", tools=[policy]) == []

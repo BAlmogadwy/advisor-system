@@ -53,6 +53,41 @@ def known_course_codes() -> frozenset[str]:
     return frozen
 
 
+_NAMES_CACHE: tuple[float, tuple[tuple[str, str], ...]] | None = None
+
+
+def known_courses() -> tuple[tuple[str, str], ...]:
+    """(code, display name) for every recognised course, cached like the codes.
+
+    The resolver's fuzzy index: small (≈500 rows), rebuilt on the same TTL,
+    dropped by the same invalidation the admin import views call.
+    """
+    global _NAMES_CACHE
+    now = time.monotonic()
+    if _NAMES_CACHE is not None and now - _NAMES_CACHE[0] < _TTL_SECONDS:
+        return _NAMES_CACHE[1]
+    import re
+
+    from core.models import Course, ElectiveCourse, ProgrammeRequirement
+
+    names: dict[str, str] = {}
+    for code, name in ProgrammeRequirement.objects.values_list("course_code", "course_name"):
+        key = re.sub(r"[^A-Za-z0-9]", "", str(code or "")).upper()
+        if key and str(name or "").strip():
+            names.setdefault(key, str(name).strip())
+    for code, name in ElectiveCourse.objects.values_list("course_code", "course_name"):
+        key = re.sub(r"[^A-Za-z0-9]", "", str(code or "")).upper()
+        if key and str(name or "").strip():
+            names.setdefault(key, str(name).strip())
+    for code, name in Course.objects.values_list("course_code", "description"):
+        key = re.sub(r"[^A-Za-z0-9]", "", str(code or "")).upper()
+        if key:
+            names.setdefault(key, str(name or "").strip())
+    frozen = tuple(sorted(names.items()))
+    _NAMES_CACHE = (now, frozen)
+    return frozen
+
+
 def invalidate_cache() -> None:
     """Force the next read to hit the database.
 
@@ -61,5 +96,6 @@ def invalidate_cache() -> None:
     fixture a warm empty-DB read from one test disabled the floor for every
     later test in the process, and rolled-back rows leaked across tests.
     """
-    global _CACHE
+    global _CACHE, _NAMES_CACHE
     _CACHE = None
+    _NAMES_CACHE = None

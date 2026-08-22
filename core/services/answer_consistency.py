@@ -49,6 +49,7 @@ REQUIRED_EVIDENCE_MISSING = "required_academic_evidence_missing"
 REQUESTED_EVIDENCE_OMITTED = "requested_academic_evidence_omitted"
 UNSUPPORTED_ACADEMIC_FACT = "unsupported_academic_fact"
 EXACT_ACADEMIC_FIGURE_MISMATCH = "exact_academic_figure_mismatch"
+POLICY_FIGURE_MISMATCH = "policy_figure_mismatch"
 
 ALL_CHECKS = (
     RETAINED_ADD_CONTRADICTION,
@@ -65,6 +66,7 @@ ALL_CHECKS = (
     REQUESTED_EVIDENCE_OMITTED,
     UNSUPPORTED_ACADEMIC_FACT,
     EXACT_ACADEMIC_FIGURE_MISMATCH,
+    POLICY_FIGURE_MISMATCH,
 )
 
 #: The first V2 evidence postcondition deliberately covers only exact student facts
@@ -593,7 +595,7 @@ def _course_codes_in_evidence(value: Any, *, parent_key: str = "") -> set[str]:
     if isinstance(value, dict):
         for raw_key, child in value.items():
             key = str(raw_key or "")
-            if key in {"course_code", "code"} and isinstance(child, str):
+            if key in {"course_code", "code", "candidate_code"} and isinstance(child, str):
                 token = _normalise_course_token(child)
                 if token and _COURSE_TOKEN.fullmatch(child.strip()):
                     codes.add(token)
@@ -2302,10 +2304,15 @@ _ECHO_KEYS = frozenset(
     {
         "query",
         "unknown_query",
-        "did_you_mean",
         "candidate_courses_considered",
         "requested_remove_course",
         "requested_add_course",
+        # NOT did_you_mean: the resolver emits only letter-repairs of codes
+        # that EXIST in the catalogue, so a candidate is a legitimate ground
+        # for naming the real course in a correction - «لعلك تقصد MATH243» -
+        # while the unknown token itself stays inadmissible.  A resolver that
+        # ever emits non-catalogue candidates would re-open the laundering
+        # hole; tests/test_course_resolver.py pins that it cannot.
     }
 )
 
@@ -2346,6 +2353,63 @@ def _floor_evidence_codes(rows: list[dict[str, Any]]) -> set[str]:
             continue
         codes |= _course_codes_in_evidence(pruned)
     return codes
+
+
+def _policy_texts_by_id(tool_results: list[dict[str, Any]] | None) -> dict[str, str]:
+    texts: dict[str, str] = {}
+    for row in tool_results or []:
+        if not isinstance(row, dict) or row.get("tool") != "policy_lookup" or not row.get("ok"):
+            continue
+        for value in row.values():
+            if not isinstance(value, list):
+                continue
+            for record in value:
+                if not isinstance(record, dict):
+                    continue
+                policy_id = str(record.get("policy_id") or "").strip()
+                if not policy_id:
+                    continue
+                blob = " ".join(
+                    str(record.get(field) or "")
+                    for field in ("rule", "statement_ar", "caveat", "exceptions")
+                )
+                if blob.strip():
+                    texts[policy_id] = (texts.get(policy_id, "") + " " + blob).strip()
+    return texts
+
+
+def _policy_figure_mismatch(answer: str, tool_results: list[dict[str, Any]] | None) -> bool:
+    """A figure asserted BESIDE a policy citation must come from that policy.
+
+    The citation contract proves the cited id EXISTS; nothing proved the
+    number beside it was what that policy says - the audited wrong
+    summer-hours answer carried a perfectly real citation.  Scoped to clauses
+    that name a policy id whose TEXT is in this turn's evidence: the id is the
+    claim of provenance, so the named source is the only admissible authority
+    for the figures in its clause.
+    """
+    texts = _policy_texts_by_id(tool_results)
+    if not texts:
+        return False
+    for clause in _clauses(answer):
+        cited = [policy_id for policy_id in texts if policy_id and policy_id in clause]
+        if not cited:
+            continue
+        claimed = (
+            _credit_figures(clause)
+            | _course_count_figures(clause)
+            | _term_figures(clause)
+            | _figures(_PERCENT_FIGURE, clause)
+        )
+        if not claimed:
+            continue
+        allowed: set[float] = set()
+        for policy_id in cited:
+            folded = texts[policy_id].translate(_ARABIC_INDIC_DIGITS)
+            allowed |= {float(match.group(1)) for match in _TAIL_NUMBER.finditer(folded)}
+        if not claimed <= allowed:
+            return True
+    return False
 
 
 def _evidence_postcondition_violations(
@@ -2457,6 +2521,9 @@ def _evidence_postcondition_violations(
                 continue
             violations.append(UNSUPPORTED_ACADEMIC_FACT)
             break
+
+    if _policy_figure_mismatch(answer, tool_results):
+        violations.append(POLICY_FIGURE_MISMATCH)
 
     if rows:
         if _unsupported_answer_codes(answer, question, rows):

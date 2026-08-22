@@ -29,6 +29,7 @@ services import models that would otherwise create import cycles.
 from __future__ import annotations
 
 import logging
+import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
@@ -422,6 +423,63 @@ def _exec_get_student_context(
     return {"ok": True, "student_context": context}
 
 
+_CODE_SHAPE = re.compile(r"[A-Za-z]{2,6}\s*-?\s*\d{1,4}\Z")
+
+
+def _split_code(code: str) -> tuple[str, str]:
+    letters = "".join(ch for ch in code if ch.isalpha())
+    digits = "".join(ch for ch in code if ch.isdigit())
+    return letters, digits
+
+
+def _letter_edit_distance(a: str, b: str) -> int:
+    """Plain Levenshtein over two short letter prefixes (length <= 6)."""
+    if a == b:
+        return 0
+    previous = list(range(len(b) + 1))
+    for i, ca in enumerate(a, 1):
+        current = [i]
+        for j, cb in enumerate(b, 1):
+            current.append(
+                min(
+                    previous[j] + 1,
+                    current[j - 1] + 1,
+                    previous[j - 1] + (ca != cb),
+                )
+            )
+        previous = current
+    return previous[-1]
+
+
+def _did_you_mean(unknown_code: str) -> list[dict[str, Any]]:
+    """Letter-part repairs with EXACTLY matching digits, nothing else.
+
+    «MATE243» is a typo of MATH243 - same digits, one letter wrong - and
+    suggesting the repair as DATA turns the model's typo-help instinct from
+    the audited speculation («ربما تقصد DS225», which does not exist) into a
+    grounded correction.  Digit-differing tokens get NO suggestion by design:
+    CS202 is one edit from both CS201 and CS212, and a nearest-neighbour
+    guess there is exactly the invented-guidance class this replaces.
+    """
+    from core.services.course_catalogue import known_courses
+
+    letters, digits = _split_code(unknown_code)
+    if not letters or not digits:
+        return []
+    candidates: list[dict[str, Any]] = []
+    for code, name in known_courses():
+        cand_letters, cand_digits = _split_code(code)
+        if cand_digits != digits:
+            continue
+        distance = _letter_edit_distance(letters, cand_letters)
+        if 0 < distance <= 2:
+            candidates.append(
+                {"candidate_code": code, "candidate_name": name, "distance": distance}
+            )
+    candidates.sort(key=lambda row: (row["distance"], row["candidate_code"]))
+    return candidates[:3]
+
+
 def _exec_lookup_course(
     args: dict[str, Any], scope: dict[str, Any], ctx: dict[str, Any]
 ) -> dict[str, Any]:
@@ -434,6 +492,16 @@ def _exec_lookup_course(
     if not query:
         return {"ok": False, "error": "query is required."}
     program = str(args.get("program") or "").strip().upper()
+    if not program and str(scope.get("role") or "") == ROLE_STUDENT:
+        # A student's lookup defaults to THEIR programme.  Unscoped, a DS2
+        # student's fuzzy search ranged over all 488 courses of every
+        # programme - cross-programme search stays available, but as the
+        # model's explicit argument, not the accident of omitting one.
+        from core.services.student_helpers import get_student_program
+
+        student_id, _error = _resolve_scoped_student_id(args, scope)
+        if student_id is not None:
+            program = str(get_student_program(student_id) or "").strip().upper()
 
     matches: dict[str, dict[str, Any]] = {}
 
@@ -552,12 +620,20 @@ def _exec_lookup_course(
             if len(matches) >= _MAX_COURSE_MATCHES:
                 break
 
-    return {
+    result: dict[str, Any] = {
         "ok": True,
         "query": query,
         "match_count": len(matches),
         "courses": list(matches.values()),
     }
+    if exact and _CODE_SHAPE.match(query) and exact not in matches:
+        # The student named a code this system does not recognise.  Say so as
+        # DATA: the unresolved token (an echo the answer checker deliberately
+        # never mines as evidence) plus at most three letter-repair
+        # candidates that DO exist.
+        result["unknown_query"] = exact
+        result["did_you_mean"] = _did_you_mean(exact)
+    return result
 
 
 #: Re-exported so this module's callers keep their import, but there is now ONE

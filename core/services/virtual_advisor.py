@@ -1276,8 +1276,24 @@ def build_verified_student_context(
                 if current_academic_state is not None
                 else []
             ),
-            "registered_or_equivalent_course_codes": (
-                list(current_academic_state.registered_or_equivalent_course_codes)
+            # Shaped, not flat: a bare list beside current_term_registrations
+            # read as one undifferentiated "registered" pool, and nothing
+            # stopped «أنت مسجّل في AI461» about a sibling elective whose only
+            # relation is sharing an occupied slot.  Each row now carries its
+            # own basis, and the flat spelling is gone so a stale consumer
+            # breaks loudly instead of silently reading an absent key.
+            "registered_or_equivalent": (
+                [
+                    {
+                        "code": code,
+                        "basis": (
+                            "registered"
+                            if code in set(current_academic_state.registered_course_codes)
+                            else "equivalent_slot_occupied"
+                        ),
+                    }
+                    for code in current_academic_state.registered_or_equivalent_course_codes
+                ]
                 if current_academic_state is not None
                 else []
             ),

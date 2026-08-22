@@ -462,6 +462,18 @@ def _project_lookup_course(result: dict[str, Any], _: RemoteIdentityMap) -> dict
         "programs",
         "fulfills_elective_slots",
     )
+    # The resolver's output: the unresolved token (an ECHO the checker never
+    # mines as evidence) and its letter-repair candidates.  Dropped silently
+    # by the whitelist otherwise, which would leave the remote model - the
+    # production model - unable to correct a typo the local path could.
+    if "unknown_query" in result:
+        out["unknown_query"] = str(result.get("unknown_query") or "")
+        out["did_you_mean"] = _course_rows(
+            result.get("did_you_mean"),
+            "candidate_code",
+            "candidate_name",
+            "distance",
+        )
     return out
 
 
@@ -1814,9 +1826,17 @@ def _project_get_student_context(
         "registered_requirement_course_codes": _code_list(
             evidence.get("registered_requirement_course_codes")
         ),
-        "registered_or_equivalent_course_codes": _code_list(
-            evidence.get("registered_or_equivalent_course_codes"), cap=200
-        ),
+        "registered_or_equivalent": [
+            {"code": row["code"], "basis": row["basis"]}
+            for row in (
+                evidence.get("registered_or_equivalent")
+                if isinstance(evidence.get("registered_or_equivalent"), list)
+                else []
+            )
+            if isinstance(row, dict)
+            and isinstance(row.get("code"), str)
+            and row.get("basis") in {"registered", "equivalent_slot_occupied"}
+        ][:200],
         "expected_plan_course_codes": _code_list(evidence.get("expected_plan_course_codes")),
         "expected_plan_requirement_aliases": _code_list(
             evidence.get("expected_plan_requirement_aliases")
