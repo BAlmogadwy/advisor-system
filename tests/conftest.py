@@ -11,6 +11,36 @@ def _disable_otp_response_floor_in_tests(settings) -> None:  # noqa: PT004
 
 
 @pytest.fixture(autouse=True)
+def _reset_generation_slots() -> None:  # noqa: PT004
+    """Fresh generation slots per test.
+
+    The semaphore is process-global; a test that acquires without releasing
+    would 503 every later conversation test in the session with no pointer
+    back to the culprit.
+    """
+    import threading
+
+    from core.services import advisor_turn
+
+    advisor_turn._GENERATION_SLOTS = threading.BoundedSemaphore(3)
+    yield
+    advisor_turn._GENERATION_SLOTS = threading.BoundedSemaphore(3)
+
+
+@pytest.fixture(autouse=True)
+def _reset_llm_circuit_breaker() -> None:  # noqa: PT004
+    """The breaker is process-global by design; tests must each start closed.
+
+    Without this, five parametrized failure cases open the breaker and the
+    sixth test's first attempt is refused before it reaches the fake - the
+    retry matrix then counts the wrong number of attempts.
+    """
+    llm_backend.reset_circuit_breaker()
+    yield
+    llm_backend.reset_circuit_breaker()
+
+
+@pytest.fixture(autouse=True)
 def _reset_course_catalogue_cache() -> None:  # noqa: PT004
     """The existence floor's catalogue is a process-global TTL cache.
 

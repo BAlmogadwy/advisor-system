@@ -1893,8 +1893,13 @@
       } else if (res.status === 429) {
         showComposerError(waitMessage(res.retryAfter));
         holdSend(res.retryAfter);
+      } else if (res.status === 503 && res.retryAfter) {
+        /* Load shedding. The server says how long; "try again" without the
+           hold would invite a retry storm into a saturated service. */
+        showComposerError((res.body && res.body.error) || T.sendFail);
+        holdSend(res.retryAfter);
       } else {
-        showComposerError(T.sendFail);
+        showComposerError((res.body && res.body.error) || T.sendFail);
       }
 
       /* Re-read the whole conversation rather than appending what we think

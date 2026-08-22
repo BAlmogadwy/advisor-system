@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import threading
 from dataclasses import dataclass
 from datetime import timedelta
 from typing import Any
@@ -190,6 +191,21 @@ def _title_from(question: str) -> str:
     return " ".join(words[:8])[:MAX_TITLE_CHARS]
 
 
+#: gunicorn runs one instance with four gthreads.  Admitting all four into
+#: generation leaves none for /health/ during a slow-provider window.  The
+#: slot is taken HERE - after the idempotency replay, before the budget charge
+#: and the model - so a stored answer is always served, a busy refusal never
+#: costs a question, and both channels (web view, Telegram worker process)
+#: share one ordering.  Process-local is correct on a single instance.
+_GENERATION_SLOTS = threading.BoundedSemaphore(3)
+
+
+class AdviserBusy(Exception):
+    """All generation slots are taken; the caller should retry shortly."""
+
+    retry_after = 15
+
+
 def run_advisor_turn(
     *,
     principal: AdvisorPrincipal,
@@ -249,122 +265,143 @@ def run_advisor_turn(
                 return resumed
             student_message = resumed
 
-    # Charged here: after ownership, after validation, and after the idempotency
-    # branch that may replay a stored answer — but still before the model is
-    # called, which is what admission control requires. Charged earlier, a replay
-    # served entirely from storage cost the student the same as a new question.
-    decision = spend_budget(GENERATION, student_id)
-    if not decision.allowed:
-        return TurnResult(
-            outcome=RATE_LIMITED, conversation=conversation, retry_after=decision.retry_after
-        )
-
-    if student_message is None:
-        try:
-            with transaction.atomic():
-                student_message = AdvisorMessage.objects.create(
-                    conversation=conversation,
-                    role=AdvisorMessage.ROLE_STUDENT,
-                    content=question,
-                    idempotency_key=key,
-                    request_hash=request_hash,
-                    generation_profile=initial_generation_profile,
-                    status=AdvisorMessage.STATUS_PENDING,
-                )
-        except IntegrityError:
-            if not key:
-                # The unique constraint only covers non-empty keys, so this cannot be
-                # an idempotency collision — it is some other integrity failure, and
-                # the recovery below would match an unrelated earlier keyless turn
-                # and serve its stored answer as this question's.
-                raise
-            # Two concurrent sends of the same key. The other one is authoritative.
-            existing = conversation.messages.filter(
-                idempotency_key=key, role=AdvisorMessage.ROLE_STUDENT
-            ).first()
-            if existing is None:
-                raise
-            resumed = _resume_or_replay(
-                conversation,
-                existing,
-                request_hash,
-                expected_profile=profile,
-            )
-            if isinstance(resumed, TurnResult):
-                return resumed
-            student_message = resumed
+    # The slot comes first, then the charge - both after the replay branch.
+    # Acquired at the view instead, a student retrying an ALREADY-ANSWERED
+    # question was refused 503 because three OTHER students were generating,
+    # for what is a pure database read.
+    if not _GENERATION_SLOTS.acquire(blocking=False):
+        raise AdviserBusy
 
     try:
-        # The turns the student already saw, so a follow-up has something to refer
-        # to. Excludes THIS question, which was written to the database before
-        # generation and would otherwise arrive twice — and twice again on a retry,
-        # which reuses the same row.
-        from core.services.advisor_channel_privacy import (
-            TELEGRAM_SAFE_PROFILE,
-            is_telegram_safe_profile,
-            project_history,
-        )
+        # Charged here: after ownership, after validation, and after the idempotency
+        # branch that may replay a stored answer — but still before the model is
+        # called, which is what admission control requires. Charged earlier, a replay
+        # served entirely from storage cost the student the same as a new question.
+        decision = spend_budget(GENERATION, student_id)
+        if not decision.allowed:
+            return TurnResult(
+                outcome=RATE_LIMITED, conversation=conversation, retry_after=decision.retry_after
+            )
 
-        if is_telegram_safe_profile(channel_profile):
-            history = load_profiled_history(
+        if student_message is None:
+            try:
+                with transaction.atomic():
+                    student_message = AdvisorMessage.objects.create(
+                        conversation=conversation,
+                        role=AdvisorMessage.ROLE_STUDENT,
+                        content=question,
+                        idempotency_key=key,
+                        request_hash=request_hash,
+                        generation_profile=initial_generation_profile,
+                        status=AdvisorMessage.STATUS_PENDING,
+                    )
+            except IntegrityError:
+                if not key:
+                    # The unique constraint only covers non-empty keys, so this cannot be
+                    # an idempotency collision — it is some other integrity failure, and
+                    # the recovery below would match an unrelated earlier keyless turn
+                    # and serve its stored answer as this question's.
+                    raise
+                # Two concurrent sends of the same key. The other one is authoritative.
+                existing = conversation.messages.filter(
+                    idempotency_key=key, role=AdvisorMessage.ROLE_STUDENT
+                ).first()
+                if existing is None:
+                    raise
+                resumed = _resume_or_replay(
+                    conversation,
+                    existing,
+                    request_hash,
+                    expected_profile=profile,
+                )
+                if isinstance(resumed, TurnResult):
+                    return resumed
+                student_message = resumed
+
+        try:
+            # The turns the student already saw, so a follow-up has something to refer
+            # to. Excludes THIS question, which was written to the database before
+            # generation and would otherwise arrive twice — and twice again on a retry,
+            # which reuses the same row.
+            from core.services.advisor_channel_privacy import (
+                TELEGRAM_SAFE_PROFILE,
+                is_telegram_safe_profile,
+                project_history,
+            )
+
+            if is_telegram_safe_profile(channel_profile):
+                history = load_profiled_history(
+                    conversation,
+                    channel_profile=TELEGRAM_SAFE_PROFILE,
+                    exclude_message_id=student_message.pk,
+                )
+            else:
+                history = load_visible_history(conversation, exclude_message_id=student_message.pk)
+
+            prior_presentation = load_latest_profile_presentation(
                 conversation,
-                channel_profile=TELEGRAM_SAFE_PROFILE,
+                channel_profile=str(channel_profile or ""),
                 exclude_message_id=student_message.pk,
             )
-        else:
-            history = load_visible_history(conversation, exclude_message_id=student_message.pk)
 
-        prior_presentation = load_latest_profile_presentation(
-            conversation,
-            channel_profile=str(channel_profile or ""),
-            exclude_message_id=student_message.pk,
-        )
+            result = answer_student_advisor(
+                question=question,
+                principal=principal,
+                history=project_history(history, profile=channel_profile),
+                prior_presentation=prior_presentation,
+                channel_profile=channel_profile,
+            )
+        except ValueError as exc:
+            # The student's own row is gone — a roster re-import can do this. Passing a
+            # real identity makes it raise where the general-mode stub used to answer
+            # blandly and work, so without this branch the student gets a failure on
+            # every question they ever ask, permanently, with no explanation. Do NOT
+            # fall back to the general context: an answer that silently stops being
+            # about them is the failure the principal work removed.
+            logger.warning(
+                "Adviser has no student record for conversation %s: %s", conversation.id, exc
+            )
+            # No answer is possible for this student until their record is restored, so
+            # charging them would spend the whole allowance on a diagnosis and then
+            # replace it with a rate-limit message that hides the diagnosis.
+            refund_budget(GENERATION, student_id)
+            student_message.status = AdvisorMessage.STATUS_FAILED
+            student_message.save(update_fields=["status"])
+            return TurnResult(
+                outcome=NO_STUDENT_RECORD,
+                conversation=conversation,
+                student_message=student_message,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("Adviser generation failed for conversation %s", conversation.id)
+            # Refund PROVIDER OUTAGES only.  During a circuit-breaker window
+            # each attempt fails in milliseconds, and charging them let a
+            # student burn the whole allowance on an outage that was never
+            # theirs to pay for.  Any other failure keeps its charge: the
+            # allowance is the ceiling on asking, and a crashing turn that
+            # already spent real provider calls must not become infinitely
+            # retryable through the refund.
+            from core.services.llm_backend import LLMUnavailable
 
-        result = answer_student_advisor(
-            question=question,
-            principal=principal,
-            history=project_history(history, profile=channel_profile),
-            prior_presentation=prior_presentation,
-            channel_profile=channel_profile,
-        )
-    except ValueError as exc:
-        # The student's own row is gone — a roster re-import can do this. Passing a
-        # real identity makes it raise where the general-mode stub used to answer
-        # blandly and work, so without this branch the student gets a failure on
-        # every question they ever ask, permanently, with no explanation. Do NOT
-        # fall back to the general context: an answer that silently stops being
-        # about them is the failure the principal work removed.
-        logger.warning(
-            "Adviser has no student record for conversation %s: %s", conversation.id, exc
-        )
-        # No answer is possible for this student until their record is restored, so
-        # charging them would spend the whole allowance on a diagnosis and then
-        # replace it with a rate-limit message that hides the diagnosis.
-        refund_budget(GENERATION, student_id)
-        student_message.status = AdvisorMessage.STATUS_FAILED
-        student_message.save(update_fields=["status"])
+            if isinstance(exc, LLMUnavailable):
+                refund_budget(GENERATION, student_id)
+            student_message.status = AdvisorMessage.STATUS_FAILED
+            student_message.save(update_fields=["status"])
+            return TurnResult(
+                outcome=GENERATION_FAILED,
+                conversation=conversation,
+                student_message=student_message,
+            )
+
+        assistant_message = persist_answer(conversation, student_message, result)
         return TurnResult(
-            outcome=NO_STUDENT_RECORD,
+            outcome=CREATED,
             conversation=conversation,
             student_message=student_message,
+            assistant_message=assistant_message,
         )
-    except Exception:  # noqa: BLE001
-        logger.exception("Adviser generation failed for conversation %s", conversation.id)
-        student_message.status = AdvisorMessage.STATUS_FAILED
-        student_message.save(update_fields=["status"])
-        return TurnResult(
-            outcome=GENERATION_FAILED,
-            conversation=conversation,
-            student_message=student_message,
-        )
-
-    assistant_message = persist_answer(conversation, student_message, result)
-    return TurnResult(
-        outcome=CREATED,
-        conversation=conversation,
-        student_message=student_message,
-        assistant_message=assistant_message,
-    )
+    finally:
+        _GENERATION_SLOTS.release()
 
 
 def _resume_or_replay(
@@ -478,9 +515,16 @@ def paired_answer(
 
 
 #: How long a turn may sit PENDING before we accept that whatever was generating it
-#: is gone. Generously longer than the slowest model call, because resuming a turn
-#: that IS still running would answer it twice.
-STALE_GENERATION = timedelta(minutes=15)
+#: is gone - because resuming a turn that IS still running would answer it twice.
+#: Sized to the TURN's true ceiling, which is larger than the 90-second provider
+#: budget: the budget gates PROVIDER calls only, and a local capability between
+#: gates is unbounded (the planner's CP-SAT path is measured at ~152s worst).
+#: 90s of provider time + one admitted call's clamped tail + the slowest local
+#: tool ≈ 4.5 minutes; six is the margin above that.  The previous fifteen left
+#: an edge-killed question replaying its own empty PENDING row for a quarter of
+#: an hour; three - an earlier value of this change - sat BELOW the ceiling and
+#: would have double-answered a still-running turn.
+STALE_GENERATION = timedelta(minutes=6)
 
 
 def is_resumable(message: AdvisorMessage) -> bool:

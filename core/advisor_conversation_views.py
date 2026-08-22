@@ -289,10 +289,34 @@ def conversation_post_message_view(request: HttpRequest, conversation_id: str) -
     channel calls too — so ownership, idempotency, the generation budget and the
     order they run in are one implementation rather than two that drift. What
     stays here is what HTTP owns: reading the body, and rendering the outcome.
+
+    Load shedding lives in the turn service too — AFTER the idempotency
+    replay, so a stored answer is always served even while every generation
+    slot is busy.  Acquired here instead, a student retrying an already-
+    answered question was refused because three OTHER students were
+    generating, for what is a pure database read.
     """
     principal = _principal(request)
     if principal is None:
         return _forbidden()
+    try:
+        return _post_message(request, principal, conversation_id)
+    except advisor_turn.AdviserBusy as busy:
+        # An OPERATOR event, not only a student message: the breaker logs when
+        # it opens, and silence here would hide that shedding is happening.
+        logger.warning("Adviser generation slots exhausted; shedding a turn.")
+        response = JsonResponse(
+            {
+                "error": ("الخدمة مشغولة حاليًا بعدد كبير من الأسئلة؛ الرجاء المحاولة بعد لحظات."),
+                "retry_after": busy.retry_after,
+            },
+            status=503,
+        )
+        response["Retry-After"] = str(busy.retry_after)
+        return response
+
+
+def _post_message(request: HttpRequest, principal, conversation_id: str) -> JsonResponse:
     conversation = _owned_conversation(principal, conversation_id)
 
     payload, err = _body(request)

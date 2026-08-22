@@ -135,7 +135,7 @@ services:
       - key: ALIBABA_LLM_MAX_TOKENS
         value: "3000"
       - key: ALIBABA_LLM_MAX_RETRIES
-        value: "2"
+        value: "1"
       - key: ALIBABA_LLM_ALLOW_LIVE_REQUESTS
         value: "true"
       - key: VIRTUAL_ADVISOR_AGENT_LOOP_ENABLED
@@ -148,6 +148,8 @@ services:
         value: "3000"
       - key: VIRTUAL_ADVISOR_TOOL_TURN_TIMEOUT_SECONDS
         value: "75"
+      - key: STUDENT_ADVISOR_V2_TURN_BUDGET_SECONDS
+        value: "90"
       - key: STUDENT_ADVISOR_V2_ENABLED
         value: "true"
       - key: STUDENT_ADVISOR_V2_MAX_TOOL_ITERATIONS
@@ -334,6 +336,11 @@ services:
           name: advisor-system
           type: web
           envVarKey: STUDENT_ADVISOR_V2_ENABLED
+      - key: STUDENT_ADVISOR_V2_TURN_BUDGET_SECONDS
+        fromService:
+          name: advisor-system
+          type: web
+          envVarKey: STUDENT_ADVISOR_V2_TURN_BUDGET_SECONDS
       - key: STUDENT_ADVISOR_V2_MAX_TOOL_ITERATIONS
         fromService:
           name: advisor-system

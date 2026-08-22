@@ -35,6 +35,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import threading
 import time
 from dataclasses import dataclass, field
 from typing import Any
@@ -582,6 +583,93 @@ _RETRY_BACKOFF_SECONDS = (0.5, 1.5)
 _MAX_HONOURED_RETRY_AFTER = 10.0
 
 
+# ── circuit breaker ──────────────────────────────────────────────────
+#
+# One instance, four gthreads: during a provider incident every thread parks in
+# urlopen for the full timeout-times-retries worst case, and /health/ goes down
+# with the chat.  The breaker converts an ongoing incident into an immediate
+# LLMUnavailable, which the adviser's existing degradation paths already handle
+# (verified fallback / abstention with escalation hand-off).  Process-local
+# state is sufficient on a single instance; the Telegram worker keeps its own.
+#: Three incidents in two minutes, not five in one: a timeout-class failure
+#: occupies its thread for up to two clamped attempts, and the semaphore caps
+#: the web process at three concurrent turns - five-in-sixty was arithmetically
+#: unreachable for the slow-failure incident the breaker was written for.
+_BREAKER_THRESHOLD = 3
+_BREAKER_WINDOW_SECONDS = 120.0
+_BREAKER_OPEN_SECONDS = 60.0
+_BREAKER_LOCK = threading.Lock()
+#: backend -> [consecutive_failures, window_started, open_until, probe_in_flight]
+_BREAKER_STATE: dict[str, list[float]] = {}
+
+
+def _breaker_guard(backend: str) -> None:
+    """Raise immediately while the breaker for this backend is open.
+
+    On expiry the state is HALF-OPEN: exactly one caller is admitted as the
+    probe; everyone else keeps failing fast until the probe reports.  Admitting
+    every waiting thread at once re-parked all of them for the full timeout the
+    moment the window closed.
+    """
+    with _BREAKER_LOCK:
+        state = _BREAKER_STATE.get(backend)
+        if not state or state[2] <= 0:
+            return
+        now = time.monotonic()
+        if now < state[2]:
+            raise LLMUnavailable(
+                f"{backend} circuit breaker is open after repeated failures; "
+                "retrying automatically shortly."
+            )
+        if state[3]:
+            raise LLMUnavailable(
+                f"{backend} circuit breaker is half-open; a probe is already in flight."
+            )
+        state[3] = 1.0
+
+
+def _breaker_record(backend: str, *, failed: bool) -> None:
+    with _BREAKER_LOCK:
+        now = time.monotonic()
+        state = _BREAKER_STATE.get(backend)
+        if not failed:
+            if state and now < state[2]:
+                # A straggler success - a request admitted BEFORE the breaker
+                # opened, landing after it did - is evidence about the past,
+                # not the present.  Letting it cancel the open window meant the
+                # breaker never latched under partial degradation, exactly the
+                # case it was built for.
+                return
+            # A half-open probe's success, or ordinary healthy traffic:
+            # the breaker closes.
+            _BREAKER_STATE.pop(backend, None)
+            return
+        if state and state[3]:
+            # The probe failed: re-open for another window without needing a
+            # fresh threshold's worth of student-facing failures.
+            state[2] = now + _BREAKER_OPEN_SECONDS
+            state[3] = 0.0
+            logger.error("llm circuit breaker RE-OPEN backend=%s (probe failed)", backend)
+            return
+        state = _BREAKER_STATE.setdefault(backend, [0.0, now, 0.0, 0.0])
+        if now - state[1] >= _BREAKER_WINDOW_SECONDS:
+            state[0], state[1] = 0.0, now
+        state[0] += 1
+        if state[0] >= _BREAKER_THRESHOLD:
+            state[2] = now + _BREAKER_OPEN_SECONDS
+            logger.error(
+                "llm circuit breaker OPEN backend=%s failures=%d",
+                backend,
+                int(state[0]),
+            )
+
+
+def reset_circuit_breaker() -> None:
+    """Test hook: forget every breaker's state."""
+    with _BREAKER_LOCK:
+        _BREAKER_STATE.clear()
+
+
 class OpenAICompatibleLLMClient:
     """One client, configured for whichever OpenAI-compatible endpoint is in use."""
 
@@ -657,6 +745,7 @@ class OpenAICompatibleLLMClient:
         path: str,
         payload: dict[str, Any] | None = None,
         timeout_seconds: float | None = None,
+        deadline_monotonic: float | None = None,
     ) -> dict[str, Any]:
         """One HTTP round trip, with bounded retries for the retryable failures.
 
@@ -681,13 +770,35 @@ class OpenAICompatibleLLMClient:
                 "outbound requests to this provider are disabled "
                 "(ALIBABA_LLM_ALLOW_LIVE_REQUESTS is not true)."
             )
+        _breaker_guard(self.config.backend)
         body = json.dumps(payload).encode("utf-8") if payload is not None else None
         expected_host = (urlparse(self.config.base_url).hostname or "").lower()
-        effective_timeout = timeout_seconds if timeout_seconds else self.config.timeout_seconds
+        # Explicit floor, not falsiness: 0.0 silently became the configured 75,
+        # and a negative would reach the socket as a ValueError outside the
+        # LLMError family.  A sub-second budget is still a real budget.
+        configured_timeout = (
+            max(1.0, timeout_seconds)
+            if timeout_seconds is not None
+            else self.config.timeout_seconds
+        )
         attempts = self.config.max_retries + 1
         last: LLMError | None = None
 
         for attempt in range(attempts):
+            # Recomputed PER ATTEMPT against the caller's deadline.  Computing
+            # the timeout once meant a retry reused the full window: a
+            # "60-second" call could legally spend 2 x 60 s, and the wall-clock
+            # budget the timeout implements bounded only half the call.
+            if deadline_monotonic is not None:
+                remaining_deadline = deadline_monotonic - time.monotonic()
+                if remaining_deadline < 1.0:
+                    raise last or LLMTimeout(
+                        f"{self.config.provider} call abandoned: the turn "
+                        "deadline passed before this attempt could start."
+                    )
+                effective_timeout = min(configured_timeout, remaining_deadline)
+            else:
+                effective_timeout = configured_timeout
             # COUNTED HERE, at the transport, and counted per ATTEMPT. The runner
             # used to add one per question, which was not a cost measurement: a
             # tool-driven answer is two to four outbound calls, and a retried one is
@@ -741,13 +852,28 @@ class OpenAICompatibleLLMClient:
                 )
             else:
                 try:
-                    return json.loads(text)
+                    parsed = json.loads(text)
                 except json.JSONDecodeError as exc:
+                    # HTTP 200 carrying a non-JSON body is the classic
+                    # edge/WAF error page - the partial-outage signature the
+                    # breaker most needs to see, and the one shape the retry
+                    # loop never records on its own.
+                    _breaker_record(self.config.backend, failed=True)
                     raise LLMInvalidResponse(
                         f"{self.config.provider} returned invalid JSON."
                     ) from exc
+                _breaker_record(self.config.backend, failed=False)
+                return parsed
 
             if not retryable or attempt == attempts - 1:
+                # One FINAL failure per call, not one per attempt: the breaker
+                # measures incidents, and a single call's retries are one.
+                # A 400/401/403 is the provider WORKING - a verdict on this
+                # request or this key, not an outage - and counting it opened
+                # the breaker for every student because one payload was
+                # rejected.  Availability-class failures only.
+                if not isinstance(last, LLMAuthenticationError | LLMBadRequest):
+                    _breaker_record(self.config.backend, failed=True)
                 raise last
             delay = (
                 wait
@@ -893,6 +1019,8 @@ class OpenAICompatibleLLMClient:
         temperature: float = 0.2,
         max_tokens: int | None = None,
         assistant_prefill: str | None = None,
+        timeout_seconds: float | None = None,
+        deadline_monotonic: float | None = None,
     ) -> ChatResult:
         resolved_model = self.resolve_model(model)
         request_messages = list(messages)
@@ -909,7 +1037,13 @@ class OpenAICompatibleLLMClient:
 
         payload = self._base_payload(resolved_model, max_tokens, temperature)
         payload["messages"] = request_messages
-        data = self._request("POST", "/chat/completions", payload)
+        data = self._request(
+            "POST",
+            "/chat/completions",
+            payload,
+            timeout_seconds=timeout_seconds,
+            deadline_monotonic=deadline_monotonic,
+        )
 
         choices = data.get("choices") or []
         first = choices[0] if choices and isinstance(choices[0], dict) else {}
@@ -935,6 +1069,7 @@ class OpenAICompatibleLLMClient:
         max_tokens: int | None = None,
         tool_choice: str = "auto",
         timeout_seconds: float | None = None,
+        deadline_monotonic: float | None = None,
     ) -> ToolChatResult:
         """One tool-enabled chat turn.
 
@@ -948,7 +1083,13 @@ class OpenAICompatibleLLMClient:
         payload["messages"] = list(messages)
         payload["tools"] = tools
         payload["tool_choice"] = tool_choice
-        data = self._request("POST", "/chat/completions", payload, timeout_seconds=timeout_seconds)
+        data = self._request(
+            "POST",
+            "/chat/completions",
+            payload,
+            timeout_seconds=timeout_seconds,
+            deadline_monotonic=deadline_monotonic,
+        )
 
         choices = data.get("choices") or []
         first = choices[0] if choices and isinstance(choices[0], dict) else {}

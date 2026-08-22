@@ -3642,8 +3642,9 @@ def test_a_blank_answer_is_never_recorded_as_a_pass(monkeypatch):
 
     check_answer reports no violations for blank text, which is right - a claim
     nobody made cannot contradict evidence - so without a terminal guard the
-    turn lands as PASS/COMPLETED, and derive_outcome then denies the student
-    the human review that an abstention would have granted.
+    turn would land as PASS/COMPLETED.  With verified evidence in the turn,
+    silence now resolves to that evidence: the verified fallback, never a PASS
+    of the blank and never a false "could not verify".
     """
     monkeypatch.setattr(
         "core.services.student_advisor_v2.execute_student_v2_tool",
@@ -3668,10 +3669,217 @@ def test_a_blank_answer_is_never_recorded_as_a_pass(monkeypatch):
         llm_client=client,
     )
 
+    assert result["agent"]["evidence_validation_outcome"] == "verified_fallback"
+    assert result["answer"].strip()
+    assert "AI1" in result["answer"]
+    assert "لم أتمكن" not in result["answer"]
+
+
+def test_a_blank_answer_with_no_evidence_at_all_abstains(monkeypatch):
+    """When there is neither an answer nor evidence, abstention is the truth."""
+    monkeypatch.setattr(
+        "core.services.student_advisor_v2.execute_student_v2_tool",
+        lambda name, arguments, **kwargs: {"tool": name, "ok": False, "error": "down"},
+    )
+    client = RepairClient(
+        _tool_turn("my_timetable", {}),
+        _answer_turn("   "),
+        _answer_turn("   "),
+        _answer_turn("   "),
+        _answer_turn("   "),
+        repair="   ",
+    )
+
+    result = answer_student_advisor_v2(
+        question="اعرض لي جدولي المسجل حاليًا.",
+        principal=_principal(),
+        academic_year=1448,
+        term=1,
+        llm_client=client,
+    )
+
     assert result["agent"]["evidence_validation_outcome"] == "abstained"
     assert result["agent"]["grounding_refused"] is True
     assert "لم أتمكن" in result["answer"]
     assert result["presentation"] is None
+
+
+@override_settings(STUDENT_ADVISOR_V2_TURN_BUDGET_SECONDS=60)
+def test_a_provider_death_after_evidence_still_answers_from_that_evidence(monkeypatch):
+    """An empty draft is not empty evidence.
+
+    When the budget expires (or the breaker opens) AFTER tools fetched the
+    verified record, that record used to be discarded and the student told
+    their facts "could not be verified" - a provider outage dressed up as a
+    grounding failure, with the escalation inbox paying for it.  The terminal
+    guard now consults the verified fallback before abstaining.
+    """
+    monkeypatch.setattr(
+        "core.services.student_advisor_v2.execute_student_v2_tool",
+        lambda name, arguments, **kwargs: _exact_timetable_result(),
+    )
+    clock = {"now": 1000.0}
+    monkeypatch.setattr("core.services.student_advisor_v2.time.monotonic", lambda: clock["now"])
+
+    class DiesAfterTools(FakeClient):
+        def chat_with_tools(self, messages, *, tools, **kwargs):
+            result = super().chat_with_tools(messages, tools=tools, **kwargs)
+            clock["now"] += 70.0  # the whole budget, gone mid-turn
+            return result
+
+    client = DiesAfterTools(_tool_turn("my_timetable", {}))
+
+    result = answer_student_advisor_v2(
+        question="اعرض لي جدولي المسجل حاليًا.",
+        principal=_principal(),
+        academic_year=1448,
+        term=1,
+        llm_client=client,
+    )
+
+    assert result["agent"]["turn_budget_exhausted"] is True
+    assert result["agent"]["evidence_validation_outcome"] == "verified_fallback"
+    # The student's real timetable, from the evidence the tools DID fetch.
+    assert "AI1" in result["answer"]
+    assert "لم أتمكن" not in result["answer"]
+
+
+@override_settings(STUDENT_ADVISOR_V2_TURN_BUDGET_SECONDS=60)
+def test_the_loop_gate_spends_no_call_the_clock_cannot_fund(monkeypatch):
+    """With the budget pre-spent, the tool loop makes ZERO provider calls.
+
+    An independent mutation run proved the loop and forced-final gates had no
+    coverage: both could be deleted with the suite green.  This drives a turn
+    whose clock is exhausted before the first call and counts the provider
+    round trips - the answer must still come from the terminal chain, not a
+    crash and not a call.
+    """
+    monkeypatch.setattr(
+        "core.services.student_advisor_v2.execute_student_v2_tool",
+        lambda name, arguments, **kwargs: _exact_timetable_result(),
+    )
+    clock = {"now": 1000.0}
+    monkeypatch.setattr("core.services.student_advisor_v2.time.monotonic", lambda: clock["now"])
+
+    class CountingClient(FakeClient):
+        calls = 0
+
+        def chat_with_tools(self, messages, *, tools, **kwargs):
+            CountingClient.calls += 1
+            return super().chat_with_tools(messages, tools=tools, **kwargs)
+
+    client = CountingClient(_tool_turn("my_timetable", {}))
+
+    # The FIRST monotonic read anchors turn_started; every later read sits
+    # past the whole budget - "setup was instant, then the world stalled".
+    reads = {"n": 0}
+
+    def stalling_clock() -> float:
+        reads["n"] += 1
+        return 1000.0 if reads["n"] == 1 else 1061.0
+
+    monkeypatch.setattr("core.services.student_advisor_v2.time.monotonic", stalling_clock)
+
+    result = answer_student_advisor_v2(
+        question="اعرض لي جدولي المسجل حاليًا.",
+        principal=_principal(),
+        academic_year=1448,
+        term=1,
+        llm_client=client,
+    )
+
+    assert CountingClient.calls == 0
+    assert result["agent"]["turn_budget_exhausted"] is True
+    assert result["agent"]["inference_calls"] == 0
+
+
+@override_settings(STUDENT_ADVISOR_V2_TURN_BUDGET_SECONDS=60)
+def test_the_clamp_passes_the_remaining_budget_to_the_provider(monkeypatch):
+    """The timeout handed to the client is the REMAINING budget, not the
+    configured 75 - the mechanism that makes the budget bound anything, which
+    an independent mutation run showed had no observer: every fake swallowed
+    the kwarg."""
+    monkeypatch.setattr(
+        "core.services.student_advisor_v2.execute_student_v2_tool",
+        lambda name, arguments, **kwargs: _exact_timetable_result(),
+    )
+    clock = {"now": 1000.0}
+    monkeypatch.setattr("core.services.student_advisor_v2.time.monotonic", lambda: clock["now"])
+    seen: list[tuple[float | None, float | None]] = []
+
+    class ObservantClient(FakeClient):
+        def chat_with_tools(self, messages, *, tools, **kwargs):
+            seen.append((kwargs.get("timeout_seconds"), kwargs.get("deadline_monotonic")))
+            clock["now"] += 40.0
+            return super().chat_with_tools(messages, tools=tools, **kwargs)
+
+    client = ObservantClient(
+        _tool_turn("my_timetable", {}),
+        _answer_turn(_natural_exact_timetable_answer()),
+    )
+
+    answer_student_advisor_v2(
+        question="اعرض لي جدولي المسجل حاليًا.",
+        principal=_principal(),
+        academic_year=1448,
+        term=1,
+        llm_client=client,
+    )
+
+    assert len(seen) == 2
+    # First call: full budget available, clamped by the tool timeout.
+    assert seen[0][0] == pytest.approx(60.0)
+    # Second call: only ~20s remain, and the deadline rides along so the
+    # transport can bound each retry attempt too.
+    assert seen[1][0] == pytest.approx(20.0)
+    assert seen[1][1] is not None
+
+
+@override_settings(STUDENT_ADVISOR_V2_TURN_BUDGET_SECONDS=60)
+def test_an_exhausted_turn_budget_lands_on_verified_facts_not_abstention(monkeypatch):
+    """A clock is not a grounding failure.
+
+    When the wall-clock budget runs out after evidence was gathered, the turn
+    must answer from that evidence - the verified fallback - rather than burn
+    a repair call it cannot fund or abstain as if the facts were unprovable.
+    """
+    monkeypatch.setattr(
+        "core.services.student_advisor_v2.execute_student_v2_tool",
+        lambda name, arguments, **kwargs: _exact_timetable_result(),
+    )
+    clock = {"now": 1000.0}
+    monkeypatch.setattr("core.services.student_advisor_v2.time.monotonic", lambda: clock["now"])
+
+    class SlowThenFabricating(RepairClient):
+        def chat_with_tools(self, messages, *, tools, **kwargs):
+            result = super().chat_with_tools(messages, tools=tools, **kwargs)
+            # Each provider round trip consumes half the budget.
+            clock["now"] += 35.0
+            return result
+
+    client = SlowThenFabricating(
+        _tool_turn("my_timetable", {}),
+        _answer_turn("جدولك يحتوي على AI331 في الشعبة F11."),
+        repair="جدولك يحتوي على AI331 في الشعبة F11.",
+    )
+
+    result = answer_student_advisor_v2(
+        question="اعرض لي جدولي المسجل حاليًا.",
+        principal=_principal(),
+        academic_year=1448,
+        term=1,
+        llm_client=client,
+    )
+
+    assert result["agent"]["turn_budget_exhausted"] is True
+    # The fabricated draft failed validation and the repair was unfundable -
+    # the verified evidence still answers the student.
+    assert result["agent"]["evidence_validation_outcome"] == "verified_fallback"
+    assert result["agent"]["evidence_validation_repair_attempted"] is False
+    assert "F11" not in result["answer"]
+    assert "AI1" in result["answer"]
+    # No repair call was made after exhaustion.
+    assert client.repair_messages == []
 
 
 def test_unverifiable_answer_abstains_instead_of_shipping_invented_facts(monkeypatch):

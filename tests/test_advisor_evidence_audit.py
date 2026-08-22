@@ -215,6 +215,7 @@ def test_persistence_rewhitelists_transient_audit_metadata():
             "violations_after_repair": [],
         },
         "repair": {"attempted": False, "result": "not_attempted"},
+        "flags": {"turn_budget_exhausted": False, "provider_error": ""},
         "cost": {
             "inference_calls": 0,
             "prompt_tokens": 0,

@@ -219,23 +219,32 @@ def _failing(status: int, *, headers: dict | None = None, then: dict | None = No
         (400, LLMBadRequest, 1),
         (401, LLMAuthenticationError, 1),
         (403, LLMAuthenticationError, 1),
-        (429, LLMRateLimited, 3),
-        (500, LLMUnavailable, 3),
-        (502, LLMUnavailable, 3),
-        (503, LLMUnavailable, 3),
+        (429, LLMRateLimited, "retryable"),
+        (500, LLMUnavailable, "retryable"),
+        (502, LLMUnavailable, "retryable"),
+        (503, LLMUnavailable, "retryable"),
     ],
 )
 def test_the_retry_matrix(monkeypatch, status, expected, attempts):
     """400 and 401/403 are decisions, not weather: retrying them wastes a
-    student's wait and, for a 429, deepens the hole. 5xx and 429 are bounded."""
+    student's wait and, for a 429, deepens the hole. 5xx and 429 are bounded.
+
+    Retryable counts are DERIVED from the configured retries, not hard-coded:
+    a literal 3 here silently meant "whatever ALIBABA_LLM_MAX_RETRIES happens
+    to be in this environment's .env", and the default changing from 2 to 1
+    passed locally while failing on CI, which has no .env.
+    """
     fake = _failing(status)
     monkeypatch.setattr(llm_backend, "_http_open", fake)
     monkeypatch.setattr(llm_backend.time, "sleep", lambda _: None)
     with override_settings(**ALIBABA):
         client = OpenAICompatibleLLMClient(endpoint_config("alibaba"))
+        expected_attempts = client.config.max_retries + 1 if attempts == "retryable" else attempts
         with pytest.raises(expected):
             client.chat([{"role": "user", "content": "hi"}])
-    assert fake.state["calls"] == attempts, f"HTTP {status} made {fake.state['calls']} attempts"
+    assert fake.state["calls"] == expected_attempts, (
+        f"HTTP {status} made {fake.state['calls']} attempts"
+    )
 
 
 def test_a_timeout_is_retried_then_typed(monkeypatch):
@@ -251,7 +260,8 @@ def test_a_timeout_is_retried_then_typed(monkeypatch):
         client = OpenAICompatibleLLMClient(endpoint_config("alibaba"))
         with pytest.raises(LLMTimeout):
             client.chat([{"role": "user", "content": "hi"}])
-    assert state["calls"] == 3
+        expected_attempts = client.config.max_retries + 1
+    assert state["calls"] == expected_attempts
 
 
 def test_a_retry_that_succeeds_returns_the_answer(monkeypatch):
@@ -632,3 +642,159 @@ def _never_reached():
         raise URLError("no network in tests")
 
     return _open
+
+
+def test_the_circuit_breaker_opens_after_three_incidents_and_probes(monkeypatch):
+    """Three FINAL failures inside the window open the breaker for a minute.
+
+    Three-in-120, not five-in-sixty: a timeout-class failure holds its thread
+    for up to two clamped attempts and the semaphore caps concurrency at
+    three, so the old arithmetic could never trip on the slow-failure incident
+    the breaker was written for.  Open means an immediate LLMUnavailable;
+    expiry admits exactly ONE probe, whose failure re-opens without a fresh
+    threshold of student-facing failures and whose success closes the breaker.
+    """
+    fake = _failing(503)
+    monkeypatch.setattr(llm_backend, "_http_open", fake)
+    monkeypatch.setattr(llm_backend.time, "sleep", lambda _: None)
+    clock = {"now": 1000.0}
+    monkeypatch.setattr(llm_backend.time, "monotonic", lambda: clock["now"])
+
+    with override_settings(**ALIBABA):
+        client = OpenAICompatibleLLMClient(endpoint_config("alibaba"))
+        for _ in range(3):
+            with pytest.raises(LLMUnavailable):
+                client.chat([{"role": "user", "content": "hi"}])
+        attempts_before = fake.state["calls"]
+        attempts_per_incident = client.config.max_retries + 1
+        assert attempts_before == 3 * attempts_per_incident
+
+        # Open: refused without touching the network.
+        with pytest.raises(LLMUnavailable):
+            client.chat([{"role": "user", "content": "hi"}])
+        assert fake.state["calls"] == attempts_before
+
+        # Expiry: ONE probe reaches the provider; a second caller in the same
+        # half-open window is still refused fast.
+        clock["now"] += 61.0
+        with pytest.raises(LLMUnavailable):
+            client.chat([{"role": "user", "content": "hi"}])
+        assert fake.state["calls"] == attempts_before + attempts_per_incident
+
+        # The failed probe RE-opened the breaker for a full window.
+        with pytest.raises(LLMUnavailable):
+            client.chat([{"role": "user", "content": "hi"}])
+        assert fake.state["calls"] == attempts_before + attempts_per_incident
+
+        # A successful probe closes it completely.
+        clock["now"] += 61.0
+        monkeypatch.setattr(llm_backend, "_http_open", _ok(ANSWER))
+        assert client.chat([{"role": "user", "content": "hi"}]).content == "نعم"
+        monkeypatch.setattr(llm_backend, "_http_open", fake)
+        with pytest.raises(LLMUnavailable):
+            client.chat([{"role": "user", "content": "hi"}])
+        assert fake.state["calls"] == attempts_before + 2 * attempts_per_incident
+
+
+def test_a_straggler_success_cannot_cancel_an_open_breaker(monkeypatch):
+    """A request admitted before the incident is evidence about the past.
+
+    Under partial degradation - mostly failures, some slow successes - a
+    success landing after the breaker opened used to cancel the open window,
+    so the breaker flapped and protected nothing in exactly the case it was
+    built for.
+    """
+    fake = _failing(503)
+    monkeypatch.setattr(llm_backend, "_http_open", fake)
+    monkeypatch.setattr(llm_backend.time, "sleep", lambda _: None)
+    clock = {"now": 1000.0}
+    monkeypatch.setattr(llm_backend.time, "monotonic", lambda: clock["now"])
+
+    with override_settings(**ALIBABA):
+        client = OpenAICompatibleLLMClient(endpoint_config("alibaba"))
+        for _ in range(3):
+            with pytest.raises(LLMUnavailable):
+                client.chat([{"role": "user", "content": "hi"}])
+        # The straggler lands while the breaker is open...
+        llm_backend._breaker_record("alibaba", failed=False)
+        # ...and the breaker stays open.
+        before = fake.state["calls"]
+        with pytest.raises(LLMUnavailable):
+            client.chat([{"role": "user", "content": "hi"}])
+        assert fake.state["calls"] == before
+
+
+def test_a_success_resets_the_breaker_count(monkeypatch):
+    calls = {"n": 0}
+
+    def flaky(request, *args, **kwargs):  # noqa: ARG001
+        calls["n"] += 1
+        raise TimeoutError
+
+    monkeypatch.setattr(llm_backend, "_http_open", flaky)
+    monkeypatch.setattr(llm_backend.time, "sleep", lambda _: None)
+    with override_settings(**ALIBABA):
+        client = OpenAICompatibleLLMClient(endpoint_config("alibaba"))
+        for _ in range(2):
+            with pytest.raises(LLMTimeout):
+                client.chat([{"role": "user", "content": "hi"}])
+        # One success wipes the two-strike count...
+        monkeypatch.setattr(llm_backend, "_http_open", _ok(ANSWER))
+        client.chat([{"role": "user", "content": "hi"}])
+        # ...so two MORE failures still do not open the breaker.
+        monkeypatch.setattr(llm_backend, "_http_open", flaky)
+        before = calls["n"]
+        for _ in range(2):
+            with pytest.raises(LLMTimeout):
+                client.chat([{"role": "user", "content": "hi"}])
+        assert calls["n"] > before  # network was reached, breaker closed
+
+
+def test_the_deadline_bounds_every_attempt_not_just_the_first(monkeypatch):
+    """A retry may not reuse the full window.
+
+    The timeout used to be computed once per CALL, so with one retry a
+    "60-second" call could legally spend 2 x 60s - the wall-clock budget the
+    timeout implements bounded only half the call.  Each attempt now gets
+    min(configured, remaining-to-deadline), and an attempt whose start is past
+    the deadline is abandoned with the last typed error.
+    """
+    seen: list[float] = []
+    clock = {"now": 1000.0}
+
+    def slow_timeout(request, *args, timeout=None, **kwargs):  # noqa: ARG001
+        seen.append(timeout)
+        clock["now"] += timeout  # the socket consumed its whole window
+        raise TimeoutError
+
+    monkeypatch.setattr(llm_backend, "_http_open", slow_timeout)
+    monkeypatch.setattr(llm_backend.time, "sleep", lambda _: None)
+    monkeypatch.setattr(llm_backend.time, "monotonic", lambda: clock["now"])
+
+    with override_settings(**ALIBABA):
+        client = OpenAICompatibleLLMClient(endpoint_config("alibaba"))
+        with pytest.raises(LLMTimeout):
+            client.chat(
+                [{"role": "user", "content": "hi"}],
+                timeout_seconds=40.0,
+                deadline_monotonic=clock["now"] + 40.0,
+            )
+
+    # First attempt got the full 40; the deadline forbade funding a second.
+    assert seen == [40.0]
+
+    # And with headroom, the second attempt gets only what REMAINS.
+    seen.clear()
+    clock["now"] = 2000.0
+    with override_settings(**ALIBABA):
+        client = OpenAICompatibleLLMClient(endpoint_config("alibaba"))
+        with pytest.raises(LLMTimeout):
+            client.chat(
+                [{"role": "user", "content": "hi"}],
+                timeout_seconds=40.0,
+                deadline_monotonic=clock["now"] + 60.0,
+            )
+    if client.config.max_retries >= 1:
+        assert seen[0] == 40.0
+        assert seen[1] == pytest.approx(20.0)
+        assert sum(seen) <= 60.0

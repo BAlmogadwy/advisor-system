@@ -62,7 +62,12 @@ from core.services.answer_consistency import (
 )
 from core.services.arabic_text import normalise as normalise_arabic_text
 from core.services.course_catalogue import known_course_codes as _known_course_codes
-from core.services.llm_backend import LLMError, UsageTotals, get_llm_client
+from core.services.llm_backend import (
+    LLMError,
+    LLMUnavailable,
+    UsageTotals,
+    get_llm_client,
+)
 from core.services.llm_remote_privacy import fold_digits, project_prior_presentation
 from core.services.policy_contract import requires_policy_contract
 from core.services.rbac import ROLE_STUDENT
@@ -3861,6 +3866,26 @@ def _portal_boundary_response(language: str, answer_style: str = "") -> str:
     )
 
 
+def _turn_budget_seconds() -> float:
+    """The wall-clock budget for one adviser turn.
+
+    Call COUNTS were the wrong unit: the worst case per call is the provider
+    timeout times its retries, and gunicorn's own --timeout plus the edge sit
+    at fixed seconds.  Exhaustion is routed toward the verified fallback WHERE
+    A FRAGMENT EXISTS for the evidence gathered (six of the exact-fact tools
+    today - the fragment library is frozen pending an owner decision);
+    otherwise the honest abstention with the escalation hand-off.  A clock is
+    still not a grounding failure, and the audit records budget_skipped so the
+    operator can tell the two apart.
+    """
+    from django.conf import settings
+
+    try:
+        return max(15.0, float(getattr(settings, "STUDENT_ADVISOR_V2_TURN_BUDGET_SECONDS", 90)))
+    except (TypeError, ValueError):
+        return 90.0
+
+
 def answer_student_advisor_v2(
     *,
     question: str,
@@ -3914,6 +3939,8 @@ def answer_student_advisor_v2(
     # The timer starts BEFORE the catalogue read: the cold-cache query is the
     # one cost this feature adds, and it must be inside turn_ms.
     turn_started = time.monotonic()
+    turn_deadline = turn_started + _turn_budget_seconds()
+    turn_budget_exhausted = False
     known_course_codes = _known_course_codes()
     # Colloquial Saudi Arabic remains accepted and fully parsed as input, but the
     # student portal renders one consistent university register: clear MSA.
@@ -4152,6 +4179,14 @@ def answer_student_advisor_v2(
         iterations = iteration + 1
         if inference_calls >= inference_ceiling - 1:
             break
+        remaining_budget = turn_deadline - time.monotonic()
+        if remaining_budget < 8.0:
+            # Answer from the evidence already gathered rather than start a
+            # call the clock cannot fund.  The forced-final and repair gates
+            # below make the same check, so exhaustion converges on the
+            # verified fallback, never a surprise abstention.
+            turn_budget_exhausted = True
+            break
         try:
             inference_calls += 1
             turn = llm.chat_with_tools(
@@ -4159,7 +4194,8 @@ def answer_student_advisor_v2(
                 tools=schemas,
                 model=resolved_model,
                 max_tokens=_max_tokens(),
-                timeout_seconds=_tool_timeout(),
+                timeout_seconds=min(_tool_timeout(), remaining_budget),
+                deadline_monotonic=turn_deadline,
             )
         except LLMError as exc:
             # A slow/unsupported tool turn must not discard the student's whole
@@ -4837,13 +4873,18 @@ def answer_student_advisor_v2(
                     ),
                 }
             )
-            if inference_calls < inference_ceiling - 1:
+            remaining_budget = turn_deadline - time.monotonic()
+            if remaining_budget < 8.0:
+                turn_budget_exhausted = True
+            elif inference_calls < inference_ceiling - 1:
                 inference_calls += 1
                 try:
                     forced = llm.chat(
                         boundary.sanitise_messages(messages),
                         model=resolved_model,
                         max_tokens=_max_tokens(),
+                        timeout_seconds=min(_tool_timeout(), remaining_budget),
+                        deadline_monotonic=turn_deadline,
                         assistant_prefill=_assistant_prefill_for_client(llm, resolved_model),
                     )
                 except Exception:  # fail closed like the tool loop, not open
@@ -5091,9 +5132,13 @@ def answer_student_advisor_v2(
     else:
         corrected_answer = ""
         repaired_candidate: dict[str, Any] | None = None
+        remaining_budget = turn_deadline - time.monotonic()
+        if remaining_budget < 8.0:
+            turn_budget_exhausted = True
         if (
             REQUIRED_EVIDENCE_MISSING not in evidence_validation_initial
             and inference_calls < inference_ceiling
+            and not turn_budget_exhausted
         ):
             evidence_validation_repair_attempted = True
             try:
@@ -5113,6 +5158,14 @@ def answer_student_advisor_v2(
                     ),
                     model=resolved_model,
                     max_tokens=_max_tokens(),
+                    # The one LLM call the budget forgot: without this clamp
+                    # the repair fell through to the full configured timeout
+                    # times its retries - a 212-second turn under a 60-second
+                    # budget, admitted 8 seconds before the deadline.
+                    timeout_seconds=min(
+                        _tool_timeout(), max(8.0, turn_deadline - time.monotonic())
+                    ),
+                    deadline_monotonic=turn_deadline,
                     assistant_prefill=_assistant_prefill_for_client(llm, resolved_model),
                 )
                 usage.add(repaired.usage)
@@ -5180,18 +5233,49 @@ def answer_student_advisor_v2(
     # student the human review that a refusal grants them.  Every route that
     # can produce one ends here, including the forced-final rescue that runs
     # out of inference budget before it writes anything.
+    #
+    # But an empty DRAFT is not empty EVIDENCE.  When the clock or the
+    # provider died after tools had already fetched the student's verified
+    # record - the exact case the turn budget and the circuit breaker exist
+    # for - that record was sitting in validation_results and used to be
+    # thrown away, telling the student their facts "could not be verified"
+    # when the provider was what failed.  The verified fallback is consulted
+    # first; abstention is only for turns with nothing provable at all.
     if not str(chosen["text"]).strip():
-        chosen = {
-            "text": _evidence_abstention(language, channel_profile),
-            "citation_refused": False,
-            "portal_claim_refused": False,
-            "section_fallback": False,
-            "graduation_fallback": False,
-            "internal_sanitized": False,
-            "policy_uncertainty_failed": False,
-        }
-        evidence_validation_outcome = "abstained"
-        grounding_refused = True
+        rescue_fallback = _verified_evidence_fallback(
+            language, validation_results, answer_style, preferred_tools=None
+        )
+        rescue_candidate = finalize_candidate(rescue_fallback) if rescue_fallback else None
+        if rescue_candidate is not None and not rescue_candidate["violations"]:
+            chosen = rescue_candidate
+            evidence_validation_outcome = "verified_fallback"
+        elif tool_turn_error and not any(
+            row.get("ok") and str(row.get("tool") or "") in EXACT_FACT_TOOLS
+            for row in validation_results
+            if isinstance(row, dict)
+        ):
+            # The provider failed and NOTHING was gathered.  Dressing that up
+            # as an abstention told the student their facts "could not be
+            # verified", charged their generation allowance, and pointed them
+            # at the human-escalation button - a 60-second provider blip
+            # manufactured escalations and a lockout, and blamed grounding.
+            # Failing the turn is honest: the question is saved, resumable,
+            # refunded, and recorded as MODEL_UNAVAILABLE.
+            raise LLMUnavailable(
+                f"provider failed before any evidence was gathered ({tool_turn_error})."
+            )
+        else:
+            chosen = {
+                "text": _evidence_abstention(language, channel_profile),
+                "citation_refused": False,
+                "portal_claim_refused": False,
+                "section_fallback": False,
+                "graduation_fallback": False,
+                "internal_sanitized": False,
+                "policy_uncertainty_failed": False,
+            }
+            evidence_validation_outcome = "abstained"
+            grounding_refused = True
 
     answer = str(chosen["text"])
     citation_refused = bool(chosen["citation_refused"])
@@ -5265,6 +5349,7 @@ def answer_student_advisor_v2(
             "internal_output_sanitized": internal_output_sanitized,
             "constraint_input_refused": constraint_input_refused,
             "evidence_tool_reprompted": evidence_tool_reprompted,
+            "turn_budget_exhausted": turn_budget_exhausted,
             "evidence_validation_outcome": evidence_validation_outcome,
             "evidence_validation_repair_attempted": evidence_validation_repair_attempted,
             "evidence_validation_repair_error": evidence_validation_repair_error,
@@ -5278,6 +5363,8 @@ def answer_student_advisor_v2(
                 violations=evidence_validation_initial,
                 violations_after_repair=evidence_validation_after_repair,
                 repair_attempted=evidence_validation_repair_attempted,
+                turn_budget_exhausted=turn_budget_exhausted,
+                provider_error=str(tool_turn_error or ""),
                 inference_calls=inference_calls,
                 prompt_tokens=int(usage.as_dict().get("prompt_tokens") or 0),
                 completion_tokens=int(usage.as_dict().get("completion_tokens") or 0),
