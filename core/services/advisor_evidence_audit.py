@@ -94,9 +94,31 @@ def _closed_categories(values: Any) -> list[str]:
     )
 
 
-def _repair_result(*, attempted: bool, outcome: str) -> str:
+_PROVIDER_ERROR_KINDS = frozenset(
+    {
+        "LLMTimeout",
+        "LLMUnavailable",
+        "LLMRateLimited",
+        "LLMInvalidResponse",
+        "LLMBadRequest",
+        "LLMAuthenticationError",
+        "LLMConfigError",
+        "LLMError",
+    }
+)
+
+
+def _provider_error(value: Any) -> str:
+    kind = str(value or "")
+    return kind if kind in _PROVIDER_ERROR_KINDS else ""
+
+
+def _repair_result(*, attempted: bool, outcome: str, budget_skipped: bool = False) -> str:
     if not attempted:
-        return "not_attempted"
+        # "We did not bother" and "the clock forbade it" are different facts,
+        # and the operator reading a violations-bearing abstention needs to
+        # know which one happened.
+        return "budget_skipped" if budget_skipped else "not_attempted"
     if outcome == "repaired":
         return "succeeded"
     if outcome == "verified_fallback":
@@ -115,6 +137,8 @@ def build_evidence_audit(
     violations: list[str] | tuple[str, ...] = (),
     violations_after_repair: list[str] | tuple[str, ...] = (),
     repair_attempted: bool = False,
+    turn_budget_exhausted: bool = False,
+    provider_error: str = "",
     inference_calls: int = 0,
     prompt_tokens: int = 0,
     completion_tokens: int = 0,
@@ -153,7 +177,12 @@ def build_evidence_audit(
             "result": _repair_result(
                 attempted=attempted,
                 outcome=outcome,
+                budget_skipped=bool(turn_budget_exhausted) and bool(initial),
             ),
+        },
+        "flags": {
+            "turn_budget_exhausted": bool(turn_budget_exhausted),
+            "provider_error": _provider_error(provider_error),
         },
         # Cost/latency counters, never content.  These exist so a later
         # feature that adds inference calls has a measured BASELINE to be
@@ -207,11 +236,15 @@ def normalise_evidence_audit(value: Any) -> dict[str, Any]:
     raw_repair = raw_repair if isinstance(raw_repair, Mapping) else {}
     raw_cost = value.get("cost")
     raw_cost = raw_cost if isinstance(raw_cost, Mapping) else {}
+    raw_flags = value.get("flags")
+    raw_flags = raw_flags if isinstance(raw_flags, Mapping) else {}
     attempted = raw_repair.get("attempted") is True
     final_violations = _closed_categories(raw_validation.get("violations_after_repair"))
     repair_result = _repair_result(
         attempted=attempted,
         outcome=outcome,
+        budget_skipped=raw_flags.get("turn_budget_exhausted") is True
+        and bool(_closed_categories(raw_validation.get("violations"))),
     )
 
     return {
@@ -226,6 +259,10 @@ def normalise_evidence_audit(value: Any) -> dict[str, Any]:
             "violations_after_repair": final_violations,
         },
         "repair": {"attempted": attempted, "result": repair_result},
+        "flags": {
+            "turn_budget_exhausted": raw_flags.get("turn_budget_exhausted") is True,
+            "provider_error": _provider_error(raw_flags.get("provider_error")),
+        },
         "cost": {
             "inference_calls": _count(raw_cost.get("inference_calls")),
             "prompt_tokens": _count(raw_cost.get("prompt_tokens")),

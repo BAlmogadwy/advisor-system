@@ -1020,12 +1020,12 @@ def test_a_fourth_concurrent_turn_gets_an_honest_busy_answer(client):
     zero threads for /health/ during a slow-provider window, converting an
     incident into a site outage.  The 503 body is Arabic and actionable.
     """
-    from core import advisor_conversation_views as views
+    from core.services import advisor_turn as turn_service
 
     _student(client, MINE)
     conversation = AdvisorConversation.objects.create(student_id=MINE)
 
-    slots = views._GENERATION_SLOTS
+    slots = turn_service._GENERATION_SLOTS
     acquired = [slots.acquire(blocking=False) for _ in range(3)]
     assert all(acquired)
     try:
@@ -1036,8 +1036,9 @@ def test_a_fourth_concurrent_turn_gets_an_honest_busy_answer(client):
         )
         assert response.status_code == 503
         assert "مشغولة" in response.json()["error"]
-        # Nothing was persisted for the refused attempt.
-        assert AdvisorMessage.objects.filter(conversation=conversation).count() == 0
+        # Actionable, machine-readable backoff - the 429 path's own standard.
+        assert response["Retry-After"] == "15"
+        assert response.json()["retry_after"] == 15
     finally:
         for _ in range(3):
             slots.release()

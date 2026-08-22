@@ -9,12 +9,30 @@ this repository's text files, so their presence is an error, not a style note.
 
 from __future__ import annotations
 
+import subprocess
 import sys
 
 ALLOWED = {0x09, 0x0A, 0x0D}
 
+#: Hash-pinned scraped evidence; mirrors the pre-commit excludes.
+EXCLUDED_PREFIXES = ("policies/sources/",)
+
+
+def tracked_files() -> list[str]:
+    """Every git-tracked path, minus the excluded evidence directories.
+
+    Exists because Windows caps the command line well below 900 paths - the
+    CI test invokes `--all-tracked` instead of an argument list.
+    """
+    out = subprocess.run(
+        ["git", "ls-files"], capture_output=True, text=True, check=True
+    ).stdout.splitlines()
+    return [p for p in out if not p.startswith(EXCLUDED_PREFIXES)]
+
 
 def main(paths: list[str]) -> int:
+    if paths == ["--all-tracked"]:
+        paths = tracked_files()
     bad = 0
     for path in paths:
         try:

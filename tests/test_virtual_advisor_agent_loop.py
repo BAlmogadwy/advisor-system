@@ -797,6 +797,7 @@ def _client_with_fake_response(
         path: str,
         payload: dict[str, Any] | None = None,
         timeout_seconds: float | None = None,
+        deadline_monotonic: float | None = None,
     ):
         captured["method"] = method
         captured["path"] = path

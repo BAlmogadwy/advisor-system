@@ -42,3 +42,7 @@ repos:
         entry: python scripts/check_control_chars.py
         language: system
         types: [text]
+        # Hash-pinned scraped evidence, like its two neighbours above: a
+        # re-scrape carrying a form feed must not block commits on files
+        # nobody may edit.
+        exclude: ^policies/sources/

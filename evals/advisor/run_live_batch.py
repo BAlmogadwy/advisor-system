@@ -51,7 +51,7 @@ from core.services.advisor_judge import (  # noqa: E402
     judge_answer,
 )
 from core.services.advisor_principal import AdvisorPrincipal  # noqa: E402
-from core.services.llm_backend import get_llm_client  # noqa: E402
+from core.services.llm_backend import get_llm_client, reset_circuit_breaker  # noqa: E402
 from core.services.policy_store import get_policy_store  # noqa: E402
 from core.services.rbac import ROLE_STUDENT  # noqa: E402
 from core.services.student_advisor_v2 import answer_student_advisor_v2  # noqa: E402
@@ -221,6 +221,12 @@ def main() -> int:
     principal = AdvisorPrincipal(role=ROLE_STUDENT, student_id=args.student_id)
     rows = []
     for n, (qid, text, entry) in enumerate(items, 1):
+        # A fresh breaker per question: the state is process-global, and five
+        # provider hiccups otherwise convert the next sixty seconds of eval
+        # questions into instant abstentions SCORED AS ADVISER BEHAVIOUR -
+        # the recorded "an empty result scores perfectly" lesson, applied to
+        # the harness itself.
+        reset_circuit_breaker()
         started = time.perf_counter()
         try:
             if args.fallback:

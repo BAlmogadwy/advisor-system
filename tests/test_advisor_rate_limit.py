@@ -382,3 +382,29 @@ def test_rating_answers_has_its_own_allowance(client):
     for _ in range(limit):
         assert _post(client, url, {"rating": "HELPFUL"}).status_code == 200
     assert _post(client, url, {"rating": "HELPFUL"}).status_code == 429
+
+
+def test_a_provider_outage_does_not_spend_the_asking_allowance(client):
+    """The mirror of the retry-spends rule, split by WHOSE failure it was.
+
+    A crashing turn keeps its charge - the allowance is the ceiling on asking,
+    and refunds there would make a failing turn infinitely retryable.  But a
+    provider outage fails in milliseconds behind the circuit breaker, and
+    charging those let one incident lock a student out for ten minutes while
+    telling them to retry.  LLMUnavailable refunds; everything else spends.
+    """
+    from core.services.llm_backend import LLMUnavailable
+
+    _student(client)
+    conversation = AdvisorConversation.objects.create(student_id=MINE)
+    url = reverse("advisor_conversation_send", args=[str(conversation.id)])
+    limit, _ = rate_limit.LIMITS[GENERATION]
+
+    with mock.patch(
+        "core.services.student_advisor_v2.answer_student_advisor",
+        side_effect=LLMUnavailable("breaker open"),
+    ):
+        for _ in range(limit + 2):
+            response = _post(client, url, {"message": "سؤال", "idempotency_key": "k"})
+            # Never 429: the outage is not the student's spend.
+            assert response.status_code == 503, response.status_code
