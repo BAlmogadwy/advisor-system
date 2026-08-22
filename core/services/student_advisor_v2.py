@@ -2817,16 +2817,19 @@ def _what_if_verdict_phrase(comparison: dict[str, Any], language: str) -> str:
     effect = str((comparison or {}).get("timing_effect") or "")
     delta = abs(int(comparison.get("term_difference") or 0)) if comparison else 0
     saved = int(comparison.get("terms_saved") or 0) if comparison else 0
+    exact_available = (
+        bool(comparison.get("exact_timing_comparison_available", True)) if comparison else True
+    )
     if language == "Arabic":
         if effect == "SAME":
-            return "لا يغيّر تقدير موعد تخرجك"
+            return "لا يغيّر تقدير موعد تخرجك" if exact_available else ""
         if effect == "LATER":
             return f"يؤخّر تقدير تخرجك بمقدار {delta} من الفصول" if delta else "يؤخّر تقدير تخرجك"
         if effect == "EARLIER":
             return f"يقدّم تقدير تخرجك بمقدار {saved} من الفصول" if saved else "يقدّم تقدير تخرجك"
         return ""
     if effect == "SAME":
-        return "does not change your estimated graduation"
+        return "does not change your estimated graduation" if exact_available else ""
     if effect == "LATER":
         return (
             f"delays your estimated graduation by {delta} term{'s' if delta != 1 else ''}"
@@ -3184,7 +3187,10 @@ def _safe_graduation_what_if_answer_base(
             "Planning-baseline scenario: " + " and ".join(change) + ".",
         ]
     )
-    lines.append("On " + baseline_label + ": " + _comparison_effect_text(comparison, language))
+    effect_text = _comparison_effect_text(comparison, language)
+    if effect_text[:1].isupper():
+        effect_text = effect_text[0].lower() + effect_text[1:]
+    lines.append("On " + baseline_label + ": " + effect_text)
     lines.append(_term_plan_change_text(comparison, language))
     lb_before = baseline.get("lower_bound_additional_terms")
     lb_after = scenario.get("lower_bound_additional_terms")

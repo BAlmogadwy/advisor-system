@@ -217,6 +217,58 @@ def test_the_answer_opens_with_a_verdict_and_scopes_the_effect_line(
     assert _check(answer, payload) == []
 
 
+def test_an_indeterminate_primary_silences_the_whole_verdict() -> None:
+    """The invariant the approval asked to pin: silence on the primary means
+    silence overall - a determinate ALTERNATE must never produce a verdict
+    line whose first half has nothing to say."""
+    from core.services.student_advisor_v2 import _what_if_verdict_line
+
+    line = _what_if_verdict_line(
+        "Arabic",
+        "حذف TG102",
+        {"timing_effect": "NOT_DETERMINABLE"},
+        "الجدول المسجّل فعليًا",
+        {
+            "planning_baseline_kind": "recommended_current_term",
+            "what_if": {
+                "valid": True,
+                "comparison": {"timing_effect": "LATER", "term_difference": 1},
+            },
+        },
+    )
+    assert line == ""
+
+
+def test_a_null_difference_is_never_asserted_as_no_change() -> None:
+    """student_graduation's else-fallback maps a null difference to SAME; the
+    verdict must not turn that into «لا يغيّر» - the effect line's nuance
+    owns it."""
+    from core.services.student_advisor_v2 import _what_if_verdict_phrase
+
+    silenced = _what_if_verdict_phrase(
+        {"timing_effect": "SAME", "exact_timing_comparison_available": False}, "Arabic"
+    )
+    assert silenced == ""
+    assert (
+        _what_if_verdict_phrase(
+            {"timing_effect": "SAME", "exact_timing_comparison_available": True}, "English"
+        )
+        == "does not change your estimated graduation"
+    )
+
+
+def test_the_english_effect_line_is_scoped_and_flows_after_the_colon(
+    divergent_plan: None,
+) -> None:
+    """N7: the English half of the bilingual scoping pair gets its own pin,
+    and the effect sentence reads as a continuation, not a new sentence."""
+    payload = _what_if_payload()
+    answer = _safe_graduation_answer("English", [payload], "")
+
+    assert "\nOn the actual registered timetable: t" in answer
+    assert ": The scenario" not in answer
+
+
 def test_the_verdict_phrase_tracks_the_computed_effect() -> None:
     from core.services.student_advisor_v2 import _what_if_verdict_phrase
 
