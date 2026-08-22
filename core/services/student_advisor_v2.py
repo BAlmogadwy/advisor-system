@@ -931,7 +931,12 @@ _CURRENT_COURSE_CHANGE_PATTERN = re.compile(
     r"(?:ماني|مو)\s*(?:ماخذ|آخذ|اخذ|باخذ|بآخذ|منزل)|لم\s+(?:آخذ|اخذ|أنزل|انزل)|"
     r"بدل|بدال|استبدل|أستبدل|استبدال|أبدل|ابدل|أغير|اغير|"
     r"أحذف|احذف|حذف|أشيل|اشيل|شيل|شلت|أكنسل|اكنسل|ألغي|الغي|"
-    r"أؤجل|اؤجل|تأجيل|أترك|اترك|انسحب|أنسحب|انسحبت|سحبت|إسقاط|اسقاط))",
+    r"أؤجل|اؤجل|تأجيل|أترك|اترك|انسحب|أنسحب|انسحبت|سحبت|إسقاط|اسقاط|"
+    # «لو ما عاد عندي X» / «لو ما بقي عندي X» state a hypothetical absence
+    # without any change VERB - the review proved the model-intention branch
+    # never got the chance on them because this classifier said no.  The
+    # «لو» anchor keeps plain record statements out.
+    r"لو\s+ما\s+(?:عاد|بقي)))",
     re.IGNORECASE,
 )
 _DIRECT_COURSE_CHANGE_ACTION_PATTERN = re.compile(
@@ -1302,14 +1307,14 @@ _ARABIC_OMISSION_PATTERN = re.compile(
     # blocked by the negation lookbehind, the engine happily backtracked
     # into the bare «حذف» INSIDE the same word, one character past every
     # guard - «لم أحذف» extracted through the hole.
-    rf"(?<!ما )(?<!ما)(?<!لم )(?<!لم)(?<!مو )(?<!مو)"
+    rf"(?<!\bما )(?<!\bما)(?<!\bلم )(?<!\bلم)(?<!\bمو )(?<!\bمو)"
     rf"(?:أحذف|احذف|(?<![ء-ي])حذف|أشيل|اشيل|(?<![ء-ي])شيل|شلت|"
     rf"أكنسل|اكنسل|ألغي|الغي|أؤجل|اؤجل|أترك|اترك)|"
     rf"انسحب(?:ت)?\s+من|أنسحب(?:ت)?\s+من|"
     rf"{_ARABIC_CONDITIONAL_PAST}"
     # «لو ما حذفت» inverts the direction; blocked, not flipped - the model
     # owns the double-negative phrasings.
-    rf"(?<!ما )(?<!ما)(?<!لم )(?<!لم)(?<!مو )(?<!مو)"
+    rf"(?<!\bما )(?<!\bما)(?<!\bلم )(?<!\bلم)(?<!\bمو )(?<!\bمو)"
     rf"(?:حذفت|ألغيت|الغيت|لغيت|كنسلت|أجلت|اجلت|تركت|سحبت|أسقطت|اسقطت))\s+"
     rf"(?:مقرر\s+|مادة\s+)?(?P<remove>\b{_COURSE_CODE_EXPR}\b)",
     re.IGNORECASE,
@@ -1367,7 +1372,7 @@ _ARABIC_ADDITION_PATTERN = re.compile(
     # OMISSION pattern is consulted first and consumes them.
     rf"(?:آخذ|اخذ|أخذ|أنزل|انزل|أضيف|اضيف|أحط|احط|"
     rf"{_ARABIC_CONDITIONAL_PAST}"
-    rf"(?<!ما )(?<!ما)(?<!لم )(?<!لم)(?<!مو )(?<!مو)"
+    rf"(?<!\bما )(?<!\bما)(?<!\bلم )(?<!\bلم)(?<!\bمو )(?<!\bمو)"
     rf"(?:أخذت|اخذت|خذيت|نزلت|أضفت|اضفت|حطيت))\s+"
     rf"(?:مقرر\s+|مادة\s+)?(?P<add>\b{_COURSE_CODE_EXPR}\b)",
     re.IGNORECASE,

@@ -2113,6 +2113,15 @@ def test_course_comparison_cannot_answer_before_fresh_evidence(monkeypatch):
             {"remove_current_courses": ["CS424"]},
             "explicit_omission",
         ),
+        # «عندما أحذف» is a temporal conditional, and «ما» here is the TAIL
+        # of the connector, not a negator - a fused-negation guard without a
+        # word boundary blocked this whole connector family.
+        (
+            "عندما أحذف CS424 هل يتأخر تخرجي؟",
+            {},
+            {"remove_current_courses": ["CS424"]},
+            "explicit_omission",
+        ),
     ],
 )
 def test_graduation_scenario_arguments_follow_explicit_student_wording(
@@ -2165,6 +2174,11 @@ def test_graduation_scenario_arguments_follow_explicit_student_wording(
         # A marker whose clause ENDS before the verb: the comma is the
         # boundary of what the conditional governs.
         "لو تكرمت، أخذت CS111 العام الماضي فمتى أتخرج؟",
+        # UNPUNCTUATED politeness - chat's normal register.  Without its own
+        # parameter, the «سمحت» guard was free to delete: the comma-separated
+        # corpus above is caught by the window class alone.
+        "لو سمحت حذفت CS424 الترم الماضي متى أتخرج؟",
+        "لو سمحت أخذت CS111 قبل سنة متى أتخرج؟",
     ],
 )
 def test_past_tense_without_a_conditional_is_a_record_not_a_scenario(question):
@@ -2174,6 +2188,26 @@ def test_past_tense_without_a_conditional_is_a_record_not_a_scenario(question):
     assert "add_current_courses" not in arguments
     assert "search_better_replacements" not in arguments
     assert normalisation == ""
+
+
+def test_the_hypothetical_absence_phrasing_reaches_the_model_branch():
+    """The degradation-to-model guarantee only holds inside the what-if
+    classifier: «وش راح يصير لو ما عاد عندي CS424؟» has no change VERB, so
+    the review proved the model branch never got the chance on it.  «لو ما
+    عاد/بقي» now count as change phrasings, and with the classifier's
+    verdict the model's direction is admissible end to end."""
+    from core.services.student_advisor_v2 import _requires_graduation_what_if
+
+    question = "وش راح يصير لو ما عاد عندي CS424؟ متى أتخرج؟"
+    assert _requires_graduation_what_if(question) is True
+
+    arguments, normalisation = _normalise_graduation_scenario_args(
+        question,
+        {"remove_current_courses": ["CS424"]},
+        allow_prior_scenario=_requires_graduation_what_if(question),
+    )
+    assert arguments["remove_current_courses"] == ["CS424"]
+    assert normalisation == "model_direction_for_student_named_courses"
 
 
 def test_model_direction_is_accepted_for_a_student_named_course():
