@@ -2072,6 +2072,56 @@ def test_course_comparison_cannot_answer_before_fresh_evidence(monkeypatch):
             },
             "explicit_replacement",
         ),
+        # Past tense under a conditional - the NATURAL «لو …» phrasing.  A
+        # live 2026-08-22 turn asked exactly the first of these and got the
+        # deterministic refusal: the change classifier matched «حذف» as a
+        # substring of «حذفت» while this extractor required «حذف » with a
+        # space, so the turn was flagged as a what-if that extracted nothing.
+        (
+            "لو حذفت مقرر CS424 هل يؤثر على تخرجي؟",
+            {},
+            {"remove_current_courses": ["CS424"]},
+            "explicit_omission",
+        ),
+        (
+            "إذا ألغيت CS424 هذا الترم متى أتخرج؟",
+            {},
+            {"remove_current_courses": ["CS424"]},
+            "explicit_omission",
+        ),
+        (
+            "لو كنسلت DS341 هل يتأخر تخرجي؟",
+            {},
+            {"remove_current_courses": ["DS341"]},
+            "explicit_omission",
+        ),
+        (
+            "لو سحبت مقرر CS424 وش يصير على تخرجي؟",
+            {},
+            {"remove_current_courses": ["CS424"]},
+            "explicit_omission",
+        ),
+        (
+            "لو أخذت مقرر MATH204 هذا الترم هل أتخرج أبكر؟",
+            {},
+            {"add_current_courses": ["MATH204"]},
+            "explicit_addition",
+        ),
+        (
+            "في حال حذفت CS424 متى أتخرج؟",
+            {},
+            {"remove_current_courses": ["CS424"]},
+            "explicit_omission",
+        ),
+        # «عندما أحذف» is a temporal conditional, and «ما» here is the TAIL
+        # of the connector, not a negator - a fused-negation guard without a
+        # word boundary blocked this whole connector family.
+        (
+            "عندما أحذف CS424 هل يتأخر تخرجي؟",
+            {},
+            {"remove_current_courses": ["CS424"]},
+            "explicit_omission",
+        ),
     ],
 )
 def test_graduation_scenario_arguments_follow_explicit_student_wording(
@@ -2085,6 +2135,158 @@ def test_graduation_scenario_arguments_follow_explicit_student_wording(
         "registered_timetable",
     }
     assert normalisation == reason
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        # Bare past tense is how students STATE their record - extracting it
+        # would simulate re-adding a passed course or dropping one that is
+        # not in the baseline.  Only a conditional makes past tense a
+        # scenario.
+        "أخذت CS111 الترم الماضي، متى أتخرج؟",
+        "حذفت CS424 من البوابة، متى أتخرج؟",
+        # A negated conditional inverts the direction; it is blocked, not
+        # flipped - the model owns double negatives.  The review measured
+        # five shapes that slipped the first two lookbehinds.
+        "لو ما حذفت CS424 هل أتخرج في وقتي؟",
+        "لو لم أحذف CS424 هل أتخرج أسرع؟",
+        "لو ماحذفت CS424 هل أتخرج أسرع؟",
+        "لو ما كنت حذفت CS424 هل أتخرج؟",
+        "لو لم أكن حذفت CS424 هل أتخرج؟",
+        "لو مو حذفت CS424 وش يصير؟",
+        "لو ما أضفت CS424 وش يصير؟",
+        "لو ما حطيت CS424 وش يصير؟",
+        # FUSED negation: the window temper needs the space after the
+        # negator, so the verb-adjacent lookbehind is the only guard here.
+        "لو ماأضفت CS424 وش يصير؟",
+        "لو ماحطيت CS424 وش يصير؟",
+        # «لو سمحت» is POLITENESS and «ولو/حتى لو» are CONCESSIVE - the
+        # review proved each of these extracted a phantom simulation of a
+        # record statement, with no downstream correction because this
+        # extractor is the sole authority.
+        "لو سمحت، حذفت CS424 الترم الماضي فمتى أتخرج؟",
+        "لو سمحت أخبرني، أنا أخذت CS111 وأبغى أعرف تخرجي",
+        "لو سمحت\nحذفت CS424 الترم الماضي",
+        "ولو أني حذفت CS424 من قبل، ما زلت أحتاجه؟",
+        "حتى لو كان صعباً، أنا أخذت CS111 بالفعل",
+        "شكراً لو سمحت؛ حذفت CS424 قبل سنة",
+        # A marker whose clause ENDS before the verb: the comma is the
+        # boundary of what the conditional governs.
+        "لو تكرمت، أخذت CS111 العام الماضي فمتى أتخرج؟",
+        # UNPUNCTUATED politeness - chat's normal register.  Without its own
+        # parameter, the «سمحت» guard was free to delete: the comma-separated
+        # corpus above is caught by the window class alone.
+        "لو سمحت حذفت CS424 الترم الماضي متى أتخرج؟",
+        "لو سمحت أخذت CS111 قبل سنة متى أتخرج؟",
+    ],
+)
+def test_past_tense_without_a_conditional_is_a_record_not_a_scenario(question):
+    arguments, normalisation = _normalise_graduation_scenario_args(question, {})
+
+    assert "remove_current_courses" not in arguments
+    assert "add_current_courses" not in arguments
+    assert "search_better_replacements" not in arguments
+    assert normalisation == ""
+
+
+def test_the_hypothetical_absence_phrasing_reaches_the_model_branch():
+    """The degradation-to-model guarantee only holds inside the what-if
+    classifier: «وش راح يصير لو ما عاد عندي CS424؟» has no change VERB, so
+    the review proved the model branch never got the chance on it.  «لو ما
+    عاد/بقي» now count as change phrasings, and with the classifier's
+    verdict the model's direction is admissible end to end."""
+    from core.services.student_advisor_v2 import _requires_graduation_what_if
+
+    question = "وش راح يصير لو ما عاد عندي CS424؟ متى أتخرج؟"
+    assert _requires_graduation_what_if(question) is True
+
+    arguments, normalisation = _normalise_graduation_scenario_args(
+        question,
+        {"remove_current_courses": ["CS424"]},
+        allow_prior_scenario=_requires_graduation_what_if(question),
+    )
+    assert arguments["remove_current_courses"] == ["CS424"]
+    assert normalisation == "model_direction_for_student_named_courses"
+
+
+def test_model_direction_is_accepted_for_a_student_named_course():
+    """The LLM-intention path.  «ما عاد عندي» is a phrasing no surface form
+    covers; the model understood it, and its DIRECTION is admissible because
+    every course it selected is one the student named in this question.
+    Without this branch the what-if reprompt was self-defeating: it demanded
+    scenario arguments this function then discarded."""
+    arguments, normalisation = _normalise_graduation_scenario_args(
+        "وش راح يصير لو ما عاد عندي CS424 هذا الترم؟",
+        {"remove_current_courses": ["CS424"]},
+        allow_prior_scenario=True,
+    )
+
+    assert arguments["remove_current_courses"] == ["CS424"]
+    assert normalisation == "model_direction_for_student_named_courses"
+
+
+def test_a_model_selected_course_the_student_never_named_is_discarded():
+    """The rail the «ما أخذت» incident justifies keeping: the model may read
+    direction, it may not introduce a course."""
+    arguments, normalisation = _normalise_graduation_scenario_args(
+        "وش راح يصير لو ما عاد عندي CS424 هذا الترم؟",
+        {"remove_current_courses": ["CS999"]},
+        allow_prior_scenario=True,
+    )
+
+    assert "remove_current_courses" not in arguments
+    assert normalisation == ""
+
+
+def test_a_plain_question_cannot_receive_an_injected_scenario():
+    """allow_prior_scenario is the what-if classifier's verdict about the
+    QUESTION; a plain "when do I graduate" keeps its original protection
+    even when the model volunteers scenario arguments."""
+    arguments, normalisation = _normalise_graduation_scenario_args(
+        "متى أتخرج؟ وأنا مسجل CS424 حالياً.",
+        {"remove_current_courses": ["CS424"]},
+        allow_prior_scenario=False,
+    )
+
+    assert "remove_current_courses" not in arguments
+    assert normalisation == ""
+
+
+def test_a_direction_conflict_from_the_model_is_discarded():
+    arguments, normalisation = _normalise_graduation_scenario_args(
+        "وش راح يصير لو غيرت وضع CS424 هذا الترم؟",
+        {"remove_current_courses": ["CS424"], "add_current_courses": ["CS424"]},
+        allow_prior_scenario=True,
+    )
+
+    assert "remove_current_courses" not in arguments
+    assert "add_current_courses" not in arguments
+    assert normalisation == ""
+
+
+def test_the_surface_form_outranks_a_wrong_model_direction():
+    """When the student's own words state the direction, a contradicting
+    model interpretation loses - the regex fast-path is first authority."""
+    arguments, normalisation = _normalise_graduation_scenario_args(
+        "لو حذفت مقرر CS424 هل يؤثر على تخرجي؟",
+        {"add_current_courses": ["CS424"]},
+        allow_prior_scenario=True,
+    )
+
+    assert arguments["remove_current_courses"] == ["CS424"]
+    assert normalisation == "explicit_omission"
+
+
+def test_the_model_may_select_the_open_search_when_no_code_is_named():
+    arguments, normalisation = _normalise_graduation_scenario_args(
+        "هل من الأفضل تغيير شيء في مقرراتي حتى أتخرج أبكر؟",
+        {"search_better_replacements": True},
+        allow_prior_scenario=True,
+    )
+
+    assert arguments.get("search_better_replacements") is True
+    assert normalisation in {"model_open_replacement_search", "open_replacement_search"}
 
 
 @pytest.mark.parametrize(

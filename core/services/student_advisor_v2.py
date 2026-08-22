@@ -931,7 +931,12 @@ _CURRENT_COURSE_CHANGE_PATTERN = re.compile(
     r"(?:ماني|مو)\s*(?:ماخذ|آخذ|اخذ|باخذ|بآخذ|منزل)|لم\s+(?:آخذ|اخذ|أنزل|انزل)|"
     r"بدل|بدال|استبدل|أستبدل|استبدال|أبدل|ابدل|أغير|اغير|"
     r"أحذف|احذف|حذف|أشيل|اشيل|شيل|شلت|أكنسل|اكنسل|ألغي|الغي|"
-    r"أؤجل|اؤجل|تأجيل|أترك|اترك|انسحب|أنسحب|انسحبت|سحبت|إسقاط|اسقاط))",
+    r"أؤجل|اؤجل|تأجيل|أترك|اترك|انسحب|أنسحب|انسحبت|سحبت|إسقاط|اسقاط|"
+    # «لو ما عاد عندي X» / «لو ما بقي عندي X» state a hypothetical absence
+    # without any change VERB - the review proved the model-intention branch
+    # never got the chance on them because this classifier said no.  The
+    # «لو» anchor keeps plain record statements out.
+    r"لو\s+ما\s+(?:عاد|بقي)))",
     re.IGNORECASE,
 )
 _DIRECT_COURSE_CHANGE_ACTION_PATTERN = re.compile(
@@ -1262,12 +1267,55 @@ _ARABIC_REVERSED_INSTEAD_PATTERN = re.compile(
     rf"(?P<add>\b{_COURSE_CODE_EXPR}\b)",
     re.IGNORECASE,
 )
+#: Conditional markers that turn a PAST-tense verb into a hypothetical.
+#: «لو حذفت CS424» is a scenario; bare «حذفت CS424» may be a record statement
+#: («حذفت CS424 الترم الماضي») and stays un-extracted — the model and the
+#: what-if reprompt still own the ambiguous phrasings.
+#:
+#: The review of the first spelling measured three leaks, closed here:
+#: «لو سمحت» is POLITENESS, «ولو/حتى لو» are CONCESSIVE — neither makes the
+#: past tense a scenario, so «لو سمحت، حذفت CS424 الترم الماضي» extracted a
+#: phantom simulation of a record statement.  The window also stopped only
+#: at sentence punctuation, so a marker in a DIFFERENT clause reached the
+#: verb — the clause the marker governs ends at a comma too.  And the
+#: window now refuses to cross a negator word (ما/لم/مو/لن/ليس) at any
+#: distance: «لو ما كنت حذفت» must be blocked, never direction-flipped.
+#: Over-blocking is safe by design: a genuine hypothetical this gate
+#: refuses falls through to the model-intention branch, not to the refusal.
+_ARABIC_CONDITIONAL_PAST = (
+    r"(?:(?<!و)(?<!حتى )لو(?!\s*سمحت)|إذا|اذا|ماذا\s+لو|في\s+حال|افترض(?:نا)?)"
+    r"\s+(?:(?!(?:ما|لم|مو|لن|ليس)\s)[^.؟?!،؛:\n]){0,40}?"
+)
+
 _ARABIC_OMISSION_PATTERN = re.compile(
+    # Every verb needs BOTH agreements. «لو حذفت CS424» is the NATURAL
+    # conditional phrasing, and the first list carried only the
+    # imperative/present forms — the change CLASSIFIER matched «حذف» as a
+    # bare substring while this extractor required «حذف » with a space, so a
+    # live turn was flagged as a what-if and then extracted nothing: the
+    # tool ran bare, and the honest refusal was the only reachable answer.
+    # (The fourth occurrence of the one-grammatical-form disease.)  The past
+    # forms are gated behind a conditional so a record statement about a
+    # really-dropped course cannot become a phantom scenario.
     rf"(?:ما\s*(?:آخذ|اخذ|أخذت|اخذت|خذت|نزلت|أنزل|انزل|باخذ|بآخذ|بنزل)|"
     rf"(?:ماني|مو)\s*(?:ماخذ|آخذ|اخذ|باخذ|بآخذ|منزل)|"
-    rf"لم\s+(?:آخذ|اخذ|أنزل|انزل)|أحذف|احذف|حذف|أشيل|اشيل|شيل|شلت|"
-    rf"أكنسل|اكنسل|ألغي|الغي|أؤجل|اؤجل|أترك|اترك|"
-    rf"انسحب(?:ت)?\s+من|أنسحب(?:ت)?\s+من)\s+"
+    # «لم آخذ» negates a TAKE verb, which IS the omission; «لم أحذف» negates
+    # a REMOVE verb, which is its inverse - so the remove-direction verbs
+    # carry the negation guard while the negated-take group stays open.
+    rf"لم\s+(?:آخذ|اخذ|أنزل|انزل)|"
+    # The bare stems get a not-mid-word guard of their own: with «أحذف»
+    # blocked by the negation lookbehind, the engine happily backtracked
+    # into the bare «حذف» INSIDE the same word, one character past every
+    # guard - «لم أحذف» extracted through the hole.
+    rf"(?<!\bما )(?<!\bما)(?<!\bلم )(?<!\bلم)(?<!\bمو )(?<!\bمو)"
+    rf"(?:أحذف|احذف|(?<![ء-ي])حذف|أشيل|اشيل|(?<![ء-ي])شيل|شلت|"
+    rf"أكنسل|اكنسل|ألغي|الغي|أؤجل|اؤجل|أترك|اترك)|"
+    rf"انسحب(?:ت)?\s+من|أنسحب(?:ت)?\s+من|"
+    rf"{_ARABIC_CONDITIONAL_PAST}"
+    # «لو ما حذفت» inverts the direction; blocked, not flipped - the model
+    # owns the double-negative phrasings.
+    rf"(?<!\bما )(?<!\bما)(?<!\bلم )(?<!\bلم)(?<!\bمو )(?<!\bمو)"
+    rf"(?:حذفت|ألغيت|الغيت|لغيت|كنسلت|أجلت|اجلت|تركت|سحبت|أسقطت|اسقطت))\s+"
     rf"(?:مقرر\s+|مادة\s+)?(?P<remove>\b{_COURSE_CODE_EXPR}\b)",
     re.IGNORECASE,
 )
@@ -1317,7 +1365,15 @@ _ENGLISH_ADDITION_PATTERN = re.compile(
     re.IGNORECASE,
 )
 _ARABIC_ADDITION_PATTERN = re.compile(
-    rf"(?:آخذ|اخذ|أخذ|أنزل|انزل|أضيف|اضيف|أحط|احط)\s+"
+    # Past forms too — «لو أخذت CS424» is an addition scenario — but ONLY
+    # under a conditional: bare «أخذت CS111» is the commonest way to state a
+    # past record, and extracting it would simulate adding an already-passed
+    # course.  Safe against negated forms (ما أخذت / ما نزلت) because the
+    # OMISSION pattern is consulted first and consumes them.
+    rf"(?:آخذ|اخذ|أخذ|أنزل|انزل|أضيف|اضيف|أحط|احط|"
+    rf"{_ARABIC_CONDITIONAL_PAST}"
+    rf"(?<!\bما )(?<!\bما)(?<!\bلم )(?<!\bلم)(?<!\bمو )(?<!\bمو)"
+    rf"(?:أخذت|اخذت|خذيت|نزلت|أضفت|اضفت|حطيت))\s+"
     rf"(?:مقرر\s+|مادة\s+)?(?P<add>\b{_COURSE_CODE_EXPR}\b)",
     re.IGNORECASE,
 )
@@ -1464,6 +1520,45 @@ def _normalise_graduation_scenario_args(
             if added:
                 normalised["add_current_courses"] = added
             return normalised, "prior_presentation_named_courses"
+
+    if allow_prior_scenario:
+        # The model's INTENTION is admissible where the surface patterns are
+        # silent - fenced by what the «ما أخذت» incident actually taught: the
+        # tested models misread DIRECTION, they never invented courses.  So
+        # direction may come from the model, while every course must be one
+        # the student NAMED in this very question, and a question that is not
+        # a what-if at all (allow_prior_scenario False) still cannot receive
+        # an injected scenario.  Surface forms above stay the first
+        # authority; this branch is what makes the next phrasing no regex
+        # has ever seen work because the model understood it.  Without it
+        # the what-if reprompt was self-defeating: it demanded scenario
+        # arguments this function then discarded, so a missed surface form
+        # could only ever end in the refusal.  The answer path restates the
+        # assumed change, so a misread direction is visible, not silent.
+        question_codes = {_normalise_course_code(code) for code in _comparison_course_codes(text)}
+        question_codes.discard("")
+
+        def model_selected(field: str) -> list[str]:
+            value = arguments.get(field)
+            if not isinstance(value, list):
+                return []
+            codes = [_normalise_course_code(item) for item in value if item]
+            return list(dict.fromkeys(code for code in codes if code))
+
+        model_removed = model_selected("remove_current_courses")
+        model_added = model_selected("add_current_courses")
+        chosen = set(model_removed + model_added)
+        if chosen and chosen <= question_codes and not (set(model_removed) & set(model_added)):
+            if model_removed:
+                normalised["remove_current_courses"] = model_removed
+            if model_added:
+                normalised["add_current_courses"] = model_added
+            return normalised, "model_direction_for_student_named_courses"
+        if not chosen and bool(arguments.get("search_better_replacements")) and not question_codes:
+            # An open "is there anything better?" names no code; the model
+            # may select the bounded search the service itself performs.
+            normalised["search_better_replacements"] = True
+            return normalised, "model_open_replacement_search"
 
     return normalised, ""
 

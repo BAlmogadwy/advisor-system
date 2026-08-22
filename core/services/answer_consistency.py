@@ -1303,14 +1303,43 @@ def _exact_figure_mismatch(answer: str, rows: list[dict[str, Any]]) -> bool:
                     return True
             if term_figures:
                 expected = set()
+                term_keys = (
+                    "estimated_additional_terms",
+                    "estimated_terms_including_planning_baseline",
+                    "lower_bound_additional_terms",
+                    "lower_bound_terms_including_planning_baseline",
+                )
                 for row in graduations:
                     expected |= _number_set(
-                        row.get("estimated_additional_terms"),
-                        row.get("estimated_terms_including_planning_baseline"),
-                        row.get("lower_bound_additional_terms"),
-                        row.get("lower_bound_terms_including_planning_baseline"),
+                        *(row.get(key) for key in term_keys),
                         row.get("terms_estimate"),
                     )
+                    # A what-if payload is the SCENARIO report at top level;
+                    # the baseline it was compared against lives only under
+                    # what_if.baseline.  A comparison answer necessarily
+                    # quotes BOTH sides - «1 قبل التغيير، مقابل 2 بعده» -
+                    # plus the server-computed difference between them, and
+                    # with only the top level mined the deterministic safe
+                    # composer's own truthful comparison failed this check
+                    # and the turn abstained.
+                    what_if = row.get("what_if") if isinstance(row.get("what_if"), dict) else {}
+                    sides = [
+                        side
+                        for side in (what_if.get("baseline"), what_if.get("scenario"))
+                        if isinstance(side, dict)
+                    ]
+                    for side in sides:
+                        expected |= _number_set(*(side.get(key) for key in term_keys))
+                    if len(sides) == 2:
+                        for key in term_keys:
+                            before, after = sides[0].get(key), sides[1].get(key)
+                            if (
+                                isinstance(before, int | float)
+                                and isinstance(after, int | float)
+                                and not isinstance(before, bool)
+                                and not isinstance(after, bool)
+                            ):
+                                expected.add(float(abs(after - before)))
                 if expected and not term_figures <= expected:
                     return True
     return False
@@ -2016,6 +2045,42 @@ def _metric_values(rows: list[dict[str, Any]], tool: str, field: str) -> set[flo
     )
 
 
+def _graduation_metric_values(rows: list[dict[str, Any]], field: str) -> set[float]:
+    """A graduation metric's value at top level AND on both what-if sides.
+
+    The what-if payload is the SCENARIO report at top level; the baseline it
+    was compared against keeps the same field names under what_if.baseline.
+    A comparison answer states the metric once per side - «1 قبل التغيير،
+    مقابل 2 بعده» - and may state the server-computed difference between
+    them; binding such a clause to the top level alone made the
+    deterministic safe composer's own truthful comparison fail and the turn
+    abstain.  Fields absent from the side summaries contribute nothing, so
+    non-scenario metrics keep their exact single-value binding.
+    """
+    values = _metric_values(rows, "graduation_progress", field)
+    for row in rows:
+        if row.get("tool") != "graduation_progress" or not row.get("ok"):
+            continue
+        what_if = row.get("what_if") if isinstance(row.get("what_if"), dict) else {}
+        sides = [
+            side
+            for side in (what_if.get("baseline"), what_if.get("scenario"))
+            if isinstance(side, dict)
+        ]
+        for side in sides:
+            values |= _number_set(side.get(field))
+        if len(sides) == 2:
+            before, after = sides[0].get(field), sides[1].get(field)
+            if (
+                isinstance(before, int | float)
+                and isinstance(after, int | float)
+                and not isinstance(before, bool)
+                and not isinstance(after, bool)
+            ):
+                values.add(float(abs(after - before)))
+    return values
+
+
 def _metric_claim_mismatch(answer: str, rows: list[dict[str, Any]]) -> bool:
     """Bind each number to its named metric instead of accepting a value set."""
     graduation_rows = [row for row in rows if row.get("tool") == "graduation_progress"]
@@ -2050,13 +2115,9 @@ def _metric_claim_mismatch(answer: str, rows: list[dict[str, Any]]) -> bool:
             for match in pair_matches:
                 passed = _number_set(match.group(1))
                 total = _number_set(match.group(2))
-                if not passed <= _metric_values(
-                    graduation_rows, "graduation_progress", "plan_courses_passed"
-                ):
+                if not passed <= _graduation_metric_values(graduation_rows, "plan_courses_passed"):
                     return True
-                if not total <= _metric_values(
-                    graduation_rows, "graduation_progress", "plan_courses_total"
-                ):
+                if not total <= _graduation_metric_values(graduation_rows, "plan_courses_total"):
                     return True
 
         if count_figures and not pair_matches:
@@ -2070,7 +2131,7 @@ def _metric_claim_mismatch(answer: str, rows: list[dict[str, Any]]) -> bool:
             elif _has_words(clause, ("إجمالي", "اجمالي", "total", "الخطة")):
                 field = "plan_courses_total"
             if field:
-                expected = _metric_values(graduation_rows, "graduation_progress", field)
+                expected = _graduation_metric_values(graduation_rows, field)
                 if not expected or not count_figures <= expected:
                     return True
 
@@ -2111,7 +2172,7 @@ def _metric_claim_mismatch(answer: str, rows: list[dict[str, Any]]) -> bool:
             elif _has_words(clause, _EARNED_WORDS):
                 field = "credits_earned_registrar"
             if field:
-                expected = _metric_values(graduation_rows, "graduation_progress", field)
+                expected = _graduation_metric_values(graduation_rows, field)
                 if not expected or not credit_figures <= expected:
                     return True
 
@@ -2143,27 +2204,43 @@ def _metric_claim_mismatch(answer: str, rows: list[dict[str, Any]]) -> bool:
                 clause,
                 ("إضاف", "اضاف", "بعد فصل", "بعد الفصل", "additional", "after"),
             )
+            # The clause's OWN metric words outrank the completeness
+            # heuristic in BOTH term branches: «الحد الأدنى المقدّر لعدد
+            # الفصول الإضافية: 1» names the lower bound explicitly, and
+            # binding it to the estimate because the simulation completed
+            # measured the safe composer's truthful lower-bound line
+            # against the wrong field.  The two-figure branch had the same
+            # defect one branch up: «الحد الأدنى: 2 فصل إضافي، أي 3 فصول
+            # بما فيها الفصل الحالي» quoted both lower_bound_* values
+            # exactly and was refused.
+            lower_bound_clause = _has_words(
+                clause,
+                ("الحد الأدنى", "على الأقل", "lower bound", "at least", "minimum"),
+            )
             if len(explicit_term_matches) >= 2 and including and has_additional_label:
+                use_lower = lower_bound_clause or not complete
                 additional_field = (
-                    "estimated_additional_terms" if complete else "lower_bound_additional_terms"
+                    "lower_bound_additional_terms" if use_lower else "estimated_additional_terms"
                 )
                 including_field = (
-                    "estimated_terms_including_planning_baseline"
-                    if complete
-                    else "lower_bound_terms_including_planning_baseline"
+                    "lower_bound_terms_including_planning_baseline"
+                    if use_lower
+                    else "estimated_terms_including_planning_baseline"
                 )
                 first = _number_set(explicit_term_matches[0].group(1))
                 last = _number_set(explicit_term_matches[-1].group(1))
-                if not first <= _metric_values(
-                    graduation_rows, "graduation_progress", additional_field
-                ):
+                if not first <= _graduation_metric_values(graduation_rows, additional_field):
                     return True
-                if not last <= _metric_values(
-                    graduation_rows, "graduation_progress", including_field
-                ):
+                if not last <= _graduation_metric_values(graduation_rows, including_field):
                     return True
                 continue
-            if complete:
+            if lower_bound_clause:
+                field = (
+                    "lower_bound_terms_including_planning_baseline"
+                    if including
+                    else "lower_bound_additional_terms"
+                )
+            elif complete:
                 field = (
                     "estimated_terms_including_planning_baseline"
                     if including
@@ -2175,12 +2252,12 @@ def _metric_claim_mismatch(answer: str, rows: list[dict[str, Any]]) -> bool:
                     if including
                     else "lower_bound_additional_terms"
                 )
-            expected = _metric_values(graduation_rows, "graduation_progress", field)
+            expected = _graduation_metric_values(graduation_rows, field)
             if not expected or not term_figures <= expected:
                 return True
 
         if percent_figures:
-            expected = _metric_values(graduation_rows, "graduation_progress", "percent_complete")
+            expected = _graduation_metric_values(graduation_rows, "percent_complete")
             if not expected or not percent_figures <= expected:
                 return True
     return False
