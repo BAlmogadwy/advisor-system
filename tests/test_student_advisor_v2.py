@@ -3773,6 +3773,114 @@ def test_progress_graduation_figures_and_phase_are_not_interchangeable():
     )
 
 
+def test_a_registered_line_does_not_make_the_next_recommendation_unsupported():
+    """Registered courses, then a recommendation: the commonest answer shape.
+
+    The schedule scope carried by a heading used to stick to every later line,
+    so a true recommendation inherited REGISTERED and had to appear in the
+    timetable to survive. Both tools' evidence was present and both lines were
+    true, and the answer was still an unsupported academic fact.
+    """
+    timetable = {
+        "tool": "my_timetable",
+        "ok": True,
+        "schedule_kind": "REGISTERED",
+        "registrations": [
+            {"course_code": "AI331", "section": "M6"},
+            {"course_code": "CS323", "section": "M9"},
+        ],
+    }
+    recommendation = {
+        "tool": "recommend_courses",
+        "ok": True,
+        "recommendation_count": 1,
+        "recommendations": [
+            {"course_code": "AI433", "course_name": "تعلم الآلة", "credit_hours": 3}
+        ],
+    }
+    evidence = [timetable, recommendation]
+
+    correct = "في الجدول المسجل لديك AI331 وCS323.\nولإكمال الخطة يوصي النظام بـ AI433."
+    assert (
+        check_answer(correct, tool_results=evidence, question="ماذا أسجل؟", required_tools=set())
+        == []
+    )
+
+    # Clearing the scope must not stop a fabricated REGISTRATION being caught.
+    invented = "في الجدول المسجل لديك AI331 وZZ999."
+    assert UNSUPPORTED_ACADEMIC_FACT in check_answer(
+        invented, tool_results=evidence, question="ماذا أسجل؟", required_tools=set()
+    )
+
+
+def test_arabic_spellings_do_not_hide_a_fabricated_figure_or_time():
+    """Arabic-Indic digits and the broken plural «فصول» are not a bypass.
+
+    Every other figure reader in the module already accepted Arabic-Indic
+    digits, and «فصول» does not start with «فصل», so a fabricated term count or
+    meeting time written the Arabic way was invisible while the identical
+    fabrication in ASCII was caught.
+    """
+    graduation = {
+        "tool": "graduation_progress",
+        "ok": True,
+        "estimated_additional_terms": 2,
+        "estimated_terms_including_planning_baseline": 3,
+        "lower_bound_additional_terms": 2,
+        "lower_bound_terms_including_planning_baseline": 3,
+        "simulation_completed": True,
+    }
+    for fabricated in ("تحتاج إلى 9 فصول إضافية.", "تحتاج إلى ٩ فصول إضافية."):
+        assert EXACT_ACADEMIC_FIGURE_MISMATCH in check_answer(
+            fabricated,
+            tool_results=[graduation],
+            question="كم يتبقى؟",
+            required_tools=set(),
+        ), fabricated
+    assert (
+        check_answer(
+            "تحتاج إلى فصلين إضافيين.",
+            tool_results=[graduation],
+            question="كم يتبقى؟",
+            required_tools=set(),
+        )
+        == []
+    )
+
+    timetable = {
+        "tool": "my_timetable",
+        "ok": True,
+        "registered_sections": [{"course_code": "AI331", "section": "M6"}],
+        "meetings": [
+            {
+                "course_code": "AI331",
+                "section": "M6",
+                "day": "SUN",
+                "start": "09:00",
+                "end": "10:15",
+                "room": "B204",
+            }
+        ],
+    }
+    assert UNSUPPORTED_ACADEMIC_FACT in check_answer(
+        "مقرر AI331 الشعبة M6 من الساعة ١١:٣٠ إلى ١٢:٤٥.",
+        tool_results=[timetable],
+        question="جدولي؟",
+        required_tools=set(),
+    )
+    # The same true time in either spelling stays clean.
+    for spelling in ("٠٩:٠٠ إلى ١٠:١٥", "09:00 إلى 10:15"):
+        assert (
+            check_answer(
+                f"مقرر AI331 الشعبة M6 من الساعة {spelling}.",
+                tool_results=[timetable],
+                question="جدولي؟",
+                required_tools=set(),
+            )
+            == []
+        ), spelling
+
+
 def test_section_listing_evidence_is_inside_the_boundary():
     """The tool that lists a course's sections must be checkable.
 

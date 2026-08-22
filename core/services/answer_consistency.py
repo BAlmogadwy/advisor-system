@@ -553,7 +553,21 @@ _COHORT_SECTION_TOKEN = re.compile(
     r"(?<![A-Za-z0-9])((?:Y[MF]|[MF])\d{1,2})(?![A-Za-z0-9])",
     re.IGNORECASE,
 )
-_CLOCK_TOKEN = re.compile(r"(?<![0-9])([0-2]?[0-9]:[0-5][0-9])(?![0-9])")
+# Every other figure reader in this module accepts Arabic-Indic digits; this one
+# did not, so «١١:٣٠» sailed past all meeting-time verification while the same
+# fabricated time in ASCII was caught.
+_CLOCK_TOKEN = re.compile(
+    r"(?<![0-9٠-٩])"
+    r"([0-2٠-٢]?[0-9٠-٩]:[0-5٠-٥][0-9٠-٩])"
+    r"(?![0-9٠-٩])"
+)
+
+
+def _ascii_clock(value: str) -> str:
+    """One spelling for a clock time, so an Arabic-Indic one compares equal."""
+    return str(value).translate(str.maketrans("٠١٢٣٤٥٦٧٨٩", "0123456789"))
+
+
 _ROOM_NEAR = re.compile(
     r"(?:القاع[ةه]|قاع[ةه]|room)\s*[:\-]?\s*([A-Za-z0-9_-]{1,20})",
     re.IGNORECASE,
@@ -612,11 +626,14 @@ def _unsupported_timetable_values(answer: str, rows: list[dict[str, Any]]) -> bo
             + [item for item in _values_for_key(row, "meetings")]
         )
     )
-    evidence_times = {match.group(1) for match in _CLOCK_TOKEN.finditer(evidence_blob)}
+    # Both sides folded to one spelling: the evidence is always ASCII, the
+    # answer may be Arabic-Indic, and comparing the two raw would make every
+    # TRUE «٠٩:٠٠» an unsupported value.
+    evidence_times = {_ascii_clock(m.group(1)) for m in _CLOCK_TOKEN.finditer(evidence_blob)}
     for clause in _clauses(answer):
         if not (_course_codes_in_text(clause) or _has_words(clause, _TIMETABLE_WORDS)):
             continue
-        claimed_times = {match.group(1) for match in _CLOCK_TOKEN.finditer(clause)}
+        claimed_times = {_ascii_clock(m.group(1)) for m in _CLOCK_TOKEN.finditer(clause)}
         if claimed_times - evidence_times:
             return True
 
@@ -752,7 +769,10 @@ _COURSE_COUNT_PAIR = re.compile(
 )
 _TERM_FIGURE = re.compile(
     r"(?<![A-Za-z0-9])([0-9\u0660-\u0669]{1,2})(?![0-9])\s*"
-    r"(?:فصل\w*|ترم\w*|term(?:s)?|semester(?:s)?)",
+    # «فصول» is a broken plural - ف-ص-و-ل - so it does not start with
+    # «فصل» and `فصل\w*` never matched it. Every fabricated term count
+    # written with the plural was therefore invisible to this check.
+    r"(?:فصول|فصل\w*|ترم\w*|term(?:s)?|semester(?:s)?)",
     re.IGNORECASE,
 )
 _QUALIFIED_TERM_FIGURE = re.compile(
@@ -1401,6 +1421,13 @@ def _kind_matches(claimed: str, actual: str) -> bool:
     return claimed == actual
 
 
+#: Verb forms as well as nouns. _RECOMMENDATION_WORDS targets «توصية»/«موصى»,
+#: which the adviser's own commonest phrasing «يوصي النظام» does not contain -
+#: ي-و-ص-ي shares no substring with «توص». A scope reset that cannot see the
+#: sentence announcing a recommendation is no reset at all.
+_RECOMMENDATION_SCOPE_WORDS = _RECOMMENDATION_WORDS + ("يوص", "نوص", "ننصح", "ينصح")
+
+
 def _schedule_relation_mismatch(answer: str, rows: list[dict[str, Any]]) -> bool:
     registrations, meetings = _schedule_evidence(rows)
     if not registrations and not meetings:
@@ -1408,7 +1435,18 @@ def _schedule_relation_mismatch(answer: str, rows: list[dict[str, Any]]) -> bool
 
     active_kind = ""
     for line in _lines(answer):
-        active_kind = _schedule_kind_from_text(line) or active_kind
+        line_kind = _schedule_kind_from_text(line)
+        if line_kind:
+            active_kind = line_kind
+        elif _has_words(line, _RECOMMENDATION_SCOPE_WORDS):
+            # A recommendation is a different relation from a registration.
+            # A heading such as «في الجدول المسجل لديك» scopes the lines that
+            # continue it, but not one that switches to what the system
+            # suggests. Inheriting REGISTERED across that switch made the
+            # commonest adviser answer shape - registered courses on one line,
+            # a recommendation on the next - an unsupported academic fact,
+            # even with both tools' evidence present and both lines true.
+            active_kind = ""
         for clause in _clauses(line):
             codes = list(_COURSE_TOKEN.finditer(clause))
             for index, code_match in enumerate(codes):
@@ -1421,7 +1459,7 @@ def _schedule_relation_mismatch(answer: str, rows: list[dict[str, Any]]) -> bool
                     sections = {
                         match.group(1).upper() for match in _COHORT_SECTION_TOKEN.finditer(segment)
                     } - {match.group(1).upper() for match in _ROOM_NEAR.finditer(segment)}
-                times = [match.group(1) for match in _CLOCK_TOKEN.finditer(segment)]
+                times = [_ascii_clock(m.group(1)) for m in _CLOCK_TOKEN.finditer(segment)]
                 rooms = {match.group(1).upper() for match in _ROOM_NEAR.finditer(segment)}
                 days = _days_in_text(segment)
 
