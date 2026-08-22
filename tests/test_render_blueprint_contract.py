@@ -13,7 +13,10 @@ from django.core.exceptions import ImproperlyConfigured
 from config import settings as project_settings
 from scripts.validate_render_blueprint import (
     CRON_SERVICE_NAME,
+    EXPECTED_CSRF_TRUSTED_ORIGINS,
     EXPECTED_DATABASE_NAME,
+    EXPECTED_DJANGO_ALLOWED_HOSTS,
+    EXPECTED_PUBLIC_ORIGIN,
     WORKER_SERVICE_NAME,
     load_blueprint,
     validate_blueprint,
@@ -104,6 +107,27 @@ def test_contract_requires_public_student_login_safety_settings(blueprint: Bluep
 
     assert any("IP_FROM_XFF" in error for error in errors)
     assert any("SENDGRID_API_KEY" in error for error in errors)
+
+
+def test_contract_pins_render_and_custom_domain_request_hosts(blueprint: Blueprint) -> None:
+    web = _service(blueprint, "advisor-system")
+    web_env = {entry["key"]: entry for entry in web["envVars"]}
+
+    assert web_env["DJANGO_ALLOWED_HOSTS"]["value"] == EXPECTED_DJANGO_ALLOWED_HOSTS
+    assert web_env["CSRF_TRUSTED_ORIGINS"]["value"] == EXPECTED_CSRF_TRUSTED_ORIGINS
+    # Linking stays on the proven Render origin until a separate, deliberate
+    # Telegram cutover; adding browser hosts must not silently change it.
+    assert web_env["TELEGRAM_PUBLIC_BASE_URL"]["value"] == EXPECTED_PUBLIC_ORIGIN
+
+    changed = deepcopy(blueprint)
+    changed_env = {entry["key"]: entry for entry in _service(changed, "advisor-system")["envVars"]}
+    changed_env["DJANGO_ALLOWED_HOSTS"]["value"] = "advisor-system-v9zs.onrender.com"
+    changed_env["CSRF_TRUSTED_ORIGINS"]["value"] = EXPECTED_PUBLIC_ORIGIN
+
+    errors = validate_blueprint(changed, project_root=PROJECT_ROOT)
+
+    assert any("DJANGO_ALLOWED_HOSTS" in error for error in errors)
+    assert any("CSRF_TRUSTED_ORIGINS" in error for error in errors)
 
 
 @pytest.mark.parametrize("secret_key", ["SENDGRID_API_KEY", "SENDGRID_FROM_EMAIL"])

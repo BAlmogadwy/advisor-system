@@ -1,8 +1,9 @@
 # MyUniProject — Academic Advising & Timetabling
 
 Django web app for academic advisors at a Saudi university. Single Django app
-(`core/`); SQLite locally, PostgreSQL on Render. Live at
-[advisor-system-v9zs.onrender.com](https://advisor-system-v9zs.onrender.com).
+(`core/`); SQLite locally, PostgreSQL on Render. The production custom domain is
+[smartacademicadviser.online](https://smartacademicadviser.online); the direct
+[Render origin](https://advisor-system-v9zs.onrender.com) remains available.
 
 ## Run locally
 
