@@ -197,6 +197,40 @@ def test_the_composed_answer_carries_both_baselines_and_survives_the_checker(
     assert _check(answer, payload) == []
 
 
+def test_the_answer_opens_with_a_verdict_and_scopes_the_effect_line(
+    divergent_plan: None,
+) -> None:
+    """The owner's live read of the first shipped shape: an unscoped «لم
+    يتغيّر…» at the top followed by a section whose numbers change read as a
+    wrong sentence.  The answer now OPENS with a verdict naming each
+    baseline beside its own outcome, and the effect line carries its
+    baseline's name."""
+    payload = _what_if_payload()
+    answer = _safe_graduation_answer("Arabic", [payload], "")
+
+    first_line = answer.splitlines()[0]
+    assert first_line.startswith("الخلاصة:")
+    assert "الجدول المسجّل فعليًا" in first_line
+    assert "الموصى بها" in first_line
+    assert "\nوفق الجدول المسجّل فعليًا: " in answer
+    assert "وبما أن مقررات البداية أعلاه تختلف عن" in answer
+    assert _check(answer, payload) == []
+
+
+def test_the_verdict_phrase_tracks_the_computed_effect() -> None:
+    from core.services.student_advisor_v2 import _what_if_verdict_phrase
+
+    assert (
+        _what_if_verdict_phrase({"timing_effect": "SAME"}, "Arabic") == "لا يغيّر تقدير موعد تخرجك"
+    )
+    later = _what_if_verdict_phrase({"timing_effect": "LATER", "term_difference": 2}, "Arabic")
+    assert "يؤخّر" in later and "2" in later
+    earlier = _what_if_verdict_phrase({"timing_effect": "EARLIER", "terms_saved": 1}, "English")
+    assert "forward" in earlier and "1 term" in earlier
+    assert _what_if_verdict_phrase({"timing_effect": "NOT_DETERMINABLE"}, "Arabic") == ""
+    assert _what_if_verdict_phrase({"timing_effect": "UNRESOLVED_WORSE"}, "English") == ""
+
+
 def test_the_default_orientation_names_the_course_the_registered_side_lacks(
     divergent_plan: None,
 ) -> None:
