@@ -281,6 +281,33 @@ def test_matching_baselines_suppress_the_alternate_via_the_differ_guard(
     assert payload.get("what_if_alternate_baseline") is None
 
 
+def test_an_alternate_failure_never_kills_the_primary_answer(
+    divergent_plan: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The alternate is an enhancement.  Un-isolated, an exception in it
+    rode up to the registry's catch-all and turned the WHOLE call into
+    ok:False - the student lost the primary simulation they were owed and
+    the turn could only refuse."""
+    from core.services import student_graduation as sg
+
+    real = sg.build_graduation_what_if
+    calls = {"n": 0}
+
+    def exploding_second(*args, **kwargs):
+        calls["n"] += 1
+        if calls["n"] > 1:
+            raise RuntimeError("production-data edge in the alternate baseline")
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(sg, "build_graduation_what_if", exploding_second)
+    payload = _what_if_payload()
+
+    assert payload.get("ok", True) is True
+    assert isinstance(payload.get("what_if"), dict)
+    assert payload["what_if"]["valid"] is True
+    assert payload.get("what_if_alternate_baseline") is None
+
+
 def test_a_producer_without_display_rows_cannot_disable_the_feature(
     divergent_plan: None, monkeypatch: pytest.MonkeyPatch
 ) -> None:

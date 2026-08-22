@@ -2009,14 +2009,26 @@ def _exec_graduation_progress(
             if planning_baseline_kind == RECOMMENDED_CURRENT_TERM
             else RECOMMENDED_CURRENT_TERM
         )
-        g_other = build_graduation_what_if(
-            int(student_id),
-            int(year),
-            int(term),
-            planning_baseline_kind=other_kind,
-            remove_current_courses=[str(code) for code in remove_courses],
-            add_current_courses=[str(code) for code in add_courses],
-        )
+        # The alternate is an ENHANCEMENT on top of a primary result the
+        # student is already owed.  Un-isolated, any exception here rode up
+        # to the registry's catch-all and turned the whole call into
+        # ok:False - the successful primary simulation died with the
+        # optional second one, and the turn could only refuse.
+        try:
+            g_other = build_graduation_what_if(
+                int(student_id),
+                int(year),
+                int(term),
+                planning_baseline_kind=other_kind,
+                remove_current_courses=[str(code) for code in remove_courses],
+                add_current_courses=[str(code) for code in add_courses],
+            )
+        except Exception:
+            logger.exception(
+                "Alternate-baseline what-if failed for student %s; answering on the primary only",
+                student_id,
+            )
+            g_other = None
         other_what_if = (g_other or {}).get("what_if")
         if isinstance(other_what_if, dict) and other_what_if.get("valid"):
 
