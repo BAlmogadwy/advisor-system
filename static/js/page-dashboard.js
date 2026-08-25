@@ -1761,7 +1761,8 @@ const IS_AR = document.documentElement.lang === 'ar';
       btn.innerHTML = '<span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 12h14M12 5l7 7-7 7"/></svg></span>' + T.run;
       return;
     }
-    q('dbgMeta').textContent = T.debugMeta(data.count, data.filters?.section || '-', data.filters?.program || '-', (data.filters?.join_year_prefixes || []).join(',') || '-') if (data.filters?.mode) q('dbgMeta').textContent += ` • mode=${data.filters.mode}`;
+    q('dbgMeta').textContent = T.debugMeta(data.count, data.filters?.section || '-', data.filters?.program || '-', (data.filters?.join_year_prefixes || []).join(',') || '-');
+    if (data.filters?.mode) q('dbgMeta').textContent += ` • mode=${data.filters.mode}`;
     q('dbgMeta').className = 'meta-banner meta-info';
     const withRec = (data.items || []).filter((x) => (x.recommended_courses || []).length > 0).length;
     q('dbgCount').textContent = String(data.count || 0);
