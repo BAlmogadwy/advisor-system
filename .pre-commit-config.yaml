@@ -37,6 +37,16 @@ repos:
         exclude: ^policies/sources/
   - repo: local
     hooks:
+      # The dashboard is ONE classic <script>: a parse error anywhere in it
+      # stops the whole file executing, so every panel dies at once — and the
+      # Python suite stays green throughout, because pytest never parses JS.
+      # That shipped once (a Python-style postfix `if` in page-dashboard.js).
+      # node --check is the cheapest possible gate against a repeat.
+      - id: js-syntax
+        name: js parses (node --check)
+        entry: node --check
+        language: system
+        files: ^static/js/.*\.js$
       - id: no-control-characters
         name: no control characters in source
         entry: python scripts/check_control_chars.py

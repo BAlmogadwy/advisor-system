@@ -228,6 +228,49 @@ def test_xlsx_export_names_strict_in_filename(
     assert f"recommendation_debug_{PROG}_{YEAR}_T{SEM}_strict.xlsx" in res["Content-Disposition"]
 
 
+def test_xlsx_export_relaxed_keeps_plain_filename(
+    admin_client: Client, student_with_split_prereqs: int
+) -> None:
+    """The converse matters as much: a relaxed file must not claim to be strict.
+
+    Without this, a mutation that appends ``_strict`` unconditionally passes
+    every other test in the file.
+    """
+    res = admin_client.get(
+        f"/export/recommendation-debug.xlsx?year={YEAR}&semester={SEM}&program={PROG}"
+    )
+    assert res.status_code == 200
+    assert f"recommendation_debug_{PROG}_{YEAR}_T{SEM}.xlsx" in res["Content-Disposition"]
+    assert "_strict" not in res["Content-Disposition"]
+
+
+@pytest.mark.parametrize(
+    ("strict", "expected_label"),
+    [(True, "Strict (passed only)"), (False, "Relaxed (passed+studying)")],
+)
+def test_xlsx_summary_sheet_names_the_mode(
+    student_with_split_prereqs: int, strict: bool, expected_label: str
+) -> None:
+    """Read the Mode cell, not just the filename.
+
+    The filename is lost the moment someone renames the download; the Summary
+    sheet is the copy that travels with the data. Asserting only the filename
+    let a swapped label survive the whole suite.
+    """
+    import openpyxl
+
+    from core.services.debug_export import export_recommendation_debug_xlsx
+
+    payload = build_recommendation_debug_report(YEAR, SEM, program=PROG, strict_passed_only=strict)
+    wb = openpyxl.load_workbook(export_recommendation_debug_xlsx(payload))
+    try:
+        summary = wb["Summary"]
+        assert summary.cell(row=4, column=1).value == "Mode"
+        assert summary.cell(row=4, column=2).value == expected_label
+    finally:
+        wb.close()
+
+
 # ── the eligibility screen consumes the same helpers (regression guard) ──────
 
 
