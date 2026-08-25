@@ -45,7 +45,16 @@ def build_recommendation_debug_report(
     program: str | None = None,
     join_year_prefixes: list[str] | None = None,
     limit: int = 150,
+    strict_passed_only: bool = False,
 ) -> dict:
+    """Per-student recommendation trace for the debug screen.
+
+    ``strict_passed_only`` is the same Relaxed/Strict switch the course
+    eligibility screen has: relaxed (default) treats currently-studied courses
+    as satisfying prerequisites; strict counts only passes. The mode is echoed
+    in ``filters.mode`` so every export names the assumption it was built under.
+    """
+    mode = "strict" if strict_passed_only else "relaxed"
     student_ids = _build_students_query(section, program, join_year_prefixes)[:limit]
 
     if not student_ids:
@@ -58,6 +67,7 @@ def build_recommendation_debug_report(
                 "limit": limit,
                 "year": current_academic_year,
                 "semester": current_semester,
+                "mode": mode,
             },
             "items": [],
         }
@@ -103,10 +113,19 @@ def build_recommendation_debug_report(
 
     # 4. Batch recommendations
     if program and "," not in program:
-        all_recs = batch_recommend(student_ids, program, current_academic_year, current_semester)
+        all_recs = batch_recommend(
+            student_ids,
+            program,
+            current_academic_year,
+            current_semester,
+            strict_passed_only=strict_passed_only,
+        )
     else:
         all_recs = batch_recommend_multi_program(
-            student_ids, current_academic_year, current_semester
+            student_ids,
+            current_academic_year,
+            current_semester,
+            strict_passed_only=strict_passed_only,
         )
 
     # ── Build items from pre-loaded data ─────────────────────────
@@ -161,6 +180,7 @@ def build_recommendation_debug_report(
             "limit": limit,
             "year": current_academic_year,
             "semester": current_semester,
+            "mode": mode,
         },
         "items": items,
     }

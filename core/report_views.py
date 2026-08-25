@@ -1478,6 +1478,8 @@ def recommendation_debug_view(request: HttpRequest) -> JsonResponse:
         [x.strip() for x in join_years_raw.split(",") if x.strip()] if join_years_raw else None
     )
     limit = _safe_int(request.GET.get("limit"), 150)
+    # Same vocabulary as course_eligibility_view: mode=strict, anything else relaxed.
+    strict_mode = (request.GET.get("mode") or "").strip().lower() == "strict"
 
     scope_err = require_program_scope(request, program)
     if scope_err:
@@ -1490,6 +1492,7 @@ def recommendation_debug_view(request: HttpRequest) -> JsonResponse:
         program=program,
         join_year_prefixes=join_years,
         limit=limit,
+        strict_passed_only=strict_mode,
     )
     return JsonResponse(payload)
 
@@ -1629,12 +1632,15 @@ def export_recommendation_debug_csv_view(request: HttpRequest) -> HttpResponse:
         [x.strip() for x in join_years_raw.split(",") if x.strip()] if join_years_raw else None
     )
     limit = _safe_int(request.GET.get("limit"), 150)
+    strict_mode = (request.GET.get("mode") or "").strip().lower() == "strict"
 
     scope_err = require_program_scope(request, program)
     if scope_err:
         return scope_err
 
-    payload = build_recommendation_debug_report(year, semester, section, program, join_years, limit)
+    payload = build_recommendation_debug_report(
+        year, semester, section, program, join_years, limit, strict_passed_only=strict_mode
+    )
 
     out = StringIO()
     writer = csv.writer(out)
@@ -1662,7 +1668,10 @@ def export_recommendation_debug_csv_view(request: HttpRequest) -> HttpResponse:
             ]
         )
 
-    return _excel_csv_response("recommendation_debug.csv", out.getvalue())
+    # Name the assumption in the file itself: a strict export must not be
+    # mistakable for a relaxed one once it leaves the browser.
+    csv_name = "recommendation_debug_strict.csv" if strict_mode else "recommendation_debug.csv"
+    return _excel_csv_response(csv_name, out.getvalue())
 
 
 @role_required(ROLE_ADVISOR)
@@ -1689,18 +1698,22 @@ def export_recommendation_debug_xlsx_view(request: HttpRequest) -> HttpResponse:
         [x.strip() for x in join_years_raw.split(",") if x.strip()] if join_years_raw else None
     )
     limit = _safe_int(request.GET.get("limit"), 150)
+    strict_mode = (request.GET.get("mode") or "").strip().lower() == "strict"
 
     scope_err = require_program_scope(request, program)
     if scope_err:
         return scope_err
 
-    payload = build_recommendation_debug_report(year, semester, section, program, join_years, limit)
+    payload = build_recommendation_debug_report(
+        year, semester, section, program, join_years, limit, strict_passed_only=strict_mode
+    )
 
     from core.services.debug_export import export_recommendation_debug_xlsx
 
     path = export_recommendation_debug_xlsx(payload)
     prog_label = program or "all"
-    filename = f"recommendation_debug_{prog_label}_{year}_T{semester}.xlsx"
+    mode_suffix = "_strict" if strict_mode else ""
+    filename = f"recommendation_debug_{prog_label}_{year}_T{semester}{mode_suffix}.xlsx"
     response = FileResponse(
         open(path, "rb"),
         content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",

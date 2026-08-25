@@ -1730,9 +1730,9 @@ const IS_AR = document.documentElement.lang === 'ar';
     const btn = q('dbgRun');
     btn.disabled = true;
     btn.innerHTML = '<span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 12h14M12 5l7 7-7 7"/></svg></span>' + T.running;
-    const url = `/report/recommendation-debug/?year=${encodeURIComponent(q('dbgYear').value)}&semester=${encodeURIComponent(q('dbgSemester').value)}&section=${encodeURIComponent(q('dbgSection').value)}&program=${encodeURIComponent(q('dbgProgram').value)}&join_years=${encodeURIComponent(q('dbgJoin').value)}&limit=${encodeURIComponent(q('dbgLimit').value)}`;
-    q('dbgCsv').href = `/export/recommendation-debug.csv?year=${encodeURIComponent(q('dbgYear').value)}&semester=${encodeURIComponent(q('dbgSemester').value)}&section=${encodeURIComponent(q('dbgSection').value)}&program=${encodeURIComponent(q('dbgProgram').value)}&join_years=${encodeURIComponent(q('dbgJoin').value)}&limit=${encodeURIComponent(q('dbgLimit').value)}`;
-    q('dbgXlsx').href = `/export/recommendation-debug.xlsx?year=${encodeURIComponent(q('dbgYear').value)}&semester=${encodeURIComponent(q('dbgSemester').value)}&section=${encodeURIComponent(q('dbgSection').value)}&program=${encodeURIComponent(q('dbgProgram').value)}&join_years=${encodeURIComponent(q('dbgJoin').value)}&limit=${encodeURIComponent(q('dbgLimit').value)}`;
+    const url = `/report/recommendation-debug/?year=${encodeURIComponent(q('dbgYear').value)}&semester=${encodeURIComponent(q('dbgSemester').value)}&section=${encodeURIComponent(q('dbgSection').value)}&program=${encodeURIComponent(q('dbgProgram').value)}&join_years=${encodeURIComponent(q('dbgJoin').value)}&limit=${encodeURIComponent(q('dbgLimit').value)}&mode=${encodeURIComponent(q('dbgMode').value)}`;
+    q('dbgCsv').href = `/export/recommendation-debug.csv?year=${encodeURIComponent(q('dbgYear').value)}&semester=${encodeURIComponent(q('dbgSemester').value)}&section=${encodeURIComponent(q('dbgSection').value)}&program=${encodeURIComponent(q('dbgProgram').value)}&join_years=${encodeURIComponent(q('dbgJoin').value)}&limit=${encodeURIComponent(q('dbgLimit').value)}&mode=${encodeURIComponent(q('dbgMode').value)}`;
+    q('dbgXlsx').href = `/export/recommendation-debug.xlsx?year=${encodeURIComponent(q('dbgYear').value)}&semester=${encodeURIComponent(q('dbgSemester').value)}&section=${encodeURIComponent(q('dbgSection').value)}&program=${encodeURIComponent(q('dbgProgram').value)}&join_years=${encodeURIComponent(q('dbgJoin').value)}&limit=${encodeURIComponent(q('dbgLimit').value)}&mode=${encodeURIComponent(q('dbgMode').value)}`;
     const tbody = document.querySelector('#dbgTable tbody');
     if (!tbody) return;
 
@@ -1761,7 +1761,7 @@ const IS_AR = document.documentElement.lang === 'ar';
       btn.innerHTML = '<span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 12h14M12 5l7 7-7 7"/></svg></span>' + T.run;
       return;
     }
-    q('dbgMeta').textContent = T.debugMeta(data.count, data.filters?.section || '-', data.filters?.program || '-', (data.filters?.join_year_prefixes || []).join(',') || '-');
+    q('dbgMeta').textContent = T.debugMeta(data.count, data.filters?.section || '-', data.filters?.program || '-', (data.filters?.join_year_prefixes || []).join(',') || '-') if (data.filters?.mode) q('dbgMeta').textContent += ` • mode=${data.filters.mode}`;
     q('dbgMeta').className = 'meta-banner meta-info';
     const withRec = (data.items || []).filter((x) => (x.recommended_courses || []).length > 0).length;
     q('dbgCount').textContent = String(data.count || 0);
@@ -2333,7 +2333,7 @@ const IS_AR = document.documentElement.lang === 'ar';
     });
   });
 
-  ['studentIdInput','batchYear','batchSemester','batchProgram','batchSection','dbgYear','dbgSemester','dbgSection','dbgProgram','dbgJoin','dbgLimit','cmYear','cmSemester','cmSection','cmProgram','cmJoin','cmLimit','elCourse','elSection','elProgram','elJoin','elMode','hpYear','hpSemester','hpSection','hpProgram','hpJoin','hpParity','hpDiscount','hpMinScore','hpTopK','hpStudying'].forEach((id) => {
+  ['studentIdInput','batchYear','batchSemester','batchProgram','batchSection','dbgYear','dbgSemester','dbgSection','dbgProgram','dbgJoin','dbgLimit','dbgMode','cmYear','cmSemester','cmSection','cmProgram','cmJoin','cmLimit','elCourse','elSection','elProgram','elJoin','elMode','hpYear','hpSemester','hpSection','hpProgram','hpJoin','hpParity','hpDiscount','hpMinScore','hpTopK','hpStudying'].forEach((id) => {
     const el = q(id);
     if (el) el.addEventListener('change', syncExportCenterLinks);
   });
@@ -2341,8 +2341,8 @@ const IS_AR = document.documentElement.lang === 'ar';
 
   q('batchSavePreset')?.addEventListener('click', () => savePreset('batch', ['batchYear','batchSemester','batchProgram','batchSection']));
   q('batchLoadPreset')?.addEventListener('click', () => loadPreset('batch', ['batchYear','batchSemester','batchProgram','batchSection']));
-  q('dbgSavePreset')?.addEventListener('click', () => savePreset('debug', ['dbgYear','dbgSemester','dbgSection','dbgProgram','dbgJoin','dbgLimit']));
-  q('dbgLoadPreset')?.addEventListener('click', () => loadPreset('debug', ['dbgYear','dbgSemester','dbgSection','dbgProgram','dbgJoin','dbgLimit']));
+  q('dbgSavePreset')?.addEventListener('click', () => savePreset('debug', ['dbgYear','dbgSemester','dbgSection','dbgProgram','dbgJoin','dbgLimit','dbgMode']));
+  q('dbgLoadPreset')?.addEventListener('click', () => loadPreset('debug', ['dbgYear','dbgSemester','dbgSection','dbgProgram','dbgJoin','dbgLimit','dbgMode']));
   q('cmSavePreset')?.addEventListener('click', () => savePreset('conflictmatrix', ['cmYear','cmSemester','cmSection','cmProgram','cmJoin','cmLimit']));
   q('cmLoadPreset')?.addEventListener('click', () => loadPreset('conflictmatrix', ['cmYear','cmSemester','cmSection','cmProgram','cmJoin','cmLimit']));
   q('elSavePreset')?.addEventListener('click', () => savePreset('eligibility', ['elCourse','elSection','elProgram','elJoin','elMode']));
