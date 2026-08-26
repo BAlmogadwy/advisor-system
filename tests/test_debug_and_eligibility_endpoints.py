@@ -27,7 +27,8 @@ def test_recommendation_debug_endpoint(monkeypatch: MonkeyPatch) -> None:
         section=None,
         program=None,
         join_year_prefixes=None,
-        limit=150: {
+        limit=150,
+        strict_passed_only=False: {
             "count": 1,
             "filters": {"year": current_academic_year, "semester": current_semester},
             "items": [
@@ -97,7 +98,8 @@ def test_export_recommendation_debug_csv(monkeypatch: MonkeyPatch) -> None:
         section=None,
         program=None,
         join_year_prefixes=None,
-        limit=150: {
+        limit=150,
+        strict_passed_only=False: {
             "count": 1,
             "items": [
                 {

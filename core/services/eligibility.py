@@ -29,6 +29,33 @@ def split_hour_prereqs(prereqs: list[str]) -> tuple[list[str], int]:
     return courses, required_hours
 
 
+def effective_credits(earned: int, registered: int, *, strict_passed_only: bool = False) -> int:
+    """Credits that count toward an hour gate under the chosen mode.
+
+    THE single definition of relaxed vs strict for hour gates. Relaxed counts
+    currently-registered credits as if they will be earned; strict counts only
+    what is already earned. Both the eligibility report and the batch
+    recommender consume this — a second inline copy of the rule is how the two
+    screens once came to disagree about who may take a capstone.
+    """
+    return int(earned or 0) if strict_passed_only else int(earned or 0) + int(registered or 0)
+
+
+def prereq_satisfied(
+    prereq: str,
+    passed: set[str],
+    studying: set[str],
+    *,
+    strict_passed_only: bool = False,
+) -> bool:
+    """Is a single course prerequisite met under the chosen mode?
+
+    THE single definition of relaxed vs strict for course prerequisites:
+    relaxed accepts a course currently being studied; strict demands a pass.
+    """
+    return prereq in passed or (not strict_passed_only and prereq in studying)
+
+
 def hour_gate(
     student_id: int | str,
     required_hours: int,
@@ -49,7 +76,7 @@ def hour_gate(
     earned, current = (row[0] or 0, row[1] or 0) if row else (0, 0)
     if registered_credits_override is not None:
         current = max(0, int(registered_credits_override))
-    effective = earned if strict_passed_only else earned + current
+    effective = effective_credits(earned, current, strict_passed_only=strict_passed_only)
     return {
         "required": int(required_hours),
         "earned": int(earned),
@@ -166,14 +193,17 @@ def build_course_eligibility_report(
                     .first()
                 )
                 earned, current = (stu[0] or 0, stu[1] or 0) if stu else (0, 0)
-                effective = earned if strict_passed_only else earned + current
+                effective = effective_credits(
+                    earned, current, strict_passed_only=strict_passed_only
+                )
                 if effective < required_hours:
                     hour_ok = False
 
-            if strict_passed_only:
-                missing = [p for p in course_prereqs if p not in passed]
-            else:
-                missing = [p for p in course_prereqs if p not in passed and p not in studying]
+            missing = [
+                p
+                for p in course_prereqs
+                if not prereq_satisfied(p, passed, studying, strict_passed_only=strict_passed_only)
+            ]
             if not hour_ok:
                 missing.append(f"{required_hours}(HOURS)")
             ok = len(missing) == 0

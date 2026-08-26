@@ -239,6 +239,16 @@ def export_recommendation_debug_xlsx(payload: dict) -> Path:
     ws_sum.cell(row=3, column=2, value=filters.get("program", "All"))
     ws_sum.cell(row=3, column=3, value="Section").font = bold_font
     ws_sum.cell(row=3, column=4, value=filters.get("section", "All"))
+    # The assumption the whole report was built under; an adviser reading the
+    # file weeks later must not have to guess whether studying courses counted.
+    ws_sum.cell(row=4, column=1, value="Mode").font = bold_font
+    ws_sum.cell(
+        row=4,
+        column=2,
+        value="Strict (passed only)"
+        if filters.get("mode") == "strict"
+        else "Relaxed (passed+studying)",
+    )
 
     # Metrics
     total = len(items)

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
@@ -625,7 +626,12 @@ def test_dashboard_scrape_source_ui_contract() -> None:
     assert "scrapeDatabaseExcluded" in javascript
     assert "q('scrapeSource').value = 'csv';" in javascript
     assert "h.student_source === 'database'" in javascript
-    assert "page-dashboard.js' %}?v=11" in script_include
+    # The CONTRACT is "the dashboard script is cache-busted", not "the buster is
+    # currently 11". Pinning the literal number made every legitimate bump a
+    # test failure, which teaches the next person to edit the number rather than
+    # think about it — and a bump is exactly what must happen whenever
+    # page-dashboard.js changes, or returning browsers keep the stale file.
+    assert re.search(r"page-dashboard\.js' %}\?v=\d+", script_include), script_include
 
 
 def test_dashboard_renders_scraper_only_for_superadmin() -> None:
