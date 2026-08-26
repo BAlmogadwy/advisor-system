@@ -48,6 +48,82 @@ def test_high_priority_cache_reuses_program_results(monkeypatch: pytest.MonkeyPa
     assert calls["n"] == 1
 
 
+@pytest.mark.parametrize(
+    ("current_term", "expected_report_parity", "expected_pattern"),
+    [(1, 0, "odd"), (2, 1, "even")],
+)
+def test_portfolio_maps_global_term_to_study_plan_parity(
+    monkeypatch: pytest.MonkeyPatch,
+    current_term: int,
+    expected_report_parity: int,
+    expected_pattern: str,
+) -> None:
+    monkeypatch.setattr(advisors, "_hp_missing_cache", {})
+    monkeypatch.setattr(
+        advisors,
+        "load_defaults",
+        lambda: {"currentYear": 1448, "currentTerm": current_term},
+    )
+    received: dict[str, object] = {}
+
+    def fake_hp(**kwargs: object) -> dict[str, list[object]]:
+        received.update(kwargs)
+        return {
+            "items": [
+                {
+                    "student_id": 9910001,
+                    "missing_this_parity": [{"course_code": "CS163", "score": 4.83}],
+                }
+            ]
+        }
+
+    monkeypatch.setattr(advisors, "run_missing_high_priority_report", fake_hp)
+
+    result = advisors._get_high_priority_by_program("DS2")
+
+    assert received["year"] == 1448
+    assert received["semester"] == current_term
+    assert received["term_parity"] == expected_report_parity
+    assert result[9910001][0]["term_pattern"] == expected_pattern
+
+
+def test_high_priority_cache_changes_with_global_term(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(advisors, "_hp_missing_cache", {})
+    defaults = {"currentYear": 1448, "currentTerm": 1}
+    monkeypatch.setattr(advisors, "load_defaults", lambda: dict(defaults))
+    received_parities: list[object] = []
+
+    def fake_hp(**kwargs: object) -> dict[str, list[object]]:
+        received_parities.append(kwargs["term_parity"])
+        return {"items": []}
+
+    monkeypatch.setattr(advisors, "run_missing_high_priority_report", fake_hp)
+
+    advisors._get_high_priority_by_program("DS2")
+    defaults["currentTerm"] = 2
+    advisors._get_high_priority_by_program("DS2")
+
+    assert received_parities == [0, 1]
+
+
+def test_portfolio_does_not_invent_parity_outside_main_terms(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(advisors, "_hp_missing_cache", {})
+    monkeypatch.setattr(
+        advisors,
+        "load_defaults",
+        lambda: {"currentYear": 1448, "currentTerm": 3},
+    )
+
+    def unexpected_report(**kwargs: object) -> dict[str, list[object]]:
+        raise AssertionError(f"report should not run outside terms 1 and 2: {kwargs}")
+
+    monkeypatch.setattr(advisors, "run_missing_high_priority_report", unexpected_report)
+
+    assert advisors._get_high_priority_by_program("DS2") == {}
+
+
 def test_list_students_by_advisor_sorted_by_attention_then_gpa(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -94,9 +94,10 @@ const T = {
   // ── HP table headers ──
   course:             IS_AR ? 'المقرر'                               : 'Course',
   score:              IS_AR ? 'الدرجة'                               : 'Score',
-  bucket:             IS_AR ? 'الفئة'                                : 'Bucket',
-  thisParity:         IS_AR ? 'هذا الطرف'                            : 'This parity',
-  other:              IS_AR ? 'آخر'                                  : 'Other',
+  planTermPattern:    IS_AR ? 'نمط فصول الخطة'                    : 'Plan-term pattern',
+  oddPlanTerms:       IS_AR ? 'فردي (1، 3، 5، 7)'                  : 'Odd (1, 3, 5, 7)',
+  evenPlanTerms:      IS_AR ? 'زوجي (2، 4، 6، 8)'                  : 'Even (2, 4, 6, 8)',
+  currentTermPattern: IS_AR ? 'مطابق لنمط الفصل الحالي'             : 'Matches current term',
 
   // ── GPA chart ──
   nStudentsTitle:  (n) => IS_AR ? `${n} طالب`                       : `${n} students`,
@@ -515,8 +516,13 @@ function openDrawer(sid) {
   const reasonMap = { low_gpa: T.lowGpa, high_priority_missing: T.hpMissing, zero_current_term_hours: T.zeroHours };
   const reasons = (Array.isArray(s.attention_reasons) ? s.attention_reasons : []).map(r => esc(reasonMap[r]||r)).join(', ') || T.none;
   const hpList = Array.isArray(s.high_priority_missing_courses) ? s.high_priority_missing_courses : [];
+  const termPatternLabel = c => c.term_pattern === 'odd'
+    ? T.oddPlanTerms
+    : c.term_pattern === 'even'
+      ? T.evenPlanTerms
+      : T.currentTermPattern;
   const hpHtml = hpList.length
-    ? `<div class="table-wrap" style="max-height:200px;margin-top:0.4rem;"><table class="table table-sm mb-0"><thead><tr><th scope="col">${T.course}</th><th scope="col">${T.score}</th><th scope="col">${T.bucket}</th></tr></thead><tbody>${hpList.map(c=>`<tr><td>${esc(c.course_code||'—')}</td><td>${Number(c.score||0).toFixed(2)}</td><td>${c.bucket==='this_parity'?T.thisParity:T.other}</td></tr>`).join('')}</tbody></table></div>`
+    ? `<div class="table-wrap" style="max-height:200px;margin-top:0.4rem;"><table class="table table-sm mb-0"><thead><tr><th scope="col">${T.course}</th><th scope="col">${T.score}</th><th scope="col">${T.planTermPattern}</th></tr></thead><tbody>${hpList.map(c=>`<tr><td>${esc(c.course_code||'—')}</td><td>${Number(c.score||0).toFixed(2)}</td><td>${termPatternLabel(c)}</td></tr>`).join('')}</tbody></table></div>`
     : `<span style="color:var(--muted-light);font-size:0.82rem;">${T.noHpMissing}</span>`;
 
   const plannerHref = `/planner/?student=${encodeURIComponent(sid)}`;

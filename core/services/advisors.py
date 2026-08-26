@@ -122,23 +122,49 @@ def _to_float(value: object, default: float = 0.0) -> float:
 
 
 _HP_CACHE_TTL_SECONDS = 300
-_hp_missing_cache: dict[str, tuple[float, dict[int, list[dict[str, object]]]]] = {}
+_hp_missing_cache: dict[tuple[str, int, int], tuple[float, dict[int, list[dict[str, object]]]]] = {}
+
+
+def _report_parity_for_current_term(current_term: int) -> int:
+    """Translate the global semester number to the report's legacy flag.
+
+    Site defaults use the registrar-facing values ``1`` (first semester) and
+    ``2`` (second semester).  The high-priority report predates those defaults
+    and uses ``0`` for odd study-plan terms and ``1`` for even study-plan
+    terms, so passing ``currentTerm`` through unchanged reverses semester one.
+    """
+
+    if current_term not in (1, 2):
+        raise ValueError("currentTerm must be 1 or 2 for advisor portfolio parity")
+    return current_term - 1
 
 
 def _get_high_priority_by_program(program: str) -> dict[int, list[dict[str, object]]]:
     now = time.time()
-    cached = _hp_missing_cache.get(program)
+
+    # Use the global current semester.  Include it in the cache key so changing
+    # System Defaults switches the portfolio immediately rather than serving
+    # the previous semester's bucket until the five-minute TTL expires.
+    defaults = load_defaults()
+    current_year = _to_int(defaults.get("currentYear"), 1447)
+    current_term = _to_int(defaults.get("currentTerm"), 1)
+    cache_key = (program, current_year, current_term)
+
+    cached = _hp_missing_cache.get(cache_key)
     if cached and (now - cached[0]) < _HP_CACHE_TTL_SECONDS:
         return cached[1]
 
-    # Use only the new system defaults (currentYear / currentTerm)
-    defaults = load_defaults()
-    current_year = defaults.get("currentYear", 1447)
-    term_parity = defaults.get("currentTerm", 1)
+    # The portfolio's odd/even pattern is defined only for the two main
+    # semesters.  Do not invent a parity for any other configured term.
+    if current_term not in (1, 2):
+        _hp_missing_cache[cache_key] = (now, {})
+        return {}
+
+    term_parity = _report_parity_for_current_term(current_term)
 
     report = run_missing_high_priority_report(
         year=current_year,
-        semester=term_parity,
+        semester=current_term,
         section=None,
         program=program,
         join_year_prefixes=None,
@@ -166,12 +192,13 @@ def _get_high_priority_by_program(program: str) -> dict[int, list[dict[str, obje
                     "course_code": str(c.get("course_code", "")),
                     "score": _to_float(c.get("score", 0.0)),
                     "bucket": "this_parity",
+                    "term_pattern": "odd" if current_term == 1 else "even",
                 }
             )
         if merged:
             parsed[sid] = merged
 
-    _hp_missing_cache[program] = (now, parsed)
+    _hp_missing_cache[cache_key] = (now, parsed)
     # Cap cache size to prevent unbounded memory growth
     if len(_hp_missing_cache) > 20:
         oldest_key = min(_hp_missing_cache, key=lambda k: _hp_missing_cache[k][0])
