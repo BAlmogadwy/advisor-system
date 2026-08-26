@@ -1,9 +1,11 @@
 """Student Advisor V2: one agent over a deliberately small, read-only surface.
 
 This runtime is intentionally separate from ``virtual_advisor``.  The old runtime
-classifies a question into intent families before the model sees it.  V2 does not:
-one conversational agent decides which academic evidence it needs, calls the
-corresponding read-only capabilities, observes the results, and answers.
+classifies a question into intent families before the model sees it.  V2 does not
+emit those labels, but it retains defensive question-pattern gates that force
+evidence for several high-risk request shapes.  The optional V2.1 strategy replaces
+that capability routing with one schema-constrained semantic evidence plan and
+server-rendered verified results.
 
 Product invariant
 -----------------
@@ -20,9 +22,11 @@ import json
 import logging
 import re
 import time
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 from django.conf import settings
+from django.core.exceptions import ImproperlyConfigured
 
 from core.models import Student
 from core.services.advisor_channel_privacy import (
@@ -45,7 +49,6 @@ from core.services.advisor_evidence_audit import (
     STUDENT_V2_PROMPT_VERSION,
     build_evidence_audit,
 )
-from core.services.advisor_intent import owning_capability
 from core.services.advisor_presentations import (
     graduation_presentation_from_tool_results,
     normalise_presentation,
@@ -59,12 +62,14 @@ from core.services.answer_consistency import (
     EXACT_FACT_TOOLS,
     REQUIRED_EVIDENCE_MISSING,
     UNSUPPORTED_ACADEMIC_FACT,
+    EvidenceValidationScope,
     check_answer,
 )
 from core.services.arabic_text import normalise as normalise_arabic_text
 from core.services.course_catalogue import known_course_codes as _known_course_codes
 from core.services.llm_backend import (
     LLMError,
+    LLMInvalidResponse,
     LLMUnavailable,
     UsageTotals,
     get_llm_client,
@@ -72,6 +77,10 @@ from core.services.llm_backend import (
 from core.services.llm_remote_privacy import fold_digits, project_prior_presentation
 from core.services.policy_contract import requires_policy_contract
 from core.services.rbac import ROLE_STUDENT
+from core.services.student_advisor_v21_prompt import (
+    STUDENT_V21_PLANNER_SYSTEM_PROMPT,
+    build_student_v21_planner_messages,
+)
 from core.services.student_graduation import (
     RECOMMENDED_CURRENT_TERM as _GRADUATION_RECOMMENDED_CURRENT_TERM,
 )
@@ -95,6 +104,8 @@ from core.services.virtual_advisor import (
 )
 from core.services.virtual_advisor_capabilities import get_default_registry
 
+STUDENT_V21_PROMPT_VERSION = "student-v21-semantic-plan-v18"
+
 # Stable ordering keeps the tool list and prompt/test behavior reproducible. These names are
 # existing, audited capability implementations. Timetable access is limited to
 # read-only inspection and proposal generation; the legacy action tool stays out.
@@ -114,6 +125,21 @@ STUDENT_V2_TOOL_NAMES: tuple[str, ...] = (
     "graduation_progress",
     "policy_lookup",
     "my_advisor",
+)
+
+STUDENT_V21_COMPOUND_TOOL_NAMES: tuple[str, ...] = (
+    "recommend_feasible_course_addition",
+    "rank_current_course_drop_impact",
+    "improve_current_timetable",
+)
+
+# V2.1 deliberately withholds the broad context aggregate until that payload has
+# field-level postconditions for GPA/credit claims. The semantic planner can use
+# the narrower typed capabilities (especially my_progress) without creating a
+# route where unrelated verified data launders a fabricated personal metric.
+STUDENT_V21_TOOL_NAMES: tuple[str, ...] = (
+    tuple(name for name in STUDENT_V2_TOOL_NAMES if name != "get_student_context")
+    + STUDENT_V21_COMPOUND_TOOL_NAMES
 )
 
 FORBIDDEN_STUDENT_V2_TOOLS = frozenset(
@@ -231,8 +257,10 @@ Operating rules:
 - You CAN read the current timetable, inspect clash-free sections, and build real
   clash-checked timetable proposals from the section catalogue. For any request to build,
   create, rebuild, arrange, or show timetable alternatives, call
-  build_timetable_proposal. Use mode=around_current when current sections must stay fixed
-  and mode=from_scratch when the student asks for a fresh arrangement. Never say that
+  build_timetable_proposal. Use mode=around_current only when the student explicitly asks
+  to retain the whole current/baseline timetable or add around it. A generic build/create request,
+  and a request to build/adjust the non-pinned remainder around specific hard pins, uses
+  mode=from_scratch so non-pinned sections may vary. Never say that
   timetable times or clash detection are unavailable when this tool can answer.
 - Preserve hard timetable constraints exactly. Pass explicitly mandatory courses in
   must_take_courses. Pass an exact requested section as a course_code/section_label item in
@@ -447,15 +475,140 @@ _TIMETABLE_AROUND_CURRENT_PATTERN = re.compile(
 # question. These patterns therefore extract only explicit, mechanically verifiable
 # constraints from the student's own sentence. Database ids never enter this layer.
 _TIMETABLE_CONSTRAINT_COURSE_PATTERN = re.compile(
-    r"\b[A-Z]{2,6}\s*-?\s*\d{1,4}\b",
+    # Short one/two-digit catalogue placeholders such as ``AI1`` are valid
+    # only when written as one token. Requiring three digits when whitespace
+    # separates the prefix prevents ordinary phrases such as ``at most 18``
+    # from becoming the invented course code ``MOST18``.
+    r"\b(?:[A-Z]{2,6}\s*-?\s*\d{3,4}|[A-Z]{2,6}-?\d{1,2})\b",
     re.IGNORECASE,
 )
 _TIMETABLE_CONSTRAINT_SECTION_PATTERN = re.compile(
     r"\b[A-Z]{1,2}\s*-?\s*\d{1,2}[A-Z]?\b",
     re.IGNORECASE,
 )
+# V2.1 provenance may authorise several pins only when the student's current
+# text contains each course/section relationship in one mechanically correlated
+# token group. This extractor does not decide whether a pin is intended; it only
+# preserves literal pairs already written as ``DS341-M2``, ``DS341/M2``, or
+# ``DS341 section/شعبة M2``. Keeping this separate from V2's single-pin normaliser
+# leaves V2 routing and argument binding unchanged.
+_V21_CORRELATED_SECTION_PIN_PATTERN = re.compile(
+    r"(?<![A-Za-z0-9])"
+    r"(?P<course>(?:[A-Z]{2,6}\s*-?\s*\d{3,4}|[A-Z]{2,6}-?\d{1,2}))"
+    r"(?:\s*[/\-]\s*|\s+(?:(?:the\s+)?sections?|(?:ال)?شعب(?:ة|ه))\s+)"
+    r"(?P<section>[A-Z]{1,2}\s*-?\s*\d{1,2}[A-Z]?)"
+    r"(?![A-Za-z0-9])",
+    re.IGNORECASE,
+)
+_V21_REVERSE_CORRELATED_SECTION_PIN_PATTERN = re.compile(
+    r"(?<![A-Za-z0-9])(?:"
+    r"(?:the\s+)?section\s+"
+    r"(?P<section_en>[A-Z]{1,2}\s*-?\s*\d{1,2}[A-Z]?)\s+"
+    r"(?:for|of|in)\s+(?:(?:the\s+)?course\s+)?"
+    r"(?P<course_en>(?:[A-Z]{2,6}\s*-?\s*\d{3,4}|[A-Z]{2,6}-?\d{1,2}))|"
+    r"(?:ال)?شعب(?:ة|ه)\s+"
+    r"(?P<section_ar>[A-Z]{1,2}\s*-?\s*\d{1,2}[A-Z]?)\s+"
+    r"(?:ل(?:مقرر)?|في\s+(?:مقرر\s+)?)\s*"
+    r"(?P<course_ar>(?:[A-Z]{2,6}\s*-?\s*\d{3,4}|[A-Z]{2,6}-?\d{1,2}))"
+    r")(?![A-Za-z0-9])",
+    re.IGNORECASE,
+)
 _TIMETABLE_PIN_VERB_PATTERN = re.compile(
     r"(?:\bpin(?:ned|ning)?\b|ثب[ّ]?ت(?:ي|ها|ه|لي)?)",
+    re.IGNORECASE,
+)
+# V2.1 uses this narrower polarity check only to prove that an exact pin field
+# was explicitly required in the *current* turn. It never chooses a capability.
+# A bare course/section mention and an explicit "do not pin" clause therefore do
+# not become a hard scheduling constraint merely because their literals are valid.
+_V21_POSITIVE_PIN_OR_RETAIN_PATTERN = re.compile(
+    r"(?:\b(?:pin|pinning|keep|retain|retaining|preserve|preserving|hold|lock)\b|"
+    r"\b(?:want|need|require)\b.{0,32}\bpinned\b|"
+    r"\bdo\s+not\s+change\b|\bdon['’]?t\s+change\b|"
+    r"\b(?:build|create|make|want|need)\b.{0,48}\b(?:timetable|schedule|option)\b"
+    r".{0,32}\b(?:with|including|containing)\b|"
+    r"\b(?:provided|condition)\b.{0,24}\b(?:include|includes|with|contains)\b|"
+    r"\b(?:timetable|schedule)\b.{0,24}\baround\b|"
+    r"(?<![\u0600-\u06FF])ثب[ّ]?ت(?:ي|ها|ه|لي|نا)?|"
+    r"احتفظ|خل[ّ]?ي.*?ثابت|(?:خل|خلي).{0,32}(?:كل\s+(?:الخيارات|الجداول))|"
+    r"لا\s+تغي[ّ]?ر|"
+    r"(?:[اأ]نش[ئي]|ابن|ابني|سو|سوي|ابي|ابغى|اريد|ودي).{0,48}"
+    r"(?:جدول|خيار).{0,32}(?:فيه|فيها|يتضمن|يشمل)|"
+    r"(?:ابي|ابغى|اريد|ودي).{0,64}(?:يكون|تكون).{0,16}"
+    r"(?:موجود|ضمن).{0,32}(?:الخيارات|الجداول)|"
+    r"بشرط.{0,24}(?:يكون|تكون).{0,16}(?:فيه|فيها|موجود|ضمن)|"
+    r"(?:جدول|الجدول).{0,24}حول)",
+    re.IGNORECASE,
+)
+_V21_EXACT_PIN_RETENTION_CUE_PATTERN = re.compile(
+    r"(?:\bmust\s+(?:stay|remain)\s+(?:fixed|unchanged)\b|"
+    r"\bleave\b.{0,48}\bunchanged\b|"
+    r"\b(?:remain|remains|stay|stays)\b.{0,48}"
+    r"\b(?:fixed|unchanged|(?:in\s+)?(?:every|all)\s+(?:option|alternative)s?)\b|"
+    r"زي\s+ما\s+هي|لا\s+تحرك|تظل.{0,32}كل\s+الخيارات)",
+    re.IGNORECASE,
+)
+_V21_NEGATED_PIN_OR_RETAIN_PATTERN = re.compile(
+    r"(?:\b(?:do\s+not|don['’]?t|never)\s+"
+    r"(?:pin|keep|retain|preserve|hold|lock)\b|"
+    r"\b(?:do\s+not|don['’]?t|never)\s+(?:want|need|require)\b"
+    r".{0,40}\b(?:pin|pinned|fixed|retained|included)\b|"
+    r"\b(?:do\s+not|don['’]?t|never)\s+(?:build|create|make)\b"
+    r".{0,48}\b(?:with|including|around)\b|"
+    r"\b(?:not|isn['’]?t|aren['’]?t)\s+(?:pinned|fixed|retained)\b|"
+    r"(?:لا|مو|ما|مش|ليس)\s+(?:أبي\s+|ابي\s+|أبغى\s+|ابغى\s+)?"
+    r"(?:أ?ثب[ّ]?ت|نثب[ّ]?ت|تثب[ّ]?ت|احتفظ)|"
+    r"(?:لا|مو|ما|مش|ليس)\s+(?:ابي|ابغى|اريد|ودي|احتاج).{0,48}"
+    r"(?:مثب[ّ]?ت|ثابت|موجود|ضمن))",
+    re.IGNORECASE,
+)
+_V21_NEGATED_PIN_PRONOUN_PATTERN = re.compile(
+    r"(?:\b(?:do\s+not|don['’]?t|never)\s+"
+    r"(?:pin|keep|retain|preserve|hold|lock)\s+(?:it|them|that)\b|"
+    r"(?:لا|مو|ما|مش|ليس)\s+(?:تثبت|ثبت|احتفظ).{0,12}(?:ها|هم|ه\b|هذا|هذي|ذلك))",
+    re.IGNORECASE,
+)
+_V21_HISTORICAL_PIN_SCOPE_PATTERN = re.compile(
+    r"\b(?:last|previous|prior)\s+(?:term|semester)\b|"
+    r"\bfor\s+(?:the\s+)?(?:last|previous|prior)\s+(?:term|semester)\b|"
+    r"(?:الترم|الفصل)\s+(?:الماضي|السابق)|"
+    r"(?:للترم|للفصل)\s+(?:الماضي|السابق)",
+    re.IGNORECASE,
+)
+_V21_CONSTRAINT_CLAUSE_SPLIT = re.compile(
+    r"[،,؛;.!؟]+|\s+(?:but|however|except|لكن|بس)\s+",
+    re.IGNORECASE,
+)
+_V21_HARD_CONSTRAINT_SCOPE_SPLIT = re.compile(
+    r"[؛;.!؟]+|\s+(?:but|however|except|لكن|بس)\s+",
+    re.IGNORECASE,
+)
+_V21_ADVERSATIVE_SEPARATOR = re.compile(
+    r"\b(?:but|however|except|لكن|بس)\b",
+    re.IGNORECASE,
+)
+_V21_EXPLICIT_CORRECTION_CUE = re.compile(
+    r"\b(?:actually|rather|instead|i\s+mean|correction)\b|"
+    r"(?:بل|[اأ]قصد|الصحيح|تصحيح)",
+    re.IGNORECASE,
+)
+_V21_PIN_REPLACEMENT_SEPARATOR = re.compile(
+    r"\b(?:instead\s+of|rather\s+than)\b|(?:بدل(?:ا\s+من)?|عوض(?:ا\s+عن)?)",
+    re.IGNORECASE,
+)
+_V21_LIST_COMMA = re.compile(r"[،,]+")
+_V21_LIST_CONTINUATION_PREFIX = re.compile(
+    r"^\s*(?:(?:and|also)\b\s*|(?:و|ايضا|كمان)\s*)*",
+    re.IGNORECASE,
+)
+_V21_LIST_CONTINUATION_STOP = re.compile(
+    r"\b(?:build|create|make|generate|arrange|adjust|change|edit|modify|compare|"
+    r"review|check|drop|add|remove)\b|"
+    r"(?:ابن|ابني|انشئ|سو|سوي|رتب|عدل|غير|قارن|راجع|تحقق|احذف|اسقط|اضف|ضيف)",
+    re.IGNORECASE,
+)
+_V21_LIST_CONNECTOR_NOISE = re.compile(
+    r"(?:\s|\b(?:and|also)\b|و|ايضا|كمان)*",
     re.IGNORECASE,
 )
 _TIMETABLE_SECTION_NOUN_PATTERN = re.compile(
@@ -477,6 +630,14 @@ _TIMETABLE_NEGATED_MUST_TAKE_PATTERN = re.compile(
     r"(?:لازم|ضروري)\s+ما\s+(?:آخذ|اخذ|أنزل|انزل))",
     re.IGNORECASE,
 )
+_V21_NEGATED_MUST_TAKE_PATTERN = re.compile(
+    r"(?:\bnot\s+(?:mandatory|required)\b|"
+    r"\b(?:is|are|was|were)\s+not\s+(?:mandatory|required)\b|"
+    r"\b(?:do\s+not|don['’]?t)\s+(?:have|need)\s+to\s+take\b|"
+    r"(?:مو|ما|مش|ليس)\s+(?:لازم|ضروري|إجباري|اجباري)|"
+    r"(?:لازم|ضروري)\s+ما\s+(?:آخذ|اخذ|أنزل|انزل))",
+    re.IGNORECASE,
+)
 _ARABIC_CONJUNCTION_BEFORE_IDENTIFIER = re.compile(
     r"(?<![A-Za-z0-9])و(?=[A-Za-z]{1,6}\s*-?\s*\d)",
 )
@@ -492,6 +653,17 @@ def _fold_constraint_text(text: str) -> str:
     match spans aligned for the course/section overlap check below.
     """
     return _ARABIC_CONJUNCTION_BEFORE_IDENTIFIER.sub(" ", fold_digits(text))
+
+
+def _fold_v21_constraint_text(text: str) -> str:
+    """Fold presentation-only Markdown wrappers for V2.1 literal constraints.
+
+    Each backtick becomes one space so match spans remain aligned. This lets an
+    explicitly related ``course`` + ``section`` pair survive inline-code markup
+    without changing legacy V2 parsing or inferring a cross-product.
+    """
+
+    return _fold_constraint_text(text).replace("`", " ")
 
 
 def _constraint_course_codes(text: str) -> list[str]:
@@ -519,6 +691,48 @@ def _constraint_section_labels(text: str) -> list[str]:
         if label and label not in out:
             out.append(label)
     return out
+
+
+def _v21_correlated_section_pins(text: str) -> list[dict[str, str]]:
+    """Extract exact current-user course/section pairs without a cross-product."""
+
+    folded = _fold_v21_constraint_text(str(text or ""))
+    matches: list[tuple[int, str, str]] = [
+        (match.start(), match.group("course"), match.group("section"))
+        for match in _V21_CORRELATED_SECTION_PIN_PATTERN.finditer(folded)
+    ]
+    matches.extend(
+        (
+            match.start(),
+            match.group("course_en") or match.group("course_ar"),
+            match.group("section_en") or match.group("section_ar"),
+        )
+        for match in _V21_REVERSE_CORRELATED_SECTION_PIN_PATTERN.finditer(folded)
+    )
+    out: list[dict[str, str]] = []
+    for _start, raw_code, raw_label in sorted(matches, key=lambda item: item[0]):
+        code = _normalise_course_code(raw_code)
+        label = re.sub(r"[\s-]+", "", raw_label).upper()
+        pair = {"course_code": code, "section_label": label}
+        if code and label and pair not in out:
+            out.append(pair)
+    return out
+
+
+def _v21_positive_pin_or_retain_match(
+    segment: str,
+    polarity_text: str,
+) -> re.Match[str] | None:
+    """Return a positive cue; paraphrase cues require an exact correlated pin."""
+
+    match = _V21_POSITIVE_PIN_OR_RETAIN_PATTERN.search(segment)
+    if match is None:
+        match = _V21_POSITIVE_PIN_OR_RETAIN_PATTERN.search(polarity_text)
+    if match is not None or not _v21_correlated_section_pins(segment):
+        return match
+    return _V21_EXACT_PIN_RETENTION_CUE_PATTERN.search(
+        segment
+    ) or _V21_EXACT_PIN_RETENTION_CUE_PATTERN.search(polarity_text)
 
 
 def _explicit_pin_from_question(question: str) -> tuple[dict[str, str] | None, bool]:
@@ -564,6 +778,45 @@ def _explicit_must_take_courses(question: str) -> list[str]:
     return out
 
 
+def _v21_explicit_must_take_courses(question: str) -> list[str]:
+    """Positive current-turn mandatory-course literals for V2.1 coverage only."""
+
+    out: list[str] = []
+    for scope in _V21_HARD_CONSTRAINT_SCOPE_SPLIT.split(str(question or "")):
+        continuation_active = False
+        for segment, segment_start in _v21_comma_segments(scope):
+            negative = _V21_NEGATED_MUST_TAKE_PATTERN.search(segment)
+            cue = _TIMETABLE_MUST_TAKE_PATTERN.search(segment)
+            active_cue = negative or cue
+            if active_cue is not None and _v21_control_match_is_inactive(
+                scope,
+                segment_start + active_cue.start(),
+            ):
+                continuation_active = False
+                continue
+            if negative is not None:
+                continuation_active = False
+                for code in _constraint_course_codes(segment):
+                    if code in out:
+                        out.remove(code)
+                continue
+            if cue is not None:
+                continuation_active = False
+                continuation_active = True
+                codes = _constraint_course_codes(segment)
+            elif continuation_active:
+                codes = _v21_course_list_continuation(segment)
+                if not codes:
+                    continuation_active = False
+                    continue
+            else:
+                continue
+            for code in codes:
+                if code not in out:
+                    out.append(code)
+    return out
+
+
 def _normalised_constraint_codes(value: Any) -> list[str]:
     """Sanitise model-provided code lists without creating any new code."""
     values = [value] if isinstance(value, str) else value
@@ -603,7 +856,10 @@ def _normalised_section_pins(value: Any) -> list[dict[str, str]]:
 
 
 def _normalise_timetable_proposal_args(
-    question: str, arguments: dict[str, Any]
+    question: str,
+    arguments: dict[str, Any],
+    *,
+    semantic_plan: bool = False,
 ) -> tuple[dict[str, Any], list[str]]:
     """Carry explicit mode, credit and hard constraints into the planner tool.
 
@@ -625,15 +881,24 @@ def _normalise_timetable_proposal_args(
             reasons.append("explicit_around_current")
         normalised["mode"] = "around_current"
 
-    for pattern in _TIMETABLE_CREDIT_CAP_PATTERNS:
-        match = pattern.search(text)
-        if not match:
-            continue
-        cap = int(match.group("cap"))
-        if normalised.get("max_credits") != cap:
-            reasons.append("explicit_credit_cap")
-        normalised["max_credits"] = cap
-        break
+    # Legacy V2 historically treats a bare "I want a 15-hour timetable" as a
+    # ceiling. V2.1 has a typed equality control, so preserve the semantic plan's
+    # exact role unless the current text separately states a real maximum.
+    exact_target_only = (
+        semantic_plan
+        and bool(_v21_credit_values(text, _V21_TARGET_CREDIT_PATTERNS))
+        and not _v21_credit_values(text, _V21_MAX_CREDIT_PATTERNS)
+    )
+    if not exact_target_only:
+        for pattern in _TIMETABLE_CREDIT_CAP_PATTERNS:
+            match = pattern.search(text)
+            if not match:
+                continue
+            cap = int(match.group("cap"))
+            if normalised.get("max_credits") != cap:
+                reasons.append("explicit_credit_cap")
+            normalised["max_credits"] = cap
+            break
 
     explicit_must_take = _explicit_must_take_courses(text)
     explicit_pin, ambiguous_pin = _explicit_pin_from_question(text)
@@ -697,7 +962,8 @@ _INTERNAL_OUTPUT_MARKERS = re.compile(
     r"course_choice_comparison|feasible_course_replacements|"
     r"graduation_progress|my_clash_free_sections|my_timetable|my_progress|"
     r"my_plan_by_term|get_student_context|lookup_course|course_prerequisites|"
-    r"why_course_locked|policy_lookup|my_advisor|max_credits|"
+    r"why_course_locked|policy_lookup|my_advisor|max_credits|target_credits|"
+    r"target_credit_status|target_credits_satisfied|"
     r"around_current|from_scratch|must_take_courses|pinned_sections|"
     r"section_label|AMBIGUOUS_PIN)",
     re.IGNORECASE,
@@ -923,7 +1189,7 @@ def _requires_graduation_progress(question: str) -> bool:
     return bool(_GRADUATION_PROGRESS_PATTERN.search(question or ""))
 
 
-_COURSE_CODE_EXPR = r"[A-Z]{2,6}\s*-?\s*\d{1,4}"
+_COURSE_CODE_EXPR = r"(?:[A-Z]{2,6}\s*-?\s*\d{3,4}|[A-Z]{2,6}-?\d{1,2})"
 _COURSE_CODE_TOKEN_PATTERN = re.compile(rf"\b{_COURSE_CODE_EXPR}\b", re.IGNORECASE)
 _CURRENT_COURSE_CHANGE_PATTERN = re.compile(
     r"(?:\b(?:do\s+not|don['’]t|did\s+not|didn['’]t|not)\s+take\b|"
@@ -1628,6 +1894,974 @@ def _normalise_feasible_replacement_args(
     return normalised, reasons
 
 
+_V21_ARABIC_SMALL_NUMBERS = {
+    normalise_arabic_text(label): value
+    for label, value in {
+        "واحد": 1,
+        "واحدة": 1,
+        "اثنان": 2,
+        "اثنين": 2,
+        "ثلاثة": 3,
+        "ثلاث": 3,
+        "أربعة": 4,
+        "خمسة": 5,
+        "ستة": 6,
+        "سبعة": 7,
+        "ثمانية": 8,
+        "تسعة": 9,
+        "عشرة": 10,
+        "أحد عشر": 11,
+        "اثنا عشر": 12,
+        "ثلاثة عشر": 13,
+        "أربع عشرة": 14,
+        "خمسة عشر": 15,
+        "ستة عشر": 16,
+        "سبعة عشر": 17,
+        "ثمانية عشر": 18,
+        "تسعة عشر": 19,
+        "عشرون": 20,
+    }.items()
+}
+_V21_CREDIT_NUMBER_TOKEN = (
+    r"(?P<value>\d{1,2}|"
+    + "|".join(
+        re.escape(label) for label in sorted(_V21_ARABIC_SMALL_NUMBERS, key=len, reverse=True)
+    )
+    + r")"
+)
+_V21_MAX_CREDIT_PATTERNS = tuple(
+    re.compile(pattern, re.IGNORECASE)
+    for pattern in (
+        rf"(?:بحد\s+اقصي|حد\s+اقصي|الحد\s+(?:الاعلي|الاقصي)|اقصي|"
+        rf"ما\s+(?:ابي|ابغى|اريد)\s+اكثر\s+من|"
+        rf"سقف(?:ي)?(?:\s+(?:هو|قدره|من))?|"
+        rf"لا\s+(?:يتجاوز|يزيد(?:\s+عن)?)|ما\s+(?:يتجاوز|يزيد(?:\s+عن)?)|حتى)\s*"
+        rf"{_V21_CREDIT_NUMBER_TOKEN}(?:\s*(?:ساعه|ساعات))?",
+        rf"(?:maximum(?:\s+of)?|max(?:imum)?|at\s+most|up\s+to|no\s+more\s+than|"
+        rf"cap(?:ped)?(?:\s+(?:it\s+)?at)?|ceiling(?:\s+of)?)\s*"
+        rf"{_V21_CREDIT_NUMBER_TOKEN}",
+    )
+)
+_V21_ADDITIONAL_CREDIT_PATTERNS = tuple(
+    re.compile(pattern, re.IGNORECASE)
+    for pattern in (
+        rf"(?:اضيف|بضيف|ازيد|بزيد|add(?:ing)?|extra|additional).{{0,18}}?"
+        rf"{_V21_CREDIT_NUMBER_TOKEN}\s*[- ]?(?:ساعه|ساعات|credits?|hours?)",
+        rf"{_V21_CREDIT_NUMBER_TOKEN}\s*[- ]?(?:credit|hour)\s+(?:course|class)",
+        rf"(?:مقرر|ماده)\s+(?:(?:من|ب)\s*)?{_V21_CREDIT_NUMBER_TOKEN}"
+        rf"\s*(?:ساعه|ساعات)",
+    )
+)
+
+# Exact timetable load is a separate role from a ceiling or one-course addition.
+# These patterns require a build/request verb and a timetable noun in the same
+# bounded phrase; current-load statements and what-if comparisons therefore do
+# not acquire a hard target merely because they contain a credit figure.
+_V21_TARGET_CREDIT_PATTERNS = tuple(
+    re.compile(pattern, re.IGNORECASE)
+    for pattern in (
+        rf"(?<![\u0600-\u06FF])"
+        rf"(?:سو|سوي|تسوي|ابن|ابني|انشئ|اعمل|ابي|ابغي|ابغى|اريد|ودي)\s*"
+        rf"(?:لي\s+)?(?:جدول|الجدول)(?:\s+(?:جديد|كامل))?\s*"
+        rf"(?:من\s+|بمجموع\s+|مجموعه\s+|بعدد\s+)?"
+        rf"{_V21_CREDIT_NUMBER_TOKEN}\s*(?:ساعه|ساعات)",
+        rf"(?<![A-Za-z])(?:build|make|create|give\s+me|i\s+(?:want|need))\s+"
+        rf"(?:me\s+)?(?:(?:an?|my)\s+)?(?:new\s+|complete\s+)?(?:timetable|schedule)\s+"
+        rf"(?:(?:of|with|for)\s+)?(?:(?:totalling|totaling)\s+(?:exactly\s+)?|exactly\s+)?"
+        rf"{_V21_CREDIT_NUMBER_TOKEN}\s*(?:credits?|credit\s+hours?|hours?)",
+        rf"(?<![A-Za-z])(?:build|make|create|give\s+me|i\s+(?:want|need))\s+"
+        rf"(?:me\s+)?(?:(?:an?|my)\s+)?{_V21_CREDIT_NUMBER_TOKEN}\s*[- ]credit"
+        rf"(?:-hour)?\s+(?:timetable|schedule)",
+    )
+)
+
+_V21_PRIORITY_LIMIT_PATTERNS = tuple(
+    re.compile(pattern, re.IGNORECASE)
+    for pattern in (
+        rf"(?:افضل|اهم|اول)\s*{_V21_CREDIT_NUMBER_TOKEN}\s*"
+        rf"(?:مقرر|مقررات|ماده|مواد)",
+        rf"(?:top|best)\s*{_V21_CREDIT_NUMBER_TOKEN}\s*(?:courses?|classes?)",
+        rf"{_V21_CREDIT_NUMBER_TOKEN}\s*(?:highest[- ]priority|most\s+important)\s*"
+        rf"(?:courses?|classes?)",
+        rf"{_V21_CREDIT_NUMBER_TOKEN}\s*(?:من\s+)?(?:اهم|افضل)\s*"
+        rf"(?:المقررات|المواد|مقررات|مواد)",
+        rf"{_V21_CREDIT_NUMBER_TOKEN}\s*(?:مقرر|مقررات|ماده|مواد)"
+        rf".{{0,24}}(?:مرتب(?:ه|ة|ين)?\s+)?(?:بالاولويه|حسب\s+الاولويه)",
+    )
+)
+
+_V21_NEGATED_CONTROL_PREFIX = re.compile(
+    r"(?:\b(?:do\s+not|don['’]?t|dont|never|not)\s+"
+    r"(?:(?:use|apply|set|make|build|create|adjust|show|list|return|give|choose|"
+    r"select|want|need)\s+)?"
+    r"(?:the\s+|a\s+|an\s+)?|"
+    r"(?:لا|مو|ما|مش|ليس)\s+"
+    r"(?:(?:تستخدم|استخدم|تعتمد|اعتمد|تعرض|اعرض|تعطي|تعطيني|اختار|تختار|"
+    r"ابي|ابغى|اريد|احتاج|تبني|ابني|تسوي|تسويلي|تسو[يى]\s+لي|تخلي|"
+    r"تجعل|تعدل)\s+)?"
+    r"(?:ال|لي\s+)?)$",
+    re.IGNORECASE,
+)
+_V21_HISTORICAL_CONTROL_PREFIX = re.compile(
+    r"(?:\b(?:last\s+(?:time|term|semester)|previously|earlier|before|historically)\b"
+    r".{0,36}|"
+    r"(?:الم(?:ره|رة)\s+(?:الماضيه|الماضية)|الترم\s+الماضي|سابقا|قبل)"
+    r".{0,36})$",
+    re.IGNORECASE,
+)
+_V21_STANDALONE_HISTORICAL_CLAUSE = re.compile(
+    r"^(?:last\s+(?:time|term|semester)|previously|earlier|before|historically|"
+    r"الم(?:ره|رة)\s+(?:الماضيه|الماضية)|الترم\s+الماضي|سابقا|قبل)\s*:?$",
+    re.IGNORECASE,
+)
+
+
+def _v21_control_match_is_inactive(text: str, match_start: int) -> bool:
+    """Reject a role literal scoped by nearby negation or historical context."""
+
+    prefix = text[max(0, match_start - 72) : match_start]
+    return bool(
+        _V21_NEGATED_CONTROL_PREFIX.search(prefix) or _V21_HISTORICAL_CONTROL_PREFIX.search(prefix)
+    )
+
+
+def _v21_active_control_matches(
+    question: str,
+    patterns: tuple[re.Pattern[str], ...],
+) -> list[re.Match[str]]:
+    """Return current-turn positive matches, with adversative scope bounded."""
+
+    matches: list[re.Match[str]] = []
+    for clause in _v21_ordered_constraint_clauses(question):
+        clause_matches: list[re.Match[str]] = []
+        for pattern in patterns:
+            for match in pattern.finditer(clause):
+                if not _v21_control_match_is_inactive(clause, match.start()):
+                    clause_matches.append(match)
+        seen_value_spans: set[tuple[int, int, str]] = set()
+        for match in sorted(
+            clause_matches,
+            key=lambda item: item.start("value"),
+        ):
+            value_start, value_end = match.span("value")
+            key = (value_start, value_end, str(match.group("value") or ""))
+            if key in seen_value_spans:
+                continue
+            seen_value_spans.add(key)
+            matches.append(match)
+    return matches
+
+
+def _v21_ordered_constraint_clauses(question: str) -> list[str]:
+    """Split before Arabic normalization erases punctuation boundaries."""
+
+    raw = fold_digits(str(question or "")).lower()
+    clauses: list[str] = []
+    pending_historical_prefix = ""
+    for raw_clause in _V21_CONSTRAINT_CLAUSE_SPLIT.split(raw):
+        clause = normalise_arabic_text(raw_clause).lower().strip()
+        if not clause:
+            continue
+        if pending_historical_prefix:
+            clause = f"{pending_historical_prefix} {clause}"
+            pending_historical_prefix = ""
+        if _V21_STANDALONE_HISTORICAL_CLAUSE.fullmatch(clause):
+            pending_historical_prefix = clause
+            continue
+        clauses.append(clause)
+    if pending_historical_prefix:
+        clauses.append(pending_historical_prefix)
+    return clauses
+
+
+def _v21_credit_values(
+    question: str,
+    patterns: tuple[re.Pattern[str], ...],
+) -> list[int]:
+    """Extract only explicitly role-bound credit constraints from user text."""
+
+    values: list[int] = []
+    for match in _v21_active_control_matches(question, patterns):
+        token = str(match.group("value") or "").strip()
+        value = int(token) if token.isdigit() else _V21_ARABIC_SMALL_NUMBERS.get(token)
+        if value is not None and 1 <= value <= 99:
+            values.append(value)
+    return values
+
+
+def _v21_priority_limits(question: str) -> list[int]:
+    """Explicit top-N course-priority numerals from the current user turn only."""
+
+    values: list[int] = []
+    for match in _v21_active_control_matches(question, _V21_PRIORITY_LIMIT_PATTERNS):
+        token = str(match.group("value") or "").strip()
+        value = int(token) if token.isdigit() else _V21_ARABIC_SMALL_NUMBERS.get(token)
+        if value is not None and 1 <= value <= 20:
+            values.append(value)
+    return values
+
+
+_V21_FROM_SCRATCH_MODE_PATTERN = re.compile(
+    r"(?:\bfrom\s+scratch\b|\bignore\s+(?:all\s+)?(?:my\s+)?current\b|"
+    r"\b(?:build|create|make|generate|arrange)\b.{0,40}\b(?:new|fresh|full|complete)?\s*"
+    r"(?:timetable|schedule)\b|"
+    r"\b(?:build|adjust|change|edit|modify)\b.{0,24}\b(?:the\s+)?(?:rest|remainder)\b|"
+    r"\b(?:present|included|fixed|pinned)\b.{0,24}\b(?:every|all)\s+(?:option|alternative)s?\b|"
+    r"من\s+الصفر|من\s+البداي(?:ه|ة)|"
+    r"جدول\s+(?:جديد|كامل)|"
+    r"(?:ابن|ابني|ابني|انشئ|سو|سوي|رتب).{0,28}(?:جدول|الجدول)|"
+    r"(?:ابن|ابني|انشئ|سو|سوي|عدل|عدلي|غير|غير).{0,24}(?:باقي|الباقي)|"
+    r"(?:موجود|موجوده|ثابت|مثبت).{0,24}(?:كل\s+الخيارات|كل\s+البدائل)|"
+    r"تجاهل.{0,32}(?:جدول|شعب).{0,16}الحالي|"
+    r"لا\s+تعتمد.{0,32}(?:جدول|شعب).{0,16}الحالي)",
+    re.IGNORECASE,
+)
+_V21_WHOLE_BASELINE_RETENTION_PATTERN = re.compile(
+    r"(?:\baround\s+(?:(?:my|the)\s+)?(?:(?:all|entire|whole)\s+)?"
+    r"(?:current|baseline)\s+(?:timetable|schedule)\b|"
+    r"\b(?:keep|retain|preserve|preserving|hold)\b\s+"
+    r"(?:(?:my|the)\s+)?(?:(?:all|entire|whole)\s+)?"
+    r"(?:current|baseline)\s+(?:timetable|schedule|sections)\b|"
+    r"\b(?:keep|retain|preserve|preserving|hold)\b\s+"
+    r"(?:all|every|entire|whole)\s+(?:(?:my|the)\s+)?"
+    r"(?:current|baseline)\s+sections\b|"
+    r"\bleave\b.{0,20}\b(?:all|every|entire|whole)\b.{0,20}"
+    r"\b(?:current|baseline)\s+sections?\b.{0,12}\bunchanged\b|"
+    r"\badd\b.{0,24}\baround\b.{0,24}\b(?:(?:my|the)\s+)?"
+    r"(?:current|baseline)\s+(?:timetable|schedule|sections)\b|"
+    r"(?:حول|مع)\s+(?:كل\s+|جميع\s+)?(?:جدولي|الجدول|شعبي|الشعب)\b"
+    r".{0,8}\bالحالي(?:ه)?\b|"
+    r"(?:احتفظ|خلي|خل|ثبت|لا\s+تغير)\s+(?:ب)?(?:جدولي|الجدول)\b"
+    r".{0,8}\bالحالي\b(?:.{0,8}\b(?:كامل|كله)\b)?|"
+    r"(?:احتفظ|خلي|خل|ثبت|لا\s+تغير)\s+(?:ب)?(?:كل|جميع)\s+"
+    r"(?:شعبي|الشعب)\b.{0,8}\bالحالي(?:ه)?\b|"
+    r"(?:احتفظ|خلي|خل|ثبت|لا\s+تغير)\s+(?:ب)?(?:شعبي|الشعب)\b"
+    r".{0,8}\bالحالي(?:ه)?\b|"
+    r"(?:الحفاظ|المحافظه)\s+علي\s+(?:جدولي|الجدول)\b.{0,8}"
+    r"\bالحالي\b.{0,8}\b(?:كامل|كله)\b|"
+    r"(?:اضف|ضيف).{0,24}(?:حول|مع).{0,24}(?:جدولي|الجدول|شعبي|الشعب)\b"
+    r".{0,8}\bالحالي(?:ه)?\b)",
+    re.IGNORECASE,
+)
+_V21_AROUND_CURRENT_MODE_PATTERN = re.compile(
+    rf"(?:{_V21_WHOLE_BASELINE_RETENTION_PATTERN.pattern}|"
+    r"\baround\s+(?:my\s+)?(?:current|baseline)\s+(?:timetable|schedule)\b|"
+    r"\bkeep\b.{0,24}\b(?:current|baseline)\s+(?:timetable|schedule)\b|"
+    r"\bkeep\b.{0,24}\b(?:all|entire)\b.{0,24}\b(?:current|baseline)\s+sections\b|"
+    r"\bretain\b.{0,24}\b(?:current|baseline)\s+(?:timetable|schedule)\b|"
+    r"\bretain\b.{0,24}\b(?:all|entire)\b.{0,24}\b(?:current|baseline)\s+sections\b|"
+    r"\badd\b.{0,24}\baround\b.{0,24}\b(?:current|baseline)\b|"
+    r"(?:احتفظ|خلي|خل|ثبت|لا\s+تغير).{0,32}(?:الشعب|شعبي|جدولي|الجدول).{0,16}الحالي|"
+    r"(?:اضف|ضيف).{0,24}(?:حول|مع).{0,24}(?:الجدول|الشعب).{0,16}الحالي)",
+    re.IGNORECASE,
+)
+_V21_NEGATED_WHOLE_BASELINE_RETENTION_PATTERN = re.compile(
+    r"(?:\b(?:do\s+not|don['’]?t|never)\s+"
+    r"(?:keep|retain|preserve|hold)\s+(?:it|them|that|"
+    r"(?:(?:my|the)\s+)?(?:current|baseline)\s+"
+    r"(?:timetable|schedule|sections))\b|"
+    r"\bwithout\s+(?:keeping|retaining|preserving)\b.{0,24}"
+    r"\b(?:current|baseline)\b|"
+    r"(?:لا|مو|ما|مش|ليس)\s+(?:تحتفظ|تحافظ|تثبت|تعتمد)"
+    r".{0,24}(?:بها|فيها|عليها|الجدول|الشعب))",
+    re.IGNORECASE,
+)
+
+
+def _v21_explicit_timetable_modes(question: str) -> list[str]:
+    """Bind only explicit current-turn builder modes; never choose a builder."""
+
+    modes: list[str] = []
+    for clause in _v21_ordered_constraint_clauses(question):
+        selective_course_clause = bool(_COURSE_CODE_TOKEN_PATTERN.search(clause))
+        whole_baseline_clause = bool(_V21_WHOLE_BASELINE_RETENTION_PATTERN.search(clause))
+        if _V21_NEGATED_WHOLE_BASELINE_RETENTION_PATTERN.search(clause):
+            modes = [mode for mode in modes if mode != "around_current"]
+        clause_modes: list[str] = []
+        for mode, pattern in (
+            ("from_scratch", _V21_FROM_SCRATCH_MODE_PATTERN),
+            ("around_current", _V21_AROUND_CURRENT_MODE_PATTERN),
+        ):
+            if mode == "around_current" and selective_course_clause and not whole_baseline_clause:
+                continue
+            for match in pattern.finditer(clause):
+                if _v21_control_match_is_inactive(clause, match.start()):
+                    continue
+                if mode not in clause_modes:
+                    clause_modes.append(mode)
+        if whole_baseline_clause and "around_current" in clause_modes:
+            clause_modes.remove("around_current")
+            clause_modes.append("around_current")
+        for mode in clause_modes:
+            if mode in modes:
+                modes.remove(mode)
+            modes.append(mode)
+    return modes
+
+
+def _v21_comma_segments(scope: str) -> list[tuple[str, int]]:
+    """Return comma-delimited segments with offsets into their unsplit scope."""
+
+    segments: list[tuple[str, int]] = []
+    start = 0
+    for delimiter in _V21_LIST_COMMA.finditer(scope):
+        segments.append((scope[start : delimiter.start()], start))
+        start = delimiter.end()
+    segments.append((scope[start:], start))
+    return segments
+
+
+def _v21_hard_constraint_scopes(text: str) -> list[tuple[str, str]]:
+    """Return hard-constraint scopes with their preceding separator."""
+
+    scopes: list[tuple[str, str]] = []
+    start = 0
+    preceding = ""
+    for delimiter in _V21_HARD_CONSTRAINT_SCOPE_SPLIT.finditer(text):
+        scopes.append((text[start : delimiter.start()], preceding))
+        preceding = delimiter.group(0)
+        start = delimiter.end()
+    scopes.append((text[start:], preceding))
+    return scopes
+
+
+def _v21_pin_list_continuation(segment: str) -> list[dict[str, str]]:
+    """Exact correlated pins in a pure comma-list continuation."""
+
+    folded = _fold_v21_constraint_text(segment)
+    start = _V21_LIST_CONTINUATION_PREFIX.match(folded)
+    payload = folded[start.end() :] if start else folded
+    stop = _V21_LIST_CONTINUATION_STOP.search(payload)
+    if stop:
+        payload = payload[: stop.start()]
+    matches = list(_V21_CORRELATED_SECTION_PIN_PATTERN.finditer(payload))
+    if not matches or matches[0].start() != 0:
+        return []
+    residual = _V21_CORRELATED_SECTION_PIN_PATTERN.sub("", payload)
+    if not _V21_LIST_CONNECTOR_NOISE.fullmatch(residual):
+        return []
+    return _v21_correlated_section_pins(payload)
+
+
+def _v21_course_list_continuation(segment: str) -> list[str]:
+    """Exact course codes in a pure comma-list continuation."""
+
+    folded = _fold_v21_constraint_text(segment)
+    start = _V21_LIST_CONTINUATION_PREFIX.match(folded)
+    payload = folded[start.end() :] if start else folded
+    stop = _V21_LIST_CONTINUATION_STOP.search(payload)
+    if stop:
+        payload = payload[: stop.start()]
+    matches = list(_TIMETABLE_CONSTRAINT_COURSE_PATTERN.finditer(payload))
+    if not matches or matches[0].start() != 0:
+        return []
+    residual = _TIMETABLE_CONSTRAINT_COURSE_PATTERN.sub("", payload)
+    if not _V21_LIST_CONNECTOR_NOISE.fullmatch(residual):
+        return []
+    return _constraint_course_codes(payload)
+
+
+def _v21_section_list_continuation(segment: str) -> list[str]:
+    """Exact section labels in a pure comma-list continuation."""
+
+    folded = _fold_v21_constraint_text(segment)
+    start = _V21_LIST_CONTINUATION_PREFIX.match(folded)
+    payload = folded[start.end() :] if start else folded
+    stop = _V21_LIST_CONTINUATION_STOP.search(payload)
+    if stop:
+        payload = payload[: stop.start()]
+    matches = list(_TIMETABLE_CONSTRAINT_SECTION_PATTERN.finditer(payload))
+    if not matches or matches[0].start() != 0:
+        return []
+    residual = _TIMETABLE_CONSTRAINT_SECTION_PATTERN.sub("", payload)
+    if not _V21_LIST_CONNECTOR_NOISE.fullmatch(residual):
+        return []
+    return _constraint_section_labels(payload)
+
+
+def _v21_pin_constraint_state(
+    question: str,
+) -> tuple[list[dict[str, str]], list[str], bool]:
+    """Reduce literal pin/retain events in order without inferring intent."""
+
+    pins: list[dict[str, str]] = []
+    courses: list[str] = []
+    unresolved_labels: set[str] = set()
+    unresolved_identity = False
+
+    def add_pin(
+        pin: dict[str, str],
+        *,
+        resolves_unresolved: bool,
+    ) -> None:
+        nonlocal unresolved_identity
+        same_course = [row for row in pins if row["course_code"] == pin["course_code"]]
+        if (
+            same_course
+            and any(row["section_label"] != pin["section_label"] for row in same_course)
+            and not resolves_unresolved
+        ):
+            # Two distinct sections of one course joined additively (``and`` /
+            # ``or`` / a comma list) are not a deterministic hard pin. Never
+            # choose the last literal; require a typed identity clarification.
+            pins[:] = [row for row in pins if row["course_code"] != pin["course_code"]]
+            unresolved_identity = True
+            return
+        pins[:] = [row for row in pins if row["course_code"] != pin["course_code"]]
+        pins.append(pin)
+        if resolves_unresolved:
+            unresolved_labels.discard(pin["section_label"])
+            unresolved_identity = False
+
+    for scope, preceding_separator in _v21_hard_constraint_scopes(str(question or "")):
+        corrective_scope = bool(_V21_ADVERSATIVE_SEPARATOR.search(preceding_separator))
+        continuation_active = False
+        for segment, segment_start in _v21_comma_segments(scope):
+            polarity_text = normalise_arabic_text(fold_digits(segment)).lower()
+            if _V21_HISTORICAL_PIN_SCOPE_PATTERN.search(
+                segment
+            ) or _V21_HISTORICAL_PIN_SCOPE_PATTERN.search(polarity_text):
+                continuation_active = False
+                continue
+            negative_match = _V21_NEGATED_PIN_OR_RETAIN_PATTERN.search(
+                segment
+            ) or _V21_NEGATED_PIN_OR_RETAIN_PATTERN.search(polarity_text)
+            positive_match = _v21_positive_pin_or_retain_match(
+                segment,
+                polarity_text,
+            )
+            cue = negative_match or positive_match
+            if cue is not None and _v21_control_match_is_inactive(
+                scope,
+                segment_start + cue.start(),
+            ):
+                continuation_active = False
+                continue
+
+            if negative_match is not None:
+                continuation_active = False
+                negative_pins = _v21_correlated_section_pins(segment)
+                negative_codes = _constraint_course_codes(segment)
+                negative_labels = _constraint_section_labels(segment)
+                for pin in negative_pins:
+                    pins[:] = [row for row in pins if row != pin]
+                    unresolved_labels.discard(pin["section_label"])
+                for label in negative_labels:
+                    unresolved_labels.discard(label)
+                if not negative_pins:
+                    for code in negative_codes:
+                        pins[:] = [row for row in pins if row["course_code"] != code]
+                        if code in courses:
+                            courses.remove(code)
+                if _V21_NEGATED_PIN_PRONOUN_PATTERN.search(segment):
+                    if pins:
+                        pins.pop()
+                    elif courses:
+                        courses.pop()
+                    unresolved_labels.clear()
+                    unresolved_identity = False
+                continue
+
+            if positive_match is not None:
+                continuation_active = True
+                positive_constraint_text = segment
+                replacement = _V21_PIN_REPLACEMENT_SEPARATOR.search(segment)
+                if replacement is not None and positive_match.start() < replacement.start():
+                    # "Pin X instead of Y" makes X the positive constraint;
+                    # Y is the explicitly rejected alternative, not a second pin.
+                    positive_constraint_text = segment[: replacement.start()]
+                segment_pins = _v21_correlated_section_pins(positive_constraint_text)
+                segment_codes = _constraint_course_codes(positive_constraint_text)
+                segment_labels = _constraint_section_labels(positive_constraint_text)
+                for pin in segment_pins:
+                    add_pin(
+                        pin,
+                        resolves_unresolved=(
+                            corrective_scope or bool(_V21_EXPLICIT_CORRECTION_CUE.search(segment))
+                        ),
+                    )
+                pinned_codes = {pin["course_code"] for pin in segment_pins}
+                for code in segment_codes:
+                    if code not in pinned_codes and code not in courses:
+                        courses.append(code)
+                correlated_labels = {pin["section_label"] for pin in segment_pins}
+                for label in segment_labels:
+                    if label not in correlated_labels:
+                        unresolved_labels.add(label)
+                whole_baseline = bool(
+                    _V21_WHOLE_BASELINE_RETENTION_PATTERN.search(segment)
+                    or _V21_WHOLE_BASELINE_RETENTION_PATTERN.search(polarity_text)
+                )
+                if (
+                    not segment_labels
+                    and not segment_pins
+                    and _TIMETABLE_SECTION_NOUN_PATTERN.search(segment)
+                    and not whole_baseline
+                ):
+                    unresolved_identity = True
+                continue
+
+            correction_match = _V21_EXPLICIT_CORRECTION_CUE.search(
+                segment
+            ) or _V21_EXPLICIT_CORRECTION_CUE.search(polarity_text)
+            if continuation_active and correction_match is not None:
+                correction_pins = _v21_correlated_section_pins(segment)
+                if correction_pins:
+                    for pin in correction_pins:
+                        add_pin(pin, resolves_unresolved=True)
+                    continue
+
+            if not continuation_active:
+                continue
+            continuation_pins = _v21_pin_list_continuation(segment)
+            continuation_courses = _v21_course_list_continuation(segment)
+            continuation_labels = _v21_section_list_continuation(segment)
+            if not (continuation_pins or continuation_courses or continuation_labels):
+                continuation_active = False
+                continue
+            for pin in continuation_pins:
+                add_pin(pin, resolves_unresolved=False)
+            for code in continuation_courses:
+                if code not in courses:
+                    courses.append(code)
+            correlated_labels = {pin["section_label"] for pin in continuation_pins}
+            for label in continuation_labels:
+                if label not in correlated_labels:
+                    unresolved_labels.add(label)
+
+    required_courses = list(courses)
+    for pin in pins:
+        code = pin["course_code"]
+        if code not in required_courses:
+            required_courses.append(code)
+    return pins, required_courses, bool(unresolved_labels or unresolved_identity)
+
+
+def _v21_explicit_positive_pins(question: str) -> list[dict[str, str]]:
+    """Exact final-active correlated section pins from the current turn."""
+
+    pins, _courses, _ambiguous = _v21_pin_constraint_state(question)
+    return pins
+
+
+def _v21_requires_pin_identity_clarification(question: str) -> bool:
+    """Whether final-active positive pin syntax lacks a correlated identity."""
+
+    _pins, _courses, ambiguous = _v21_pin_constraint_state(question)
+    return ambiguous
+
+
+def _v21_explicit_positive_retained_courses(question: str) -> list[str]:
+    """Final-active course codes under positive pin/retain scope."""
+
+    _pins, courses, _ambiguous = _v21_pin_constraint_state(question)
+    return courses
+
+
+class _V21ConstraintCoverageError(ValueError):
+    """A typed plan changed or omitted a current-turn explicit control."""
+
+    def __init__(self, missing_field_paths: Sequence[str]) -> None:
+        self.missing_field_paths = tuple(dict.fromkeys(missing_field_paths))
+        super().__init__("The semantic plan did not preserve explicit constraints.")
+
+
+class _V21SemanticPolicyError(ValueError):
+    """A typed plan violated a closed V2.1 request-family contract."""
+
+    def __init__(self, policy_ids: Sequence[str]) -> None:
+        self.policy_ids = tuple(dict.fromkeys(policy_ids))
+        super().__init__("The semantic plan did not match a closed semantic policy.")
+
+
+def _v21_missing_explicit_constraint_paths(
+    plan: Any,
+    question: str,
+) -> tuple[str, ...]:
+    """Return closed field paths absent/mismatched in selected owning calls.
+
+    The semantic planner still owns capability choice. This gate activates only
+    when the plan selected a capability that owns a mechanically extracted field;
+    it neither routes the question nor patches the submitted arguments.
+    """
+
+    requests_by_capability: dict[str, list[dict[str, Any]]] = {}
+    for request in getattr(plan, "evidence_requests", ()) or ():
+        capability = str(getattr(request, "capability", "") or "")
+        arguments = getattr(request, "arguments", {})
+        if capability and isinstance(arguments, dict):
+            requests_by_capability.setdefault(capability, []).append(arguments)
+
+    missing: list[str] = []
+
+    def require_final_scalar_value(
+        capability: str,
+        field: str,
+        values: Sequence[int],
+    ) -> None:
+        calls = requests_by_capability.get(capability, [])
+        if not calls or not values:
+            return
+        path = f"{capability}.{field}"
+        required_value = values[-1]
+        if any(arguments.get(field) != required_value for arguments in calls):
+            missing.append(path)
+
+    if _v21_requires_pin_identity_clarification(question):
+        decision = getattr(getattr(plan, "decision", None), "value", "")
+        clarification_kind = getattr(
+            getattr(plan, "clarification_kind", None),
+            "value",
+            "",
+        )
+        if decision != "clarify" or clarification_kind != "course_or_section_identity":
+            missing.append("clarification_kind")
+
+    explicit_priority_limits = _v21_priority_limits(question)
+    require_final_scalar_value("my_progress", "priority_limit", explicit_priority_limits)
+
+    explicit_modes = _v21_explicit_timetable_modes(question)
+    build_calls = requests_by_capability.get("build_timetable_proposal", [])
+    if build_calls and explicit_modes:
+        # Corrective wording is evaluated in textual order; polarity filtering
+        # removes an explicitly rejected earlier mode before this point.
+        required_mode = explicit_modes[-1]
+        if any(arguments.get("mode") != required_mode for arguments in build_calls):
+            missing.append("build_timetable_proposal.mode")
+
+    explicit_max_credits = _v21_credit_values(question, _V21_MAX_CREDIT_PATTERNS)
+    for owner in (
+        "build_timetable_proposal",
+        "recommend_feasible_course_addition",
+        "rank_current_course_drop_impact",
+        "improve_current_timetable",
+    ):
+        require_final_scalar_value(owner, "max_credits", explicit_max_credits)
+
+    explicit_target_credits = _v21_credit_values(
+        question,
+        _V21_TARGET_CREDIT_PATTERNS,
+    )
+    if build_calls and explicit_target_credits:
+        required_target = explicit_target_credits[-1]
+        if any(arguments.get("target_credits") != required_target for arguments in build_calls):
+            missing.append("build_timetable_proposal.target_credits")
+
+    explicit_additional_credits = _v21_credit_values(
+        question,
+        _V21_ADDITIONAL_CREDIT_PATTERNS,
+    )
+    require_final_scalar_value(
+        "recommend_feasible_course_addition",
+        "additional_credit_hours",
+        explicit_additional_credits,
+    )
+
+    positive_pins = _v21_explicit_positive_pins(question)
+    for owner in (
+        "build_timetable_proposal",
+        "recommend_feasible_course_addition",
+    ):
+        calls = requests_by_capability.get(owner, [])
+        if not calls or not positive_pins:
+            continue
+        pin_path = f"{owner}.pinned_sections"
+        if any(
+            not all(
+                pin in _normalised_section_pins(arguments.get("pinned_sections"))
+                for pin in positive_pins
+            )
+            for arguments in calls
+        ):
+            missing.append(pin_path)
+
+    if build_calls:
+        required_codes = list(_v21_explicit_must_take_courses(question))
+        for code in _v21_explicit_positive_retained_courses(question):
+            if code not in required_codes:
+                required_codes.append(code)
+        for pin in positive_pins:
+            code = pin["course_code"]
+            if code not in required_codes:
+                required_codes.append(code)
+        if required_codes and any(
+            not all(
+                code in _normalised_constraint_codes(arguments.get("must_take_courses"))
+                for code in required_codes
+            )
+            for arguments in build_calls
+        ):
+            missing.append("build_timetable_proposal.must_take_courses")
+
+    from core.services.student_advisor_v21_plan import (
+        EXPLICIT_CONSTRAINT_FIELD_PATHS,
+    )
+
+    # The assertion makes a future extractor/schema addition fail during tests
+    # rather than widening telemetry with an unreviewed string path.
+    if any(path not in EXPLICIT_CONSTRAINT_FIELD_PATHS for path in missing):
+        raise AssertionError("unregistered V2.1 explicit-constraint field path")
+    return tuple(dict.fromkeys(missing))
+
+
+def _v21_argument_provenance_contract(
+    question: str,
+    *,
+    history: Any,
+    prior_presentation: dict[str, Any],
+    prior_course_names: dict[str, str],
+) -> Any:
+    """Build a fail-closed source policy for one semantic evidence plan.
+
+    This is entity and constraint binding, not intent routing. The LLM chooses
+    capabilities and semantic enum controls; the server proves that every
+    student-authored identifier, correlated section pin, and numeric cap came
+    from a trusted turn source before any capability executes.
+    """
+    from core.services.student_advisor_v21_plan import (
+        ArgumentProvenanceContract,
+        ArgumentProvenanceRule,
+    )
+
+    current = str(question or "")
+    user_texts = [current]
+    if isinstance(history, list | tuple):
+        for message in history:
+            if not isinstance(message, dict) or str(message.get("role") or "") != "user":
+                continue
+            content = message.get("content")
+            if isinstance(content, str) and content.strip():
+                user_texts.append(content)
+
+    # Course-code syntax extraction is deliberately independent of routing. It
+    # only creates a set of literals the model is allowed to repeat.
+    user_codes = _comparison_course_codes("\n".join(user_texts))
+    folded_current = normalise_arabic_text(current).lower()
+    named_prior_codes = [
+        _normalise_course_code(code)
+        for code, name in prior_course_names.items()
+        if str(name or "").strip() and normalise_arabic_text(str(name)).lower() in folded_current
+    ]
+    sourced_codes = list(dict.fromkeys(code for code in [*user_codes, *named_prior_codes] if code))
+
+    rules: list[Any] = []
+
+    def identifiers(path: tuple[str, ...], values: list[str]) -> None:
+        if values:
+            rules.append(ArgumentProvenanceRule.identifier(path, *values))
+
+    def text_spans(path: tuple[str, ...]) -> None:
+        nonempty = tuple(text for text in user_texts if text.strip())
+        if nonempty:
+            rules.append(ArgumentProvenanceRule.text_span(path, *nonempty))
+
+    # Generic identifiers may be selected semantically, but never created by
+    # the model or copied from assistant prose/the full catalogue.
+    for path in (
+        ("my_clash_free_sections", "course_code"),
+        ("my_clash_free_sections", "course_codes", "*"),
+        ("build_timetable_proposal", "course_codes", "*"),
+        ("course_prerequisites", "course_code"),
+        ("why_course_locked", "course_code"),
+        ("course_choice_comparison", "course_codes", "*"),
+        ("recommend_feasible_course_addition", "candidate_courses", "*"),
+        ("rank_current_course_drop_impact", "course_codes", "*"),
+    ):
+        identifiers(path, sourced_codes)
+
+    if sourced_codes:
+        # When the student supplied a course code, the minimum precise lookup
+        # is that code. A generic literal span would also authorise ``AI`` from
+        # ``AI331`` and let the planner silently broaden the catalogue search.
+        identifiers(("lookup_course", "query"), sourced_codes)
+    else:
+        text_spans(("lookup_course", "query"))
+
+    plan_levels = _v21_explicit_plan_levels(current)
+    if plan_levels:
+        rules.append(ArgumentProvenanceRule.exact(("my_plan_by_term", "term"), *plan_levels))
+
+    # These are bounded semantic controls, not student identities or factual
+    # values. Their JSON-schema enums remain the first validation boundary.
+    for path in (
+        ("build_timetable_proposal", "mode"),
+        ("course_choice_comparison", "objective"),
+        ("graduation_progress", "planning_baseline_kind"),
+        ("graduation_progress", "search_better_replacements"),
+        ("recommend_feasible_course_addition", "objective"),
+        ("rank_current_course_drop_impact", "objective"),
+        ("improve_current_timetable", "objective"),
+        ("improve_current_timetable", "credit_load_policy"),
+        ("improve_current_timetable", "allow_course_replacements"),
+        (PRIOR_PRESENTATION_TOOL, "view"),
+    ):
+        rules.append(ArgumentProvenanceRule.semantic_choice(path))
+
+    explicit_priority_limits = _v21_priority_limits(current)
+    if explicit_priority_limits:
+        rules.append(
+            ArgumentProvenanceRule.exact(
+                ("my_progress", "priority_limit"),
+                *explicit_priority_limits,
+            )
+        )
+
+    # Constraint polarity belongs to the typed semantic plan.  The server only
+    # proves that emitted literals occur in trusted user text; it never decides
+    # whether a mentioned course is mandatory, removed, added, or excluded.
+    identifiers(
+        ("build_timetable_proposal", "must_take_courses", "*"),
+        sourced_codes,
+    )
+    explicit_max_credits = _v21_credit_values(current, _V21_MAX_CREDIT_PATTERNS)
+    if explicit_max_credits:
+        for path in (
+            ("build_timetable_proposal", "max_credits"),
+            ("recommend_feasible_course_addition", "max_credits"),
+            ("rank_current_course_drop_impact", "max_credits"),
+            ("improve_current_timetable", "max_credits"),
+        ):
+            rules.append(ArgumentProvenanceRule.exact(path, *explicit_max_credits))
+    explicit_target_credits = _v21_credit_values(
+        current,
+        _V21_TARGET_CREDIT_PATTERNS,
+    )
+    if explicit_target_credits:
+        rules.append(
+            ArgumentProvenanceRule.exact(
+                ("build_timetable_proposal", "target_credits"),
+                *explicit_target_credits,
+            )
+        )
+    explicit_additional_credits = _v21_credit_values(
+        current,
+        _V21_ADDITIONAL_CREDIT_PATTERNS,
+    )
+    if explicit_additional_credits:
+        rules.append(
+            ArgumentProvenanceRule.exact(
+                ("recommend_feasible_course_addition", "additional_credit_hours"),
+                *explicit_additional_credits,
+            )
+        )
+
+    trusted_pins: list[dict[str, Any]] = list(_v21_correlated_section_pins(current))
+    current_codes = _constraint_course_codes(current)
+    current_sections = _constraint_section_labels(current)
+    if len(current_codes) == 1 and len(current_sections) == 1:
+        single_pin = {
+            "course_code": current_codes[0],
+            "section_label": current_sections[0],
+        }
+        if single_pin not in trusted_pins:
+            trusted_pins.append(single_pin)
+
+    def collect_verified_pairs(value: Any) -> None:
+        if isinstance(value, dict):
+            code = _normalise_course_code(value.get("course_code") or value.get("code") or "")
+            label = str(value.get("section_label") or value.get("section") or "").strip()
+            if code and label:
+                pair = {"course_code": code, "section_label": label}
+                if pair not in trusted_pins:
+                    trusted_pins.append(pair)
+            for nested in value.values():
+                collect_verified_pairs(nested)
+        elif isinstance(value, list | tuple):
+            for nested in value:
+                collect_verified_pairs(nested)
+
+    collect_verified_pairs(prior_presentation)
+    if trusted_pins:
+        for capability in (
+            "build_timetable_proposal",
+            "recommend_feasible_course_addition",
+        ):
+            rules.append(
+                ArgumentProvenanceRule.structured_exact(
+                    (capability, "pinned_sections", "*"),
+                    *trusted_pins,
+                )
+            )
+
+    identifiers(
+        ("graduation_progress", "remove_current_courses", "*"),
+        sourced_codes,
+    )
+    identifiers(
+        ("graduation_progress", "noncompletion_current_courses", "*"),
+        sourced_codes,
+    )
+    identifiers(
+        ("graduation_progress", "add_current_courses", "*"),
+        sourced_codes,
+    )
+    identifiers(
+        ("feasible_course_replacements", "remove_course"),
+        sourced_codes,
+    )
+    identifiers(
+        ("feasible_course_replacements", "add_course"),
+        sourced_codes,
+    )
+
+    # The execution layer replaces any accepted policy query with the exact
+    # current question. Other policy selectors are absent from V2.1's schema.
+    rules.append(ArgumentProvenanceRule.text_span(("policy_lookup", "query"), current))
+    return ArgumentProvenanceContract.from_rules(*rules)
+
+
+def _v21_explicit_plan_levels(question: str) -> list[int]:
+    """Distinct valid degree-plan levels explicitly written by the student."""
+
+    return list(
+        dict.fromkeys(
+            int(match.group("level"))
+            for match in re.finditer(
+                r"(?:المستوى|level)\s*(?P<level>\d{1,2})",
+                fold_digits(str(question or "")),
+                re.IGNORECASE,
+            )
+            if 1 <= int(match.group("level")) <= 10
+        )
+    )
+
+
+def _v21_bind_explicit_plan_constraints(
+    plan: Any,
+    question: str,
+    *,
+    prior_course_names: dict[str, str],
+) -> Any:
+    """Bind only server-owned arguments without reinterpreting plan semantics.
+
+    Capability choice, constraint polarity, objective, timetable mode and
+    graduation baseline all remain exactly as the typed planner submitted them.
+    Provenance validation separately proves that student-authored literals came
+    from trusted input.
+    """
+    from core.services.student_advisor_v21_plan import (
+        PlannedCapabilityCall,
+        StudentTurnPlan,
+    )
+
+    del prior_course_names  # retained as a stable internal-call signature
+    bound: list[Any] = []
+    for request in plan.evidence_requests:
+        name = request.capability
+        arguments = dict(request.arguments)
+        if name == "policy_lookup":
+            arguments = {"query": str(question or "")}
+        bound.append(PlannedCapabilityCall(capability=name, arguments=arguments))
+
+    return StudentTurnPlan(
+        decision=plan.decision,
+        evidence_requests=tuple(bound),
+        clarification_kind=plan.clarification_kind,
+        clarification_question=plan.clarification_question,
+        requested_outcomes=tuple(plan.requested_outcomes),
+    )
+
+
 _SECTION_DATA_MISSING_CLAIM = re.compile(
     r"(?:لا\s+توجد\s+(?:شعب|بيانات)|"
     r"لا\s+(?:يحتوي|يوجد).*?(?:سجل|شعب)|"
@@ -2207,8 +3441,13 @@ def _safe_feasible_replacement_answer(
     else:
         requested_remove = str(result.get("requested_remove_course") or "").upper()
         requested_add = str(result.get("requested_add_course") or "").upper()
-        exact = (
+        exact_ar = (
             f"استبدال {requested_remove} بالمقرر {requested_add}"
+            if requested_remove and requested_add
+            else requested_remove or requested_add
+        )
+        exact_en = (
+            f"replacing {requested_remove} with {requested_add}"
             if requested_remove and requested_add
             else requested_remove or requested_add
         )
@@ -2229,26 +3468,27 @@ def _safe_feasible_replacement_answer(
             for row in rejections
         )
         if language == "Arabic":
-            subject = f"بالنسبة إلى {exact}: " if exact else ""
+            if exact_ar:
+                lines.append(f"السيناريو المطلوب: {exact_ar}.")
             if academic_rejected:
                 lines.append(
-                    f"**الخلاصة:** {subject}لم تثبت المحاكاة تحسن مسار إكمال الخطة؛ "
+                    "**الخلاصة:** لم تثبت المحاكاة تحسن مسار إكمال الخطة؛ "
                     "لذلك لم يعتمد النظام أي استبدال بوصفه أفضل، ولم تُستنتج منه "
                     "ملاءمة الجدول."
                 )
             elif snapshot_term_mismatch:
                 lines.append(
-                    f"**الخلاصة:** {subject}بيانات الشُعب المحفوظة لا تخص الفصل المطلوب؛ "
+                    "**الخلاصة:** بيانات الشُعب المحفوظة لا تخص الفصل المطلوب؛ "
                     "لذلك توقف الفحص، ولم يُعتمد جدول بلا تعارضات."
                 )
             elif "NOT_DETERMINABLE" in timetable_statuses:
                 lines.append(
-                    f"**الخلاصة:** {subject}أمكن فحص الجانب الأكاديمي، لكن بيانات "
+                    "**الخلاصة:** أمكن فحص الجانب الأكاديمي، لكن بيانات "
                     "الشُعب أو الجدول لم تكفِ لاعتماد جدول مكتمل بلا تعارضات."
                 )
             else:
                 lines.append(
-                    f"**الخلاصة:** {subject}لم ينتج الفحص المحدود استبدالًا يجمع "
+                    "**الخلاصة:** لم ينتج الفحص المحدود استبدالًا يجمع "
                     "بين تحسن مسار إكمال الخطة وإمكان إنشاء جدول مكتمل بلا تعارضات."
                 )
             lines.append(
@@ -2256,22 +3496,23 @@ def _safe_feasible_replacement_answer(
                 "وجود ترتيب آخر خارج نطاق البحث."
             )
         else:
-            subject = f"for {exact}" if exact else "in the requested search"
+            if exact_en:
+                lines.append(f"Requested scenario: {exact_en}.")
             if academic_rejected:
                 lines.append(
-                    f"**Conclusion:** The graduation simulation did not prove an academic improvement {subject}, so I did not certify it as a better replacement or infer timetable feasibility."
+                    "**Conclusion:** The graduation simulation did not prove an academic improvement, so I did not certify it as a better replacement or infer timetable feasibility."
                 )
             elif snapshot_term_mismatch:
                 lines.append(
-                    f"**Conclusion:** The recorded section snapshot does not belong to the requested term {subject}, so I stopped before running the academic-improvement simulation and did not certify a clash-free timetable."
+                    "**Conclusion:** The recorded section snapshot does not belong to the requested term, so I stopped before running the academic-improvement simulation and did not certify a clash-free timetable."
                 )
             elif "NOT_DETERMINABLE" in timetable_statuses:
                 lines.append(
-                    f"**Conclusion:** Academic evidence was evaluable, but the recorded section or timetable data was insufficient to certify a complete clash-free schedule {subject}."
+                    "**Conclusion:** Academic evidence was evaluable, but the recorded section or timetable data was insufficient to certify a complete clash-free schedule."
                 )
             else:
                 lines.append(
-                    f"**Conclusion:** The bounded check did not produce a replacement that passed both the graduation-improvement and complete clash-free timetable gates {subject}."
+                    "**Conclusion:** The bounded check did not produce a replacement that passed both the graduation-improvement and complete clash-free timetable gates in the requested search."
                 )
             lines.append(
                 "This was a bounded search of recorded data, not proof that no other arrangement exists."
@@ -3097,6 +4338,10 @@ def _safe_graduation_what_if_answer_base(
     removed = [
         str(course.get("code") or "") for course in what_if.get("removed_current_courses") or []
     ]
+    noncompletion = [
+        str(course.get("code") or "")
+        for course in what_if.get("noncompletion_current_courses") or []
+    ]
     added = [str(course.get("code") or "") for course in what_if.get("added_current_courses") or []]
     comparison = what_if.get("comparison") or {}
     baseline = what_if.get("baseline") or {}
@@ -3110,6 +4355,8 @@ def _safe_graduation_what_if_answer_base(
         change = []
         if removed:
             change.append("حذف " + "، ".join(removed))
+        if noncompletion:
+            change.append("عدم اجتياز " + "، ".join(noncompletion) + " في هذا السيناريو")
         if added:
             change.append("إضافة " + "، ".join(added))
         change_text = " و".join(change)
@@ -3122,7 +4369,13 @@ def _safe_graduation_what_if_answer_base(
         lines.extend(
             [
                 "مصدر مقررات البداية: " + baseline_label + ".",
-                "التغيير المفترض في مقررات المحاكاة: " + change_text + ".",
+                (
+                    "الافتراض الأكاديمي في المحاكاة: "
+                    if noncompletion
+                    else "التغيير المفترض في مقررات المحاكاة: "
+                )
+                + change_text
+                + ".",
             ]
         )
         # Scoped to its own baseline: unscoped, this sentence read as the
@@ -3160,11 +4413,18 @@ def _safe_graduation_what_if_answer_base(
                 "الساعات المكتسبة، لكنها لا تحل محل مقررات الخطة."
             )
         lines.extend(_what_if_alternate_lines(language, alternate, what_if))
-        lines.append(
-            "هذا سيناريو أكاديمي افتراضي للقراءة فقط. لم يُحذف أو يُضف أو يُسجّل "
-            "أي مقرر فعليًا، ولا يثبت السيناريو وجود شعبة مطروحة أو مقعد شاغر أو "
-            "جدول بلا تعارضات."
-        )
+        if noncompletion:
+            lines.append(
+                "هذا افتراض أكاديمي للقراءة فقط بأن المقرر لم يُجتز بعد الفصل؛ ولا "
+                "يثبت رسوبًا فعليًا أو درجة أو قاعدة إعادة، ولم يغيّر السجل الأكاديمي "
+                "أو الجدول المسجّل فعليًا."
+            )
+        else:
+            lines.append(
+                "هذا سيناريو أكاديمي افتراضي للقراءة فقط. لم يُحذف أو يُضف أو يُسجّل "
+                "أي مقرر فعليًا، ولا يثبت السيناريو وجود شعبة مطروحة أو مقعد شاغر أو "
+                "جدول بلا تعارضات."
+            )
         return "\n".join(lines)
 
     change = []
@@ -3172,6 +4432,9 @@ def _safe_graduation_what_if_answer_base(
     if removed:
         change.append("remove " + ", ".join(removed))
         verdict_change.append("removing " + ", ".join(removed))
+    if noncompletion:
+        change.append("assume " + ", ".join(noncompletion) + " is not completed this term")
+        verdict_change.append("not completing " + ", ".join(noncompletion) + " this term")
     if added:
         change.append("add " + ", ".join(added))
         verdict_change.append("adding " + ", ".join(added))
@@ -3184,7 +4447,9 @@ def _safe_graduation_what_if_answer_base(
     lines.extend(
         [
             "Starting-course source: " + baseline_label + ".",
-            "Planning-baseline scenario: " + " and ".join(change) + ".",
+            ("Academic assumption: " if noncompletion else "Planning-baseline scenario: ")
+            + " and ".join(change)
+            + ".",
         ]
     )
     effect_text = _comparison_effect_text(comparison, language)
@@ -3220,10 +4485,18 @@ def _safe_graduation_what_if_answer_base(
             "credits, but does not complete a plan course."
         )
     lines.extend(_what_if_alternate_lines(language, alternate, what_if))
-    lines.append(
-        "This is a read-only academic assumption. No course was removed, added, or registered, "
-        "and the scenario does not prove section availability, seats, or a clash-free timetable."
-    )
+    if noncompletion:
+        lines.append(
+            "This is a read-only assumption that the course is not completed after the term. "
+            "It does not establish an actual failing grade, mark, or retake rule, and it changed "
+            "no student record or registered timetable."
+        )
+    else:
+        lines.append(
+            "This is a read-only academic assumption. No course was removed, added, or "
+            "registered, and the scenario does not prove section availability, seats, or a "
+            "clash-free timetable."
+        )
     return "\n".join(lines)
 
 
@@ -3368,7 +4641,7 @@ def _safe_graduation_answer(
             opening
             + blockers
             + term_plan
-            + f"\nهذه محاكاة للقراءة فقط، وسقفها التخطيطي {cap} ساعة معتمدة لكل فصل رئيس،"
+            + f"\nهذه محاكاة للقراءة فقط، وسقفها التخطيطي {cap} ساعة معتمدة لكل فصل رئيس."
             + baseline_assumption
             + " كما تفترض اجتياز جميع المقررات من المحاولة الأولى. ولا تضمن طرح "
             "المقررات مستقبلًا أو وجود مقاعد شاغرة أو أوقات الشُعب أو استيفاء جميع "
@@ -3448,8 +4721,8 @@ def _safe_graduation_answer(
         opening
         + blockers
         + term_plan
-        + f"\nThis read-only scenario caps each main term at {cap} credits and assumes every "
-        "course is passed on the first attempt."
+        + f"\nThis read-only scenario caps each main term at {cap} credits. "
+        "It assumes every course is passed on the first attempt."
         + baseline_assumption
         + " It cannot guarantee future offerings, seats, "
         "section times, or registration permission, and it does not change the student record."
@@ -3473,6 +4746,12 @@ def _required_exact_fact_tools(
     """
     required: set[str] = set()
     if allow_owner:
+        # V2's rollback-compatible evidence gate deliberately keeps the legacy
+        # router local to this branch.  Student Advisor V2.1 never imports or
+        # executes it; its obligations come from a schema-validated semantic
+        # evidence plan instead.
+        from core.services.advisor_intent import owning_capability
+
         owner = owning_capability(question)
         if owner in EXACT_FACT_TOOLS:
             required.add(str(owner))
@@ -3630,6 +4909,242 @@ def _display_number(value: Any) -> str:
     except (TypeError, ValueError):
         return str(value or "")
     return str(int(number)) if number.is_integer() else str(number)
+
+
+def _safe_my_advisor_answer(language: str, row: dict[str, Any], answer_style: str) -> str:
+    """Render adviser identity locally; the remote model never sees the name."""
+
+    if not row.get("ok"):
+        answer = (
+            "تعذّر التحقق من سجل المرشد الأكاديمي الآن. راجع صفحة ملفك الأكاديمي "
+            "أو تواصل مع القسم للتحقق."
+            if language == "Arabic"
+            else (
+                "I could not verify the adviser record right now. Check your academic "
+                "profile or contact your department to confirm it."
+            )
+        )
+        return _apply_saudi_register(answer, language, answer_style)
+
+    assigned = bool(row.get("advisor_assigned"))
+    name = str(row.get("advisor_name") or "").strip()
+    department = str(row.get("advisor_department") or row.get("department") or "").strip()
+    if not assigned:
+        answer = (
+            "لا يوجد مرشد أكاديمي مسجّل في ملفك حاليًا. راجع القسم لتعيين المرشد أو للتحقق من السجل."
+            if language == "Arabic"
+            else (
+                "No academic adviser is recorded on your student profile right now. "
+                "Contact your department to verify the record or arrange assignment."
+            )
+        )
+    elif name:
+        if language == "Arabic":
+            answer = f"المرشد الأكاديمي المسجّل في ملفك هو {name}"
+            if department:
+                answer += f"، من قسم {department}"
+            answer += ". لا يتوفر في السجل المعروض بريد موثوق يمكنني تزويدك به."
+        else:
+            answer = f"The academic adviser recorded on your profile is {name}"
+            if department:
+                answer += f" in the {department} department"
+            answer += ". No verified contact email is available in the displayed record."
+    else:
+        answer = (
+            "يوجد تعيين لمرشد أكاديمي في ملفك، لكن اسم المرشد غير متاح في السجل "
+            "المعروض. راجع القسم للتحقق."
+            if language == "Arabic"
+            else (
+                "Your profile has an adviser assignment, but the adviser's name is not "
+                "available in the displayed record. Contact your department to verify it."
+            )
+        )
+    return _apply_saudi_register(answer, language, answer_style)
+
+
+def _safe_course_lock_answer(language: str, row: dict[str, Any], answer_style: str) -> str:
+    """Render one course's prerequisite state from its typed graph payload."""
+
+    code = str(row.get("course_code") or "").strip().upper()
+    name = str(row.get("course_name") or "").strip()
+    label = code + (f" — {name}" if name else "")
+    if not row.get("ok"):
+        answer = (
+            f"تعذّر التحقق من حالة المتطلبات للمقرر {label or 'المحدد'}."
+            if language == "Arabic"
+            else f"I could not verify the prerequisite state for {label or 'that course'}."
+        )
+        return _apply_saudi_register(answer, language, answer_style)
+
+    status = str(row.get("status") or "").strip().upper()
+    reasons = [item for item in row.get("blocked_by") or [] if isinstance(item, dict)]
+    missing_courses = [
+        str(item.get("code") or "").strip().upper()
+        for item in reasons
+        if str(item.get("kind") or "").upper() in {"MISSING_COURSE", "UNKNOWN_PREREQ"}
+        and str(item.get("code") or "").strip()
+    ]
+    hour_reasons = [
+        item for item in reasons if str(item.get("kind") or "").upper() == "MISSING_HOURS"
+    ]
+    listed = [
+        str(item.get("code") or "").strip().upper()
+        for item in row.get("listed_as_prerequisite_for") or []
+        if isinstance(item, dict) and str(item.get("code") or "").strip()
+    ]
+    sole = [
+        str(item.get("code") or "").strip().upper()
+        for item in row.get("sole_remaining_prerequisite_for") or []
+        if isinstance(item, dict) and str(item.get("code") or "").strip()
+    ]
+
+    if language == "Arabic":
+        lines: list[str] = []
+        if status == "PREREQUISITE_BLOCKED":
+            lines.append(f"{label} محجوب بسبب متطلبات سابقة غير مستوفاة في السجل.")
+            if missing_courses:
+                lines.append("المقررات الناقصة: " + "، ".join(missing_courses) + ".")
+            for reason in hour_reasons:
+                required = reason.get("required")
+                effective = reason.get("effective")
+                remaining = reason.get("remaining")
+                lines.append(
+                    "شرط الساعات: المطلوب "
+                    f"{_display_number(required)}، المحتسب {_display_number(effective)}، "
+                    f"والمتبقي {_display_number(remaining)}."
+                )
+        elif status == "PREREQUISITES_SATISFIED":
+            lines.append(f"{label} مستوفٍ للمتطلبات السابقة المسجّلة.")
+        elif status == "PASSED":
+            lines.append(f"{label} مسجّل كمقرر مجتاز.")
+        elif status == "STUDYING":
+            lines.append(f"{label} مسجّل كمقرر قيد الدراسة، ويظل اجتيازه مطلوبًا.")
+        elif status == "EXPECTED_PLAN_ONLY":
+            lines.append(f"{label} ظاهر في الخطة المتوقعة فقط؛ وهذا لا يجعله مسجّلًا أو قيد الدراسة.")
+        else:
+            lines.append(f"الحالة الموثقة للمقرر {label}: {status or 'غير محددة'}.")
+        lines.append(
+            "يظهر المقرر كمتطلب سابق لـ "
+            f"{_display_number(row.get('listed_as_prerequisite_count', len(listed)))} مقررات، "
+            "وهو آخر متطلب غير مستوفى لـ "
+            f"{_display_number(row.get('sole_remaining_prerequisite_count', len(sole)))} منها."
+        )
+        if sole:
+            lines.append("المقررات التي تنتظره وحده: " + "، ".join(sole) + ".")
+        lines.append("هذه حالة متطلبات فقط، ولا تثبت طرح شعبة أو وجود مقعد أو إذن التسجيل.")
+    else:
+        lines = []
+        if status == "PREREQUISITE_BLOCKED":
+            lines.append(f"{label} is blocked by unmet recorded prerequisites.")
+            if missing_courses:
+                lines.append("Missing courses: " + ", ".join(missing_courses) + ".")
+            for reason in hour_reasons:
+                lines.append(
+                    "Credit-hour gate: "
+                    f"{_display_number(reason.get('required'))} required, "
+                    f"{_display_number(reason.get('effective'))} counted, and "
+                    f"{_display_number(reason.get('remaining'))} remaining."
+                )
+        elif status == "PREREQUISITES_SATISFIED":
+            lines.append(f"{label} has satisfied all recorded prerequisites.")
+        elif status == "PASSED":
+            lines.append(f"{label} is recorded as passed.")
+        elif status == "STUDYING":
+            lines.append(f"{label} is recorded as being studied and still must be passed.")
+        elif status == "EXPECTED_PLAN_ONLY":
+            lines.append(
+                f"{label} appears only in expected-plan evidence; it is not recorded as registered."
+            )
+        else:
+            lines.append(f"The verified status for {label} is {status or 'unspecified'}.")
+        lines.append(
+            "It is listed as a prerequisite for "
+            f"{_display_number(row.get('listed_as_prerequisite_count', len(listed)))} courses; "
+            "it is the sole remaining prerequisite for "
+            f"{_display_number(row.get('sole_remaining_prerequisite_count', len(sole)))} of them."
+        )
+        if sole:
+            lines.append("Waiting only on this course: " + ", ".join(sole) + ".")
+        lines.append(
+            "This verifies prerequisite state only; it does not prove offering, seats, or registration permission."
+        )
+    return _apply_saudi_register("\n".join(lines), language, answer_style)
+
+
+def _safe_policy_answer(
+    language: str,
+    tool_results: list[dict[str, Any]],
+    answer_style: str,
+) -> str:
+    """Quote governing approved records without model paraphrase or inference."""
+
+    direct: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for result in tool_results:
+        if not isinstance(result, dict) or result.get("tool") != "policy_lookup":
+            continue
+        for policy in result.get("direct_policy_evidence") or []:
+            if not isinstance(policy, dict):
+                continue
+            policy_id = str(policy.get("policy_id") or "").strip()
+            if policy_id and policy_id not in seen:
+                seen.add(policy_id)
+                direct.append(policy)
+
+    rendered: list[str] = []
+    limitations: list[str] = []
+    for policy in direct:
+        policy_id = str(policy.get("policy_id") or "").strip()
+        statement = str(policy.get("statement_ar") or "").strip()
+        citation = policy.get("citation") if isinstance(policy.get("citation"), dict) else {}
+        page = citation.get("page")
+        if not (policy_id and statement and page not in (None, "")):
+            continue
+        document = str(citation.get("document_title") or "الدليل الإرشادي للطالب").strip()
+        rendered.append(f"- {statement}\n  «{document}، ص {page} [{policy_id}]»")
+        if bool(
+            policy.get("source_is_unclear_on")
+            or policy.get("open_question")
+            or policy.get("source_leaves_unresolved")
+        ):
+            limitations.append(
+                "المصدر لا يحسم جزءًا من هذه المسألة؛ لذلك لا يثبت أي نتيجة تتجاوز النص المقتبس."
+                if language == "Arabic"
+                else (
+                    "The source does not settle part of this issue, so it establishes "
+                    "no conclusion beyond the quoted text."
+                )
+            )
+        decision_use = str(policy.get("decision_use") or "").strip().upper()
+        if decision_use == "PROHIBITED_FOR_DECISION":
+            limitations.append(
+                "لا تسمح البيانات المتاحة بتطبيق هذا النص على حالتك كقرار فردي."
+                if language == "Arabic"
+                else "The available data cannot apply this text as a decision on your individual case."
+            )
+        elif decision_use == "PARTIALLY_EVALUABLE":
+            limitations.append(
+                "يمكن التحقق من جزء من الحالة فقط، وليس إصدار قرار نهائي."
+                if language == "Arabic"
+                else "Only part of the case can be checked here; this is not a final determination."
+            )
+        elif decision_use == "PERMITTED_WITH_USER_PROVIDED_INPUTS":
+            limitations.append(
+                "يتطلب تطبيق النص مدخلات منك، ولا تُستبدل ببيانات مفترضة."
+                if language == "Arabic"
+                else "Applying the text requires inputs from you; no missing value is assumed."
+            )
+
+    if not rendered:
+        return _citation_refusal(language, answer_style)
+
+    opening = (
+        "النصوص الرسمية التي تحكم سؤالك في السجل المعتمد:"
+        if language == "Arabic"
+        else "The governing approved records state (official Arabic text):"
+    )
+    answer = "\n".join([opening, *rendered, *dict.fromkeys(limitations)])
+    return _apply_saudi_register(answer, language, answer_style)
 
 
 def _safe_timetable_fact_fragment(language: str, row: dict[str, Any]) -> str:
@@ -3790,7 +5305,111 @@ def _safe_recommendation_fact_fragment(language: str, row: dict[str, Any]) -> st
     return "\n".join(lines)
 
 
-def _safe_progress_fact_fragment(language: str, row: dict[str, Any]) -> str:
+def _safe_requested_priority_fact_fragment(
+    language: str,
+    row: dict[str, Any],
+) -> str:
+    """Render one exact, typed top-N prefix or fail closed on payload drift."""
+
+    limit = row.get("requested_priority_limit")
+    if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 20:
+        return ""
+    full = [item for item in (row.get("unlock_impact_ranking") or []) if isinstance(item, dict)]
+    requested = [
+        item
+        for item in (row.get("requested_unlock_impact_ranking") or [])
+        if isinstance(item, dict)
+    ]
+
+    def signature(item: dict[str, Any]) -> tuple[str, Any, Any]:
+        return (
+            _normalise_course_code(item.get("code") or item.get("course_code")),
+            item.get("sole_remaining_prerequisite_count"),
+            item.get("on_prerequisite_chain_of_count"),
+        )
+
+    expected = full[:limit]
+    if (
+        [signature(item) for item in requested] != [signature(item) for item in expected]
+        or any(not signature(item)[0] for item in requested)
+        or row.get("requested_priority_limit_fulfilled") is not (len(expected) == limit)
+    ):
+        return ""
+
+    basis = str(row.get("unlock_impact_ranking_basis") or "").strip()
+    if basis != "SOLE_REMAINING_UNLOCK_COUNT_THEN_DOWNSTREAM_COUNT":
+        return ""
+
+    if language == "Arabic":
+        if len(requested) == limit:
+            lines = [
+                f"أفضل {_display_number(limit)} مقررات حسب أثر فتح مسارات المتطلبات:",
+            ]
+        else:
+            lines = [
+                f"حجم الترتيب المطلوب: أفضل {_display_number(limit)} مقررات.",
+                f"لكن السجل يحتوي {_display_number(len(requested))} فقط مستوفية للمتطلبات المسجلة.",
+                "ترتيب المتاح منها حسب أثر فتح مسارات المتطلبات:",
+            ]
+        for index, item in enumerate(requested, start=1):
+            code = signature(item)[0]
+            sole = _display_number(item.get("sole_remaining_prerequisite_count") or 0)
+            downstream = _display_number(item.get("on_prerequisite_chain_of_count") or 0)
+            lines.append(
+                f"{index}. {code} — تنتظر عليه وحده {sole} مقررات، ويقع في سلسلة "
+                f"متطلبات {downstream} مقررات."
+            )
+        if not requested:
+            lines.append("لا يوجد مقرر مستوفٍ للمتطلبات المسجلة في هذا السجل.")
+        lines.append(
+            "أساس الترتيب: عدد المقررات التي لا ينقصها سواه، ثم عدد المقررات التي "
+            "يقع في سلسلة متطلباتها. هذا معيار لأثر المتطلبات فقط، ولا يثبت طرح شعبة "
+            "أو وجود مقعد أو السماح بالتسجيل."
+        )
+        return "\n".join(lines)
+
+    if len(requested) == limit:
+        lines = [f"Top {_display_number(limit)} courses by prerequisite-chain unlock impact:"]
+    else:
+        lines = [
+            f"You requested a ranking of the top {_display_number(limit)} courses.",
+            f"The record contains only {_display_number(len(requested))} "
+            "prerequisite-ready courses.",
+            "The available courses ranked by prerequisite-chain unlock impact:",
+        ]
+    for index, item in enumerate(requested, start=1):
+        code = signature(item)[0]
+        sole = _display_number(item.get("sole_remaining_prerequisite_count") or 0)
+        downstream = _display_number(item.get("on_prerequisite_chain_of_count") or 0)
+        lines.append(
+            f"{index}. {code} — sole remaining prerequisite for {sole} courses; on the "
+            f"prerequisite chain of {downstream} courses."
+        )
+    if not requested:
+        lines.append("No course is prerequisite-ready in this record.")
+    lines.append(
+        "Ranking basis: sole-remaining unlock count, then downstream-chain count. This "
+        "measures prerequisite impact only and does not prove offering, seats, or "
+        "registration permission."
+    )
+    return "\n".join(lines)
+
+
+def _safe_progress_fact_fragment(
+    language: str,
+    row: dict[str, Any],
+    *,
+    requested_outcomes: Sequence[str] | None = None,
+) -> str:
+    # Legacy V2/fallback callers do not carry semantic outcomes, so ``None``
+    # preserves their established rendering. V2.1 always supplies the accepted
+    # plan outcomes and must not turn a plain eligibility list into an unasked
+    # priority recommendation merely because ``my_progress`` also returns a
+    # server-owned ranking.
+    priority_requested = requested_outcomes is None or "course_priority" in requested_outcomes
+    if "requested_priority_limit" in row and priority_requested:
+        return _safe_requested_priority_fact_fragment(language, row)
+
     counts = row.get("counts") if isinstance(row.get("counts"), dict) else {}
     open_rows = [
         item for item in (row.get("prerequisites_satisfied") or []) if isinstance(item, dict)
@@ -3802,27 +5421,57 @@ def _safe_progress_fact_fragment(language: str, row: dict[str, Any]) -> str:
     blocked_codes = [
         str(item.get("code") or "").strip() for item in blocked_rows if item.get("code")
     ]
+    ranking_rows = (
+        [item for item in (row.get("unlock_impact_ranking") or []) if isinstance(item, dict)]
+        if priority_requested
+        else []
+    )
+    ranked_codes = [
+        str(item.get("code") or "").strip() for item in ranking_rows if item.get("code")
+    ]
+    # The capability promises a complete ordering of every prerequisite-ready
+    # concrete course.  Older/injected rows may not carry it, so preserve the
+    # ready-course list as a truthful fallback instead of inventing an order.
+    displayed_open_codes = ranked_codes or open_codes
     open_count = counts.get("open", len(open_codes))
     blocked_count = counts.get("locked", len(blocked_codes))
     if language == "Arabic":
         lines = [
             "بحسب بيانات التقدم الموثقة: "
-            f"{_display_number(open_count)} مقررات مستوفية للمتطلبات المسجلة، و"
-            f"{_display_number(blocked_count)} مقررات محجوبة بمتطلبات."
+            f"{_display_number(open_count)} مقررات مستوفية للمتطلبات المسجلة.",
+            f"وبحسب السجل نفسه: {_display_number(blocked_count)} مقررات محجوبة بمتطلبات.",
         ]
-        if open_codes:
-            lines.append("المقررات المستوفية للمتطلبات: " + "، ".join(open_codes) + ".")
+        if displayed_open_codes:
+            label = (
+                "المقررات المستوفية مرتبة حسب أثر فتح مسارات المتطلبات: "
+                if ranked_codes
+                else "المقررات المستوفية للمتطلبات: "
+            )
+            lines.append(label + "، ".join(displayed_open_codes) + ".")
+            if ranked_codes:
+                lines.append(
+                    f"الأعلى وفق معيار أثر فتح مسارات المتطلبات في السجل: {ranked_codes[0]}."
+                )
         if blocked_codes:
             lines.append("المقررات المحجوبة: " + "، ".join(blocked_codes) + ".")
         lines.append("استيفاء المتطلبات لا يثبت طرح شعبة أو وجود مقعد أو السماح بالتسجيل.")
         return "\n".join(lines)
     lines = [
         "The verified progress record shows "
-        f"{_display_number(open_count)} prerequisite-ready courses and "
-        f"{_display_number(blocked_count)} prerequisite-blocked courses."
+        f"{_display_number(open_count)} prerequisite-ready courses.",
+        f"The same record shows {_display_number(blocked_count)} prerequisite-blocked courses.",
     ]
-    if open_codes:
-        lines.append("Prerequisite-ready: " + ", ".join(open_codes) + ".")
+    if displayed_open_codes:
+        label = (
+            "Prerequisite-ready courses ranked by prerequisite-chain unlock impact: "
+            if ranked_codes
+            else "Prerequisite-ready: "
+        )
+        lines.append(label + ", ".join(displayed_open_codes) + ".")
+        if ranked_codes:
+            lines.append(
+                f"Highest on the verified prerequisite-chain impact ranking: {ranked_codes[0]}."
+            )
     if blocked_codes:
         lines.append("Blocked: " + ", ".join(blocked_codes) + ".")
     lines.append(
@@ -3874,6 +5523,234 @@ def _safe_prior_presentation_fragment(language: str, row: dict[str, Any]) -> str
 
 def _safe_timetable_proposal_fact_fragment(language: str, row: dict[str, Any]) -> str:
     """Complete deterministic text for provider-visible proposal alternatives."""
+    from core.services.student_advisor_v21_synthesis import (
+        localize_timetable_constraint_failure_reason,
+        localize_timetable_day,
+        localize_timetable_unplaced_reason,
+    )
+
+    constraint_negative = not row.get("alternatives") and (
+        row.get("constraints_satisfied") is False
+        or str(row.get("status") or "").strip().upper() == "CONSTRAINTS_UNSATISFIED"
+    )
+    raw_credit_ceiling = row.get("credit_ceiling")
+    credit_ceiling_text = (
+        _display_number(raw_credit_ceiling)
+        if isinstance(raw_credit_ceiling, int | float) and not isinstance(raw_credit_ceiling, bool)
+        else ""
+    )
+    constraint_lines = (
+        [
+            (
+                (
+                    f"الحد الأعلى للساعات المطبّق في فحص القيود: {credit_ceiling_text} ساعة معتمدة."
+                    if constraint_negative
+                    else f"الحد الأعلى لساعات الجدول المقترح: {credit_ceiling_text} ساعة معتمدة."
+                )
+                if language == "Arabic"
+                else (
+                    f"Credit-hour ceiling applied to the constraint check: "
+                    f"{credit_ceiling_text} credit hours."
+                    if constraint_negative
+                    else f"Proposal credit ceiling: {credit_ceiling_text} credit hours."
+                )
+            )
+        ]
+        if credit_ceiling_text
+        else []
+    )
+    raw_target_credits = row.get("target_credits")
+    target_credits_text = (
+        _display_number(raw_target_credits)
+        if isinstance(raw_target_credits, int | float)
+        and not isinstance(raw_target_credits, bool)
+        and raw_target_credits > 0
+        else ""
+    )
+    target_status = str(row.get("target_credit_status") or "").strip().upper()
+    if target_credits_text:
+        target_verified = (
+            row.get("target_credits_satisfied") is True and target_status == "SATISFIED"
+        )
+        constraint_lines.append(
+            (
+                (
+                    f"المجموع الدقيق المطلوب والمتحقق لساعات الجدول: "
+                    f"{target_credits_text} ساعة معتمدة."
+                )
+                if target_verified
+                else f"المجموع الدقيق المطلوب لساعات الجدول: {target_credits_text} ساعة معتمدة."
+            )
+            if language == "Arabic"
+            else (
+                (
+                    f"Exact requested and verified timetable total: "
+                    f"{target_credits_text} credit hours."
+                )
+                if target_verified
+                else f"Exact requested timetable total: {target_credits_text} credit hours."
+            )
+        )
+
+    target_status_messages = {
+        "TARGET_EXCEEDS_EFFECTIVE_MAX": (
+            "يتجاوز المجموع الدقيق المطلوب الحد الأعلى الفعّال، ولم يُخفّض الهدف تلقائيًا."
+            if language == "Arabic"
+            else (
+                "The exact requested total exceeds the effective credit ceiling; "
+                "the target was not reduced automatically."
+            )
+        ),
+        "RETAINED_BASELINE_EXCEEDS_TARGET": (
+            "تتجاوز ساعات الجدول المحتفَظ به الهدف الدقيق، ووضع البناء حول الجدول "
+            "الحالي لا يحذف مقرراته."
+            if language == "Arabic"
+            else (
+                "The retained timetable already exceeds the exact target, and "
+                "around-current mode does not remove retained courses."
+            )
+        ),
+        "NO_EXACT_ALTERNATIVE": (
+            "لم يجد البحث المحدود A1–C3 جدولًا يساوي مجموع الساعات الدقيق، ولم "
+            "يُعرض جدول أقل ساعات على أنه يحقق الهدف."
+            if language == "Arabic"
+            else (
+                "The bounded A1-C3 search did not find a timetable at the exact credit "
+                "total; a lower-credit timetable is not shown as fulfillment."
+            )
+        ),
+    }
+    target_status_message = target_status_messages.get(target_status, "")
+
+    if row.get("no_additional_courses"):
+        baseline_kind = str(row.get("baseline_kind") or "").upper()
+        baseline = [item for item in (row.get("baseline_sections") or []) if isinstance(item, dict)]
+        if language == "Arabic":
+            kind = "الجدول المتوقع" if baseline_kind == "EXPECTED_PLAN" else "الجدول المسجّل فعليًا"
+            lines = [
+                *constraint_lines,
+                f"لا توجد مقررات إضافية مقترحة؛ احتُفظ بـ{kind} كما هو:",
+            ]
+            for item in baseline:
+                code = str(item.get("course_code") or "").strip().upper()
+                section = str(item.get("section") or "").strip().upper()
+                name = str(item.get("course_name") or "").strip()
+                if not code:
+                    continue
+                text = f"- {code}" + (f" — {name}" if name else "")
+                text += f" — الشعبة {section}" if section else ""
+                lines.append(text)
+            if row.get("pinned_sections") and row.get("constraints_satisfied"):
+                pins = [
+                    "- "
+                    + str(pin.get("course_code") or "").strip().upper()
+                    + " — الشعبة "
+                    + str(pin.get("section_label") or "").strip().upper()
+                    for pin in row.get("pinned_sections") or []
+                    if isinstance(pin, dict) and pin.get("course_code") and pin.get("section_label")
+                ]
+                if pins:
+                    lines.extend(["القيود المثبتة التي تحققت:", *pins])
+            lines.append("هذا مقترح للقراءة فقط، ولم يغيّر تسجيلك الفعلي.")
+            return "\n".join(lines)
+
+        kind = (
+            "expected-plan timetable"
+            if baseline_kind == "EXPECTED_PLAN"
+            else "registered timetable"
+        )
+        lines = [
+            *constraint_lines,
+            f"There are no new course additions proposed; the {kind} is retained as recorded:",
+        ]
+        for item in baseline:
+            code = str(item.get("course_code") or "").strip().upper()
+            section = str(item.get("section") or "").strip().upper()
+            name = str(item.get("course_name") or "").strip()
+            if not code:
+                continue
+            text = f"- {code}" + (f" — {name}" if name else "")
+            text += f" — section {section}" if section else ""
+            lines.append(text)
+        if row.get("pinned_sections") and row.get("constraints_satisfied"):
+            pins = [
+                "- "
+                + str(pin.get("course_code") or "").strip().upper()
+                + " — section "
+                + str(pin.get("section_label") or "").strip().upper()
+                for pin in row.get("pinned_sections") or []
+                if isinstance(pin, dict) and pin.get("course_code") and pin.get("section_label")
+            ]
+            if pins:
+                lines.extend(["Verified pinned constraints:", *pins])
+        lines.append("This is a read-only proposal and did not change actual registration.")
+        return "\n".join(lines)
+
+    failures = [item for item in (row.get("constraint_failures") or []) if isinstance(item, dict)]
+    unplaced = [item for item in (row.get("unplaced_courses") or []) if isinstance(item, dict)]
+    if not row.get("alternatives") and (failures or unplaced or target_status_message):
+        blockers: list[tuple[str, str, str]] = []
+        seen: set[tuple[str, str, str]] = set()
+        explicit_hard_codes = {
+            str(code or "").strip().upper()
+            for code in row.get("must_take_courses") or []
+            if str(code or "").strip()
+        }
+        explicit_hard_codes.update(
+            str(pin.get("course_code") or "").strip().upper()
+            for pin in row.get("pinned_sections") or []
+            if isinstance(pin, dict) and pin.get("course_code")
+        )
+        for item in [*failures, *unplaced]:
+            code = str(item.get("course_code") or "").strip().upper()
+            section = str(item.get("section_label") or item.get("section") or "").strip().upper()
+            reason = localize_timetable_constraint_failure_reason(language, item)
+            if target_status_message and not code and not section:
+                # The closed status above has a bilingual rendering. Do not put
+                # the executor's English diagnostic into an Arabic student card.
+                continue
+            if target_status_message and code and code not in explicit_hard_codes:
+                # A typed exact-target negative is about the bounded aggregate
+                # search. Generic per-course omissions from rejected variants
+                # neither prove a course-specific blocker nor belong to a
+                # zero-alternative schedule relation. Preserve only explicit
+                # must-take/pin failures, whose course identity is meaningful.
+                continue
+            identity = (code, section, reason)
+            if identity in seen:
+                continue
+            seen.add(identity)
+            blockers.append(identity)
+
+        if language == "Arabic":
+            lines = [
+                *constraint_lines,
+                "لا يوجد ناتج صالح من فحص الجدولة يحقق جميع القيود المحددة.",
+            ]
+            if target_status_message:
+                lines.append(target_status_message)
+            for code, section, reason in blockers:
+                subject = code or "القيد العام"
+                if section:
+                    subject += f" — الشعبة {section}"
+                lines.append(f"- {subject}" + (f" — {reason}" if reason else ""))
+            lines.append("هذا فحص للقراءة فقط، ولم يغيّر تسجيلك الفعلي.")
+            return "\n".join(lines)
+
+        lines = [
+            *constraint_lines,
+            "None of the proposed timetables satisfies all specified constraints.",
+        ]
+        if target_status_message:
+            lines.append(target_status_message)
+        for code, section, reason in blockers:
+            subject = code or "General constraint"
+            if section:
+                subject += f" — section {section}"
+            lines.append(f"- {subject}" + (f" — {reason}" if reason else ""))
+        lines.append("This is a read-only check and did not change actual registration.")
+        return "\n".join(lines)
+
     blocks: list[str] = []
     for index, alternative in enumerate(row.get("alternatives") or [], start=1):
         if not isinstance(alternative, dict):
@@ -3895,7 +5772,23 @@ def _safe_timetable_proposal_fact_fragment(language: str, row: dict[str, Any]) -
             )
             meetings_by_course.setdefault(key, []).append(meeting)
 
-        lines = [f"الخيار {label}:" if language == "Arabic" else f"Option {label}:"]
+        raw_total = alternative.get("total_credit_hours")
+        total_text = (
+            _display_number(raw_total)
+            if isinstance(raw_total, int | float) and not isinstance(raw_total, bool)
+            else ""
+        )
+        lines = [
+            (
+                f"الخيار {label}"
+                + (f" — المجموع: {total_text} ساعة معتمدة" if total_text else "")
+                + ":"
+                if language == "Arabic"
+                else f"Option {label}"
+                + (f" — total: {total_text} credit hours" if total_text else "")
+                + ":"
+            )
+        ]
         for course in alternative.get("courses") or []:
             if not isinstance(course, dict):
                 continue
@@ -3906,7 +5799,7 @@ def _safe_timetable_proposal_fact_fragment(language: str, row: dict[str, Any]) -
             name = str(course.get("course_name") or "").strip()
             detail_rows = []
             for meeting in meetings_by_course.get((code, section), []):
-                day = str(meeting.get("day") or "").strip()
+                day = localize_timetable_day(language, meeting.get("day"))
                 start = str(meeting.get("start") or "").strip()
                 end = str(meeting.get("end") or "").strip()
                 detail_rows.append(
@@ -3927,7 +5820,7 @@ def _safe_timetable_proposal_fact_fragment(language: str, row: dict[str, Any]) -
             if not isinstance(course, dict):
                 continue
             code = str(course.get("course_code") or "").strip().upper()
-            reason = str(course.get("reason") or "").strip()
+            reason = localize_timetable_unplaced_reason(language, course)
             if code:
                 lines.append(
                     f"- لم يُدرج {code}: {reason}"
@@ -3942,7 +5835,7 @@ def _safe_timetable_proposal_fact_fragment(language: str, row: dict[str, Any]) -
         if language == "Arabic"
         else "These are read-only proposals and do not change actual registration."
     )
-    return "\n\n".join([*blocks, tail])
+    return "\n\n".join([*constraint_lines, *blocks, tail])
 
 
 def _verified_evidence_fallback(
@@ -3989,6 +5882,261 @@ def _verified_evidence_fallback(
         if fragment:
             fragments.append(fragment)
     return "\n\n".join(fragments)
+
+
+_V21_TOOL_LABELS_EN = {
+    "my_progress": "academic progress",
+    "my_plan_by_term": "degree plan",
+    "my_timetable": "timetable",
+    "my_clash_free_sections": "section-clash check",
+    "build_timetable_proposal": "timetable check",
+    "lookup_course": "course catalogue lookup",
+    "course_prerequisites": "course prerequisites",
+    "why_course_locked": "course-lock analysis",
+    "course_choice_comparison": "course comparison",
+    "feasible_course_replacements": "course-replacement check",
+    "recommend_courses": "course recommendations",
+    "graduation_progress": "graduation forecast",
+    "policy_lookup": "policy evidence",
+    "my_advisor": "academic-adviser record",
+    "recommend_feasible_course_addition": "feasible course addition",
+    "rank_current_course_drop_impact": "course-drop impact ranking",
+    "improve_current_timetable": "current-timetable improvement",
+    PRIOR_PRESENTATION_TOOL: "prior verified result",
+}
+_V21_TOOL_LABELS_AR = {
+    "my_progress": "التقدم الأكاديمي",
+    "my_plan_by_term": "الخطة الدراسية",
+    "my_timetable": "الجدول الدراسي",
+    "my_clash_free_sections": "فحص تعارض الشُعب",
+    "build_timetable_proposal": "فحص الجدولة",
+    "lookup_course": "البحث في سجل المقررات",
+    "course_prerequisites": "متطلبات المقرر",
+    "why_course_locked": "تحليل حجب المقرر",
+    "course_choice_comparison": "مقارنة المقررات",
+    "feasible_course_replacements": "فحص استبدال المقرر",
+    "recommend_courses": "توصيات المقررات",
+    "graduation_progress": "توقع التخرج",
+    "policy_lookup": "الدليل التنظيمي",
+    "my_advisor": "سجل المرشد الأكاديمي",
+    "recommend_feasible_course_addition": "اقتراح مقرر إضافي قابل للتنفيذ",
+    "rank_current_course_drop_impact": "ترتيب أثر حذف المقررات",
+    "improve_current_timetable": "تحسين الجدول الحالي",
+    PRIOR_PRESENTATION_TOOL: "النتيجة الموثقة السابقة",
+}
+
+
+def _v21_capability_refusal(language: str, tool: str) -> str:
+    labels = _V21_TOOL_LABELS_AR if language == "Arabic" else _V21_TOOL_LABELS_EN
+    label = labels.get(tool, "الدليل المطلوب" if language == "Arabic" else "requested evidence")
+    return (
+        f"تعذّر التحقق من {label}؛ لذلك لن أعرض نتيجة غير مؤكدة."
+        if language == "Arabic"
+        else f"I could not verify the {label}, so I will not present an unconfirmed result."
+    )
+
+
+def _v21_plan_contract_refusal(language: str) -> str:
+    """Fail closed when the typed plan does not cover the whole request."""
+
+    if language == "Arabic":
+        return (
+            "لم أتمكن من إعداد خطة أدلة مكتملة تغطي كل أجزاء طلبك، لذلك لم "
+            "أنفّذ مجموعة أدوات ناقصة ولم أعرض استنتاجًا جزئيًا على أنه إجابة كاملة. "
+            "أعد المحاولة بصياغة أقصر أو افصل المطلوب إلى سؤالين."
+        )
+    return (
+        "I could not build a complete evidence plan covering every part of your "
+        "request, so I did not run an incomplete tool set or present a partial "
+        "conclusion as a complete answer. Please retry with a shorter request or "
+        "split it into two questions."
+    )
+
+
+def _v21_unsupported_answer(language: str, outcomes: tuple[str, ...]) -> str:
+    """Render a closed, claim-free limitation from the typed unsupported outcome."""
+
+    registration_action = "registration_action" in outcomes
+    credit_load_comparison = "credit_load_comparison" in outcomes
+    generic_unsupported = "unsupported_request" in outcomes
+    blocks: list[str] = []
+    if language == "Arabic":
+        if registration_action:
+            blocks.append(
+                "المستشار هنا للقراءة والتحليل فقط؛ لا يستطيع تسجيل مقرر أو حذفه أو "
+                "حفظ تعديل في بوابة الجامعة. أقدر بدلًا من ذلك أفحص الأهلية والأثر "
+                "الأكاديمي والجدول المقترح، ثم تنفّذ القرار بنفسك في القناة الرسمية."
+            )
+        if credit_load_comparison:
+            blocks.append(
+                "المحاكاة الحالية تستخدم سقفًا تخطيطيًا ثابتًا قدره 18 ساعة، ولا "
+                "تستطيع مقارنة أحمال بديلة مثل 12 مقابل 18 ساعة أو إثبات أقل حمل "
+                "يحافظ على موعد التخرج. لذلك لن أعرض توقعًا ثابتًا على أنه نتيجة "
+                "لهذه المقارنة؛ اطلب من المرشد الأكاديمي دراسة السيناريوهين."
+            )
+        if generic_unsupported or not blocks:
+            blocks.append(
+                "هذا الطلب خارج نطاق الأدلة والقدرات الموثقة المتاحة للمستشار حاليًا، "
+                "لذلك لن أخمّن نتيجة. يمكنك تضييق السؤال إلى الخطة أو المتطلبات أو الجدول "
+                "أو أثر القرار على التخرج، أو إحالته إلى مرشدك الأكاديمي."
+            )
+        return "\n\n".join(blocks)
+    if registration_action:
+        blocks.append(
+            "This adviser is read-only: it cannot register or drop a course or save a "
+            "change in the university portal. I can instead verify eligibility, academic "
+            "impact, and a proposed timetable so you can make the change through the "
+            "official channel."
+        )
+    if credit_load_comparison:
+        blocks.append(
+            "The current simulation uses a fixed 18-credit planning ceiling; it cannot "
+            "compare alternative loads such as 12 versus 18 credits or prove the minimum "
+            "load that preserves graduation timing. I will not present the fixed forecast "
+            "as the result of that comparison; ask your academic adviser to assess both "
+            "scenarios."
+        )
+    if generic_unsupported or not blocks:
+        blocks.append(
+            "This request is outside the adviser's currently verified evidence and capability "
+            "scope, so I will not guess. You can narrow it to degree progress, prerequisites, "
+            "timetabling, or graduation impact, or refer it to your academic adviser."
+        )
+    return "\n\n".join(blocks)
+
+
+def _safe_v21_planned_answer(
+    language: str,
+    tool_results: list[dict[str, Any]],
+    answer_style: str,
+    *,
+    planned_tools: tuple[str, ...],
+    requested_outcomes: tuple[str, ...] = (),
+) -> tuple[str, bool, tuple[tuple[str, str], ...]]:
+    """Render every V2.1 plan obligation from typed local evidence.
+
+    The LLM owns semantic evidence selection, not factual restatement.  Every
+    planned capability yields one block in plan order.  Missing/failed rows are
+    explicit and mark the result incomplete so terminal accounting can abstain.
+    """
+
+    from core.services.student_advisor_v21_render import (
+        render_course_prerequisites,
+        render_improve_current_timetable,
+        render_lookup_course,
+        render_plan_by_term,
+        render_rank_current_course_drop_impact,
+        render_recommend_feasible_course_addition,
+    )
+    from core.services.student_advisor_v21_synthesis import joined_answer_blocks
+
+    latest: dict[str, dict[str, Any]] = {}
+    for row in tool_results:
+        if not isinstance(row, dict):
+            continue
+        tool = str(row.get("tool") or "")
+        if tool:
+            latest[tool] = row
+
+    blocks: list[str] = []
+    scoped_blocks: list[tuple[str, str]] = []
+    complete = True
+    for tool in planned_tools:
+        row = latest.get(tool)
+        if row is None or not row.get("ok"):
+            refusal = _v21_capability_refusal(language, tool)
+            blocks.append(refusal)
+            scoped_blocks.append((tool, refusal))
+            complete = False
+            continue
+
+        if tool == "lookup_course":
+            block = render_lookup_course(language, row)
+        elif tool == "course_prerequisites":
+            block = render_course_prerequisites(language, row)
+        elif tool == "my_plan_by_term":
+            block = render_plan_by_term(language, row)
+        elif tool == "my_timetable":
+            block = _safe_timetable_fact_fragment(language, row)
+        elif tool == "recommend_courses":
+            block = _safe_recommendation_fact_fragment(language, row)
+        elif tool == "my_progress":
+            block = _safe_progress_fact_fragment(
+                language,
+                row,
+                requested_outcomes=requested_outcomes,
+            )
+        elif tool == "graduation_progress":
+            block = _safe_graduation_answer(language, tool_results, answer_style)
+        elif tool == "build_timetable_proposal":
+            block = _safe_timetable_proposal_fact_fragment(language, row)
+        elif tool == PRIOR_PRESENTATION_TOOL:
+            block = _safe_prior_presentation_fragment(language, row)
+        elif tool == "my_clash_free_sections":
+            block = _safe_section_answer(language, tool_results, answer_style)
+        elif tool == "course_choice_comparison":
+            block = _safe_course_comparison_answer(language, tool_results, answer_style)
+        elif tool == "feasible_course_replacements":
+            block = _safe_feasible_replacement_answer(language, tool_results, answer_style)
+        elif tool == "why_course_locked":
+            block = _safe_course_lock_answer(language, row, answer_style)
+        elif tool == "my_advisor":
+            block = _safe_my_advisor_answer(language, row, answer_style)
+        elif tool == "policy_lookup":
+            block = _safe_policy_answer(language, tool_results, answer_style)
+        elif tool == "recommend_feasible_course_addition":
+            block = render_recommend_feasible_course_addition(language, row)
+        elif tool == "rank_current_course_drop_impact":
+            block = render_rank_current_course_drop_impact(language, row)
+        elif tool == "improve_current_timetable":
+            block = render_improve_current_timetable(language, row)
+        else:  # The advertised surface and this dispatch must evolve together.
+            block = ""
+
+        block = str(block or "").strip()
+        if block:
+            labels = _V21_TOOL_LABELS_AR if language == "Arabic" else _V21_TOOL_LABELS_EN
+            heading = labels.get(tool, tool.replace("_", " "))
+            scoped = f"### {heading}\n{block}"
+            blocks.append(scoped)
+            scoped_blocks.append((tool, scoped))
+        else:
+            refusal = _v21_capability_refusal(language, tool)
+            blocks.append(refusal)
+            scoped_blocks.append((tool, refusal))
+            complete = False
+
+    # Cross-capability conclusions are also server-owned.  They are licensed only
+    # by an exact typed outcome/tool pair and compare provider-visible fields from
+    # the two successful rows; the model never supplies this relationship prose.
+    for scope, joined_block in joined_answer_blocks(
+        language,
+        latest,
+        planned_tools=planned_tools,
+        requested_outcomes=requested_outcomes,
+    ):
+        blocks.append(joined_block)
+        scoped_blocks.append((scope, joined_block))
+
+    if "registration_action" in requested_outcomes:
+        boundary = _v21_unsupported_answer(language, ("registration_action",))
+        heading = "حدود تنفيذ الإجراء" if language == "Arabic" else "Action boundary"
+        scoped = f"### {heading}\n{boundary}"
+        blocks.append(scoped)
+        scoped_blocks.append(("registration_action_boundary", scoped))
+
+    if "credit_load_comparison" in requested_outcomes:
+        boundary = _v21_unsupported_answer(language, ("credit_load_comparison",))
+        heading = (
+            "حدود مقارنة العبء الدراسي"
+            if language == "Arabic"
+            else "Credit-load comparison boundary"
+        )
+        scoped = f"### {heading}\n{boundary}"
+        blocks.append(scoped)
+        scoped_blocks.append(("credit_load_comparison_boundary", scoped))
+
+    return "\n\n".join(blocks), complete, tuple(scoped_blocks)
 
 
 def _evidence_abstention(language: str, channel_profile: str = "") -> str:
@@ -4122,10 +6270,93 @@ def student_v2_tool_schemas() -> list[dict[str, Any]]:
             # model cannot choose a different timetable/scenario term.
             properties.pop("academic_year", None)
             properties.pop("term", None)
+        if name == "graduation_progress":
+            # Registered-course non-completion is a V2.1 typed scenario. The
+            # adaptive V2 normaliser predates that contract, so advertising it
+            # here would invite an argument that V2 silently discards.
+            properties.pop("noncompletion_current_courses", None)
+        if name == "my_progress":
+            # Explicit top-N cardinality is a V2.1 semantic-plan contract.
+            # Legacy V2 keeps its historical argument-free progress behavior.
+            properties.pop("priority_limit", None)
+        if name == "build_timetable_proposal":
+            # Exact timetable-load equality is a V2.1 semantic-plan contract.
+            # Legacy V2 retains its historical ceiling-only builder surface.
+            properties.pop("target_credits", None)
         required = parameters.get("required")
         if isinstance(required, list):
             parameters["required"] = [item for item in required if item != "student_id"]
         schemas.append(schema)
+    return schemas
+
+
+def student_v21_tool_schemas() -> list[dict[str, Any]]:
+    """Return the launch-safe semantic-planner capability surface."""
+
+    registry = get_default_registry()
+    schemas = [
+        copy.deepcopy(registry.capabilities[name].tool_schema()) for name in STUDENT_V21_TOOL_NAMES
+    ]
+    for schema in schemas:
+        function = schema.get("function") or {}
+        name = str(function.get("name") or "")
+        parameters = function.get("parameters") or {}
+        properties = parameters.get("properties") or {}
+        properties.pop("student_id", None)
+        # Calendar context is server-owned in V2.1. ``my_plan_by_term.term`` is
+        # a plan level rather than a calendar term, so it remains available and
+        # is separately provenance-bound to explicit level wording.
+        properties.pop("academic_year", None)
+        if name != "my_plan_by_term":
+            properties.pop("term", None)
+        if name == "policy_lookup":
+            # Retrieval is always rebound to the exact student question. Topic,
+            # policy ids and limits are useful for an adaptive legacy agent but
+            # are unnecessary planner-authored degrees of freedom here.
+            for key in ("topic", "policy_ids", "limit"):
+                properties.pop(key, None)
+        if name in {"lookup_course", "course_prerequisites"}:
+            # A program filter changes catalogue scope. V2.1 defaults it from
+            # the authenticated student rather than inferring a short code from
+            # a substring inside a course identifier.
+            properties.pop("program", None)
+        required = [
+            str(item) for item in parameters.get("required") or [] if str(item) in properties
+        ]
+        # These defaults materially change the evidence request. In V2.1 the
+        # semantic planner must state them explicitly instead of letting an
+        # executor default silently answer a different question.
+        if name == "build_timetable_proposal" and "mode" not in required:
+            required.append("mode")
+        if name == "course_choice_comparison" and "objective" not in required:
+            required.append("objective")
+        if name == "graduation_progress" and "planning_baseline_kind" not in required:
+            required.append("planning_baseline_kind")
+        if name == "graduation_progress":
+            function["description"] = (
+                str(function.get("description") or "")
+                + " For 'if I fail DS341', use registered_timetable and put DS341 only in "
+                "noncompletion_current_courses. That typed control models that the registered "
+                "course is not assumed passed after the term; never substitute "
+                "remove_current_courses, whose meaning is drop/remove. It must be the only "
+                "course-change control: do not combine it with add, remove, or replacement "
+                "search. The non-completion scenario does not prove a grade or apply a "
+                "withdrawal or retake rule. Pair why_course_locked when the student also asks "
+                "which dependent courses are affected."
+            )
+        if name in STUDENT_V21_COMPOUND_TOOL_NAMES and "objective" not in required:
+            required.append("objective")
+        if name == "improve_current_timetable":
+            # V2.1 exposes one unambiguous load contract. The older boolean is
+            # retained only for internal/legacy callers of the capability.
+            properties.pop("preserve_credit_hours", None)
+            for semantic_control in (
+                "credit_load_policy",
+                "allow_course_replacements",
+            ):
+                if semantic_control not in required:
+                    required.append(semantic_control)
+        parameters["required"] = required
     return schemas
 
 
@@ -4139,7 +6370,7 @@ def execute_student_v2_tool(
     """Execute one allowed self-service capability; refuse everything else."""
     if principal.role != ROLE_STUDENT or principal.student_id is None:
         return {"tool": name, "ok": False, "error": "Student identity is required."}
-    if name not in STUDENT_V2_TOOL_NAMES:
+    if name not in {*STUDENT_V2_TOOL_NAMES, *STUDENT_V21_COMPOUND_TOOL_NAMES}:
         return {"tool": name, "ok": False, "error": "This capability is not available."}
     if not isinstance(arguments, dict):
         return {"tool": name, "ok": False, "error": "Tool arguments must be an object."}
@@ -4149,6 +6380,7 @@ def execute_student_v2_tool(
         "course_choice_comparison",
         "feasible_course_replacements",
         "graduation_progress",
+        *STUDENT_V21_COMPOUND_TOOL_NAMES,
     }:
         # Defense in depth for callers that bypass schema-guided generation.
         arguments.pop("academic_year", None)
@@ -4161,11 +6393,21 @@ def execute_student_v2_tool(
     )
 
 
-def _policy_grounding(question: str, tool_results: list[dict[str, Any]]) -> tuple[bool, str]:
-    # Retrieval is unconditional, but a missing rule must only turn the whole
-    # response into an abstention when the student actually asked for a rule.
-    # Pure timetable and record questions are grounded by their own tools.
-    required = requires_policy_contract(question)
+def _policy_grounding(
+    question: str,
+    tool_results: list[dict[str, Any]],
+    *,
+    required_override: bool | None = None,
+) -> tuple[bool, str]:
+    # V2 may seed retrieval defensively, while V2.1 requests it explicitly.
+    # In either mode, a missing rule must only turn the whole response into an
+    # abstention when the student actually asked for a rule. Pure timetable and
+    # record questions are grounded by their own tools.
+    required = (
+        bool(required_override)
+        if required_override is not None
+        else requires_policy_contract(question)
+    )
     policy = [row for row in tool_results if row.get("tool") == "policy_lookup"]
     if not policy:
         return required, "not_consulted"
@@ -4176,6 +6418,17 @@ def _policy_grounding(question: str, tool_results: list[dict[str, Any]]) -> tupl
     if any(row.get("policies") for row in policy):
         return required, "none_governing"
     return required, "none_matched"
+
+
+def _legacy_v2_arguments(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    """Remove V2.1-only controls from a non-semantic legacy model call."""
+
+    safe = dict(arguments)
+    if name == "my_progress":
+        safe.pop("priority_limit", None)
+    if name == "build_timetable_proposal":
+        safe.pop("target_credits", None)
+    return safe
 
 
 def _citation_refusal(language: str, answer_style: str = "") -> str:
@@ -4245,8 +6498,16 @@ def answer_student_advisor_v2(
     model: str | None = None,
     llm_client: Any = None,
     channel_profile: str = "",
+    _semantic_planning: bool = False,
 ) -> dict[str, Any]:
-    """Run one student turn through a single plan/act/observe agent loop."""
+    """Run one student turn through the evidence-grounded adviser runtime.
+
+    ``_semantic_planning`` is an internal strategy seam used only by V2.1.  The
+    public V2 entry point leaves it false, preserving the current production
+    behaviour.  When true, a typed semantic evidence plan replaces every
+    question-side intent/regex gate while the authorization, execution,
+    validation, presentation, and fail-closed layers remain shared.
+    """
     if principal.role != ROLE_STUDENT or principal.student_id is None:
         raise ValueError("Student Advisor V2 requires an authenticated student principal.")
 
@@ -4275,8 +6536,22 @@ def answer_student_advisor_v2(
         "section_snapshot_academic_year": int(academic_year),
         "section_snapshot_term": int(term),
     }
-    replacement_tool_context = dict(comparison_tool_context)
-    explicit_comparison_term = _explicit_comparison_year_term(clean_question)
+    replacement_tool_context = {
+        **comparison_tool_context,
+        # Compound current-timetable tools need two independently trusted
+        # clocks: the selected section snapshot and the site's literal current
+        # graduation baseline. They fail closed when those cannot describe the
+        # same current-term decision instead of silently forecasting from the
+        # planning/import term.
+        "graduation_academic_year": int(defaults["currentYear"]),
+        "graduation_term": int(defaults["currentTerm"]),
+    }
+    # V2 keeps its legacy entity extractor. V2.1 never lets a phrase parser
+    # silently rewrite evidence context; its advertised comparison capability is
+    # bound to the configured term, and a different essential term must clarify.
+    explicit_comparison_term = (
+        None if _semantic_planning else _explicit_comparison_year_term(clean_question)
+    )
     if explicit_comparison_term is not None:
         comparison_tool_context.update(
             academic_year=explicit_comparison_term[0],
@@ -4330,25 +6605,29 @@ def answer_student_advisor_v2(
             verified_prior_presentation = {}
     prior_course_names = _prior_presentation_course_names(verified_prior_presentation)
 
-    # Policy retrieval is local and cheap, and must not depend on whether either a
-    # classifier or the model recognises the regulation hidden in colloquial Arabic.
-    # The same one-agent loop remains in control; this only seeds verified evidence.
-    policy_prefetched = True
-    policy_result, _ = _seed_policy_evidence(clean_question, scope)
-    seeded_policy_results: list[dict[str, Any]] = [policy_result]
-    projected_policy = project_channel_tool_result(
-        "policy_lookup",
-        boundary.project_tool_result("policy_lookup", policy_result),
-        profile=channel_profile,
-    )
-    # The post-answer validator compares claims to exactly what the provider saw,
-    # never to the richer local result.  Otherwise an invented private field could
-    # be accepted merely because it happens to match a value that was not sent.
-    validation_results: list[dict[str, Any]] = [projected_policy]
-    provider_policy_evidence = _policy_evidence_for_prompt(projected_policy)
-    provider_evidence_for_audit: list[tuple[str, dict[str, Any]]] = [
-        ("policy_lookup", provider_policy_evidence)
-    ]
+    # V2 keeps its unconditional policy safety seed. V2.1 instead makes the typed
+    # policy outcome/call the sole evidence obligation: a DIRECT or UNSUPPORTED
+    # zero-tool plan must not quietly execute and audit an unplanned lookup. The
+    # server-owned deterministic V2.1 composer cannot invent a policy rule when no
+    # policy capability was selected.
+    policy_prefetched = not _semantic_planning
+    seeded_policy_results: list[dict[str, Any]] = []
+    validation_results: list[dict[str, Any]] = []
+    provider_policy_evidence: dict[str, Any] = {}
+    provider_evidence_for_audit: list[tuple[str, dict[str, Any]]] = []
+    if policy_prefetched:
+        policy_result, _ = _seed_policy_evidence(clean_question, scope)
+        seeded_policy_results.append(policy_result)
+        projected_policy = project_channel_tool_result(
+            "policy_lookup",
+            boundary.project_tool_result("policy_lookup", policy_result),
+            profile=channel_profile,
+        )
+        # The post-answer validator compares claims to exactly what the provider
+        # saw, never to richer local evidence that was not transmitted.
+        validation_results.append(projected_policy)
+        provider_policy_evidence = _policy_evidence_for_prompt(projected_policy)
+        provider_evidence_for_audit.append(("policy_lookup", provider_policy_evidence))
     prior_presentation_evidence: dict[str, Any] = {}
     if verified_prior_presentation:
         # A remote provider gets the card through a whitelist, never whole.
@@ -4372,11 +6651,16 @@ def answer_student_advisor_v2(
         }
         validation_results.append(prior_presentation_evidence)
         provider_evidence_for_audit.append((PRIOR_PRESENTATION_TOOL, prior_presentation_evidence))
-    policy_prompt = "\nverified_policy_evidence: " + json.dumps(
-        provider_policy_evidence,
-        ensure_ascii=False,
-        separators=(",", ":"),
-        default=str,
+    policy_prompt = (
+        "\nverified_policy_evidence: "
+        + json.dumps(
+            provider_policy_evidence,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            default=str,
+        )
+        if policy_prefetched
+        else ""
     )
     prior_presentation_prompt = (
         "\nverified_prior_presentation: "
@@ -4391,7 +6675,9 @@ def answer_student_advisor_v2(
     )
 
     schemas = project_channel_tool_schemas(
-        boundary.tool_schemas(student_v2_tool_schemas()),
+        boundary.tool_schemas(
+            student_v21_tool_schemas() if _semantic_planning else student_v2_tool_schemas()
+        ),
         profile=channel_profile,
     )
     if verified_prior_presentation:
@@ -4413,7 +6699,7 @@ def answer_student_advisor_v2(
                 f"{graduation_tool_context['academic_year']}/{graduation_tool_context['term']}\n"
                 "Use this configured term unless the student explicitly asks about another. "
                 "Graduation scenarios use graduation_system_current_term_hijri and the "
-                "deterministic planning_baseline_kind; do not substitute the planning/import term. "
+                "typed planning_baseline_kind; do not substitute the planning/import term. "
                 "Do not ask for a Gregorian year.\n"
                 f"student_question: {clean_question}" + policy_prompt + prior_presentation_prompt
             ),
@@ -4434,69 +6720,634 @@ def answer_student_advisor_v2(
     iterations = 0
     tool_turn_error = ""
     fallback_seeded = False
-    exact_fact_owner = owning_capability(clean_question)
-    requires_feasible_replacement = _requires_feasible_course_replacements(clean_question)
-    requires_course_comparison = (
-        _requires_course_choice_comparison(clean_question) and not requires_feasible_replacement
-    )
-    requires_timetable_proposal = (
-        _requires_timetable_proposal(clean_question)
-        and exact_fact_owner != "my_timetable"
-        and not requires_course_comparison
-        and not requires_feasible_replacement
-    )
-    # A proposal containing an exact pin is itself the authoritative clash/section
-    # check for that build. Keep the independent section capability for inspection
-    # questions only; otherwise the same sentence is interpreted twice and the
-    # second call can contradict or obscure the hard pin.
-    requires_section_check = (
-        _requires_section_check(clean_question)
-        and not requires_timetable_proposal
-        and not requires_course_comparison
-        and not requires_feasible_replacement
-    )
-    requires_graduation_progress = (
-        _requires_graduation_progress(clean_question)
-        and not requires_course_comparison
-        and not requires_feasible_replacement
-    )
-    folded_question_for_prior = normalise_arabic_text(clean_question).lower()
-    names_from_prior_in_question = any(
-        normalise_arabic_text(name).lower() in folded_question_for_prior
-        for name in prior_course_names.values()
-        if str(name or "").strip()
-    )
-    graduation_change_follow_up = bool(
-        _CURRENT_COURSE_CHANGE_PATTERN.search(clean_question)
-        and not _REPLACEMENT_TIMETABLE_PROOF_PATTERN.search(clean_question)
-        and (
-            _COURSE_CODE_TOKEN_PATTERN.search(clean_question)
-            or names_from_prior_in_question
-            or _DIRECT_COURSE_CHANGE_ACTION_PATTERN.search(clean_question)
+    semantic_plan: Any = None
+    semantic_synthetic_turn: Any = None
+    semantic_plan_decision = "disabled"
+    semantic_plan_tools: tuple[str, ...] = ()
+    semantic_plan_model = ""
+    semantic_plan_model_revision = ""
+    semantic_multi_capability = False
+    semantic_provenance_contract: Any = None
+    semantic_execution_failed = False
+    semantic_answer_blocks: tuple[tuple[str, str], ...] = ()
+    semantic_plan_outcomes: tuple[str, ...] = ()
+    semantic_plan_clarification_kind = "none"
+    semantic_outcome_coverage: dict[str, Any] = {
+        "valid": not _semantic_planning,
+        "requested_outcomes": [],
+        "covered_outcomes": [],
+        "uncovered_outcomes": [],
+        "selected_capabilities": [],
+        "redundant_capabilities": [],
+        "uncovered_course_codes": [],
+        "reason": "disabled" if not _semantic_planning else "not_evaluated",
+    }
+    semantic_outcome_coverage_refused = False
+    semantic_plan_failure_reason = ""
+    semantic_plan_repair_attempted = False
+    semantic_plan_pruned_capabilities: tuple[str, ...] = ()
+    semantic_plan_missing_constraint_paths: tuple[str, ...] = ()
+    semantic_plan_policy_validation: dict[str, Any] = {
+        "valid": not _semantic_planning,
+        "policy_ids": [],
+    }
+
+    if _semantic_planning:
+        from core.services.student_advisor_v21_plan import (
+            ClarificationKind,
+            StudentTurnPlan,
+            TurnPlanDecision,
+            TurnPlanProvenanceError,
+            TurnPlanValidationError,
+            plan_student_turn,
+            synthesize_tool_chat_result,
+            validate_plan_argument_provenance,
         )
-    )
-    requires_graduation_what_if = (
-        (_requires_graduation_what_if(clean_question) or graduation_change_follow_up)
-        and not requires_course_comparison
-        and not requires_feasible_replacement
-    )
-    required_exact_fact_tools = _required_exact_fact_tools(
-        clean_question,
-        graduation_required=requires_graduation_progress,
-        allow_owner=not any(
-            (
-                requires_timetable_proposal,
-                requires_section_check,
-                requires_course_comparison,
-                requires_feasible_replacement,
-                requires_graduation_what_if,
+
+        if bool(getattr(getattr(llm, "config", None), "enable_thinking", False)):
+            # The deployed non-thinking provider supports forced function calls.
+            # Thinking-mode providers do not share that contract, so V2.1 fails
+            # closed instead of accepting prose as an unvalidated plan.
+            raise LLMUnavailable(
+                "Student Advisor V2.1 requires verified forced-tool planning; "
+                "the configured thinking mode does not provide that contract."
             )
-        ),
-    )
-    if requires_timetable_proposal:
-        required_exact_fact_tools.add("build_timetable_proposal")
-    if requires_graduation_what_if:
-        required_exact_fact_tools.add("graduation_progress")
+
+        planner_system = channel_system_prompt(
+            STUDENT_V21_PLANNER_SYSTEM_PROMPT,
+            profile=channel_profile,
+        )
+        planner_messages = build_student_v21_planner_messages(
+            question=clean_question,
+            academic_year=academic_year,
+            term=term,
+            history=messages[1:-1],
+            prior_verified_artifact=(prior_presentation_evidence.get("presentation") or {}),
+            prior_verified_artifact_available=bool(verified_prior_presentation),
+            system_prompt=planner_system,
+        )
+        # History was projected and sanitised when ``messages`` was built above.
+        # Preserve that exact production boundary and sanitise only the newly
+        # constructed final planner-user turn.
+        planner_messages[-1] = boundary.sanitise_messages([planner_messages[-1]])[0]
+        remaining_budget = turn_deadline - time.monotonic()
+        if remaining_budget < 8.0:
+            raise LLMUnavailable("Student Advisor V2.1 turn budget expired before planning.")
+        semantic_provenance_contract = _v21_argument_provenance_contract(
+            clean_question,
+            history=history,
+            prior_presentation=verified_prior_presentation,
+            prior_course_names=prior_course_names,
+        )
+        from core.services.student_advisor_v21_outcomes import (
+            evaluate_outcome_coverage,
+            minimise_redundant_capabilities,
+        )
+        from core.services.student_advisor_v21_policy import semantic_policy_violations
+
+        planning_provider_turns: list[Any] = []
+        last_schema_plan: Any = None
+        last_bound_plan: Any = None
+        last_grounded_plan: Any = None
+        coverage_report: Any = None
+        semantic_policy_repair_ids: tuple[str, ...] = ()
+
+        def account_planning_turns(turns: Any) -> None:
+            """Account every bounded planner response, including rejected ones."""
+
+            nonlocal inference_calls
+            bounded = tuple(turns or ())
+            if len(planning_provider_turns) + len(bounded) > 2:
+                raise AssertionError("V2.1 exceeded its two-call planner budget")
+            for planning_turn in bounded:
+                planning_provider_turns.append(planning_turn)
+                inference_calls += 1
+                usage.add(planning_turn.usage)
+
+        def request_plan(
+            *,
+            max_attempts: int,
+            repair_reason: str = "",
+            repair_details: Mapping[str, Sequence[str]] | None = None,
+        ) -> Any:
+            remaining = turn_deadline - time.monotonic()
+            return plan_student_turn(
+                llm,
+                planner_messages,
+                advertised_tools=schemas,
+                max_calls=_max_calls(),
+                model=resolved_model,
+                max_tokens=max(
+                    256,
+                    int(
+                        getattr(
+                            settings,
+                            "STUDENT_ADVISOR_V21_PLAN_MAX_TOKENS",
+                            900,
+                        )
+                    ),
+                ),
+                timeout_seconds=min(
+                    max(
+                        1.0,
+                        float(
+                            getattr(
+                                settings,
+                                "STUDENT_ADVISOR_V21_PLAN_TIMEOUT_SECONDS",
+                                45,
+                            )
+                        ),
+                    ),
+                    max(1.0, remaining),
+                ),
+                deadline_monotonic=turn_deadline,
+                max_attempts=max_attempts,
+                repair_reason=repair_reason,
+                repair_details=repair_details,
+            )
+
+        def validate_planning_result(planning_result: Any) -> tuple[Any, Any]:
+            nonlocal last_schema_plan, last_bound_plan, last_grounded_plan
+            nonlocal coverage_report
+            nonlocal semantic_plan_pruned_capabilities
+            nonlocal semantic_plan_missing_constraint_paths
+            nonlocal semantic_policy_repair_ids
+            nonlocal semantic_plan_policy_validation
+            last_schema_plan = planning_result.plan
+            last_bound_plan = None
+            last_grounded_plan = None
+            bound_plan = _v21_bind_explicit_plan_constraints(
+                planning_result.plan,
+                clean_question,
+                prior_course_names=prior_course_names,
+            )
+            last_bound_plan = bound_plan
+            missing_constraint_paths = _v21_missing_explicit_constraint_paths(
+                bound_plan,
+                clean_question,
+            )
+            if missing_constraint_paths:
+                semantic_plan_missing_constraint_paths = tuple(
+                    dict.fromkeys(
+                        (
+                            *semantic_plan_missing_constraint_paths,
+                            *missing_constraint_paths,
+                        )
+                    )
+                )
+                raise _V21ConstraintCoverageError(missing_constraint_paths)
+            grounded_plan = validate_plan_argument_provenance(
+                bound_plan,
+                contract=semantic_provenance_contract,
+            )
+            last_grounded_plan = grounded_plan
+            report = evaluate_outcome_coverage(
+                grounded_plan,
+                advertised_capabilities=advertised,
+                explicit_course_codes=_comparison_course_codes(clean_question),
+            )
+            grounded_plan, report, pruned = minimise_redundant_capabilities(
+                grounded_plan,
+                advertised_capabilities=advertised,
+                explicit_course_codes=_comparison_course_codes(clean_question),
+                report=report,
+            )
+            coverage_report = report
+            if pruned:
+                semantic_plan_pruned_capabilities = tuple(
+                    dict.fromkeys((*semantic_plan_pruned_capabilities, *pruned))
+                )
+                last_grounded_plan = grounded_plan
+            if report.valid:
+                policy_violations = semantic_policy_violations(
+                    clean_question,
+                    grounded_plan,
+                    explicit_pins=_v21_explicit_positive_pins(clean_question),
+                )
+                semantic_plan_policy_validation = {
+                    "valid": not policy_violations,
+                    "policy_ids": [violation.value for violation in policy_violations],
+                }
+                if policy_violations:
+                    semantic_policy_repair_ids = tuple(
+                        violation.value for violation in policy_violations
+                    )
+                    raise _V21SemanticPolicyError(semantic_policy_repair_ids)
+            return grounded_plan, report
+
+        try:
+            planning_result = request_plan(max_attempts=2)
+        except TurnPlanValidationError as exc:
+            account_planning_turns(exc.provider_turns)
+            semantic_plan_failure_reason = "plan_validation_failed"
+        else:
+            planning_turns = planning_result.provider_turns or (planning_result.provider_turn,)
+            account_planning_turns(planning_turns)
+            try:
+                candidate_plan, coverage_report = validate_planning_result(planning_result)
+            except _V21ConstraintCoverageError:
+                semantic_plan_failure_reason = "constraint_coverage_failed"
+            except TurnPlanProvenanceError:
+                semantic_plan_failure_reason = "argument_provenance_failed"
+            except _V21SemanticPolicyError:
+                semantic_plan_failure_reason = "semantic_policy_failed"
+            else:
+                if coverage_report.valid:
+                    semantic_plan = candidate_plan
+                else:
+                    semantic_plan_failure_reason = "outcome_coverage_failed"
+
+        # Schema repair is already bounded inside plan_student_turn. If the
+        # first response parsed but failed explicit-constraint completeness,
+        # provenance, or semantic coverage, the sole remaining planner slot may
+        # regenerate from the original request.
+        # The rejected assistant payload is never added to these messages.
+        if (
+            semantic_plan_failure_reason
+            in {
+                "constraint_coverage_failed",
+                "argument_provenance_failed",
+                "outcome_coverage_failed",
+                "semantic_policy_failed",
+            }
+            and len(planning_provider_turns) == 1
+        ):
+            if turn_deadline - time.monotonic() < 8.0:
+                turn_budget_exhausted = True
+            else:
+                semantic_plan_repair_attempted = True
+                repair_reason = semantic_plan_failure_reason
+                # A failed repair must never leave the first rejected plan in
+                # the execution slot, even if that plan was schema-valid.
+                semantic_plan = None
+                repair_details: dict[str, tuple[str, ...]] = {}
+                if repair_reason == "outcome_coverage_failed" and coverage_report:
+                    repair_details = {
+                        "coverage_reason": (str(coverage_report.reason or ""),),
+                        "redundant_capabilities": tuple(coverage_report.redundant_capabilities),
+                        "uncovered_outcomes": tuple(
+                            outcome.value for outcome in coverage_report.uncovered_outcomes
+                        ),
+                        "uncovered_course_codes": tuple(coverage_report.uncovered_course_codes),
+                    }
+                elif repair_reason == "constraint_coverage_failed":
+                    repair_details = {
+                        "missing_field_paths": semantic_plan_missing_constraint_paths,
+                    }
+                elif repair_reason == "semantic_policy_failed":
+                    repair_details = {"policy_ids": semantic_policy_repair_ids}
+                try:
+                    planning_result = request_plan(
+                        max_attempts=1,
+                        repair_reason=repair_reason,
+                        repair_details=repair_details,
+                    )
+                except TurnPlanValidationError as exc:
+                    account_planning_turns(exc.provider_turns)
+                    semantic_plan_failure_reason = "plan_validation_failed"
+                else:
+                    planning_turns = planning_result.provider_turns or (
+                        planning_result.provider_turn,
+                    )
+                    account_planning_turns(planning_turns)
+                    try:
+                        candidate_plan, coverage_report = validate_planning_result(planning_result)
+                    except _V21ConstraintCoverageError:
+                        semantic_plan_failure_reason = "constraint_coverage_failed"
+                    except TurnPlanProvenanceError:
+                        semantic_plan_failure_reason = "argument_provenance_failed"
+                    except _V21SemanticPolicyError:
+                        semantic_plan_failure_reason = "semantic_policy_failed"
+                    else:
+                        if coverage_report.valid:
+                            semantic_plan = candidate_plan
+                            semantic_plan_failure_reason = ""
+                        else:
+                            semantic_plan_failure_reason = "outcome_coverage_failed"
+
+        semantic_plan_repair_attempted = (
+            semantic_plan_repair_attempted or len(planning_provider_turns) > 1
+        )
+        metadata_plan = (
+            semantic_plan
+            or (
+                last_grounded_plan
+                if semantic_plan_failure_reason != "plan_validation_failed"
+                else None
+            )
+            or (
+                last_bound_plan
+                if semantic_plan_failure_reason == "constraint_coverage_failed"
+                else None
+            )
+            or (
+                last_schema_plan
+                if semantic_plan_failure_reason == "argument_provenance_failed"
+                else None
+            )
+        )
+        if (
+            semantic_plan_failure_reason in {"outcome_coverage_failed", "semantic_policy_failed"}
+            and coverage_report
+        ):
+            semantic_outcome_coverage = coverage_report.as_dict()
+        elif semantic_plan_failure_reason:
+            failure_outcomes = tuple(getattr(metadata_plan, "requested_outcomes", ()) or ())
+            failure_tools = tuple(
+                request.capability
+                for request in (getattr(metadata_plan, "evidence_requests", ()) or ())
+            )
+            semantic_outcome_coverage = {
+                "valid": False,
+                "requested_outcomes": [item.value for item in failure_outcomes],
+                "covered_outcomes": [],
+                "uncovered_outcomes": [item.value for item in failure_outcomes],
+                "selected_capabilities": list(failure_tools),
+                "redundant_capabilities": [],
+                "uncovered_course_codes": [],
+                "reason": semantic_plan_failure_reason,
+            }
+        elif coverage_report is not None:
+            semantic_outcome_coverage = coverage_report.as_dict()
+
+        semantic_outcome_coverage_refused = bool(semantic_plan_failure_reason) or not bool(
+            semantic_outcome_coverage.get("valid")
+        )
+        semantic_plan_outcomes = tuple(
+            outcome.value for outcome in (getattr(metadata_plan, "requested_outcomes", ()) or ())
+        )
+        runtime_plan = semantic_plan or StudentTurnPlan(
+            decision=TurnPlanDecision.CLARIFY,
+            evidence_requests=(),
+            clarification_kind=ClarificationKind.GENERIC,
+            clarification_question="",
+            requested_outcomes=(),
+        )
+        repeated_capabilities = {
+            request.capability
+            for request in runtime_plan.evidence_requests
+            if sum(
+                other.capability == request.capability for other in runtime_plan.evidence_requests
+            )
+            > 1
+        }
+        repeated_capability_refused = bool(repeated_capabilities)
+        if repeated_capabilities:
+            # The shared answer postconditions currently aggregate by capability
+            # name, not by individual call obligation.  Refuse the batch before
+            # execution, but return a server-owned clarification instead of
+            # surfacing a provider-response exception to the student.
+            runtime_plan = StudentTurnPlan(
+                decision=TurnPlanDecision.CLARIFY,
+                evidence_requests=(),
+                clarification_kind=ClarificationKind.GENERIC,
+                clarification_question="",
+                requested_outcomes=tuple(runtime_plan.requested_outcomes),
+            )
+        reported_plan = metadata_plan if semantic_plan_failure_reason else runtime_plan
+        semantic_plan_decision = reported_plan.decision.value if reported_plan is not None else ""
+        semantic_plan_clarification_kind = str(
+            getattr(
+                getattr(reported_plan, "clarification_kind", ClarificationKind.NONE),
+                "value",
+                getattr(reported_plan, "clarification_kind", ClarificationKind.NONE),
+            )
+        )
+        semantic_plan_tools = tuple(
+            request.capability
+            for request in (getattr(reported_plan, "evidence_requests", ()) or ())
+        )
+        if planning_provider_turns:
+            last_planning_turn = planning_provider_turns[-1]
+            semantic_plan_model = str(last_planning_turn.model or resolved_model)
+            semantic_plan_model_revision = str(
+                getattr(last_planning_turn, "model_revision", "") or ""
+            )
+        answer_model = semantic_plan_model or answer_model
+        answer_model_revision = semantic_plan_model_revision or answer_model_revision
+        if semantic_plan_failure_reason:
+            # Schema validity and argument provenance are necessary but not
+            # sufficient: the selected tools must cover every typed student
+            # deliverable and contain no unrelated evidence calls. Refuse the
+            # incomplete plan before any capability can execute.
+            answer = _v21_plan_contract_refusal(language)
+            semantic_execution_failed = True
+            if semantic_plan_failure_reason in {
+                "plan_validation_failed",
+                "argument_provenance_failed",
+                "constraint_coverage_failed",
+                "semantic_policy_failed",
+            }:
+                tool_turn_error = "LLMInvalidResponse"
+        elif semantic_outcome_coverage_refused:
+            answer = _v21_plan_contract_refusal(language)
+            semantic_execution_failed = True
+        elif runtime_plan.decision is TurnPlanDecision.EXECUTE:
+            semantic_synthetic_turn = synthesize_tool_chat_result(
+                runtime_plan,
+                model=semantic_plan_model or resolved_model,
+                model_revision=semantic_plan_model_revision,
+            )
+        elif runtime_plan.decision is TurnPlanDecision.CLARIFY:
+            # The planner decides that a slot is missing, but its free-text
+            # wording is not evidence and is therefore not returned verbatim.
+            # A server-owned question prevents a malicious or mistaken planner
+            # from smuggling an academic assertion into the clarification.
+            if repeated_capability_refused:
+                answer = (
+                    "هذا الطلب يحتاج مقارنة عدة حالات مستقلة، ولا يملك النظام حاليًا "
+                    "عقدًا موثوقًا يجمع نتائجها في ترتيب واحد. أرسل حالة واحدة في كل "
+                    "طلب؛ أستطيع فحصها من دون تنفيذ أي حذف أو تسجيل."
+                    if language == "Arabic"
+                    else (
+                        "This request needs several independent cases to be compared, "
+                        "and the system does not yet have a verified contract for one "
+                        "combined ranking. Send one case per request; I can inspect it "
+                        "without dropping or registering anything."
+                    )
+                )
+            elif runtime_plan.clarification_kind is ClarificationKind.TIMETABLE_LOAD:
+                answer = (
+                    "وش تقصد بجدول خفيف: كم ساعة تبي بالضبط، أو وش الحد الأقصى للساعات؟ "
+                    "أعطني الرقم، "
+                    "وأقدر أبني لك خيارات بدون تعارض ضمن هذا الحد، لكن ما أقدر أؤكد "
+                    "أن تخفيف الحمل ما راح يؤخر التخرج."
+                    if language == "Arabic"
+                    else (
+                        "What do you mean by a light timetable: exactly how many credit "
+                        "hours, or what maximum? Give me the number, and I can "
+                        "build clash-checked options within that bound, but I cannot certify "
+                        "that a lighter load will not delay graduation."
+                    )
+                )
+            elif runtime_plan.clarification_kind is ClarificationKind.TIMETABLE_PREFERENCE:
+                answer = (
+                    "أقدر أعطيك خيارات بدون تصنيف واحد منها كـ«الأفضل». حدّد عدد الساعات "
+                    "المطلوب أو الحد الأقصى، وأي مقرر أو شعبة لازم تكون موجودة أو مثبتة."
+                    if language == "Arabic"
+                    else (
+                        "I can provide neutral alternatives without naming one as the best. "
+                        "Specify the exact or maximum credits and any required or pinned "
+                        "course or section."
+                    )
+                )
+            elif runtime_plan.clarification_kind is ClarificationKind.COURSE_OR_SECTION_IDENTITY:
+                answer = (
+                    "الشعبة تتبع أي مقرر؟ حدّد زوج المقرر والشعبة اللي تقصده."
+                    if language == "Arabic"
+                    else (
+                        "Which course does that section belong to? Please specify the exact "
+                        "course-section pair."
+                    )
+                )
+            elif runtime_plan.clarification_kind is ClarificationKind.TERM_OR_CHOICE:
+                answer = (
+                    "حدّد الفصل الدراسي أو الخيار اللي تقصده."
+                    if language == "Arabic"
+                    else "Please specify the term or choice you mean."
+                )
+            else:
+                answer = (
+                    "أحتاج معلومة إضافية قبل أن أتحقق من الأدلة الموثقة. حدّد بوضوح "
+                    "المقرر أو الشعبة أو الفصل الدراسي أو الخيار الذي تقصده."
+                    if language == "Arabic"
+                    else (
+                        "I need one more detail before I can check verified evidence. "
+                        "Please specify the course, section, term, or choice you mean."
+                    )
+                )
+        elif runtime_plan.decision is TurnPlanDecision.UNSUPPORTED:
+            answer = _v21_unsupported_answer(language, semantic_plan_outcomes)
+        else:
+            # DIRECT is intentionally server-authored and claim-free. A planning
+            # false negative (for example, classifying a GPA question as direct)
+            # may therefore be unhelpful, but it can never turn model memory into
+            # a fabricated personal or university fact.
+            answer = (
+                "مرحبًا! أستطيع مساعدتك في الأسئلة الأكاديمية وشرح المعلومات "
+                "الموثقة المتاحة في النظام. اكتب ما تريد معرفته، وسأتحقق من "
+                "المصدر المناسب قبل الإجابة."
+                if language == "Arabic"
+                else (
+                    "Hello! I can help with academic questions and explain verified "
+                    "information available in the system. Tell me what you want to know, "
+                    "and I will check the appropriate source before answering."
+                )
+            )
+
+        planned_names = {request.capability for request in runtime_plan.evidence_requests}
+        # A planned policy lookup is a real answer obligation even though policy
+        # evidence is prefetched. Treat it as one of the requested capabilities
+        # so a specialised deterministic renderer cannot erase the policy half
+        # of a mixed answer.
+        semantic_multi_capability = len(runtime_plan.evidence_requests) > 1
+        planned_graduation_arguments: dict[str, Any] = next(
+            (
+                request.arguments
+                for request in runtime_plan.evidence_requests
+                if request.capability == "graduation_progress"
+            ),
+            {},
+        )
+        requires_feasible_replacement = "feasible_course_replacements" in planned_names
+        requires_course_comparison = "course_choice_comparison" in planned_names
+        requires_timetable_proposal = "build_timetable_proposal" in planned_names
+        requires_section_check = (
+            "my_clash_free_sections" in planned_names and not requires_timetable_proposal
+        )
+        requires_graduation_progress = "graduation_progress" in planned_names
+        requires_graduation_what_if = requires_graduation_progress and any(
+            planned_graduation_arguments.get(key)
+            for key in (
+                "remove_current_courses",
+                "add_current_courses",
+                "search_better_replacements",
+            )
+        )
+        # `check_answer` intentionally admits only typed exact-fact contracts.
+        # Other planned tools are still executed and audited, but adding them to
+        # this set would make the acquisition gate wait forever for a tool name
+        # that its verifier deliberately does not recognize.
+        required_exact_fact_tools = set(planned_names) & set(EXACT_FACT_TOOLS)
+        # Policy retrieval is unconditional, and this conservative obligation
+        # remains a compliance backstop rather than an evidence router.  The
+        # semantic plan may strengthen the obligation by selecting policy_lookup,
+        # but an under-planned normative question must not silently lose the
+        # citation/abstention contract.
+        # The typed semantic plan owns policy relevance in V2.1. Policy evidence
+        # is still prefetched locally, but the legacy phrase detector must not
+        # turn unrelated wording (for example, a requested answer length) into a
+        # second semantic router. Deterministic rendering prevents an under-plan
+        # from inventing a policy rule; the holdout gate measures missed policy
+        # selection as a quality failure.
+        policy_contract_required = "policy_lookup" in planned_names
+    else:
+        from core.services.advisor_intent import owning_capability
+
+        exact_fact_owner = owning_capability(clean_question)
+        requires_feasible_replacement = _requires_feasible_course_replacements(clean_question)
+        requires_course_comparison = (
+            _requires_course_choice_comparison(clean_question) and not requires_feasible_replacement
+        )
+        requires_timetable_proposal = (
+            _requires_timetable_proposal(clean_question)
+            and exact_fact_owner != "my_timetable"
+            and not requires_course_comparison
+            and not requires_feasible_replacement
+        )
+        # A proposal containing an exact pin is itself the authoritative clash/section
+        # check for that build. Keep the independent section capability for inspection
+        # questions only; otherwise the same sentence is interpreted twice and the
+        # second call can contradict or obscure the hard pin.
+        requires_section_check = (
+            _requires_section_check(clean_question)
+            and not requires_timetable_proposal
+            and not requires_course_comparison
+            and not requires_feasible_replacement
+        )
+        requires_graduation_progress = (
+            _requires_graduation_progress(clean_question)
+            and not requires_course_comparison
+            and not requires_feasible_replacement
+        )
+        folded_question_for_prior = normalise_arabic_text(clean_question).lower()
+        names_from_prior_in_question = any(
+            normalise_arabic_text(name).lower() in folded_question_for_prior
+            for name in prior_course_names.values()
+            if str(name or "").strip()
+        )
+        graduation_change_follow_up = bool(
+            _CURRENT_COURSE_CHANGE_PATTERN.search(clean_question)
+            and not _REPLACEMENT_TIMETABLE_PROOF_PATTERN.search(clean_question)
+            and (
+                _COURSE_CODE_TOKEN_PATTERN.search(clean_question)
+                or names_from_prior_in_question
+                or _DIRECT_COURSE_CHANGE_ACTION_PATTERN.search(clean_question)
+            )
+        )
+        requires_graduation_what_if = (
+            (_requires_graduation_what_if(clean_question) or graduation_change_follow_up)
+            and not requires_course_comparison
+            and not requires_feasible_replacement
+        )
+        required_exact_fact_tools = _required_exact_fact_tools(
+            clean_question,
+            graduation_required=requires_graduation_progress,
+            allow_owner=not any(
+                (
+                    requires_timetable_proposal,
+                    requires_section_check,
+                    requires_course_comparison,
+                    requires_feasible_replacement,
+                    requires_graduation_what_if,
+                )
+            ),
+        )
+        if requires_timetable_proposal:
+            required_exact_fact_tools.add("build_timetable_proposal")
+        if requires_graduation_what_if:
+            required_exact_fact_tools.add("graduation_progress")
+        policy_contract_required = requires_policy_contract(clean_question)
 
     # A graduation what-if whose scenario is written in the student's own
     # words is fully determined server-side: the classifier names the tool
@@ -4509,7 +7360,7 @@ def answer_student_advisor_v2(
     # evidence exists.  Isolated like every enhancement - a seeding failure
     # leaves the turn exactly where it was before this block existed.
     graduation_what_if_prefetched = False
-    if requires_graduation_what_if:
+    if requires_graduation_what_if and not _semantic_planning:
         try:
             seeded_args, _seed_reason = _normalise_graduation_scenario_args(
                 clean_question,
@@ -4590,7 +7441,10 @@ def answer_student_advisor_v2(
     evidence_validation_after_repair: list[str] = []
     evidence_validation_outcome = "not_applicable"
 
+    semantic_turn_pending = semantic_synthetic_turn
     for iteration in range(_max_iterations()):
+        if answer:
+            break
         iterations = iteration + 1
         if inference_calls >= inference_ceiling - 1:
             break
@@ -4602,23 +7456,51 @@ def answer_student_advisor_v2(
             # verified fallback, never a surprise abstention.
             turn_budget_exhausted = True
             break
-        try:
-            inference_calls += 1
-            turn = llm.chat_with_tools(
-                messages,
-                tools=schemas,
-                model=resolved_model,
-                max_tokens=_max_tokens(),
-                timeout_seconds=min(_tool_timeout(), remaining_budget),
-                deadline_monotonic=turn_deadline,
+        semantic_plan_turn = semantic_turn_pending is not None
+        if semantic_plan_turn:
+            # The planner provider's raw meta-tool response is never replayed.
+            # This is a new assistant tool-call message reconstructed only from
+            # the server-validated plan, so arbitrary planner JSON cannot cross
+            # the execution/privacy boundary a second time.
+            turn = semantic_turn_pending
+            semantic_turn_pending = None
+        else:
+            try:
+                inference_calls += 1
+                if _semantic_planning:
+                    turn = llm.chat_with_tools(
+                        messages,
+                        tools=schemas,
+                        model=resolved_model,
+                        max_tokens=_max_tokens(),
+                        timeout_seconds=min(_tool_timeout(), remaining_budget),
+                        deadline_monotonic=turn_deadline,
+                        tool_choice="none",
+                    )
+                else:
+                    turn = llm.chat_with_tools(
+                        messages,
+                        tools=schemas,
+                        model=resolved_model,
+                        max_tokens=_max_tokens(),
+                        timeout_seconds=min(_tool_timeout(), remaining_budget),
+                        deadline_monotonic=turn_deadline,
+                    )
+            except LLMError as exc:
+                # A slow/unsupported tool turn must not discard the student's whole
+                # question. The no-tools rescue below receives a verified self-snapshot
+                # when no evidence was gathered yet; it never answers from memory.
+                tool_turn_error = type(exc).__name__
+                break
+            usage.add(turn.usage)
+        if _semantic_planning and not semantic_plan_turn and turn.tool_calls:
+            # A V2.1 synthesis turn is deliberately non-agentic: the typed plan
+            # is the sole authority for evidence acquisition.  A provider that
+            # ignores tool_choice=none has violated the runtime contract; never
+            # execute its unplanned call or fall back to question-side regexes.
+            raise LLMInvalidResponse(
+                "Student Advisor V2.1 synthesis returned an unplanned tool call."
             )
-        except LLMError as exc:
-            # A slow/unsupported tool turn must not discard the student's whole
-            # question. The no-tools rescue below receives a verified self-snapshot
-            # when no evidence was gathered yet; it never answers from memory.
-            tool_turn_error = type(exc).__name__
-            break
-        usage.add(turn.usage)
         answer_model = turn.model or answer_model
         answer_model_revision = getattr(turn, "model_revision", "") or answer_model_revision
         if not turn.tool_calls:
@@ -4654,6 +7536,17 @@ def answer_student_advisor_v2(
             # just below.  Keep this set for final fulfillment, but do not replace
             # that richer reprompt with the generic exact-record instruction.
             missing_exact_fact_tools.discard("build_timetable_proposal")
+            # V2.1 can require every planned capability. These specialized tools
+            # already have richer correction contracts immediately below; keep
+            # them out of the generic reprompt while retaining them in the final
+            # required-evidence set.
+            missing_exact_fact_tools.difference_update(
+                {
+                    "course_choice_comparison",
+                    "feasible_course_replacements",
+                    "my_clash_free_sections",
+                }
+            )
             if candidate and missing_exact_fact_tools and not evidence_tool_reprompted:
                 # Initial tool choice remains conversational.  This fires only after
                 # the model attempts to finish an exact-record request without the
@@ -5015,7 +7908,35 @@ def answer_student_advisor_v2(
             comparison_normalizations: list[str] = []
             replacement_normalizations: list[str] = []
             constraint_input_error = ""
-            if call.name == "graduation_progress":
+            semantic_argument_error = False
+            if _semantic_planning:
+                from core.services.student_advisor_v21_plan import (
+                    TurnPlanSchemaError,
+                    TurnPlanValidationError,
+                    validate_capability_argument_provenance,
+                    validate_capability_arguments,
+                )
+
+                try:
+                    effective_arguments = validate_capability_arguments(
+                        call.name,
+                        model_arguments,
+                        advertised_tools=schemas,
+                    )
+                except (TurnPlanValidationError, TurnPlanSchemaError):
+                    effective_arguments = {}
+                    semantic_argument_error = True
+                if call.name == "policy_lookup" and not semantic_argument_error:
+                    # Policy retrieval is bound to the student's actual question,
+                    # never to a topic/query silently rewritten by either model.
+                    effective_arguments = {"query": clean_question}
+                if not semantic_argument_error:
+                    effective_arguments = validate_capability_argument_provenance(
+                        call.name,
+                        effective_arguments,
+                        contract=semantic_provenance_contract,
+                    )
+            elif call.name == "graduation_progress":
                 effective_arguments, scenario_normalization = _normalise_graduation_scenario_args(
                     clean_question,
                     model_arguments,
@@ -5034,6 +7955,7 @@ def answer_student_advisor_v2(
                 effective_arguments, timetable_normalizations = _normalise_timetable_proposal_args(
                     clean_question,
                     model_arguments,
+                    semantic_plan=_semantic_planning,
                 )
                 # Private control signal: never advertise it and never let it
                 # cross the remote boundary or reach the capability executor.
@@ -5066,8 +7988,25 @@ def answer_student_advisor_v2(
                     ),
                 }
             )
+            if semantic_argument_error:
+                messages.append(
+                    _tool_message(
+                        call.id,
+                        {
+                            "ok": False,
+                            "error": (
+                                "The semantic tool arguments did not match the advertised "
+                                "read-only capability contract. Replan or ask a clarification."
+                            ),
+                        },
+                    )
+                )
+                continue
+            allowed_runtime_tools = (
+                set(STUDENT_V21_TOOL_NAMES) if _semantic_planning else set(STUDENT_V2_TOOL_NAMES)
+            )
             if call.name not in advertised or (
-                call.name not in STUDENT_V2_TOOL_NAMES and call.name != PRIOR_PRESENTATION_TOOL
+                call.name not in allowed_runtime_tools and call.name != PRIOR_PRESENTATION_TOOL
             ):
                 messages.append(
                     _tool_message(call.id, {"ok": False, "error": "Capability unavailable."})
@@ -5142,6 +8081,10 @@ def answer_student_advisor_v2(
                 # identity here as well so the executor receives only choices the
                 # model is actually allowed to make.
                 arguments.pop("student_id", None)
+                if not _semantic_planning:
+                    # The shared registry exposes V2.1-only typed controls. A
+                    # legacy model cannot opt into unadvertised behavior.
+                    arguments = _legacy_v2_arguments(call.name, arguments)
                 raw_local_result = execute_student_v2_tool(
                     call.name,
                     arguments,
@@ -5150,7 +8093,11 @@ def answer_student_advisor_v2(
                         comparison_tool_context
                         if call.name == "course_choice_comparison"
                         else replacement_tool_context
-                        if call.name == "feasible_course_replacements"
+                        if call.name
+                        in {
+                            "feasible_course_replacements",
+                            *STUDENT_V21_COMPOUND_TOOL_NAMES,
+                        }
                         else graduation_tool_context
                         if call.name == "graduation_progress"
                         else tool_context
@@ -5176,6 +8123,24 @@ def answer_student_advisor_v2(
             seen[cache_key] = provider_result
             messages.append(_tool_message(call.id, provider_result))
 
+        if _semantic_planning:
+            # The semantic model selects evidence once; it never restates facts.
+            # A typed server composer renders every validated plan obligation in
+            # order, which removes the class where correct evidence is followed by
+            # a fabricated name, status, prerequisite relation, or policy rule.
+            answer, semantic_plan_complete, semantic_answer_blocks = _safe_v21_planned_answer(
+                language,
+                local_results,
+                answer_style,
+                planned_tools=semantic_plan_tools,
+                requested_outcomes=semantic_plan_outcomes,
+            )
+            semantic_execution_failed = not semantic_plan_complete
+            if not answer:
+                answer = _evidence_abstention(language, channel_profile)
+                semantic_execution_failed = True
+            break
+
         # Graduation what-if answers are deliberately reconstructed from the
         # structured comparison below; the model's prose is never authoritative for
         # them. Once that comparison exists, another model turn can only add cost or
@@ -5189,7 +8154,7 @@ def answer_student_advisor_v2(
             and isinstance(row.get("what_if"), dict)
             for row in local_results
         )
-        if verified_what_if and not requires_feasible_replacement:
+        if verified_what_if and not requires_feasible_replacement and not semantic_multi_capability:
             answer = _safe_graduation_answer(language, local_results, answer_style)
             if answer:
                 graduation_safe_fallback_used = True
@@ -5197,7 +8162,11 @@ def answer_student_advisor_v2(
         verified_comparison = any(
             row.get("tool") == "course_choice_comparison" and row.get("ok") for row in local_results
         )
-        if verified_comparison and not requires_feasible_replacement:
+        if (
+            verified_comparison
+            and not requires_feasible_replacement
+            and not semantic_multi_capability
+        ):
             answer = _safe_course_comparison_answer(language, local_results, answer_style)
             if answer:
                 comparison_safe_fallback_used = True
@@ -5206,7 +8175,7 @@ def answer_student_advisor_v2(
             row.get("tool") == "feasible_course_replacements" and row.get("ok")
             for row in local_results
         )
-        if verified_replacement:
+        if verified_replacement and not semantic_multi_capability:
             answer = _safe_feasible_replacement_answer(language, local_results, answer_style)
             if answer:
                 replacement_safe_fallback_used = True
@@ -5238,7 +8207,9 @@ def answer_student_advisor_v2(
             )
             comparison_safe_fallback_used = True
         else:
-            if not any(row.get("tool") != "policy_lookup" for row in local_results):
+            if not _semantic_planning and not any(
+                row.get("tool") != "policy_lookup" for row in local_results
+            ):
                 fallback_name = channel_fallback_tool(profile=channel_profile)
                 fallback_raw = execute_student_v2_tool(
                     fallback_name,
@@ -5331,7 +8302,7 @@ def answer_student_advisor_v2(
         )
         answer = _apply_saudi_register(answer, language, answer_style)
 
-    if requires_feasible_replacement:
+    if requires_feasible_replacement and not (_semantic_planning and semantic_multi_capability):
         safe_replacement = _safe_feasible_replacement_answer(language, local_results, answer_style)
         if safe_replacement:
             answer = safe_replacement
@@ -5351,7 +8322,7 @@ def answer_student_advisor_v2(
             answer = _apply_saudi_register(answer, language, answer_style)
             replacement_safe_fallback_used = True
 
-    if requires_course_comparison:
+    if requires_course_comparison and not (_semantic_planning and semantic_multi_capability):
         safe_comparison = _safe_course_comparison_answer(language, local_results, answer_style)
         if safe_comparison:
             answer = safe_comparison
@@ -5411,12 +8382,16 @@ def answer_student_advisor_v2(
         )
         answer = _apply_saudi_register(answer, language, answer_style)
         graduation_safe_fallback_used = True
-    elif safe_graduation and (
-        graduation_what_if
-        or incomplete_graduation
-        or graduation_baseline_label_corrected
-        or _graduation_revision_facts(answer, local_results)
-        or _GRADUATION_UNSUPPORTED_INFERENCE.search(answer or "")
+    elif (
+        safe_graduation
+        and not (_semantic_planning and semantic_multi_capability)
+        and (
+            graduation_what_if
+            or incomplete_graduation
+            or graduation_baseline_label_corrected
+            or _graduation_revision_facts(answer, local_results)
+            or _GRADUATION_UNSUPPORTED_INFERENCE.search(answer or "")
+        )
     ):
         answer = safe_graduation
         graduation_safe_fallback_used = True
@@ -5442,6 +8417,18 @@ def answer_student_advisor_v2(
 
     citations = _retrieved_citations(local_results)
     unresolved_policy_ids = _unresolved_policy_ids(local_results)
+    policy_required_now, policy_grounding_state = _policy_grounding(
+        clean_question,
+        local_results,
+        required_override=policy_contract_required if _semantic_planning else None,
+    )
+    direct_policy_ids = {
+        str(policy.get("policy_id") or "").strip()
+        for result in local_results
+        if isinstance(result, dict) and result.get("tool") == "policy_lookup" and result.get("ok")
+        for policy in result.get("direct_policy_evidence") or []
+        if isinstance(policy, dict) and str(policy.get("policy_id") or "").strip()
+    }
 
     # ── one terminal candidate pipeline ─────────────────────────────────
     #
@@ -5472,12 +8459,16 @@ def answer_student_advisor_v2(
             # ``answer`` already holds the deterministic missing-scenario refusal.
             text = answer
             used_graduation_fallback = True
-        elif safe_graduation and (
-            graduation_what_if
-            or incomplete_graduation
-            or baseline_label_wrong
-            or _graduation_revision_facts(text, local_results)
-            or _GRADUATION_UNSUPPORTED_INFERENCE.search(text or "")
+        elif (
+            safe_graduation
+            and not (_semantic_planning and semantic_multi_capability)
+            and (
+                graduation_what_if
+                or incomplete_graduation
+                or baseline_label_wrong
+                or _graduation_revision_facts(text, local_results)
+                or _GRADUATION_UNSUPPORTED_INFERENCE.search(text or "")
+            )
         ):
             text = safe_graduation
             used_graduation_fallback = True
@@ -5489,20 +8480,85 @@ def answer_student_advisor_v2(
         if presentation:
             text = remove_false_media_incapability(text)
 
+        policy_evidence_missing = bool(
+            _semantic_planning and policy_required_now and policy_grounding_state != "retrieved"
+        )
+        direct_citation_missing = bool(
+            _semantic_planning
+            and policy_required_now
+            and policy_grounding_state == "retrieved"
+            and not any(policy_id in text for policy_id in direct_policy_ids)
+        )
         citation_failed = bool(
-            _bad_citations(text, citations) or _fabricated_policy_ids(text, citations)
+            policy_evidence_missing
+            or direct_citation_missing
+            or _bad_citations(text, citations)
+            or _fabricated_policy_ids(text, citations)
         )
         if citation_failed:
-            if safe_graduation and not requires_policy_contract(clean_question):
+            if safe_graduation and not policy_contract_required:
                 text = safe_graduation
                 citation_failed = False
                 used_graduation_fallback = True
             else:
-                text = _citation_refusal(language, answer_style)
+                refusal = _citation_refusal(language, answer_style)
+                if _semantic_planning:
+                    verified_data = _verified_evidence_fallback(
+                        language,
+                        validation_results,
+                        answer_style,
+                        preferred_tools=(set(required_exact_fact_tools) or None),
+                    )
+                    text = "\n\n".join(part for part in (verified_data, refusal) if part)
+                else:
+                    text = refusal
 
         portal_failed = _claims_portal_action(text)
         if portal_failed:
             text = _portal_boundary_response(language, answer_style)
+
+        validation_scopes: tuple[EvidenceValidationScope, ...] = ()
+        scoped_answer = "\n\n".join(block for _tool, block in semantic_answer_blocks)
+        if _semantic_planning and semantic_answer_blocks and text == scoped_answer:
+            from core.services.student_advisor_v21_synthesis import joined_scope_tools
+
+            scopes: list[EvidenceValidationScope] = []
+            for tool, block in semantic_answer_blocks:
+                joined_owners = joined_scope_tools(tool)
+                if joined_owners:
+                    # One most-recent projected row per owner.  Completeness stays
+                    # with each capability's own block; this supplemental scope
+                    # receives both rows only to validate the derived relationship.
+                    joined_rows: list[dict[str, Any]] = []
+                    for owner in joined_owners:
+                        owner_rows = [
+                            row
+                            for row in validation_results
+                            if isinstance(row, dict) and str(row.get("tool") or "") == owner
+                        ]
+                        if owner_rows:
+                            joined_rows.append(owner_rows[-1])
+                    scope_rows = tuple(joined_rows)
+                    scope_required = frozenset()
+                else:
+                    matching = [
+                        row
+                        for row in validation_results
+                        if isinstance(row, dict) and str(row.get("tool") or "") == tool
+                    ]
+                    scope_rows = tuple(matching[-1:])
+                    scope_required = frozenset(
+                        {tool} if tool in required_exact_fact_tools else set()
+                    )
+                scopes.append(
+                    EvidenceValidationScope(
+                        answer=block,
+                        tool_results=scope_rows,
+                        required_tools=scope_required,
+                        presentation=presentation,
+                    )
+                )
+            validation_scopes = tuple(scopes)
 
         violations = check_answer(
             text,
@@ -5511,10 +8567,11 @@ def answer_student_advisor_v2(
             required_tools=required_exact_fact_tools,
             presentation=presentation,
             known_course_codes=known_course_codes,
+            evidence_scopes=validation_scopes,
         )
         policy_uncertainty_failed = bool(
             not citation_failed
-            and requires_policy_contract(clean_question)
+            and policy_contract_required
             and unresolved_policy_ids
             and not _UNCERTAINTY_MARKERS.search(text)
         )
@@ -5530,6 +8587,9 @@ def answer_student_advisor_v2(
             "graduation_fallback": used_graduation_fallback,
             "internal_sanitized": sanitized_internal,
             "policy_uncertainty_failed": policy_uncertainty_failed,
+            "policy_grounding_failed": bool(
+                _semantic_planning and policy_required_now and citation_failed
+            ),
         }
 
     initial_candidate = finalize_candidate(answer)
@@ -5542,6 +8602,12 @@ def answer_student_advisor_v2(
         # refusal, but record it as an evidence abstention rather than a PASS.
         evidence_validation_outcome = "abstained"
         grounding_refused = True
+    elif initial_candidate["policy_grounding_failed"]:
+        evidence_validation_outcome = "abstained"
+        grounding_refused = True
+    elif _semantic_planning and semantic_execution_failed:
+        evidence_validation_outcome = "abstained"
+        grounding_refused = True
     elif not evidence_validation_initial:
         evidence_validation_outcome = "passed" if required_exact_fact_tools else "not_applicable"
     else:
@@ -5551,7 +8617,8 @@ def answer_student_advisor_v2(
         if remaining_budget < 8.0:
             turn_budget_exhausted = True
         if (
-            REQUIRED_EVIDENCE_MISSING not in evidence_validation_initial
+            not _semantic_planning
+            and REQUIRED_EVIDENCE_MISSING not in evidence_validation_initial
             and inference_calls < inference_ceiling
             and not turn_budget_exhausted
         ):
@@ -5703,7 +8770,7 @@ def answer_student_advisor_v2(
     if grounding_refused:
         presentation = None
 
-    policy_required, grounding = _policy_grounding(clean_question, local_results)
+    policy_required, grounding = policy_required_now, policy_grounding_state
     cited_policy_ids = [
         str(item.get("policy_id") or "")
         for item in citations
@@ -5720,8 +8787,27 @@ def answer_student_advisor_v2(
         "missing_information": [],
         "presentation": presentation,
         "agent": {
-            "version": "student-v2",
-            "prompt_version": STUDENT_V2_PROMPT_VERSION,
+            "version": "student-v2.1" if _semantic_planning else "student-v2",
+            "prompt_version": (
+                STUDENT_V21_PROMPT_VERSION if _semantic_planning else STUDENT_V2_PROMPT_VERSION
+            ),
+            "semantic_planning": bool(_semantic_planning),
+            "semantic_plan_version": (STUDENT_V21_PROMPT_VERSION if _semantic_planning else ""),
+            "semantic_plan_decision": semantic_plan_decision,
+            "semantic_plan_clarification_kind": semantic_plan_clarification_kind,
+            "semantic_plan_requested_outcomes": list(semantic_plan_outcomes),
+            "semantic_plan_tools": list(semantic_plan_tools),
+            "semantic_outcome_coverage": semantic_outcome_coverage,
+            "semantic_outcome_coverage_refused": semantic_outcome_coverage_refused,
+            "semantic_plan_failure_reason": semantic_plan_failure_reason,
+            "semantic_plan_repair_attempted": semantic_plan_repair_attempted,
+            "semantic_plan_missing_constraint_paths": list(semantic_plan_missing_constraint_paths),
+            "semantic_plan_pruned_capabilities": list(semantic_plan_pruned_capabilities),
+            "semantic_plan_policy_validation": dict(semantic_plan_policy_validation),
+            "semantic_plan_multi_capability": semantic_multi_capability,
+            "semantic_plan_model": semantic_plan_model,
+            "semantic_plan_model_revision": semantic_plan_model_revision,
+            "semantic_plan_execution_complete": not semantic_execution_failed,
             "model_revision": answer_model_revision,
             "answer_style": answer_style,
             "loop_used": True,
@@ -5785,6 +8871,24 @@ def answer_student_advisor_v2(
                 prompt_tokens=int(usage.as_dict().get("prompt_tokens") or 0),
                 completion_tokens=int(usage.as_dict().get("completion_tokens") or 0),
                 turn_ms=int((time.monotonic() - turn_started) * 1000),
+                semantic_plan_decision=(semantic_plan_decision if _semantic_planning else ""),
+                semantic_plan_clarification_kind=(
+                    semantic_plan_clarification_kind if _semantic_planning else "none"
+                ),
+                semantic_plan_requested_outcomes=semantic_plan_outcomes,
+                semantic_outcome_coverage_valid=(
+                    bool(semantic_outcome_coverage.get("valid")) if _semantic_planning else None
+                ),
+                semantic_outcome_coverage_reason=str(semantic_outcome_coverage.get("reason") or ""),
+                semantic_plan_failure_reason=(
+                    semantic_plan_failure_reason if _semantic_planning else ""
+                ),
+                semantic_plan_repair_attempted=(
+                    semantic_plan_repair_attempted if _semantic_planning else False
+                ),
+                semantic_plan_missing_constraint_paths=(
+                    semantic_plan_missing_constraint_paths if _semantic_planning else ()
+                ),
             ),
             "read_only": True,
             "portal_action": "student_manual_only",
@@ -5794,6 +8898,25 @@ def answer_student_advisor_v2(
 
 def answer_student_advisor(**kwargs: Any) -> dict[str, Any]:
     """Feature-flagged seam used by the durable student conversation endpoint."""
+    # V2.1 is an explicit deployment strategy, not a per-turn fallback.  If its
+    # semantic planner cannot produce a valid plan, that failure is surfaced by
+    # V2.1; silently invoking V2 here would reintroduce the regex router for the
+    # exact question the operator selected V2.1 to handle.
+    from core.services.student_advisor_v21 import (
+        answer_student_advisor_v21,
+    )
+    from core.services.student_advisor_v21 import (
+        is_enabled as is_v21_enabled,
+    )
+
+    if is_v21_enabled():
+        if not is_enabled():
+            raise ImproperlyConfigured(
+                "STUDENT_ADVISOR_V21_ENABLED requires STUDENT_ADVISOR_V2_ENABLED=true "
+                "so the V2.1 kill switch has a defined V2 rollback target."
+            )
+        return answer_student_advisor_v21(**kwargs)
+
     # The legacy runtime has no channel-specific evidence projection. Telegram
     # therefore stays on V2 even during a web rollback of the V2 feature flag;
     # silently downgrading here would reopen exact-record access.
@@ -5810,9 +8933,12 @@ def answer_student_advisor(**kwargs: Any) -> dict[str, Any]:
 __all__ = [
     "FORBIDDEN_STUDENT_V2_TOOLS",
     "STUDENT_V2_TOOL_NAMES",
+    "STUDENT_V21_COMPOUND_TOOL_NAMES",
+    "STUDENT_V21_TOOL_NAMES",
     "answer_student_advisor",
     "answer_student_advisor_v2",
     "execute_student_v2_tool",
     "is_enabled",
     "student_v2_tool_schemas",
+    "student_v21_tool_schemas",
 ]

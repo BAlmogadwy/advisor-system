@@ -157,6 +157,89 @@ def test_lower_ranked_academic_swap_is_certified_after_first_five_fail(monkeypat
     )
 
 
+@pytest.mark.parametrize(
+    "result_credit_predicate, expected_metadata",
+    [
+        (
+            {"exact_result_credits": 3},
+            {"exact_credit_hours": 3, "maximum_credit_hours": None},
+        ),
+        (
+            {"max_result_credits": 3},
+            {"exact_credit_hours": None, "maximum_credit_hours": 3},
+        ),
+    ],
+    ids=("exact-result-credits", "maximum-result-credits"),
+)
+def test_result_credit_predicate_is_applied_before_certified_result_limit(
+    monkeypatch, result_credit_predicate, expected_metadata
+):
+    from core.services import course_replacement_feasibility as service
+
+    pairs = [_academic_pair("OLD", f"ADD{index}") for index in range(1, 7)]
+    for pair in pairs[:5]:
+        pair["add_course"]["credits"] = 4
+    search = _search_payload(pairs, ["OLD"])
+    search["what_if"]["result_credit_predicate_filtered_count"] = 20
+    graduation_calls = []
+    monkeypatch.setattr(
+        service, "get_student_term_baseline", lambda *_a, **_k: [_baseline_row("OLD", 1)]
+    )
+
+    def fake_graduation(*_args, **kwargs):
+        graduation_calls.append(dict(kwargs))
+        return deepcopy(search)
+
+    monkeypatch.setattr(service, "build_graduation_what_if", fake_graduation)
+
+    def fake_planner(request):
+        code = request.required_courses[0]
+        credits = 3 if code == "ADD6" else 4
+        option = _planner_option(code)
+        option["courses"][0]["credits"] = credits
+        option["credit_hours"] = credits
+        return {"alternatives": [option], "unplaced": []}
+
+    monkeypatch.setattr(service, "build_student_options", fake_planner)
+
+    result = service.find_feasible_course_replacements(
+        SID,
+        1448,
+        1,
+        **result_credit_predicate,
+    )
+
+    assert [row["add_course"]["course_code"] for row in result["certified_replacements"]] == [
+        "ADD6"
+    ]
+    assert {
+        key: graduation_calls[0].get(key) for key in result_credit_predicate
+    } == result_credit_predicate
+    assert result["certification_search"] == {
+        "academic_candidates_received": 6,
+        "timetable_candidates_checked": 6,
+        "certified_result_limit": service.MAX_CERTIFIED_REPLACEMENTS,
+        "search_truncated": False,
+        "result_credit_predicate": expected_metadata,
+        "result_credit_predicate_filtered_count": 25,
+    }
+
+
+@pytest.mark.parametrize(
+    "result_credit_predicate",
+    [
+        {"exact_result_credits": -1},
+        {"max_result_credits": -1},
+        {"exact_result_credits": 4, "max_result_credits": 3},
+    ],
+)
+def test_invalid_result_credit_predicates_are_rejected(result_credit_predicate):
+    from core.services import course_replacement_feasibility as service
+
+    with pytest.raises(ValueError):
+        service.find_feasible_course_replacements(SID, 1448, 1, **result_credit_predicate)
+
+
 def test_exact_pair_keeps_every_other_section_and_strips_database_ids(monkeypatch):
     from core.services import course_replacement_feasibility as service
 

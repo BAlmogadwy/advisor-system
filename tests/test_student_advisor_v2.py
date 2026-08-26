@@ -164,6 +164,8 @@ def test_v2_surface_is_small_self_scoped_and_read_only():
         "add_current_courses",
         "search_better_replacements",
     } <= set(graduation_properties)
+    assert "noncompletion_current_courses" not in graduation_properties
+    assert "noncompletion_current_courses" not in graduation_schema["function"]["description"]
     assert graduation_properties["planning_baseline_kind"]["enum"] == [
         "recommended_current_term",
         "registered_timetable",
@@ -178,6 +180,10 @@ def test_v2_surface_is_small_self_scoped_and_read_only():
     assert comparison_params["properties"]["course_codes"]["maxItems"] == 4
     assert "academic_year" not in comparison_params["properties"]
     assert "term" not in comparison_params["properties"]
+    progress_schema = next(
+        schema for schema in schemas if schema["function"]["name"] == "my_progress"
+    )
+    assert "priority_limit" not in progress_schema["function"]["parameters"]["properties"]
     replacement_schema = next(
         schema for schema in schemas if schema["function"]["name"] == "feasible_course_replacements"
     )
@@ -185,6 +191,28 @@ def test_v2_surface_is_small_self_scoped_and_read_only():
         "remove_course",
         "add_course",
     }
+
+
+def test_v18_semantic_policy_validation_is_isolated_from_legacy_v2(monkeypatch):
+    import core.services.student_advisor_v21_policy as policy
+
+    monkeypatch.setattr(
+        policy,
+        "semantic_policy_violations",
+        lambda *_args, **_kwargs: pytest.fail(
+            "the V2.1 semantic-policy seam must never run for legacy V2"
+        ),
+    )
+    client = FakeClient(_answer_turn("Hello."))
+
+    result = answer_student_advisor_v2(
+        question="Hello",
+        principal=_principal(),
+        llm_client=client,
+    )
+
+    assert result["agent"]["version"] == "student-v2"
+    assert len(client.messages) == 1
 
 
 def test_replacement_capability_fails_closed_on_unexpected_service_error(monkeypatch):
@@ -1119,6 +1147,33 @@ def _complete_graduation_result() -> dict[str, Any]:
         ],
         "unresolved_requirements": [],
     }
+
+
+@pytest.mark.parametrize("language", ["English", "Arabic"])
+def test_safe_graduation_answer_does_not_relabel_the_term_cap_as_passed_credits(
+    language: str,
+) -> None:
+    graduation = {
+        **_complete_graduation_result(),
+        "planning_baseline_kind": "recommended_current_term",
+        "lower_bound_additional_terms": 4,
+        "lower_bound_terms_including_planning_baseline": 5,
+        "credits_earned_registrar": 91,
+        "passed_credits_in_plan": 86,
+    }
+
+    answer = _safe_graduation_answer(language, [graduation])
+
+    assert "18" in answer
+    assert (
+        check_answer(
+            answer,
+            tool_results=[graduation],
+            question="Approximately how many terms remain until I complete my degree plan?",
+            required_tools={"graduation_progress"},
+        )
+        == []
+    )
 
 
 @pytest.mark.parametrize(
@@ -2929,7 +2984,7 @@ def test_single_agent_calls_evidence_tool_and_forces_session_identity(monkeypatc
 
     monkeypatch.setattr("core.services.student_advisor_v2.execute_student_v2_tool", fake_execute)
     client = FakeClient(
-        _tool_turn("my_progress", {"student_id": 9999999}),
+        _tool_turn("my_progress", {"student_id": 9999999, "priority_limit": 5}),
         _answer_turn("You currently have three prerequisite-ready courses."),
     )
 
@@ -3702,7 +3757,10 @@ def test_tool_timeout_falls_back_to_verified_read_only_snapshot(monkeypatch):
     assert result["agent"]["tools_called"][-1]["name"] == "get_student_context"
 
 
-@override_settings(STUDENT_ADVISOR_V2_ENABLED=False)
+@override_settings(
+    STUDENT_ADVISOR_V2_ENABLED=False,
+    STUDENT_ADVISOR_V21_ENABLED=False,
+)
 def test_feature_flag_preserves_legacy_generator(monkeypatch):
     expected = {"answer": "legacy", "model": "test"}
     monkeypatch.setattr(

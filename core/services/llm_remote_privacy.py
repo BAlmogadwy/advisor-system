@@ -86,6 +86,9 @@ REMOTE_POLICY: dict[str, RemoteExposure] = {
     "why_course_locked": RemoteExposure.PROJECT,
     "course_choice_comparison": RemoteExposure.PROJECT,
     "feasible_course_replacements": RemoteExposure.PROJECT,
+    "recommend_feasible_course_addition": RemoteExposure.PROJECT,
+    "rank_current_course_drop_impact": RemoteExposure.PROJECT,
+    "improve_current_timetable": RemoteExposure.PROJECT,
     "graduation_progress": RemoteExposure.PROJECT,
     "my_plan_by_term": RemoteExposure.PROJECT,
     "recommend_courses": RemoteExposure.PROJECT,
@@ -531,14 +534,75 @@ def _project_course_prerequisites(result: dict[str, Any], _: RemoteIdentityMap) 
     return out
 
 
-#: The impact row's four keys, named once because `most_useful_course_to_pass`
-#: and every row of `unlock_impact_ranking` are the same shape.
-_IMPACT_FIELDS = (
-    "code",
-    "course_name",
-    "sole_remaining_prerequisite_count",
-    "on_prerequisite_chain_of_count",
-)
+#: ``most_useful_course_to_pass`` and both ranking arrays share this closed,
+#: scalar-only boundary. Limits are deliberately independent of producer data.
+_MAX_IMPACT_CODE_CHARS = 32
+_MAX_IMPACT_NAME_CHARS = 240
+_MAX_IMPACT_COUNT = 10_000
+_MAX_IMPACT_METHOD_CHARS = 96
+_MAX_IMPACT_NOTE_CHARS = 1_000
+
+
+def _bounded_impact_string(value: Any, *, max_chars: int) -> str | None:
+    """One non-empty priority scalar; nested containers are never coerced."""
+
+    if not isinstance(value, str):
+        return None
+    clean = value.strip()
+    if not clean or len(clean) > max_chars:
+        return None
+    return clean
+
+
+def _bounded_impact_count(value: Any) -> int | None:
+    """One finite plan count, excluding bool (which is an int subclass)."""
+
+    if isinstance(value, int) and not isinstance(value, bool) and 0 <= value <= _MAX_IMPACT_COUNT:
+        return value
+    return None
+
+
+def _project_impact_row(value: Any) -> dict[str, Any] | None:
+    """Project the closed scalar shape of one unlock-impact ranking row."""
+
+    if not isinstance(value, dict):
+        return None
+    code = _bounded_impact_string(
+        value.get("code"),
+        max_chars=_MAX_IMPACT_CODE_CHARS,
+    )
+    if code is None:
+        # A ranking row without a scalar course identity is unusable, so drop
+        # the whole row instead of forwarding detached names/counts.
+        return None
+    out: dict[str, Any] = {"code": code}
+    course_name = _bounded_impact_string(
+        value.get("course_name"),
+        max_chars=_MAX_IMPACT_NAME_CHARS,
+    )
+    if course_name is not None:
+        out["course_name"] = course_name
+    for count_field in (
+        "sole_remaining_prerequisite_count",
+        "on_prerequisite_chain_of_count",
+    ):
+        count = _bounded_impact_count(value.get(count_field))
+        if count is not None:
+            out[count_field] = count
+    return out
+
+
+def _project_impact_rows(value: Any, *, limit: int | None = None) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    rows: list[dict[str, Any]] = []
+    for item in value:
+        projected = _project_impact_row(item)
+        if projected is not None:
+            rows.append(projected)
+            if limit is not None and len(rows) >= limit:
+                break
+    return rows
 
 
 def _project_my_progress(result: dict[str, Any], _: RemoteIdentityMap) -> dict[str, Any]:
@@ -573,6 +637,18 @@ def _project_my_progress(result: dict[str, Any], _: RemoteIdentityMap) -> dict[s
             "note",
         )
     )
+    method = _bounded_impact_string(
+        result.get("unlock_impact_ranking_basis"),
+        max_chars=_MAX_IMPACT_METHOD_CHARS,
+    )
+    if method is not None:
+        out["unlock_impact_ranking_basis"] = method
+    ranking_note = _bounded_impact_string(
+        result.get("unlock_impact_ranking_note"),
+        max_chars=_MAX_IMPACT_NOTE_CHARS,
+    )
+    if ranking_note is not None:
+        out["unlock_impact_ranking_note"] = ranking_note
     out["registered_requirement_course_codes"] = _code_list(
         result.get("registered_requirement_course_codes")
     )
@@ -581,12 +657,21 @@ def _project_my_progress(result: dict[str, Any], _: RemoteIdentityMap) -> dict[s
         result.get("expected_plan_requirement_aliases")
     )
     top = result.get("most_useful_course_to_pass")
-    out["most_useful_course_to_pass"] = (
-        _keep(top, *_IMPACT_FIELDS) if isinstance(top, dict) else None
-    )
-    out["unlock_impact_ranking"] = _course_rows(
-        result.get("unlock_impact_ranking"), *_IMPACT_FIELDS
-    )
+    out["most_useful_course_to_pass"] = _project_impact_row(top)
+    out["unlock_impact_ranking"] = _project_impact_rows(result.get("unlock_impact_ranking"))
+    requested_limit = result.get("requested_priority_limit")
+    if (
+        isinstance(requested_limit, int)
+        and not isinstance(requested_limit, bool)
+        and 1 <= requested_limit <= 20
+    ):
+        out["requested_priority_limit"] = requested_limit
+        out["requested_unlock_impact_ranking"] = _project_impact_rows(
+            result.get("requested_unlock_impact_ranking"),
+            limit=requested_limit,
+        )
+        if isinstance(result.get("requested_priority_limit_fulfilled"), bool):
+            out["requested_priority_limit_fulfilled"] = result["requested_priority_limit_fulfilled"]
     out["prerequisites_satisfied"] = _course_rows(
         result.get("prerequisites_satisfied"),
         "code",
@@ -740,6 +825,10 @@ def _project_graduation_what_if(what_if: Any) -> dict[str, Any] | None:
     out["removed_current_courses"] = _course_rows(
         what_if.get("removed_current_courses"), "code", "name", "credits"
     )
+    if "noncompletion_current_courses" in what_if:
+        out["noncompletion_current_courses"] = _course_rows(
+            what_if.get("noncompletion_current_courses"), "code", "name", "credits"
+        )
     out["added_current_courses"] = _course_rows(
         what_if.get("added_current_courses"),
         "code",
@@ -1284,6 +1373,500 @@ def _project_feasible_course_replacements(
     return out
 
 
+def _project_compound_graduation_delta(value: Any) -> dict[str, Any]:
+    """Exact allowlist for the already-compacted compound graduation delta."""
+    raw = value if isinstance(value, dict) else {}
+    out = _keep(
+        raw,
+        "status",
+        "simulation_completed",
+        "timing_effect",
+        "term_difference",
+        "terms_saved",
+        "exact_timing_comparison_available",
+        "estimated_additional_terms",
+        "lower_bound_additional_terms",
+        "plan_changed",
+        "reason_code",
+    )
+    out["blockers_resolved"] = _code_list(raw.get("blockers_resolved"))
+    out["blockers_improved"] = _code_list(raw.get("blockers_improved"))
+    out["blockers_introduced"] = _code_list(raw.get("blockers_introduced"))
+    out["affected_future_course_codes"] = _code_list(raw.get("affected_future_course_codes"))
+    out["validation_errors"] = []
+    for error in raw.get("validation_errors") or []:
+        if not isinstance(error, dict):
+            continue
+        projected = _keep(error, "kind", "course_code")
+        projected["missing_prerequisites"] = _code_list(error.get("missing_prerequisites"))
+        out["validation_errors"].append(projected)
+    out["deferred_courses"] = [
+        _keep(
+            row,
+            "course_code",
+            "future_sequence",
+            "academic_year",
+            "term",
+            "unresolved",
+        )
+        for row in raw.get("deferred_courses") or []
+        if isinstance(row, dict)
+    ][:20]
+    return out
+
+
+def _project_compound_constraints(value: Any) -> dict[str, Any]:
+    raw = value if isinstance(value, dict) else {}
+    out = _keep(
+        raw,
+        "addition_count",
+        "keep_baseline_sections",
+        "requested_max_credits",
+        "effective_max_credits",
+        "additional_credit_hours",
+        "change_kind",
+        "preserve_credit_hours",
+        "credit_load_policy",
+        "maximum_result_credit_hours",
+        "allow_course_replacements",
+        "never_mutate_current_timetable",
+    )
+    out["add_courses"] = _code_list(raw.get("add_courses"), cap=20)
+    out["pinned_sections"] = [
+        _keep(row, "course_code", "section_label")
+        for row in raw.get("pinned_sections") or []
+        if isinstance(row, dict)
+    ][:10]
+    return out
+
+
+def _project_compound_addition_row(value: Any) -> dict[str, Any] | None:
+    if not isinstance(value, dict):
+        return None
+    out = _keep(value, "rank", "course_code", "course_name", "credit_hours")
+    out["eligibility"] = _keep(value.get("eligibility") or {}, "status", "requirement_course_code")
+    out["official_recommendation"] = _keep(
+        value.get("official_recommendation") or {}, "included", "rank"
+    )
+    out["unlock_impact"] = _keep(
+        value.get("unlock_impact") or {},
+        "sole_remaining_prerequisite_count",
+        "on_prerequisite_chain_of_count",
+    )
+    timetable = value.get("timetable") or {}
+    out["timetable"] = _keep(
+        timetable,
+        "status",
+        "baseline_kind",
+        "credit_ceiling",
+        "clash_free_section_count",
+        "search_is_exhaustive",
+    )
+    out["timetable"]["clash_free_sections"] = [
+        {
+            **_keep(row, "section", "credit_hours"),
+            "meetings": [
+                _keep(meeting, "day", "start", "end")
+                for meeting in row.get("meetings") or []
+                if isinstance(meeting, dict)
+            ][:10],
+        }
+        for row in timetable.get("clash_free_sections") or []
+        if isinstance(row, dict) and not is_other_branch_section_label(row.get("section"))
+    ][:10]
+    out["graduation"] = _project_compound_graduation_delta(value.get("graduation"))
+    return out
+
+
+def _project_recommend_feasible_course_addition(
+    result: dict[str, Any], _: RemoteIdentityMap
+) -> dict[str, Any]:
+    out = _envelope(result)
+    out.update(
+        _keep(
+            result,
+            "status",
+            "outcome",
+            "objective",
+            "planning_term",
+            "baseline_kind",
+            "baseline_credit_hours",
+            "candidate_source",
+            "recommendation_scope",
+            "reason_code",
+            "excluded_candidates_count",
+            "registration_action",
+            "can_save",
+            "can_register",
+        )
+    )
+    out["constraints"] = _project_compound_constraints(result.get("constraints"))
+    out["ranking_basis"] = _keep(
+        result.get("ranking_basis") or {},
+        "objective",
+        "method",
+        "no_cross_dimension_weighted_score",
+    )
+    out["search"] = _keep(
+        result.get("search") or {},
+        "candidates_discovered",
+        "candidates_evaluated",
+        "feasible_candidates_found",
+        "objective_matches_found",
+        "credit_prefiltered_count",
+        "search_truncated",
+        "candidate_limit",
+        "timetable_search_exhaustive",
+    )
+    out["recommended_addition"] = _project_compound_addition_row(result.get("recommended_addition"))
+    out["ranked_feasible_additions"] = [
+        projected
+        for row in (result.get("ranked_feasible_additions") or [])[:10]
+        if (projected := _project_compound_addition_row(row)) is not None
+    ]
+    out["excluded_candidates"] = [
+        _keep(row, "course_code", "stage", "outcome", "reason_code")
+        for row in (result.get("excluded_candidates") or [])[:10]
+        if isinstance(row, dict)
+    ]
+    return out
+
+
+def _project_compound_drop_row(value: Any) -> dict[str, Any] | None:
+    if not isinstance(value, dict):
+        return None
+    out = _keep(
+        value,
+        "rank",
+        "course_code",
+        "course_name",
+        "credit_hours",
+        "impact_status",
+    )
+    out["sections"] = [
+        str(label)
+        for label in (value.get("sections") or [])[:10]
+        if isinstance(label, str) and not is_other_branch_section_label(label)
+    ]
+    out["academic_priority"] = _keep(
+        value.get("academic_priority") or {},
+        "requirement_course_code",
+        "sole_remaining_prerequisite_count",
+        "on_prerequisite_chain_of_count",
+        "weighted_downstream_score",
+        "weighted_score_method",
+    )
+    out["graduation"] = _project_compound_graduation_delta(value.get("graduation"))
+    return out
+
+
+def _project_rank_current_course_drop_impact(
+    result: dict[str, Any], _: RemoteIdentityMap
+) -> dict[str, Any]:
+    out = _envelope(result)
+    out.update(
+        _keep(
+            result,
+            "status",
+            "outcome",
+            "objective",
+            "planning_term",
+            "baseline_kind",
+            "candidate_source",
+            "reason_code",
+            "excluded_courses_count",
+            "registration_action",
+            "can_drop",
+            "can_save",
+        )
+    )
+    out["constraints"] = _project_compound_constraints(result.get("constraints"))
+    out["ranking_basis"] = _keep(
+        result.get("ranking_basis") or {},
+        "objective",
+        "method",
+        "no_cross_dimension_weighted_score",
+    )
+    out["search"] = _keep(
+        result.get("search") or {},
+        "registered_courses_found",
+        "drop_scenarios_evaluated",
+        "determinable_scenarios",
+        "search_truncated",
+    )
+    out["top_ranked_drop_candidate"] = _project_compound_drop_row(
+        result.get("top_ranked_drop_candidate")
+    )
+    out["ranked_drop_impacts"] = [
+        projected
+        for row in (result.get("ranked_drop_impacts") or [])[:10]
+        if (projected := _project_compound_drop_row(row)) is not None
+    ]
+    out["excluded_courses"] = [
+        _keep(row, "course_code", "outcome", "reason_code")
+        for row in (result.get("excluded_courses") or [])[:10]
+        if isinstance(row, dict)
+    ]
+    return out
+
+
+def _project_compound_schedule_metrics(value: Any) -> dict[str, Any]:
+    raw = value if isinstance(value, dict) else {}
+    out = _keep(
+        raw,
+        "status",
+        "days_on_campus",
+        "total_daily_span_minutes",
+        "earliest_start",
+        "latest_end",
+    )
+    out["issues"] = [
+        _keep(row, "course_code", "section", "reason_code")
+        for row in (raw.get("issues") or [])[:20]
+        if isinstance(row, dict) and not is_other_branch_section_label(row.get("section"))
+    ]
+    return out
+
+
+def _project_compound_replacement(value: Any) -> dict[str, Any] | None:
+    if not isinstance(value, dict):
+        return None
+
+    def course(raw_value: Any) -> dict[str, Any]:
+        raw = raw_value if isinstance(raw_value, dict) else {}
+        return _keep(raw, "course_code", "course_name", "credit_hours")
+
+    academic = value.get("academic_improvement") or {}
+    timetable = value.get("timetable") or {}
+    out = {
+        "remove_course": course(value.get("remove_course")),
+        "add_course": course(value.get("add_course")),
+        "outside_plan_addition": value.get("outside_plan_addition") is True,
+        "academic_improvement": {
+            **_keep(
+                academic,
+                "proven_improvement",
+                "timing_effect",
+                "term_difference",
+                "terms_saved",
+                "improvement_basis",
+            ),
+            "blockers_resolved": _code_list(academic.get("blockers_resolved")),
+            "blockers_improved": _code_list(academic.get("blockers_improved")),
+            "blockers_introduced": _code_list(academic.get("blockers_introduced")),
+        },
+        "graduation_scenario": _keep(
+            value.get("graduation_scenario") or {},
+            "simulation_completed",
+            "estimated_additional_terms",
+            "lower_bound_additional_terms",
+        ),
+        "timetable": {
+            "status": timetable.get("status"),
+            "certified_options": [],
+        },
+    }
+    priority = value.get("academic_priority") or {}
+    if isinstance(priority, dict):
+        out["academic_priority"] = _keep(
+            priority,
+            "weighted_score_method",
+            "removed_requirement_course_code",
+            "added_requirement_course_code",
+            "removed_weighted_downstream_score",
+            "added_weighted_downstream_score",
+            "weighted_priority_gain",
+            "added_sole_remaining_prerequisite_count",
+            "added_on_prerequisite_chain_of_count",
+        )
+    for option in (timetable.get("certified_options") or [])[:3]:
+        if not isinstance(option, dict):
+            continue
+        projected_option = _keep(
+            option,
+            "scheduled_courses",
+            "target_courses",
+            "credit_hours",
+            "days_on_campus",
+        )
+        projected_option["planner_options"] = _code_list(option.get("planner_options"), cap=20)
+        projected_option["complete_sections"] = [
+            {
+                **_keep(row, "course_code", "course_name", "section", "credits"),
+                "meetings": [
+                    _keep(meeting, "day", "start", "end")
+                    for meeting in (row.get("meetings") or [])[:10]
+                    if isinstance(meeting, dict)
+                ],
+            }
+            for row in (option.get("complete_sections") or [])[:20]
+            if isinstance(row, dict) and not is_other_branch_section_label(row.get("section"))
+        ]
+        out["timetable"]["certified_options"].append(projected_option)
+    return out
+
+
+def _project_compound_schedule_improvement(value: Any) -> dict[str, Any] | None:
+    if not isinstance(value, dict):
+        return None
+    out = _keep(value, "rank", "credit_hours")
+    out["planner_options"] = _code_list(value.get("planner_options"), cap=20)
+    out["course_codes"] = _code_list(value.get("course_codes"), cap=20)
+    out["changed_sections"] = []
+    for change in (value.get("changed_sections") or [])[:20]:
+        if not isinstance(change, dict):
+            continue
+        projected = _keep(change, "course_code")
+        projected["from_sections"] = [
+            label
+            for label in _code_list(change.get("from_sections"), cap=10)
+            if not is_other_branch_section_label(label)
+        ]
+        projected["to_sections"] = [
+            label
+            for label in _code_list(change.get("to_sections"), cap=10)
+            if not is_other_branch_section_label(label)
+        ]
+        out["changed_sections"].append(projected)
+    out["before"] = _project_compound_schedule_metrics(value.get("before"))
+    out["after"] = _project_compound_schedule_metrics(value.get("after"))
+    out["improvement"] = _keep(
+        value.get("improvement") or {}, "campus_days_saved", "daily_span_minutes_saved"
+    )
+    out["meetings"] = [
+        _keep(row, "course_code", "section", "day", "start", "end")
+        for row in (value.get("meetings") or [])[:60]
+        if isinstance(row, dict) and not is_other_branch_section_label(row.get("section"))
+    ]
+    return out
+
+
+def _project_improve_current_timetable(
+    result: dict[str, Any], _: RemoteIdentityMap
+) -> dict[str, Any]:
+    out = _envelope(result)
+    out.update(
+        _keep(
+            result,
+            "status",
+            "outcome",
+            "objective",
+            "planning_term",
+            "baseline_kind",
+            "reason_code",
+            "improvement_types_found",
+            "registration_action",
+            "can_save",
+            "can_apply",
+            "can_register",
+        )
+    )
+    out["improvement_types_found"] = _code_list(result.get("improvement_types_found"), cap=5)
+    out["constraints"] = _project_compound_constraints(result.get("constraints"))
+    out["ranking_basis"] = _keep(
+        result.get("ranking_basis") or {},
+        "graduation",
+        "academic_priority",
+        "schedule_quality",
+        "method",
+        "no_cross_dimension_weighted_score",
+    )
+    baseline = result.get("baseline") or {}
+    out["baseline"] = {
+        "course_codes": _code_list(baseline.get("course_codes"), cap=20),
+        **_keep(baseline, "credit_hours"),
+        "schedule_quality": _project_compound_schedule_metrics(baseline.get("schedule_quality")),
+    }
+    out["constraint_failures"] = [
+        _keep(row, "reason_code")
+        for row in (result.get("constraint_failures") or [])[:20]
+        if isinstance(row, dict)
+    ]
+    out["baseline_mapping_issues"] = [
+        _keep(row, "course_code", "reason_code")
+        for row in (result.get("baseline_mapping_issues") or [])[:20]
+        if isinstance(row, dict)
+    ]
+    out["graduation_improvements"] = [
+        projected
+        for row in (result.get("graduation_improvements") or [])[:10]
+        if (projected := _project_compound_replacement(row)) is not None
+    ]
+    out["schedule_quality_improvements"] = [
+        projected
+        for row in (result.get("schedule_quality_improvements") or [])[:3]
+        if (projected := _project_compound_schedule_improvement(row)) is not None
+    ]
+    recommended = result.get("recommended_change")
+    if isinstance(recommended, dict):
+        kind = str(recommended.get("kind") or "")
+        if kind == "COURSE_REPLACEMENT":
+            projected_change = _project_compound_replacement(recommended.get("replacement"))
+            out["recommended_change"] = (
+                {"kind": kind, "replacement": projected_change}
+                if projected_change is not None
+                else None
+            )
+        elif kind == "SECTION_REARRANGEMENT":
+            projected_change = _project_compound_schedule_improvement(recommended.get("schedule"))
+            out["recommended_change"] = (
+                {"kind": kind, "schedule": projected_change}
+                if projected_change is not None
+                else None
+            )
+        else:
+            out["recommended_change"] = None
+    else:
+        out["recommended_change"] = None
+
+    search = result.get("search") or {}
+    graduation_search = search.get("graduation_replacements") or {}
+    schedule_search = search.get("schedule_quality") or {}
+    out["search"] = {
+        "bounded": search.get("bounded") is True,
+        "graduation_replacements": {
+            **_keep(
+                graduation_search,
+                "attempted",
+                "status",
+                "certified_improvements_found",
+                "credit_policy_rejections_count",
+                "objective_rejections_count",
+                "execution_failed",
+            ),
+            "academic": _keep(
+                graduation_search.get("academic") or {},
+                "pairs_evaluated",
+                "search_truncated",
+                "academic_improvements_found",
+            ),
+            "certification": _keep(
+                graduation_search.get("certification") or {},
+                "academic_candidates_received",
+                "timetable_candidates_checked",
+                "search_truncated",
+            ),
+        },
+        "schedule_quality": {
+            **_keep(
+                schedule_search,
+                "attempted",
+                "alternatives_checked",
+                "constraints_satisfied",
+                "search_exhaustive",
+                "execution_failed",
+            ),
+            "constraint_failures": [
+                _keep(row, "course_code", "section_label", "reason_code")
+                for row in (schedule_search.get("constraint_failures") or [])[:20]
+                if isinstance(row, dict)
+                and not is_other_branch_section_label(row.get("section_label"))
+            ],
+        },
+    }
+    return out
+
+
 def _project_my_clash_free_sections(result: dict[str, Any], _: RemoteIdentityMap) -> dict[str, Any]:
     """Keep safe section evidence for both supported capability payloads.
 
@@ -1498,6 +2081,43 @@ def _project_build_timetable_proposal(
             "note",
         )
     )
+    target_credits = _bounded_impact_count(result.get("target_credits"))
+    if target_credits is not None and target_credits > 0:
+        out["target_credits"] = target_credits
+    if isinstance(result.get("target_credits_satisfied"), bool):
+        out["target_credits_satisfied"] = result["target_credits_satisfied"]
+    if isinstance(result.get("no_additional_courses"), bool):
+        out["no_additional_courses"] = result["no_additional_courses"]
+    target_status = str(result.get("target_credit_status") or "").strip().upper()
+    if target_status in {
+        "NOT_REQUESTED",
+        "SATISFIED",
+        "TARGET_EXCEEDS_EFFECTIVE_MAX",
+        "RETAINED_BASELINE_EXCEEDS_TARGET",
+        "NO_EXACT_ALTERNATIVE",
+    }:
+        out["target_credit_status"] = target_status
+    status = str(result.get("status") or "").strip().upper()
+    if status in {
+        "PROPOSALS_GENERATED",
+        "NO_ADDITIONAL_COURSES",
+        "CONSTRAINTS_UNSATISFIED",
+    }:
+        out["status"] = status
+    search = result.get("search")
+    if isinstance(search, dict):
+        out["search"] = {
+            "bounded": search.get("bounded") is True,
+            "exact_target_enforced": search.get("exact_target_enforced") is True,
+            "planner_methods": [
+                token
+                for raw in search.get("planner_methods") or []
+                if (token := str(raw or "").strip().upper()) in {"A", "B", "C"}
+            ][:3],
+        }
+        alternatives_per_method = _bounded_impact_count(search.get("alternatives_per_method"))
+        if alternatives_per_method is not None:
+            out["search"]["alternatives_per_method"] = alternatives_per_method
 
     # Timetable constraints cross the remote boundary by their public labels
     # only.  The model never needs (and must never receive) TermSection primary
@@ -2024,7 +2644,12 @@ def project_prior_presentation(presentation: Any) -> dict[str, Any]:
         "baseline_kind",
         "current_credit_hours",
         "expected_plan_credit_hours",
+        "target_credit_status",
+        "target_credits_satisfied",
     )
+    target_credits = _bounded_impact_count(presentation.get("target_credits"))
+    if target_credits is not None and target_credits > 0:
+        kept["target_credits"] = target_credits
     graph = presentation.get("graph")
     if isinstance(graph, dict):
         name_of = graph.get("nameOf")
@@ -2057,6 +2682,9 @@ PROJECTORS = {
     "recommend_courses": _project_recommend_courses,
     "course_choice_comparison": _project_course_choice_comparison,
     "feasible_course_replacements": _project_feasible_course_replacements,
+    "recommend_feasible_course_addition": _project_recommend_feasible_course_addition,
+    "rank_current_course_drop_impact": _project_rank_current_course_drop_impact,
+    "improve_current_timetable": _project_improve_current_timetable,
     "my_clash_free_sections": _project_my_clash_free_sections,
     "build_my_timetable": _project_build_my_timetable,
     "build_timetable_proposal": _project_build_timetable_proposal,

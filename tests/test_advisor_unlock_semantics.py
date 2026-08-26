@@ -117,12 +117,12 @@ def _why(code: str) -> dict:
     )
 
 
-def _progress() -> dict:
+def _progress(arguments: dict | None = None) -> dict:
     from core.services.virtual_advisor_capabilities import get_default_registry
 
     return get_default_registry().execute(
         "my_progress",
-        {"student_id": SID},
+        {"student_id": SID, **(arguments or {})},
         scope={"role": ROLE_SUPER_ADMIN},
         ctx={"academic_year": YEAR, "term": TERM},
     )
@@ -364,6 +364,30 @@ def test_my_progress_ranks_by_impact_and_names_which_number_is_which(plan):
         not r["code"].endswith(("1", "2", "3")) or r["code"] in dict((c, 1) for c, *_ in _PLAN)
         for r in ranking
     )
+
+
+def test_my_progress_keeps_the_full_ranking_and_projects_the_exact_requested_prefix(plan):
+    for code in ("GX101", "GX102", "GX103"):
+        _add(code, 7, 3, (), "Mandatory")
+    out = _progress({"priority_limit": 5})
+
+    full_codes = [row["code"] for row in out["unlock_impact_ranking"]]
+    requested_codes = [row["code"] for row in out["requested_unlock_impact_ranking"]]
+    assert len(full_codes) > 5
+    assert out["requested_priority_limit"] == 5
+    assert requested_codes == full_codes[:5]
+    assert out["requested_priority_limit_fulfilled"] is True
+
+
+@pytest.mark.parametrize("value", [True, 0, 21, 5.0, "5"])
+def test_my_progress_rejects_invalid_priority_limits_without_querying_a_different_slice(
+    plan,
+    value,
+):
+    out = _progress({"priority_limit": value})
+
+    assert out["ok"] is False
+    assert out["error"] == "priority_limit must be an integer from 1 through 20."
 
 
 def test_my_plan_by_term_carries_the_canonical_field_beside_the_legacy_one(plan):

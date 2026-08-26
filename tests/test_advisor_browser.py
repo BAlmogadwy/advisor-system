@@ -415,6 +415,7 @@ class AdvisorBrowserTests(StaticLiveServerTestCase):
             "kind": "timetable_proposals",
             "planning_term": "1448/1",
             "mode": "from_scratch",
+            "credit_ceiling": 18,
             "can_save": True,  # the server normaliser must force this off
             "must_take_courses": ["CS211"],
             "pinned_sections": [{"course_code": "CS211", "section_label": "M2"}],
@@ -487,10 +488,13 @@ class AdvisorBrowserTests(StaticLiveServerTestCase):
         assert card.get_attribute("aria-label") == "Timetable alternatives"
         assert page.locator(".sa-tt-option").count() == 2
         assert page.locator(".sa-tt-option").nth(0).get_attribute("open") is not None
-        assert page.locator(".sa-tt-constraint-chip").count() == 2
+        assert page.locator(".sa-tt-constraint-chip").count() == 3
         constraint_text = page.locator(".sa-tt-constraints").text_content()
         assert "Must take: CS211" in constraint_text
         assert "Pinned section: CS211" in constraint_text
+        cap = page.locator(".sa-tt-constraint-chip.is-credit-ceiling")
+        assert "Timetable credit ceiling: 18 credit hours" in " ".join(cap.inner_text().split())
+        assert "10:30" not in cap.inner_text()
         assert "A1 / B1 / C1" in page.locator(".sa-tt-option-name").nth(0).inner_text()
         assert "10:30–11:45" in page.locator(".sa-tt-option").nth(0).inner_text()
         assert page.locator(".sa-timetable button").count() == 0
@@ -647,6 +651,125 @@ class AdvisorBrowserTests(StaticLiveServerTestCase):
         assert page.locator(".sa-tt-time").inner_text() == "10:30–11:45"
         assert card.evaluate("node => node.scrollWidth - node.clientWidth") <= 1
 
+    def test_arabic_composite_timetable_card_shows_cap_pin_and_localized_day(self):
+        presentation = {
+            "kind": "timetable_proposals",
+            "planning_term": "1448/1",
+            "mode": "from_scratch",
+            "credit_ceiling": 18,
+            "must_take_courses": ["DS341"],
+            "pinned_sections": [{"course_code": "DS341", "section_label": "M2"}],
+            "constraints_satisfied": True,
+            "alternatives": [
+                {
+                    "planner_options": ["A1"],
+                    "scheduled_courses": 1,
+                    "target_courses": 1,
+                    "total_credit_hours": 3,
+                    "courses": [{"course_code": "DS341", "section": "M2", "credits": 3}],
+                    "meetings": [
+                        {
+                            "course_code": "DS341",
+                            "section": "M2",
+                            "day": "MON",
+                            "start": "10:30",
+                            "end": "11:45",
+                        }
+                    ],
+                    "unplaced_courses": [],
+                }
+            ],
+        }
+        conversation = AdvisorConversation.objects.create(student_id=MINE)
+        self._turn(
+            conversation,
+            answer="هذه خيارات الجدولة المقترحة.",
+            citations=[],
+            question=(
+                "ابنِ لي جدول جديد من الصفر بحد أقصى 18 ساعة، "
+                "ثبت فيه DS341-M2، وأعط الأولوية للمقررات المهمة."
+            ),
+            presentation=presentation,
+        )
+        page = self._page(
+            viewport={"width": 375, "height": 812},
+            locale="ar",
+            extra_http_headers={"Accept-Language": "ar"},
+        )
+        page.context.add_cookies(
+            [{"name": "django_language", "value": "ar", "url": self.live_server_url}]
+        )
+        self._open(page, f"?c={conversation.id}")
+        page.wait_for_selector(".sa-timetable")
+
+        constraints = " ".join(page.locator(".sa-tt-constraints").inner_text().split())
+        assert "الشعبة المحدّدة: DS341 · M2" in constraints
+        cap = page.locator(".sa-tt-constraint-chip.is-credit-ceiling")
+        assert "الحد الأعلى للساعات المعتمدة للجدول: 18 ساعة معتمدة" in " ".join(
+            cap.inner_text().split()
+        )
+        assert "10:30" not in cap.inner_text()
+        assert page.locator(".sa-tt-day").inner_text() == "الاثنين"
+        assert "MON" not in page.locator(".sa-tt-day").inner_text()
+        assert page.locator(".sa-tt-time").inner_text() == "10:30–11:45"
+        assert page.locator(".sa-tt-credit-ceiling-value").get_attribute("dir") == "ltr"
+
+    def test_exact_credit_bounded_failure_is_closed_and_bilingual(self):
+        presentation = {
+            "kind": "timetable_proposals",
+            "planning_term": "1448/1",
+            "mode": "from_scratch",
+            "credit_ceiling": 19,
+            "target_credits": 18,
+            "target_credits_satisfied": False,
+            "target_credit_status": "NO_EXACT_ALTERNATIVE",
+            "constraints_satisfied": False,
+            "constraint_failures": [
+                {
+                    "course_code": "",
+                    "section_label": "",
+                    "reason": "INTERNAL ENGLISH DIAGNOSTIC MUST NOT LEAK",
+                }
+            ],
+            "alternatives": [],
+        }
+        expectations = (
+            ("en", "The bounded A1–C3 search did not find a timetable"),
+            ("ar", "لم يجد البحث المحدود A1–C3 جدولًا"),
+        )
+        for locale, expected in expectations:
+            conversation = AdvisorConversation.objects.create(student_id=MINE)
+            self._turn(
+                conversation,
+                answer="Verified bounded timetable result.",
+                citations=[],
+                question="Build me an 18-credit timetable.",
+                presentation=presentation,
+            )
+            page = self._page(
+                viewport={"width": 375, "height": 812},
+                locale=locale,
+                extra_http_headers={"Accept-Language": locale},
+            )
+            page.context.add_cookies(
+                [
+                    {
+                        "name": "django_language",
+                        "value": locale,
+                        "url": self.live_server_url,
+                    }
+                ]
+            )
+            self._open(page, f"?c={conversation.id}")
+            page.wait_for_selector(".sa-tt-target-status")
+
+            status = " ".join(page.locator(".sa-tt-target-status").inner_text().split())
+            assert expected in status
+            assert "INTERNAL ENGLISH DIAGNOSTIC" not in page.locator(".sa-timetable").inner_text()
+            target = page.locator(".sa-tt-constraint-chip.is-credit-target")
+            assert "18" in target.inner_text()
+            assert page.locator(".sa-tt-option").count() == 0
+
     def test_graduation_scenario_renders_the_shared_tree_and_mobile_term_list(self):
         conversation = AdvisorConversation.objects.create(student_id=MINE)
         wide_history = [f"EL{index:02d}" for index in range(14)]
@@ -703,6 +826,7 @@ class AdvisorBrowserTests(StaticLiveServerTestCase):
                         "credit_hour_gate": {"required": 147, "remaining": 7},
                     }
                 ],
+                "noncompletion_current_courses": [{"code": "DS225"}],
                 "read_only": False,
             },
         )
@@ -723,6 +847,9 @@ class AdvisorBrowserTests(StaticLiveServerTestCase):
         assert messages.evaluate("node => node.scrollWidth - node.clientWidth") <= 1
         assert "DS492" in page.locator(".sa-grad-blockers").inner_text()
         assert "MATH204" in page.locator(".sa-grad-blockers").inner_text()
+        scenario_change = " ".join(page.locator(".sa-grad-change").inner_text().split())
+        assert "Assumed not completed after this term DS225" in scenario_change
+        assert "Removed DS225" not in scenario_change
         assert "register courses" in card.inner_text()
         assert page.locator(".sa-graduation-map button").count() == 3
 

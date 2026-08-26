@@ -1,0 +1,1399 @@
+meta:
+  name: saudi_registration_planning_prompt_corpus
+  schema_version: 1
+  corpus_version: "1.1.15"
+  built: "2026-08-24"
+  locale: ar-SA
+  source: "Owner-supplied Saudi-Arabic student prompts, 2026-08-23."
+  description: >-
+    Registration, course-choice, drop, timetable-construction, and graduation-impact
+    prompts preserved verbatim and paired with executable, locally grounded variants.
+  execution_field: grounded_utterance_ar
+  total_count: 108
+  counts_by_kind:
+    bullet: 104
+    composite: 4
+  counts_by_input_variant:
+    literal_canary: 67
+    placeholder_substituted: 30
+    fixture_literal_substituted: 11
+  invariants:
+    - utterance_ar is the exact owner-supplied text and must not be rewritten.
+    - grounded_utterance_ar contains no XXXX or YYYY placeholder.
+    - Live evaluation must send grounded_utterance_ar, never utterance_ar.
+    - All expected capabilities are read-only and cannot register, drop, reserve, or save.
+    - Every case declares a strict canonical typed plan expected from V2.1.
+    - Adjudicated acceptable_plans are explicit closed alternatives, never wildcard relaxations.
+    - Compound-tool critical controls are bounded semantic values, never student identity or raw evidence.
+  support_levels:
+    supported: "The read-only capability surface can answer the academic question from recorded evidence."
+    read_only_partial: "Recorded evidence can answer part of the question, but cannot prove live seats, portal permission, or perform a change."
+    capability_gap: "The requested optimization or fact is not represented by the current capability/data contract."
+
+grounding:
+  fixture_student_id: 7654321
+  pii_policy: "Only a synthetic fixture key and bounded academic facts are retained; name, nationality, adviser, and the source student ID are excluded."
+  inspected_read_only: "2026-08-24"
+  academic_year: 1448
+  term: 1
+  program: DS
+  cohort: M
+  observed_facts:
+    passed_plan_courses: 29
+    studying_plan_courses: 5
+    registered_credit_hours: 17
+    registered_courses:
+      - {course_code: DS321, section: M4, credits: 4}
+      - {course_code: DS332, section: M4, credits: 4}
+      - {course_code: DS341, section: M2, credits: 3}
+      - {course_code: MATH471, section: M3, credits: 3}
+      - {course_code: STAT301, section: M28, credits: 3}
+    expected_plan_only_courses: []
+    open_course_examples:
+      - {course_code: IS362, recorded_prerequisite: IS244, downstream_chain_count: 2}
+      - {course_code: AI201, recorded_prerequisite: CS103, downstream_chain_count: 1}
+    locked_course_examples:
+      - {course_code: DS491, reported_missing: IS362}
+      - {course_code: DS451, reported_missing: AI201}
+      - {course_code: DS492, reported_missing: DS491}
+    graduation_estimate:
+      planning_baseline_kind: recommended_current_term
+      estimated_additional_terms: 3
+      estimated_terms_including_planning_baseline: 4
+    new_system_recommendation_count: 0
+  grounding_profiles:
+    none: {}
+    eligible_open: {XXXX: IS362}
+    locked_project: {XXXX: DS491}
+    registered_current: {XXXX: DS321}
+    registered_critical: {XXXX: DS332}
+    registered_pair: {XXXX: DS341, YYYY: DS321}
+    open_choice_pair: {XXXX: IS362, YYYY: AI201}
+    drop_add_pair: {XXXX: DS341, YYYY: IS362}
+    pin_one: {"CS371-M1": "DS341-M2"}
+    pin_two: {"CS371-M1": "DS341-M2", "AI331-M2": "DS432-M3"}
+    current_triple: {CS371: DS332, AI331: DS341, DS341: DS321}
+
+categories:
+  - {id: eligibility, title_ar: "إضافة مقرر والتحقق من الأهلية", count: 10}
+  - {id: prerequisites, title_ar: "متطلبات المقرر", count: 9}
+  - {id: available, title_ar: "المقررات المتاحة للتسجيل", count: 10}
+  - {id: priority, title_ar: "الأولوية بين المقررات", count: 10}
+  - {id: add_one, title_ar: "إضافة مقرر واحد", count: 8}
+  - {id: drop, title_ar: "حذف مقرر", count: 10}
+  - {id: current_review, title_ar: "تقييم الجدول الحالي", count: 10}
+  - {id: build, title_ar: "بناء جدول جديد", count: 9}
+  - {id: pin, title_ar: "تثبيت مقرر أو شعبة", count: 8}
+  - {id: accelerate, title_ar: "تحسين فترة التخرج", count: 10}
+  - {id: what_if, title_ar: "أسئلة What-if مهمة جداً للاختبار", count: 10}
+  - {id: composite, title_ar: "أسئلة مركبة", count: 4}
+
+category_contracts:
+  eligibility:
+    primary_tools: [why_course_locked]
+    boundary: "Prerequisite state is not live registration permission; recorded sections do not prove seats."
+  prerequisites:
+    primary_tools: [course_prerequisites, why_course_locked]
+    boundary: "course_prerequisites is reverse lookup; why_course_locked owns personal and forward-unlock evidence."
+  available:
+    primary_tools: [my_progress, recommend_courses, my_timetable, recommend_feasible_course_addition]
+    boundary: "Prerequisite-satisfied means academically open in recorded data, not offered or seat-available."
+  priority:
+    primary_tools: [my_progress]
+    boundary: "Unlock-impact ranking is a planning heuristic, not university policy."
+  add_one:
+    primary_tools: [recommend_feasible_course_addition]
+    boundary: "A feasible addition uses recorded timetable evidence but cannot prove a live seat or register the course."
+  drop:
+    primary_tools: [rank_current_course_drop_impact]
+    boundary: "Scenarios are read-only and cannot withdraw from a course."
+  current_review:
+    primary_tools: [my_timetable, my_progress, policy_lookup, recommend_feasible_course_addition, rank_current_course_drop_impact, improve_current_timetable]
+    boundary: "REGISTERED and EXPECTED_PLAN evidence must remain distinct."
+  build:
+    primary_tools: [build_timetable_proposal]
+    boundary: "A proposal neither saves nor registers and ignores live seat capacity."
+  pin:
+    primary_tools: [build_timetable_proposal]
+    boundary: "Pinned section labels constrain a read-only proposal only."
+  accelerate:
+    primary_tools: [graduation_progress, feasible_course_replacements, recommend_feasible_course_addition, improve_current_timetable]
+    boundary: "Forecasts assume first-attempt passes and do not guarantee future offerings."
+  what_if:
+    primary_tools: [graduation_progress, course_choice_comparison, feasible_course_replacements, why_course_locked, recommend_feasible_course_addition]
+    boundary: "Counterfactuals do not alter the record."
+  composite:
+    primary_tools: [build_timetable_proposal, my_progress, recommend_feasible_course_addition, rank_current_course_drop_impact, improve_current_timetable]
+    boundary: "Decompose the request and preserve every read-only limitation."
+
+cases:
+  - id: SA-ELIG-001
+    source_ordinal: 1
+    category_id: eligibility
+    category_ar: "إضافة مقرر والتحقق من الأهلية"
+    kind: bullet
+    utterance_ar: "أقدر أضيف مقرر `XXXX`؟"
+    grounded_utterance_ar: "أقدر أضيف مقرر `IS362`؟"
+    grounding_profile: eligible_open
+    input_variant: placeholder_substituted
+    contract:
+      support: read_only_partial
+      mode: execute
+      requested_outcomes: [course_eligibility]
+      expected_tools: [why_course_locked]
+      acceptable_plans:
+        - requested_outcomes: [course_eligibility, timetable_feasibility]
+          expected_tools: [why_course_locked, my_clash_free_sections]
+  - id: SA-ELIG-002
+    source_ordinal: 2
+    category_id: eligibility
+    category_ar: "إضافة مقرر والتحقق من الأهلية"
+    kind: bullet
+    utterance_ar: "هل مسموح لي أسجل `XXXX` هذا الترم؟"
+    grounded_utterance_ar: "هل مسموح لي أسجل `IS362` هذا الترم؟"
+    grounding_profile: eligible_open
+    input_variant: placeholder_substituted
+    contract: {support: read_only_partial, mode: execute, requested_outcomes: [course_eligibility], expected_tools: [why_course_locked]}
+  - id: SA-ELIG-003
+    source_ordinal: 3
+    category_id: eligibility
+    category_ar: "إضافة مقرر والتحقق من الأهلية"
+    kind: bullet
+    utterance_ar: "أقدر أنزل `XXXX` ولا باقي لي متطلب؟"
+    grounded_utterance_ar: "أقدر أنزل `DS491` ولا باقي لي متطلب؟"
+    grounding_profile: locked_project
+    input_variant: placeholder_substituted
+    contract: {support: supported, mode: execute, requested_outcomes: [course_eligibility, prerequisite_information], expected_tools: [why_course_locked]}
+  - id: SA-ELIG-004
+    source_ordinal: 4
+    category_id: eligibility
+    category_ar: "إضافة مقرر والتحقق من الأهلية"
+    kind: bullet
+    utterance_ar: "هل أنا مستوفي شروط `XXXX`؟"
+    grounded_utterance_ar: "هل أنا مستوفي شروط `IS362`؟"
+    grounding_profile: eligible_open
+    input_variant: placeholder_substituted
+    contract: {support: supported, mode: execute, requested_outcomes: [course_eligibility], expected_tools: [why_course_locked]}
+  - id: SA-ELIG-005
+    source_ordinal: 5
+    category_id: eligibility
+    category_ar: "إضافة مقرر والتحقق من الأهلية"
+    kind: bullet
+    utterance_ar: "وش ناقصني عشان أقدر أسجل `XXXX`؟"
+    grounded_utterance_ar: "وش ناقصني عشان أقدر أسجل `DS491`؟"
+    grounding_profile: locked_project
+    input_variant: placeholder_substituted
+    contract: {support: read_only_partial, mode: execute, requested_outcomes: [prerequisite_information], expected_tools: [why_course_locked]}
+  - id: SA-ELIG-006
+    source_ordinal: 6
+    category_id: eligibility
+    category_ar: "إضافة مقرر والتحقق من الأهلية"
+    kind: bullet
+    utterance_ar: "ليه ما أقدر أنزل `XXXX`؟"
+    grounded_utterance_ar: "ليه ما أقدر أنزل `DS491`؟"
+    grounding_profile: locked_project
+    input_variant: placeholder_substituted
+    contract: {support: supported, mode: execute, requested_outcomes: [course_eligibility], expected_tools: [why_course_locked]}
+  - id: SA-ELIG-007
+    source_ordinal: 7
+    category_id: eligibility
+    category_ar: "إضافة مقرر والتحقق من الأهلية"
+    kind: bullet
+    utterance_ar: "إذا أبغى أسجل `XXXX` وش لازم أكون مخلص قبله؟"
+    grounded_utterance_ar: "إذا أبغى أسجل `DS491` وش لازم أكون مخلص قبله؟"
+    grounding_profile: locked_project
+    input_variant: placeholder_substituted
+    contract: {support: supported, mode: execute, requested_outcomes: [prerequisite_information], expected_tools: [why_course_locked]}
+  - id: SA-ELIG-008
+    source_ordinal: 8
+    category_id: eligibility
+    category_ar: "إضافة مقرر والتحقق من الأهلية"
+    kind: bullet
+    utterance_ar: "`XXXX` مفتوح لي من ناحية المتطلبات؟"
+    grounded_utterance_ar: "`IS362` مفتوح لي من ناحية المتطلبات؟"
+    grounding_profile: eligible_open
+    input_variant: placeholder_substituted
+    contract: {support: supported, mode: execute, requested_outcomes: [course_eligibility], expected_tools: [why_course_locked]}
+  - id: SA-ELIG-009
+    source_ordinal: 9
+    category_id: eligibility
+    category_ar: "إضافة مقرر والتحقق من الأهلية"
+    kind: bullet
+    utterance_ar: "هل فيه شيء يمنعني أكاديمياً من تسجيل `XXXX`؟"
+    grounded_utterance_ar: "هل فيه شيء يمنعني أكاديمياً من تسجيل `DS491`؟"
+    grounding_profile: locked_project
+    input_variant: placeholder_substituted
+    contract: {support: supported, mode: execute, requested_outcomes: [course_eligibility], expected_tools: [why_course_locked]}
+  - id: SA-ELIG-010
+    source_ordinal: 10
+    category_id: eligibility
+    category_ar: "إضافة مقرر والتحقق من الأهلية"
+    kind: bullet
+    utterance_ar: "أقدر أخذ `XXXX` مع المواد اللي عندي الحين؟"
+    grounded_utterance_ar: "أقدر أخذ `IS362` مع المواد اللي عندي الحين؟"
+    grounding_profile: eligible_open
+    input_variant: placeholder_substituted
+    contract: {support: read_only_partial, mode: execute, requested_outcomes: [course_eligibility, timetable_feasibility], expected_tools: [why_course_locked, my_clash_free_sections]}
+
+  - id: SA-PREREQ-001
+    source_ordinal: 11
+    category_id: prerequisites
+    category_ar: "متطلبات المقرر"
+    kind: bullet
+    utterance_ar: "إيش متطلبات مقرر `XXXX`؟"
+    grounded_utterance_ar: "إيش متطلبات مقرر `DS491`؟"
+    grounding_profile: locked_project
+    input_variant: placeholder_substituted
+    contract: {support: supported, mode: execute, requested_outcomes: [prerequisite_information], expected_tools: [course_prerequisites]}
+  - id: SA-PREREQ-002
+    source_ordinal: 12
+    category_id: prerequisites
+    category_ar: "متطلبات المقرر"
+    kind: bullet
+    utterance_ar: "وش المتطلب السابق لـ `XXXX`؟"
+    grounded_utterance_ar: "وش المتطلب السابق لـ `DS491`؟"
+    grounding_profile: locked_project
+    input_variant: placeholder_substituted
+    contract: {support: supported, mode: execute, requested_outcomes: [prerequisite_information], expected_tools: [course_prerequisites]}
+  - id: SA-PREREQ-003
+    source_ordinal: 13
+    category_id: prerequisites
+    category_ar: "متطلبات المقرر"
+    kind: bullet
+    utterance_ar: "`XXXX` يعتمد على أي مواد؟"
+    grounded_utterance_ar: "`DS491` يعتمد على أي مواد؟"
+    grounding_profile: locked_project
+    input_variant: placeholder_substituted
+    contract: {support: supported, mode: execute, requested_outcomes: [prerequisite_information], expected_tools: [course_prerequisites]}
+  - id: SA-PREREQ-004
+    source_ordinal: 14
+    category_id: prerequisites
+    category_ar: "متطلبات المقرر"
+    kind: bullet
+    utterance_ar: "وش لازم أنجح فيه قبل `XXXX`؟"
+    grounded_utterance_ar: "وش لازم أنجح فيه قبل `DS491`؟"
+    grounding_profile: locked_project
+    input_variant: placeholder_substituted
+    contract: {support: supported, mode: execute, requested_outcomes: [prerequisite_information], expected_tools: [why_course_locked]}
+  - id: SA-PREREQ-005
+    source_ordinal: 15
+    category_id: prerequisites
+    category_ar: "متطلبات المقرر"
+    kind: bullet
+    utterance_ar: "هل `XXXX` له أكثر من متطلب؟"
+    grounded_utterance_ar: "هل `DS491` له أكثر من متطلب؟"
+    grounding_profile: locked_project
+    input_variant: placeholder_substituted
+    contract: {support: supported, mode: execute, requested_outcomes: [prerequisite_information], expected_tools: [course_prerequisites]}
+  - id: SA-PREREQ-006
+    source_ordinal: 16
+    category_id: prerequisites
+    category_ar: "متطلبات المقرر"
+    kind: bullet
+    utterance_ar: "هل فيه متطلب متزامن مع `XXXX`؟"
+    grounded_utterance_ar: "هل فيه متطلب متزامن مع `DS491`؟"
+    grounding_profile: locked_project
+    input_variant: placeholder_substituted
+    contract: {support: capability_gap, mode: unsupported, requested_outcomes: [unsupported_request], expected_tools: []}
+  - id: SA-PREREQ-007
+    source_ordinal: 17
+    category_id: prerequisites
+    category_ar: "متطلبات المقرر"
+    kind: bullet
+    utterance_ar: "إذا نجحت في `XXXX` وش المواد اللي تنفتح لي؟"
+    grounded_utterance_ar: "إذا نجحت في `IS362` وش المواد اللي تنفتح لي؟"
+    grounding_profile: eligible_open
+    input_variant: placeholder_substituted
+    contract: {support: supported, mode: execute, requested_outcomes: [prerequisite_information], expected_tools: [why_course_locked]}
+  - id: SA-PREREQ-008
+    source_ordinal: 18
+    category_id: prerequisites
+    category_ar: "متطلبات المقرر"
+    kind: bullet
+    utterance_ar: "`XXXX` يفتح لي أي مقررات بعده؟"
+    grounded_utterance_ar: "`IS362` يفتح لي أي مقررات بعده؟"
+    grounding_profile: eligible_open
+    input_variant: placeholder_substituted
+    contract: {support: supported, mode: execute, requested_outcomes: [prerequisite_information], expected_tools: [why_course_locked]}
+  - id: SA-PREREQ-009
+    source_ordinal: 19
+    category_id: prerequisites
+    category_ar: "متطلبات المقرر"
+    kind: bullet
+    utterance_ar: "عطيني سلسلة المتطلبات المرتبطة بـ `XXXX`."
+    grounded_utterance_ar: "عطيني سلسلة المتطلبات المرتبطة بـ `DS491`."
+    grounding_profile: locked_project
+    input_variant: placeholder_substituted
+    contract: {support: supported, mode: execute, requested_outcomes: [prerequisite_information], expected_tools: [why_course_locked]}
+
+  - id: SA-AVAILABLE-001
+    source_ordinal: 20
+    category_id: available
+    category_ar: "المقررات المتاحة للتسجيل"
+    kind: bullet
+    utterance_ar: "إيش المقررات اللي أقدر أسجلها هذا الترم؟"
+    grounded_utterance_ar: "إيش المقررات اللي أقدر أسجلها هذا الترم؟"
+    grounding_profile: none
+    input_variant: literal_canary
+    contract: {support: read_only_partial, mode: execute, requested_outcomes: [available_courses], expected_tools: [my_progress]}
+  - id: SA-AVAILABLE-002
+    source_ordinal: 21
+    category_id: available
+    category_ar: "المقررات المتاحة للتسجيل"
+    kind: bullet
+    utterance_ar: "وش المواد المتاحة لي حالياً حسب خطتي؟"
+    grounded_utterance_ar: "وش المواد المتاحة لي حالياً حسب خطتي؟"
+    grounding_profile: none
+    input_variant: literal_canary
+    contract: {support: read_only_partial, mode: execute, requested_outcomes: [available_courses], expected_tools: [my_progress]}
+  - id: SA-AVAILABLE-003
+    source_ordinal: 22
+    category_id: available
+    category_ar: "المقررات المتاحة للتسجيل"
+    kind: bullet
+    utterance_ar: "عطيني كل المواد اللي مستوفي متطلباتها."
+    grounded_utterance_ar: "عطيني كل المواد اللي مستوفي متطلباتها."
+    grounding_profile: none
+    input_variant: literal_canary
+    contract: {support: supported, mode: execute, requested_outcomes: [available_courses], expected_tools: [my_progress]}
+  - id: SA-AVAILABLE-004
+    source_ordinal: 23
+    category_id: available
+    category_ar: "المقررات المتاحة للتسجيل"
+    kind: bullet
+    utterance_ar: "وش أقدر أنزل من المواد المتبقية لي؟"
+    grounded_utterance_ar: "وش أقدر أنزل من المواد المتبقية لي؟"
+    grounding_profile: none
+    input_variant: literal_canary
+    contract: {support: read_only_partial, mode: execute, requested_outcomes: [available_courses], expected_tools: [my_progress]}
+  - id: SA-AVAILABLE-005
+    source_ordinal: 24
+    category_id: available
+    category_ar: "المقررات المتاحة للتسجيل"
+    kind: bullet
+    utterance_ar: "عندي مكان في الجدول، وش المواد اللي أقدر أضيفها؟"
+    grounded_utterance_ar: "عندي مكان في الجدول، وش المواد اللي أقدر أضيفها؟"
+    grounding_profile: none
+    input_variant: literal_canary
+    contract:
+      support: read_only_partial
+      mode: execute
+      requested_outcomes: [course_addition]
+      expected_tools: [recommend_feasible_course_addition]
+      required_controls:
+        recommend_feasible_course_addition: {objective: timetable_fit}
+      acceptable_plans:
+        - required_controls:
+            recommend_feasible_course_addition: {objective: balanced}
+  - id: SA-AVAILABLE-006
+    source_ordinal: 25
+    category_id: available
+    category_ar: "المقررات المتاحة للتسجيل"
+    kind: bullet
+    utterance_ar: "إيش أفضل المواد المتاحة لي للتسجيل الحين؟"
+    grounded_utterance_ar: "إيش أفضل المواد المتاحة لي للتسجيل الحين؟"
+    grounding_profile: none
+    input_variant: literal_canary
+    contract: {support: read_only_partial, mode: execute, requested_outcomes: [course_priority, available_courses], expected_tools: [my_progress]}
+  - id: SA-AVAILABLE-007
+    source_ordinal: 26
+    category_id: available
+    category_ar: "المقررات المتاحة للتسجيل"
+    kind: bullet
+    utterance_ar: "فيه مقررات مهمة أقدر أسجلها وما نزلتها؟"
+    grounded_utterance_ar: "فيه مقررات مهمة أقدر أسجلها وما نزلتها؟"
+    grounding_profile: none
+    input_variant: literal_canary
+    contract: {support: read_only_partial, mode: execute, requested_outcomes: [course_priority, available_courses], expected_tools: [my_progress]}
+  - id: SA-AVAILABLE-008
+    source_ordinal: 27
+    category_id: available
+    category_ar: "المقررات المتاحة للتسجيل"
+    kind: bullet
+    utterance_ar: "وش المواد اللي أنا مؤهل لها بس مو موجودة في جدولي؟"
+    grounded_utterance_ar: "وش المواد اللي أنا مؤهل لها بس مو موجودة في جدولي؟"
+    grounding_profile: none
+    input_variant: literal_canary
+    contract: {support: supported, mode: execute, requested_outcomes: [available_courses], expected_tools: [my_progress]}
+  - id: SA-AVAILABLE-009
+    source_ordinal: 28
+    category_id: available
+    category_ar: "المقررات المتاحة للتسجيل"
+    kind: bullet
+    utterance_ar: "هل فيه مقرر متاح لي نسيت أسجله؟"
+    grounded_utterance_ar: "هل فيه مقرر متاح لي نسيت أسجله؟"
+    grounding_profile: none
+    input_variant: literal_canary
+    contract: {support: read_only_partial, mode: execute, requested_outcomes: [available_courses], expected_tools: [my_progress]}
+  - id: SA-AVAILABLE-010
+    source_ordinal: 29
+    category_id: available
+    category_ar: "المقررات المتاحة للتسجيل"
+    kind: bullet
+    utterance_ar: "من المواد الباقية، وش المفتوح لي حالياً؟"
+    grounded_utterance_ar: "من المواد الباقية، وش المفتوح لي حالياً؟"
+    grounding_profile: none
+    input_variant: literal_canary
+    contract: {support: supported, mode: execute, requested_outcomes: [available_courses], expected_tools: [my_progress]}
+
+  - id: SA-PRIORITY-001
+    source_ordinal: 30
+    category_id: priority
+    category_ar: "الأولوية بين المقررات"
+    kind: bullet
+    utterance_ar: "عطيني أهم المقررات المتبقية لي."
+    grounded_utterance_ar: "عطيني أهم المقررات المتبقية لي."
+    grounding_profile: none
+    input_variant: literal_canary
+    contract: {support: read_only_partial, mode: execute, requested_outcomes: [course_priority], expected_tools: [my_progress]}
+  - id: SA-PRIORITY-002
+    source_ordinal: 31
+    category_id: priority
+    category_ar: "الأولوية بين المقررات"
+    kind: bullet
+    utterance_ar: "وش أهم مادة لازم أخلصها أول؟"
+    grounded_utterance_ar: "وش أهم مادة لازم أخلصها أول؟"
+    grounding_profile: none
+    input_variant: literal_canary
+    contract: {support: read_only_partial, mode: execute, requested_outcomes: [course_priority], expected_tools: [my_progress]}
+  - id: SA-PRIORITY-003
+    source_ordinal: 32
+    category_id: priority
+    category_ar: "الأولوية بين المقررات"
+    kind: bullet
+    utterance_ar: "رتب لي المواد المتبقية حسب الأولوية."
+    grounded_utterance_ar: "رتب لي المواد المتبقية حسب الأولوية."
+    grounding_profile: none
+    input_variant: literal_canary
+    contract: {support: read_only_partial, mode: execute, requested_outcomes: [course_priority], expected_tools: [my_progress]}
+  - id: SA-PRIORITY-004
+    source_ordinal: 33
+    category_id: priority
+    category_ar: "الأولوية بين المقررات"
+    kind: bullet
+    utterance_ar: "أي مقرر لو خلصته بيفتح لي أكبر عدد من المواد؟"
+    grounded_utterance_ar: "أي مقرر لو خلصته بيفتح لي أكبر عدد من المواد؟"
+    grounding_profile: none
+    input_variant: literal_canary
+    contract: {support: supported, mode: execute, requested_outcomes: [course_priority], expected_tools: [my_progress]}
+  - id: SA-PRIORITY-005
+    source_ordinal: 34
+    category_id: priority
+    category_ar: "الأولوية بين المقررات"
+    kind: bullet
+    utterance_ar: "وش أكثر مقرر مأخرني في الخطة؟"
+    grounded_utterance_ar: "وش أكثر مقرر مأخرني في الخطة؟"
+    grounding_profile: none
+    input_variant: literal_canary
+    contract: {support: read_only_partial, mode: execute, requested_outcomes: [course_priority], expected_tools: [my_progress]}
+  - id: SA-PRIORITY-006
+    source_ordinal: 35
+    category_id: priority
+    category_ar: "الأولوية بين المقررات"
+    kind: bullet
+    utterance_ar: "وش المواد الحرجة بالنسبة لتخرجي؟"
+    grounded_utterance_ar: "وش المواد الحرجة بالنسبة لتخرجي؟"
+    grounding_profile: none
+    input_variant: literal_canary
+    contract: {support: read_only_partial, mode: execute, requested_outcomes: [course_priority], expected_tools: [my_progress]}
+  - id: SA-PRIORITY-007
+    source_ordinal: 36
+    category_id: priority
+    category_ar: "الأولوية بين المقررات"
+    kind: bullet
+    utterance_ar: "إذا ما قدرت آخذ كل المواد، وش أهم شيء أسجله؟"
+    grounded_utterance_ar: "إذا ما قدرت آخذ كل المواد، وش أهم شيء أسجله؟"
+    grounding_profile: none
+    input_variant: literal_canary
+    contract:
+      support: read_only_partial
+      mode: execute
+      requested_outcomes: [course_priority]
+      expected_tools: [my_progress]
+      acceptable_plans:
+        - requested_outcomes: [course_priority, course_recommendation]
+          expected_tools: [my_progress, recommend_courses]
+  - id: SA-PRIORITY-008
+    source_ordinal: 37
+    category_id: priority
+    category_ar: "الأولوية بين المقررات"
+    kind: bullet
+    utterance_ar: "وش المواد اللي الأفضل ما أأجلها؟"
+    grounded_utterance_ar: "وش المواد اللي الأفضل ما أأجلها؟"
+    grounding_profile: none
+    input_variant: literal_canary
+    contract: {support: read_only_partial, mode: execute, requested_outcomes: [course_priority], expected_tools: [my_progress]}
+  - id: SA-PRIORITY-009
+    source_ordinal: 38
+    category_id: priority
+    category_ar: "الأولوية بين المقررات"
+    kind: bullet
+    utterance_ar: "أي مقرر تنصحني أبدأ فيه من المواد المتبقية؟"
+    grounded_utterance_ar: "أي مقرر تنصحني أبدأ فيه من المواد المتبقية؟"
+    grounding_profile: none
+    input_variant: literal_canary
+    contract: {support: read_only_partial, mode: execute, requested_outcomes: [course_priority], expected_tools: [my_progress]}
+  - id: SA-PRIORITY-010
+    source_ordinal: 39
+    category_id: priority
+    category_ar: "الأولوية بين المقررات"
+    kind: bullet
+    utterance_ar: "عطيني أفضل 5 مقررات أسجلها حسب تأثيرها على التخرج."
+    grounded_utterance_ar: "عطيني أفضل 5 مقررات أسجلها حسب تأثيرها على التخرج."
+    grounding_profile: none
+    input_variant: literal_canary
+    contract:
+      support: read_only_partial
+      mode: execute
+      requested_outcomes: [course_priority]
+      expected_tools: [my_progress]
+      required_controls:
+        my_progress: {priority_limit: 5}
+
+  - id: SA-ADDONE-001
+    source_ordinal: 40
+    category_id: add_one
+    category_ar: "إضافة مقرر واحد"
+    kind: bullet
+    utterance_ar: "أبغى أنزل مقرر واحد زيادة، وش تنصحني؟"
+    grounded_utterance_ar: "أبغى أنزل مقرر واحد زيادة، وش تنصحني؟"
+    grounding_profile: none
+    input_variant: literal_canary
+    contract: {support: read_only_partial, mode: execute, requested_outcomes: [course_addition], expected_tools: [recommend_feasible_course_addition], required_controls: {recommend_feasible_course_addition: {objective: balanced}}}
+  - id: SA-ADDONE-002
+    source_ordinal: 41
+    category_id: add_one
+    category_ar: "إضافة مقرر واحد"
+    kind: bullet
+    utterance_ar: "عندي مجال لمادة وحدة بس، وش أختار؟"
+    grounded_utterance_ar: "عندي مجال لمادة وحدة بس، وش أختار؟"
+    grounding_profile: none
+    input_variant: literal_canary
+    contract: {support: read_only_partial, mode: execute, requested_outcomes: [course_addition], expected_tools: [recommend_feasible_course_addition], required_controls: {recommend_feasible_course_addition: {objective: balanced}}}
+  - id: SA-ADDONE-003
+    source_ordinal: 42
+    category_id: add_one
+    category_ar: "إضافة مقرر واحد"
+    kind: bullet
+    utterance_ar: "إذا بضيف 3 ساعات، وش أفضل مقرر؟"
+    grounded_utterance_ar: "إذا بضيف 3 ساعات، وش أفضل مقرر؟"
+    grounding_profile: none
+    input_variant: literal_canary
+    contract: {support: read_only_partial, mode: execute, requested_outcomes: [course_addition], expected_tools: [recommend_feasible_course_addition], required_controls: {recommend_feasible_course_addition: {objective: balanced, additional_credit_hours: 3}}}
+  - id: SA-ADDONE-004
+    source_ordinal: 43
+    category_id: add_one
+    category_ar: "إضافة مقرر واحد"
+    kind: bullet
+    utterance_ar: "من المواد المتاحة لي، أي وحدة أهم أضيفها؟"
+    grounded_utterance_ar: "من المواد المتاحة لي، أي وحدة أهم أضيفها؟"
+    grounding_profile: none
+    input_variant: literal_canary
+    contract:
+      support: read_only_partial
+      mode: execute
+      requested_outcomes: [course_addition]
+      expected_tools: [recommend_feasible_course_addition]
+      required_controls: {recommend_feasible_course_addition: {objective: unlock_impact}}
+      acceptable_plans:
+        - requested_outcomes: [available_courses, course_priority, course_addition]
+          expected_tools: [my_progress, recommend_feasible_course_addition]
+  - id: SA-ADDONE-005
+    source_ordinal: 44
+    category_id: add_one
+    category_ar: "إضافة مقرر واحد"
+    kind: bullet
+    utterance_ar: "اختار لي مقرر إضافي يساعدني أتخرج أسرع."
+    grounded_utterance_ar: "اختار لي مقرر إضافي يساعدني أتخرج أسرع."
+    grounding_profile: none
+    input_variant: literal_canary
+    contract: {support: read_only_partial, mode: execute, requested_outcomes: [course_addition], expected_tools: [recommend_feasible_course_addition], required_controls: {recommend_feasible_course_addition: {objective: faster_graduation}}}
+  - id: SA-ADDONE-006
+    source_ordinal: 45
+    category_id: add_one
+    category_ar: "إضافة مقرر واحد"
+    kind: bullet
+    utterance_ar: "إذا بأزيد حملي بمقرر واحد، وش أفضل خيار؟"
+    grounded_utterance_ar: "إذا بأزيد حملي بمقرر واحد، وش أفضل خيار؟"
+    grounding_profile: none
+    input_variant: literal_canary
+    contract: {support: read_only_partial, mode: execute, requested_outcomes: [course_addition], expected_tools: [recommend_feasible_course_addition], required_controls: {recommend_feasible_course_addition: {objective: balanced}}}
+  - id: SA-ADDONE-007
+    source_ordinal: 46
+    category_id: add_one
+    category_ar: "إضافة مقرر واحد"
+    kind: bullet
+    utterance_ar: "أبي مادة إضافية بس ما أبي شيء ما له أولوية."
+    grounded_utterance_ar: "أبي مادة إضافية بس ما أبي شيء ما له أولوية."
+    grounding_profile: none
+    input_variant: literal_canary
+    contract: {support: read_only_partial, mode: execute, requested_outcomes: [course_addition], expected_tools: [recommend_feasible_course_addition], required_controls: {recommend_feasible_course_addition: {objective: unlock_impact}}}
+  - id: SA-ADDONE-008
+    source_ordinal: 47
+    category_id: add_one
+    category_ar: "إضافة مقرر واحد"
+    kind: bullet
+    utterance_ar: "وش المادة اللي تستاهل أضيفها لجدولي الحالي أكثر؟"
+    grounded_utterance_ar: "وش المادة اللي تستاهل أضيفها لجدولي الحالي أكثر؟"
+    grounding_profile: none
+    input_variant: literal_canary
+    contract: {support: read_only_partial, mode: execute, requested_outcomes: [course_addition], expected_tools: [recommend_feasible_course_addition], required_controls: {recommend_feasible_course_addition: {objective: balanced}}}
+
+  - id: SA-DROP-001
+    source_ordinal: 48
+    category_id: drop
+    category_ar: "حذف مقرر"
+    kind: bullet
+    utterance_ar: "لو أبغى أحذف مقرر بدون ما يأثر على تخرجي، وش أختار؟"
+    grounded_utterance_ar: "لو أبغى أحذف مقرر بدون ما يأثر على تخرجي، وش أختار؟"
+    grounding_profile: none
+    input_variant: literal_canary
+    contract: {support: read_only_partial, mode: execute, requested_outcomes: [course_drop_impact], expected_tools: [rank_current_course_drop_impact], required_controls: {rank_current_course_drop_impact: {objective: least_graduation_delay}}}
+  - id: SA-DROP-002
+    source_ordinal: 49
+    category_id: drop
+    category_ar: "حذف مقرر"
+    kind: bullet
+    utterance_ar: "أي مادة في جدولي الحالي أقل أهمية؟"
+    grounded_utterance_ar: "أي مادة في جدولي الحالي أقل أهمية؟"
+    grounding_profile: none
+    input_variant: literal_canary
+    contract: {support: read_only_partial, mode: execute, requested_outcomes: [course_drop_impact], expected_tools: [rank_current_course_drop_impact], required_controls: {rank_current_course_drop_impact: {objective: lowest_academic_priority}}}
+  - id: SA-DROP-003
+    source_ordinal: 50
+    category_id: drop
+    category_ar: "حذف مقرر"
+    kind: bullet
+    utterance_ar: "إذا لازم أحذف مادة، وش أقل مادة تسبب لي تأخير؟"
+    grounded_utterance_ar: "إذا لازم أحذف مادة، وش أقل مادة تسبب لي تأخير؟"
+    grounding_profile: none
+    input_variant: literal_canary
+    contract: {support: read_only_partial, mode: execute, requested_outcomes: [course_drop_impact], expected_tools: [rank_current_course_drop_impact], required_controls: {rank_current_course_drop_impact: {objective: least_graduation_delay}}}
+  - id: SA-DROP-004
+    source_ordinal: 51
+    category_id: drop
+    category_ar: "حذف مقرر"
+    kind: bullet
+    utterance_ar: "عندي حمل ثقيل وأبي أخفف، أي مقرر أحذفه؟"
+    grounded_utterance_ar: "عندي حمل ثقيل وأبي أخفف، أي مقرر أحذفه؟"
+    grounding_profile: none
+    input_variant: literal_canary
+    contract:
+      support: read_only_partial
+      mode: execute
+      requested_outcomes: [course_drop_impact]
+      expected_tools: [rank_current_course_drop_impact]
+      required_controls: {rank_current_course_drop_impact: {objective: balanced}}
+      acceptable_plans:
+        - required_controls: {rank_current_course_drop_impact: {objective: least_graduation_delay}}
+  - id: SA-DROP-005
+    source_ordinal: 52
+    category_id: drop
+    category_ar: "حذف مقرر"
+    kind: bullet
+    utterance_ar: "وش المادة اللي ممكن أأجلها للترم الجاي بأقل ضرر؟"
+    grounded_utterance_ar: "وش المادة اللي ممكن أأجلها للترم الجاي بأقل ضرر؟"
+    grounding_profile: none
+    input_variant: literal_canary
+    contract:
+      support: read_only_partial
+      mode: execute
+      requested_outcomes: [course_drop_impact]
+      expected_tools: [rank_current_course_drop_impact]
+      required_controls: {rank_current_course_drop_impact: {objective: balanced}}
+      acceptable_plans:
+        - required_controls: {rank_current_course_drop_impact: {objective: least_graduation_delay}}
+  - id: SA-DROP-006
+    source_ordinal: 53
+    category_id: drop
+    category_ar: "حذف مقرر"
+    kind: bullet
+    utterance_ar: "لو حذفت `XXXX` هل يتأخر تخرجي؟"
+    grounded_utterance_ar: "لو حذفت `DS332` هل يتأخر تخرجي؟"
+    grounding_profile: registered_critical
+    input_variant: placeholder_substituted
+    contract: {support: supported, mode: execute, requested_outcomes: [graduation_impact], expected_tools: [rank_current_course_drop_impact], required_controls: {rank_current_course_drop_impact: {objective: least_graduation_delay, course_codes: [DS332]}}}
+  - id: SA-DROP-007
+    source_ordinal: 54
+    category_id: drop
+    category_ar: "حذف مقرر"
+    kind: bullet
+    utterance_ar: "أيهم أفضل أحذف: `XXXX` أو `YYYY`؟"
+    grounded_utterance_ar: "أيهم أفضل أحذف: `DS341` أو `DS321`؟"
+    grounding_profile: registered_pair
+    input_variant: placeholder_substituted
+    contract:
+      support: read_only_partial
+      mode: execute
+      requested_outcomes: [course_drop_impact]
+      expected_tools: [rank_current_course_drop_impact]
+      required_controls: {rank_current_course_drop_impact: {objective: balanced, course_codes: [DS341, DS321]}}
+      acceptable_plans:
+        - required_controls: {rank_current_course_drop_impact: {objective: least_graduation_delay, course_codes: [DS341, DS321]}}
+  - id: SA-DROP-008
+    source_ordinal: 55
+    category_id: drop
+    category_ar: "حذف مقرر"
+    kind: bullet
+    utterance_ar: "وش بيصير لو انسحبت من `XXXX`؟"
+    grounded_utterance_ar: "وش بيصير لو انسحبت من `DS332`؟"
+    grounding_profile: registered_critical
+    input_variant: placeholder_substituted
+    contract:
+      support: read_only_partial
+      mode: execute
+      requested_outcomes: [course_drop_impact]
+      expected_tools: [rank_current_course_drop_impact]
+      required_controls: {rank_current_course_drop_impact: {objective: balanced, course_codes: [DS332]}}
+      acceptable_plans:
+        - required_controls: {rank_current_course_drop_impact: {objective: least_graduation_delay, course_codes: [DS332]}}
+  - id: SA-DROP-009
+    source_ordinal: 56
+    category_id: drop
+    category_ar: "حذف مقرر"
+    kind: bullet
+    utterance_ar: "هل حذف `XXXX` يقفل علي مواد في الترم الجاي؟"
+    grounded_utterance_ar: "هل حذف `DS332` يقفل علي مواد في الترم الجاي؟"
+    grounding_profile: registered_critical
+    input_variant: placeholder_substituted
+    contract: {support: supported, mode: execute, requested_outcomes: [course_drop_impact], expected_tools: [rank_current_course_drop_impact], required_controls: {rank_current_course_drop_impact: {objective: prerequisite_continuity, course_codes: [DS332]}}}
+  - id: SA-DROP-010
+    source_ordinal: 57
+    category_id: drop
+    category_ar: "حذف مقرر"
+    kind: bullet
+    utterance_ar: "فيه مادة في جدولي الحالي أقدر أشيلها بدون ما تكسر سلسلة المتطلبات؟"
+    grounded_utterance_ar: "فيه مادة في جدولي الحالي أقدر أشيلها بدون ما تكسر سلسلة المتطلبات؟"
+    grounding_profile: none
+    input_variant: literal_canary
+    contract: {support: read_only_partial, mode: execute, requested_outcomes: [course_drop_impact], expected_tools: [rank_current_course_drop_impact], required_controls: {rank_current_course_drop_impact: {objective: prerequisite_continuity}}}
+
+  - id: SA-REVIEW-001
+    source_ordinal: 58
+    category_id: current_review
+    category_ar: "تقييم الجدول الحالي"
+    kind: bullet
+    utterance_ar: "هل جدولي الحالي جيد بالنسبة لخطة تخرجي؟"
+    grounded_utterance_ar: "هل جدولي الحالي جيد بالنسبة لخطة تخرجي؟"
+    grounding_profile: none
+    input_variant: literal_canary
+    contract: {support: read_only_partial, mode: execute, requested_outcomes: [timetable_review], expected_tools: [improve_current_timetable], required_controls: {improve_current_timetable: {objective: faster_graduation, allow_course_replacements: true}}}
+  - id: SA-REVIEW-002
+    source_ordinal: 59
+    category_id: current_review
+    category_ar: "تقييم الجدول الحالي"
+    kind: bullet
+    utterance_ar: "هل جدولي الحالي ناقصه مقررات مهمة؟"
+    grounded_utterance_ar: "هل جدولي الحالي ناقصه مقررات مهمة؟"
+    grounding_profile: none
+    input_variant: literal_canary
+    contract: {support: supported, mode: execute, requested_outcomes: [current_timetable, course_priority], expected_tools: [my_timetable, my_progress]}
+  - id: SA-REVIEW-003
+    source_ordinal: 60
+    category_id: current_review
+    category_ar: "تقييم الجدول الحالي"
+    kind: bullet
+    utterance_ar: "فيه مادة مهمة أقدر أنزلها وما هي موجودة بجدولي؟"
+    grounded_utterance_ar: "فيه مادة مهمة أقدر أنزلها وما هي موجودة بجدولي؟"
+    grounding_profile: none
+    input_variant: literal_canary
+    contract: {support: read_only_partial, mode: execute, requested_outcomes: [course_addition], expected_tools: [recommend_feasible_course_addition], required_controls: {recommend_feasible_course_addition: {objective: unlock_impact}}}
+  - id: SA-REVIEW-004
+    source_ordinal: 61
+    category_id: current_review
+    category_ar: "تقييم الجدول الحالي"
+    kind: bullet
+    utterance_ar: "هل اختياراتي الحالية مناسبة ولا فيه مواد أولى منها؟"
+    grounded_utterance_ar: "هل اختياراتي الحالية مناسبة ولا فيه مواد أولى منها؟"
+    grounding_profile: none
+    input_variant: literal_canary
+    contract: {support: read_only_partial, mode: execute, requested_outcomes: [current_timetable, course_priority], expected_tools: [my_timetable, my_progress]}
+  - id: SA-REVIEW-005
+    source_ordinal: 62
+    category_id: current_review
+    category_ar: "تقييم الجدول الحالي"
+    kind: bullet
+    utterance_ar: "راجع جدولي وقل لي إذا فيه شيء المفروض أغيره."
+    grounded_utterance_ar: "راجع جدولي وقل لي إذا فيه شيء المفروض أغيره."
+    grounding_profile: none
+    input_variant: literal_canary
+    contract: {support: read_only_partial, mode: execute, requested_outcomes: [timetable_review], expected_tools: [improve_current_timetable], required_controls: {improve_current_timetable: {objective: balanced, allow_course_replacements: true}}}
+  - id: SA-REVIEW-006
+    source_ordinal: 63
+    category_id: current_review
+    category_ar: "تقييم الجدول الحالي"
+    kind: bullet
+    utterance_ar: "هل سجلت المواد الصح لهذا الترم؟"
+    grounded_utterance_ar: "هل سجلت المواد الصح لهذا الترم؟"
+    grounding_profile: none
+    input_variant: literal_canary
+    contract: {support: read_only_partial, mode: execute, requested_outcomes: [current_timetable, course_priority], expected_tools: [my_timetable, my_progress]}
+  - id: SA-REVIEW-007
+    source_ordinal: 64
+    category_id: current_review
+    category_ar: "تقييم الجدول الحالي"
+    kind: bullet
+    utterance_ar: "فيه مقرر في جدولي ما له أولوية حالياً؟"
+    grounded_utterance_ar: "فيه مقرر في جدولي ما له أولوية حالياً؟"
+    grounding_profile: none
+    input_variant: literal_canary
+    contract: {support: read_only_partial, mode: execute, requested_outcomes: [course_drop_impact], expected_tools: [rank_current_course_drop_impact], required_controls: {rank_current_course_drop_impact: {objective: lowest_academic_priority}}}
+  - id: SA-REVIEW-008
+    source_ordinal: 65
+    category_id: current_review
+    category_ar: "تقييم الجدول الحالي"
+    kind: bullet
+    utterance_ar: "هل أقدر أحسن جدولي بدون ما أزيد عدد الساعات؟"
+    grounded_utterance_ar: "هل أقدر أحسن جدولي بدون ما أزيد عدد الساعات؟"
+    grounding_profile: none
+    input_variant: literal_canary
+    contract: {support: supported, mode: execute, requested_outcomes: [timetable_review], expected_tools: [improve_current_timetable], required_controls: {improve_current_timetable: {objective: balanced, credit_load_policy: not_increase, allow_course_replacements: true}}}
+  - id: SA-REVIEW-009
+    source_ordinal: 66
+    category_id: current_review
+    category_ar: "تقييم الجدول الحالي"
+    kind: bullet
+    utterance_ar: "هل جدولي الحالي يستفيد من الحد الأعلى للساعات بشكل جيد؟"
+    grounded_utterance_ar: "هل جدولي الحالي يستفيد من الحد الأعلى للساعات بشكل جيد؟"
+    grounding_profile: none
+    input_variant: literal_canary
+    contract: {support: read_only_partial, mode: execute, requested_outcomes: [current_timetable, policy_rule], expected_tools: [my_timetable, policy_lookup]}
+  - id: SA-REVIEW-010
+    source_ordinal: 67
+    category_id: current_review
+    category_ar: "تقييم الجدول الحالي"
+    kind: bullet
+    utterance_ar: "قيّم جدولي من ناحية سرعة التخرج."
+    grounded_utterance_ar: "قيّم جدولي من ناحية سرعة التخرج."
+    grounding_profile: none
+    input_variant: literal_canary
+    contract: {support: supported, mode: execute, requested_outcomes: [timetable_review], expected_tools: [improve_current_timetable], required_controls: {improve_current_timetable: {objective: faster_graduation, allow_course_replacements: true}}}
+
+  - id: SA-BUILD-001
+    source_ordinal: 68
+    category_id: build
+    category_ar: "بناء جدول جديد"
+    kind: bullet
+    utterance_ar: "أنشئ لي جدول جديد من الصفر."
+    grounded_utterance_ar: "أنشئ لي جدول جديد من الصفر."
+    grounding_profile: none
+    input_variant: literal_canary
+    contract: {support: supported, mode: execute, requested_outcomes: [timetable_build], expected_tools: [build_timetable_proposal], required_controls: {build_timetable_proposal: {mode: from_scratch}}}
+  - id: SA-BUILD-002
+    source_ordinal: 69
+    category_id: build
+    category_ar: "بناء جدول جديد"
+    kind: bullet
+    utterance_ar: "ابنِ لي أفضل جدول ممكن لهذا الترم."
+    grounded_utterance_ar: "ابنِ لي أفضل جدول ممكن لهذا الترم."
+    grounding_profile: none
+    input_variant: literal_canary
+    contract: {support: read_only_partial, mode: clarify, clarification_kind: timetable_preference, requested_outcomes: [timetable_build], expected_tools: []}
+  - id: SA-BUILD-003
+    source_ordinal: 70
+    category_id: build
+    category_ar: "بناء جدول جديد"
+    kind: bullet
+    utterance_ar: "سو لي جدول من المواد اللي أقدر أسجلها."
+    grounded_utterance_ar: "سو لي جدول من المواد اللي أقدر أسجلها."
+    grounding_profile: none
+    input_variant: literal_canary
+    contract:
+      support: read_only_partial
+      mode: execute
+      requested_outcomes: [timetable_build]
+      expected_tools: [build_timetable_proposal]
+      required_controls: {build_timetable_proposal: {mode: from_scratch}}
+      acceptable_plans:
+        - requested_outcomes: [timetable_build, available_courses]
+          expected_tools: [my_progress, build_timetable_proposal]
+          required_controls: {build_timetable_proposal: {mode: from_scratch}}
+  - id: SA-BUILD-004
+    source_ordinal: 71
+    category_id: build
+    category_ar: "بناء جدول جديد"
+    kind: bullet
+    utterance_ar: "أبغى جدول جديد يركز على أهم المواد للتخرج."
+    grounded_utterance_ar: "أبغى جدول جديد يركز على أهم المواد للتخرج."
+    grounding_profile: none
+    input_variant: literal_canary
+    contract: {support: read_only_partial, mode: execute, requested_outcomes: [timetable_build, course_priority], expected_tools: [build_timetable_proposal, my_progress], required_controls: {build_timetable_proposal: {mode: from_scratch}}}
+  - id: SA-BUILD-005
+    source_ordinal: 72
+    category_id: build
+    category_ar: "بناء جدول جديد"
+    kind: bullet
+    utterance_ar: "ابنِ لي جدول بحد أقصى 15 ساعة."
+    grounded_utterance_ar: "ابنِ لي جدول بحد أقصى 15 ساعة."
+    grounding_profile: none
+    input_variant: literal_canary
+    contract: {support: supported, mode: execute, requested_outcomes: [timetable_build], expected_tools: [build_timetable_proposal], required_controls: {build_timetable_proposal: {mode: from_scratch, max_credits: 15}}}
+  - id: SA-BUILD-006
+    source_ordinal: 73
+    category_id: build
+    category_ar: "بناء جدول جديد"
+    kind: bullet
+    utterance_ar: "سو لي جدول 18 ساعة بدون تعارضات."
+    grounded_utterance_ar: "سو لي جدول 18 ساعة بدون تعارضات."
+    grounding_profile: none
+    input_variant: literal_canary
+    contract: {support: read_only_partial, mode: execute, requested_outcomes: [timetable_build], expected_tools: [build_timetable_proposal], required_controls: {build_timetable_proposal: {mode: from_scratch, target_credits: 18}}}
+  - id: SA-BUILD-007
+    source_ordinal: 74
+    category_id: build
+    category_ar: "بناء جدول جديد"
+    kind: bullet
+    utterance_ar: "أبغى جدول خفيف لكن ما يأخرني."
+    grounded_utterance_ar: "أبغى جدول خفيف لكن ما يأخرني."
+    grounding_profile: none
+    input_variant: literal_canary
+    contract: {support: read_only_partial, mode: clarify, clarification_kind: timetable_load, requested_outcomes: [timetable_build], expected_tools: []}
+  - id: SA-BUILD-008
+    source_ordinal: 75
+    category_id: build
+    category_ar: "بناء جدول جديد"
+    kind: bullet
+    utterance_ar: "سو لي أكثر من خيار جدول وأعطني الأفضل."
+    grounded_utterance_ar: "سو لي أكثر من خيار جدول وأعطني الأفضل."
+    grounding_profile: none
+    input_variant: literal_canary
+    contract: {support: read_only_partial, mode: clarify, clarification_kind: timetable_preference, requested_outcomes: [timetable_build], expected_tools: []}
+  - id: SA-BUILD-009
+    source_ordinal: 76
+    category_id: build
+    category_ar: "بناء جدول جديد"
+    kind: bullet
+    utterance_ar: "ابنِ لي جدول يعتمد على أولويات الخطة مو بس المواد المتاحة."
+    grounded_utterance_ar: "ابنِ لي جدول يعتمد على أولويات الخطة مو بس المواد المتاحة."
+    grounding_profile: none
+    input_variant: literal_canary
+    contract: {support: read_only_partial, mode: execute, requested_outcomes: [timetable_build, course_priority], expected_tools: [build_timetable_proposal, my_progress], required_controls: {build_timetable_proposal: {mode: from_scratch}}}
+
+  - id: SA-PIN-001
+    source_ordinal: 77
+    category_id: pin
+    category_ar: "تثبيت مقرر أو شعبة"
+    kind: bullet
+    utterance_ar: "أنشئ لي جدول جديد فيه `CS371` شعبة `M1`."
+    grounded_utterance_ar: "أنشئ لي جدول جديد فيه `DS341` شعبة `M2`."
+    grounding_profile: pin_one
+    input_variant: fixture_literal_substituted
+    contract:
+      support: supported
+      mode: execute
+      requested_outcomes: [timetable_build]
+      expected_tools: [build_timetable_proposal]
+      required_controls:
+        build_timetable_proposal:
+          mode: from_scratch
+          must_take_courses: [DS341]
+          pinned_sections: [{course_code: DS341, section_label: M2}]
+  - id: SA-PIN-002
+    source_ordinal: 78
+    category_id: pin
+    category_ar: "تثبيت مقرر أو شعبة"
+    kind: bullet
+    utterance_ar: "ثبت `CS371-M1` وابنِ باقي الجدول حوله."
+    grounded_utterance_ar: "ثبت `DS341-M2` وابنِ باقي الجدول حوله."
+    grounding_profile: pin_one
+    input_variant: fixture_literal_substituted
+    contract:
+      support: supported
+      mode: execute
+      requested_outcomes: [timetable_build]
+      expected_tools: [build_timetable_proposal]
+      required_controls:
+        build_timetable_proposal:
+          mode: from_scratch
+          must_take_courses: [DS341]
+          pinned_sections: [{course_code: DS341, section_label: M2}]
+  - id: SA-PIN-003
+    source_ordinal: 79
+    category_id: pin
+    category_ar: "تثبيت مقرر أو شعبة"
+    kind: bullet
+    utterance_ar: "أبي `CS371` شعبة `M1` تكون موجودة في كل الخيارات."
+    grounded_utterance_ar: "أبي `DS341` شعبة `M2` تكون موجودة في كل الخيارات."
+    grounding_profile: pin_one
+    input_variant: fixture_literal_substituted
+    contract:
+      support: supported
+      mode: execute
+      requested_outcomes: [timetable_build]
+      expected_tools: [build_timetable_proposal]
+      required_controls:
+        build_timetable_proposal:
+          mode: from_scratch
+          must_take_courses: [DS341]
+          pinned_sections: [{course_code: DS341, section_label: M2}]
+  - id: SA-PIN-004
+    source_ordinal: 80
+    category_id: pin
+    category_ar: "تثبيت مقرر أو شعبة"
+    kind: bullet
+    utterance_ar: "لا تغير شعبة `CS371-M1`، بس عدل باقي الجدول."
+    grounded_utterance_ar: "لا تغير شعبة `DS341-M2`، بس عدل باقي الجدول."
+    grounding_profile: pin_one
+    input_variant: fixture_literal_substituted
+    contract:
+      support: supported
+      mode: execute
+      requested_outcomes: [timetable_build]
+      expected_tools: [build_timetable_proposal]
+      required_controls:
+        build_timetable_proposal:
+          mode: from_scratch
+          must_take_courses: [DS341]
+          pinned_sections: [{course_code: DS341, section_label: M2}]
+  - id: SA-PIN-005
+    source_ordinal: 81
+    category_id: pin
+    category_ar: "تثبيت مقرر أو شعبة"
+    kind: bullet
+    utterance_ar: "سو لي جدول جديد بشرط يكون فيه `CS371-M1`."
+    grounded_utterance_ar: "سو لي جدول جديد بشرط يكون فيه `DS341-M2`."
+    grounding_profile: pin_one
+    input_variant: fixture_literal_substituted
+    contract:
+      support: supported
+      mode: execute
+      requested_outcomes: [timetable_build]
+      expected_tools: [build_timetable_proposal]
+      required_controls:
+        build_timetable_proposal:
+          mode: from_scratch
+          must_take_courses: [DS341]
+          pinned_sections: [{course_code: DS341, section_label: M2}]
+  - id: SA-PIN-006
+    source_ordinal: 82
+    category_id: pin
+    category_ar: "تثبيت مقرر أو شعبة"
+    kind: bullet
+    utterance_ar: "هل أقدر أبني جدول كامل حول `CS371-M1` بدون تعارض؟"
+    grounded_utterance_ar: "هل أقدر أبني جدول كامل حول `DS341-M2` بدون تعارض؟"
+    grounding_profile: pin_one
+    input_variant: fixture_literal_substituted
+    contract:
+      support: supported
+      mode: execute
+      requested_outcomes: [timetable_build]
+      expected_tools: [build_timetable_proposal]
+      required_controls:
+        build_timetable_proposal:
+          mode: from_scratch
+          must_take_courses: [DS341]
+          pinned_sections: [{course_code: DS341, section_label: M2}]
+  - id: SA-PIN-007
+    source_ordinal: 83
+    category_id: pin
+    category_ar: "تثبيت مقرر أو شعبة"
+    kind: bullet
+    utterance_ar: "إذا ثبتنا `CS371-M1`، وش أفضل المواد اللي نضيفها معه؟"
+    grounded_utterance_ar: "إذا ثبتنا `DS341-M2`، وش أفضل المواد اللي نضيفها معه؟"
+    grounding_profile: pin_one
+    input_variant: fixture_literal_substituted
+    contract: {support: read_only_partial, mode: execute, requested_outcomes: [course_addition], expected_tools: [recommend_feasible_course_addition], required_controls: {recommend_feasible_course_addition: {objective: balanced, pinned_sections: [{course_code: DS341, section_label: M2}]}}}
+  - id: SA-PIN-008
+    source_ordinal: 84
+    category_id: pin
+    category_ar: "تثبيت مقرر أو شعبة"
+    kind: bullet
+    utterance_ar: "ثبت مقررين `CS371-M1` و`AI331-M2` وابنِ الباقي."
+    grounded_utterance_ar: "ثبت مقررين `DS341-M2` و`DS432-M3` وابنِ الباقي."
+    grounding_profile: pin_two
+    input_variant: fixture_literal_substituted
+    contract:
+      support: supported
+      mode: execute
+      requested_outcomes: [timetable_build]
+      expected_tools: [build_timetable_proposal]
+      required_controls:
+        build_timetable_proposal:
+          mode: from_scratch
+          must_take_courses: [DS341, DS432]
+          pinned_sections:
+            - {course_code: DS341, section_label: M2}
+            - {course_code: DS432, section_label: M3}
+
+  - id: SA-ACCEL-001
+    source_ordinal: 85
+    category_id: accelerate
+    category_ar: "تحسين فترة التخرج"
+    kind: bullet
+    utterance_ar: "هل يوجد جدول أفضل من جدولي الحالي يقلل فترة تخرجي؟"
+    grounded_utterance_ar: "هل يوجد جدول أفضل من جدولي الحالي يقلل فترة تخرجي؟"
+    grounding_profile: none
+    input_variant: literal_canary
+    contract: {support: supported, mode: execute, requested_outcomes: [timetable_review], expected_tools: [improve_current_timetable], required_controls: {improve_current_timetable: {objective: faster_graduation, allow_course_replacements: true}}}
+  - id: SA-ACCEL-002
+    source_ordinal: 86
+    category_id: accelerate
+    category_ar: "تحسين فترة التخرج"
+    kind: bullet
+    utterance_ar: "أقدر أغير جدولي عشان أتخرج أسرع؟"
+    grounded_utterance_ar: "أقدر أغير جدولي عشان أتخرج أسرع؟"
+    grounding_profile: none
+    input_variant: literal_canary
+    contract: {support: supported, mode: execute, requested_outcomes: [timetable_review], expected_tools: [improve_current_timetable], required_controls: {improve_current_timetable: {objective: faster_graduation, allow_course_replacements: true}}}
+  - id: SA-ACCEL-003
+    source_ordinal: 87
+    category_id: accelerate
+    category_ar: "تحسين فترة التخرج"
+    kind: bullet
+    utterance_ar: "قارن جدولي الحالي بأفضل جدول ممكن للتخرج."
+    grounded_utterance_ar: "قارن جدولي الحالي بأفضل جدول ممكن للتخرج."
+    grounding_profile: none
+    input_variant: literal_canary
+    contract: {support: read_only_partial, mode: execute, requested_outcomes: [timetable_review], expected_tools: [improve_current_timetable], required_controls: {improve_current_timetable: {objective: faster_graduation, allow_course_replacements: true}}}
+  - id: SA-ACCEL-004
+    source_ordinal: 88
+    category_id: accelerate
+    category_ar: "تحسين فترة التخرج"
+    kind: bullet
+    utterance_ar: "هل فيه تبديل بين مقررين يخلي تخرجي أسرع؟"
+    grounded_utterance_ar: "هل فيه تبديل بين مقررين يخلي تخرجي أسرع؟"
+    grounding_profile: none
+    input_variant: literal_canary
+    contract: {support: supported, mode: execute, requested_outcomes: [course_replacement], expected_tools: [graduation_progress], required_controls: {graduation_progress: {planning_baseline_kind: recommended_current_term, search_better_replacements: true}}}
+  - id: SA-ACCEL-005
+    source_ordinal: 89
+    category_id: accelerate
+    category_ar: "تحسين فترة التخرج"
+    kind: bullet
+    utterance_ar: "وش أغير في جدولي عشان أقلل عدد الترمات المتبقية؟"
+    grounded_utterance_ar: "وش أغير في جدولي عشان أقلل عدد الترمات المتبقية؟"
+    grounding_profile: none
+    input_variant: literal_canary
+    contract: {support: supported, mode: execute, requested_outcomes: [timetable_review], expected_tools: [improve_current_timetable], required_controls: {improve_current_timetable: {objective: faster_graduation, allow_course_replacements: true}}}
+  - id: SA-ACCEL-006
+    source_ordinal: 90
+    category_id: accelerate
+    category_ar: "تحسين فترة التخرج"
+    kind: bullet
+    utterance_ar: "هل جدولي الحالي يسبب لي تأخير بدون ما أدري؟"
+    grounded_utterance_ar: "هل جدولي الحالي يسبب لي تأخير بدون ما أدري؟"
+    grounding_profile: none
+    input_variant: literal_canary
+    contract: {support: supported, mode: execute, requested_outcomes: [timetable_review], expected_tools: [improve_current_timetable], required_controls: {improve_current_timetable: {objective: faster_graduation, allow_course_replacements: true}}}
+  - id: SA-ACCEL-007
+    source_ordinal: 91
+    category_id: accelerate
+    category_ar: "تحسين فترة التخرج"
+    kind: bullet
+    utterance_ar: "لو هدفنا أسرع تخرج ممكن، وش الجدول الأفضل لي؟"
+    grounded_utterance_ar: "لو هدفنا أسرع تخرج ممكن، وش الجدول الأفضل لي؟"
+    grounding_profile: none
+    input_variant: literal_canary
+    contract: {support: read_only_partial, mode: execute, requested_outcomes: [timetable_review], expected_tools: [improve_current_timetable], required_controls: {improve_current_timetable: {objective: faster_graduation, allow_course_replacements: true}}}
+  - id: SA-ACCEL-008
+    source_ordinal: 92
+    category_id: accelerate
+    category_ar: "تحسين فترة التخرج"
+    kind: bullet
+    utterance_ar: "هل فيه مادة لازم أضيفها الآن عشان ما أتأخر مستقبلاً؟"
+    grounded_utterance_ar: "هل فيه مادة لازم أضيفها الآن عشان ما أتأخر مستقبلاً؟"
+    grounding_profile: none
+    input_variant: literal_canary
+    contract: {support: read_only_partial, mode: execute, requested_outcomes: [course_addition], expected_tools: [recommend_feasible_course_addition], required_controls: {recommend_feasible_course_addition: {objective: faster_graduation}}}
+  - id: SA-ACCEL-009
+    source_ordinal: 93
+    category_id: accelerate
+    category_ar: "تحسين فترة التخرج"
+    kind: bullet
+    utterance_ar: "وش أكثر تعديل في جدولي الحالي ممكن يفيد تاريخ تخرجي؟"
+    grounded_utterance_ar: "وش أكثر تعديل في جدولي الحالي ممكن يفيد تاريخ تخرجي؟"
+    grounding_profile: none
+    input_variant: literal_canary
+    contract: {support: supported, mode: execute, requested_outcomes: [timetable_review], expected_tools: [improve_current_timetable], required_controls: {improve_current_timetable: {objective: faster_graduation, allow_course_replacements: true}}}
+  - id: SA-ACCEL-010
+    source_ordinal: 94
+    category_id: accelerate
+    category_ar: "تحسين فترة التخرج"
+    kind: bullet
+    utterance_ar: "هل أقدر أوفر ترم كامل إذا غيرت بعض المقررات؟"
+    grounded_utterance_ar: "هل أقدر أوفر ترم كامل إذا غيرت بعض المقررات؟"
+    grounding_profile: none
+    input_variant: literal_canary
+    contract: {support: read_only_partial, mode: execute, requested_outcomes: [graduation_impact], expected_tools: [improve_current_timetable], required_controls: {improve_current_timetable: {objective: faster_graduation, allow_course_replacements: true}}}
+
+  - id: SA-WHATIF-001
+    source_ordinal: 95
+    category_id: what_if
+    category_ar: "أسئلة What-if مهمة جداً للاختبار"
+    kind: bullet
+    utterance_ar: "لو أخذت `XXXX` بدل `YYYY` وش الأفضل لتخرجي؟"
+    grounded_utterance_ar: "لو أخذت `IS362` بدل `AI201` وش الأفضل لتخرجي؟"
+    grounding_profile: open_choice_pair
+    input_variant: placeholder_substituted
+    contract: {support: read_only_partial, mode: execute, requested_outcomes: [course_comparison, graduation_impact], expected_tools: [course_choice_comparison], required_controls: {course_choice_comparison: {objective: graduation}}}
+  - id: SA-WHATIF-002
+    source_ordinal: 96
+    category_id: what_if
+    category_ar: "أسئلة What-if مهمة جداً للاختبار"
+    kind: bullet
+    utterance_ar: "إذا ما نزلت `XXXX` هذا الترم وش يصير؟"
+    grounded_utterance_ar: "إذا ما نزلت `DS321` هذا الترم وش يصير؟"
+    grounding_profile: registered_current
+    input_variant: placeholder_substituted
+    contract:
+      support: supported
+      mode: execute
+      requested_outcomes: [graduation_impact]
+      expected_tools: [graduation_progress]
+      required_controls:
+        graduation_progress:
+          planning_baseline_kind: registered_timetable
+          remove_current_courses: [DS321]
+  - id: SA-WHATIF-003
+    source_ordinal: 97
+    category_id: what_if
+    category_ar: "أسئلة What-if مهمة جداً للاختبار"
+    kind: bullet
+    utterance_ar: "لو أجلت `XXXX` للترم الجاي، كم ممكن أتأخر؟"
+    grounded_utterance_ar: "لو أجلت `DS321` للترم الجاي، كم ممكن أتأخر؟"
+    grounding_profile: registered_current
+    input_variant: placeholder_substituted
+    contract:
+      support: read_only_partial
+      mode: execute
+      requested_outcomes: [graduation_impact]
+      expected_tools: [graduation_progress]
+      required_controls:
+        graduation_progress:
+          planning_baseline_kind: registered_timetable
+          remove_current_courses: [DS321]
+  - id: SA-WHATIF-004
+    source_ordinal: 98
+    category_id: what_if
+    category_ar: "أسئلة What-if مهمة جداً للاختبار"
+    kind: bullet
+    utterance_ar: "إذا رسبت في `XXXX` وش المواد اللي بتتأثر؟"
+    grounded_utterance_ar: "إذا رسبت في `DS332` وش المواد اللي بتتأثر؟"
+    grounding_profile: registered_critical
+    input_variant: placeholder_substituted
+    contract:
+      support: read_only_partial
+      mode: execute
+      requested_outcomes: [prerequisite_information, graduation_impact]
+      expected_tools: [why_course_locked, graduation_progress]
+      required_controls:
+        graduation_progress:
+          planning_baseline_kind: registered_timetable
+          noncompletion_current_courses: [DS332]
+  - id: SA-WHATIF-005
+    source_ordinal: 99
+    category_id: what_if
+    category_ar: "أسئلة What-if مهمة جداً للاختبار"
+    kind: bullet
+    utterance_ar: "إذا نجحت في `XXXX` هذا الترم وش بينفتح لي الترم الجاي؟"
+    grounded_utterance_ar: "إذا نجحت في `DS332` هذا الترم وش بينفتح لي الترم الجاي؟"
+    grounding_profile: registered_critical
+    input_variant: placeholder_substituted
+    contract: {support: supported, mode: execute, requested_outcomes: [prerequisite_information], expected_tools: [why_course_locked]}
+  - id: SA-WHATIF-006
+    source_ordinal: 100
+    category_id: what_if
+    category_ar: "أسئلة What-if مهمة جداً للاختبار"
+    kind: bullet
+    utterance_ar: "لو حذفت `XXXX` وأضفت `YYYY` هل وضعي يصير أفضل؟"
+    grounded_utterance_ar: "لو حذفت `DS341` وأضفت `IS362` هل وضعي يصير أفضل؟"
+    grounding_profile: drop_add_pair
+    input_variant: placeholder_substituted
+    contract:
+      support: supported
+      mode: execute
+      requested_outcomes: [course_replacement]
+      expected_tools: [feasible_course_replacements]
+      acceptable_plans:
+        - requested_outcomes: [course_replacement, graduation_impact]
+  - id: SA-WHATIF-007
+    source_ordinal: 101
+    category_id: what_if
+    category_ar: "أسئلة What-if مهمة جداً للاختبار"
+    kind: bullet
+    utterance_ar: "أي سيناريو أفضل: آخذ `XXXX` الآن أو `YYYY`؟"
+    grounded_utterance_ar: "أي سيناريو أفضل: آخذ `IS362` الآن أو `AI201`؟"
+    grounding_profile: open_choice_pair
+    input_variant: placeholder_substituted
+    contract: {support: read_only_partial, mode: execute, requested_outcomes: [course_comparison], expected_tools: [course_choice_comparison]}
+  - id: SA-WHATIF-008
+    source_ordinal: 102
+    category_id: what_if
+    category_ar: "أسئلة What-if مهمة جداً للاختبار"
+    kind: bullet
+    utterance_ar: "لو أخذت 12 ساعة بدل 18، هل يتغير الترم المتوقع للتخرج؟"
+    grounded_utterance_ar: "لو أخذت 12 ساعة بدل 18، هل يتغير الترم المتوقع للتخرج؟"
+    grounding_profile: none
+    input_variant: literal_canary
+    contract: {support: capability_gap, mode: unsupported, requested_outcomes: [credit_load_comparison], expected_tools: []}
+  - id: SA-WHATIF-009
+    source_ordinal: 103
+    category_id: what_if
+    category_ar: "أسئلة What-if مهمة جداً للاختبار"
+    kind: bullet
+    utterance_ar: "وش أقل عدد مواد أقدر آخذه بدون ما يزيد وقت التخرج؟"
+    grounded_utterance_ar: "وش أقل عدد مواد أقدر آخذه بدون ما يزيد وقت التخرج؟"
+    grounding_profile: none
+    input_variant: literal_canary
+    contract: {support: capability_gap, mode: unsupported, requested_outcomes: [credit_load_comparison], expected_tools: []}
+  - id: SA-WHATIF-010
+    source_ordinal: 104
+    category_id: what_if
+    category_ar: "أسئلة What-if مهمة جداً للاختبار"
+    kind: bullet
+    utterance_ar: "هل زيادة مقرر واحد هذا الترم فعلاً تفرق في موعد تخرجي؟"
+    grounded_utterance_ar: "هل زيادة مقرر واحد هذا الترم فعلاً تفرق في موعد تخرجي؟"
+    grounding_profile: none
+    input_variant: literal_canary
+    contract: {support: read_only_partial, mode: execute, requested_outcomes: [graduation_impact], expected_tools: [recommend_feasible_course_addition], required_controls: {recommend_feasible_course_addition: {objective: faster_graduation}}}
+
+  - id: SA-COMPOSITE-001
+    source_ordinal: 105
+    category_id: composite
+    category_ar: "أسئلة مركبة"
+    kind: composite
+    utterance_ar: "عندي 15 ساعة حالياً، أبغى أضيف مادة وحدة بس. شوف المواد المتاحة لي واختار المادة اللي تفتح لي أكبر عدد من مقررات الترمات الجاية وما تسبب تعارض."
+    grounded_utterance_ar: "عندي 17 ساعة حالياً، أبغى أضيف مادة وحدة بس. شوف المواد المتاحة لي واختار المادة اللي تفتح لي أكبر عدد من مقررات الترمات الجاية وما تسبب تعارض."
+    grounding_profile: none
+    input_variant: fixture_literal_substituted
+    contract: {support: read_only_partial, mode: execute, requested_outcomes: [course_addition], expected_tools: [recommend_feasible_course_addition], required_controls: {recommend_feasible_course_addition: {objective: unlock_impact}}}
+  - id: SA-COMPOSITE-002
+    source_ordinal: 106
+    category_id: composite
+    category_ar: "أسئلة مركبة"
+    kind: composite
+    utterance_ar: "جدولي الحالي فيه `CS371` و`AI331` و`DS341`. إذا اضطررت أحذف مقرر واحد، اختر المقرر الأقل تأثيراً على موعد تخرجي ووضح لي ليه."
+    grounded_utterance_ar: "جدولي الحالي فيه `DS332` و`DS341` و`DS321`. إذا اضطررت أحذف مقرر واحد، اختر المقرر الأقل تأثيراً على موعد تخرجي ووضح لي ليه."
+    grounding_profile: current_triple
+    input_variant: fixture_literal_substituted
+    contract: {support: read_only_partial, mode: execute, requested_outcomes: [course_drop_impact], expected_tools: [rank_current_course_drop_impact], required_controls: {rank_current_course_drop_impact: {objective: least_graduation_delay, course_codes: [DS332, DS341, DS321]}}}
+  - id: SA-COMPOSITE-003
+    source_ordinal: 107
+    category_id: composite
+    category_ar: "أسئلة مركبة"
+    kind: composite
+    utterance_ar: "ابنِ لي جدول جديد من الصفر بحد أقصى 18 ساعة، ثبت فيه `CS371-M1`، وأعط الأولوية للمقررات اللي تمنع تأخر التخرج."
+    grounded_utterance_ar: "ابنِ لي جدول جديد من الصفر بحد أقصى 18 ساعة، ثبت فيه `DS341-M2`، وأعط الأولوية للمقررات اللي تمنع تأخر التخرج."
+    grounding_profile: pin_one
+    input_variant: fixture_literal_substituted
+    contract:
+      support: read_only_partial
+      mode: execute
+      requested_outcomes: [timetable_build, course_priority]
+      expected_tools: [build_timetable_proposal, my_progress]
+      required_controls:
+        build_timetable_proposal:
+          mode: from_scratch
+          max_credits: 18
+          must_take_courses: [DS341]
+          pinned_sections: [{course_code: DS341, section_label: M2}]
+  - id: SA-COMPOSITE-004
+    source_ordinal: 108
+    category_id: composite
+    category_ar: "أسئلة مركبة"
+    kind: composite
+    utterance_ar: "قارن جدولي الحالي بأفضل جدول ممكن حسب خطتي، وإذا فيه جدول يخليني أتخرج أبكر عطيني التغييرات المطلوبة فقط."
+    grounded_utterance_ar: "قارن جدولي الحالي بأفضل جدول ممكن حسب خطتي، وإذا فيه جدول يخليني أتخرج أبكر عطيني التغييرات المطلوبة فقط."
+    grounding_profile: none
+    input_variant: literal_canary
+    contract: {support: read_only_partial, mode: execute, requested_outcomes: [timetable_review], expected_tools: [improve_current_timetable], required_controls: {improve_current_timetable: {objective: faster_graduation, allow_course_replacements: true}}}

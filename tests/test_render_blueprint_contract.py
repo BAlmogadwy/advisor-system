@@ -326,6 +326,29 @@ def test_contract_requires_reviewed_live_rollout_and_both_image_exports(
     assert any("STUDENT_ADVISOR_V2_ENABLED" in error for error in errors)
 
 
+@pytest.mark.parametrize(
+    ("key", "invalid_value"),
+    [
+        ("STUDENT_ADVISOR_V21_ENABLED", "true"),
+        ("STUDENT_ADVISOR_V21_PLAN_MAX_TOKENS", "901"),
+        ("STUDENT_ADVISOR_V21_PLAN_TIMEOUT_SECONDS", "46"),
+    ],
+)
+def test_contract_pins_student_advisor_v21_rollout_and_plan_budget(
+    blueprint: Blueprint,
+    key: str,
+    invalid_value: str,
+) -> None:
+    changed = deepcopy(blueprint)
+    web = _service(changed, "advisor-system")
+    env = {entry["key"]: entry for entry in web["envVars"]}
+    env[key]["value"] = invalid_value
+
+    errors = validate_blueprint(changed, project_root=PROJECT_ROOT)
+
+    assert any(key in error for error in errors)
+
+
 def test_contract_keeps_playwright_browser_inside_the_deployed_worker(
     blueprint: Blueprint, tmp_path: Path
 ) -> None:

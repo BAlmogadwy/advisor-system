@@ -67,6 +67,11 @@ def test_students_get_only_self_scoped_tools():
         # read-only and resolve the chatting student from the principal.
         "course_choice_comparison",
         "feasible_course_replacements",
+        # V2.1 server-owned compound decisions. These join academic and timetable
+        # evidence without exposing another student's identity or any write path.
+        "recommend_feasible_course_addition",
+        "rank_current_course_drop_impact",
+        "improve_current_timetable",
         # The written regulations. Carries no student data at all — the rules are the
         # same for everyone — so it widens what a student can READ, not what they can
         # reach ABOUT THEMSELVES or anyone else. Added deliberately when the policy

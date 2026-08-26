@@ -152,6 +152,12 @@ services:
         value: "90"
       - key: STUDENT_ADVISOR_V2_ENABLED
         value: "true"
+      - key: STUDENT_ADVISOR_V21_ENABLED
+        value: "false"
+      - key: STUDENT_ADVISOR_V21_PLAN_MAX_TOKENS
+        value: "900"
+      - key: STUDENT_ADVISOR_V21_PLAN_TIMEOUT_SECONDS
+        value: "45"
       - key: STUDENT_ADVISOR_V2_MAX_TOOL_ITERATIONS
         value: "4"
       - key: STUDENT_ADVISOR_V2_MAX_TOOL_CALLS
@@ -336,6 +342,21 @@ services:
           name: advisor-system
           type: web
           envVarKey: STUDENT_ADVISOR_V2_ENABLED
+      - key: STUDENT_ADVISOR_V21_ENABLED
+        fromService:
+          name: advisor-system
+          type: web
+          envVarKey: STUDENT_ADVISOR_V21_ENABLED
+      - key: STUDENT_ADVISOR_V21_PLAN_MAX_TOKENS
+        fromService:
+          name: advisor-system
+          type: web
+          envVarKey: STUDENT_ADVISOR_V21_PLAN_MAX_TOKENS
+      - key: STUDENT_ADVISOR_V21_PLAN_TIMEOUT_SECONDS
+        fromService:
+          name: advisor-system
+          type: web
+          envVarKey: STUDENT_ADVISOR_V21_PLAN_TIMEOUT_SECONDS
       - key: STUDENT_ADVISOR_V2_TURN_BUDGET_SECONDS
         fromService:
           name: advisor-system

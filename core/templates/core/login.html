@@ -22,6 +22,7 @@
 
       <form method="post" aria-label="{% if LANGUAGE_CODE == 'ar' %}نموذج تسجيل الدخول{% else %}Login form{% endif %}" novalidate>
         {% csrf_token %}
+        {% if next %}<input type="hidden" name="next" value="{{ next }}">{% endif %}
         <!-- Username -->
         <div class="neu-input-group">
           <svg class="neu-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>

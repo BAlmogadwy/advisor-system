@@ -1328,6 +1328,55 @@ def test_chat_timetable_tool_distinguishes_no_target_from_failed_coverage(world,
     assert result["alternatives_generated"] == 0
 
 
+@pytest.mark.parametrize(
+    ("maximum", "satisfied"),
+    ((12, False), (16, True), (18, True)),
+)
+def test_around_current_proposal_never_calls_an_over_cap_baseline_valid(
+    world, monkeypatch, maximum, satisfied
+):
+    from core.services.rbac import ROLE_STUDENT
+    from core.services.virtual_advisor_capabilities import _exec_build_timetable_proposal
+
+    # One deliberately high-credit synthetic course makes the boundary exact and
+    # avoids coupling this contract test to a large catalogue fixture.
+    ProgrammeRequirement.objects.filter(program="AI", course_code="CS113").update(credit_hours=16)
+    StudentTermSection.objects.create(
+        student_id=OWNER,
+        academic_year="1448",
+        term="1",
+        term_section=world[("CS113", "M1")],
+        source="scraper_timetable",
+    )
+    monkeypatch.setattr(
+        "core.services.recommender.recommend_next_courses", lambda *_args, **_kwargs: []
+    )
+    monkeypatch.setattr(
+        "core.services.student_planner.build_student_options",
+        lambda _request: {"generated": 0, "alternatives": [], "unplaced": []},
+    )
+
+    result = _exec_build_timetable_proposal(
+        {"mode": "around_current", "max_credits": maximum},
+        {"role": ROLE_STUDENT, "student_id": OWNER},
+        {"academic_year": 1448, "term": 1},
+    )
+
+    assert result["ok"] is True
+    assert result["baseline_credit_hours"] == 16
+    assert result["credit_ceiling"] == maximum
+    assert result["constraints_satisfied"] is satisfied
+    assert result["no_additional_courses"] is satisfied
+    assert result["alternatives"] == []
+    if satisfied:
+        assert result["constraint_failures"] == []
+    else:
+        assert len(result["constraint_failures"]) == 1
+        assert result["constraint_failures"][0]["course_code"] == ""
+        assert "16" in result["constraint_failures"][0]["reason"]
+        assert "12" in result["constraint_failures"][0]["reason"]
+
+
 def test_student_adapter_keeps_exact_planner_names_and_option_specific_coverage(world, monkeypatch):
     """A/B/C provenance and partial coverage must survive the chat adapter."""
     from core.services.student_planner import PlannerRequest, build_student_options

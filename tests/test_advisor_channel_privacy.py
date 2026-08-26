@@ -424,7 +424,10 @@ def test_a_prefetch_failure_leaves_the_turn_standing(monkeypatch):
     assert result["agent"]["graduation_what_if_prefetched"] is False
 
 
-@override_settings(STUDENT_ADVISOR_V2_ENABLED=False)
+@override_settings(
+    STUDENT_ADVISOR_V2_ENABLED=False,
+    STUDENT_ADVISOR_V21_ENABLED=False,
+)
 def test_telegram_profile_never_downgrades_to_the_legacy_runtime(monkeypatch):
     expected = {"ok": True, "answer": "v2"}
     called: dict[str, Any] = {}

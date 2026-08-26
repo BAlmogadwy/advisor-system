@@ -1,0 +1,40 @@
+{% extends "core/base.html" %}
+
+{% block title %}Student Advisor V2.1 Lab{% endblock %}
+{% block page_heading %}Student Advisor V2.1 Lab{% endblock %}
+
+{% block page_chips %}
+  <span class="ph-chip ph-chip-page">Local development only</span>
+  <span class="ph-chip {% if v21_enabled %}ph-chip-status{% else %}ph-chip-warn{% endif %}">V2.1 {% if v21_enabled %}enabled{% else %}disabled{% endif %}</span>
+  <span class="ph-chip ph-chip-context">{{ llm_backend }}</span>
+{% endblock %}
+
+{% block page_intro %}
+  <p class="mb-0">Choose an existing local student record. This browser will become that student and open the real student adviser, including its normal ownership, persistence, and rate limits.</p>
+{% endblock %}
+
+{% block content %}
+<section class="advisor-block" aria-labelledby="v21LabLauncherTitle">
+  <h2 id="v21LabLauncherTitle">Open the real student test page</h2>
+
+  {% if not v2_enabled or not v21_enabled %}
+    <div class="alert alert-warning" role="status">
+      V2 is {% if v2_enabled %}enabled{% else %}disabled{% endif %}; V2.1 is {% if v21_enabled %}enabled{% else %}disabled{% endif %}.
+      Restart the server with both <code>STUDENT_ADVISOR_V2_ENABLED=true</code> and <code>STUDENT_ADVISOR_V21_ENABLED=true</code> before judging V2.1 responses.
+    </div>
+  {% endif %}
+
+  {% if error %}<div class="alert alert-danger" role="alert">{{ error }}</div>{% endif %}
+
+  <form method="post" class="mt-3" autocomplete="off">
+    {% csrf_token %}
+    <label class="form-label" for="v21LabStudentId">University ID from the local database</label>
+    <input class="form-control" id="v21LabStudentId" name="student_id" type="text"
+           inputmode="numeric" maxlength="20" value="{{ student_id|default:'' }}" required autofocus>
+    <p class="form-text">No student ID is sent to the adviser API. It is bound to the authenticated session before the chat opens.</p>
+    <button class="btn btn-primary" type="submit">Enter V2.1 test page</button>
+  </form>
+
+  <p class="text-secondary mt-3 mb-0">This replaces the current superuser session with the selected student session. Log out and sign in as the superuser again to choose another student.</p>
+</section>
+{% endblock %}

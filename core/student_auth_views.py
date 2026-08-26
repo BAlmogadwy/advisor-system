@@ -689,6 +689,9 @@ def student_advisor_view(request: HttpRequest) -> HttpResponse:
             {**get_sidebar_context(request), "unlinked": True},
             status=409,
         )
+    from core.dev_student_advisor_lab_views import student_advisor_lab_request_allowed
+
+    lab_mode = request.GET.get("lab") == "1" and student_advisor_lab_request_allowed(request)
     return render(
         request,
         "core/student_advisor.html",
@@ -696,6 +699,15 @@ def student_advisor_view(request: HttpRequest) -> HttpResponse:
             **get_sidebar_context(request),
             "student": Student.objects.filter(student_id=student_id).first(),
             "student_id": student_id,
+            "advisor_lab": (
+                {
+                    "v2_enabled": bool(getattr(settings, "STUDENT_ADVISOR_V2_ENABLED", False)),
+                    "v21_enabled": bool(getattr(settings, "STUDENT_ADVISOR_V21_ENABLED", False)),
+                    "llm_backend": str(getattr(settings, "LLM_BACKEND", "")),
+                }
+                if lab_mode
+                else None
+            ),
         },
     )
 

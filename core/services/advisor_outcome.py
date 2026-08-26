@@ -32,7 +32,7 @@ from typing import Any
 
 #: Bumped when the meaning of a stored outcome changes, so a reader can tell a row
 #: written under different rules from one it can interpret.
-OUTCOME_SCHEMA_VERSION = "1.0"
+OUTCOME_SCHEMA_VERSION = "1.1"
 
 
 class ReasonCode:
@@ -52,6 +52,12 @@ class ReasonCode:
     #: reported for the same reason: a turn that ends in a refusal has not
     #: answered the student, whatever the prose looks like.
     OUTPUT_NOT_GROUNDED = "OUTPUT_NOT_GROUNDED"
+    #: The typed semantic planner correctly identified a deliverable that the
+    #: read-only adviser cannot provide (including a requested portal mutation).
+    CAPABILITY_UNSUPPORTED = "CAPABILITY_UNSUPPORTED"
+    #: A schema-valid plan omitted a requested deliverable or selected unrelated
+    #: evidence. No capability was executed under that incomplete contract.
+    SEMANTIC_PLAN_INCOMPLETE = "SEMANTIC_PLAN_INCOMPLETE"
 
     ALL = frozenset(
         {
@@ -65,6 +71,8 @@ class ReasonCode:
             MODEL_UNAVAILABLE,
             STUDENT_REQUESTED,
             OUTPUT_NOT_GROUNDED,
+            CAPABILITY_UNSUPPORTED,
+            SEMANTIC_PLAN_INCOMPLETE,
         }
     )
 
@@ -182,6 +190,9 @@ _STUDENT_SCOPED_TOOLS = frozenset(
         "recommend_next_courses",
         "current_registrations",
         "remaining_requirements",
+        "recommend_feasible_course_addition",
+        "rank_current_course_drop_impact",
+        "improve_current_timetable",
     }
 )
 
@@ -308,6 +319,19 @@ def derive_outcome(
         # تحتاج إلى مراجعة» — a refused answer presented as a resolved one.
         reasons.append(ReasonCode.OUTPUT_NOT_GROUNDED)
 
+    semantic_outcomes = {
+        str(value or "") for value in (agent.get("semantic_plan_requested_outcomes") or [])
+    }
+    if (
+        agent.get("semantic_plan_decision") == "unsupported"
+        or "registration_action" in semantic_outcomes
+        or "credit_load_comparison" in semantic_outcomes
+    ):
+        reasons.append(ReasonCode.CAPABILITY_UNSUPPORTED)
+
+    if agent.get("semantic_outcome_coverage_refused"):
+        reasons.append(ReasonCode.SEMANTIC_PLAN_INCOMPLETE)
+
     if agent.get("judge_action") == "ESCALATE":
         reasons.append(ReasonCode.JUDGE_REJECTED)
 
@@ -322,7 +346,12 @@ def derive_outcome(
         or ReasonCode.CONFLICTING_AUTHORITIES in reasons
     ):
         disposition = "ESCALATE"
-    elif agent.get("citation_refused") or agent.get("grounding_refused"):
+    elif (
+        agent.get("citation_refused")
+        or agent.get("grounding_refused")
+        or ReasonCode.CAPABILITY_UNSUPPORTED in reasons
+        or ReasonCode.SEMANTIC_PLAN_INCOMPLETE in reasons
+    ):
         # The answer was withheld — because its citations could not be verified,
         # or because it named identifiers the evidence does not support. Both are
         # the system declining to answer, not answering.

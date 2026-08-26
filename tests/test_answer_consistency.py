@@ -980,6 +980,109 @@ def test_every_required_tool_must_contribute_not_just_one_of_them():
     )
 
 
+def test_graduation_course_comparison_must_cover_every_named_candidate():
+    comparison = {
+        "tool": "course_choice_comparison",
+        "ok": True,
+        "objective": "graduation",
+        "candidates": [
+            {
+                "course_code": "IS362",
+                "graduation": {
+                    "simulation_completed": False,
+                    "estimated_additional_terms": None,
+                },
+            },
+            {
+                "course_code": "AI201",
+                "graduation": {
+                    "simulation_completed": False,
+                    "estimated_additional_terms": None,
+                },
+            },
+        ],
+    }
+    complete = (
+        "IS362: graduation scenario incomplete; the term difference is not determinable.\n"
+        "AI201: graduation scenario incomplete; the term difference is not determinable."
+    )
+    omitted = "IS362: graduation scenario incomplete; the term difference is not determinable."
+
+    assert (
+        check_answer(
+            complete,
+            tool_results=[comparison],
+            question="Which is better for graduation, IS362 or AI201?",
+            required_tools={"course_choice_comparison"},
+        )
+        == []
+    )
+    assert REQUESTED_EVIDENCE_OMITTED in check_answer(
+        omitted,
+        tool_results=[comparison],
+        question="Which is better for graduation, IS362 or AI201?",
+        required_tools={"course_choice_comparison"},
+    )
+
+
+def test_completed_graduation_comparison_must_name_each_candidate_term_estimate():
+    comparison = {
+        "tool": "course_choice_comparison",
+        "ok": True,
+        "objective": "graduation",
+        "candidates": [
+            {
+                "course_code": "IS362",
+                "graduation": {
+                    "simulation_completed": True,
+                    "estimated_additional_terms": 3,
+                },
+            },
+            {
+                "course_code": "AI201",
+                "graduation": {
+                    "simulation_completed": True,
+                    "estimated_additional_terms": 4,
+                },
+            },
+        ],
+    }
+    complete = (
+        "IS362: completed graduation scenario: 3 additional terms.\n"
+        "AI201: completed graduation scenario: 4 additional terms."
+    )
+    missing_metric = (
+        "IS362: completed graduation scenario: 3 additional terms.\n"
+        "AI201: completed graduation scenario, but no term estimate is shown."
+    )
+    wrong_status = (
+        "IS362: completed graduation scenario: 3 additional terms.\n"
+        "AI201: graduation scenario incomplete; lower bound 4 terms."
+    )
+
+    assert (
+        check_answer(
+            complete,
+            tool_results=[comparison],
+            question="Which is better for graduation, IS362 or AI201?",
+            required_tools={"course_choice_comparison"},
+        )
+        == []
+    )
+    assert REQUESTED_EVIDENCE_OMITTED in check_answer(
+        missing_metric,
+        tool_results=[comparison],
+        question="Which is better for graduation, IS362 or AI201?",
+        required_tools={"course_choice_comparison"},
+    )
+    assert REQUESTED_EVIDENCE_OMITTED in check_answer(
+        wrong_status,
+        tool_results=[comparison],
+        question="Which is better for graduation, IS362 or AI201?",
+        required_tools={"course_choice_comparison"},
+    )
+
+
 def test_open_and_locked_are_different_facts_about_a_course():
     """A locked course called ready is the prerequisite leap in bucket form."""
     progress = {

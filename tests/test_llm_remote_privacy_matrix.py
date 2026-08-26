@@ -451,6 +451,45 @@ def test_clash_projection_keeps_section_evidence_without_people_or_rooms() -> No
     assert str(MINE) not in sent
 
 
+def test_graduation_projection_preserves_typed_noncompletion_without_a_grade() -> None:
+    boundary = RemoteToolBoundary(
+        scope=STUDENT_SCOPE,
+        identities=RemoteIdentityMap(nonce=FIXED),
+        known_names=(CANARIES["name"],),
+    )
+    projected = boundary.project_tool_result(
+        "graduation_progress",
+        {
+            "tool": "graduation_progress",
+            "ok": True,
+            "student_id": MINE,
+            "planning_baseline_kind": "registered_timetable",
+            "what_if": {
+                "mode": "explicit_changes",
+                "valid": True,
+                "removed_current_courses": [],
+                "noncompletion_current_courses": [
+                    {
+                        "code": "TG102",
+                        "name": "Course TG102",
+                        "credits": 3,
+                        "grade": "F",
+                        "mark": 42,
+                    }
+                ],
+                "added_current_courses": [],
+                "comparison": {"timing_effect": "LATER", "term_difference": 1},
+            },
+        },
+    )
+
+    row = projected["what_if"]["noncompletion_current_courses"][0]
+    assert row == {"code": "TG102", "name": "Course TG102", "credits": 3}
+    encoded = json.dumps(projected, ensure_ascii=False).casefold()
+    assert "grade" not in encoded and "mark" not in encoded
+    assert str(MINE) not in encoded
+
+
 def test_replacement_projection_keeps_proof_without_internal_section_identity() -> None:
     boundary = RemoteToolBoundary(
         scope=STUDENT_SCOPE,
@@ -844,3 +883,82 @@ def test_new_list_fields_are_element_typed_not_container_typed():
     assert out["expected_plan_requirement_aliases"] == []
     for needle in ("Ahmed Canary", "1098765432", "3.42", "4400123"):
         assert needle not in encoded, needle
+
+
+def test_progress_priority_rankings_enforce_scalar_types_before_remote_serialisation():
+    """An allowed key never licenses an object/list stored under that key."""
+
+    from core.services.llm_remote_privacy import project_tool_result_for_remote
+
+    secret = "NESTED_PRIORITY_SECRET"
+    hostile = {
+        "tool": "my_progress",
+        "ok": True,
+        "unlock_impact_ranking_basis": {"method": secret},
+        "unlock_impact_ranking_note": [secret],
+        "most_useful_course_to_pass": {
+            "code": "CS300",
+            "course_name": {"student_name": secret},
+            "sole_remaining_prerequisite_count": [secret],
+            "on_prerequisite_chain_of_count": True,
+        },
+        "unlock_impact_ranking": [
+            {
+                "code": "CS301",
+                "course_name": {"student_name": secret},
+                "sole_remaining_prerequisite_count": [secret],
+                "on_prerequisite_chain_of_count": True,
+            },
+            {
+                "code": {"course_code": "CS302", "private_note": secret},
+                "course_name": "Detached name must not survive",
+                "sole_remaining_prerequisite_count": 1,
+            },
+            {
+                "code": "X" * 33,
+                "course_name": "Overlong code row",
+            },
+        ],
+        "requested_priority_limit": 5,
+        "requested_priority_limit_fulfilled": False,
+        "requested_unlock_impact_ranking": [
+            {
+                "code": "CS303",
+                "course_name": [secret],
+                "sole_remaining_prerequisite_count": {"count": 3, "secret": secret},
+                "on_prerequisite_chain_of_count": 10_001,
+            },
+            {
+                "code": "CS304",
+                "course_name": "Scalar course name",
+                "sole_remaining_prerequisite_count": 0,
+                "on_prerequisite_chain_of_count": 10_000,
+                "unknown_nested_field": {"secret": secret},
+            },
+            {
+                "code": ["CS305", secret],
+                "course_name": "Detached requested name",
+            },
+        ],
+    }
+
+    out = project_tool_result_for_remote(
+        "my_progress",
+        hostile,
+        RemoteIdentityMap(),
+    )
+
+    assert out["most_useful_course_to_pass"] == {"code": "CS300"}
+    assert out["unlock_impact_ranking"] == [{"code": "CS301"}]
+    assert out["requested_unlock_impact_ranking"] == [
+        {"code": "CS303"},
+        {
+            "code": "CS304",
+            "course_name": "Scalar course name",
+            "sole_remaining_prerequisite_count": 0,
+            "on_prerequisite_chain_of_count": 10_000,
+        },
+    ]
+    assert "unlock_impact_ranking_basis" not in out
+    assert "unlock_impact_ranking_note" not in out
+    assert secret not in json.dumps(out, ensure_ascii=False)
