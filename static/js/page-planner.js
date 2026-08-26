@@ -928,6 +928,27 @@ q('runBuilder').onclick=async()=>{
       : escapeHtml(f.reason||T.noFeasibleHardConstraints);
     return `<div class="mt-1">• ${code?`<strong>${code}</strong>: `:''}${reason}</div>`;
   }).join('');
+  /* The per-course reasons the server computed. They were only ever rendered
+     INSIDE an option card, so when a build produced no options — the exact
+     moment an adviser needs to know why — the page showed one generic banner
+     and discarded every reason. An adviser who cannot tell "impossible" from
+     "nothing found" cannot act. */
+  const blocked=Array.isArray(data.unscheduled)?data.unscheduled:[];
+  const blockedHtml=(!feasible && blocked.length)
+    ? `<div class="mt-2"><strong>${IS_AR?'المقررات التي تعذّرت جدولتها':'Courses that could not be scheduled'}:</strong></div>`
+      + blocked.map(u=>{
+          const code=escapeHtml(u.course_code||'');
+          const reason=escapeHtml(u.reason||(IS_AR?'سبب غير محدد':'no reason given'));
+          const detail=Array.isArray(u.details)&&u.details.length
+            ? ` <span class="fs-11 text-t4">(${u.details.map(d=>escapeHtml(
+                d.section ? `${d.section}: ${(d.reason_codes||[]).join(', ')}`
+                          : Object.entries(d).map(([k,v])=>`${k}=${v}`).join(' ')
+              )).join('; ')})</span>`
+            : '';
+          return `<div class="mt-1">• <strong>${code}</strong>: ${reason}${detail}</div>`;
+        }).join('')
+    : '';
+
   const summaryEl=q('builderSummary');
   summaryEl.className=`planner-banner planner-banner-${feasible?'ok':'warn'}`;
   summaryEl.innerHTML=`
@@ -935,7 +956,7 @@ q('runBuilder').onclick=async()=>{
     <div><strong>${IS_AR ? 'التعارضات' : 'Conflicts'}:</strong> ${s.conflicts||0}</div>
     <div><strong>${IS_AR ? 'التبديلات المطلوبة' : 'Swaps required'}:</strong> ${s.swaps_required||0}</div>
     <div><strong>${IS_AR ? 'الحالة' : 'Status'}:</strong> ${feasible?(IS_AR?'تم العثور على أفضل خطة ممكنة':'Best feasible plan found'):(IS_AR?'لا توجد خطة تحقق جميع القيود الإلزامية':'No plan satisfies all hard constraints')}</div>
-    ${failureHtml}`;
+    ${failureHtml}${blockedHtml}`;
 
   setBanner(
     feasible?'success':'warning',

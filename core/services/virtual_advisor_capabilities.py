@@ -2850,7 +2850,20 @@ _UNPLACED_REASONS: dict[str, tuple[str, str]] = {
 }
 
 
-def _translate_unplaced(raw: str) -> tuple[str, str]:
+def _translate_unplaced(raw: str, reason_code: str = "") -> tuple[str, str]:
+    """Map a builder reason to the closed vocabulary.
+
+    Prefers the builder's STRUCTURED ``reason_code`` and only falls back to
+    prefix-matching its English sentence for rows that predate the code. Matching
+    on prose meant any improvement to a reason string silently reclassified it as
+    OTHER, and the Arabic surface then showed its generic fallback.
+    """
+    code = str(reason_code or "").strip().upper()
+    if code:
+        for mapped_code, sentence in _UNPLACED_REASONS.values():
+            if mapped_code == code:
+                return mapped_code, sentence
+        return code, str(raw or "").strip()
     text = str(raw or "").strip()
     for prefix, mapped in _UNPLACED_REASONS.items():
         if text.startswith(prefix):
@@ -3082,7 +3095,9 @@ def _exec_build_my_timetable(
         raw_unplaced = result.get("unscheduled") or []
         translated_unplaced: list[dict[str, Any]] = []
         for entry in raw_unplaced:
-            reason_code, explanation = _translate_unplaced(entry.get("reason"))
+            reason_code, explanation = _translate_unplaced(
+                entry.get("reason"), str(entry.get("reason_code") or "")
+            )
             translated_unplaced.append(
                 {
                     "course_code": entry.get("course_code"),
@@ -3125,7 +3140,7 @@ def _exec_build_my_timetable(
     best = max(options, key=lambda o: int(o.get("scheduled") or 0))
     unscheduled = []
     for u in best.get("unscheduled") or []:
-        code, explanation = _translate_unplaced(u.get("reason"))
+        code, explanation = _translate_unplaced(u.get("reason"), str(u.get("reason_code") or ""))
         unscheduled.append(
             {"course_code": u.get("course_code"), "reason_code": code, "reason": explanation}
         )

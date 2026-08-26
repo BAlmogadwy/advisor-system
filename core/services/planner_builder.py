@@ -1593,13 +1593,58 @@ def build_plans(
         unscheduled: list[dict[str, Any]],
     ) -> list[dict[str, Any]]:
         annotated: list[dict[str, Any]] = []
+        # Every annotated row carries a STRUCTURED reason_code as well as its
+        # English sentence. Downstream consumers (the advisor's unplaced list,
+        # the Arabic draft view) used to recognise reasons by string prefix, so
+        # rewording a sentence here silently reclassified it as "OTHER" and the
+        # Arabic page fell back to a generic line. The code is the contract; the
+        # sentence is free to improve.
         for row in unscheduled:
             item = dict(row)
             code = str(item.get("course_code") or "").replace(" ", "").upper()
             details = incomplete_meetings.get(code) or []
             if details:
                 item["reason"] = "Section meeting data is incomplete or invalid"
+                item["reason_code"] = "MEETING_DATA_INCOMPLETE"
                 item["details"] = details
+            elif not catalog.get(code):
+                # No section at all is a different problem from "did not fit",
+                # and the adviser's next move differs: chase the timetable, not
+                # the constraints.
+                item["reason"] = "No section of this course is offered to this student this term"
+                item["reason_code"] = "NOT_ON_FILE"
+                item["details"] = []
+            else:
+                # Generic "could not fit" carried a hint describing the SOLVER
+                # ("Profile B uses bitmask optimization: fewest days then
+                # smallest gaps") - true, and of no use to an adviser deciding
+                # what to change. Name the binding constraint instead.
+                course_credits = int(credits_map.get(code, 0) or 0)
+                if max_credits and course_credits > max_credits:
+                    item["reason"] = (
+                        f"{code} is {course_credits} credits, above the "
+                        f"{max_credits}-credit limit set for this build"
+                    )
+                    item["reason_code"] = "DID_NOT_FIT"
+                    item["details"] = [
+                        {"course_credits": course_credits, "credit_limit": max_credits}
+                    ]
+                elif max_credits:
+                    item["reason"] = (
+                        "Could not fit alongside the other courses within the "
+                        f"{max_credits}-credit limit, or its sections clash"
+                    )
+                    item["reason_code"] = "DID_NOT_FIT"
+                    item["details"] = [
+                        {
+                            "course_credits": course_credits,
+                            "credit_limit": max_credits,
+                            "sections_considered": len(catalog.get(code) or []),
+                        }
+                    ]
+                else:
+                    item["reason"] = "Every section of this course clashes with the chosen plan"
+                    item["details"] = [{"sections_considered": len(catalog.get(code) or [])}]
             annotated.append(item)
         return annotated
 
