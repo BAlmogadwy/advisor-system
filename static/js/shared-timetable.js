@@ -407,11 +407,56 @@
     return html + '</div>';
   }
 
+  function _escapeText(value) {
+    return String(value == null ? '' : value)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+
+  /* A calendar grid is absolutely-positioned blocks on a CSS grid: correct to
+   * mark aria-hidden, meaningless to a screen reader. Every grid therefore
+   * ships with a visually-hidden table saying the same thing in reading order.
+   *
+   * This lives in the RENDERER, not in each caller, because a caller that
+   * forgets it produces a panel that is simply absent for assistive tech — the
+   * planner shipped four such panels (registered, suggested, options, overlay)
+   * and nothing on the page revealed it. Callers with their own visible agenda
+   * opt out with accessibleTable:false. */
+  function _renderAccessibleTable(opts, prepared) {
+    var dayLabels = opts.dayLabels || {};
+    var rows = [];
+    prepared.days.forEach(function (day) {
+      (prepared.blocksByDay[day] || [])
+        .slice()
+        .sort(function (a, b) { return a._st - b._st; })
+        .forEach(function (block) {
+          rows.push(
+            '<tr><th scope="row">' + _escapeText(dayLabels[day] || day) + '</th>' +
+            '<td>' + _escapeText(block.label || '') + '</td>' +
+            '<td>' + _escapeText(block.start) + '–' + _escapeText(block.end) + '</td>' +
+            '<td>' + _escapeText(block.room || '') + '</td></tr>'
+          );
+        });
+    });
+    if (!rows.length) return '';
+    var caption = opts.a11yLabel || 'Timetable';
+    var headings = opts.a11yHeadings || ['Day', 'Course', 'Time', 'Room'];
+    return '<table class="sr-only"><caption>' + _escapeText(caption) + '</caption>' +
+      '<thead><tr>' + headings.map(function (h) {
+        return '<th scope="col">' + _escapeText(h) + '</th>';
+      }).join('') + '</tr></thead><tbody>' + rows.join('') + '</tbody></table>';
+  }
+
   function renderWeekGrid(options) {
     var opts = options || {};
     var prepared = _prepare(opts);
     if (prepared.empty) return opts.empty || '';
-    return opts.mode === 'blocks' ? _renderBlocks(opts, prepared) : _renderTable(opts, prepared);
+    if (opts.mode !== 'blocks') return _renderTable(opts, prepared);
+    var visual = _renderBlocks(opts, prepared);
+    // Default ON: a missing companion is invisible in review, so it must be
+    // opted OUT of deliberately (student-timetable.js renders its own agenda).
+    if (opts.accessibleTable === false) return visual;
+    return visual + _renderAccessibleTable(opts, prepared);
   }
 
   global.WeekGrid = {

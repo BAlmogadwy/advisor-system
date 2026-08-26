@@ -71,6 +71,13 @@
     expectedSections: AR ? 'الشُعب المحتفَظ بها من الجدول المتوقع' : 'Expected-plan sections retained',
     plannerOption: AR ? 'الجدول المقترح' : 'Planner option',
     creditHours: AR ? 'الساعات المعتمدة' : 'credits',
+    creditCeiling: AR
+      ? 'الحد الأعلى للساعات المعتمدة للجدول'
+      : 'Timetable credit ceiling',
+    exactCreditTarget: AR
+      ? 'المجموع الدقيق المطلوب لساعات الجدول'
+      : 'Exact timetable credit target',
+    creditHourUnit: AR ? 'ساعة معتمدة' : 'credit hours',
     courseCoverage: AR ? 'المقررات المدرجة' : 'Courses scheduled',
     meetings: AR ? 'مواعيد المحاضرات' : 'Meetings',
     section: AR ? 'الشعبة' : 'section',
@@ -81,6 +88,15 @@
     noValidConstrainedOption: AR
       ? 'لا يتوفر جدول يحقق جميع الشروط. لم يُعرض الجدول الجزئي على أنه خيار صالح؛ عدّل الشروط ثم أعد المحاولة.'
       : 'No partial timetable is presented as valid. Adjust the requested constraint and try again.',
+    targetExceedsMaximum: AR
+      ? 'المجموع الدقيق المطلوب يتجاوز الحد الأعلى الفعّال، ولم يُخفّض الهدف تلقائيًا.'
+      : 'The exact requested total exceeds the effective credit ceiling; the target was not reduced automatically.',
+    retainedExceedsTarget: AR
+      ? 'ساعات الجدول المحتفَظ بها تتجاوز الهدف الدقيق، ووضع البناء حول الجدول الحالي لا يحذف مقرراته.'
+      : 'The retained timetable already exceeds the exact target, and around-current mode does not remove retained courses.',
+    noExactTargetOption: AR
+      ? 'لم يجد البحث المحدود A1–C3 جدولًا يساوي مجموع الساعات الدقيق، ولم يُعرض جدول أقل ساعات على أنه يحقق الهدف.'
+      : 'The bounded A1–C3 search did not find a timetable at the exact credit total; a lower-credit timetable is not shown as fulfillment.',
     unplaced: AR ? 'مقررات لم تُدرج في هذا الجدول المقترح' : 'Not placed in this option',
     noAdditions: AR ? 'لا توجد مقررات جديدة في هذا الجدول المقترح.' : 'This option has no additions.',
     noAdditionalCourses: AR
@@ -118,6 +134,9 @@
     creditGate: AR ? 'شرط الساعات المعتمدة' : 'Credit requirement',
     scenarioChange: AR ? 'التغيير المفترض في فصل البداية' : 'Planning-baseline change in this scenario',
     removed: AR ? 'المقررات المفترض حذفها:' : 'Removed',
+    noncompletion: AR
+      ? 'المقررات المفترض عدم اجتيازها بعد هذا الفصل:'
+      : 'Assumed not completed after this term',
     added: AR ? 'المقررات المفترض إضافتها:' : 'Added',
     maximumPerTerm: AR ? 'الحد الأعلى للساعات المعتمدة في كل فصل تقديري' : 'Simulation cap per term',
     waitingTerm: AR ? 'لا توجد مقررات مدرجة في هذا الفصل التقديري' : 'no planned courses',
@@ -1109,10 +1128,24 @@
       ? presentation.must_take_courses.filter(Boolean) : [];
     const pinned = Array.isArray(presentation.pinned_sections)
       ? presentation.pinned_sections : [];
+    const rawCreditCeiling = Number(presentation.credit_ceiling);
+    const creditCeiling = Number.isFinite(rawCreditCeiling) && rawCreditCeiling > 0
+      ? rawCreditCeiling : null;
+    const rawTargetCredits = Number(presentation.target_credits);
+    const targetCredits = Number.isFinite(rawTargetCredits) && rawTargetCredits > 0
+      ? rawTargetCredits : null;
     const constraintFailures = Array.isArray(presentation.constraint_failures)
       ? presentation.constraint_failures : [];
+    const targetCreditStatus = String(presentation.target_credit_status || '').toUpperCase();
+    const targetStatusMessages = {
+      TARGET_EXCEEDS_EFFECTIVE_MAX: T.targetExceedsMaximum,
+      RETAINED_BASELINE_EXCEEDS_TARGET: T.retainedExceedsTarget,
+      NO_EXACT_ALTERNATIVE: T.noExactTargetOption,
+    };
+    const targetStatusMessage = targetStatusMessages[targetCreditStatus] || '';
     if (!alternatives.length && !baseline.length && !mustTake.length
-        && !pinned.length && !constraintFailures.length) return null;
+        && !pinned.length && !constraintFailures.length && targetCredits === null
+        && !targetStatusMessage) return null;
 
     const wrap = el('section', 'sa-timetable');
     const dir = language === 'ar' ? 'rtl' : language === 'en' ? 'ltr' : (AR ? 'rtl' : 'ltr');
@@ -1148,7 +1181,7 @@
       wrap.appendChild(notice);
     }
 
-    if (mustTake.length || pinned.length) {
+    if (mustTake.length || pinned.length || creditCeiling !== null || targetCredits !== null) {
       const constraints = el('section', 'sa-tt-constraints');
       constraints.appendChild(el('h5', 'sa-tt-subtitle', T.enforcedConstraints));
       const chips = el('div', 'sa-tt-constraint-chips');
@@ -1167,16 +1200,36 @@
         chip.appendChild(ltrNode('bdi', null, String(row.section_label)));
         chips.appendChild(chip);
       });
+      if (creditCeiling !== null) {
+        const chip = el('span', 'sa-tt-constraint-chip is-credit-ceiling');
+        chip.appendChild(el('span', null, T.creditCeiling + ': '));
+        chip.appendChild(ltrNode('bdi', 'sa-tt-credit-ceiling-value', String(creditCeiling)));
+        chip.appendChild(document.createTextNode(' ' + T.creditHourUnit));
+        chips.appendChild(chip);
+      }
+      if (targetCredits !== null) {
+        const chip = el('span', 'sa-tt-constraint-chip is-credit-target');
+        chip.appendChild(el('span', null, T.exactCreditTarget + ': '));
+        chip.appendChild(ltrNode('bdi', 'sa-tt-credit-target-value', String(targetCredits)));
+        chip.appendChild(document.createTextNode(' ' + T.creditHourUnit));
+        chips.appendChild(chip);
+      }
       constraints.appendChild(chips);
       wrap.appendChild(constraints);
     }
 
-    if (constraintFailures.length) {
+    if (constraintFailures.length || targetStatusMessage) {
       const alert = el('section', 'sa-tt-constraint-alert');
       alert.setAttribute('role', 'alert');
       alert.appendChild(el('h5', 'sa-tt-subtitle', T.constraintProblems));
+      if (targetStatusMessage) {
+        alert.appendChild(el('p', 'sa-tt-target-status', targetStatusMessage));
+      }
+      const visibleFailures = constraintFailures.filter(function (row) {
+        return !targetStatusMessage || (row && (row.course_code || row.section_label));
+      });
       const list = el('ul', null);
-      constraintFailures.forEach(function (row) {
+      visibleFailures.forEach(function (row) {
         const item = el('li');
         if (row && row.course_code) {
           item.appendChild(ltrNode('strong', null, String(row.course_code)));
@@ -1191,7 +1244,7 @@
         }
         list.appendChild(item);
       });
-      alert.appendChild(list);
+      if (visibleFailures.length) alert.appendChild(list);
       if (!alternatives.length) {
         alert.appendChild(el('p', 'sa-tt-empty', T.noValidConstrainedOption));
       }
@@ -1482,26 +1535,26 @@
 
     const removed = Array.isArray(presentation.removed_current_courses)
       ? presentation.removed_current_courses : [];
+    const noncompletion = Array.isArray(presentation.noncompletion_current_courses)
+      ? presentation.noncompletion_current_courses : [];
     const added = Array.isArray(presentation.added_current_courses)
       ? presentation.added_current_courses : [];
-    if (removed.length || added.length) {
+    const scenarioChanges = [
+      { label: T.removed, courses: removed },
+      { label: T.noncompletion, courses: noncompletion },
+      { label: T.added, courses: added }
+    ].filter(function (change) { return change.courses.length; });
+    if (scenarioChanges.length) {
       const change = el('div', 'sa-grad-change');
       change.appendChild(el('strong', null, T.scenarioChange + ': '));
-      if (removed.length) {
-        change.appendChild(document.createTextNode(T.removed + ' '));
-        removed.forEach(function (course, index) {
+      scenarioChanges.forEach(function (scenarioChange, groupIndex) {
+        if (groupIndex) change.appendChild(document.createTextNode(' · '));
+        change.appendChild(document.createTextNode(scenarioChange.label + ' '));
+        scenarioChange.courses.forEach(function (course, index) {
           if (index) change.appendChild(document.createTextNode(', '));
           change.appendChild(ltrNode('bdi', null, course.code));
         });
-      }
-      if (removed.length && added.length) change.appendChild(document.createTextNode(' · '));
-      if (added.length) {
-        change.appendChild(document.createTextNode(T.added + ' '));
-        added.forEach(function (course, index) {
-          if (index) change.appendChild(document.createTextNode(', '));
-          change.appendChild(ltrNode('bdi', null, course.code));
-        });
-      }
+      });
       wrap.appendChild(change);
     }
 

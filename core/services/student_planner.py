@@ -82,6 +82,10 @@ class PlannerRequest:
     required_courses: tuple[str, ...] = ()
     keep_current_sections: bool = True
     max_credits: int = 0
+    #: Exact total credits for the complete returned timetable. ``None`` means
+    #: no exact target; unlike ``max_credits`` this is not a ceiling. In
+    #: keep-current mode the retained baseline counts toward this total.
+    target_credits: int | None = None
     # Draft-backed screens already materialise the recommendation into
     # ``course_codes`` when the workspace is created.  They set this to False so
     # removing a recommended course on screen really removes it; callers that ask
@@ -115,6 +119,7 @@ def run_solver(
     baseline: list[dict[str, Any]],
     keep_current_sections: bool,
     max_credits: int,
+    target_credits: int | None = None,
     gender: str,
     program: str | None = None,
     require_complete_meetings: bool = False,
@@ -154,6 +159,7 @@ def run_solver(
         # it, and a screen that shows "25 seats" is read as "a seat for you".
         consider_capacity=False,
         max_credits=int(max_credits or 0),
+        target_credits=target_credits,
         gender=gender,
         program=program,
         require_complete_meetings=require_complete_meetings,
@@ -467,6 +473,29 @@ def build_student_options(request: PlannerRequest) -> dict[str, Any]:
         required_set - current_codes if request.keep_current_sections else set(required_set)
     )
     if not addition_codes and not current_mappings:
+        if request.target_credits is not None:
+            target = int(request.target_credits)
+            return {
+                "student_id": student_id,
+                "term": f"{request.year}/{request.term}",
+                "requested": codes,
+                "alternatives": [],
+                "unplaced": [],
+                "constraint_failures": [
+                    {
+                        "kind": "target_credits",
+                        "course_code": "",
+                        "reason": (
+                            "The bounded candidate set is empty, so it cannot form "
+                            f"an exact {target}-credit timetable."
+                        ),
+                    }
+                ],
+                "generated": 0,
+                "target_credits": target,
+                "target_credits_satisfied": False,
+                "reason": "HARD_CONSTRAINTS_UNSATISFIED",
+            }
         return {
             "student_id": student_id,
             "term": f"{request.year}/{request.term}",
@@ -493,9 +522,80 @@ def build_student_options(request: PlannerRequest) -> dict[str, Any]:
 
     current_credit_hours = _distinct_credit_hours(current_mappings, credits)
     requested_cap = int(request.max_credits or 0)
+    requested_target = int(request.target_credits) if request.target_credits is not None else None
+    if requested_target is not None and requested_target < 0:
+        return {
+            "student_id": student_id,
+            "term": f"{request.year}/{request.term}",
+            "requested": codes,
+            "alternatives": [],
+            "unplaced": [],
+            "constraint_failures": [
+                {
+                    "kind": "target_credits",
+                    "course_code": "",
+                    "reason": "Exact target credits cannot be negative.",
+                }
+            ],
+            "generated": 0,
+            "target_credits": requested_target,
+            "target_credits_satisfied": False,
+            "reason": "HARD_CONSTRAINTS_UNSATISFIED",
+        }
+    if requested_target is not None and requested_cap > 0 and requested_target > requested_cap:
+        return {
+            "student_id": student_id,
+            "term": f"{request.year}/{request.term}",
+            "requested": codes,
+            "alternatives": [],
+            "unplaced": [],
+            "constraint_failures": [
+                {
+                    "kind": "target_credits",
+                    "course_code": "",
+                    "reason": (
+                        f"The exact {requested_target}-credit target exceeds the "
+                        f"{requested_cap}-credit maximum."
+                    ),
+                }
+            ],
+            "generated": 0,
+            "target_credits": requested_target,
+            "target_credits_satisfied": False,
+            "reason": "HARD_CONSTRAINTS_UNSATISFIED",
+        }
+    if (
+        requested_target is not None
+        and request.keep_current_sections
+        and current_credit_hours > requested_target
+    ):
+        return {
+            "student_id": student_id,
+            "term": f"{request.year}/{request.term}",
+            "requested": codes,
+            "alternatives": [],
+            "unplaced": [],
+            "constraint_failures": [
+                {
+                    "kind": "target_credits",
+                    "course_code": "",
+                    "reason": (
+                        f"The retained baseline already has {current_credit_hours} credits, "
+                        f"above the exact {requested_target}-credit target."
+                    ),
+                }
+            ],
+            "generated": 0,
+            "target_credits": requested_target,
+            "target_credits_satisfied": False,
+            "reason": "HARD_CONSTRAINTS_UNSATISFIED",
+        }
     solver_cap = requested_cap
     if request.keep_current_sections and requested_cap > 0:
         solver_cap = max(0, requested_cap - current_credit_hours)
+    solver_target = requested_target
+    if request.keep_current_sections and requested_target is not None:
+        solver_target = requested_target - current_credit_hours
 
     generated = 0
     solver_options: list[dict[str, Any]] = []
@@ -517,9 +617,17 @@ def build_student_options(request: PlannerRequest) -> dict[str, Any]:
                 continue
             if int(mapping.get("term_section_id") or 0) != int(pinned_id):
                 return False
+        if solver_target is not None:
+            selected_credits = sum(_credit_for(code, credits) for code in selected)
+            if selected_credits != solver_target:
+                return False
         return True
 
-    if shortlist and not (request.keep_current_sections and requested_cap > 0 and solver_cap <= 0):
+    if (
+        shortlist
+        and solver_target != 0
+        and not (request.keep_current_sections and requested_cap > 0 and solver_cap <= 0)
+    ):
         result = run_solver(
             year=str(request.year),
             term=str(request.term),
@@ -527,6 +635,7 @@ def build_student_options(request: PlannerRequest) -> dict[str, Any]:
             baseline=baseline,
             keep_current_sections=request.keep_current_sections,
             max_credits=solver_cap,
+            target_credits=solver_target,
             gender=gender,
             program=program,
             require_complete_meetings=request.require_complete_meetings,
@@ -540,6 +649,25 @@ def build_student_options(request: PlannerRequest) -> dict[str, Any]:
             (result.get("summary") or {}).get("hard_constraint_failures") or []
         )
         generated = len(solver_options)
+
+    if requested_target is not None and not solver_options:
+        baseline_exact = bool(current_mappings) and current_credit_hours == requested_target
+        if not baseline_exact and not any(
+            str(row.get("kind") or "") == "target_credits"
+            for row in solver_constraint_failures
+            if isinstance(row, dict)
+        ):
+            solver_constraint_failures.append(
+                {
+                    "kind": "target_credits",
+                    "course_code": "",
+                    "reason": (
+                        "The bounded Planner search did not find a timetable with "
+                        f"exactly {requested_target} total credits under the current "
+                        "recorded sections and constraints."
+                    ),
+                }
+            )
 
     # A required addition that could not be placed invalidates the whole proposed
     # alternative.  Preserve an explanation, but never turn the retained baseline
@@ -591,7 +719,12 @@ def build_student_options(request: PlannerRequest) -> dict[str, Any]:
     # Keeping a real baseline is itself a useful alternative.  This also covers a
     # solver that found no addition and a cap already consumed by current courses.
     # The synthetic row has no A/B/C label because no Planner method produced it.
-    if current_mappings and not solver_options and not required_addition_codes:
+    if (
+        current_mappings
+        and not solver_options
+        and not required_addition_codes
+        and (requested_target is None or current_credit_hours == requested_target)
+    ):
         reason = (
             "Could not fit with chosen constraints/objective"
             if shortlist and requested_cap > 0 and solver_cap <= 0
@@ -740,6 +873,11 @@ def build_student_options(request: PlannerRequest) -> dict[str, Any]:
             }
         )
 
+    target_fulfilled = (
+        requested_target is not None
+        and bool(alternatives)
+        and all(int(row.get("credit_hours") or 0) == requested_target for row in alternatives)
+    )
     return {
         "student_id": student_id,
         "term": f"{request.year}/{request.term}",
@@ -747,10 +885,20 @@ def build_student_options(request: PlannerRequest) -> dict[str, Any]:
         "alternatives": alternatives,
         "unplaced": unplaced,
         "constraint_failures": solver_constraint_failures if not alternatives else [],
+        "target_credits": requested_target,
+        "target_credits_satisfied": target_fulfilled,
         # How many the builder produced before duplicates were removed, so a caller
         # can see that "3 alternatives" came from nine attempts rather than three.
         "generated": generated,
-        "reason": "" if alternatives else "NO_VALID_TIMETABLE",
+        "reason": (
+            ""
+            if alternatives
+            else (
+                "HARD_CONSTRAINTS_UNSATISFIED"
+                if requested_target is not None
+                else "NO_VALID_TIMETABLE"
+            )
+        ),
     }
 
 

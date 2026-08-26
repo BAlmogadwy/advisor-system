@@ -75,8 +75,20 @@ function setStep(step){
     const el=q('step'+s);
     if(!el) return;
     el.classList.remove('active','done');
-    if(s===step) el.classList.add('active');
-    else if(i<idx) el.classList.add('done');
+    /* The classes are the only thing that changed before, so assistive tech had
+       no idea which step was current or which were done. */
+    if(s===step){
+      el.classList.add('active');
+      el.setAttribute('aria-current','step');
+    } else {
+      el.removeAttribute('aria-current');
+      if(i<idx) el.classList.add('done');
+    }
+    const stepName=(el.querySelector('.wf-num')?.nextSibling?.textContent||el.textContent||'').trim();
+    el.setAttribute('aria-label', `${stepName} — ${
+      s===step ? (IS_AR?'الخطوة الحالية':'current step')
+      : i<idx  ? (IS_AR?'مكتملة':'completed')
+               : (IS_AR?'لم تبدأ':'not started')}`);
   });
   const simple=!!q('simpleMode')?.checked;
   document.querySelectorAll('.step-panel').forEach(el=>{
@@ -96,6 +108,22 @@ let currentCtx={student_id:'',academic_year:'',term:''};
 let currentBaseline=[];
 let lastBuilderOptions=[];
 let builderGeneration=0;
+/* Same guard as builderGeneration, for the student fetch. Without it a slow
+   response for student A could land after a fast one for student B and
+   overwrite the whole page — summary, baseline, recommendations, shortlist —
+   leaving B's ID on screen above A's data. */
+let fetchGeneration=0;
+
+/* The backend's status vocabulary is English snake_case ("passed", "studying",
+   "not_taken"). Rendering it raw dropped untranslated tokens into the Arabic
+   plan table; this maps them once for every caller. */
+const PLAN_STATUS_AR={passed:'مجتاز', studying:'قيد الدراسة', not_taken:'لم يُدرس', failed:'راسب'};
+const PLAN_STATUS_EN={passed:'Passed', studying:'Studying', not_taken:'Not taken', failed:'Failed'};
+function planStatusLabel(raw){
+  const key=String(raw||'').trim().toLowerCase();
+  if(!key) return '';
+  return (IS_AR?PLAN_STATUS_AR:PLAN_STATUS_EN)[key] || raw;
+}
 
 function useProgrammeSectionsOnly(){
   return !!q('programSectionsOnly')?.checked;
@@ -201,7 +229,9 @@ function renderBaselineWeeklyCompact(baseline){
   const unmappedHtml=unmapped.length
     ? `<div class="planner-banner planner-banner-warn mt-2" style="font-size:12px">
         <span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg></span>
-        ${unmapped.length} registered course${unmapped.length===1?'':'s'} have no mapped timetable slots:
+        ${IS_AR
+          ? `${unmapped.length} مقرر مسجّل بدون مواعيد في الجدول:`
+          : `${unmapped.length} registered course${unmapped.length===1?'':'s'} have no mapped timetable slots:`}
         ${unmapped.map(r=>`<strong>${courseKey(r)}</strong>`).join(', ')}
       </div>`
     : '';
@@ -219,6 +249,8 @@ function renderBaselineWeeklyCompact(baseline){
     blocks,
     timeLabel: UI.time,
     dayLabels: UI.dayShort,
+    a11yLabel: IS_AR ? 'الجدول المسجّل' : 'Registered timetable',
+    a11yHeadings: IS_AR ? ['اليوم','المقرر','الوقت','القاعة'] : ['Day','Course','Time','Room'],
     /* A registered week is rarely continuous: morning classes and a single
        evening one stretched this card to ~11 empty-ish hours, pushing the
        Suggested-to-add pane against a wall of blank grid. The shared renderer
@@ -297,6 +329,8 @@ function renderVisualTimetable(source='baseline'){
     blocks: enriched,
     timeLabel: UI.time,
     dayLabels: UI.dayShort,
+    a11yLabel: IS_AR ? 'الجدول المقترح' : 'Proposed timetable',
+    a11yHeadings: IS_AR ? ['اليوم','المقرر','الوقت','القاعة'] : ['Day','Course','Time','Room'],
     /* Same treatment as the registered card above — and it matters more here,
        because a proposed plan is compared against it side by side. Two grids
        on one page must not use different vertical scales. */
@@ -357,7 +391,7 @@ function renderShortlist(){
     const pinnedHtml=hasPinned
       ? `<div class="d-flex align-items-center flex-wrap" style="margin-top:3px; gap:4px">
            <span class="fs-11 fw-semibold text-teal" title="${IS_AR?'هذه هي الشعبة الوحيدة المسموح بها لهذا المقرر':'This is the only allowed section for this course'}">${IS_AR?'الشعبة المثبّتة:':'Pinned section:'}</span>
-           ${c.pinned_sections.map((p,pi)=>`<span class="sl-pin-badge align-items-center fs-11 fw-semibold text-teal u-cursor-pointer" data-pi="${pi}" title="${IS_AR?'انقر للإزالة':'Click to remove'}" style="display:inline-flex; gap:3px; padding:1px 7px; border-radius:5px; background:var(--teal-dim)">§${p.section} <span style="font-size:9px;opacity:0.6">✕</span></span>`).join('')}
+           ${c.pinned_sections.map((p,pi)=>`<button type="button" class="sl-pin-badge align-items-center fs-11 fw-semibold text-teal u-cursor-pointer" data-pi="${pi}" aria-label="${IS_AR?'إزالة تثبيت الشعبة':'Remove pinned section'} ${p.section}" style="display:inline-flex; gap:3px; padding:1px 7px; border-radius:5px; background:var(--teal-dim); border:0">§${p.section} <span style="font-size:9px;opacity:0.6" aria-hidden="true">✕</span></button>`).join('')}
          </div>`
       : `<div class="fs-11 text-t4" style="margin-top:2px">${IS_AR?'أي شعبة (البناء يختار الأنسب)':'Any section (builder picks best)'}</div>`;
 
@@ -396,20 +430,35 @@ function renderShortlist(){
   q('shortCredits').textContent=String(credits);
 }
 
+/* One cached copy of the student plan per student. The three checkboxes below
+   the palette are display filters — they change which rows are drawn, nothing
+   the server computes — yet each toggle used to re-issue this request AND the
+   sections-catalog POST. Cleared whenever a different student is fetched. */
+let _planCache={student:null, data:null, sections:null};
+function invalidatePlanCache(){ _planCache={student:null, data:null, sections:null}; }
+
 async function renderPlanPalette(studentId){
   const wrap=q('planPalette');
-  wrap.innerHTML=`<span class="text-secondary">${IS_AR ? 'جارٍ تحميل خطة الطالب...' : 'Loading student plan...'}</span>`;
+  const cached=_planCache.student===String(studentId) ? _planCache.data : null;
+  if(!cached){
+    wrap.innerHTML=`<span class="text-secondary">${IS_AR ? 'جارٍ تحميل خطة الطالب...' : 'Loading student plan...'}</span>`;
+  }
   try{
-    const planRes=await fetch(`/report/student-plan/?student_id=${encodeURIComponent(studentId)}`);
-    const planData=await planRes.json();
+    let planData=cached;
+    if(!planData){
+      const planRes=await fetch(`/report/student-plan/?student_id=${encodeURIComponent(studentId)}`);
+      planData=await planRes.json();
+      if(!planData.error) _planCache={student:String(studentId), data:planData};
+    }
     if(planData.error){ wrap.innerHTML=`<span class="text-danger">${planData.error}</span>`; return; }
 
     const allCourses=[];
     (planData.terms||[]).forEach(t=> (t.courses||[]).forEach(c=> allCourses.push({...c, _term:t.term})));
     const codes=[...new Set(allCourses.map(c=>String(c.course_code||'').replace(/\s+/g,'').toUpperCase()).filter(Boolean))];
 
-    let sections=[];
-    if(codes.length){
+    let sections=_planCache.student===String(studentId) ? (_planCache.sections||null) : null;
+    if(sections===null && codes.length){
+      sections=[];
       const secRes=await fetch('/ops/planner/sections-catalog/',{
         method:'POST',
         headers:{'Content-Type':'application/json','X-CSRFToken':getCsrfToken()},
@@ -423,7 +472,9 @@ async function renderPlanPalette(studentId){
       });
       const secData=await secRes.json();
       sections=secData.sections||[];
+      if(_planCache.student===String(studentId)) _planCache.sections=sections;
     }
+    if(sections===null) sections=[];
 
     const secByCourse={};
     sections.forEach(s=>{
@@ -491,10 +542,11 @@ async function renderPlanPalette(studentId){
               data-code="${code}"
               data-credits="${Number(c.credit_hours||0)}"
               data-score="${Math.round(Number(c.importance_score||0)*20)}"
+              aria-label="${IS_AR?'اختيار':'Select'} ${code}"
               ${canAdd?'':'disabled'}>
             <strong>${code}</strong> <span class="text-secondary">(${c.credit_hours||0}${IS_AR?' ساعة':'cr'})</span>
           </td>
-          <td>${c.status||''}</td>
+          <td>${planStatusLabel(c.status)}</td>
           <td>${Number(c.importance_score||0).toFixed(2)}</td>
           <td><span class="plan-chip ${cls}">${label}</span></td>
           <td><button class="pl-btn pl-btn-teal" ${canAdd?'':'disabled'}><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></span>${IS_AR?'إضافة':'Add'}</button></td>`;
@@ -648,32 +700,43 @@ async function renderAvailableSections(){
 
         const timeStr=(s.meetings||[]).map(m=>
           `${UI.dayShort[normalizeDay(m.day)]||normalizeDay(m.day)} ${m.start_time||''}-${m.end_time||''}`
-        ).join(', ')||'TBA';
+        ).join(', ')||(IS_AR?'غير محدد':'TBA');
 
         const capacityText=capacity.known
           ? `${capacity.registered}/${capacity.maximum}`
           : (IS_AR?'السعة غير معروفة':'Capacity unknown');
         const programs=(s.programs||[]).join('/') || (IS_AR?'غير مرتبط ببرنامج':'Unassigned');
 
+        /* A real <button>: this is the ONLY way to pin an exact section, and as a
+           plain div it was unreachable by keyboard entirely. statusLabel is now
+           VISIBLE text as well as the accessible name — the four states used to
+           differ only by a tint and a 6px dot, which a colour-blind adviser
+           cannot read, and the sole text lived in a title attribute on a
+           non-focusable element where no screen reader would announce it. */
+        const secAria=[
+          `${IS_AR?'الشعبة':'Section'} ${s.section||'?'}`, statusLabel, timeStr,
+          capacityText===statusLabel ? '' : capacityText,   // don't say it twice
+        ].filter(Boolean).join(' · ');
         secHtml+=`
-          <div class="avail-sec-row ${colorClass}" data-tsid="${s.term_section_id}" title="${statusLabel}">
-            <span class="sec-dot ${dotClass}"></span>
+          <button type="button" class="avail-sec-row ${colorClass}" data-tsid="${s.term_section_id}" aria-label="${secAria}">
+            <span class="sec-dot ${dotClass}" aria-hidden="true"></span>
             <span class="sec-id">${s.section||'?'}</span>
             <span class="sec-time">${timeStr}</span>
             <span class="sec-program">${programs}</span>
             <span class="sec-capacity">${capacityText}</span>
-          </div>`;
+            <span class="sec-status">${statusLabel}</span>
+          </button>`;
       });
 
       card.innerHTML=`
-        <div class="avail-course-head u-cursor-pointer" title="${IS_AR?'انقر لإضافة المقرر (أي شعبة)':'Click to add course (any section)'}">
+        <button type="button" class="avail-course-head u-cursor-pointer" aria-label="${course.code} — ${IS_AR?'إضافة المقرر (أي شعبة)':'add course (any section)'}">
           <div>
             <div class="avail-course-code">${course.code}</div>
             <div class="avail-course-name">${course.name}</div>
           </div>
           <span class="avail-course-credits" style="margin-inline-end:4px">${course.credits} ${IS_AR?'ساعة':'cr'}</span>
           <span class="avail-course-credits" style="background:${course.importance>=3?'var(--teal-dim);color:var(--teal)':course.importance>=1?'var(--amber-dim);color:var(--warning)':'var(--pl-overlay-2);color:var(--t4)'}">⚡${course.importance.toFixed(1)}</span>
-        </div>
+        </button>
         ${secHtml}`;
 
       /* Click section row → pin that specific section to the shortlist */
@@ -991,6 +1054,10 @@ q('runBuilder').onclick=async()=>{
 q('fetchBtn').onclick=async()=>{
   invalidateBuilderResults();
   setStep('1');
+  const runFetch = ++fetchGeneration;
+  invalidatePlanCache();
+  const fetchBtnEl = q('fetchBtn');
+  if(fetchBtnEl) fetchBtnEl.disabled = true;   // removes the easy double-click trigger
   q('fetchState').textContent = IS_AR ? 'جارٍ التحميل...' : 'Loading...';
   setBanner('info', IS_AR ? 'جارٍ جلب بيانات الطالب...' : 'Fetching student context...');
 
@@ -1007,11 +1074,17 @@ q('fetchBtn').onclick=async()=>{
     });
     data=await r.json();
   }catch(err){
+    if(runFetch!==fetchGeneration) return;          // a newer fetch owns the page
+    if(fetchBtnEl) fetchBtnEl.disabled = false;
     q('fetchState').textContent = IS_AR ? 'خطأ' : 'Error';
     setBanner('danger', IS_AR?'فشل جلب بيانات الطالب':'Failed to fetch student context');
     notify.error(IS_AR?'فشل جلب بيانات الطالب':'Failed to fetch student context', err.message||String(err));
     return;
   }
+  /* Everything past this point WRITES page state, so a superseded response must
+     stop here — before it touches currentCtx, the baseline or the shortlist. */
+  if(runFetch!==fetchGeneration) return;
+  if(fetchBtnEl) fetchBtnEl.disabled = false;
   if(data.error){
     q('fetchState').textContent = IS_AR ? 'خطأ' : 'Error';
     setBanner('danger', errMsg(data));
@@ -1036,10 +1109,27 @@ q('fetchBtn').onclick=async()=>{
     <div><strong>${IS_AR ? 'المرشد' : 'Advisor'}:</strong> ${st.advisor_id||''}</div>
     <div><strong>${IS_AR ? 'المعدل التراكمي' : 'GPA'}:</strong> ${st.gpa??''}</div>
     <div><strong>${IS_AR ? 'الساعات المسجلة' : 'Registered credits'}:</strong> ${st.registered_credits||0}</div>
-    <div><strong>${IS_AR ? 'الحد الأعلى للساعات' : 'Credit cap'}:</strong> ${st.credit_cap||0}</div>`;
+    <div><strong>${IS_AR ? 'الحد الأعلى للساعات' : 'Credit cap'}:</strong> ${st.credit_cap||0}${
+      st.regulatory_max_credits && Number(st.regulatory_max_credits)>Number(st.credit_cap||0)
+        ? ` <span class="fs-11 text-t4">(${IS_AR
+            ? `إرشادي — الحد النظامي ${st.regulatory_max_credits}`
+            : `advisory — regulatory limit ${st.regulatory_max_credits}`})</span>`
+        : ''
+    }</div>`;
 
   /* Auto-fill max credits box from student credit cap */
   if(st.credit_cap && Number(st.credit_cap)>0) q('maxCredits').value=Number(st.credit_cap);
+  /* The builder turns this box into a hard sum(credits) <= max constraint, so
+     pre-filling it with the ADVISORY 18 silently forbade the 19th credit the
+     student is entitled to. The regulatory ceiling is now stated where the
+     adviser sets the number, instead of only being sent and ignored. */
+  const maxHint=q('maxCreditsHint');
+  if(maxHint && st.regulatory_max_credits){
+    maxHint.textContent = IS_AR
+      ? `إرشادي ${st.credit_cap||0} · النظامي ${st.regulatory_max_credits}`
+      : `advisory ${st.credit_cap||0} · regulatory ${st.regulatory_max_credits}`;
+    q('maxCredits')?.setAttribute('max', String(st.regulatory_max_credits));
+  }
 
   q('baselineTotals').textContent=`${IS_AR ? 'المقررات' : 'Courses'}: ${data.baseline_totals.courses} | ${IS_AR ? 'الساعات' : 'Credits'}: ${data.baseline_totals.credits}`;
 

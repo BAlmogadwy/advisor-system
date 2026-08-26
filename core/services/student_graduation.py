@@ -1206,9 +1206,15 @@ def build_graduation_what_if(
     max_replacement_results: int = MAX_REPLACEMENT_RESULTS,
     replacement_remove_course: str | None = None,
     replacement_add_course: str | None = None,
+    exact_result_credits: int | None = None,
+    max_result_credits: int | None = None,
     _query_cache: dict[object, object] | None = None,
 ) -> dict:
-    """Compare planning-baseline changes without mutating real records."""
+    """Compare planning-baseline changes without mutating real records.
+
+    Result-credit predicates constrain replacement-search candidates before the
+    bounded result slice. They do not broaden the 120-pair evaluation ceiling.
+    """
     from core.models import Course
 
     baseline_kind = _validate_planning_baseline_kind(planning_baseline_kind)
@@ -1217,6 +1223,22 @@ def build_graduation_what_if(
         1,
         min(int(max_replacement_results), MAX_REPLACEMENT_EVALUATIONS),
     )
+    exact_replacement_credits = (
+        int(exact_result_credits) if exact_result_credits is not None else None
+    )
+    maximum_replacement_credits = (
+        int(max_result_credits) if max_result_credits is not None else None
+    )
+    if exact_replacement_credits is not None and exact_replacement_credits < 0:
+        raise ValueError("exact_result_credits must be zero or greater.")
+    if maximum_replacement_credits is not None and maximum_replacement_credits < 0:
+        raise ValueError("max_result_credits must be zero or greater.")
+    if (
+        exact_replacement_credits is not None
+        and maximum_replacement_credits is not None
+        and exact_replacement_credits > maximum_replacement_credits
+    ):
+        raise ValueError("exact_result_credits cannot exceed max_result_credits.")
     remove_codes = _normalise_code_list(remove_current_courses)
     add_codes = _normalise_code_list(add_current_courses)
     replacement_remove_filter = normalize_code(replacement_remove_course or "")
@@ -1319,6 +1341,7 @@ def build_graduation_what_if(
 
     improving = []
     unproven_blocker_progress_pairs = 0
+    result_credit_predicate_filtered_count = 0
     evaluated_count = 0
     truncated = False
     for removed in removable_courses:
@@ -1344,6 +1367,21 @@ def build_graduation_what_if(
                 unproven_blocker_progress_pairs += 1
             if not comparison["proven_improvement"]:
                 continue
+            scenario_credits_raw = comparison.get("scenario_planning_credits")
+            scenario_credits = (
+                int(scenario_credits_raw)
+                if scenario_credits_raw is not None
+                else sum(int(course.get("credits") or 0) for course in evaluated["current_courses"])
+            )
+            if (
+                exact_replacement_credits is not None
+                and scenario_credits != exact_replacement_credits
+            ) or (
+                maximum_replacement_credits is not None
+                and scenario_credits > maximum_replacement_credits
+            ):
+                result_credit_predicate_filtered_count += 1
+                continue
             improving.append(
                 {
                     "remove_course": evaluated["removed_courses"][0],
@@ -1356,6 +1394,16 @@ def build_graduation_what_if(
         if truncated:
             break
     improving.sort(key=_replacement_rank)
+
+    result_credit_search: dict[str, object] = {}
+    if exact_replacement_credits is not None or maximum_replacement_credits is not None:
+        result_credit_search = {
+            "result_credit_predicate": {
+                "exact_credit_hours": exact_replacement_credits,
+                "maximum_credit_hours": maximum_replacement_credits,
+            },
+            "result_credit_predicate_filtered_count": (result_credit_predicate_filtered_count),
+        }
 
     return {
         **baseline,
@@ -1373,6 +1421,7 @@ def build_graduation_what_if(
             "improving_replacements_found": len(improving),
             "replacement_results_truncated": len(improving) > replacement_result_limit,
             "improving_replacements": improving[:replacement_result_limit],
+            **result_credit_search,
             "no_proven_improvement": not improving,
             "timetable_check_required": bool(improving),
             "note": (

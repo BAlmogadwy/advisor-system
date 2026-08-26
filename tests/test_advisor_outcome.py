@@ -123,6 +123,64 @@ def test_a_general_explanation_of_a_prohibited_rule_still_passes():
     assert outcome.disposition == FinalDisposition.PASS
 
 
+def test_typed_unsupported_request_is_not_persisted_as_a_pass():
+    outcome = derive_outcome(
+        _result(
+            semantic_plan_decision="unsupported",
+            semantic_plan_requested_outcomes=["registration_action"],
+            policy_required=False,
+        )
+    )
+
+    assert outcome.disposition == FinalDisposition.ABSTAIN
+    assert outcome.reason_codes == [ReasonCode.CAPABILITY_UNSUPPORTED]
+
+
+def test_verified_advice_with_refused_registration_action_is_not_a_full_pass():
+    outcome = derive_outcome(
+        _result(
+            semantic_plan_decision="execute",
+            semantic_plan_requested_outcomes=[
+                "course_addition",
+                "registration_action",
+            ],
+            policy_required=False,
+        )
+    )
+
+    assert outcome.disposition == FinalDisposition.ABSTAIN
+    assert outcome.reason_codes == [ReasonCode.CAPABILITY_UNSUPPORTED]
+
+
+def test_verified_advice_with_unsupported_credit_load_comparison_is_not_a_full_pass():
+    outcome = derive_outcome(
+        _result(
+            semantic_plan_decision="execute",
+            semantic_plan_requested_outcomes=[
+                "degree_progress",
+                "credit_load_comparison",
+            ],
+            policy_required=False,
+        )
+    )
+
+    assert outcome.disposition == FinalDisposition.ABSTAIN
+    assert outcome.reason_codes == [ReasonCode.CAPABILITY_UNSUPPORTED]
+
+
+def test_incomplete_semantic_evidence_plan_is_a_closed_abstention_reason():
+    outcome = derive_outcome(
+        _result(
+            semantic_plan_decision="execute",
+            semantic_outcome_coverage_refused=True,
+            policy_required=False,
+        )
+    )
+
+    assert outcome.disposition == FinalDisposition.ABSTAIN
+    assert outcome.reason_codes == [ReasonCode.SEMANTIC_PLAN_INCOMPLETE]
+
+
 def test_a_cited_background_rule_is_still_not_a_governing_one():
     """The two guards must not lean on each other.
 

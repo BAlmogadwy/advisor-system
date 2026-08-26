@@ -55,6 +55,7 @@ from .db_admin_views import (
     elective_mapping_set_view,
     elective_placeholders_view,
 )
+from .dev_student_advisor_lab_views import dev_student_advisor_v21_lab_view
 from .exam_views import (
     exam_timetable_build_view,
     exam_timetable_delete_view,
@@ -259,6 +260,11 @@ urlpatterns = [
     path("student/login/", student_login_view, name="student_login"),
     path("student/login/resend/", student_otp_resend_view, name="student_otp_resend"),
     path("student/login/verify/", student_otp_verify_view, name="student_otp_verify"),
+    path(
+        "ops/dev/student-advisor-v21/",
+        dev_student_advisor_v21_lab_view,
+        name="dev_student_advisor_v21_lab",
+    ),
     path(
         "student/",
         login_required(student_home_view, login_url="student_login"),

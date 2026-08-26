@@ -20,8 +20,17 @@ from collections.abc import Iterable, Mapping
 from typing import Any
 
 from core.services.answer_consistency import ALL_CHECKS
+from core.services.student_advisor_v21_plan import (
+    EXPLICIT_CONSTRAINT_FIELD_PATHS,
+    ClarificationKind,
+    StudentRequestOutcome,
+    TurnPlanDecision,
+)
 
-EVIDENCE_AUDIT_SCHEMA_VERSION = "1"
+# The new constraint fields live inside the optional V2.1 plan_contract block.
+# They change the persisted envelope contract, so this revision intentionally
+# advances while legacy V2 records continue to omit the optional block.
+EVIDENCE_AUDIT_SCHEMA_VERSION = "2"
 STUDENT_V2_PROMPT_VERSION = "student-v2-evidence-boundary-v1"
 
 # This is deliberately a closed list rather than a syntactic check.  A value such
@@ -50,6 +59,9 @@ AUDITABLE_TOOL_NAMES = frozenset(
         # indistinguishable from a turn that called no tool at all.
         "build_my_timetable",
         "course_eligibility",
+        "recommend_feasible_course_addition",
+        "rank_current_course_drop_impact",
+        "improve_current_timetable",
     }
 )
 
@@ -58,6 +70,88 @@ VALIDATION_OUTCOMES = frozenset(
 )
 _SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 _VERSION_TOKEN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/-]*\Z")
+_SEMANTIC_DECISIONS = frozenset(decision.value for decision in TurnPlanDecision)
+_SEMANTIC_CLARIFICATION_KINDS = frozenset(kind.value for kind in ClarificationKind)
+_SEMANTIC_OUTCOMES = frozenset(outcome.value for outcome in StudentRequestOutcome)
+_SEMANTIC_COVERAGE_REASONS = frozenset(
+    {
+        "",
+        "outcomes_missing",
+        "duplicate_outcomes",
+        "capability_not_advertised",
+        "direct_outcome_mismatch",
+        "unsupported_outcome_mismatch",
+        "clarify_outcome_mismatch",
+        "requested_outcome_uncovered",
+        "requested_entity_uncovered",
+        "invalid_control_combination",
+        "unnecessary_capability",
+        "evidence_missing",
+        "constraint_coverage_failed",
+        "semantic_policy_failed",
+    }
+)
+_SEMANTIC_PLAN_FAILURE_REASONS = frozenset(
+    {
+        "plan_validation_failed",
+        "argument_provenance_failed",
+        "outcome_coverage_failed",
+        "constraint_coverage_failed",
+        "semantic_policy_failed",
+    }
+)
+
+
+def _closed_constraint_field_paths(values: Any) -> list[str]:
+    """Keep only reviewed schema paths; never an argument value or error prose."""
+
+    if not isinstance(values, list | tuple):
+        return []
+    return list(
+        dict.fromkeys(
+            str(value)
+            for value in values
+            if isinstance(value, str) and value in EXPLICIT_CONSTRAINT_FIELD_PATHS
+        )
+    )
+
+
+def _semantic_plan_summary(
+    *,
+    decision: Any,
+    clarification_kind: Any,
+    requested_outcomes: Any,
+    coverage_valid: Any,
+    coverage_reason: Any,
+) -> dict[str, Any]:
+    typed_decision = str(decision or "")
+    if typed_decision not in _SEMANTIC_DECISIONS:
+        return {}
+    typed_clarification_kind = str(clarification_kind or "none")
+    if typed_clarification_kind not in _SEMANTIC_CLARIFICATION_KINDS:
+        return {}
+    if (typed_decision == "clarify") != (typed_clarification_kind != "none"):
+        return {}
+    typed_outcomes: list[str] = []
+    if isinstance(requested_outcomes, list | tuple):
+        for raw in requested_outcomes:
+            outcome = str(raw or "")
+            if outcome in _SEMANTIC_OUTCOMES and outcome not in typed_outcomes:
+                typed_outcomes.append(outcome)
+    if not typed_outcomes:
+        return {}
+    reason = str(coverage_reason or "")
+    if reason not in _SEMANTIC_COVERAGE_REASONS:
+        reason = ""
+    return {
+        "decision": typed_decision,
+        "clarification_kind": typed_clarification_kind,
+        "requested_outcomes": typed_outcomes,
+        "coverage": {
+            "valid": coverage_valid is True,
+            "reason": reason,
+        },
+    }
 
 
 def canonical_evidence_json(value: Any) -> str:
@@ -143,6 +237,14 @@ def build_evidence_audit(
     prompt_tokens: int = 0,
     completion_tokens: int = 0,
     turn_ms: int = 0,
+    semantic_plan_decision: str = "",
+    semantic_plan_clarification_kind: str = "none",
+    semantic_plan_requested_outcomes: Iterable[str] = (),
+    semantic_outcome_coverage_valid: bool | None = None,
+    semantic_outcome_coverage_reason: str = "",
+    semantic_plan_failure_reason: str = "",
+    semantic_plan_repair_attempted: bool = False,
+    semantic_plan_missing_constraint_paths: Iterable[str] = (),
 ) -> dict[str, Any]:
     """Build the transient audit shape from the exact payloads the provider saw."""
 
@@ -163,7 +265,7 @@ def build_evidence_audit(
     initial = _closed_categories(violations)
     final = _closed_categories(violations_after_repair)
     attempted = bool(repair_attempted)
-    return {
+    audit = {
         "schema_version": EVIDENCE_AUDIT_SCHEMA_VERSION,
         "tool_names": tool_names,
         "evidence_hashes": hashes,
@@ -195,6 +297,35 @@ def build_evidence_audit(
             "turn_ms": _count(turn_ms),
         },
     }
+    semantic_plan = _semantic_plan_summary(
+        decision=semantic_plan_decision,
+        clarification_kind=semantic_plan_clarification_kind,
+        requested_outcomes=tuple(semantic_plan_requested_outcomes),
+        coverage_valid=semantic_outcome_coverage_valid,
+        coverage_reason=semantic_outcome_coverage_reason,
+    )
+    if semantic_plan:
+        audit["semantic_plan"] = semantic_plan
+    plan_failure = str(semantic_plan_failure_reason or "")
+    plan_repair_attempted = bool(semantic_plan_repair_attempted)
+    missing_constraint_paths = _closed_constraint_field_paths(
+        tuple(semantic_plan_missing_constraint_paths)
+    )
+    if plan_failure in _SEMANTIC_PLAN_FAILURE_REASONS or plan_repair_attempted:
+        audit["plan_contract"] = {
+            "failure_reason": (
+                plan_failure if plan_failure in _SEMANTIC_PLAN_FAILURE_REASONS else ""
+            ),
+            "repair": {
+                "attempted": plan_repair_attempted,
+                "result": (
+                    "failed" if plan_failure in _SEMANTIC_PLAN_FAILURE_REASONS else "succeeded"
+                ),
+            },
+        }
+        if missing_constraint_paths:
+            audit["plan_contract"]["missing_field_paths"] = missing_constraint_paths
+    return audit
 
 
 def _count(value: Any) -> int:
@@ -247,7 +378,7 @@ def normalise_evidence_audit(value: Any) -> dict[str, Any]:
         and bool(_closed_categories(raw_validation.get("violations"))),
     )
 
-    return {
+    cleaned = {
         "schema_version": EVIDENCE_AUDIT_SCHEMA_VERSION,
         # Derive this from the accepted hashes rather than trusting a second list
         # that could disagree with them.
@@ -270,6 +401,43 @@ def normalise_evidence_audit(value: Any) -> dict[str, Any]:
             "turn_ms": _count(raw_cost.get("turn_ms")),
         },
     }
+    raw_semantic = value.get("semantic_plan")
+    if isinstance(raw_semantic, Mapping):
+        raw_coverage = raw_semantic.get("coverage")
+        raw_coverage = raw_coverage if isinstance(raw_coverage, Mapping) else {}
+        semantic_plan = _semantic_plan_summary(
+            decision=raw_semantic.get("decision"),
+            clarification_kind=raw_semantic.get("clarification_kind"),
+            requested_outcomes=raw_semantic.get("requested_outcomes"),
+            coverage_valid=raw_coverage.get("valid"),
+            coverage_reason=raw_coverage.get("reason"),
+        )
+        if semantic_plan:
+            cleaned["semantic_plan"] = semantic_plan
+    raw_plan_contract = value.get("plan_contract")
+    if isinstance(raw_plan_contract, Mapping):
+        raw_failure = str(raw_plan_contract.get("failure_reason") or "")
+        raw_plan_repair = raw_plan_contract.get("repair")
+        raw_plan_repair = raw_plan_repair if isinstance(raw_plan_repair, Mapping) else {}
+        plan_repair_attempted = raw_plan_repair.get("attempted") is True
+        if raw_failure in _SEMANTIC_PLAN_FAILURE_REASONS or plan_repair_attempted:
+            cleaned["plan_contract"] = {
+                "failure_reason": (
+                    raw_failure if raw_failure in _SEMANTIC_PLAN_FAILURE_REASONS else ""
+                ),
+                "repair": {
+                    "attempted": plan_repair_attempted,
+                    "result": (
+                        "failed" if raw_failure in _SEMANTIC_PLAN_FAILURE_REASONS else "succeeded"
+                    ),
+                },
+            }
+            missing_constraint_paths = _closed_constraint_field_paths(
+                raw_plan_contract.get("missing_field_paths")
+            )
+            if missing_constraint_paths:
+                cleaned["plan_contract"]["missing_field_paths"] = missing_constraint_paths
+    return cleaned
 
 
 def normalise_prompt_version(value: Any) -> str:

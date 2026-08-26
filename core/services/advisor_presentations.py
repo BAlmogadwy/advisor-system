@@ -248,7 +248,7 @@ def _normalise_graduation_presentation(payload: dict[str, Any]) -> dict[str, Any
         # relabelling an older card as a recommendation.
         baseline_kind = "registered_timetable"
 
-    return {
+    presentation = {
         "kind": KIND_GRADUATION,
         "program": _text(payload.get("program"), 32),
         "planning_term": _text(payload.get("planning_term"), 24),
@@ -284,6 +284,11 @@ def _normalise_graduation_presentation(payload: dict[str, Any]) -> dict[str, Any
         # Server-owned boundary: this is never an actionable or saved plan.
         "read_only": True,
     }
+    if "noncompletion_current_courses" in payload:
+        presentation["noncompletion_current_courses"] = _course_rows(
+            payload.get("noncompletion_current_courses")
+        )
+    return presentation
 
 
 def normalise_presentation(payload: Any) -> dict[str, Any]:
@@ -356,6 +361,18 @@ def normalise_presentation(payload: Any) -> dict[str, Any]:
         for row in _items(payload.get("constraint_failures"), _MAX_COURSES)
         if isinstance(row, dict)
     ]
+    target_credits = _optional_number(payload.get("target_credits"))
+    if target_credits is not None and target_credits <= 0:
+        target_credits = None
+    target_credit_status = _text(payload.get("target_credit_status"), 48).upper()
+    if target_credit_status not in {
+        "NOT_REQUESTED",
+        "SATISFIED",
+        "TARGET_EXCEEDS_EFFECTIVE_MAX",
+        "RETAINED_BASELINE_EXCEEDS_TARGET",
+        "NO_EXACT_ALTERNATIVE",
+    }:
+        target_credit_status = "NOT_REQUESTED" if target_credits is None else "NO_EXACT_ALTERNATIVE"
 
     replacement: dict[str, Any] = {}
     raw_replacement = payload.get("replacement")
@@ -438,6 +455,26 @@ def normalise_presentation(payload: Any) -> dict[str, Any]:
             }
         )
 
+    target_projection_mismatch = False
+    if target_credits is not None:
+        exact_alternatives = [
+            row for row in alternatives if _number(row.get("total_credit_hours")) == target_credits
+        ]
+        target_projection_mismatch = len(exact_alternatives) != len(alternatives)
+        alternatives = exact_alternatives
+        if target_projection_mismatch:
+            target_credit_status = "NO_EXACT_ALTERNATIVE"
+            constraint_failures.append(
+                {
+                    "course_code": "",
+                    "section_label": "",
+                    "reason": (
+                        "A timetable whose total differed from the exact credit target "
+                        "was withheld from the presentation."
+                    ),
+                }
+            )
+
     # The solver returns the student's baseline in from-scratch mode for
     # comparison and provenance. Those sections are not fixed or retained, so
     # presenting them under "Current retained sections" is materially false.
@@ -452,8 +489,31 @@ def normalise_presentation(payload: Any) -> dict[str, Any]:
         and not must_take_courses
         and not pinned_sections
         and not constraint_failures
+        and target_credits is None
     ):
         return {}
+    baseline_target_satisfied = (
+        target_credits is not None
+        and payload.get("no_additional_courses") is True
+        and _number(payload.get("baseline_credit_hours")) == target_credits
+    )
+    target_credits_satisfied = (
+        target_credits is not None
+        and not target_projection_mismatch
+        and payload.get("target_credits_satisfied") is True
+        and (bool(alternatives) or baseline_target_satisfied)
+    )
+    if target_credits is not None and not target_credits_satisfied:
+        target_credit_status = (
+            target_credit_status
+            if target_credit_status
+            in {
+                "TARGET_EXCEEDS_EFFECTIVE_MAX",
+                "RETAINED_BASELINE_EXCEEDS_TARGET",
+                "NO_EXACT_ALTERNATIVE",
+            }
+            else "NO_EXACT_ALTERNATIVE"
+        )
     presentation = {
         "kind": KIND_TIMETABLE,
         "planning_term": _text(payload.get("planning_term"), 24),
@@ -463,13 +523,20 @@ def normalise_presentation(payload: Any) -> dict[str, Any]:
         "current_credit_hours": _number(payload.get("current_credit_hours")),
         "expected_plan_credit_hours": _number(payload.get("expected_plan_credit_hours")),
         "credit_ceiling": _number(payload.get("credit_ceiling")),
+        "target_credits": target_credits,
+        "target_credits_satisfied": target_credits_satisfied,
+        "target_credit_status": target_credit_status,
         "baseline_sections": baseline_sections,
         "current_sections": current_sections,
         "expected_plan_sections": expected_plan_sections,
         "alternatives": alternatives,
         "must_take_courses": must_take_courses,
         "pinned_sections": pinned_sections,
-        "constraints_satisfied": payload.get("constraints_satisfied") is True,
+        "constraints_satisfied": (
+            payload.get("constraints_satisfied") is True
+            and not target_projection_mismatch
+            and (target_credits is None or target_credits_satisfied)
+        ),
         "constraint_failures": constraint_failures,
         "no_additional_courses": payload.get("no_additional_courses") is True,
         # Server-owned constants, never copied from a model or client.
@@ -500,6 +567,9 @@ def timetable_presentation_from_tool_results(
                 "current_credit_hours": result.get("current_credit_hours"),
                 "expected_plan_credit_hours": result.get("expected_plan_credit_hours"),
                 "credit_ceiling": result.get("credit_ceiling"),
+                "target_credits": result.get("target_credits"),
+                "target_credits_satisfied": result.get("target_credits_satisfied"),
+                "target_credit_status": result.get("target_credit_status"),
                 "baseline_sections": result.get("baseline_sections"),
                 "current_sections": result.get("current_sections"),
                 "expected_plan_sections": result.get("expected_plan_sections"),
@@ -780,37 +850,40 @@ def graduation_presentation_from_tool_results(
 
         removed = what_if.get("removed_current_courses") if isinstance(what_if, dict) else []
         added = what_if.get("added_current_courses") if isinstance(what_if, dict) else []
-        return normalise_presentation(
-            {
-                "kind": KIND_GRADUATION,
-                "program": result.get("program"),
-                "planning_term": planning_term,
-                "planning_baseline_kind": baseline_kind,
-                "planning_baseline_credits": result.get(
-                    "planning_baseline_credits",
-                    result.get("registered_credits_at_planning_baseline"),
-                ),
-                "simulation_completed": result.get("simulation_completed"),
-                "estimated_terms_including_planning_baseline": result.get(
-                    "estimated_terms_including_planning_baseline",
-                    result.get("estimated_terms_including_current"),
-                ),
-                "lower_bound_terms_including_planning_baseline": result.get(
-                    "lower_bound_terms_including_planning_baseline",
-                    result.get("lower_bound_terms_including_current"),
-                ),
-                "max_credits_per_term": result.get("max_credits_per_term"),
-                "graph": {
-                    "items": edges,
-                    "termOf": term_of,
-                    "nameOf": name_of,
-                    "statusOf": status_of,
-                    "extraNodes": sorted(visible),
-                },
-                "band_labels": band_labels,
-                "unresolved_requirements": result.get("unresolved_requirements"),
-                "removed_current_courses": removed,
-                "added_current_courses": added,
-            }
-        )
+        presentation_payload = {
+            "kind": KIND_GRADUATION,
+            "program": result.get("program"),
+            "planning_term": planning_term,
+            "planning_baseline_kind": baseline_kind,
+            "planning_baseline_credits": result.get(
+                "planning_baseline_credits",
+                result.get("registered_credits_at_planning_baseline"),
+            ),
+            "simulation_completed": result.get("simulation_completed"),
+            "estimated_terms_including_planning_baseline": result.get(
+                "estimated_terms_including_planning_baseline",
+                result.get("estimated_terms_including_current"),
+            ),
+            "lower_bound_terms_including_planning_baseline": result.get(
+                "lower_bound_terms_including_planning_baseline",
+                result.get("lower_bound_terms_including_current"),
+            ),
+            "max_credits_per_term": result.get("max_credits_per_term"),
+            "graph": {
+                "items": edges,
+                "termOf": term_of,
+                "nameOf": name_of,
+                "statusOf": status_of,
+                "extraNodes": sorted(visible),
+            },
+            "band_labels": band_labels,
+            "unresolved_requirements": result.get("unresolved_requirements"),
+            "removed_current_courses": removed,
+            "added_current_courses": added,
+        }
+        if isinstance(what_if, dict) and "noncompletion_current_courses" in what_if:
+            presentation_payload["noncompletion_current_courses"] = what_if.get(
+                "noncompletion_current_courses"
+            )
+        return normalise_presentation(presentation_payload)
     return {}

@@ -23,6 +23,7 @@ from core.services.credit_policy import (
     RECOMMENDED_MAX_CREDITS,
     REGULATORY_MAX_CREDITS,
 )
+from core.services.eligibility import evaluate_prerequisites
 from core.services.planner_builder import build_plans
 from core.services.policy import require_student_scope
 from core.services.rbac import ROLE_ADVISOR, ROLE_GENERAL_ADVISOR, ROLE_SUPER_ADMIN, get_user_role
@@ -180,6 +181,11 @@ def _planner_context_inner(
             "advisor_id",
             "gpa",
             "total_registered_credits",
+            # Needed by the hour-gate half of the prerequisite check below.
+            # Taken from THIS query rather than a second lookup: the students
+            # table was being hit eight times per request for one student.
+            "total_earned_credits",
+            "current_registered_credits",
         )
         .first()
     )
@@ -202,6 +208,8 @@ def _planner_context_inner(
         "regulatory_max_credits": REGULATORY_MAX_CREDITS,
     }
     program = str(student_summary["program"] or "").strip()
+    _earned_credits = student["total_earned_credits"] or 0
+    _registered_credits = student["current_registered_credits"] or 0
     gender = student_gender(student_id_int)
 
     baseline = get_student_term_baseline(student_id, year, term, snapshot=Snapshot.EFFECTIVE)
@@ -298,9 +306,21 @@ def _planner_context_inner(
         else:
             info = (code, "", pr_credit_map.get(code_n, 0))
 
+        # THE shared prerequisite check — not an inline diff. A raw comparison
+        # against passed/studying treats the curriculum's "90(HOURS)" gate as a
+        # course code that can never match, which marked every capstone Blocked
+        # and disabled its Add button for 68 live students who had all met the
+        # gate. evaluate_prerequisites splits the gate out and answers both.
         prereqs = _all_prereqs.get(code_n, []) if program else []
-        missing = [p for p in prereqs if p not in passed and p not in studying]
-        status = "Eligible" if not missing else "Blocked"
+        outcome = evaluate_prerequisites(
+            prereqs,
+            passed,
+            studying,
+            earned_credits=_earned_credits,
+            registered_credits=_registered_credits,
+        )
+        missing = outcome.missing
+        status = "Eligible" if outcome.met else "Blocked"
         recommendations.append(
             {
                 "course_code": info[0] or code,
@@ -457,6 +477,21 @@ def planner_sections_catalog_view(request: HttpRequest) -> JsonResponse:
     term_err = _validate_term_inputs(year, term)
     if term_err:
         return term_err
+
+    # Naming a student here reveals that student's programme and cohort, so the
+    # caller must be allowed to see them — exactly as planner_context_view,
+    # planner_save_student_sections_view and planner_build_view already require.
+    # This endpoint was the one sibling that never asked, which let a scoped
+    # adviser probe another adviser's student. The no-student path is staff
+    # browsing the shared catalogue and stays scope-free by design.
+    if student_id:
+        scope_sid, scope_sid_err = _parse_student_id(student_id)
+        if scope_sid_err:
+            return scope_sid_err
+        if scope_sid is not None:
+            scope_err = require_student_scope(request, scope_sid)
+            if scope_err:
+                return scope_err
 
     try:
         ts_qs = TermSection.objects.filter(scenario__isnull=True)

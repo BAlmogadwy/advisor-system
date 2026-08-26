@@ -174,6 +174,8 @@ def _academic_pairs(
     cap: int,
     remove_code: str,
     add_code: str,
+    exact_result_credits: int | None,
+    max_result_credits: int | None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any], list[str]]:
     """Return proven pairs, academic rejections, metadata and extra limitations."""
     rejections: list[dict[str, Any]] = []
@@ -210,6 +212,8 @@ def _academic_pairs(
             search_better_replacements=True,
             max_credits_per_term=cap,
             max_replacement_results=MAX_ACADEMIC_RESULTS_TO_CERTIFY,
+            exact_result_credits=exact_result_credits,
+            max_result_credits=max_result_credits,
         )
         what_if = search.get("what_if") or {}
         candidate_codes = [
@@ -242,6 +246,15 @@ def _academic_pairs(
                 "academic_results_checked_for_timetable": len(
                     what_if.get("improving_replacements") or []
                 ),
+                **(
+                    {
+                        "result_credit_predicate_filtered_count": int(
+                            what_if.get("result_credit_predicate_filtered_count") or 0
+                        )
+                    }
+                    if exact_result_credits is not None or max_result_credits is not None
+                    else {}
+                ),
             },
             limitations,
         )
@@ -259,6 +272,8 @@ def _academic_pairs(
         max_replacement_results=MAX_ACADEMIC_RESULTS_TO_CERTIFY,
         replacement_remove_course=remove_code or None,
         replacement_add_course=add_code or None,
+        exact_result_credits=exact_result_credits,
+        max_result_credits=max_result_credits,
     )
     filtered_what_if = filtered.get("what_if") or {}
     academic_baseline_courses = list(
@@ -297,6 +312,15 @@ def _academic_pairs(
                 filtered_what_if.get("improving_replacements_found") or 0
             ),
             "academic_results_checked_for_timetable": len(proven),
+            **(
+                {
+                    "result_credit_predicate_filtered_count": int(
+                        filtered_what_if.get("result_credit_predicate_filtered_count") or 0
+                    )
+                }
+                if exact_result_credits is not None or max_result_credits is not None
+                else {}
+            ),
         },
         limitations,
     )
@@ -518,12 +542,30 @@ def find_feasible_course_replacements(
     remove_course: str | None = None,
     add_course: str | None = None,
     max_credits_per_term: int = DEFAULT_MAX_CREDITS_PER_TERM,
+    exact_result_credits: int | None = None,
+    max_result_credits: int | None = None,
 ) -> dict[str, Any]:
-    """Return only academically improved swaps with a complete timetable proof."""
+    """Return academically improved swaps with a complete timetable proof.
+
+    Optional result-credit predicates apply in both the academic search and the
+    timetable certification pass before their respective result limits.
+    """
     sid = int(student_id)
     year = int(academic_year)
     term_number = int(term)
     cap = max(1, int(max_credits_per_term))
+    exact_credits = int(exact_result_credits) if exact_result_credits is not None else None
+    maximum_credits = int(max_result_credits) if max_result_credits is not None else None
+    if exact_credits is not None and exact_credits < 0:
+        raise ValueError("exact_result_credits must be zero or greater.")
+    if maximum_credits is not None and maximum_credits < 0:
+        raise ValueError("max_result_credits must be zero or greater.")
+    if (
+        exact_credits is not None
+        and maximum_credits is not None
+        and exact_credits > maximum_credits
+    ):
+        raise ValueError("exact_result_credits cannot exceed max_result_credits.")
     requested_remove = normalize_code(remove_course or "")
     requested_add = normalize_code(add_course or "")
     raw_baseline = [
@@ -571,9 +613,14 @@ def find_feasible_course_replacements(
         cap=cap,
         remove_code=requested_remove,
         add_code=requested_add,
+        exact_result_credits=exact_credits,
+        max_result_credits=maximum_credits,
     )
     certified: list[dict[str, Any]] = []
     timetable_candidates_checked = 0
+    result_credit_predicate_filtered_count = int(
+        search_meta.get("result_credit_predicate_filtered_count") or 0
+    )
     for pair in pairs:
         timetable_candidates_checked += 1
         removed = _public_course(pair.get("remove_course"))
@@ -719,6 +766,20 @@ def find_feasible_course_replacements(
             )
             continue
 
+        if exact_credits is not None or maximum_credits is not None:
+            public_options = [
+                option
+                for option in public_options
+                if (exact_credits is None or option["credit_hours"] == exact_credits)
+                and (maximum_credits is None or option["credit_hours"] <= maximum_credits)
+            ]
+            if not public_options:
+                # This pair is still academically useful and timetable-feasible,
+                # but it does not satisfy the caller's result-load contract. It
+                # must not consume one of the bounded certified-result slots.
+                result_credit_predicate_filtered_count += 1
+                continue
+
         certified.append(
             {
                 "remove_course": removed,
@@ -742,6 +803,15 @@ def find_feasible_course_replacements(
     # of a returned option is therefore always a bounded negative, never proof
     # that no timetable exists outside the checked search space.
     status = "CERTIFIED_SWAPS_FOUND" if certified else "NOT_DETERMINABLE"
+    result_credit_search: dict[str, Any] = {}
+    if exact_credits is not None or maximum_credits is not None:
+        result_credit_search = {
+            "result_credit_predicate": {
+                "exact_credit_hours": exact_credits,
+                "maximum_credit_hours": maximum_credits,
+            },
+            "result_credit_predicate_filtered_count": (result_credit_predicate_filtered_count),
+        }
     return {
         **base,
         "status": status,
@@ -751,6 +821,7 @@ def find_feasible_course_replacements(
             "timetable_candidates_checked": timetable_candidates_checked,
             "certified_result_limit": MAX_CERTIFIED_REPLACEMENTS,
             "search_truncated": certification_truncated,
+            **result_credit_search,
         },
         "certified_replacements": certified,
         "rejected_replacements": rejected[:MAX_REJECTED_DETAILS],

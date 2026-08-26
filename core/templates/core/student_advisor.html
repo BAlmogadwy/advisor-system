@@ -17,6 +17,25 @@
 {% endblock %}
 
 {% block content %}
+{% if advisor_lab %}
+<section class="advisor-block mb-3" id="saV21LabBanner" aria-labelledby="saV21LabTitle">
+  <div class="d-flex flex-wrap align-items-center gap-2">
+    <h2 class="h5 mb-0" id="saV21LabTitle">V2.1 local test lab</h2>
+    <span class="ph-chip {% if advisor_lab.v21_enabled %}ph-chip-status{% else %}ph-chip-warn{% endif %}">V2.1 {% if advisor_lab.v21_enabled %}enabled{% else %}disabled{% endif %}</span>
+    <span class="ph-chip ph-chip-context">{{ advisor_lab.llm_backend }}</span>
+  </div>
+  {% if not advisor_lab.v2_enabled or not advisor_lab.v21_enabled %}
+    <p class="text-danger mt-2 mb-0" role="alert">This process is not running V2.1. Enable both V2 and V2.1, then restart it before testing.</p>
+  {% endif %}
+  <p class="text-secondary mt-2 mb-2">These prompts target semantic paraphrases, negation, ambiguity, and false-positive resistance. They use the same composer and API as every student question.</p>
+  <div class="d-flex flex-wrap gap-2" aria-label="V2.1 test prompts">
+    <button type="button" class="btn btn-sm btn-outline-secondary" data-sa-example="على وضعي الأكاديمي، كم ترم تقريبًا باقي لي لين أخلص الخطة؟">Arabic paraphrase</button>
+    <button type="button" class="btn btn-sm btn-outline-secondary" data-sa-example="Do not use a 12-credit maximum; build around my current schedule with at most 18 credits. AI331 is not mandatory.">Negation and constraints</button>
+    <button type="button" class="btn btn-sm btn-outline-secondary" data-sa-example="Tell me about AI331 in a maximum of one sentence.">Regex false positive</button>
+    <button type="button" class="btn btn-sm btn-outline-secondary" data-sa-example="Why is that course locked?">Ambiguous follow-up</button>
+  </div>
+</section>
+{% endif %}
 <div class="sa-layout" id="saAdvisorLayout">
 
   <button type="button" class="sa-drawer-backdrop" id="saHistoryBackdrop"

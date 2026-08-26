@@ -26,7 +26,8 @@ from core.models import (
     StudentTermSection,
     TermSection,
 )
-from core.services.answer_consistency import check_answer
+from core.services.advisor_presentations import graduation_presentation_from_tool_results
+from core.services.answer_consistency import UNSUPPORTED_ACADEMIC_FACT, check_answer
 from core.services.rbac import ROLE_STUDENT
 from core.services.student_advisor_v2 import _safe_graduation_answer
 from core.services.virtual_advisor_capabilities import get_default_registry
@@ -100,6 +101,18 @@ def _what_if_payload(kind: str | None = "registered_timetable") -> dict:
     )
 
 
+def _noncompletion_payload() -> dict:
+    return get_default_registry().execute(
+        "graduation_progress",
+        {
+            "planning_baseline_kind": "registered_timetable",
+            "noncompletion_current_courses": ["TG102"],
+        },
+        scope={"role": ROLE_STUDENT, "student_id": SID},
+        ctx={"academic_year": YEAR, "term": TERM},
+    )
+
+
 def _check(answer: str, payload: dict) -> list[str]:
     return check_answer(
         answer,
@@ -115,6 +128,115 @@ def test_identical_baselines_attach_no_alternate(chained_plan: None) -> None:
     would restate the first - the executor attaches nothing."""
     payload = _what_if_payload()
     assert payload.get("what_if_alternate_baseline") is None
+
+
+def test_noncompletion_is_typed_rendered_and_checked_without_drop_wording(
+    chained_plan: None,
+) -> None:
+    payload = _noncompletion_payload()
+    what_if = payload["what_if"]
+
+    assert payload["ok"] is True
+    assert what_if["valid"] is True
+    assert what_if["scenario_semantics"] == "REGISTERED_COURSE_NONCOMPLETION"
+    assert what_if["removed_current_courses"] == []
+    assert [row["code"] for row in what_if["noncompletion_current_courses"]] == ["TG102"]
+    assert payload.get("what_if_alternate_baseline") is None
+
+    answer = _safe_graduation_answer("Arabic", [payload], "")
+    assert "عدم اجتياز TG102 في هذا السيناريو" in answer
+    assert "حذف TG102" not in answer
+    assert "لا يثبت رسوبًا فعليًا أو درجة أو قاعدة إعادة" in answer
+    assert (
+        check_answer(
+            answer,
+            tool_results=[payload],
+            question="إذا رسبت في TG102 وش المواد اللي بتتأثر؟",
+            required_tools={"graduation_progress"},
+            known_course_codes=_CATALOGUE,
+        )
+        == []
+    )
+
+    presentation = graduation_presentation_from_tool_results([payload])
+    assert presentation["removed_current_courses"] == []
+    assert [row["code"] for row in presentation["noncompletion_current_courses"]] == ["TG102"]
+    assert (
+        check_answer(
+            "The verified graduation scenario is displayed in the card.",
+            tool_results=[payload],
+            question="If I fail TG102, what changes?",
+            required_tools={"graduation_progress"},
+            presentation=presentation,
+            known_course_codes=_CATALOGUE,
+        )
+        == []
+    )
+
+
+@pytest.mark.parametrize(
+    "answer",
+    (
+        "حذف TG102 يؤخر التخرج.",
+        "Removing TG102 delays estimated graduation by 2 terms.",
+        "The scenario removes TG102 from the current term.",
+        "TG102 was removed from the planning baseline.",
+        "The removal of TG102 delays graduation.",
+        "You actually failed TG102, so graduation is later.",
+    ),
+)
+def test_noncompletion_checker_rejects_removal_or_actual_failure_claims(
+    chained_plan: None,
+    answer: str,
+) -> None:
+    violations = check_answer(
+        answer,
+        tool_results=[_noncompletion_payload()],
+        question="إذا رسبت في TG102 وش المواد اللي بتتأثر؟",
+        required_tools={"graduation_progress"},
+        known_course_codes=_CATALOGUE,
+    )
+
+    assert UNSUPPORTED_ACADEMIC_FACT in violations
+
+
+@pytest.mark.parametrize(
+    "extra_controls",
+    (
+        {"remove_current_courses": ["TG103"]},
+        {"add_current_courses": ["TG103"]},
+        {"search_better_replacements": True},
+    ),
+    ids=("remove-other", "add-other", "replacement-search"),
+)
+def test_noncompletion_executor_rejects_every_other_course_change_control(
+    chained_plan: None,
+    extra_controls: dict,
+) -> None:
+    payload = get_default_registry().execute(
+        "graduation_progress",
+        {
+            "planning_baseline_kind": "registered_timetable",
+            "noncompletion_current_courses": ["TG102"],
+            **extra_controls,
+        },
+        scope={"role": ROLE_STUDENT, "student_id": SID},
+        ctx={"academic_year": YEAR, "term": TERM},
+    )
+
+    assert payload["ok"] is False
+    assert "only course-change control" in payload["error"]
+
+
+def test_noncompletion_english_renderer_never_calls_the_assumption_a_removal(
+    chained_plan: None,
+) -> None:
+    answer = _safe_graduation_answer("English", [_noncompletion_payload()], "")
+
+    assert "not completing TG102 this term" in answer
+    assert "assume TG102 is not completed this term" in answer
+    assert "remove TG102" not in answer
+    assert "actual failing grade, mark, or retake rule" in answer
 
 
 @pytest.fixture

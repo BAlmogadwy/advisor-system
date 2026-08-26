@@ -528,6 +528,7 @@ def _bitmask_build_option_b(
     strict_per_course: bool,
     consider_capacity: bool,
     max_credits: int = 0,
+    target_credits: int | None = None,
     credits_map: dict[str, int] | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     # Collect must_take codes for hard-constraint enforcement
@@ -642,15 +643,28 @@ def _bitmask_build_option_b(
 
     _cr_map = credits_map or {}
     _max_cr = max_credits if max_credits and max_credits > 0 else 0
+    _target_cr = int(target_credits) if target_credits is not None else None
+    remaining_credit_upper_bound = [0] * (len(course_options) + 1)
+    for idx in range(len(course_options) - 1, -1, -1):
+        code, _opts = course_options[idx]
+        remaining_credit_upper_bound[idx] = remaining_credit_upper_bound[idx + 1] + int(
+            _cr_map.get(code, 0) or 0
+        )
 
     def dfs(i: int, used_mask: int, chosen: list[dict[str, Any]], used_cr: int) -> None:
         nonlocal best_score, best_selected
 
+        if _target_cr is not None and (
+            used_cr > _target_cr or used_cr + remaining_credit_upper_bound[i] < _target_cr
+        ):
+            return
         remaining = len(course_options) - i
         if best_score is not None and len(chosen) + remaining < best_score[0]:
             return
 
         if i >= len(course_options):
+            if _target_cr is not None and used_cr != _target_cr:
+                return
             cur = score_of(chosen, used_mask)
             if (
                 best_score is None
@@ -670,7 +684,9 @@ def _bitmask_build_option_b(
             dfs(i + 1, used_mask, chosen, used_cr)
 
         # credit-cap check: skip if adding this course would exceed the cap
-        if _max_cr and (used_cr + course_cr) > _max_cr:
+        if (_max_cr and (used_cr + course_cr) > _max_cr) or (
+            _target_cr is not None and (used_cr + course_cr) > _target_cr
+        ):
             return
 
         for opt in opts:
@@ -716,6 +732,7 @@ def _bitmask_build_option_c(
     keep_registered: bool,
     strict_per_course: bool,
     max_credits: int = 0,
+    target_credits: int | None = None,
     credits_map: dict[str, int] | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     # Collect must_take codes for hard-constraint enforcement
@@ -843,15 +860,28 @@ def _bitmask_build_option_c(
 
     _cr_map = credits_map or {}
     _max_cr = max_credits if max_credits and max_credits > 0 else 0
+    _target_cr = int(target_credits) if target_credits is not None else None
+    remaining_credit_upper_bound = [0] * (len(course_options) + 1)
+    for idx in range(len(course_options) - 1, -1, -1):
+        code, _opts = course_options[idx]
+        remaining_credit_upper_bound[idx] = remaining_credit_upper_bound[idx + 1] + int(
+            _cr_map.get(code, 0) or 0
+        )
 
     def dfs(i: int, cur_days: list[int], chosen: list[dict[str, Any]], used_cr: int) -> None:
         nonlocal best_key, best_selected
 
+        if _target_cr is not None and (
+            used_cr > _target_cr or used_cr + remaining_credit_upper_bound[i] < _target_cr
+        ):
+            return
         remaining = len(course_options) - i
         if best_key is not None and len(chosen) + remaining < best_key[0]:
             return
 
         if i >= len(course_options):
+            if _target_cr is not None and used_cr != _target_cr:
+                return
             key = score_key(chosen)
             if best_key is None or key > best_key or (key == best_key and random.random() < 0.5):
                 best_key = key
@@ -867,7 +897,9 @@ def _bitmask_build_option_c(
             dfs(i + 1, cur_days, chosen, used_cr)
 
         # credit-cap check: skip if adding this course would exceed the cap
-        if _max_cr and (used_cr + course_cr) > _max_cr:
+        if (_max_cr and (used_cr + course_cr) > _max_cr) or (
+            _target_cr is not None and (used_cr + course_cr) > _target_cr
+        ):
             return
 
         for opt in opts:
@@ -919,9 +951,25 @@ def _cp_build_option(
     strict_per_course: bool,
     consider_capacity: bool,
     max_credits: int = 0,
+    target_credits: int | None = None,
     credits_map: dict[str, int] | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     if cp_model is None:
+        if target_credits is not None:
+            # The greedy compatibility fallback cannot prove an exact credit
+            # total.  Reuse the bounded DFS solver so exact requests remain
+            # fail-closed even when OR-Tools is unavailable.
+            return _bitmask_build_option_b(
+                shortlist,
+                catalog,
+                baseline,
+                keep_registered,
+                strict_per_course=strict_per_course,
+                consider_capacity=consider_capacity,
+                max_credits=max_credits,
+                target_credits=target_credits,
+                credits_map=credits_map,
+            )
         return _choose(shortlist, catalog, baseline, keep_registered, strategy=profile)
 
     # Collect must_take codes for hard-constraint enforcement
@@ -1039,19 +1087,32 @@ def _cp_build_option(
         if a in var_by_sid and b in var_by_sid:
             model.Add(var_by_sid[a] + var_by_sid[b] <= 1)
 
-    # Credit-cap constraint: total scheduled credits ≤ max_credits
+    # Credit controls are intentionally distinct: max_credits is a ceiling,
+    # while target_credits is an exact total for the scheduled course set.
     _cr_map = credits_map or {}
     _max_cr = max_credits if max_credits and max_credits > 0 else 0
-    if _max_cr:
-        credit_terms = []
-        for code, sids in course_to_sids.items():
-            cr = _cr_map.get(code, 0)
-            if cr > 0:
-                for sid in sids:
-                    if sid in var_by_sid:
-                        credit_terms.append(cr * var_by_sid[sid])
+    _target_cr = int(target_credits) if target_credits is not None else None
+    credit_terms = []
+    for code, sids in course_to_sids.items():
+        cr = _cr_map.get(code, 0)
+        if cr > 0:
+            for sid in sids:
+                if sid in var_by_sid:
+                    credit_terms.append(cr * var_by_sid[sid])
+    if _target_cr is not None:
         if credit_terms:
-            model.Add(sum(credit_terms) <= _max_cr)
+            model.Add(sum(credit_terms) == _target_cr)
+        elif _target_cr != 0:
+            return [], [
+                *unscheduled,
+                {
+                    "course_code": "",
+                    "reason": "No exact-credit timetable can be formed from the bounded candidate set",
+                    "details": [],
+                },
+            ]
+    if _max_cr and credit_terms:
+        model.Add(sum(credit_terms) <= _max_cr)
 
     # Soft objective terms
     selected_sum = sum(var_by_sid.values())
@@ -1268,6 +1329,7 @@ def build_plans(
     strict_per_course: bool = False,
     consider_capacity: bool = True,
     max_credits: int = 0,
+    target_credits: int | None = None,
     gender: str = "",
     program: str | None = None,
     require_complete_meetings: bool = False,
@@ -1392,6 +1454,20 @@ def build_plans(
                     }
                 )
 
+        if target_credits is not None:
+            scheduled_credits = sum(credits_map.get(code, 0) for code in selected_by_code)
+            if scheduled_credits != int(target_credits):
+                failures.append(
+                    {
+                        "kind": "target_credits",
+                        "course_code": "",
+                        "reason": (
+                            f"Generated option has {scheduled_credits} credits; "
+                            f"the exact requested total is {int(target_credits)} credits"
+                        ),
+                    }
+                )
+
         return failures
 
     def _catalog_without_sids(excluded: set[int]) -> dict[str, list[dict[str, Any]]]:
@@ -1424,6 +1500,7 @@ def build_plans(
                 strict_per_course=strict_per_course,
                 consider_capacity=consider_capacity,
                 max_credits=max_credits,
+                target_credits=target_credits,
                 credits_map=credits_map,
             )
         if method == "B":
@@ -1435,6 +1512,7 @@ def build_plans(
                 strict_per_course=strict_per_course,
                 consider_capacity=consider_capacity,
                 max_credits=max_credits,
+                target_credits=target_credits,
                 credits_map=credits_map,
             )
         return _bitmask_build_option_c(
@@ -1444,6 +1522,7 @@ def build_plans(
             keep_registered,
             strict_per_course=strict_per_course,
             max_credits=max_credits,
+            target_credits=target_credits,
             credits_map=credits_map,
         )
 

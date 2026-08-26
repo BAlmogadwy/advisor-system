@@ -7,6 +7,12 @@ not an intent-family or role router. The model decides which verified academic
 evidence it needs, calls a deliberately small read-only capability surface, and
 combines the results into one answer.
 
+The production V2 runtime is intentionally defensive, but it still contains
+question-pattern gates inherited from the first rollout. Those gates force
+evidence for several high-risk request shapes. They are safety-oriented, yet
+they also make V2 a hybrid semantic/rule-based router rather than a purely
+semantic planner.
+
 The adviser can:
 
 - explain the student's academic state and degree progress;
@@ -47,6 +53,8 @@ The next read-only slice adds `my_timetable`, `my_clash_free_sections`, and
 `build_timetable_proposal`. The last capability calls the existing deterministic
 planner engine and returns multiple section/time alternatives directly to the
 same agent loop. The legacy `build_my_timetable` tool remains excluded.
+In V2.1, `max_credits` is a ceiling, while `target_credits` requires the complete
+proposal to total exactly that many credits or returns a typed bounded negative.
 
 `course_choice_comparison` adds a deterministic two-to-four-course comparison
 inside the same agent. It evaluates every named course against one student,
@@ -151,7 +159,161 @@ are separate Planner checks.
 
 ## Rollout
 
-Set `STUDENT_ADVISOR_V2_ENABLED=true` to route durable student conversations to
-V2. The default is `false`; staff Virtual Advisor behavior is unchanged. Turning
-the flag off restores the existing student generator without changing stored
-conversation data.
+`STUDENT_ADVISOR_V2_ENABLED=true` routes durable student conversations to V2.
+The application default and the live Render blueprint are currently `true`;
+staff Virtual Advisor behavior is unchanged. Turning the flag off restores the
+legacy student generator without changing stored conversation data. The
+`.env.example` value remains conservative for a newly copied local environment.
+
+## V2.1 semantic planning candidate
+
+V2.1 replaces V2's question-side keyword and phrase routing with one typed
+evidence plan. It does not add another intent taxonomy. The planner must submit
+exactly one `submit_student_turn_plan` function call with one of four decisions
+and a non-empty, closed `requested_outcomes` list:
+
+- `execute`: a minimal list of advertised read-only evidence capabilities that
+  covers every requested outcome;
+- `clarify`: one concise question and no evidence calls;
+- `direct`: general conversation only; no academic evidence is needed;
+- `unsupported`: a request made entirely of typed capability gaps or write
+  actions, with no evidence calls.
+
+`credit_load_comparison` is a specific unsupported outcome for comparing
+graduation timing under alternative hypothetical per-term credit/course loads
+or solving for a minimum load. The current graduation simulator has a fixed
+18-credit ceiling; a normal fixed-cap forecast is never accepted as evidence for
+that different deliverable.
+
+For a mixed request such as “recommend one course and register it,” the supported
+analysis remains `execute` while `registration_action` is recorded as a second
+requested outcome. The server renders the verified recommendation and a separate
+read-only action boundary. It never pretends that registration occurred, and the
+durable turn outcome remains an abstention for the unsupported mutation half.
+The same partial-support contract applies when supported analysis is combined
+with `credit_load_comparison`: the supported capabilities still execute, the
+comparison itself receives no substitute forecast or evidence call, and the
+server appends the typed fixed-capability limitation. A request containing only
+`credit_load_comparison` remains `unsupported` with zero evidence calls.
+
+The plan is not trusted merely because the provider returned a function call.
+The server reparses the raw JSON, rejects duplicate or malformed fields, offers
+the provider a capability-discriminated `oneOf` schema for each nested evidence
+request, and validates every argument again against the exact channel- and
+privacy-projected tool schema. It executes only the reconstructed validated
+calls. At most one bounded
+server-guided regeneration is permitted across the whole planning contract: a
+nested schema failure, ungrounded argument, or incomplete/non-minimal outcome
+coverage. It receives only a closed sanitized failure category/path, never the
+rejected raw planner message. If the second plan is still invalid, the runtime
+returns a server-owned plan-contract limitation and records the failure; it does
+not expose a provider exception and does not fall through to V2's regex router.
+Every `execute` answer is then composed from
+typed, channel-projected evidence by server-owned renderers; there is no second
+free-form synthesis turn that can rename a verified course or reverse a recorded
+status. The typed plan therefore remains the sole evidence-acquisition authority.
+
+V2.1 reuses V2's authenticated principal, read-only allow-list, remote-provider
+privacy projection, Telegram projection, local capability executor, evidence
+postconditions, deterministic timetable/graduation presentations, citations,
+portal-action guard, audit envelope, and fail-closed fallbacks. Regular
+expressions remain for narrow syntax/entity validation, literal provenance
+checks, and output/security checks. They can reject a course code, section,
+level, or numeric value that is absent from trusted input. Numeric provenance is
+field-specific: a stated current load is not accepted as a maximum-credit ceiling,
+and an additional-credit value must be explicitly stated as the size of the added
+course. These checks do not assign
+constraint polarity, choose an intent, or choose an evidence capability in
+V2.1. Timetable mode, must-take/excluded courses, credit limits, graduation
+add/remove direction, and graduation evidence source remain exactly as the typed
+semantic plan submitted them. Unlike V2, V2.1 does not prefetch policy evidence:
+`policy_lookup` runs only when the typed plan requests the `policy_rule` outcome.
+The legacy policy phrase detector does not reroute a V2.1 turn.
+
+Three V2.1-only compound capabilities own conclusions that cannot be proved by
+placing adjacent fact tools beside each other:
+
+- `recommend_feasible_course_addition` joins prerequisite readiness, an exact
+  recorded-snapshot timetable fit, bounded priority evidence, and (when requested)
+  a completed graduation delta. It may retain exact student-authored section pins
+  only when they already match the recorded baseline; it never turns a pin into an
+  implicit second addition;
+- `rank_current_course_drop_impact` evaluates independent pure-drop scenarios
+  against one registered baseline and never equates an unresolved simulation with
+  “no delay”;
+- `improve_current_timetable` compares certified course replacements and/or
+  section rearrangements under a typed credit-load policy. Incompatible objective
+  and search-branch controls are rejected before execution.
+
+Every compound is read-only, bounded, privacy-projected field by field, and uses a
+server-owned deterministic renderer for both positive and negative outcomes.
+The plain `graduation_progress` capability owns `graduation_impact` only when its
+validated arguments contain an explicit add/remove scenario or bounded
+replacement search; a baseline-only call owns only `graduation_forecast`.
+Graduation-impact and replacement criteria may be satisfied directly by their
+owning add/drop/replacement/improvement compound; the planner does not have to
+invent an unrequested “primary” outcome merely to name the operation. A redundant
+sibling graduation or replacement call is rejected rather than joined in model
+prose.
+
+Rollout is independent and fail-closed:
+
+- `STUDENT_ADVISOR_V21_ENABLED=false` is the default and current live value;
+- V2.1 may be enabled only while `STUDENT_ADVISOR_V2_ENABLED=true`, which keeps
+  the rollback target explicit and is enforced by the dispatcher;
+- enabling V2.1 takes precedence over V2 for the whole student turn;
+- an invalid plan never falls through to V2's phrase router for that question;
+- rollback flips only the V2.1 flag and restores the unchanged V2 path;
+- the configured provider must support forced function calls in non-thinking
+  mode.
+
+Promotion requires the versioned semantic-plan gate under
+`evals/advisor/v21_semantic_plan_cases.yaml`, the complete V2 regression suite,
+privacy/boundary tests, and a live same-model A/B report for answer quality,
+grounding, latency, provider calls, and tokens. The architecture alone is not an
+outperformance claim.
+
+### Local V2.1 student lab
+
+Set all three local-only flags before starting Django:
+
+```text
+DJANGO_DEBUG=true
+ALLOW_DEV_STUDENT_ADVISOR_LAB=true
+STUDENT_ADVISOR_V2_ENABLED=true
+STUDENT_ADVISOR_V21_ENABLED=true
+```
+
+An authenticated local superuser can then open
+`/ops/dev/student-advisor-v21/`, select an existing student ID, and enter the
+ordinary `/student/advisor/` page as that student. The lab does not provide a
+second adviser endpoint: prompts use the real durable conversation API,
+principal binding, persistence, rate limits, and V2.1 dispatcher. The launcher
+is concealed unless Django is in debug mode, the explicit lab flag is enabled,
+and the peer address is loopback.
+
+### Saudi-Arabic bundle diagnostic
+
+`student_advising_ar_sa_bundle.py` validates the supplied ZIP in place and
+classifies each root as directly scorable, capability gap, transactional safety,
+or requiring gold adjudication. It does not copy the source prompts into the
+repository. The companion runner defaults to a zero-provider-call audit:
+
+```console
+python evals/advisor/run_student_advising_ar_sa_bundle.py path/to/bundle.zip
+```
+
+A live planner-only run is explicit, bounded, and must retain its artifact:
+
+```console
+python evals/advisor/run_student_advising_ar_sa_bundle.py path/to/bundle.zip \
+  --live --confirm-live-external-request \
+  --max-provider-calls 26 --max-total-tokens 1000000 \
+  --output runtime/evals/student-advising-ar-sa-v21.json
+```
+
+This diagnostic sends prompt text only. It never resolves a student, executes
+evidence capabilities, or generates final answers. Report supported-plan
+accuracy, transactional read-only safety, and root-level robustness separately;
+the archive has no frozen student/term/evidence fixtures and cannot establish
+end-to-end answer accuracy by itself.

@@ -631,11 +631,17 @@ html[data-theme="dark"] .page-header {
 }
 
 /* ── Dark: table-wrap thead sticky bg ─── */
+/* Composited over --card for the same reason as the light rule: these are
+   sticky headers now, and a 6%-alpha background lets the rows scroll through
+   them. This block outranks the base rule (id-ish specificity + !important),
+   so leaving it translucent would silently undo the fix in dark mode only. */
 html[data-theme="dark"] .table-wrap thead th {
-  background: rgba(255,255,255,0.06) !important;
+  background: linear-gradient(rgba(255,255,255,0.06), rgba(255,255,255,0.06)),
+              var(--card) !important;
 }
 html[data-theme="dark"] .table-wrap thead th:hover {
-  background: rgba(255,255,255,0.10) !important;
+  background: linear-gradient(rgba(255,255,255,0.10), rgba(255,255,255,0.10)),
+              var(--card) !important;
 }
 
 /* ── Dark: mc spark bars ─── */
@@ -1735,7 +1741,12 @@ html body .btn:focus-visible {
    TABLE WRAP
    ============================================================ */
 .table-wrap {
-  max-height:    420px;
+  /* Viewport-relative, not a flat 420px. A fixed box meant a 13-row report got
+     its own scrollbar INSIDE the page scrollbar on every screen, while a 27"
+     monitor showed the same ten rows as a laptop. clamp() lets a short table
+     render whole — no nested scrolling at all — and a long one use the height
+     the screen actually has. */
+  max-height:    clamp(340px, 70vh, 900px);
   overflow:      auto;
   border:        none;
   border-radius: 14px;
@@ -1752,7 +1763,16 @@ html body .btn:focus-visible {
 .table-wrap tbody tr:hover td { background: color-mix(in srgb, var(--teal) 7%, transparent); }
 
 .table-wrap thead th {
-  background:    var(--glass-bg-header) !important;
+  /* Sticky, so the column names survive scrolling. Ten rows in, "CS112(2.92)"
+     under an unlabelled column is just a number.
+     The glass tint is composited OVER an opaque card colour rather than used
+     alone: --glass-bg-header is rgba(255,255,255,0.08) in dark mode, and a
+     sticky header that transparent shows the rows travelling underneath it. */
+  position:      sticky;
+  top:           0;
+  z-index:       2;
+  background:    linear-gradient(var(--glass-bg-header), var(--glass-bg-header)),
+                 var(--card) !important;
   backdrop-filter: blur(10px);
   -webkit-backdrop-filter: blur(10px);
   border-bottom: 2px solid color-mix(in srgb, var(--teal) 15%, transparent);
@@ -1769,7 +1789,11 @@ html body .btn:focus-visible {
   user-select:   none;
 }
 
-.table-wrap thead th:hover { background: var(--glass-bg-data) !important; color: var(--t3); }
+.table-wrap thead th:hover {
+  background: linear-gradient(var(--glass-bg-data), var(--glass-bg-data)),
+              var(--card) !important;
+  color: var(--t3);
+}
 
 /* Sorted-column visual indicator */
 .table-wrap thead th.sorted { color: var(--teal); }
@@ -5880,14 +5904,52 @@ details > summary::-webkit-details-marker   { display: none; }
   display:        flex;
   align-items:    center;
   gap:            8px;
+  width:          100%;
   margin-bottom:  4px;
   padding:        6px 8px;
+  border:         0;
   border-radius:  6px;
+  font-family:    inherit;
   font-size:      12px;
+  color:          inherit;
+  text-align:     start;
   cursor:         pointer;
   transition:     all 0.15s var(--ease);
 }
 .avail-sec-row:hover { filter: brightness(0.97); }
+
+/* These two are <button> elements so the keyboard can reach them — pinning an
+   exact section has no other route. Buttons arrive with a UA border, font and
+   centred text, so each is reset above/below; the same omission once rendered
+   130 controls as browser-default grey. */
+.avail-course-head {
+  width:       100%;
+  border-block-start: 0;
+  border-inline: 0;
+  background:  transparent;
+  font-family: inherit;
+  color:       inherit;
+  text-align:  start;
+  cursor:      pointer;
+}
+.avail-sec-row:focus-visible,
+.avail-course-head:focus-visible,
+.sl-pin-badge:focus-visible {
+  outline:        2px solid var(--teal);
+  outline-offset: 2px;
+}
+/* Status as TEXT, not only as a tint and a dot: the four states are otherwise
+   indistinguishable to a colour-blind adviser. */
+.sec-status {
+  margin-inline-start: auto;
+  padding:       1px 6px;
+  border-radius: 4px;
+  background:    var(--pl-overlay-2);
+  color:         var(--t3);
+  font-size:     10px;
+  font-weight:   600;
+  white-space:   nowrap;
+}
 
 .sec-teal { background: var(--teal-dim);      border-inline-start: 3px solid var(--teal); }
 .sec-rose { background: var(--rose-dim);      border-inline-start: 3px solid var(--rose); }

@@ -1,0 +1,644 @@
+meta:
+  name: advisor_v21_semantic_plan
+  version: "2.4"
+  built: "2026-08-24"
+  count: 36
+  languages:
+    - ar-SA
+    - en
+  description: >-
+    A focused holdout contract for semantic evidence planning. The utterances are
+    deliberately phrased away from the legacy router's canonical wording and include
+    counterexamples where academic-looking keywords must not trigger an unrelated tool.
+  modes:
+    - execute
+    - clarify
+    - direct
+    - unsupported
+  tool_surface:
+    - my_progress
+    - my_plan_by_term
+    - my_timetable
+    - my_clash_free_sections
+    - build_timetable_proposal
+    - lookup_course
+    - course_prerequisites
+    - why_course_locked
+    - course_choice_comparison
+    - feasible_course_replacements
+    - recommend_courses
+    - graduation_progress
+    - policy_lookup
+    - my_advisor
+    - recommend_feasible_course_addition
+    - rank_current_course_drop_impact
+    - improve_current_timetable
+  forbidden_model_arguments:
+    - student_id
+  scoring_dimensions:
+    - mode_correct
+    - clarification_kind_correct
+    - outcomes_correct
+    - outcome_coverage_correct
+    - semantic_policy_correct
+    - required_tools_correct
+    - forbidden_tools_correct
+    - tool_minimality_correct
+    - arguments_correct
+  quality_gate:
+    candidate_min_exact_match_rate: 0.90
+    candidate_min_unseen_paraphrase_rate: 0.90
+    candidate_min_regex_false_positive_rate: 1.00
+    candidate_min_required_tools_rate: 0.95
+    candidate_min_forbidden_tools_rate: 1.00
+    candidate_min_outcomes_rate: 1.00
+    candidate_min_outcome_coverage_rate: 1.00
+    candidate_min_semantic_policy_rate: 1.00
+    candidate_min_clarification_kind_rate: 1.00
+    minimum_absolute_lift_vs_v2: 0.10
+    no_dimension_regressions: true
+  contract_notes:
+    - required_tools means every named capability must be selected.
+    - Each required_any inner list is an OR group and at least one member must be selected.
+    - allowed_tools is a strict allow-list; an unnecessary evidence call fails minimality.
+    - required_arguments is a recursive partial match, so harmless optional arguments are allowed.
+    - expected_outcomes is ordered and exact; extra incidental outcomes fail the case.
+    - Every execute outcome must be owned by a selected capability, and every selected capability must be justified by an outcome.
+    - unsupported is a typed no-tool decision; direct is reserved for general conversation.
+    - forbidden_model_arguments applies recursively to every model-authored tool call.
+    - Non-execute modes must emit no tool calls.
+
+cases:
+  - id: V21-SP-001
+    case_type: unseen_paraphrase
+    pair_id: timetable-build-vs-read
+    language: ar-SA
+    question: "رتّب لي ترم مريح حول جدولي الحالي كامل، ولا تغيّره ولا يتجاوز أربع عشرة ساعة."
+    expected_goal: TIMETABLE_BUILD
+    expected_outcomes: [timetable_build]
+    expected_mode: execute
+    required_tools: [build_timetable_proposal]
+    required_any: []
+    allowed_tools: [build_timetable_proposal]
+    forbidden_tools: [my_timetable, policy_lookup]
+    required_arguments:
+      build_timetable_proposal:
+        mode: around_current
+        max_credits: 14
+    novelty_note: "Uses Saudi planning language without the canonical build-table wording."
+
+  - id: V21-SP-002
+    case_type: unseen_paraphrase
+    language: en
+    question: "Start over and find a clash-free week where AI331 and ENGL214 are both non-negotiable."
+    expected_goal: TIMETABLE_BUILD
+    expected_outcomes: [timetable_build]
+    expected_mode: execute
+    required_tools: [build_timetable_proposal]
+    required_any: []
+    allowed_tools: [build_timetable_proposal]
+    forbidden_tools: [my_clash_free_sections, my_timetable]
+    required_arguments:
+      build_timetable_proposal:
+        mode: from_scratch
+        must_take_courses: [AI331, ENGL214]
+    novelty_note: "Expresses a fresh build and hard constraints without saying 'build my timetable'."
+
+  - id: V21-SP-003
+    case_type: unseen_paraphrase
+    language: ar-SA
+    question: "أبي أشوف وش نازل باسمي فعليًا هذا الترم، مو الخطة المتوقعة."
+    expected_goal: CURRENT_TIMETABLE
+    expected_outcomes: [current_timetable]
+    expected_mode: execute
+    required_tools: [my_timetable]
+    required_any: []
+    allowed_tools: [my_timetable]
+    forbidden_tools: [build_timetable_proposal, my_plan_by_term]
+    required_arguments: {}
+    novelty_note: "Distinguishes registrar evidence from a planning snapshot in colloquial Arabic."
+
+  - id: V21-SP-004
+    case_type: unseen_paraphrase
+    pair_id: graduation-vs-exam-completion
+    language: ar-SA
+    question: "على وضعي الأكاديمي، كم ترم دراسي تقريبًا باقٍ لي لين أخلّص الخطة؟"
+    expected_goal: GRADUATION_FORECAST
+    expected_outcomes: [graduation_forecast]
+    expected_mode: execute
+    required_tools: [graduation_progress]
+    required_any: []
+    allowed_tools: [graduation_progress]
+    forbidden_tools: [my_progress, policy_lookup]
+    required_arguments:
+      graduation_progress:
+        planning_baseline_kind: recommended_current_term
+    novelty_note: "Asks for a term forecast through indirect plan-completion wording."
+
+  - id: V21-SP-005
+    case_type: unseen_paraphrase
+    pair_id: hypothetical-vs-history
+    language: ar-SA
+    question: "افترض CS424 مو ضمن جدولي المسجّل هالفصل؛ هل يتغيّر موعد تخرجي المتوقع؟"
+    expected_goal: GRADUATION_WHAT_IF
+    expected_outcomes: [graduation_impact]
+    expected_mode: execute
+    required_tools: [graduation_progress]
+    required_any: []
+    allowed_tools: [graduation_progress]
+    forbidden_tools: [my_progress, feasible_course_replacements]
+    required_arguments:
+      graduation_progress:
+        planning_baseline_kind: registered_timetable
+        remove_current_courses: [CS424]
+    novelty_note: "Encodes a removal counterfactual without using skip, drop, or withdraw."
+
+  - id: V21-SP-006
+    case_type: unseen_paraphrase
+    language: en
+    question: "Project the graduation path if MATH204 joins the recommended courses for this term."
+    expected_goal: GRADUATION_WHAT_IF
+    expected_outcomes: [graduation_impact]
+    expected_mode: execute
+    required_tools: [graduation_progress]
+    required_any: []
+    allowed_tools: [graduation_progress]
+    forbidden_tools: [recommend_courses, feasible_course_replacements]
+    required_arguments:
+      graduation_progress:
+        planning_baseline_kind: recommended_current_term
+        add_current_courses: [MATH204]
+    novelty_note: "Uses scenario language rather than an explicit 'what if' phrase."
+
+  - id: V21-SP-007
+    case_type: unseen_paraphrase
+    language: ar-SA
+    question: "بين AI331 وDS341، أي واحد يخدم التخرج أسرع؟ قارنهم ولا تجمعهم في درجة وحدة."
+    expected_goal: COURSE_COMPARISON
+    expected_outcomes: [course_comparison, graduation_impact]
+    expected_mode: execute
+    required_tools: [course_choice_comparison]
+    required_any: []
+    allowed_tools: [course_choice_comparison]
+    forbidden_tools: [graduation_progress, recommend_courses]
+    required_arguments:
+      course_choice_comparison:
+        course_codes: [AI331, DS341]
+        objective: graduation
+    novelty_note: "Requests a bounded multi-dimensional comparison with a graduation objective."
+
+  - id: V21-SP-008
+    case_type: unseen_paraphrase
+    pair_id: course-vs-text-replacement
+    language: ar-SA
+    question: "دور لي على بديل موثّق لـ DS341 بدل CS285، بشرط يحسن مسار التخرج ويركب على الجدول كامل."
+    expected_goal: FEASIBLE_REPLACEMENT
+    expected_outcomes: [course_replacement]
+    expected_mode: execute
+    required_tools: [feasible_course_replacements]
+    required_any: []
+    allowed_tools: [feasible_course_replacements]
+    forbidden_tools: [graduation_progress, my_clash_free_sections]
+    required_arguments:
+      feasible_course_replacements:
+        remove_course: CS285
+        add_course: DS341
+    novelty_note: "Requires both the academic and complete-timetable proofs for a course swap."
+
+  - id: V21-SP-009
+    case_type: unseen_paraphrase
+    language: ar-SA
+    question: "AI331 طالع لي مقفّل؛ وش السبب المسجّل عندكم؟"
+    expected_goal: COURSE_LOCK_REASON
+    expected_outcomes: [course_eligibility]
+    expected_mode: execute
+    required_tools: [why_course_locked]
+    required_any: []
+    allowed_tools: [why_course_locked]
+    forbidden_tools: [course_prerequisites, my_progress]
+    required_arguments:
+      why_course_locked:
+        course_code: AI331
+    novelty_note: "Uses UI-state vocabulary rather than asking for prerequisites directly."
+
+  - id: V21-SP-010
+    case_type: unseen_paraphrase
+    pair_id: unlock-vs-portal-opening
+    language: ar-SA
+    question: "لو أنهيت AI331 بنجاح، وش المواد اللي تنفتح لي بعدها في الخطة؟"
+    expected_goal: COURSE_UNLOCK_EFFECT
+    expected_outcomes: [prerequisite_information]
+    expected_mode: execute
+    required_tools: []
+    required_any:
+      - [my_progress, why_course_locked]
+    allowed_tools: [why_course_locked, my_progress]
+    forbidden_tools: [policy_lookup, course_choice_comparison]
+    required_arguments: {}
+    novelty_note: "Uses 'opens' for prerequisite-chain impact, not a portal deadline."
+
+  - id: V21-SP-011
+    case_type: unseen_paraphrase
+    language: en
+    question: "Who is the faculty adviser attached to my student record?"
+    expected_goal: ADVISER_IDENTITY
+    expected_outcomes: [academic_adviser]
+    expected_mode: execute
+    required_tools: [my_advisor]
+    required_any: []
+    allowed_tools: [my_advisor]
+    forbidden_tools: [get_student_context]
+    required_arguments: {}
+    novelty_note: "Requests the record-linked adviser rather than generic support."
+
+  - id: V21-SP-012
+    case_type: unseen_paraphrase
+    pair_id: policy-vs-personal-cap
+    language: ar-SA
+    question: "وش يقول الدليل الرسمي عن الحد الأعلى للساعات في الفصل العادي؟"
+    expected_goal: POLICY_EXPLANATION
+    expected_outcomes: [policy_rule]
+    expected_mode: execute
+    required_tools: [policy_lookup]
+    required_any: []
+    allowed_tools: [policy_lookup]
+    forbidden_tools: [build_timetable_proposal, graduation_progress]
+    required_arguments:
+      policy_lookup:
+        query: "وش يقول الدليل الرسمي عن الحد الأعلى للساعات في الفصل العادي؟"
+    novelty_note: "Clearly asks for governing written policy rather than a personal plan constraint."
+
+  - id: V21-SP-013
+    case_type: unseen_paraphrase
+    language: en
+    question: "Which recorded CS285 sections fit without overlapping anything already on my schedule?"
+    expected_goal: SECTION_CHECK
+    expected_outcomes: [timetable_feasibility]
+    expected_mode: execute
+    required_tools: [my_clash_free_sections]
+    required_any: []
+    allowed_tools: [my_clash_free_sections]
+    forbidden_tools: [build_timetable_proposal, policy_lookup]
+    required_arguments:
+      my_clash_free_sections:
+        course_code: CS285
+    novelty_note: "Asks for recorded, clash-free section evidence without implying live seats."
+
+  - id: V21-SP-014
+    case_type: unseen_paraphrase
+    language: ar-SA
+    question: "بناءً على اللي خلصته، وش المواد المنطقية أقترحها للترم الجاي؟"
+    expected_goal: COURSE_RECOMMENDATION
+    expected_outcomes: [course_recommendation]
+    expected_mode: execute
+    required_tools: [recommend_courses]
+    required_any: []
+    allowed_tools: [recommend_courses]
+    forbidden_tools: [my_progress, build_timetable_proposal]
+    required_arguments: {}
+    novelty_note: "Frames recommendation as a forward choice grounded in completed work."
+
+  - id: V21-SP-015
+    case_type: unseen_paraphrase
+    language: ar-SA
+    question: "اعرض مقررات المستوى السابع من خطتي وحالتها."
+    expected_goal: PLAN_BY_LEVEL
+    expected_outcomes: [degree_plan]
+    expected_mode: execute
+    required_tools: [my_plan_by_term]
+    required_any: []
+    allowed_tools: [my_plan_by_term]
+    forbidden_tools: [my_timetable, my_progress]
+    required_arguments:
+      my_plan_by_term:
+        term: 7
+    novelty_note: "Uses term-like level language where term must mean a degree-plan level."
+
+  - id: V21-SP-016
+    case_type: unseen_paraphrase
+    language: en
+    question: "Does the catalogue know a course called Natural Language Processing?"
+    expected_goal: COURSE_LOOKUP
+    expected_outcomes: [course_catalogue]
+    expected_mode: execute
+    required_tools: [lookup_course]
+    required_any: []
+    allowed_tools: [lookup_course]
+    forbidden_tools: [course_prerequisites, recommend_courses]
+    required_arguments:
+      lookup_course:
+        query: "Natural Language Processing"
+    novelty_note: "Looks up a name rather than relying on an exact course-code shape."
+
+  - id: V21-SP-017
+    case_type: unseen_paraphrase
+    language: ar-SA
+    question: "قبل ما أفكر في CS424، وش المتطلبات السابقة المثبتة له؟"
+    expected_goal: PREREQUISITE_LOOKUP
+    expected_outcomes: [prerequisite_information]
+    expected_mode: execute
+    required_tools: [course_prerequisites]
+    required_any: []
+    allowed_tools: [course_prerequisites]
+    forbidden_tools: [why_course_locked, my_progress]
+    required_arguments:
+      course_prerequisites:
+        course_code: CS424
+    novelty_note: "Asks for catalogue prerequisites, not a personal lock explanation."
+
+  - id: V21-SP-018
+    case_type: unseen_paraphrase
+    language: en
+    question: "Make me an 18-credit clash-free proposal and also verify whether 18 is permitted by the written rules."
+    expected_goal: MULTI_GOAL_TIMETABLE_POLICY
+    expected_outcomes: [timetable_build, policy_rule]
+    expected_mode: execute
+    required_tools: [build_timetable_proposal, policy_lookup]
+    required_any: []
+    allowed_tools: [build_timetable_proposal, policy_lookup]
+    forbidden_tools: [graduation_progress]
+    required_arguments:
+      build_timetable_proposal:
+        mode: from_scratch
+        target_credits: 18
+      policy_lookup:
+        query: "Make me an 18-credit clash-free proposal and also verify whether 18 is permitted by the written rules."
+    novelty_note: "Requires semantic decomposition into personal planning and policy evidence."
+
+  - id: V21-SP-019
+    case_type: regex_false_positive
+    pair_id: graduation-vs-exam-completion
+    language: en
+    question: "My last final ends Thursday; how many hours until I finish exam week?"
+    expected_goal: UNSUPPORTED_CAPABILITY
+    expected_outcomes: [unsupported_request]
+    expected_mode: unsupported
+    required_tools: []
+    required_any: []
+    allowed_tools: []
+    forbidden_tools: [graduation_progress, my_progress]
+    required_arguments: {}
+    novelty_note: "Completion wording refers to an exam week, not degree completion."
+
+  - id: V21-SP-020
+    case_type: regex_false_positive
+    pair_id: course-vs-text-replacement
+    language: ar-SA
+    question: "استبدل كلمة «مقرر» بكلمة «مادة» في الجملة اللي كتبتها، بس لا تغيّر المعنى."
+    expected_goal: GENERAL_NON_ACADEMIC
+    expected_outcomes: [general_conversation]
+    expected_mode: direct
+    required_tools: []
+    required_any: []
+    allowed_tools: []
+    forbidden_tools: [feasible_course_replacements, graduation_progress]
+    required_arguments: {}
+    novelty_note: "The verb 'replace' describes a text edit, not an academic course swap."
+
+  - id: V21-SP-021
+    case_type: regex_false_positive
+    language: ar-SA
+    question: "بدّل شعبة DS341 من M1 إلى M2 في الفحص فقط: هل M2 تتعارض مع جدولي؟"
+    expected_goal: SECTION_CHECK
+    expected_outcomes: [timetable_feasibility]
+    expected_mode: execute
+    required_tools: [my_clash_free_sections]
+    required_any: []
+    allowed_tools: [my_clash_free_sections]
+    forbidden_tools: [feasible_course_replacements, graduation_progress]
+    required_arguments:
+      my_clash_free_sections:
+        course_code: DS341
+    novelty_note: "A section change must not be interpreted as replacing an academic course."
+
+  - id: V21-SP-022
+    case_type: regex_false_positive
+    language: en
+    question: "Replace my current major with whichever career has the highest salary."
+    expected_goal: UNSUPPORTED_CAPABILITY
+    expected_outcomes: [unsupported_request]
+    expected_mode: unsupported
+    required_tools: []
+    required_any: []
+    allowed_tools: []
+    forbidden_tools: [feasible_course_replacements, recommend_courses, graduation_progress]
+    required_arguments: {}
+    novelty_note: "A major/career decision is outside the evidence tools and is not a course swap."
+
+  - id: V21-SP-023
+    case_type: regex_false_positive
+    language: ar-SA
+    question: "صفحة التسجيل تفتح بيضاء على جوالي؛ أصلح المشكلة التقنية."
+    expected_goal: UNSUPPORTED_CAPABILITY
+    expected_outcomes: [unsupported_request]
+    expected_mode: unsupported
+    required_tools: []
+    required_any: []
+    allowed_tools: []
+    forbidden_tools: [policy_lookup, my_timetable]
+    required_arguments: {}
+    novelty_note: "A portal malfunction is technical support, not a registration-policy question."
+
+  - id: V21-SP-024
+    case_type: regex_false_positive
+    language: ar-SA
+    question: "كم باب يفصل بين قاعة B12 وقاعة B18 في المبنى؟"
+    expected_goal: UNSUPPORTED_CAPABILITY
+    expected_outcomes: [unsupported_request]
+    expected_mode: unsupported
+    required_tools: []
+    required_any: []
+    allowed_tools: []
+    forbidden_tools: [my_progress, graduation_progress, my_timetable]
+    required_arguments: {}
+    novelty_note: "Distance/separation wording must not become academic remaining-progress intent."
+
+  - id: V21-SP-025
+    case_type: regex_false_positive
+    pair_id: hypothetical-vs-history
+    language: ar-SA
+    question: "حذفت CS424 السنة اللي راحت؛ أبي أشوف حالتي الأكاديمية المسجّلة الآن، مو سيناريو افتراضي."
+    expected_goal: ACADEMIC_PROGRESS
+    expected_outcomes: [degree_progress]
+    expected_mode: execute
+    required_tools: [my_progress]
+    required_any: []
+    allowed_tools: [my_progress]
+    forbidden_tools: [graduation_progress, feasible_course_replacements]
+    required_arguments: {}
+    novelty_note: "A past-tense statement provides context but explicitly requests the current record."
+
+  - id: V21-SP-026
+    case_type: regex_false_positive
+    pair_id: timetable-build-vs-read
+    language: ar-SA
+    question: "ماني طالب جدول جديد؛ ورّني الجدول المسجّل فعليًا مثل ما هو."
+    expected_goal: CURRENT_TIMETABLE
+    expected_outcomes: [current_timetable]
+    expected_mode: execute
+    required_tools: [my_timetable]
+    required_any: []
+    allowed_tools: [my_timetable]
+    forbidden_tools: [build_timetable_proposal]
+    required_arguments: {}
+    novelty_note: "Negates a build request while retaining timetable vocabulary."
+
+  - id: V21-SP-027
+    case_type: regex_false_positive
+    pair_id: policy-vs-personal-cap
+    language: ar-SA
+    question: "أنا حاط لنفسي سقف 12 ساعة؛ رتّب المقترح على هالحد الشخصي."
+    expected_goal: TIMETABLE_BUILD
+    expected_outcomes: [timetable_build]
+    expected_mode: execute
+    required_tools: [build_timetable_proposal]
+    required_any: []
+    allowed_tools: [build_timetable_proposal]
+    forbidden_tools: [policy_lookup, graduation_progress]
+    required_arguments:
+      build_timetable_proposal:
+        mode: from_scratch
+        max_credits: 12
+    novelty_note: "A self-imposed ceiling is a planner constraint, not a claim about university policy."
+
+  - id: V21-SP-028
+    case_type: context_boundary
+    language: ar-SA
+    question: "طيب وش يفتح بعدها؟"
+    expected_goal: CLARIFICATION
+    expected_outcomes: [prerequisite_information]
+    expected_mode: clarify
+    expected_clarification_kind: generic
+    required_tools: []
+    required_any: []
+    allowed_tools: []
+    forbidden_tools: [why_course_locked, my_progress, policy_lookup]
+    required_arguments: {}
+    novelty_note: "A deictic follow-up cannot be resolved without a named course or trusted context."
+
+  - id: V21-SP-029
+    case_type: context_boundary
+    language: ar-SA
+    question: "ثبّت M2 وابنِ الباقي حولها."
+    history:
+      - role: user
+        content: "كنت أقارن بين شعبتي DS341-M2 وDS432-M2."
+    expected_goal: CLARIFICATION
+    expected_outcomes: [timetable_build]
+    expected_mode: clarify
+    expected_clarification_kind: course_or_section_identity
+    required_tools: []
+    required_any: []
+    allowed_tools: []
+    forbidden_tools: [build_timetable_proposal, my_clash_free_sections]
+    required_arguments: {}
+    novelty_note: "An exact section label without a unique course is insufficient for a safe pin."
+
+  - id: V21-SP-030
+    case_type: regex_false_positive
+    language: en
+    question: "Tell me which AI331 section has an open seat right this second."
+    expected_goal: UNSUPPORTED_CAPABILITY
+    expected_outcomes: [unsupported_request]
+    expected_mode: unsupported
+    required_tools: []
+    required_any: []
+    allowed_tools: []
+    forbidden_tools: [my_clash_free_sections, build_timetable_proposal]
+    required_arguments: {}
+    novelty_note: "Live seat availability is not represented by the recorded section catalogue."
+
+  - id: V21-SP-031
+    case_type: context_boundary
+    language: ar-SA
+    question: "سجّلني رسميًا في AI331 الآن وأكد لي أن المقعد انحجز."
+    expected_goal: UNSUPPORTED_CAPABILITY
+    expected_outcomes: [registration_action]
+    expected_mode: unsupported
+    required_tools: []
+    required_any: []
+    allowed_tools: []
+    forbidden_tools: [build_timetable_proposal, my_clash_free_sections]
+    required_arguments: {}
+    novelty_note: "A portal mutation and seat promise must stop at the read-only boundary."
+
+  - id: V21-SP-032
+    case_type: regex_false_positive
+    pair_id: unlock-vs-portal-opening
+    language: ar-SA
+    question: "متى تفتح بوابة الحذف والإضافة حسب الدليل الرسمي؟"
+    expected_goal: POLICY_EXPLANATION
+    expected_outcomes: [policy_rule]
+    expected_mode: execute
+    required_tools: [policy_lookup]
+    required_any: []
+    allowed_tools: [policy_lookup]
+    forbidden_tools: [why_course_locked, my_progress]
+    required_arguments:
+      policy_lookup:
+        query: "متى تفتح بوابة الحذف والإضافة حسب الدليل الرسمي؟"
+    novelty_note: "The verb 'opens' refers to a governed portal window, not course unlocking."
+
+  - id: V21-SP-033
+    case_type: regex_false_positive
+    language: en
+    question: "Does DS491 have a corequisite?"
+    expected_goal: UNSUPPORTED_COREQUISITE
+    expected_outcomes: [unsupported_request]
+    expected_mode: unsupported
+    required_tools: []
+    required_any: []
+    allowed_tools: []
+    forbidden_tools: [course_prerequisites, why_course_locked, lookup_course]
+    required_arguments: {}
+    novelty_note: "A standalone corequisite relationship is outside the prerequisite-only catalogue."
+
+  - id: V21-SP-034
+    case_type: unseen_paraphrase
+    language: en
+    question: "I have room for one course; what should I choose?"
+    expected_goal: COURSE_ADDITION
+    expected_outcomes: [course_addition]
+    expected_mode: execute
+    required_tools: [recommend_feasible_course_addition]
+    required_any: []
+    allowed_tools: [recommend_feasible_course_addition]
+    forbidden_tools: [my_progress, build_timetable_proposal]
+    required_arguments:
+      recommend_feasible_course_addition:
+        objective: balanced
+    novelty_note: "A generic singular choice is a feasible addition decision without an invented criterion."
+
+  - id: V21-SP-035
+    case_type: unseen_paraphrase
+    language: en
+    question: "Which courses am I eligible for but are not in my timetable?"
+    expected_goal: AVAILABLE_COURSES
+    expected_outcomes: [available_courses]
+    expected_mode: execute
+    required_tools: [my_progress]
+    required_any: []
+    allowed_tools: [my_progress]
+    forbidden_tools: [recommend_feasible_course_addition, my_timetable]
+    required_arguments: {}
+    novelty_note: "A plain eligible-and-absent list does not request importance or a one-course choice."
+
+  - id: V21-SP-036
+    case_type: context_boundary
+    language: en
+    question: "If we pin DS341-M2, which are the best courses to add with it?"
+    policy_explicit_pins:
+      - {course_code: DS341, section_label: M2}
+    expected_goal: COURSE_ADDITION
+    expected_outcomes: [course_addition]
+    expected_mode: execute
+    required_tools: [recommend_feasible_course_addition]
+    required_any: []
+    allowed_tools: [recommend_feasible_course_addition]
+    forbidden_tools: [build_timetable_proposal, my_progress]
+    required_arguments:
+      recommend_feasible_course_addition:
+        objective: balanced
+        pinned_sections:
+          - {course_code: DS341, section_label: M2}
+    novelty_note: "Best modifies the pinned course addition, not a ranked timetable alternative."

@@ -206,7 +206,7 @@ def test_persistence_rewhitelists_transient_audit_metadata():
     encoded = json.dumps(cleaned, ensure_ascii=False, sort_keys=True)
 
     assert cleaned == {
-        "schema_version": "1",
+        "schema_version": "2",
         "tool_names": ["my_timetable"],
         "evidence_hashes": [{"tool": "my_timetable", "sha256": valid_digest}],
         "validation": {
@@ -329,6 +329,160 @@ def test_the_build_side_rejects_a_plausible_snake_case_non_tool():
     assert audit["tool_names"] == ["my_timetable"]
     assert [row["tool"] for row in audit["evidence_hashes"]] == ["my_timetable"]
     assert "4400000" not in json.dumps(audit)
+
+
+def test_semantic_plan_audit_persists_only_closed_outcomes_and_coverage():
+    audit = build_evidence_audit(
+        provider_evidence=[],
+        validation_outcome="not_applicable",
+        semantic_plan_decision="unsupported",
+        semantic_plan_requested_outcomes=[
+            "registration_action",
+            "student_9876543",
+            "registration_action",
+        ],
+        semantic_outcome_coverage_valid=True,
+        semantic_outcome_coverage_reason="",
+    )
+
+    assert audit["semantic_plan"] == {
+        "decision": "unsupported",
+        "clarification_kind": "none",
+        "requested_outcomes": ["registration_action"],
+        "coverage": {"valid": True, "reason": ""},
+    }
+    assert "9876543" not in json.dumps(audit)
+
+
+def test_semantic_plan_audit_is_rewhitelisted_before_persistence():
+    raw = build_evidence_audit(
+        provider_evidence=[],
+        validation_outcome="not_applicable",
+        semantic_plan_decision="execute",
+        semantic_plan_requested_outcomes=["course_addition"],
+        semantic_outcome_coverage_valid=False,
+        semantic_outcome_coverage_reason="requested_outcome_uncovered",
+    )
+    raw["semantic_plan"]["raw_arguments"] = {"course": "AI331"}
+    raw["semantic_plan"]["requested_outcomes"].append("student_9876543")
+
+    cleaned = normalise_evidence_audit(raw)
+
+    assert cleaned["semantic_plan"] == {
+        "decision": "execute",
+        "clarification_kind": "none",
+        "requested_outcomes": ["course_addition"],
+        "coverage": {
+            "valid": False,
+            "reason": "requested_outcome_uncovered",
+        },
+    }
+    assert "AI331" not in json.dumps(cleaned)
+
+
+@pytest.mark.parametrize(
+    ("decision", "clarification_kind"),
+    [
+        ("clarify", "none"),
+        ("execute", "timetable_load"),
+        ("direct", "generic"),
+        ("unsupported", "term_or_choice"),
+    ],
+)
+def test_semantic_plan_audit_rejects_decision_kind_mismatches(
+    decision: str,
+    clarification_kind: str,
+) -> None:
+    audit = build_evidence_audit(
+        provider_evidence=[],
+        validation_outcome="not_applicable",
+        semantic_plan_decision=decision,
+        semantic_plan_clarification_kind=clarification_kind,
+        semantic_plan_requested_outcomes=["timetable_build"],
+        semantic_outcome_coverage_valid=True,
+    )
+
+    assert "semantic_plan" not in audit
+
+
+def test_plan_contract_failure_audit_keeps_only_closed_categories():
+    raw = build_evidence_audit(
+        provider_evidence=[],
+        validation_outcome="abstained",
+        semantic_plan_failure_reason="argument_provenance_failed",
+        semantic_plan_repair_attempted=True,
+    )
+    raw["plan_contract"]["raw_error"] = "CS424 from rejected arguments"
+    raw["plan_contract"]["repair"]["result"] = "provider prose"
+
+    cleaned = normalise_evidence_audit(raw)
+
+    assert cleaned["plan_contract"] == {
+        "failure_reason": "argument_provenance_failed",
+        "repair": {"attempted": True, "result": "failed"},
+    }
+    assert "CS424" not in json.dumps(cleaned)
+
+
+def test_semantic_policy_failure_audit_persists_only_the_generic_category() -> None:
+    raw = build_evidence_audit(
+        provider_evidence=[],
+        validation_outcome="abstained",
+        semantic_plan_failure_reason="semantic_policy_failed",
+        semantic_plan_repair_attempted=True,
+    )
+    raw["plan_contract"]["policy_ids"] = [
+        "pinned_course_addition_balanced",
+        "DS341-M2",
+    ]
+
+    cleaned = normalise_evidence_audit(raw)
+
+    assert cleaned["plan_contract"] == {
+        "failure_reason": "semantic_policy_failed",
+        "repair": {"attempted": True, "result": "failed"},
+    }
+    assert "pinned_course_addition_balanced" not in json.dumps(cleaned)
+    assert "DS341" not in json.dumps(cleaned)
+
+
+def test_constraint_contract_audit_keeps_only_closed_field_paths() -> None:
+    raw = build_evidence_audit(
+        provider_evidence=[],
+        validation_outcome="abstained",
+        semantic_plan_failure_reason="constraint_coverage_failed",
+        semantic_plan_repair_attempted=True,
+        semantic_plan_missing_constraint_paths=[
+            "build_timetable_proposal.mode",
+            "build_timetable_proposal.max_credits",
+            "build_timetable_proposal.pinned_sections",
+            "build_timetable_proposal.max_credits",
+            "DS341/M2",
+        ],
+    )
+    raw["plan_contract"]["missing_field_paths"].extend(
+        ["build_timetable_proposal.max_credits=18", "student_4901291"]
+    )
+    raw["plan_contract"]["rejected_arguments"] = {
+        "max_credits": 18,
+        "pinned_sections": ["DS341/M2"],
+    }
+
+    cleaned = normalise_evidence_audit(raw)
+
+    assert cleaned["plan_contract"] == {
+        "failure_reason": "constraint_coverage_failed",
+        "repair": {"attempted": True, "result": "failed"},
+        "missing_field_paths": [
+            "build_timetable_proposal.mode",
+            "build_timetable_proposal.max_credits",
+            "build_timetable_proposal.pinned_sections",
+        ],
+    }
+    encoded = json.dumps(cleaned, sort_keys=True)
+    assert "DS341" not in encoded
+    assert "4901291" not in encoded
+    assert "=18" not in encoded
 
 
 @pytest.mark.parametrize(

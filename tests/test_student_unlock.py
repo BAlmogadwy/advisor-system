@@ -984,6 +984,106 @@ def test_replacement_search_finds_only_proven_academic_improvements(plan):
     )
 
 
+@pytest.mark.parametrize(
+    "result_credit_predicate",
+    [
+        {"exact_result_credits": 3},
+        {"max_result_credits": 3},
+    ],
+    ids=("exact-result-credits", "maximum-result-credits"),
+)
+def test_replacement_credit_predicate_is_applied_before_academic_result_slice(
+    monkeypatch, result_credit_predicate
+):
+    from core.services import student_graduation as service
+
+    candidate_codes = [f"R{index:03d}" for index in range(1, 22)]
+    Course.objects.bulk_create(
+        [
+            Course(
+                course_code=code,
+                description=code,
+                credit_hours=3 if code == "R021" else 4,
+            )
+            for code in candidate_codes
+        ]
+    )
+    baseline_course = {
+        "code": "OLD",
+        "name": "Current course",
+        "credits": 3,
+        "section": "M1",
+        "source": "scraper_timetable",
+    }
+    baseline = {
+        "program": "TEST",
+        "planning_baseline_kind": service.REGISTERED_TIMETABLE,
+        "planning_baseline_credits": 3,
+        "registered_credits_at_planning_baseline": 3,
+        "planning_baseline_courses_assumed_passed": [baseline_course],
+        "simulation_completed": True,
+        "estimated_additional_terms": 5,
+        "lower_bound_additional_terms": 5,
+    }
+    monkeypatch.setattr(service, "build_graduation_report", lambda *_a, **_k: baseline)
+    monkeypatch.setattr(
+        service,
+        "build_unlock_report",
+        lambda *_a, **_k: {"open_courses": [{"code": code} for code in candidate_codes]},
+    )
+
+    def fake_evaluate(*, add_codes, **_kwargs):
+        code = add_codes[0]
+        credits = 3 if code == "R021" else 4
+        return {
+            "valid": True,
+            "removed_courses": [baseline_course],
+            "added_courses": [
+                {
+                    "code": code,
+                    "name": code,
+                    "credits": credits,
+                    "section": "",
+                    "source": "graduation_what_if",
+                    "in_degree_plan": True,
+                }
+            ],
+            "current_courses": [{"code": code, "credits": credits}],
+            "outside_plan_additions": [],
+            "scenario_report": {
+                **baseline,
+                "planning_baseline_credits": credits,
+                "registered_credits_at_planning_baseline": credits,
+            },
+            "comparison": {
+                "proven_improvement": True,
+                "blocker_progress_only": False,
+                "timing_effect": "EARLIER",
+                "term_difference": -1,
+                "blockers_resolved": [],
+                "blockers_improved": [],
+                "scenario_planning_credits": credits,
+            },
+        }
+
+    monkeypatch.setattr(service, "_evaluate_current_term_changes", fake_evaluate)
+
+    result = service.build_graduation_what_if(
+        SID,
+        1448,
+        1,
+        search_better_replacements=True,
+        max_replacement_results=20,
+        **result_credit_predicate,
+    )["what_if"]
+
+    assert result["pairs_evaluated"] == 21
+    assert result["result_credit_predicate_filtered_count"] == 20
+    assert result["improving_replacements_found"] == 1
+    assert result["replacement_results_truncated"] is False
+    assert [row["add_course"]["code"] for row in result["improving_replacements"]] == ["R021"]
+
+
 def test_partial_blocker_progress_is_not_a_proven_replacement_improvement():
     from core.services.student_graduation import _compare_reports
 

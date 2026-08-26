@@ -1252,8 +1252,8 @@ def test_staff_planner_ui_uses_clear_positive_control_names() -> None:
 
     assert 'id="programSectionsOnly" type="checkbox" checked' in template
     assert 'id="allowFullSections" type="checkbox"' in template
-    assert "Student programme sections only" in template
-    assert "Allow full sections" in template
+    assert "Only this student's programme" in template
+    assert "Include sections with no seats left" in template
     assert "program_sections_only:useProgrammeSectionsOnly()" in script
     assert "allow_full_sections:allowFullSections()" in script
     assert "Must-take — every result" in script

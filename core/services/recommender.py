@@ -1,6 +1,10 @@
 from core.models import Prerequisite, ProgrammeRequirement
 from core.services.credit_policy import RECOMMENDED_MAX_CREDITS
-from core.services.eligibility import hour_gate, split_hour_prereqs
+from core.services.eligibility import (
+    evaluate_prerequisites,
+    hour_gate,
+    split_hour_prereqs,
+)
 from core.services.student_helpers import (
     get_program_prerequisites,
     get_student_passed_and_studying,
@@ -100,14 +104,21 @@ def _next_term_candidates(
     )
     all_prereq_codes = [",".join(values) for values in prereqs_by_course.values() if values]
 
+    # Resolved ONCE per request. The gate is a property of the student, not of
+    # the candidate course, so calling hour_gate() inside prereqs_ok re-queried
+    # the same two credit columns for every hour-gated course considered.
+    _effective = effective_credits
+    if _effective is None and any(split_hour_prereqs(v)[1] for v in prereqs_by_course.values()):
+        _effective = int(hour_gate(student_id, 0)["effective"])
+
     def prereqs_ok(course_code: str) -> bool:
-        course_prereqs, required_hours = split_hour_prereqs(prereqs_by_course.get(course_code, []))
-        courses_ok = all(pr in passed or pr in studying for pr in course_prereqs)
-        if not courses_ok or not required_hours:
-            return courses_ok
-        if effective_credits is not None:
-            return int(effective_credits) >= required_hours
-        return bool(hour_gate(student_id, required_hours)["met"])
+        return evaluate_prerequisites(
+            prereqs_by_course.get(course_code, []),
+            passed if isinstance(passed, set) else set(passed),
+            studying if isinstance(studying, set) else set(studying),
+            earned_credits=int(_effective or 0),
+            registered_credits=0,
+        ).met
 
     def is_gs_course(course_code: str) -> bool:
         return normalize_code(course_code).startswith("GS")

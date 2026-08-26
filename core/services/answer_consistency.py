@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Iterable
+from dataclasses import dataclass
 from typing import Any
 
 from core.services.arabic_text import normalise
@@ -101,6 +102,13 @@ EXACT_FACT_TOOLS = frozenset(
         "feasible_course_replacements",
         "course_eligibility",
         "build_my_timetable",
+        # V2.1 deterministic compound decisions. Each payload is a bounded,
+        # typed join whose selected/ranked result must be visibly fulfilled;
+        # treating these as free-form would reduce "the tool ran" to a false
+        # semantic guarantee.
+        "recommend_feasible_course_addition",
+        "rank_current_course_drop_impact",
+        "improve_current_timetable",
     }
 )
 
@@ -177,6 +185,11 @@ _SCHEDULE_TOOLS = frozenset(
         "build_my_timetable",
         # Its alternatives embed proposal-shaped courses/meetings rows.
         "feasible_course_replacements",
+        # V2.1 compound joins embed recorded-snapshot section options and
+        # complete improvement timetables respectively.
+        "recommend_feasible_course_addition",
+        "rank_current_course_drop_impact",
+        "improve_current_timetable",
     }
 )
 
@@ -190,30 +203,36 @@ def _fold(text: str) -> str:
     return normalise(str(text or "")).lower()
 
 
-def _phrases(text: str, phrases: tuple[str, ...]) -> str:
-    """The first phrase present, folded on both sides. Empty when none is."""
-    folded = _fold(text)
-    for phrase in phrases:
-        if _fold(phrase) in folded:
-            return phrase
-    return ""
-
-
 #: A negator immediately before a claim turns it into the correct disclaimer. Checked
 #: over a WINDOW rather than the whole answer: «لا» somewhere in a long answer must
 #: not license a seat claim three sentences later.
 _NEGATORS = ("لا ", "لن ", "ليس", "غير ", "بدون", "no ", "not ", "cannot", "never", "without")
 _NEGATION_WINDOW = 60
+_CLAIM_SCOPE_BREAK = re.compile(r"[\n\r.!?؟;؛,،]")
 
 
 def _affirmative(text: str, phrase: str) -> bool:
-    """Is this phrase used as a claim rather than as a denial?"""
+    """Does any occurrence assert the phrase rather than deny it?"""
     folded = _fold(text)
-    index = folded.find(_fold(phrase))
-    if index < 0:
-        return False
-    window = folded[max(0, index - _NEGATION_WINDOW) : index]
-    return not any(_fold(n) in window for n in _NEGATORS)
+    needle = _fold(phrase)
+    start = 0
+    while (index := folded.find(needle, start)) >= 0:
+        window = folded[max(0, index - _NEGATION_WINDOW) : index]
+        # A disclaimer in a previous sentence/tool block cannot negate a later
+        # mutation or availability claim.  Keep only the current clause fragment.
+        boundaries = list(_CLAIM_SCOPE_BREAK.finditer(window))
+        if boundaries:
+            window = window[boundaries[-1].end() :]
+        if not any(_fold(negator) in window for negator in _NEGATORS):
+            return True
+        start = index + max(1, len(needle))
+    return False
+
+
+def _any_affirmative_phrase(text: str, phrases: tuple[str, ...]) -> bool:
+    """Check every phrase family member, not only the first one found."""
+
+    return any(_affirmative(text, phrase) for phrase in phrases)
 
 
 _SEAT_PHRASES = (
@@ -417,6 +436,23 @@ def _lines(text: str) -> list[str]:
     return out
 
 
+@dataclass(frozen=True)
+class EvidenceValidationScope:
+    """One server-rendered answer block and the typed evidence that owns it.
+
+    V2.1 composes independent capability blocks.  Validating the whole answer
+    against the union of every row lets an unrelated timetable or graduation
+    metric change the meaning of a true progress sentence.  The scope keeps
+    relational postconditions attached to their actual typed owner while the
+    older V2 path continues to use whole-answer validation.
+    """
+
+    answer: str
+    tool_results: tuple[dict[str, Any], ...]
+    required_tools: frozenset[str] = frozenset()
+    presentation: dict[str, Any] | None = None
+
+
 def _attributed(text: str, phrases: tuple[str, ...]) -> set[str]:
     """The course codes an answer attributes to ONE provenance, and only those.
 
@@ -569,6 +605,30 @@ def _normalise_course_token(value: Any) -> str:
     return re.sub(r"[^A-Za-z0-9]", "", folded).upper()
 
 
+def _names_exact_course_code(text: str, course_code: Any) -> bool:
+    """Whether prose names one exact typed code, including before ``:``.
+
+    The generic course-token scanner excludes digit-colon tokens to avoid reading
+    ``SUN 14:30`` as a course. Here the code comes from a validated typed field,
+    so matching that exact identifier cannot create the day/time false positive.
+    """
+
+    code = _normalise_course_token(course_code)
+    match = re.fullmatch(r"([A-Z]{2,6})(\d{1,4})", code)
+    if not match:
+        return False
+    prefix, digits = match.groups()
+    return (
+        re.search(
+            rf"(?<![A-Za-z0-9]){re.escape(prefix)}\s*-?\s*{re.escape(digits)}"
+            r"(?![A-Za-z0-9])",
+            str(text or ""),
+            re.IGNORECASE,
+        )
+        is not None
+    )
+
+
 _ARABIC_INDIC_DIGITS = str.maketrans("٠١٢٣٤٥٦٧٨٩۰۱۲۳۴۵۶۷۸۹", "01234567890123456789")
 
 
@@ -640,6 +700,17 @@ def _course_codes_in_text(text: str) -> set[str]:
     return {_normalise_course_token(match.group(0)) for match in _COURSE_TOKEN.finditer(text or "")}
 
 
+def _ordered_course_codes_in_text(text: str) -> list[str]:
+    """Distinct course codes in first-appearance order."""
+
+    ordered: list[str] = []
+    for match in _COURSE_TOKEN.finditer(text or ""):
+        code = _normalise_course_token(match.group(0))
+        if code and code not in ordered:
+            ordered.append(code)
+    return ordered
+
+
 def _section_labels_in_timetable(rows: list[dict[str, Any]]) -> set[str]:
     labels: set[str] = set()
     for row in rows:
@@ -657,6 +728,7 @@ def _section_labels_in_timetable(rows: list[dict[str, Any]]) -> set[str]:
                         "currently_registered_sections",
                         "expected_plan_sections",
                         "baseline_sections",
+                        "sections",
                     } and isinstance(child, list):
                         # my_timetable carries bare label strings here, which
                         # the key-based walk below would never reach.
@@ -1199,6 +1271,27 @@ def _exact_figure_mismatch(answer: str, rows: list[dict[str, Any]]) -> bool:
             if expected and not count_figures <= expected:
                 return True
 
+        progress_impact_figure_supported = False
+        if (
+            count_figures
+            and progress_rows
+            and _has_words(
+                clause,
+                ("متطلب", "تنتظر", "سلسلة", "prerequisite", "unlock", "chain"),
+            )
+        ):
+            impact_figures = _numeric_values_for_keys(
+                progress_rows,
+                {
+                    "requested_priority_limit",
+                    "sole_remaining_prerequisite_count",
+                    "on_prerequisite_chain_of_count",
+                },
+            )
+            progress_impact_figure_supported = bool(
+                impact_figures and count_figures <= impact_figures
+            )
+
         graduation_context = (
             _has_words(clause, _GRADUATION_WORDS)
             or bool(credit_figures and _has_words(clause, _REMAINING_WORDS + _EARNED_WORDS))
@@ -1208,6 +1301,7 @@ def _exact_figure_mismatch(answer: str, rows: list[dict[str, Any]]) -> bool:
             not graduations
             and (credit_figures or count_figures or term_figures or percent_figures)
             and _has_words(clause, _PERSONAL_GRADUATION_CLAIM_WORDS)
+            and not progress_impact_figure_supported
         ):
             # Comparison and replacement payloads carry their own server-
             # computed graduation-shaped numbers (terms_saved, unlock counts,
@@ -1228,7 +1322,13 @@ def _exact_figure_mismatch(answer: str, rows: list[dict[str, Any]]) -> bool:
                     row
                     for row in rows
                     if row.get("tool")
-                    in {"feasible_course_replacements", "course_choice_comparison"}
+                    in {
+                        "feasible_course_replacements",
+                        "course_choice_comparison",
+                        "recommend_feasible_course_addition",
+                        "rank_current_course_drop_impact",
+                        "improve_current_timetable",
+                    }
                 ],
                 {
                     "terms_saved",
@@ -1242,6 +1342,7 @@ def _exact_figure_mismatch(answer: str, rows: list[dict[str, Any]]) -> bool:
                     "sole_remaining_prerequisite_count",
                     "chain_course_count",
                     "clash_free_count",
+                    "clash_free_section_count",
                     "clashing_count",
                     "sections_on_file",
                     "credit_hours",
@@ -1466,6 +1567,9 @@ def _tool_signature_present(answer: str, row: dict[str, Any]) -> bool:
         spoken = _figures(_PERCENT_FIGURE, answer) | _credit_figures(answer) | _term_figures(answer)
         return bool(figures & spoken and _has_words(answer, _GRADUATION_WORDS))
     if tool == "build_timetable_proposal":
+        target = _as_number(row.get("target_credits"))
+        if target is not None and target in _credit_figures(answer):
+            return True
         planner_names: set[str] = set()
         for alternative in row.get("alternatives") or []:
             if not isinstance(alternative, dict):
@@ -2302,19 +2406,26 @@ def _presentation_fulfils_tool(
         if planned_terms and not all(term_of.get(code) == band for code, band in planned_terms):
             return False
         what_if = row.get("what_if") if isinstance(row.get("what_if"), dict) else {}
+
+        def scenario_course_code(value: Any) -> str:
+            if isinstance(value, dict):
+                value = value.get("code") or value.get("course_code")
+            return _normalise_course_token(value)
+
         for evidence_field, presentation_field in (
             ("removed_current_courses", "removed_current_courses"),
+            ("noncompletion_current_courses", "noncompletion_current_courses"),
             ("added_current_courses", "added_current_courses"),
         ):
             expected = {
-                _normalise_course_token(code)
-                for code in what_if.get(evidence_field) or []
-                if _normalise_course_token(code)
+                scenario_course_code(course)
+                for course in what_if.get(evidence_field) or []
+                if scenario_course_code(course)
             }
             shown = {
-                _normalise_course_token(code)
-                for code in presentation.get(presentation_field) or []
-                if _normalise_course_token(code)
+                scenario_course_code(course)
+                for course in presentation.get(presentation_field) or []
+                if scenario_course_code(course)
             }
             if expected != shown:
                 return False
@@ -2323,6 +2434,66 @@ def _presentation_fulfils_tool(
         return not expected_terms or bool(expected_terms & shown_terms)
 
     if tool == "build_timetable_proposal" and presentation.get("kind") == "timetable_proposals":
+        target = _as_number(row.get("target_credits"))
+        if target is not None:
+            shown_target = _as_number(presentation.get("target_credits"))
+            if shown_target != target:
+                return False
+            evidence_satisfied = row.get("target_credits_satisfied") is True
+            shown_satisfied = presentation.get("target_credits_satisfied") is True
+            if shown_satisfied is not evidence_satisfied:
+                return False
+            evidence_status = str(row.get("target_credit_status") or "").strip().upper()
+            shown_status = str(presentation.get("target_credit_status") or "").strip().upper()
+            if not evidence_status or shown_status != evidence_status:
+                return False
+            evidence_alternatives = [
+                item for item in row.get("alternatives") or [] if isinstance(item, dict)
+            ]
+            shown_alternatives = [
+                item for item in presentation.get("alternatives") or [] if isinstance(item, dict)
+            ]
+            if any(
+                _as_number(item.get("total_credit_hours")) != target
+                for item in [*evidence_alternatives, *shown_alternatives]
+            ):
+                return False
+            baseline_exact = (
+                row.get("no_additional_courses") is True
+                and _as_number(row.get("baseline_credit_hours")) == target
+            )
+            if evidence_satisfied and not evidence_alternatives and not baseline_exact:
+                return False
+            if not evidence_satisfied:
+                if evidence_alternatives or shown_alternatives:
+                    return False
+                if row.get("constraints_satisfied") is not False:
+                    return False
+                if presentation.get("constraints_satisfied") is not False:
+                    return False
+                if not row.get("constraint_failures") or not presentation.get(
+                    "constraint_failures"
+                ):
+                    return False
+                return True
+            if baseline_exact and not evidence_alternatives:
+                evidence_baseline = {
+                    (
+                        _normalise_course_token(course.get("course_code")),
+                        str(course.get("section") or "").strip().upper(),
+                    )
+                    for course in row.get("baseline_sections") or []
+                    if isinstance(course, dict) and course.get("course_code")
+                }
+                shown_baseline = {
+                    (
+                        _normalise_course_token(course.get("course_code")),
+                        str(course.get("section") or "").strip().upper(),
+                    )
+                    for course in presentation.get("baseline_sections") or []
+                    if isinstance(course, dict) and course.get("course_code")
+                }
+                return bool(evidence_baseline) and evidence_baseline == shown_baseline
         evidence_sections = {
             (
                 _normalise_course_token(course.get("course_code")),
@@ -2404,7 +2575,82 @@ def _tool_contract_complete(
             return any(_fold(word) in _fold(answer) for word in _EMPTY_EVIDENCE_WORDS)
         return recommended <= answer_codes
 
+    if tool == "my_progress" and "requested_priority_limit" in row:
+        limit = row.get("requested_priority_limit")
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 20:
+            return False
+        full = [item for item in row.get("unlock_impact_ranking") or [] if isinstance(item, dict)]
+        requested = [
+            item
+            for item in row.get("requested_unlock_impact_ranking") or []
+            if isinstance(item, dict)
+        ]
+        expected_codes = [
+            _normalise_course_token(item.get("code") or item.get("course_code"))
+            for item in full[:limit]
+        ]
+        requested_codes = [
+            _normalise_course_token(item.get("code") or item.get("course_code"))
+            for item in requested
+        ]
+        if (
+            any(not code for code in expected_codes)
+            or requested_codes != expected_codes
+            or row.get("requested_priority_limit_fulfilled") is not (len(expected_codes) == limit)
+        ):
+            return False
+        if _ordered_course_codes_in_text(answer) != expected_codes:
+            return False
+        folded = _fold(answer)
+        return any(_fold(marker) in folded for marker in ("أساس الترتيب", "ranking basis"))
+
     if tool == "build_timetable_proposal":
+        target = _as_number(row.get("target_credits"))
+        if target is not None:
+            alternatives = [
+                item for item in row.get("alternatives") or [] if isinstance(item, dict)
+            ]
+            if any(_as_number(item.get("total_credit_hours")) != target for item in alternatives):
+                return False
+            target_satisfied = row.get("target_credits_satisfied") is True
+            baseline_exact = (
+                row.get("no_additional_courses") is True
+                and _as_number(row.get("baseline_credit_hours")) == target
+            )
+            if target_satisfied is not bool(alternatives or baseline_exact):
+                return False
+            if target not in _credit_figures(answer):
+                return False
+            if not target_satisfied:
+                if row.get("constraints_satisfied") is not False or alternatives:
+                    return False
+                folded = _fold(answer)
+                generic_markers = (
+                    "تعذر",
+                    "لم يجد",
+                    "لم يتوفر",
+                    "لا يوجد جدول",
+                    "could not",
+                    "did not find",
+                    "no exact",
+                )
+                status_markers = {
+                    "TARGET_EXCEEDS_EFFECTIVE_MAX": (
+                        "يتجاوز المجموع الدقيق",
+                        "exceeds the effective credit ceiling",
+                    ),
+                    "RETAINED_BASELINE_EXCEEDS_TARGET": (
+                        "تتجاوز ساعات الجدول",
+                        "already exceeds the exact target",
+                    ),
+                    "NO_EXACT_ALTERNATIVE": (
+                        "لم يجد البحث المحدود",
+                        "bounded A1-C3 search did not find",
+                    ),
+                }.get(str(row.get("target_credit_status") or "").strip().upper(), ())
+                return any(
+                    _fold(phrase) in folded for phrase in (*generic_markers, *status_markers)
+                )
         # One alternative, presented WHOLE - its placed courses and the ones
         # it could not place - is a complete, honest answer.  The first
         # contract demanded the union of every code across EVERY alternative,
@@ -2445,6 +2691,255 @@ def _tool_contract_complete(
         if blocking:
             return blocking <= answer_codes
         return any(_fold(word) in _fold(answer) for word in _EMPTY_EVIDENCE_WORDS)
+
+    if tool == "course_choice_comparison":
+        candidates = [item for item in row.get("candidates") or [] if isinstance(item, dict)]
+        if not candidates:
+            return False
+        candidate_codes = [
+            _normalise_course_token(candidate.get("course_code")) for candidate in candidates
+        ]
+        if any(not code for code in candidate_codes):
+            return False
+
+        def code_pattern(code: str, *, heading: bool) -> re.Pattern[str]:
+            match = re.fullmatch(r"([A-Z]{2,6})(\d{1,4})", code)
+            assert match is not None
+            prefix, digits = match.groups()
+            token = (
+                rf"(?<![A-Za-z0-9]){re.escape(prefix)}\s*-?\s*{re.escape(digits)}"
+                r"(?![A-Za-z0-9])"
+            )
+            return re.compile(
+                rf"\*\*\s*{token}\s*\*\*" if heading else token,
+                re.IGNORECASE,
+            )
+
+        # The deterministic renderer owns bold candidate headings.  Use those
+        # server-authored boundaries when all are present so a course code in a
+        # prerequisite/name inside another block cannot truncate the relation.
+        heading_positions = {
+            code: [match.start() for match in code_pattern(code, heading=True).finditer(answer)]
+            for code in candidate_codes
+        }
+        use_headings = all(heading_positions[code] for code in candidate_codes)
+        occurrences = sorted(
+            (
+                position,
+                code,
+            )
+            for code in candidate_codes
+            for position in (
+                heading_positions[code]
+                if use_headings
+                else [match.start() for match in code_pattern(code, heading=False).finditer(answer)]
+            )
+        )
+        if any(
+            not any(found_code == code for _position, found_code in occurrences)
+            for code in candidate_codes
+        ):
+            return False
+
+        for candidate in candidates:
+            code = _normalise_course_token(candidate.get("course_code"))
+            if str(row.get("objective") or "").strip().lower() != "graduation":
+                continue
+            graduation = (
+                candidate.get("graduation") if isinstance(candidate.get("graduation"), dict) else {}
+            )
+            graduation_evidence: list[tuple[str, str]] = []
+            for index, (position, found_code) in enumerate(occurrences):
+                if found_code != code:
+                    continue
+                end = occurrences[index + 1][0] if index + 1 < len(occurrences) else len(answer)
+                block = answer[position:end]
+                folded_block = _fold(block)
+                positions = [
+                    marker_position
+                    for marker in ("محاكاة إكمال الخطة", "graduation scenario")
+                    for marker_position in [folded_block.find(_fold(marker))]
+                    if marker_position >= 0
+                ]
+                if positions:
+                    graduation_evidence.append((folded_block, folded_block[min(positions) :]))
+            if not graduation_evidence:
+                return False
+            completed = graduation.get("simulation_completed") is True
+            estimated_terms = _as_number(graduation.get("estimated_additional_terms"))
+            if completed and estimated_terms is not None:
+                completed_markers = (
+                    _fold("محاكاة إكمال الخطة مكتملة"),
+                    "completed graduation scenario",
+                )
+                if not any(
+                    any(marker in folded_block for marker in completed_markers)
+                    and _fold("غير مكتملة") not in folded_block
+                    for folded_block, _fragment in graduation_evidence
+                ):
+                    return False
+                spoken = {
+                    number
+                    for _folded_block, fragment in graduation_evidence
+                    for match in _TAIL_NUMBER.finditer(
+                        _NOT_A_FIGURE.sub(" ", fragment).translate(_ARABIC_INDIC_DIGITS)
+                    )
+                    for number in [_as_number(match.group(1))]
+                    if number is not None
+                }
+                if estimated_terms not in spoken:
+                    return False
+            elif not any(
+                marker in folded_block
+                for folded_block, _fragment in graduation_evidence
+                for marker in (
+                    _fold("غير مكتمل"),
+                    _fold("لا يمكن تحديد فرق"),
+                    "incomplete",
+                    "not determinable",
+                )
+            ):
+                return False
+        return True
+
+    if tool == "feasible_course_replacements":
+        certified = [
+            item for item in row.get("certified_replacements") or [] if isinstance(item, dict)
+        ]
+        if certified:
+            required_codes = {
+                _normalise_course_token(course.get("course_code"))
+                for item in certified
+                for course in (item.get("remove_course") or {}, item.get("add_course") or {})
+                if isinstance(course, dict) and course.get("course_code")
+            }
+            required_codes.discard("")
+            return bool(required_codes) and all(
+                _names_exact_course_code(answer, code) for code in required_codes
+            )
+
+        # A bounded negative is a complete result too.  In the generic search
+        # case there may be no student-named course to repeat, so requiring a
+        # course-code signature makes the deterministic, truthful answer
+        # impossible to ship.  Bind any explicitly requested pair when present,
+        # and require the server renderer's fail-closed conclusion language.
+        requested_codes = {
+            _normalise_course_token(row.get(field))
+            for field in ("requested_remove_course", "requested_add_course")
+            if row.get(field)
+        }
+        requested_codes.discard("")
+        if requested_codes and not all(
+            _names_exact_course_code(answer, code) for code in requested_codes
+        ):
+            return False
+        folded = _fold(answer)
+        bounded_negative_markers = (
+            "لم ينتج الفحص المحدود استبدالا",
+            "لم تثبت المحاكاة تحسن",
+            "لم يعتمد النظام اي استبدال",
+            "لم يعتمد جدول بلا تعارضات",
+            "لم يكف لاعتماد جدول مكتمل",
+            "لم تكف لاعتماد جدول مكتمل",
+            "bounded check did not produce a replacement",
+            "did not prove an academic improvement",
+            "did not certify a clash-free timetable",
+            "insufficient to certify a complete clash-free schedule",
+        )
+        return any(_fold(marker) in folded for marker in bounded_negative_markers)
+
+    if tool == "recommend_feasible_course_addition":
+        candidates = [
+            item for item in row.get("ranked_feasible_additions") or [] if isinstance(item, dict)
+        ]
+        if str(row.get("status") or "") == "RECOMMENDATION_FOUND":
+            if not candidates and isinstance(row.get("recommended_addition"), dict):
+                candidates = [row["recommended_addition"]]
+            codes = {
+                _normalise_course_token(item.get("course_code"))
+                for item in candidates
+                if item.get("course_code")
+            }
+            codes.discard("")
+            return bool(codes) and all(_names_exact_course_code(answer, code) for code in codes)
+        return any(
+            _fold(marker) in _fold(answer)
+            for marker in (
+                "لم ينتج الفحص المحدود نتيجة إيجابية موثقة",
+                "the bounded check did not produce a verified positive result",
+            )
+        )
+
+    if tool == "rank_current_course_drop_impact":
+        ranked = [item for item in row.get("ranked_drop_impacts") or [] if isinstance(item, dict)]
+        if str(row.get("status") or "") == "RANKING_AVAILABLE":
+            if not ranked and isinstance(row.get("top_ranked_drop_candidate"), dict):
+                ranked = [row["top_ranked_drop_candidate"]]
+            codes = {
+                _normalise_course_token(item.get("course_code"))
+                for item in ranked
+                if item.get("course_code")
+            }
+            codes.discard("")
+            return bool(codes) and all(_names_exact_course_code(answer, code) for code in codes)
+        return any(
+            _fold(marker) in _fold(answer)
+            for marker in (
+                "لم ينتج الفحص المحدود نتيجة إيجابية موثقة",
+                "the bounded check did not produce a verified positive result",
+            )
+        )
+
+    if tool == "improve_current_timetable":
+        if str(row.get("status") or "") == "IMPROVEMENTS_FOUND":
+            codes: set[str] = set()
+
+            def add_replacement_codes(replacement: object) -> None:
+                if not isinstance(replacement, dict):
+                    return
+                for key in ("remove_course", "add_course"):
+                    course = replacement.get(key)
+                    if isinstance(course, dict) and course.get("course_code"):
+                        codes.add(_normalise_course_token(course.get("course_code")))
+                timetable = replacement.get("timetable")
+                if not isinstance(timetable, dict):
+                    return
+                for option in timetable.get("certified_options") or []:
+                    if not isinstance(option, dict):
+                        continue
+                    for course in option.get("complete_sections") or []:
+                        if isinstance(course, dict) and course.get("course_code"):
+                            codes.add(_normalise_course_token(course.get("course_code")))
+
+            def add_schedule_change_codes(schedule: object) -> None:
+                if not isinstance(schedule, dict):
+                    return
+                # The renderer presents the changed sections, not every unchanged
+                # baseline course carried in the solver's complete candidate set.
+                for change in schedule.get("changed_sections") or []:
+                    if isinstance(change, dict) and change.get("course_code"):
+                        codes.add(_normalise_course_token(change.get("course_code")))
+
+            for replacement in row.get("graduation_improvements") or []:
+                add_replacement_codes(replacement)
+            for schedule in row.get("schedule_quality_improvements") or []:
+                add_schedule_change_codes(schedule)
+            recommended = row.get("recommended_change")
+            if isinstance(recommended, dict):
+                kind = str(recommended.get("kind") or "").strip().upper()
+                if kind == "COURSE_REPLACEMENT":
+                    add_replacement_codes(recommended.get("replacement"))
+                elif kind == "SECTION_REARRANGEMENT":
+                    add_schedule_change_codes(recommended.get("schedule"))
+            codes.discard("")
+            return bool(codes) and all(_names_exact_course_code(answer, code) for code in codes)
+        return any(
+            _fold(marker) in _fold(answer)
+            for marker in (
+                "لم ينتج الفحص المحدود نتيجة إيجابية موثقة",
+                "the bounded check did not produce a verified positive result",
+            )
+        )
 
     if tool == "present_prior_artifact":
         if row.get("view") == "source_artifact":
@@ -2599,6 +3094,81 @@ def _policy_figure_mismatch(answer: str, tool_results: list[dict[str, Any]] | No
     return False
 
 
+_NONCOMPLETION_REMOVAL_CLAIMS = (
+    "حذف",
+    "اسقاط",
+    "انسحاب",
+    "سحب",
+    "remov",
+    "drop",
+    "withdraw",
+)
+_NONCOMPLETION_FAILURE_CLAIMS = (
+    "رسب",
+    "رسوب",
+    "راسب",
+    "failed",
+    "failing grade",
+    "received an f",
+    "earned an f",
+    "grade is f",
+)
+_NONCOMPLETION_ASSUMPTION_MARKERS = (
+    "لو ",
+    "اذا ",
+    "افتراض",
+    "سيناريو",
+    "عدم اجتياز",
+    "غير مجتاز",
+    "if ",
+    "what if",
+    "assume",
+    "assuming",
+    "scenario",
+    "not complet",
+    "non-completion",
+)
+
+
+def _noncompletion_semantic_mismatch(answer: str, rows: list[dict[str, Any]]) -> bool:
+    """Reject prose that changes a typed non-completion into removal or a real grade.
+
+    The relation is closed over exact course identifiers from the typed what-if row.
+    A hypothetical fail clause remains valid, but evidence saying "not assumed passed"
+    cannot support either "removed" or "actually failed" for that same course.
+    """
+
+    noncompletion_codes: set[str] = set()
+    for row in rows:
+        if str(row.get("tool") or "") != "graduation_progress":
+            continue
+        what_if = row.get("what_if") if isinstance(row.get("what_if"), dict) else {}
+        for course in what_if.get("noncompletion_current_courses") or []:
+            value = (
+                course.get("code") or course.get("course_code")
+                if isinstance(course, dict)
+                else course
+            )
+            code = _normalise_course_token(value)
+            if code:
+                noncompletion_codes.add(code)
+    if not noncompletion_codes:
+        return False
+
+    for clause in _clauses(answer):
+        if not (_course_codes_in_text(clause) & noncompletion_codes):
+            continue
+        if any(_affirmative(clause, marker) for marker in _NONCOMPLETION_REMOVAL_CLAIMS):
+            return True
+        if not any(_affirmative(clause, marker) for marker in _NONCOMPLETION_FAILURE_CLAIMS):
+            continue
+        folded = _fold(clause)
+        if any(_fold(marker) in folded for marker in _NONCOMPLETION_ASSUMPTION_MARKERS):
+            continue
+        return True
+    return False
+
+
 def _evidence_postcondition_violations(
     answer: str,
     *,
@@ -2713,6 +3283,9 @@ def _evidence_postcondition_violations(
         violations.append(POLICY_FIGURE_MISMATCH)
 
     if rows:
+        if _noncompletion_semantic_mismatch(answer, rows):
+            violations.append(UNSUPPORTED_ACADEMIC_FACT)
+
         if _unsupported_answer_codes(answer, question, rows):
             violations.append(UNSUPPORTED_ACADEMIC_FACT)
 
@@ -2792,6 +3365,7 @@ def check_answer(
     required_tools: Iterable[str] | None = None,
     presentation: dict[str, Any] | None = None,
     known_course_codes: frozenset[str] | None = None,
+    evidence_scopes: Iterable[EvidenceValidationScope] | None = None,
 ) -> list[str]:
     """Every consistency violation in this answer, as codes. Empty means shippable.
 
@@ -2848,8 +3422,7 @@ def check_answer(
         tool_results, "why_course_locked"
     )
     if progress:
-        phrase = _phrases(text, _ELIGIBLE_PHRASES)
-        if phrase and _affirmative(text, phrase):
+        if _any_affirmative_phrase(text, _ELIGIBLE_PHRASES):
             found.append(PREREQ_TO_REGISTRATION_LEAP)
 
     # 6. NOT_ON_FILE means this system holds no section, never that none exists.
@@ -2858,14 +3431,12 @@ def check_answer(
         for r in (timetable.get("unplaced_courses") or [])
         if isinstance(r, dict)
     ):
-        phrase = _phrases(text, _NOT_OFFERED_PHRASES)
-        if phrase and _affirmative(text, phrase):
+        if _any_affirmative_phrase(text, _NOT_OFFERED_PHRASES):
             found.append(NOT_ON_FILE_TO_NOT_OFFERED)
 
     # 7. There are no seat counts anywhere in the data. See the module docstring for
     #    why this is the weakest of the legacy checks.
-    phrase = _phrases(text, _SEAT_PHRASES)
-    if phrase and _affirmative(text, phrase):
+    if _any_affirmative_phrase(text, _SEAT_PHRASES):
         found.append(SEAT_CLAIM)
 
     # 8. CAP AND LOAD claims only, each against the source that owns it.
@@ -2892,11 +3463,9 @@ def check_answer(
 
     # Legacy checks 9/10. The adviser mutates nothing. A hand-off is an OFFER, so an answer that
     #       carries one may not also report the thing as done.
-    phrase = _phrases(text, _PLANNER_MUTATION_PHRASES)
-    if phrase and _affirmative(text, phrase):
+    if _any_affirmative_phrase(text, _PLANNER_MUTATION_PHRASES):
         found.append(CLAIMED_PLANNER_MUTATION)
-    phrase = _phrases(text, _REGISTERED_PHRASES)
-    if phrase and _affirmative(text, phrase):
+    if _any_affirmative_phrase(text, _REGISTERED_PHRASES):
         found.append(CLAIMED_REGISTRATION_MUTATION)
 
     # A caller opts into the evidence-to-answer postcondition by supplying the
@@ -2904,18 +3473,38 @@ def check_answer(
     # question= and the catalogue too, so a preview or rollback environment
     # running the legacy path keeps the same floor.
     if question is not None:
-        found.extend(
-            _evidence_postcondition_violations(
-                text,
-                question=question,
-                tool_results=tool_results,
-                required_tools=required_tools,
-                presentation=presentation,
-                known_course_codes=known_course_codes,
+        scopes = tuple(evidence_scopes or ())
+        if scopes:
+            for scope in scopes:
+                found.extend(
+                    _evidence_postcondition_violations(
+                        scope.answer,
+                        question=question,
+                        tool_results=list(scope.tool_results),
+                        required_tools=scope.required_tools,
+                        presentation=scope.presentation,
+                        known_course_codes=known_course_codes,
+                    )
+                )
+        else:
+            found.extend(
+                _evidence_postcondition_violations(
+                    text,
+                    question=question,
+                    tool_results=tool_results,
+                    required_tools=required_tools,
+                    presentation=presentation,
+                    known_course_codes=known_course_codes,
+                )
             )
-        )
 
     return list(dict.fromkeys(found))
 
 
-__all__ = ["ALL_CHECKS", "EXACT_FACT_TOOLS", "check_answer", *ALL_CHECKS]
+__all__ = [
+    "ALL_CHECKS",
+    "EXACT_FACT_TOOLS",
+    "EvidenceValidationScope",
+    "check_answer",
+    *ALL_CHECKS,
+]

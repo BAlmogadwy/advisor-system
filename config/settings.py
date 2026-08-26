@@ -222,6 +222,24 @@ VIRTUAL_ADVISOR_TOOL_TURN_TIMEOUT_SECONDS = float(
 # new services - which are exactly where the unguarded legacy path must not
 # silently become the student's adviser again.
 STUDENT_ADVISOR_V2_ENABLED = os.getenv("STUDENT_ADVISOR_V2_ENABLED", "true").lower() == "true"
+# Student Advisor V2.1: schema-constrained semantic planning. This is an
+# independent rollout switch, deliberately OFF until the V2.1 evaluation gate
+# passes. V2 must remain enabled while this is true so disabling only V2.1 has
+# an explicit rollback target; the runtime dispatcher enforces that invariant.
+STUDENT_ADVISOR_V21_ENABLED = os.getenv("STUDENT_ADVISOR_V21_ENABLED", "false").lower() == "true"
+# Local V2.1 browser launcher. DEBUG, this explicit switch, a loopback peer, and
+# an authenticated superuser are all required by the view; false is the only safe
+# default because the launcher intentionally changes the current session identity.
+ALLOW_DEV_STUDENT_ADVISOR_LAB = (
+    os.getenv("ALLOW_DEV_STUDENT_ADVISOR_LAB", "false").lower() == "true"
+)
+# The semantic plan is one compact, forced-schema inference within the existing
+# V2 wall-clock budget. Its own cap prevents planning from consuming the answer
+# budget; the evidence-call ceiling remains STUDENT_ADVISOR_V2_MAX_TOOL_CALLS.
+STUDENT_ADVISOR_V21_PLAN_MAX_TOKENS = int(os.getenv("STUDENT_ADVISOR_V21_PLAN_MAX_TOKENS", "900"))
+STUDENT_ADVISOR_V21_PLAN_TIMEOUT_SECONDS = float(
+    os.getenv("STUDENT_ADVISOR_V21_PLAN_TIMEOUT_SECONDS", "45")
+)
 STUDENT_ADVISOR_V2_MAX_TOOL_ITERATIONS = int(
     os.getenv("STUDENT_ADVISOR_V2_MAX_TOOL_ITERATIONS", "4")
 )

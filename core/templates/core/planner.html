@@ -76,7 +76,7 @@
           </div>
 
           <!-- Workflow stepper -->
-          <div class="wf-stepper" style="margin-top:10px">
+          <div class="wf-stepper" style="margin-top:10px" role="group" aria-label="{% if LANGUAGE_CODE == 'ar' %}خطوات بناء الجدول{% else %}Timetable build steps{% endif %}">
             <button id="step1" class="wf-step active" type="button"><span class="wf-num">1</span>{% if LANGUAGE_CODE == 'ar' %}الطالب{% else %}Student{% endif %}</button>
             <div class="wf-sep"></div>
             <button id="step2" class="wf-step" type="button"><span class="wf-num">2</span>{% if LANGUAGE_CODE == 'ar' %}اختيار المقررات{% else %}Pick Courses{% endif %}</button>
@@ -169,6 +169,15 @@
             <div class="pane-head">
               <div class="pane-icon pane-icon-sky"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg></span></div>
               <div><h6 class="pane-title">{% if LANGUAGE_CODE == 'ar' %}المقررات والشعب المتاحة{% else %}Available Courses & Sections{% endif %}</h6><div class="pane-sub">{% if LANGUAGE_CODE == 'ar' %}الشعب مصنفة حسب التعارض والسعة{% else %}Sections color-coded by conflict & capacity{% endif %}</div></div>
+              <!-- This filter decides WHICH sections this panel lists, so it
+                   belongs beside them. It previously sat in the Builder panel,
+                   three screens down and ~700px BELOW the list it governs. -->
+              <div class="pl-checks align-items-center" style="margin-inline-start:auto">
+                <label title="{% if LANGUAGE_CODE == 'ar' %}يختار المنشئ فقط الشُعب المرتبطة ببرنامج الطالب، بما فيها الشُعب المشتركة المرتبطة بالبرنامج.{% else %}Use only sections explicitly linked to the student's programme, including shared sections linked to it.{% endif %}"><input id="programSectionsOnly" type="checkbox" checked> {% if LANGUAGE_CODE == 'ar' %}شُعب برنامج الطالب فقط{% else %}Only this student's programme{% endif %}</label>
+              <div class="fs-11 text-t4" style="flex-basis:100%; text-align:end; margin-top:2px">
+                {% if LANGUAGE_CODE == 'ar' %}عند إيقافه تظهر شُعب برامج أخرى أيضًا.{% else %}Uncheck to also list other programmes' sections.{% endif %}
+              </div>
+              </div>
             </div>
 
             <div class="chip-legend mb-2">
@@ -204,15 +213,14 @@
               <button id="applyOption" class="pl-btn pl-btn-success" disabled><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></span>{% if LANGUAGE_CODE == 'ar' %}تطبيق{% else %}Apply{% endif %}</button>
             </div>
             <div class="pl-checks align-items-center" style="margin-bottom:10px">
-              <label title="{% if LANGUAGE_CODE == 'ar' %}يختار المنشئ فقط الشُعب المرتبطة ببرنامج الطالب، بما فيها الشُعب المشتركة المرتبطة بالبرنامج.{% else %}Use only sections explicitly linked to the student's programme, including shared sections linked to it.{% endif %}"><input id="programSectionsOnly" type="checkbox" checked> {% if LANGUAGE_CODE == 'ar' %}شُعب برنامج الطالب فقط{% else %}Student programme sections only{% endif %}</label>
-              <label title="{% if LANGUAGE_CODE == 'ar' %}يسمح بإدخال الشُعب التي بلغ عدد المسجلين فيها سعتها القصوى. هذا للتخطيط فقط ولا يحجز مقعدًا.{% else %}Allow sections whose registered count has reached capacity. Planning only; this does not reserve a seat.{% endif %}"><input id="allowFullSections" type="checkbox"> {% if LANGUAGE_CODE == 'ar' %}السماح بالشُعب الممتلئة{% else %}Allow full sections{% endif %}</label>
+              <label title="{% if LANGUAGE_CODE == 'ar' %}يسمح بإدخال الشُعب التي بلغ عدد المسجلين فيها سعتها القصوى. هذا للتخطيط فقط ولا يحجز مقعدًا.{% else %}Allow sections whose registered count has reached capacity. Planning only; this does not reserve a seat.{% endif %}"><input id="allowFullSections" type="checkbox"> {% if LANGUAGE_CODE == 'ar' %}تضمين شُعب بلا مقاعد شاغرة{% else %}Include sections with no seats left{% endif %}</label>
               <label class="align-items-center" style="display:inline-flex; gap:4px">
                 {% if LANGUAGE_CODE == 'ar' %}الحد الأقصى ساعات{% else %}Max credits{% endif %}
-                <input class="text-center" id="maxCredits" type="text" inputmode="numeric" pattern="[0-9]*" value="17" dir="ltr" style="width:52px; padding:2px 4px; border:1px solid var(--border); border-radius:6px; font-size:12px; font-family:'Courier New',monospace">
+                <input class="text-center" id="maxCredits" type="text" inputmode="numeric" pattern="[0-9]*" value="17" dir="ltr" aria-describedby="maxCreditsHint" aria-label="{% if LANGUAGE_CODE == 'ar' %}الحد الأعلى للساعات{% else %}Maximum credits{% endif %}" style="width:52px; padding:2px 4px; border:1px solid var(--border); border-radius:6px; font-size:12px; font-family:'Courier New',monospace"><span id="maxCreditsHint" class="fs-11 text-t4" style="margin-inline-start:6px"></span>
               </label>
             </div>
             <div class="fs-11 text-t4" style="margin-top:-4px;margin-bottom:10px">
-              {% if LANGUAGE_CODE == 'ar' %}عند إلغاء قيد البرنامج يمكن استخدام شُعب برامج أخرى. الشُعب ذات السعة غير المعروفة لا تُعامل كممتلئة.{% else %}Turning off programme-only allows other programmes' sections. Unknown capacity is not treated as full.{% endif %}
+              {% if LANGUAGE_CODE == 'ar' %}للتخطيط فقط — لا يحجز مقعدًا. الشُعب ذات السعة غير المعروفة لا تُعامل كممتلئة.{% else %}Planning only — this does not reserve a seat. Sections whose capacity is unknown are not treated as full.{% endif %}
             </div>
 
             <input id="selectedOption" type="hidden">
@@ -295,5 +303,5 @@
   const defaultYear = {{ default_year }};
   const defaultTerm = {{ default_term }};
 </script>
-<script src="{% static 'js/page-planner.js' %}?v=11"></script>
+<script src="{% static 'js/page-planner.js' %}?v=13"></script>
 {% endblock %}
