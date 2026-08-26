@@ -124,6 +124,26 @@ def test_portfolio_does_not_invent_parity_outside_main_terms(
     assert advisors._get_high_priority_by_program("DS2") == {}
 
 
+@pytest.mark.parametrize(
+    ("program_filter", "expected_id"),
+    [(" ai ", 1), ("AI2", 2), (" ds ", 3), ("DS2", 4)],
+)
+def test_advisor_program_filter_matches_exact_normalized_curriculum(
+    program_filter: str,
+    expected_id: int,
+) -> None:
+    items = [
+        {"student_id": 1, "program": "AI"},
+        {"student_id": 2, "program": "AI2"},
+        {"student_id": 3, "program": "DS"},
+        {"student_id": 4, "program": "DS2"},
+    ]
+
+    result = advisors._apply_advisor_filters(items, program_filter=program_filter)
+
+    assert [row["student_id"] for row in result] == [expected_id]
+
+
 def test_list_students_by_advisor_sorted_by_attention_then_gpa(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -267,3 +287,5 @@ def test_list_students_by_advisor_enriched_metrics(monkeypatch: pytest.MonkeyPat
     assert summary["high_priority_missing_count"] == 1
     assert summary["needs_attention_count"] == 2
     assert summary["current_term_registered_hours_total"] == 15
+    assert summary["program_summaries"]["CS"]["student_count"] == 2
+    assert summary["program_summaries"]["CS"]["high_priority_missing_count"] == 1

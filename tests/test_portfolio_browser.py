@@ -308,6 +308,96 @@ class PortfolioDeadEndTests(PortfolioBrowserTests):
         page.wait_for_selector("#apTable tbody tr[data-sid]", timeout=15_000)
         assert page.is_visible("#apProgramFilter"), "the program filter went with the picker"
 
+    def test_program_selector_and_pills_filter_exact_curricula(self) -> None:
+        """AI/AI2 and DS/DS2 are different plans, and the visible pills are controls.
+
+        The old free-text path did exact matching correctly, but the program pills
+        were inert spans and the field offered no valid choices. A user clicking
+        AI2 saw all 210 students and reasonably concluded that filtering was dead.
+        """
+        self._students()
+        Student.objects.filter(student_id=990002).update(program="AI2")
+        Student.objects.filter(student_id=990003).update(program="DS")
+        Student.objects.create(
+            student_id=990005,
+            name="STUDENT 990005",
+            program="DS2",
+            section="M",
+            advisor_id=ADVISER_ID,
+            status="ACTIVE",
+        )
+
+        page = self._page()
+        self._open(page)
+        page.wait_for_function(
+            "() => document.querySelectorAll('#apProgramFilter option').length === 5",
+            timeout=20_000,
+        )
+
+        options = page.eval_on_selector_all(
+            "#apProgramFilter option", "options => options.map(option => option.value)"
+        )
+        assert set(options) == {"", "AI", "AI2", "DS", "DS2"}, options
+
+        page.select_option("#apProgramFilter", "DS2")
+        page.wait_for_function(
+            "() => document.querySelectorAll('#apTable tbody tr[data-sid]').length === 1"
+        )
+        assert self._rows(page) == ["990005"]
+        assert page.inner_text("#mStudents").strip() == "1"
+        assert page.inner_text('[data-focus="all"] .fb-dd-count').strip() == "1"
+        assert "program_filter=DS2" in (page.get_attribute("#apCsvLink", "href") or "")
+
+        page.select_option("#apProgramFilter", "DS")
+        assert self._rows(page) == ["990003"], "DS must not include DS2"
+
+        page.click('.ap-prog-pill[data-program="AI"]')
+        page.wait_for_function("() => document.querySelector('#apProgramFilter').value === 'AI'")
+        assert self._rows(page) == ["990001"], "AI must not include AI2"
+        assert page.get_attribute('.ap-prog-pill[data-program="AI"]', "aria-pressed") == "true"
+
+        page.click('.ap-prog-pill[data-program="AI2"]')
+        page.wait_for_function("() => document.querySelector('#apProgramFilter').value === 'AI2'")
+        assert self._rows(page) == ["990002"], "AI2 must not include AI"
+
+        page.click('.ap-prog-pill[data-program="AI2"]')
+        page.wait_for_function("() => document.querySelector('#apProgramFilter').value === ''")
+        assert set(self._rows(page)) == {"990001", "990002", "990003", "990005"}
+        assert page.inner_text("#mStudents").strip() == "4"
+
+    def test_clearing_portfolio_ignores_an_older_in_flight_roster(self) -> None:
+        """A late response must not repopulate a portfolio the user already cleared."""
+        self._students()
+        page = self._page()
+        page.add_init_script(
+            """
+            (() => {
+              const realFetch = window.fetch.bind(window);
+              window.fetch = (input, init) => {
+                const url = typeof input === 'string' ? input : input.url;
+                if (url.includes('/report/students-by-advisor/')) {
+                  return new Promise((resolve, reject) => {
+                    window.__releasePortfolioFetch = () => {
+                      realFetch(input, init).then(resolve, reject);
+                    };
+                  });
+                }
+                return realFetch(input, init);
+              };
+            })();
+            """
+        )
+        self._open(page)
+        page.wait_for_function("() => typeof window.__releasePortfolioFetch === 'function'")
+
+        page.evaluate("clearPortfolio()")
+        page.evaluate("window.__releasePortfolioFetch()")
+        page.wait_for_timeout(750)
+
+        assert page.evaluate("() => currentAdvisorId") == ""
+        assert page.evaluate("() => allStudents.length") == 0
+        assert self._rows(page) == []
+
     # ── 2. truncation ────────────────────────────────────────────
 
     def _many(self, n=60):
@@ -430,3 +520,8 @@ class PortfolioDeadEndTests(PortfolioBrowserTests):
         # complete roster.
         assert "CSV" in note.upper(), note
         assert page.get_attribute("#apCsvLink", "href") not in (None, "#")
+
+        page.select_option("#apProgramFilter", "AI")
+        assert page.inner_text("#mStudents").strip() == "505", (
+            "program metrics must use the full server summary, not the 500-row browser prefix"
+        )
