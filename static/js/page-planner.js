@@ -845,6 +845,32 @@ q('applyOption').onclick=async()=>{
   const ids=(opt.mappings||[]).map(m=>m.term_section_id).filter(Boolean);
   if(!ids.length){ setBanner('warning', T.noMappableInOption(name)); return; }
 
+  /* This is the ONLY operation on the page that writes, and it is a REPLACE:
+     any planner section saved earlier that is not in this option is deleted.
+     The request has always carried confirm_replace:true - a flag whose name
+     promises a gate that did not exist anywhere in the UI. Ask first, naming
+     what is about to be written. */
+  const courseList=(opt.mappings||[])
+    .map(m=>`${m.course_code||''} ${m.section||''}`.trim()).filter(Boolean);
+  const proceed = window.confirm(
+    (IS_AR
+      ? `سيتم استبدال جدول الطالب المخطط بالخيار ${name}:
+
+`
+      : `This replaces the student's planned timetable with option ${name}:
+
+`)
+    + courseList.join(String.fromCharCode(10))
+    + (IS_AR
+      ? `
+
+سيتم حذف أي مقررات مخططة سابقًا غير موجودة في هذا الخيار. متابعة؟`
+      : `
+
+Any previously planned courses not in this option will be removed. Continue?`)
+  );
+  if(!proceed) return;
+
   let r, data;
   try{
     r=await fetch('/ops/planner/save-student-sections/',{
@@ -866,7 +892,22 @@ q('applyOption').onclick=async()=>{
   }
   if(data.error){ setBanner('danger', errMsg(data)); return; }
 
+  /* Report what the write actually did, including what it took away. */
+  const removed=Array.isArray(data.removed)?data.removed:[];
+  const clashes=Array.isArray(data.clashes_with_registered)?data.clashes_with_registered:[];
   setBanner('success', T.appliedOption(name, data.inserted||0));
+  if(removed.length){
+    notify.warning(
+      IS_AR ? `أُزيلت ${removed.length} مقرر مخطط سابقًا` : `Removed ${removed.length} previously planned course(s)`,
+      removed.map(x=>`${x.course_code||''} ${x.section||''}`.trim()).join(', ')
+    );
+  }
+  if(clashes.length){
+    notify.warning(
+      IS_AR ? `تعارض مع الجدول المسجّل (${clashes.length})` : `Clashes with the registered timetable (${clashes.length})`,
+      clashes.map(x=>`${x.course_code} ${x.section} @ ${x.slot} vs ${x.clashes_with}`).join('; ')
+    );
+  }
   q('trustStrip').textContent=T.trustUpdated(name);
   setStep('3');
   q('fetchBtn').click();
@@ -928,6 +969,27 @@ q('runBuilder').onclick=async()=>{
       : escapeHtml(f.reason||T.noFeasibleHardConstraints);
     return `<div class="mt-1">• ${code?`<strong>${code}</strong>: `:''}${reason}</div>`;
   }).join('');
+  /* The per-course reasons the server computed. They were only ever rendered
+     INSIDE an option card, so when a build produced no options — the exact
+     moment an adviser needs to know why — the page showed one generic banner
+     and discarded every reason. An adviser who cannot tell "impossible" from
+     "nothing found" cannot act. */
+  const blocked=Array.isArray(data.unscheduled)?data.unscheduled:[];
+  const blockedHtml=(!feasible && blocked.length)
+    ? `<div class="mt-2"><strong>${IS_AR?'المقررات التي تعذّرت جدولتها':'Courses that could not be scheduled'}:</strong></div>`
+      + blocked.map(u=>{
+          const code=escapeHtml(u.course_code||'');
+          const reason=escapeHtml(u.reason||(IS_AR?'سبب غير محدد':'no reason given'));
+          const detail=Array.isArray(u.details)&&u.details.length
+            ? ` <span class="fs-11 text-t4">(${u.details.map(d=>escapeHtml(
+                d.section ? `${d.section}: ${(d.reason_codes||[]).join(', ')}`
+                          : Object.entries(d).map(([k,v])=>`${k}=${v}`).join(' ')
+              )).join('; ')})</span>`
+            : '';
+          return `<div class="mt-1">• <strong>${code}</strong>: ${reason}${detail}</div>`;
+        }).join('')
+    : '';
+
   const summaryEl=q('builderSummary');
   summaryEl.className=`planner-banner planner-banner-${feasible?'ok':'warn'}`;
   summaryEl.innerHTML=`
@@ -935,7 +997,7 @@ q('runBuilder').onclick=async()=>{
     <div><strong>${IS_AR ? 'التعارضات' : 'Conflicts'}:</strong> ${s.conflicts||0}</div>
     <div><strong>${IS_AR ? 'التبديلات المطلوبة' : 'Swaps required'}:</strong> ${s.swaps_required||0}</div>
     <div><strong>${IS_AR ? 'الحالة' : 'Status'}:</strong> ${feasible?(IS_AR?'تم العثور على أفضل خطة ممكنة':'Best feasible plan found'):(IS_AR?'لا توجد خطة تحقق جميع القيود الإلزامية':'No plan satisfies all hard constraints')}</div>
-    ${failureHtml}`;
+    ${failureHtml}${blockedHtml}`;
 
   setBanner(
     feasible?'success':'warning',

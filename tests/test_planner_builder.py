@@ -71,13 +71,31 @@ def test_capacity_contract_uses_maximum_minus_registered(
     assert _known_full_section(section) is full
 
 
+#: Distinct slots so the four capacity fixtures are real alternatives rather
+#: than interchangeable clones.
+_CAPACITY_SLOTS = {
+    "M1": ("SUN", "09:00", "09:50"),
+    "M2": ("MON", "09:00", "09:50"),
+    "M3": ("TUE", "09:00", "09:50"),
+    "M4": ("WED", "09:00", "09:50"),
+}
+
+
 def _planner_section(
     section: str,
     *,
     maximum: int | None,
     registered: int | None,
 ) -> TermSection:
-    return TermSection.objects.create(
+    """A capacity fixture WITH a real meeting.
+
+    These sections used to be created with no meetings at all, which the
+    builder then treated as free all week — so this test passed only because
+    phantom sections were schedulable. That is the defect the completeness gate
+    now closes, so the fixture has to describe a section that could genuinely
+    be timetabled; otherwise the test asserts the bug instead of capacity.
+    """
+    row = TermSection.objects.create(
         course_code="CS",
         course_number="200",
         course_key="CS200",
@@ -86,6 +104,9 @@ def _planner_section(
         available_capacity=maximum,
         registered_count=registered,
     )
+    day, start, end = _CAPACITY_SLOTS.get(section, ("SUN", "09:00", "09:50"))
+    TermSectionMeeting.objects.create(term_section=row, day=day, start_time=start, end_time=end)
+    return row
 
 
 def _builder_section(

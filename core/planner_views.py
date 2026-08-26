@@ -16,6 +16,7 @@ from core.models import (
     ProgrammeRequirement,
     Student,
     StudentCourse,
+    StudentTermSection,
     TermSection,
     TermSectionMeeting,
 )
@@ -38,14 +39,19 @@ from core.services.student_sections import (
     get_student_term_baseline,
     replace_student_term_sections,
     section_is_available_to_student,
+    snapshot_class_filter,
     student_gender,
     student_gender_strict,
 )
-from core.services.timetable_snapshots import Snapshot
+from core.services.timetable_snapshots import Snapshot, SnapshotClass
 from core.settings_views import load_defaults
 from core.sidebar_context import get_sidebar_context
 
 logger = logging.getLogger(__name__)
+
+#: A shortlist is a term's worth of courses for one student. Anything past
+#: this is a malformed or hostile caller, not an adviser planning a term.
+MAX_SHORTLIST_COURSES = 40
 
 
 def _ok(data: dict[str, object], status: int = 200) -> JsonResponse:
@@ -83,6 +89,26 @@ def _validate_term_inputs(year: str, term: str) -> JsonResponse | None:
     if term not in {"1", "2", "3"}:
         return _err("term must be one of: 1, 2, 3", code="VALIDATION_TERM_FORMAT", status=400)
     return None
+
+
+def _int_field(value: object, field: str, *, default: int = 0) -> tuple[int, JsonResponse | None]:
+    """Coerce a numeric payload field, or refuse it with a 400.
+
+    ``int("three")`` raises ValueError, and these coercions sat OUTSIDE the
+    try block wrapping the build, so a typo in one shortlist row returned a raw
+    HTML 500 from a JSON endpoint. A malformed request is the caller's error and
+    must say so in the caller's language.
+    """
+    if value is None or value == "":
+        return default, None
+    if isinstance(value, bool):
+        return default, _err(f"{field} must be a number", code="VALIDATION_NUMERIC", status=400)
+    try:
+        return int(value), None
+    except (TypeError, ValueError):
+        return default, _err(
+            f"{field} must be a number, got {value!r}", code="VALIDATION_NUMERIC", status=400
+        )
 
 
 def _parse_student_id(student_id: str) -> tuple[int | None, JsonResponse | None]:
@@ -440,10 +466,117 @@ def planner_save_student_sections_view(request: HttpRequest) -> JsonResponse:
                     details={"section_ids": unavailable},
                 )
 
-        result = replace_student_term_sections(student_id, year, term, cleaned, source="planner")
-        return _ok(result)  # type: ignore[arg-type]
+        # WHAT THIS WRITE REMOVES. replace_student_term_sections is a REPLACE
+        # over the planner's own snapshot class, so any planner section the
+        # student had saved that is not in this option disappears - silently,
+        # and with no mention in the response. An adviser applying option B
+        # after option A had no way to know A's courses had gone. Read the
+        # before-state and report the difference.
+        previous = {
+            int(row.term_section_id): row
+            for row in StudentTermSection.objects.filter(
+                student_id=student_id_int,
+                academic_year=year,
+                term=term,
+                term_section__scenario__isnull=True,
+            )
+            .filter(snapshot_class_filter(SnapshotClass.WORKING))
+            .select_related("term_section")
+        }
+        removed = [
+            {
+                "term_section_id": tsid,
+                "course_code": str(getattr(row.term_section, "course_key", "") or ""),
+                "section": str(getattr(row.term_section, "section", "") or ""),
+            }
+            for tsid, row in previous.items()
+            if tsid not in set(cleaned)
+        ]
+
+        # DOES THE PLAN STILL FIT? The build ran against the timetable as it was
+        # then. Between building and applying, the registrar snapshot can move -
+        # another adviser, a re-scrape - and applying a stale option writes a
+        # clash nobody checked for. This does not block the write; it reports
+        # the clash so the adviser sees it in the same breath as the result.
+        clashes = _planner_apply_clashes(student_id, student_id_int, year, term, cleaned)
+
+        write_result = replace_student_term_sections(
+            student_id, year, term, cleaned, source="planner"
+        )
+        result: dict[str, object] = dict(write_result)
+        result["removed"] = removed
+        result["removed_count"] = len(removed)
+        result["clashes_with_registered"] = clashes
+        return _ok(result)
     except Exception as exc:
         return _internal_error(exc)
+
+
+def _planner_apply_clashes(
+    student_id: str,
+    student_id_int: int,
+    year: str,
+    term: str,
+    section_ids: list[int],
+) -> list[dict[str, object]]:
+    """Meetings in the applied plan that collide with the REGISTRAR's timetable.
+
+    The build ran against the timetable as it stood then. Between building and
+    applying, that can move — another adviser, a re-scrape — so a stale option
+    could be written straight over a real registration with nothing checking.
+    Reported, not enforced: an adviser may legitimately plan a change they
+    intend to make at the registrar. Silence was the problem, not the write.
+    """
+    registrar_rows = [
+        row
+        for row in get_student_term_baseline(student_id, year, term, snapshot=Snapshot.REGISTERED)
+        or []
+        if row.get("day") and row.get("start_time") and row.get("end_time")
+    ]
+    if not registrar_rows or not section_ids:
+        return []
+
+    def _minutes(value: object) -> int:
+        try:
+            hh, mm = str(value).strip().split(":")
+            return int(hh) * 60 + int(mm)
+        except (ValueError, AttributeError, TypeError):
+            return -1
+
+    busy: list[tuple[str, int, int, str]] = []
+    for row in registrar_rows:
+        start, end = _minutes(row.get("start_time")), _minutes(row.get("end_time"))
+        if start < 0 or end <= start:
+            continue
+        busy.append(
+            (
+                str(row.get("day") or "").strip().upper()[:3],
+                start,
+                end,
+                str(row.get("course_code") or row.get("course_key") or ""),
+            )
+        )
+
+    found: list[dict[str, object]] = []
+    for meeting in TermSectionMeeting.objects.filter(
+        term_section_id__in=section_ids
+    ).select_related("term_section"):
+        start, end = _minutes(meeting.start_time), _minutes(meeting.end_time)
+        if start < 0 or end <= start:
+            continue
+        day = str(meeting.day or "").strip().upper()[:3]
+        for busy_day, busy_start, busy_end, busy_code in busy:
+            if day == busy_day and start < busy_end and busy_start < end:
+                found.append(
+                    {
+                        "course_code": str(getattr(meeting.term_section, "course_key", "") or ""),
+                        "section": str(getattr(meeting.term_section, "section", "") or ""),
+                        "slot": f"{meeting.day} {meeting.start_time}-{meeting.end_time}",
+                        "clashes_with": busy_code,
+                    }
+                )
+                break
+    return found
 
 
 @login_required(login_url="login")
@@ -602,12 +735,26 @@ def planner_build_view(request: HttpRequest) -> JsonResponse:
         payload.get("allow_full_sections", payload.get("ignore_capacity", False))
     )
     shortlist = payload.get("shortlist", [])
-    baseline = payload.get("baseline", [])
+    # NOTE: payload["baseline"] is deliberately NOT read. The client still sends
+    # it, and older callers may too, but the build re-derives the registered
+    # timetable from the database below. Accepting it here is what let a stale
+    # browser copy decide what "Keep Registered" avoided.
     student_id = str(payload.get("student_id", "")).strip()
 
     if not year or not term:
         return _err(
             "academic_year and term are required", code="VALIDATION_REQUIRED_FIELDS", status=400
+        )
+    # REQUIRED. Without a student there is no gender filter and no programme
+    # filter, so the catalogue becomes the entire term and the exhaustive
+    # solvers have nothing to bound them: a 14-course shortlist held a
+    # synchronous request past 90 seconds. Every real caller sends one, and a
+    # build is meaningless without the student it is built for.
+    if not student_id:
+        return _err(
+            "student_id is required to build a timetable",
+            code="VALIDATION_REQUIRED_FIELDS",
+            status=400,
         )
     if not isinstance(shortlist, list):
         return _err("shortlist must be list", code="VALIDATION_LIST_REQUIRED", status=400)
@@ -623,6 +770,7 @@ def planner_build_view(request: HttpRequest) -> JsonResponse:
     # sections, and the request is gated by the caller's student scope.
     gender = ""
     program: str | None = None
+    student_id_for_baseline: int | None = None
     if student_id:
         student_id_int, sid_err = _parse_student_id(student_id)
         if sid_err:
@@ -636,6 +784,7 @@ def planner_build_view(request: HttpRequest) -> JsonResponse:
         scope_deny = require_student_scope(request, student_id_int)
         if scope_deny:
             return scope_deny
+        student_id_for_baseline = student_id_int
         gender = student_gender(student_id_int)
         student_program = str(
             Student.objects.filter(student_id=student_id_int)
@@ -651,7 +800,15 @@ def planner_build_view(request: HttpRequest) -> JsonResponse:
             )
         program = student_program if program_sections_only else None
 
+    if len(shortlist) > MAX_SHORTLIST_COURSES:
+        return _err(
+            f"shortlist may not exceed {MAX_SHORTLIST_COURSES} courses",
+            code="VALIDATION_SHORTLIST_SIZE",
+            status=400,
+        )
+
     normalized_shortlist: list[dict[str, object]] = []
+    seen_codes: set[str] = set()
     for item in shortlist:
         if not isinstance(item, dict):
             return _err(
@@ -716,17 +873,39 @@ def planner_build_view(request: HttpRequest) -> JsonResponse:
                 status=400,
             )
 
+        # ONE row per course. Without this, method A builds an unsatisfiable
+        # constraint (2*(v1+v2) == 1) and calls the course infeasible, while
+        # methods B and C treat the duplicates as two independent slots and
+        # return an option holding TWO sections of the same course, reported as
+        # fully scheduled. The only previous defence was a client-side check
+        # that compares codes case-sensitively where the rest of the file does
+        # not; correctness here must not depend on the caller.
+        if code in seen_codes:
+            return _err(
+                f"{code} appears more than once in the shortlist",
+                code="VALIDATION_SHORTLIST_DUPLICATE",
+                status=400,
+            )
+        seen_codes.add(code)
+
+        score, score_err = _int_field(item.get("score"), f"{code} score")
+        if score_err:
+            return score_err
+        credits, credits_err = _int_field(item.get("credits"), f"{code} credits")
+        if credits_err:
+            return credits_err
+
         normalized_shortlist.append(
             {
                 "course_code": code,
                 "priority": str(item.get("priority", "Med")),
-                "score": int(item.get("score", 0) or 0),
+                "score": score,
                 "status": str(item.get("status", "Eligible")),
                 "missing_prerequisites": item.get("missing_prerequisites", [])
                 if isinstance(item.get("missing_prerequisites", []), list)
                 else [],
                 "must_take": must_take,
-                "credits": int(item.get("credits", 0) or 0),
+                "credits": credits,
                 "pinned_sections": pinned_sections,
             }
         )
@@ -734,13 +913,43 @@ def planner_build_view(request: HttpRequest) -> JsonResponse:
     keep_registered = mode != "ignore"
     suggest_swaps = bool(payload.get("swap", False))
     enforce_capacity = not allow_full_sections
-    max_credits = int(payload.get("max_credits", 0) or 0)  # type: ignore[call-overload]
+    max_credits, max_credits_err = _int_field(payload.get("max_credits"), "max_credits")
+    if max_credits_err:
+        return max_credits_err
+    # THE BASELINE IS SERVER-DERIVED. "Keep Registered" promises the build
+    # avoids clashing with what the student is already registered for; taking
+    # that list from the request body made the promise only as good as whatever
+    # the browser last held. A stale tab, a timetable changed in another
+    # session, or simply an omitted field, and the build scheduled straight
+    # over real registrations. planner_context_view has always read this from
+    # the DB (get_student_term_baseline) - the build now does the same.
+    effective_baseline: list[dict[str, object]] = []
+    if keep_registered and student_id_for_baseline is not None:
+        try:
+            effective_baseline = list(
+                get_student_term_baseline(
+                    str(student_id_for_baseline), year, term, snapshot=Snapshot.EFFECTIVE
+                )
+                or []
+            )
+        except Exception:
+            logger.warning(
+                "planner_build_view: baseline re-derivation failed for student=%s",
+                student_id_for_baseline,
+                exc_info=True,
+            )
+            return _err(
+                "Could not read the student's registered timetable",
+                code="BASELINE_UNAVAILABLE",
+                status=409,
+            )
+
     try:
         result = build_plans(
             year,
             term,
             normalized_shortlist,
-            baseline if isinstance(baseline, list) else [],
+            effective_baseline,
             keep_registered,
             suggest_swaps=suggest_swaps,
             # The staff checkbox named "Strict" historically reached this

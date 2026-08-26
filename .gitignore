@@ -63,6 +63,7 @@ datadump.json
 
 # Ad-hoc data exports (student lists, etc.) — generated, may contain PII
 *.xlsx
+data/superseded/
 # Extensionless workbook accidentally produced by a local export.
 /data$2
 
