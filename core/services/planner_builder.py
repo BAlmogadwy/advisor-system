@@ -105,13 +105,12 @@ def _display_course_label(row: dict[str, Any]) -> str:
 
 
 class _SolverDeadline:
-    """A wall-clock budget the exhaustive solvers check as they recurse.
+    """One wall-clock budget shared by every solver invocation in a build.
 
     Methods B and C are hand-written branch-and-bound over (course x section).
-    Method A (CP-SAT) has had an 8-second cap since it was written; B and C had
-    none, so a large unscoped catalogue could hold a synchronous request for
-    minutes — measured: a 14-course shortlist with no student_id (hence no
-    gender or programme filter) had not returned after 90 seconds.
+    Method A is CP-SAT. Its per-solve cap is also clipped to the time remaining
+    here, so asking each method for alternatives cannot multiply the request's
+    advertised budget.
 
     Expiring is not an error: the search returns the best answer found so far,
     which is what branch-and-bound has at every moment anyway.
@@ -130,10 +129,15 @@ class _SolverDeadline:
             self.expired = True
         return self.expired
 
+    def remaining(self) -> float:
+        """Seconds left for a solver call, or zero once the shared budget expires."""
+        if self.reached():
+            return 0.0
+        return max(0.0, self._deadline - time.monotonic())
 
-#: Wall-clock budget for ALL exhaustive search in one build request. Method A
-#: (CP-SAT) has always had its own 8s cap; B and C had none, which is how a
-#: 14-course unscoped shortlist held a synchronous request past 90 seconds.
+
+#: Wall-clock budget for ALL exhaustive search in one build request, including
+#: repeated CP-SAT solves used to generate alternative plans.
 SOLVER_BUDGET_SECONDS = 10.0
 
 
@@ -999,6 +1003,7 @@ def _cp_build_option(
     max_credits: int = 0,
     target_credits: int | None = None,
     credits_map: dict[str, int] | None = None,
+    deadline: _SolverDeadline | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     if cp_model is None:
         if target_credits is not None:
@@ -1015,6 +1020,7 @@ def _cp_build_option(
                 max_credits=max_credits,
                 target_credits=target_credits,
                 credits_map=credits_map,
+                deadline=deadline,
             )
         return _choose(shortlist, catalog, baseline, keep_registered, strategy=profile)
 
@@ -1050,6 +1056,36 @@ def _cp_build_option(
         eligible.append({**c, "_code": code})
 
     if not eligible:
+        return [], unscheduled
+
+    def _budget_exhausted_result() -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        if deadline is not None:
+            deadline.expired = True
+        for course in eligible:
+            code = str(course["_code"])
+            if code not in unscheduled_codes:
+                unscheduled.append(
+                    {
+                        "course_code": code,
+                        "reason": "Solver search budget exhausted before a placement was certified",
+                        "reason_code": "SEARCH_BUDGET_EXHAUSTED",
+                        "details": [],
+                    }
+                )
+        return [], unscheduled
+
+    def _model_invalid_result() -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        for course in eligible:
+            code = str(course["_code"])
+            if code not in unscheduled_codes:
+                unscheduled.append(
+                    {
+                        "course_code": code,
+                        "reason": "The timetable solver rejected its generated model",
+                        "reason_code": "SOLVER_MODEL_INVALID",
+                        "details": [],
+                    }
+                )
         return [], unscheduled
 
     model = cp_model.CpModel()
@@ -1280,15 +1316,28 @@ def _cp_build_option(
         + w_cap * cap_sum
     )
 
+    cp_seconds = 8.0
+    if deadline is not None:
+        remaining = deadline.remaining()
+        if remaining <= 0:
+            return _budget_exhausted_result()
+        cp_seconds = min(cp_seconds, remaining)
+
     solver = cp_model.CpSolver()
-    solver.parameters.max_time_in_seconds = 8.0
+    solver.parameters.max_time_in_seconds = cp_seconds
     solver.parameters.num_search_workers = 8
     # Randomize search so each run can produce different optimal/feasible results
     solver.parameters.randomize_search = True
     solver.parameters.random_seed = random.randint(0, 2**31 - 1)
     res = solver.Solve(model)
 
+    if res == cp_model.UNKNOWN:
+        return _budget_exhausted_result()
+    if res == cp_model.MODEL_INVALID:
+        return _model_invalid_result()
     if res not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+        if deadline is not None and deadline.reached():
+            return _budget_exhausted_result()
         pair_set = {(a, b) for (a, b) in _get_conflict_pairs(option_by_sid)}
         pair_set |= {(b, a) for (a, b) in pair_set}
         for c in eligible:
@@ -1563,6 +1612,7 @@ def build_plans(
                 max_credits=max_credits,
                 target_credits=target_credits,
                 credits_map=credits_map,
+                deadline=solver_deadline,
             )
         if method == "B":
             return _bitmask_build_option_b(
@@ -1602,6 +1652,9 @@ def build_plans(
         for row in unscheduled:
             item = dict(row)
             code = str(item.get("course_code") or "").replace(" ", "").upper()
+            if item.get("reason_code"):
+                annotated.append(item)
+                continue
             details = incomplete_meetings.get(code) or []
             if details:
                 item["reason"] = "Section meeting data is incomplete or invalid"
@@ -1644,7 +1697,25 @@ def build_plans(
                     ]
                 else:
                     item["reason"] = "Every section of this course clashes with the chosen plan"
+                    item["reason_code"] = "ALL_SECTIONS_CLASH"
                     item["details"] = [{"sections_considered": len(catalog.get(code) or [])}]
+            annotated.append(item)
+        return annotated
+
+    def _timeout_diagnostics(
+        unscheduled: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """Replace only unproved solver conclusions with an honest cutoff reason."""
+        annotated: list[dict[str, Any]] = []
+        for row in unscheduled:
+            item = dict(row)
+            reason = str(item.get("reason") or "")
+            if item.get("reason_code") == "SEARCH_BUDGET_EXHAUSTED" or reason.startswith(
+                ("Could not fit", "Model infeasible")
+            ):
+                item["reason"] = "Solver search budget exhausted before a placement was certified"
+                item["reason_code"] = "SEARCH_BUDGET_EXHAUSTED"
+                item["details"] = []
             annotated.append(item)
         return annotated
 
@@ -1657,6 +1728,8 @@ def build_plans(
         visited_excl: set[tuple[int, ...]] = set()
 
         while queue and len(results) < k:
+            if solver_deadline.reached():
+                break
             excl = queue.pop(0)
             excl_key = tuple(sorted(excl))
             if excl_key in visited_excl:
@@ -1665,8 +1738,30 @@ def build_plans(
 
             cat = _catalog_without_sids(excl)
             sel, uns = _run_method(method, cat)
+            timed_out = solver_deadline.reached()
+            if timed_out:
+                uns = _timeout_diagnostics(uns)
             uns = _annotate_incomplete_meeting_evidence(uns)
+            if any(str(item.get("reason_code") or "") == "SOLVER_MODEL_INVALID" for item in uns):
+                rejected_unscheduled.append(uns)
+                break
             hard_failures = _hard_requirement_failures(sel, uns)
+            if timed_out and (not sel or hard_failures):
+                if not any(
+                    str(item.get("reason_code") or "") == "SEARCH_BUDGET_EXHAUSTED" for item in uns
+                ):
+                    uns.append(
+                        {
+                            "course_code": "",
+                            "reason": (
+                                "Solver search budget exhausted before a placement was certified"
+                            ),
+                            "reason_code": "SEARCH_BUDGET_EXHAUSTED",
+                            "details": [],
+                        }
+                    )
+                rejected_unscheduled.append(uns)
+                break
             if hard_failures:
                 rejected_hard_failures.extend(hard_failures)
                 rejected_unscheduled.append(uns)

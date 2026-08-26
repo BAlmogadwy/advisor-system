@@ -39,10 +39,11 @@ from core.services.student_sections import (
     get_student_term_baseline,
     replace_student_term_sections,
     section_is_available_to_student,
+    snapshot_class_filter,
     student_gender,
     student_gender_strict,
 )
-from core.services.timetable_snapshots import Snapshot
+from core.services.timetable_snapshots import Snapshot, SnapshotClass
 from core.settings_views import load_defaults
 from core.sidebar_context import get_sidebar_context
 
@@ -477,8 +478,10 @@ def planner_save_student_sections_view(request: HttpRequest) -> JsonResponse:
                 student_id=student_id_int,
                 academic_year=year,
                 term=term,
-                source="planner",
-            ).select_related("term_section")
+                term_section__scenario__isnull=True,
+            )
+            .filter(snapshot_class_filter(SnapshotClass.WORKING))
+            .select_related("term_section")
         }
         removed = [
             {
@@ -497,12 +500,14 @@ def planner_save_student_sections_view(request: HttpRequest) -> JsonResponse:
         # the clash so the adviser sees it in the same breath as the result.
         clashes = _planner_apply_clashes(student_id, student_id_int, year, term, cleaned)
 
-        result = replace_student_term_sections(student_id, year, term, cleaned, source="planner")
-        if isinstance(result, dict):
-            result["removed"] = removed
-            result["removed_count"] = len(removed)
-            result["clashes_with_registered"] = clashes
-        return _ok(result)  # type: ignore[arg-type]
+        write_result = replace_student_term_sections(
+            student_id, year, term, cleaned, source="planner"
+        )
+        result: dict[str, object] = dict(write_result)
+        result["removed"] = removed
+        result["removed_count"] = len(removed)
+        result["clashes_with_registered"] = clashes
+        return _ok(result)
     except Exception as exc:
         return _internal_error(exc)
 

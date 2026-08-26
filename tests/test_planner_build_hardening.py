@@ -21,8 +21,10 @@ from core.models import (
     TermSectionMeeting,
     TermSectionProgram,
 )
+from core.services import planner_builder
 from core.services.planner_builder import SOLVER_BUDGET_SECONDS, build_plans
 from core.services.rbac import ROLE_SUPER_ADMIN, ensure_role_groups
+from core.services.virtual_advisor_capabilities import _translate_unplaced
 
 pytestmark = pytest.mark.django_db
 
@@ -128,6 +130,37 @@ def test_a_clean_section_still_schedules(student: Student) -> None:
     assert result["summary"]["scheduled"] == 1
 
 
+def test_all_clash_reason_keeps_its_structured_adviser_code(student: Student) -> None:
+    """Changing explanatory prose must not silently turn a clash into OTHER."""
+    ProgrammeRequirement.objects.create(program=PROG, course_code="CLASH", credit_hours=3)
+    _section("CLASH", "M1", day="MON", start="09:00", end="09:50")
+    baseline = [
+        {
+            "course_key": "BUSY",
+            "section": "M1",
+            "day": "MON",
+            "start_time": "09:00",
+            "end_time": "09:50",
+            "term_section_id": 999,
+        }
+    ]
+
+    result = build_plans(
+        YEAR,
+        TERM,
+        [{"course_code": "CLASH", "credits": 3, "must_take": True}],
+        baseline,
+        True,
+    )
+
+    assert result["options"] == []
+    [unplaced] = result["unscheduled"]
+    assert unplaced["reason_code"] == "ALL_SECTIONS_CLASH"
+    assert _translate_unplaced(unplaced["reason"], unplaced["reason_code"])[0] == (
+        "ALL_SECTIONS_CLASH"
+    )
+
+
 # ── the solvers are bounded ──────────────────────────────────────────────────
 
 
@@ -138,6 +171,149 @@ def test_the_solver_budget_is_shared_by_the_whole_request() -> None:
     multiply into a request nine times longer than the number suggests.
     """
     assert 0 < SOLVER_BUDGET_SECONDS <= 30
+
+
+def test_cp_sat_uses_the_shared_remaining_budget(
+    student: Student, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Alternative CP-SAT runs must not each receive a fresh eight seconds."""
+    ProgrammeRequirement.objects.create(program=PROG, course_code="BUDGET", credit_hours=3)
+    _section("BUDGET", "M1", day="MON", start="09:00", end="09:50")
+    observed_limits: list[float] = []
+
+    class ExpiringDeadline:
+        def __init__(self, _seconds: float) -> None:
+            self.expired = False
+
+        def reached(self) -> bool:
+            return self.expired
+
+        def remaining(self) -> float:
+            return 0.25
+
+    class Parameters:
+        max_time_in_seconds: float
+        num_search_workers: int
+        randomize_search: bool
+        random_seed: int
+
+    class RecordingSolver:
+        def __init__(self) -> None:
+            self.parameters = Parameters()
+
+        def Solve(self, _model: object) -> int:  # noqa: N802 - OR-Tools API name
+            observed_limits.append(self.parameters.max_time_in_seconds)
+            return int(planner_builder.cp_model.UNKNOWN)
+
+    monkeypatch.setattr(planner_builder, "_SolverDeadline", ExpiringDeadline)
+    monkeypatch.setattr(planner_builder.cp_model, "CpSolver", RecordingSolver)
+
+    result = build_plans(
+        YEAR,
+        TERM,
+        [{"course_code": "BUDGET", "credits": 3, "must_take": True}],
+        [],
+        False,
+    )
+
+    assert observed_limits == [0.25]
+    assert result["options"] == []
+    assert result["unscheduled"][0]["reason_code"] == "SEARCH_BUDGET_EXHAUSTED"
+    assert result["summary"]["hard_constraint_failures"] == []
+
+
+def test_bitmask_timeout_is_not_reported_as_infeasible(
+    student: Student, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An expired DFS search has not proved a must-take course impossible."""
+    ProgrammeRequirement.objects.create(program=PROG, course_code="DFS", credit_hours=3)
+    _section("DFS", "M1", day="MON", start="09:00", end="09:50")
+    calls: list[str] = []
+
+    def no_cp_result(*_args: object, **_kwargs: object) -> tuple[list[dict], list[dict]]:
+        calls.append("A")
+        # Satisfy the must-take check without emitting an option signature, so
+        # this test isolates method B's timeout classification.
+        return [{"course_code": "DFS", "course_key": "DFS", "term_section_id": 0}], []
+
+    def expired_dfs(
+        *_args: object, deadline: planner_builder._SolverDeadline, **_kwargs: object
+    ) -> tuple[list[dict], list[dict]]:
+        calls.append("B")
+        deadline.expired = True
+        return [], [
+            {
+                "course_code": "DFS",
+                "reason": "Could not fit with chosen constraints/objective",
+                "details": [],
+            }
+        ]
+
+    def forbidden_c(*_args: object, **_kwargs: object) -> tuple[list[dict], list[dict]]:
+        raise AssertionError("method C must not start after the shared deadline expires")
+
+    monkeypatch.setattr(planner_builder, "_cp_build_option", no_cp_result)
+    monkeypatch.setattr(planner_builder, "_bitmask_build_option_b", expired_dfs)
+    monkeypatch.setattr(planner_builder, "_bitmask_build_option_c", forbidden_c)
+
+    result = build_plans(
+        YEAR,
+        TERM,
+        [{"course_code": "DFS", "credits": 3, "must_take": True}],
+        [],
+        False,
+    )
+
+    assert calls == ["A", "B"]
+    assert result["options"] == []
+    assert result["unscheduled"][0]["reason_code"] == "SEARCH_BUDGET_EXHAUSTED"
+    assert result["summary"]["hard_constraint_failures"] == []
+
+
+def test_valid_best_so_far_survives_the_deadline_without_a_fake_conflict(
+    student: Student, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A complete plan found at the boundary stays complete and conflict-free."""
+    ProgrammeRequirement.objects.create(program=PROG, course_code="FOUND", credit_hours=3)
+    section = _section("FOUND", "M1", day="MON", start="09:00", end="09:50")
+
+    def no_cp_result(*_args: object, **_kwargs: object) -> tuple[list[dict], list[dict]]:
+        return [{"course_code": "FOUND", "course_key": "FOUND", "term_section_id": 0}], []
+
+    def completed_dfs(
+        *_args: object, deadline: planner_builder._SolverDeadline, **_kwargs: object
+    ) -> tuple[list[dict], list[dict]]:
+        deadline.expired = True
+        return [
+            {
+                "course_code": "FOUND",
+                "course_key": "FOUND",
+                "section": "M1",
+                "term_section_id": section.id,
+                "meetings": [],
+            }
+        ], []
+
+    def forbidden_c(*_args: object, **_kwargs: object) -> tuple[list[dict], list[dict]]:
+        raise AssertionError("method C must not start after the shared deadline expires")
+
+    monkeypatch.setattr(planner_builder, "_cp_build_option", no_cp_result)
+    monkeypatch.setattr(planner_builder, "_bitmask_build_option_b", completed_dfs)
+    monkeypatch.setattr(planner_builder, "_bitmask_build_option_c", forbidden_c)
+
+    result = build_plans(
+        YEAR,
+        TERM,
+        [{"course_code": "FOUND", "credits": 3, "must_take": True}],
+        [],
+        False,
+    )
+
+    [option] = result["options"]
+    assert option["name"] == "B1"
+    assert option["unscheduled"] == []
+    assert result["summary"]["scheduled"] == result["summary"]["target"] == 1
+    assert result["summary"]["conflicts"] == 0
 
 
 #: Days used to spread the stress fixture's sections apart.
@@ -315,6 +491,64 @@ def test_apply_reports_the_planner_sections_it_removed(student: Student) -> None
     body = res.json()
     assert body["removed_count"] == 1
     assert body["removed"][0]["course_code"] == "OLDC"
+
+
+def test_apply_reports_every_working_section_the_replace_removes(student: Student) -> None:
+    """Auto-mapped rows share the write's WORKING class and must not disappear silently."""
+    auto_mapped = _applyable("AUTOC", "M1", "SUN", "09:00", "09:50")
+    registrar = _applyable("REGC", "M1", "TUE", "09:00", "09:50")
+    replacement = _applyable("NEWC", "M1", "MON", "09:00", "09:50")
+    StudentTermSection.objects.create(
+        student_id=SID,
+        term_section=auto_mapped,
+        academic_year=YEAR,
+        term=TERM,
+        source="auto_from_studying",
+    )
+    registrar_link = StudentTermSection.objects.create(
+        student_id=SID,
+        term_section=registrar,
+        academic_year=YEAR,
+        term=TERM,
+        source="scraper_timetable",
+    )
+
+    c = _client()
+    res = c.post(
+        "/ops/planner/save-student-sections/",
+        data=json.dumps(
+            {
+                "student_id": str(SID),
+                "academic_year": YEAR,
+                "term": TERM,
+                "term_section_ids": [replacement.id],
+                "confirm_replace": True,
+            }
+        ),
+        content_type="application/json",
+    )
+
+    assert res.status_code == 200, res.content[:300]
+    body = res.json()
+    assert body["removed_count"] == 1
+    assert body["removed"] == [
+        {
+            "term_section_id": auto_mapped.id,
+            "course_code": "AUTOC",
+            "section": "M1",
+        }
+    ]
+    assert not StudentTermSection.objects.filter(
+        student_id=SID, term_section=auto_mapped, academic_year=YEAR, term=TERM
+    ).exists()
+    assert StudentTermSection.objects.filter(
+        student_id=SID,
+        term_section=replacement,
+        academic_year=YEAR,
+        term=TERM,
+        source="planner",
+    ).exists()
+    assert StudentTermSection.objects.filter(pk=registrar_link.pk).exists()
 
 
 def test_apply_reports_a_clash_with_the_registered_timetable(student: Student) -> None:

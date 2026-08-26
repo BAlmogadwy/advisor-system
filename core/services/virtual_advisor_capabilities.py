@@ -2847,6 +2847,14 @@ _UNPLACED_REASONS: dict[str, tuple[str, str]] = {
         "MEETING_DATA_INCOMPLETE",
         "A recorded section has missing or invalid meeting data, so clashes cannot be certified.",
     ),
+    "Solver search budget exhausted": (
+        "SEARCH_BUDGET_EXHAUSTED",
+        "The timetable search reached its time limit before it could certify a placement.",
+    ),
+    "The timetable solver rejected its generated model": (
+        "SOLVER_MODEL_INVALID",
+        "The timetable solver could not validate this request; retry or ask an administrator.",
+    ),
 }
 
 
