@@ -219,6 +219,12 @@ function renderBaselineWeeklyCompact(baseline){
     blocks,
     timeLabel: UI.time,
     dayLabels: UI.dayShort,
+    /* A registered week is rarely continuous: morning classes and a single
+       evening one stretched this card to ~11 empty-ish hours, pushing the
+       Suggested-to-add pane against a wall of blank grid. The shared renderer
+       already splits on a fully-empty span and PRINTS the omitted interval
+       between segments, so compression can never read as adjacent classes. */
+    compressGaps: true,
     empty: `<span class="text-secondary">${T.noMappedSlots}</span>`,
     pick: (cur,inc)=>inc, // last write wins
     bg: m=>colorForCourse(m.label),
@@ -291,6 +297,10 @@ function renderVisualTimetable(source='baseline'){
     blocks: enriched,
     timeLabel: UI.time,
     dayLabels: UI.dayShort,
+    /* Same treatment as the registered card above — and it matters more here,
+       because a proposed plan is compared against it side by side. Two grids
+       on one page must not use different vertical scales. */
+    compressGaps: true,
     empty: `<span class="text-secondary">${IS_AR ? 'لا توجد لقاءات جدول لعرضها.' : 'No timetable meetings to display.'}</span>`,
     pick: (cur,inc)=>(inc.conflict?inc:cur), // keep first unless incoming is a conflict
     bg: m=>(m.conflict?conflictBg:colorForCourse(m.label)),
