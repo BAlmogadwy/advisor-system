@@ -4,6 +4,7 @@ from typing import Any
 
 from core.models import Prerequisite, Student, StudentCourse
 from core.services import course_priority
+from core.services.eligibility import evaluate_prerequisites
 from core.services.recommender import get_all_department_courses
 from core.services.student_helpers import (
     normalize_code,
@@ -94,10 +95,26 @@ def _is_eligible(
     passed: set[str],
     studying: set[str],
     studying_counts_as_passed: bool,
+    credits: tuple[int, int] = (0, 0),
 ) -> bool:
-    prereqs = prereqs_map.get(course, set())
-    satisfied = set(passed) | (set(studying) if studying_counts_as_passed else set())
-    return prereqs.issubset(satisfied)
+    """Delegates to THE shared prerequisite check.
+
+    This used to be a plain ``prereqs.issubset(satisfied)``, which silently
+    treated the curriculum's ``90(HOURS)`` gate as a course code that can never
+    be satisfied — so every hour-gated capstone was reported "missing but not
+    eligible" no matter how many credits the student had earned. The shared
+    helper splits the gate out and evaluates it properly; ``credits`` is passed
+    in because this runs over a whole cohort and must not query per course.
+    """
+    earned, registered = credits
+    return evaluate_prerequisites(
+        prereqs_map.get(course, set()),
+        passed,
+        studying,
+        strict_passed_only=not studying_counts_as_passed,
+        earned_credits=earned,
+        registered_credits=registered,
+    ).met
 
 
 def run_missing_high_priority_report(
@@ -119,13 +136,17 @@ def run_missing_high_priority_report(
     if not students:
         return {"count": 0, "results": [], "filters": {}}
 
-    # Batch-load student programs (1 query instead of N)
+    # Batch-load student programs AND credits (1 query instead of N). The
+    # credits feed the hour-gate half of the prerequisite check; taking them
+    # here keeps that check free of per-course queries.
     _student_programs: dict[int, str] = {}
-    for sid_val, prog_val in Student.objects.filter(student_id__in=students).values_list(
-        "student_id", "program"
-    ):
+    _student_credits: dict[int, tuple[int, int]] = {}
+    for sid_val, prog_val, earned_val, reg_val in Student.objects.filter(
+        student_id__in=students
+    ).values_list("student_id", "program", "total_earned_credits", "current_registered_credits"):
         if prog_val:
             _student_programs[sid_val] = prog_val
+        _student_credits[sid_val] = (earned_val or 0, reg_val or 0)
 
     # Batch-load passed/studying (1 query instead of N)
     _sc_rows = list(
@@ -188,7 +209,14 @@ def run_missing_high_priority_report(
             score = float(scores.get(course, 0.0))
             if score < min_score:
                 continue
-            if _is_eligible(course, prereqs_map, passed_n, studying_n, studying_counts_as_passed):
+            if _is_eligible(
+                course,
+                prereqs_map,
+                passed_n,
+                studying_n,
+                studying_counts_as_passed,
+                _student_credits.get(sid, (0, 0)),
+            ):
                 candidates.append((course, score))
 
         candidates.sort(key=lambda x: x[1], reverse=True)

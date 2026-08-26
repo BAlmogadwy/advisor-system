@@ -84,6 +84,7 @@ def _workspace_json(draft: Any, *, prefer_arabic_names: bool = False) -> dict[st
     the HTTP boundary.
     """
     from core.models import Course, Prerequisite, ProgrammeRequirement, Student, TermSection
+    from core.services.eligibility import evaluate_prerequisites
     from core.services.student_helpers import get_student_passed_and_studying, normalize_code
     from core.services.student_planner import DEFAULT_CREDITS, permitted_course_codes
     from core.services.student_sections import (
@@ -96,8 +97,15 @@ def _workspace_json(draft: Any, *, prefer_arabic_names: bool = False) -> dict[st
     from core.services.timetable_snapshots import Snapshot, forecast_rows
     from core.services.timetable_snapshots import select as select_snapshot_rows
 
-    student = Student.objects.filter(student_id=draft.student_id).values("program").first() or {}
+    student = (
+        Student.objects.filter(student_id=draft.student_id)
+        .values("program", "total_earned_credits", "current_registered_credits")
+        .first()
+        or {}
+    )
     program = str(student.get("program") or "").strip()
+    _earned = student.get("total_earned_credits") or 0
+    _registered = student.get("current_registered_credits") or 0
     permitted = permitted_course_codes(program) if program else set()
     passed, studying = get_student_passed_and_studying(draft.student_id)
     passed = {normalize_code(code) for code in passed}
@@ -163,12 +171,17 @@ def _workspace_json(draft: Any, *, prefer_arabic_names: bool = False) -> dict[st
             continue
         requirement = requirement_by_code.get(code) or {}
         course = course_by_code.get(code)
+        # THE shared prerequisite check. The inline set-difference this replaces
+        # could not tell a course code from the curriculum's "90(HOURS)" gate,
+        # so a student who had earned the hours still saw the course blocked.
         missing = sorted(
-            {
-                item
-                for item in prerequisites.get(code, [])
-                if item not in passed and item not in studying
-            }
+            evaluate_prerequisites(
+                prerequisites.get(code, []),
+                passed,
+                studying,
+                earned_credits=_earned,
+                registered_credits=_registered,
+            ).missing
         )
         safe_sections = []
         for section in sections_by_code.get(code, []):

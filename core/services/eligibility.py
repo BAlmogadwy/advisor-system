@@ -1,4 +1,6 @@
 import re
+from collections.abc import Iterable
+from dataclasses import dataclass
 
 from core.models import ElectiveCourse, ProgrammeRequirement, Student
 from core.services.student_helpers import (
@@ -54,6 +56,73 @@ def prereq_satisfied(
     relaxed accepts a course currently being studied; strict demands a pass.
     """
     return prereq in passed or (not strict_passed_only and prereq in studying)
+
+
+@dataclass(frozen=True)
+class PrerequisiteOutcome:
+    """Whether one course's prerequisites are met, and precisely what is not."""
+
+    met: bool
+    missing_courses: list[str]
+    required_hours: int
+    effective_hours: int
+    hours_met: bool
+
+    @property
+    def missing(self) -> list[str]:
+        """What to SHOW a user: unmet course codes, plus the hour gate if short.
+
+        The hour token is re-emitted in its curriculum form (``90(HOURS)``) only
+        when the gate is genuinely unmet, so a display list never contains a
+        pseudo-code that the student has in fact satisfied.
+        """
+        out = list(self.missing_courses)
+        if not self.hours_met:
+            out.append(f"{self.required_hours}(HOURS)")
+        return out
+
+
+def evaluate_prerequisites(
+    raw_prereqs: Iterable[str],
+    passed: set[str],
+    studying: set[str],
+    *,
+    strict_passed_only: bool = False,
+    earned_credits: int = 0,
+    registered_credits: int = 0,
+) -> PrerequisiteOutcome:
+    """THE prerequisite check. Every screen consumes this one.
+
+    The curriculum encodes "you need N credit hours" as a pseudo-prerequisite
+    such as ``90(HOURS)``. It is NOT a course code: compared against a student's
+    course list it can never match, so any caller that skips the split marks
+    every capstone permanently blocked — measured at 68 live students across 13
+    courses, every one of whom had actually met the gate. That is why the split
+    lives inside this function rather than being each caller's job to remember.
+
+    Deliberately PURE: credits are passed in, not queried. Batch callers
+    (recommender_batch, high_priority_missing) pre-load them for hundreds of
+    students at once, and a helper that queried per course would reintroduce the
+    N+1 they exist to avoid. ``hour_gate`` is the single-student wrapper that
+    does the lookup.
+    """
+    courses, required = split_hour_prereqs([str(p) for p in raw_prereqs])
+    missing_courses = [
+        c
+        for c in courses
+        if not prereq_satisfied(c, passed, studying, strict_passed_only=strict_passed_only)
+    ]
+    effective = effective_credits(
+        earned_credits, registered_credits, strict_passed_only=strict_passed_only
+    )
+    hours_met = required <= 0 or effective >= required
+    return PrerequisiteOutcome(
+        met=not missing_courses and hours_met,
+        missing_courses=missing_courses,
+        required_hours=required,
+        effective_hours=effective,
+        hours_met=hours_met,
+    )
 
 
 def hour_gate(
@@ -158,18 +227,15 @@ def build_course_eligibility_report(
         if not prereqs:
             prereqs = _get_elective_prerequisites(code, prog)
 
-        # Separate hour-based prerequisites from course prerequisites
-        import re
-
-        _hour_pat = re.compile(r"^(\d+)\s*\(?\s*HOURS?\s*\)?$", re.IGNORECASE)
-        course_prereqs: list[str] = []
-        required_hours = 0
-        for p in prereqs:
-            m = _hour_pat.match(p)
-            if m:
-                required_hours = int(m.group(1))
-            else:
-                course_prereqs.append(p)
+        # Credits for the whole cohort in ONE query. Fetching them per student
+        # inside the loop is a query per student for a figure that never varies
+        # within the request.
+        credits_by_student: dict[int, tuple[int, int]] = {
+            row[0]: (row[1] or 0, row[2] or 0)
+            for row in Student.objects.filter(student_id__in=students).values_list(
+                "student_id", "total_earned_credits", "current_registered_credits"
+            )
+        }
 
         for sid in students:
             passed, studying = get_student_passed_and_studying(sid)
@@ -184,29 +250,17 @@ def build_course_eligibility_report(
                     )
                 continue
 
-            # Check hour-based prerequisite
-            hour_ok = True
-            if required_hours > 0:
-                stu = (
-                    Student.objects.filter(student_id=sid)
-                    .values_list("total_earned_credits", "current_registered_credits")
-                    .first()
-                )
-                earned, current = (stu[0] or 0, stu[1] or 0) if stu else (0, 0)
-                effective = effective_credits(
-                    earned, current, strict_passed_only=strict_passed_only
-                )
-                if effective < required_hours:
-                    hour_ok = False
-
-            missing = [
-                p
-                for p in course_prereqs
-                if not prereq_satisfied(p, passed, studying, strict_passed_only=strict_passed_only)
-            ]
-            if not hour_ok:
-                missing.append(f"{required_hours}(HOURS)")
-            ok = len(missing) == 0
+            earned, current = credits_by_student.get(sid, (0, 0))
+            outcome = evaluate_prerequisites(
+                prereqs,
+                passed,
+                studying,
+                strict_passed_only=strict_passed_only,
+                earned_credits=earned,
+                registered_credits=current,
+            )
+            missing = outcome.missing
+            ok = outcome.met
             if ok:
                 eligible_ids.append(sid)
             else:

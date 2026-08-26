@@ -199,6 +199,10 @@
       timeColumnWidth: opts.timeColumnWidth == null ? 60 : opts.timeColumnWidth,
       dayMinWidth: opts.dayMinWidth == null ? 124 : opts.dayMinWidth,
       minWidth: opts.minWidth == null ? 720 : opts.minWidth,
+      // This module renders its own VISIBLE agenda below the calendar, so the
+      // renderer's hidden companion would duplicate every meeting for a
+      // screen reader.
+      accessibleTable: false,
       compressGaps: opts.compressGaps !== false,
       compressGapMinutes: opts.compressGapMinutes,
       segmentPadMinutes: opts.segmentPadMinutes,

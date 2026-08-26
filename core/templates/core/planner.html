@@ -76,7 +76,7 @@
           </div>
 
           <!-- Workflow stepper -->
-          <div class="wf-stepper" style="margin-top:10px">
+          <div class="wf-stepper" style="margin-top:10px" role="group" aria-label="{% if LANGUAGE_CODE == 'ar' %}خطوات بناء الجدول{% else %}Timetable build steps{% endif %}">
             <button id="step1" class="wf-step active" type="button"><span class="wf-num">1</span>{% if LANGUAGE_CODE == 'ar' %}الطالب{% else %}Student{% endif %}</button>
             <div class="wf-sep"></div>
             <button id="step2" class="wf-step" type="button"><span class="wf-num">2</span>{% if LANGUAGE_CODE == 'ar' %}اختيار المقررات{% else %}Pick Courses{% endif %}</button>
@@ -208,7 +208,7 @@
               <label title="{% if LANGUAGE_CODE == 'ar' %}يسمح بإدخال الشُعب التي بلغ عدد المسجلين فيها سعتها القصوى. هذا للتخطيط فقط ولا يحجز مقعدًا.{% else %}Allow sections whose registered count has reached capacity. Planning only; this does not reserve a seat.{% endif %}"><input id="allowFullSections" type="checkbox"> {% if LANGUAGE_CODE == 'ar' %}السماح بالشُعب الممتلئة{% else %}Allow full sections{% endif %}</label>
               <label class="align-items-center" style="display:inline-flex; gap:4px">
                 {% if LANGUAGE_CODE == 'ar' %}الحد الأقصى ساعات{% else %}Max credits{% endif %}
-                <input class="text-center" id="maxCredits" type="text" inputmode="numeric" pattern="[0-9]*" value="17" dir="ltr" style="width:52px; padding:2px 4px; border:1px solid var(--border); border-radius:6px; font-size:12px; font-family:'Courier New',monospace">
+                <input class="text-center" id="maxCredits" type="text" inputmode="numeric" pattern="[0-9]*" value="17" dir="ltr" aria-describedby="maxCreditsHint" aria-label="{% if LANGUAGE_CODE == 'ar' %}الحد الأعلى للساعات{% else %}Maximum credits{% endif %}" style="width:52px; padding:2px 4px; border:1px solid var(--border); border-radius:6px; font-size:12px; font-family:'Courier New',monospace"><span id="maxCreditsHint" class="fs-11 text-t4" style="margin-inline-start:6px"></span>
               </label>
             </div>
             <div class="fs-11 text-t4" style="margin-top:-4px;margin-bottom:10px">
@@ -295,5 +295,5 @@
   const defaultYear = {{ default_year }};
   const defaultTerm = {{ default_term }};
 </script>
-<script src="{% static 'js/page-planner.js' %}?v=11"></script>
+<script src="{% static 'js/page-planner.js' %}?v=12"></script>
 {% endblock %}
