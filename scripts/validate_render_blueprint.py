@@ -63,7 +63,7 @@ EXPECTED_CRON_START_COMMAND = (
 )
 EXPECTED_PREDEPLOY_COMMAND = (
     "python manage.py migrate --noinput && "
-    "python manage.py createcachetable --database default && "
+    "python manage.py createcachetable django_cache_table --database default && "
     "python manage.py normalise_exam_runs && "
     "python manage.py purge_rate_limit_buckets"
 )

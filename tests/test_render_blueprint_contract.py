@@ -95,6 +95,12 @@ def test_contract_rejects_missing_web_health_check(blueprint: Blueprint) -> None
     assert any("healthCheckPath" in error for error in errors)
 
 
+def test_predeploy_explicitly_creates_the_legacy_cache_table(blueprint: Blueprint) -> None:
+    command = _service(blueprint, "advisor-system")["preDeployCommand"]
+
+    assert "createcachetable django_cache_table --database default" in command
+
+
 def test_contract_requires_public_student_login_safety_settings(blueprint: Blueprint) -> None:
     changed = deepcopy(blueprint)
     web = _service(changed, "advisor-system")
