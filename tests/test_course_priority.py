@@ -11,9 +11,19 @@ from core.services.course_priority import (
 from core.services.high_priority_missing import (
     _build_unlock_graph_for_program,
     _compute_priority_scores,
+    _matches_term_parity,
 )
 
 pytestmark = pytest.mark.django_db
+
+
+def test_high_priority_report_parity_flag_matches_plan_term_groups() -> None:
+    assert _matches_term_parity(1, 0) is True
+    assert _matches_term_parity(3, 0) is True
+    assert _matches_term_parity(2, 0) is False
+    assert _matches_term_parity(2, 1) is True
+    assert _matches_term_parity(4, 1) is True
+    assert _matches_term_parity(1, 1) is False
 
 
 def test_program_graph_seeds_plan_leaves_and_normalizes_prerequisite_edges() -> None:
