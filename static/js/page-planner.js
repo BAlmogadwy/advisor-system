@@ -845,6 +845,32 @@ q('applyOption').onclick=async()=>{
   const ids=(opt.mappings||[]).map(m=>m.term_section_id).filter(Boolean);
   if(!ids.length){ setBanner('warning', T.noMappableInOption(name)); return; }
 
+  /* This is the ONLY operation on the page that writes, and it is a REPLACE:
+     any planner section saved earlier that is not in this option is deleted.
+     The request has always carried confirm_replace:true - a flag whose name
+     promises a gate that did not exist anywhere in the UI. Ask first, naming
+     what is about to be written. */
+  const courseList=(opt.mappings||[])
+    .map(m=>`${m.course_code||''} ${m.section||''}`.trim()).filter(Boolean);
+  const proceed = window.confirm(
+    (IS_AR
+      ? `سيتم استبدال جدول الطالب المخطط بالخيار ${name}:
+
+`
+      : `This replaces the student's planned timetable with option ${name}:
+
+`)
+    + courseList.join(String.fromCharCode(10))
+    + (IS_AR
+      ? `
+
+سيتم حذف أي مقررات مخططة سابقًا غير موجودة في هذا الخيار. متابعة؟`
+      : `
+
+Any previously planned courses not in this option will be removed. Continue?`)
+  );
+  if(!proceed) return;
+
   let r, data;
   try{
     r=await fetch('/ops/planner/save-student-sections/',{
@@ -866,7 +892,22 @@ q('applyOption').onclick=async()=>{
   }
   if(data.error){ setBanner('danger', errMsg(data)); return; }
 
+  /* Report what the write actually did, including what it took away. */
+  const removed=Array.isArray(data.removed)?data.removed:[];
+  const clashes=Array.isArray(data.clashes_with_registered)?data.clashes_with_registered:[];
   setBanner('success', T.appliedOption(name, data.inserted||0));
+  if(removed.length){
+    notify.warning(
+      IS_AR ? `أُزيلت ${removed.length} مقرر مخطط سابقًا` : `Removed ${removed.length} previously planned course(s)`,
+      removed.map(x=>`${x.course_code||''} ${x.section||''}`.trim()).join(', ')
+    );
+  }
+  if(clashes.length){
+    notify.warning(
+      IS_AR ? `تعارض مع الجدول المسجّل (${clashes.length})` : `Clashes with the registered timetable (${clashes.length})`,
+      clashes.map(x=>`${x.course_code} ${x.section} @ ${x.slot} vs ${x.clashes_with}`).join('; ')
+    );
+  }
   q('trustStrip').textContent=T.trustUpdated(name);
   setStep('3');
   q('fetchBtn').click();

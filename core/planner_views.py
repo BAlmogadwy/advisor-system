@@ -16,6 +16,7 @@ from core.models import (
     ProgrammeRequirement,
     Student,
     StudentCourse,
+    StudentTermSection,
     TermSection,
     TermSectionMeeting,
 )
@@ -464,10 +465,113 @@ def planner_save_student_sections_view(request: HttpRequest) -> JsonResponse:
                     details={"section_ids": unavailable},
                 )
 
+        # WHAT THIS WRITE REMOVES. replace_student_term_sections is a REPLACE
+        # over the planner's own snapshot class, so any planner section the
+        # student had saved that is not in this option disappears - silently,
+        # and with no mention in the response. An adviser applying option B
+        # after option A had no way to know A's courses had gone. Read the
+        # before-state and report the difference.
+        previous = {
+            int(row.term_section_id): row
+            for row in StudentTermSection.objects.filter(
+                student_id=student_id_int,
+                academic_year=year,
+                term=term,
+                source="planner",
+            ).select_related("term_section")
+        }
+        removed = [
+            {
+                "term_section_id": tsid,
+                "course_code": str(getattr(row.term_section, "course_key", "") or ""),
+                "section": str(getattr(row.term_section, "section", "") or ""),
+            }
+            for tsid, row in previous.items()
+            if tsid not in set(cleaned)
+        ]
+
+        # DOES THE PLAN STILL FIT? The build ran against the timetable as it was
+        # then. Between building and applying, the registrar snapshot can move -
+        # another adviser, a re-scrape - and applying a stale option writes a
+        # clash nobody checked for. This does not block the write; it reports
+        # the clash so the adviser sees it in the same breath as the result.
+        clashes = _planner_apply_clashes(student_id, student_id_int, year, term, cleaned)
+
         result = replace_student_term_sections(student_id, year, term, cleaned, source="planner")
+        if isinstance(result, dict):
+            result["removed"] = removed
+            result["removed_count"] = len(removed)
+            result["clashes_with_registered"] = clashes
         return _ok(result)  # type: ignore[arg-type]
     except Exception as exc:
         return _internal_error(exc)
+
+
+def _planner_apply_clashes(
+    student_id: str,
+    student_id_int: int,
+    year: str,
+    term: str,
+    section_ids: list[int],
+) -> list[dict[str, object]]:
+    """Meetings in the applied plan that collide with the REGISTRAR's timetable.
+
+    The build ran against the timetable as it stood then. Between building and
+    applying, that can move — another adviser, a re-scrape — so a stale option
+    could be written straight over a real registration with nothing checking.
+    Reported, not enforced: an adviser may legitimately plan a change they
+    intend to make at the registrar. Silence was the problem, not the write.
+    """
+    registrar_rows = [
+        row
+        for row in get_student_term_baseline(student_id, year, term, snapshot=Snapshot.REGISTERED)
+        or []
+        if row.get("day") and row.get("start_time") and row.get("end_time")
+    ]
+    if not registrar_rows or not section_ids:
+        return []
+
+    def _minutes(value: object) -> int:
+        try:
+            hh, mm = str(value).strip().split(":")
+            return int(hh) * 60 + int(mm)
+        except (ValueError, AttributeError, TypeError):
+            return -1
+
+    busy: list[tuple[str, int, int, str]] = []
+    for row in registrar_rows:
+        start, end = _minutes(row.get("start_time")), _minutes(row.get("end_time"))
+        if start < 0 or end <= start:
+            continue
+        busy.append(
+            (
+                str(row.get("day") or "").strip().upper()[:3],
+                start,
+                end,
+                str(row.get("course_code") or row.get("course_key") or ""),
+            )
+        )
+
+    found: list[dict[str, object]] = []
+    for meeting in TermSectionMeeting.objects.filter(
+        term_section_id__in=section_ids
+    ).select_related("term_section"):
+        start, end = _minutes(meeting.start_time), _minutes(meeting.end_time)
+        if start < 0 or end <= start:
+            continue
+        day = str(meeting.day or "").strip().upper()[:3]
+        for busy_day, busy_start, busy_end, busy_code in busy:
+            if day == busy_day and start < busy_end and busy_start < end:
+                found.append(
+                    {
+                        "course_code": str(getattr(meeting.term_section, "course_key", "") or ""),
+                        "section": str(getattr(meeting.term_section, "section", "") or ""),
+                        "slot": f"{meeting.day} {meeting.start_time}-{meeting.end_time}",
+                        "clashes_with": busy_code,
+                    }
+                )
+                break
+    return found
 
 
 @login_required(login_url="login")

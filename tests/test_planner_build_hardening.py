@@ -19,6 +19,7 @@ from core.models import (
     StudentTermSection,
     TermSection,
     TermSectionMeeting,
+    TermSectionProgram,
 )
 from core.services.planner_builder import SOLVER_BUDGET_SECONDS, build_plans
 from core.services.rbac import ROLE_SUPER_ADMIN, ensure_role_groups
@@ -271,3 +272,85 @@ def test_a_junk_baseline_in_the_body_cannot_crash_the_build(student: Student) ->
     c = _client()
     status, _ = _post(c, mode="keep", baseline=["junk", 42, None])
     assert status == 200
+
+
+# ── the write path reports what it did ───────────────────────────────────────
+
+
+def _applyable(course_key: str, section: str, day: str, start: str, end: str) -> TermSection:
+    """A section the student is actually allowed to be given."""
+    row = _section(course_key, section, day=day, start=start, end=end)
+    TermSectionProgram.objects.create(term_section=row, program=PROG)
+    return row
+
+
+def test_apply_reports_the_planner_sections_it_removed(student: Student) -> None:
+    """A REPLACE that says nothing about what it replaced.
+
+    Applying option B after option A silently deleted A's courses: the write is
+    scoped to the planner snapshot class and removes anything not in the option,
+    with no mention in the response.
+    """
+    old = _applyable("OLDC", "M1", "SUN", "09:00", "09:50")
+    new = _applyable("NEWC", "M1", "MON", "09:00", "09:50")
+    StudentTermSection.objects.create(
+        student_id=SID, term_section=old, academic_year=YEAR, term=TERM, source="planner"
+    )
+
+    c = _client()
+    res = c.post(
+        "/ops/planner/save-student-sections/",
+        data=json.dumps(
+            {
+                "student_id": str(SID),
+                "academic_year": YEAR,
+                "term": TERM,
+                "term_section_ids": [new.id],
+                "confirm_replace": True,
+            }
+        ),
+        content_type="application/json",
+    )
+    assert res.status_code == 200, res.content[:300]
+    body = res.json()
+    assert body["removed_count"] == 1
+    assert body["removed"][0]["course_code"] == "OLDC"
+
+
+def test_apply_reports_a_clash_with_the_registered_timetable(student: Student) -> None:
+    """The build ran against the timetable as it was THEN.
+
+    Between building and applying, the registrar snapshot can move. Applying a
+    stale option used to write the clash with nothing checking; it is now
+    reported alongside the result (reported, not blocked - an adviser may plan
+    a change they intend to make at the registrar).
+    """
+    registered = _applyable("REGC", "M1", "MON", "09:00", "09:50")
+    StudentTermSection.objects.create(
+        student_id=SID,
+        term_section=registered,
+        academic_year=YEAR,
+        term=TERM,
+        source="scraper_timetable",
+    )
+    clashing = _applyable("PLNC", "M1", "MON", "09:30", "10:20")
+
+    c = _client()
+    res = c.post(
+        "/ops/planner/save-student-sections/",
+        data=json.dumps(
+            {
+                "student_id": str(SID),
+                "academic_year": YEAR,
+                "term": TERM,
+                "term_section_ids": [clashing.id],
+                "confirm_replace": True,
+            }
+        ),
+        content_type="application/json",
+    )
+    assert res.status_code == 200, res.content[:300]
+    clashes = res.json()["clashes_with_registered"]
+    assert len(clashes) == 1
+    assert clashes[0]["course_code"] == "PLNC"
+    assert clashes[0]["clashes_with"] == "REGC"
