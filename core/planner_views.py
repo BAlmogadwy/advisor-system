@@ -47,6 +47,10 @@ from core.sidebar_context import get_sidebar_context
 
 logger = logging.getLogger(__name__)
 
+#: A shortlist is a term's worth of courses for one student. Anything past
+#: this is a malformed or hostile caller, not an adviser planning a term.
+MAX_SHORTLIST_COURSES = 40
+
 
 def _ok(data: dict[str, object], status: int = 200) -> JsonResponse:
     return JsonResponse({"ok": True, **data}, status=status)
@@ -83,6 +87,26 @@ def _validate_term_inputs(year: str, term: str) -> JsonResponse | None:
     if term not in {"1", "2", "3"}:
         return _err("term must be one of: 1, 2, 3", code="VALIDATION_TERM_FORMAT", status=400)
     return None
+
+
+def _int_field(value: object, field: str, *, default: int = 0) -> tuple[int, JsonResponse | None]:
+    """Coerce a numeric payload field, or refuse it with a 400.
+
+    ``int("three")`` raises ValueError, and these coercions sat OUTSIDE the
+    try block wrapping the build, so a typo in one shortlist row returned a raw
+    HTML 500 from a JSON endpoint. A malformed request is the caller's error and
+    must say so in the caller's language.
+    """
+    if value is None or value == "":
+        return default, None
+    if isinstance(value, bool):
+        return default, _err(f"{field} must be a number", code="VALIDATION_NUMERIC", status=400)
+    try:
+        return int(value), None
+    except (TypeError, ValueError):
+        return default, _err(
+            f"{field} must be a number, got {value!r}", code="VALIDATION_NUMERIC", status=400
+        )
 
 
 def _parse_student_id(student_id: str) -> tuple[int | None, JsonResponse | None]:
@@ -602,12 +626,26 @@ def planner_build_view(request: HttpRequest) -> JsonResponse:
         payload.get("allow_full_sections", payload.get("ignore_capacity", False))
     )
     shortlist = payload.get("shortlist", [])
-    baseline = payload.get("baseline", [])
+    # NOTE: payload["baseline"] is deliberately NOT read. The client still sends
+    # it, and older callers may too, but the build re-derives the registered
+    # timetable from the database below. Accepting it here is what let a stale
+    # browser copy decide what "Keep Registered" avoided.
     student_id = str(payload.get("student_id", "")).strip()
 
     if not year or not term:
         return _err(
             "academic_year and term are required", code="VALIDATION_REQUIRED_FIELDS", status=400
+        )
+    # REQUIRED. Without a student there is no gender filter and no programme
+    # filter, so the catalogue becomes the entire term and the exhaustive
+    # solvers have nothing to bound them: a 14-course shortlist held a
+    # synchronous request past 90 seconds. Every real caller sends one, and a
+    # build is meaningless without the student it is built for.
+    if not student_id:
+        return _err(
+            "student_id is required to build a timetable",
+            code="VALIDATION_REQUIRED_FIELDS",
+            status=400,
         )
     if not isinstance(shortlist, list):
         return _err("shortlist must be list", code="VALIDATION_LIST_REQUIRED", status=400)
@@ -623,6 +661,7 @@ def planner_build_view(request: HttpRequest) -> JsonResponse:
     # sections, and the request is gated by the caller's student scope.
     gender = ""
     program: str | None = None
+    student_id_for_baseline: int | None = None
     if student_id:
         student_id_int, sid_err = _parse_student_id(student_id)
         if sid_err:
@@ -636,6 +675,7 @@ def planner_build_view(request: HttpRequest) -> JsonResponse:
         scope_deny = require_student_scope(request, student_id_int)
         if scope_deny:
             return scope_deny
+        student_id_for_baseline = student_id_int
         gender = student_gender(student_id_int)
         student_program = str(
             Student.objects.filter(student_id=student_id_int)
@@ -651,7 +691,15 @@ def planner_build_view(request: HttpRequest) -> JsonResponse:
             )
         program = student_program if program_sections_only else None
 
+    if len(shortlist) > MAX_SHORTLIST_COURSES:
+        return _err(
+            f"shortlist may not exceed {MAX_SHORTLIST_COURSES} courses",
+            code="VALIDATION_SHORTLIST_SIZE",
+            status=400,
+        )
+
     normalized_shortlist: list[dict[str, object]] = []
+    seen_codes: set[str] = set()
     for item in shortlist:
         if not isinstance(item, dict):
             return _err(
@@ -716,17 +764,39 @@ def planner_build_view(request: HttpRequest) -> JsonResponse:
                 status=400,
             )
 
+        # ONE row per course. Without this, method A builds an unsatisfiable
+        # constraint (2*(v1+v2) == 1) and calls the course infeasible, while
+        # methods B and C treat the duplicates as two independent slots and
+        # return an option holding TWO sections of the same course, reported as
+        # fully scheduled. The only previous defence was a client-side check
+        # that compares codes case-sensitively where the rest of the file does
+        # not; correctness here must not depend on the caller.
+        if code in seen_codes:
+            return _err(
+                f"{code} appears more than once in the shortlist",
+                code="VALIDATION_SHORTLIST_DUPLICATE",
+                status=400,
+            )
+        seen_codes.add(code)
+
+        score, score_err = _int_field(item.get("score"), f"{code} score")
+        if score_err:
+            return score_err
+        credits, credits_err = _int_field(item.get("credits"), f"{code} credits")
+        if credits_err:
+            return credits_err
+
         normalized_shortlist.append(
             {
                 "course_code": code,
                 "priority": str(item.get("priority", "Med")),
-                "score": int(item.get("score", 0) or 0),
+                "score": score,
                 "status": str(item.get("status", "Eligible")),
                 "missing_prerequisites": item.get("missing_prerequisites", [])
                 if isinstance(item.get("missing_prerequisites", []), list)
                 else [],
                 "must_take": must_take,
-                "credits": int(item.get("credits", 0) or 0),
+                "credits": credits,
                 "pinned_sections": pinned_sections,
             }
         )
@@ -734,13 +804,43 @@ def planner_build_view(request: HttpRequest) -> JsonResponse:
     keep_registered = mode != "ignore"
     suggest_swaps = bool(payload.get("swap", False))
     enforce_capacity = not allow_full_sections
-    max_credits = int(payload.get("max_credits", 0) or 0)  # type: ignore[call-overload]
+    max_credits, max_credits_err = _int_field(payload.get("max_credits"), "max_credits")
+    if max_credits_err:
+        return max_credits_err
+    # THE BASELINE IS SERVER-DERIVED. "Keep Registered" promises the build
+    # avoids clashing with what the student is already registered for; taking
+    # that list from the request body made the promise only as good as whatever
+    # the browser last held. A stale tab, a timetable changed in another
+    # session, or simply an omitted field, and the build scheduled straight
+    # over real registrations. planner_context_view has always read this from
+    # the DB (get_student_term_baseline) - the build now does the same.
+    effective_baseline: list[dict[str, object]] = []
+    if keep_registered and student_id_for_baseline is not None:
+        try:
+            effective_baseline = list(
+                get_student_term_baseline(
+                    str(student_id_for_baseline), year, term, snapshot=Snapshot.EFFECTIVE
+                )
+                or []
+            )
+        except Exception:
+            logger.warning(
+                "planner_build_view: baseline re-derivation failed for student=%s",
+                student_id_for_baseline,
+                exc_info=True,
+            )
+            return _err(
+                "Could not read the student's registered timetable",
+                code="BASELINE_UNAVAILABLE",
+                status=409,
+            )
+
     try:
         result = build_plans(
             year,
             term,
             normalized_shortlist,
-            baseline if isinstance(baseline, list) else [],
+            effective_baseline,
             keep_registered,
             suggest_swaps=suggest_swaps,
             # The staff checkbox named "Strict" historically reached this
