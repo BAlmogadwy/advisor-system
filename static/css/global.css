@@ -8390,6 +8390,11 @@ html[data-theme="dark"] .btn-export {
   margin-bottom: 0.75rem;
 }
 .ap-advisor-bar select { max-width: 360px; }
+.ap-advisor-bar .ap-program-filter {
+  width: auto;
+  min-width: 170px;
+  max-width: 210px !important;
+}
 .ap-advisor-bar .ap-loaded-label {
   font-size: 0.78rem; color: var(--muted); font-weight: 500;
   display: flex; align-items: center; gap: 0.3rem;
@@ -8423,6 +8428,23 @@ html[data-theme="dark"] .btn-export {
   padding: 0.2rem 0.55rem; border-radius: 999px;
   font-size: 0.75rem; font-weight: 700;
   background: #eef2ff; color: #3b3fa0; border: 1px solid #c7d2fe;
+  cursor: pointer;
+  font-family: inherit;
+  line-height: inherit;
+  transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+.ap-prog-pill:hover {
+  background: #e0e7ff;
+  border-color: #818cf8;
+}
+.ap-prog-pill[aria-pressed="true"] {
+  background: #3b3fa0;
+  border-color: #3b3fa0;
+  color: #fff;
+}
+.ap-prog-pill:focus-visible {
+  outline: 3px solid rgba(59,63,160,0.28);
+  outline-offset: 2px;
 }
 .ap-prog-pill .ap-prog-n {
   font-family: var(--font-mono); font-size: 0.72rem;
@@ -8659,6 +8681,15 @@ html[data-theme="dark"] .ap-prog-pill {
   background: rgba(64,86,227,0.12);
   color: #8b8fff;
   border-color: rgba(139,143,255,0.25);
+}
+html[data-theme="dark"] .ap-prog-pill:hover {
+  background: rgba(139,143,255,0.2);
+  border-color: rgba(139,143,255,0.55);
+}
+html[data-theme="dark"] .ap-prog-pill[aria-pressed="true"] {
+  background: #8b8fff;
+  color: #151826;
+  border-color: #8b8fff;
 }
 html[data-theme="dark"] .ap-prog-pill .ap-prog-n {
   background: rgba(139,143,255,0.12);

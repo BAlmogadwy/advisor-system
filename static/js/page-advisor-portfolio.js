@@ -16,6 +16,7 @@ const SERVER_PAGE_SIZE = 500;
 let rosterTotal = 0;
 let batchSelected = new Set();
 let selectedSid = null;
+let advisorLoadGeneration = 0;
 
 const IS_AR = document.documentElement.lang === 'ar';
 
@@ -52,6 +53,7 @@ const T = {
   lowGpaInsight:   (n) => IS_AR ? `${n} معدل أقل من 2.0`            : `${n} GPA < 2.0`,
   hpMissing2Plus:  (n) => IS_AR ? `${n} بنقص ≥2 مقررات ذات أولوية`  : `${n} with 2+ HP missing`,
   zeroTermHours:   (n) => IS_AR ? `${n} بدون ساعات هذا الفصل`       : `${n} zero current-term hours`,
+  allPrograms:        IS_AR ? 'كل البرامج'                          : 'All programs',
 
   // ── Table status ──
   noStudentsMatch:    IS_AR ? 'لم يُعثر على طلاب مطابقين'           : 'No students match filters',
@@ -111,6 +113,66 @@ const T = {
 
 /* q, esc, getCookie, csrfToken, csrfHeaders — provided by shared-utils.js */
 
+function normalizeProgram(value) {
+  return String(value || '').trim().toUpperCase();
+}
+
+function selectedProgram() {
+  return normalizeProgram(q('apProgramFilter')?.value);
+}
+
+function resetProgramFilterControl() {
+  const select = q('apProgramFilter');
+  if (!select) return;
+  select.innerHTML = `<option value="">${T.allPrograms}</option>`;
+  select.value = '';
+}
+
+function syncProgramPills() {
+  const selected = selectedProgram();
+  document.querySelectorAll('#apPrograms .ap-prog-pill').forEach(btn => {
+    const active = normalizeProgram(btn.dataset.program) === selected && selected !== '';
+    btn.setAttribute('aria-pressed', active ? 'true' : 'false');
+  });
+}
+
+function renderProgramControls(programBreakdown) {
+  const entries = Object.entries(programBreakdown || {})
+    .filter(([program]) => normalizeProgram(program))
+    .sort((a, b) => Number(b[1]) - Number(a[1]) || String(a[0]).localeCompare(String(b[0])));
+
+  const select = q('apProgramFilter');
+  const previous = selectedProgram();
+  if (select) {
+    select.innerHTML = `<option value="">${T.allPrograms}</option>` + entries
+      .map(([program, count]) => `<option value="${esc(normalizeProgram(program))}">${esc(program)} (${Number(count) || 0})</option>`)
+      .join('');
+    select.value = entries.some(([program]) => normalizeProgram(program) === previous)
+      ? previous
+      : '';
+  }
+
+  q('apPrograms').innerHTML = entries.length
+    ? entries.map(([program, count]) => `
+        <button type="button" class="ap-prog-pill" data-program="${esc(normalizeProgram(program))}"
+                aria-pressed="false" onclick="setProgramFilter(this.dataset.program)">
+          ${esc(program)} <span class="ap-prog-n">${Number(count) || 0}</span>
+        </button>`).join('')
+    : '<span style="font-size:0.78rem;color:var(--muted);">—</span>';
+  syncProgramPills();
+}
+
+function setProgramFilter(program) {
+  const select = q('apProgramFilter');
+  if (!select) return;
+  const requested = normalizeProgram(program);
+  const next = selectedProgram() === requested ? '' : requested;
+  const valid = Array.from(select.options).some(option => normalizeProgram(option.value) === next);
+  select.value = valid ? next : '';
+  currentPage = 1;
+  apFilter();
+}
+
 async function copyText(text, triggerBtn) {
   try {
     await navigator.clipboard.writeText(text);
@@ -168,10 +230,13 @@ q('apAdvisorSelect').addEventListener('change', () => {
 });
 
 async function loadStudents(advisorId) {
+  const loadGeneration = ++advisorLoadGeneration;
   currentAdvisorId = advisorId;
   currentPage = 1;
   batchSelected.clear();
   updateBatchBar();
+  resetProgramFilterControl();
+  q('apPrograms').innerHTML = '';
 
   const tbody = q('apTable').querySelector('tbody');
   tbody.innerHTML = `<tr><td colspan="10"><div class="ap-empty"><span class="ap-empty-icon"><span class="i i-xl" aria-hidden="true"><svg viewBox="0 0 24 24"><line x1="12" y1="2" x2="12" y2="6"/><line x1="12" y1="18" x2="12" y2="22"/><line x1="4.93" y1="4.93" x2="7.76" y2="7.76"/><line x1="16.24" y1="16.24" x2="19.07" y2="19.07"/><line x1="2" y1="12" x2="6" y2="12"/><line x1="18" y1="12" x2="22" y2="12"/><line x1="4.93" y1="19.07" x2="7.76" y2="16.24"/><line x1="16.24" y1="7.76" x2="19.07" y2="4.93"/></svg></span></span><div class="ap-empty-title">${T.loadingStudents}</div></div></td></tr>`;
@@ -202,6 +267,7 @@ async function loadStudents(advisorId) {
       `/report/students-by-advisor/?advisor_id=${encodeURIComponent(advisorId)}&page=1&page_size=${SERVER_PAGE_SIZE}`
     );
     const data = await res.json();
+    if (loadGeneration !== advisorLoadGeneration) return;
     if (!res.ok || !Array.isArray(data?.items)) {
       const msg = data?.error || data?.message || `HTTP ${res.status}`;
       tbody.innerHTML = `<tr><td colspan="10" class="text-danger small"><span class="i i-xs" aria-hidden="true" style="vertical-align:-2px"><svg viewBox="0 0 24 24"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg></span> ${esc(msg)}</td></tr>`;
@@ -234,17 +300,19 @@ async function loadStudents(advisorId) {
     q('apLoadedTime').textContent = new Date().toLocaleTimeString();
     q('apMetricsWrap').classList.remove('d-none');
 
-    updateMetrics();
+    renderProgramControls(summaryCache.program_breakdown);
     updateCsvLink();
     apFilter();
     notify.success(T.loadedStudents(allStudents.length), advisorId);
   } catch (err) {
+    if (loadGeneration !== advisorLoadGeneration) return;
     tbody.innerHTML = `<tr><td colspan="10" class="text-danger small"><span class="i i-xs" aria-hidden="true" style="vertical-align:-2px"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg></span> Network failure — ${esc(String(err))}</td></tr>`;
     notify.error(T.networkFailure);
   }
 }
 
 function clearPortfolio() {
+  advisorLoadGeneration++;
   currentAdvisorId = '';
   allStudents = [];
   summaryCache = {};
@@ -260,16 +328,24 @@ function clearPortfolio() {
   q('apInsights').innerHTML = '';
   q('apPrograms').innerHTML = '';
   q('apGpaChart').innerHTML = '';
+  resetProgramFilterControl();
 }
 
 /* ═══════════════════════════════════════════════════════════════
    METRICS — Fix #6, #7, #11, #12, #14
    ═══════════════════════════════════════════════════════════════ */
 function updateMetrics() {
-  const s = summaryCache;
+  const program = selectedProgram();
+  const scopedStudents = program
+    ? allStudents.filter(student => normalizeProgram(student.program) === program)
+    : allStudents;
+  const serverProgramSummary = program ? summaryCache.program_summaries?.[program] : null;
+  const s = program ? (serverProgramSummary || summarizeStudents(scopedStudents)) : summaryCache;
+  const scopedTotal = program ? Number(s.student_count ?? scopedStudents.length) : rosterTotal;
+
   q('mAttention').textContent = s.needs_attention_count || 0;
   q('mHighRisk').textContent = s.very_high_risk_count || 0;
-  q('mStudents').textContent = rosterTotal;
+  q('mStudents').textContent = scopedTotal;
   q('mAvgGpa').textContent = s.avg_gpa != null ? String(s.avg_gpa) : '—';
   q('mTermHours').textContent = s.current_term_registered_hours_total || 0;
   q('mHpMissing').textContent = s.high_priority_missing_count || 0;
@@ -286,26 +362,60 @@ function updateMetrics() {
   if (zero > 0) chips.push(`<span class="ap-insight ap-insight-warn"><span class="i i-xxs" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></span> ${T.zeroTermHours(zero)}</span>`);
   q('apInsights').innerHTML = chips.join('');
 
-  // Program breakdown pills
-  const progs = Object.entries(s.program_breakdown || {});
-  q('apPrograms').innerHTML = progs.length
-    ? progs.sort((a,b) => b[1]-a[1]).map(([k,v]) => `<span class="ap-prog-pill">${esc(k)} <span class="ap-prog-n">${v}</span></span>`).join('')
-    : '<span style="font-size:0.78rem;color:var(--muted);">—</span>';
-
   // GPA mini-chart
-  buildGpaChart();
+  buildGpaChart(scopedStudents, s.gpa_distribution);
 }
 
-function buildGpaChart() {
-  const buckets = [0, 0, 0, 0]; // <2, 2-3, 3-3.5, 3.5+
-  allStudents.forEach(s => {
-    if (s.gpa == null) return;
-    const g = Number(s.gpa);
-    if (g < 2) buckets[0]++;
-    else if (g < 3) buckets[1]++;
-    else if (g < 3.5) buckets[2]++;
-    else buckets[3]++;
-  });
+function summarizeStudents(students) {
+  const gpas = students
+    .filter(student => student.gpa != null)
+    .map(student => Number(student.gpa))
+    .filter(Number.isFinite);
+  const avgGpa = gpas.length
+    ? Math.round((gpas.reduce((sum, gpa) => sum + gpa, 0) / gpas.length) * 1000) / 1000
+    : null;
+
+  return {
+    avg_gpa: avgGpa,
+    low_gpa_count: gpas.filter(gpa => gpa < 2).length,
+    gpa_distribution: [
+      gpas.filter(gpa => gpa < 2).length,
+      gpas.filter(gpa => gpa >= 2 && gpa < 3).length,
+      gpas.filter(gpa => gpa >= 3 && gpa < 3.5).length,
+      gpas.filter(gpa => gpa >= 3.5).length,
+    ],
+    student_count: students.length,
+    needs_attention_count: students.filter(student => student.needs_attention).length,
+    very_high_risk_count: students.filter(student => Number(student.risk_score || 0) >= 8).length,
+    high_priority_missing_count: students.filter(student => student.has_high_priority_missing).length,
+    zero_current_term_hours_count: students.filter(
+      student => Number(student.current_term_registered_hours || 0) === 0
+    ).length,
+    two_plus_high_priority_missing_count: students.filter(student =>
+      Array.isArray(student.high_priority_missing_courses)
+      && student.high_priority_missing_courses.length >= 2
+    ).length,
+    current_term_registered_hours_total: students.reduce(
+      (sum, student) => sum + Number(student.current_term_registered_hours || 0),
+      0
+    ),
+  };
+}
+
+function buildGpaChart(students = allStudents, serverBuckets = null) {
+  const buckets = Array.isArray(serverBuckets) && serverBuckets.length === 4
+    ? serverBuckets.map(value => Number(value) || 0)
+    : [0, 0, 0, 0]; // <2, 2-3, 3-3.5, 3.5+
+  if (!Array.isArray(serverBuckets) || serverBuckets.length !== 4) {
+    students.forEach(s => {
+      if (s.gpa == null) return;
+      const g = Number(s.gpa);
+      if (g < 2) buckets[0]++;
+      else if (g < 3) buckets[1]++;
+      else if (g < 3.5) buckets[2]++;
+      else buckets[3]++;
+    });
+  }
   const max = Math.max(...buckets, 1);
   const colors = ['ap-gpa-bar-danger', 'ap-gpa-bar-warn', 'ap-gpa-bar-ok', 'ap-gpa-bar-great'];
   q('apGpaChart').innerHTML = buckets.map((n, i) =>
@@ -330,7 +440,7 @@ function setFocus(btn) {
 
 function apFilter() {
   const search = (q('apSearch')?.value || '').trim().toLowerCase();
-  const progFilter = (q('apProgramFilter')?.value || '').trim().toUpperCase();
+  const progFilter = selectedProgram();
 
   let rows = [...allStudents];
 
@@ -338,7 +448,7 @@ function apFilter() {
     rows = rows.filter(s => String(s.student_id||'').toLowerCase().includes(search) || String(s.name||'').toLowerCase().includes(search));
   }
   if (progFilter) {
-    rows = rows.filter(s => String(s.program||'').toUpperCase() === progFilter);
+    rows = rows.filter(s => normalizeProgram(s.program) === progFilter);
   }
   if (currentFocus === 'attention') rows = rows.filter(s => s.needs_attention);
   else if (currentFocus === 'risk') rows = rows.filter(s => s.gpa != null && Number(s.gpa) < 2.0);
@@ -355,6 +465,8 @@ function apFilter() {
   });
 
   filteredStudents = rows;
+  syncProgramPills();
+  updateMetrics();
   updateCsvLink();
   renderPage();
   updatePillCounts();
@@ -362,10 +474,10 @@ function apFilter() {
 
 function updatePillCounts() {
   const search = (q('apSearch')?.value || '').trim().toLowerCase();
-  const progFilter = (q('apProgramFilter')?.value || '').trim().toUpperCase();
+  const progFilter = selectedProgram();
   let base = [...allStudents];
   if (search) base = base.filter(s => String(s.student_id||'').toLowerCase().includes(search) || String(s.name||'').toLowerCase().includes(search));
-  if (progFilter) base = base.filter(s => String(s.program||'').toUpperCase() === progFilter);
+  if (progFilter) base = base.filter(s => normalizeProgram(s.program) === progFilter);
 
   const counts = {
     all:       base.length,
@@ -745,8 +857,12 @@ document.addEventListener('keydown', e => {
 /* Debounced filter wrappers — debounce() provided by shared-ux.js */
 const debouncedApFilter = debounce(() => { currentPage = 1; apFilter(); }, 250);
 
-/* Also listen for program filter changes */
-q('apProgramFilter').addEventListener('input', debounce(() => { currentPage = 1; apFilter(); updateCsvLink(); }, 250));
+/* The options come from this roster, so an exact program can be selected without
+   guessing whether AI and AI2 (or DS and DS2) are separate curricula. */
+q('apProgramFilter').addEventListener('change', () => {
+  currentPage = 1;
+  apFilter();
+});
 
 /* ═══════════════════════════════════════════════════════════════
    INIT

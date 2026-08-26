@@ -41,7 +41,10 @@
         </select>
       </div>
       <div class="ap-advisor-bar" id="apRosterTools">
-        <input id="apProgramFilter" class="form-control" style="max-width:140px;" placeholder="{% if LANGUAGE_CODE == 'ar' %}البرنامج{% else %}Program (AI/CS){% endif %}">
+        <label class="visually-hidden" for="apProgramFilter">{% if LANGUAGE_CODE == 'ar' %}تصفية حسب البرنامج{% else %}Filter by program{% endif %}</label>
+        <select id="apProgramFilter" class="form-select ap-program-filter" aria-label="{% if LANGUAGE_CODE == 'ar' %}تصفية حسب البرنامج{% else %}Filter by program{% endif %}">
+          <option value="">{% if LANGUAGE_CODE == 'ar' %}كل البرامج{% else %}All programs{% endif %}</option>
+        </select>
         <span class="ap-loaded-label d-none" id="apLoadedLabel">
           {% if LANGUAGE_CODE == 'ar' %}تم التحميل{% else %}Loaded{% endif %} <span class="ap-loaded-time" id="apLoadedTime"></span>
         </span>
@@ -168,5 +171,5 @@
   /* Computed once, server-side, so the template and the JS cannot disagree. */
   const hideAdvisorPicker = {{ hide_advisor_picker|yesno:"true,false" }};
 </script>
-<script src="{% static 'js/page-advisor-portfolio.js' %}?v=4"></script>
+<script src="{% static 'js/page-advisor-portfolio.js' %}?v=5"></script>
 {% endblock %}
