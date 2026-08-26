@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import random
 import threading
+import time
 from dataclasses import dataclass
 from typing import Any
 
@@ -101,6 +102,39 @@ def _display_course_label(row: dict[str, Any]) -> str:
     code = _option_course_key(row)
     section = str(row.get("section", "") or "").strip()
     return f"{code} {section}".strip()
+
+
+class _SolverDeadline:
+    """A wall-clock budget the exhaustive solvers check as they recurse.
+
+    Methods B and C are hand-written branch-and-bound over (course x section).
+    Method A (CP-SAT) has had an 8-second cap since it was written; B and C had
+    none, so a large unscoped catalogue could hold a synchronous request for
+    minutes — measured: a 14-course shortlist with no student_id (hence no
+    gender or programme filter) had not returned after 90 seconds.
+
+    Expiring is not an error: the search returns the best answer found so far,
+    which is what branch-and-bound has at every moment anyway.
+    """
+
+    __slots__ = ("_deadline", "expired")
+
+    def __init__(self, seconds: float) -> None:
+        self._deadline = time.monotonic() + max(0.1, float(seconds))
+        self.expired = False
+
+    def reached(self) -> bool:
+        if self.expired:
+            return True
+        if time.monotonic() >= self._deadline:
+            self.expired = True
+        return self.expired
+
+
+#: Wall-clock budget for ALL exhaustive search in one build request. Method A
+#: (CP-SAT) has always had its own 8s cap; B and C had none, which is how a
+#: 14-course unscoped shortlist held a synchronous request past 90 seconds.
+SOLVER_BUDGET_SECONDS = 10.0
 
 
 def _to_minutes(t: str) -> int:
@@ -530,6 +564,7 @@ def _bitmask_build_option_b(
     max_credits: int = 0,
     target_credits: int | None = None,
     credits_map: dict[str, int] | None = None,
+    deadline: _SolverDeadline | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     # Collect must_take codes for hard-constraint enforcement
     must_take_codes: set[str] = set()
@@ -654,6 +689,11 @@ def _bitmask_build_option_b(
     def dfs(i: int, used_mask: int, chosen: list[dict[str, Any]], used_cr: int) -> None:
         nonlocal best_score, best_selected
 
+        # Budget check first. Branch-and-bound always holds a valid best-so-far,
+        # so stopping early costs the answer's optimality, never its validity.
+        if deadline is not None and deadline.reached():
+            return
+
         if _target_cr is not None and (
             used_cr > _target_cr or used_cr + remaining_credit_upper_bound[i] < _target_cr
         ):
@@ -734,6 +774,7 @@ def _bitmask_build_option_c(
     max_credits: int = 0,
     target_credits: int | None = None,
     credits_map: dict[str, int] | None = None,
+    deadline: _SolverDeadline | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     # Collect must_take codes for hard-constraint enforcement
     must_take_codes: set[str] = set()
@@ -870,6 +911,11 @@ def _bitmask_build_option_c(
 
     def dfs(i: int, cur_days: list[int], chosen: list[dict[str, Any]], used_cr: int) -> None:
         nonlocal best_key, best_selected
+
+        # Budget check first. Branch-and-bound always holds a valid best-so-far,
+        # so stopping early costs the answer's optimality, never its validity.
+        if deadline is not None and deadline.reached():
+            return
 
         if _target_cr is not None and (
             used_cr > _target_cr or used_cr + remaining_credit_upper_bound[i] < _target_cr
@@ -1332,7 +1378,15 @@ def build_plans(
     target_credits: int | None = None,
     gender: str = "",
     program: str | None = None,
-    require_complete_meetings: bool = False,
+    # DEFAULT ON. This gate existed, was correct, and was never switched on by
+    # the adviser-facing build view — so a section with no meetings, a blank
+    # meeting set or a malformed time ("aa:bb" parses to -1, which _overlap
+    # reads as "no valid meeting") entered the solver as an all-week-free
+    # option. It could not conflict with anything, so the optimiser PREFERRED
+    # it, and the adviser was shown "conflicts: 0" for a timetable containing a
+    # course with no real slot. A safety gate that must be opted into is a gate
+    # that gets forgotten; the permissive behaviour is now the thing you ask for.
+    require_complete_meetings: bool = True,
 ) -> dict[str, Any]:
     must_take_codes = {
         str(item.get("course_code", "")).replace(" ", "").upper()
@@ -1487,6 +1541,13 @@ def build_plans(
             )
         )
 
+    # ONE budget for the whole request, shared by every exhaustive search it
+    # runs. Per-solver budgets would multiply: three methods x three variants
+    # each is nine searches, so a 5s-per-search cap is a 45s request. The
+    # request is synchronous — this number is a promise to the caller about how
+    # long the page can block, so it belongs to the request, not the solver.
+    solver_deadline = _SolverDeadline(SOLVER_BUDGET_SECONDS)
+
     def _run_method(
         method: str, cat: dict[str, list[dict[str, Any]]]
     ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
@@ -1514,6 +1575,7 @@ def build_plans(
                 max_credits=max_credits,
                 target_credits=target_credits,
                 credits_map=credits_map,
+                deadline=solver_deadline,
             )
         return _bitmask_build_option_c(
             shortlist,
@@ -1524,6 +1586,7 @@ def build_plans(
             max_credits=max_credits,
             target_credits=target_credits,
             credits_map=credits_map,
+            deadline=solver_deadline,
         )
 
     def _annotate_incomplete_meeting_evidence(
