@@ -22,9 +22,11 @@ def _login_superadmin() -> None:
 
 def test_missing_high_priority_report_endpoint(monkeypatch: MonkeyPatch) -> None:
     _login_superadmin()
-    monkeypatch.setattr(
-        "core.report_views.run_missing_high_priority_report",
-        lambda **kwargs: {
+    received: dict[str, object] = {}
+
+    def _report(**kwargs: object) -> dict[str, object]:
+        received.update(kwargs)
+        return {
             "count": 1,
             "params": kwargs,
             "items": [
@@ -36,15 +38,21 @@ def test_missing_high_priority_report_endpoint(monkeypatch: MonkeyPatch) -> None
                     "missing_total": 1,
                 }
             ],
-        },
+        }
+
+    monkeypatch.setattr(
+        "core.report_views.run_missing_high_priority_report",
+        _report,
     )
 
-    response = client.get("/report/missing-high-priority/?year=1448&semester=0")
+    response = client.get("/report/missing-high-priority/?year=1448&semester=1&term_parity=1")
 
     assert response.status_code == 200
     payload = response.json()
     assert payload["count"] == 1
     assert payload["items"][0]["student_id"] == 4410001
+    assert received["semester"] == 1
+    assert received["term_parity"] == 0
 
 
 def test_export_missing_high_priority_xlsx_endpoint(
@@ -53,16 +61,23 @@ def test_export_missing_high_priority_xlsx_endpoint(
     _login_superadmin()
     out_file = tmp_path / "flagged_students_missing_high_priority.xlsx"
     out_file.write_bytes(b"dummy-xlsx")
+    received: dict[str, object] = {}
+
+    def _export(**kwargs: object) -> Path:
+        received.update(kwargs)
+        return out_file
 
     monkeypatch.setattr(
         "core.report_views.export_missing_high_priority_xlsx",
-        lambda **kwargs: out_file,
+        _export,
     )
 
-    response = client.get("/export/missing-high-priority.xlsx?year=1448&semester=0")
+    response = client.get("/export/missing-high-priority.xlsx?year=1448&semester=2&term_parity=0")
 
     assert response.status_code == 200
     assert "attachment;" in (response.get("Content-Disposition") or "")
+    assert received["semester"] == 2
+    assert received["term_parity"] == 1
 
 
 def test_export_missing_high_priority_xlsx_error(monkeypatch: MonkeyPatch) -> None:
@@ -73,7 +88,27 @@ def test_export_missing_high_priority_xlsx_error(monkeypatch: MonkeyPatch) -> No
 
     monkeypatch.setattr("core.report_views.export_missing_high_priority_xlsx", _boom)
 
-    response = client.get("/export/missing-high-priority.xlsx?year=1448&semester=0")
+    response = client.get("/export/missing-high-priority.xlsx?year=1448&semester=1")
 
     assert response.status_code == 500
     assert "openpyxl" in response.json().get("error", "")
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/report/missing-high-priority/",
+        "/export/missing-high-priority.xlsx",
+    ],
+)
+@pytest.mark.parametrize("semester", [0, 3])
+def test_missing_high_priority_endpoints_reject_non_main_semesters(
+    path: str,
+    semester: int,
+) -> None:
+    _login_superadmin()
+
+    response = client.get(path, {"year": 1448, "semester": semester})
+
+    assert response.status_code == 400
+    assert response.json()["error"] == "semester must be 1 or 2"

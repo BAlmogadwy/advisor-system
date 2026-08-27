@@ -2245,8 +2245,19 @@ const IS_AR = document.documentElement.lang === 'ar';
     document.dispatchEvent(new Event('dashboard:badges:update'));
   }
 
+  function syncHighPriorityParity() {
+    const semester = Number(q('hpSemester')?.value);
+    if ((semester === 1 || semester === 2) && q('hpParity')) {
+      q('hpParity').value = String(semester - 1);
+    }
+  }
+
+  q('hpSemester')?.addEventListener('input', syncHighPriorityParity);
+  syncHighPriorityParity();
+
   q('hpRun').onclick = async () => {
     if (!requireFields(['hpYear','hpSemester'], 'hpMeta', T.highPriorityReport)) return;
+    syncHighPriorityParity();
     const btn = q('hpRun');
     btn.disabled = true;
     btn.textContent = T.running;

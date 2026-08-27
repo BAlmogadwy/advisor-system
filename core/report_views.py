@@ -1765,6 +1765,9 @@ def missing_high_priority_view(request: HttpRequest) -> JsonResponse:
     if year is None or semester is None:
         return JsonResponse({"error": "Invalid parameters"}, status=400)
 
+    if semester not in {1, 2}:
+        return JsonResponse({"error": "semester must be 1 or 2"}, status=400)
+
     section = (request.GET.get("section") or "").strip().upper() or None
     program = (request.GET.get("program") or "").strip().upper() or None
     join_years_raw = (request.GET.get("join_years") or "").strip()
@@ -1776,7 +1779,11 @@ def missing_high_priority_view(request: HttpRequest) -> JsonResponse:
     if scope_err:
         return scope_err
 
-    term_parity = _safe_int(request.GET.get("term_parity"), 0)
+    # Main semesters are the source of truth for study-plan parity: semester
+    # 1 serves odd plan terms and semester 2 serves even plan terms.  Keeping a
+    # second, independently editable value allowed the HP report to disagree
+    # with the global term selected by the operator.
+    term_parity = semester - 1
     discount = (request.GET.get("discount") or "1_over_d").strip()
     min_score = _safe_float(request.GET.get("min_score"), 2.0)
     top_k = _safe_int(request.GET.get("top_k"), 10)
@@ -1905,6 +1912,8 @@ def export_missing_high_priority_xlsx_view(request: HttpRequest) -> HttpResponse
         return err
     if year is None or semester is None:
         return JsonResponse({"error": "Invalid parameters"}, status=400)
+    if semester not in {1, 2}:
+        return JsonResponse({"error": "semester must be 1 or 2"}, status=400)
 
     section = (request.GET.get("section") or "").strip().upper() or None
     program = (request.GET.get("program") or "").strip().upper() or None
@@ -1917,7 +1926,7 @@ def export_missing_high_priority_xlsx_view(request: HttpRequest) -> HttpResponse
     if scope_err:
         return scope_err
 
-    term_parity = _safe_int(request.GET.get("term_parity"), 0)
+    term_parity = semester - 1
     discount = (request.GET.get("discount") or "1_over_d").strip()
     min_score = _safe_float(request.GET.get("min_score"), 2.0)
     top_k = _safe_int(request.GET.get("top_k"), 10)

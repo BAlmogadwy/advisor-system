@@ -5,7 +5,10 @@ from typing import Any
 from core.models import Prerequisite, Student, StudentCourse
 from core.services import course_priority
 from core.services.eligibility import evaluate_prerequisites
-from core.services.recommender import get_all_department_courses
+from core.services.recommender import (
+    calculate_real_student_term,
+    get_all_department_courses,
+)
 from core.services.student_helpers import (
     normalize_code,
 )
@@ -71,6 +74,32 @@ def _matches_term_parity(course_term: int | None, term_parity: int) -> bool:
         return False
     desired_remainder = 1 if term_parity == 0 else 0
     return (course_term % 2) == desired_remainder
+
+
+def _current_curriculum_term(
+    student_id: int,
+    current_academic_year: int,
+    current_semester: int,
+) -> int | None:
+    """Return the student's 1-based plan term for a main semester.
+
+    ``calculate_real_student_term`` returns the number of main terms completed
+    at the supplied calendar point.  The course plan is 1-based, so the term
+    currently due is one greater.  Summer and implausible pre-enrolment dates
+    are deliberately not assigned a plan term for this report.
+    """
+
+    if current_semester not in {1, 2}:
+        return None
+    term = (
+        calculate_real_student_term(
+            student_id,
+            current_academic_year,
+            current_semester,
+        )
+        + 1
+    )
+    return term if term >= 1 else None
 
 
 def _prereqs_visual_style(course: str, program: str) -> set[str]:
@@ -201,10 +230,19 @@ def run_missing_high_priority_report(
 
         passed_n = _student_passed.get(sid, set())
         studying_n = _student_studying.get(sid, set())
+        current_curriculum_term = _current_curriculum_term(sid, year, semester)
+        if current_curriculum_term is None:
+            continue
 
         candidates: list[tuple[str, float]] = []
         for course in universe:
             if course in passed_n or course in studying_n:
+                continue
+            course_term = term_map.get(course)
+            # "Missing" is a due-state, not merely prerequisite readiness.
+            # A high-impact course from a later plan term must not flag a
+            # student who is fully registered for the term they are in.
+            if course_term is None or course_term > current_curriculum_term:
                 continue
             score = float(scores.get(course, 0.0))
             if score < min_score:
@@ -241,13 +279,17 @@ def run_missing_high_priority_report(
 
     items = []
     for sid in sorted(per_student_grouped.keys()):
-        row = per_student_grouped[sid]
-        in_this_rows = [{"course_code": c, "score": float(s)} for c, s in row.get("in_this", [])]
-        other_rows = [{"course_code": c, "score": float(s)} for c, s in row.get("other", [])]
+        grouped_row = per_student_grouped[sid]
+        in_this_rows = [
+            {"course_code": c, "score": float(s)} for c, s in grouped_row.get("in_this", [])
+        ]
+        other_rows = [
+            {"course_code": c, "score": float(s)} for c, s in grouped_row.get("other", [])
+        ]
         items.append(
             {
                 "student_id": sid,
-                "program": row.get("program", ""),
+                "program": grouped_row.get("program", ""),
                 "missing_this_parity": in_this_rows,
                 "missing_other": other_rows,
                 "missing_total": len(in_this_rows) + len(other_rows),
