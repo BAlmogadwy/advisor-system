@@ -22,6 +22,7 @@ from core.models import (
     TimetableScenario,
 )
 from core.services.group_availability import (
+    _section_course_identity,
     compute_group_availability,
     normalise_student_ids,
 )
@@ -56,13 +57,24 @@ def _make_global_section(
     return ts
 
 
-def _enrol(student_id: int, ts: TermSection, *, program: str = "CS") -> None:
+def _enrol(
+    student_id: int,
+    ts: TermSection,
+    *,
+    program: str = "CS",
+    cohort: str = "",
+    source: str = "scraper_timetable",
+) -> None:
     Student.objects.get_or_create(
         student_id=student_id,
-        defaults={"name": f"Student {student_id}", "program": program},
+        defaults={"name": f"Student {student_id}", "program": program, "section": cohort},
     )
     StudentTermSection.objects.create(
-        student_id=student_id, academic_year=YEAR, term=TERM, term_section=ts
+        student_id=student_id,
+        academic_year=YEAR,
+        term=TERM,
+        term_section=ts,
+        source=source,
     )
 
 
@@ -117,6 +129,40 @@ def test_offgrid_meeting_marks_every_overlapping_slot():
     assert _cell(result, "lecture", "TUE", 2)["free"] is True
 
 
+def test_timeline_uses_all_continuous_ten_minute_intervals():
+    result = compute_group_availability([], YEAR, TERM)
+
+    slots = result["grids"]["timeline"]["slots"]
+    assert len(slots) == 48
+    assert slots[0] == {"label": "09:00-09:10", "start": "09:00", "end": "09:10"}
+    assert slots[-1] == {"label": "16:50-17:00", "start": "16:50", "end": "17:00"}
+    assert [(slot["start"], slot["end"]) for slot in slots[17:25]] == [
+        ("11:50", "12:00"),
+        ("12:00", "12:10"),
+        ("12:10", "12:20"),
+        ("12:20", "12:30"),
+        ("12:30", "12:40"),
+        ("12:40", "12:50"),
+        ("12:50", "13:00"),
+        ("13:00", "13:10"),
+    ]
+    assert result["grids"]["timeline"]["free_for_all_count"] == 240
+    assert result["grids"]["timeline"]["free_for_resolved_count"] == 240
+
+
+def test_timeline_marks_exactly_the_ten_minute_intervals_a_meeting_overlaps():
+    section = _make_global_section("CS302", "M1", [("TUE", "12:05", "12:15")])
+    _enrol(3051, section, cohort="M", source="scraper_timetable")
+
+    result = compute_group_availability([3051], YEAR, TERM)
+
+    assert _cell(result, "timeline", "TUE", 17)["busy_count"] == 0  # 11:50-12:00
+    assert _cell(result, "timeline", "TUE", 18)["busy_count"] == 1  # 12:00-12:10
+    assert _cell(result, "timeline", "TUE", 19)["busy_count"] == 1  # 12:10-12:20
+    assert _cell(result, "timeline", "TUE", 20)["busy_count"] == 0  # 12:20-12:30
+    assert _cell(result, "timeline", "MON", 18)["busy_count"] == 0
+
+
 def test_lab_grid_reflects_lab_length_meeting():
     # Lab slot 0 is 09:00-10:40.
     sec = _make_global_section("CS401", "S1", [("WED", "09:00", "10:40")])
@@ -148,7 +194,11 @@ def test_scenario_scoped_section_is_included():
     )
     Student.objects.create(student_id=9001, name="Scoped", program="CS")
     StudentTermSection.objects.create(
-        student_id=9001, academic_year=YEAR, term=TERM, term_section=ts
+        student_id=9001,
+        academic_year=YEAR,
+        term=TERM,
+        term_section=ts,
+        source="scraper_timetable",
     )
 
     result = compute_group_availability([9001])  # term auto-detected
@@ -168,6 +218,25 @@ def test_auto_detects_current_term_without_explicit_term():
     assert _cell(result, "lecture", "TUE", 3)["busy_count"] == 1
 
 
+def test_auto_detected_term_ignores_a_later_expected_only_term():
+    registered = _make_global_section("CS951", "M1", [("MON", "09:00", "10:15")])
+    future_plan = _make_global_section("CS952", "M2", [("TUE", "09:00", "10:15")])
+    _enrol(9511, registered, cohort="M", source="scraper_timetable")
+    StudentTermSection.objects.create(
+        student_id=9511,
+        academic_year="1449",
+        term="1",
+        term_section=future_plan,
+        source="registration_plan_1449_t1",
+    )
+
+    result = compute_group_availability([9511])
+
+    assert (result["academic_year"], result["term"]) == (YEAR, TERM)
+    assert _cell(result, "lecture", "MON", 0)["busy_count"] == 1
+    assert _cell(result, "lecture", "TUE", 0)["busy_count"] == 0
+
+
 def test_occupants_carry_course_identity():
     sec = _make_global_section("CS501", "S2", [("SUN", "13:00", "14:15")])
     _enrol(5001, sec)
@@ -183,6 +252,137 @@ def test_occupants_carry_course_identity():
     assert occ[0]["section"] == "S2"
 
 
+def test_known_student_cohort_excludes_opposite_local_section_before_resolution():
+    male = _make_global_section("DS432", "M3", [("MON", "09:00", "10:15")])
+    female = _make_global_section("DS432", "F5", [("TUE", "09:00", "10:15")])
+    expected = _make_global_section("DS433", "M4", [("WED", "09:00", "10:15")])
+    # Cohort filtering happens before the registered-only source selection. The
+    # valid registrar row remains, while both the opposite F row and M plan go.
+    _enrol(5101, male, cohort="M", source="scraper_timetable")
+    _enrol(5101, female, cohort="M", source="scraper_timetable")
+    _enrol(5101, expected, cohort="M", source="registration_plan_1448_t1")
+
+    result = compute_group_availability([5101], YEAR, TERM)
+
+    assert _cell(result, "lecture", "MON", 0)["busy_count"] == 1
+    assert _cell(result, "lecture", "TUE", 0)["busy_count"] == 0
+    assert _cell(result, "lecture", "WED", 0)["busy_count"] == 0
+    assert {
+        occupant["section"] for occupant in _cell(result, "lecture", "MON", 0)["occupants"]
+    } == {"M3"}
+    assert result["students"][0]["snapshot_class"] == "registrar"
+
+
+def test_female_cohort_excludes_male_sections_but_keeps_shared_sections():
+    female = _make_global_section("AI431", "F2", [("MON", "09:00", "10:15")])
+    male = _make_global_section("AI432", "M2", [("TUE", "09:00", "10:15")])
+    shared = _make_global_section("AI433", "S2", [("WED", "09:00", "10:15")])
+    _enrol(5151, female, cohort="F", source="scraper_timetable")
+    _enrol(5151, male, cohort="F", source="scraper_timetable")
+    _enrol(5151, shared, cohort="F", source="scraper_timetable")
+
+    result = compute_group_availability([5151], YEAR, TERM)
+
+    assert _cell(result, "lecture", "MON", 0)["busy_count"] == 1
+    assert _cell(result, "lecture", "TUE", 0)["busy_count"] == 0
+    assert _cell(result, "lecture", "WED", 0)["busy_count"] == 1
+
+
+def test_blank_student_cohort_keeps_local_sections_but_rejects_other_branch():
+    male = _make_global_section("DS433", "M1", [("MON", "09:00", "10:15")])
+    female = _make_global_section("DS434", "F1", [("TUE", "09:00", "10:15")])
+    other_branch = _make_global_section("DS435", "YM1", [("WED", "09:00", "10:15")])
+    _enrol(5201, male, source="scraper_timetable")
+    _enrol(5201, female, source="scraper_timetable")
+    _enrol(5201, other_branch, source="scraper_timetable")
+
+    result = compute_group_availability([5201], YEAR, TERM)
+
+    assert _cell(result, "lecture", "MON", 0)["busy_count"] == 1
+    assert _cell(result, "lecture", "TUE", 0)["busy_count"] == 1
+    assert _cell(result, "lecture", "WED", 0)["busy_count"] == 0
+
+
+def test_conflict_details_prefer_full_course_key_over_prefix():
+    section = TermSection.objects.create(
+        course_code="DS",
+        course_number="432",
+        course_key="DS432",
+        section="M3",
+        course_name="Data Mining",
+        source_tag="test",
+    )
+    TermSectionMeeting.objects.create(
+        term_section=section, day="TUE", start_time="13:00", end_time="14:15"
+    )
+    _enrol(5301, section, cohort="M", source="scraper_timetable")
+
+    result = compute_group_availability([5301], YEAR, TERM)
+
+    occupant = _cell(result, "lecture", "TUE", 3)["occupants"][0]
+    assert occupant["course_code"] == "DS432"
+
+
+@pytest.mark.parametrize(
+    ("course_code", "course_number", "expected"),
+    [("DS", "432", "DS432"), ("GS101", "GS101", "GS101")],
+)
+def test_course_identity_safely_composes_legacy_rows_without_a_key(
+    course_code: str, course_number: str, expected: str
+):
+    section = TermSection(course_code=course_code, course_number=course_number, course_key="")
+
+    assert _section_course_identity(section) == expected
+
+
+def test_only_registrar_rows_contribute_to_availability():
+    expected_superseded = _make_global_section("CS541", "M1", [("MON", "09:00", "10:15")])
+    registered = _make_global_section("CS542", "M2", [("TUE", "09:00", "10:15")])
+    expected_only = _make_global_section("CS543", "F1", [("WED", "09:00", "10:15")])
+    working_only = _make_global_section("CS544", "M3", [("THU", "09:00", "10:15")])
+
+    _enrol(5401, expected_superseded, cohort="M", source="registration_plan_1448_t1")
+    _enrol(5401, registered, cohort="M", source="scraper_timetable")
+    _enrol(5402, expected_only, cohort="F", source="registration_plan_1448_t1")
+    _enrol(5403, working_only, cohort="M", source="planner")
+
+    result = compute_group_availability([5401, 5402, 5403], YEAR, TERM)
+
+    assert _cell(result, "lecture", "MON", 0)["busy_count"] == 0
+    assert _cell(result, "lecture", "TUE", 0)["occupants"][0]["snapshot_class"] == "registrar"
+    assert _cell(result, "lecture", "WED", 0)["busy_count"] == 0
+    assert _cell(result, "lecture", "THU", 0)["busy_count"] == 0
+    assert {student["student_id"]: student["snapshot_class"] for student in result["students"]} == {
+        5401: "registrar",
+        5402: "",
+        5403: "",
+    }
+    assert result["no_schedule"] == [5402, 5403]
+    assert result["resolved_count"] == 1
+    assert result["snapshot_class_counts"] == {
+        "registrar": 1,
+        "expected": 0,
+        "working": 0,
+    }
+
+
+def test_expected_and_working_rows_never_fallback_when_registrar_is_absent():
+    expected = _make_global_section("CS545", "M1", [("MON", "09:00", "10:15")])
+    working = _make_global_section("CS546", "M2", [("TUE", "09:00", "10:15")])
+    _enrol(5451, expected, cohort="M", source="registration_plan_1448_t1")
+    _enrol(5452, working, cohort="M", source="planner")
+
+    result = compute_group_availability([5451, 5452], YEAR, TERM)
+
+    assert result["resolved_count"] == 0
+    assert result["no_schedule"] == [5451, 5452]
+    assert all(
+        cell["busy_count"] == 0
+        for cells in result["grids"]["timeline"]["cells"].values()
+        for cell in cells
+    )
+
+
 def test_not_found_vs_no_schedule_reporting():
     sec = _make_global_section("CS601", "S1", [("MON", "09:00", "10:15")])
     _enrol(6001, sec)
@@ -194,6 +394,55 @@ def test_not_found_vs_no_schedule_reporting():
     assert result["resolved_count"] == 1
     assert result["no_schedule"] == [6002]
     assert result["not_found"] == [9999]
+
+
+def test_partial_coverage_is_flagged_without_blocking_resolved_calculation():
+    section = _make_global_section("CS602", "M1", [("MON", "09:00", "10:15")])
+    _enrol(6101, section, cohort="M", source="scraper_timetable")
+    Student.objects.create(student_id=6102, name="No timetable", program="CS", section="M")
+
+    result = compute_group_availability([6101, 6102, 6199], YEAR, TERM)
+
+    assert result["resolved_count"] == 1
+    assert result["unresolved_count"] == 2
+    assert result["coverage_complete"] is False
+    assert result["no_schedule"] == [6102]
+    assert result["not_found"] == [6199]
+    assert result["snapshot_class_counts"] == {
+        "registrar": 1,
+        "expected": 0,
+        "working": 0,
+    }
+    busy = _cell(result, "lecture", "MON", 0)
+    assert busy["busy_count"] == 1
+    assert busy["free"] is False
+    assert busy["free_for_resolved"] is False
+    free = _cell(result, "lecture", "TUE", 0)
+    assert free["free"] is True
+    assert free["free_for_resolved"] is True
+    assert (
+        result["grids"]["lecture"]["free_for_resolved_count"]
+        == result["grids"]["lecture"]["free_for_all_count"]
+    )
+
+
+def test_partially_timed_schedule_is_flagged_without_blocking_timed_sections():
+    timed = _make_global_section("CS603", "M1", [("MON", "09:00", "10:15")])
+    untimed = _make_global_section("CS604", "M2", [])
+    _enrol(6201, timed, cohort="M", source="scraper_timetable")
+    _enrol(6201, untimed, cohort="M", source="scraper_timetable")
+
+    result = compute_group_availability([6201], YEAR, TERM)
+
+    assert result["resolved_count"] == 1
+    assert result["unresolved_count"] == 0
+    assert result["partial_schedule"] == [6201]
+    assert result["partial_schedule_count"] == 1
+    assert result["coverage_complete"] is False
+    assert result["students"][0]["unscheduled_section_count"] == 1
+    assert result["students"][0]["snapshot_class"] == "registrar"
+    assert _cell(result, "lecture", "MON", 0)["busy_count"] == 1
+    assert _cell(result, "timeline", "MON", 0)["busy_count"] == 1
 
 
 def test_normalise_student_ids_dedupes_and_drops_nonnumeric():
@@ -208,6 +457,7 @@ def test_empty_group_returns_all_free():
     # base 5); labs are unchanged at 5 slots × 5 days = 25.
     assert result["grids"]["lecture"]["free_for_all_count"] == 35
     assert result["grids"]["lab"]["free_for_all_count"] == 25
+    assert result["grids"]["timeline"]["free_for_all_count"] == 240
 
 
 # ── View wiring ──────────────────────────────────────────────

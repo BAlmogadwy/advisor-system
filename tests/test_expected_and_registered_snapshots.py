@@ -545,10 +545,9 @@ def test_exam_section_enrolment_counts_registrar_rows_only(student_with_sections
     assert [(row["section"], row["student_count"]) for row in result["SA101"]] == [("M1", 1)]
 
 
-def test_group_availability_resolves_each_student_separately(student_with_sections):
-    """One student registered, one only planned -- a legitimate mid-registration
-    group. Resolving per query rather than per student would either drop B's week
-    or book A into a slot they never registered for."""
+def test_group_availability_uses_registered_schedules_only(student_with_sections):
+    """A planned-only student remains unresolved instead of contributing a
+    forecast as though the registrar recorded it."""
     from core.services.group_availability import compute_group_availability
 
     other_id = SID + 1
@@ -567,13 +566,12 @@ def test_group_availability_resolves_each_student_separately(student_with_sectio
 
     result = compute_group_availability([SID, other_id], YEAR, TERM)
 
-    assert result["no_schedule"] == [], "both students have a week on file"
-    assert result["resolved_count"] == 2
+    assert result["no_schedule"] == [other_id]
+    assert result["resolved_count"] == 1
 
 
-def test_group_availability_ignores_a_superseded_plan(student_with_sections):
-    """Both snapshots for ONE student: the registration supersedes the forecast, so
-    the planned-only slot must not be counted as time that student is busy."""
+def test_group_availability_ignores_a_plan_alongside_registration(student_with_sections):
+    """A plan never contributes, including when a registered snapshot coexists."""
     from core.services.group_availability import compute_group_availability
 
     _link(student_with_sections["SA101"], "scraper_timetable")

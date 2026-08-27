@@ -3,24 +3,24 @@ core/services/group_availability.py
 
 Group availability / common-free-slot finder.
 
-Given a set of student IDs, aggregate each student's CURRENT weekly schedule
-(their actual registered sections for the term) and report, for every standard
-teaching slot, how many of the students are already busy. A slot that is free
-for ALL students in the group is a conflict-free candidate for opening a new
-course section for that group.
+Given a set of student IDs, aggregate each student's registered weekly schedule
+for the term and report how many resolved students are already busy in each
+standard teaching slot. Only authoritative registrar evidence contributes;
+expected plans and working mappings are deliberately ignored. Free cells
+describe only the registered schedule data that was loaded; unresolved or
+partially timed records remain visible as non-blocking coverage warnings.
 
 Data source: each student's registered sections for the term — their
 ``StudentTermSection`` rows joined to the section's ``TermSectionMeeting``
 times. A section may be global (imported) or owned by a planning scenario;
-either way the student is booked at those times, so we read all of a student's
-term sections regardless of scenario. This answers "when are these students
-actually busy this term", which is what the registrar needs before opening a
-new section.
+either way it contributes only when the link's canonical snapshot class is
+``REGISTRAR``. This answers "when does the registrar say these students are
+busy?" without treating a forecast or staff draft as an actual commitment.
 
-The busy/free decision is computed by overlapping each student's real meeting
-times against the canonical lecture and lab slot grids, so it stays correct
-even when a meeting (e.g. a 100-minute lab, or an imported off-grid section)
-does not start exactly on a standard slot boundary.
+The busy/free decision is computed by overlapping each student's meeting times
+against the canonical lecture/lab grids and an uninterrupted ten-minute
+timeline, so it stays correct even when a meeting (e.g. a 100-minute lab, or an
+imported off-grid section) does not start exactly on a standard slot boundary.
 """
 
 from __future__ import annotations
@@ -29,13 +29,18 @@ from collections import defaultdict
 from collections.abc import Iterable
 
 from core.models import Student, StudentTermSection
+from core.services.student_sections import (
+    OTHER_BRANCH_SECTION_COHORT,
+    section_gender,
+    snapshot_class_filter,
+)
 from core.services.timetable_autoplace import (
     DEFAULT_LAB_SLOTS,
     DEFAULT_SLOTS,
     WEEKDAYS,
     placeable_slots,
 )
-from core.services.timetable_snapshots import classify_source, effective_class
+from core.services.timetable_snapshots import SnapshotClass, classify_source
 
 # Safety bound on a single group query — registrar groups are small; this guards
 # against an accidental paste of the entire cohort.
@@ -44,6 +49,37 @@ MAX_STUDENTS = 600
 # Cap occupant detail per cell to keep the payload bounded for large groups.
 # ``busy_count`` is always exact; only the per-cell occupant list is capped.
 _OCCUPANT_CAP = 80
+
+
+def _timeline_slots() -> list[dict[str, str]]:
+    """Return an uninterrupted 10-minute grid from 09:00 through 17:00."""
+
+    def hhmm(total_minutes: int) -> str:
+        return f"{total_minutes // 60:02d}:{total_minutes % 60:02d}"
+
+    return [
+        {
+            "label": f"{hhmm(start)}-{hhmm(start + 10)}",
+            "start": hhmm(start),
+            "end": hhmm(start + 10),
+        }
+        for start in range(9 * 60, 17 * 60, 10)
+    ]
+
+
+TIMELINE_SLOTS = _timeline_slots()
+
+
+def _section_course_identity(term_section: object) -> str:
+    """Return the full course identity, including a safe legacy fallback."""
+    key = str(getattr(term_section, "course_key", "") or "").strip()
+    if key:
+        return key
+    code = str(getattr(term_section, "course_code", "") or "").strip()
+    number = str(getattr(term_section, "course_number", "") or "").strip()
+    if code and number and number.casefold() != code.casefold():
+        return f"{code}{number}"
+    return code or number
 
 
 def _hhmm_to_min(value: object) -> int | None:
@@ -90,12 +126,14 @@ def normalise_student_ids(raw_ids: Iterable[object]) -> list[int]:
 def _build_grid(
     slots: list[dict],
     meetings_by_student: dict[int, list[tuple[str, int, int, str, str]]],
+    snapshot_classes_by_student: dict[int, str] | None = None,
 ) -> dict:
-    """Build one busy/free grid (lecture or lab) over WEEKDAYS x slots.
+    """Build one busy/free grid over WEEKDAYS x slots.
 
     Each cell reports how many distinct students are busy in that slot and the
     (capped) list of occupants so the registrar can see who/what conflicts.
     """
+    snapshot_classes_by_student = snapshot_classes_by_student or {}
     cells_by_day: dict[str, list[dict]] = {day: [] for day in WEEKDAYS}
     free_for_all = 0
 
@@ -123,6 +161,7 @@ def _build_grid(
                                     "student_id": sid,
                                     "course_code": course,
                                     "section": section,
+                                    "snapshot_class": snapshot_classes_by_student.get(sid, ""),
                                 }
                             )
 
@@ -133,6 +172,10 @@ def _build_grid(
                 {
                     "busy_count": len(busy_students),
                     "free": free,
+                    # The legacy field remains for existing consumers. The new
+                    # name is explicit that an unresolved student's unknown
+                    # timetable never blocks calculation for everyone else.
+                    "free_for_resolved": free,
                     "occupants": occupants[:_OCCUPANT_CAP],
                     "occupants_truncated": max(0, len(occupants) - _OCCUPANT_CAP),
                 }
@@ -145,30 +188,37 @@ def _build_grid(
         ],
         "cells": cells_by_day,
         "free_for_all_count": free_for_all,
+        "free_for_resolved_count": free_for_all,
     }
 
 
-def _load_meetings_by_student(
+def _load_schedule_data(
     student_ids: list[int], academic_year: str, term: str
-) -> tuple[dict[int, list[tuple[str, int, int, str, str]]], set[int]]:
+) -> tuple[
+    dict[int, list[tuple[str, int, int, str, str]]],
+    set[int],
+    dict[int, str],
+    dict[int, int],
+]:
     """Load each student's weekly meetings for the term in one prefetch query.
 
     Reads ``StudentTermSection`` joined to their ``TermSectionMeeting`` times.
     Sections are included regardless of scenario ownership — the student is booked
     at those times either way.
 
-    RESOLVED PER STUDENT, NOT PER QUERY. A term may hold both the registrar's
-    snapshot and an expected plan, and this screen answers "when is this group
-    free", so it needs one week per student rather than the union of two. The
-    resolution is :attr:`Snapshot.EFFECTIVE` — registrar evidence supersedes a
-    forecast for the same term — applied INDIVIDUALLY, because different students
-    in one group are legitimately at different stages: A has registered, B has only
-    the plan. Taking the union instead would book A into planned slots they did not
-    register, and shrink the group's free time with meetings nobody will attend.
+    Only rows canonically classified as :class:`SnapshotClass.REGISTRAR` are
+    used. Expected plans and working mappings never contribute, including for a
+    student who has no registrar row. Cohort/branch filtering is deliberately
+    applied first so an invalid opposite-cohort row cannot survive merely because
+    its source is authoritative.
 
-    Returns ``(meetings_by_student, enrolled_ids)`` where ``enrolled_ids`` is
-    the set of students with at least one section this term (used to distinguish
-    "no schedule" from an unknown ID).
+    Returns ``(meetings_by_student, enrolled_ids, snapshot_classes_by_student,
+    unscheduled_section_counts)``. ``enrolled_ids`` is the set of students with
+    at least one registered section this term (used to distinguish "no schedule"
+    from an unknown ID). Provenance is exposed only for students with at least
+    one usable meeting. Unscheduled counts are distinct registered sections with
+    no usable weekday meeting, allowing partial coverage to remain non-blocking
+    while still being reported truthfully.
     """
     rows = (
         StudentTermSection.objects.filter(
@@ -185,20 +235,44 @@ def _load_meetings_by_student(
         .select_related("term_section")
         .prefetch_related("term_section__meetings")
     )
+
+    # Match get_student_term_baseline's canonical cohort rule. A known M/F
+    # student keeps their own local cohort plus genuinely shared sections. A
+    # student whose cohort is blank keeps both local cohorts so incomplete
+    # profile data does not erase a schedule. YM/YF is another branch and is
+    # rejected for everyone. This filtering remains before source selection so
+    # the accepted row set is first made truthful for the student's cohort.
+    student_cohorts = {
+        sid: cohort
+        for sid, raw_cohort in Student.objects.filter(student_id__in=student_ids).values_list(
+            "student_id", "section"
+        )
+        if (cohort := str(raw_cohort or "").strip().upper()) in ("M", "F")
+    }
     by_student: dict[int, list[StudentTermSection]] = defaultdict(list)
     for sts in rows:
+        section_cohort = section_gender(str(sts.term_section.section or ""))
+        if section_cohort == OTHER_BRANCH_SECTION_COHORT:
+            continue
+        student_cohort = student_cohorts.get(sts.student_id, "")
+        if student_cohort and section_cohort and section_cohort != student_cohort:
+            continue
         by_student[sts.student_id].append(sts)
-    resolved: list[StudentTermSection] = []
+    registered: list[StudentTermSection] = []
     for student_rows in by_student.values():
-        winner = effective_class({"source": r.source} for r in student_rows)
-        resolved.extend(r for r in student_rows if classify_source(r.source) is winner)
+        registered.extend(
+            row for row in student_rows if classify_source(row.source) is SnapshotClass.REGISTRAR
+        )
 
     meetings_by_student: dict[int, list[tuple[str, int, int, str, str]]] = defaultdict(list)
     enrolled: set[int] = set()
-    for sts in resolved:
+    registered_section_ids: dict[int, set[int]] = defaultdict(set)
+    scheduled_section_ids: dict[int, set[int]] = defaultdict(set)
+    for sts in registered:
         enrolled.add(sts.student_id)
         ts = sts.term_section
-        course = str(ts.course_code or ts.course_key or "")
+        registered_section_ids[sts.student_id].add(ts.id)
+        course = _section_course_identity(ts)
         section = str(ts.section or "")
         for meeting in ts.meetings.all():
             day = str(meeting.day or "").upper()
@@ -210,32 +284,48 @@ def _load_meetings_by_student(
                 and end_min is not None
                 and end_min > start_min
             ):
+                scheduled_section_ids[sts.student_id].add(ts.id)
                 meetings_by_student[sts.student_id].append(
                     (day, start_min, end_min, course, section)
                 )
+    snapshot_classes_by_student = {sid: "registrar" for sid in meetings_by_student}
+    unscheduled_section_counts = {
+        sid: len(section_ids - scheduled_section_ids.get(sid, set()))
+        for sid, section_ids in registered_section_ids.items()
+    }
+    return (
+        meetings_by_student,
+        enrolled,
+        snapshot_classes_by_student,
+        unscheduled_section_counts,
+    )
+
+
+def _load_meetings_by_student(
+    student_ids: list[int], academic_year: str, term: str
+) -> tuple[dict[int, list[tuple[str, int, int, str, str]]], set[int]]:
+    """Compatibility wrapper returning the historical two-item result."""
+    meetings_by_student, enrolled, _snapshot_classes, _unscheduled_counts = _load_schedule_data(
+        student_ids, academic_year, term
+    )
     return meetings_by_student, enrolled
 
 
 def resolve_current_term() -> tuple[str, str]:
-    """Return the current ``(academic_year, term)`` — the latest one present in
-    ``StudentTermSection``.
+    """Return the latest registered ``(academic_year, term)``.
 
     Mirrors the exam-timetable convention (``build_enrolled_sets`` orders by
     ``-academic_year, -term``) so "current timetable" means the same thing
     across screens, without the caller having to pick a term. Returns
-    ``("", "")`` when there is no timetable data at all.
+    ``("", "")`` when there is no registered timetable data at all.
 
-    DELIBERATELY UNFILTERED BY PROVENANCE. A term that exists only as an imported
-    expected plan still counts as the latest term, because this screen is a
-    FORWARD-PLANNING tool: a registrar deciding where to open a new section is
-    asking about the term being planned, not the last one the registrar recorded.
-    Scoping this probe to registrar rows would answer for a term that has already
-    happened. The class question is settled per student inside
-    ``_load_meetings_by_student``, which is where it belongs -- one student may
-    have registered while another still has only the plan.
+    Term discovery follows the same registered-only contract as schedule loading.
+    An expected-plan-only future term must not make the page ignore the latest
+    term for which the registrar actually recorded schedules.
     """
     latest = (
-        StudentTermSection.objects.order_by("-academic_year", "-term")
+        StudentTermSection.objects.filter(snapshot_class_filter(SnapshotClass.REGISTRAR))
+        .order_by("-academic_year", "-term")
         .values_list("academic_year", "term")
         .first()
     )
@@ -277,11 +367,17 @@ def compute_group_availability(
         )
     }
 
-    meetings_by_student, enrolled = _load_meetings_by_student(ordered_ids, year, term_s)
+    (
+        meetings_by_student,
+        enrolled,
+        snapshot_classes_by_student,
+        unscheduled_section_counts,
+    ) = _load_schedule_data(ordered_ids, year, term_s)
 
     students: list[dict] = []
     not_found: list[int] = []
     no_schedule: list[int] = []
+    partial_schedule: list[int] = []
 
     for sid in ordered_ids:
         meetings = meetings_by_student.get(sid, [])
@@ -293,6 +389,10 @@ def compute_group_availability(
         elif not meetings:
             no_schedule.append(sid)
 
+        unscheduled_section_count = unscheduled_section_counts.get(sid, 0)
+        if meetings and unscheduled_section_count:
+            partial_schedule.append(sid)
+
         info = meta.get(sid) or {}
         students.append(
             {
@@ -301,23 +401,50 @@ def compute_group_availability(
                 "program": info.get("program") or "",
                 "found": exists or is_enrolled,
                 "meeting_count": len(meetings),
+                "snapshot_class": snapshot_classes_by_student.get(sid, ""),
+                "unscheduled_section_count": unscheduled_section_count,
             }
         )
+
+    resolved_count = sum(1 for student in students if student["meeting_count"] > 0)
+    unresolved_count = len(ordered_ids) - resolved_count
+    snapshot_class_counts = {"registrar": 0, "expected": 0, "working": 0}
+    for student in students:
+        snapshot_class = student["snapshot_class"]
+        if student["meeting_count"] > 0 and snapshot_class in snapshot_class_counts:
+            snapshot_class_counts[snapshot_class] += 1
 
     return {
         "academic_year": year,
         "term": term_s,
         "weekdays": list(WEEKDAYS),
         "requested_count": len(ordered_ids),
-        "resolved_count": sum(1 for s in students if s["meeting_count"] > 0),
+        "resolved_count": resolved_count,
+        "unresolved_count": unresolved_count,
+        "coverage_complete": unresolved_count == 0 and not partial_schedule,
+        "snapshot_class_counts": snapshot_class_counts,
         "not_found": not_found,
         "no_schedule": no_schedule,
+        "partial_schedule": partial_schedule,
+        "partial_schedule_count": len(partial_schedule),
         "students": students,
         "grids": {
-            "lecture": _build_grid(DEFAULT_SLOTS, meetings_by_student),
+            "lecture": _build_grid(DEFAULT_SLOTS, meetings_by_student, snapshot_classes_by_student),
             # Online-only windows are not lab availability: nothing in the
             # estate is open then, so offering them as free cells would be
             # inviting somebody to book a room that does not exist.
-            "lab": _build_grid(placeable_slots(DEFAULT_LAB_SLOTS), meetings_by_student),
+            "lab": _build_grid(
+                placeable_slots(DEFAULT_LAB_SLOTS),
+                meetings_by_student,
+                snapshot_classes_by_student,
+            ),
+            # Fine-grained diagnostic view: every ten-minute interval is
+            # represented, including the midday gap intentionally absent from
+            # the curated lecture/lab placement grids.
+            "timeline": _build_grid(
+                TIMELINE_SLOTS,
+                meetings_by_student,
+                snapshot_classes_by_student,
+            ),
         },
     }

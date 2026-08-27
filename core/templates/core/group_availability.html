@@ -6,10 +6,10 @@
 {% block page_heading %}{% if LANGUAGE_CODE == 'ar' %}توافر المجموعة{% else %}Group Availability{% endif %}{% endblock %}
 {% block page_chips %}
   <span class="ph-chip ph-chip-page">{% if LANGUAGE_CODE == 'ar' %}مخطط الشعب{% else %}Section planning{% endif %}</span>
-  <span class="ph-chip ph-chip-context">{% if LANGUAGE_CODE == 'ar' %}جداول الطلاب الحالية{% else %}Current student schedules{% endif %}</span>
+  <span class="ph-chip ph-chip-context">{% if LANGUAGE_CODE == 'ar' %}الجداول المسجلة{% else %}Registered schedules{% endif %}</span>
 {% endblock %}
 {% block page_intro %}
-  <p class="mb-0">{% if LANGUAGE_CODE == 'ar' %}الصق قائمة بأرقام الطلاب لرؤية الأوقات المشغولة لهم مجتمعين. الخلايا الخضراء فارغة للجميع — وهي أوقات مناسبة لفتح شعبة جديدة بدون تعارض.{% else %}Paste a list of student IDs to see their combined weekly busy slots. Green cells are free for everyone — good times to open a new section conflict-free.{% endif %}</p>
+  <p class="mb-0">{% if LANGUAGE_CODE == 'ar' %}الصق قائمة بأرقام الطلاب لرؤية الأوقات المشغولة في جداولهم المسجلة. الخلايا الخضراء متاحة، ويستمر الحساب مع تمييز أي طالب تعذر تحميل جدوله أو بعض أوقات شعبه.{% else %}Paste a list of student IDs to see busy times in their registered schedules. Green cells are free; unresolved or partially timed students stay flagged without blocking the calculation.{% endif %}</p>
 {% endblock %}
 
 {% block content %}
@@ -33,28 +33,37 @@
     <div class="ga-panel ga-summary-panel" id="gaSummary" hidden>
       <div class="ga-kicker">{% if LANGUAGE_CODE == 'ar' %}الملخص{% else %}Summary{% endif %}</div>
       <div class="ga-summary-stats" id="gaSummaryStats"></div>
+      <div class="ga-provenance" id="gaProvenance"></div>
       <div class="ga-flags" id="gaFlags"></div>
     </div>
   </aside>
 
   <section class="ga-main" aria-label="{% if LANGUAGE_CODE == 'ar' %}شبكة التوافر الأسبوعية{% else %}Weekly availability grid{% endif %}">
     <div class="ga-toolbar">
-      <div class="ga-tabs" role="tablist" aria-label="{% if LANGUAGE_CODE == 'ar' %}نوع الشبكة{% else %}Grid type{% endif %}">
-        <button type="button" class="ga-tab is-active" id="gaTabLecture" role="tab" aria-selected="true" data-grid="lecture">{% if LANGUAGE_CODE == 'ar' %}محاضرات (75 د){% else %}Lecture (75m){% endif %}</button>
-        <button type="button" class="ga-tab" id="gaTabLab" role="tab" aria-selected="false" data-grid="lab">{% if LANGUAGE_CODE == 'ar' %}معامل (100 د){% else %}Lab (100m){% endif %}</button>
+      <div class="ga-tabs" role="tablist" aria-orientation="horizontal" aria-label="{% if LANGUAGE_CODE == 'ar' %}نوع الشبكة{% else %}Grid type{% endif %}">
+        <button type="button" class="ga-tab is-active" id="gaTabLecture" role="tab" aria-selected="true" aria-controls="gaPanelLecture" tabindex="0" data-grid="lecture">{% if LANGUAGE_CODE == 'ar' %}محاضرات (75 د){% else %}Lecture (75m){% endif %}</button>
+        <button type="button" class="ga-tab" id="gaTabLab" role="tab" aria-selected="false" aria-controls="gaPanelLab" tabindex="-1" data-grid="lab">{% if LANGUAGE_CODE == 'ar' %}معامل (100 د){% else %}Lab (100m){% endif %}</button>
+        <button type="button" class="ga-tab" id="gaTabTimeline" role="tab" aria-selected="false" aria-controls="gaPanelTimeline" tabindex="-1" data-grid="timeline">{% if LANGUAGE_CODE == 'ar' %}اليوم الكامل (10 د){% else %}Full day (10m){% endif %}</button>
       </div>
       <div class="ga-legend" aria-hidden="false">
-        <span class="ga-legend-item"><span class="ga-swatch ga-swatch-free"></span>{% if LANGUAGE_CODE == 'ar' %}متاح للجميع{% else %}Free for all{% endif %}</span>
-        <span class="ga-legend-item"><span class="ga-swatch ga-swatch-some"></span>{% if LANGUAGE_CODE == 'ar' %}بعضهم مشغول{% else %}Some busy{% endif %}</span>
-        <span class="ga-legend-item"><span class="ga-swatch ga-swatch-most"></span>{% if LANGUAGE_CODE == 'ar' %}معظمهم مشغول{% else %}Most busy{% endif %}</span>
+        <span class="ga-legend-item"><span class="ga-swatch ga-swatch-free"></span><span id="gaLegendFree">{% if LANGUAGE_CODE == 'ar' %}متاح{% else %}Free{% endif %}</span></span>
+        <span class="ga-legend-item"><span class="ga-swatch ga-swatch-some"></span>{% if LANGUAGE_CODE == 'ar' %}بعض الجداول المسجلة مشغول{% else %}Some registered schedules busy{% endif %}</span>
+        <span class="ga-legend-item"><span class="ga-swatch ga-swatch-most"></span>{% if LANGUAGE_CODE == 'ar' %}معظم الجداول المسجلة مشغول{% else %}Most registered schedules busy{% endif %}</span>
+        <span class="ga-legend-item"><span class="ga-swatch ga-swatch-unknown"></span>{% if LANGUAGE_CODE == 'ar' %}لا توجد جداول مسجلة{% else %}No registered schedules{% endif %}</span>
       </div>
     </div>
 
-    <div class="ga-grid-wrap" id="gaGridWrap">
-      <div class="ga-empty" id="gaEmpty">{% if LANGUAGE_CODE == 'ar' %}أدخل أرقام الطلاب ثم اضغط «عرض التوافر».{% else %}Enter student IDs and press “Show availability”.{% endif %}</div>
+    <div class="ga-grid-wrap" id="gaPanelLecture" role="tabpanel" aria-labelledby="gaTabLecture" tabindex="0">
+      <div class="ga-empty">{% if LANGUAGE_CODE == 'ar' %}أدخل أرقام الطلاب ثم اضغط «عرض التوافر».{% else %}Enter student IDs and press “Show availability”.{% endif %}</div>
+    </div>
+    <div class="ga-grid-wrap" id="gaPanelLab" role="tabpanel" aria-labelledby="gaTabLab" tabindex="0" hidden>
+      <div class="ga-empty">{% if LANGUAGE_CODE == 'ar' %}أدخل أرقام الطلاب ثم اضغط «عرض التوافر».{% else %}Enter student IDs and press “Show availability”.{% endif %}</div>
+    </div>
+    <div class="ga-grid-wrap" id="gaPanelTimeline" role="tabpanel" aria-labelledby="gaTabTimeline" tabindex="0" hidden>
+      <div class="ga-empty">{% if LANGUAGE_CODE == 'ar' %}أدخل أرقام الطلاب ثم اضغط «عرض التوافر».{% else %}Enter student IDs and press “Show availability”.{% endif %}</div>
     </div>
 
-    <div class="ga-detail" id="gaDetail" hidden aria-live="polite">
+    <div class="ga-detail" id="gaDetail" role="region" aria-labelledby="gaDetailTitle" hidden aria-live="polite">
       <div class="ga-detail-head">
         <strong id="gaDetailTitle"></strong>
         <button type="button" class="btn btn-sm btn-outline-secondary" id="gaDetailClose" aria-label="{% if LANGUAGE_CODE == 'ar' %}إغلاق{% else %}Close{% endif %}">×</button>
@@ -66,7 +75,7 @@
 {% endblock %}
 
 {% block extra_css %}
-<link rel="stylesheet" href="{% static 'css/group-availability.css' %}?v=1">
+<link rel="stylesheet" href="{% static 'css/group-availability.css' %}?v=3">
 {% endblock %}
 
 {% block extra_js %}
@@ -78,5 +87,5 @@
     maxStudents: {{ max_students }}
   };
 </script>
-<script src="{% static 'js/page-group-availability.js' %}?v=2"></script>
+<script src="{% static 'js/page-group-availability.js' %}?v=4"></script>
 {% endblock %}
