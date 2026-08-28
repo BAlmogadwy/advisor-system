@@ -89,6 +89,55 @@ def test_course_eligibility_endpoint(monkeypatch: MonkeyPatch) -> None:
     assert payload["total_eligible"] == 7
 
 
+@pytest.mark.parametrize(
+    ("mode_query", "expected_strict"),
+    [
+        ("", True),
+        ("&mode=relaxed", False),
+    ],
+)
+def test_course_eligibility_mode_defaults_strict_and_relaxed_is_explicit(
+    monkeypatch: MonkeyPatch,
+    mode_query: str,
+    expected_strict: bool,
+) -> None:
+    _login_superadmin()
+    captured: list[bool] = []
+
+    def fake_report(
+        course_code: str,
+        section: str | None = None,
+        program: str | None = None,
+        join_year_prefixes: list[str] | None = None,
+        strict_passed_only: bool = False,
+    ) -> dict[str, object]:
+        captured.append(strict_passed_only)
+        return {
+            "course_code": course_code,
+            "strict_passed_only": strict_passed_only,
+            "total_students": 0,
+            "total_eligible": 0,
+            "per_program": [],
+        }
+
+    monkeypatch.setattr("core.report_views.build_course_eligibility_report", fake_report)
+
+    response = client.get(f"/report/course-eligibility/?course_code=AI201{mode_query}")
+
+    assert response.status_code == 200
+    assert response.json()["strict_passed_only"] is expected_strict
+    assert captured == [expected_strict]
+
+
+def test_course_eligibility_rejects_invalid_mode() -> None:
+    _login_superadmin()
+
+    response = client.get("/report/course-eligibility/?course_code=AI201&mode=unknown")
+
+    assert response.status_code == 400
+    assert response.json()["error"] == "mode must be strict or relaxed"
+
+
 def test_export_recommendation_debug_csv(monkeypatch: MonkeyPatch) -> None:
     _login_superadmin()
     monkeypatch.setattr(

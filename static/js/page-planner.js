@@ -104,7 +104,7 @@ function enforceBuilderProcessLayout(){
 
 let currentRecommendations=[];
 let shortlist=[];
-let currentCtx={student_id:'',academic_year:'',term:''};
+let currentCtx={student_id:'',academic_year:'',term:'',eligibility_mode:'strict'};
 let currentBaseline=[];
 let lastBuilderOptions=[];
 let builderGeneration=0;
@@ -351,6 +351,28 @@ q('mode').addEventListener('change',()=>{
   renderVisualTimetable(q('visualSource').value || 'baseline');
 });
 
+function selectedEligibilityMode(){
+  return q('eligibilityMode')?.value === 'relaxed' ? 'relaxed' : 'strict';
+}
+
+q('eligibilityMode')?.addEventListener('change',()=>{
+  invalidateBuilderResults();
+  invalidatePlanCache();
+  currentCtx.eligibility_mode=selectedEligibilityMode();
+  /* Eligibility changes invalidate every course picked under the old rule.
+     Re-fetching also refreshes the strict-aware recommendation and plan APIs. */
+  currentRecommendations=[];
+  shortlist=[];
+  renderShortlist();
+  if(currentCtx?.student_id){
+    q('fetchBtn')?.click();
+  }else{
+    setBanner('info', IS_AR
+      ? 'تم تغيير وضع الأهلية. اجلب الطالب لتطبيقه.'
+      : 'Eligibility mode changed. Fetch the student to apply it.');
+  }
+});
+
 q('programSectionsOnly')?.addEventListener('change',()=>{
   invalidateBuilderResults();
   if(currentCtx?.student_id){
@@ -434,21 +456,32 @@ function renderShortlist(){
    the palette are display filters — they change which rows are drawn, nothing
    the server computes — yet each toggle used to re-issue this request AND the
    sections-catalog POST. Cleared whenever a different student is fetched. */
-let _planCache={student:null, data:null, sections:null};
-function invalidatePlanCache(){ _planCache={student:null, data:null, sections:null}; }
+let _planCache={student:null, eligibilityMode:null, data:null, sections:null};
+function invalidatePlanCache(){
+  _planCache={student:null, eligibilityMode:null, data:null, sections:null};
+}
+
+function studentPlanUrl(studentId, eligibilityMode){
+  return `/report/student-plan/?student_id=${encodeURIComponent(studentId)}&eligibility_mode=${encodeURIComponent(eligibilityMode)}`;
+}
 
 async function renderPlanPalette(studentId){
   const wrap=q('planPalette');
-  const cached=_planCache.student===String(studentId) ? _planCache.data : null;
+  const eligibilityMode=currentCtx.eligibility_mode || selectedEligibilityMode();
+  const cacheMatches=_planCache.student===String(studentId)
+    && _planCache.eligibilityMode===eligibilityMode;
+  const cached=cacheMatches ? _planCache.data : null;
   if(!cached){
     wrap.innerHTML=`<span class="text-secondary">${IS_AR ? 'جارٍ تحميل خطة الطالب...' : 'Loading student plan...'}</span>`;
   }
   try{
     let planData=cached;
     if(!planData){
-      const planRes=await fetch(`/report/student-plan/?student_id=${encodeURIComponent(studentId)}`);
+      const planRes=await fetch(studentPlanUrl(studentId, eligibilityMode));
       planData=await planRes.json();
-      if(!planData.error) _planCache={student:String(studentId), data:planData};
+      if(!planData.error){
+        _planCache={student:String(studentId), eligibilityMode, data:planData, sections:null};
+      }
     }
     if(planData.error){ wrap.innerHTML=`<span class="text-danger">${planData.error}</span>`; return; }
 
@@ -456,7 +489,7 @@ async function renderPlanPalette(studentId){
     (planData.terms||[]).forEach(t=> (t.courses||[]).forEach(c=> allCourses.push({...c, _term:t.term})));
     const codes=[...new Set(allCourses.map(c=>String(c.course_code||'').replace(/\s+/g,'').toUpperCase()).filter(Boolean))];
 
-    let sections=_planCache.student===String(studentId) ? (_planCache.sections||null) : null;
+    let sections=cacheMatches ? (_planCache.sections||null) : null;
     if(sections===null && codes.length){
       sections=[];
       const secRes=await fetch('/ops/planner/sections-catalog/',{
@@ -472,7 +505,8 @@ async function renderPlanPalette(studentId){
       });
       const secData=await secRes.json();
       sections=secData.sections||[];
-      if(_planCache.student===String(studentId)) _planCache.sections=sections;
+      if(_planCache.student===String(studentId)
+          && _planCache.eligibilityMode===eligibilityMode) _planCache.sections=sections;
     }
     if(sections===null) sections=[];
 
@@ -589,7 +623,8 @@ async function renderAvailableSections(){
 
   try{
     /* 1. Get student plan */
-    const planRes=await fetch(`/report/student-plan/?student_id=${encodeURIComponent(currentCtx.student_id)}`);
+    const eligibilityMode=currentCtx.eligibility_mode || selectedEligibilityMode();
+    const planRes=await fetch(studentPlanUrl(currentCtx.student_id, eligibilityMode));
     const planData=await planRes.json();
     if(planData.error){ grid.innerHTML=`<span class="text-danger">${planData.error}</span>`; return; }
 
@@ -936,6 +971,7 @@ q('runBuilder').onclick=async()=>{
         academic_year:currentCtx.academic_year,
         term:currentCtx.term,
         mode:q('mode').value,
+        eligibility_mode:currentCtx.eligibility_mode || selectedEligibilityMode(),
         swap:q('swap').checked,
         program_sections_only:useProgrammeSectionsOnly(),
         allow_full_sections:allowFullSections(),
@@ -1131,7 +1167,8 @@ q('fetchBtn').onclick=async()=>{
       body:JSON.stringify({
         student_id:q('studentId').value,
         academic_year:q('year').value,
-        term:q('term').value
+        term:q('term').value,
+        eligibility_mode:selectedEligibilityMode()
       })
     });
     data=await r.json();
@@ -1158,8 +1195,10 @@ q('fetchBtn').onclick=async()=>{
   currentCtx={
     student_id:String(data.student?.student_id||q('studentId').value),
     academic_year:String(data.year||q('year').value),
-    term:String(data.term||q('term').value)
+    term:String(data.term||q('term').value),
+    eligibility_mode:String(data.eligibility_mode||selectedEligibilityMode())
   };
+  if(q('eligibilityMode')) q('eligibilityMode').value=currentCtx.eligibility_mode;
 
   currentBaseline=(data.baseline||[]);
 

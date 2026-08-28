@@ -58,6 +58,18 @@ def _parse_int(value: str | None, field: str) -> tuple[int | None, JsonResponse 
         return None, JsonResponse({"error": f"Invalid integer for {field}: {value}"}, status=400)
 
 
+def _parse_recommendation_mode(
+    value: str | None,
+    *,
+    default: str = "strict",
+) -> tuple[str | None, JsonResponse | None]:
+    """Parse the only supported prerequisite modes without a relaxed fallback."""
+    mode = (value or "").strip().casefold() or default
+    if mode not in {"strict", "relaxed"}:
+        return None, JsonResponse({"error": "mode must be strict or relaxed"}, status=400)
+    return mode, None
+
+
 def _excel_csv_response(filename: str, csv_text: str) -> HttpResponse:
     body = "\ufeff" + csv_text
     response = HttpResponse(body, content_type="text/csv; charset=utf-8")
@@ -107,6 +119,7 @@ def _build_batch_course_rows(
     semester: int,
     program: str | None,
     section: str | None,
+    strict_passed_only: bool = True,
     limit: int | None = None,
 ) -> tuple[int, list[dict[str, object]]]:
     """Return batch recommender rows grouped by plan-specific course identity."""
@@ -115,6 +128,7 @@ def _build_batch_course_rows(
         semester=semester,
         program=program,
         section=section,
+        strict_passed_only=strict_passed_only,
     )
     program_list = _student_programs_for_filter(program, section)
     show_programs = len(program_list) != 1
@@ -130,6 +144,7 @@ def _build_batch_course_rows(
                 semester=semester,
                 program=prog,
                 section=section,
+                strict_passed_only=strict_passed_only,
             )
             prog_codes = [normalize_code(code) for code in prog_aggregate.keys()]
             prog_names = _programme_course_names(prog, prog_codes)
@@ -193,6 +208,7 @@ def _build_student_plan_payload(
     *,
     prerequisite_map: dict[str, list[str]] | None = None,
     additional_studying_codes: set[str] | None = None,
+    strict_passed_only: bool = False,
 ) -> tuple[dict | None, JsonResponse | None]:
     program = get_student_program(student_id)
     if not program:
@@ -211,7 +227,10 @@ def _build_student_plan_payload(
     # do not count it simultaneously in both plan-status buckets.
     studying -= passed
     failed -= passed | studying
-    satisfied_pool = passed | studying
+    # Keep the shared service backward-compatible for non-screen callers, while
+    # request handlers explicitly choose their screen policy.  Strict eligibility
+    # treats only completed passes/earned hours as prerequisite evidence.
+    satisfied_pool = passed if strict_passed_only else passed | studying
     importance_scores = _program_importance_scores(program)
     prerequisites_by_course = (
         prerequisite_map if prerequisite_map is not None else get_program_prerequisites(program)
@@ -250,7 +269,15 @@ def _build_student_plan_payload(
         # course code it can never be satisfied, which locked every capstone forever.
         course_prereqs, required_hours = split_hour_prereqs(prereqs)
         missing_prereqs = [p for p in course_prereqs if p not in satisfied_pool]
-        gate = hour_gate(student_id, required_hours) if required_hours else None
+        gate = (
+            hour_gate(
+                student_id,
+                required_hours,
+                strict_passed_only=strict_passed_only,
+            )
+            if required_hours
+            else None
+        )
         if gate is not None and not gate["met"]:
             missing_prereqs = [*missing_prereqs, f"{required_hours}(HOURS)"]
         prereqs_ok = len(missing_prereqs) == 0
@@ -311,6 +338,8 @@ def _build_student_plan_payload(
     payload = {
         "student_id": student_id,
         "program": program,
+        "eligibility_mode": "strict" if strict_passed_only else "relaxed",
+        "strict_passed_only": strict_passed_only,
         "summary": {
             "passed": len(passed),
             "studying": len(studying),
@@ -361,6 +390,11 @@ def report_summary_view(request: HttpRequest) -> JsonResponse:
 
     program = request.GET.get("program") or None
     section = request.GET.get("section") or None
+    mode, err = _parse_recommendation_mode(request.GET.get("mode"))
+    if err:
+        return err
+    if mode is None:
+        return JsonResponse({"error": "Invalid mode"}, status=400)
 
     scope_err = require_program_scope(request, program)
     if scope_err:
@@ -371,6 +405,7 @@ def report_summary_view(request: HttpRequest) -> JsonResponse:
         semester=semester,
         program=program,
         section=section,
+        strict_passed_only=mode == "strict",
         limit=20,
     )
 
@@ -380,6 +415,8 @@ def report_summary_view(request: HttpRequest) -> JsonResponse:
             "semester": semester,
             "program": program,
             "section": section,
+            "mode": mode,
+            "strict_passed_only": mode == "strict",
             "student_count": student_count,
             "top_recommended_courses": rows,
         }
@@ -406,10 +443,12 @@ def export_student_csv_view(request: HttpRequest) -> HttpResponse:
     if scope_err:
         return scope_err
 
+    mode = "relaxed" if request.GET.get("mode", "").strip().lower() == "relaxed" else "strict"
     recommendations = recommend_next_courses(
         student_id=student_id,
         current_academic_year=year,
         current_semester=semester,
+        strict_passed_only=mode == "strict",
     )
 
     out = StringIO()
@@ -418,7 +457,9 @@ def export_student_csv_view(request: HttpRequest) -> HttpResponse:
     for code in recommendations:
         writer.writerow([student_id, year, semester, code])
 
-    return _excel_csv_response(f"student_{student_id}_{year}_{semester}.csv", out.getvalue())
+    response = _excel_csv_response(f"student_{student_id}_{year}_{semester}.csv", out.getvalue())
+    response["X-Recommendation-Mode"] = mode
+    return response
 
 
 @role_required(ROLE_GENERAL_ADVISOR)
@@ -436,6 +477,11 @@ def export_aggregate_csv_view(request: HttpRequest) -> HttpResponse:
 
     program = request.GET.get("program") or None
     section = request.GET.get("section") or None
+    mode, err = _parse_recommendation_mode(request.GET.get("mode"))
+    if err:
+        return err
+    if mode is None:
+        return JsonResponse({"error": "Invalid mode"}, status=400)
 
     scope_err = require_program_scope(request, program)
     if scope_err:
@@ -446,6 +492,7 @@ def export_aggregate_csv_view(request: HttpRequest) -> HttpResponse:
         semester=semester,
         program=program,
         section=section,
+        strict_passed_only=mode == "strict",
     )
 
     out = StringIO()
@@ -454,6 +501,7 @@ def export_aggregate_csv_view(request: HttpRequest) -> HttpResponse:
         [
             "year",
             "semester",
+            "mode",
             "program",
             "section",
             "student_count",
@@ -468,6 +516,7 @@ def export_aggregate_csv_view(request: HttpRequest) -> HttpResponse:
             [
                 year,
                 semester,
+                mode,
                 program or "",
                 section or "",
                 student_count,
@@ -478,7 +527,12 @@ def export_aggregate_csv_view(request: HttpRequest) -> HttpResponse:
             ]
         )
 
-    return _excel_csv_response(f"aggregate_{year}_{semester}.csv", out.getvalue())
+    response = _excel_csv_response(
+        f"aggregate_{year}_{semester}_{mode}.csv",
+        out.getvalue(),
+    )
+    response["X-Recommendation-Mode"] = mode
+    return response
 
 
 @role_required(ROLE_ADVISOR)
@@ -496,6 +550,11 @@ def export_aggregate_xlsx_view(request: HttpRequest) -> HttpResponse:
 
     program = request.GET.get("program") or None
     section = request.GET.get("section") or None
+    mode, err = _parse_recommendation_mode(request.GET.get("mode"))
+    if err:
+        return err
+    if mode is None:
+        return JsonResponse({"error": "Invalid mode"}, status=400)
 
     scope_err = require_program_scope(request, program)
     if scope_err:
@@ -506,6 +565,7 @@ def export_aggregate_xlsx_view(request: HttpRequest) -> HttpResponse:
         semester=semester,
         program=program,
         section=section,
+        strict_passed_only=mode == "strict",
     )
 
     from core.services.batch_export import export_batch_recommender_xlsx
@@ -518,14 +578,16 @@ def export_aggregate_xlsx_view(request: HttpRequest) -> HttpResponse:
         student_count,
         {str(row.get("course_code", "")): int(row.get("count", 0)) for row in rows},
         course_rows=rows,
+        strict_passed_only=mode == "strict",
     )
     prog_label = program or "all"
-    filename = f"batch_recommender_{prog_label}_{year}_T{semester}.xlsx"
+    filename = f"batch_recommender_{prog_label}_{year}_T{semester}_{mode}.xlsx"
     response = FileResponse(
         open(path, "rb"),
         content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
     response["Content-Disposition"] = f'attachment; filename="{filename}"'
+    response["X-Recommendation-Mode"] = mode
     return response
 
 
@@ -542,7 +604,15 @@ def student_plan_view(request: HttpRequest) -> JsonResponse:
     if scope_err:
         return scope_err
 
-    payload, payload_err = _build_student_plan_payload(student_id)
+    mode, mode_err = _parse_recommendation_mode(request.GET.get("eligibility_mode"))
+    if mode_err:
+        return mode_err
+    assert mode is not None
+
+    payload, payload_err = _build_student_plan_payload(
+        student_id,
+        strict_passed_only=mode == "strict",
+    )
     if payload_err:
         return payload_err
     if payload is None:
@@ -564,7 +634,15 @@ def export_student_plan_csv_view(request: HttpRequest) -> HttpResponse:
     if scope_err:
         return scope_err
 
-    payload, payload_err = _build_student_plan_payload(student_id)
+    mode, mode_err = _parse_recommendation_mode(request.GET.get("eligibility_mode"))
+    if mode_err:
+        return mode_err
+    assert mode is not None
+
+    payload, payload_err = _build_student_plan_payload(
+        student_id,
+        strict_passed_only=mode == "strict",
+    )
     if payload_err:
         return payload_err
     if payload is None:
@@ -1593,7 +1671,12 @@ def course_eligibility_view(request: HttpRequest) -> JsonResponse:
     join_years = (
         [x.strip() for x in join_years_raw.split(",") if x.strip()] if join_years_raw else None
     )
-    strict_mode = (request.GET.get("mode") or "").strip().lower() == "strict"
+    mode, err = _parse_recommendation_mode(request.GET.get("mode"))
+    if err:
+        return err
+    if mode is None:
+        return JsonResponse({"error": "Invalid mode"}, status=400)
+    strict_mode = mode == "strict"
 
     scope_err = require_program_scope(request, program)
     if scope_err:
@@ -1736,7 +1819,12 @@ def export_course_eligibility_csv_view(request: HttpRequest) -> HttpResponseBase
     join_years = (
         [x.strip() for x in join_years_raw.split(",") if x.strip()] if join_years_raw else None
     )
-    strict_mode = (request.GET.get("mode") or "").strip().lower() == "strict"
+    mode, err = _parse_recommendation_mode(request.GET.get("mode"))
+    if err:
+        return err
+    if mode is None:
+        return JsonResponse({"error": "Invalid mode"}, status=400)
+    strict_mode = mode == "strict"
 
     scope_err = require_program_scope(request, program)
     if scope_err:
@@ -1749,8 +1837,10 @@ def export_course_eligibility_csv_view(request: HttpRequest) -> HttpResponseBase
     from core.services.eligibility_export import export_eligibility_xlsx
 
     path = export_eligibility_xlsx(payload)
-    filename = f"eligibility_{course_code}.xlsx"
-    return FileResponse(path.open("rb"), as_attachment=True, filename=filename)
+    filename = f"eligibility_{course_code}_{mode}.xlsx"
+    response = FileResponse(path.open("rb"), as_attachment=True, filename=filename)
+    response["X-Recommendation-Mode"] = mode
+    return response
 
 
 @role_required(ROLE_ADVISOR)

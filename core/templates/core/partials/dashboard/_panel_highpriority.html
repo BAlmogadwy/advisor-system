@@ -23,7 +23,7 @@
           <div class="fb-search" style="max-width:150px"><select id="hpDiscount" aria-label="Discount function"><option value="1_over_d" selected>Standard decay (1/d)</option><option value="half_power_d">Gentle decay (1/&#x221A;d)</option><option value="none">No decay</option></select></div>
           <div class="fb-search fb-w-120"><input id="hpMinScore" type="text" inputmode="decimal" pattern="[0-9.]*" value="2.0" placeholder="{% if LANGUAGE_CODE == 'ar' %}أقل درجة{% else %}Min score{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}أقل درجة{% else %}Minimum score{% endif %}"></div>
           <div class="fb-search fb-w-100"><input id="hpTopK" type="text" inputmode="numeric" pattern="[0-9]*" value="10" placeholder="{% if LANGUAGE_CODE == 'ar' %}أفضل K{% else %}Top K{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}أفضل K{% else %}Top K{% endif %}"></div>
-          <div class="fb-search" style="max-width:210px"><select id="hpStudying" aria-label="Include studying"><option value="false" selected>{% if LANGUAGE_CODE == 'ar' %}لا (الافتراضي الدقيق){% else %}No (exact default){% endif %}</option><option value="true">{% if LANGUAGE_CODE == 'ar' %}نعم{% else %}Yes{% endif %}</option></select></div>
+          <div class="fb-search" style="max-width:250px"><select id="hpStudying" aria-label="{% if LANGUAGE_CODE == 'ar' %}وضع التأهيل{% else %}Eligibility mode{% endif %}"><option value="false" selected>{% if LANGUAGE_CODE == 'ar' %}صارم (مجتاز + مكتسب فقط){% else %}Strict (passed + earned only){% endif %}</option><option value="true">{% if LANGUAGE_CODE == 'ar' %}مرن (+ يدرس + مسجل){% else %}Relaxed (+ studying + registered){% endif %}</option></select></div>
         </div>
       </details>
       <div class="preset-row">

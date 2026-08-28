@@ -360,6 +360,7 @@ const IS_AR = document.documentElement.lang === 'ar';
   q('resetBatch').onclick = () => {
     q('batchProgram').value = '';
     q('batchSection').value = '';
+    q('batchMode').value = 'strict';
     const tbody = document.querySelector('#batchTable tbody');
     if (tbody) tbody.innerHTML = `<tr><td colspan="5"><div class="ap-empty"><span class="ap-empty-icon"><span class="i empty-icon-32"><svg viewBox="0 0 24 24"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg></span></span><div class="ap-empty-title">${T.noBatchData}</div><div class="ap-empty-hint">${T.setBatchFilters}</div></div></td></tr>`;
     q('batchMetrics').classList.add('d-none');
@@ -369,6 +370,7 @@ const IS_AR = document.documentElement.lang === 'ar';
     q('batchTopChips').innerHTML = `<div class="empty-note">${T.runBatchHint}</div>`;
     const bpEl = document.getElementById('batchPager'); if (bpEl) bpEl.innerHTML = '';
     setUpdated('batchUpdated');
+    syncExportCenterLinks();
   };
 
   function batchProgramTags(row) {
@@ -392,7 +394,8 @@ const IS_AR = document.documentElement.lang === 'ar';
 
     const year = q('batchYear').value, semester = q('batchSemester').value;
     const program = q('batchProgram').value, section = q('batchSection').value;
-    const url = `/report/summary/?year=${year}&semester=${semester}&program=${encodeURIComponent(program)}&section=${encodeURIComponent(section)}`;
+    const mode = q('batchMode').value;
+    const url = `/report/summary/?year=${encodeURIComponent(year)}&semester=${encodeURIComponent(semester)}&program=${encodeURIComponent(program)}&section=${encodeURIComponent(section)}&mode=${encodeURIComponent(mode)}`;
 
     const tbody = document.querySelector('#batchTable tbody');
     if (tbody) {
@@ -413,8 +416,8 @@ const IS_AR = document.documentElement.lang === 'ar';
       return;
     }
 
-    q('batchCsv').href = `/export/aggregate.csv?year=${year}&semester=${semester}&program=${encodeURIComponent(program)}&section=${encodeURIComponent(section)}`;
-    q('batchXlsx').href = `/export/aggregate.xlsx?year=${year}&semester=${semester}&program=${encodeURIComponent(program)}&section=${encodeURIComponent(section)}`;
+    q('batchCsv').href = `/export/aggregate.csv?year=${encodeURIComponent(year)}&semester=${encodeURIComponent(semester)}&program=${encodeURIComponent(program)}&section=${encodeURIComponent(section)}&mode=${encodeURIComponent(mode)}`;
+    q('batchXlsx').href = `/export/aggregate.xlsx?year=${encodeURIComponent(year)}&semester=${encodeURIComponent(semester)}&program=${encodeURIComponent(program)}&section=${encodeURIComponent(section)}&mode=${encodeURIComponent(mode)}`;
     q('batchSummary').href = url;
 
     if (!res.ok || !Array.isArray(data.top_recommended_courses)) {
@@ -432,6 +435,7 @@ const IS_AR = document.documentElement.lang === 'ar';
     q('batchMetricTerm').textContent = `${data.year}/${data.semester}`;
     q('batchMetricStudents').textContent = String(data.student_count ?? 0);
     q('batchMetricTopCount').textContent = String(data.top_recommended_courses.length);
+    q('batchMetricMode').textContent = data.mode || (data.strict_passed_only ? 'strict' : 'relaxed');
     q('batchMetrics').classList.remove('d-none');
 
     if (tbody) {
@@ -2327,11 +2331,11 @@ const IS_AR = document.documentElement.lang === 'ar';
     const sid = q('studentIdInput')?.value || '';
     const year = q('batchYear')?.value || q('dbgYear')?.value || '';
     const sem = q('batchSemester')?.value || q('dbgSemester')?.value || '';
-    q('exStudentCsv').href = sid && year !== '' && sem !== '' ? `/export/student.csv?student_id=${encodeURIComponent(sid)}&year=${encodeURIComponent(year)}&semester=${encodeURIComponent(sem)}` : '#';
-    q('exAggregateCsv').href = `/export/aggregate.csv?year=${encodeURIComponent(q('batchYear')?.value || '')}&semester=${encodeURIComponent(q('batchSemester')?.value || '')}&program=${encodeURIComponent(q('batchProgram')?.value || '')}&section=${encodeURIComponent(q('batchSection')?.value || '')}`;
+    q('exStudentCsv').href = sid && year !== '' && sem !== '' ? `/export/student.csv?student_id=${encodeURIComponent(sid)}&year=${encodeURIComponent(year)}&semester=${encodeURIComponent(sem)}&mode=${encodeURIComponent(q('studentRecommendationMode')?.value || 'strict')}` : '#';
+    q('exAggregateCsv').href = `/export/aggregate.csv?year=${encodeURIComponent(q('batchYear')?.value || '')}&semester=${encodeURIComponent(q('batchSemester')?.value || '')}&program=${encodeURIComponent(q('batchProgram')?.value || '')}&section=${encodeURIComponent(q('batchSection')?.value || '')}&mode=${encodeURIComponent(q('batchMode')?.value || 'strict')}`;
     q('exPlanCsv').href = sid ? `/export/student-plan.csv?student_id=${encodeURIComponent(sid)}` : '#';
     q('exDebugCsv').href = `/export/recommendation-debug.csv?year=${encodeURIComponent(q('dbgYear')?.value || '')}&semester=${encodeURIComponent(q('dbgSemester')?.value || '')}&section=${encodeURIComponent(q('dbgSection')?.value || '')}&program=${encodeURIComponent(q('dbgProgram')?.value || '')}&join_years=${encodeURIComponent(q('dbgJoin')?.value || '')}&limit=${encodeURIComponent(q('dbgLimit')?.value || '')}`;
-    q('exEligibilityCsv').href = `/export/course-eligibility.csv?course_code=${encodeURIComponent(q('elCourse')?.value || '')}&section=${encodeURIComponent(q('elSection')?.value || '')}&program=${encodeURIComponent(q('elProgram')?.value || '')}&join_years=${encodeURIComponent(q('elJoin')?.value || '')}&mode=${encodeURIComponent(q('elMode')?.value || 'relaxed')}`;
+    q('exEligibilityCsv').href = `/export/course-eligibility.csv?course_code=${encodeURIComponent(q('elCourse')?.value || '')}&section=${encodeURIComponent(q('elSection')?.value || '')}&program=${encodeURIComponent(q('elProgram')?.value || '')}&join_years=${encodeURIComponent(q('elJoin')?.value || '')}&mode=${encodeURIComponent(q('elMode')?.value || 'strict')}`;
     q('exAdvisorCsv').href = '/advisor-portfolio/';  // portfolio is now standalone
     q('exHighPriorityXlsx').href = `/export/missing-high-priority.xlsx?year=${encodeURIComponent(q('hpYear')?.value || '')}&semester=${encodeURIComponent(q('hpSemester')?.value || '')}&section=${encodeURIComponent(q('hpSection')?.value || '')}&program=${encodeURIComponent(q('hpProgram')?.value || '')}&join_years=${encodeURIComponent(q('hpJoin')?.value || '')}&term_parity=${encodeURIComponent(q('hpParity')?.value || '0')}&discount=${encodeURIComponent(q('hpDiscount')?.value || '1_over_d')}&min_score=${encodeURIComponent(q('hpMinScore')?.value || '2.0')}&top_k=${encodeURIComponent(q('hpTopK')?.value || '10')}&studying_counts_as_passed=${encodeURIComponent(q('hpStudying')?.value || 'false')}`;
     requestSidebarBadgeUpdate();
@@ -2345,20 +2349,26 @@ const IS_AR = document.documentElement.lang === 'ar';
     });
   });
 
-  ['studentIdInput','batchYear','batchSemester','batchProgram','batchSection','dbgYear','dbgSemester','dbgSection','dbgProgram','dbgJoin','dbgLimit','dbgMode','cmYear','cmSemester','cmSection','cmProgram','cmJoin','cmLimit','elCourse','elSection','elProgram','elJoin','elMode','hpYear','hpSemester','hpSection','hpProgram','hpJoin','hpParity','hpDiscount','hpMinScore','hpTopK','hpStudying'].forEach((id) => {
+  ['studentIdInput','studentRecommendationMode','batchYear','batchSemester','batchProgram','batchSection','batchMode','dbgYear','dbgSemester','dbgSection','dbgProgram','dbgJoin','dbgLimit','dbgMode','cmYear','cmSemester','cmSection','cmProgram','cmJoin','cmLimit','elCourse','elSection','elProgram','elJoin','elMode','hpYear','hpSemester','hpSection','hpProgram','hpJoin','hpParity','hpDiscount','hpMinScore','hpTopK','hpStudying'].forEach((id) => {
     const el = q(id);
     if (el) el.addEventListener('change', syncExportCenterLinks);
   });
   syncExportCenterLinks();
 
-  q('batchSavePreset')?.addEventListener('click', () => savePreset('batch', ['batchYear','batchSemester','batchProgram','batchSection']));
-  q('batchLoadPreset')?.addEventListener('click', () => loadPreset('batch', ['batchYear','batchSemester','batchProgram','batchSection']));
+  q('batchSavePreset')?.addEventListener('click', () => savePreset('batch', ['batchYear','batchSemester','batchProgram','batchSection','batchMode']));
+  q('batchLoadPreset')?.addEventListener('click', () => {
+    loadPreset('batch', ['batchYear','batchSemester','batchProgram','batchSection','batchMode']);
+    syncExportCenterLinks();
+  });
   q('dbgSavePreset')?.addEventListener('click', () => savePreset('debug', ['dbgYear','dbgSemester','dbgSection','dbgProgram','dbgJoin','dbgLimit','dbgMode']));
   q('dbgLoadPreset')?.addEventListener('click', () => loadPreset('debug', ['dbgYear','dbgSemester','dbgSection','dbgProgram','dbgJoin','dbgLimit','dbgMode']));
   q('cmSavePreset')?.addEventListener('click', () => savePreset('conflictmatrix', ['cmYear','cmSemester','cmSection','cmProgram','cmJoin','cmLimit']));
   q('cmLoadPreset')?.addEventListener('click', () => loadPreset('conflictmatrix', ['cmYear','cmSemester','cmSection','cmProgram','cmJoin','cmLimit']));
   q('elSavePreset')?.addEventListener('click', () => savePreset('eligibility', ['elCourse','elSection','elProgram','elJoin','elMode']));
-  q('elLoadPreset')?.addEventListener('click', () => loadPreset('eligibility', ['elCourse','elSection','elProgram','elJoin','elMode']));
+  q('elLoadPreset')?.addEventListener('click', () => {
+    loadPreset('eligibility', ['elCourse','elSection','elProgram','elJoin','elMode']);
+    syncExportCenterLinks();
+  });
   q('elCopyIds')?.addEventListener('click', async () => {
     // Scrape every eligible ID from the table (paginateTable only hides rows, so all are in the DOM).
     const ids = Array.from(document.querySelectorAll('#elTable .cr-id'))

@@ -52,6 +52,7 @@ logger = logging.getLogger(__name__)
 #: A shortlist is a term's worth of courses for one student. Anything past
 #: this is a malformed or hostile caller, not an adviser planning a term.
 MAX_SHORTLIST_COURSES = 40
+ELIGIBILITY_MODES = {"strict", "relaxed"}
 
 
 def _ok(data: dict[str, object], status: int = 200) -> JsonResponse:
@@ -131,6 +132,25 @@ def _safe_json(request: HttpRequest) -> tuple[dict[str, object], JsonResponse | 
     return payload, None
 
 
+def _eligibility_mode(
+    payload: dict[str, object],
+) -> tuple[str | None, JsonResponse | None]:
+    """Parse the planner's eligibility policy, defaulting the screen to strict.
+
+    This is deliberately separate from the existing ``mode`` field, whose
+    ``keep``/``ignore`` values control how the registered timetable is handled.
+    """
+
+    mode = str(payload.get("eligibility_mode", "strict")).strip().lower()
+    if mode not in ELIGIBILITY_MODES:
+        return None, _err(
+            "eligibility_mode must be strict or relaxed",
+            code="VALIDATION_ELIGIBILITY_MODE",
+            status=400,
+        )
+    return mode, None
+
+
 @login_required(login_url="login")
 @require_GET
 def planner_page(request: HttpRequest) -> HttpResponse:
@@ -161,6 +181,10 @@ def planner_context_view(request: HttpRequest) -> JsonResponse:
     student_id = str(payload.get("student_id", "")).strip()
     year = str(payload.get("academic_year", "")).strip()
     term = str(payload.get("term", "")).strip()
+    eligibility_mode, eligibility_err = _eligibility_mode(payload)
+    if eligibility_err:
+        return eligibility_err
+    assert eligibility_mode is not None
 
     if not student_id or not year or not term:
         return _err(
@@ -183,7 +207,14 @@ def planner_context_view(request: HttpRequest) -> JsonResponse:
         return scope_err
 
     try:
-        return _planner_context_inner(request, student_id, student_id_int, year, term)
+        return _planner_context_inner(
+            request,
+            student_id,
+            student_id_int,
+            year,
+            term,
+            eligibility_mode=eligibility_mode,
+        )
     except Exception as exc:
         logger.error("planner_context_view error for student=%s", student_id, exc_info=True)
         return _internal_error(exc)
@@ -195,6 +226,8 @@ def _planner_context_inner(
     student_id_int: int,
     year: str,
     term: str,
+    *,
+    eligibility_mode: str,
 ) -> JsonResponse:
     """Core logic extracted so the caller can catch unexpected exceptions."""
     student = (
@@ -285,7 +318,12 @@ def _planner_context_inner(
 
     recommendation_warning = None
     try:
-        rec_codes = recommend_next_courses(student_id, int(year), int(term))
+        rec_codes = recommend_next_courses(
+            student_id,
+            int(year),
+            int(term),
+            strict_passed_only=eligibility_mode == "strict",
+        )
     except Exception as exc:
         rec_codes = []
         recommendation_warning = f"Recommendation engine fallback: {type(exc).__name__}"
@@ -344,6 +382,7 @@ def _planner_context_inner(
             studying,
             earned_credits=_earned_credits,
             registered_credits=_registered_credits,
+            strict_passed_only=eligibility_mode == "strict",
         )
         missing = outcome.missing
         status = "Eligible" if outcome.met else "Blocked"
@@ -381,6 +420,8 @@ def _planner_context_inner(
                 "credits": credits_total,
             },
             "recommendations": recommendations,
+            "eligibility_mode": eligibility_mode,
+            "strict_passed_only": eligibility_mode == "strict",
             "year": year,
             "term": term,
             "warning": recommendation_warning,
@@ -725,6 +766,10 @@ def planner_build_view(request: HttpRequest) -> JsonResponse:
     year = str(payload.get("academic_year", "")).strip()
     term = str(payload.get("term", "")).strip()
     mode = str(payload.get("mode", "keep")).strip().lower()
+    eligibility_mode, eligibility_err = _eligibility_mode(payload)
+    if eligibility_err:
+        return eligibility_err
+    assert eligibility_mode is not None
     program_sections_only = bool(
         payload.get(
             "program_sections_only",
@@ -962,6 +1007,7 @@ def planner_build_view(request: HttpRequest) -> JsonResponse:
             program=program,
         )
         result["mode"] = mode
+        result["eligibility_mode"] = eligibility_mode
         result["constraints"] = {
             "program_sections_only": program_sections_only,
             "allow_full_sections": allow_full_sections,

@@ -3,6 +3,7 @@
         <div class="fb-search" style="max-width:170px"><span class="i i-sm flex-shrink-0"><svg viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></span><input id="studentIdInput" type="text" inputmode="numeric" pattern="[0-9]*" name="student_id" value="{{ student_id }}" placeholder="{% if LANGUAGE_CODE == 'ar' %}رقم الطالب{% else %}Student ID{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}رقم الطالب{% else %}Student ID{% endif %}" required></div>
         <div class="fb-search fb-w-110"><input type="text" inputmode="numeric" pattern="[0-9]*" name="year" value="{{ year }}" placeholder="{% if LANGUAGE_CODE == 'ar' %}السنة{% else %}Year{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}السنة{% else %}Year{% endif %}" required></div>
         <div class="fb-search fb-w-110"><input type="text" inputmode="numeric" pattern="[0-9]*" min="0" max="1" name="semester" value="{{ semester }}" placeholder="{% if LANGUAGE_CODE == 'ar' %}الفصل{% else %}Semester{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}الفصل{% else %}Semester{% endif %}" required></div>
+        <div class="fb-search" style="max-width:230px"><select id="studentRecommendationMode" name="mode" aria-label="{% if LANGUAGE_CODE == 'ar' %}وضع المتطلبات السابقة{% else %}Prerequisite mode{% endif %}"><option value="strict"{% if recommendation_mode == "strict" %} selected{% endif %}>{% if LANGUAGE_CODE == 'ar' %}صارم (مجتاز + مكتسب فقط){% else %}Strict (passed + earned only){% endif %}</option><option value="relaxed"{% if recommendation_mode == "relaxed" %} selected{% endif %}>{% if LANGUAGE_CODE == 'ar' %}مرن (+ يدرس + مسجل){% else %}Relaxed (+ studying + registered){% endif %}</option></select></div>
         <div class="fb-spacer"></div>
         <button class="btn btn-primary">
           <span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></span>{% if LANGUAGE_CODE == 'ar' %}توصية{% else %}Recommend{% endif %}
@@ -16,9 +17,9 @@
         <div class="cp-h">
           <span class="i i-faint"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg></span>
           <div class="cp-t">{% if LANGUAGE_CODE == 'ar' %}التوصيات{% else %}Recommendations{% endif %}</div>
-          <span class="cp-live">{{ recommendations|length }} courses</span>
+          <span class="cp-live">{{ recommendations|length }} courses · {{ recommendation_mode }}</span>
           <div class="flex-spacer"></div>
-          <a id="studentCsvLink" class="btn btn-outline-primary btn-sm" href="/export/student.csv?student_id={{ student_id }}&year={{ year }}&semester={{ semester }}">{% if LANGUAGE_CODE == 'ar' %}تصدير CSV{% else %}Export CSV{% endif %}</a>
+          <a id="studentCsvLink" class="btn btn-outline-primary btn-sm" href="/export/student.csv?student_id={{ student_id }}&year={{ year }}&semester={{ semester }}&mode={{ recommendation_mode|urlencode }}">{% if LANGUAGE_CODE == 'ar' %}تصدير CSV{% else %}Export CSV{% endif %}</a>
           <button id="copyStudentCsv" type="button" class="btn btn-outline-secondary btn-sm">Copy link</button>
         </div>
         <div class="cp-b">

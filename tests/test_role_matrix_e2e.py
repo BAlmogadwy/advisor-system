@@ -66,7 +66,10 @@ def test_super_admin_full_access_summary(monkeypatch: MonkeyPatch) -> None:
 
     monkeypatch.setattr(
         "core.report_views.build_aggregate_counts",
-        lambda year, semester, program=None, section=None: (2, Counter({"CS101": 2})),
+        lambda year, semester, program=None, section=None, **kwargs: (
+            2,
+            Counter({"CS101": 2}),
+        ),
     )
 
     response = client.get("/report/summary/?year=1448&semester=0")
@@ -78,7 +81,10 @@ def test_general_advisor_department_scope_summary(monkeypatch: MonkeyPatch) -> N
 
     monkeypatch.setattr(
         "core.report_views.build_aggregate_counts",
-        lambda year, semester, program=None, section=None: (1, Counter({"AI201": 1})),
+        lambda year, semester, program=None, section=None, **kwargs: (
+            1,
+            Counter({"AI201": 1}),
+        ),
     )
 
     ok_resp = client.get("/report/summary/?year=1448&semester=0&program=AI")
@@ -106,7 +112,10 @@ def test_advisor_own_students_scope_student_plan(monkeypatch: MonkeyPatch) -> No
 
     monkeypatch.setattr(
         "core.report_views._build_student_plan_payload",
-        lambda student_id: ({"student_id": student_id, "program": "AI", "terms": []}, None),
+        lambda student_id, **kwargs: (
+            {"student_id": student_id, "program": "AI", "terms": []},
+            None,
+        ),
     )
 
     in_scope = client.get("/report/student-plan/?student_id=1001")

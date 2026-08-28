@@ -81,6 +81,12 @@ def dev_role_switch_view(request: HttpRequest) -> JsonResponse:
 @login_required(login_url="login")
 def dashboard(request: HttpRequest) -> HttpResponse:
     student_id_raw = request.GET.get("student_id", "").strip()
+    # Relaxed behavior is an explicit opt-in on the Student Recommender. Unknown
+    # or missing values fail closed to strict instead of silently counting current
+    # study/registration as completed prerequisite evidence.
+    recommendation_mode = (
+        "relaxed" if request.GET.get("mode", "").strip().lower() == "relaxed" else "strict"
+    )
 
     # Fall back to saved global defaults when year/semester not in GET params
     _defaults = load_defaults()
@@ -119,6 +125,7 @@ def dashboard(request: HttpRequest) -> HttpResponse:
         "student_id": student_id_raw,
         "year": year_raw,
         "semester": semester_raw,
+        "recommendation_mode": recommendation_mode,
         "recommendations": None,
         "error": "",
         "programs": programs,
@@ -148,6 +155,7 @@ def dashboard(request: HttpRequest) -> HttpResponse:
             student_id=student_id,
             current_academic_year=year,
             current_semester=semester,
+            strict_passed_only=recommendation_mode == "strict",
         )
         context["recommendations"] = recommendations
 
