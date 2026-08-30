@@ -69,6 +69,7 @@ from .exam_views import (
 )
 from .group_availability_views import (
     group_availability_compute_view,
+    group_availability_export_xlsx_view,
     group_availability_page,
 )
 from .instructor_views import (
@@ -108,7 +109,11 @@ from .planner_views import (
     planner_save_student_sections_view,
     planner_sections_catalog_view,
 )
-from .portfolio_views import advisor_portfolio_page
+from .portfolio_views import (
+    advisor_portfolio_page,
+    advisor_portfolio_student_graduation_page,
+    advisor_portfolio_student_graduation_view,
+)
 from .profile_views import (
     profile_change_password_view,
     profile_change_username_view,
@@ -436,6 +441,11 @@ urlpatterns = [
         group_availability_compute_view,
         name="group_availability_compute",
     ),
+    path(
+        "ops/group-availability/export.xlsx",
+        group_availability_export_xlsx_view,
+        name="group_availability_export_xlsx",
+    ),
     path("recommend/<int:student_id>/", recommend_view, name="recommend"),
     path("classify/", classify_view, name="classify"),
     path("parse-and-classify/", parse_and_classify_view, name="parse_and_classify"),
@@ -533,6 +543,16 @@ urlpatterns = [
     path("ops/sections-import/insert/", sections_import_insert_view, name="sections_import_insert"),
     path("planner/", planner_page, name="planner_page"),
     path("advisor-portfolio/", advisor_portfolio_page, name="advisor_portfolio_page"),
+    path(
+        "advisor-portfolio/students/<int:student_id>/graduation/",
+        advisor_portfolio_student_graduation_page,
+        name="advisor_portfolio_student_graduation_page",
+    ),
+    path(
+        "api/advisor-portfolio/students/<int:student_id>/graduation/",
+        advisor_portfolio_student_graduation_view,
+        name="advisor_portfolio_student_graduation",
+    ),
     path("ops/planner/context/", planner_context_view, name="planner_context"),
     path(
         "ops/planner/save-student-sections/",

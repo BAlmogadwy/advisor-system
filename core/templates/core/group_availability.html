@@ -45,6 +45,9 @@
         <button type="button" class="ga-tab" id="gaTabLab" role="tab" aria-selected="false" aria-controls="gaPanelLab" tabindex="-1" data-grid="lab">{% if LANGUAGE_CODE == 'ar' %}معامل (100 د){% else %}Lab (100m){% endif %}</button>
         <button type="button" class="ga-tab" id="gaTabTimeline" role="tab" aria-selected="false" aria-controls="gaPanelTimeline" tabindex="-1" data-grid="timeline">{% if LANGUAGE_CODE == 'ar' %}اليوم الكامل (10 د){% else %}Full day (10m){% endif %}</button>
       </div>
+      <button type="button" class="btn btn-sm btn-outline-success ga-export" id="gaExport" disabled aria-busy="false">
+        {% if LANGUAGE_CODE == 'ar' %}تصدير كل الشبكات (XLSX){% else %}Export all grids (XLSX){% endif %}
+      </button>
       <div class="ga-legend" aria-hidden="false">
         <span class="ga-legend-item"><span class="ga-swatch ga-swatch-free"></span><span id="gaLegendFree">{% if LANGUAGE_CODE == 'ar' %}متاح{% else %}Free{% endif %}</span></span>
         <span class="ga-legend-item"><span class="ga-swatch ga-swatch-some"></span>{% if LANGUAGE_CODE == 'ar' %}بعض الجداول المسجلة مشغول{% else %}Some registered schedules busy{% endif %}</span>
@@ -75,17 +78,18 @@
 {% endblock %}
 
 {% block extra_css %}
-<link rel="stylesheet" href="{% static 'css/group-availability.css' %}?v=3">
+<link rel="stylesheet" href="{% static 'css/group-availability.css' %}?v=5">
 {% endblock %}
 
 {% block extra_js %}
 <script>
   window.groupAvailabilityConfig = {
     computeUrl: "{% url 'group_availability_compute' %}",
+    exportUrl: "{% url 'group_availability_export_xlsx' %}",
     csrfToken: "{{ csrf_token }}",
     lang: "{{ LANGUAGE_CODE }}",
     maxStudents: {{ max_students }}
   };
 </script>
-<script src="{% static 'js/page-group-availability.js' %}?v=4"></script>
+<script src="{% static 'js/page-group-availability.js' %}?v=5"></script>
 {% endblock %}

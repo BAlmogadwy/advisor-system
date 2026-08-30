@@ -48,6 +48,16 @@ MAX_REPLACEMENT_RESULTS = 5
 PROVEN_GRADUATION_IMPROVEMENT_EFFECTS = frozenset({"EARLIER", "FORECAST_COMPLETED"})
 
 
+def _validate_academic_term(value: int) -> int:
+    try:
+        term = int(value)
+    except (TypeError, ValueError):
+        raise ValueError(f"academic term must be 1 or 2, got {value!r}") from None
+    if term not in {1, 2}:
+        raise ValueError(f"academic term must be 1 or 2, got {value!r}")
+    return term
+
+
 def _validate_planning_baseline_kind(value: str) -> str:
     kind = str(value or "").strip().lower()
     if kind not in PLANNING_BASELINE_KINDS:
@@ -272,6 +282,8 @@ def build_graduation_report(
     _query_cache: dict[object, object] | None = None,
 ) -> dict:
     """Build progress plus a non-persistent scenario after a planning baseline."""
+    term = _validate_academic_term(term)
+
     from core.models import Course, ProgrammeRequirement, Student
 
     baseline_kind = _validate_planning_baseline_kind(planning_baseline_kind)
@@ -447,6 +459,21 @@ def build_graduation_report(
     else:
         registered_now = baseline_credits if current_courses else int(registered_registrar or 0)
 
+    # A retake still consumes timetable load, but its credits are already part
+    # of the registrar's earned total. Count only newly earnable baseline
+    # credits when evaluating cumulative-hour gates and future progression.
+    # When only an aggregate registrar value exists, there are no course codes
+    # with which to identify repeats, so retain that aggregate as the fallback.
+    baseline_progress_credits = (
+        sum(
+            int(course.get("credits") or 0)
+            for course in current_courses
+            if normalize_code(course.get("code") or "") not in actual_passed
+        )
+        if current_courses
+        else registered_now
+    )
+
     excluded_studying_codes = {
         normalize_code(code) for code in (_excluded_studying_codes or set()) if normalize_code(code)
     }
@@ -461,7 +488,7 @@ def build_graduation_report(
         term,
         additional_studying_codes=current_codes,
         excluded_studying_codes=excluded_studying_codes,
-        registered_credits_override=registered_now,
+        registered_credits_override=baseline_progress_credits,
         _prerequisite_map=prerequisites_by_course,
         _query_cache=_query_cache,
     )
@@ -501,7 +528,7 @@ def build_graduation_report(
         actual_passed=actual_passed,
         current_courses=current_courses,
         earned_credits=int(earned_registrar or 0),
-        current_credits=registered_now,
+        current_credits=baseline_progress_credits,
         max_credits_per_term=cap,
         prerequisite_map=prerequisites_by_course,
         recommender_courses=recommender_courses,

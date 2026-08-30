@@ -8,11 +8,14 @@ compute view wiring end-to-end via the Django test client.
 from __future__ import annotations
 
 import json
+from io import BytesIO
 
 import pytest
 from django.contrib.auth import get_user_model
+from django.contrib.auth.models import Group
 from django.test import Client
 from django.urls import reverse
+from openpyxl import load_workbook
 
 from core.models import (
     Student,
@@ -26,6 +29,7 @@ from core.services.group_availability import (
     compute_group_availability,
     normalise_student_ids,
 )
+from core.services.rbac import ROLE_STUDENT
 
 pytestmark = pytest.mark.django_db
 
@@ -33,7 +37,8 @@ YEAR = "1448"
 TERM = "1"
 
 # Lecture slot indices (DEFAULT_SLOTS): 0=09:00-10:15, 1=10:30-11:45,
-# 2=10:50-12:05, 3=13:00-14:15, 4=14:30-15:45, 5=14:45-16:00, 6=16:00-17:15.
+# 2=10:50-12:05, 3=13:00-14:15, 4=14:30-15:45, 5=14:45-16:00,
+# 6=16:00-17:15, plus the Group Availability extension 7=17:15-18:30.
 
 
 def _make_global_section(
@@ -133,9 +138,9 @@ def test_timeline_uses_all_continuous_ten_minute_intervals():
     result = compute_group_availability([], YEAR, TERM)
 
     slots = result["grids"]["timeline"]["slots"]
-    assert len(slots) == 48
+    assert len(slots) == 57
     assert slots[0] == {"label": "09:00-09:10", "start": "09:00", "end": "09:10"}
-    assert slots[-1] == {"label": "16:50-17:00", "start": "16:50", "end": "17:00"}
+    assert slots[-1] == {"label": "18:20-18:30", "start": "18:20", "end": "18:30"}
     assert [(slot["start"], slot["end"]) for slot in slots[17:25]] == [
         ("11:50", "12:00"),
         ("12:00", "12:10"),
@@ -146,8 +151,19 @@ def test_timeline_uses_all_continuous_ten_minute_intervals():
         ("12:50", "13:00"),
         ("13:00", "13:10"),
     ]
-    assert result["grids"]["timeline"]["free_for_all_count"] == 240
-    assert result["grids"]["timeline"]["free_for_resolved_count"] == 240
+    assert [(slot["start"], slot["end"]) for slot in slots[48:]] == [
+        ("17:00", "17:10"),
+        ("17:10", "17:20"),
+        ("17:20", "17:30"),
+        ("17:30", "17:40"),
+        ("17:40", "17:50"),
+        ("17:50", "18:00"),
+        ("18:00", "18:10"),
+        ("18:10", "18:20"),
+        ("18:20", "18:30"),
+    ]
+    assert result["grids"]["timeline"]["free_for_all_count"] == 285
+    assert result["grids"]["timeline"]["free_for_resolved_count"] == 285
 
 
 def test_timeline_marks_exactly_the_ten_minute_intervals_a_meeting_overlaps():
@@ -163,6 +179,20 @@ def test_timeline_marks_exactly_the_ten_minute_intervals_a_meeting_overlaps():
     assert _cell(result, "timeline", "MON", 18)["busy_count"] == 0
 
 
+def test_all_grids_mark_a_meeting_in_the_new_final_interval():
+    section = _make_global_section("CS303", "M2", [("THU", "18:20", "18:30")])
+    _enrol(3052, section, cohort="M", source="scraper_timetable")
+
+    result = compute_group_availability([3052], YEAR, TERM)
+
+    assert _cell(result, "lecture", "THU", 6)["busy_count"] == 0  # 16:00-17:15
+    assert _cell(result, "lecture", "THU", 7)["busy_count"] == 1  # 17:15-18:30
+    assert _cell(result, "lab", "THU", 4)["busy_count"] == 0  # 16:30-18:10
+    assert _cell(result, "lab", "THU", 5)["busy_count"] == 1  # 16:50-18:30
+    assert _cell(result, "timeline", "THU", 55)["busy_count"] == 0  # 18:10-18:20
+    assert _cell(result, "timeline", "THU", 56)["busy_count"] == 1  # 18:20-18:30
+
+
 def test_lab_grid_reflects_lab_length_meeting():
     # Lab slot 0 is 09:00-10:40.
     sec = _make_global_section("CS401", "S1", [("WED", "09:00", "10:40")])
@@ -172,8 +202,8 @@ def test_lab_grid_reflects_lab_length_meeting():
 
     assert _cell(result, "lab", "WED", 0)["busy_count"] == 1
     assert _cell(result, "lab", "WED", 0)["free"] is False
-    # free_for_all_count drops below the full 25 cells when something is busy.
-    assert result["grids"]["lab"]["free_for_all_count"] == 24
+    # free_for_all_count drops below the full 30 cells when something is busy.
+    assert result["grids"]["lab"]["free_for_all_count"] == 29
 
 
 def test_scenario_scoped_section_is_included():
@@ -452,12 +482,11 @@ def test_normalise_student_ids_dedupes_and_drops_nonnumeric():
 def test_empty_group_returns_all_free():
     result = compute_group_availability([], YEAR, TERM)
     assert result["requested_count"] == 0
-    # 7 lecture slots × 5 weekdays = 35 (the 10:50-12:05 post-lab slot and the
-    # 14:45-16:00 afternoon post-lab slot each add a lecture slot beyond the
-    # base 5); labs are unchanged at 5 slots × 5 days = 25.
-    assert result["grids"]["lecture"]["free_for_all_count"] == 35
-    assert result["grids"]["lab"]["free_for_all_count"] == 25
-    assert result["grids"]["timeline"]["free_for_all_count"] == 240
+    # Group Availability includes one late option ending at 18:30 in both the
+    # 75-minute and 100-minute views.
+    assert result["grids"]["lecture"]["free_for_all_count"] == 40
+    assert result["grids"]["lab"]["free_for_all_count"] == 30
+    assert result["grids"]["timeline"]["free_for_all_count"] == 285
 
 
 # ── View wiring ──────────────────────────────────────────────
@@ -475,6 +504,8 @@ def test_page_renders_with_config():
     resp = client.get(reverse("group_availability_page"))
     assert resp.status_code == 200
     assert b"groupAvailabilityConfig" in resp.content
+    assert reverse("group_availability_export_xlsx").encode() in resp.content
+    assert b'id="gaExport"' in resp.content
 
 
 def test_compute_endpoint_returns_grids():
@@ -518,3 +549,104 @@ def test_compute_endpoint_parses_freetext_ids():
     body = resp.json()
     assert body["requested_count"] == 2  # deduped
     assert body["grids"]["lecture"]["cells"]["TUE"][1]["busy_count"] == 2
+
+
+def test_export_endpoint_returns_all_styled_grids_and_truthful_coverage():
+    Student.objects.create(
+        student_id=9001,
+        name="=2+2",
+        program="CS",
+        section="M",
+    )
+    section = _make_global_section("CS901", "M2", [("THU", "18:20", "18:30")])
+    _enrol(9001, section, cohort="M", source="scraper_timetable")
+    unknown_id = 9099
+    client = _login_client()
+
+    response = client.post(
+        reverse("group_availability_export_xlsx"),
+        data=json.dumps({"student_ids": [9001, unknown_id]}),
+        content_type="application/json",
+    )
+
+    assert response.status_code == 200
+    assert response["Content-Type"] == (
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+    assert "group_availability_" in response["Content-Disposition"]
+    assert response["Content-Disposition"].endswith('.xlsx"')
+
+    workbook = load_workbook(BytesIO(response.content))
+    assert workbook.sheetnames == [
+        "Summary",
+        "Students",
+        "Lecture 75m",
+        "Lab 100m",
+        "Full Day 10m",
+    ]
+
+    summary = workbook["Summary"]
+    assert summary["B4"].value == 2
+    assert summary["D4"].value == 1
+    assert summary["F4"].value == 1
+    assert summary["D5"].value == "Incomplete"
+    assert str(unknown_id) in summary["B9"].value
+
+    students = workbook["Students"]
+    assert students["B5"].value == "'=2+2"
+    assert students["B5"].data_type == "s"
+    assert students["D6"].value == "Not found"
+
+    expected_final_slots = {
+        "Lecture 75m": "17:15–18:30",
+        "Lab 100m": "16:50–18:30",
+        "Full Day 10m": "18:20–18:30",
+    }
+    for sheet_name, final_slot in expected_final_slots.items():
+        sheet = workbook[sheet_name]
+        assert sheet.cell(row=sheet.max_row, column=1).value == final_slot
+        assert sheet.cell(row=sheet.max_row, column=6).value == 1  # Thursday
+
+    timeline = workbook["Full Day 10m"]
+    timeline_slots = [timeline.cell(row=row, column=1).value for row in range(6, 63)]
+    assert len(timeline_slots) == 57
+    assert timeline_slots[18:21] == ["12:00–12:10", "12:10–12:20", "12:20–12:30"]
+
+
+def test_export_endpoint_marks_grid_unknown_when_no_schedule_resolves():
+    client = _login_client()
+    response = client.post(
+        reverse("group_availability_export_xlsx"),
+        data=json.dumps({"student_ids": [9199]}),
+        content_type="application/json",
+    )
+
+    assert response.status_code == 200
+    workbook = load_workbook(BytesIO(response.content))
+    assert workbook["Summary"]["D5"].value == "Incomplete"
+    assert workbook["Lecture 75m"]["B6"].value == "?"
+    assert workbook["Lab 100m"]["B6"].value == "?"
+    assert workbook["Full Day 10m"]["B6"].value == "?"
+
+
+def test_export_endpoint_validates_method_ids_and_role():
+    client = _login_client()
+    assert client.get(reverse("group_availability_export_xlsx")).status_code == 405
+    empty = client.post(
+        reverse("group_availability_export_xlsx"),
+        data=json.dumps({"student_ids": []}),
+        content_type="application/json",
+    )
+    assert empty.status_code == 400
+
+    student_user = get_user_model().objects.create_user(username="ga_student", password="x")
+    student_group, _ = Group.objects.get_or_create(name=ROLE_STUDENT)
+    student_user.groups.add(student_group)
+    student_client = Client()
+    student_client.force_login(student_user)
+    denied = student_client.post(
+        reverse("group_availability_export_xlsx"),
+        data=json.dumps({"student_ids": [9001]}),
+        content_type="application/json",
+    )
+    assert denied.status_code == 403

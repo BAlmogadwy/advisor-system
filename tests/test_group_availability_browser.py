@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import os
 import threading
+from io import BytesIO
 from unittest import mock
 
 # Playwright's synchronous API runs through a greenlet.  Fixture creation is
@@ -23,6 +24,7 @@ from django.contrib.auth.models import Group
 from django.contrib.staticfiles.testing import StaticLiveServerTestCase
 from django.test import Client
 from django.urls import reverse
+from openpyxl import load_workbook
 
 from core.models import Student, StudentTermSection, TermSection, TermSectionMeeting
 from core.services.rbac import ROLE_ADVISOR
@@ -194,6 +196,24 @@ class GroupAvailabilityBrowserTests(StaticLiveServerTestCase):
         assert loaded.locator(".ga-stat-num").inner_text() == "2/4"
         assert unresolved.locator(".ga-stat-num").inner_text() == "2"
 
+        summary_cards = page.locator("#gaSummaryStats .ga-stat")
+        assert summary_cards.count() == 5
+        card_boxes = summary_cards.evaluate_all(
+            "nodes => nodes.map(node => ({ x: node.offsetLeft, y: node.offsetTop, width: node.offsetWidth }))"
+        )
+        assert card_boxes[0]["y"] == card_boxes[1]["y"]
+        assert card_boxes[2]["y"] > card_boxes[0]["y"]
+        assert card_boxes[4]["width"] > card_boxes[0]["width"] * 1.8
+        for index in range(summary_cards.count()):
+            overflow = (
+                summary_cards.nth(index)
+                .locator(".ga-stat-lbl")
+                .evaluate(
+                    "node => ({ clientWidth: node.clientWidth, scrollWidth: node.scrollWidth })"
+                )
+            )
+            assert overflow["scrollWidth"] <= overflow["clientWidth"] + 1
+
         status = page.locator("#gaStatus").inner_text()
         assert "calculated from 2 of 4 registered schedules" in status
         assert "2 unresolved flagged" in status
@@ -213,18 +233,33 @@ class GroupAvailabilityBrowserTests(StaticLiveServerTestCase):
         assert "Working" not in page.locator(".ga-shell").inner_text()
         assert page.locator("#gaLegendFree").inner_text() == "Free"
 
+        lecture_rows = page.locator("#gaPanelLecture tbody tr")
+        assert lecture_rows.count() == 8
+        assert lecture_rows.nth(7).locator(".ga-grid-slotlabel").inner_text().splitlines() == [
+            "17:15",
+            "18:30",
+        ]
+
+        page.locator("#gaTabLab").click()
+        lab_rows = page.locator("#gaPanelLab tbody tr")
+        assert lab_rows.count() == 6
+        assert lab_rows.nth(5).locator(".ga-grid-slotlabel").inner_text().splitlines() == [
+            "16:50",
+            "18:30",
+        ]
+
         page.locator("#gaTabTimeline").click()
         timeline = page.locator("#gaPanelTimeline")
         expect(timeline).to_be_visible()
         rows = timeline.locator("tbody tr")
-        assert rows.count() == 48
+        assert rows.count() == 57
         assert rows.nth(0).locator(".ga-grid-slotlabel").inner_text().splitlines() == [
             "09:00",
             "09:10",
         ]
-        assert rows.nth(47).locator(".ga-grid-slotlabel").inner_text().splitlines() == [
-            "16:50",
-            "17:00",
+        assert rows.nth(56).locator(".ga-grid-slotlabel").inner_text().splitlines() == [
+            "18:20",
+            "18:30",
         ]
 
         noon = rows.nth(18)  # 12:00–12:10; noon is never omitted.
@@ -265,7 +300,10 @@ class GroupAvailabilityBrowserTests(StaticLiveServerTestCase):
     def test_editing_ids_immediately_hides_old_results_and_details(self):
         self._seed_one_registered_student()
         page = self._page()
+        export_button = page.locator("#gaExport")
+        expect(export_button).to_be_disabled()
         self._compute(page, [REGISTERED_ID])
+        expect(export_button).to_be_enabled()
 
         conflict = page.locator('#gaPanelLecture .ga-cell-button[aria-label^="Monday 09:00"]')
         conflict.click()
@@ -273,6 +311,7 @@ class GroupAvailabilityBrowserTests(StaticLiveServerTestCase):
 
         page.locator("#gaIds").fill(f"{REGISTERED_ID}\n{UNKNOWN_ID}")
 
+        expect(export_button).to_be_disabled()
         expect(page.locator("#gaSummary")).to_be_hidden()
         expect(page.locator("#gaDetail")).to_be_hidden()
         assert page.locator(".ga-grid-wrap table.ga-grid").count() == 0
@@ -309,12 +348,14 @@ class GroupAvailabilityBrowserTests(StaticLiveServerTestCase):
             ):
                 page.locator("#gaIds").fill(str(REGISTERED_ID))
                 page.locator("#gaCompute").click()
+                expect(page.locator("#gaExport")).to_be_disabled()
                 assert started.wait(timeout=5), (
                     "the live endpoint never entered the delayed service"
                 )
 
                 page.locator("#gaClear").click()
                 assert page.locator("#gaIds").input_value() == ""
+                expect(page.locator("#gaExport")).to_be_disabled()
                 expect(page.locator("#gaSummary")).to_be_hidden()
 
                 release.set()
@@ -329,6 +370,97 @@ class GroupAvailabilityBrowserTests(StaticLiveServerTestCase):
         assert page.locator(".ga-grid-wrap table.ga-grid").count() == 0
         expect(page.locator("#gaSummary")).to_be_hidden()
         expect(page.locator("#gaCompute")).to_be_enabled()
+
+    # ── XLSX export always includes every grid, independent of active tab ──
+    def test_xlsx_export_downloads_all_grids_and_invalidates_on_edit(self):
+        self._seed_one_registered_student()
+        page = self._page()
+        export_button = page.locator("#gaExport")
+        expect(export_button).to_be_disabled()
+        self._compute(page, [REGISTERED_ID])
+        expect(export_button).to_be_enabled()
+
+        page.locator("#gaTabTimeline").click()
+        with page.expect_download(timeout=15_000) as download_info:
+            export_button.click()
+        download = download_info.value
+
+        assert download.suggested_filename.startswith("group_availability_")
+        assert download.suggested_filename.endswith(".xlsx")
+        workbook = load_workbook(BytesIO(download.path().read_bytes()), read_only=True)
+        assert workbook.sheetnames == [
+            "Summary",
+            "Students",
+            "Lecture 75m",
+            "Lab 100m",
+            "Full Day 10m",
+        ]
+        assert (
+            workbook["Lecture 75m"].cell(row=workbook["Lecture 75m"].max_row, column=1).value
+            == "17:15–18:30"
+        )
+        assert (
+            workbook["Lab 100m"].cell(row=workbook["Lab 100m"].max_row, column=1).value
+            == "16:50–18:30"
+        )
+        assert (
+            workbook["Full Day 10m"].cell(row=workbook["Full Day 10m"].max_row, column=1).value
+            == "18:20–18:30"
+        )
+        workbook.close()
+
+        expect(export_button).to_be_enabled()
+        assert export_button.get_attribute("aria-busy") == "false"
+        page.locator("#gaIds").fill(f"{REGISTERED_ID}\n{UNKNOWN_ID}")
+        expect(export_button).to_be_disabled()
+
+    def test_editing_ids_during_xlsx_export_prevents_stale_download(self):
+        self._seed_one_registered_student()
+        page = self._page()
+        self._compute(page, [REGISTERED_ID])
+        export_button = page.locator("#gaExport")
+        downloads = []
+        page.on("download", lambda download: downloads.append(download))
+
+        from core.services.group_availability_export import build_group_availability_xlsx
+
+        started = threading.Event()
+        release = threading.Event()
+        finished = threading.Event()
+
+        def delayed_export(result):
+            started.set()
+            try:
+                if not release.wait(timeout=8):
+                    raise TimeoutError("browser test did not release delayed XLSX export")
+                return build_group_availability_xlsx(result)
+            finally:
+                finished.set()
+
+        try:
+            with mock.patch(
+                "core.services.group_availability_export.build_group_availability_xlsx",
+                side_effect=delayed_export,
+            ):
+                export_button.click()
+                assert started.wait(timeout=5), "the live endpoint never entered XLSX export"
+                expect(export_button).to_be_disabled()
+                assert export_button.get_attribute("aria-busy") == "true"
+                assert export_button.inner_text() == "Exporting…"
+
+                page.locator("#gaIds").fill(f"{REGISTERED_ID}\n{UNKNOWN_ID}")
+                expect(export_button).to_be_disabled()
+                expect(page.locator("#gaSummary")).to_be_hidden()
+
+                release.set()
+                assert finished.wait(timeout=5), "the delayed XLSX export did not finish"
+                page.wait_for_timeout(350)
+        finally:
+            release.set()
+
+        assert downloads == []
+        expect(export_button).to_be_disabled()
+        assert export_button.get_attribute("aria-busy") == "false"
 
     # ── Keyboard tabs, labelled conflicts, and focus restoration ──
     def test_tabs_and_busy_details_are_keyboard_and_screen_reader_operable(self):

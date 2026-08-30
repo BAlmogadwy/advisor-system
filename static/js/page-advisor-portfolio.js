@@ -17,6 +17,12 @@ let rosterTotal = 0;
 let batchSelected = new Set();
 let selectedSid = null;
 let advisorLoadGeneration = 0;
+let graduationRequestController = null;
+let graduationRequestGeneration = 0;
+let graduationBaseline = 'registered_timetable';
+let graduationGraphMode = 'term';
+let graduationRenderedGraph = null;
+let graduationBandLabels = {};
 
 const IS_AR = document.documentElement.lang === 'ar';
 
@@ -92,6 +98,66 @@ const T = {
   openPlanner:        IS_AR ? 'فتح مخطط الجدول'                      : 'Open Timetable Builder',
   copyId:             IS_AR ? 'نسخ المعرّف'                          : 'Copy ID',
   copyHpCourses:      IS_AR ? 'نسخ المقررات ذات الأولوية'            : 'Copy HP courses',
+
+  // ── Graduation plan panel ──
+  graduationPlan:     IS_AR ? 'خطة إكمال التخرج'                    : 'Graduation Plan',
+  graduationPanelTitle: IS_AR ? 'مسار إكمال الخطة الدراسية'          : 'Degree-plan completion path',
+  graduationTabsLabel: IS_AR ? 'مصدر مقررات فصل البداية'             : 'Starting-term course source',
+  registeredBaseline: IS_AR ? 'المسجّل'                              : 'Registered',
+  recommendedBaseline: IS_AR ? 'الموصى به'                           : 'Recommended',
+  registeredExplanation: IS_AR
+    ? 'يبدأ التقدير من جدول الطالب المسجّل فعليًا.'
+    : "Starts from the student's actual registered timetable.",
+  recommendedExplanation: IS_AR
+    ? 'يبدأ التقدير من مقررات فصل البداية التي يوصي بها النظام.'
+    : 'Starts from the courses the system recommends for the starting term.',
+  graduationAdvisory: IS_AR
+    ? 'تقدير إرشادي للانتهاء من متطلبات الخطة، وليس قرار تخرج رسميًا. لا يغيّر أي سجل.'
+    : 'Advisory estimate for completing the degree plan, not an official graduation decision. Nothing is saved.',
+  loadingGraduation:  IS_AR ? 'جارٍ حساب مسار إكمال الخطة…'          : 'Calculating the degree-plan path…',
+  failedGraduation:   IS_AR ? 'تعذّر تحميل خطة إكمال التخرج.'        : 'Could not load the graduation plan.',
+  retry:              IS_AR ? 'إعادة المحاولة'                       : 'Retry',
+  noGraduationData:   IS_AR ? 'لا تتوفر بيانات خطة دراسية لهذا الطالب.' : 'No degree-plan data is available for this student.',
+  progressSummary:    IS_AR ? 'ملخص التقدم'                          : 'Progress summary',
+  program:            IS_AR ? 'البرنامج'                             : 'Program',
+  planProgress:       IS_AR ? 'مقررات الخطة المجتازة'                : 'Plan courses completed',
+  coursesRemaining:   IS_AR ? 'المقررات المتبقية'                    : 'Courses remaining',
+  creditsRemaining:   IS_AR ? 'الساعات المتبقية'                    : 'Credits remaining',
+  projectedTerms:     IS_AR ? 'الفصول التقديرية'                    : 'Projected terms',
+  lowerBound:         IS_AR ? 'الحد الأدنى'                          : 'Lower bound',
+  exactEstimate:      IS_AR ? 'تقدير مكتمل'                          : 'Complete estimate',
+  incompleteEstimate: IS_AR ? 'تعذّر بناء تقدير كامل'               : 'Full estimate unavailable',
+  planningBaseline:   IS_AR ? 'فصل البداية ومصدره'                   : 'Starting term and provenance',
+  registeredProvenance: IS_AR ? 'الجدول المسجّل فعليًا'              : 'Actual registered timetable',
+  recommendedProvenance: IS_AR ? 'توصيات النظام لفصل البداية'        : 'System recommendations for the starting term',
+  planningTerm:       IS_AR ? 'فصل البداية'                          : 'Starting term',
+  baselineCredits:    IS_AR ? 'ساعات فصل البداية'                    : 'Starting-term credits',
+  baselineCourses:    IS_AR ? 'مقررات فصل البداية المفترض اجتيازها' : 'Starting-term courses assumed passed',
+  noBaselineCourses:  IS_AR ? 'لم تُرجع الخدمة مقررات مفصّلة لفصل البداية.' : 'No detailed starting-term courses were returned.',
+  fullTermPlan:       IS_AR ? 'الخطة الكاملة حسب الفصل'              : 'Full term-by-term plan',
+  sequence:           IS_AR ? 'الترتيب'                              : 'Step',
+  academicTerm:       IS_AR ? 'الفصل الأكاديمي'                      : 'Academic term',
+  termState:          IS_AR ? 'حالة الفصل'                           : 'Term state',
+  plannedCourses:     IS_AR ? 'المقررات'                             : 'Courses',
+  termCredits:        IS_AR ? 'الساعات'                              : 'Credits',
+  planned:            IS_AR ? 'مقررات مخططة'                         : 'Courses planned',
+  waiting:            IS_AR ? 'فصل انتظار'                           : 'Waiting term',
+  waitingForPrereqs:  IS_AR ? 'لا مقررات — انتظار إتاحة المتطلبات السابقة' : 'No courses — waiting for prerequisites to unlock',
+  noFutureTerms:      IS_AR ? 'لا توجد فصول مستقبلية مطلوبة في هذا السيناريو.' : 'No future terms are needed in this scenario.',
+  unresolvedBlockers: IS_AR ? 'العوائق غير المحلولة'                 : 'Unresolved blockers',
+  noBlockers:         IS_AR ? 'لا توجد عوائق غير محلولة.'            : 'No unresolved blockers.',
+  blockerDetailsMissing: IS_AR ? 'لم تُرجع الخدمة تفاصيل للعوائق المتبقية.' : 'No details were returned for the remaining blockers.',
+  missingPrereqs:     IS_AR ? 'متطلبات سابقة ناقصة'                  : 'Missing prerequisites',
+  creditGate:         IS_AR ? 'شرط الساعات'                          : 'Credit-hour gate',
+  required:           IS_AR ? 'المطلوب'                              : 'required',
+  effective:          IS_AR ? 'المحتسب'                              : 'effective',
+  remaining:          IS_AR ? 'المتبقي'                              : 'remaining',
+  prerequisiteTree:   IS_AR ? 'شجرة المتطلبات السابقة'              : 'Prerequisite tree',
+  byProjectedTerm:    IS_AR ? 'حسب الفصل التقديري'                  : 'By projected term',
+  byPrerequisiteChain: IS_AR ? 'حسب سلسلة المتطلبات'                 : 'By prerequisite chain',
+  noPrerequisiteTree: IS_AR ? 'لا تتوفر خريطة متطلبات لهذا السيناريو.' : 'No prerequisite map is available for this scenario.',
+  graphLabel:         IS_AR ? 'خريطة تفاعلية لمسار إكمال الخطة'     : 'Interactive map of the degree-plan completion path',
+  readOnly:           IS_AR ? 'للقراءة فقط'                          : 'Read only',
 
   // ── HP table headers ──
   course:             IS_AR ? 'المقرر'                               : 'Course',
@@ -618,6 +684,11 @@ function openDrawer(sid) {
   const s = allStudents.find(x => String(x.student_id) === String(sid));
   if (!s) return;
 
+  cancelGraduationRequest();
+  graduationBaseline = 'registered_timetable';
+  graduationGraphMode = 'term';
+  graduationRenderedGraph = null;
+  graduationBandLabels = {};
   selectedSid = sid;
   // Highlight row
   document.querySelectorAll('#apTable tbody tr.cr-row').forEach(r => r.classList.toggle('selected', r.dataset.sid == sid));
@@ -638,6 +709,7 @@ function openDrawer(sid) {
     : `<span style="color:var(--muted-light);font-size:0.82rem;">${T.noHpMissing}</span>`;
 
   const plannerHref = `/planner/?student=${encodeURIComponent(sid)}`;
+  const graduationHref = `/advisor-portfolio/students/${encodeURIComponent(sid)}/graduation/`;
 
   q('apDrawerWrap').innerHTML = `
     <div class="ap-drawer-backdrop" onclick="closeDrawer()"></div>
@@ -674,9 +746,15 @@ function openDrawer(sid) {
 
       <div class="ap-drawer-actions">
         <a href="${plannerHref}" target="_blank" class="btn btn-sm btn-outline-primary"><span class="i i-xs" aria-hidden="true" style="vertical-align:-2px"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></span> ${T.openPlanner}</a>
+        <a class="btn btn-sm btn-outline-primary" id="apGraduationAction"
+           href="${graduationHref}" target="_blank" rel="noopener">
+          <span class="i i-xs" aria-hidden="true" style="vertical-align:-2px"><svg viewBox="0 0 24 24"><path d="M3 3h18v18H3z"/><path d="M7 15l3-3 2 2 5-6"/></svg></span>
+          ${T.graduationPlan}
+        </a>
         <button class="btn btn-sm btn-export" onclick="copyText('${sid}', this)" title="${IS_AR ? 'نسخ معرّف الطالب إلى الحافظة' : 'Copy student ID to clipboard'}">${T.copyId}</button>
         ${hpList.length ? `<button class="btn btn-sm btn-export" onclick="copyHpCourses('${sid}', this)" title="${IS_AR ? 'نسخ المقررات ذات الأولوية إلى الحافظة' : 'Copy high-priority missing courses to clipboard'}">${T.copyHpCourses}</button>` : ''}
       </div>
+
     </div>`;
 
   // Focus trap + Escape key
@@ -695,6 +773,9 @@ function closeDrawer() {
   const wrap = q('apDrawerWrap');
   const drawer = wrap.querySelector('.ap-drawer');
   const backdrop = wrap.querySelector('.ap-drawer-backdrop');
+  cancelGraduationRequest();
+  graduationRenderedGraph = null;
+  graduationBandLabels = {};
   if (drawer) drawer.classList.add('closing');
   if (backdrop) backdrop.classList.add('closing');
   setTimeout(() => {
@@ -717,6 +798,581 @@ function drawerKeyHandler(e) {
   const first = els[0], last = els[els.length - 1];
   if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
   else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   GRADUATION PLAN — read-only, per-student drawer panel
+   ═══════════════════════════════════════════════════════════════ */
+function cancelGraduationRequest() {
+  graduationRequestGeneration += 1;
+  if (graduationRequestController) graduationRequestController.abort();
+  graduationRequestController = null;
+}
+
+function openGraduationPlan(sid) {
+  if (String(selectedSid) !== String(sid)) return;
+  const panel = q('apGraduationPanel');
+  const action = q('apGraduationAction');
+  const drawer = q('apDrawerWrap')?.querySelector('.ap-drawer');
+  if (!panel || !action || !drawer) return;
+
+  if (!panel.hidden) {
+    q(graduationBaseline === 'registered_timetable' ? 'apGradRegisteredTab' : 'apGradRecommendedTab')?.focus();
+    return;
+  }
+
+  panel.hidden = false;
+  action.setAttribute('aria-expanded', 'true');
+  drawer.classList.add('ap-drawer--graduation');
+  graduationBaseline = 'registered_timetable';
+  selectGraduationBaseline('registered_timetable', { force: true, focus: false });
+  requestAnimationFrame(() => q('apGradRegisteredTab')?.focus());
+}
+
+function graduationBaselineKeydown(event) {
+  const tabs = Array.from(q('apGraduationPanel')?.querySelectorAll('[role="tab"]') || []);
+  if (!tabs.length || !tabs.includes(event.target)) return;
+  const current = tabs.indexOf(event.target);
+  let next = null;
+  if (event.key === 'ArrowRight' || event.key === 'ArrowDown') next = (current + 1) % tabs.length;
+  else if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') next = (current - 1 + tabs.length) % tabs.length;
+  else if (event.key === 'Home') next = 0;
+  else if (event.key === 'End') next = tabs.length - 1;
+  if (next === null) return;
+  event.preventDefault();
+  const baseline = tabs[next].dataset.baseline;
+  selectGraduationBaseline(baseline, { focus: true });
+}
+
+function selectGraduationBaseline(mode, options = {}) {
+  if (!['registered_timetable', 'recommended_current_term'].includes(mode)) return;
+  const panel = q('apGraduationPanel');
+  const content = q('apGraduationContent');
+  if (!panel || !content || panel.hidden) return;
+
+  graduationBaseline = mode;
+  const activeTab = mode === 'registered_timetable' ? q('apGradRegisteredTab') : q('apGradRecommendedTab');
+  panel.querySelectorAll('[role="tab"]').forEach(tab => {
+    const active = tab.dataset.baseline === mode;
+    tab.classList.toggle('is-active', active);
+    tab.setAttribute('aria-selected', String(active));
+    tab.tabIndex = active ? 0 : -1;
+  });
+  q('apGraduationTabPanel')?.setAttribute('aria-labelledby', activeTab?.id || 'apGradRegisteredTab');
+  if (options.focus) activeTab?.focus();
+
+  const needsLoad = options.force || content.dataset.baseline !== mode;
+  if (needsLoad) loadGraduationPlan(String(selectedSid), mode);
+}
+
+function retryGraduationPlan() {
+  if (selectedSid == null) return;
+  loadGraduationPlan(String(selectedSid), graduationBaseline);
+}
+
+function graduationApiMessage(payload, fallback) {
+  if (!payload || typeof payload !== 'object') return fallback;
+  const direct = payload.error || payload.message || payload.detail;
+  if (typeof direct === 'string' && direct.trim()) return direct.trim();
+  if (direct && typeof direct === 'object' && typeof direct.message === 'string') return direct.message;
+  return fallback;
+}
+
+function unpackGraduationPayload(payload) {
+  if (!payload || typeof payload !== 'object') return { report: null, presentation: {} };
+  const containers = [payload];
+  if (payload.data && typeof payload.data === 'object') containers.push(payload.data);
+  if (payload.graduation && typeof payload.graduation === 'object') containers.push(payload.graduation);
+
+  let report = null;
+  const reportKeys = ['report', 'graduation_report', 'graduation'];
+  containers.some(container => {
+    for (const key of reportKeys) {
+      const candidate = container[key];
+      if (candidate && typeof candidate === 'object' && !Array.isArray(candidate)) {
+        if ('term_plan' in candidate || 'planning_baseline_kind' in candidate || 'plan_courses_total' in candidate) {
+          report = candidate;
+          return true;
+        }
+      }
+    }
+    if ('term_plan' in container || 'planning_baseline_kind' in container || 'plan_courses_total' in container) {
+      report = container;
+      return true;
+    }
+    return false;
+  });
+
+  let presentation = {};
+  for (const container of containers) {
+    const candidate = container.presentation || container.graduation_presentation;
+    if (candidate && typeof candidate === 'object' && !Array.isArray(candidate)) {
+      presentation = candidate;
+      break;
+    }
+  }
+  if (!Object.keys(presentation).length && report?.presentation && typeof report.presentation === 'object') {
+    presentation = report.presentation;
+  }
+  return { report, presentation };
+}
+
+function renderGraduationState(kind, message = '') {
+  const content = q('apGraduationContent');
+  if (!content) return;
+  graduationRenderedGraph = null;
+  graduationBandLabels = {};
+  if (kind === 'loading') {
+    content.innerHTML = `<div class="ap-grad-state ap-grad-state-loading" role="status">
+      <span class="ap-grad-spinner" aria-hidden="true"></span><span>${T.loadingGraduation}</span>
+    </div>`;
+    return;
+  }
+  if (kind === 'error') {
+    content.innerHTML = `<div class="ap-grad-state ap-grad-state-error" role="alert">
+      <strong>${T.failedGraduation}</strong>
+      ${message ? `<span>${esc(message)}</span>` : ''}
+      <button type="button" class="ap-grad-retry" onclick="retryGraduationPlan()">${T.retry}</button>
+    </div>`;
+    return;
+  }
+  content.innerHTML = `<div class="ap-grad-state ap-grad-state-empty" role="status">${T.noGraduationData}</div>`;
+}
+
+async function loadGraduationPlan(sid, mode) {
+  const content = q('apGraduationContent');
+  if (!content || String(selectedSid) !== String(sid) || graduationBaseline !== mode) return;
+
+  if (graduationRequestController) graduationRequestController.abort();
+  graduationRequestGeneration += 1;
+  const generation = graduationRequestGeneration;
+  const controller = typeof AbortController === 'function' ? new AbortController() : null;
+  graduationRequestController = controller;
+  content.dataset.baseline = mode;
+  renderGraduationState('loading');
+
+  const endpoint = `/api/advisor-portfolio/students/${encodeURIComponent(sid)}/graduation/?baseline=${encodeURIComponent(mode)}`;
+  try {
+    const options = { headers: { Accept: 'application/json' }, credentials: 'same-origin' };
+    if (controller) options.signal = controller.signal;
+    const response = await fetch(endpoint, options);
+    const payload = response.status === 204 ? null : await response.json().catch(() => ({}));
+    if (
+      generation !== graduationRequestGeneration
+      || String(selectedSid) !== String(sid)
+      || graduationBaseline !== mode
+    ) return;
+    if (payload?.code === 'GRADUATION_REPORT_UNAVAILABLE') {
+      renderGraduationState('empty');
+      return;
+    }
+    if (!response.ok || payload?.ok === false) {
+      throw new Error(graduationApiMessage(payload, `HTTP ${response.status}`));
+    }
+    const { report, presentation } = unpackGraduationPayload(payload);
+    if (!report) {
+      renderGraduationState('empty');
+      return;
+    }
+    renderGraduationReport(report, presentation);
+  } catch (error) {
+    if (error?.name === 'AbortError') return;
+    if (
+      generation !== graduationRequestGeneration
+      || String(selectedSid) !== String(sid)
+      || graduationBaseline !== mode
+    ) return;
+    renderGraduationState('error', error?.message || T.networkFailure);
+  } finally {
+    if (generation === graduationRequestGeneration) graduationRequestController = null;
+  }
+}
+
+function graduationNumber(value) {
+  if (value === null || value === undefined || value === '') return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
+function graduationCourseRows(value) {
+  return Array.isArray(value) ? value.filter(row => row && typeof row === 'object') : [];
+}
+
+function graduationCourseCode(row) {
+  return String(row?.code || row?.course_code || '').trim().toUpperCase();
+}
+
+function renderGraduationCourseList(rows, emptyText) {
+  if (!rows.length) return `<p class="ap-grad-muted">${emptyText}</p>`;
+  return `<ul class="ap-grad-course-list">${rows.map(row => {
+    const code = graduationCourseCode(row) || '—';
+    const name = String(row.name || row.course_name || '').trim();
+    const credits = graduationNumber(row.credits ?? row.credit_hours);
+    return `<li>
+      <bdi class="ap-grad-course-code" dir="ltr">${esc(code)}</bdi>
+      ${name ? `<span class="ap-grad-course-name">${esc(name)}</span>` : ''}
+      ${credits !== null ? `<span class="ap-grad-course-credits">${credits} ${T.termCredits}</span>` : ''}
+    </li>`;
+  }).join('')}</ul>`;
+}
+
+function renderGraduationTermCourses(term) {
+  let rows = graduationCourseRows(term?.courses);
+  if (!rows.length && Array.isArray(term?.course_codes)) {
+    rows = term.course_codes.map(code => ({ code }));
+  }
+  if (!rows.length) return `<span class="ap-grad-wait-text">${T.waitingForPrereqs}</span>`;
+  return `<ul class="ap-grad-term-courses">${rows.map(row => {
+    const code = graduationCourseCode(row) || '—';
+    const name = String(row.name || row.course_name || '').trim();
+    const credits = graduationNumber(row.credits ?? row.credit_hours);
+    return `<li><bdi dir="ltr">${esc(code)}</bdi>${name ? `<span>${esc(name)}</span>` : ''}${credits !== null ? `<small>${credits}</small>` : ''}</li>`;
+  }).join('')}</ul>`;
+}
+
+function renderGraduationTermTable(report) {
+  const terms = Array.isArray(report.term_plan) ? report.term_plan : [];
+  if (!terms.length) return `<div class="ap-grad-state ap-grad-state-empty">${T.noFutureTerms}</div>`;
+  const rows = terms.map((term, index) => {
+    const courses = graduationCourseRows(term?.courses);
+    const codes = Array.isArray(term?.course_codes) ? term.course_codes : [];
+    const waiting = term?.waiting_term === true || (!courses.length && !codes.length);
+    const sequence = graduationNumber(term?.sequence) ?? index + 1;
+    const year = graduationNumber(term?.academic_year);
+    const academicTerm = graduationNumber(term?.term);
+    const credits = graduationNumber(term?.credits) ?? 0;
+    return `<tr class="${waiting ? 'ap-grad-waiting-row' : ''}">
+      <td>${sequence}</td>
+      <td><bdi dir="ltr">${year ?? '—'}/${academicTerm ?? '—'}</bdi></td>
+      <td><span class="ap-grad-term-state ${waiting ? 'is-waiting' : 'is-planned'}">${waiting ? T.waiting : T.planned}</span></td>
+      <td>${renderGraduationTermCourses(term)}</td>
+      <td>${credits}</td>
+    </tr>`;
+  }).join('');
+  return `<div class="ap-grad-table-scroll" role="region" tabindex="0" aria-label="${T.fullTermPlan}">
+    <table class="ap-grad-term-table">
+      <caption class="visually-hidden">${T.fullTermPlan}</caption>
+      <thead><tr>
+        <th scope="col">${T.sequence}</th>
+        <th scope="col">${T.academicTerm}</th>
+        <th scope="col">${T.termState}</th>
+        <th scope="col">${T.plannedCourses}</th>
+        <th scope="col">${T.termCredits}</th>
+      </tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+  </div>`;
+}
+
+function renderGraduationBlockers(report, presentation) {
+  const source = Array.isArray(report.unresolved_requirements)
+    ? report.unresolved_requirements
+    : (Array.isArray(presentation?.unresolved_requirements) ? presentation.unresolved_requirements : []);
+  if (!source.length) {
+    return `<div class="ap-grad-blocker-empty">${report.simulation_completed === false ? T.blockerDetailsMissing : T.noBlockers}</div>`;
+  }
+  return `<ul class="ap-grad-blockers">${source.map(row => {
+    const code = graduationCourseCode(row) || '—';
+    const name = String(row?.name || row?.course_name || '').trim();
+    const prerequisites = Array.isArray(row?.missing_course_prerequisites)
+      ? row.missing_course_prerequisites
+      : (Array.isArray(row?.missing_prerequisites) ? row.missing_prerequisites : []);
+    const gate = row?.credit_hour_gate && typeof row.credit_hour_gate === 'object' ? row.credit_hour_gate : null;
+    const required = graduationNumber(gate?.required);
+    const effective = graduationNumber(gate?.effective_in_scenario ?? gate?.effective);
+    const remaining = graduationNumber(gate?.remaining);
+    const details = [];
+    if (prerequisites.length) {
+      details.push(`${T.missingPrereqs}: ${prerequisites.map(value => esc(String(value).toUpperCase())).join(', ')}`);
+    }
+    if (gate && (required !== null || effective !== null || remaining !== null)) {
+      details.push(`${T.creditGate}: ${T.required} ${required ?? '—'}, ${T.effective} ${effective ?? '—'}, ${T.remaining} ${remaining ?? '—'}`);
+    }
+    return `<li>
+      <div><bdi class="ap-grad-course-code" dir="ltr">${esc(code)}</bdi>${name ? `<span>${esc(name)}</span>` : ''}</div>
+      ${details.length ? `<p>${details.join(' · ')}</p>` : ''}
+    </li>`;
+  }).join('')}</ul>`;
+}
+
+function graduationPresentationGraph(report, presentation) {
+  if (presentation?.graph && typeof presentation.graph === 'object') {
+    return { graph: presentation.graph, labels: presentation.band_labels || {} };
+  }
+  if (report?.graduation_presentation?.graph && typeof report.graduation_presentation.graph === 'object') {
+    return {
+      graph: report.graduation_presentation.graph,
+      labels: report.graduation_presentation.band_labels || {},
+    };
+  }
+  if (report?.scenario_graph && typeof report.scenario_graph === 'object') {
+    return { graph: report.scenario_graph, labels: {} };
+  }
+  return { graph: null, labels: {} };
+}
+
+function normalizeGraduationGraph(source) {
+  if (!source || typeof source !== 'object') return null;
+  const items = (Array.isArray(source.items) ? source.items : []).filter(row => (
+    row && typeof row === 'object' && row.course_code && row.prerequisite_course_code
+  ));
+  const extraNodes = Array.from(new Set((Array.isArray(source.extraNodes) ? source.extraNodes : [])
+    .map(code => String(code || '').trim().toUpperCase()).filter(Boolean)));
+  items.forEach(row => {
+    const course = String(row.course_code || '').trim().toUpperCase();
+    const prerequisite = String(row.prerequisite_course_code || '').trim().toUpperCase();
+    if (course && !extraNodes.includes(course)) extraNodes.push(course);
+    if (prerequisite && !extraNodes.includes(prerequisite)) extraNodes.push(prerequisite);
+  });
+  if (!extraNodes.length) return null;
+
+  const pickMap = (values, transform = value => value) => Object.fromEntries(
+    Object.entries(values && typeof values === 'object' ? values : {})
+      .filter(([code]) => extraNodes.includes(String(code).toUpperCase()))
+      .map(([code, value]) => [String(code).toUpperCase(), transform(value)])
+  );
+  return {
+    items: items.map(row => ({
+      course_code: String(row.course_code).trim().toUpperCase(),
+      prerequisite_course_code: String(row.prerequisite_course_code).trim().toUpperCase(),
+    })),
+    termOf: pickMap(source.termOf, value => {
+      const number = graduationNumber(value);
+      return number === null ? value : number;
+    }),
+    nameOf: pickMap(source.nameOf, value => String(value || '')),
+    statusOf: pickMap(source.statusOf, value => String(value || '').toLowerCase()),
+    extraNodes,
+  };
+}
+
+/* Keep the unfinished path and its immediate completed prerequisites legible.
+   If the plan is already complete, retain the full graph rather than showing an
+   unexplained empty map. */
+function focusGraduationGraph(source) {
+  const graph = normalizeGraduationGraph(source);
+  if (!graph) return null;
+  const kept = new Set(graph.extraNodes.filter(code => graph.statusOf[code] !== 'passed'));
+  if (!kept.size) return graph;
+  graph.items.forEach(edge => {
+    if (kept.has(edge.course_code) && graph.statusOf[edge.prerequisite_course_code] === 'passed') {
+      kept.add(edge.prerequisite_course_code);
+    }
+  });
+  const filterMap = values => Object.fromEntries(Object.entries(values || {}).filter(([code]) => kept.has(code)));
+  return {
+    items: graph.items.filter(edge => kept.has(edge.course_code) && kept.has(edge.prerequisite_course_code)),
+    termOf: filterMap(graph.termOf),
+    nameOf: filterMap(graph.nameOf),
+    statusOf: filterMap(graph.statusOf),
+    extraNodes: Array.from(kept),
+  };
+}
+
+function localizeGraduationBand(value) {
+  const label = String(value ?? '');
+  if (label === 'Completed before the scenario') return IS_AR ? 'مجتاز قبل فصل البداية' : label;
+  if (label.startsWith('Recommended starting term ')) {
+    const term = label.slice('Recommended starting term '.length);
+    return IS_AR ? `مقررات فصل البداية الموصى بها: ${term}` : `Recommended starting-term courses ${term}`;
+  }
+  if (label.startsWith('Registered timetable ')) {
+    const term = label.slice('Registered timetable '.length);
+    return IS_AR ? `الجدول المسجّل لفصل البداية: ${term}` : label;
+  }
+  if (label.startsWith('Planning baseline ')) {
+    const term = label.slice('Planning baseline '.length);
+    return IS_AR ? `فصل البداية: ${term}` : `Starting term ${term}`;
+  }
+  if (label.startsWith('Projected ')) {
+    const term = label.slice('Projected '.length);
+    return IS_AR ? `فصل تقديري: ${term}` : `Projected term ${term}`;
+  }
+  return label;
+}
+
+function graduationBandLabel(number) {
+  const label = graduationBandLabels[String(number)];
+  if (label !== undefined) return localizeGraduationBand(label);
+  return IS_AR ? `الفصل ${number}` : `Term ${number}`;
+}
+
+function graduationGraphStrings() {
+  return {
+    termHeading: graduationBandLabel,
+    pgNoTermBand: IS_AR ? 'خارج الفصول المرتبة' : 'Outside the projected terms',
+    pgGateTip: hours => IS_AR ? `شرط الساعات المعتمدة: ${hours}` : `Credit-hour requirement: ${hours}`,
+    pgInferredTip: IS_AR ? 'موضع تقديري' : 'Position inferred',
+    pgTermTip: graduationBandLabel,
+    pgGate: T.creditGate,
+    pgInferred: IS_AR ? 'موضع تقديري' : 'inferred position',
+    pgFoundation: IS_AR ? 'بداية السلسلة' : 'chain start',
+    pgIntermediate: IS_AR ? 'وسط السلسلة' : 'chain middle',
+    pgTerminal: IS_AR ? 'نهاية السلسلة' : 'chain end',
+    pgHoverHint: IS_AR ? 'مرّر على مقرر لإبراز سلسلته' : 'hover to highlight a chain',
+    pgPassed: IS_AR ? 'مجتاز قبل البداية' : 'completed before the scenario',
+    pgStudying: IS_AR ? 'مسجّل ويُفترض اجتيازه' : 'registered; assumed passed',
+    pgOpen: graduationBaseline === 'recommended_current_term'
+      ? (IS_AR ? 'موصى به أو مخطط' : 'recommended or planned')
+      : (IS_AR ? 'مخطط في السيناريو' : 'planned in the scenario'),
+    pgLocked: IS_AR ? 'غير محلول' : 'unresolved',
+    pgSameTermWarn: count => IS_AR
+      ? `${count} علاقة متطلب داخل الفصل نفسه.`
+      : `${count} prerequisite relation(s) within one projected term.`,
+    pgBackwardWarn: count => IS_AR
+      ? `${count} علاقة يظهر فيها المتطلب بعد المقرر.`
+      : `${count} prerequisite relation(s) scheduled after their course.`,
+  };
+}
+
+function renderGraduationGraphFallback(host) {
+  if (!graduationRenderedGraph) return;
+  const byTerm = new Map();
+  graduationRenderedGraph.extraNodes.forEach(code => {
+    const term = graduationNumber(graduationRenderedGraph.termOf[code]);
+    const key = term === null ? Number.MAX_SAFE_INTEGER : term;
+    if (!byTerm.has(key)) byTerm.set(key, []);
+    byTerm.get(key).push(code);
+  });
+  const prerequisites = {};
+  graduationRenderedGraph.items.forEach(edge => {
+    if (!prerequisites[edge.course_code]) prerequisites[edge.course_code] = [];
+    prerequisites[edge.course_code].push(edge.prerequisite_course_code);
+  });
+  host.innerHTML = `<div class="ap-grad-tree-fallback">${Array.from(byTerm.entries())
+    .sort((a, b) => a[0] - b[0])
+    .map(([term, codes]) => `<section>
+      <h4>${term === Number.MAX_SAFE_INTEGER ? T.prerequisiteTree : graduationBandLabel(term)}</h4>
+      <ul>${codes.sort().map(code => `<li>
+        <bdi dir="ltr">${esc(code)}</bdi>
+        ${prerequisites[code]?.length ? `<span>← ${prerequisites[code].map(item => esc(item)).join(', ')}</span>` : ''}
+      </li>`).join('')}</ul>
+    </section>`).join('')}</div>`;
+}
+
+function drawGraduationGraph() {
+  const host = q('apGraduationGraph');
+  if (!host || !graduationRenderedGraph) return;
+  host.innerHTML = '';
+  host.setAttribute('dir', 'ltr');
+  if (!window.PrereqGraph?.render) {
+    renderGraduationGraphFallback(host);
+    return;
+  }
+  window.PrereqGraph.render(graduationRenderedGraph.items, host, {
+    termOf: graduationRenderedGraph.termOf,
+    nameOf: graduationRenderedGraph.nameOf,
+    statusOf: graduationRenderedGraph.statusOf,
+    extraNodes: graduationRenderedGraph.extraNodes,
+    mode: graduationGraphMode,
+    t: graduationGraphStrings(),
+  });
+}
+
+function setGraduationGraphMode(mode) {
+  if (!['term', 'depth'].includes(mode) || !graduationRenderedGraph) return;
+  graduationGraphMode = mode;
+  document.querySelectorAll('#apGraduationGraphModes [data-graph-mode]').forEach(button => {
+    const active = button.dataset.graphMode === mode;
+    button.classList.toggle('is-active', active);
+    button.setAttribute('aria-pressed', String(active));
+  });
+  drawGraduationGraph();
+}
+
+function renderGraduationReport(report, presentation) {
+  const content = q('apGraduationContent');
+  if (!content) return;
+
+  const total = graduationNumber(report.plan_courses_total);
+  const passed = graduationNumber(report.plan_courses_passed);
+  const percent = Math.max(0, Math.min(100, graduationNumber(report.percent_courses) ?? 0));
+  const remainingCourses = graduationNumber(report.remaining_courses);
+  const remainingCredits = graduationNumber(report.remaining_credits);
+  const exactTerms = graduationNumber(
+    report.estimated_terms_including_planning_baseline ?? report.estimated_terms_including_current
+  );
+  const lowerTerms = graduationNumber(
+    report.lower_bound_terms_including_planning_baseline ?? report.lower_bound_terms_including_current
+  );
+  const exactAvailable = report.simulation_completed === true && exactTerms !== null;
+  const displayedTerms = exactAvailable ? exactTerms : (lowerTerms !== null ? `≥ ${lowerTerms}` : '—');
+  const baselineKind = report.planning_baseline_kind || graduationBaseline;
+  const baselineCourses = graduationCourseRows(
+    report.planning_baseline_courses_assumed_passed
+      || report.planning_baseline?.courses_assumed_passed
+      || report.current_courses_assumed_passed
+  );
+  const baselineYear = graduationNumber(
+    report.planning_baseline_academic_year ?? report.planning_baseline?.academic_year
+  );
+  const baselineTerm = graduationNumber(report.planning_baseline_term ?? report.planning_baseline?.term);
+  const baselineCredits = graduationNumber(
+    report.planning_baseline_credits ?? report.planning_baseline?.credits ?? report.registered_credits_at_planning_baseline
+  ) ?? 0;
+  const provenanceLabel = baselineKind === 'recommended_current_term'
+    ? T.recommendedProvenance
+    : T.registeredProvenance;
+  const provenanceDescription = baselineKind === 'recommended_current_term'
+    ? T.recommendedExplanation
+    : T.registeredExplanation;
+  const graphData = graduationPresentationGraph(report, presentation);
+  graduationRenderedGraph = focusGraduationGraph(graphData.graph);
+  graduationBandLabels = graphData.labels && typeof graphData.labels === 'object' ? graphData.labels : {};
+  graduationGraphMode = 'term';
+
+  content.innerHTML = `
+    <section class="ap-grad-section" aria-labelledby="apGradSummaryTitle">
+      <h3 id="apGradSummaryTitle">${T.progressSummary}</h3>
+      <div class="ap-grad-summary-grid">
+        <div class="ap-grad-metric"><span>${T.program}</span><strong>${esc(report.program || '—')}</strong></div>
+        <div class="ap-grad-metric"><span>${T.planProgress}</span><strong>${passed ?? '—'} / ${total ?? '—'}</strong><small>${percent}%</small></div>
+        <div class="ap-grad-metric"><span>${T.coursesRemaining}</span><strong>${remainingCourses ?? '—'}</strong></div>
+        <div class="ap-grad-metric"><span>${T.creditsRemaining}</span><strong>${remainingCredits ?? '—'}</strong></div>
+        <div class="ap-grad-metric ap-grad-metric-emphasis"><span>${T.projectedTerms}</span><strong>${displayedTerms}</strong><small>${exactAvailable ? T.exactEstimate : T.incompleteEstimate}</small></div>
+      </div>
+      <div class="ap-grad-progress" role="progressbar" aria-label="${T.planProgress}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${percent}">
+        <span style="width:${percent}%"></span>
+      </div>
+    </section>
+
+    <section class="ap-grad-section" aria-labelledby="apGradBaselineTitle">
+      <h3 id="apGradBaselineTitle">${T.planningBaseline}</h3>
+      <div class="ap-grad-provenance">
+        <div><strong>${provenanceLabel}</strong><p>${provenanceDescription}</p></div>
+        <dl>
+          <div><dt>${T.planningTerm}</dt><dd><bdi dir="ltr">${baselineYear ?? '—'}/${baselineTerm ?? '—'}</bdi></dd></div>
+          <div><dt>${T.baselineCredits}</dt><dd>${baselineCredits}</dd></div>
+        </dl>
+      </div>
+      <h4>${T.baselineCourses}</h4>
+      ${renderGraduationCourseList(baselineCourses, T.noBaselineCourses)}
+    </section>
+
+    <section class="ap-grad-section" aria-labelledby="apGradTermsTitle">
+      <h3 id="apGradTermsTitle">${T.fullTermPlan}</h3>
+      ${renderGraduationTermTable(report)}
+    </section>
+
+    <section class="ap-grad-section" aria-labelledby="apGradBlockersTitle">
+      <h3 id="apGradBlockersTitle">${T.unresolvedBlockers}</h3>
+      ${renderGraduationBlockers(report, presentation)}
+    </section>
+
+    <section class="ap-grad-section" aria-labelledby="apGradGraphTitle">
+      <div class="ap-grad-graph-head">
+        <h3 id="apGradGraphTitle">${T.prerequisiteTree}</h3>
+        ${graduationRenderedGraph ? `<div class="ap-grad-graph-modes" id="apGraduationGraphModes" role="group" aria-label="${T.prerequisiteTree}">
+          <button type="button" class="is-active" data-graph-mode="term" aria-pressed="true" onclick="setGraduationGraphMode('term')">${T.byProjectedTerm}</button>
+          <button type="button" data-graph-mode="depth" aria-pressed="false" onclick="setGraduationGraphMode('depth')">${T.byPrerequisiteChain}</button>
+        </div>` : ''}
+      </div>
+      ${graduationRenderedGraph
+        ? `<div class="ap-grad-graph-scroll" role="region" tabindex="0" aria-label="${T.graphLabel}"><div class="ap-grad-graph" id="apGraduationGraph" role="img" aria-label="${T.graphLabel}"></div></div>`
+        : `<div class="ap-grad-state ap-grad-state-empty">${T.noPrerequisiteTree}</div>`}
+    </section>`;
+
+  if (graduationRenderedGraph) requestAnimationFrame(drawGraduationGraph);
 }
 
 function copyHpCourses(sid, triggerBtn) {
@@ -828,6 +1484,8 @@ function updateCsvLink() {
    KEYBOARD NAVIGATION — Fix #13
    ═══════════════════════════════════════════════════════════════ */
 document.addEventListener('keydown', e => {
+  // Nested widgets (notably the graduation baseline tabs) own their arrow keys.
+  if (e.defaultPrevented) return;
   // Ignore if typing in input
   if (['INPUT','TEXTAREA','SELECT'].includes(e.target.tagName)) return;
 

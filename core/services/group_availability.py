@@ -52,7 +52,7 @@ _OCCUPANT_CAP = 80
 
 
 def _timeline_slots() -> list[dict[str, str]]:
-    """Return an uninterrupted 10-minute grid from 09:00 through 17:00."""
+    """Return an uninterrupted 10-minute grid from 09:00 through 18:30."""
 
     def hhmm(total_minutes: int) -> str:
         return f"{total_minutes // 60:02d}:{total_minutes % 60:02d}"
@@ -63,11 +63,24 @@ def _timeline_slots() -> list[dict[str, str]]:
             "start": hhmm(start),
             "end": hhmm(start + 10),
         }
-        for start in range(9 * 60, 17 * 60, 10)
+        for start in range(9 * 60, 18 * 60 + 30, 10)
     ]
 
 
 TIMELINE_SLOTS = _timeline_slots()
+
+# Group Availability deliberately extends the curated teaching grids to the
+# requested 18:30 boundary without changing the global automatic-placement
+# defaults. The late lab option is a 100-minute alternative ending at 18:30;
+# like the existing post-lab lecture variants, it may overlap another option.
+GROUP_LECTURE_SLOTS = [
+    *DEFAULT_SLOTS,
+    {"label": "17:15-18:30", "start": "17:15", "end": "18:30"},
+]
+GROUP_LAB_SLOTS = [
+    *placeable_slots(DEFAULT_LAB_SLOTS),
+    {"label": "Lab 6", "start": "16:50", "end": "18:30"},
+]
 
 
 def _section_course_identity(term_section: object) -> str:
@@ -429,12 +442,16 @@ def compute_group_availability(
         "partial_schedule_count": len(partial_schedule),
         "students": students,
         "grids": {
-            "lecture": _build_grid(DEFAULT_SLOTS, meetings_by_student, snapshot_classes_by_student),
+            "lecture": _build_grid(
+                GROUP_LECTURE_SLOTS,
+                meetings_by_student,
+                snapshot_classes_by_student,
+            ),
             # Online-only windows are not lab availability: nothing in the
             # estate is open then, so offering them as free cells would be
             # inviting somebody to book a room that does not exist.
             "lab": _build_grid(
-                placeable_slots(DEFAULT_LAB_SLOTS),
+                GROUP_LAB_SLOTS,
                 meetings_by_student,
                 snapshot_classes_by_student,
             ),

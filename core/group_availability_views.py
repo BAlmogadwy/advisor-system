@@ -46,6 +46,17 @@ def _parse_student_ids(raw: Any) -> list[int]:
     return []
 
 
+def _parse_json_payload(request: HttpRequest) -> tuple[dict[str, Any] | None, JsonResponse | None]:
+    """Parse the shared compute/export JSON envelope."""
+    try:
+        payload = json.loads(request.body.decode("utf-8"))
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return None, JsonResponse({"error": "Invalid JSON body"}, status=400)
+    if not isinstance(payload, dict):
+        return None, JsonResponse({"error": "JSON body must be an object"}, status=400)
+    return payload, None
+
+
 @login_required(login_url="login")
 @role_required(ROLE_ADVISOR)  # registrar tool: never a student (exposes arbitrary students' grids)
 def group_availability_page(request: HttpRequest) -> HttpResponse:
@@ -61,12 +72,10 @@ def group_availability_page(request: HttpRequest) -> HttpResponse:
 @require_POST
 @throttle(max_calls=30, window_seconds=60)
 def group_availability_compute_view(request: HttpRequest) -> JsonResponse:
-    try:
-        payload = json.loads(request.body.decode("utf-8"))
-    except (json.JSONDecodeError, UnicodeDecodeError):
-        return JsonResponse({"error": "Invalid JSON body"}, status=400)
-    if not isinstance(payload, dict):
-        return JsonResponse({"error": "JSON body must be an object"}, status=400)
+    payload, error = _parse_json_payload(request)
+    if error is not None:
+        return error
+    assert payload is not None
 
     ids = _parse_student_ids(payload.get("student_ids"))
     if not ids:
@@ -75,3 +84,41 @@ def group_availability_compute_view(request: HttpRequest) -> JsonResponse:
     # Term is auto-detected (the students' current timetable) — no year/term input.
     result = compute_group_availability(ids)
     return JsonResponse(result)
+
+
+@login_required(login_url="login")
+@role_required(ROLE_ADVISOR)  # same arbitrary-student scope as the workspace
+@require_POST
+@throttle(max_calls=10, window_seconds=60)
+def group_availability_export_xlsx_view(request: HttpRequest) -> HttpResponse:
+    """Recompute the current group and download every availability grid as XLSX."""
+    payload, error = _parse_json_payload(request)
+    if error is not None:
+        return error
+    assert payload is not None
+
+    ids = _parse_student_ids(payload.get("student_ids"))
+    if not ids:
+        return JsonResponse({"error": "Provide at least one numeric student ID."}, status=400)
+
+    # Recompute from authoritative registrar data. Never accept client-supplied
+    # cells: they may be stale or tampered with, while the workbook must match
+    # the same rules as a fresh on-screen calculation.
+    result = compute_group_availability(ids)
+    try:
+        from core.services.group_availability_export import build_group_availability_xlsx
+
+        content = build_group_availability_xlsx(result)
+    except RuntimeError as exc:
+        return JsonResponse({"error": str(exc)}, status=500)
+
+    year = re.sub(r"[^0-9A-Za-z_-]+", "_", str(result.get("academic_year") or "current"))
+    term = re.sub(r"[^0-9A-Za-z_-]+", "_", str(result.get("term") or "current"))
+    filename = f"group_availability_{year}_T{term}.xlsx"
+    response = HttpResponse(
+        content,
+        content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+    response["Content-Disposition"] = f'attachment; filename="{filename}"'
+    response["X-Content-Type-Options"] = "nosniff"
+    return response

@@ -8640,6 +8640,367 @@ html[data-theme="dark"] .btn-export {
   outline: 2px solid var(--brand); outline-offset: 2px;
 }
 
+/* ── Graduation plan presentation ─────────────────────────── */
+.ap-drawer.ap-drawer--graduation {
+  width: min(920px, 96vw);
+  box-sizing: border-box;
+}
+.ap-grad-panel {
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--line);
+}
+.ap-grad-panel[hidden] { display: none; }
+.ap-grad-panel-head,
+.ap-grad-graph-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: .75rem;
+  flex-wrap: wrap;
+}
+.ap-grad-panel-head h2 {
+  margin: 0;
+  color: var(--navy);
+  font-size: 1.1rem;
+}
+.ap-grad-panel-head h2:focus { outline: none; }
+.ap-grad-readonly {
+  padding: .2rem .55rem;
+  border: 1px solid var(--teal-border);
+  border-radius: 999px;
+  background: var(--teal-dim);
+  color: var(--brand-dark);
+  font-size: .68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+}
+.ap-grad-advisory {
+  margin: .4rem 0 .8rem;
+  color: var(--muted);
+  font-size: .78rem;
+  line-height: 1.55;
+}
+.ap-grad-tabs {
+  display: inline-grid;
+  grid-template-columns: repeat(2, minmax(130px, 1fr));
+  max-width: 440px;
+  width: 100%;
+  padding: 3px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--navy) 5%, transparent);
+}
+.ap-grad-tab {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 38px;
+  padding: .45rem .75rem;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font: inherit;
+  font-size: .78rem;
+  font-weight: 700;
+  text-align: center;
+  text-decoration: none;
+}
+.ap-grad-tab:hover { color: var(--ink); }
+.ap-grad-tab.is-active {
+  background: var(--teal);
+  color: #fff;
+  box-shadow: 0 2px 8px rgba(8, 110, 85, .2);
+}
+.ap-grad-tab:focus-visible,
+.ap-grad-retry:focus-visible,
+.ap-grad-graph-modes button:focus-visible,
+.ap-grad-table-scroll:focus-visible,
+.ap-grad-graph-scroll:focus-visible {
+  outline: 2px solid var(--teal);
+  outline-offset: 2px;
+}
+.ap-grad-tabpanel { min-height: 140px; padding-top: .8rem; }
+.ap-grad-state {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: .65rem;
+  min-height: 110px;
+  padding: 1rem;
+  border: 1px dashed var(--line);
+  border-radius: 12px;
+  color: var(--muted);
+  font-size: .82rem;
+  text-align: center;
+}
+.ap-grad-state-error {
+  flex-direction: column;
+  border-color: color-mix(in srgb, var(--danger) 28%, transparent);
+  background: color-mix(in srgb, var(--danger) 6%, transparent);
+  color: var(--danger);
+}
+.ap-grad-retry {
+  padding: .35rem .8rem;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 700;
+}
+.ap-grad-spinner {
+  width: 20px;
+  height: 20px;
+  border: 2px solid var(--teal-border);
+  border-top-color: var(--teal);
+  border-radius: 50%;
+  animation: ap-grad-spin .7s linear infinite;
+}
+@keyframes ap-grad-spin { to { transform: rotate(360deg); } }
+.ap-grad-section {
+  margin-top: .75rem;
+  padding: .85rem;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--glass-bg);
+}
+.ap-grad-section h3 {
+  margin: 0 0 .65rem;
+  color: var(--navy);
+  font-size: .9rem;
+}
+.ap-grad-section h4 {
+  margin: .75rem 0 .4rem;
+  color: var(--t2);
+  font-size: .76rem;
+}
+.ap-grad-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(110px, 1fr));
+  gap: .5rem;
+}
+.ap-grad-metric {
+  min-width: 0;
+  padding: .65rem;
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--navy) 4%, transparent);
+}
+.ap-grad-metric > span {
+  display: block;
+  min-height: 2.2em;
+  color: var(--muted);
+  font-size: .65rem;
+  font-weight: 700;
+}
+.ap-grad-metric strong {
+  display: block;
+  overflow-wrap: anywhere;
+  color: var(--navy);
+  font-size: 1.05rem;
+}
+.ap-grad-metric small { color: var(--muted); font-size: .62rem; }
+.ap-grad-metric-emphasis {
+  background: var(--teal-dim);
+  border: 1px solid var(--teal-border);
+}
+.ap-grad-metric-emphasis strong { color: var(--brand-dark); }
+.ap-grad-progress {
+  height: 5px;
+  margin-top: .65rem;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--line);
+}
+.ap-grad-progress span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--teal);
+}
+.ap-grad-provenance {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: .75rem;
+  padding: .7rem;
+  border-inline-start: 3px solid var(--teal);
+  border-radius: 8px;
+  background: var(--teal-dim);
+}
+.ap-grad-provenance strong { color: var(--brand-dark); font-size: .82rem; }
+.ap-grad-provenance p { margin: .2rem 0 0; color: var(--muted); font-size: .72rem; }
+.ap-grad-provenance dl { display: flex; gap: .8rem; margin: 0; }
+.ap-grad-provenance dl div { min-width: 88px; }
+.ap-grad-provenance dt { color: var(--muted); font-size: .62rem; }
+.ap-grad-provenance dd { margin: .1rem 0 0; color: var(--ink); font-size: .78rem; font-weight: 700; }
+.ap-grad-course-list,
+.ap-grad-term-courses,
+.ap-grad-blockers,
+.ap-grad-tree-fallback ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.ap-grad-course-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: .35rem;
+}
+.ap-grad-course-list li {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: .35rem;
+  align-items: baseline;
+  padding: .45rem .55rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font-size: .73rem;
+}
+.ap-grad-course-code { color: var(--teal-deep); font-family: var(--font-mono); font-weight: 800; }
+.ap-grad-course-name { overflow: hidden; color: var(--ink); text-overflow: ellipsis; white-space: nowrap; }
+.ap-grad-course-credits { color: var(--muted); font-size: .62rem; white-space: nowrap; }
+.ap-grad-muted { margin: 0; color: var(--muted); font-size: .75rem; }
+.ap-grad-table-scroll,
+.ap-grad-graph-scroll {
+  max-width: 100%;
+  overflow-x: auto;
+  overscroll-behavior-inline: contain;
+  border-radius: 9px;
+}
+.ap-grad-term-table {
+  width: 100%;
+  min-width: 710px;
+  border-collapse: collapse;
+  font-size: .73rem;
+}
+.ap-grad-term-table th {
+  padding: .5rem;
+  border-bottom: 1px solid var(--line);
+  background: color-mix(in srgb, var(--navy) 5%, transparent);
+  color: var(--muted);
+  font-size: .62rem;
+  text-align: start;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  white-space: nowrap;
+}
+.ap-grad-term-table td { padding: .55rem; border-bottom: 1px solid var(--line); vertical-align: top; }
+.ap-grad-term-table tbody tr:last-child td { border-bottom: 0; }
+.ap-grad-waiting-row { background: color-mix(in srgb, var(--warning) 6%, transparent); }
+.ap-grad-term-state {
+  display: inline-block;
+  padding: .15rem .45rem;
+  border-radius: 999px;
+  font-size: .62rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.ap-grad-term-state.is-planned { background: var(--teal-dim); color: var(--brand-dark); }
+.ap-grad-term-state.is-waiting { background: color-mix(in srgb, var(--warning) 16%, transparent); color: #9a5b08; }
+.ap-grad-term-courses { display: grid; gap: .25rem; }
+.ap-grad-term-courses li { display: grid; grid-template-columns: auto minmax(120px, 1fr) auto; gap: .45rem; }
+.ap-grad-term-courses bdi { color: var(--teal-deep); font-family: var(--font-mono); font-weight: 750; }
+.ap-grad-term-courses span { color: var(--ink); }
+.ap-grad-term-courses small { color: var(--muted); }
+.ap-grad-wait-text { color: #9a5b08; font-style: italic; }
+.ap-grad-blockers { display: grid; gap: .4rem; }
+.ap-grad-blockers li {
+  padding: .55rem .65rem;
+  border-inline-start: 3px solid var(--warning);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--warning) 7%, transparent);
+}
+.ap-grad-blockers li > div { display: flex; gap: .45rem; align-items: baseline; }
+.ap-grad-blockers li > div span { color: var(--ink); font-size: .75rem; }
+.ap-grad-blockers p { margin: .25rem 0 0; color: var(--muted); font-size: .68rem; }
+.ap-grad-blocker-empty { color: var(--muted); font-size: .76rem; }
+.ap-grad-graph-head h3 { margin-bottom: 0; }
+.ap-grad-graph-modes {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--navy) 5%, transparent);
+}
+.ap-grad-graph-modes button {
+  padding: .3rem .65rem;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font: inherit;
+  font-size: .65rem;
+  font-weight: 700;
+}
+.ap-grad-graph-modes button.is-active { background: var(--teal-dim); color: var(--brand-dark); }
+.ap-grad-graph-scroll { margin-top: .65rem; border: 1px solid var(--line); background: var(--bg); }
+.ap-grad-graph { min-width: 680px; padding: .35rem; }
+.ap-grad-tree-fallback { display: grid; gap: .6rem; padding: .75rem; }
+.ap-grad-tree-fallback section { border-inline-start: 2px solid var(--teal); padding-inline-start: .65rem; }
+.ap-grad-tree-fallback h4 { margin: 0 0 .35rem; }
+.ap-grad-tree-fallback li { display: flex; gap: .5rem; padding: .2rem 0; font-size: .72rem; }
+.ap-grad-tree-fallback bdi { color: var(--teal-deep); font-family: var(--font-mono); font-weight: 750; }
+.ap-grad-tree-fallback span { color: var(--muted); }
+
+/* ── Dedicated adviser graduation workspace ──────────────── */
+.advisor-grad-page,
+.advisor-grad-page #advisorGraduationResults {
+  min-width: 0;
+}
+.advisor-grad-page {
+  display: grid;
+  gap: .75rem;
+}
+.advisor-grad-switcher {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: .9rem;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--glass-bg);
+  box-shadow: var(--shadow-soft);
+}
+.advisor-grad-switcher h2 {
+  margin: 0;
+  color: var(--navy);
+  font-size: .95rem;
+}
+.advisor-grad-switcher p,
+.advisor-grad-map-head p {
+  margin: .2rem 0 0;
+  color: var(--muted);
+  font-size: .75rem;
+}
+.advisor-grad-switcher .ap-grad-tabs { flex: 0 1 440px; }
+.advisor-grad-summary { margin-top: 0; }
+.advisor-grad-error { min-height: 180px; }
+.advisor-grad-error .ap-grad-retry { text-decoration: none; }
+.advisor-grad-map-details > summary {
+  color: var(--navy);
+  cursor: pointer;
+  font-size: .9rem;
+  font-weight: 800;
+}
+.advisor-grad-map-details > summary:focus-visible {
+  outline: 2px solid var(--teal);
+  outline-offset: 4px;
+}
+.advisor-grad-map-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: .75rem;
+  margin-top: .65rem;
+}
+.advisor-grad-page .ap-grad-graph { min-width: 900px; }
+
 /* Row count / pagination: using global .pg-bar, .pg-btn */
 
 /* ── Empty state ─── */
@@ -8652,8 +9013,28 @@ html[data-theme="dark"] .btn-export {
 
 /* Mobile: always show row actions & checkboxes */
 @media (max-width: 768px) {
-  .ap-drawer { width: 100vw; max-width: 100vw; padding: 1.25rem; }
+  .ap-drawer {
+    inset-inline-start: 0;
+    width: auto;
+    max-width: none;
+    box-sizing: border-box;
+    padding: 1.25rem;
+  }
+  .ap-drawer.ap-drawer--graduation { width: auto; max-width: none; }
   .ap-metrics { grid-template-columns: repeat(2, 1fr); }
+  .ap-grad-summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .ap-grad-metric-emphasis { grid-column: 1 / -1; }
+  .ap-grad-provenance { grid-template-columns: 1fr; }
+  .ap-grad-provenance dl { justify-content: space-between; }
+  .ap-grad-course-list { grid-template-columns: 1fr; }
+  .ap-grad-graph-head { align-items: flex-start; }
+  .advisor-grad-switcher,
+  .advisor-grad-map-head {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .advisor-grad-switcher .ap-grad-tabs { flex-basis: auto; max-width: none; }
+  .advisor-grad-page .ap-grad-section { padding: .7rem; }
 }
 
 /* ═══════════════════════════════════════════════════════════
@@ -8734,6 +9115,63 @@ html[data-theme="dark"] .ap-drawer-section {
 html[data-theme="dark"] .ap-drawer-kv-item strong {
   color: #e2e4ec;
 }
+html[data-theme="dark"] .ap-grad-panel {
+  border-top-color: rgba(255,255,255,.08);
+}
+html[data-theme="dark"] .ap-grad-panel-head h2,
+html[data-theme="dark"] .ap-grad-section h3,
+html[data-theme="dark"] .ap-grad-metric strong {
+  color: #e2e4ec;
+}
+html[data-theme="dark"] .ap-grad-readonly,
+html[data-theme="dark"] .ap-grad-metric-emphasis,
+html[data-theme="dark"] .ap-grad-provenance,
+html[data-theme="dark"] .ap-grad-term-state.is-planned,
+html[data-theme="dark"] .ap-grad-graph-modes button.is-active {
+  background: rgba(10,142,110,.14);
+  border-color: rgba(10,142,110,.28);
+  color: #5ee8b7;
+}
+html[data-theme="dark"] .ap-grad-tabs,
+html[data-theme="dark"] .ap-grad-graph-modes,
+html[data-theme="dark"] .ap-grad-metric,
+html[data-theme="dark"] .ap-grad-term-table th {
+  background: rgba(255,255,255,.045);
+}
+html[data-theme="dark"] .ap-grad-tab.is-active {
+  background: #0a8e6e;
+  color: #fff;
+}
+html[data-theme="dark"] .ap-grad-section,
+html[data-theme="dark"] .ap-grad-graph-scroll {
+  background: rgba(255,255,255,.025);
+  border-color: rgba(255,255,255,.07);
+}
+html[data-theme="dark"] .ap-grad-course-list li,
+html[data-theme="dark"] .ap-grad-term-table th,
+html[data-theme="dark"] .ap-grad-term-table td {
+  border-color: rgba(255,255,255,.07);
+}
+html[data-theme="dark"] .ap-grad-course-code,
+html[data-theme="dark"] .ap-grad-term-courses bdi,
+html[data-theme="dark"] .ap-grad-tree-fallback bdi {
+  color: #5ee8b7;
+}
+html[data-theme="dark"] .ap-grad-course-name,
+html[data-theme="dark"] .ap-grad-term-courses span,
+html[data-theme="dark"] .ap-grad-provenance dd,
+html[data-theme="dark"] .ap-grad-blockers li > div span {
+  color: #e2e4ec;
+}
+html[data-theme="dark"] .ap-grad-waiting-row,
+html[data-theme="dark"] .ap-grad-blockers li {
+  background: rgba(245,158,11,.08);
+}
+html[data-theme="dark"] .ap-grad-term-state.is-waiting {
+  background: rgba(245,158,11,.14);
+  color: #f5b760;
+}
+html[data-theme="dark"] .ap-grad-wait-text { color: #f5b760; }
 
 /* Drawer table wrap */
 html[data-theme="dark"] .ap-drawer-section .table-wrap {

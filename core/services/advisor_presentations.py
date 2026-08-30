@@ -12,6 +12,8 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from core.services.student_graduation import MAX_SIMULATED_TERMS
+
 KIND_TIMETABLE = "timetable_proposals"
 KIND_GRADUATION = "graduation_scenario"
 _MAX_ALTERNATIVES = 9
@@ -20,7 +22,6 @@ _MAX_MEETINGS = 80
 _MAX_GRAPH_NODES = 160
 _MAX_GRAPH_EDGES = 360
 _MAX_UNRESOLVED = 80
-_MAX_SIMULATED_TERMS = 18
 
 _FALSE_MEDIA_INCAPABILITY = re.compile(
     r"(?:\b(?:I|we)(?:\s+can(?:not|['’]t)|\s+(?:am|are)\s+(?:not\s+able|unable)\s+to|"
@@ -188,7 +189,7 @@ def _normalise_graduation_presentation(payload: dict[str, Any]) -> dict[str, Any
     status_of: dict[str, str] = {}
     for code in nodes:
         term_value = _optional_number(raw_terms.get(code))
-        if term_value is not None and term_value <= _MAX_SIMULATED_TERMS + 2:
+        if term_value is not None and term_value <= MAX_SIMULATED_TERMS + 2:
             term_of[code] = term_value
         name = _text(raw_names.get(code))
         if name:
@@ -205,7 +206,7 @@ def _normalise_graduation_presentation(payload: dict[str, Any]) -> dict[str, Any
                 band = int(key)
             except (TypeError, ValueError):
                 continue
-            if 0 <= band <= _MAX_SIMULATED_TERMS + 2:
+            if 0 <= band <= MAX_SIMULATED_TERMS + 2:
                 label = _text(value, 80)
                 if label:
                     labels[str(band)] = label
@@ -800,7 +801,7 @@ def graduation_presentation_from_tool_results(
                 )
             ),
         }
-        for planned in _items(result.get("term_plan"), _MAX_SIMULATED_TERMS):
+        for planned in _items(result.get("term_plan"), MAX_SIMULATED_TERMS):
             if not isinstance(planned, dict):
                 continue
             sequence = _number(planned.get("sequence"))

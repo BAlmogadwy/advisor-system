@@ -18,11 +18,14 @@
   };
 
   var REGISTERED_LABEL = t("Registered", "مسجل");
+  var EXPORT_LABEL = t("Export all grids (XLSX)", "تصدير كل الشبكات (XLSX)");
+  var EXPORTING_LABEL = t("Exporting…", "جارٍ التصدير…");
 
   // ── DOM refs ──────────────────────────────────────────────
   var $ids = document.getElementById("gaIds");
   var $compute = document.getElementById("gaCompute");
   var $clear = document.getElementById("gaClear");
+  var $export = document.getElementById("gaExport");
   var $status = document.getElementById("gaStatus");
   var $countHint = document.getElementById("gaCountHint");
   var $summary = document.getElementById("gaSummary");
@@ -49,6 +52,9 @@
     requestVersion: 0,
     controller: null,
     pending: false,
+    exportVersion: 0,
+    exportController: null,
+    exportPending: false,
   };
 
   function parseIds(text) {
@@ -120,6 +126,7 @@
     Object.keys($panels).forEach(function (key) {
       if ($panels[key]) $panels[key].innerHTML = emptyMarkup(message);
     });
+    syncExportControl();
   }
 
   function cancelPendingRequest() {
@@ -128,6 +135,43 @@
     state.controller = null;
     state.pending = false;
     $compute.disabled = false;
+    syncExportControl();
+  }
+
+  function syncExportControl() {
+    if (!$export) return;
+    $export.disabled = !state.result || state.pending || state.exportPending;
+    $export.setAttribute("aria-busy", state.exportPending ? "true" : "false");
+    $export.textContent = state.exportPending ? EXPORTING_LABEL : EXPORT_LABEL;
+  }
+
+  function cancelPendingExport() {
+    state.exportVersion += 1;
+    if (state.exportController) state.exportController.abort();
+    state.exportController = null;
+    state.exportPending = false;
+    syncExportControl();
+  }
+
+  function exportNotice(kind, message) {
+    if (window.notify && typeof window.notify[kind] === "function") {
+      window.notify[kind](message);
+      return;
+    }
+    setStatus(message, kind === "error");
+  }
+
+  function filenameFromDisposition(header, fallback) {
+    var encoded = String(header || "").match(/filename\*=UTF-8''([^;]+)/i);
+    var plain = String(header || "").match(/filename="?([^";]+)"?/i);
+    var filename = fallback;
+    try {
+      if (encoded) filename = decodeURIComponent(encoded[1]);
+      else if (plain) filename = plain[1];
+    } catch (error) {
+      filename = fallback;
+    }
+    return String(filename || fallback).replace(/[\\/:*?"<>|]/g, "_");
   }
 
   // ── Render: summary ───────────────────────────────────────
@@ -396,6 +440,7 @@
   // ── Fetch ─────────────────────────────────────────────────
   function compute() {
     var ids = parseIds($ids.value);
+    cancelPendingExport();
     cancelPendingRequest();
     clearResultDisplay(ids.length
       ? t("Computing availability…", "جارٍ حساب التوافر…")
@@ -412,6 +457,7 @@
     state.pending = true;
     setStatus(t("Computing…", "جارٍ الحساب…"), false);
     $compute.disabled = true;
+    syncExportControl();
 
     var options = {
       method: "POST",
@@ -442,6 +488,7 @@
         closeDetail(false);
         renderSummary(response.body);
         renderAllGrids();
+        syncExportControl();
 
         var requested = count(response.body.requested_count, 0);
         var resolved = count(response.body.resolved_count, 0);
@@ -481,6 +528,74 @@
         state.controller = null;
         state.pending = false;
         $compute.disabled = false;
+        syncExportControl();
+      });
+  }
+
+  function exportAllGrids() {
+    if (!state.result || state.exportPending || !cfg.exportUrl) return;
+
+    var ids = (state.result.students || []).map(function (student) {
+      return student.student_id;
+    }).filter(function (studentId) {
+      return studentId != null && studentId !== "";
+    });
+    if (!ids.length) {
+      exportNotice("error", t("No current result to export.", "لا توجد نتيجة حالية للتصدير."));
+      return;
+    }
+
+    cancelPendingExport();
+    var exportVersion = ++state.exportVersion;
+    var controller = typeof AbortController === "undefined" ? null : new AbortController();
+    state.exportController = controller;
+    state.exportPending = true;
+    syncExportControl();
+
+    var options = {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-CSRFToken": cfg.csrfToken },
+      body: JSON.stringify({ student_ids: ids }),
+    };
+    if (controller) options.signal = controller.signal;
+
+    fetch(cfg.exportUrl, options)
+      .then(function (response) {
+        if (!response.ok) {
+          return response.json().catch(function () { return {}; }).then(function (body) {
+            throw new Error((body && body.error) || t("Export failed.", "فشل التصدير."));
+          });
+        }
+        var fallback = "group_availability_" +
+          (state.result.academic_year || "current") + "_T" +
+          (state.result.term || "current") + ".xlsx";
+        var filename = filenameFromDisposition(response.headers.get("Content-Disposition"), fallback);
+        return response.blob().then(function (blob) {
+          return { blob: blob, filename: filename };
+        });
+      })
+      .then(function (download) {
+        if (!download || exportVersion !== state.exportVersion || !state.result) return;
+        var objectUrl = window.URL.createObjectURL(download.blob);
+        var link = document.createElement("a");
+        link.href = objectUrl;
+        link.download = download.filename;
+        link.hidden = true;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        window.setTimeout(function () { window.URL.revokeObjectURL(objectUrl); }, 1000);
+        exportNotice("success", t("XLSX exported.", "تم تصدير ملف XLSX."));
+      })
+      .catch(function (error) {
+        if (exportVersion !== state.exportVersion || error && error.name === "AbortError") return;
+        exportNotice("error", error && error.message || t("Export failed.", "فشل التصدير."));
+      })
+      .finally(function () {
+        if (exportVersion !== state.exportVersion) return;
+        state.exportController = null;
+        state.exportPending = false;
+        syncExportControl();
       });
   }
 
@@ -500,7 +615,9 @@
   }
 
   $compute.addEventListener("click", compute);
+  if ($export) $export.addEventListener("click", exportAllGrids);
   $clear.addEventListener("click", function () {
+    cancelPendingExport();
     cancelPendingRequest();
     $ids.value = "";
     clearResultDisplay();
@@ -510,7 +627,8 @@
   });
 
   $ids.addEventListener("input", function () {
-    var hadResultsOrRequest = !!state.result || state.pending;
+    var hadResultsOrRequest = !!state.result || state.pending || state.exportPending;
+    cancelPendingExport();
     cancelPendingRequest();
     clearResultDisplay(hadResultsOrRequest
       ? t("Inputs changed. Run availability again.", "تغيرت المدخلات. أعد حساب التوافر.")
@@ -547,4 +665,5 @@
 
   activateTab($tabs[0], false);
   updateCountHint();
+  syncExportControl();
 })();

@@ -50,6 +50,7 @@
   const baselineKind = presentation.planning_baseline_kind || 'registered_timetable';
   const AR = (document.documentElement.lang || '').toLowerCase().startsWith('ar');
   const MOBILE_QUERY = '(max-width: 768px)';
+  const renderOnMobile = details.dataset.renderMobile === 'true';
 
   function isMobile() {
     if (typeof window.matchMedia === 'function') {
@@ -145,7 +146,7 @@
 
   function draw() {
     /* The server-rendered term list is the sole presentation on narrow screens. */
-    if (isMobile() || !window.PrereqGraph) return false;
+    if ((isMobile() && !renderOnMobile) || !window.PrereqGraph) return false;
 
     host.setAttribute('dir', 'ltr');
     host.setAttribute('role', 'img');
@@ -169,7 +170,7 @@
   }
 
   function chooseMode(nextMode) {
-    if (isMobile() || mode === nextMode) return;
+    if ((isMobile() && !renderOnMobile) || mode === nextMode) return;
     mode = nextMode;
     setButtonState();
     if (details.open && drawn) draw();
