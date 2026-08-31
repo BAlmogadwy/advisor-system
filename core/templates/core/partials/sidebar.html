@@ -111,6 +111,12 @@
         <span class="nav-badge sidebar-badge sb-badge-portfolio"></span>
       </a>
     {% endif %}
+    {% if can_graduation_planning %}
+      <a class="nav-a nav-link" href="{% url 'admin_graduation_planning_page' %}" tabindex="0">
+        <span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M22 10 12 5 2 10l10 5 10-5z"/><path d="M6 12v5c0 1 2.7 2.5 6 2.5s6-1.5 6-2.5v-5"/><path d="M19 14v5"/></svg></span>
+        {% if LANGUAGE_CODE == 'ar' %}تخطيط التخرج{% else %}Graduation Planning{% endif %}
+      </a>
+    {% endif %}
     {% if can_db_admin %}
     <a class="nav-a nav-link" data-target="highpriority" href="/#highpriority" tabindex="0">
       <span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg></span>
@@ -248,7 +254,8 @@
     const isStudentCoursesSubpage = (
       path === '/student/plan-map/' || path.startsWith('/student/courses/')
     ) && href === '/student/courses/';
-    if (path === href || path === href.replace(/\/$/, '') || isStudentPlanner || isStudentCoursesSubpage) {
+    const isAdminGraduation = path.startsWith('/graduation-planning/') && href === '/graduation-planning/';
+    if (path === href || path === href.replace(/\/$/, '') || isStudentPlanner || isStudentCoursesSubpage || isAdminGraduation) {
       a.classList.add('active');
     }
   });

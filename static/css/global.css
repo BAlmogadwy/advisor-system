@@ -8963,6 +8963,682 @@ main[data-page="advisor-student-graduation"] > .content-wrap {
   display: grid;
   gap: .75rem;
 }
+.admin-grad-search {
+  display: grid;
+  grid-template-columns: minmax(210px, .8fr) minmax(360px, 1.2fr);
+  align-items: end;
+  gap: 1rem;
+  width: 100%;
+  max-width: 960px;
+  margin-inline: auto;
+  padding: 1rem;
+  border: 1px solid var(--teal-border);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--teal) 4%, var(--glass-bg));
+  box-shadow: var(--shadow-soft);
+}
+.admin-grad-search h2 {
+  margin: 0;
+  color: var(--navy);
+  font-size: 1rem;
+}
+.admin-grad-search p {
+  margin: .25rem 0 0;
+  color: var(--muted);
+  font-size: .76rem;
+  line-height: 1.55;
+}
+.admin-grad-search-form {
+  min-width: 0;
+}
+.admin-grad-search-form label {
+  display: block;
+  margin-bottom: .35rem;
+  color: var(--navy);
+  font-size: .76rem;
+  font-weight: 800;
+}
+.admin-grad-search-controls {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) max-content;
+  gap: .55rem;
+}
+.admin-grad-search-controls input {
+  width: 100%;
+  min-width: 0;
+  min-height: 44px;
+  padding: .65rem .8rem;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  outline: 0;
+  background: var(--glass-bg-data);
+  color: var(--navy);
+  font: 750 .88rem/1.2 var(--font-mono);
+  direction: ltr;
+}
+.admin-grad-search-controls input:focus {
+  border-color: var(--teal);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--teal) 18%, transparent);
+}
+.admin-grad-search-controls input[aria-invalid="true"] {
+  border-color: var(--danger);
+}
+.admin-grad-search-controls .btn {
+  min-height: 44px;
+  white-space: nowrap;
+}
+.admin-grad-search-form .admin-grad-search-error {
+  margin-top: .45rem;
+  color: var(--danger);
+  font-weight: 700;
+}
+
+/* ── Graduation planning: focused admin landing ─────────── */
+main[data-page="advisor-student-graduation"][data-graduation-workspace="admin"][data-graduation-state="landing"]
+  > .content-wrap > .page-intro {
+  display: none;
+}
+.admin-grad-landing.admin-grad-search {
+  display: grid;
+  grid-template-columns: 1fr;
+  align-content: center;
+  gap: 1rem;
+  width: min(1120px, 100%);
+  max-width: none;
+  min-height: max(580px, calc(100dvh - 180px));
+  margin: 0 auto;
+  padding: clamp(1rem, 2.6vw, 2.4rem) 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+.admin-grad-landing-shell {
+  position: relative;
+  isolation: isolate;
+  display: grid;
+  grid-template-columns: minmax(0, 1.12fr) minmax(370px, .88fr);
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--teal) 22%, var(--line));
+  border-radius: 26px;
+  background:
+    radial-gradient(circle at 10% 5%, color-mix(in srgb, var(--sky) 14%, transparent), transparent 34%),
+    radial-gradient(circle at 58% 105%, color-mix(in srgb, var(--teal) 12%, transparent), transparent 40%),
+    linear-gradient(135deg,
+      color-mix(in srgb, var(--teal) 7%, var(--glass-bg)) 0%,
+      color-mix(in srgb, var(--royal) 4%, var(--glass-bg)) 100%);
+  box-shadow: 0 24px 65px color-mix(in srgb, var(--navy) 13%, transparent),
+              0 1px 0 rgba(255,255,255,.5) inset;
+}
+.admin-grad-landing-shell::before,
+.admin-grad-landing-shell::after {
+  position: absolute;
+  z-index: -1;
+  content: "";
+  border: 1px solid color-mix(in srgb, var(--teal) 16%, transparent);
+  border-radius: 50%;
+  pointer-events: none;
+}
+.admin-grad-landing-shell::before {
+  width: 260px;
+  height: 260px;
+  inset: -155px auto auto -105px;
+}
+.admin-grad-landing-shell::after {
+  width: 170px;
+  height: 170px;
+  inset: auto auto -115px 43%;
+}
+.admin-grad-landing-copy {
+  display: flex;
+  min-width: 0;
+  padding: clamp(2rem, 4vw, 3.6rem);
+  flex-direction: column;
+  justify-content: center;
+}
+.admin-grad-eyebrow {
+  display: inline-flex;
+  width: fit-content;
+  align-items: center;
+  gap: .45rem;
+  margin-bottom: 1rem;
+  padding: .35rem .65rem;
+  border: 1px solid var(--teal-border);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--teal) 8%, transparent);
+  color: var(--teal-deep);
+  font: 800 .68rem/1.2 var(--font-mono);
+  letter-spacing: .07em;
+  text-transform: uppercase;
+}
+.admin-grad-eyebrow svg {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.7;
+}
+.admin-grad-search .admin-grad-landing-copy h2 {
+  max-width: 680px;
+  margin: 0;
+  color: var(--navy);
+  font-family: var(--font-serif);
+  font-size: clamp(2rem, 1.5rem + 1.35vw, 3.05rem);
+  font-weight: 700;
+  letter-spacing: -.035em;
+  line-height: 1.06;
+}
+.admin-grad-search .admin-grad-landing-copy > p {
+  max-width: 62ch;
+  margin: 1rem 0 0;
+  color: var(--t3);
+  font-size: clamp(.83rem, .78rem + .18vw, .96rem);
+  line-height: 1.7;
+}
+.admin-grad-journey {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: .5rem;
+  margin: clamp(1.6rem, 3vw, 2.35rem) 0 0;
+  padding: 0;
+  list-style: none;
+}
+.admin-grad-journey li {
+  position: relative;
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: .55rem;
+  padding: .65rem;
+  border: 1px solid color-mix(in srgb, var(--teal) 14%, var(--line));
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--glass-bg-data) 78%, transparent);
+}
+.admin-grad-journey li > span {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  flex: 0 0 28px;
+  border-radius: 9px;
+  place-items: center;
+  background: color-mix(in srgb, var(--teal) 12%, transparent);
+  color: var(--teal-deep);
+  font: 800 .62rem/1 var(--font-mono);
+}
+.admin-grad-journey li > div {
+  display: grid;
+  min-width: 0;
+  gap: .12rem;
+}
+.admin-grad-journey strong {
+  color: var(--navy);
+  font-size: .7rem;
+  line-height: 1.25;
+}
+.admin-grad-journey small {
+  color: var(--muted);
+  font-size: .61rem;
+  line-height: 1.3;
+}
+.admin-grad-lookup-wrap {
+  display: grid;
+  min-width: 0;
+  padding: clamp(1.15rem, 2.7vw, 2.25rem);
+  border-inline-start: 1px solid color-mix(in srgb, var(--teal) 16%, var(--line));
+  place-items: center;
+  background: linear-gradient(165deg,
+    color-mix(in srgb, var(--glass-bg-data) 72%, transparent),
+    color-mix(in srgb, var(--royal) 4%, var(--glass-bg)));
+}
+.admin-grad-lookup-card {
+  width: min(100%, 420px);
+  padding: clamp(1.15rem, 2.2vw, 1.6rem);
+  border: 1px solid color-mix(in srgb, var(--teal) 18%, var(--line));
+  border-radius: 20px;
+  background: color-mix(in srgb, var(--glass-bg) 94%, transparent);
+  box-shadow: 0 18px 45px color-mix(in srgb, var(--navy) 12%, transparent),
+              0 1px 0 rgba(255,255,255,.65) inset;
+}
+.admin-grad-lookup-head {
+  display: flex;
+  align-items: center;
+  gap: .75rem;
+  margin-bottom: 1.35rem;
+}
+.admin-grad-lookup-head > div {
+  display: grid;
+  gap: .12rem;
+}
+.admin-grad-lookup-head > div > span {
+  color: var(--teal-deep);
+  font: 800 .62rem/1.2 var(--font-mono);
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+.admin-grad-lookup-head h3 {
+  margin: 0;
+  color: var(--navy);
+  font-size: 1.08rem;
+  letter-spacing: -.015em;
+}
+.admin-grad-lookup-icon,
+.admin-grad-capability-icon {
+  display: grid;
+  flex: 0 0 auto;
+  place-items: center;
+  color: var(--teal-deep);
+  background: linear-gradient(145deg,
+    color-mix(in srgb, var(--teal) 14%, var(--glass-bg-data)),
+    color-mix(in srgb, var(--sky) 8%, var(--glass-bg-data)));
+  box-shadow: 0 8px 20px color-mix(in srgb, var(--teal) 13%, transparent);
+}
+.admin-grad-lookup-icon {
+  width: 46px;
+  height: 46px;
+  border: 1px solid var(--teal-border);
+  border-radius: 14px;
+}
+.admin-grad-lookup-icon svg,
+.admin-grad-capability-icon svg,
+.admin-grad-id-field > svg,
+.admin-grad-readonly-note svg {
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.7;
+}
+.admin-grad-lookup-icon svg { width: 23px; height: 23px; }
+.admin-grad-landing-form {
+  display: grid;
+  gap: .65rem;
+}
+.admin-grad-search-form.admin-grad-landing-form label {
+  margin: 0;
+  font-size: .72rem;
+  letter-spacing: .035em;
+  text-transform: uppercase;
+}
+.admin-grad-id-field {
+  position: relative;
+  min-width: 0;
+}
+.admin-grad-id-field > svg {
+  position: absolute;
+  z-index: 1;
+  top: 50%;
+  inset-inline-start: .9rem;
+  width: 20px;
+  height: 20px;
+  color: var(--muted);
+  pointer-events: none;
+  transform: translateY(-50%);
+}
+.admin-grad-id-field input {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  min-height: 56px;
+  padding: .8rem .95rem .8rem 2.75rem;
+  border: 1px solid color-mix(in srgb, var(--teal) 22%, var(--line));
+  border-radius: 13px;
+  outline: 0;
+  background: var(--glass-bg-data);
+  color: var(--navy);
+  font: 800 1rem/1.2 var(--font-mono);
+  direction: ltr;
+  transition: border-color .18s ease, box-shadow .18s ease, background .18s ease;
+}
+html[dir="rtl"] .admin-grad-id-field input {
+  padding: .8rem 2.75rem .8rem .95rem;
+}
+.admin-grad-id-field input::placeholder {
+  color: color-mix(in srgb, var(--muted) 72%, transparent);
+  font-weight: 600;
+}
+.admin-grad-id-field input:hover { border-color: color-mix(in srgb, var(--teal) 40%, var(--line)); }
+.admin-grad-id-field input:focus {
+  border-color: var(--teal);
+  background: color-mix(in srgb, var(--teal) 2%, var(--glass-bg-data));
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--teal) 15%, transparent);
+}
+.admin-grad-id-field input[aria-invalid="true"] { border-color: var(--danger); }
+.admin-grad-id-hint {
+  margin: -.18rem 0 .1rem !important;
+  color: var(--muted) !important;
+  font-size: .66rem !important;
+  line-height: 1.4 !important;
+}
+.admin-grad-lookup-submit {
+  display: flex !important;
+  width: 100%;
+  min-height: 50px !important;
+  align-items: center;
+  justify-content: space-between;
+  gap: .75rem;
+  margin-top: .1rem;
+  padding-inline: 1rem !important;
+  border-radius: 13px !important;
+  font-size: .8rem !important;
+}
+.admin-grad-lookup-submit svg {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2;
+  transition: transform .18s ease;
+}
+.admin-grad-lookup-submit:hover svg { transform: translateX(3px); }
+html[dir="rtl"] .admin-grad-lookup-submit svg { transform: scaleX(-1); }
+html[dir="rtl"] .admin-grad-lookup-submit:hover svg { transform: scaleX(-1) translateX(3px); }
+.admin-grad-readonly-note {
+  display: flex;
+  align-items: flex-start;
+  gap: .45rem;
+  margin-top: 1rem;
+  padding-top: .85rem;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: .65rem;
+  line-height: 1.5;
+}
+.admin-grad-readonly-note svg {
+  width: 15px;
+  height: 15px;
+  flex: 0 0 15px;
+  margin-top: .08rem;
+  color: var(--teal);
+}
+.admin-grad-capabilities {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: .75rem;
+}
+.admin-grad-capabilities article {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: .8rem;
+  padding: .9rem 1rem;
+  border: 1px solid color-mix(in srgb, var(--teal) 13%, var(--line));
+  border-radius: 15px;
+  background: color-mix(in srgb, var(--glass-bg) 88%, transparent);
+  box-shadow: var(--shadow-soft);
+}
+.admin-grad-capability-icon {
+  width: 38px;
+  height: 38px;
+  border-radius: 11px;
+}
+.admin-grad-capability-icon svg { width: 19px; height: 19px; }
+.admin-grad-capabilities article > div {
+  display: grid;
+  min-width: 0;
+  gap: .16rem;
+}
+.admin-grad-capabilities strong {
+  color: var(--navy);
+  font-size: .72rem;
+}
+.admin-grad-search .admin-grad-capabilities p {
+  margin: 0;
+  color: var(--muted);
+  font-size: .65rem;
+  line-height: 1.45;
+}
+
+@media (max-width: 980px) {
+  .admin-grad-landing-shell { grid-template-columns: 1fr; }
+  .admin-grad-landing-copy { padding-bottom: 1.5rem; }
+  .admin-grad-lookup-wrap {
+    border-top: 1px solid color-mix(in srgb, var(--teal) 16%, var(--line));
+    border-inline-start: 0;
+  }
+  .admin-grad-lookup-card { width: min(100%, 620px); }
+}
+
+@media (max-width: 640px) {
+  .admin-grad-landing.admin-grad-search {
+    min-height: 0;
+    padding: .25rem 0 1rem;
+  }
+  .admin-grad-landing-shell { border-radius: 19px; }
+  .admin-grad-landing-copy { padding: 1.35rem 1.15rem 1.2rem; }
+  .admin-grad-search .admin-grad-landing-copy h2 {
+    font-size: clamp(1.65rem, 1.35rem + 1.5vw, 2rem);
+    line-height: 1.1;
+  }
+  .admin-grad-search .admin-grad-landing-copy > p { margin-top: .75rem; font-size: .78rem; }
+  .admin-grad-eyebrow { margin-bottom: .75rem; font-size: .6rem; }
+  .admin-grad-journey {
+    grid-template-columns: 1fr;
+    gap: .35rem;
+    margin-top: 1.1rem;
+  }
+  .admin-grad-journey li { padding: .5rem .6rem; }
+  .admin-grad-lookup-wrap { padding: .9rem; }
+  .admin-grad-lookup-card { padding: 1rem; border-radius: 16px; }
+  .admin-grad-capabilities { grid-template-columns: 1fr; gap: .5rem; }
+  .admin-grad-capabilities article { padding: .75rem .85rem; }
+}
+
+.admin-grad-scenario {
+  display: grid;
+  gap: .85rem;
+  padding: 1rem;
+  border: 1px solid color-mix(in srgb, var(--royal) 22%, var(--line));
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--royal) 3%, var(--glass-bg));
+  box-shadow: var(--shadow-soft);
+}
+.admin-grad-scenario-head,
+.admin-grad-scenario-result-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+.admin-grad-scenario h2 {
+  margin: 0;
+  color: var(--navy);
+  font-size: .95rem;
+}
+.admin-grad-scenario-head p,
+.admin-grad-field p {
+  margin: .25rem 0 0;
+  color: var(--muted);
+  font-size: .72rem;
+  line-height: 1.5;
+}
+.admin-grad-readonly-badge {
+  flex: 0 0 auto;
+  padding: .35rem .6rem;
+  border: 1px solid color-mix(in srgb, var(--royal) 28%, var(--line));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--royal) 8%, transparent);
+  color: var(--royal);
+  font-size: .68rem;
+  font-weight: 800;
+  white-space: nowrap;
+}
+.admin-grad-scenario-form {
+  display: grid;
+  gap: .8rem;
+}
+.admin-grad-scenario-fields {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: .8rem;
+}
+.admin-grad-field { min-width: 0; }
+.admin-grad-field > label {
+  display: block;
+  margin-bottom: .35rem;
+  color: var(--navy);
+  font-size: .74rem;
+  font-weight: 800;
+}
+.admin-grad-picker-controls {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) max-content;
+  gap: .5rem;
+}
+.admin-grad-picker-controls select,
+.admin-grad-field input {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  min-height: 44px;
+  padding: .6rem .7rem;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  outline: 0;
+  background: var(--glass-bg-data);
+  color: var(--navy);
+  font-size: .78rem;
+}
+.admin-grad-field input {
+  direction: ltr;
+  font-family: var(--font-mono);
+  font-weight: 750;
+}
+.admin-grad-picker-controls select:focus,
+.admin-grad-field input:focus,
+.admin-grad-exception-toggle:focus-within {
+  border-color: var(--teal);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--teal) 18%, transparent);
+}
+.admin-grad-field input[aria-invalid="true"] { border-color: var(--danger); }
+.admin-grad-picker-controls .btn { min-height: 44px; white-space: nowrap; }
+.admin-grad-selected {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .35rem;
+  min-height: 30px;
+  margin-top: .45rem;
+}
+.admin-grad-selected-chip,
+.admin-grad-course-tag,
+.admin-grad-course-role {
+  display: inline-flex;
+  align-items: center;
+  gap: .3rem;
+  border: 1px solid color-mix(in srgb, var(--royal) 32%, var(--line));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--royal) 8%, transparent);
+  color: var(--royal);
+  font-size: .66rem;
+  font-weight: 800;
+}
+.admin-grad-selected-chip { padding: .22rem .3rem .22rem .55rem; }
+.admin-grad-selected-chip button {
+  display: inline-grid;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  place-items: center;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font-size: 1rem;
+}
+.admin-grad-selected-chip button:hover,
+.admin-grad-selected-chip button:focus-visible {
+  background: color-mix(in srgb, var(--royal) 14%, transparent);
+  outline: 2px solid color-mix(in srgb, var(--royal) 40%, transparent);
+}
+.admin-grad-selection-empty {
+  align-self: center;
+  color: var(--muted);
+  font-size: .7rem;
+}
+.admin-grad-exception-toggle {
+  display: flex;
+  align-items: flex-start;
+  gap: .65rem;
+  padding: .7rem;
+  border: 1px solid color-mix(in srgb, #b45309 28%, var(--line));
+  border-radius: 11px;
+  background: color-mix(in srgb, #f59e0b 6%, transparent);
+  cursor: pointer;
+}
+.admin-grad-exception-toggle input {
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  margin-top: .1rem;
+  accent-color: #b45309;
+}
+.admin-grad-exception-toggle span { display: grid; gap: .15rem; }
+.admin-grad-exception-toggle strong { color: var(--navy); font-size: .75rem; }
+.admin-grad-exception-toggle small { color: var(--muted); font-size: .68rem; line-height: 1.45; }
+.admin-grad-scenario-actions { display: flex; flex-wrap: wrap; gap: .5rem; }
+.admin-grad-scenario-actions .btn { min-height: 42px; }
+.admin-grad-scenario-alert,
+.admin-grad-scenario-result {
+  padding: .8rem;
+  border-radius: 11px;
+  font-size: .72rem;
+  line-height: 1.5;
+}
+.admin-grad-scenario-alert.is-error {
+  border: 1px solid color-mix(in srgb, var(--danger) 38%, var(--line));
+  background: color-mix(in srgb, var(--danger) 7%, transparent);
+  color: var(--danger);
+}
+.admin-grad-scenario-alert:focus { outline: 2px solid var(--danger); outline-offset: 3px; }
+.admin-grad-scenario-alert ul { margin: .35rem 0 0; padding-inline-start: 1.25rem; }
+.admin-grad-scenario-result {
+  display: grid;
+  gap: .65rem;
+  border: 1px solid color-mix(in srgb, var(--teal) 34%, var(--line));
+  background: color-mix(in srgb, var(--teal) 6%, transparent);
+}
+.admin-grad-scenario-result-head > div:first-child { display: grid; gap: .15rem; }
+.admin-grad-scenario-result-head strong { color: var(--navy); font-size: .78rem; }
+.admin-grad-scenario-result-head span { color: var(--muted); font-size: .68rem; }
+.admin-grad-impact {
+  display: grid;
+  min-width: 190px;
+  gap: .1rem;
+  padding: .45rem .6rem;
+  border-radius: 9px;
+  background: var(--glass-bg-data);
+  text-align: end;
+}
+.admin-grad-impact strong { color: var(--teal); }
+.admin-grad-term-comparison { color: var(--navy); font: 800 .72rem/1.4 var(--font-mono); }
+.admin-grad-scenario-groups { display: grid; gap: .4rem; }
+.admin-grad-scenario-groups > div { display: flex; flex-wrap: wrap; align-items: center; gap: .35rem; }
+.admin-grad-scenario-groups > div > span:first-child { min-width: 185px; color: var(--muted); font-weight: 700; }
+.admin-grad-course-tag { padding: .2rem .5rem; }
+.admin-grad-course-tag.is-prerequisite,
+.admin-grad-course-role.is-prerequisite {
+  border-color: color-mix(in srgb, #b45309 38%, var(--line));
+  background: color-mix(in srgb, #f59e0b 10%, transparent);
+  color: #9a4a08;
+}
+.admin-grad-course-tag.is-displaced {
+  border-color: color-mix(in srgb, var(--muted) 35%, var(--line));
+  background: color-mix(in srgb, var(--muted) 8%, transparent);
+  color: var(--muted);
+  text-decoration: line-through;
+}
+.admin-grad-course-role { margin-inline-start: .35rem; padding: .16rem .45rem; }
+.admin-grad-special-warning {
+  margin: 0;
+  padding-top: .55rem;
+  border-top: 1px solid color-mix(in srgb, #b45309 25%, var(--line));
+  color: #9a4a08;
+  font-weight: 750;
+}
 .advisor-grad-switcher {
   display: flex;
   align-items: center;
@@ -9049,6 +9725,22 @@ main[data-page="advisor-student-graduation"] > .content-wrap {
     align-items: stretch;
     flex-direction: column;
   }
+  .admin-grad-search {
+    grid-template-columns: 1fr;
+    align-items: stretch;
+  }
+  .admin-grad-search-controls { grid-template-columns: 1fr; }
+  .admin-grad-search-controls .btn { width: 100%; }
+  .admin-grad-scenario-head,
+  .admin-grad-scenario-result-head { align-items: stretch; flex-direction: column; }
+  .admin-grad-readonly-badge { align-self: flex-start; white-space: normal; }
+  .admin-grad-scenario-fields { grid-template-columns: 1fr; }
+  .admin-grad-picker-controls { grid-template-columns: 1fr; }
+  .admin-grad-picker-controls .btn { width: 100%; }
+  .admin-grad-scenario-actions { display: grid; grid-template-columns: 1fr; }
+  .admin-grad-scenario-actions .btn { width: 100%; }
+  .admin-grad-impact { min-width: 0; text-align: start; }
+  .admin-grad-scenario-groups > div > span:first-child { flex-basis: 100%; min-width: 0; }
   .advisor-grad-switcher .ap-grad-tabs { flex-basis: auto; max-width: none; }
   .advisor-grad-page .ap-grad-section { padding: .7rem; }
 }

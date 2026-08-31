@@ -17,9 +17,10 @@ or seats.
 from __future__ import annotations
 
 import math
+import re
 
 from core.services.credit_policy import RECOMMENDED_MAX_CREDITS
-from core.services.eligibility import split_hour_prereqs
+from core.services.eligibility import evaluate_prerequisites, split_hour_prereqs
 from core.services.recommender import (
     calculate_real_student_term,
     recommend_next_courses_for_state,
@@ -46,6 +47,8 @@ MAX_CURRENT_TERM_CHANGES = 10
 MAX_REPLACEMENT_EVALUATIONS = 120
 MAX_REPLACEMENT_RESULTS = 5
 PROVEN_GRADUATION_IMPROVEMENT_EFFECTS = frozenset({"EARLIER", "FORECAST_COMPLETED"})
+MUST_HAVE_CURRENT_TERM = "must_have_current_term"
+OPTIMIZED_CURRENT_OFFERINGS_KIND = "optimized_current_offerings"
 
 
 def _validate_academic_term(value: int) -> int:
@@ -72,6 +75,120 @@ def _next_main_term(year: int, term: int) -> tuple[int, int]:
     if int(term) == 1:
         return int(year), 2
     return int(year) + 1, 1
+
+
+def _graduation_project_stage(course_name: object) -> int | None:
+    """Return the I/II stage for a plan's graduation-project title.
+
+    Programme requirements are authoritative here. Global course descriptions
+    are not: display codes such as AI492 and DS492 refer to Project II in the
+    older plan but Cooperative Training in the newer plan. The normalisation
+    covers the title variants present in the curricula (including ``PROJECT I``,
+    ``GRADUATION I``, repeated whitespace, and a leading catalogue number).
+    """
+    title = re.sub(r"\s+", " ", str(course_name or "").strip().upper())
+    title = re.sub(r"^\d+\s+", "", title)
+    match = re.search(r"(?:GRADUATION(?: PROJECT)?|PROJECT) (II|I)$", title)
+    if not match:
+        return None
+    return 2 if match.group(1) == "II" else 1
+
+
+def _graduation_project_successors(
+    plan_rows: dict[str, dict],
+    prerequisite_map: dict[str, list[str]],
+) -> dict[str, str]:
+    """Map Project I to Project II for the selected programme plan.
+
+    A title alone is not enough (for example, Project Management is not a
+    capstone). Require the same-plan direct prerequisite edge and consecutive
+    curriculum terms as corroborating evidence before applying the sequencing
+    rule.
+    """
+    project_ones = {
+        code for code, row in plan_rows.items() if _graduation_project_stage(row.get("name")) == 1
+    }
+    successors: dict[str, str] = {}
+    for project_two, row in plan_rows.items():
+        if _graduation_project_stage(row.get("name")) != 2:
+            continue
+        course_prerequisites, _required_hours = split_hour_prereqs(
+            prerequisite_map.get(project_two, [])
+        )
+        normalized_prerequisites = {normalize_code(value) for value in course_prerequisites}
+        matching_ones = sorted(
+            project_one
+            for project_one in project_ones
+            if project_one in normalized_prerequisites
+            and int(row.get("term") or 0) == int(plan_rows[project_one].get("term") or 0) + 1
+        )
+        if len(matching_ones) == 1:
+            successors[matching_ones[0]] = project_two
+    return successors
+
+
+def _projects_required_in_next_term(
+    *,
+    previous_term_codes: set[str],
+    outstanding: set[str],
+    project_successors: dict[str, str],
+    simulated_passed: set[str],
+    effective_credits: int,
+    max_credits_per_term: int,
+    prerequisite_map: dict[str, list[str]],
+    plan_rows: dict[str, dict],
+    academic_year: int,
+    term: int,
+) -> tuple[list[str], dict[str, dict]]:
+    """Reserve the immediately following term for any due Project II.
+
+    The exception is deliberately narrow: only the verified Project II is
+    allowed to bypass normal parity/due-term ranking. Every prerequisite and
+    hour gate must still be met, and the configured credit cap is never
+    exceeded. If adjacency is impossible, return a truthful blocker instead
+    of publishing a later, non-consecutive Project II.
+    """
+    required: list[str] = []
+    blockers: dict[str, dict] = {}
+    for project_one in sorted(previous_term_codes):
+        project_two = project_successors.get(project_one)
+        if not project_two or project_two not in outstanding:
+            continue
+        credits = int(plan_rows[project_two].get("credits") or 0)
+        outcome = evaluate_prerequisites(
+            prerequisite_map.get(project_two, []),
+            simulated_passed,
+            set(),
+            earned_credits=effective_credits,
+            registered_credits=0,
+        )
+        blocker = {
+            "project_1": project_one,
+            "project_2": project_two,
+            "required_academic_year": int(academic_year),
+            "required_term": int(term),
+            "required_immediately_after": True,
+        }
+        if not outcome.met:
+            blocker.update(
+                {
+                    "reason": "PREREQUISITES_OR_HOURS",
+                    "missing_prerequisites": list(outcome.missing),
+                }
+            )
+            blockers[project_two] = blocker
+        elif credits > int(max_credits_per_term):
+            blocker.update(
+                {
+                    "reason": "CREDIT_CAP",
+                    "course_credits": credits,
+                    "maximum_credits": int(max_credits_per_term),
+                }
+            )
+            blockers[project_two] = blocker
+        else:
+            required.append(project_two)
+    return required, blockers
 
 
 def _current_course_state(
@@ -159,6 +276,9 @@ def _simulate_future_terms(
     cursor_year, cursor_term = int(year), int(term)
     term_plan: list[dict] = []
     no_progress_terms = 0
+    previous_term_codes = set(current_codes)
+    project_successors = _graduation_project_successors(plan_rows, prerequisite_map)
+    project_sequence_blockers: dict[str, dict] = {}
     latest_programme_term = max(
         (int(row.get("term") or 0) for row in plan_rows.values()), default=0
     )
@@ -174,6 +294,35 @@ def _simulate_future_terms(
         # recommendation as 1448/2, which delayed term-sensitive courses and
         # made the first projected term appear artificially blocked.
         plan_student_term = calculate_real_student_term(student_id, plan_year, plan_term)
+        required_projects, sequence_blockers = _projects_required_in_next_term(
+            previous_term_codes=previous_term_codes,
+            outstanding=outstanding,
+            project_successors=project_successors,
+            simulated_passed=simulated_passed,
+            effective_credits=effective_credits,
+            max_credits_per_term=max_credits_per_term,
+            prerequisite_map=prerequisite_map,
+            plan_rows=plan_rows,
+            academic_year=plan_year,
+            term=plan_term,
+        )
+        if sequence_blockers:
+            project_sequence_blockers.update(sequence_blockers)
+            break
+
+        reserved_credits = sum(
+            int(plan_rows[code].get("credits") or 0) for code in required_projects
+        )
+        # Project II continuity is the only exception to the normal parity and
+        # due-term filter. Remove the reserved codes from the ordinary candidate
+        # catalogue so they neither consume the remaining cap twice nor satisfy
+        # downstream prerequisites in the same term.
+        required_project_set = set(required_projects)
+        ordinary_courses = (
+            [course for course in recommender_courses if course["code"] not in required_project_set]
+            if required_projects
+            else recommender_courses
+        )
         recommended = recommend_next_courses_for_state(
             student_id,
             plan_year,
@@ -181,12 +330,14 @@ def _simulate_future_terms(
             passed=simulated_passed,
             studying=set(),
             effective_credits=effective_credits,
-            max_credits=max_credits_per_term,
+            max_credits=max(0, int(max_credits_per_term) - reserved_credits),
             program=program,
             prerequisite_map=prerequisite_map,
-            all_courses=recommender_courses,
+            all_courses=ordinary_courses,
         )
-        selected = [code for code in recommended if code in outstanding]
+        selected = required_projects + [
+            code for code in recommended if code in outstanding and code not in required_project_set
+        ]
         courses = []
         term_credits = 0
         for code in selected:
@@ -219,6 +370,7 @@ def _simulate_future_terms(
         simulated_passed.update(selected)
         effective_credits += term_credits
         cursor_year, cursor_term = plan_year, plan_term
+        previous_term_codes = set(selected)
         no_progress_terms = 0 if selected else no_progress_terms + 1
         # Once the student's simulated progression has reached the end of the
         # programme map, two empty terms cover both odd/even offering parities.
@@ -255,6 +407,7 @@ def _simulate_future_terms(
                     if required_hours > effective_credits
                     else None
                 ),
+                "project_sequence_gate": project_sequence_blockers.get(code),
             }
         )
     return {
@@ -266,6 +419,13 @@ def _simulate_future_terms(
         ),
         "simulation_completed": not unresolved,
         "unresolved_requirements": unresolved_rows,
+        "project_sequence_pairs": [
+            {"project_1": project_one, "project_2": project_two}
+            for project_one, project_two in sorted(project_successors.items())
+        ],
+        "project_sequence_blockers": [
+            project_sequence_blockers[code] for code in sorted(project_sequence_blockers)
+        ],
     }
 
 
@@ -610,6 +770,8 @@ def build_graduation_report(
         "productive_terms_planned": simulation["productive_terms_planned"],
         "term_plan": simulation["term_plan"],
         "unresolved_requirements": simulation["unresolved_requirements"],
+        "project_sequence_pairs": simulation["project_sequence_pairs"],
+        "project_sequence_blockers": simulation["project_sequence_blockers"],
         # Local presentation input for the student-facing scenario map. The
         # remote LLM privacy projector deliberately does not transmit this
         # graph; the model already has the compact term plan it needs.
@@ -619,6 +781,7 @@ def build_graduation_report(
             "All planning-baseline and simulated courses are passed on the first attempt.",
             f"Every simulated main term uses a maximum of {cap} credits.",
             "Elective placeholders remain plan requirements; no concrete elective is invented.",
+            "Graduation Project II is placed in the main term immediately after Graduation Project I.",
             "Future course offerings, section times, seats, and registration permission are not guaranteed.",
             "The scenario is read-only and does not update the student record or university portal.",
         ],
@@ -981,31 +1144,16 @@ def _prepare_current_term_changes(
     remove_codes: list[str],
     add_codes: list[str],
     max_credits_per_term: int,
+    allow_same_term_direct_prerequisites: bool = False,
+    strict_added_course_hour_gates: bool = False,
     query_cache: dict[object, object] | None = None,
 ) -> dict:
     from core.models import Course, ProgrammeRequirement, Student
 
     errors: list[dict] = []
-    if len(remove_codes) > MAX_CURRENT_TERM_CHANGES or len(add_codes) > MAX_CURRENT_TERM_CHANGES:
-        errors.append(
-            {
-                "kind": "TOO_MANY_CHANGES",
-                "maximum_per_list": MAX_CURRENT_TERM_CHANGES,
-            }
-        )
-
-    overlap = sorted(set(remove_codes) & set(add_codes))
-    if overlap:
-        errors.append({"kind": "SAME_COURSE_REMOVED_AND_ADDED", "course_codes": overlap})
-
+    requested_add_codes = list(add_codes)
     baseline_courses = baseline.get("planning_baseline_courses_assumed_passed") or []
     baseline_by_code = {course["code"]: dict(course) for course in baseline_courses}
-    for code in remove_codes:
-        if code not in baseline_by_code:
-            errors.append({"kind": "NOT_IN_CURRENT_TIMETABLE", "course_code": code})
-    for code in add_codes:
-        if code in baseline_by_code and code not in remove_codes:
-            errors.append({"kind": "ALREADY_IN_CURRENT_TIMETABLE", "course_code": code})
 
     passed_key = ("passed_and_studying", int(student_id))
     cached_status = query_cache.get(passed_key) if query_cache is not None else None
@@ -1015,10 +1163,7 @@ def _prepare_current_term_changes(
         actual_passed, _actual_studying = get_student_passed_and_studying(student_id)
         if query_cache is not None:
             query_cache[passed_key] = (actual_passed, _actual_studying)
-    actual_passed = {normalize_code(code) for code in actual_passed}
-    for code in add_codes:
-        if code in actual_passed:
-            errors.append({"kind": "ALREADY_PASSED", "course_code": code})
+    actual_passed = {normalize_code(code) for code in actual_passed if normalize_code(code)}
 
     plan_key = ("scenario_plan_rows", program.strip().upper())
     cached_plan_rows = query_cache.get(plan_key) if query_cache is not None else None
@@ -1028,18 +1173,112 @@ def _prepare_current_term_changes(
         plan_rows = {
             normalize_code(row["course_code"]): row
             for row in ProgrammeRequirement.objects.filter(program=program).values(
-                "course_code", "course_name", "credit_hours", "type"
+                "course_code",
+                "course_name",
+                "programme_term",
+                "credit_hours",
+                "type",
             )
         }
         if query_cache is not None:
             query_cache[plan_key] = plan_rows
 
+    prerequisite_key = ("program_prerequisites", program.strip().upper())
+    cached_prerequisites = query_cache.get(prerequisite_key) if query_cache is not None else None
+    if isinstance(cached_prerequisites, dict):
+        prerequisites_by_course = cached_prerequisites
+    else:
+        prerequisites_by_course = get_program_prerequisites(program)
+        if query_cache is not None:
+            query_cache[prerequisite_key] = prerequisites_by_course
+
+    effective_add_codes = list(requested_add_codes)
+    auto_added_codes: list[str] = []
+    same_term_edges: list[dict] = []
+    if allow_same_term_direct_prerequisites:
+        project_successors = _graduation_project_successors(
+            {
+                code: {
+                    "name": str(row.get("course_name") or ""),
+                    "term": int(row.get("programme_term") or 0),
+                }
+                for code, row in plan_rows.items()
+            },
+            prerequisites_by_course,
+        )
+        retained_baseline_codes = set(baseline_by_code) - set(remove_codes)
+        for target_code in requested_add_codes:
+            target_plan_row = plan_rows.get(target_code)
+            if target_plan_row is None or is_elective_slot(target_plan_row.get("type")):
+                continue
+            direct_prerequisites, _required_hours = split_hour_prereqs(
+                prerequisites_by_course.get(target_code, [])
+            )
+            for raw_prerequisite in direct_prerequisites:
+                prerequisite_code = normalize_code(raw_prerequisite)
+                if not prerequisite_code or prerequisite_code in actual_passed:
+                    continue
+                if project_successors.get(prerequisite_code) == target_code:
+                    errors.append(
+                        {
+                            "kind": "GRADUATION_PROJECT_SEQUENCE_REQUIRES_NEXT_TERM",
+                            "course_code": target_code,
+                            "prerequisite_code": prerequisite_code,
+                        }
+                    )
+                    continue
+                if (
+                    prerequisite_code not in retained_baseline_codes
+                    and prerequisite_code not in effective_add_codes
+                ):
+                    prerequisite_plan_row = plan_rows.get(prerequisite_code)
+                    if prerequisite_plan_row is not None and not is_elective_slot(
+                        prerequisite_plan_row.get("type")
+                    ):
+                        effective_add_codes.append(prerequisite_code)
+                        auto_added_codes.append(prerequisite_code)
+                if (
+                    prerequisite_code in retained_baseline_codes
+                    or prerequisite_code in effective_add_codes
+                ):
+                    same_term_edges.append(
+                        {
+                            "course_code": target_code,
+                            "prerequisite_code": prerequisite_code,
+                            "exception": "same_term_direct_prerequisite",
+                        }
+                    )
+
+    if (
+        len(remove_codes) > MAX_CURRENT_TERM_CHANGES
+        or len(effective_add_codes) > MAX_CURRENT_TERM_CHANGES
+    ):
+        errors.append(
+            {
+                "kind": "TOO_MANY_CHANGES",
+                "maximum_per_list": MAX_CURRENT_TERM_CHANGES,
+            }
+        )
+
+    overlap = sorted(set(remove_codes) & set(effective_add_codes))
+    if overlap:
+        errors.append({"kind": "SAME_COURSE_REMOVED_AND_ADDED", "course_codes": overlap})
+
+    for code in remove_codes:
+        if code not in baseline_by_code:
+            errors.append({"kind": "NOT_IN_CURRENT_TIMETABLE", "course_code": code})
+    for code in effective_add_codes:
+        if code in baseline_by_code and code not in remove_codes:
+            errors.append({"kind": "ALREADY_IN_CURRENT_TIMETABLE", "course_code": code})
+        if code in actual_passed:
+            errors.append({"kind": "ALREADY_PASSED", "course_code": code})
+
     course_key = ("scenario_course_rows", program.strip().upper())
     cached_course_rows = query_cache.get(course_key) if query_cache is not None else None
     missing_course_codes = (
-        set(add_codes) - set(cached_course_rows or {})
+        set(effective_add_codes) - set(cached_course_rows or {})
         if isinstance(cached_course_rows, dict)
-        else set(add_codes)
+        else set(effective_add_codes)
     )
     course_rows = dict(cached_course_rows) if isinstance(cached_course_rows, dict) else {}
     if missing_course_codes:
@@ -1053,7 +1292,7 @@ def _prepare_current_term_changes(
             query_cache[course_key] = course_rows
 
     additions = []
-    for code in add_codes:
+    for code in effective_add_codes:
         plan_row = plan_rows.get(code)
         course = course_rows.get(code)
         if plan_row and is_elective_slot(plan_row.get("type")):
@@ -1072,12 +1311,17 @@ def _prepare_current_term_changes(
             {
                 "code": code,
                 "name": str(
-                    getattr(course, "description", "") or (plan_row or {}).get("course_name") or ""
+                    (plan_row or {}).get("course_name") or getattr(course, "description", "") or ""
                 ),
                 "credits": credits,
                 "section": "",
                 "source": "graduation_what_if",
                 "in_degree_plan": code in plan_rows,
+                **(
+                    {"auto_added_prerequisite": code in auto_added_codes}
+                    if allow_same_term_direct_prerequisites
+                    else {}
+                ),
             }
         )
 
@@ -1107,43 +1351,131 @@ def _prepare_current_term_changes(
         if query_cache is not None:
             query_cache[earned_key] = earned
 
-    prerequisite_key = ("program_prerequisites", program.strip().upper())
-    cached_prerequisites = query_cache.get(prerequisite_key) if query_cache is not None else None
-    if isinstance(cached_prerequisites, dict):
-        prerequisites_by_course = cached_prerequisites
+    if allow_same_term_direct_prerequisites:
+        current_codes = {
+            normalize_code(course.get("code") or "")
+            for course in modified_courses
+            if normalize_code(course.get("code") or "")
+        }
+        accepted_edges = [
+            edge
+            for edge in same_term_edges
+            if edge["course_code"] in current_codes and edge["prerequisite_code"] in current_codes
+        ]
+        relaxed_prerequisite_codes = {edge["prerequisite_code"] for edge in accepted_edges}
+
+        # A same-term exception is one level deep. A prerequisite course used by
+        # that exception must itself be ordinarily eligible from completed work;
+        # otherwise A -> B -> C could be collapsed into one term by recursively
+        # treating every peer as passed. Hour gates are earned-only here too.
+        for prerequisite_code in sorted(relaxed_prerequisite_codes):
+            prerequisite_outcome = evaluate_prerequisites(
+                prerequisites_by_course.get(prerequisite_code, []),
+                actual_passed,
+                set(),
+                strict_passed_only=True,
+                earned_credits=earned,
+                registered_credits=0,
+            )
+            if not prerequisite_outcome.met:
+                errors.append(
+                    {
+                        "kind": "SAME_TERM_PREREQUISITE_NOT_STRICTLY_ELIGIBLE",
+                        "course_code": prerequisite_code,
+                        "required_by": sorted(
+                            edge["course_code"]
+                            for edge in accepted_edges
+                            if edge["prerequisite_code"] == prerequisite_code
+                        ),
+                        "missing_prerequisites": list(prerequisite_outcome.missing_courses),
+                        "credit_hour_gate": (
+                            {
+                                "required": prerequisite_outcome.required_hours,
+                                "effective": prerequisite_outcome.effective_hours,
+                                "remaining": max(
+                                    0,
+                                    prerequisite_outcome.required_hours
+                                    - prerequisite_outcome.effective_hours,
+                                ),
+                            }
+                            if not prerequisite_outcome.hours_met
+                            else None
+                        ),
+                    }
+                )
+
+        requested_add_set = set(requested_add_codes)
+        for addition in additions:
+            code = addition["code"]
+            if code not in requested_add_set:
+                continue
+            outcome = evaluate_prerequisites(
+                prerequisites_by_course.get(code, []),
+                actual_passed,
+                current_codes - {code},
+                strict_passed_only=False,
+                earned_credits=earned,
+                registered_credits=0,
+            )
+            if outcome.missing_courses:
+                errors.append(
+                    {
+                        "kind": "ADDED_COURSE_PREREQUISITES_UNMET",
+                        "course_code": code,
+                        "missing_prerequisites": sorted(outcome.missing_courses),
+                    }
+                )
+            if not outcome.hours_met:
+                errors.append(
+                    {
+                        "kind": "ADDED_COURSE_CREDIT_GATE_UNMET",
+                        "course_code": code,
+                        "required": outcome.required_hours,
+                        "effective": outcome.effective_hours,
+                        "remaining": outcome.required_hours - outcome.effective_hours,
+                    }
+                )
+        same_term_edges = accepted_edges
     else:
-        prerequisites_by_course = get_program_prerequisites(program)
-        if query_cache is not None:
-            query_cache[prerequisite_key] = prerequisites_by_course
-    # A planning-baseline peer is not a passed prerequisite. The forecast may
-    # assume all baseline courses pass before the *next* simulated term, but a
-    # replacement being added to that same baseline cannot use a retained course
-    # as though it were already completed. Corequisites require an explicit rule;
-    # none is represented in this data model.
-    satisfied = set(actual_passed)
-    for addition in additions:
-        code = addition["code"]
-        course_prereqs, required_hours = split_hour_prereqs(prerequisites_by_course.get(code, []))
-        missing = sorted(prereq for prereq in course_prereqs if prereq not in satisfied - {code})
-        if missing:
-            errors.append(
-                {
-                    "kind": "ADDED_COURSE_PREREQUISITES_UNMET",
-                    "course_code": code,
-                    "missing_prerequisites": missing,
-                }
+        # A planning-baseline peer is not a passed prerequisite. The forecast may
+        # assume all baseline courses pass before the *next* simulated term, but a
+        # replacement being added to that same baseline cannot use a retained course
+        # as though it were already completed. Corequisites require an explicit rule;
+        # none is represented in this data model.
+        satisfied = set(actual_passed)
+        for addition in additions:
+            code = addition["code"]
+            course_prereqs, required_hours = split_hour_prereqs(
+                prerequisites_by_course.get(code, [])
             )
-        effective_credits = earned + modified_credits
-        if required_hours and effective_credits < required_hours:
-            errors.append(
-                {
-                    "kind": "ADDED_COURSE_CREDIT_GATE_UNMET",
-                    "course_code": code,
-                    "required": required_hours,
-                    "effective": effective_credits,
-                    "remaining": required_hours - effective_credits,
-                }
+            missing = sorted(
+                prereq for prereq in course_prereqs if prereq not in satisfied - {code}
             )
+            if missing:
+                errors.append(
+                    {
+                        "kind": "ADDED_COURSE_PREREQUISITES_UNMET",
+                        "course_code": code,
+                        "missing_prerequisites": missing,
+                    }
+                )
+            effective_credits = (
+                earned if strict_added_course_hour_gates else earned + modified_credits
+            )
+            if required_hours and effective_credits < required_hours:
+                errors.append(
+                    {
+                        "kind": "ADDED_COURSE_CREDIT_GATE_UNMET",
+                        "course_code": code,
+                        "required": required_hours,
+                        "effective": effective_credits,
+                        "remaining": required_hours - effective_credits,
+                    }
+                )
+
+    auto_added_prerequisites = [
+        course for course in additions if course["code"] in set(auto_added_codes)
+    ]
 
     return {
         "valid": not errors,
@@ -1154,6 +1486,8 @@ def _prepare_current_term_changes(
         ],
         "added_courses": additions,
         "outside_plan_additions": [course for course in additions if not course["in_degree_plan"]],
+        "auto_added_prerequisites": auto_added_prerequisites,
+        "same_term_direct_prerequisite_edges": same_term_edges,
     }
 
 
@@ -1166,6 +1500,7 @@ def _evaluate_current_term_changes(
     remove_codes: list[str],
     add_codes: list[str],
     max_credits_per_term: int,
+    allow_same_term_direct_prerequisites: bool = False,
     query_cache: dict[object, object] | None = None,
 ) -> dict:
     prepared = _prepare_current_term_changes(
@@ -1175,6 +1510,7 @@ def _evaluate_current_term_changes(
         remove_codes=remove_codes,
         add_codes=add_codes,
         max_credits_per_term=max_credits_per_term,
+        allow_same_term_direct_prerequisites=allow_same_term_direct_prerequisites,
         query_cache=query_cache,
     )
     if not prepared["valid"]:
@@ -1220,6 +1556,438 @@ def _replacement_rank(row: dict) -> tuple:
     )
 
 
+def build_graduation_must_have_scenario(
+    student_id: int,
+    year: int,
+    term: int,
+    *,
+    baseline_report: dict,
+    must_have_courses: list[str] | tuple[str, ...] | None,
+    allow_same_term_direct_prerequisites: bool = False,
+    max_credits_per_term: int = DEFAULT_MAX_CREDITS_PER_TERM,
+    _query_cache: dict[object, object] | None = None,
+) -> dict:
+    """Apply admin-only starting-term constraints to an existing forecast.
+
+    This is deliberately a wrapper around the normal simulator, not another
+    recommender policy. The supplied report remains the comparison baseline.
+    Registered courses are never displaced. For a recommended or optimized
+    hypothetical baseline, trailing unprotected courses may be displaced so the
+    requested courses fit, but the result is explicitly labelled as a manual
+    override rather than a re-optimized recommendation.
+
+    The same-term prerequisite switch is a narrowly scoped, hypothetical waiver:
+    it covers direct course edges only. It never relaxes hour gates, recursively
+    chains prerequisites, or places verified Graduation Project I and II together.
+    """
+    from core.models import ProgrammeRequirement
+
+    baseline = dict(baseline_report or {})
+    requested_codes = _normalise_code_list(must_have_courses)
+    cap = max(1, int(max_credits_per_term))
+    allow_concurrent = bool(allow_same_term_direct_prerequisites)
+    query_cache: dict[object, object] = _query_cache if _query_cache is not None else {}
+    baseline_kind = str(baseline.get("planning_baseline_kind") or "").strip()
+    program = str(baseline.get("program") or "").strip()
+    baseline_courses = [
+        dict(course)
+        for course in baseline.get("planning_baseline_courses_assumed_passed") or []
+        if isinstance(course, dict) and normalize_code(course.get("code") or "")
+    ]
+    baseline_by_code = {
+        normalize_code(course.get("code") or ""): course for course in baseline_courses
+    }
+
+    plan_key = ("scenario_plan_rows", program.upper())
+    cached_plan_rows = query_cache.get(plan_key)
+    if isinstance(cached_plan_rows, dict):
+        plan_rows = cached_plan_rows
+    else:
+        plan_rows = {
+            normalize_code(row["course_code"]): row
+            for row in ProgrammeRequirement.objects.filter(program=program).values(
+                "course_code",
+                "course_name",
+                "programme_term",
+                "credit_hours",
+                "type",
+            )
+        }
+        query_cache[plan_key] = plan_rows
+
+    def display_row(code: str) -> dict:
+        row = plan_rows.get(code) or {}
+        return {
+            "code": code,
+            "name": str(row.get("course_name") or ""),
+            "credits": int(row.get("credit_hours") or 0),
+            "requirement_type": str(row.get("type") or ""),
+            "programme_term": int(row.get("programme_term") or 0),
+            "elective_slot": bool(row and is_elective_slot(row.get("type"))),
+            "must_have": True,
+            "auto_added_prerequisite": False,
+            "scenario_role": "must_have",
+        }
+
+    recognized_requested_rows = [display_row(code) for code in requested_codes if code in plan_rows]
+
+    def result_with_what_if(
+        *,
+        valid: bool,
+        errors: list[dict],
+        scenario: dict | None = None,
+        already_rows: list[dict] | None = None,
+        added_rows: list[dict] | None = None,
+        auto_rows: list[dict] | None = None,
+        edges: list[dict] | None = None,
+        displaced_rows: list[dict] | None = None,
+        comparison: dict | None = None,
+    ) -> dict:
+        output = dict(scenario if valid and scenario is not None else baseline)
+        effective_must_have_rows = (
+            [
+                course
+                for code in requested_codes
+                for course in output.get("planning_baseline_courses_assumed_passed") or []
+                if normalize_code(course.get("code") or "") == code
+            ]
+            if valid and scenario is not None
+            else recognized_requested_rows
+        )
+        output["what_if"] = {
+            "mode": MUST_HAVE_CURRENT_TERM,
+            "valid": bool(valid),
+            "allow_same_term_direct_prerequisites": allow_concurrent,
+            "same_term_direct_prerequisite_approval": bool(valid and edges),
+            "requested_must_have_course_codes": requested_codes,
+            "must_have_courses": effective_must_have_rows,
+            "already_in_baseline_courses": already_rows or [],
+            "added_must_have_courses": added_rows or [],
+            "auto_added_prerequisites": auto_rows or [],
+            "same_term_direct_prerequisite_edges": edges or [],
+            "displaced_baseline_courses": displaced_rows or [],
+            "validation_errors": errors,
+            "baseline": _scenario_summary(baseline) if baseline else None,
+            "scenario": _scenario_summary(scenario) if valid and scenario else None,
+            "comparison": comparison if valid else None,
+            "timetable_check_required": bool(valid and ((added_rows or []) + (auto_rows or []))),
+            "note": (
+                "Read-only academic what-if. A same-term prerequisite edge is a hypothetical "
+                "admin-approved exception, not a recorded corequisite or registration decision. "
+                "Offerings, seats, timetable fit, and registration permission are not guaranteed."
+            ),
+        }
+        return output
+
+    validation_errors: list[dict] = []
+    if not baseline or not program:
+        validation_errors.append({"kind": "GRADUATION_BASELINE_UNAVAILABLE"})
+    if baseline_kind not in {
+        RECOMMENDED_CURRENT_TERM,
+        REGISTERED_TIMETABLE,
+        OPTIMIZED_CURRENT_OFFERINGS_KIND,
+    }:
+        validation_errors.append(
+            {
+                "kind": "UNSUPPORTED_GRADUATION_BASELINE",
+                "planning_baseline_kind": baseline_kind,
+            }
+        )
+    if not requested_codes:
+        validation_errors.append({"kind": "NO_MUST_HAVE_COURSES"})
+    if len(requested_codes) > MAX_CURRENT_TERM_CHANGES:
+        validation_errors.append(
+            {
+                "kind": "TOO_MANY_CHANGES",
+                "maximum_per_list": MAX_CURRENT_TERM_CHANGES,
+            }
+        )
+
+    passed_key = ("passed_and_studying", int(student_id))
+    cached_status = query_cache.get(passed_key)
+    if isinstance(cached_status, tuple):
+        raw_passed, raw_studying = cached_status
+    else:
+        raw_passed, raw_studying = get_student_passed_and_studying(student_id)
+        query_cache[passed_key] = (raw_passed, raw_studying)
+    actual_passed = {normalize_code(code) for code in raw_passed if normalize_code(code)}
+
+    for code in requested_codes:
+        plan_row = plan_rows.get(code)
+        if plan_row is None:
+            validation_errors.append({"kind": "MUST_HAVE_COURSE_NOT_IN_PLAN", "course_code": code})
+        elif is_elective_slot(plan_row.get("type")):
+            validation_errors.append(
+                {"kind": "MUST_HAVE_ELECTIVE_PLACEHOLDER", "course_code": code}
+            )
+        elif code in actual_passed:
+            validation_errors.append({"kind": "ALREADY_PASSED", "course_code": code})
+
+    already_rows = [
+        dict(baseline_by_code[code]) for code in requested_codes if code in baseline_by_code
+    ]
+    missing_requested_codes = [code for code in requested_codes if code not in baseline_by_code]
+    if validation_errors:
+        return result_with_what_if(
+            valid=False,
+            errors=validation_errors,
+            already_rows=already_rows,
+        )
+
+    # Resolve automatic direct prerequisites and all strict eligibility checks
+    # before deciding whether a hypothetical baseline needs displacement. The
+    # temporary cap only suppresses the additive cap error; it never weakens the
+    # final configured cap or any academic rule.
+    generous_cap = max(
+        cap,
+        sum(int(course.get("credits") or 0) for course in baseline_courses)
+        + sum(int(row.get("credit_hours") or 0) for row in plan_rows.values())
+        + cap,
+    )
+    prepared = _prepare_current_term_changes(
+        student_id=student_id,
+        program=program,
+        baseline=baseline,
+        remove_codes=[],
+        add_codes=missing_requested_codes,
+        max_credits_per_term=generous_cap,
+        allow_same_term_direct_prerequisites=allow_concurrent,
+        strict_added_course_hour_gates=True,
+        query_cache=query_cache,
+    )
+    if not prepared["valid"]:
+        return result_with_what_if(
+            valid=False,
+            errors=prepared["errors"],
+            already_rows=already_rows,
+            added_rows=[
+                course
+                for course in prepared["added_courses"]
+                if course["code"] in set(missing_requested_codes)
+            ],
+            auto_rows=prepared["auto_added_prerequisites"],
+            edges=prepared["same_term_direct_prerequisite_edges"],
+        )
+
+    added_codes = {course["code"] for course in prepared["added_courses"]}
+    auto_codes = {course["code"] for course in prepared["auto_added_prerequisites"]}
+    edge_prerequisite_codes = {
+        edge["prerequisite_code"] for edge in prepared["same_term_direct_prerequisite_edges"]
+    }
+    protected_baseline_codes = (set(requested_codes) | edge_prerequisite_codes) & set(
+        baseline_by_code
+    )
+    forced_credits = sum(
+        int(course.get("credits") or 0) for course in prepared["added_courses"]
+    ) + sum(int(baseline_by_code[code].get("credits") or 0) for code in protected_baseline_codes)
+    if forced_credits > cap:
+        return result_with_what_if(
+            valid=False,
+            errors=[
+                {
+                    "kind": "MUST_HAVE_COURSES_EXCEED_CREDIT_CAP",
+                    "credits": forced_credits,
+                    "maximum": cap,
+                }
+            ],
+            already_rows=already_rows,
+            added_rows=[
+                course
+                for course in prepared["added_courses"]
+                if course["code"] in set(missing_requested_codes)
+            ],
+            auto_rows=prepared["auto_added_prerequisites"],
+            edges=prepared["same_term_direct_prerequisite_edges"],
+        )
+
+    retained_baseline = list(baseline_courses)
+    displaced_rows: list[dict] = []
+    if baseline_kind != REGISTERED_TIMETABLE:
+        total_credits = sum(
+            int(course.get("credits") or 0) for course in prepared["current_courses"]
+        )
+        displaced_codes: set[str] = set()
+        for course in reversed(baseline_courses):
+            if total_credits <= cap:
+                break
+            code = normalize_code(course.get("code") or "")
+            if code in protected_baseline_codes:
+                continue
+            displaced_codes.add(code)
+            displaced_rows.append(dict(course))
+            total_credits -= int(course.get("credits") or 0)
+        displaced_rows.reverse()
+        retained_baseline = [
+            course
+            for course in baseline_courses
+            if normalize_code(course.get("code") or "") not in displaced_codes
+        ]
+
+    working_baseline = dict(baseline)
+    working_baseline["planning_baseline_courses_assumed_passed"] = retained_baseline
+    final_prepared = _prepare_current_term_changes(
+        student_id=student_id,
+        program=program,
+        baseline=working_baseline,
+        remove_codes=[],
+        add_codes=missing_requested_codes,
+        max_credits_per_term=cap,
+        allow_same_term_direct_prerequisites=allow_concurrent,
+        strict_added_course_hour_gates=True,
+        query_cache=query_cache,
+    )
+    if not final_prepared["valid"]:
+        return result_with_what_if(
+            valid=False,
+            errors=final_prepared["errors"],
+            already_rows=already_rows,
+            added_rows=[
+                course
+                for course in final_prepared["added_courses"]
+                if course["code"] in set(missing_requested_codes)
+            ],
+            auto_rows=final_prepared["auto_added_prerequisites"],
+            edges=final_prepared["same_term_direct_prerequisite_edges"],
+            displaced_rows=displaced_rows,
+        )
+
+    prepared_by_code = {
+        normalize_code(course.get("code") or ""): dict(course)
+        for course in final_prepared["current_courses"]
+    }
+    ordered_codes: list[str] = []
+    for course in retained_baseline:
+        code = normalize_code(course.get("code") or "")
+        if code and code not in ordered_codes:
+            ordered_codes.append(code)
+    for code in missing_requested_codes:
+        if code in prepared_by_code and code not in ordered_codes:
+            ordered_codes.append(code)
+    for course in final_prepared["auto_added_prerequisites"]:
+        code = normalize_code(course.get("code") or "")
+        if code and code not in ordered_codes:
+            ordered_codes.append(code)
+
+    annotated_current_courses: list[dict] = []
+    requested_set = set(requested_codes)
+    for code in ordered_codes:
+        course = prepared_by_code[code]
+        course["must_have"] = code in requested_set
+        course["auto_added_prerequisite"] = code in auto_codes
+        if code in requested_set and code not in baseline_by_code:
+            course["scenario_role"] = "must_have"
+            course["source"] = "admin_override"
+        elif code in auto_codes:
+            course["scenario_role"] = "auto_prerequisite"
+            course["source"] = "same_term_direct_prerequisite"
+        else:
+            # A requested course already present in the selected baseline keeps
+            # its factual/recommendation provenance; the constraint is already
+            # satisfied and must not relabel it as a hypothetical registration.
+            course["scenario_role"] = "retained_baseline"
+        annotated_current_courses.append(course)
+
+    engine_baseline_kind = (
+        baseline_kind if baseline_kind in PLANNING_BASELINE_KINDS else RECOMMENDED_CURRENT_TERM
+    )
+    prerequisite_map = query_cache.get(("program_prerequisites", program.upper()))
+    scenario = build_graduation_report(
+        student_id,
+        year,
+        term,
+        planning_baseline_kind=engine_baseline_kind,
+        max_credits_per_term=cap,
+        _current_courses_override=annotated_current_courses,
+        _excluded_studying_codes={
+            normalize_code(course.get("code") or "") for course in displaced_rows
+        },
+        _prerequisite_map=prerequisite_map if isinstance(prerequisite_map, dict) else None,
+        _query_cache=query_cache,
+    )
+    if not scenario:
+        return result_with_what_if(
+            valid=False,
+            errors=[{"kind": "GRADUATION_SCENARIO_UNAVAILABLE"}],
+            already_rows=already_rows,
+            displaced_rows=displaced_rows,
+        )
+
+    # Preserve the selected tab as the baseline origin while making it explicit
+    # that a manual constraint changed the starting term. In optimized mode the
+    # exact optimizer was *not* rerun, so its original result is nested as base
+    # evidence and optimization_complete is deliberately false.
+    scenario["planning_baseline_kind"] = baseline_kind
+    scenario_baseline = dict(scenario.get("planning_baseline") or {})
+    scenario_baseline["kind"] = baseline_kind
+    scenario["planning_baseline"] = scenario_baseline
+    scenario["planning_baseline_provenance"] = {
+        "source": "admin_must_have_override",
+        "base_planning_baseline_kind": baseline_kind,
+        "manual_constraint_applied": True,
+        "baseline_reoptimized": False,
+        "registered_courses_displaced": False,
+        "displaced_baseline_course_codes": [
+            normalize_code(course.get("code") or "") for course in displaced_rows
+        ],
+        "base_provenance": baseline.get("planning_baseline_provenance"),
+    }
+    if baseline_kind == OPTIMIZED_CURRENT_OFFERINGS_KIND:
+        base_optimization = baseline.get("offering_optimization") or baseline.get("optimization")
+        manual_optimization = {
+            "mode": OPTIMIZED_CURRENT_OFFERINGS_KIND,
+            "optimization_complete": False,
+            "manual_override_applied": True,
+            "reoptimized": False,
+            "base_optimization": base_optimization,
+        }
+        scenario["offering_optimization"] = manual_optimization
+        scenario["optimization"] = manual_optimization
+    assumptions = list(scenario.get("simulation_assumptions") or [])
+    assumptions.insert(
+        0,
+        "The starting term contains an admin-selected must-have constraint; this is a "
+        "read-only scenario and was not re-optimized.",
+    )
+    if final_prepared["same_term_direct_prerequisite_edges"]:
+        assumptions.insert(
+            1,
+            "Only the displayed direct prerequisite edges are hypothetically allowed in "
+            "the same term; prerequisite courses and hour gates remain strict.",
+        )
+    scenario["simulation_assumptions"] = assumptions
+
+    comparison = _compare_reports(
+        baseline,
+        scenario,
+        [normalize_code(course.get("code") or "") for course in displaced_rows],
+    )
+    scenario_rows_by_code = {
+        normalize_code(course.get("code") or ""): course
+        for course in scenario.get("planning_baseline_courses_assumed_passed") or []
+    }
+    return result_with_what_if(
+        valid=True,
+        errors=[],
+        scenario=scenario,
+        already_rows=[
+            scenario_rows_by_code.get(code, baseline_by_code[code])
+            for code in requested_codes
+            if code in baseline_by_code
+        ],
+        added_rows=[
+            scenario_rows_by_code[code]
+            for code in requested_codes
+            if code in added_codes and code in scenario_rows_by_code
+        ],
+        auto_rows=[
+            scenario_rows_by_code[code] for code in auto_codes if code in scenario_rows_by_code
+        ],
+        edges=final_prepared["same_term_direct_prerequisite_edges"],
+        displaced_rows=displaced_rows,
+        comparison=comparison,
+    )
+
+
 def build_graduation_what_if(
     student_id: int,
     year: int,
@@ -1231,6 +1999,7 @@ def build_graduation_what_if(
     search_better_replacements: bool = False,
     max_credits_per_term: int = DEFAULT_MAX_CREDITS_PER_TERM,
     max_replacement_results: int = MAX_REPLACEMENT_RESULTS,
+    allow_same_term_direct_prerequisites: bool = False,
     replacement_remove_course: str | None = None,
     replacement_add_course: str | None = None,
     exact_result_credits: int | None = None,
@@ -1305,6 +2074,7 @@ def build_graduation_what_if(
             remove_codes=remove_codes,
             add_codes=add_codes,
             max_credits_per_term=cap,
+            allow_same_term_direct_prerequisites=allow_same_term_direct_prerequisites,
             query_cache=query_cache,
         )
         scenario = evaluated.get("scenario_report") or baseline
@@ -1317,6 +2087,20 @@ def build_graduation_what_if(
                 "removed_current_courses": evaluated["removed_courses"],
                 "added_current_courses": evaluated["added_courses"],
                 "outside_plan_additions": evaluated["outside_plan_additions"],
+                **(
+                    {
+                        "allow_same_term_direct_prerequisites": True,
+                        "same_term_direct_prerequisite_approval": bool(
+                            evaluated["valid"] and evaluated["same_term_direct_prerequisite_edges"]
+                        ),
+                        "auto_added_prerequisites": evaluated["auto_added_prerequisites"],
+                        "same_term_direct_prerequisite_edges": evaluated[
+                            "same_term_direct_prerequisite_edges"
+                        ],
+                    }
+                    if allow_same_term_direct_prerequisites
+                    else {}
+                ),
                 "baseline": _scenario_summary(baseline),
                 "scenario": _scenario_summary(scenario) if evaluated["valid"] else None,
                 "comparison": evaluated["comparison"],

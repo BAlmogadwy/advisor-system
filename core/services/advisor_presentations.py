@@ -27,6 +27,11 @@ _MAX_MEETINGS = 80
 _MAX_GRAPH_NODES = 160
 _MAX_GRAPH_EDGES = 360
 _MAX_UNRESOLVED = 80
+_MUST_HAVE_WHAT_IF_MODES = {
+    "must_have_current_term",
+    "admin_must_have",
+    "must_have",
+}
 
 _FALSE_MEDIA_INCAPABILITY = re.compile(
     r"(?:\b(?:I|we)(?:\s+can(?:not|['’]t)|\s+(?:am|are)\s+(?:not\s+able|unable)\s+to|"
@@ -137,6 +142,231 @@ def _course_rows(value: Any, limit: int = _MAX_COURSES) -> list[dict[str, Any]]:
     return rows
 
 
+def _scenario_course_rows(value: Any, limit: int = _MAX_COURSES) -> list[dict[str, Any]]:
+    """Whitelist course rows while retaining admin what-if provenance.
+
+    Ordinary graduation cards only need code/name/credits.  The admin
+    must-have simulator also needs to distinguish retained registrations from
+    hypothetical forced courses and auto-added prerequisites.  Keeping that
+    small provenance set prevents the renderer or export from describing a
+    hypothetical course as registered/studying.
+    """
+
+    rows: list[dict[str, Any]] = []
+    for value_row in _items(value, limit):
+        if isinstance(value_row, dict):
+            raw = value_row
+            raw_code = raw.get("code") or raw.get("course_code")
+        else:
+            raw = {}
+            raw_code = value_row
+        code = _text(raw_code, 32).upper()
+        if not code:
+            continue
+        row: dict[str, Any] = {
+            "code": code,
+            "name": _text(raw.get("name") or raw.get("course_name")),
+            "credits": _number(raw.get("credits")),
+        }
+        source = _text(
+            raw.get("source")
+            or raw.get("scenario_source")
+            or raw.get("what_if_source")
+            or raw.get("origin"),
+            64,
+        )
+        if source:
+            row["source"] = source
+        scenario_role = _text(raw.get("scenario_role"), 32).lower()
+        if scenario_role in {"must_have", "auto_prerequisite", "retained_baseline"}:
+            row["scenario_role"] = scenario_role
+        if raw.get("must_have") is True:
+            row["must_have"] = True
+        if raw.get("auto_added_prerequisite") is True:
+            row["auto_added_prerequisite"] = True
+        requirement_type = _text(raw.get("requirement_type"), 48)
+        if requirement_type:
+            row["requirement_type"] = requirement_type
+        rows.append(row)
+    return rows
+
+
+def _signed_optional_number(value: Any) -> int | None:
+    if value is None or value == "":
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _scenario_summary(value: Any) -> dict[str, Any]:
+    """Return the bounded before/after summary needed by the admin UI."""
+
+    if not isinstance(value, dict):
+        return {}
+    summary: dict[str, Any] = {
+        "planning_baseline_kind": _text(value.get("planning_baseline_kind"), 32).lower(),
+        "planning_baseline_credits": _number(value.get("planning_baseline_credits")),
+        "simulation_completed": value.get("simulation_completed") is True,
+    }
+    for key in (
+        "estimated_additional_terms",
+        "estimated_terms_including_planning_baseline",
+        "estimated_terms_including_current",
+        "lower_bound_additional_terms",
+        "lower_bound_terms_including_planning_baseline",
+        "lower_bound_terms_including_current",
+        "registered_credits_at_planning_baseline",
+        "registered_credits_now",
+    ):
+        summary[key] = _optional_number(value.get(key))
+    summary["planning_baseline_courses_assumed_passed"] = _scenario_course_rows(
+        value.get("planning_baseline_courses_assumed_passed")
+    )
+    return summary
+
+
+def _what_if_comparison(value: Any) -> dict[str, Any]:
+    """Whitelist the scalar, auditable before/after comparison fields."""
+
+    if not isinstance(value, dict):
+        return {}
+    comparison: dict[str, Any] = {
+        "timing_effect": _text(value.get("timing_effect"), 48).upper(),
+        "term_difference": _signed_optional_number(value.get("term_difference")),
+        "terms_saved": _optional_number(value.get("terms_saved")),
+        "exact_timing_comparison_available": value.get("exact_timing_comparison_available") is True,
+        "proven_improvement": value.get("proven_improvement") is True,
+        "complete_forecast_improved": value.get("complete_forecast_improved") is True,
+        "blocker_progress_only": value.get("blocker_progress_only") is True,
+        "improvement_basis": _text(value.get("improvement_basis"), 48).upper(),
+        "plan_changed": value.get("plan_changed") is True,
+    }
+    for key in (
+        "baseline_lower_bound_additional_terms",
+        "scenario_lower_bound_additional_terms",
+        "lower_bound_change",
+        "baseline_planning_credits",
+        "scenario_planning_credits",
+        "planning_credit_change",
+        "baseline_current_credits",
+        "scenario_current_credits",
+        "current_credit_change",
+    ):
+        comparison[key] = _signed_optional_number(value.get(key))
+    return comparison
+
+
+def _what_if_errors(value: Any) -> list[dict[str, Any]]:
+    errors: list[dict[str, Any]] = []
+    for raw in _items(value, 20):
+        if isinstance(raw, dict):
+            code = _text(raw.get("kind") or raw.get("code"), 64).upper()
+            message = _text(raw.get("message") or raw.get("error"), 400)
+            course_code = _text(raw.get("course_code"), 32).upper()
+        else:
+            code = ""
+            message = _text(raw, 400)
+            course_code = ""
+        if code or message:
+            errors.append(
+                {
+                    "code": code,
+                    "message": message,
+                    "course_code": course_code,
+                }
+            )
+    return errors
+
+
+def _what_if_edges(value: Any) -> list[dict[str, Any]]:
+    edges: list[dict[str, Any]] = []
+    for raw in _items(value, _MAX_GRAPH_EDGES):
+        if not isinstance(raw, dict):
+            continue
+        course = _text(raw.get("course_code") or raw.get("course"), 32).upper()
+        prerequisite = _text(
+            raw.get("prerequisite_code") or raw.get("prerequisite_course_code"),
+            32,
+        ).upper()
+        if not course or not prerequisite:
+            continue
+        edges.append(
+            {
+                "course_code": course,
+                "prerequisite_code": prerequisite,
+                "exception": _text(raw.get("exception"), 160),
+            }
+        )
+    return edges
+
+
+def _normalise_graduation_what_if(value: Any) -> dict[str, Any]:
+    """Preserve the bounded evidence for a graduation what-if scenario."""
+
+    if not isinstance(value, dict):
+        return {}
+    mode = _text(value.get("mode"), 48).lower()
+    if not mode:
+        return {}
+
+    must_have = _scenario_course_rows(value.get("must_have_courses"))
+    added_must_have = _scenario_course_rows(
+        value.get("added_must_have_courses") or value.get("added_current_courses")
+    )
+    auto_prerequisites = _scenario_course_rows(
+        value.get("auto_added_prerequisites") or value.get("auto_added_same_term_prerequisites")
+    )
+    edges = _what_if_edges(
+        value.get("same_term_direct_prerequisite_edges") or value.get("relaxed_prerequisite_edges")
+    )
+    approval = bool(
+        value.get("same_term_direct_prerequisite_approval")
+        or value.get("special_approval_required")
+    )
+    requested_codes = []
+    for raw_code in _items(value.get("requested_must_have_course_codes"), _MAX_COURSES):
+        code = _text(raw_code, 32).upper()
+        if code and code not in requested_codes:
+            requested_codes.append(code)
+
+    normalised = {
+        "mode": mode,
+        "valid": value.get("valid") is True,
+        "allow_same_term_direct_prerequisites": value.get("allow_same_term_direct_prerequisites")
+        is True,
+        "same_term_direct_prerequisite_approval": approval,
+        # A more general alias lets renderers use one label while retaining the
+        # engine's precise field above.
+        "special_approval_required": approval,
+        "requested_must_have_course_codes": requested_codes,
+        "must_have_courses": must_have,
+        "already_in_baseline_courses": _scenario_course_rows(
+            value.get("already_in_baseline_courses")
+        ),
+        "added_must_have_courses": added_must_have,
+        "auto_added_prerequisites": auto_prerequisites,
+        "auto_added_same_term_prerequisites": auto_prerequisites,
+        "same_term_direct_prerequisite_edges": edges,
+        "relaxed_prerequisite_edges": edges,
+        "displaced_baseline_courses": _scenario_course_rows(
+            value.get("displaced_baseline_courses")
+        ),
+        "validation_errors": _what_if_errors(value.get("validation_errors")),
+        "baseline": _scenario_summary(value.get("baseline")),
+        "scenario": _scenario_summary(value.get("scenario")),
+        "comparison": _what_if_comparison(value.get("comparison")),
+        "timetable_check_required": value.get("timetable_check_required") is True,
+        "note": _text(value.get("note"), 800),
+        # Server-owned safety boundary: the scenario can never communicate
+        # registration or prerequisite-waiver approval.
+        "no_eligibility_or_registration_approval": True,
+    }
+    normalised["added_current_courses"] = [*added_must_have, *auto_prerequisites]
+    return normalised
+
+
 def _replacement_course(value: Any) -> dict[str, Any]:
     """Whitelist one course descriptor used by a certified replacement card."""
     if not isinstance(value, dict):
@@ -156,6 +386,16 @@ def _normalise_graduation_presentation(payload: dict[str, Any]) -> dict[str, Any
     graph = payload.get("graph")
     if not isinstance(graph, dict):
         return {}
+    what_if = _normalise_graduation_what_if(payload.get("what_if"))
+    hypothetical_codes = {
+        row["code"]
+        for key in (
+            "added_must_have_courses",
+            "auto_added_prerequisites",
+        )
+        for row in what_if.get(key, [])
+        if isinstance(row, dict) and row.get("code")
+    }
 
     nodes: list[str] = []
     for value in _items(graph.get("extraNodes"), _MAX_GRAPH_NODES):
@@ -199,7 +439,7 @@ def _normalise_graduation_presentation(payload: dict[str, Any]) -> dict[str, Any
         name = _text(raw_names.get(code))
         if name:
             name_of[code] = name
-        status = _text(raw_status.get(code), 16).lower()
+        status = "open" if code in hypothetical_codes else _text(raw_status.get(code), 16).lower()
         if status in statuses:
             status_of[code] = status
 
@@ -290,10 +530,16 @@ def _normalise_graduation_presentation(payload: dict[str, Any]) -> dict[str, Any
         "band_labels": labels,
         "unresolved_requirements": unresolved,
         "removed_current_courses": _course_rows(payload.get("removed_current_courses")),
-        "added_current_courses": _course_rows(payload.get("added_current_courses")),
+        "added_current_courses": (
+            _scenario_course_rows(payload.get("added_current_courses"))
+            if what_if
+            else _course_rows(payload.get("added_current_courses"))
+        ),
         # Server-owned boundary: this is never an actionable or saved plan.
         "read_only": True,
     }
+    if what_if:
+        presentation["what_if"] = what_if
     if "noncompletion_current_courses" in payload:
         presentation["noncompletion_current_courses"] = _course_rows(
             payload.get("noncompletion_current_courses")
@@ -752,8 +998,12 @@ def graduation_presentation_from_tool_results(
             continue
 
         what_if = result.get("what_if")
+        normalised_what_if = _normalise_graduation_what_if(what_if)
         if isinstance(what_if, dict):
-            if what_if.get("valid") is not True:
+            if (
+                what_if.get("valid") is not True
+                and normalised_what_if.get("mode") not in _MUST_HAVE_WHAT_IF_MODES
+            ):
                 return {}
             if what_if.get("mode") == "replacement_search":
                 return {}
@@ -773,11 +1023,36 @@ def graduation_presentation_from_tool_results(
             for code, status in raw_status.items()
             if str(status).lower() == "passed" and _text(code, 32)
         }
-        current_rows = _course_rows(
-            result.get("planning_baseline_courses_assumed_passed")
-            or result.get("current_courses_assumed_passed")
+        raw_current_rows = result.get("planning_baseline_courses_assumed_passed") or result.get(
+            "current_courses_assumed_passed"
+        )
+        current_rows = (
+            _scenario_course_rows(raw_current_rows)
+            if normalised_what_if
+            else _course_rows(raw_current_rows)
         )
         current = {row["code"] for row in current_rows}
+        already_in_baseline = {
+            row["code"]
+            for row in normalised_what_if.get("already_in_baseline_courses", [])
+            if isinstance(row, dict) and row.get("code")
+        }
+        hypothetical_current = {
+            row["code"]
+            for key in ("added_must_have_courses", "auto_added_prerequisites")
+            for row in normalised_what_if.get(key, [])
+            if isinstance(row, dict) and row.get("code")
+        }
+        hypothetical_current.update(
+            row["code"]
+            for row in current_rows
+            if row["code"] not in already_in_baseline
+            and (
+                row.get("scenario_role") in {"must_have", "auto_prerequisite"}
+                or row.get("must_have") is True
+                or row.get("auto_added_prerequisite") is True
+            )
+        )
 
         future: dict[str, int] = {}
         future_names: dict[str, str] = {}
@@ -842,7 +1117,12 @@ def graduation_presentation_from_tool_results(
         term_of.update(future)
         status_of = {code: "passed" for code in passed}
         status_of.update(
-            {code: "open" if hypothetical_baseline else "studying" for code in current}
+            {
+                code: (
+                    "open" if hypothetical_baseline or code in hypothetical_current else "studying"
+                )
+                for code in current
+            }
         )
         status_of.update({code: "open" for code in future})
         name_of = {
@@ -869,6 +1149,8 @@ def graduation_presentation_from_tool_results(
 
         removed = what_if.get("removed_current_courses") if isinstance(what_if, dict) else []
         added = what_if.get("added_current_courses") if isinstance(what_if, dict) else []
+        if normalised_what_if and not added:
+            added = normalised_what_if.get("added_current_courses") or []
         presentation_payload = {
             "kind": KIND_GRADUATION,
             "program": result.get("program"),
@@ -900,6 +1182,8 @@ def graduation_presentation_from_tool_results(
             "removed_current_courses": removed,
             "added_current_courses": added,
         }
+        if normalised_what_if:
+            presentation_payload["what_if"] = what_if
         if isinstance(what_if, dict) and "noncompletion_current_courses" in what_if:
             presentation_payload["noncompletion_current_courses"] = what_if.get(
                 "noncompletion_current_courses"

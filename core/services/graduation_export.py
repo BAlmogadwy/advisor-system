@@ -22,6 +22,11 @@ _SHEET_NAMES = (
     "Prerequisite Map",
     "Blockers & Assumptions",
 )
+_MUST_HAVE_WHAT_IF_MODES = {
+    "must_have_current_term",
+    "admin_must_have",
+    "must_have",
+}
 
 
 def _safe_excel_text(value: object) -> str:
@@ -36,6 +41,74 @@ def _student_value(student: object, field: str, default: object = "") -> object:
     if isinstance(student, dict):
         return student.get(field, default)
     return getattr(student, field, default)
+
+
+def _course_code(value: object) -> str:
+    if isinstance(value, dict):
+        value = value.get("code") or value.get("course_code")
+    return str(value or "").strip().upper()
+
+
+def _course_rows(value: object) -> list[dict[str, Any]]:
+    if not isinstance(value, list | tuple):
+        return []
+    return [row for row in value if isinstance(row, dict) and _course_code(row)]
+
+
+def _course_codes(value: object) -> set[str]:
+    if not isinstance(value, list | tuple):
+        return set()
+    return {code for row in value if (code := _course_code(row))}
+
+
+def _display_codes(value: object) -> str:
+    return ", ".join(sorted(_course_codes(value))) or "None"
+
+
+def _edge_rows(value: object) -> list[dict[str, Any]]:
+    if not isinstance(value, list | tuple):
+        return []
+    rows: list[dict[str, Any]] = []
+    for raw in value:
+        if not isinstance(raw, dict):
+            continue
+        course = _course_code(raw.get("course_code") or raw.get("course"))
+        prerequisite = _course_code(
+            raw.get("prerequisite_code") or raw.get("prerequisite_course_code")
+        )
+        if course and prerequisite:
+            rows.append(
+                {
+                    "course_code": course,
+                    "prerequisite_code": prerequisite,
+                    "exception": str(raw.get("exception") or "").strip(),
+                }
+            )
+    return rows
+
+
+def _comparison_label(comparison: object) -> str:
+    if not isinstance(comparison, dict):
+        return "Not available"
+    effect = str(comparison.get("timing_effect") or "NOT_DETERMINABLE").strip().upper()
+    term_difference = comparison.get("term_difference")
+    terms_saved = comparison.get("terms_saved")
+    labels = {
+        "EARLIER": "Earlier projected completion",
+        "LATER": "Later projected completion",
+        "SAME": "Same projected completion timing",
+        "FORECAST_COMPLETED": "Scenario resolves the forecast",
+        "FORECAST_BECAME_UNRESOLVED": "Scenario makes the forecast unresolved",
+        "UNRESOLVED_IMPROVEMENT": "Some unresolved blockers improve",
+        "UNRESOLVED_WORSE": "Unresolved blockers worsen",
+        "NOT_DETERMINABLE": "Exact timing is not determinable",
+    }
+    detail = labels.get(effect, effect.replace("_", " ").title())
+    if effect == "EARLIER" and terms_saved is not None:
+        detail = f"{detail} · {int(terms_saved)} term(s) saved"
+    elif term_difference is not None:
+        detail = f"{detail} · term difference {int(term_difference):+d}"
+    return detail
 
 
 def build_graduation_xlsx(
@@ -87,6 +160,76 @@ def build_graduation_xlsx(
     wrap = Alignment(horizontal="left", vertical="top", wrap_text=True)
 
     is_arabic = str(language_code or "").lower().startswith("ar")
+    raw_what_if = report.get("what_if")
+    what_if = raw_what_if if isinstance(raw_what_if, dict) else {}
+    what_if_mode = str(what_if.get("mode") or "").strip().lower()
+    is_must_have_what_if = what_if_mode in _MUST_HAVE_WHAT_IF_MODES
+    if not is_must_have_what_if:
+        what_if = {}
+    what_if_valid = what_if.get("valid") is True
+    must_have_courses = _course_rows(what_if.get("must_have_courses"))
+    added_must_have_courses = _course_rows(
+        what_if.get("added_must_have_courses") or what_if.get("added_current_courses")
+    )
+    auto_added_prerequisites = _course_rows(
+        what_if.get("auto_added_prerequisites") or what_if.get("auto_added_same_term_prerequisites")
+    )
+    already_in_baseline_courses = _course_rows(what_if.get("already_in_baseline_courses"))
+    displaced_baseline_courses = _course_rows(what_if.get("displaced_baseline_courses"))
+    relaxed_edges = _edge_rows(
+        what_if.get("same_term_direct_prerequisite_edges")
+        or what_if.get("relaxed_prerequisite_edges")
+    )
+    added_must_have_codes = _course_codes(added_must_have_courses)
+    auto_prerequisite_codes = _course_codes(auto_added_prerequisites)
+    already_in_baseline_codes = _course_codes(already_in_baseline_courses)
+    relaxed_edge_pairs = {(row["course_code"], row["prerequisite_code"]) for row in relaxed_edges}
+    special_approval_required = bool(
+        what_if.get("same_term_direct_prerequisite_approval")
+        or what_if.get("special_approval_required")
+        or relaxed_edges
+    )
+
+    def course_scenario_role(course: dict[str, Any]) -> str:
+        code = _course_code(course)
+        if code in auto_prerequisite_codes:
+            return "auto_prerequisite"
+        if code in added_must_have_codes:
+            return "must_have"
+        # An already-registered/recommended baseline course stays truthful even
+        # if the administrator also selected it as a must-have.
+        if code in already_in_baseline_codes:
+            return "retained_baseline"
+        role = str(course.get("scenario_role") or "").strip().lower()
+        if role in {"must_have", "auto_prerequisite", "retained_baseline"}:
+            return role
+        if course.get("auto_added_prerequisite") is True:
+            return "auto_prerequisite"
+        if course.get("must_have") is True:
+            return "must_have"
+        return "retained_baseline"
+
+    def course_stage(course: dict[str, Any]) -> str:
+        role = course_scenario_role(course)
+        if role == "must_have":
+            return "Hypothetical must-have"
+        if role == "auto_prerequisite":
+            return "Hypothetical same-term prerequisite"
+        return baseline_stage
+
+    def course_source(course: dict[str, Any]) -> str:
+        role = course_scenario_role(course)
+        raw_source = str(course.get("source") or "").strip()
+        if role == "must_have":
+            return "Hypothetical admin must-have override" + (
+                f" · source {raw_source}" if raw_source else ""
+            )
+        if role == "auto_prerequisite":
+            return "Hypothetical auto-added same-term prerequisite" + (
+                f" · source {raw_source}" if raw_source else ""
+            )
+        return baseline_source
+
     baseline_is_recommended = baseline_kind == RECOMMENDED_CURRENT_TERM
     baseline_is_optimized = baseline_kind == OPTIMIZED_CURRENT_OFFERINGS
     if baseline_is_optimized:
@@ -115,10 +258,15 @@ def build_graduation_xlsx(
     workbook = Workbook()
     workbook.properties.creator = "Advisor Portal"
     workbook.properties.title = f"Graduation plan — {student_id}"
-    workbook.properties.subject = f"Read-only {baseline_source.lower()} graduation scenario"
-    workbook.properties.description = (
-        "Read-only planning estimate. It is not an official graduation decision or registration."
-    )
+    if is_must_have_what_if:
+        workbook.properties.subject = "Read-only hypothetical admin must-have graduation scenario"
+        workbook.properties.description = (
+            "Hypothetical planning simulation only. It does not approve registration, "
+            "prerequisite eligibility, timetable feasibility, or graduation."
+        )
+    else:
+        workbook.properties.subject = f"Read-only {baseline_source.lower()} graduation scenario"
+        workbook.properties.description = "Read-only planning estimate. It is not an official graduation decision or registration."
     workbook.calculation.fullCalcOnLoad = True
     workbook.calculation.forceFullCalc = True
     workbook.calculation.calcMode = "auto"
@@ -233,21 +381,30 @@ def build_graduation_xlsx(
         sheet.page_margins.right = 0.25
         sheet.page_margins.top = 0.45
         sheet.page_margins.bottom = 0.45
-        sheet.oddFooter.center.text = "Advisor Portal · Read-only planning estimate"
+        sheet.oddFooter.center.text = (
+            "Advisor Portal · Hypothetical only · No registration or eligibility approval"
+            if is_must_have_what_if
+            else "Advisor Portal · Read-only planning estimate"
+        )
         sheet.oddFooter.right.text = "Page &P of &N"
         sheet.oddFooter.center.size = 8
         sheet.oddFooter.center.color = slate
         sheet.oddFooter.right.size = 8
         sheet.oddFooter.right.color = slate
 
-    def status_label(status: object, band: object) -> str:
+    def status_label(status: object, band: object, course_code: object = "") -> str:
         key = str(status or "").strip().lower()
+        code = _course_code(course_code)
         try:
             band_number = int(band)
         except (TypeError, ValueError):
             band_number = -1
         if key == "passed":
             return "Completed"
+        if band_number == 1 and code in added_must_have_codes:
+            return "Hypothetical must-have"
+        if band_number == 1 and code in auto_prerequisite_codes:
+            return "Hypothetical same-term prerequisite"
         if band_number == 1 and baseline_is_recommended:
             return "Recommended starting course"
         if band_number == 1 and baseline_is_optimized:
@@ -279,7 +436,12 @@ def build_graduation_xlsx(
     merged_banner(
         overview,
         3,
-        "Read-only advisory estimate — not an official graduation decision, registration, or guarantee of course availability.",
+        (
+            "Hypothetical admin override — this workbook does not approve registration, "
+            "prerequisite eligibility, timetable feasibility, or graduation."
+            if is_must_have_what_if
+            else "Read-only advisory estimate — not an official graduation decision, registration, or guarantee of course availability."
+        ),
         8,
         warning=True,
     )
@@ -433,6 +595,39 @@ def build_graduation_xlsx(
     style_cell(overview["A23"], alignment=wrap, fill=PatternFill("solid", fgColor="F5F7FA"))
     overview.row_dimensions[23].height = 30
 
+    overview_last_row = 23
+    if is_must_have_what_if:
+        section_banner(overview, 25, "Administrative must-have what-if", 8)
+        requested = what_if.get("requested_must_have_course_codes") or must_have_courses
+        override_rows = (
+            ("Scenario validity", "Valid" if what_if_valid else "Invalid"),
+            ("Requested must-have courses", _display_codes(requested)),
+            ("Forced hypothetical courses", _display_codes(added_must_have_courses)),
+            ("Auto-added prerequisites", _display_codes(auto_added_prerequisites)),
+            ("Displaced baseline courses", _display_codes(displaced_baseline_courses)),
+            (
+                "Same-term prerequisite approval",
+                "Required" if special_approval_required else "Not required",
+            ),
+            ("Graduation comparison", _comparison_label(what_if.get("comparison"))),
+            (
+                "Decision boundary",
+                "Simulation only — no eligibility, prerequisite waiver, registration, seat, or timetable approval.",
+            ),
+        )
+        for row, (label, value) in enumerate(override_rows, start=26):
+            overview.merge_cells(start_row=row, start_column=1, end_row=row, end_column=2)
+            set_text(overview.cell(row=row, column=1), label)
+            style_cell(overview.cell(row=row, column=1), font=label_font, fill=section_fill)
+            overview.cell(row=row, column=2).border = border
+            overview.merge_cells(start_row=row, start_column=3, end_row=row, end_column=8)
+            set_text(overview.cell(row=row, column=3), value)
+            style_cell(overview.cell(row=row, column=3), alignment=wrap)
+            for column in range(4, 9):
+                overview.cell(row=row, column=column).border = border
+            overview.row_dimensions[row].height = 30 if row == 33 else 24
+        overview_last_row = 25 + len(override_rows)
+
     for column, width in {
         "A": 18,
         "B": 12,
@@ -445,7 +640,7 @@ def build_graduation_xlsx(
     }.items():
         overview.column_dimensions[column].width = width
     configure_sheet(overview, orientation="portrait", freeze="A5", tab_color=navy)
-    overview.print_area = "A1:H23"
+    overview.print_area = f"A1:H{overview_last_row}"
 
     # ── Term Plan ─────────────────────────────────────────────
     term_sheet = workbook.create_sheet(_SHEET_NAMES[1])
@@ -470,6 +665,11 @@ def build_graduation_xlsx(
         (
             f"Starting source: {baseline_source} · {baseline_source_note} "
             f"· Planning term {baseline_year}/{baseline_term}"
+            + (
+                " · Hypothetical must-have override; no registration or eligibility approval"
+                if is_must_have_what_if
+                else ""
+            )
         ),
         len(term_headers),
     )
@@ -478,15 +678,17 @@ def build_graduation_xlsx(
     baseline_courses = list(report.get("planning_baseline_courses_assumed_passed") or [])
     baseline_total = int(report.get("planning_baseline_credits") or 0)
     for course in baseline_courses:
+        role = course_scenario_role(course) if is_must_have_what_if else "retained_baseline"
         term_rows.append(
             {
                 "step": 0,
                 "year": baseline_year,
                 "term": baseline_term,
-                "stage": baseline_stage,
+                "stage": course_stage(course) if is_must_have_what_if else baseline_stage,
                 "course": course,
                 "term_credits": baseline_total,
                 "waiting": False,
+                "hypothetical": role in {"must_have", "auto_prerequisite"},
             }
         )
     if not baseline_courses:
@@ -500,6 +702,7 @@ def build_graduation_xlsx(
                 "term_credits": baseline_total,
                 "waiting": True,
                 "message": "No starting-term courses were available for this scenario.",
+                "hypothetical": False,
             }
         )
     for planned in list(report.get("term_plan") or []):
@@ -516,6 +719,7 @@ def build_graduation_xlsx(
                         "course": course,
                         "term_credits": int(planned.get("credits") or 0),
                         "waiting": False,
+                        "hypothetical": False,
                     }
                 )
         else:
@@ -529,6 +733,7 @@ def build_graduation_xlsx(
                     "term_credits": int(planned.get("credits") or 0),
                     "waiting": True,
                     "message": "Waiting for prerequisites",
+                    "hypothetical": False,
                 }
             )
 
@@ -566,7 +771,7 @@ def build_graduation_xlsx(
                 style_cell(cell, alignment=wrap if column == 7 else center)
         stage_fill = (
             PatternFill("solid", fgColor=pale_amber)
-            if item["waiting"]
+            if item["waiting"] or item.get("hypothetical")
             else PatternFill("solid", fgColor=pale_royal if item["step"] == 0 else pale_teal)
         )
         for column in range(1, len(term_headers) + 1):
@@ -602,24 +807,37 @@ def build_graduation_xlsx(
     merged_banner(
         baseline_sheet,
         2,
-        f"{baseline_source} · {baseline_source_note} · {baseline_year}/{baseline_term}",
+        (
+            f"{baseline_source} · {baseline_source_note} · {baseline_year}/{baseline_term}"
+            + (
+                " · Mixed with clearly labelled hypothetical admin override rows"
+                if is_must_have_what_if
+                else ""
+            )
+        ),
         len(baseline_headers),
     )
     write_headers(baseline_sheet, 4, baseline_headers)
     baseline_data_rows = 0
     if baseline_courses:
         for row, course in enumerate(baseline_courses, start=5):
+            role = course_scenario_role(course) if is_must_have_what_if else "retained_baseline"
+            hypothetical = role in {"must_have", "auto_prerequisite"}
             values = (
                 exported_course_code(course),
                 exported_course_name(course),
                 course.get("fulfills_plan_code") or course.get("code", ""),
                 (
-                    ", ".join(str(value) for value in course.get("recorded_sections") or [])
-                    if baseline_is_optimized
-                    else course.get("section", "")
+                    "No registration evidence — hypothetical override"
+                    if hypothetical
+                    else (
+                        ", ".join(str(value) for value in course.get("recorded_sections") or [])
+                        if baseline_is_optimized
+                        else course.get("section", "")
+                    )
                 ),
                 int(course.get("credits") or 0),
-                baseline_source,
+                course_source(course) if is_must_have_what_if else baseline_source,
             )
             for column, value in enumerate(values, start=1):
                 cell = baseline_sheet.cell(row=row, column=column)
@@ -630,6 +848,8 @@ def build_graduation_xlsx(
                 else:
                     set_text(cell, value)
                     style_cell(cell, alignment=wrap if column in (2, 4, 6) else center)
+                if hypothetical:
+                    cell.fill = PatternFill("solid", fgColor=pale_amber)
             baseline_data_rows += 1
     else:
         baseline_sheet.merge_cells("A5:F5")
@@ -670,13 +890,35 @@ def build_graduation_xlsx(
     merged_banner(
         prereq_sheet,
         2,
-        "Tabular version of the on-screen tree. Standalone courses are retained even when they have no visible prerequisite link.",
+        (
+            "Tabular version of the on-screen tree. Standalone courses are retained even when they have no visible prerequisite link."
+            + (
+                " Approved same-term simulation exceptions are labelled explicitly."
+                if relaxed_edges
+                else ""
+            )
+        ),
         len(prereq_headers),
     )
     write_headers(prereq_sheet, 4, prereq_headers)
     graph = presentation.get("graph") if isinstance(presentation, dict) else {}
     graph = graph if isinstance(graph, dict) else {}
     edges = [row for row in list(graph.get("items") or []) if isinstance(row, dict)]
+    graph_edge_pairs = {
+        (
+            _course_code(row.get("course_code")),
+            _course_code(row.get("prerequisite_course_code")),
+        )
+        for row in edges
+    }
+    edges.extend(
+        {
+            "course_code": row["course_code"],
+            "prerequisite_course_code": row["prerequisite_code"],
+        }
+        for row in relaxed_edges
+        if (row["course_code"], row["prerequisite_code"]) not in graph_edge_pairs
+    )
     term_of = graph.get("termOf") if isinstance(graph.get("termOf"), dict) else {}
     name_of = graph.get("nameOf") if isinstance(graph.get("nameOf"), dict) else {}
     status_of = graph.get("statusOf") if isinstance(graph.get("statusOf"), dict) else {}
@@ -687,17 +929,22 @@ def build_graduation_xlsx(
     linked_nodes: set[str] = set()
     map_rows: list[dict[str, Any]] = []
     for edge in edges:
-        course_code = str(edge.get("course_code") or "").strip()
-        prereq_code = str(edge.get("prerequisite_course_code") or "").strip()
+        course_code = _course_code(edge.get("course_code"))
+        prereq_code = _course_code(edge.get("prerequisite_course_code"))
         if not course_code or not prereq_code:
             continue
         nodes.update((course_code, prereq_code))
         linked_nodes.update((course_code, prereq_code))
         map_rows.append(
             {
-                "relation": "Prerequisite link",
+                "relation": (
+                    "Same-term prerequisite exception"
+                    if (course_code, prereq_code) in relaxed_edge_pairs
+                    else "Prerequisite link"
+                ),
                 "prereq": prereq_code,
                 "course": course_code,
+                "relaxed": (course_code, prereq_code) in relaxed_edge_pairs,
             }
         )
     for code in sorted(nodes - linked_nodes):
@@ -712,12 +959,16 @@ def build_graduation_xlsx(
             item["relation"],
             prereq_code,
             name_of.get(prereq_code, "") if prereq_code else "",
-            status_label(status_of.get(prereq_code), prereq_band) if prereq_code else "",
+            (
+                status_label(status_of.get(prereq_code), prereq_band, prereq_code)
+                if prereq_code
+                else ""
+            ),
             prereq_band,
             band_labels.get(str(prereq_band), "") if prereq_code else "",
             course_code,
             name_of.get(course_code, ""),
-            status_label(status_of.get(course_code), course_band),
+            status_label(status_of.get(course_code), course_band, course_code),
             course_band,
             band_labels.get(str(course_band), ""),
             None,
@@ -739,14 +990,19 @@ def build_graduation_xlsx(
                 cell.number_format = "0"
                 style_cell(cell, alignment=center)
             elif column == 13:
-                cell.value = (
-                    f'=IF(COUNT(E{row},J{row})<2,"No link",IF(J{row}-E{row}>0,"OK",'
-                    f'IF(J{row}-E{row}=0,"Same term","Prerequisite later")))'
-                )
+                if item.get("relaxed"):
+                    set_text(cell, "Approved hypothetical same-term exception")
+                else:
+                    cell.value = (
+                        f'=IF(COUNT(E{row},J{row})<2,"No link",IF(J{row}-E{row}>0,"OK",'
+                        f'IF(J{row}-E{row}=0,"Same term","Prerequisite later")))'
+                    )
                 style_cell(cell, alignment=center)
             else:
                 set_text(cell, value)
                 style_cell(cell, alignment=wrap if column in (3, 6, 8, 11) else center)
+            if item.get("relaxed"):
+                cell.fill = PatternFill("solid", fgColor=pale_amber)
 
     if not map_rows:
         prereq_sheet.merge_cells("A5:M5")
@@ -874,6 +1130,17 @@ def build_graduation_xlsx(
             "No simulation assumptions were supplied with this report.",
             "This export remains a read-only planning aid and is not an official graduation decision.",
         ]
+    if is_must_have_what_if:
+        assumptions.extend(
+            [
+                "Selected must-have and auto-added prerequisite courses are hypothetical current-term planning inputs, not registrations.",
+                "This simulation does not approve prerequisite eligibility, a prerequisite waiver, timetable compatibility, seats, or registration.",
+            ]
+        )
+        if relaxed_edges:
+            assumptions.append(
+                "The labelled same-term direct-prerequisite edges are explicit administrative simulation exceptions and require separate academic approval."
+            )
     for index, assumption in enumerate(assumptions, start=1):
         row = assumptions_start + index
         blocker_sheet.cell(row=row, column=1).value = index
@@ -888,12 +1155,72 @@ def build_graduation_xlsx(
 
     metadata_row = assumptions_start + len(assumptions) + 2
     section_banner(blocker_sheet, metadata_row, "Scenario metadata", len(blocker_headers))
-    metadata = (
+    metadata: list[tuple[str, object]] = [
         ("Baseline kind", baseline_kind),
         ("Starting-course source", baseline_source),
         ("Planning term", f"{baseline_year}/{baseline_term}"),
         ("Simulation completed", "Yes" if report.get("simulation_completed") else "No"),
-    )
+    ]
+    if is_must_have_what_if:
+        requested = what_if.get("requested_must_have_course_codes") or must_have_courses
+        validation_errors = []
+        for error in what_if.get("validation_errors") or []:
+            if isinstance(error, dict):
+                code = str(error.get("kind") or error.get("code") or "").strip()
+                message = str(error.get("message") or error.get("error") or "").strip()
+                validation_errors.append(" — ".join(value for value in (code, message) if value))
+            elif str(error or "").strip():
+                validation_errors.append(str(error).strip())
+        edge_labels = [
+            f"{row['prerequisite_code']} → {row['course_code']}"
+            + (f" ({row['exception']})" if row.get("exception") else "")
+            for row in relaxed_edges
+        ]
+        baseline_summary = (
+            what_if.get("baseline") if isinstance(what_if.get("baseline"), dict) else {}
+        )
+        scenario_summary = (
+            what_if.get("scenario") if isinstance(what_if.get("scenario"), dict) else {}
+        )
+        metadata.extend(
+            [
+                ("What-if type", "Hypothetical admin must-have override"),
+                ("What-if valid", "Yes" if what_if_valid else "No"),
+                ("Requested must-have courses", _display_codes(requested)),
+                ("Added hypothetical must-have courses", _display_codes(added_must_have_courses)),
+                ("Already in baseline", _display_codes(already_in_baseline_courses)),
+                ("Auto-added same-term prerequisites", _display_codes(auto_added_prerequisites)),
+                ("Displaced baseline courses", _display_codes(displaced_baseline_courses)),
+                ("Relaxed prerequisite edges", "; ".join(edge_labels) or "None"),
+                (
+                    "Special academic approval",
+                    "Required" if special_approval_required else "Not required",
+                ),
+                (
+                    "Timetable conflict check",
+                    "Required" if what_if.get("timetable_check_required") else "Not flagged",
+                ),
+                ("Comparison", _comparison_label(what_if.get("comparison"))),
+                (
+                    "Baseline projected terms",
+                    baseline_summary.get("estimated_terms_including_planning_baseline")
+                    if baseline_summary
+                    else "Not available",
+                ),
+                (
+                    "Scenario projected terms",
+                    scenario_summary.get("estimated_terms_including_planning_baseline")
+                    if scenario_summary
+                    else "Not available",
+                ),
+                ("Validation errors", "; ".join(validation_errors) or "None"),
+                ("Engine note", str(what_if.get("note") or "None")),
+                (
+                    "Decision boundary",
+                    "No eligibility, prerequisite-waiver, registration, seat, timetable, or graduation approval is granted.",
+                ),
+            ]
+        )
     for offset, (label, value) in enumerate(metadata, start=metadata_row + 1):
         blocker_sheet.merge_cells(start_row=offset, start_column=1, end_row=offset, end_column=2)
         set_text(blocker_sheet.cell(row=offset, column=1), label)

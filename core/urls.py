@@ -110,6 +110,9 @@ from .planner_views import (
     planner_sections_catalog_view,
 )
 from .portfolio_views import (
+    admin_graduation_planning_page,
+    admin_graduation_student_export_xlsx,
+    admin_graduation_student_page,
     advisor_portfolio_page,
     advisor_portfolio_student_graduation_export_xlsx,
     advisor_portfolio_student_graduation_page,
@@ -544,6 +547,21 @@ urlpatterns = [
     path("ops/sections-import/insert/", sections_import_insert_view, name="sections_import_insert"),
     path("planner/", planner_page, name="planner_page"),
     path("advisor-portfolio/", advisor_portfolio_page, name="advisor_portfolio_page"),
+    path(
+        "graduation-planning/",
+        admin_graduation_planning_page,
+        name="admin_graduation_planning_page",
+    ),
+    path(
+        "graduation-planning/students/<int:student_id>/",
+        admin_graduation_student_page,
+        name="admin_graduation_student_page",
+    ),
+    path(
+        "graduation-planning/students/<int:student_id>/export.xlsx",
+        admin_graduation_student_export_xlsx,
+        name="admin_graduation_student_export_xlsx",
+    ),
     path(
         "advisor-portfolio/students/<int:student_id>/graduation/",
         advisor_portfolio_student_graduation_page,
