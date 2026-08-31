@@ -228,14 +228,21 @@
     const hasDeclaredTerm = [...all].some(c => Number.isFinite(termOf[c]));
     const byTerm = o.mode !== 'depth' && hasDeclaredTerm;
 
-    /* Keep the map legible at normal desktop zoom.  The SVG may scroll when a
-       chain is genuinely wide, but course codes must never be shrunk into
-       thumbnail-sized labels just to force the whole plan into one viewport. */
-    const nH = 42, gX = 24, padY = 13, emptyH = 32, padX = 28, rW = 16;
+    /* The dedicated graduation workspace opts into a compact, wrapped layout.
+       Dense bands become two or more readable lanes instead of one very wide
+       strip, so both graph modes can use the full panel without tiny labels. */
+    const fitToWidth = o.fitToWidth === true;
+    const nH = 42;
+    const renderedNodeH = fitToWidth ? 40 : nH;
+    const gX = fitToWidth ? 14 : 24;
+    const padY = fitToWidth ? 11 : 13;
+    const emptyH = fitToWidth ? 28 : 32;
+    const padX = fitToWidth ? 20 : 28;
+    const rW = fitToWidth ? 12 : 16;
     const requestedTermGutter = Number(o.termGutter);
     const TERM_GUTTER = Number.isFinite(requestedTermGutter)
       ? Math.max(80, Math.min(220, requestedTermGutter))
-      : 104;
+      : (fitToWidth ? 144 : 104);
     const maxChars = Math.max(...[...all].map(c => c.length));
     const nW = Math.max(92, maxChars * 9 + 26);
     const slotW = sl => (sl.kind === 'node' ? nW : rW);
@@ -267,7 +274,17 @@
     /* active layout */
     const { row, inferred } = byTerm ? termLayout : depthLayout;
     const gutter = byTerm ? TERM_GUTTER : 0;
-    const svgW = Math.max(560, padX * 2 + gutter + naturalContentW(row, inferred));
+    const naturalSvgW = Math.max(560, padX * 2 + gutter + naturalContentW(row, inferred));
+    let hostW = 0;
+    if (fitToWidth && container.clientWidth) {
+      const cs = window.getComputedStyle(container);
+      hostW = container.clientWidth
+        - (Number.parseFloat(cs.paddingLeft) || 0)
+        - (Number.parseFloat(cs.paddingRight) || 0);
+    }
+    const svgW = fitToWidth && hostW > 0
+      ? Math.max(320, Math.floor(hostW))
+      : naturalSvgW;
 
     /* bands: every row from min..max, so a term with no linked course still
        occupies the axis instead of silently collapsing */
@@ -278,14 +295,37 @@
     const { slots, up, dn, chain } = pgBuildSlots(edges, row, minR, maxR, all);
     const { keys } = pgOrderSlots(slots, up, dn, edges, chain);
 
-    const bandW = k => {
-      const arr = slots.get(k);
-      return arr.reduce((a, sl) => a + slotW(sl), 0) + Math.max(0, arr.length - 1) * gX;
+    const slotsWidth = arr => (
+      arr.reduce((a, sl) => a + slotW(sl), 0) + Math.max(0, arr.length - 1) * gX
+    );
+    const contentW = Math.max(nW, svgW - gutter - padX * 2);
+    const splitBand = arr => {
+      if (!fitToWidth || slotsWidth(arr) <= contentW) return [arr];
+      const lanes = [];
+      let lane = [], laneW = 0;
+      arr.forEach(sl => {
+        const nextW = slotW(sl) + (lane.length ? gX : 0);
+        if (lane.length && laneW + nextW > contentW) {
+          lanes.push(lane);
+          lane = [];
+          laneW = 0;
+        }
+        laneW += slotW(sl) + (lane.length ? gX : 0);
+        lane.push(sl);
+      });
+      if (lane.length) lanes.push(lane);
+      return lanes;
     };
+    const bandLanes = {};
+    const laneHeight = lane => (
+      lane.some(sl => sl.kind === 'node') ? renderedNodeH + padY * 2 : emptyH
+    );
     const bandH = {}, bandY = {};
     let y = 0;
     keys.forEach(k => {
-      const h = slots.get(k).some(sl => sl.kind === 'node') ? nH + padY * 2 : emptyH;
+      const lanes = splitBand(slots.get(k));
+      bandLanes[k] = lanes;
+      const h = lanes.reduce((total, lane) => total + laneHeight(lane), 0);
       bandY[k] = y; bandH[k] = h; y += h;
     });
     const svgH = y;
@@ -294,12 +334,15 @@
     const cx0 = gutter + padX, cxW = svgW - gutter - padX * 2;
     const pos = {};
     keys.forEach(k => {
-      const arr = slots.get(k);
-      if (!arr.length) return;
-      let x = cx0 + Math.max(0, (cxW - bandW(k)) / 2);
-      arr.forEach(sl => {
-        pos[sl.id] = { x: x + slotW(sl) / 2, y: bandY[k] + bandH[k] / 2, kind: sl.kind };
-        x += slotW(sl) + gX;
+      let laneY = bandY[k];
+      bandLanes[k].forEach(lane => {
+        const h = laneHeight(lane);
+        let x = cx0 + Math.max(0, (cxW - slotsWidth(lane)) / 2);
+        lane.forEach(sl => {
+          pos[sl.id] = { x: x + slotW(sl) / 2, y: laneY + h / 2, kind: sl.kind };
+          x += slotW(sl) + gX;
+        });
+        laneY += h;
       });
     });
 
@@ -307,7 +350,10 @@
        A wide chain remains readable inside the host's horizontal scroller. */
     const PG_MAX_SCALE = 1.25;
     const pgMaxW = Math.round(svgW * PG_MAX_SCALE);
-    let s = `<svg class="prereq-svg" viewBox="0 0 ${svgW} ${svgH}" style="min-width:${svgW}px;max-width:${pgMaxW}px;height:auto" role="img">`;
+    const sizing = fitToWidth
+      ? `width:100%;min-width:0;max-width:${svgW}px;height:auto`
+      : `min-width:${svgW}px;max-width:${pgMaxW}px;height:auto`;
+    let s = `<svg class="prereq-svg" viewBox="0 0 ${svgW} ${svgH}" style="${sizing}" role="img">`;
     s += '<defs>';
     s += `<marker id="pgA" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto"><polygon points="0 0,10 4,0 8" fill="var(--teal)" opacity="0.78"/></marker>`;
     s += `<marker id="pgAW" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto"><polygon points="0 0,10 4,0 8" fill="#b45309" opacity="0.9"/></marker>`;
@@ -321,7 +367,9 @@
         s += `<rect class="pg-band${k % 2 ? ' pg-band-alt' : ''}" x="0" y="${bandY[k]}" width="${svgW}" height="${bandH[k]}"/>`;
         s += `<line class="pg-band-rule" x1="0" y1="${bandY[k]}" x2="${svgW}" y2="${bandY[k]}"/>`;
         const ly = bandY[k] + bandH[k] / 2;
-        s += `<text class="pg-band-lbl${filled ? '' : ' pg-band-lbl-empty'}" x="${gutter - 14}" y="${ly}" text-anchor="end" dominant-baseline="middle">${pgEsc(t.termHeading(k))}</text>`;
+        const heading = String(t.termHeading(k));
+        const headingTitle = t.termHeadingTitle ? String(t.termHeadingTitle(k)) : heading;
+        s += `<text class="pg-band-lbl${filled ? '' : ' pg-band-lbl-empty'}" x="${gutter - 14}" y="${ly}" text-anchor="end" dominant-baseline="middle" aria-label="${pgEsc(headingTitle)}"><title>${pgEsc(headingTitle)}</title>${pgEsc(heading)}</text>`;
         if (!filled) {
           s += `<text class="pg-band-note" x="${gutter + 14}" y="${ly}" dominant-baseline="middle">${pgEsc(t.pgNoTermBand)}</text>`;
         }
@@ -341,7 +389,7 @@
         if (byTerm) offRows.push({ f: e.f, t: e.t, same: row[e.f] === row[e.t] });
         const dir = t.x >= f.x ? 1 : -1;
         const x1 = f.x + dir * (nW / 2), x2 = t.x - dir * (nW / 2);
-        const yb = Math.max(f.y, t.y) + nH / 2 + 14;
+        const yb = Math.max(f.y, t.y) + renderedNodeH / 2 + 14;
         s += `<path class="pg-edge pg-edge-warn" d="M${x1},${f.y} C${x1 + dir * 26},${yb} ${x2 - dir * 26},${yb} ${x2},${t.y}" ${attrs} marker-end="url(#pgAW)"/>`;
         return;
       }
@@ -349,8 +397,8 @@
       const path = chain[i] || [e.f, e.t];
       const pts = path.map((id, j) => {
         const q = pos[id];
-        if (j === 0) return { x: q.x, y: q.y + nH / 2 };
-        if (j === path.length - 1) return { x: q.x, y: q.y - nH / 2 };
+        if (j === 0) return { x: q.x, y: q.y + renderedNodeH / 2 };
+        if (j === path.length - 1) return { x: q.x, y: q.y - renderedNodeH / 2 };
         return { x: q.x, y: q.y };
       });
       let d = `M${pts[0].x},${pts[0].y}`;
@@ -374,7 +422,7 @@
       if (gate) {
         anyGate = true;
         fl = 'rgba(180,83,9,0.07)'; st = 'rgba(180,83,9,0.30)'; tc = '#b45309';
-        rx = nH / 2; dash = ' stroke-dasharray="4 3"'; cls += ' pg-node-gate';
+        rx = renderedNodeH / 2; dash = ' stroke-dasharray="4 3"'; cls += ' pg-node-gate';
         label = IS_AR ? `الساعات المعتمدة: ${gate[1]}` : `${gate[1]} hrs`;
       } else if (statusOf[c]) {
         /* personalised: the student's own progress outranks the structural role */
@@ -398,8 +446,16 @@
       if (gate) bits.push(t.pgGateTip(gate[1]));
       else if (isInferred) bits.push(t.pgInferredTip);
       else if (typeof termOf[c] === 'number') bits.push(t.pgTermTip(termOf[c]));
-      s += `<g class="${cls}" data-c="${pgEsc(c)}"><title>${pgEsc(bits.join(' — '))}</title>`
-        + `<rect x="${p.x - nW / 2}" y="${p.y - nH / 2}" width="${nW}" height="${nH}" rx="${rx}" fill="${fl}" stroke="${st}" stroke-width="${statusOf[c] === 'open' ? 2.4 : 1.6}"${dash} filter="url(#nSh)"/>`
+      const stateLabel = {
+        passed: t.pgPassed,
+        studying: t.pgStudying,
+        open: t.pgOpen,
+        locked: t.pgLocked,
+      }[statusOf[c]];
+      if (stateLabel) bits.push(stateLabel);
+      const accessibleLabel = bits.join(' — ');
+      s += `<g class="${cls}" data-c="${pgEsc(c)}" tabindex="0" role="img" aria-label="${pgEsc(accessibleLabel)}"><title>${pgEsc(accessibleLabel)}</title>`
+        + `<rect x="${p.x - nW / 2}" y="${p.y - renderedNodeH / 2}" width="${nW}" height="${renderedNodeH}" rx="${rx}" fill="${fl}" stroke="${st}" stroke-width="${statusOf[c] === 'open' ? 2.4 : 1.6}"${dash} filter="url(#nSh)"/>`
         + `<text x="${p.x}" y="${p.y + 1}" text-anchor="middle" dominant-baseline="middle" fill="${tc}" font-family="var(--font-mono)" font-size="13" font-weight="750">${pgEsc(label)}</text></g>`;
     });
     s += '</svg>';
@@ -444,16 +500,20 @@
 
     /* interactivity — hover highlights the full chain */
     container.querySelectorAll('.pg-node').forEach(nd => {
-      nd.addEventListener('mouseenter', () => {
+      const highlight = () => {
         const cc = nd.dataset.c, conn = new Set();
         (function up(x) { conn.add(x); (prereqs[x] || []).forEach(p => { if (!conn.has(p)) up(p); }); })(cc);
         (function dn(x) { conn.add(x); (dependents[x] || []).forEach(k => { if (!conn.has(k)) dn(k); }); })(cc);
         container.querySelectorAll('.pg-node').forEach(n => { n.classList.toggle('hl', conn.has(n.dataset.c)); n.classList.toggle('dm', !conn.has(n.dataset.c)); });
         container.querySelectorAll('.pg-edge').forEach(e => { const ok = conn.has(e.dataset.f) && conn.has(e.dataset.t); e.classList.toggle('hl', ok); e.classList.toggle('dm', !ok); });
-      });
-      nd.addEventListener('mouseleave', () => {
+      };
+      const clearHighlight = () => {
         container.querySelectorAll('.pg-node,.pg-edge').forEach(el => { el.classList.remove('hl', 'dm'); });
-      });
+      };
+      nd.addEventListener('mouseenter', highlight);
+      nd.addEventListener('focus', highlight);
+      nd.addEventListener('mouseleave', clearHighlight);
+      nd.addEventListener('blur', clearHighlight);
     });
   }
   window.PrereqGraph = {

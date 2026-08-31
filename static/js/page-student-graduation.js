@@ -75,6 +75,12 @@
       const term = label.slice('Registered timetable '.length);
       return AR ? `الجدول المسجّل لفصل البداية: ${term}` : `Registered timetable ${term}`;
     }
+    if (label.indexOf('Optimized current offerings ') === 0) {
+      const term = label.slice('Optimized current offerings '.length);
+      return AR
+        ? `العروض المحسّنة لفصل البداية: ${term}`
+        : `Optimized current offerings ${term}`;
+    }
     if (label.indexOf('Planning baseline ') === 0) {
       const term = label.slice('Planning baseline '.length);
       return AR ? `فصل البداية: ${term}` : `Planning baseline term ${term}`;
@@ -101,9 +107,39 @@
     return AR ? `الفصل التقديري: ${number}` : `Scenario term ${number}`;
   }
 
+  /* Full descriptions belong in the tooltip and accessible label. The fixed
+     left axis needs a concise label that remains readable at every viewport. */
+  function compactBandLabel(number) {
+    const key = String(number);
+    const raw = Object.prototype.hasOwnProperty.call(bandLabels, key)
+      ? String(bandLabels[key] == null ? '' : bandLabels[key])
+      : '';
+    if (raw === 'Completed before the scenario') {
+      return AR ? 'قبل البداية' : 'Before baseline';
+    }
+    const baselinePrefixes = [
+      'Recommended starting term ',
+      'Registered timetable ',
+      'Optimized current offerings ',
+      'Planning baseline ',
+      'Current ',
+    ];
+    const baselinePrefix = baselinePrefixes.find(prefix => raw.indexOf(prefix) === 0);
+    if (baselinePrefix) {
+      const term = raw.slice(baselinePrefix.length);
+      return AR ? `البداية ${term}` : `Baseline ${term}`;
+    }
+    if (raw.indexOf('Projected ') === 0) {
+      const term = raw.slice('Projected '.length);
+      return AR ? `الفصل ${term}` : `Term ${term}`;
+    }
+    return AR ? `الفصل ${number}` : `Term ${number}`;
+  }
+
   function graphStrings() {
     return {
-      termHeading: bandLabel,
+      termHeading: compactBandLabel,
+      termHeadingTitle: bandLabel,
       pgNoTermBand: AR ? 'خارج الفصول التي شملها التقدير' : 'Outside the scenario order',
       pgGateTip: hours => (AR
         ? `شرط الساعات المعتمدة: ${hours}`
@@ -120,7 +156,7 @@
       pgHoverHint: AR ? 'مرّر على مقرر لإبراز سلسلة متطلباته' : 'hover to highlight a chain',
       pgPassed: AR ? 'مجتاز قبل فصل البداية' : 'completed before the scenario',
       pgStudying: AR ? 'مسجّل فعليًا، ويُفترض اجتيازه' : 'registered; assumed passed by term end',
-      pgOpen: baselineKind === 'recommended_current_term'
+      pgOpen: baselineKind === 'recommended_current_term' || baselineKind === 'optimized_current_offerings'
         ? (AR ? 'مقرر مقترح في المسار' : 'proposed in the scenario')
         : (AR ? 'مُدرج في فصل تقديري' : 'planned in the scenario'),
       pgLocked: AR ? 'تعذّر تحديد فصل مناسب له' : 'unresolved',
@@ -135,6 +171,9 @@
 
   let mode = 'term';
   let drawn = false;
+  let lastDrawWidth = 0;
+  let resizeFrame = 0;
+  const scroller = host.closest('.ap-grad-graph-scroll');
 
   function setButtonState() {
     const termIsActive = mode === 'term';
@@ -163,8 +202,10 @@
       statusOf: graph.statusOf || {},
       extraNodes: graph.extraNodes || [],
       mode: mode,
+      fitToWidth: true,
       t: graphStrings(),
     });
+    lastDrawWidth = Math.round((scroller || host).clientWidth || 0);
     drawn = true;
     return true;
   }
@@ -173,7 +214,10 @@
     if ((isMobile() && !renderOnMobile) || mode === nextMode) return;
     mode = nextMode;
     setButtonState();
-    if (details.open && drawn) draw();
+    if (details.open && drawn) {
+      if (scroller) scroller.scrollLeft = 0;
+      draw();
+    }
   }
 
   details.addEventListener('toggle', function () {
@@ -181,6 +225,36 @@
   });
   termButton.addEventListener('click', function () { chooseMode('term'); });
   chainButton.addEventListener('click', function () { chooseMode('depth'); });
+
+  const modeButtons = [
+    { button: termButton, mode: 'term' },
+    { button: chainButton, mode: 'depth' },
+  ];
+  modeButtons.forEach((entry, index) => {
+    entry.button.addEventListener('keydown', event => {
+      if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+      event.preventDefault();
+      let nextIndex = index;
+      if (event.key === 'Home') nextIndex = 0;
+      else if (event.key === 'End') nextIndex = modeButtons.length - 1;
+      else nextIndex = (index + (event.key === 'ArrowRight' ? 1 : -1) + modeButtons.length) % modeButtons.length;
+      chooseMode(modeButtons[nextIndex].mode);
+      modeButtons[nextIndex].button.focus();
+    });
+  });
+
+  if (typeof ResizeObserver === 'function') {
+    const observer = new ResizeObserver(() => {
+      const width = Math.round((scroller || host).clientWidth || 0);
+      if (!details.open || !drawn || !width || Math.abs(width - lastDrawWidth) < 8) return;
+      if (resizeFrame) cancelAnimationFrame(resizeFrame);
+      resizeFrame = requestAnimationFrame(() => {
+        resizeFrame = 0;
+        draw();
+      });
+    });
+    observer.observe(scroller || host);
+  }
 
   /* An explicitly open disclosure still renders lazily at enhancement time. */
   if (details.open) draw();

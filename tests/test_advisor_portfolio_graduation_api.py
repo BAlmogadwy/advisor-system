@@ -1,13 +1,16 @@
 from __future__ import annotations
 
+from io import BytesIO
 from unittest.mock import Mock
 
 import pytest
 from django.contrib.auth.models import Group, User
 from django.test import Client
 from django.urls import reverse
+from openpyxl import load_workbook
 
 from core.models import Student
+from core.services.advisor_graduation_optimization import OPTIMIZED_CURRENT_OFFERINGS
 from core.services.rbac import ROLE_ADVISOR, ROLE_STUDENT, set_user_scope
 from core.services.student_graduation import (
     RECOMMENDED_CURRENT_TERM,
@@ -58,6 +61,13 @@ def _url() -> str:
 def _page_url() -> str:
     return reverse(
         "advisor_portfolio_student_graduation_page",
+        kwargs={"student_id": STUDENT_ID},
+    )
+
+
+def _export_url() -> str:
+    return reverse(
+        "advisor_portfolio_student_graduation_export_xlsx",
         kwargs={"student_id": STUDENT_ID},
     )
 
@@ -188,6 +198,106 @@ def test_dedicated_page_switches_to_recommended_without_an_embedded_drawer(
     )
 
 
+def test_dedicated_page_exports_only_the_active_scenario(portfolio_student, monkeypatch):
+    _install_successful_services(monkeypatch, RECOMMENDED_CURRENT_TERM)
+
+    response = _client("page-export-link").get(_page_url(), {"baseline": RECOMMENDED_CURRENT_TERM})
+
+    assert response.status_code == 200
+    body = response.content.decode()
+    assert f"{_export_url()}?baseline={RECOMMENDED_CURRENT_TERM}" in body
+    assert "Export this scenario (XLSX)" in body
+
+
+def test_export_endpoint_requires_advisor_scope_before_building(portfolio_student, monkeypatch):
+    build, _presentation = _install_successful_services(monkeypatch)
+    export = Mock(return_value=b"PK-test")
+    monkeypatch.setattr("core.portfolio_views.build_graduation_xlsx", export)
+
+    assert Client().get(_export_url()).status_code == 401
+    assert (
+        _client(
+            "export-student-role",
+            role=ROLE_STUDENT,
+            advisor_id="",
+            student_id=STUDENT_ID,
+        )
+        .get(_export_url())
+        .status_code
+        == 403
+    )
+    assert (
+        _client("export-other-advisor", advisor_id="SOMEONE-ELSE").get(_export_url()).status_code
+        == 403
+    )
+    missing_url = reverse(
+        "advisor_portfolio_student_graduation_export_xlsx",
+        kwargs={"student_id": STUDENT_ID + 1},
+    )
+    assert _client("export-missing-student").get(missing_url).status_code == 404
+    build.assert_not_called()
+    export.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("baseline_kind", "filename_part"),
+    [
+        (REGISTERED_TIMETABLE, "registered"),
+        (RECOMMENDED_CURRENT_TERM, "recommended"),
+    ],
+)
+def test_export_endpoint_returns_loadable_selected_scenario_workbook(
+    portfolio_student, monkeypatch, baseline_kind, filename_part
+):
+    build, _presentation = _install_successful_services(monkeypatch, baseline_kind)
+
+    response = _client(f"export-{filename_part}").get(_export_url(), {"baseline": baseline_kind})
+
+    assert response.status_code == 200
+    assert response.headers["Content-Type"] == (
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+    assert response.headers["Content-Disposition"] == (
+        f'attachment; filename="graduation_plan_{STUDENT_ID}_{filename_part}_1448_T2.xlsx"'
+    )
+    assert response.headers["X-Content-Type-Options"] == "nosniff"
+    assert "no-store" in response.headers["Cache-Control"]
+    workbook = load_workbook(BytesIO(response.content), read_only=True)
+    try:
+        assert workbook.sheetnames == [
+            "Overview",
+            "Term Plan",
+            "Baseline Courses",
+            "Prerequisite Map",
+            "Blockers & Assumptions",
+        ]
+    finally:
+        workbook.close()
+    build.assert_called_once_with(
+        STUDENT_ID,
+        1448,
+        2,
+        planning_baseline_kind=baseline_kind,
+    )
+
+
+@pytest.mark.parametrize("invalid_baseline", ["ignore_registration", ""])
+def test_export_endpoint_rejects_unknown_baseline(portfolio_student, monkeypatch, invalid_baseline):
+    report_builder = Mock()
+    exporter = Mock()
+    monkeypatch.setattr("core.portfolio_views.build_graduation_report", report_builder)
+    monkeypatch.setattr("core.portfolio_views.build_graduation_xlsx", exporter)
+
+    response = _client(f"bad-export-{invalid_baseline or 'blank'}").get(
+        _export_url(), {"baseline": invalid_baseline}
+    )
+
+    assert response.status_code == 400
+    assert response.json()["code"] == "INVALID_GRADUATION_BASELINE"
+    report_builder.assert_not_called()
+    exporter.assert_not_called()
+
+
 @pytest.mark.parametrize("invalid_baseline", ["ignore_registration", ""])
 def test_endpoint_rejects_unknown_baseline(portfolio_student, monkeypatch, invalid_baseline):
     build = Mock()
@@ -202,6 +312,7 @@ def test_endpoint_rejects_unknown_baseline(portfolio_student, monkeypatch, inval
     assert set(response.json()["allowed_baselines"]) == {
         REGISTERED_TIMETABLE,
         RECOMMENDED_CURRENT_TERM,
+        OPTIMIZED_CURRENT_OFFERINGS,
     }
     build.assert_not_called()
 
@@ -272,3 +383,96 @@ def test_endpoint_forwards_mode_and_preserves_full_report(
     assert tool_result["scenario_academic_year"] == 1448
     assert tool_result["scenario_term"] == 2
     assert tool_result["term_plan"][0]["waiting_term"] is True
+
+
+def test_advisor_only_optimized_mode_uses_verified_section_snapshot_and_preserves_provenance(
+    portfolio_student, monkeypatch
+):
+    report = _report(OPTIMIZED_CURRENT_OFFERINGS)
+    report["planning_baseline"] = {"kind": OPTIMIZED_CURRENT_OFFERINGS}
+    report["offering_optimization"] = {
+        "candidate_count": 4,
+        "evaluated_maximal_subset_count": 2,
+    }
+    optimized = Mock(return_value=report)
+    normal = Mock()
+    presentation = Mock(
+        return_value={
+            "planning_baseline_kind": OPTIMIZED_CURRENT_OFFERINGS,
+            "graph": {"extraNodes": ["AI201"]},
+        }
+    )
+    monkeypatch.setattr("core.portfolio_views.build_optimized_current_offerings_report", optimized)
+    monkeypatch.setattr("core.portfolio_views.build_graduation_report", normal)
+    monkeypatch.setattr(
+        "core.portfolio_views.graduation_presentation_from_tool_results", presentation
+    )
+    monkeypatch.setattr(
+        "core.portfolio_views.load_defaults",
+        lambda: {
+            "currentYear": "1448",
+            "currentTerm": "2",
+            "academic_year": "1448",
+            "term": "2",
+        },
+    )
+
+    response = _client("optimized-api").get(_url(), {"baseline": OPTIMIZED_CURRENT_OFFERINGS})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["baseline"] == OPTIMIZED_CURRENT_OFFERINGS
+    assert payload["report"]["planning_baseline_kind"] == OPTIMIZED_CURRENT_OFFERINGS
+    assert payload["report"]["planning_baseline"]["kind"] == OPTIMIZED_CURRENT_OFFERINGS
+    assert payload["presentation"]["planning_baseline_kind"] == OPTIMIZED_CURRENT_OFFERINGS
+    optimized.assert_called_once_with(
+        STUDENT_ID,
+        1448,
+        2,
+        section_snapshot_academic_year=1448,
+        section_snapshot_term=2,
+    )
+    normal.assert_not_called()
+
+
+def test_optimized_export_uses_distinct_filename_and_source_label(portfolio_student, monkeypatch):
+    report = _report(OPTIMIZED_CURRENT_OFFERINGS)
+    report["planning_baseline"] = {"kind": OPTIMIZED_CURRENT_OFFERINGS}
+    monkeypatch.setattr(
+        "core.portfolio_views.build_optimized_current_offerings_report",
+        Mock(return_value=report),
+    )
+    monkeypatch.setattr(
+        "core.portfolio_views.graduation_presentation_from_tool_results",
+        Mock(return_value={"graph": {"extraNodes": []}}),
+    )
+    monkeypatch.setattr(
+        "core.portfolio_views.load_defaults",
+        lambda: {
+            "currentYear": "1448",
+            "currentTerm": "2",
+            "academic_year": "1448",
+            "term": "2",
+        },
+    )
+
+    response = _client("optimized-export").get(
+        _export_url(), {"baseline": OPTIMIZED_CURRENT_OFFERINGS}
+    )
+
+    assert response.status_code == 200
+    assert response.headers["Content-Disposition"] == (
+        f'attachment; filename="graduation_plan_{STUDENT_ID}_optimized_offerings_1448_T2.xlsx"'
+    )
+    workbook = load_workbook(BytesIO(response.content), read_only=True)
+    try:
+        values = {
+            str(cell.value)
+            for row in workbook["Overview"].iter_rows()
+            for cell in row
+            if cell.value is not None
+        }
+        assert "Optimized current offerings" in values
+        assert "Registered timetable" not in values
+    finally:
+        workbook.close()

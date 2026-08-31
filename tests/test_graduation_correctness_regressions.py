@@ -11,6 +11,7 @@ from core.models import (
     StudentTermSection,
     TermSection,
 )
+from core.services.advisor_graduation_optimization import OPTIMIZED_CURRENT_OFFERINGS
 from core.services.advisor_presentations import graduation_presentation_from_tool_results
 from core.services.student_graduation import (
     MAX_SIMULATED_TERMS,
@@ -68,6 +69,32 @@ def test_presentation_keeps_every_term_the_calculator_can_simulate():
     assert len(presentation["graph"]["extraNodes"]) == MAX_SIMULATED_TERMS
     assert presentation["graph"]["termOf"][final_code] == MAX_SIMULATED_TERMS + 1
     assert presentation["band_labels"][str(MAX_SIMULATED_TERMS + 1)].startswith("Projected ")
+
+
+def test_optimized_baseline_stays_hypothetical_in_presentation_provenance():
+    result = {
+        "tool": "graduation_progress",
+        "ok": True,
+        "program": "OPT",
+        "planning_baseline_academic_year": 1448,
+        "planning_baseline_term": 1,
+        "planning_baseline_kind": OPTIMIZED_CURRENT_OFFERINGS,
+        "planning_baseline_courses_assumed_passed": [
+            {"code": "OPT200", "name": "Optimized candidate", "credits": 3}
+        ],
+        "term_plan": [],
+        "scenario_graph": {
+            "items": [],
+            "nameOf": {"OPT200": "Optimized candidate"},
+            "statusOf": {"OPT200": "studying"},
+        },
+    }
+
+    presentation = graduation_presentation_from_tool_results([result])
+
+    assert presentation["planning_baseline_kind"] == OPTIMIZED_CURRENT_OFFERINGS
+    assert presentation["band_labels"]["1"] == "Optimized current offerings 1448/1"
+    assert presentation["graph"]["statusOf"]["OPT200"] == "open"
 
 
 def test_registered_passed_retake_does_not_count_twice_toward_hour_gate():

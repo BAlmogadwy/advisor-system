@@ -12,7 +12,12 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from core.services.student_graduation import MAX_SIMULATED_TERMS
+from core.services.advisor_graduation_optimization import OPTIMIZED_CURRENT_OFFERINGS
+from core.services.student_graduation import (
+    MAX_SIMULATED_TERMS,
+    RECOMMENDED_CURRENT_TERM,
+    REGISTERED_TIMETABLE,
+)
 
 KIND_TIMETABLE = "timetable_proposals"
 KIND_GRADUATION = "graduation_scenario"
@@ -243,11 +248,15 @@ def _normalise_graduation_presentation(payload: dict[str, Any]) -> dict[str, Any
         )
 
     baseline_kind = _text(payload.get("planning_baseline_kind"), 32).lower()
-    if baseline_kind not in {"recommended_current_term", "registered_timetable"}:
+    if baseline_kind not in {
+        RECOMMENDED_CURRENT_TERM,
+        REGISTERED_TIMETABLE,
+        OPTIMIZED_CURRENT_OFFERINGS,
+    }:
         # Legacy presentations predate explicit provenance and were built from
         # the registered timetable. Preserve that meaning rather than silently
         # relabelling an older card as a recommendation.
-        baseline_kind = "registered_timetable"
+        baseline_kind = REGISTERED_TIMETABLE
 
     presentation = {
         "kind": KIND_GRADUATION,
@@ -783,21 +792,28 @@ def graduation_presentation_from_tool_results(
         planning_term = f"{baseline_year}/{baseline_term}"
         baseline_kind = _text(result.get("planning_baseline_kind"), 32).lower()
         legacy_baseline = baseline_kind not in {
-            "recommended_current_term",
-            "registered_timetable",
+            RECOMMENDED_CURRENT_TERM,
+            REGISTERED_TIMETABLE,
+            OPTIMIZED_CURRENT_OFFERINGS,
         }
         if legacy_baseline:
-            baseline_kind = "registered_timetable"
-        recommended_baseline = baseline_kind == "recommended_current_term"
+            baseline_kind = REGISTERED_TIMETABLE
+        recommended_baseline = baseline_kind == RECOMMENDED_CURRENT_TERM
+        optimized_baseline = baseline_kind == OPTIMIZED_CURRENT_OFFERINGS
+        hypothetical_baseline = recommended_baseline or optimized_baseline
         band_labels = {
             "0": "Completed before the scenario",
             "1": (
                 f"Recommended starting term {planning_term}"
                 if recommended_baseline
                 else (
-                    f"Planning baseline {planning_term}"
-                    if legacy_baseline
-                    else f"Registered timetable {planning_term}"
+                    f"Optimized current offerings {planning_term}"
+                    if optimized_baseline
+                    else (
+                        f"Planning baseline {planning_term}"
+                        if legacy_baseline
+                        else f"Registered timetable {planning_term}"
+                    )
                 )
             ),
         }
@@ -825,7 +841,9 @@ def graduation_presentation_from_tool_results(
         term_of.update({code: 1 for code in current})
         term_of.update(future)
         status_of = {code: "passed" for code in passed}
-        status_of.update({code: "open" if recommended_baseline else "studying" for code in current})
+        status_of.update(
+            {code: "open" if hypothetical_baseline else "studying" for code in current}
+        )
         status_of.update({code: "open" for code in future})
         name_of = {
             _text(code, 32).upper(): _text(name)

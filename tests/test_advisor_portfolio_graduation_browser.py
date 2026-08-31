@@ -26,6 +26,7 @@ STUDENT_ID = 4_801_909
 ADVISOR_ID = "ADV-GRAD-BROWSER"
 REGISTERED = "registered_timetable"
 RECOMMENDED = "recommended_current_term"
+OPTIMIZED = "optimized_current_offerings"
 
 
 def _report(mode: str, marker: str) -> dict:
@@ -77,9 +78,11 @@ def _presentation(mode: str, marker: str) -> dict:
     baseline_code = f"{marker}101"
     future_code = f"{marker}201"
     baseline_status = "studying" if mode == REGISTERED else "open"
-    baseline_label = (
-        "Registered timetable 1448/1" if mode == REGISTERED else "Recommended starting term 1448/1"
-    )
+    baseline_label = {
+        REGISTERED: "Registered timetable 1448/1",
+        RECOMMENDED: "Recommended starting term 1448/1",
+        OPTIMIZED: "Optimized current offerings 1448/1",
+    }[mode]
     return {
         "kind": "graduation_scenario",
         "planning_baseline_kind": mode,
@@ -102,6 +105,48 @@ def _presentation(mode: str, marker: str) -> dict:
             },
             "statusOf": {baseline_code: baseline_status, future_code: "open"},
             "extraNodes": [baseline_code, future_code],
+        },
+    }
+
+
+def _dense_presentation(mode: str) -> dict:
+    """A realistic wide map that exercises both graph layout modes."""
+
+    roots = [f"AI1{number:02d}" for number in range(1, 10)]
+    middle = [f"AI2{number:02d}" for number in range(1, 10)]
+    terminal = [f"AI3{number:02d}" for number in range(1, 10)]
+    codes = roots + middle + terminal
+    return {
+        "kind": "graduation_scenario",
+        "planning_baseline_kind": mode,
+        "band_labels": {
+            "1": "Registered timetable 1448/1",
+            "2": "Projected 1448/2",
+            "3": "Projected 1449/1",
+        },
+        "graph": {
+            "items": [
+                *[
+                    {"course_code": target, "prerequisite_course_code": source}
+                    for source, target in zip(roots, middle, strict=True)
+                ],
+                *[
+                    {"course_code": target, "prerequisite_course_code": source}
+                    for source, target in zip(middle, terminal, strict=True)
+                ],
+            ],
+            "termOf": {
+                **dict.fromkeys(roots, 1),
+                **dict.fromkeys(middle, 2),
+                **dict.fromkeys(terminal, 3),
+            },
+            "nameOf": {code: f"Course {code}" for code in codes},
+            "statusOf": {
+                **dict.fromkeys(roots, "studying"),
+                **dict.fromkeys(middle, "open"),
+                **dict.fromkeys(terminal, "open"),
+            },
+            "extraNodes": codes,
         },
     }
 
@@ -163,18 +208,45 @@ class AdvisorPortfolioGraduationBrowserTests(StaticLiveServerTestCase):
 
         def present(tool_results):
             mode = tool_results[0]["planning_baseline_kind"]
-            marker = "REC" if mode == RECOMMENDED else "REG"
+            marker = {RECOMMENDED: "REC", REGISTERED: "REG", OPTIMIZED: "OPT"}[mode]
             return _presentation(mode, marker)
+
+        def build_optimized(
+            _student_id,
+            _year,
+            _term,
+            *,
+            section_snapshot_academic_year,
+            section_snapshot_term,
+        ):
+            assert (section_snapshot_academic_year, section_snapshot_term) == (1448, 1)
+            requested_modes.append(OPTIMIZED)
+            report = _report(OPTIMIZED, "OPT")
+            report["planning_baseline"] = {"kind": OPTIMIZED}
+            report["offering_optimization"] = {
+                "candidate_count": 6,
+                "evaluated_maximal_subset_count": 3,
+            }
+            return report
 
         with (
             patch("core.portfolio_views.build_graduation_report", side_effect=build),
+            patch(
+                "core.portfolio_views.build_optimized_current_offerings_report",
+                side_effect=build_optimized,
+            ),
             patch(
                 "core.portfolio_views.graduation_presentation_from_tool_results",
                 side_effect=present,
             ),
             patch(
                 "core.portfolio_views.load_defaults",
-                return_value={"currentYear": "1448", "currentTerm": "1"},
+                return_value={
+                    "currentYear": "1448",
+                    "currentTerm": "1",
+                    "academic_year": "1448",
+                    "term": "1",
+                },
             ),
         ):
             yield
@@ -218,6 +290,7 @@ class AdvisorPortfolioGraduationBrowserTests(StaticLiveServerTestCase):
         assert requested_modes == [REGISTERED]
         assert page.get_attribute("#agRegisteredTab", "aria-selected") == "true"
         assert page.get_attribute("#agRecommendedTab", "aria-selected") == "false"
+        assert page.get_attribute("#agOptimizedTab", "aria-selected") == "false"
         assert "2 / 6" in page.locator(".ap-grad-summary-grid").inner_text()
         assert page.get_attribute('.ap-grad-progress[role="progressbar"]', "aria-valuenow") == "33"
 
@@ -251,7 +324,27 @@ class AdvisorPortfolioGraduationBrowserTests(StaticLiveServerTestCase):
         assert str(STUDENT_ID) in page.locator(".page-header").inner_text()
         assert page.locator('.ap-grad-course-code:text-is("REG101")').count() == 0
 
-    def test_mobile_table_and_tree_scroll_inside_the_page(self):
+    def test_third_tab_opens_exact_optimized_recorded_offerings_without_registration_claim(self):
+        page = self._page()
+        requested_modes: list[str] = []
+
+        with self._graduation_services(requested_modes):
+            page.goto(self._graduation_url(RECOMMENDED))
+            page.wait_for_selector('.ap-grad-course-code:text-is("REC101")', timeout=10_000)
+            page.locator("#agRecommendedTab").focus()
+            page.locator("#agRecommendedTab").press("ArrowRight")
+            page.wait_for_url(f"**/graduation/?baseline={OPTIMIZED}", timeout=10_000)
+            page.wait_for_selector('.ap-grad-course-code:text-is("OPT101")', timeout=10_000)
+
+        assert requested_modes == [RECOMMENDED, OPTIMIZED]
+        assert page.get_attribute("#agOptimizedTab", "aria-selected") == "true"
+        assert page.get_attribute("#agOptimizedTab", "tabindex") == "0"
+        provenance = page.locator(".ap-grad-provenance").inner_text()
+        assert "Exact optimization from the recorded current-section snapshot" in provenance
+        assert "not guarantee registration, seats, or a clash-free timetable" in provenance
+        assert "Actual registered timetable" not in provenance
+
+    def test_mobile_table_scrolls_and_tree_stays_inside_the_page(self):
         page = self._page(viewport={"width": 390, "height": 844})
         requested_modes: list[str] = []
 
@@ -281,4 +374,58 @@ class AdvisorPortfolioGraduationBrowserTests(StaticLiveServerTestCase):
         assert layout["tableOverflow"] == "auto"
         assert layout["tableScroll"] > layout["tableClient"]
         assert layout["graphOverflow"] == "auto"
-        assert layout["graphScroll"] > layout["graphClient"]
+        assert layout["graphScroll"] <= layout["graphClient"] + 1
+
+    def test_dense_tree_modes_fit_desktop_without_making_courses_unreadable(self):
+        page = self._page(viewport={"width": 1440, "height": 1000})
+        requested_modes: list[str] = []
+
+        with self._graduation_services(requested_modes):
+            with patch(
+                "core.portfolio_views.graduation_presentation_from_tool_results",
+                return_value=_dense_presentation(REGISTERED),
+            ):
+                page.goto(self._graduation_url())
+                page.wait_for_selector('#sgGraph .pg-node[data-c="AI301"]', timeout=10_000)
+
+                def measure_graph() -> dict:
+                    return page.evaluate(
+                        """() => {
+                          const scroll = document.querySelector('.ap-grad-graph-scroll');
+                          const svg = scroll.querySelector('svg');
+                          const nodes = [...svg.querySelectorAll('.pg-node rect')];
+                          const labels = [...svg.querySelectorAll('.pg-node text')];
+                          const bandLabels = [...svg.querySelectorAll('.pg-band-lbl')];
+                          const svgLeft = svg.getBoundingClientRect().left;
+                          return {
+                            clientWidth: scroll.clientWidth,
+                            scrollWidth: scroll.scrollWidth,
+                            nodeCount: nodes.length,
+                            minNodeWidth: Math.min(...nodes.map(node => node.getBoundingClientRect().width)),
+                            minNodeHeight: Math.min(...nodes.map(node => node.getBoundingClientRect().height)),
+                            minLabelHeight: Math.min(...labels.map(label => label.getBoundingClientRect().height)),
+                            minBandLabelInset: bandLabels.length
+                              ? Math.min(...bandLabels.map(label => label.getBoundingClientRect().left - svgLeft))
+                              : null,
+                          };
+                        }"""
+                    )
+
+                term_layout = measure_graph()
+                page.click("#sgPgChain")
+                page.wait_for_function(
+                    "document.querySelector('#sgPgChain').getAttribute('aria-pressed') === 'true'"
+                )
+                chain_layout = measure_graph()
+
+        assert requested_modes == [REGISTERED]
+        for mode_name, layout in (
+            ("projected term", term_layout),
+            ("prerequisite chain", chain_layout),
+        ):
+            assert layout["nodeCount"] == 27
+            assert layout["scrollWidth"] <= layout["clientWidth"] + 1, (mode_name, layout)
+            assert layout["minNodeWidth"] >= 70, (mode_name, layout)
+            assert layout["minNodeHeight"] >= 30, (mode_name, layout)
+            assert layout["minLabelHeight"] >= 10, (mode_name, layout)
+        assert term_layout["minBandLabelInset"] >= -1, term_layout

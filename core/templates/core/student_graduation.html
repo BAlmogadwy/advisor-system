@@ -302,7 +302,7 @@
 {% if graduation_presentation.graph.extraNodes %}
   {{ graduation_presentation|json_script:"studentGraduationPresentation" }}
   <script>window.__STUDENT_GRADUATION_PRESENTATION__ = JSON.parse(document.getElementById('studentGraduationPresentation').textContent);</script>
-  <script src="{% static 'js/prereq-graph.js' %}?v=5"></script>
-  <script src="{% static 'js/page-student-graduation.js' %}?v=7"></script>
+  <script src="{% static 'js/prereq-graph.js' %}?v=6"></script>
+  <script src="{% static 'js/page-student-graduation.js' %}?v=8"></script>
 {% endif %}
 {% endblock %}

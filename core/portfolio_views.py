@@ -12,7 +12,13 @@ from django.views.decorators.http import require_GET
 
 from core.authz import role_required
 from core.models import Student
+from core.services.advisor_graduation_optimization import (
+    OPTIMIZED_CURRENT_OFFERINGS,
+    OptimizedGraduationUnavailable,
+    build_optimized_current_offerings_report,
+)
 from core.services.advisor_presentations import graduation_presentation_from_tool_results
+from core.services.graduation_export import build_graduation_xlsx
 from core.services.policy import require_student_scope
 from core.services.rbac import ROLE_ADVISOR
 from core.services.student_graduation import (
@@ -25,6 +31,10 @@ from core.settings_views import load_defaults
 from core.sidebar_context import get_sidebar_context
 
 logger = logging.getLogger(__name__)
+
+ADVISOR_GRADUATION_BASELINE_KINDS = frozenset(
+    {*PLANNING_BASELINE_KINDS, OPTIMIZED_CURRENT_OFFERINGS}
+)
 
 
 def _request_prefers_arabic(request: HttpRequest) -> bool:
@@ -54,13 +64,16 @@ def _advisor_student_graduation_payload(
     baseline_kind = (
         REGISTERED_TIMETABLE if requested_baseline is None else str(requested_baseline).strip()
     )
-    if baseline_kind not in PLANNING_BASELINE_KINDS:
+    if baseline_kind not in ADVISOR_GRADUATION_BASELINE_KINDS:
         return (
             None,
             {
-                "error": "baseline must be registered_timetable or recommended_current_term",
+                "error": (
+                    "baseline must be registered_timetable, recommended_current_term, "
+                    "or optimized_current_offerings"
+                ),
                 "code": "INVALID_GRADUATION_BASELINE",
-                "allowed_baselines": sorted(PLANNING_BASELINE_KINDS),
+                "allowed_baselines": sorted(ADVISOR_GRADUATION_BASELINE_KINDS),
             },
             400,
         )
@@ -95,14 +108,41 @@ def _advisor_student_graduation_payload(
         )
 
     try:
-        report = build_graduation_report(
-            student_id,
-            academic_year,
-            term,
-            planning_baseline_kind=baseline_kind,
-        )
+        if baseline_kind == OPTIMIZED_CURRENT_OFFERINGS:
+            try:
+                section_snapshot_academic_year = int(defaults["academic_year"])
+                section_snapshot_term = int(defaults["term"])
+            except (KeyError, TypeError, ValueError):
+                raise OptimizedGraduationUnavailable(
+                    "The recorded section-snapshot term is not configured.",
+                    code="SECTION_SNAPSHOT_TERM_MISMATCH",
+                ) from None
+            report = build_optimized_current_offerings_report(
+                student_id,
+                academic_year,
+                term,
+                section_snapshot_academic_year=section_snapshot_academic_year,
+                section_snapshot_term=section_snapshot_term,
+            )
+        else:
+            report = build_graduation_report(
+                student_id,
+                academic_year,
+                term,
+                planning_baseline_kind=baseline_kind,
+            )
         if report and _request_prefers_arabic(request):
             report = prefer_arabic_course_names_in_payload(report)
+    except OptimizedGraduationUnavailable as exc:
+        return (
+            None,
+            {
+                "error": str(exc),
+                "code": exc.code,
+                **exc.details,
+            },
+            exc.status,
+        )
     except Exception:  # noqa: BLE001 - API must fail closed without leaking internals
         logger.exception("portfolio graduation report failed for student %s", student_id)
         return (
@@ -166,7 +206,7 @@ def advisor_portfolio_student_graduation_page(
     requested_baseline = str(request.GET.get("baseline") or REGISTERED_TIMETABLE).strip()
     active_baseline = (
         requested_baseline
-        if requested_baseline in PLANNING_BASELINE_KINDS
+        if requested_baseline in ADVISOR_GRADUATION_BASELINE_KINDS
         else REGISTERED_TIMETABLE
     )
     error_payload = error or {}
@@ -204,3 +244,52 @@ def advisor_portfolio_student_graduation_view(
 
     payload, error, status = _advisor_student_graduation_payload(request, student_id)
     return JsonResponse(payload if payload is not None else error, status=status)
+
+
+@never_cache
+@role_required(ROLE_ADVISOR)  # ADVISOR, GENERAL_ACADEMIC_ADVISOR, SUPER_ADMIN
+@require_GET
+def advisor_portfolio_student_graduation_export_xlsx(
+    request: HttpRequest, student_id: int
+) -> HttpResponse:
+    """Download the same scoped graduation scenario shown on the page."""
+    scope_error = require_student_scope(request, student_id)
+    if scope_error:
+        return scope_error
+
+    payload, error, status = _advisor_student_graduation_payload(request, student_id)
+    if payload is None:
+        return JsonResponse(error, status=status)
+
+    student = Student.objects.filter(student_id=student_id).first()
+    if student is None:  # Defensive only; the scope check already returns 404.
+        return JsonResponse(
+            {"error": "Student not found.", "code": "STUDENT_NOT_FOUND"},
+            status=404,
+        )
+
+    content = build_graduation_xlsx(
+        student=student,
+        academic_year=int(payload["academic_year"]),
+        term=int(payload["term"]),
+        baseline_kind=str(payload["baseline"]),
+        report=payload["report"],
+        presentation=payload["presentation"],
+        language_code=str(getattr(request, "LANGUAGE_CODE", "en") or "en"),
+    )
+    baseline_slug = {
+        REGISTERED_TIMETABLE: "registered",
+        "recommended_current_term": "recommended",
+        OPTIMIZED_CURRENT_OFFERINGS: "optimized_offerings",
+    }[str(payload["baseline"])]
+    filename = (
+        f"graduation_plan_{student_id}_{baseline_slug}_"
+        f"{payload['academic_year']}_T{payload['term']}.xlsx"
+    )
+    response = HttpResponse(
+        content,
+        content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+    response["Content-Disposition"] = f'attachment; filename="{filename}"'
+    response["X-Content-Type-Options"] = "nosniff"
+    return response

@@ -4,6 +4,7 @@
 {% block title %}{% if LANGUAGE_CODE == 'ar' %}مسار إكمال الخطة{% else %}Degree-plan completion path{% endif %}{% endblock %}
 
 {% block main_padding %}p-3{% endblock %}
+{% block main_attrs %}data-page="advisor-student-graduation"{% endblock %}
 
 {% block page_heading %}{% if LANGUAGE_CODE == 'ar' %}مسار إكمال الخطة{% else %}Degree-plan completion path{% endif %}{% endblock %}
 
@@ -15,13 +16,21 @@
 {% endblock %}
 
 {% block page_header_right %}
+  {% if grad %}
+    <a class="btn btn-sm btn-export advisor-grad-export"
+       href="{% url 'advisor_portfolio_student_graduation_export_xlsx' student_id=student_id %}?baseline={{ baseline_kind|urlencode }}"
+       aria-label="{% if LANGUAGE_CODE == 'ar' %}تصدير سيناريو التخرج الحالي بصيغة XLSX{% else %}Export the current graduation scenario as XLSX{% endif %}">
+      <span aria-hidden="true">⇩</span>
+      {% if LANGUAGE_CODE == 'ar' %}تصدير السيناريو (XLSX){% else %}Export this scenario (XLSX){% endif %}
+    </a>
+  {% endif %}
   <a class="btn btn-sm btn-outline-secondary" href="{% url 'advisor_portfolio_page' %}">{% if LANGUAGE_CODE == 'ar' %}العودة إلى محفظة المرشد{% else %}Back to portfolio{% endif %}</a>
   {{ block.super }}
 {% endblock %}
 
 {% block page_intro %}
   <h2>{% if student and student.name %}<span dir="auto">{{ student.name }}</span>{% else %}{% if LANGUAGE_CODE == 'ar' %}الطالب {{ student_id }}{% else %}Student {{ student_id }}{% endif %}{% endif %}</h2>
-  <div class="panel-sub">{% if LANGUAGE_CODE == 'ar' %}قارن مسار إكمال الخطة باستخدام الجدول المسجّل أو مقررات فصل البداية الموصى بها. هذا تقدير إرشادي للقراءة فقط ولا يغيّر أي سجل.{% else %}Compare the degree-plan path from the actual registered timetable or the recommended starting-term courses. This is a read-only planning estimate and changes no records.{% endif %}</div>
+  <div class="panel-sub">{% if LANGUAGE_CODE == 'ar' %}قارن مسار إكمال الخطة باستخدام الجدول المسجّل، أو التوصية الرسمية، أو مقررات البداية المحسّنة من لقطة الشعب الحالية المسجّلة. هذا تقدير إرشادي للقراءة فقط ولا يغيّر أي سجل.{% else %}Compare the degree-plan path from the actual registered timetable, the formal recommendation, or an optimized baseline from the recorded current-section snapshot. This is a read-only planning estimate and changes no records.{% endif %}</div>
 {% endblock %}
 
 {% block content %}
@@ -46,17 +55,25 @@
          aria-controls="advisorGraduationResults"
          tabindex="{% if baseline_kind == 'recommended_current_term' %}0{% else %}-1{% endif %}"
          href="{% url 'advisor_portfolio_student_graduation_page' student_id=student_id %}?baseline=recommended_current_term">
-        {% if LANGUAGE_CODE == 'ar' %}الموصى به{% else %}Recommended{% endif %}
+        {% if LANGUAGE_CODE == 'ar' %}التوصية الرسمية{% else %}Formal recommendation{% endif %}
+      </a>
+      <a class="ap-grad-tab{% if baseline_kind == 'optimized_current_offerings' %} is-active{% endif %}"
+         id="agOptimizedTab" role="tab"
+         aria-selected="{% if baseline_kind == 'optimized_current_offerings' %}true{% else %}false{% endif %}"
+         aria-controls="advisorGraduationResults"
+         tabindex="{% if baseline_kind == 'optimized_current_offerings' %}0{% else %}-1{% endif %}"
+         href="{% url 'advisor_portfolio_student_graduation_page' student_id=student_id %}?baseline=optimized_current_offerings">
+        {% if LANGUAGE_CODE == 'ar' %}العروض المحسّنة{% else %}Optimized offerings{% endif %}
       </a>
     </div>
   </section>
 
-  <div id="advisorGraduationResults" role="tabpanel" aria-labelledby="{% if baseline_kind == 'recommended_current_term' %}agRecommendedTab{% else %}agRegisteredTab{% endif %}" tabindex="0">
+  <div id="advisorGraduationResults" role="tabpanel" aria-labelledby="{% if baseline_kind == 'recommended_current_term' %}agRecommendedTab{% elif baseline_kind == 'optimized_current_offerings' %}agOptimizedTab{% else %}agRegisteredTab{% endif %}" tabindex="0">
   {% if graduation_error %}
     <div class="ap-grad-state ap-grad-state-error advisor-grad-error" role="alert">
       <strong>{% if LANGUAGE_CODE == 'ar' %}تعذّر إعداد مسار إكمال الخطة{% else %}Could not build the degree-plan path{% endif %}</strong>
       <span>{{ graduation_error.error }}</span>
-      <a class="ap-grad-retry" href="{% url 'advisor_portfolio_student_graduation_page' student_id=student_id %}">{% if LANGUAGE_CODE == 'ar' %}إعادة المحاولة{% else %}Try again{% endif %}</a>
+      <a class="ap-grad-retry" href="{% url 'advisor_portfolio_student_graduation_page' student_id=student_id %}?baseline={{ baseline_kind|urlencode }}">{% if LANGUAGE_CODE == 'ar' %}إعادة المحاولة{% else %}Try again{% endif %}</a>
     </div>
   {% elif grad %}
     <section class="ap-grad-section advisor-grad-summary" aria-labelledby="agSummaryTitle">
@@ -81,19 +98,27 @@
       <h3 id="agBaselineTitle">{% if LANGUAGE_CODE == 'ar' %}فصل البداية ومصدره{% else %}Starting term and provenance{% endif %}</h3>
       <div class="ap-grad-provenance">
         <div>
-          <strong>{% if baseline_kind == 'recommended_current_term' %}{% if LANGUAGE_CODE == 'ar' %}توصيات النظام لفصل البداية{% else %}System recommendations for the starting term{% endif %}{% else %}{% if LANGUAGE_CODE == 'ar' %}الجدول المسجّل فعليًا{% else %}Actual registered timetable{% endif %}{% endif %}</strong>
-          <p>{% if baseline_kind == 'recommended_current_term' %}{% if LANGUAGE_CODE == 'ar' %}يبدأ التقدير من المقررات التي يوصي بها النظام، وليست تسجيلًا فعليًا.{% else %}The estimate starts from system-recommended courses; these are not actual registrations.{% endif %}{% else %}{% if LANGUAGE_CODE == 'ar' %}يبدأ التقدير من مقررات الطالب المسجّلة فعليًا في بوابة الجامعة.{% else %}The estimate starts from the student's actual university-portal registrations.{% endif %}{% endif %}</p>
+          <strong>{% if baseline_kind == 'recommended_current_term' %}{% if LANGUAGE_CODE == 'ar' %}توصيات النظام الرسمية لفصل البداية{% else %}Formal system recommendation for the starting term{% endif %}{% elif baseline_kind == 'optimized_current_offerings' %}{% if LANGUAGE_CODE == 'ar' %}مقررات محسّنة من لقطة الشعب الحالية المسجّلة{% else %}Exact optimization from the recorded current-section snapshot{% endif %}{% else %}{% if LANGUAGE_CODE == 'ar' %}الجدول المسجّل فعليًا{% else %}Actual registered timetable{% endif %}{% endif %}</strong>
+          <p>{% if baseline_kind == 'recommended_current_term' %}{% if LANGUAGE_CODE == 'ar' %}يبدأ التقدير من مقررات التوصية الرسمية حسب تكافؤ فصل الخطة، وليست تسجيلًا فعليًا.{% else %}The estimate starts from the formal parity-based recommendation; these are not actual registrations.{% endif %}{% elif baseline_kind == 'optimized_current_offerings' %}{% if LANGUAGE_CODE == 'ar' %}اختيار افتراضي دقيق من مقررات الخطة المؤهلة بصرامة ذات شعب مسجّلة لنفس فئة الطالب. قد تكون الشعبة من برنامج آخر فقط عند تطابق هوية المقرر. لا يضمن هذا التسجيل أو المقاعد أو خلو الجدول من التعارض.{% else %}An exact hypothetical selection of strictly eligible plan courses with recorded sections for the student's cohort. A section may come from another programme only when course identity matches. This does not guarantee registration, seats, or a clash-free timetable.{% endif %}{% else %}{% if LANGUAGE_CODE == 'ar' %}يبدأ التقدير من مقررات الطالب المسجّلة فعليًا في بوابة الجامعة.{% else %}The estimate starts from the student's actual university-portal registrations.{% endif %}{% endif %}</p>
         </div>
         <dl>
           <div><dt>{% if LANGUAGE_CODE == 'ar' %}فصل البداية{% else %}Starting term{% endif %}</dt><dd><bdi dir="ltr">{{ grad.planning_baseline_academic_year }}/{{ grad.planning_baseline_term }}</bdi></dd></div>
           <div><dt>{% if LANGUAGE_CODE == 'ar' %}الساعات{% else %}Credits{% endif %}</dt><dd>{{ grad.planning_baseline_credits|default:0 }}</dd></div>
+          {% if baseline_kind == 'optimized_current_offerings' and grad.offering_optimization %}
+          <div><dt>{% if LANGUAGE_CODE == 'ar' %}المرشحون{% else %}Eligible candidates{% endif %}</dt><dd>{{ grad.offering_optimization.candidate_count }}</dd></div>
+          <div><dt>{% if LANGUAGE_CODE == 'ar' %}البدائل المقيمة{% else %}Baselines evaluated{% endif %}</dt><dd>{{ grad.offering_optimization.evaluated_maximal_subset_count }}</dd></div>
+          {% endif %}
         </dl>
       </div>
       <h4>{% if LANGUAGE_CODE == 'ar' %}مقررات فصل البداية المفترض اجتيازها{% else %}Starting-term courses assumed passed{% endif %}</h4>
       {% if grad.planning_baseline_courses_assumed_passed %}
         <ul class="ap-grad-course-list">
         {% for course in grad.planning_baseline_courses_assumed_passed %}
-          <li><bdi class="ap-grad-course-code" dir="ltr">{{ course.code }}</bdi><span class="ap-grad-course-name" dir="auto">{{ course.name }}</span><span class="ap-grad-course-credits">{{ course.credits }} {% if LANGUAGE_CODE == 'ar' %}ساعات{% else %}credits{% endif %}</span></li>
+          <li>
+            <bdi class="ap-grad-course-code" dir="ltr">{{ course.offered_course_code|default:course.code }}</bdi>
+            <span class="ap-grad-course-name" dir="auto">{{ course.name }}{% if course.fulfills_plan_code %} <small>({% if LANGUAGE_CODE == 'ar' %}يحقق{% else %}fulfills{% endif %} <bdi dir="ltr">{{ course.fulfills_plan_code }}</bdi>)</small>{% endif %}</span>
+            <span class="ap-grad-course-credits">{{ course.credits }} {% if LANGUAGE_CODE == 'ar' %}ساعات{% else %}credit{{ course.credits|pluralize }}{% endif %}{% if course.recorded_section_count %} · {{ course.recorded_section_count }} {% if LANGUAGE_CODE == 'ar' %}شعب مسجّلة{% else %}recorded section{{ course.recorded_section_count|pluralize }}{% endif %}{% endif %}</span>
+          </li>
         {% endfor %}
         </ul>
       {% else %}
@@ -170,8 +195,8 @@
 {% if graduation_presentation.graph.extraNodes %}
   {{ graduation_presentation|json_script:"studentGraduationPresentation" }}
   <script>window.__STUDENT_GRADUATION_PRESENTATION__ = JSON.parse(document.getElementById('studentGraduationPresentation').textContent);</script>
-  <script src="{% static 'js/prereq-graph.js' %}?v=5"></script>
-  <script src="{% static 'js/page-student-graduation.js' %}?v=7"></script>
+  <script src="{% static 'js/prereq-graph.js' %}?v=6"></script>
+  <script src="{% static 'js/page-student-graduation.js' %}?v=8"></script>
 {% endif %}
 <script src="{% static 'js/page-advisor-student-graduation.js' %}?v=1"></script>
 {% endblock %}

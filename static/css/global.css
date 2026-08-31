@@ -1993,6 +1993,8 @@ html body .btn:focus-visible {
 .pg-edge { fill:none;stroke:var(--teal);stroke-width:2;stroke-opacity:0.4;transition:all .35s var(--ease) }
 .pg-node { cursor:pointer }.pg-node rect{transition:all .35s var(--ease)}.pg-node text{transition:fill .35s var(--ease);pointer-events:none}
 .pg-node:hover rect{stroke-width:2;filter:drop-shadow(0 2px 8px color-mix(in srgb, var(--teal) 25%, transparent))}
+.pg-node:focus{outline:none}
+.pg-node:focus-visible rect{stroke:var(--teal)!important;stroke-width:3;filter:drop-shadow(0 2px 8px color-mix(in srgb, var(--teal) 28%, transparent))}
 .pg-node.hl rect{stroke:var(--teal)!important;stroke-width:2.2}
 .pg-node.hl text{fill:var(--teal)!important}
 .pg-edge.hl{stroke:var(--teal);stroke-width:3;stroke-opacity:0.9}
@@ -8833,7 +8835,7 @@ html[data-theme="dark"] .btn-export {
 }
 .ap-grad-provenance strong { color: var(--brand-dark); font-size: .82rem; }
 .ap-grad-provenance p { margin: .2rem 0 0; color: var(--muted); font-size: .72rem; }
-.ap-grad-provenance dl { display: flex; gap: .8rem; margin: 0; }
+.ap-grad-provenance dl { display: flex; flex-wrap: wrap; gap: .8rem; margin: 0; }
 .ap-grad-provenance dl div { min-width: 88px; }
 .ap-grad-provenance dt { color: var(--muted); font-size: .62rem; }
 .ap-grad-provenance dd { margin: .1rem 0 0; color: var(--ink); font-size: .78rem; font-weight: 700; }
@@ -8948,6 +8950,11 @@ html[data-theme="dark"] .btn-export {
 .ap-grad-tree-fallback span { color: var(--muted); }
 
 /* ── Dedicated adviser graduation workspace ──────────────── */
+main[data-page="advisor-student-graduation"] > .content-wrap {
+  width: 100%;
+  max-width: 1440px;
+}
+
 .advisor-grad-page,
 .advisor-grad-page #advisorGraduationResults {
   min-width: 0;
@@ -8978,7 +8985,11 @@ html[data-theme="dark"] .btn-export {
   color: var(--muted);
   font-size: .75rem;
 }
-.advisor-grad-switcher .ap-grad-tabs { flex: 0 1 440px; }
+.advisor-grad-switcher .ap-grad-tabs {
+  flex: 0 1 620px;
+  max-width: 620px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
 .advisor-grad-summary { margin-top: 0; }
 .advisor-grad-error { min-height: 180px; }
 .advisor-grad-error .ap-grad-retry { text-decoration: none; }
@@ -8999,7 +9010,12 @@ html[data-theme="dark"] .btn-export {
   gap: .75rem;
   margin-top: .65rem;
 }
-.advisor-grad-page .ap-grad-graph { min-width: 900px; }
+.advisor-grad-page .ap-grad-graph {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  padding: .4rem;
+}
 
 /* Row count / pagination: using global .pg-bar, .pg-btn */
 

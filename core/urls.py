@@ -111,6 +111,7 @@ from .planner_views import (
 )
 from .portfolio_views import (
     advisor_portfolio_page,
+    advisor_portfolio_student_graduation_export_xlsx,
     advisor_portfolio_student_graduation_page,
     advisor_portfolio_student_graduation_view,
 )
@@ -547,6 +548,11 @@ urlpatterns = [
         "advisor-portfolio/students/<int:student_id>/graduation/",
         advisor_portfolio_student_graduation_page,
         name="advisor_portfolio_student_graduation_page",
+    ),
+    path(
+        "advisor-portfolio/students/<int:student_id>/graduation/export.xlsx",
+        advisor_portfolio_student_graduation_export_xlsx,
+        name="advisor_portfolio_student_graduation_export_xlsx",
     ),
     path(
         "api/advisor-portfolio/students/<int:student_id>/graduation/",
