@@ -999,6 +999,12 @@ class AdvisorBrowserTests(StaticLiveServerTestCase):
         assert not page.locator(".page-header").is_visible()
         assert not page.locator(".page-intro").is_visible()
         assert page.locator("#saEmptyState").is_visible()
+        assert (
+            page.locator(".sa-workspace-kicker")
+            .inner_text()
+            .startswith("Academic planning adviser · AI-supported")
+        )
+        assert page.locator("#saThreadTitle").inner_text() == "New advising session"
         assert page.locator(".va-message-user").count() == 0
         assert page.locator(".va-message-assistant").count() == 0
         assert "?c=" not in page.url
@@ -1050,7 +1056,12 @@ class AdvisorBrowserTests(StaticLiveServerTestCase):
         )
         self._open(page)
 
-        assert page.locator("#saEmptyState h3").inner_text() == "كيف يمكنني مساعدتك اليوم؟"
+        assert page.locator("#saEmptyState h3").inner_text() == "لنراجع خطتك الأكاديمية"
+        assert (
+            page.locator(".sa-workspace-kicker")
+            .inner_text()
+            .startswith("مرشد التخطيط الأكاديمي · مدعوم بالذكاء الاصطناعي")
+        )
         examples = page.locator("#saExamples [data-sa-example]")
         prompts = examples.evaluate_all("nodes => nodes.map(node => node.dataset.saExample)")
         assert prompts == [
@@ -1062,9 +1073,8 @@ class AdvisorBrowserTests(StaticLiveServerTestCase):
             "ما الحد الأقصى لعدد مرات الانسحاب من مقرر؟",
         ]
 
-    def test_new_answer_thinks_then_reveals_prose_before_evidence(self):
+    def test_new_answer_reviews_the_record_then_renders_the_complete_answer_atomically(self):
         page = self._page(viewport={"width": 1280, "height": 800})
-        page.add_init_script("window.__SA_FORCE_PROGRESSIVE_REVEAL__ = true")
         long_answer = "\n\n".join([WITHDRAWAL_ANSWER] * 8)
 
         def slow_answer(*args, **kwargs):
@@ -1081,26 +1091,25 @@ class AdvisorBrowserTests(StaticLiveServerTestCase):
 
             thinking = page.locator("#saThinkingMessage")
             thinking.wait_for(state="visible")
-            assert thinking.locator(".sa-thinking-dots > span").count() == 3
+            assert thinking.locator(".sa-thinking-dots").count() == 0
+            assert thinking.locator(".sa-thinking-label").inner_text() == (
+                "Reviewing your academic record and relevant rules…"
+            )
 
-            page.wait_for_selector(".va-message-assistant.is-revealing", timeout=15_000)
-            answer = page.locator(".va-message-assistant.is-revealing")
-            partial = answer.locator(".sa-body").inner_text()
-            assert partial.strip()
-            assert len(partial) < len(long_answer)
-            assert not answer.locator(".sa-citations").is_visible()
-
-            page.wait_for_function("() => !document.querySelector('.is-revealing')")
+            page.wait_for_selector(".va-message-assistant", timeout=15_000)
             completed = page.locator(".va-message-assistant")
-            assert len(completed.locator(".sa-body").inner_text()) > len(partial)
+            displayed_answer = re.sub(r"\s*\[[A-Z][A-Z0-9]*(?:\.[A-Z0-9_]+){2,}\]", "", long_answer)
+            assert completed.locator(".sa-body").inner_text() == displayed_answer
             assert completed.locator(".sa-citations").is_visible()
+            assert completed.get_attribute("aria-busy") is None
+            assert page.locator(".va-message-assistant.is-revealing").count() == 0
 
     # ── 16. a turn abandoned mid-generation is recoverable ──
     def test_an_abandoned_turn_can_be_retried_from_the_screen(self):
         """A killed worker leaves the turn on PENDING and nothing moves it on.
 
-        Driving Retry off `status === 'FAILED'` leaves that question showing
-        "Preparing the answer…" for ever — a lost question wearing a spinner.
+        Driving Retry off `status === 'FAILED'` leaves that question showing the
+        record-review state for ever — a lost question wearing a busy state.
         """
         from django.utils import timezone
 

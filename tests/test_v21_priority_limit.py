@@ -195,7 +195,7 @@ def test_typed_renderer_lists_exactly_the_requested_prefix_and_labels_the_basis(
     assert all(code in answer for code in expected)
     assert all(item["code"] not in answer for item in row["unlock_impact_ranking"][5:])
     assert "CS399" not in answer
-    assert ("أساس الترتيب" if language == "Arabic" else "Ranking basis") in answer
+    assert ("لماذا هذا الترتيب" if language == "Arabic" else "Why this order") in answer
     assert (
         check_answer(
             answer,
@@ -213,7 +213,7 @@ def test_priority_evidence_checker_rejects_omitted_extra_and_wrongly_ordered_cod
     first, second, sixth = "CS301", "CS302", "CS306"
     variants = (
         good.replace(f"1. {first}", "1. OMITTED"),
-        good.replace("Ranking basis:", f"6. {sixth}\nRanking basis:"),
+        good.replace("Why this order:", f"6. {sixth}\nWhy this order:"),
         good.replace(first, "SWAP", 1).replace(second, first, 1).replace("SWAP", second, 1),
     )
 
@@ -243,8 +243,8 @@ def test_renderer_discloses_when_fewer_than_n_courses_exist_without_padding() ->
 
     answer = _safe_progress_fact_fragment("English", row)
 
-    assert "requested a ranking of the top 5" in answer
-    assert "only 3 prerequisite-ready courses" in answer
+    assert "asked me to prioritize 5 courses" in answer
+    assert "only 3 with recorded prerequisite readiness" in answer
     assert all(code in answer for code in ("CS301", "CS302", "CS303"))
     assert "CS304" not in answer
     assert (

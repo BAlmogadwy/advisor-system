@@ -168,13 +168,13 @@ class EscalationUiTests(StaticLiveServerTestCase):
         preview = page.locator(".sa-preview").inner_text()
         for promised in (
             "سؤالك",
-            "إجابة المرشد الذكي",
+            "إجابة مرشد التخطيط الأكاديمي",
             "حالة الإجابة وسبب الإحالة",
             "المصادر المعروضة مع الإجابة",
             "المعلومات التي حُدّدت على أنها ناقصة، إن وجدت",
         ):
             assert promised in preview, promised
-        assert "لن تُرسل المحادثات الأخرى" in preview
+        assert "لن تُرسل جلسات الإرشاد الأخرى" in preview
         assert page.locator(".sa-preview-note").count() == 1
 
     def test_the_page_never_renders_the_stored_evidence(self):

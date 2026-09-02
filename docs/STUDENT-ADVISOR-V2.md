@@ -258,7 +258,9 @@ prose.
 
 Rollout is independent and fail-closed:
 
-- `STUDENT_ADVISOR_V21_ENABLED=false` is the default and current live value;
+- `STUDENT_ADVISOR_V21_ENABLED=false` remains the fail-closed application default,
+  while the checked-in production Blueprint promotes the verified V2.1 adviser with
+  `STUDENT_ADVISOR_V21_ENABLED=true`;
 - V2.1 may be enabled only while `STUDENT_ADVISOR_V2_ENABLED=true`, which keeps
   the rollback target explicit and is enforced by the dispatcher;
 - enabling V2.1 takes precedence over V2 for the whole student turn;

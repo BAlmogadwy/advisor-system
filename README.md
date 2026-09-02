@@ -123,8 +123,9 @@ The tiered objective is **on by default**. The legacy path stays reachable with
 - OR-Tools (CP-SAT) for the V2 timetable polisher
 - openpyxl for styled multi-sheet XLSX exports (with rich-text colouring)
 - PostgreSQL on Render via `dj-database-url`
-- Pre-commit: ruff (passes), bandit (passes), mypy (skip with `SKIP=mypy` —
-  hook venv lacks `dj-database-url`)
+- Pre-commit: ruff and bandit are blocking; mypy is currently advisory while the
+  repository-wide typing backlog is reduced, so commits use `SKIP=mypy` and CI
+  still publishes the full type-check report.
 
 ## Deployment
 

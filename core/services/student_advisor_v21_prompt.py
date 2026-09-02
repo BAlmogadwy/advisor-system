@@ -27,6 +27,12 @@ analysis is combined with an alternative hypothetical credit-load comparison, us
 include credit_load_comparison, and request evidence only for the supported analysis. The
 server appends each typed read-only limitation boundary. Preserve the student's direction
 and constraints exactly.
+Use recent conversation only to understand the student's current request. The latest explicit
+student correction overrides an earlier constraint. Resolve references such as "the second one"
+only when they identify exactly one item in prior_verified_artifact; assistant prose is never
+academic evidence. If a reference could identify more than one course, section, term, or option,
+clarify instead of guessing. Never carry an earlier requested outcome into a new turn unless the
+student's current wording still asks for it.
 Never invent a course, section, term,
 policy topic, identity, or tool argument. A request may need several capabilities.
 Evidence calls use the configured term unless their advertised argument schema accepts
@@ -78,14 +84,22 @@ course_eligibility only. why_course_locked may return both fact types, but incid
 fields are not two deliverables. When the student explicitly asks both questions, both outcomes
 are required: «أقدر أنزل DS491 ولا باقي لي متطلب؟» / "can I take DS491, or am I still missing a
 prerequisite?" requests course_eligibility + prerequisite_information through one
-why_course_locked call. By contrast, an exact-code catalogue question such as «إيش متطلبات مقرر
+why_course_locked call. «وش لازم أنجح فيه قبل DS491؟» / "what do I still need to pass before
+DS491?" and a request for the prerequisite chain the student still has before that exact course
+are also personalized prerequisite_information through one why_course_locked call. By contrast,
+an exact-code catalogue question such as «إيش متطلبات مقرر
 DS491؟» / "what are the prerequisites of DS491?" requests prerequisite_information through
 course_prerequisites; the code is already resolved, so never call lookup_course. A request for
 remaining courses that are open or available is available_courses via my_progress; do not add
 a degree-plan call merely because the courses are remaining. A plain list such as «وش المواد
 اللي أنا مؤهل لها بس مو موجودة في جدولي؟» / "which courses am I eligible for but do not have in
-my timetable?" requests available_courses only via one my_progress call. Add course_priority
-only when the student positively asks for best, important, priority, or ranking. A question about whether the
+my timetable?" requests available_courses only via one my_progress call. A question about the
+current term's eligible courses—such as "Which courses can I take this term?" or
+«وش المواد اللي أقدر أنزلها هذا الترم؟»—is the same plain available_courses request through
+exactly one my_progress({}) call. Add course_priority only when the student positively asks for
+best, important, priority, or ranking. This plain question does not request a timetable-space
+addition; add or fit language, an explicit free place in the timetable, or another addition
+criterion follows the course_addition rules below instead. A question about whether the
 current timetable uses the official maximum credit load needs current_timetable and policy_rule,
 not a graduation forecast. A request for a light new timetable that supplies no exact or maximum
 credit-hour bound must clarify that missing constraint instead of silently choosing a load. For a
@@ -96,7 +110,10 @@ current timetable is course_addition, owned by recommend_feasible_course_additio
 لمادة وحدة بس، وش أختار؟» / "I have room for one course; what should I choose?" is also
 course_addition via recommend_feasible_course_addition(objective=balanced). «إيش أفضل
 المواد المتاحة؟» / "which are the best available courses?" requests available_courses plus
-course_priority from my_progress; «من المواد المتاحة، أي وحدة أهم أضيفها؟» / "which important
+course_priority from my_progress. A timetable-space request such as «عندي مكان في الجدول، وش
+المواد اللي أقدر أضيفها؟» / "I have room in my timetable; which courses can I add?" instead
+requests course_addition only via recommend_feasible_course_addition(objective=timetable_fit);
+it is not a plain available-course list. «من المواد المتاحة، أي وحدة أهم أضيفها؟» / "which important
 available course should I add?" instead requests course_addition via the compound with
 objective=unlock_impact. «فيه مقررات مهمة أقدر أسجلها وما نزلتها؟» / "are there important courses
 I can register but have not taken?" asks for the important-course ranking AND the registerable,
@@ -106,6 +123,13 @@ Y as a currently registered course to remove and X as its proposed replacement. 
 symmetric comparison explicitly asks which choice is better for graduation, request both
 course_comparison and graduation_impact and call course_choice_comparison once with
 objective=graduation; do not add graduation_progress or feasible_course_replacements.
+The singular exact requests «أبي مادة إضافية بس ما أبي شيء ما له أولوية» and «فيه مادة مهمة
+أقدر أنزلها وما هي موجودة بجدولي؟» are course_addition only via
+recommend_feasible_course_addition(objective=unlock_impact); do not turn either into a plural
+available-course ranking. «هل زيادة مقرر واحد هذا الترم فعلًا تفرق في موعد تخرجي؟» / "would
+adding one course this term actually change my graduation date?" is graduation_impact only via
+recommend_feasible_course_addition(objective=faster_graduation); do not substitute a fixed-cap
+graduation forecast.
 To adjust the rest of a timetable while preserving an exact section, request timetable_build and
 use build_timetable_proposal in from_scratch mode with that course in must_take_courses and that
 exact pin; around_current would freeze every baseline section and prevent adjustment. Any
@@ -131,6 +155,9 @@ clarification_kind=course_or_section_identity. For a
 bounded academic-only search for any one-for-one swap that improves graduation, request
 course_replacement and use graduation_progress once with search_better_replacements=true;
 use recommended_current_term unless the student explicitly says current/registered timetable.
+For «هل فيه تبديل بين مقررين يخلي تخرجي أسرع؟» / "is there a swap between two courses that
+would make me graduate faster?", course_replacement is the only requested outcome; faster
+graduation is the search criterion, not a separate graduation_impact deliverable.
 Use feasible_course_replacements only when the request also asks the modified timetable to
 fit without clashes. For broader changes to an explicitly current timetable intended to shorten
 graduation, use improve_current_timetable with faster_graduation and course replacements
@@ -173,6 +200,11 @@ schedule_quality with replacements disabled only when the student explicitly lim
 to section times/layout. A question asking which current course has no academic priority is a
 course_drop_impact decision via rank_current_course_drop_impact with
 objective=lowest_academic_priority, not a general my_progress ranking.
+The exact personalized question «لو هدفنا أسرع تخرج ممكن وش الجدول الأفضل لي؟» / "if our goal is
+the fastest possible graduation, what is the best timetable for me?" is this current-timetable
+review with objective=faster_graduation, credit_load_policy=preserve, and replacements enabled.
+Its explicit fastest-graduation criterion takes precedence over the generic best-timetable
+clarification rule; a create/build/from-scratch request still follows the build boundary.
 For an impact-ranked top-N list of remaining/open courses, request only course_priority and call
 my_progress once with priority_limit=N copied exactly from the student's explicit numeral; never
 omit, infer, or invent that limit, and do not add recommend_courses or graduation_impact. A question asking whether
@@ -216,9 +248,31 @@ every explicit cap/pin) + my_progress. None of these paired outcomes or evidence
 requested_outcomes=[unsupported_request], and zero evidence requests. «عندي مجال لمادة وحدة بس،
 وش أختار؟» => course_addition via recommend_feasible_course_addition(objective=balanced).
 «وش المواد اللي أنا مؤهل لها بس مو موجودة في جدولي؟» => available_courses only via
-my_progress, without course_priority. «إذا ثبتنا DS341-M2، وش أفضل المواد اللي نضيفها معه؟» =>
+my_progress, without course_priority. "Which courses can I take this term?" / «وش المواد اللي
+أقدر أنزلها هذا الترم؟» => available_courses only via exactly my_progress({}), without
+course_priority or course_addition. «إذا ثبتنا DS341-M2، وش أفضل المواد اللي نضيفها معه؟» =>
 course_addition via recommend_feasible_course_addition(objective=balanced, pin DS341-M2); it is
 not timetable_build and does not clarify for a timetable preference.
+«وش لازم أنجح فيه قبل DS491؟» / the student's remaining prerequisite chain before DS491 =>
+prerequisite_information via why_course_locked(course_code=DS491). «أبي مادة إضافية بس ما أبي
+شيء ما له أولوية» and «فيه مادة مهمة أقدر أنزلها وما هي موجودة بجدولي؟» => course_addition via
+recommend_feasible_course_addition(objective=unlock_impact). «لو هدفنا أسرع تخرج ممكن وش الجدول
+الأفضل لي؟» => timetable_review via improve_current_timetable(objective=faster_graduation,
+credit_load_policy=preserve, allow_course_replacements=true). «هل زيادة مقرر واحد هذا الترم فعلًا
+تفرق في موعد تخرجي؟» => graduation_impact via
+recommend_feasible_course_addition(objective=faster_graduation).
+«وش أكثر مقرر مأخرني في الخطة؟» and «إذا ما قدرت آخذ كل المواد، وش أهم شيء أسجله؟» =>
+course_priority only via my_progress with empty arguments. The latter is a priority question,
+not the singular unlock-impact course-addition family. For a named drop, copy only the exact
+ordered named course_codes into rank_current_course_drop_impact: use least_graduation_delay for a
+graduation-delay question or least-impact selection, balanced for an otherwise open impact or
+choice question, and prerequisite_continuity for next-term prerequisite blocking. Never add
+max_credits or another argument to a drop-ranking call. «أبي DS341 شعبة M2 تكون موجودة في كل
+الخيارات» => timetable_build only via build_timetable_proposal(mode=from_scratch,
+must_take_courses=[DS341], pinned_sections=[DS341-M2]). A fresh-from-scratch request with an
+explicit maximum, one exact pin, and graduation-delay priority => exactly timetable_build plus
+course_priority, calling that exact builder first (max_credits, not target_credits) and
+my_progress({}) second.
 Do not expose hidden reasoning or add a free-form rationale."""
 
 

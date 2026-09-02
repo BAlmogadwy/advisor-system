@@ -1,11 +1,11 @@
 {% extends "core/base.html" %}
 {% load static i18n %}{% get_current_language as LANGUAGE_CODE %}
 
-{% block title %}{% if LANGUAGE_CODE == 'ar' %}المرشد الذكي{% else %}AI Advisor{% endif %}{% endblock %}
+{% block title %}{% if LANGUAGE_CODE == 'ar' %}مرشد التخطيط الأكاديمي{% else %}Academic Planning Adviser{% endif %}{% endblock %}
 {% block main_padding %}sa-advisor-shell{% endblock %}
 {% block main_attrs %}data-page="student-advisor"{% endblock %}
 
-{% block page_heading %}{% if LANGUAGE_CODE == 'ar' %}المرشد الذكي{% else %}AI Advisor{% endif %}{% endblock %}
+{% block page_heading %}{% if LANGUAGE_CODE == 'ar' %}مرشد التخطيط الأكاديمي{% else %}Academic Planning Adviser{% endif %}{% endblock %}
 
 {% block page_chips %}
   <span class="ph-chip ph-chip-page">{% if LANGUAGE_CODE == 'ar' %}الرقم الجامعي{% else %}University ID{% endif %}: {{ student_id }}</span>
@@ -39,22 +39,22 @@
 <div class="sa-layout" id="saAdvisorLayout">
 
   <button type="button" class="sa-drawer-backdrop" id="saHistoryBackdrop"
-          aria-label="{% if LANGUAGE_CODE == 'ar' %}إغلاق سجل المحادثات{% else %}Close conversation history{% endif %}"
+          aria-label="{% if LANGUAGE_CODE == 'ar' %}إغلاق جلسات الإرشاد السابقة{% else %}Close previous advising sessions{% endif %}"
           tabindex="-1"></button>
 
   {# ── conversations, newest activity first ── #}
   <aside class="sa-sidebar card" id="saConversationDrawer"
-         aria-label="{% if LANGUAGE_CODE == 'ar' %}المحادثات{% else %}Conversations{% endif %}"
+         aria-label="{% if LANGUAGE_CODE == 'ar' %}جلسات الإرشاد{% else %}Advising sessions{% endif %}"
          aria-hidden="true">
     <div class="sa-sidebar-head">
-      <h2>{% if LANGUAGE_CODE == 'ar' %}سجل المحادثات{% else %}Conversation history{% endif %}</h2>
+      <h2>{% if LANGUAGE_CODE == 'ar' %}جلسات الإرشاد السابقة{% else %}Previous advising sessions{% endif %}</h2>
       <button type="button" class="sa-icon-btn" id="saHistoryClose"
-              aria-label="{% if LANGUAGE_CODE == 'ar' %}إغلاق سجل المحادثات{% else %}Close conversation history{% endif %}">
+              aria-label="{% if LANGUAGE_CODE == 'ar' %}إغلاق جلسات الإرشاد السابقة{% else %}Close previous advising sessions{% endif %}">
         <span aria-hidden="true">×</span>
       </button>
     </div>
     <p class="sa-muted sa-empty" id="saConvEmpty" hidden>
-      {% if LANGUAGE_CODE == 'ar' %}لا توجد محادثات بعد.{% else %}No conversations yet.{% endif %}
+      {% if LANGUAGE_CODE == 'ar' %}لا توجد جلسات إرشاد سابقة.{% else %}No previous advising sessions.{% endif %}
     </p>
     {# A real <ul>: the buttons keep their button role and the list keeps its list role. #}
     <ul id="saConvList" class="sa-conv-list"></ul>
@@ -73,21 +73,21 @@
         <span class="sa-workspace-mark" aria-hidden="true">AI</span>
         <div>
           <p class="sa-workspace-kicker">
-            {% if LANGUAGE_CODE == 'ar' %}مساعد الإرشاد الأكاديمي{% else %}Academic advisor{% endif %}
+            {% if LANGUAGE_CODE == 'ar' %}مرشد التخطيط الأكاديمي · مدعوم بالذكاء الاصطناعي{% else %}Academic planning adviser · AI-supported{% endif %}
             {% if student and student.program %}<span class="sa-workspace-program">{{ student.program }}</span>{% endif %}
           </p>
-          <h2 id="saThreadTitle">{% if LANGUAGE_CODE == 'ar' %}محادثة جديدة{% else %}New conversation{% endif %}</h2>
+          <h2 id="saThreadTitle">{% if LANGUAGE_CODE == 'ar' %}جلسة إرشاد جديدة{% else %}New advising session{% endif %}</h2>
         </div>
       </div>
       <div class="sa-workspace-actions">
         <button type="button" class="btn btn-sm sa-history-toggle" id="saHistoryToggle"
                 aria-controls="saConversationDrawer" aria-expanded="false">
           <span aria-hidden="true">☰</span>
-          <span>{% if LANGUAGE_CODE == 'ar' %}المحادثات{% else %}History{% endif %}</span>
+          <span>{% if LANGUAGE_CODE == 'ar' %}الجلسات السابقة{% else %}Previous sessions{% endif %}</span>
         </button>
         <button type="button" class="btn btn-sm btn-primary sa-new-chat" id="saNewChat">
           <span aria-hidden="true">＋</span>
-          <span>{% if LANGUAGE_CODE == 'ar' %}محادثة جديدة{% else %}New conversation{% endif %}</span>
+          <span>{% if LANGUAGE_CODE == 'ar' %}جلسة إرشاد جديدة{% else %}New advising session{% endif %}</span>
         </button>
       </div>
     </header>
@@ -102,9 +102,9 @@
       <div class="va-messages" id="saMessages" role="log" aria-busy="false">
         <div class="sa-empty-state" id="saEmptyState">
           <span class="sa-empty-mark" aria-hidden="true">AI</span>
-          <h3>{% if LANGUAGE_CODE == 'ar' %}كيف يمكنني مساعدتك اليوم؟{% else %}How can I help today?{% endif %}</h3>
+          <h3>{% if LANGUAGE_CODE == 'ar' %}لنراجع خطتك الأكاديمية{% else %}Let’s review your academic plan{% endif %}</h3>
           <p class="sa-muted" id="saWelcome">
-            {% if LANGUAGE_CODE == 'ar' %}اسأل عن خطتك الدراسية أو مقرراتك أو اللوائح الأكاديمية المعتمدة. تُبنى الإجابة على بيانات سجلك المتاحة للنظام.{% else %}Ask about your plan, courses, or approved regulations. Answers use your academic record.{% endif %}
+            {% if LANGUAGE_CODE == 'ar' %}اختر ما تريد التخطيط له أو اسأل عن قرار أكاديمي. أراجع بيانات سجلك واللوائح المعتمدة المتاحة للنظام، وأوضح ما يحتاج إلى مراجعة بشرية.{% else %}Choose what you want to plan or ask about an academic decision. I review your available record and approved rules, and identify anything that needs human review.{% endif %}
           </p>
           <div class="va-examples" id="saExamples">
             {% if LANGUAGE_CODE == 'ar' %}
@@ -150,7 +150,7 @@
           so 30 lines above.)
         {% endcomment %}
         <textarea class="va-input" id="saQuestion" maxlength="1000" dir="auto" rows="1"
-                  placeholder="{% if LANGUAGE_CODE == 'ar' %}اكتب سؤالك عن خطتك الأكاديمية…{% else %}Ask about your academic plan…{% endif %}" required></textarea>
+                  placeholder="{% if LANGUAGE_CODE == 'ar' %}ما الذي تريد التخطيط له أو حسمه؟{% else %}What would you like to plan or decide?{% endif %}" required></textarea>
         <button class="btn btn-primary" id="saSend" type="submit"
                 aria-label="{% if LANGUAGE_CODE == 'ar' %}إرسال السؤال{% else %}Send question{% endif %}"
                 title="{% if LANGUAGE_CODE == 'ar' %}إرسال السؤال{% else %}Send question{% endif %}">
@@ -179,5 +179,5 @@
   };
 </script>
 <script src="{% static 'js/prereq-graph.js' %}?v=4"></script>
-<script src="{% static 'js/page-student-advisor.js' %}?v=30"></script>
+<script src="{% static 'js/page-student-advisor.js' %}?v=31"></script>
 {% endblock %}

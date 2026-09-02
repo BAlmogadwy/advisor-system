@@ -24,7 +24,7 @@ from enum import Enum
 from typing import Any
 
 from core.services.llm_backend import LLMInvalidResponse, ToolCallRequest, ToolChatResult
-from core.services.student_advisor_v21_policy import SEMANTIC_POLICY_IDS
+from core.services.student_advisor_v21_policy import SEMANTIC_POLICY_IDS, SemanticPolicyId
 
 TURN_PLAN_TOOL_NAME = "submit_student_turn_plan"
 MAX_RAW_PLAN_ARGUMENT_CHARS = 64_000
@@ -522,6 +522,15 @@ def build_turn_plan_tool_schema(
                 "bound clarifies with clarification_kind=timetable_load; and an ambiguous pin "
                 "that lacks a unique course/section identity clarifies with "
                 "clarification_kind=course_or_section_identity. "
+                "The student's remaining pass-before/prerequisite chain for one exact course is "
+                "prerequisite_information via why_course_locked; one priority-qualified extra "
+                "course is course_addition via recommend_feasible_course_addition(objective="
+                "unlock_impact); one extra course's effect on the graduation date is "
+                "graduation_impact via the same compound with objective=faster_graduation; and "
+                "the exact personalized fastest-graduation best-timetable question is "
+                "timetable_review via improve_current_timetable(objective=faster_graduation, "
+                "credit_load_policy=preserve, allow_course_replacements=true), not a generic "
+                "best-timetable clarification. "
                 "A standalone corequisite question is unsupported_request with decision="
                 "unsupported and no evidence calls; a generic choice of one course when no "
                 "fit, priority, unlock, or graduation criterion is stated is course_addition "
@@ -662,6 +671,243 @@ def build_turn_plan_tool_schema(
             },
         },
     }
+
+
+def _provider_compatible_turn_plan_tool_schema(
+    strict_schema: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Project the strict plan schema onto the provider's accepted subset.
+
+    Alibaba's OpenAI-compatible chat endpoint rejects ``uniqueItems`` with
+    ``invalid_parameter_error`` even though it is valid JSON Schema. The
+    canonical schema keeps that constraint, and :func:`parse_turn_plan_result`
+    validates every provider result against it locally. Only the copy sent to
+    the provider omits the unsupported hint.
+    """
+
+    projected = copy.deepcopy(dict(strict_schema))
+    requested_outcomes = projected["function"]["parameters"]["properties"]["requested_outcomes"]
+    if requested_outcomes.pop("uniqueItems", None) is not True:
+        raise AssertionError("strict turn-plan schema lost its unique-outcome constraint")
+    return projected
+
+
+_DROP_REPAIR_POLICIES: dict[SemanticPolicyId, tuple[str, str]] = {
+    SemanticPolicyId.SINGLE_DROP_GRADUATION_DELAY: (
+        "graduation_impact",
+        "least_graduation_delay",
+    ),
+    SemanticPolicyId.BALANCED_NAMED_DROP_IMPACT: ("course_drop_impact", "balanced"),
+    SemanticPolicyId.SINGLE_DROP_PREREQUISITE_CONTINUITY: (
+        "course_drop_impact",
+        "prerequisite_continuity",
+    ),
+    SemanticPolicyId.LEAST_DELAY_NAMED_DROP_SELECTION: (
+        "course_drop_impact",
+        "least_graduation_delay",
+    ),
+}
+
+_SINGLE_CALL_REPAIR_POLICIES: dict[
+    SemanticPolicyId,
+    tuple[str, str, tuple[tuple[str, Any], ...]],
+] = {
+    SemanticPolicyId.PLAIN_AVAILABLE_COURSES_ONLY: (
+        "available_courses",
+        "my_progress",
+        (),
+    ),
+    SemanticPolicyId.TIMETABLE_SPACE_COURSE_ADDITION: (
+        "course_addition",
+        "recommend_feasible_course_addition",
+        (("objective", "timetable_fit"),),
+    ),
+    SemanticPolicyId.GRADUATION_IMPROVING_COURSE_SWAP: (
+        "course_replacement",
+        "graduation_progress",
+        (
+            ("planning_baseline_kind", "recommended_current_term"),
+            ("search_better_replacements", True),
+        ),
+    ),
+}
+
+
+def _repair_focused_provider_schema(
+    provider_schema: Mapping[str, Any],
+    policy_ids: Sequence[SemanticPolicyId],
+) -> dict[str, Any]:
+    """Narrow only the provider hint for one validated repair policy."""
+
+    focused = copy.deepcopy(dict(provider_schema))
+    policies = tuple(dict.fromkeys(policy_ids))
+    if len(policies) != 1:
+        return focused
+    policy = policies[0]
+    parameters = focused["function"]["parameters"]
+    properties = parameters["properties"]
+    requests = properties["evidence_requests"]
+    item_schema = requests["items"]
+
+    if policy in _SINGLE_CALL_REPAIR_POLICIES:
+        outcome, capability, argument_items = _SINGLE_CALL_REPAIR_POLICIES[policy]
+        expected_arguments = dict(argument_items)
+        focused["function"]["description"] = (
+            f"Repair only the validated closed policy {policy.value}. "
+            f"{_SEMANTIC_POLICY_REPAIR_MAPPINGS[policy]}."
+        )
+        properties["decision"]["enum"] = ["execute"]
+        properties["requested_outcomes"]["items"]["enum"] = [outcome]
+        properties["requested_outcomes"]["minItems"] = 1
+        properties["requested_outcomes"]["maxItems"] = 1
+        requests["minItems"] = requests["maxItems"] = 1
+        branches = [
+            branch
+            for branch in item_schema["oneOf"]
+            if branch["properties"]["capability"]["enum"] == [capability]
+        ]
+        if len(branches) != 1:
+            raise AssertionError("single-call repair capability branch is missing")
+        branch = branches[0]
+        arguments = branch["properties"]["arguments"]
+        if not set(expected_arguments) <= set(arguments["properties"]):
+            raise AssertionError("single-call repair argument schema is missing")
+        arguments["properties"] = {key: arguments["properties"][key] for key in expected_arguments}
+        arguments["required"] = list(expected_arguments)
+        arguments["additionalProperties"] = False
+        for key, value in expected_arguments.items():
+            arguments["properties"][key]["enum"] = [value]
+            arguments["properties"][key]["description"] = (
+                f"REQUIRED exact value: {json.dumps(value, ensure_ascii=False)}."
+            )
+        item_schema["properties"]["capability"]["enum"] = [capability]
+        item_schema["oneOf"] = branches
+        properties["clarification_kind"]["enum"] = ["none"]
+        properties["clarification_question"]["enum"] = [""]
+        return focused
+
+    if policy in _DROP_REPAIR_POLICIES:
+        outcome, objective = _DROP_REPAIR_POLICIES[policy]
+        focused["function"]["description"] = (
+            f"Repair only the validated closed policy {policy.value}. "
+            f"{_SEMANTIC_POLICY_REPAIR_MAPPINGS[policy]}."
+        )
+        properties["decision"]["enum"] = ["execute"]
+        properties["requested_outcomes"]["items"]["enum"] = [outcome]
+        properties["requested_outcomes"]["minItems"] = 1
+        properties["requested_outcomes"]["maxItems"] = 1
+        requests["minItems"] = requests["maxItems"] = 1
+        branches = [
+            branch
+            for branch in item_schema["oneOf"]
+            if branch["properties"]["capability"]["enum"] == ["rank_current_course_drop_impact"]
+        ]
+        if len(branches) != 1:
+            raise AssertionError("drop repair capability branch is missing")
+        branch = branches[0]
+        arguments = branch["properties"]["arguments"]
+        arguments["properties"] = {
+            key: value
+            for key, value in arguments["properties"].items()
+            if key in {"course_codes", "objective"}
+        }
+        arguments["required"] = ["course_codes", "objective"]
+        arguments["additionalProperties"] = False
+        arguments["properties"]["objective"]["enum"] = [objective]
+        arguments["properties"]["objective"]["description"] = (
+            f"REQUIRED exact objective: {objective}."
+        )
+        course_codes = arguments["properties"]["course_codes"]
+        course_codes["description"] = (
+            "REQUIRED course codes copied exactly, in order, from the original question."
+        )
+        if policy in {
+            SemanticPolicyId.SINGLE_DROP_GRADUATION_DELAY,
+            SemanticPolicyId.SINGLE_DROP_PREREQUISITE_CONTINUITY,
+        }:
+            course_codes["minItems"] = course_codes["maxItems"] = 1
+        elif policy is SemanticPolicyId.BALANCED_NAMED_DROP_IMPACT:
+            course_codes["minItems"] = 1
+            course_codes["maxItems"] = 2
+        else:
+            course_codes["minItems"] = course_codes["maxItems"] = 3
+        item_schema["properties"]["capability"]["enum"] = ["rank_current_course_drop_impact"]
+        item_schema["oneOf"] = branches
+        properties["clarification_kind"]["enum"] = ["none"]
+        properties["clarification_question"]["enum"] = [""]
+        return focused
+
+    if policy is SemanticPolicyId.FRESH_PINNED_GRADUATION_PRIORITY_BUILD:
+        focused["function"]["description"] = (
+            "Repair only the validated closed policy "
+            f"{policy.value}. {_SEMANTIC_POLICY_REPAIR_MAPPINGS[policy]}. "
+            "The two evidence requests must be ordered exactly: "
+            "build_timetable_proposal first, my_progress second."
+        )
+        properties["decision"]["enum"] = ["execute"]
+        properties["requested_outcomes"]["items"]["enum"] = [
+            "timetable_build",
+            "course_priority",
+        ]
+        properties["requested_outcomes"]["minItems"] = 2
+        properties["requested_outcomes"]["maxItems"] = 2
+        requests["minItems"] = requests["maxItems"] = 2
+        allowed = {"build_timetable_proposal", "my_progress"}
+        branches = [
+            branch
+            for branch in item_schema["oneOf"]
+            if branch["properties"]["capability"]["enum"][0] in allowed
+        ]
+        if len(branches) != 2:
+            raise AssertionError("composite repair capability branches are missing")
+        branches.sort(
+            key=lambda branch: 0
+            if branch["properties"]["capability"]["enum"] == ["build_timetable_proposal"]
+            else 1
+        )
+        for branch in branches:
+            capability = branch["properties"]["capability"]["enum"][0]
+            arguments = branch["properties"]["arguments"]
+            if capability == "build_timetable_proposal":
+                required = {"mode", "max_credits", "must_take_courses", "pinned_sections"}
+                arguments["properties"] = {
+                    key: value for key, value in arguments["properties"].items() if key in required
+                }
+                arguments["required"] = [
+                    "mode",
+                    "max_credits",
+                    "must_take_courses",
+                    "pinned_sections",
+                ]
+                arguments["properties"]["mode"]["enum"] = ["from_scratch"]
+                arguments["properties"]["mode"]["description"] = (
+                    "REQUIRED exact mode: from_scratch."
+                )
+                arguments["properties"]["max_credits"]["description"] = (
+                    "REQUIRED explicit maximum credits copied from the original question."
+                )
+                for key in ("must_take_courses", "pinned_sections"):
+                    arguments["properties"][key]["minItems"] = 1
+                    arguments["properties"][key]["maxItems"] = 1
+                    arguments["properties"][key]["description"] = (
+                        "REQUIRED exact singleton copied from the original question."
+                    )
+                arguments["additionalProperties"] = False
+            else:
+                arguments["properties"] = {}
+                arguments["required"] = []
+                arguments["additionalProperties"] = False
+        item_schema["properties"]["capability"]["enum"] = [
+            "build_timetable_proposal",
+            "my_progress",
+        ]
+        item_schema["oneOf"] = branches
+        requests["description"] = (
+            "REQUIRED exact order: build_timetable_proposal first, my_progress second."
+        )
+        properties["clarification_kind"]["enum"] = ["none"]
+        properties["clarification_question"]["enum"] = [""]
+    return focused
 
 
 class _DuplicateJSONKey(ValueError):
@@ -1345,9 +1591,12 @@ def _closed_repair_details(
                 "redundant_capabilities",
                 "uncovered_outcomes",
                 "uncovered_course_codes",
+                "policy_ids",
             }
         ),
-        "constraint_coverage_failed": frozenset({"missing_field_paths"}),
+        "constraint_coverage_failed": frozenset({"missing_field_paths", "policy_ids"}),
+        "argument_provenance_failed": frozenset({"policy_ids"}),
+        "plan_validation_failed": frozenset({"policy_ids"}),
         "semantic_policy_failed": frozenset({"policy_ids"}),
     }
     allowed_keys = allowed_keys_by_reason.get(repair_reason)
@@ -1369,7 +1618,9 @@ def _closed_repair_details(
     }
     serialized: list[str] = []
     ordered_keys = {
-        "constraint_coverage_failed": ("missing_field_paths",),
+        "constraint_coverage_failed": ("missing_field_paths", "policy_ids"),
+        "argument_provenance_failed": ("policy_ids",),
+        "plan_validation_failed": ("policy_ids",),
         "semantic_policy_failed": ("policy_ids",),
     }.get(
         repair_reason,
@@ -1378,6 +1629,7 @@ def _closed_repair_details(
             "redundant_capabilities",
             "uncovered_outcomes",
             "uncovered_course_codes",
+            "policy_ids",
         ),
     )
     for key in ordered_keys:
@@ -1406,6 +1658,31 @@ def _closed_repair_details(
         if values:
             serialized.append(f"{key}={','.join(values)}")
     return tuple(serialized)
+
+
+_SEMANTIC_POLICY_REPAIR_MAPPINGS: dict[SemanticPolicyId, str] = {
+    SemanticPolicyId.STANDALONE_COREQUISITE_UNSUPPORTED: "decision=unsupported; requested_outcomes exactly [unsupported_request]; no evidence calls",
+    SemanticPolicyId.SINGLE_COURSE_CHOICE_BALANCED: "decision=execute; requested_outcomes exactly [course_addition]; exactly one recommend_feasible_course_addition call with arguments exactly {objective: balanced}",
+    SemanticPolicyId.PLAIN_AVAILABLE_COURSES_ONLY: "decision=execute; requested_outcomes exactly [available_courses]; exactly one my_progress call with empty arguments",
+    SemanticPolicyId.PINNED_COURSE_ADDITION_BALANCED: "decision=execute; requested_outcomes exactly [course_addition]; exactly one recommend_feasible_course_addition call with objective=balanced and every exact pin from the original question",
+    SemanticPolicyId.PERSONALIZED_PREREQUISITE_ANALYSIS: "decision=execute; requested_outcomes exactly [prerequisite_information]; exactly one why_course_locked call with only the exact single course_code from the original question",
+    SemanticPolicyId.PRIORITY_COURSE_ADDITION_UNLOCK: "decision=execute; requested_outcomes exactly [course_addition]; exactly one recommend_feasible_course_addition call with arguments exactly {objective: unlock_impact}",
+    SemanticPolicyId.FASTEST_GRADUATION_TIMETABLE_REVIEW: "decision=execute; requested_outcomes exactly [timetable_review]; exactly one improve_current_timetable call with arguments exactly {objective: faster_graduation, credit_load_policy: preserve, allow_course_replacements: true}",
+    SemanticPolicyId.ONE_COURSE_GRADUATION_IMPACT: "decision=execute; requested_outcomes exactly [graduation_impact]; exactly one recommend_feasible_course_addition call with arguments exactly {objective: faster_graduation}",
+    SemanticPolicyId.BEST_TIMETABLE_PREFERENCE_CLARIFICATION: "decision=clarify; requested_outcomes exactly [timetable_build]; clarification_kind=timetable_preference; one concise nonempty clarification_question; no evidence calls",
+    SemanticPolicyId.MOST_DELAYING_COURSE_PRIORITY: "for the most-delaying-course request, decision=execute; requested_outcomes exactly [course_priority]; exactly one my_progress call with empty arguments",
+    SemanticPolicyId.REGISTRATION_SHORTFALL_COURSE_PRIORITY: "for the registration-shortfall request, decision=execute; requested_outcomes exactly [course_priority]; exactly one my_progress call with empty arguments",
+    SemanticPolicyId.SINGLE_DROP_GRADUATION_DELAY: "decision=execute; requested_outcomes exactly [graduation_impact]; exactly one rank_current_course_drop_impact call whose arguments contain only objective=least_graduation_delay and the exact singleton course_codes from the original question; prohibit max_credits and every other argument",
+    SemanticPolicyId.BALANCED_NAMED_DROP_IMPACT: "decision=execute; requested_outcomes exactly [course_drop_impact]; exactly one rank_current_course_drop_impact call whose arguments contain only objective=balanced and exact ordered course_codes from the original question; prohibit max_credits and every other argument",
+    SemanticPolicyId.SINGLE_DROP_PREREQUISITE_CONTINUITY: "decision=execute; requested_outcomes exactly [course_drop_impact]; exactly one rank_current_course_drop_impact call whose arguments contain only objective=prerequisite_continuity and the exact singleton course_codes from the original question; prohibit max_credits and every other argument",
+    SemanticPolicyId.LEAST_DELAY_NAMED_DROP_SELECTION: "decision=execute; requested_outcomes exactly [course_drop_impact]; exactly one rank_current_course_drop_impact call whose arguments contain only objective=least_graduation_delay and exact ordered course_codes from the original question; prohibit max_credits and every other argument",
+    SemanticPolicyId.PINNED_SECTION_EVERY_OPTION_BUILD: "decision=execute; requested_outcomes exactly [timetable_build]; exactly one build_timetable_proposal call whose arguments contain only mode=from_scratch, exact singleton must_take_courses, and exact singleton pinned_sections from the original question",
+    SemanticPolicyId.FRESH_PINNED_GRADUATION_PRIORITY_BUILD: "decision=execute; requested_outcomes exactly [timetable_build, course_priority]; exactly two calls in order: build_timetable_proposal then my_progress; build arguments contain only mode=from_scratch, explicit max_credits, exact singleton must_take_courses, and exact singleton pinned_sections from the original question; prohibit target_credits, course_codes, and every other argument; my_progress arguments are empty",
+    SemanticPolicyId.TIMETABLE_SPACE_COURSE_ADDITION: "decision=execute; requested_outcomes exactly [course_addition]; exactly one recommend_feasible_course_addition call with arguments exactly {objective: timetable_fit}",
+    SemanticPolicyId.GRADUATION_IMPROVING_COURSE_SWAP: "decision=execute; requested_outcomes exactly [course_replacement]; exactly one graduation_progress call with arguments exactly {planning_baseline_kind: recommended_current_term, search_better_replacements: true}",
+}
+if set(_SEMANTIC_POLICY_REPAIR_MAPPINGS) != set(SemanticPolicyId):
+    raise RuntimeError("semantic policy repair mappings must cover the closed enum exactly")
 
 
 _PLAN_REPAIR_INSTRUCTIONS = {
@@ -1437,16 +1714,7 @@ _PLAN_REPAIR_INSTRUCTIONS = {
     "semantic_policy_failed": (
         "The server rejected the previous plan because it did not match a closed, "
         "high-confidence semantic request policy. Regenerate from the original student "
-        "question without copying or discussing the rejected plan. Apply these exact closed "
-        "mappings when their policy ID is listed: standalone_corequisite_unsupported means "
-        "decision=unsupported, only unsupported_request, and no evidence calls; "
-        "single_course_choice_balanced means decision=execute, only course_addition, and "
-        "exactly one recommend_feasible_course_addition call with objective=balanced; "
-        "plain_available_courses_only means decision=execute, only available_courses, and "
-        "exactly one my_progress call without priority_limit; "
-        "pinned_course_addition_balanced means decision=execute, only course_addition, and "
-        "exactly one recommend_feasible_course_addition call with objective=balanced and "
-        "every exact pin from the original student question."
+        "question without copying or discussing the rejected plan."
     ),
 }
 
@@ -1473,11 +1741,25 @@ def build_plan_repair_message(
         if closed_repair_details
         else ""
     )
+    validated_policy_ids: tuple[SemanticPolicyId, ...] = ()
+    if any(detail.startswith("policy_ids=") for detail in closed_repair_details):
+        validated_policy_ids = tuple(
+            dict.fromkeys(
+                SemanticPolicyId(str(policy_id).strip())
+                for policy_id in (repair_details or {}).get("policy_ids", ())
+            )
+        )
+    policy_suffix = "".join(
+        " Validated closed policy requirement for "
+        f"{policy.value}: {_SEMANTIC_POLICY_REPAIR_MAPPINGS[policy]}."
+        for policy in validated_policy_ids
+    )
     return {
         "role": "user",
         "content": (
             _PLAN_REPAIR_INSTRUCTIONS[repair_reason]
             + details_suffix
+            + policy_suffix
             + " Return only the submit_student_turn_plan function call."
         ),
     }
@@ -1496,6 +1778,7 @@ def plan_student_turn(
     max_attempts: int = 2,
     repair_reason: str = "",
     repair_details: Mapping[str, Sequence[str]] | None = None,
+    schema_repair_policy_ids: Sequence[str] = (),
 ) -> TurnPlanningResult:
     """Obtain one forced, schema-constrained semantic plan from the LLM client.
 
@@ -1513,11 +1796,22 @@ def plan_student_turn(
         repair_details,
         advertised_tools=advertised_tools,
     )
+    if isinstance(schema_repair_policy_ids, str):
+        raise ValueError("schema_repair_policy_ids must be a bounded string sequence")
+    schema_policy_ids = tuple(schema_repair_policy_ids)
+    schema_repair = build_plan_repair_message(
+        "plan_validation_failed",
+        {"policy_ids": schema_policy_ids} if schema_policy_ids else {},
+        advertised_tools=advertised_tools,
+    )
+    if schema_repair is None:  # pragma: no cover - closed non-empty reason
+        raise AssertionError("schema repair instruction is missing")
 
     tools = tuple(advertised_tools)
-    planner_tool = build_turn_plan_tool_schema(tools, max_calls=max_calls)
+    planner_tool = _provider_compatible_turn_plan_tool_schema(
+        build_turn_plan_tool_schema(tools, max_calls=max_calls)
+    )
     kwargs: dict[str, Any] = {
-        "tools": [planner_tool],
         "temperature": 0.0,
         "tool_choice": "required",
     }
@@ -1533,11 +1827,35 @@ def plan_student_turn(
     planner_messages = [copy.deepcopy(dict(message)) for message in messages]
     if repair_message is not None:
         planner_messages.append(repair_message)
+    external_repair_policy_ids = tuple(
+        dict.fromkeys(
+            SemanticPolicyId(str(policy_id).strip())
+            for policy_id in (repair_details or {}).get("policy_ids", ())
+        )
+    )
+    schema_repair_policy_values = tuple(
+        dict.fromkeys(SemanticPolicyId(str(policy_id).strip()) for policy_id in schema_policy_ids)
+    )
     provider_turns: list[ToolChatResult] = []
     for attempt in range(max_attempts):
+        focused_policy_ids = (
+            external_repair_policy_ids
+            if repair_message is not None
+            else schema_repair_policy_values
+            if attempt > 0
+            else ()
+        )
+        call_kwargs = {
+            **kwargs,
+            "tools": [
+                _repair_focused_provider_schema(planner_tool, focused_policy_ids)
+                if focused_policy_ids
+                else copy.deepcopy(planner_tool)
+            ],
+        }
         provider_turn = llm_client.chat_with_tools(
             copy.deepcopy(planner_messages),
-            **kwargs,
+            **call_kwargs,
         )
         provider_turns.append(provider_turn)
         try:
@@ -1550,13 +1868,6 @@ def plan_student_turn(
             if attempt + 1 >= max_attempts:
                 exc.retain_provider_turns(provider_turns)
                 raise
-            schema_repair = build_plan_repair_message(
-                "plan_validation_failed",
-                {},
-                advertised_tools=tools,
-            )
-            if schema_repair is None:  # pragma: no cover - closed non-empty reason
-                raise AssertionError("schema repair instruction is missing") from exc
             planner_messages.append(schema_repair)
             continue
         return TurnPlanningResult(

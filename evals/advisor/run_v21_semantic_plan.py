@@ -14,7 +14,7 @@ runner never invents a V2 score or silently substitutes the keyword mock provide
 Live planning is opt-in and bounded by limits the operator must supply::
 
     python evals/advisor/run_v21_semantic_plan.py --live \
-        --confirm-live-external-request --max-provider-calls 72 \
+        --confirm-live-external-request --max-provider-calls 86 \
         --max-total-tokens 2000000 --baseline runtime/evals/v2-baseline.json
 
 The live path invokes only the typed semantic planner. It does not access a student
@@ -24,7 +24,7 @@ An explicit V2 approximation can be collected separately, with the same opt-in a
 budget controls::
 
     python evals/advisor/run_v21_semantic_plan.py --collect-v2-baseline \
-        --confirm-live-external-request --max-provider-calls 36 \
+        --confirm-live-external-request --max-provider-calls 43 \
         --max-total-tokens 3000000 --output runtime/evals/v2-baseline.json
 
 That artifact records one real V2 model turn plus the current deterministic evidence
@@ -47,6 +47,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[2]))
 
 from core.services.student_advisor_v21_policy import (  # noqa: E402
     SEMANTIC_POLICY_IDS,
+    active_semantic_policy_ids,
     semantic_policy_violations,
 )
 from core.services.student_advisor_v21_prompt import (  # noqa: E402
@@ -107,6 +108,13 @@ def _contract_with_semantic_policy_context(
             if normalized_declared != normalized_derived:
                 raise ValueError("semantic policy pin context differs from the production reducer")
         case["_semantic_policy_explicit_pins"] = derived
+        case["_semantic_policy_ids"] = [
+            policy.value
+            for policy in active_semantic_policy_ids(
+                str(case.get("question") or ""),
+                explicit_pins=derived,
+            )
+        ]
         decorated_cases.append(case)
     active["cases"] = decorated_cases
     return active
@@ -352,7 +360,6 @@ def _raw_rows(results: Any) -> list[dict[str, Any]]:
                         "semantic_policy_failed",
                     }
                 )
-                or (reason == "plan_validation_failed" and policy_ids)
                 or (reason == "semantic_policy_failed" and not policy_ids)
             ):
                 raise ValueError(f"candidate row {case_id} has an invalid repair object")
@@ -467,6 +474,7 @@ def validate_candidate_through_typed_planner(
                 str(case.get("question") or ""),
                 plan,
                 explicit_pins=case.get("_semantic_policy_explicit_pins"),
+                active_policy_ids=case.get("_semantic_policy_ids"),
             ):
                 raise SemanticPolicyReplayError
         except Exception as exc:  # noqa: BLE001 - malformed rows belong in the report
@@ -823,6 +831,11 @@ def collect_live_candidate(
     for case in cases:
         messages = planner_messages(case, year=year, term=term)
         explicit_pins = _production_explicit_pins(str(case.get("question") or ""))
+        active_policies = active_semantic_policy_ids(
+            str(case.get("question") or ""),
+            explicit_pins=explicit_pins,
+        )
+        active_policy_values = tuple(policy.value for policy in active_policies)
         row_usage: dict[str, int] = {}
         row_model = str(model or "")
         row_revision = ""
@@ -890,6 +903,7 @@ def collect_live_candidate(
                     max_attempts=1,
                     repair_reason=repair_reason,
                     repair_details=repair_details,
+                    schema_repair_policy_ids=active_policy_values,
                 )
             except Exception as exc:  # noqa: BLE001 - invalid rows remain scoreable
                 used_model, used_revision = account_usage(row_usage, exc)
@@ -897,7 +911,9 @@ def collect_live_candidate(
                 row_revision = used_revision or row_revision
                 if attempt == 0 and isinstance(exc, TurnPlanValidationError):
                     repair_reason = "plan_validation_failed"
-                    repair_details = {}
+                    repair_details = (
+                        {"policy_ids": active_policy_values} if active_policy_values else {}
+                    )
                     continue
                 final_error = _safe_error_category(exc)
                 break
@@ -910,6 +926,7 @@ def collect_live_candidate(
                 str(case.get("question") or ""),
                 plan,
                 explicit_pins=explicit_pins,
+                active_policy_ids=active_policies,
             )
             if violations:
                 if attempt == 0:

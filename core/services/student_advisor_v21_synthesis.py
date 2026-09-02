@@ -2,30 +2,37 @@
 
 Individual capability renderers intentionally describe only their own evidence.
 Some questions, however, ask for a relationship between two verified result sets.
-Those relationships are computed here rather than left to model prose.  Every
-statement is a bounded set comparison over provider-visible course codes; it does
-not infer eligibility, offering, seats, or an optimal graduation plan.
+Those relationships are computed here rather than left to model prose. Every
+statement is a bounded comparison over typed provider-visible fields; it does not
+infer eligibility, offering, seats, or an optimal graduation plan.
 """
 
 from __future__ import annotations
 
+import math
 import re
 from collections.abc import Mapping, Sequence
 from types import MappingProxyType
 from typing import Any
 
 CURRENT_TIMETABLE_PRIORITY_SCOPE = "current_timetable_priority_assessment"
+CURRENT_TIMETABLE_LOAD_POLICY_SCOPE = "current_timetable_load_policy_assessment"
 TIMETABLE_BUILD_PRIORITY_SCOPE = "timetable_build_priority_assessment"
 
 JOINED_SCOPE_TOOLS: Mapping[str, tuple[str, ...]] = MappingProxyType(
     {
         CURRENT_TIMETABLE_PRIORITY_SCOPE: ("my_timetable", "my_progress"),
+        CURRENT_TIMETABLE_LOAD_POLICY_SCOPE: ("my_timetable", "policy_lookup"),
         TIMETABLE_BUILD_PRIORITY_SCOPE: (
             "build_timetable_proposal",
             "my_progress",
         ),
     }
 )
+
+_SEMESTER_RANGE_POLICY_ID = "TU.LOAD.SEMESTER_RANGE"
+_EXPECTED_GRADUATE_POLICY_ID = "TU.LOAD.EXPECTED_GRADUATE_REQUEST"
+_MAIN_TERMS = frozenset({1, 2})
 
 
 _AR_UNPLACED_REASONS: Mapping[str, str] = MappingProxyType(
@@ -74,8 +81,7 @@ _AR_CONSTRAINT_FAILURE_REASONS: Mapping[str, str] = MappingProxyType(
 )
 
 _RETAINED_BASELINE_OVER_MAX_REASON = re.compile(
-    r"retained baseline has\s+(?P<baseline>\d+)\s+credits?.*?"
-    r"maximum of\s+(?P<maximum>\d+)",
+    r"retained baseline has\s+(?P<baseline>\d+)\s+credits?.*?" r"maximum of\s+(?P<maximum>\d+)",
     re.IGNORECASE,
 )
 
@@ -119,6 +125,64 @@ def _code_values(value: Any) -> list[str]:
     if not isinstance(value, Sequence) or isinstance(value, str | bytes):
         return []
     return _unique_codes(value)
+
+
+def _direct_number(value: Any) -> float | None:
+    """Accept an actual finite JSON number, never a number parsed from prose."""
+
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        return None
+    number = float(value)
+    return number if math.isfinite(number) else None
+
+
+def _shown_number(value: float) -> str:
+    return str(int(value)) if value.is_integer() else f"{value:g}"
+
+
+def _policy_is_unresolved(policy: Mapping[str, Any]) -> bool:
+    return bool(
+        policy.get("source_leaves_unresolved")
+        or policy.get("source_is_unclear_on")
+        or policy.get("open_question")
+    )
+
+
+def _direct_main_term_maximum(policy_result: Mapping[str, Any]) -> float | None:
+    """Return one unambiguous structured main-term maximum from direct evidence.
+
+    The policy statement is intentionally not parsed. The comparison is licensed
+    only by the typed ``rule.max_value`` on the exact governing policy record.
+    """
+
+    direct = _mapping_rows(policy_result.get("direct_policy_evidence"))
+    if any(_code(policy.get("policy_id")) == _EXPECTED_GRADUATE_POLICY_ID for policy in direct):
+        # That record's 16-hour request ceiling has an explicitly unresolved
+        # relationship to the ordinary 19-unit range. Do not choose between them.
+        return None
+
+    maxima: set[float] = set()
+    for policy in direct:
+        if _code(policy.get("policy_id")) != _SEMESTER_RANGE_POLICY_ID:
+            continue
+        if _policy_is_unresolved(policy):
+            return None
+        rule = policy.get("rule")
+        if not isinstance(rule, Mapping):
+            continue
+        applies_to = rule.get("applies_to")
+        if not isinstance(applies_to, Mapping):
+            continue
+        if _code(applies_to.get("term_type")) != "MAIN":
+            continue
+        if _code(applies_to.get("study_system")) != "TWO_SEMESTER":
+            continue
+        maximum = _direct_number(rule.get("max_value"))
+        if maximum is not None and maximum >= 0:
+            maxima.add(maximum)
+    if len(maxima) != 1:
+        return None
+    return next(iter(maxima))
 
 
 def _row_codes(rows: Any, field: str) -> list[str]:
@@ -230,31 +294,31 @@ def render_current_timetable_priority_assessment(
     if language == "Arabic":
         if expected:
             return (
-                "الخلاصة المحدودة: السجل المعروض جدول متوقع للتخطيط وليس تسجيلًا فعليًا؛ "
+                "تقييمي: السجل المعروض جدول متوقع للتخطيط وليس تسجيلًا فعليًا؛ "
                 "لذلك لا يمكن الحكم منه على المواد التي سجلتها فعليًا."
             )
         if not registered:
             return (
-                "الخلاصة المحدودة: لا يحتوي دليل الجدول المعروض على مقررات مسجلة يمكن "
+                "تقييمي: لا يحتوي الجدول المعروض على مقررات مسجلة يمكن "
                 "مقارنتها بترتيب الأولوية، لذلك لا يمكن وصف اختيارات هذا الفصل بأنها صحيحة "
                 "أو غير صحيحة."
             )
 
         if len(exact_plan_matches) == len(registered):
             conclusion = (
-                "الخلاصة المحدودة: تتسق كل رموز مقررات جدولك المسجّل مع هويات متطلبات "
+                "تقييمي: تتسق كل رموز مقررات جدولك المسجّل مع هويات متطلبات "
                 "يعاملها سجل التقدم على أنها قيد الدراسة حاليًا. هذا يثبت اتساق السجلين، "
                 "لكنه لا يثبت أن الجدول هو الاختيار الأكاديمي الأفضل أو الأسرع للتخرج."
             )
         elif exact_plan_matches:
             conclusion = (
-                "الخلاصة المحدودة: يتسق الجدول جزئيًا مع سجل التقدم بالمطابقة الحرفية "
+                "تقييمي: يتسق الجدول جزئيًا مع سجل التقدم بالمطابقة الحرفية "
                 "للرموز. لا تسمح هذه الأدلة وحدها بالحكم بأن الرموز الأخرى خاطئة؛ فقد تكون "
                 "لها هوية اختيارية أو بديلة لا تظهر في هذا العرض."
             )
         else:
             conclusion = (
-                "الخلاصة المحدودة: لا يظهر تطابق حرفي بين رموز الجدول وهويات المتطلبات "
+                "تقييمي: لا يظهر تطابق حرفي بين رموز الجدول وهويات المتطلبات "
                 "المسجلة في عرض التقدم. لا يثبت ذلك أن الاختيارات خاطئة، لأن هذا العرض لا "
                 "يكشف كل علاقات المقررات الاختيارية والرموز البديلة."
             )
@@ -294,32 +358,32 @@ def render_current_timetable_priority_assessment(
 
     if expected:
         return (
-            "Bounded conclusion: the displayed record is an expected planning timetable, "
+            "My assessment: the displayed record is an expected planning timetable, "
             "not actual registration, so it cannot assess which courses you actually registered."
         )
     if not registered:
         return (
-            "Bounded conclusion: the displayed timetable evidence contains no registered "
+            "My assessment: the displayed timetable contains no registered "
             "course rows to compare with the priority ranking, so it cannot label this term's "
             "choices right or wrong."
         )
 
     if len(exact_plan_matches) == len(registered):
         conclusion = (
-            "Bounded conclusion: every registered timetable code aligns with a requirement "
+            "My assessment: every registered timetable code aligns with a requirement "
             "identity the progress record treats as currently being studied. This establishes "
             "consistency between the records, not that the timetable is academically optimal "
             "or fastest for graduation."
         )
     elif exact_plan_matches:
         conclusion = (
-            "Bounded conclusion: the timetable partly aligns with the progress record by exact "
+            "My assessment: the timetable partly aligns with the progress record by exact "
             "code. This evidence cannot label the other codes wrong; an elective or equivalent "
             "identity may not be exposed in this view."
         )
     else:
         conclusion = (
-            "Bounded conclusion: no exact-code match is visible between the timetable and the "
+            "My assessment: no exact-code match is visible between the timetable and the "
             "registered requirement identities. That does not establish that the choices are "
             "wrong because this view does not expose every elective or equivalent relationship."
         )
@@ -359,6 +423,84 @@ def render_current_timetable_priority_assessment(
     return "\n".join(lines)
 
 
+def render_current_timetable_load_policy_assessment(
+    language: str,
+    timetable: Mapping[str, Any],
+    policy_result: Mapping[str, Any],
+) -> str | None:
+    """Compare a registered main-term load with one direct structured maximum.
+
+    Returning ``None`` is deliberate fail-closed behaviour. Expected planning
+    timetables, summer or unknown terms, prose-only limits, and unresolved
+    expected-graduate evidence do not license this comparison.
+    """
+
+    if bool(timetable.get("is_expected_plan")):
+        return None
+    if _code(timetable.get("schedule_kind")) != "REGISTERED":
+        return None
+    term = timetable.get("term")
+    if isinstance(term, bool) or term not in _MAIN_TERMS:
+        return None
+    registered = _direct_number(timetable.get("registered_credit_hours"))
+    maximum = _direct_main_term_maximum(policy_result)
+    if registered is None or registered < 0 or maximum is None:
+        return None
+
+    registered_text = _shown_number(registered)
+    maximum_text = _shown_number(maximum)
+    difference_text = _shown_number(abs(maximum - registered))
+
+    if language == "Arabic":
+        if registered < maximum:
+            relation = f"لذلك يقل عبؤك عن الرقم التنظيمي بـ {difference_text} ساعة معتمدة."
+        elif registered == maximum:
+            relation = "لذلك يساوي عبؤك ذلك الحد الأعلى تمامًا."
+        else:
+            relation = (
+                f"لذلك يزيد العبء المسجّل على ذلك الحد الأعلى بـ {difference_text} "
+                "ساعة معتمدة؛ وهذا وصف للفارق في السجلين وليس حكمًا على السماح بالتسجيل."
+            )
+        return "\n".join(
+            (
+                f"عبء جدولك المسجّل هو {registered_text} ساعة معتمدة.",
+                (
+                    "يضع السجل التنظيمي المباشر للفصل الرئيس حدًا أعلى قدره "
+                    f"{maximum_text} ساعة معتمدة [{_SEMESTER_RANGE_POLICY_ID}]."
+                ),
+                relation,
+                (
+                    "العبء الدراسي وحده لا يثبت جودة اختيار مقررات الجدول أكاديميًا، "
+                    "ولا يثبت أن الجدول يسرّع التخرج."
+                ),
+            )
+        )
+
+    if registered < maximum:
+        relation = f"Your load is therefore {difference_text} credit hours below that maximum."
+    elif registered == maximum:
+        relation = "Your load is therefore exactly at that maximum."
+    else:
+        relation = (
+            f"The recorded load is therefore {difference_text} credit hours above that maximum; "
+            "this describes the difference between the records, not registration permission."
+        )
+    return "\n".join(
+        (
+            f"Your registered timetable load is {registered_text} credit hours.",
+            (
+                "The directly governing main-term record sets a maximum of "
+                f"{maximum_text} credit hours [{_SEMESTER_RANGE_POLICY_ID}]."
+            ),
+            relation,
+            (
+                "Credit load alone does not establish that the timetable has academically "
+                "well-chosen courses or that it is faster for graduation."
+            ),
+        )
+    )
+
+
 def render_timetable_build_priority_assessment(
     language: str,
     proposal: Mapping[str, Any],
@@ -375,12 +517,12 @@ def render_timetable_build_priority_assessment(
     if language == "Arabic":
         lines = [
             (
-                "الخلاصة المحدودة للأولوية: فحص الجدولة يثبت مواضع مقررات ضمن القيود "
-                "المحددة فقط، ولا يثبت أن محلّل الجدول حسّن موعد التخرج أو رتّب مقرراته "
+                "تقييمي: خيارات الجدول تحقق مواضع مقررات ضمن القيود "
+                "المحددة فقط، ولا يثبت أن إنشاء هذه الخيارات حسّن موعد التخرج أو رتّب المقررات "
                 "حسب الأولوية. سجل التقدم التالي يستخدم معيارًا منفصلًا هو أثر فتح سلاسل "
                 "المتطلبات."
             ),
-            ("قائمة الأولوية التالية ليست توصية تسجيل ولا جزءًا من هدف محلّل الجدول."),
+            ("قائمة الأولوية التالية ليست توصية تسجيل ولم تكن ضمن معيار إنشاء الجدول."),
             (
                 "التداخل الحرفي بين المقررات الموضوعة في أي بديل وقائمة الأولوية المعروضة: "
                 f"{_shown(overlap, language=language)}."
@@ -401,14 +543,14 @@ def render_timetable_build_priority_assessment(
 
     lines = [
         (
-            "Bounded priority conclusion: the timetable check establishes course placement "
-            "under the specified constraints only. It does not establish that the solver "
+            "My assessment: the timetable options establish course placement under the "
+            "specified constraints only. They do not establish that the timetable search "
             "optimised graduation timing or course priority. The progress record uses the "
             "separate criterion of prerequisite-chain unlock impact."
         ),
         (
             "The following priority list is not a registration recommendation and was not "
-            "the timetable solver's objective."
+            "part of the timetable search criterion."
         ),
         (
             "Exact-code overlap between courses placed in any option and the displayed "
@@ -455,9 +597,31 @@ def joined_answer_blocks(
         and timetable.get("ok")
         and progress.get("ok")
     ):
-        heading = "تقييم الاختيارات" if language == "Arabic" else "Course-choice assessment"
+        heading = "تقييمي لاختياراتك" if language == "Arabic" else "My assessment"
         body = render_current_timetable_priority_assessment(language, timetable, progress)
         blocks.append((CURRENT_TIMETABLE_PRIORITY_SCOPE, f"### {heading}\n{body}"))
+
+    policy_result = latest.get("policy_lookup")
+    if (
+        outcomes == {"current_timetable", "policy_rule"}
+        and tools == {"my_timetable", "policy_lookup"}
+        and timetable
+        and policy_result
+        and timetable.get("ok")
+        and policy_result.get("ok")
+    ):
+        body = render_current_timetable_load_policy_assessment(
+            language,
+            timetable,
+            policy_result,
+        )
+        if body:
+            heading = (
+                "مقارنة عبئك الدراسي بالحد الأعلى"
+                if language == "Arabic"
+                else "How your credit load compares"
+            )
+            blocks.append((CURRENT_TIMETABLE_LOAD_POLICY_SCOPE, f"### {heading}\n{body}"))
 
     proposal = latest.get("build_timetable_proposal")
     if (
@@ -468,7 +632,7 @@ def joined_answer_blocks(
         and proposal.get("ok")
         and progress.get("ok")
     ):
-        heading = "حدود أولوية المقترح" if language == "Arabic" else "Proposal-priority boundary"
+        heading = "مفاضلة أولوية المقترح" if language == "Arabic" else "Priority trade-off"
         body = render_timetable_build_priority_assessment(language, proposal, progress)
         blocks.append((TIMETABLE_BUILD_PRIORITY_SCOPE, f"### {heading}\n{body}"))
 
@@ -482,6 +646,7 @@ def joined_scope_tools(scope: str) -> tuple[str, ...]:
 
 
 __all__ = [
+    "CURRENT_TIMETABLE_LOAD_POLICY_SCOPE",
     "CURRENT_TIMETABLE_PRIORITY_SCOPE",
     "JOINED_SCOPE_TOOLS",
     "TIMETABLE_BUILD_PRIORITY_SCOPE",
@@ -490,6 +655,7 @@ __all__ = [
     "localize_timetable_constraint_failure_reason",
     "localize_timetable_day",
     "localize_timetable_unplaced_reason",
+    "render_current_timetable_load_policy_assessment",
     "render_current_timetable_priority_assessment",
     "render_timetable_build_priority_assessment",
 ]

@@ -288,7 +288,7 @@
 
 <div class="card p-3 student-page-actions">
   <a class="btn btn-sm btn-primary" href="{% url 'student_courses' %}">{% if LANGUAGE_CODE == 'ar' %}عرض المقررات التي استوفيت متطلباتها{% else %}View academically eligible courses{% endif %}</a>
-  <a class="btn btn-sm" href="{% url 'student_advisor' %}">{% if LANGUAGE_CODE == 'ar' %}اسأل المرشد الذكي عن هذا التقدير{% else %}Ask the AI advisor about this result{% endif %}</a>
+  <a class="btn btn-sm" href="{% url 'student_advisor' %}">{% if LANGUAGE_CODE == 'ar' %}اسأل مرشد التخطيط الأكاديمي عن هذا التقدير{% else %}Ask the planning adviser about this result{% endif %}</a>
 </div>
 
 {% else %}

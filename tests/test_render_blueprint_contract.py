@@ -335,7 +335,7 @@ def test_contract_requires_reviewed_live_rollout_and_both_image_exports(
 @pytest.mark.parametrize(
     ("key", "invalid_value"),
     [
-        ("STUDENT_ADVISOR_V21_ENABLED", "true"),
+        ("STUDENT_ADVISOR_V21_ENABLED", "false"),
         ("STUDENT_ADVISOR_V21_PLAN_MAX_TOKENS", "901"),
         ("STUDENT_ADVISOR_V21_PLAN_TIMEOUT_SECONDS", "46"),
     ],

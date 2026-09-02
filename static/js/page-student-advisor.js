@@ -36,7 +36,7 @@
     : '';
 
   const T = {
-    thinking:  AR ? 'جارٍ إعداد الإجابة…' : 'Preparing the answer…',
+    thinking:  AR ? 'جارٍ مراجعة سجلك الأكاديمي واللوائح ذات الصلة…' : 'Reviewing your academic record and relevant rules…',
     failed:    AR ? 'لم نتمكّن من إعداد الإجابة.' : 'We could not complete the answer.',
     interrupted: AR ? 'توقّف إعداد الإجابة قبل اكتمالها.' : 'Answer preparation stopped before it finished.',
     abstained: AR ? 'لا تتوفر معلومات موثوقة كافية للإجابة عن هذا السؤال.' : 'There is not enough verified information to answer.',
@@ -55,13 +55,13 @@
     no:        AR ? 'لا' : 'No',
     thanks:    AR ? 'شكرًا لملاحظتك.' : 'Thank you for the feedback.',
     page:      AR ? 'ص' : 'p.',
-    untitled:  AR ? 'محادثة بلا عنوان' : 'Untitled conversation',
-    loadFail:  AR ? 'تعذّر تحميل المحادثة.' : 'Could not load the conversation.',
+    untitled:  AR ? 'جلسة إرشاد بلا عنوان' : 'Untitled advising session',
+    loadFail:  AR ? 'تعذّر تحميل جلسة الإرشاد.' : 'Could not load the advising session.',
     me:        AR ? 'أنا' : 'Me',
     sendFail:  AR ? 'تعذّر إرسال السؤال. أعد المحاولة.' : 'Could not send your question. Please try again.',
     offline:   AR ? 'لا يتوفر اتصال بالشبكة. بقي السؤال في خانة الكتابة؛ أعد المحاولة بعد عودة الاتصال.' : 'No connection. Your question is kept — try again.',
     why:       AR ? 'لماذا لم تكن الإجابة مفيدة؟' : 'Why was the answer not helpful?',
-    convList:  AR ? 'المحادثات' : 'Conversations',
+    convList:  AR ? 'جلسات الإرشاد' : 'Advising sessions',
 
     timetableTitle: AR ? 'الجداول المقترحة' : 'Timetable alternatives',
     planningOnly: AR
@@ -153,8 +153,8 @@
     mayNeed:   AR ? 'قد تحتاج هذه الحالة إلى مراجعة المرشد الأكاديمي.'
                   : 'This case may need review by an academic adviser.',
     willSend:  AR ? 'ستُرسل المعلومات الآتية إلى المرشد الأكاديمي:' : 'What will be sent:',
-    wontSend:  AR ? 'لن تُرسل المحادثات الأخرى ولا السجلات الداخلية للنظام.'
-                  : 'Your other conversations and the system’s internal records will not be sent.',
+    wontSend:  AR ? 'لن تُرسل جلسات الإرشاد الأخرى ولا السجلات الداخلية للنظام.'
+                  : 'Your other advising sessions and the system’s internal records will not be sent.',
     noteAsk:   AR ? 'هل تريد إضافة توضيح للمرشد الأكاديمي؟' : 'Would you like to add anything for the adviser?',
     optional:  AR ? 'اختياري' : 'optional',
     confirm:   AR ? 'إرسال' : 'Send',
@@ -164,9 +164,9 @@
     caseState: AR ? 'الحالة' : 'Status',
     caseWhen:  AR ? 'تاريخ الإرسال' : 'Submitted',
     viewCase:  AR ? 'عرض الحالة' : 'View case',
-    backToChat: AR ? 'العودة للمحادثة' : 'Back to the conversation',
-    caseFail:  AR ? 'تعذّر إرسال الحالة. لم تتغيّر المحادثة.'
-                  : 'Could not send the case. Nothing in your conversation changed.',
+    backToChat: AR ? 'العودة إلى جلسة الإرشاد' : 'Back to the advising session',
+    caseFail:  AR ? 'تعذّر إرسال الحالة. لم تتغيّر جلسة الإرشاد.'
+                  : 'Could not send the case. Nothing in your advising session changed.',
     adviserReply: AR ? 'رد المرشد الأكاديمي' : 'The adviser’s reply',
   };
 
@@ -178,7 +178,7 @@
   const SHARED_ITEMS = AR
       ? [
         'سؤالك',
-        'إجابة المرشد الذكي',
+        'إجابة مرشد التخطيط الأكاديمي',
         'حالة الإجابة وسبب الإحالة',
         'المصادر المعروضة مع الإجابة',
         'المعلومات التي حُدّدت على أنها ناقصة، إن وجدت',
@@ -206,7 +206,6 @@
   let currentId = null;
   let busy = false;
   let activeExpandedMapCloser = null;
-  let answerRevealTimer = null;
   /* Keyed BY TURN, not one slot for the page. One slot breaks as soon as two
      questions fail: the second overwrites the key, so retrying the FIRST sends the
      second's key with the first's text. The server correctly refuses that as a
@@ -994,9 +993,6 @@
     article.setAttribute('aria-hidden', 'true');
     article.appendChild(el('div', 'va-avatar', 'AI'));
     const bubble = el('div', 'va-bubble');
-    const dots = el('span', 'sa-thinking-dots');
-    for (let i = 0; i < 3; i += 1) dots.appendChild(el('span'));
-    bubble.appendChild(dots);
     bubble.appendChild(el('span', 'sa-thinking-label', T.thinking));
     article.appendChild(bubble);
     return article;
@@ -1007,84 +1003,6 @@
     if (existing) existing.remove();
     messagesEl.appendChild(renderThinkingMessage());
     scrollToLatest();
-  }
-
-  function cancelAnswerReveal() {
-    if (answerRevealTimer !== null) clearTimeout(answerRevealTimer);
-    answerRevealTimer = null;
-  }
-
-  function progressiveRevealEnabled() {
-    if (window.__SA_FORCE_PROGRESSIVE_REVEAL__ === true) return true;
-    if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
-      return false;
-    }
-    /* Browser automation reads completed DOM deterministically. The dedicated
-       animation test opts back in; real student browsers animate normally. */
-    return !navigator.webdriver;
-  }
-
-  function revealAssistantMessage(article) {
-    if (!article || !progressiveRevealEnabled()) return;
-    const body = article.querySelector('.sa-body');
-    const bubble = article.querySelector('.va-bubble');
-    if (!body || !bubble) return;
-
-    const walker = document.createTreeWalker(body, NodeFilter.SHOW_TEXT);
-    const textNodes = [];
-    let current = walker.nextNode();
-    while (current) {
-      if (current.nodeValue) textNodes.push(current);
-      current = walker.nextNode();
-    }
-    const queue = [];
-    textNodes.forEach(function (node) {
-      const parts = node.nodeValue.match(/\S+\s*|\s+/gu) || [];
-      node.nodeValue = '';
-      parts.forEach(function (part) { queue.push({ node: node, text: part }); });
-    });
-    if (!queue.length) return;
-
-    const deferred = Array.from(bubble.children)
-      .filter(function (node) { return node !== body; })
-      .map(function (node) {
-        const state = { node: node, hidden: node.hidden };
-        node.hidden = true;
-        return state;
-      });
-    const caret = el('span', 'sa-answer-caret');
-    caret.setAttribute('aria-hidden', 'true');
-    body.appendChild(caret);
-    article.classList.add('is-revealing');
-    article.setAttribute('aria-busy', 'true');
-
-    let index = 0;
-    let ticks = 0;
-    const perTick = Math.max(1, Math.ceil(queue.length / 180));
-    function finish() {
-      cancelAnswerReveal();
-      caret.remove();
-      deferred.forEach(function (state) { state.node.hidden = state.hidden; });
-      article.classList.remove('is-revealing');
-      article.removeAttribute('aria-busy');
-      scrollToLatest();
-    }
-    function writeNext() {
-      const stop = Math.min(queue.length, index + perTick);
-      while (index < stop) {
-        const item = queue[index];
-        item.node.nodeValue += item.text;
-        index += 1;
-      }
-      ticks += 1;
-      if (ticks % 4 === 0) scrollToLatest();
-      if (index >= queue.length) {
-        finish();
-        return;
-      }
-      answerRevealTimer = setTimeout(writeNext, 20);
-    }
-    writeNext();
   }
 
   const TIMETABLE_DAYS = {
@@ -1726,8 +1644,7 @@
     if (statusEl) statusEl.textContent = text;
   }
 
-  function renderMessages(messages, options) {
-    cancelAnswerReveal();
+  function renderMessages(messages) {
     if (activeExpandedMapCloser) activeExpandedMapCloser();
     document.documentElement.classList.remove('sa-overlay-open');
     messagesEl.innerHTML = '';
@@ -1741,13 +1658,9 @@
       syncJumpLatest();
       return;
     }
-    const revealMessageId = options && options.revealMessageId;
     messages.forEach(function (m) {
       const article = renderMessage(m);
       messagesEl.appendChild(article);
-      if (revealMessageId && String(m.id) === String(revealMessageId)) {
-        revealAssistantMessage(article);
-      }
     });
     scrollToLatest();
   }
@@ -1802,7 +1715,7 @@
      highlight another. */
   let openToken = 0;
 
-  async function openConversation(id, options) {
+  async function openConversation(id) {
     const token = ++openToken;
     const res = await api(withId(cfg.urls.messages, 'CONVERSATION_ID', id), { method: 'GET' });
     if (token !== openToken) return;
@@ -1822,7 +1735,7 @@
     }
     currentId = id;
     try { window.history.replaceState(null, '', '?c=' + encodeURIComponent(id)); } catch (e) { /* ignore */ }
-    renderMessages(res.body.messages || [], options || null);
+    renderMessages(res.body.messages || []);
     await loadConversations();
   }
 
@@ -1959,9 +1872,7 @@
          happened: the stored rows are authoritative, including a failed turn.
          Skipped if the student moved to another conversation while waiting —
          yanking them back mid-read is worse than a late refresh. */
-      const revealMessageId = res.ok && res.body && res.body.assistant_message
-        ? res.body.assistant_message.id : null;
-      if (currentId === id) await openConversation(id, { revealMessageId: revealMessageId });
+      if (currentId === id) await openConversation(id);
       else await loadConversations();
     } finally {
       setBusy(false);

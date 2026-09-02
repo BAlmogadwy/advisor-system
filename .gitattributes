@@ -15,3 +15,7 @@ policies/sources/** -text -diff
 # Generated from the PDF text layer; their SHA-256s are recorded in INDEX.json, so
 # they are subject to exactly the same corruption.
 policies/evidence/page_text/** -text
+
+# This owner-supplied evaluation corpus is itself SHA-256 pinned by the test
+# harness, so its bytes must survive Windows checkouts unchanged as well.
+evals/advisor/saudi_registration_planning_corpus_v1.yaml -text

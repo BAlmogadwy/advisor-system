@@ -87,8 +87,13 @@ enabling Django's console email backend, which could expose OTPs in hosted logs.
 
 ## CI required gates
 - lint (ruff)
-- typecheck (mypy)
 - test (pytest + coverage)
+- production deploy preflight (PostgreSQL, migrations, static files, Gunicorn,
+  health endpoint, and worker standby)
 - security (bandit + pip-audit)
 
-Security runs after lint/type/test pass.
+Typecheck (mypy) remains visible but non-blocking while the tracked repository
+backlog is reduced. The local commit hook may therefore be skipped with
+`SKIP=mypy`; do not suppress the advisory CI job or describe it as clean unless
+its report actually has zero errors. Security runs after the lint, advisory
+typecheck, test, and production-preflight jobs complete.

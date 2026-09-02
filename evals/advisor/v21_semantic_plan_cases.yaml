@@ -1,8 +1,8 @@
 meta:
   name: advisor_v21_semantic_plan
-  version: "2.4"
-  built: "2026-08-24"
-  count: 36
+  version: "2.8"
+  built: "2026-09-02"
+  count: 57
   languages:
     - ar-SA
     - en
@@ -642,3 +642,314 @@ cases:
         pinned_sections:
           - {course_code: DS341, section_label: M2}
     novelty_note: "Best modifies the pinned course addition, not a ranked timetable alternative."
+
+  - id: V21-SP-037
+    case_type: unseen_paraphrase
+    language: en
+    question: "What do I still need to pass before DS491?"
+    expected_goal: PERSONALIZED_PREREQUISITE_ANALYSIS
+    expected_outcomes: [prerequisite_information]
+    expected_mode: execute
+    required_tools: [why_course_locked]
+    required_any: []
+    allowed_tools: [why_course_locked]
+    forbidden_tools: [course_prerequisites, lookup_course, my_progress]
+    required_arguments:
+      why_course_locked:
+        course_code: DS491
+    novelty_note: "Pass-before wording asks for the student's remaining prerequisite state, not catalogue edges."
+
+  - id: V21-SP-038
+    case_type: unseen_paraphrase
+    language: en
+    question: "Show me the prerequisite chain I still have before DS491."
+    expected_goal: PERSONALIZED_PREREQUISITE_ANALYSIS
+    expected_outcomes: [prerequisite_information]
+    expected_mode: execute
+    required_tools: [why_course_locked]
+    required_any: []
+    allowed_tools: [why_course_locked]
+    forbidden_tools: [course_prerequisites, lookup_course, graduation_progress]
+    required_arguments:
+      why_course_locked:
+        course_code: DS491
+    novelty_note: "The remaining chain is personalized to passed work and therefore uses course-lock analysis."
+
+  - id: V21-SP-039
+    case_type: unseen_paraphrase
+    language: en
+    question: "I want one extra course, but I do not want anything with no academic priority."
+    expected_goal: COURSE_ADDITION
+    expected_outcomes: [course_addition]
+    expected_mode: execute
+    required_tools: [recommend_feasible_course_addition]
+    required_any: []
+    allowed_tools: [recommend_feasible_course_addition]
+    forbidden_tools: [my_progress, build_timetable_proposal, graduation_progress]
+    required_arguments:
+      recommend_feasible_course_addition:
+        objective: unlock_impact
+    novelty_note: "The double negative states a priority criterion for one addition, not a plural ranking."
+
+  - id: V21-SP-040
+    case_type: unseen_paraphrase
+    language: en
+    question: "Is there an important course I can take that is not in my current timetable?"
+    expected_goal: COURSE_ADDITION
+    expected_outcomes: [course_addition]
+    expected_mode: execute
+    required_tools: [recommend_feasible_course_addition]
+    required_any: []
+    allowed_tools: [recommend_feasible_course_addition]
+    forbidden_tools: [my_progress, my_timetable, build_timetable_proposal]
+    required_arguments:
+      recommend_feasible_course_addition:
+        objective: unlock_impact
+    novelty_note: "Singular important-and-feasible wording selects one compound addition."
+
+  - id: V21-SP-041
+    case_type: unseen_paraphrase
+    language: en
+    question: "If our goal is the fastest possible graduation, what is the best timetable for me?"
+    expected_goal: TIMETABLE_REVIEW
+    expected_outcomes: [timetable_review]
+    expected_mode: execute
+    required_tools: [improve_current_timetable]
+    required_any: []
+    allowed_tools: [improve_current_timetable]
+    forbidden_tools: [build_timetable_proposal, graduation_progress, my_progress]
+    required_arguments:
+      improve_current_timetable:
+        objective: faster_graduation
+        credit_load_policy: preserve
+        allow_course_replacements: true
+    novelty_note: "A personalized fastest-graduation criterion owns a current-timetable review despite the word best."
+
+  - id: V21-SP-042
+    case_type: unseen_paraphrase
+    language: en
+    question: "Would adding one course this term actually change my graduation date?"
+    expected_goal: GRADUATION_IMPACT
+    expected_outcomes: [graduation_impact]
+    expected_mode: execute
+    required_tools: [recommend_feasible_course_addition]
+    required_any: []
+    allowed_tools: [recommend_feasible_course_addition]
+    forbidden_tools: [graduation_progress, my_progress, build_timetable_proposal]
+    required_arguments:
+      recommend_feasible_course_addition:
+        objective: faster_graduation
+    novelty_note: "A singular feasible addition owns its concrete graduation-date impact."
+
+  - id: V21-SP-043
+    case_type: context_boundary
+    language: en
+    question: "Build several timetable options and give me the best one."
+    expected_goal: CLARIFICATION
+    expected_outcomes: [timetable_build]
+    expected_mode: clarify
+    expected_clarification_kind: timetable_preference
+    required_tools: []
+    required_any: []
+    allowed_tools: []
+    forbidden_tools: [build_timetable_proposal, improve_current_timetable, my_progress]
+    required_arguments: {}
+    novelty_note: "The builder can return neutral alternatives but cannot certify a ranked best timetable."
+
+  - id: V21-SP-044
+    case_type: unseen_paraphrase
+    language: en
+    question: "Which course is delaying me the most in my degree plan?"
+    expected_goal: COURSE_PRIORITY
+    expected_outcomes: [course_priority]
+    expected_mode: execute
+    required_tools: [my_progress]
+    required_any: []
+    allowed_tools: [my_progress]
+    forbidden_tools: [recommend_feasible_course_addition, graduation_progress]
+    required_arguments: {my_progress: {}}
+    novelty_note: "Most-delaying asks for a personalized priority ranking."
+
+  - id: V21-SP-045
+    case_type: unseen_paraphrase
+    language: en
+    question: "If I cannot take all the courses, what is the most important thing to register?"
+    expected_goal: COURSE_PRIORITY
+    expected_outcomes: [course_priority]
+    expected_mode: execute
+    required_tools: [my_progress]
+    required_any: []
+    allowed_tools: [my_progress]
+    forbidden_tools: [recommend_feasible_course_addition, recommend_courses]
+    required_arguments: {my_progress: {}}
+    novelty_note: "Registration shortfall requests the highest priority, not an added-course recommendation."
+
+  - id: V21-SP-046
+    case_type: unseen_paraphrase
+    language: en
+    question: "If I drop DS332 will my graduation be delayed?"
+    expected_goal: GRADUATION_IMPACT
+    expected_outcomes: [graduation_impact]
+    expected_mode: execute
+    required_tools: [rank_current_course_drop_impact]
+    required_any: []
+    allowed_tools: [rank_current_course_drop_impact]
+    forbidden_tools: [graduation_progress, my_progress]
+    required_arguments: {rank_current_course_drop_impact: {objective: least_graduation_delay, course_codes: [DS332]}}
+    novelty_note: "A singleton named drop uses exact least-delay ranking arguments."
+
+  - id: V21-SP-047
+    case_type: unseen_paraphrase
+    language: en
+    question: "Which is better to drop DS341 or DS321?"
+    expected_goal: COURSE_DROP_IMPACT
+    expected_outcomes: [course_drop_impact]
+    expected_mode: execute
+    required_tools: [rank_current_course_drop_impact]
+    required_any: []
+    allowed_tools: [rank_current_course_drop_impact]
+    forbidden_tools: [my_progress, graduation_progress]
+    required_arguments: {rank_current_course_drop_impact: {objective: balanced, course_codes: [DS341, DS321]}}
+    novelty_note: "An open named drop choice preserves order and uses balanced impact."
+
+  - id: V21-SP-048
+    case_type: unseen_paraphrase
+    language: en
+    question: "Will dropping DS332 block courses for me next term?"
+    expected_goal: COURSE_DROP_IMPACT
+    expected_outcomes: [course_drop_impact]
+    expected_mode: execute
+    required_tools: [rank_current_course_drop_impact]
+    required_any: []
+    allowed_tools: [rank_current_course_drop_impact]
+    forbidden_tools: [course_prerequisites, my_progress]
+    required_arguments: {rank_current_course_drop_impact: {objective: prerequisite_continuity, course_codes: [DS332]}}
+    novelty_note: "Next-term blocking selects prerequisite continuity for the exact singleton."
+
+  - id: V21-SP-049
+    case_type: unseen_paraphrase
+    language: en
+    question: "My current timetable has DS332 and DS341 and DS321. If I must drop one course, choose the course with the least impact on my graduation date and explain why."
+    expected_goal: COURSE_DROP_IMPACT
+    expected_outcomes: [course_drop_impact]
+    expected_mode: execute
+    required_tools: [rank_current_course_drop_impact]
+    required_any: []
+    allowed_tools: [rank_current_course_drop_impact]
+    forbidden_tools: [my_progress, graduation_progress]
+    required_arguments: {rank_current_course_drop_impact: {objective: least_graduation_delay, course_codes: [DS332, DS341, DS321]}}
+    novelty_note: "Named least-impact selection preserves all codes in mention order."
+
+  - id: V21-SP-050
+    case_type: unseen_paraphrase
+    language: ar-SA
+    question: "أبي DS341 شعبة M2 تكون موجودة في كل الخيارات."
+    policy_explicit_pins: [{course_code: DS341, section_label: M2}]
+    expected_goal: TIMETABLE_BUILD
+    expected_outcomes: [timetable_build]
+    expected_mode: execute
+    required_tools: [build_timetable_proposal]
+    required_any: []
+    allowed_tools: [build_timetable_proposal]
+    forbidden_tools: [my_progress, recommend_feasible_course_addition]
+    required_arguments: {build_timetable_proposal: {mode: from_scratch, must_take_courses: [DS341], pinned_sections: [{course_code: DS341, section_label: M2}]}}
+    novelty_note: "Every option makes the exact section a builder pin and its course mandatory."
+
+  - id: V21-SP-051
+    case_type: unseen_paraphrase
+    language: en
+    question: "Build me a new timetable from scratch with a maximum of 18 credits, pin DS341-M2, and prioritize courses that prevent graduation delay."
+    policy_explicit_pins: [{course_code: DS341, section_label: M2}]
+    expected_goal: COMPOSITE_BUILD_PRIORITY
+    expected_outcomes: [timetable_build, course_priority]
+    expected_mode: execute
+    required_tools: [build_timetable_proposal, my_progress]
+    required_any: []
+    allowed_tools: [build_timetable_proposal, my_progress]
+    forbidden_tools: [recommend_feasible_course_addition, graduation_progress]
+    required_arguments: {build_timetable_proposal: {mode: from_scratch, max_credits: 18, must_take_courses: [DS341], pinned_sections: [{course_code: DS341, section_label: M2}]}, my_progress: {}}
+    novelty_note: "Fresh build owns the explicit maximum and pin; priority is a second empty progress call."
+
+  - id: V21-SP-052
+    case_type: context_boundary
+    language: ar-SA
+    question: "عندي مكان في الجدول، وش المواد اللي أقدر أضيفها؟"
+    expected_goal: COURSE_ADDITION
+    expected_outcomes: [course_addition]
+    expected_mode: execute
+    required_tools: [recommend_feasible_course_addition]
+    required_any: []
+    allowed_tools: [recommend_feasible_course_addition]
+    forbidden_tools: [my_progress, my_timetable, build_timetable_proposal]
+    required_arguments: {recommend_feasible_course_addition: {objective: timetable_fit}}
+    novelty_note: "Explicit timetable space makes this a compound addition decision, not a plain eligible-course list."
+
+  - id: V21-SP-053
+    case_type: context_boundary
+    language: ar-SA
+    question: "هل فيه تبديل بين مقررين يخلي تخرجي أسرع؟"
+    expected_goal: COURSE_REPLACEMENT
+    expected_outcomes: [course_replacement]
+    expected_mode: execute
+    required_tools: [graduation_progress]
+    required_any: []
+    allowed_tools: [graduation_progress]
+    forbidden_tools: [feasible_course_replacements, improve_current_timetable]
+    required_arguments: {graduation_progress: {planning_baseline_kind: recommended_current_term, search_better_replacements: true}}
+    novelty_note: "Faster graduation is the replacement-search criterion, not an additional requested impact deliverable."
+
+  - id: V21-SP-054
+    case_type: unseen_paraphrase
+    language: en
+    question: "Which courses can I take this term?"
+    expected_goal: AVAILABLE_COURSES
+    expected_outcomes: [available_courses]
+    expected_mode: execute
+    required_tools: [my_progress]
+    required_any: []
+    allowed_tools: [my_progress]
+    forbidden_tools: [recommend_feasible_course_addition, build_timetable_proposal, my_timetable]
+    required_arguments: {my_progress: {}}
+    novelty_note: "A common present-term eligibility question requests the available-course list, not a timetable-space addition."
+
+  - id: V21-SP-055
+    case_type: unseen_paraphrase
+    language: en
+    question: "What classes am I eligible to take this semester?"
+    expected_goal: AVAILABLE_COURSES
+    expected_outcomes: [available_courses]
+    expected_mode: execute
+    required_tools: [my_progress]
+    required_any: []
+    allowed_tools: [my_progress]
+    forbidden_tools: [recommend_feasible_course_addition, build_timetable_proposal, my_timetable]
+    required_arguments: {my_progress: {}}
+    novelty_note: "Eligible-to-take wording is a plain present-semester list without an addition criterion."
+
+  - id: V21-SP-056
+    case_type: unseen_paraphrase
+    language: ar-SA
+    question: "وش المواد اللي أقدر أنزلها هذا الترم؟"
+    expected_goal: AVAILABLE_COURSES
+    expected_outcomes: [available_courses]
+    expected_mode: execute
+    required_tools: [my_progress]
+    required_any: []
+    allowed_tools: [my_progress]
+    forbidden_tools: [recommend_feasible_course_addition, build_timetable_proposal, my_timetable]
+    required_arguments: {my_progress: {}}
+    novelty_note: "Direct Saudi registration language asks which courses are currently eligible, without timetable-space criteria."
+
+  - id: V21-SP-057
+    case_type: unseen_paraphrase
+    language: ar-SA
+    question: "إيش المقررات اللي أنا مؤهل لها هالفصل؟"
+    expected_goal: AVAILABLE_COURSES
+    expected_outcomes: [available_courses]
+    expected_mode: execute
+    required_tools: [my_progress]
+    required_any: []
+    allowed_tools: [my_progress]
+    forbidden_tools: [recommend_feasible_course_addition, build_timetable_proposal, my_timetable]
+    required_arguments: {my_progress: {}}
+    novelty_note: "A direct Saudi-Arabic eligibility paraphrase remains a plain available-course list."

@@ -305,6 +305,14 @@ def test_forced_planner_call_uses_the_singleton_contract_and_returns_provider_me
     assert client.kwargs["deadline_monotonic"] == 99.0
     assert len(client.kwargs["tools"]) == 1
     assert client.kwargs["tools"][0]["function"]["name"] == TURN_PLAN_TOOL_NAME
+    provider_outcomes = client.kwargs["tools"][0]["function"]["parameters"]["properties"][
+        "requested_outcomes"
+    ]
+    assert "uniqueItems" not in provider_outcomes
+    strict_outcomes = build_turn_plan_tool_schema(TOOLS, max_calls=4)["function"]["parameters"][
+        "properties"
+    ]["requested_outcomes"]
+    assert strict_outcomes["uniqueItems"] is True
     assert client.messages == source_messages
     assert client.messages is not source_messages
 
@@ -353,7 +361,71 @@ def test_planner_repairs_one_nested_schema_failure_without_replaying_raw_output(
     repair_message = client.calls[1][-1]["content"]
     assert "unexpected properties" not in repair_message
     assert "rogue" not in repair_message
+    assert "best_timetable_preference_clarification" not in repair_message
+    assert "Apply only a listed policy mapping" not in repair_message
     assert "Tell me about AI331" in client.calls[1][0]["content"]
+
+
+def test_schema_repair_uses_prevalidated_closed_semantic_policy_mapping() -> None:
+    invalid = _tool_result(
+        _raw_plan(
+            requests=[
+                {
+                    "capability": "lookup_course",
+                    "arguments": {"query": "AI331", "private_rogue": True},
+                }
+            ]
+        )
+    )
+    valid = _tool_result(_raw_plan())
+
+    class Client:
+        def __init__(self) -> None:
+            self.turns = [invalid, valid]
+            self.calls: list[list[dict[str, Any]]] = []
+
+        def chat_with_tools(self, messages, **_kwargs):
+            self.calls.append(messages)
+            return self.turns.pop(0)
+
+    client = Client()
+    result = plan_student_turn(
+        client,
+        [{"role": "user", "content": "Build several options and pick the best."}],
+        advertised_tools=TOOLS,
+        max_calls=2,
+        schema_repair_policy_ids=("best_timetable_preference_clarification",),
+    )
+
+    assert result.provider_turns == (invalid, valid)
+    assert len(client.calls) == 2
+    repair_message = client.calls[1][-1]["content"]
+    assert "policy_ids=best_timetable_preference_clarification" in repair_message
+    assert "clarification_kind=timetable_preference" in repair_message
+    assert "concise nonempty clarification_question" in repair_message
+    assert "private_rogue" not in repair_message
+
+
+def test_unknown_schema_repair_policy_fails_before_provider_egress() -> None:
+    class Client:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def chat_with_tools(self, *_args, **_kwargs):
+            self.calls += 1
+            raise AssertionError("closed policy validation must precede provider egress")
+
+    client = Client()
+    with pytest.raises(ValueError, match="outside its closed vocabulary"):
+        plan_student_turn(
+            client,
+            [{"role": "user", "content": "Build a timetable."}],
+            advertised_tools=TOOLS,
+            max_calls=2,
+            schema_repair_policy_ids=("operator_supplied_open_value",),
+        )
+
+    assert client.calls == 0
 
 
 def test_final_nested_schema_failure_retains_both_provider_turns_for_accounting() -> None:
@@ -525,6 +597,122 @@ def test_semantic_policy_repair_receives_only_closed_policy_ids() -> None:
     assert "policy_ids=single_course_choice_balanced" in repair_message
     assert "private original turn" not in repair_message
     assert "rejected plan" in repair_message
+
+
+@pytest.mark.parametrize(
+    ("reason", "details"),
+    [
+        ("argument_provenance_failed", {"policy_ids": ["single_course_choice_balanced"]}),
+        ("outcome_coverage_failed", {"policy_ids": ["most_delaying_course_priority"]}),
+        ("constraint_coverage_failed", {"policy_ids": ["pinned_section_every_option_build"]}),
+    ],
+)
+def test_v20_non_schema_repairs_accept_only_closed_policy_mapping(
+    reason: str,
+    details: dict[str, list[str]],
+) -> None:
+    class Client:
+        def __init__(self) -> None:
+            self.messages: list[dict[str, Any]] = []
+
+        def chat_with_tools(self, messages, **_kwargs):
+            self.messages = messages
+            return _tool_result(_raw_plan())
+
+    client = Client()
+    plan_student_turn(
+        client,
+        [{"role": "user", "content": "private original turn"}],
+        advertised_tools=TOOLS,
+        max_calls=2,
+        max_attempts=1,
+        repair_reason=reason,
+        repair_details=details,
+    )
+    repair = client.messages[-1]["content"]
+    policy_id = details["policy_ids"][0]
+    assert f"policy_ids={policy_id}" in repair
+    assert policy_id in repair
+    assert "private original turn" not in repair
+
+
+def test_policy_repair_mapping_is_complete_unique_focused_and_bounded() -> None:
+    from core.services.student_advisor_v21_plan import _SEMANTIC_POLICY_REPAIR_MAPPINGS
+    from core.services.student_advisor_v21_policy import SemanticPolicyId
+
+    assert set(_SEMANTIC_POLICY_REPAIR_MAPPINGS) == set(SemanticPolicyId)
+    assert len(set(_SEMANTIC_POLICY_REPAIR_MAPPINGS.values())) == len(SemanticPolicyId)
+    for policy in SemanticPolicyId:
+        message = build_plan_repair_message(
+            "semantic_policy_failed",
+            {"policy_ids": [policy.value]},
+            advertised_tools=TOOLS,
+        )
+        assert message is not None
+        content = message["content"]
+        assert policy.value in content
+        assert _SEMANTIC_POLICY_REPAIR_MAPPINGS[policy] in content
+        assert len(content) < 1_500
+        assert all(other.value not in content for other in SemanticPolicyId if other is not policy)
+
+
+def test_plain_available_policy_gets_an_exact_empty_my_progress_repair_schema() -> None:
+    from core.services.student_advisor_v2 import student_v21_tool_schemas
+    from core.services.student_advisor_v21_plan import (
+        _provider_compatible_turn_plan_tool_schema,
+        _repair_focused_provider_schema,
+        build_turn_plan_tool_schema,
+    )
+    from core.services.student_advisor_v21_policy import SemanticPolicyId
+
+    broad = _provider_compatible_turn_plan_tool_schema(
+        build_turn_plan_tool_schema(student_v21_tool_schemas(), max_calls=4)
+    )
+    focused = _repair_focused_provider_schema(
+        broad,
+        (SemanticPolicyId.PLAIN_AVAILABLE_COURSES_ONLY,),
+    )
+    properties = focused["function"]["parameters"]["properties"]
+    requests = properties["evidence_requests"]
+    assert properties["decision"]["enum"] == ["execute"]
+    assert properties["requested_outcomes"]["items"]["enum"] == ["available_courses"]
+    assert requests["minItems"] == requests["maxItems"] == 1
+    assert len(requests["items"]["oneOf"]) == 1
+    branch = requests["items"]["oneOf"][0]
+    assert branch["properties"]["capability"]["enum"] == ["my_progress"]
+    arguments = branch["properties"]["arguments"]
+    assert arguments["properties"] == {}
+    assert arguments["required"] == []
+    assert arguments["additionalProperties"] is False
+
+
+def test_generic_repair_without_policy_id_has_no_policy_catalog() -> None:
+    from core.services.student_advisor_v21_policy import SemanticPolicyId
+
+    message = build_plan_repair_message("argument_provenance_failed", {}, advertised_tools=TOOLS)
+    assert message is not None
+    assert "Validated closed policy requirement" not in message["content"]
+    assert all(policy.value not in message["content"] for policy in SemanticPolicyId)
+
+
+def test_policy_repair_normalizes_then_deduplicates_ids() -> None:
+    message = build_plan_repair_message(
+        "argument_provenance_failed",
+        {
+            "policy_ids": [
+                "single_drop_graduation_delay",
+                " single_drop_graduation_delay ",
+            ]
+        },
+        advertised_tools=TOOLS,
+    )
+    assert message is not None
+    assert (
+        message["content"].count(
+            "Validated closed policy requirement for single_drop_graduation_delay"
+        )
+        == 1
+    )
 
 
 @pytest.mark.parametrize(

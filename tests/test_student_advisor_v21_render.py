@@ -201,8 +201,8 @@ def test_every_addition_negative_has_stable_bounded_phrase_in_both_languages() -
         arabic = render_recommend_feasible_course_addition(
             "Arabic", {"ok": True, "status": status, "search": {}}
         )
-        assert "The bounded check did not produce a verified positive result." in english
-        assert "لم ينتج الفحص المحدود نتيجة إيجابية موثقة." in arabic
+        assert "I could not confirm a suitable option from the records I reviewed." in english
+        assert "لم أتمكن من تأكيد خيار مناسب من السجلات التي راجعتها." in arabic
         assert "read-only" in english
         assert "للقراءة فقط" in arabic
 
@@ -272,7 +272,8 @@ def test_drop_renderer_names_ranked_codes_and_never_calls_a_drop_harmless() -> N
     assert "registered sections: M1" in answer
     assert "graduation effect: no change in forecast term count" in answer
     assert "not proof that a drop has no academic consequence" in answer
-    assert "dropped" in answer
+    assert "read-only" in answer
+    assert "did not change your registration" in answer
 
 
 def test_drop_renderer_names_requested_courses_excluded_from_the_ranking() -> None:
@@ -317,8 +318,8 @@ def test_every_drop_negative_has_stable_bounded_phrase() -> None:
     ):
         answer = render_rank_current_course_drop_impact("English", {"ok": True, "status": status})
         arabic = render_rank_current_course_drop_impact("Arabic", {"ok": True, "status": status})
-        assert "The bounded check did not produce a verified positive result." in answer
-        assert "لم ينتج الفحص المحدود نتيجة إيجابية موثقة." in arabic
+        assert "I could not confirm a suitable option from the records I reviewed." in answer
+        assert "لم أتمكن من تأكيد خيار مناسب من السجلات التي راجعتها." in arabic
         assert "read-only" in answer
         assert "للقراءة فقط" in arabic
 
@@ -408,7 +409,7 @@ def test_timetable_improvement_renderer_preserves_section_changes_in_arabic() ->
     assert "قبل التغيير أيام الحضور: 5" in answer
     assert "بعد التغيير أيام الحضور: 4" in answer
     assert "أيام حضور موفرة: 1" in answer
-    assert "لم يُضف أو يُحذف" in answer
+    assert "لم تغيّر تسجيلك" in answer
 
 
 def test_timetable_improvement_requires_changed_not_unchanged_course_codes() -> None:
@@ -477,6 +478,113 @@ def test_timetable_improvement_requires_changed_not_unchanged_course_codes() -> 
     assert "DS341" not in english and "MATH471" not in english and "STAT301" not in english
 
 
+def test_timetable_improvement_old_section_absent_from_proposed_meetings_is_grounded() -> None:
+    """The renderer may quote a truthful old section absent from the new timetable."""
+
+    schedule = {
+        "rank": 1,
+        "credit_hours": 19,
+        "course_codes": ["DS332", "GS104"],
+        "changed_sections": [
+            {"course_code": "DS332", "from_sections": ["M4"], "to_sections": ["M3"]},
+            {"course_code": "GS104", "from_sections": ["M46"], "to_sections": ["M19"]},
+        ],
+        "before": {"days_on_campus": 5, "total_daily_span_minutes": 1685},
+        "after": {"days_on_campus": 5, "total_daily_span_minutes": 1465},
+        "improvement": {"campus_days_saved": 0, "daily_span_minutes_saved": 220},
+        # Production improvement payloads contain the proposed timetable here,
+        # so the old M4/M46 labels are deliberately absent.
+        "meetings": [
+            {
+                "course_code": "DS332",
+                "section": "M3",
+                "day": "MON",
+                "start": "12:50",
+                "end": "14:05",
+            },
+            {
+                "course_code": "GS104",
+                "section": "M19",
+                "day": "WED",
+                "start": "17:40",
+                "end": "19:20",
+            },
+        ],
+    }
+    for credit_load_policy in ("preserve", "not_increase"):
+        row = {
+            "tool": "improve_current_timetable",
+            "ok": True,
+            "status": "IMPROVEMENTS_FOUND",
+            "constraints": {
+                "credit_load_policy": credit_load_policy,
+                "allow_course_replacements": True,
+            },
+            "recommended_change": {
+                "kind": "SECTION_REARRANGEMENT",
+                "schedule": schedule,
+            },
+            "graduation_improvements": [],
+            "schedule_quality_improvements": [schedule],
+            "search": {"bounded": True},
+        }
+
+        _assert_compound_answer_is_grounded(
+            "improve_current_timetable",
+            row,
+            render_improve_current_timetable,
+        )
+
+
+def test_timetable_improvement_section_lists_do_not_license_invented_or_malformed_labels() -> None:
+    row = {
+        "tool": "improve_current_timetable",
+        "ok": True,
+        "status": "IMPROVEMENTS_FOUND",
+        "recommended_change": {
+            "kind": "SECTION_REARRANGEMENT",
+            "schedule": {
+                "rank": 1,
+                "credit_hours": 19,
+                "changed_sections": [
+                    {
+                        "course_code": "GS104",
+                        # A malformed scalar must not be treated as an evidence
+                        # list and therefore cannot license M99.
+                        "from_sections": "M99",
+                        "to_sections": ["M19"],
+                    }
+                ],
+                "before": {"days_on_campus": 5, "total_daily_span_minutes": 1685},
+                "after": {"days_on_campus": 5, "total_daily_span_minutes": 1465},
+                "improvement": {"campus_days_saved": 0, "daily_span_minutes_saved": 220},
+                "meetings": [
+                    {
+                        "course_code": "GS104",
+                        "section": "M19",
+                        "day": "WED",
+                        "start": "17:40",
+                        "end": "19:20",
+                    }
+                ],
+            },
+        },
+        "graduation_improvements": [],
+        "schedule_quality_improvements": [],
+        "search": {"bounded": True},
+    }
+    answer = render_improve_current_timetable("English", row)
+    invented = f"{answer}\nGS104 changes from section M99."
+
+    assert check_answer(
+        invented,
+        tool_results=[row],
+        question="Can I improve my timetable without increasing credits?",
+        required_tools={"improve_current_timetable"},
+        known_course_codes=frozenset({"GS104"}),
+    ) == ["unsupported_academic_fact"]
+
+
 def test_every_timetable_improvement_negative_has_stable_bounded_phrase() -> None:
     for status in (
         "NO_VERIFIED_IMPROVEMENT_IN_BOUNDED_SEARCH",
@@ -506,8 +614,8 @@ def test_every_timetable_improvement_negative_has_stable_bounded_phrase() -> Non
                 "search": {"bounded": True},
             },
         )
-        assert "The bounded check did not produce a verified positive result." in answer
-        assert "لم ينتج الفحص المحدود نتيجة إيجابية موثقة." in arabic
+        assert "I could not confirm a suitable option from the records I reviewed." in answer
+        assert "لم أتمكن من تأكيد خيار مناسب من السجلات التي راجعتها." in arabic
         assert "read-only" in answer
         assert "للقراءة فقط" in arabic
 
