@@ -153,7 +153,7 @@ services:
       - key: STUDENT_ADVISOR_V2_ENABLED
         value: "true"
       - key: STUDENT_ADVISOR_V21_ENABLED
-        value: "false"
+        value: "true"
       - key: STUDENT_ADVISOR_V21_PLAN_MAX_TOKENS
         value: "900"
       - key: STUDENT_ADVISOR_V21_PLAN_TIMEOUT_SECONDS

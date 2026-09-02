@@ -104,7 +104,7 @@ from core.services.virtual_advisor import (
 )
 from core.services.virtual_advisor_capabilities import get_default_registry
 
-STUDENT_V21_PROMPT_VERSION = "student-v21-semantic-plan-v18"
+STUDENT_V21_PROMPT_VERSION = "student-v21-plan-v22-adviser-voice"
 
 # Stable ordering keeps the tool list and prompt/test behavior reproducible. These names are
 # existing, audited capability implementations. Timetable access is limited to
@@ -163,6 +163,18 @@ Understand the student's goal, gather the minimum verified evidence needed, and 
 clear, practical answer.
 
 Operating rules:
+- Speak like a careful staff adviser in a short appointment, not like a search
+  engine or a support bot. Start with the answer or recommendation the student
+  needs, connect it to the goal they stated, explain at most the two most useful
+  verified reasons, then give one practical next step. Do not begin with a canned
+  greeting, restate the whole question, or end with generic phrases such as
+  "How else can I help?" Never say "as an AI", "the tool says", "the system
+  processed", or narrate evidence collection. Acknowledge worry or pressure once
+  only when the student actually expresses it; do not manufacture empathy.
+- Keep uncertainty human and specific. Say what the record supports, what still
+  needs confirmation, and what the student can do next. Avoid implementation
+  language such as bounded search, solver, baseline, capability, determinable
+  scenario, exact-code overlap, or candidate set in student-facing prose.
 - Never state a course code, course name, or section label that is absent from this
   turn's tool results or the student's own message. If the student names a code the
   system does not recognise, call lookup_course: its unknown_query and did_you_mean
@@ -437,19 +449,19 @@ _TIMETABLE_CREDIT_CAP_PATTERNS = (
     re.compile(
         r"(?:بحد\s+أقصى|حد(?:اً|ا)?\s+أقصاه|لا\s+(?:يتجاوز|تتجاوز|يزيد\s+عن)|"
         r"لا\s+تبن(?:ي)?\b.*?(?:يتجاوز|فوق))\s*"
-        r"(?P<cap>\d{1,2})\s*(?:ساعة|ساعات|وحدة|وحدات)?",
+        r"(?P<cap>\d{1,2})(?!\d)\s*(?:ساعة|ساعات|وحدة|وحدات)?",
         re.IGNORECASE,
     ),
     re.compile(
         r"(?:at\s+most|maximum(?:\s+of)?|max(?:imum)?|no\s+more\s+than|"
-        r"do\s+not\s+exceed|don['’]t\s+exceed)\s*(?P<cap>\d{1,2})\s*"
+        r"do\s+not\s+exceed|don['’]t\s+exceed)\s*(?P<cap>\d{1,2})(?!\d)\s*"
         r"(?:credits?|hours?)?",
         re.IGNORECASE,
     ),
     re.compile(
         r"(?:أبي|ابي|أبغى|ابغى|ودي|خل|خل[ّ]?ي)\s+"
         r"(?:ال)?(?:جدول|دوام)(?:ي|ه)?(?:\s+يكون)?\s*"
-        r"(?:من|بـ?)?\s*(?P<cap>\d{1,2})\s*(?:ساعة|ساعات|وحدة|وحدات)"
+        r"(?:من|بـ?)?\s*(?P<cap>\d{1,2})(?!\d)\s*(?:ساعة|ساعات|وحدة|وحدات)"
         r"(?:\s*(?:بالكثير|كحد\s+أقصى))?",
         re.IGNORECASE,
     ),
@@ -484,6 +496,10 @@ _TIMETABLE_CONSTRAINT_COURSE_PATTERN = re.compile(
 )
 _TIMETABLE_CONSTRAINT_SECTION_PATTERN = re.compile(
     r"\b[A-Z]{1,2}\s*-?\s*\d{1,2}[A-Z]?\b",
+    re.IGNORECASE,
+)
+_V21_MIRRORED_CREDIT_ROLE_PATTERN = re.compile(
+    r"\btarget\s+(?:of|at)\s+\d{1,2}(?!\d)\s+(?:credits?|credit\s+hours?)\b",
     re.IGNORECASE,
 )
 # V2.1 provenance may authorise several pins only when the student's current
@@ -542,6 +558,8 @@ _V21_POSITIVE_PIN_OR_RETAIN_PATTERN = re.compile(
 )
 _V21_EXACT_PIN_RETENTION_CUE_PATTERN = re.compile(
     r"(?:\bmust\s+(?:stay|remain)\s+(?:fixed|unchanged)\b|"
+    r"\b(?:want|need|require)\b.{0,48}\b(?:included|present)\s+in\s+"
+    r"(?:every|all)\s+(?:option|alternative)s?\b|"
     r"\bleave\b.{0,48}\bunchanged\b|"
     r"\b(?:remain|remains|stay|stays)\b.{0,48}"
     r"\b(?:fixed|unchanged|(?:in\s+)?(?:every|all)\s+(?:option|alternative)s?)\b|"
@@ -588,8 +606,7 @@ _V21_ADVERSATIVE_SEPARATOR = re.compile(
     re.IGNORECASE,
 )
 _V21_EXPLICIT_CORRECTION_CUE = re.compile(
-    r"\b(?:actually|rather|instead|i\s+mean|correction)\b|"
-    r"(?:بل|[اأ]قصد|الصحيح|تصحيح)",
+    r"\b(?:actually|rather|instead|i\s+mean|correction)\b|" r"(?:بل|[اأ]قصد|الصحيح|تصحيح)",
     re.IGNORECASE,
 )
 _V21_PIN_REPLACEMENT_SEPARATOR = re.compile(
@@ -680,11 +697,26 @@ def _constraint_section_labels(text: str) -> list[str]:
     """Unique section labels, excluding tokens that are complete course codes."""
     folded = _fold_constraint_text(text)
     course_spans = [match.span() for match in _TIMETABLE_CONSTRAINT_COURSE_PATTERN.finditer(folded)]
+    credit_phrase_spans = [
+        match.span()
+        for pattern in (
+            *_V21_MAX_CREDIT_PATTERNS,
+            *_V21_TARGET_CREDIT_PATTERNS,
+            *_V21_ADDITIONAL_CREDIT_PATTERNS,
+            _V21_MIRRORED_CREDIT_ROLE_PATTERN,
+        )
+        for match in pattern.finditer(normalise_arabic_text(folded).lower())
+    ]
     out: list[str] = []
     for match in _TIMETABLE_CONSTRAINT_SECTION_PATTERN.finditer(folded):
         start, end = match.span()
         if any(
             start < course_end and end > course_start for course_start, course_end in course_spans
+        ):
+            continue
+        if any(
+            start < phrase_end and end > phrase_start
+            for phrase_start, phrase_end in credit_phrase_spans
         ):
             continue
         label = re.sub(r"[\s-]+", "", match.group(0)).upper()
@@ -1423,13 +1455,11 @@ _EXPLICIT_COMPARISON_TERM_PATTERN = re.compile(
     r"(?<!\d)(?P<academic_year>\d{4})\s*[/؍]\s*(?P<term>[1-3])(?!\d)"
 )
 _COMPARISON_TERM_TARGET_BEFORE_PATTERN = re.compile(
-    r"(?:\b(?:for|in)\s+(?:term\s+)?|"
-    r"(?:في|لـ?|للترم|للفصل)\s*)$",
+    r"(?:\b(?:for|in)\s+(?:term\s+)?|" r"(?:في|لـ?|للترم|للفصل)\s*)$",
     re.IGNORECASE,
 )
 _COMPARISON_TERM_TARGET_AFTER_PATTERN = re.compile(
-    r"^\s*[, :]?\s*(?:please\s+)?(?:compare|rank)\b|"
-    r"^\s*[, :]?\s*(?:قارن|رت[ّ]?ب)\b",
+    r"^\s*[, :]?\s*(?:please\s+)?(?:compare|rank)\b|" r"^\s*[, :]?\s*(?:قارن|رت[ّ]?ب)\b",
     re.IGNORECASE,
 )
 _COMPARISON_CLAUSE_BEFORE_TERM_PATTERN = re.compile(
@@ -1922,12 +1952,42 @@ _V21_ARABIC_SMALL_NUMBERS = {
         "عشرون": 20,
     }.items()
 }
+_V21_ENGLISH_SMALL_NUMBERS = {
+    label: value
+    for value, label in enumerate(
+        (
+            "one",
+            "two",
+            "three",
+            "four",
+            "five",
+            "six",
+            "seven",
+            "eight",
+            "nine",
+            "ten",
+            "eleven",
+            "twelve",
+            "thirteen",
+            "fourteen",
+            "fifteen",
+            "sixteen",
+            "seventeen",
+            "eighteen",
+            "nineteen",
+            "twenty",
+        ),
+        start=1,
+    )
+}
+_V21_SMALL_NUMBERS = {
+    **_V21_ARABIC_SMALL_NUMBERS,
+    **_V21_ENGLISH_SMALL_NUMBERS,
+}
 _V21_CREDIT_NUMBER_TOKEN = (
     r"(?P<value>\d{1,2}|"
-    + "|".join(
-        re.escape(label) for label in sorted(_V21_ARABIC_SMALL_NUMBERS, key=len, reverse=True)
-    )
-    + r")"
+    + "|".join(re.escape(label) for label in sorted(_V21_SMALL_NUMBERS, key=len, reverse=True))
+    + r")(?!\d)"
 )
 _V21_MAX_CREDIT_PATTERNS = tuple(
     re.compile(pattern, re.IGNORECASE)
@@ -1948,8 +2008,7 @@ _V21_ADDITIONAL_CREDIT_PATTERNS = tuple(
         rf"(?:اضيف|بضيف|ازيد|بزيد|add(?:ing)?|extra|additional).{{0,18}}?"
         rf"{_V21_CREDIT_NUMBER_TOKEN}\s*[- ]?(?:ساعه|ساعات|credits?|hours?)",
         rf"{_V21_CREDIT_NUMBER_TOKEN}\s*[- ]?(?:credit|hour)\s+(?:course|class)",
-        rf"(?:مقرر|ماده)\s+(?:(?:من|ب)\s*)?{_V21_CREDIT_NUMBER_TOKEN}"
-        rf"\s*(?:ساعه|ساعات)",
+        rf"(?:مقرر|ماده)\s+(?:(?:من|ب)\s*)?{_V21_CREDIT_NUMBER_TOKEN}" rf"\s*(?:ساعه|ساعات)",
     )
 )
 
@@ -1978,15 +2037,19 @@ _V21_TARGET_CREDIT_PATTERNS = tuple(
 _V21_PRIORITY_LIMIT_PATTERNS = tuple(
     re.compile(pattern, re.IGNORECASE)
     for pattern in (
-        rf"(?:افضل|اهم|اول)\s*{_V21_CREDIT_NUMBER_TOKEN}\s*"
-        rf"(?:مقرر|مقررات|ماده|مواد)",
+        rf"(?:افضل|اهم|اول)\s*{_V21_CREDIT_NUMBER_TOKEN}\s*" rf"(?:مقرر|مقررات|ماده|مواد)",
         rf"(?:top|best)\s*{_V21_CREDIT_NUMBER_TOKEN}\s*(?:courses?|classes?)",
+        rf"(?:which|what)\s+{_V21_CREDIT_NUMBER_TOKEN}\s+"
+        rf"(?:(?:courses?|classes?)\s+)?should\s+i\s+prioriti[sz]e",
         rf"{_V21_CREDIT_NUMBER_TOKEN}\s*(?:highest[- ]priority|most\s+important)\s*"
         rf"(?:courses?|classes?)",
         rf"{_V21_CREDIT_NUMBER_TOKEN}\s*(?:من\s+)?(?:اهم|افضل)\s*"
         rf"(?:المقررات|المواد|مقررات|مواد)",
         rf"{_V21_CREDIT_NUMBER_TOKEN}\s*(?:مقرر|مقررات|ماده|مواد)"
         rf".{{0,24}}(?:مرتب(?:ه|ة|ين)?\s+)?(?:بالاولويه|حسب\s+الاولويه)",
+        rf"(?:اي|وش)\s*{_V21_CREDIT_NUMBER_TOKEN}\s*"
+        rf"(?:(?:مقرر|مقررات|ماده|مواد)\s*)?(?:اللي\s+)?"
+        rf"(?:اعطيها|اخليها)\s+(?:ال)?اولويه",
     )
 )
 
@@ -2083,7 +2146,7 @@ def _v21_credit_values(
     values: list[int] = []
     for match in _v21_active_control_matches(question, patterns):
         token = str(match.group("value") or "").strip()
-        value = int(token) if token.isdigit() else _V21_ARABIC_SMALL_NUMBERS.get(token)
+        value = int(token) if token.isdigit() else _V21_SMALL_NUMBERS.get(token)
         if value is not None and 1 <= value <= 99:
             values.append(value)
     return values
@@ -2095,7 +2158,7 @@ def _v21_priority_limits(question: str) -> list[int]:
     values: list[int] = []
     for match in _v21_active_control_matches(question, _V21_PRIORITY_LIMIT_PATTERNS):
         token = str(match.group("value") or "").strip()
-        value = int(token) if token.isdigit() else _V21_ARABIC_SMALL_NUMBERS.get(token)
+        value = int(token) if token.isdigit() else _V21_SMALL_NUMBERS.get(token)
         if value is not None and 1 <= value <= 20:
             values.append(value)
     return values
@@ -2477,6 +2540,8 @@ class _V21SemanticPolicyError(ValueError):
 def _v21_missing_explicit_constraint_paths(
     plan: Any,
     question: str,
+    *,
+    explicit_positive_pins: Sequence[Mapping[str, str]] | None = None,
 ) -> tuple[str, ...]:
     """Return closed field paths absent/mismatched in selected owning calls.
 
@@ -2557,7 +2622,11 @@ def _v21_missing_explicit_constraint_paths(
         explicit_additional_credits,
     )
 
-    positive_pins = _v21_explicit_positive_pins(question)
+    positive_pins = list(
+        explicit_positive_pins
+        if explicit_positive_pins is not None
+        else _v21_explicit_positive_pins(question)
+    )
     for owner in (
         "build_timetable_proposal",
         "recommend_feasible_course_addition",
@@ -5340,57 +5409,89 @@ def _safe_requested_priority_fact_fragment(
     if basis != "SOLE_REMAINING_UNLOCK_COUNT_THEN_DOWNSTREAM_COUNT":
         return ""
 
+    def course_label(item: dict[str, Any]) -> str:
+        code = signature(item)[0]
+        name = str(item.get("course_name") or "").strip()
+        return code + (f" — {name}" if name else "")
+
+    def count(item: dict[str, Any], key: str) -> int:
+        value = item.get(key)
+        return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else 0
+
     if language == "Arabic":
         if len(requested) == limit:
             lines = [
-                f"أفضل {_display_number(limit)} مقررات حسب أثر فتح مسارات المتطلبات:",
+                "للحفاظ على أكبر عدد من مسارات المتطلبات مفتوحًا، أنصحك بإعطاء "
+                "الأولوية للمقررات التالية بهذا الترتيب:",
             ]
         else:
             lines = [
-                f"حجم الترتيب المطلوب: أفضل {_display_number(limit)} مقررات.",
-                f"لكن السجل يحتوي {_display_number(len(requested))} فقط مستوفية للمتطلبات المسجلة.",
-                "ترتيب المتاح منها حسب أثر فتح مسارات المتطلبات:",
+                f"طلبتَ ترتيب {_display_number(limit)} مقررات، لكن سجلك يظهر "
+                f"{_display_number(len(requested))} فقط مستوفية للمتطلبات المسجلة.",
+                "أنصحك بترتيب المتاح منها هكذا:",
             ]
         for index, item in enumerate(requested, start=1):
-            code = signature(item)[0]
-            sole = _display_number(item.get("sole_remaining_prerequisite_count") or 0)
-            downstream = _display_number(item.get("on_prerequisite_chain_of_count") or 0)
-            lines.append(
-                f"{index}. {code} — تنتظر عليه وحده {sole} مقررات، ويقع في سلسلة "
-                f"متطلبات {downstream} مقررات."
-            )
+            sole = count(item, "sole_remaining_prerequisite_count")
+            downstream = count(item, "on_prerequisite_chain_of_count")
+            reasons: list[str] = []
+            if sole:
+                reasons.append(
+                    f"إكماله يزيل آخر متطلب مسجل أمام {_display_number(sole)} من المقررات"
+                )
+            if downstream:
+                reasons.append(f"يقع في مسار متطلبات {_display_number(downstream)} من المقررات")
+            if not reasons:
+                reasons.append("لا يظهر له أثر إضافي في فتح مسارات المتطلبات ضمن هذا الترتيب")
+            lines.append(f"{index}. {course_label(item)} — " + "؛ ".join(reasons) + ".")
         if not requested:
-            lines.append("لا يوجد مقرر مستوفٍ للمتطلبات المسجلة في هذا السجل.")
+            lines.append("لم أجد في السجل مقررًا مستوفيًا للمتطلبات يمكنني إعطاؤه الأولوية.")
         lines.append(
-            "أساس الترتيب: عدد المقررات التي لا ينقصها سواه، ثم عدد المقررات التي "
-            "يقع في سلسلة متطلباتها. هذا معيار لأثر المتطلبات فقط، ولا يثبت طرح شعبة "
-            "أو وجود مقعد أو السماح بالتسجيل."
+            "لماذا هذا الترتيب: أبدأ بالمقرر الذي يمثل آخر متطلب مسجل لأكبر عدد من "
+            "المقررات، ثم أنظر إلى عدد المقررات اللاحقة التي تعتمد عليه. يساعد هذا على "
+            "استمرار مسارات المتطلبات، لكنه لا يضمن موعد تخرج أبكر ولا يثبت الطرح أو "
+            "المقاعد أو السماح بالتسجيل."
         )
         return "\n".join(lines)
 
     if len(requested) == limit:
-        lines = [f"Top {_display_number(limit)} courses by prerequisite-chain unlock impact:"]
+        lines = [
+            "To keep the most prerequisite paths open, I’d prioritize the following "
+            "courses in this order:"
+        ]
     else:
         lines = [
-            f"You requested a ranking of the top {_display_number(limit)} courses.",
-            f"The record contains only {_display_number(len(requested))} "
-            "prerequisite-ready courses.",
-            "The available courses ranked by prerequisite-chain unlock impact:",
+            f"You asked me to prioritize {_display_number(limit)} courses, but your "
+            f"record has only {_display_number(len(requested))} with recorded "
+            "prerequisite readiness.",
+            "I’d order those as follows:",
         ]
     for index, item in enumerate(requested, start=1):
-        code = signature(item)[0]
-        sole = _display_number(item.get("sole_remaining_prerequisite_count") or 0)
-        downstream = _display_number(item.get("on_prerequisite_chain_of_count") or 0)
-        lines.append(
-            f"{index}. {code} — sole remaining prerequisite for {sole} courses; on the "
-            f"prerequisite chain of {downstream} courses."
-        )
+        sole = count(item, "sole_remaining_prerequisite_count")
+        downstream = count(item, "on_prerequisite_chain_of_count")
+        reasons: list[str] = []
+        if sole:
+            noun = "course" if sole == 1 else "courses"
+            reasons.append(
+                "completing it would clear the last recorded prerequisite for "
+                f"{_display_number(sole)} {noun}"
+            )
+        if downstream:
+            noun = "course" if downstream == 1 else "courses"
+            reasons.append(
+                f"it is on the prerequisite path for {_display_number(downstream)} {noun}"
+            )
+        if not reasons:
+            reasons.append("it has no additional prerequisite-path advantage in this ranking")
+        lines.append(f"{index}. {course_label(item)} — " + "; ".join(reasons) + ".")
     if not requested:
-        lines.append("No course is prerequisite-ready in this record.")
+        lines.append(
+            "I could not identify a prerequisite-ready course to prioritize from this record."
+        )
     lines.append(
-        "Ranking basis: sole-remaining unlock count, then downstream-chain count. This "
-        "measures prerequisite impact only and does not prove offering, seats, or "
-        "registration permission."
+        "Why this order: I start with courses that are the final recorded prerequisite "
+        "for the most later courses, then consider how many other courses depend on them. "
+        "This supports prerequisite continuity; it does not guarantee an earlier graduation "
+        "date or confirm a live offering, seat, or permission to register."
     )
     return "\n".join(lines)
 
@@ -5406,6 +5507,11 @@ def _safe_progress_fact_fragment(
     # plan outcomes and must not turn a plain eligibility list into an unasked
     # priority recommendation merely because ``my_progress`` also returns a
     # server-owned ranking.
+    if requested_outcomes is not None and set(requested_outcomes) == {"available_courses"}:
+        from core.services.student_advisor_v21_render import render_available_course_advice
+
+        return render_available_course_advice(language, row)
+
     priority_requested = requested_outcomes is None or "course_priority" in requested_outcomes
     if "requested_priority_limit" in row and priority_requested:
         return _safe_requested_priority_fact_fragment(language, row)
@@ -5885,44 +5991,44 @@ def _verified_evidence_fallback(
 
 
 _V21_TOOL_LABELS_EN = {
-    "my_progress": "academic progress",
-    "my_plan_by_term": "degree plan",
-    "my_timetable": "timetable",
-    "my_clash_free_sections": "section-clash check",
-    "build_timetable_proposal": "timetable check",
-    "lookup_course": "course catalogue lookup",
-    "course_prerequisites": "course prerequisites",
-    "why_course_locked": "course-lock analysis",
-    "course_choice_comparison": "course comparison",
-    "feasible_course_replacements": "course-replacement check",
-    "recommend_courses": "course recommendations",
-    "graduation_progress": "graduation forecast",
-    "policy_lookup": "policy evidence",
-    "my_advisor": "academic-adviser record",
-    "recommend_feasible_course_addition": "feasible course addition",
-    "rank_current_course_drop_impact": "course-drop impact ranking",
-    "improve_current_timetable": "current-timetable improvement",
-    PRIOR_PRESENTATION_TOOL: "prior verified result",
+    "my_progress": "What your record shows",
+    "my_plan_by_term": "Your degree plan",
+    "my_timetable": "Your timetable",
+    "my_clash_free_sections": "How the sections fit",
+    "build_timetable_proposal": "Timetable options",
+    "lookup_course": "Course details",
+    "course_prerequisites": "Prerequisites",
+    "why_course_locked": "Why the course is blocked",
+    "course_choice_comparison": "Comparing your options",
+    "feasible_course_replacements": "Replacement options",
+    "recommend_courses": "Courses to consider",
+    "graduation_progress": "Graduation outlook",
+    "policy_lookup": "What the regulation says",
+    "my_advisor": "Your assigned adviser",
+    "recommend_feasible_course_addition": "My recommendation",
+    "rank_current_course_drop_impact": "If you are considering a drop",
+    "improve_current_timetable": "A better timetable option",
+    PRIOR_PRESENTATION_TOOL: "Your previous result",
 }
 _V21_TOOL_LABELS_AR = {
-    "my_progress": "التقدم الأكاديمي",
-    "my_plan_by_term": "الخطة الدراسية",
-    "my_timetable": "الجدول الدراسي",
-    "my_clash_free_sections": "فحص تعارض الشُعب",
-    "build_timetable_proposal": "فحص الجدولة",
-    "lookup_course": "البحث في سجل المقررات",
-    "course_prerequisites": "متطلبات المقرر",
-    "why_course_locked": "تحليل حجب المقرر",
-    "course_choice_comparison": "مقارنة المقررات",
-    "feasible_course_replacements": "فحص استبدال المقرر",
-    "recommend_courses": "توصيات المقررات",
-    "graduation_progress": "توقع التخرج",
-    "policy_lookup": "الدليل التنظيمي",
-    "my_advisor": "سجل المرشد الأكاديمي",
-    "recommend_feasible_course_addition": "اقتراح مقرر إضافي قابل للتنفيذ",
-    "rank_current_course_drop_impact": "ترتيب أثر حذف المقررات",
-    "improve_current_timetable": "تحسين الجدول الحالي",
-    PRIOR_PRESENTATION_TOOL: "النتيجة الموثقة السابقة",
+    "my_progress": "ما يظهر في سجلك",
+    "my_plan_by_term": "خطتك الدراسية",
+    "my_timetable": "جدولك الدراسي",
+    "my_clash_free_sections": "مدى ملاءمة الشُعب",
+    "build_timetable_proposal": "خيارات الجدول",
+    "lookup_course": "بيانات المقرر",
+    "course_prerequisites": "المتطلبات السابقة",
+    "why_course_locked": "سبب حجب المقرر",
+    "course_choice_comparison": "مقارنة خياراتك",
+    "feasible_course_replacements": "خيارات الاستبدال",
+    "recommend_courses": "مقررات مقترحة للنظر فيها",
+    "graduation_progress": "توقع إكمال الخطة",
+    "policy_lookup": "ما تنص عليه اللائحة",
+    "my_advisor": "مرشدك الأكاديمي المسجل",
+    "recommend_feasible_course_addition": "توصيتي",
+    "rank_current_course_drop_impact": "إذا كنت تفكر في حذف مقرر",
+    "improve_current_timetable": "خيار أفضل للجدول",
+    PRIOR_PRESENTATION_TOOL: "نتيجتك السابقة",
 }
 
 
@@ -5941,15 +6047,14 @@ def _v21_plan_contract_refusal(language: str) -> str:
 
     if language == "Arabic":
         return (
-            "لم أتمكن من إعداد خطة أدلة مكتملة تغطي كل أجزاء طلبك، لذلك لم "
-            "أنفّذ مجموعة أدوات ناقصة ولم أعرض استنتاجًا جزئيًا على أنه إجابة كاملة. "
-            "أعد المحاولة بصياغة أقصر أو افصل المطلوب إلى سؤالين."
+            "لم أستطع تحديد كل أجزاء طلبك بثقة، لذلك توقفت بدل أن أعطيك إجابة "
+            "ناقصة. اكتب القرار الأساسي الذي تريد مساعدتي فيه في جملة واحدة، أو "
+            "قسّم المطلوب إلى سؤالين."
         )
     return (
-        "I could not build a complete evidence plan covering every part of your "
-        "request, so I did not run an incomplete tool set or present a partial "
-        "conclusion as a complete answer. Please retry with a shorter request or "
-        "split it into two questions."
+        "I could not determine every part of your request confidently, so I stopped "
+        "rather than give you a partial answer. State the main decision you want help "
+        "with in one sentence, or split the request into two questions."
     )
 
 
@@ -6038,9 +6143,21 @@ def _safe_v21_planned_answer(
         if tool:
             latest[tool] = row
 
-    blocks: list[str] = []
-    scoped_blocks: list[tuple[str, str]] = []
+    # A relationship or decision derived from several evidence rows is the part
+    # a student needs first. Supporting capability detail follows it, like a real
+    # advising conversation, instead of burying the conclusion at the end.
+    joined_blocks = list(
+        joined_answer_blocks(
+            language,
+            latest,
+            planned_tools=planned_tools,
+            requested_outcomes=requested_outcomes,
+        )
+    )
+    blocks: list[str] = [block for _scope, block in joined_blocks]
+    scoped_blocks: list[tuple[str, str]] = list(joined_blocks)
     complete = True
+    show_tool_headings = len(planned_tools) > 1
     for tool in planned_tools:
         row = latest.get(tool)
         if row is None or not row.get("ok"):
@@ -6097,7 +6214,7 @@ def _safe_v21_planned_answer(
         if block:
             labels = _V21_TOOL_LABELS_AR if language == "Arabic" else _V21_TOOL_LABELS_EN
             heading = labels.get(tool, tool.replace("_", " "))
-            scoped = f"### {heading}\n{block}"
+            scoped = f"### {heading}\n{block}" if show_tool_headings else block
             blocks.append(scoped)
             scoped_blocks.append((tool, scoped))
         else:
@@ -6105,18 +6222,6 @@ def _safe_v21_planned_answer(
             blocks.append(refusal)
             scoped_blocks.append((tool, refusal))
             complete = False
-
-    # Cross-capability conclusions are also server-owned.  They are licensed only
-    # by an exact typed outcome/tool pair and compare provider-visible fields from
-    # the two successful rows; the model never supplies this relationship prose.
-    for scope, joined_block in joined_answer_blocks(
-        language,
-        latest,
-        planned_tools=planned_tools,
-        requested_outcomes=requested_outcomes,
-    ):
-        blocks.append(joined_block)
-        scoped_blocks.append((scope, joined_block))
 
     if "registration_action" in requested_outcomes:
         boundary = _v21_unsupported_answer(language, ("registration_action",))
@@ -6803,7 +6908,17 @@ def answer_student_advisor_v2(
             evaluate_outcome_coverage,
             minimise_redundant_capabilities,
         )
-        from core.services.student_advisor_v21_policy import semantic_policy_violations
+        from core.services.student_advisor_v21_policy import (
+            active_semantic_policy_ids,
+            semantic_policy_violations,
+        )
+
+        semantic_explicit_pins = tuple(_v21_explicit_positive_pins(clean_question))
+        semantic_active_policy_ids = active_semantic_policy_ids(
+            clean_question,
+            explicit_pins=semantic_explicit_pins,
+        )
+        semantic_active_policy_values = tuple(policy.value for policy in semantic_active_policy_ids)
 
         planning_provider_turns: list[Any] = []
         last_schema_plan: Any = None
@@ -6864,6 +6979,7 @@ def answer_student_advisor_v2(
                 max_attempts=max_attempts,
                 repair_reason=repair_reason,
                 repair_details=repair_details,
+                schema_repair_policy_ids=semantic_active_policy_values,
             )
 
         def validate_planning_result(planning_result: Any) -> tuple[Any, Any]:
@@ -6885,6 +7001,7 @@ def answer_student_advisor_v2(
             missing_constraint_paths = _v21_missing_explicit_constraint_paths(
                 bound_plan,
                 clean_question,
+                explicit_positive_pins=semantic_explicit_pins,
             )
             if missing_constraint_paths:
                 semantic_plan_missing_constraint_paths = tuple(
@@ -6922,7 +7039,8 @@ def answer_student_advisor_v2(
                 policy_violations = semantic_policy_violations(
                     clean_question,
                     grounded_plan,
-                    explicit_pins=_v21_explicit_positive_pins(clean_question),
+                    explicit_pins=semantic_explicit_pins,
+                    active_policy_ids=semantic_active_policy_ids,
                 )
                 semantic_plan_policy_validation = {
                     "valid": not policy_violations,
@@ -6989,11 +7107,15 @@ def answer_student_advisor_v2(
                             outcome.value for outcome in coverage_report.uncovered_outcomes
                         ),
                         "uncovered_course_codes": tuple(coverage_report.uncovered_course_codes),
+                        "policy_ids": semantic_active_policy_values,
                     }
                 elif repair_reason == "constraint_coverage_failed":
                     repair_details = {
                         "missing_field_paths": semantic_plan_missing_constraint_paths,
+                        "policy_ids": semantic_active_policy_values,
                     }
+                elif repair_reason == "argument_provenance_failed":
+                    repair_details = {"policy_ids": semantic_active_policy_values}
                 elif repair_reason == "semantic_policy_failed":
                     repair_details = {"policy_ids": semantic_policy_repair_ids}
                 try:
@@ -7168,10 +7290,9 @@ def answer_student_advisor_v2(
                 )
             elif runtime_plan.clarification_kind is ClarificationKind.TIMETABLE_LOAD:
                 answer = (
-                    "وش تقصد بجدول خفيف: كم ساعة تبي بالضبط، أو وش الحد الأقصى للساعات؟ "
-                    "أعطني الرقم، "
-                    "وأقدر أبني لك خيارات بدون تعارض ضمن هذا الحد، لكن ما أقدر أؤكد "
-                    "أن تخفيف الحمل ما راح يؤخر التخرج."
+                    "عندما تقول «جدول خفيف»، هل تقصد عددًا محددًا من الساعات أم حدًا "
+                    "أعلى؟ أعطني الرقم، وسأبني لك خيارات بلا تعارض ضمنه. لا أستطيع "
+                    "تأكيد أن تخفيف العبء لن يؤخر إكمال الخطة من هذا القيد وحده."
                     if language == "Arabic"
                     else (
                         "What do you mean by a light timetable: exactly how many credit "
@@ -7193,7 +7314,7 @@ def answer_student_advisor_v2(
                 )
             elif runtime_plan.clarification_kind is ClarificationKind.COURSE_OR_SECTION_IDENTITY:
                 answer = (
-                    "الشعبة تتبع أي مقرر؟ حدّد زوج المقرر والشعبة اللي تقصده."
+                    "إلى أي مقرر تتبع هذه الشعبة؟ حدّد رمز المقرر والشعبة المقصودة."
                     if language == "Arabic"
                     else (
                         "Which course does that section belong to? Please specify the exact "
@@ -7202,17 +7323,17 @@ def answer_student_advisor_v2(
                 )
             elif runtime_plan.clarification_kind is ClarificationKind.TERM_OR_CHOICE:
                 answer = (
-                    "حدّد الفصل الدراسي أو الخيار اللي تقصده."
+                    "حدّد الفصل الدراسي أو الخيار الذي تقصده."
                     if language == "Arabic"
                     else "Please specify the term or choice you mean."
                 )
             else:
                 answer = (
-                    "أحتاج معلومة إضافية قبل أن أتحقق من الأدلة الموثقة. حدّد بوضوح "
+                    "أحتاج معلومة واحدة إضافية حتى أراجع سجلك بدقة. حدّد بوضوح "
                     "المقرر أو الشعبة أو الفصل الدراسي أو الخيار الذي تقصده."
                     if language == "Arabic"
                     else (
-                        "I need one more detail before I can check verified evidence. "
+                        "I need one more detail so I can review your record accurately. "
                         "Please specify the course, section, term, or choice you mean."
                     )
                 )

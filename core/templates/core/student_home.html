@@ -44,7 +44,7 @@
 <section class="card student-summary-card p-3 mb-3" id="student-home-summary" aria-labelledby="student-summary-title">
   <div class="student-summary-header mb-2">
     <h2 class="student-section-title mb-0" id="student-summary-title">{% if LANGUAGE_CODE == 'ar' %}الملخص الأكاديمي{% else %}Academic summary{% endif %}</h2>
-    <a class="student-summary-advisor" href="{% url 'student_advisor' %}">{% if LANGUAGE_CODE == 'ar' %}اسأل المرشد الذكي{% else %}Ask the AI advisor{% endif %} <span aria-hidden="true">↗</span></a>
+    <a class="student-summary-advisor" href="{% url 'student_advisor' %}">{% if LANGUAGE_CODE == 'ar' %}اسأل مرشد التخطيط الأكاديمي{% else %}Ask the planning adviser{% endif %} <span aria-hidden="true">↗</span></a>
   </div>
   {% comment %}
     One fact appears once. The raw Student fields for GPA and registered credits

@@ -12,6 +12,7 @@ https://docs.djangoproject.com/en/5.2/ref/settings/
 
 import os
 from pathlib import Path
+from typing import Any
 
 import dj_database_url
 from django.core.exceptions import ImproperlyConfigured
@@ -119,6 +120,27 @@ else:
             },
         }
     }
+
+
+# SQLite allows one writer.  A deferred transaction that reads and then writes
+# can therefore fail immediately with SQLITE_BUSY_SNAPSHOT when the scraper
+# commits between those two statements; the connection timeout cannot rescue a
+# read snapshot that is no longer promotable.  The adviser rate limiter has that
+# exact shape.  Acquire the writer slot at the start of writable atomic blocks so
+# SQLite's busy timeout applies before any read snapshot is established.  Apply
+# the same defaults to SQLite DATABASE_URL configurations, while leaving frozen
+# read-only fixture URIs alone (BEGIN IMMEDIATE is itself a write transaction).
+def _configure_sqlite_transaction_options(database: Any) -> None:
+    if database.get("ENGINE") != "django.db.backends.sqlite3":
+        return
+    options = database.setdefault("OPTIONS", {})
+    options.setdefault("timeout", 30)
+    name = str(database.get("NAME") or "").lower()
+    if "?mode=ro" not in name and "&mode=ro" not in name:
+        options.setdefault("transaction_mode", "IMMEDIATE")
+
+
+_configure_sqlite_transaction_options(DATABASES["default"])
 
 # Cache backend for rate limiting and login throttling
 CACHES = {

@@ -166,7 +166,28 @@ def test_offline_report_reparses_all_cases_through_real_typed_planner(
     assert report["candidate_report"]["all_passed"] is True
     assert report["comparison_gate"]["passed"] is True
     assert report["comparison_gate"]["absolute_lift"] >= 0.10
-    assert len(report["rows"]) == 36
+    assert len(report["rows"]) == 57
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        "I want DS341 section M2 included in every option.",
+        "أبي DS341 شعبة M2 تكون موجودة في كل الخيارات.",
+    ],
+)
+def test_runner_derives_every_option_pin_before_policy_activation(question: str) -> None:
+    from core.services.student_advisor_v21_policy import (
+        SemanticPolicyId,
+        active_semantic_policy_ids,
+    )
+    from evals.advisor.run_v21_semantic_plan import _production_explicit_pins
+
+    pins = _production_explicit_pins(question)
+    assert pins == [{"course_code": "DS341", "section_label": "M2"}]
+    assert active_semantic_policy_ids(question, explicit_pins=pins) == (
+        SemanticPolicyId.PINNED_SECTION_EVERY_OPTION_BUILD,
+    )
 
 
 def test_invalid_capability_arguments_fail_typed_gate_before_scoring(
@@ -251,6 +272,24 @@ def test_report_preserves_only_closed_repair_attribution(
     serialized = next(item for item in report["rows"] if item["case_id"] == "V21-SP-034")
     assert serialized["repair"] == row["repair"]
 
+    schema_candidate = _perfect_rows(contract)
+    schema_row = next(item for item in schema_candidate["rows"] if item["case_id"] == "V21-SP-043")
+    schema_row["repair"] = {
+        "attempted": True,
+        "reason": "plan_validation_failed",
+        "policy_ids": ["best_timetable_preference_clarification"],
+    }
+    schema_report = build_report(
+        schema_candidate,
+        _weaker_baseline(contract),
+        contract=contract,
+        advertised_tools=schemas,
+    )
+    assert (
+        next(item for item in schema_report["rows"] if item["case_id"] == "V21-SP-043")["repair"]
+        == schema_row["repair"]
+    )
+
     poisoned = copy.deepcopy(candidate)
     poisoned_row = next(item for item in poisoned["rows"] if item["case_id"] == "V21-SP-034")
     poisoned_row["repair"]["rejected_question"] = "PRIVATE DS341-M2"
@@ -269,7 +308,7 @@ def test_report_preserves_only_closed_repair_attribution(
     "limits",
     [
         LiveLimits(max_provider_calls=0, max_total_tokens=1000),
-        LiveLimits(max_provider_calls=73, max_total_tokens=1000),
+        LiveLimits(max_provider_calls=115, max_total_tokens=1000),
         LiveLimits(max_provider_calls=1, max_total_tokens=0),
         LiveLimits(max_provider_calls=1, max_total_tokens=1000, max_plan_tokens=2001),
         LiveLimits(max_provider_calls=1, max_total_tokens=1000, timeout_seconds=61),
@@ -371,6 +410,7 @@ def test_live_policy_repair_uses_exact_second_ceiling_and_closed_row_metadata(
 
     assert len(calls) == 2
     assert all(call["max_attempts"] == 1 for call in calls)
+    assert all(call["schema_repair_policy_ids"] == (policy_id,) for call in calls)
     assert calls[1]["repair_reason"] == "semantic_policy_failed"
     assert calls[1]["repair_details"] == {"policy_ids": (policy_id,)}
     assert metadata["usage"]["provider_calls"] == 2
@@ -436,10 +476,12 @@ def test_live_schema_repair_and_schema_then_policy_failure_never_make_a_third_ca
 
         assert len(calls) == metadata["usage"]["provider_calls"] == 2
         assert calls[1]["repair_reason"] == "plan_validation_failed"
+        assert calls[1]["repair_details"] == {"policy_ids": ("single_course_choice_balanced",)}
+        assert calls[1]["schema_repair_policy_ids"] == ("single_course_choice_balanced",)
         assert rows[0]["repair"] == {
             "attempted": True,
             "reason": "plan_validation_failed",
-            "policy_ids": [],
+            "policy_ids": ["single_course_choice_balanced"],
         }
         if expected_error:
             assert rows[0]["collection_error"] == {"error_category": expected_error}
@@ -695,14 +737,14 @@ def test_live_runner_records_invalid_failure_and_continues_without_secret_text(
         client=object(),
         advertised_tools=schemas,
         plan_student_turn=fake_plan,
-        limits=LiveLimits(max_provider_calls=36, max_total_tokens=100_000_000),
+        limits=LiveLimits(max_provider_calls=57, max_total_tokens=100_000_000),
         model="same-model",
         year=1448,
         term=1,
     )
 
-    assert len(rows) == next_case == 36
-    assert metadata["usage"]["provider_calls"] == 36
+    assert len(rows) == next_case == 57
+    assert metadata["usage"]["provider_calls"] == 57
     assert metadata["collection_errors"] == [
         {"case_id": "V21-SP-001", "error_category": "SecretProviderError"}
     ]
@@ -893,7 +935,7 @@ def test_runner_output_file_remains_utf8_and_unescaped(tmp_path, capsys) -> None
 def test_v2_baseline_collector_receives_no_gold_fields(contract: dict[str, Any]) -> None:
     projected = v2_baseline_inputs(contract)
 
-    assert len(projected) == 36
+    assert len(projected) == 57
     assert all(set(case) <= {"id", "language", "question", "history"} for case in projected)
     assert all(
         not ({"expected_mode", "required_tools", "forbidden_tools", "expected_goal"} & set(case))
@@ -1005,7 +1047,7 @@ def test_bounded_v2_collection_produces_reusable_explicit_baseline(
         client=client,
         advertised_tools=v2_schemas,
         limits=LiveLimits(
-            max_provider_calls=36,
+            max_provider_calls=57,
             max_total_tokens=10_000_000,
             max_plan_tokens=1800,
         ),
@@ -1019,8 +1061,8 @@ def test_bounded_v2_collection_produces_reusable_explicit_baseline(
         collection_metadata=metadata,
     )
 
-    assert len(rows) == client.calls == 36
-    assert metadata["usage"]["provider_calls"] == 36
+    assert len(rows) == client.calls == 57
+    assert metadata["usage"]["provider_calls"] == 57
     assert metadata["usage"]["committed_token_ceiling"] <= 10_000_000
     assert artifact["baseline_collection"]["collection_valid"] is True
     assert artifact["baseline_collection"]["gold_labels_visible_to_collector"] is False
@@ -1047,7 +1089,7 @@ def test_collect_v2_cli_requires_confirmation_before_runtime_or_provider(
                 "--output",
                 str(tmp_path / "baseline.json"),
                 "--max-provider-calls",
-                "36",
+                "57",
                 "--max-total-tokens",
                 "10000000",
             ]
@@ -1087,7 +1129,7 @@ def test_live_cli_rejects_pin_annotation_drift_before_client_creation(
                 "--live",
                 "--confirm-live-external-request",
                 "--max-provider-calls",
-                "72",
+                "86",
                 "--max-total-tokens",
                 "10000000",
                 "--baseline",
@@ -1186,7 +1228,7 @@ def test_collect_v2_cli_writes_scorer_compatible_artifact(
             "--collect-v2-baseline",
             "--confirm-live-external-request",
             "--max-provider-calls",
-            "36",
+            "57",
             "--max-total-tokens",
             "10000000",
             "--output",
@@ -1197,12 +1239,12 @@ def test_collect_v2_cli_writes_scorer_compatible_artifact(
 
     assert exit_code == 0
     artifact = json.loads(output.read_text(encoding="utf-8"))
-    assert len(artifact["rows"]) == 36
+    assert len(artifact["rows"]) == 57
     assert artifact["baseline_collection"]["collection_valid"] is True
     assert artifact["baseline_collection"]["method"].startswith("v2_first_model_turn")
     assert artifact["baseline_collection"]["budgets"]["max_retries"] == 0
     assert artifact["baseline_collection"]["transport"] == {
-        "http_calls": 36,
-        "http_responses": 36,
+        "http_calls": 57,
+        "http_responses": 57,
         "max_retries": 0,
     }

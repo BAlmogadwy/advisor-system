@@ -388,9 +388,7 @@ _COURSE_TOKEN = re.compile(
     # parsed the day-and-hour of every meeting string («SUN 14:30») as a
     # course code SUN14 and the server's own timetable fallback refused
     # itself.
-    r"(?<![A-Za-z0-9])"
-    r"(?:[A-Za-z]{2,4}-?|[A-Z]{2,4}[ ])"
-    r"[0-9٠-٩۰-۹]{1,3}(?![A-Za-z0-9:])"
+    r"(?<![A-Za-z0-9])" r"(?:[A-Za-z]{2,4}-?|[A-Z]{2,4}[ ])" r"[0-9٠-٩۰-۹]{1,3}(?![A-Za-z0-9:])"
 )
 
 #: Numbers that are already something else, removed before any figure is read.
@@ -620,8 +618,7 @@ def _names_exact_course_code(text: str, course_code: Any) -> bool:
     prefix, digits = match.groups()
     return (
         re.search(
-            rf"(?<![A-Za-z0-9]){re.escape(prefix)}\s*-?\s*{re.escape(digits)}"
-            r"(?![A-Za-z0-9])",
+            rf"(?<![A-Za-z0-9]){re.escape(prefix)}\s*-?\s*{re.escape(digits)}" r"(?![A-Za-z0-9])",
             str(text or ""),
             re.IGNORECASE,
         )
@@ -729,6 +726,14 @@ def _section_labels_in_timetable(rows: list[dict[str, Any]]) -> set[str]:
                         "expected_plan_sections",
                         "baseline_sections",
                         "sections",
+                        # improve_current_timetable represents a section
+                        # rearrangement as bounded old/new label lists.  The
+                        # deterministic renderer quotes both sides, while the
+                        # proposed-state meetings naturally contain only the
+                        # new labels.  Mine these exact typed facts so the
+                        # renderer cannot reject its own truthful change.
+                        "from_sections",
+                        "to_sections",
                     } and isinstance(child, list):
                         # my_timetable carries bare label strings here, which
                         # the key-based walk below would never reach.
@@ -773,11 +778,7 @@ _COHORT_SECTION_TOKEN = re.compile(
 # Every other figure reader in this module accepts Arabic-Indic digits; this one
 # did not, so «١١:٣٠» sailed past all meeting-time verification while the same
 # fabricated time in ASCII was caught.
-_CLOCK_TOKEN = re.compile(
-    r"(?<![0-9٠-٩])"
-    r"([0-2٠-٢]?[0-9٠-٩]:[0-5٠-٥][0-9٠-٩])"
-    r"(?![0-9٠-٩])"
-)
+_CLOCK_TOKEN = re.compile(r"(?<![0-9٠-٩])" r"([0-2٠-٢]?[0-9٠-٩]:[0-5٠-٥][0-9٠-٩])" r"(?![0-9٠-٩])")
 
 
 def _ascii_clock(value: str) -> str:
@@ -982,8 +983,7 @@ _CREDIT_FIGURE = re.compile(
     re.IGNORECASE,
 )
 _COURSE_COUNT_FIGURE = re.compile(
-    r"(?<![A-Za-z0-9])([0-9\u0660-\u0669]{1,3})(?![0-9])\s*"
-    r"(?:مقرر\w*|مواد|مادة|course(?:s)?)",
+    r"(?<![A-Za-z0-9])([0-9\u0660-\u0669]{1,3})(?![0-9])\s*" r"(?:مقرر\w*|مواد|مادة|course(?:s)?)",
     re.IGNORECASE,
 )
 _COURSE_COUNT_PAIR = re.compile(
@@ -2602,7 +2602,15 @@ def _tool_contract_complete(
         if _ordered_course_codes_in_text(answer) != expected_codes:
             return False
         folded = _fold(answer)
-        return any(_fold(marker) in folded for marker in ("أساس الترتيب", "ranking basis"))
+        return any(
+            _fold(marker) in folded
+            for marker in (
+                "أساس الترتيب",
+                "لماذا هذا الترتيب",
+                "ranking basis",
+                "why this order",
+            )
+        )
 
     if tool == "build_timetable_proposal":
         target = _as_number(row.get("target_credits"))
@@ -2866,7 +2874,9 @@ def _tool_contract_complete(
             _fold(marker) in _fold(answer)
             for marker in (
                 "لم ينتج الفحص المحدود نتيجة إيجابية موثقة",
+                "لم أتمكن من تأكيد خيار مناسب من السجلات التي راجعتها",
                 "the bounded check did not produce a verified positive result",
+                "I could not confirm a suitable option from the records I reviewed",
             )
         )
 
@@ -2886,7 +2896,9 @@ def _tool_contract_complete(
             _fold(marker) in _fold(answer)
             for marker in (
                 "لم ينتج الفحص المحدود نتيجة إيجابية موثقة",
+                "لم أتمكن من تأكيد خيار مناسب من السجلات التي راجعتها",
                 "the bounded check did not produce a verified positive result",
+                "I could not confirm a suitable option from the records I reviewed",
             )
         )
 
@@ -2937,7 +2949,9 @@ def _tool_contract_complete(
             _fold(marker) in _fold(answer)
             for marker in (
                 "لم ينتج الفحص المحدود نتيجة إيجابية موثقة",
+                "لم أتمكن من تأكيد خيار مناسب من السجلات التي راجعتها",
                 "the bounded check did not produce a verified positive result",
+                "I could not confirm a suitable option from the records I reviewed",
             )
         )
 

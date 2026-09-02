@@ -24,9 +24,76 @@ def _number(value: Any) -> str:
 
 
 def _course_label(row: dict[str, Any]) -> str:
-    code = _text(row.get("course_code") or row.get("candidate_code")).upper()
+    code = _text(row.get("course_code") or row.get("candidate_code") or row.get("code")).upper()
     name = _text(row.get("course_name") or row.get("candidate_name"))
     return code + (f" — {name}" if name else "")
+
+
+def render_available_course_advice(language: str, row: dict[str, Any]) -> str:
+    """Answer a plain course-readiness question like an academic adviser.
+
+    The wording deliberately separates recorded prerequisite readiness from live
+    registration permission. It gives the student one useful continuation while
+    keeping every course label and count tied to the projected progress row.
+    """
+
+    ready = [item for item in row.get("prerequisites_satisfied") or [] if isinstance(item, dict)]
+    blocked = [item for item in row.get("prerequisite_blocked") or [] if isinstance(item, dict)]
+    labels = [_course_label(item) for item in ready]
+    labels = [label for label in labels if label]
+
+    if language == "Arabic":
+        lines = (
+            [
+                "بحسب تقدمك في الخطة، المقررات التي استوفيت متطلباتها المسجلة هي:",
+                *(f"- {label}" for label in labels),
+            ]
+            if labels
+            else ["لا يظهر في سجل تقدمك حاليًا مقرر متبقٍ استوفيت متطلباته المسجلة."]
+        )
+        if blocked:
+            lines.append(
+                f"استبعدتُ المقررات المحجوبة بمتطلبات من هذه القائمة (العدد: {len(blocked)})."
+            )
+        lines.extend(
+            [
+                (
+                    "الخطوة التالية: حدّد لي الحد الأعلى للساعات أو الأوقات التي "
+                    "تفضّلها، وسأفحص أيّ هذه المقررات يلائم جدولك بلا تعارض."
+                ),
+                ("قبل التسجيل، تحقّق في بوابة الجامعة من الطرح الفعلي والمقاعد والسماح بالتسجيل."),
+            ]
+        )
+        return "\n".join(lines)
+
+    lines = (
+        [
+            "Based on your degree progress, you currently meet the recorded prerequisites for:",
+            *(f"- {label}" for label in labels),
+        ]
+        if labels
+        else [
+            "Your progress record does not currently show a remaining course whose "
+            "recorded prerequisites you have met."
+        ]
+    )
+    if blocked:
+        lines.append(
+            f"I left prerequisite-blocked courses out of this list (count: {len(blocked)})."
+        )
+    lines.extend(
+        [
+            (
+                "Next step: tell me your maximum credit load or preferred class times, "
+                "and I’ll check which of these courses fits your timetable without clashes."
+            ),
+            (
+                "Before registering, confirm live offering, seats, and registration "
+                "permission in the university portal."
+            ),
+        ]
+    )
+    return "\n".join(lines)
 
 
 def render_lookup_course(language: str, row: dict[str, Any]) -> str:
@@ -429,9 +496,9 @@ def _compound_context_lines(language: str, row: dict[str, Any]) -> list[str]:
     planning_term = _text(row.get("planning_term"))
     if planning_term:
         lines.append(
-            f"الفصل الذي جرى تحليله: {planning_term}."
+            f"راجعت الفصل: {planning_term}."
             if language == "Arabic"
-            else f"Planning term analysed: {planning_term}."
+            else f"I reviewed planning term {planning_term}."
         )
     baseline = _text(row.get("baseline_kind")).upper()
     if baseline:
@@ -440,7 +507,11 @@ def _compound_context_lines(language: str, row: dict[str, Any]) -> list[str]:
             if language == "Arabic"
             else _BASELINE_EN.get(baseline, "baseline status not specified")
         )
-        lines.append(f"خط الأساس: {label}." if language == "Arabic" else f"Baseline: {label}.")
+        lines.append(
+            f"بُنيت المقارنة على: {label}."
+            if language == "Arabic"
+            else f"The comparison starts from the {label}."
+        )
     pins = _mapping_rows(_mapping(row.get("constraints")).get("pinned_sections"))
     pin_labels = [
         f"{_text(pin.get('course_code')).upper()}-{_text(pin.get('section_label')).upper()}"
@@ -460,32 +531,25 @@ def _compound_read_only_footer(language: str) -> list[str]:
     if language == "Arabic":
         return [
             (
-                "هذه نتيجة بحث محدود وللقراءة فقط؛ لم يُضف أو يُحذف أو يُحفظ "
-                "أو يُطبّق أو يُسجّل أي مقرر أو شعبة."
-            ),
-            (
-                "الملاءمة في اللقطة المسجلة لا تثبت طرحًا حيًا أو مقعدًا أو إذن "
-                "تسجيل؛ وأي تغيير ينفذه الطالب يدويًا في بوابة الجامعة بعد التحقق."
+                "الخطوة التالية: تحقّق في بوابة الجامعة من الطرح الفعلي والمقاعد "
+                "والسماح بالتسجيل، ثم نفّذ القرار هناك إن كان مناسبًا لك. هذه "
+                "المشورة للقراءة فقط ولم تغيّر تسجيلك."
             ),
         ]
     return [
         (
-            "This is a bounded, read-only result; no course or section was added, "
-            "dropped, saved, applied, or registered."
-        ),
-        (
-            "Fit in the recorded snapshot does not prove a live offering, seat, or "
-            "registration permission; the student must make any change manually in "
-            "the university portal after verification."
+            "Next step: confirm the live offering, seat, and registration permission "
+            "in the university portal, then make the change there if it still suits "
+            "your plan. This advice is read-only and did not change your registration."
         ),
     ]
 
 
 def _bounded_negative_line(language: str) -> str:
     return (
-        "لم ينتج الفحص المحدود نتيجة إيجابية موثقة."
+        "لم أتمكن من تأكيد خيار مناسب من السجلات التي راجعتها."
         if language == "Arabic"
-        else "The bounded check did not produce a verified positive result."
+        else "I could not confirm a suitable option from the records I reviewed."
     )
 
 
@@ -570,21 +634,21 @@ def _addition_search_line(language: str, row: dict[str, Any]) -> str:
     limit = _number(search.get("candidate_limit"))
     truncated = search.get("search_truncated") is True
     if language == "Arabic":
-        text = f"البحث المحدود قيّم {evaluated} مرشحًا ووجد {feasible} مرشحًا ملائمًا"
+        text = f"راجعت {evaluated} خيارًا ووجدت {feasible} خيارًا ملائمًا"
         if limit:
-            text += f" ضمن حد أقصى قدره {limit}"
+            text += f" ضمن نطاق يصل إلى {limit}"
         text += "."
         if truncated:
-            text += " بلغ البحث حد المرشحين، لذلك لم يشمل كل المرشحين الممكنين."
-        text += " بحث بدائل الجدول غير شامل لكل التركيبات الممكنة."
+            text += " وصل الفحص إلى حد الخيارات، لذلك قد توجد خيارات أخرى."
+        text += " وقد توجد ترتيبات أخرى خارج الخيارات التي فُحصت."
         return text
-    text = f"The bounded search evaluated {evaluated} candidate(s) and found {feasible} feasible"
+    text = f"I reviewed {evaluated} options and found {feasible} that fit"
     if limit:
-        text += f", within a limit of {limit}"
+        text += f", within a search range of {limit}"
     text += "."
     if truncated:
-        text += " The candidate limit was reached, so not every possible candidate was searched."
-    text += " The timetable-alternative search is not exhaustive."
+        text += " The option limit was reached, so other courses may still be worth checking."
+    text += " Other timetable arrangements may also exist beyond the options checked."
     return text
 
 
@@ -671,11 +735,6 @@ def render_recommend_feasible_course_addition(language: str, row: dict[str, Any]
 
     status = _text(row.get("status")).upper()
     if status == "RECOMMENDATION_FOUND":
-        lines.append(
-            "وُجدت إضافة مقرر ملائمة ضمن البحث المحدود واللقطة المسجلة:"
-            if language == "Arabic"
-            else "A feasible course addition was found within the bounded recorded-snapshot search:"
-        )
         candidates = _mapping_rows(row.get("ranked_feasible_additions"))
         recommended = _mapping(row.get("recommended_addition"))
         recommended_code = _text(recommended.get("course_code")).upper()
@@ -684,9 +743,25 @@ def render_recommend_feasible_course_addition(language: str, row: dict[str, Any]
             for candidate in candidates
         ):
             candidates.insert(0, recommended)
-        lines.extend(
-            _render_addition_candidate(language, candidate) for candidate in candidates[:10]
-        )
+        recommended_label = _course_label(recommended)
+        if recommended_label:
+            lines.append(
+                f"توصيتي الأولى: انظر في إضافة {recommended_label}."
+                if language == "Arabic"
+                else f"My first recommendation is to consider adding {recommended_label}."
+            )
+            lines.append(
+                "لماذا يتصدر هذا الفحص:" if language == "Arabic" else "Why it leads this check:"
+            )
+            lines.append(_render_addition_candidate(language, recommended))
+        remaining = [
+            candidate
+            for candidate in candidates
+            if _text(candidate.get("course_code")).upper() != recommended_code
+        ][:9]
+        if remaining:
+            lines.append("خيارات أخرى:" if language == "Arabic" else "Other options:")
+            lines.extend(_render_addition_candidate(language, candidate) for candidate in remaining)
     elif status == "NO_ELIGIBLE_CANDIDATES":
         lines.append(
             "لم يعثر نطاق المرشحين الذي جرى فحصه على مقرر مستوفٍ للمتطلبات السابقة."
@@ -1207,6 +1282,7 @@ def render_improve_current_timetable(language: str, row: dict[str, Any]) -> str:
 
 
 __all__ = [
+    "render_available_course_advice",
     "render_course_prerequisites",
     "render_improve_current_timetable",
     "render_lookup_course",

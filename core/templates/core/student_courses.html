@@ -170,7 +170,7 @@
           {% elif c.hours_only %}
             <p class="mb-2">{% if LANGUAGE_CODE == 'ar' %}لا توجد متطلبات مقررات سابقة غير مستوفاة؛ والمتبقي هو بلوغ الحد المطلوب من الساعات المعتمدة.{% else %}No course is blocking you — you only need credit hours.{% endif %}</p>
           {% endif %}
-          <a class="btn btn-sm btn-primary" href="{% url 'student_advisor' %}">{% if LANGUAGE_CODE == 'ar' %}اسأل المرشد الذكي عن هذه المتطلبات{% else %}Ask the AI advisor about this{% endif %}</a>
+          <a class="btn btn-sm btn-primary" href="{% url 'student_advisor' %}">{% if LANGUAGE_CODE == 'ar' %}اسأل مرشد التخطيط الأكاديمي عن هذه المتطلبات{% else %}Ask the planning adviser about this{% endif %}</a>
         </div>
       </details>
     {% endfor %}

@@ -36,7 +36,8 @@ HERE = pathlib.Path(__file__).resolve().parent
 DEFAULT_CONTRACT_PATH = HERE / "v21_semantic_plan_cases.yaml"
 
 CONTRACT_NAME = "advisor_v21_semantic_plan"
-CONTRACT_VERSION = "2.4"
+CONTRACT_VERSION = "2.8"
+MAX_CONTRACT_CASES = 60
 VALID_MODES = frozenset({"execute", "clarify", "direct", "unsupported"})
 VALID_CLARIFICATION_KINDS = frozenset(
     {
@@ -334,8 +335,10 @@ def validate_contract(contract: Mapping[str, Any]) -> None:
     cases = root.get("cases")
     if not isinstance(cases, list):
         raise ContractValidationError("cases must be a list")
-    if not 20 <= len(cases) <= 40:
-        raise ContractValidationError("the focused contract must contain between 20 and 40 cases")
+    if not 20 <= len(cases) <= MAX_CONTRACT_CASES:
+        raise ContractValidationError(
+            f"the focused contract must contain between 20 and {MAX_CONTRACT_CASES} cases"
+        )
     if meta.get("count") != len(cases):
         raise ContractValidationError("meta.count must equal the number of cases")
 
@@ -794,6 +797,7 @@ def score_case(
         str(case.get("question") or ""),
         {
             "decision": mode,
+            "clarification_kind": clarification_kind,
             "requested_outcomes": outcomes,
             "evidence_requests": calls,
         },
@@ -801,6 +805,7 @@ def score_case(
             "_semantic_policy_explicit_pins",
             case.get("policy_explicit_pins"),
         ),
+        active_policy_ids=case.get("_semantic_policy_ids"),
     )
     semantic_policy_correct = not policy_violations
     required_tools_correct = required <= name_set and all(

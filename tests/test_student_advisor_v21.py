@@ -233,7 +233,10 @@ def test_v21_direct_turn_never_enters_the_legacy_question_router(monkeypatch):
 
 
 def test_v21_planner_prompt_declares_semantic_capability_boundaries() -> None:
-    assert STUDENT_V21_PROMPT_VERSION == "student-v21-semantic-plan-v18"
+    from core.services.advisor_evidence_audit import normalise_prompt_version
+
+    assert STUDENT_V21_PROMPT_VERSION == "student-v21-plan-v22-adviser-voice"
+    assert normalise_prompt_version(STUDENT_V21_PROMPT_VERSION) == STUDENT_V21_PROMPT_VERSION
     client = ScriptedClient(_planner_turn("unsupported"))
 
     answer_student_advisor_v21(
@@ -252,6 +255,9 @@ def test_v21_planner_prompt_declares_semantic_capability_boundaries() -> None:
     assert "graduation_impact alone may be owned" in planner_prompt
     assert "أنزل/آخذ/أسجل a course means take or enrol" in planner_prompt
     assert "remaining courses that are open or available is available_courses" in planner_prompt
+    assert '"Which courses can I take this term?"' in planner_prompt
+    assert "exactly one my_progress({}) call" in planner_prompt
+    assert "does not request a timetable-space addition" in planner_prompt
     assert "official maximum credit load needs current_timetable and policy_rule" in planner_prompt
     assert "light new timetable that supplies no exact or maximum credit-hour" in planner_prompt
     assert "include every named candidate in course_codes" in planner_prompt
@@ -278,6 +284,12 @@ def test_v21_planner_prompt_declares_semantic_capability_boundaries() -> None:
     assert 'For "if I fail this named course, which courses are affected?"' in planner_prompt
     assert "noncompletion_current_courses=[that exact course]" in planner_prompt
     assert "Never encode failure/non-passage as remove_current_courses" in planner_prompt
+    assert (
+        "The latest explicit student correction overrides an earlier constraint" in planner_prompt
+    )
+    assert 'references such as "the second one"' in planner_prompt
+    assert "assistant prose is never academic evidence" in planner_prompt
+    assert "clarify instead of guessing" in planner_prompt
     assert "وش ناقصني عشان أقدر أسجل DS491؟" in planner_prompt
     assert "prerequisite_information via why_course_locked, never" in planner_prompt
     assert "ليه ما أقدر أنزل DS491؟" in planner_prompt
@@ -387,7 +399,7 @@ def _policy_plan(
     }
 
 
-_V18_POLICY_CASES = [
+_V19_POLICY_CASES = [
     pytest.param(
         "هل فيه متطلب متزامن مع DS491؟",
         _policy_plan(
@@ -475,14 +487,153 @@ _V18_POLICY_CASES = [
         ],
         id="pinned-course-addition",
     ),
+    pytest.param(
+        "وش لازم أنجح فيه قبل DS491؟",
+        _policy_plan(
+            "execute",
+            ["prerequisite_information"],
+            [
+                {
+                    "capability": "course_prerequisites",
+                    "arguments": {"course_code": "DS491"},
+                }
+            ],
+        ),
+        _policy_plan(
+            "execute",
+            ["prerequisite_information"],
+            [
+                {
+                    "capability": "why_course_locked",
+                    "arguments": {"course_code": "DS491"},
+                }
+            ],
+        ),
+        "personalized_prerequisite_analysis",
+        [("why_course_locked", {"course_code": "DS491"})],
+        id="personalized-prerequisite",
+    ),
+    pytest.param(
+        "أبي مادة إضافية بس ما أبي شيء ما له أولوية.",
+        _policy_plan(
+            "execute",
+            ["course_addition"],
+            [
+                {
+                    "capability": "recommend_feasible_course_addition",
+                    "arguments": {"objective": "balanced"},
+                }
+            ],
+        ),
+        _policy_plan(
+            "execute",
+            ["course_addition"],
+            [
+                {
+                    "capability": "recommend_feasible_course_addition",
+                    "arguments": {"objective": "unlock_impact"},
+                }
+            ],
+        ),
+        "priority_course_addition_unlock",
+        [("recommend_feasible_course_addition", {"objective": "unlock_impact"})],
+        id="priority-course-addition",
+    ),
+    pytest.param(
+        "لو هدفنا أسرع تخرج ممكن، وش الجدول الأفضل لي؟",
+        _policy_plan(
+            "execute",
+            ["timetable_review"],
+            [
+                {
+                    "capability": "improve_current_timetable",
+                    "arguments": {
+                        "objective": "schedule_quality",
+                        "credit_load_policy": "preserve",
+                        "allow_course_replacements": False,
+                    },
+                }
+            ],
+        ),
+        _policy_plan(
+            "execute",
+            ["timetable_review"],
+            [
+                {
+                    "capability": "improve_current_timetable",
+                    "arguments": {
+                        "objective": "faster_graduation",
+                        "credit_load_policy": "preserve",
+                        "allow_course_replacements": True,
+                    },
+                }
+            ],
+        ),
+        "fastest_graduation_timetable_review",
+        [
+            (
+                "improve_current_timetable",
+                {
+                    "objective": "faster_graduation",
+                    "credit_load_policy": "preserve",
+                    "allow_course_replacements": True,
+                },
+            )
+        ],
+        id="fastest-graduation-review",
+    ),
+    pytest.param(
+        "هل زيادة مقرر واحد هذا الترم فعلاً تفرق في موعد تخرجي؟",
+        _policy_plan(
+            "execute",
+            ["graduation_impact"],
+            [
+                {
+                    "capability": "recommend_feasible_course_addition",
+                    "arguments": {"objective": "balanced"},
+                }
+            ],
+        ),
+        _policy_plan(
+            "execute",
+            ["graduation_impact"],
+            [
+                {
+                    "capability": "recommend_feasible_course_addition",
+                    "arguments": {"objective": "faster_graduation"},
+                }
+            ],
+        ),
+        "one_course_graduation_impact",
+        [("recommend_feasible_course_addition", {"objective": "faster_graduation"})],
+        id="one-course-graduation-impact",
+    ),
+    pytest.param(
+        "سو لي أكثر من خيار جدول وأعطني الأفضل.",
+        _policy_plan(
+            "clarify",
+            ["timetable_build"],
+            [],
+            clarification_kind="generic",
+        ),
+        _policy_plan(
+            "clarify",
+            ["timetable_build"],
+            [],
+            clarification_kind="timetable_preference",
+        ),
+        "best_timetable_preference_clarification",
+        [],
+        id="best-timetable-preference",
+    ),
 ]
 
 
 @pytest.mark.parametrize(
     ("question", "bad_plan", "good_plan", "policy_id", "expected_execution"),
-    _V18_POLICY_CASES,
+    _V19_POLICY_CASES,
 )
-def test_v18_semantic_policy_repairs_once_then_accepts_only_the_correct_plan(
+def test_v19_semantic_policy_repairs_once_then_accepts_only_the_correct_plan(
     monkeypatch: pytest.MonkeyPatch,
     question: str,
     bad_plan: dict[str, Any],
@@ -551,9 +702,9 @@ def test_v18_semantic_policy_repairs_once_then_accepts_only_the_correct_plan(
 
 @pytest.mark.parametrize(
     ("question", "bad_plan", "_good_plan", "policy_id", "_expected_execution"),
-    _V18_POLICY_CASES,
+    _V19_POLICY_CASES,
 )
-def test_v18_semantic_policy_repeated_miss_refuses_with_zero_domain_tools(
+def test_v19_semantic_policy_repeated_miss_refuses_with_zero_domain_tools(
     monkeypatch: pytest.MonkeyPatch,
     question: str,
     bad_plan: dict[str, Any],
@@ -764,7 +915,6 @@ def test_v21_repeated_execute_for_ambiguous_pin_fails_closed_before_tools(
                     "capability": "build_timetable_proposal",
                     "arguments": {
                         "mode": "from_scratch",
-                        "course_codes": ["DS341"],
                         "must_take_courses": ["DS341"],
                         "pinned_sections": [{"course_code": "DS341", "section_label": "M2"}],
                         "max_credits": 18,
@@ -1426,6 +1576,25 @@ def test_v21_priority_limit_gate_requires_the_final_corrected_value(
         )
         == ()
     )
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        "Which three should I prioritize if I want to avoid delaying graduation?",
+        "What three courses should I prioritise for graduation?",
+        "وش ثلاثة مقررات أعطيها الأولوية؟",
+    ],
+)
+def test_v21_priority_limit_accepts_natural_conversational_number_words(
+    question: str,
+) -> None:
+    from core.services.student_advisor_v2 import _v21_priority_limits
+
+    assert _v21_priority_limits(question) == [3]
+    assert _validate_v21_arguments(question, "my_progress", {"priority_limit": 3}) == {
+        "priority_limit": 3
+    }
 
 
 def test_v21_repeated_scalar_correction_preserves_occurrence_order() -> None:
@@ -2544,7 +2713,7 @@ def test_v21_executes_supported_advice_and_refuses_the_requested_write(monkeypat
     assert executed == [("recommend_feasible_course_addition", {"objective": "balanced"})]
     assert result["agent"]["semantic_outcome_coverage"]["valid"] is True
     assert result["agent"]["semantic_plan_execution_complete"] is True
-    assert "لم ينتج الفحص المحدود نتيجة إيجابية موثقة" in result["answer"]
+    assert "لم أتمكن من تأكيد خيار مناسب من السجلات التي راجعتها" in result["answer"]
     assert "لا يستطيع تسجيل" in result["answer"]
 
 
@@ -2594,7 +2763,7 @@ def test_v21_executes_supported_advice_and_bounds_credit_load_comparison(
     assert result["agent"]["semantic_outcome_coverage"]["valid"] is True
     assert result["agent"]["semantic_plan_execution_complete"] is True
     assert result["agent"]["evidence_validation_outcome"] == "passed"
-    assert "لم ينتج الفحص المحدود نتيجة إيجابية موثقة" in result["answer"]
+    assert "لم أتمكن من تأكيد خيار مناسب من السجلات التي راجعتها" in result["answer"]
     assert "12 مقابل 18" in result["answer"]
     assert "لن أعرض توقعًا ثابتًا" in result["answer"]
 
@@ -2628,7 +2797,7 @@ def test_v21_refuses_an_underplanned_compound_outcome_before_execution(monkeypat
     assert result["agent"]["semantic_plan_execution_complete"] is False
     assert result["agent"]["semantic_plan_failure_reason"] == ("outcome_coverage_failed")
     assert result["agent"]["semantic_plan_repair_attempted"] is True
-    assert "خطة أدلة مكتملة" in result["answer"]
+    assert "تحديد كل أجزاء طلبك بثقة" in result["answer"]
 
 
 def test_v21_repairs_coverage_once_then_executes_only_the_repaired_plan(monkeypatch):
@@ -2850,7 +3019,7 @@ def test_v21_executes_and_renders_each_compound_capability(
     assert executed == [(tool, arguments)]
     assert result["agent"]["semantic_plan_execution_complete"] is True
     assert result["agent"]["semantic_outcome_coverage"]["valid"] is True
-    assert "لم ينتج الفحص المحدود نتيجة إيجابية موثقة" in result["answer"]
+    assert "لم أتمكن من تأكيد خيار مناسب من السجلات التي راجعتها" in result["answer"]
     assert result["agent"]["evidence_validation_outcome"] == "passed"
 
 
@@ -3034,10 +3203,9 @@ def test_v21_clarification_is_server_authored_and_claim_free(
         pytest.param(
             "أبغى جدول خفيف لكن ما يأخرني.",
             (
-                "وش تقصد بجدول خفيف: كم ساعة تبي بالضبط، أو وش الحد الأقصى للساعات؟ "
-                "أعطني الرقم، "
-                "وأقدر أبني لك خيارات بدون تعارض ضمن هذا الحد، لكن ما أقدر أؤكد "
-                "أن تخفيف الحمل ما راح يؤخر التخرج."
+                "عندما تقول «جدول خفيف»، هل تقصد عددًا محددًا من الساعات أم حدًا "
+                "أعلى؟ أعطني الرقم، وسأبني لك خيارات بلا تعارض ضمنه. لا أستطيع "
+                "تأكيد أن تخفيف العبء لن يؤخر إكمال الخطة من هذا القيد وحده."
             ),
             id="arabic",
         ),
@@ -3119,13 +3287,13 @@ def test_v21_timetable_build_clarification_asks_only_for_the_lightness_bound(
         pytest.param(
             "ثبّت M2 وابنِ الباقي حولها.",
             "course_or_section_identity",
-            "الشعبة تتبع أي مقرر؟ حدّد زوج المقرر والشعبة اللي تقصده.",
+            "إلى أي مقرر تتبع هذه الشعبة؟ حدّد رمز المقرر والشعبة المقصودة.",
             id="arabic-section-identity",
         ),
         pytest.param(
             "ثبت إما DS341-M2 أو DS341-F2 وابن الباقي.",
             "course_or_section_identity",
-            "الشعبة تتبع أي مقرر؟ حدّد زوج المقرر والشعبة اللي تقصده.",
+            "إلى أي مقرر تتبع هذه الشعبة؟ حدّد رمز المقرر والشعبة المقصودة.",
             id="arabic-conflicting-exact-sections",
         ),
         pytest.param(
@@ -3289,12 +3457,1097 @@ def test_v21_final_nested_schema_failure_returns_a_closed_contract_refusal(
         "failure_reason": "plan_validation_failed",
         "repair": {"attempted": True, "result": "failed"},
     }
-    assert "complete evidence plan" in result["answer"]
+    assert "determine every part of your request confidently" in result["answer"]
     assert "leaked_secret_property" not in client.calls[1]["messages"][-1]["content"]
     assert "leaked_secret_property" not in json.dumps(
         result["agent"]["evidence_audit"],
         sort_keys=True,
     )
+
+
+def test_v21_schema_repair_carries_active_best_timetable_policy_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import core.services.student_advisor_v2 as runtime
+
+    _make_legacy_input_router_fail(monkeypatch)
+    monkeypatch.setattr(
+        runtime,
+        "execute_student_v2_tool",
+        lambda *_args, **_kwargs: pytest.fail("a clarification must execute no evidence"),
+    )
+    invalid = _planner_payload_turn(
+        {
+            "decision": "clarify",
+            "requested_outcomes": ["timetable_build"],
+            "evidence_requests": [],
+            "clarification_kind": "timetable_preference",
+            "clarification_question": "Which preference?",
+            "private_rejected_value": "never replay",
+        }
+    )
+    valid = _planner_turn(
+        "clarify",
+        clarification="Which preference?",
+        outcomes=["timetable_build"],
+        clarification_kind="timetable_preference",
+    )
+    client = ScriptedClient(invalid, valid)
+
+    result = answer_student_advisor_v21(
+        question="Build several timetable options and give me the best one.",
+        principal=_principal(),
+        llm_client=client,
+    )
+
+    assert len(client.calls) == result["usage"]["provider_calls"] == 2
+    assert result["agent"]["semantic_plan_failure_reason"] == ""
+    assert result["agent"]["semantic_plan_clarification_kind"] == "timetable_preference"
+    repair_message = client.calls[1]["messages"][-1]["content"]
+    assert "policy_ids=best_timetable_preference_clarification" in repair_message
+    assert "clarification_kind=timetable_preference" in repair_message
+    assert "private_rejected_value" not in repair_message
+
+
+def test_v21_schema_repair_then_best_timetable_policy_miss_never_gets_third_call(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import core.services.student_advisor_v2 as runtime
+
+    _make_legacy_input_router_fail(monkeypatch)
+    monkeypatch.setattr(
+        runtime,
+        "execute_student_v2_tool",
+        lambda *_args, **_kwargs: pytest.fail("a failed policy must execute no evidence"),
+    )
+    invalid = _planner_payload_turn(
+        {
+            "decision": "clarify",
+            "requested_outcomes": ["timetable_build"],
+            "evidence_requests": [],
+            "clarification_kind": "timetable_preference",
+            "clarification_question": "Which preference?",
+            "private_rejected_value": "never replay",
+        }
+    )
+    wrong_policy = _planner_turn(
+        "clarify",
+        clarification="Which preference?",
+        outcomes=["timetable_build"],
+        clarification_kind="generic",
+    )
+    client = ScriptedClient(invalid, wrong_policy)
+
+    result = answer_student_advisor_v21(
+        question="Build several timetable options and give me the best one.",
+        principal=_principal(),
+        llm_client=client,
+    )
+
+    assert len(client.calls) == result["usage"]["provider_calls"] == 2
+    assert result["agent"]["tools_called"] == []
+    assert result["agent"]["semantic_plan_failure_reason"] == "semantic_policy_failed"
+    assert result["agent"]["semantic_plan_policy_validation"] == {
+        "valid": False,
+        "policy_ids": ["best_timetable_preference_clarification"],
+    }
+    assert result["agent"]["evidence_audit"]["plan_contract"] == {
+        "failure_reason": "semantic_policy_failed",
+        "repair": {"attempted": True, "result": "failed"},
+    }
+    assert "private_rejected_value" not in client.calls[1]["messages"][-1]["content"]
+    assert "private_rejected_value" not in json.dumps(
+        result["agent"]["evidence_audit"], ensure_ascii=False
+    )
+
+
+@pytest.mark.parametrize(
+    ("question", "bad_plan", "good_plan", "policy_id"),
+    [
+        (
+            "لو حذفت DS332 هل يتأخر تخرجي؟",
+            {
+                "decision": "execute",
+                "requested_outcomes": ["graduation_impact"],
+                "evidence_requests": [
+                    {
+                        "capability": "rank_current_course_drop_impact",
+                        "arguments": {
+                            "objective": "least_graduation_delay",
+                            "course_codes": ["DS999"],
+                        },
+                    }
+                ],
+                "clarification_kind": "none",
+                "clarification_question": "",
+            },
+            {
+                "decision": "execute",
+                "requested_outcomes": ["graduation_impact"],
+                "evidence_requests": [
+                    {
+                        "capability": "rank_current_course_drop_impact",
+                        "arguments": {
+                            "objective": "least_graduation_delay",
+                            "course_codes": ["DS332"],
+                        },
+                    }
+                ],
+                "clarification_kind": "none",
+                "clarification_question": "",
+            },
+            "single_drop_graduation_delay",
+        ),
+        (
+            "أيهم أفضل أحذف: DS341 أو DS321؟",
+            {
+                "decision": "execute",
+                "requested_outcomes": ["course_drop_impact"],
+                "evidence_requests": [
+                    {
+                        "capability": "rank_current_course_drop_impact",
+                        "arguments": {
+                            "objective": "balanced",
+                            "course_codes": ["DS341", "DS321"],
+                            "max_credits": 18,
+                        },
+                    }
+                ],
+                "clarification_kind": "none",
+                "clarification_question": "",
+            },
+            {
+                "decision": "execute",
+                "requested_outcomes": ["course_drop_impact"],
+                "evidence_requests": [
+                    {
+                        "capability": "rank_current_course_drop_impact",
+                        "arguments": {"objective": "balanced", "course_codes": ["DS341", "DS321"]},
+                    }
+                ],
+                "clarification_kind": "none",
+                "clarification_question": "",
+            },
+            "balanced_named_drop_impact",
+        ),
+        (
+            "وش بيصير لو انسحبت من DS332؟",
+            {
+                "decision": "execute",
+                "requested_outcomes": ["course_drop_impact"],
+                "evidence_requests": [
+                    {
+                        "capability": "rank_current_course_drop_impact",
+                        "arguments": {
+                            "objective": "balanced",
+                            "course_codes": ["DS332"],
+                            "max_credits": 18,
+                        },
+                    }
+                ],
+                "clarification_kind": "none",
+                "clarification_question": "",
+            },
+            {
+                "decision": "execute",
+                "requested_outcomes": ["course_drop_impact"],
+                "evidence_requests": [
+                    {
+                        "capability": "rank_current_course_drop_impact",
+                        "arguments": {"objective": "balanced", "course_codes": ["DS332"]},
+                    }
+                ],
+                "clarification_kind": "none",
+                "clarification_question": "",
+            },
+            "balanced_named_drop_impact",
+        ),
+        (
+            "هل حذف DS332 يقفل علي مواد في الترم الجاي؟",
+            {
+                "decision": "execute",
+                "requested_outcomes": ["course_drop_impact"],
+                "evidence_requests": [
+                    {
+                        "capability": "rank_current_course_drop_impact",
+                        "arguments": {
+                            "objective": "prerequisite_continuity",
+                            "course_codes": ["DS332"],
+                            "max_credits": 18,
+                        },
+                    }
+                ],
+                "clarification_kind": "none",
+                "clarification_question": "",
+            },
+            {
+                "decision": "execute",
+                "requested_outcomes": ["course_drop_impact"],
+                "evidence_requests": [
+                    {
+                        "capability": "rank_current_course_drop_impact",
+                        "arguments": {
+                            "objective": "prerequisite_continuity",
+                            "course_codes": ["DS332"],
+                        },
+                    }
+                ],
+                "clarification_kind": "none",
+                "clarification_question": "",
+            },
+            "single_drop_prerequisite_continuity",
+        ),
+        (
+            "جدولي الحالي فيه `DS332` و`DS341` و`DS321`. إذا اضطررت أحذف مقرر واحد، اختر المقرر الأقل تأثيراً على موعد تخرجي ووضح لي ليه.",
+            {
+                "decision": "execute",
+                "requested_outcomes": ["course_drop_impact"],
+                "evidence_requests": [
+                    {
+                        "capability": "rank_current_course_drop_impact",
+                        "arguments": {
+                            "objective": "least_graduation_delay",
+                            "course_codes": ["DS332", "DS341", "DS321"],
+                            "max_credits": 18,
+                        },
+                    }
+                ],
+                "clarification_kind": "none",
+                "clarification_question": "",
+            },
+            {
+                "decision": "execute",
+                "requested_outcomes": ["course_drop_impact"],
+                "evidence_requests": [
+                    {
+                        "capability": "rank_current_course_drop_impact",
+                        "arguments": {
+                            "objective": "least_graduation_delay",
+                            "course_codes": ["DS332", "DS341", "DS321"],
+                        },
+                    }
+                ],
+                "clarification_kind": "none",
+                "clarification_question": "",
+            },
+            "least_delay_named_drop_selection",
+        ),
+        (
+            "ابنِ لي جدول جديد من الصفر بحد أقصى 18 ساعة، ثبت فيه DS341-M2، وأعط الأولوية للمقررات اللي تمنع تأخر التخرج.",
+            {
+                "decision": "execute",
+                "requested_outcomes": ["timetable_build", "course_priority"],
+                "evidence_requests": [
+                    {
+                        "capability": "build_timetable_proposal",
+                        "arguments": {
+                            "mode": "from_scratch",
+                            "must_take_courses": ["DS341"],
+                            "pinned_sections": [{"course_code": "DS341", "section_label": "M2"}],
+                        },
+                    },
+                    {"capability": "my_progress", "arguments": {}},
+                ],
+                "clarification_kind": "none",
+                "clarification_question": "",
+            },
+            {
+                "decision": "execute",
+                "requested_outcomes": ["timetable_build", "course_priority"],
+                "evidence_requests": [
+                    {
+                        "capability": "build_timetable_proposal",
+                        "arguments": {
+                            "mode": "from_scratch",
+                            "max_credits": 18,
+                            "must_take_courses": ["DS341"],
+                            "pinned_sections": [{"course_code": "DS341", "section_label": "M2"}],
+                        },
+                    },
+                    {"capability": "my_progress", "arguments": {}},
+                ],
+                "clarification_kind": "none",
+                "clarification_question": "",
+            },
+            "fresh_pinned_graduation_priority_build",
+        ),
+        (
+            "عندي مكان في الجدول، وش المواد اللي أقدر أضيفها؟",
+            {
+                "decision": "execute",
+                "requested_outcomes": ["available_courses"],
+                "evidence_requests": [{"capability": "my_progress", "arguments": {}}],
+                "clarification_kind": "none",
+                "clarification_question": "",
+            },
+            {
+                "decision": "execute",
+                "requested_outcomes": ["course_addition"],
+                "evidence_requests": [
+                    {
+                        "capability": "recommend_feasible_course_addition",
+                        "arguments": {"objective": "timetable_fit"},
+                    }
+                ],
+                "clarification_kind": "none",
+                "clarification_question": "",
+            },
+            "timetable_space_course_addition",
+        ),
+        (
+            "Which courses can I take this term?",
+            {
+                "decision": "execute",
+                "requested_outcomes": ["available_courses", "course_priority"],
+                "evidence_requests": [
+                    {"capability": "my_progress", "arguments": {"priority_limit": 5}}
+                ],
+                "clarification_kind": "none",
+                "clarification_question": "",
+            },
+            {
+                "decision": "execute",
+                "requested_outcomes": ["available_courses"],
+                "evidence_requests": [{"capability": "my_progress", "arguments": {}}],
+                "clarification_kind": "none",
+                "clarification_question": "",
+            },
+            "plain_available_courses_only",
+        ),
+        (
+            "هل فيه تبديل بين مقررين يخلي تخرجي أسرع؟",
+            {
+                "decision": "execute",
+                "requested_outcomes": ["course_replacement", "graduation_impact"],
+                "evidence_requests": [
+                    {
+                        "capability": "graduation_progress",
+                        "arguments": {
+                            "planning_baseline_kind": "recommended_current_term",
+                            "search_better_replacements": True,
+                        },
+                    }
+                ],
+                "clarification_kind": "none",
+                "clarification_question": "",
+            },
+            {
+                "decision": "execute",
+                "requested_outcomes": ["course_replacement"],
+                "evidence_requests": [
+                    {
+                        "capability": "graduation_progress",
+                        "arguments": {
+                            "planning_baseline_kind": "recommended_current_term",
+                            "search_better_replacements": True,
+                        },
+                    }
+                ],
+                "clarification_kind": "none",
+                "clarification_question": "",
+            },
+            "graduation_improving_course_swap",
+        ),
+    ],
+)
+def test_v20_early_repair_uses_precomputed_policy_id_without_rejected_values(
+    monkeypatch: pytest.MonkeyPatch,
+    question: str,
+    bad_plan: dict[str, Any],
+    good_plan: dict[str, Any],
+    policy_id: str,
+) -> None:
+    import core.services.student_advisor_v2 as runtime
+
+    _make_legacy_input_router_fail(monkeypatch)
+    monkeypatch.setattr(
+        runtime,
+        "execute_student_v2_tool",
+        lambda name, arguments, **_kwargs: {"tool": name, "ok": True},
+    )
+    monkeypatch.setattr(
+        runtime,
+        "_safe_v21_planned_answer",
+        lambda *_args, planned_tools, **_kwargs: (
+            "verified",
+            True,
+            tuple((name, "verified") for name in planned_tools),
+        ),
+    )
+    monkeypatch.setattr(runtime, "check_answer", lambda *_args, **_kwargs: [])
+    client = ScriptedClient(_planner_payload_turn(bad_plan), _planner_payload_turn(good_plan))
+
+    result = answer_student_advisor_v21(
+        question=question, principal=_principal(), llm_client=client
+    )
+
+    assert len(client.calls) == result["usage"]["provider_calls"] == 2
+    assert result["agent"]["semantic_plan_failure_reason"] == ""
+    repair = client.calls[1]["messages"][-1]["content"]
+    assert f"policy_ids={policy_id}" in repair
+    assert "DS999" not in repair
+    initial_schema = client.calls[0]["tools"][0]
+    repair_schema = client.calls[1]["tools"][0]
+    assert repair_schema is not initial_schema
+    initial_parameters = initial_schema["function"]["parameters"]
+    repair_parameters = repair_schema["function"]["parameters"]
+    assert len(initial_parameters["properties"]["evidence_requests"]["items"]["oneOf"]) > 2
+    repair_requests = repair_parameters["properties"]["evidence_requests"]
+    assert repair_parameters["properties"]["clarification_kind"]["enum"] == ["none"]
+    assert repair_parameters["properties"]["clarification_question"]["enum"] == [""]
+    if policy_id == "fresh_pinned_graduation_priority_build":
+        assert repair_requests["minItems"] == repair_requests["maxItems"] == 2
+        branches = repair_requests["items"]["oneOf"]
+        assert [branch["properties"]["capability"]["enum"][0] for branch in branches] == [
+            "build_timetable_proposal",
+            "my_progress",
+        ]
+        build_branch = next(
+            branch
+            for branch in branches
+            if branch["properties"]["capability"]["enum"] == ["build_timetable_proposal"]
+        )
+        assert set(build_branch["properties"]["arguments"]["properties"]) == {
+            "mode",
+            "max_credits",
+            "must_take_courses",
+            "pinned_sections",
+        }
+        for key in ("must_take_courses", "pinned_sections"):
+            value_schema = build_branch["properties"]["arguments"]["properties"][key]
+            assert value_schema["minItems"] == value_schema["maxItems"] == 1
+            assert value_schema["description"].startswith("REQUIRED")
+        assert build_branch["properties"]["arguments"]["properties"]["max_credits"][
+            "description"
+        ].startswith("REQUIRED")
+        assert repair_requests["description"].startswith("REQUIRED exact order")
+        initial_build = next(
+            branch
+            for branch in initial_parameters["properties"]["evidence_requests"]["items"]["oneOf"]
+            if branch["properties"]["capability"]["enum"] == ["build_timetable_proposal"]
+        )
+        assert "target_credits" in initial_build["properties"]["arguments"]["properties"]
+    elif policy_id in {
+        "plain_available_courses_only",
+        "timetable_space_course_addition",
+        "graduation_improving_course_swap",
+    }:
+        assert repair_requests["minItems"] == repair_requests["maxItems"] == 1
+        branches = repair_requests["items"]["oneOf"]
+        assert len(branches) == 1
+        branch = branches[0]
+        expected = {
+            "plain_available_courses_only": (
+                "my_progress",
+                {},
+            ),
+            "timetable_space_course_addition": (
+                "recommend_feasible_course_addition",
+                {"objective": "timetable_fit"},
+            ),
+            "graduation_improving_course_swap": (
+                "graduation_progress",
+                {
+                    "planning_baseline_kind": "recommended_current_term",
+                    "search_better_replacements": True,
+                },
+            ),
+        }[policy_id]
+        assert branch["properties"]["capability"]["enum"] == [expected[0]]
+        arguments = branch["properties"]["arguments"]
+        assert set(arguments["properties"]) == set(expected[1])
+        assert set(arguments["required"]) == set(expected[1])
+        assert arguments["additionalProperties"] is False
+        for key, value in expected[1].items():
+            assert arguments["properties"][key]["enum"] == [value]
+            assert arguments["properties"][key]["description"].startswith("REQUIRED exact value")
+    else:
+        assert repair_requests["minItems"] == repair_requests["maxItems"] == 1
+        branches = repair_requests["items"]["oneOf"]
+        assert len(branches) == 1
+        arguments = branches[0]["properties"]["arguments"]
+        assert set(arguments["properties"]) == {"course_codes", "objective"}
+        assert set(arguments["required"]) == {"course_codes", "objective"}
+        assert "max_credits" not in arguments["properties"]
+        assert arguments["properties"]["course_codes"]["description"].startswith("REQUIRED")
+        assert arguments["properties"]["objective"]["description"] == (
+            "REQUIRED exact objective: " + arguments["properties"]["objective"]["enum"][0] + "."
+        )
+        course_codes = arguments["properties"]["course_codes"]
+        expected_cardinality = {
+            "single_drop_graduation_delay": (1, 1),
+            "balanced_named_drop_impact": (1, 2),
+            "single_drop_prerequisite_continuity": (1, 1),
+            "least_delay_named_drop_selection": (3, 3),
+        }[policy_id]
+        assert (course_codes["minItems"], course_codes["maxItems"]) == expected_cardinality
+        initial_drop = next(
+            branch
+            for branch in initial_parameters["properties"]["evidence_requests"]["items"]["oneOf"]
+            if branch["properties"]["capability"]["enum"] == ["rank_current_course_drop_impact"]
+        )
+        assert "max_credits" in initial_drop["properties"]["arguments"]["properties"]
+    assert "Three exact boundaries" in initial_schema["function"]["description"]
+    assert "Three exact boundaries" not in repair_schema["function"]["description"]
+    assert policy_id in repair_schema["function"]["description"]
+
+
+def test_v20_focused_drop_repair_repeated_provenance_miss_has_no_third_or_leak(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import core.services.student_advisor_v2 as runtime
+
+    _make_legacy_input_router_fail(monkeypatch)
+    monkeypatch.setattr(
+        runtime,
+        "execute_student_v2_tool",
+        lambda *_args, **_kwargs: pytest.fail("a repeated invalid repair executes no tool"),
+    )
+    bad_plan = {
+        "decision": "execute",
+        "requested_outcomes": ["graduation_impact"],
+        "evidence_requests": [
+            {
+                "capability": "rank_current_course_drop_impact",
+                "arguments": {
+                    "objective": "least_graduation_delay",
+                    "course_codes": ["DS999"],
+                },
+            }
+        ],
+        "clarification_kind": "none",
+        "clarification_question": "",
+    }
+    client = ScriptedClient(_planner_payload_turn(bad_plan), _planner_payload_turn(bad_plan))
+    result = answer_student_advisor_v21(
+        question="لو حذفت DS332 هل يتأخر تخرجي؟",
+        principal=_principal(),
+        llm_client=client,
+    )
+
+    assert len(client.calls) == result["usage"]["provider_calls"] == 2
+    assert result["agent"]["tools_called"] == []
+    assert result["agent"]["semantic_plan_failure_reason"] == "argument_provenance_failed"
+    repair = client.calls[1]["messages"][-1]["content"]
+    assert "policy_ids=single_drop_graduation_delay" in repair
+    assert "Validated closed policy requirement for single_drop_graduation_delay" in repair
+    assert "DS999" not in repair
+    assert "balanced_named_drop_impact" not in repair
+
+
+@pytest.mark.parametrize(
+    ("question", "bad_plan", "failure_reason", "policy_id", "rejected_literal"),
+    [
+        (
+            "لو حذفت DS332 هل يتأخر تخرجي؟",
+            {
+                "decision": "execute",
+                "requested_outcomes": ["graduation_impact"],
+                "evidence_requests": [
+                    {
+                        "capability": "rank_current_course_drop_impact",
+                        "arguments": {
+                            "objective": "least_graduation_delay",
+                            "max_credits": 18,
+                        },
+                    }
+                ],
+                "clarification_kind": "none",
+                "clarification_question": "",
+            },
+            "argument_provenance_failed",
+            "single_drop_graduation_delay",
+            "18",
+        ),
+        (
+            "ابنِ لي جدول جديد من الصفر بحد أقصى 18 ساعة، ثبت فيه DS341-M2، وأعط الأولوية للمقررات اللي تمنع تأخر التخرج.",
+            {
+                "decision": "execute",
+                "requested_outcomes": ["timetable_build", "course_priority"],
+                "evidence_requests": [
+                    {
+                        "capability": "build_timetable_proposal",
+                        "arguments": {
+                            "mode": "from_scratch",
+                            "max_credits": 18,
+                            "target_credits": 15,
+                        },
+                    },
+                    {"capability": "my_progress", "arguments": {}},
+                ],
+                "clarification_kind": "none",
+                "clarification_question": "",
+            },
+            "constraint_coverage_failed",
+            "fresh_pinned_graduation_priority_build",
+            "15",
+        ),
+        (
+            "عندي مكان في الجدول، وش المواد اللي أقدر أضيفها؟",
+            {
+                "decision": "execute",
+                "requested_outcomes": ["available_courses"],
+                "evidence_requests": [{"capability": "my_progress", "arguments": {}}],
+                "clarification_kind": "none",
+                "clarification_question": "",
+            },
+            "semantic_policy_failed",
+            "timetable_space_course_addition",
+            "available_courses",
+        ),
+        (
+            "Which courses can I take this term?",
+            {
+                "decision": "execute",
+                "requested_outcomes": ["available_courses", "course_priority"],
+                "evidence_requests": [
+                    {"capability": "my_progress", "arguments": {"priority_limit": 5}}
+                ],
+                "clarification_kind": "none",
+                "clarification_question": "",
+            },
+            "argument_provenance_failed",
+            "plain_available_courses_only",
+            "course_priority",
+        ),
+        (
+            "هل فيه تبديل بين مقررين يخلي تخرجي أسرع؟",
+            {
+                "decision": "execute",
+                "requested_outcomes": ["course_replacement", "graduation_impact"],
+                "evidence_requests": [
+                    {
+                        "capability": "graduation_progress",
+                        "arguments": {
+                            "planning_baseline_kind": "recommended_current_term",
+                            "search_better_replacements": True,
+                        },
+                    }
+                ],
+                "clarification_kind": "none",
+                "clarification_question": "",
+            },
+            "semantic_policy_failed",
+            "graduation_improving_course_swap",
+            "graduation_impact",
+        ),
+    ],
+)
+def test_v20_provider_ignoring_focused_schema_twice_still_fails_closed(
+    monkeypatch: pytest.MonkeyPatch,
+    question: str,
+    bad_plan: dict[str, Any],
+    failure_reason: str,
+    policy_id: str,
+    rejected_literal: str,
+) -> None:
+    import core.services.student_advisor_v2 as runtime
+
+    _make_legacy_input_router_fail(monkeypatch)
+    monkeypatch.setattr(
+        runtime,
+        "execute_student_v2_tool",
+        lambda *_args, **_kwargs: pytest.fail("invalid focused repairs execute no domain tool"),
+    )
+    client = ScriptedClient(_planner_payload_turn(bad_plan), _planner_payload_turn(bad_plan))
+    result = answer_student_advisor_v21(
+        question=question,
+        principal=_principal(),
+        llm_client=client,
+    )
+
+    assert len(client.calls) == result["usage"]["provider_calls"] == 2
+    assert result["agent"]["tools_called"] == []
+    assert result["agent"]["semantic_plan_failure_reason"] == failure_reason
+    audit = result["agent"]["evidence_audit"]["plan_contract"]
+    assert audit["failure_reason"] == failure_reason
+    assert audit["repair"] == {"attempted": True, "result": "failed"}
+    repair = client.calls[1]["messages"][-1]["content"]
+    assert f"policy_ids={policy_id}" in repair
+    assert rejected_literal not in repair
+
+
+def test_repair_provider_schema_isolated_for_all_other_policies_and_generic() -> None:
+    from core.services.student_advisor_v2 import student_v21_tool_schemas
+    from core.services.student_advisor_v21_plan import (
+        _provider_compatible_turn_plan_tool_schema,
+        _repair_focused_provider_schema,
+        build_turn_plan_tool_schema,
+    )
+    from core.services.student_advisor_v21_policy import SemanticPolicyId
+
+    broad = _provider_compatible_turn_plan_tool_schema(
+        build_turn_plan_tool_schema(student_v21_tool_schemas(), max_calls=4)
+    )
+    narrowed = {
+        SemanticPolicyId.SINGLE_DROP_GRADUATION_DELAY,
+        SemanticPolicyId.BALANCED_NAMED_DROP_IMPACT,
+        SemanticPolicyId.SINGLE_DROP_PREREQUISITE_CONTINUITY,
+        SemanticPolicyId.LEAST_DELAY_NAMED_DROP_SELECTION,
+        SemanticPolicyId.FRESH_PINNED_GRADUATION_PRIORITY_BUILD,
+        SemanticPolicyId.PLAIN_AVAILABLE_COURSES_ONLY,
+        SemanticPolicyId.TIMETABLE_SPACE_COURSE_ADDITION,
+        SemanticPolicyId.GRADUATION_IMPROVING_COURSE_SWAP,
+    }
+    for policy in SemanticPolicyId:
+        projected = _repair_focused_provider_schema(broad, (policy,))
+        assert projected is not broad
+        if policy not in narrowed:
+            assert projected == broad
+    generic = _repair_focused_provider_schema(broad, ())
+    assert generic == broad and generic is not broad
+    assert "uniqueItems" not in broad["function"]["parameters"]["properties"]["requested_outcomes"]
+
+
+def test_repair_provider_schema_fails_closed_on_recognized_branch_drift() -> None:
+    from core.services.student_advisor_v2 import student_v21_tool_schemas
+    from core.services.student_advisor_v21_plan import (
+        _provider_compatible_turn_plan_tool_schema,
+        _repair_focused_provider_schema,
+        build_turn_plan_tool_schema,
+    )
+    from core.services.student_advisor_v21_policy import SemanticPolicyId
+
+    broad = _provider_compatible_turn_plan_tool_schema(
+        build_turn_plan_tool_schema(student_v21_tool_schemas(), max_calls=4)
+    )
+    branches = broad["function"]["parameters"]["properties"]["evidence_requests"]["items"]["oneOf"]
+    broad["function"]["parameters"]["properties"]["evidence_requests"]["items"]["oneOf"] = [
+        branch
+        for branch in branches
+        if branch["properties"]["capability"]["enum"]
+        not in (["rank_current_course_drop_impact"], ["my_progress"])
+    ]
+    with pytest.raises(AssertionError, match="drop repair capability branch is missing"):
+        _repair_focused_provider_schema(broad, (SemanticPolicyId.SINGLE_DROP_GRADUATION_DELAY,))
+    with pytest.raises(AssertionError, match="composite repair capability branches are missing"):
+        _repair_focused_provider_schema(
+            broad, (SemanticPolicyId.FRESH_PINNED_GRADUATION_PRIORITY_BUILD,)
+        )
+
+
+@pytest.mark.parametrize(
+    ("policy", "capability"),
+    [
+        ("plain_available_courses_only", "my_progress"),
+        (
+            "timetable_space_course_addition",
+            "recommend_feasible_course_addition",
+        ),
+        ("graduation_improving_course_swap", "graduation_progress"),
+    ],
+)
+def test_single_call_repair_provider_schema_fails_closed_on_branch_drift(
+    policy: str,
+    capability: str,
+) -> None:
+    from core.services.student_advisor_v2 import student_v21_tool_schemas
+    from core.services.student_advisor_v21_plan import (
+        _provider_compatible_turn_plan_tool_schema,
+        _repair_focused_provider_schema,
+        build_turn_plan_tool_schema,
+    )
+    from core.services.student_advisor_v21_policy import SemanticPolicyId
+
+    broad = _provider_compatible_turn_plan_tool_schema(
+        build_turn_plan_tool_schema(student_v21_tool_schemas(), max_calls=4)
+    )
+    items = broad["function"]["parameters"]["properties"]["evidence_requests"]["items"]
+    items["oneOf"] = [
+        branch
+        for branch in items["oneOf"]
+        if branch["properties"]["capability"]["enum"] != [capability]
+    ]
+    with pytest.raises(
+        AssertionError,
+        match="single-call repair capability branch is missing",
+    ):
+        _repair_focused_provider_schema(broad, (SemanticPolicyId(policy),))
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        "I want DS341 section M2 included in every option.",
+        "أبي DS341 شعبة M2 تكون موجودة في كل الخيارات.",
+    ],
+)
+def test_v20_every_option_pin_is_derived_by_production_in_both_languages(
+    question: str,
+) -> None:
+    from core.services.student_advisor_v2 import _v21_explicit_positive_pins
+
+    assert _v21_explicit_positive_pins(question) == [
+        {"course_code": "DS341", "section_label": "M2"}
+    ]
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        "Build a timetable with a maximum of 15 credits.",
+        "Build a timetable with up to 15 credits.",
+        "Build a timetable with target 15 credits.",
+        "Build a timetable with target at 15 credit hours.",
+        "Build a timetable with an additional 3 credits.",
+        "Build a timetable with a cap at 15 credits.",
+        "Build a timetable with a ceiling of 15 credits.",
+        "Build a timetable of 15 credits.",
+        "Build a timetable and add a 3-credit course.",
+    ],
+)
+def test_v20_credit_phrases_never_fabricate_section_labels(question: str) -> None:
+    from core.services.student_advisor_v2 import _constraint_section_labels
+
+    assert _constraint_section_labels(question) == []
+
+
+@pytest.mark.parametrize("label", ["M2", "L15", "A3"])
+def test_v20_credit_role_exclusion_preserves_real_explicit_section_labels(
+    label: str,
+) -> None:
+    from core.services.student_advisor_v2 import _constraint_section_labels
+
+    assert _constraint_section_labels(f"Pin DS341 section {label}.") == [label]
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        "Build a timetable with a maximum of 0 credits.",
+        "Build a timetable with a maximum of 100 credits.",
+        "ابن لي جدول بحد أقصى 0 ساعة.",
+        "ابن لي جدول بحد أقصى 100 ساعة.",
+    ],
+)
+def test_v20_production_credit_roles_reject_zero_and_three_digits(question: str) -> None:
+    from core.services.student_advisor_v2 import (
+        _V21_MAX_CREDIT_PATTERNS,
+        _v21_credit_values,
+    )
+
+    assert _v21_credit_values(question, _V21_MAX_CREDIT_PATTERNS) == []
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        "Build me a new timetable from scratch with a maximum of 15 credits, pin DS341-M2, and prioritize courses that prevent graduation delay.",
+        "ابنِ لي جدول جديد من الصفر بحد أقصى 15 ساعة، ثبت فيه DS341-M2، وأعط الأولوية للمقررات اللي تمنع تأخر التخرج.",
+    ],
+)
+def test_v20_composite003_correct_plan_has_no_pin_ambiguity_and_completes(
+    monkeypatch: pytest.MonkeyPatch,
+    question: str,
+) -> None:
+    import core.services.student_advisor_v2 as runtime
+
+    pins, courses, ambiguous = runtime._v21_pin_constraint_state(question)
+    assert pins == [{"course_code": "DS341", "section_label": "M2"}]
+    assert courses == ["DS341"]
+    assert ambiguous is False
+    plan = {
+        "decision": "execute",
+        "requested_outcomes": ["timetable_build", "course_priority"],
+        "evidence_requests": [
+            {
+                "capability": "build_timetable_proposal",
+                "arguments": {
+                    "mode": "from_scratch",
+                    "max_credits": 15,
+                    "must_take_courses": ["DS341"],
+                    "pinned_sections": pins,
+                },
+            },
+            {"capability": "my_progress", "arguments": {}},
+        ],
+        "clarification_kind": "none",
+        "clarification_question": "",
+    }
+    executed: list[tuple[str, dict[str, Any]]] = []
+    monkeypatch.setattr(
+        runtime,
+        "execute_student_v2_tool",
+        lambda name, arguments, **_kwargs: executed.append((name, dict(arguments)))
+        or {"tool": name, "ok": True},
+    )
+    monkeypatch.setattr(
+        runtime,
+        "_safe_v21_planned_answer",
+        lambda *_args, planned_tools, **_kwargs: (
+            "verified",
+            True,
+            tuple((name, "verified") for name in planned_tools),
+        ),
+    )
+    monkeypatch.setattr(runtime, "check_answer", lambda *_args, **_kwargs: [])
+    result = answer_student_advisor_v21(
+        question=question,
+        principal=_principal(),
+        llm_client=ScriptedClient(_planner_payload_turn(plan)),
+    )
+
+    assert result["agent"]["semantic_plan_failure_reason"] == ""
+    assert result["agent"]["semantic_plan_repair_attempted"] is False
+    assert [name for name, _args in executed] == ["build_timetable_proposal", "my_progress"]
+
+
+@pytest.mark.parametrize(
+    ("family", "question"),
+    [
+        (family, question)
+        for family, questions in {
+            "priority": (
+                "Which course is delaying me the most in my degree plan?",
+                "وش أكثر مقرر مأخرني في الخطة؟",
+            ),
+            "shortfall": (
+                "If I cannot take all the courses, what is the most important thing to register?",
+                "إذا ما قدرت آخذ كل المواد، وش أهم شيء أسجله؟",
+            ),
+            "single_delay": (
+                "If I drop DS332 will my graduation be delayed?",
+                "لو حذفت DS332 هل يتأخر تخرجي؟",
+            ),
+            "balanced": (
+                "Which is better to drop DS341 or DS321?",
+                "أيهم أفضل أحذف: DS341 أو DS321؟",
+            ),
+            "continuity": (
+                "Will dropping DS332 block courses for me next term?",
+                "هل حذف DS332 يقفل علي مواد في الترم الجاي؟",
+            ),
+            "least": (
+                "My current timetable has DS332 and DS341 and DS321. If I must drop one course, choose the course with the least impact on my graduation date and explain why.",
+                "جدولي الحالي فيه DS332 وDS341 وDS321. إذا اضطررت أحذف مقرر واحد، اختر المقرر الأقل تأثيراً على موعد تخرجي ووضح لي ليه.",
+            ),
+            "pin": (
+                "I want DS341 section M2 included in every option.",
+                "أبي DS341 شعبة M2 تكون موجودة في كل الخيارات.",
+            ),
+            "composite": (
+                "Build me a new timetable from scratch with a maximum of 15 credits, pin DS341-M2, and prioritize courses that prevent graduation delay.",
+                "ابنِ لي جدول جديد من الصفر بحد أقصى 15 ساعة، ثبت فيه DS341-M2، وأعط الأولوية للمقررات اللي تمنع تأخر التخرج.",
+            ),
+        }.items()
+        for question in questions
+    ],
+)
+def test_v20_all_closed_families_complete_on_production_path_in_en_and_ar(
+    monkeypatch: pytest.MonkeyPatch,
+    family: str,
+    question: str,
+) -> None:
+    import core.services.student_advisor_v2 as runtime
+
+    pins = runtime._v21_explicit_positive_pins(question)
+    calls_by_family = {
+        "priority": (["course_priority"], [{"capability": "my_progress", "arguments": {}}]),
+        "shortfall": (["course_priority"], [{"capability": "my_progress", "arguments": {}}]),
+        "single_delay": (
+            ["graduation_impact"],
+            [
+                {
+                    "capability": "rank_current_course_drop_impact",
+                    "arguments": {"objective": "least_graduation_delay", "course_codes": ["DS332"]},
+                }
+            ],
+        ),
+        "balanced": (
+            ["course_drop_impact"],
+            [
+                {
+                    "capability": "rank_current_course_drop_impact",
+                    "arguments": {"objective": "balanced", "course_codes": ["DS341", "DS321"]},
+                }
+            ],
+        ),
+        "continuity": (
+            ["course_drop_impact"],
+            [
+                {
+                    "capability": "rank_current_course_drop_impact",
+                    "arguments": {
+                        "objective": "prerequisite_continuity",
+                        "course_codes": ["DS332"],
+                    },
+                }
+            ],
+        ),
+        "least": (
+            ["course_drop_impact"],
+            [
+                {
+                    "capability": "rank_current_course_drop_impact",
+                    "arguments": {
+                        "objective": "least_graduation_delay",
+                        "course_codes": ["DS332", "DS341", "DS321"],
+                    },
+                }
+            ],
+        ),
+        "pin": (
+            ["timetable_build"],
+            [
+                {
+                    "capability": "build_timetable_proposal",
+                    "arguments": {
+                        "mode": "from_scratch",
+                        "must_take_courses": ["DS341"],
+                        "pinned_sections": pins,
+                    },
+                }
+            ],
+        ),
+        "composite": (
+            ["timetable_build", "course_priority"],
+            [
+                {
+                    "capability": "build_timetable_proposal",
+                    "arguments": {
+                        "mode": "from_scratch",
+                        "max_credits": 15,
+                        "must_take_courses": ["DS341"],
+                        "pinned_sections": pins,
+                    },
+                },
+                {"capability": "my_progress", "arguments": {}},
+            ],
+        ),
+    }
+    outcomes, requests = calls_by_family[family]
+    plan = {
+        "decision": "execute",
+        "requested_outcomes": outcomes,
+        "evidence_requests": requests,
+        "clarification_kind": "none",
+        "clarification_question": "",
+    }
+    executed: list[str] = []
+    monkeypatch.setattr(
+        runtime,
+        "execute_student_v2_tool",
+        lambda name, _arguments, **_kwargs: executed.append(name) or {"tool": name, "ok": True},
+    )
+    monkeypatch.setattr(
+        runtime,
+        "_safe_v21_planned_answer",
+        lambda *_args, planned_tools, **_kwargs: (
+            "verified",
+            True,
+            tuple((name, "verified") for name in planned_tools),
+        ),
+    )
+    monkeypatch.setattr(runtime, "check_answer", lambda *_args, **_kwargs: [])
+    result = answer_student_advisor_v21(
+        question=question,
+        principal=_principal(),
+        llm_client=ScriptedClient(_planner_payload_turn(plan)),
+    )
+
+    assert result["agent"]["semantic_plan_failure_reason"] == ""
+    assert result["agent"]["semantic_plan_repair_attempted"] is False
+    assert executed == [request["capability"] for request in requests]
 
 
 def test_v21_rejects_schema_valid_but_unsourced_course_before_execution(monkeypatch):
@@ -3328,7 +4581,7 @@ def test_v21_rejects_schema_valid_but_unsourced_course_before_execution(monkeypa
         "failure_reason": "argument_provenance_failed",
         "repair": {"attempted": True, "result": "failed"},
     }
-    assert "complete evidence plan" in result["answer"]
+    assert "determine every part of your request confidently" in result["answer"]
     assert "CS424" not in result["answer"]
 
 
@@ -4006,7 +5259,7 @@ def test_v21_refuses_a_course_omitted_by_the_semantic_plan(monkeypatch):
     assert result["agent"]["semantic_outcome_coverage_refused"] is True
     assert result["agent"]["semantic_outcome_coverage"]["reason"] == ("requested_entity_uncovered")
     assert result["agent"]["semantic_outcome_coverage"]["uncovered_course_codes"] == ["CS424"]
-    assert "complete evidence plan" in result["answer"]
+    assert "determine every part of your request confidently" in result["answer"]
 
 
 def test_v21_renders_adviser_identity_locally_without_model_restatement(monkeypatch):
@@ -4820,9 +6073,9 @@ def test_v21_capability_headings_stop_relation_scope_leaking_between_blocks() ->
 
     assert complete is True
     assert [tool for tool, _block in scopes] == ["my_progress", "recommend_courses"]
-    assert "### التقدم الأكاديمي" in answer
-    assert "### توصيات المقررات" in answer
-    assert "المقررات المستوفية للمتطلبات: AI331" in answer
+    assert "### ما يظهر في سجلك" in answer
+    assert "### مقررات مقترحة للنظر فيها" in answer
+    assert "AI331" in answer
     assert "الأعلى وفق معيار أثر فتح مسارات المتطلبات" not in answer
     assert (
         check_answer(
@@ -4853,14 +6106,15 @@ def test_v21_capability_headings_stop_relation_scope_leaking_between_blocks() ->
     [
         (
             "English",
-            "### academic progress\n"
-            "The verified progress record shows 2 prerequisite-ready courses.\n"
-            "The same record shows 1 prerequisite-blocked courses.\n"
-            "Prerequisite-ready: CS102, CS101.\n"
-            "Blocked: CS399.\n"
-            "Prerequisite readiness does not prove offering, seats, or registration "
-            "permission.",
-            "### academic progress\n"
+            "Based on your degree progress, you currently meet the recorded "
+            "prerequisites for:\n"
+            "- CS102\n"
+            "- CS101\n"
+            "I left prerequisite-blocked courses out of this list (count: 1).\n"
+            "Next step: tell me your maximum credit load or preferred class times, "
+            "and I’ll check which of these courses fits your timetable without clashes.\n"
+            "Before registering, confirm live offering, seats, and registration "
+            "permission in the university portal.",
             "The verified progress record shows 2 prerequisite-ready courses.\n"
             "The same record shows 1 prerequisite-blocked courses.\n"
             "Prerequisite-ready courses ranked by prerequisite-chain unlock impact: "
@@ -4873,13 +6127,14 @@ def test_v21_capability_headings_stop_relation_scope_leaking_between_blocks() ->
         ),
         (
             "Arabic",
-            "### التقدم الأكاديمي\n"
-            "بحسب بيانات التقدم الموثقة: 2 مقررات مستوفية للمتطلبات المسجلة.\n"
-            "وبحسب السجل نفسه: 1 مقررات محجوبة بمتطلبات.\n"
-            "المقررات المستوفية للمتطلبات: CS102، CS101.\n"
-            "المقررات المحجوبة: CS399.\n"
-            "استيفاء المتطلبات لا يثبت طرح شعبة أو وجود مقعد أو السماح بالتسجيل.",
-            "### التقدم الأكاديمي\n"
+            "بحسب تقدمك في الخطة، المقررات التي استوفيت متطلباتها المسجلة هي:\n"
+            "- CS102\n"
+            "- CS101\n"
+            "استبعدتُ المقررات المحجوبة بمتطلبات من هذه القائمة (العدد: 1).\n"
+            "الخطوة التالية: حدّد لي الحد الأعلى للساعات أو الأوقات التي تفضّلها، "
+            "وسأفحص أيّ هذه المقررات يلائم جدولك بلا تعارض.\n"
+            "قبل التسجيل، تحقّق في بوابة الجامعة من الطرح الفعلي والمقاعد "
+            "والسماح بالتسجيل.",
             "بحسب بيانات التقدم الموثقة: 2 مقررات مستوفية للمتطلبات المسجلة.\n"
             "وبحسب السجل نفسه: 1 مقررات محجوبة بمتطلبات.\n"
             "المقررات المستوفية مرتبة حسب أثر فتح مسارات المتطلبات: CS101، CS102.\n"
@@ -5394,8 +6649,9 @@ def test_v21_priority_timetable_build_localizes_variants_and_bounds_solver_objec
     assert localized_reason in result["answer"]
     assert forbidden_reason not in result["answer"]
     assert (
-        "لا يثبت أن محلّل الجدول حسّن موعد التخرج" in result["answer"]
-        or "does not establish that the solver optimised graduation timing" in result["answer"]
+        "لا يثبت أن إنشاء هذه الخيارات حسّن موعد التخرج" in result["answer"]
+        or "do not establish that the timetable search optimised graduation timing"
+        in result["answer"]
     )
     assert result["agent"]["semantic_plan_execution_complete"] is True
     assert result["agent"]["evidence_validation_outcome"] == "passed"

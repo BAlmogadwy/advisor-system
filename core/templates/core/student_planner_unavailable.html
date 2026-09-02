@@ -8,6 +8,6 @@
 <section class="card p-4" role="alert">
   <h2 class="h5">{% if LANGUAGE_CODE == 'ar' %}تعذّر إعداد أداة التخطيط حاليًا{% else %}A planning workspace cannot be prepared yet{% endif %}</h2>
   <p>{{ planner_error }}</p>
-  <a class="btn btn-outline-primary" href="{% url 'student_advisor' %}">{% if LANGUAGE_CODE == 'ar' %}العودة إلى المرشد الذكي{% else %}Back to the AI Advisor{% endif %}</a>
+  <a class="btn btn-outline-primary" href="{% url 'student_advisor' %}">{% if LANGUAGE_CODE == 'ar' %}العودة إلى مرشد التخطيط الأكاديمي{% else %}Back to the planning adviser{% endif %}</a>
 </section>
 {% endblock %}

@@ -63,12 +63,25 @@ def _case(contract: dict, case_id: str) -> dict:
 
 def test_contract_is_versioned_focused_private_and_balanced(contract: dict) -> None:
     assert contract["meta"]["name"] == "advisor_v21_semantic_plan"
-    assert contract["meta"]["version"] == "2.4"
-    assert contract["meta"]["count"] == len(contract["cases"]) == 36
+    assert contract["meta"]["version"] == "2.8"
+    assert contract["meta"]["count"] == len(contract["cases"]) == 57
     assert tuple(contract["meta"]["scoring_dimensions"]) == SCORE_DIMENSIONS
     assert {case["language"] for case in contract["cases"]} == {"ar-SA", "en"}
     assert sum(case["case_type"] == "regex_false_positive" for case in contract["cases"]) >= 8
     assert all("student_id" not in case["required_arguments"] for case in contract["cases"])
+
+
+def test_contract_case_count_remains_bounded_above_current_growth(contract: dict) -> None:
+    oversized = copy.deepcopy(contract)
+    template = _case(oversized, "V21-SP-033")
+    for index in range(58, 63):
+        extra = copy.deepcopy(template)
+        extra["id"] = f"V21-SP-{index:03d}"
+        oversized["cases"].append(extra)
+    oversized["meta"]["count"] = len(oversized["cases"])
+
+    with pytest.raises(ContractValidationError, match="between 20 and 60"):
+        validate_contract(oversized)
 
 
 def test_contract_tool_surface_matches_v21_runtime(contract: dict) -> None:
@@ -688,12 +701,30 @@ def test_semantic_policy_cases_are_non_vacuous_and_score_independently(
 ) -> None:
     from core.services.student_advisor_v21_policy import active_semantic_policy_ids
 
-    policy_cases = [_case(contract, f"V21-SP-{index:03d}") for index in range(33, 37)]
+    policy_cases = [
+        *[_case(contract, f"V21-SP-{index:03d}") for index in range(33, 44)],
+        _case(contract, "V21-SP-052"),
+        _case(contract, "V21-SP-053"),
+        *[_case(contract, f"V21-SP-{index:03d}") for index in range(54, 58)],
+    ]
     expected_ids = (
         "standalone_corequisite_unsupported",
         "single_course_choice_balanced",
         "plain_available_courses_only",
         "pinned_course_addition_balanced",
+        "personalized_prerequisite_analysis",
+        "personalized_prerequisite_analysis",
+        "priority_course_addition_unlock",
+        "priority_course_addition_unlock",
+        "fastest_graduation_timetable_review",
+        "one_course_graduation_impact",
+        "best_timetable_preference_clarification",
+        "timetable_space_course_addition",
+        "graduation_improving_course_swap",
+        "plain_available_courses_only",
+        "plain_available_courses_only",
+        "plain_available_courses_only",
+        "plain_available_courses_only",
     )
 
     for case, expected_id in zip(policy_cases, expected_ids, strict=True):
@@ -708,7 +739,7 @@ def test_semantic_policy_cases_are_non_vacuous_and_score_independently(
             score_case(case, _perfect_plan(case))["dimensions"]["semantic_policy_correct"] is True
         )
 
-    pinned = policy_cases[-1]
+    pinned = _case(contract, "V21-SP-036")
     wrong = _perfect_plan(pinned)
     wrong["evidence_requests"][0]["arguments"]["objective"] = "timetable_fit"
     scored = score_case(pinned, wrong)
@@ -716,6 +747,23 @@ def test_semantic_policy_cases_are_non_vacuous_and_score_independently(
     assert scored["dimensions"]["outcome_coverage_correct"] is True
     assert scored["dimensions"]["semantic_policy_correct"] is False
     assert scored["dimensions"]["arguments_correct"] is False
+
+
+def test_best_timetable_policy_rejects_wrong_clarification_kind_non_vacuously(
+    contract: dict,
+) -> None:
+    case = _case(contract, "V21-SP-043")
+    wrong = _perfect_plan(case)
+    wrong["clarification_kind"] = "generic"
+
+    scored = score_case(case, wrong)
+
+    assert scored["dimensions"]["mode_correct"] is True
+    assert scored["dimensions"]["outcomes_correct"] is True
+    assert scored["dimensions"]["semantic_policy_correct"] is False
+    assert scored["actual"]["semantic_policy_violations"] == [
+        "best_timetable_preference_clarification"
+    ]
 
 
 def test_semantic_policy_gate_requires_every_closed_case(contract: dict) -> None:
