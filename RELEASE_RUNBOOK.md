@@ -97,3 +97,74 @@ backlog is reduced. The local commit hook may therefore be skipped with
 `SKIP=mypy`; do not suppress the advisory CI job or describe it as clean unless
 its report actually has zero errors. Security runs after the lint, advisory
 typecheck, test, and production-preflight jobs complete.
+
+## Production-safe timetable delta sync
+
+Never use `loaddata`, `import_release_seed`, `deployment_cutover`, a raw database
+copy, or a full seed replacement to synchronize a live production database.
+Those paths can erase production-only accounts and runtime state.
+
+The supported workflow is deliberately limited to `academic_year=1448`,
+`term=1`, and `source=scraper_timetable`:
+
+1. Freeze separate baseline and target SQLite copies. Neither input may be the
+   configured live SQLite database, and neither may have a data-bearing WAL or
+   journal sidecar.
+2. Export the deterministic restricted-data artifact locally:
+
+   ```powershell
+   python manage.py export_timetable_delta <baseline.sqlite3> <target.sqlite3> <delta.json>
+   ```
+
+3. Review the SHA-256 sidecar, exclusions, and every operation count. Keep the
+   artifact out of Git: it contains student identifiers and timetable links.
+4. Immediately before transfer, obtain operator approval for sending that
+   restricted artifact to the named production service. Create and verify a
+   fresh production logical backup before applying it.
+5. Stage the artifact in the production web service without printing its
+   contents, then run the default dry-run:
+
+   ```text
+   python manage.py import_timetable_delta <delta.json>
+   ```
+
+6. Compare the dry-run's artifact SHA, production base-state SHA, and all
+   operation counts with the independently reviewed values. Apply only by
+   repeating every printed expectation:
+
+   ```text
+   python manage.py import_timetable_delta <delta.json> --apply \
+     --expect-sha256 <artifact-sha256> \
+     --expect-base-state-sha256 <base-state-sha256> \
+     --expect-count sections_created=<n> \
+     --expect-count sections_updated=<n> \
+     --expect-count section_upserts=<n> \
+     --expect-count programs_added=<n> \
+     --expect-count programs_updated=<n> \
+     --expect-count programs_removed=<n> \
+     --expect-count meetings_added=<n> \
+     --expect-count meetings_updated=<n> \
+     --expect-count meetings_removed=<n> \
+     --expect-count students_replaced=<n> \
+     --expect-count student_term_sections_added=<n> \
+     --expect-count student_term_sections_removed=<n>
+   ```
+
+The importer takes the shared section-operation guard, a non-blocking PostgreSQL
+advisory transaction lock, a bounded write-blocking/read-preserving table-lock
+window, and deterministic row locks. Confirm no bulk timetable writer is active
+before starting; if a conflicting writer exists, the bounded lock acquisition
+fails closed instead of waiting indefinitely. The importer recomputes the
+production state under lock, applies everything in one transaction, rebuilds
+only derived observed programme memberships, and verifies a zero-pending-operation
+target postcondition before commit.
+
+If the shell loses its response after commit, retry the exact same fully pinned
+apply command. An exact base can still apply; an exact already-present target
+returns `mode=already_applied` with zero writes; every other stale or partial
+state fails closed. Never change the original SHA or operation-count expectations
+to make a retry pass.
+
+After a successful apply, delete the staged restricted artifact, confirm `/health`
+on both production origins, inspect worker/cron health, and record counts only.
+Never put student IDs or artifact contents in tickets, logs, commits, or chat.

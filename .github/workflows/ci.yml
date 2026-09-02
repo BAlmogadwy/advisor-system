@@ -99,7 +99,8 @@ jobs:
     #
     # This job is not a duplicate of the suite; it is the only place those
     # guarantees are tested. Deliberately narrow: migrations, the planner
-    # lifecycle, and the five real threaded concurrency tests. Widening it to the
+    # lifecycle, the five real threaded concurrency tests, and the timetable-delta
+    # PostgreSQL lock regression. Widening it to the
     # full suite on PostgreSQL is a separate decision with its own cost.
     name: planner (PostgreSQL 16)
     runs-on: ubuntu-latest
@@ -154,16 +155,19 @@ jobs:
           pytest -q -p no:randomly \
             tests/test_planner_draft_lifecycle.py \
             tests/test_planner_draft_concurrency.py \
+            tests/test_timetable_delta_import_postgres.py \
             --maxfail=1
       - name: Fail if the PostgreSQL-only tests did not actually run
-        # Belt and braces alongside REQUIRE_POSTGRES_TESTS: assert the five
-        # concurrency tests reported as PASSED, not merely that the job exited 0.
+        # Belt and braces alongside REQUIRE_POSTGRES_TESTS: assert all six
+        # PostgreSQL-only tests reported as PASSED, not merely that the job exited 0.
         run: |
-          pytest -q -p no:randomly tests/test_planner_draft_concurrency.py \
+          pytest -q -p no:randomly \
+            tests/test_planner_draft_concurrency.py \
+            tests/test_timetable_delta_import_postgres.py \
             --no-header -rA 2>&1 | tee /tmp/conc.txt
           passed=$(grep -c '^PASSED' /tmp/conc.txt || true)
           echo "concurrency tests passed: $passed"
-          test "$passed" -eq 5 || { echo "expected 5 passing concurrency tests"; exit 1; }
+          test "$passed" -eq 6 || { echo "expected 6 passing PostgreSQL tests"; exit 1; }
 
   production-preflight:
     # This job mirrors the dependency boundary Render actually deploys. The

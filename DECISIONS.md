@@ -31,3 +31,22 @@
   read snapshot that cannot be promoted to a writer. Acquiring the SQLite writer
   slot at atomic-block entry makes the configured timeout effective and prevents
   intermittent lock failures without changing production PostgreSQL semantics.
+
+## ADR-005: Synchronize registrar timetable data with a guarded natural-key delta
+- **Decision:** Publish local timetable changes through the versioned
+  `academic_timetable_delta.v1` export/import workflow. The importer is fixed to
+  academic year `1448`, term `1`, and source `scraper_timetable`; it replaces the
+  complete registrar-section set only for explicitly named, roster-matched
+  students and never deletes global sections.
+- **Status:** Accepted
+- **Date:** 2026-09-02
+- **Rationale:** A production database contains accounts, sessions, conversations,
+  planner state, OTPs, and production-only students that do not exist in a local
+  SQLite snapshot. Replacing or loading that snapshot would destroy live state.
+  A SHA-pinned, count-pinned, natural-key delta can update the intended registrar
+  slice atomically while preserving production-only and non-registrar data.
+- **Consequences:** The importer fails closed when the production logical state,
+  touched-student roster fields, migrations, or expected operation counts differ
+  from the frozen baseline. New roster records, roster-field changes, orphan
+  sections, empty meeting extracts, and non-registrar relationship changes are
+  excluded and require a separate reviewed workflow.
