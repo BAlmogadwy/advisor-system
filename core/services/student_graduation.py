@@ -272,7 +272,26 @@ def _simulate_future_terms(
 ) -> dict:
     current_codes = {item["code"] for item in current_courses}
     simulated_passed = set(actual_passed) | current_codes
-    effective_credits = int(earned_credits) + int(current_credits)
+    # The scenario counts every course it schedules at the PLAN's credit value,
+    # so its starting total must be denominated the same way.  Seeding purely
+    # from the registrar aggregate mixed two accounting systems at this seam: a
+    # plan course already passed contributed the registrar's figure for it, while
+    # the same course scheduled a term later would contribute the plan's.  Where
+    # the two disagree the difference is simply lost, and the six second-cohort
+    # plans gate co-op at exactly `plan_total - co-op credits`, so ANY lost credit
+    # is fatal.  Fourteen DS2 students hit precisely that: their CS111 pass is
+    # absent from the registrar's earned total, the scenario therefore never
+    # re-scheduled it and never counted it either, and all fourteen topped out at
+    # 143 credits against a 147 gate they in fact reach.
+    #
+    # Credits earned OUTSIDE the plan -- transfers, a programme change -- exist
+    # only in the registrar aggregate and must survive, so take whichever total
+    # is larger.  That is identical to "plan credits plus outside-plan surplus",
+    # and it is a no-op wherever the two sources already agree.
+    plan_credits_passed = sum(
+        int(plan_rows[code].get("credits") or 0) for code in simulated_passed if code in plan_rows
+    )
+    effective_credits = max(int(earned_credits) + int(current_credits), plan_credits_passed)
     cursor_year, cursor_term = int(year), int(term)
     term_plan: list[dict] = []
     no_progress_terms = 0

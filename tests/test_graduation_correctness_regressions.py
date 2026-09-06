@@ -184,3 +184,87 @@ def test_registered_passed_retake_does_not_count_twice_toward_hour_gate():
         "effective_in_scenario": 97,
         "remaining": 3,
     }
+
+
+def _plan_row(program: str, code: str, term: int, credits: int, name: str) -> None:
+    ProgrammeRequirement.objects.create(
+        program=program,
+        course_code=code,
+        course_name=name,
+        type="Mandatory",
+        programme_term=term,
+        credit_hours=credits,
+    )
+
+
+def test_plan_credits_survive_a_registrar_total_that_undercounts_a_passed_course():
+    """A zero-slack hour gate must not be lost in the seam between two credit systems.
+
+    The scenario schedules future courses at the PLAN's credit value but used to
+    seed itself from the registrar's aggregate alone. A plan course already passed
+    whose credits are missing from that aggregate was therefore counted by neither
+    side: never re-scheduled, because the scenario knows it is passed, and never
+    added, because the registrar never had it.
+
+    That is not hypothetical. Fourteen DS2 students hold a passed CS111 (4 credits)
+    that the registrar's `total_earned_credits` omits. All six second-cohort plans
+    gate co-op at exactly `plan_total - co-op credits`, so those four credits were
+    the difference between 143 and the 147 the gate demands, and all fourteen lost
+    their forecast entirely.
+
+    Here ZSG101's four credits are absent from the registrar total, and the gate
+    needs every credit in the plan bar the co-op's own.
+    """
+
+    student_id = 4_401_993
+    student = Student.objects.create(
+        student_id=student_id,
+        registration_no=str(student_id),
+        name="Undercounted registrar total",
+        program="ZSG",
+        section="M",
+        status="active",
+        # The registrar has no record of ZSG101's four credits.
+        total_earned_credits=0,
+        current_registered_credits=3,
+    )
+    undercounted = Course.objects.create(
+        course_code="ZSG101", description="Passed but uncounted", credit_hours=4
+    )
+    Course.objects.create(course_code="ZSG201", description="Registered now", credit_hours=3)
+    Course.objects.create(course_code="ZSG490", description="Co-op", credit_hours=6)
+    _plan_row("ZSG", "ZSG101", 1, 4, "Passed but uncounted")
+    _plan_row("ZSG", "ZSG201", 1, 3, "Registered now")
+    _plan_row("ZSG", "ZSG490", 2, 6, "Co-op")
+    # plan total 13, co-op 6 -> the gate is satisfiable only by passing everything else.
+    Prerequisite.objects.create(
+        program="ZSG", course_code="ZSG490", prerequisite_course_code="7(HOURS)"
+    )
+    StudentCourse.objects.create(student=student, course=undercounted, status="passed")
+    section = TermSection.objects.create(
+        course_code="ZSG201",
+        course_number="ZSG201",
+        course_key="ZSG201",
+        course_name="Registered now",
+        section="M1",
+        available_capacity=30,
+        registered_count=10,
+    )
+    StudentTermSection.objects.create(
+        student_id=student_id,
+        academic_year="1448",
+        term="1",
+        term_section=section,
+        source="scraper_timetable",
+    )
+
+    report = build_graduation_report(
+        student_id, 1448, 1, planning_baseline_kind=REGISTERED_TIMETABLE
+    )
+
+    # 4 passed + 3 registered = the 7 the gate asks for; the registrar aggregate
+    # alone would have offered 3 and left the co-op permanently unreachable.
+    assert report["unresolved_requirements"] == []
+    assert report["simulation_completed"] is True
+    assert report["estimated_additional_terms"] == 1
+    assert [term["course_codes"] for term in report["term_plan"]] == [["ZSG490"]]
