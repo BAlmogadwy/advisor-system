@@ -14871,6 +14871,21 @@ html body .btn.sp-requested-remove {
   font-size: .78rem;
   line-height: 1.55;
 }
+/* An unsatisfiable prerequisite is a curriculum fault, not a course the student
+   has yet to take. It must not read like the ordinary missing-prerequisite line
+   directly above it. */
+.student-grad-blocker-unsatisfiable,
+.ap-grad-blocker-unsatisfiable {
+  margin-top: .3rem;
+  padding: .35rem .5rem;
+  border-inline-start: 3px solid var(--amber);
+  border-radius: 6px;
+  background: var(--amber-dim);
+  color: var(--warning);
+  font-weight: 700;
+}
+.student-grad-blocker-unsatisfiable bdi,
+.ap-grad-blocker-unsatisfiable bdi { font-weight: 800; }
 .student-grad-blocker-title { align-items: baseline; justify-content: flex-start; margin-bottom: .3rem; }
 .student-grad-blocker-title bdi { color: var(--teal); font-weight: 800; }
 .student-grad-blocker-title span { overflow: hidden; color: var(--t1); font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }

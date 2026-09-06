@@ -16,11 +16,16 @@ or seats.
 
 from __future__ import annotations
 
+import logging
 import math
 import re
 
 from core.services.credit_policy import RECOMMENDED_MAX_CREDITS
-from core.services.eligibility import evaluate_prerequisites, split_hour_prereqs
+from core.services.eligibility import (
+    evaluate_prerequisites,
+    scenario_effective_credits,
+    split_hour_prereqs,
+)
 from core.services.recommender import (
     calculate_real_student_term,
     recommend_next_courses_for_state,
@@ -46,6 +51,8 @@ MAX_SIMULATED_TERMS = 24
 MAX_CURRENT_TERM_CHANGES = 10
 MAX_REPLACEMENT_EVALUATIONS = 120
 MAX_REPLACEMENT_RESULTS = 5
+
+logger = logging.getLogger(__name__)
 PROVEN_GRADUATION_IMPROVEMENT_EFFECTS = frozenset({"EARLIER", "FORECAST_COMPLETED"})
 MUST_HAVE_CURRENT_TERM = "must_have_current_term"
 OPTIMIZED_CURRENT_OFFERINGS_KIND = "optimized_current_offerings"
@@ -272,7 +279,32 @@ def _simulate_future_terms(
 ) -> dict:
     current_codes = {item["code"] for item in current_courses}
     simulated_passed = set(actual_passed) | current_codes
-    effective_credits = int(earned_credits) + int(current_credits)
+    # The scenario counts every course it schedules at the PLAN's credit value, so
+    # its starting total must be denominated the same way or credits vanish at the
+    # seam.  `scenario_effective_credits` owns that rule and explains why it is
+    # deliberately not the same rule `hour_gate` applies to the factual view.
+    plan_credits_passed = sum(
+        int(plan_rows[code].get("credits") or 0) for code in simulated_passed if code in plan_rows
+    )
+    registrar_seed = int(earned_credits) + int(current_credits)
+    effective_credits = scenario_effective_credits(registrar_seed, plan_credits_passed)
+    scenario_credit_seed = effective_credits
+    # Which of two sources of truth the scenario believed is not a detail: on a
+    # zero-slack gate it decides whether the student graduates.  Silently switching
+    # authority and leaving no trace is how the ORIGINAL defect stayed invisible
+    # for so long, so say it once, here, whenever they disagree.
+    seed_basis = "plan" if plan_credits_passed > registrar_seed else "registrar"
+    if seed_basis == "plan":
+        logger.info(
+            "graduation scenario seed: student=%s program=%s basis=plan "
+            "registrar=%d plan_credits_passed=%d (registrar aggregate omits %d "
+            "credits of passed plan courses)",
+            student_id,
+            program,
+            registrar_seed,
+            plan_credits_passed,
+            plan_credits_passed - registrar_seed,
+        )
     cursor_year, cursor_term = int(year), int(term)
     term_plan: list[dict] = []
     no_progress_terms = 0
@@ -412,6 +444,10 @@ def _simulate_future_terms(
         )
     return {
         "term_plan": term_plan,
+        "scenario_credit_seed": scenario_credit_seed,
+        "scenario_credit_seed_basis": seed_basis,
+        "scenario_credit_seed_registrar": registrar_seed,
+        "scenario_credit_seed_plan": plan_credits_passed,
         "estimated_additional_terms": len(term_plan) if not unresolved else None,
         "simulated_terms_examined": len(term_plan),
         "productive_terms_planned": sum(
@@ -732,6 +768,13 @@ def build_graduation_report(
         "remaining_credits": remaining_credits,
         "passed_credits_in_plan": passed_credits,
         "earned_credits_registrar": int(earned_registrar or 0),
+        # Which credit total the SCENARIO believed, and why. Both inputs were
+        # already published; nothing said which one the forecast consumed, and on
+        # a zero-slack gate that is the whole answer.
+        "scenario_credit_seed": simulation["scenario_credit_seed"],
+        "scenario_credit_seed_basis": simulation["scenario_credit_seed_basis"],
+        "scenario_credit_seed_registrar": simulation["scenario_credit_seed_registrar"],
+        "scenario_credit_seed_plan": simulation["scenario_credit_seed_plan"],
         "planning_baseline_academic_year": int(year),
         "planning_baseline_term": int(term),
         "planning_baseline_kind": baseline_kind,
@@ -1350,6 +1393,14 @@ def _prepare_current_term_changes(
         )
         if query_cache is not None:
             query_cache[earned_key] = earned
+
+    # This is a PROJECTION -- "if these courses were placed next term" -- not a
+    # registration decision, so it must read credits on the same basis the
+    # simulator does.  Left on the registrar aggregate alone it contradicted the
+    # forecast outright on a zero-slack gate: the forecast placed the co-op and
+    # reported graduation while this validator refused the very same course for
+    # want of the very same credits, both on one adviser screen.
+    earned = scenario_effective_credits(earned, int(baseline.get("passed_credits_in_plan") or 0))
 
     if allow_same_term_direct_prerequisites:
         current_codes = {

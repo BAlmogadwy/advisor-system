@@ -27,6 +27,7 @@ from core.models import (
     TermSectionMeeting,
     TermSectionProgram,
 )
+from core.services.curriculum_integrity import find_orphan_prerequisites
 from core.services.section_programmes import reconcile_observed_section_programs
 
 BASE_DIR = Path(__file__).resolve().parents[2]
@@ -137,6 +138,13 @@ def run_integrity_checks() -> dict[str, Any]:
         + ProgrammeRequirement.objects.filter(programme_term__isnull=True).count()
     )
 
+    # A prerequisite naming a course its own programme's plan lacks can never be
+    # satisfied, so it blocks that course for every student in the programme.  The
+    # sweep already owns the neighbouring Prerequisite and ProgrammeRequirement
+    # checks, and this is the screen a human actually opens -- an audit that only
+    # exists behind a management command is documentation, not a guard.
+    orphan_prerequisites = find_orphan_prerequisites()
+
     return {
         "ok": True,
         "integrity_check": integrity_result,
@@ -144,11 +152,20 @@ def run_integrity_checks() -> dict[str, Any]:
         "duplicate_prerequisite_triplets": duplicate_prereq_triplets,
         "invalid_credit_rows": invalid_credit_rows,
         "invalid_programme_term_rows": invalid_term_rows,
+        "orphan_prerequisites": len(orphan_prerequisites),
+        "orphan_prerequisite_details": [
+            finding.describe() for finding in orphan_prerequisites[:50]
+        ],
         "advice": {
             "orphan_student_courses": "Delete orphan rows or re-insert missing students.",
             "duplicate_prerequisite_triplets": "Deduplicate prerequisites table for exact triplets.",
             "invalid_credit_rows": "Fix source catalog rows with non-positive credit hours.",
             "invalid_programme_term_rows": "Fix programme_term outside 1..10 range.",
+            "orphan_prerequisites": (
+                "A prerequisite names a course absent from that programme's plan; it can "
+                "never be satisfied. Repoint it at the course the plan actually contains "
+                "(a renumbered equivalent), or remove it if the requirement is not real."
+            ),
         },
     }
 

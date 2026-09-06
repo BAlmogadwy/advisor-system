@@ -417,6 +417,10 @@
         <li>
           <div><bdi class="ap-grad-course-code" dir="ltr">{{ requirement.code }}</bdi><span dir="auto">{{ requirement.name }}</span></div>
           {% if requirement.missing_course_prerequisites %}<p>{% if LANGUAGE_CODE == 'ar' %}متطلبات سابقة ناقصة:{% else %}Missing prerequisites:{% endif %} {% for code in requirement.missing_course_prerequisites %}<bdi dir="ltr">{{ code }}</bdi>{% if not forloop.last %}, {% endif %}{% endfor %}</p>{% endif %}
+          {# Not "not taken yet" - absent from the plan entirely, so unsatisfiable. Shown
+             separately because as an ordinary missing prerequisite DS2's MATH204 looked
+             routine on this screen for all 191 students. #}
+          {% if requirement.missing_prerequisites_outside_plan %}<p class="ap-grad-blocker-unsatisfiable">{% if LANGUAGE_CODE == 'ar' %}غير مُدرَج في خطة البرنامج، ولا يمكن استيفاؤه؛ يُرجى مراجعة القبول والتسجيل:{% else %}Not in this programme's plan, so it can never be satisfied - refer to the registrar:{% endif %} {% for code in requirement.missing_prerequisites_outside_plan %}<bdi dir="ltr">{{ code }}</bdi>{% if not forloop.last %}, {% endif %}{% endfor %}</p>{% endif %}
           {% if requirement.credit_hour_gate %}<p>{% if LANGUAGE_CODE == 'ar' %}شرط الساعات — المطلوب{% else %}Credit-hour gate — required{% endif %}: {{ requirement.credit_hour_gate.required }}; {% if LANGUAGE_CODE == 'ar' %}المحتسب{% else %}effective{% endif %}: {{ requirement.credit_hour_gate.effective_in_scenario }}; {% if LANGUAGE_CODE == 'ar' %}المتبقي{% else %}remaining{% endif %}: {{ requirement.credit_hour_gate.remaining }}</p>{% endif %}
         </li>
         {% endfor %}

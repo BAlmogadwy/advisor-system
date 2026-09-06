@@ -162,6 +162,15 @@
                   {% for code in requirement.missing_course_prerequisites %}<bdi dir="ltr">{{ code }}</bdi>{% if not forloop.last %}، {% endif %}{% endfor %}
                 </p>
               {% endif %}
+              {# A prerequisite outside the plan is not "not taken yet" - it can never be
+                 taken, because the programme does not contain it. Listed only among the
+                 ordinary missing prerequisites, DS2's MATH204 read as an ordinary gap for
+                 191 students and nobody questioned it. #}
+              {% if requirement.missing_prerequisites_outside_plan %}
+                <p class="mb-0 student-grad-blocker-unsatisfiable">{% if LANGUAGE_CODE == 'ar' %}غير مُدرَج في خطة البرنامج، ولا يمكن استيفاؤه؛ يُرجى مراجعة القبول والتسجيل:{% else %}Not in this programme's plan, so it can never be satisfied - refer to the registrar:{% endif %}
+                  {% for code in requirement.missing_prerequisites_outside_plan %}<bdi dir="ltr">{{ code }}</bdi>{% if not forloop.last %}، {% endif %}{% endfor %}
+                </p>
+              {% endif %}
               {% if requirement.credit_hour_gate %}
                 <p class="mb-0">{% if LANGUAGE_CODE == 'ar' %}الساعات المحتسبة في المسار التقديري مقابل الساعات المطلوبة:{% else %}After the built path, the simulation reaches{% endif %}
                   <bdi dir="ltr">{{ requirement.credit_hour_gate.effective_in_scenario }}/{{ requirement.credit_hour_gate.required }}</bdi>
