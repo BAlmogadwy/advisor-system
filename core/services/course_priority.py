@@ -21,6 +21,13 @@ def build_program_dependency_graph(program: str) -> dict[str, set[str]]:
     Prerequisite rows can also reference a course outside the declared plan, so
     both endpoints of every valid row are retained.  A comma-separated cell is
     interpreted as multiple prerequisite codes, matching the existing schema.
+
+    That tolerance is a SCORING decision, not an endorsement: importance ranking
+    must not crash or silently drop an edge because one endpoint is unknown.  Such
+    a row is nevertheless a data defect -- it can never be satisfied, so it blocks
+    its course for every student in the programme.  `core.services.curriculum_integrity`
+    is the authority that says so, and this is the one place the shape was
+    previously absorbed without comment.
     """
 
     normalized_program = str(program or "").strip().upper()

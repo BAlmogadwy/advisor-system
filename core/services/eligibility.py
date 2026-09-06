@@ -43,6 +43,52 @@ def effective_credits(earned: int, registered: int, *, strict_passed_only: bool 
     return int(earned or 0) if strict_passed_only else int(earned or 0) + int(registered or 0)
 
 
+def scenario_effective_credits(registrar_total: int, plan_credits_passed: int) -> int:
+    """Credits an hour gate sees inside a PROJECTED plan, from two disagreeing sources.
+
+    A scenario that schedules future courses at ``ProgrammeRequirement.credit_hours``
+    must denominate its starting total the same way, or credits vanish at the seam:
+    a plan course already passed is never re-scheduled, because the scenario knows
+    it is passed, and never added, because the registrar aggregate omits it.
+    Fourteen DS2 students hold a ``passed`` CS111 the registrar does not count, and
+    the six second-cohort plans gate co-op at exactly ``plan_total - co-op credits``
+    — so those four credits were the whole difference between a forecast and none.
+
+    The larger of the two. A no-op wherever the sources agree, which is 3724 of
+    3741 students, and it preserves credits earned outside the plan (transfers, a
+    programme change) because those live only in the registrar aggregate.
+
+    A HEURISTIC, not an identity. Writing ``R_in`` for the registrar's credits
+    against in-plan passes, ``O`` for its outside-plan credits and
+    ``S = plan_credits_passed - R_in`` for the shortfall at the seam::
+
+        max(R_in + O, R_in + S) = R_in + max(O, S)      what this returns
+        R_in + S + O                                    what is actually held
+        loss = min(O, S)
+
+    A student with BOTH a registrar seam and genuine outside-plan credit loses the
+    smaller of the two. The exact value is not computable here: the registrar
+    aggregate is a single number, so ``R_in`` and ``O`` cannot be separated out of
+    it, and inventing a decomposition would inflate credits on a guess. The
+    conservative under-count is the right failure direction for a gate.
+
+    Latent today for two independent reasons, neither of them by design: an
+    out-of-plan registration contributes 0 to the baseline credit total, and all
+    six second-cohort gates sit at exactly ``plan_total - co-op credits``, so the
+    end state lands on the gate either way. Raise any gate above that and the loss
+    starts to matter.
+
+    DELIBERATELY NOT used by :func:`hour_gate`. That answers "may this student
+    register for this course NOW", where the registrar's own total is the
+    authority and a projection has no standing. This answers "will the student
+    reach the gate along this simulated path". A report can therefore show a
+    reconciled scenario gate beside an unreconciled factual one; they are answers
+    to different questions and the asymmetry is the point, not drift.
+    """
+
+    return max(int(registrar_total or 0), int(plan_credits_passed or 0))
+
+
 def prereq_satisfied(
     prereq: str,
     passed: set[str],

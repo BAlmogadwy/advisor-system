@@ -34,7 +34,7 @@ from __future__ import annotations
 from collections import defaultdict
 from dataclasses import dataclass
 
-from core.models import Prerequisite, ProgrammeRequirement
+from core.models import ElectiveCourse, Prerequisite, ProgrammeRequirement
 from core.services.eligibility import split_hour_prereqs
 from core.services.student_helpers import normalize_code
 
@@ -64,9 +64,22 @@ class OrphanPrerequisite:
 
 
 def _plans_by_program() -> dict[str, set[str]]:
+    """Every course code a programme can legitimately name, by programme.
+
+    The elective catalogue counts. `eligibility._course_exists_in_program` is the
+    project's existing answer to "is this course in this programme", and it
+    consults `ElectiveCourse` as well as the declared plan -- a plan carries
+    placeholder slots (AI1, AI2) that the catalogue resolves. Checking only
+    `ProgrammeRequirement` would call a prerequisite naming a real elective an
+    orphan. No live row depends on this today; the two definitions simply must
+    not disagree.
+    """
+
     plans: dict[str, set[str]] = defaultdict(set)
     for program, course_code in ProgrammeRequirement.objects.values_list("program", "course_code"):
         plans[normalize_code(program)].add(normalize_code(course_code))
+    for programme, course_code in ElectiveCourse.objects.values_list("programme", "course_code"):
+        plans[normalize_code(programme)].add(normalize_code(course_code))
     return plans
 
 
@@ -82,9 +95,15 @@ def find_orphan_prerequisites(*, programs: list[str] | None = None) -> list[Orph
     """
 
     plans = _plans_by_program()
-    rows = Prerequisite.objects.values_list(
-        "id", "program", "course_code", "prerequisite_course_code"
-    )
+    # Explicitly ordered. Without an ORDER BY, SQLite returns rowid order but
+    # PostgreSQL returns heap order, which shifts after any UPDATE or VACUUM.  The
+    # finding list is sorted before it is returned either way, but a
+    # PROGRAMME_HAS_NO_PLAN finding reports whichever row it saw first, so an
+    # unordered scan would make that row -- and the report -- unstable in
+    # production while looking stable locally.
+    rows = Prerequisite.objects.order_by(
+        "program", "course_code", "prerequisite_course_code", "id"
+    ).values_list("id", "program", "course_code", "prerequisite_course_code")
     # Programme identity is compared normalised everywhere else in this codebase,
     # so the filter normalises too; a database-side `program__in` would silently
     # miss a row stored as "ds2" or with a stray space.
