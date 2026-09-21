@@ -4,6 +4,7 @@ from typing import Any
 from django.conf import settings
 from django.db import models, transaction
 from django.db.models import F
+from django.db.models.functions import Trim, Upper
 
 
 class Student(models.Model):
@@ -346,6 +347,132 @@ class CourseInstructor(models.Model):
 
     def __str__(self) -> str:
         return f"CourseInstructor({self.program}/{self.course_code}/{self.section}->{self.instructor_id})"
+
+
+class SectionInstructor(models.Model):
+    """Who *does* teach one section, as opposed to who *may* teach the course.
+
+    ``CourseInstructor`` records eligibility at course granularity and cannot say
+    which of CS113's thirty-one sections a person holds — the live report names
+    eight different people across them.  The registrar publishes that decision per
+    section (``facultySectionsAvilableSeats.do`` — استاذ المادة against الشعبة), and
+    this table stores it.
+
+    **Keyed by natural identity, deliberately not by a ``TermSection`` FK.**  Four
+    operations delete section rows out from under an assignment:
+    ``scheduler.bridge`` on every ``plan()`` run, and ``db_admin_ops`` for the
+    section-snapshot clear and for external courses (93 of the 855 live sections),
+    plus the scenario cascade.  A FK would make an assignment a casualty of any of
+    them, which is what made the 2026-06 ``SectionInstructor`` (migration 0034,
+    dropped in 0035 with no data migration) fragile.
+    ``(scenario, course_key, section)`` is owned by the registrar, is already the
+    key ``ux_term_sections_global`` enforces, and survives all four.  A row may
+    therefore describe a section that does not exist yet; resolution is a join,
+    never a dependency.
+
+    The release-seed import is NOT in that list and no key can survive it:
+    ``_flush_target_database`` truncates every table in the target before loading,
+    so this one is replaced like any other — which is the intended behaviour for a
+    rebuild, not a loss.
+
+    ``scenario`` NULL means a registrar/global section — the only kind the importer
+    writes.  Scenario-scoped rows are supported for symmetry with ``TermSection``
+    but carry the caveat that a generated section's label is positional
+    (``S{index}``, recomputed from demand each build), so it is not a stable
+    identity.
+
+    This table changes no behaviour on its own: nothing reads it into the planner
+    yet, and nothing here writes ``TermSectionMeeting.instructor``.
+    """
+
+    scenario = models.ForeignKey(
+        "TimetableScenario",
+        on_delete=models.CASCADE,
+        related_name="section_instructors",
+        null=True,
+        blank=True,
+    )
+    course_key = models.TextField()  # normalised on write (strip + upper)
+    section = models.TextField()  # normalised on write (strip + upper)
+    instructor = models.ForeignKey(
+        Instructor,
+        on_delete=models.PROTECT,
+        related_name="section_links",
+    )
+    ROLE_CHOICES = (("primary", "Primary"), ("co", "Co-instructor"), ("lab", "Lab"))
+
+    role = models.TextField(default="primary", choices=ROLE_CHOICES)
+    source = models.TextField(blank=True, default="")  # provenance of the assignment
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "section_instructors"
+        constraints = [
+            # A unique index treats NULLs as distinct, so the scenario-owned and
+            # global cases need separate partial constraints — the same split
+            # ``TermSection`` uses, for the same reason.
+            models.UniqueConstraint(
+                fields=["scenario", "course_key", "section", "instructor"],
+                condition=models.Q(scenario__isnull=False),
+                name="ux_section_instructor_scenario",
+            ),
+            models.UniqueConstraint(
+                fields=["course_key", "section", "instructor"],
+                condition=models.Q(scenario__isnull=True),
+                name="ux_section_instructor_global",
+            ),
+            # Exactly one primary per section, mirroring
+            # ``ux_course_instructor_one_primary``.  Without it "primary" would be
+            # whichever row was inserted first — the defect migration 0035 fixed at
+            # course level and that the dropped 0034 model never had.
+            models.UniqueConstraint(
+                fields=["scenario", "course_key", "section"],
+                condition=models.Q(scenario__isnull=False, role="primary"),
+                name="ux_section_instructor_one_primary_scenario",
+            ),
+            models.UniqueConstraint(
+                fields=["course_key", "section"],
+                condition=models.Q(scenario__isnull=True, role="primary"),
+                name="ux_section_instructor_one_primary_global",
+            ),
+            # Enforced in the DATABASE, not in ``save()``.  The unique indexes
+            # compare raw stored text, and ``bulk_create`` / ``QuerySet.update``
+            # never call ``save()`` — so a Python-only normalisation let
+            # ``cs111``/``m27`` sit beside ``CS111``/``M27`` as a second primary,
+            # and let ``"   "`` pass a plain ``<> ''`` check.
+            models.CheckConstraint(
+                condition=models.Q(course_key=Upper(Trim(F("course_key"))))
+                & ~models.Q(course_key=""),
+                name="ck_si_course_key_normalised",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(section=Upper(Trim(F("section")))) & ~models.Q(section=""),
+                name="ck_si_section_normalised",
+            ),
+            # ``role`` participates in the one-primary partial index by literal
+            # value, so an unconstrained variant such as "Primary" would sit
+            # outside it and silently give a section two primaries.
+            models.CheckConstraint(
+                condition=models.Q(role__in=("primary", "co", "lab")),
+                name="ck_si_role_valid",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["course_key", "section"], name="idx_si_lookup"),
+            models.Index(fields=["instructor"], name="idx_si_instructor"),
+        ]
+
+    def __str__(self) -> str:
+        return f"SectionInstructor({self.course_key}/{self.section}->{self.instructor_id})"
+
+    def save(self, *args: Any, **kwargs: Any) -> None:
+        # Convenience for the ordinary path; the CHECK constraints are what make
+        # it a guarantee, because bulk_create and .update() skip this method.
+        self.course_key = (self.course_key or "").strip().upper()
+        self.section = (self.section or "").strip().upper()
+        self.role = (self.role or "primary").strip().lower()
+        super().save(*args, **kwargs)
 
 
 class TermSection(models.Model):

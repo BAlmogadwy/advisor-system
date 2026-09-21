@@ -29,7 +29,8 @@ Design contract
 6. **Idempotent:** ``normalise(normalise(x)) == normalise(x)`` for any
    input. Migrators only run once per call (because a normalised payload
    already has the current ``schema_version``), and the default-filler
-   uses ``setdefault``.
+   uses ``setdefault``. An outdated derived status is refreshed once from
+   recorded QA, independently of schema migration or schedule changes.
 
 Read-side rule
 --------------
@@ -69,7 +70,7 @@ from typing import Any, Literal, TypedDict, cast
 # Version constant
 # ---------------------------------------------------------------------------
 
-EXAM_RUN_SCHEMA_VERSION: int = 3
+EXAM_RUN_SCHEMA_VERSION: int = 5
 """Current schema version for ``ExamTimetableRun.result_json`` payloads.
 
 Bump this whenever you add a key the UI or XLSX exporter will read but
@@ -98,6 +99,14 @@ Version history
   scheduler decision. Old rows cannot reconstruct telemetry, so the
   v2->v3 migrator fills empty defaults; new builds populate at
   write time.
+- v4: ``exam_review`` provides aggregate shared-student relationships
+  from the full, selected scraped enrollment graph. It is independent
+  of scheduling relaxation and never includes student identifiers.
+  Older rows default to ``None`` (unavailable), never an invented
+  zero-overlap result. New builds, checks and imports record it.
+- v5: ``operations_snapshot`` captures programme/gender counts and recorded
+  instructors per canonical exam and teaching section. Older runs have no
+  recoverable saved attribution and default to ``None`` without live queries.
 """
 
 
@@ -111,6 +120,8 @@ ExamRunPrimaryStatus = Literal[
     "requires_room_action",
     "contains_overflow",
     "contains_manual_override",
+    "requires_section_review",
+    "contains_workload_warnings",
     "infeasible",
     "unrenderable",
     "future_version_unrenderable",
@@ -135,10 +146,15 @@ the first applicable):
    a room, OR at least one multi-sitting section with incomplete
    sitting data (missing slot/room/student allocation).
 6. ``"contains_manual_override"``: ``qa.manual_override_count > 0``
-   (registrar pinned overrides created same-slot conflicts).
-7. ``"clean_with_approved_thin_conflicts"``: realised thin clashes
+   (registrar overrides created same-slot or bucket-day conflicts).
+7. ``"requires_section_review"``: measured teaching-section mappings
+   are missing or ambiguous for one or more course enrolments.
+8. ``"contains_workload_warnings"``: students exceed the configured
+   daily exam limit or have a heavy credit day. These remain soft
+   scheduling preferences; the status does not reject the schedule.
+9. ``"clean_with_approved_thin_conflicts"``: realised thin clashes
    exist but no other issues.
-8. ``"clean"``: no flags raised.
+10. ``"clean"``: no actionable warnings raised.
 
 Multi-sitting alone does NOT promote a run to ``requires_room_action``:
 multi-sitting is a legitimate capacity-resolution path when every
@@ -221,6 +237,9 @@ RegistrarStatusFlag = Literal[
     "room_action_required",
     "overflow",
     "manual_override",
+    "section_mapping_incomplete",
+    "daily_limit_exceeded",
+    "heavy_credit_day",
     "multi_sitting_required",
     "legacy_incomplete_qa",
 ]
@@ -242,6 +261,14 @@ lost just because a more severe one took the headline.
   Distinct from ``room_action_required``: a complete multi-sitting
   with all rooms+slots+student-allocation is a valid registrar plan,
   not a defect.
+- ``daily_limit_exceeded``: ``qa.students_over_limit_per_day > 0``.
+  At least one student exceeds the configured soft daily exam limit.
+- ``heavy_credit_day``: ``qa.heavy_day_students > 0``. At least one
+  student has a heavy credit pairing under the existing workload metric.
+- ``section_mapping_incomplete``: ``qa.section_mapping`` reports
+  missing or ambiguous teaching-section attribution. This preserves
+  the complete course population; it does not make up section labels
+  or prevent scheduling. Absent mapping QA does not imply a measured gap.
 - ``legacy_incomplete_qa``: the payload's QA dict lacks one or more
   keys this version of the derivation expects (e.g. v1 rows missing
   ``qa.manual_override_count``). The status is computed best-effort
@@ -255,12 +282,17 @@ lost just because a more severe one took the headline.
 RegistrarPrimaryStatus = ExamRunPrimaryStatus
 RegistrarRunStatus = ExamRunPrimaryStatus
 
-STATUS_DERIVATION_VERSION: int = 1
+STATUS_DERIVATION_VERSION: int = 3
 """Version of the rules used to derive ``primary_status`` and
 ``status_flags`` from a payload. Bump when the rules change so a
 consumer can detect that an older row's status was computed under a
 different policy. Independent of ``EXAM_RUN_SCHEMA_VERSION`` — payload
 shape can stay stable while the derivation rules evolve.
+
+Version 2 surfaces workload warnings and corrects bucket-day and nested
+room-shortage signals. Version 3 surfaces measured teaching-section mapping
+gaps. Reads refresh older derived status from recorded QA without rewriting
+saved runs or changing scheduling policy.
 """
 
 
@@ -315,8 +347,12 @@ class ExamRunDisplayPayload(TypedDict, total=False):
     courses_count: int
     conflicts: list[dict[str, Any]]
     conflicts_count: int
+    exam_review: dict[str, Any] | None
+    operations_snapshot: dict[str, Any] | None
     slots: list[dict[str, Any]]
     schedule: list[dict[str, Any]]
+    enrollment_scope: dict[str, list[str]]
+    pinned: list[dict[str, str]]
     qa: dict[str, Any]
     buckets_summary: list[dict[str, Any]]
     bucket_count: int
@@ -393,6 +429,18 @@ def _empty_building_footprint() -> dict[str, Any]:
         "cross_building_clusters_per_dept": {},
         "largest_slot_footprint_summary": "",
     }
+
+
+def _migrate_v3_to_v4(payload: dict[str, Any]) -> dict[str, Any]:
+    """v3 -> v4: distinguish unrecorded review data from measured no overlap."""
+    payload.setdefault("exam_review", None)
+    return payload
+
+
+def _migrate_v4_to_v5(payload: dict[str, Any]) -> dict[str, Any]:
+    """v4 -> v5: historic programme/section attribution is unavailable."""
+    payload.setdefault("operations_snapshot", None)
+    return payload
 
 
 def _empty_enrolment_snapshot() -> dict[str, Any]:
@@ -476,7 +524,8 @@ _MIGRATORS: list[Migrator] = [
     _migrate_v0_to_v1,
     _migrate_v1_to_v2,
     _migrate_v2_to_v3,
-    # _migrate_v3_to_v4 goes here when we bump to v4.
+    _migrate_v3_to_v4,
+    _migrate_v4_to_v5,
 ]
 
 
@@ -511,6 +560,9 @@ def _normalise_room_input(input_: Any) -> dict[str, list[dict[str, Any]]]:
             grouped[slot_key].append(
                 {
                     "course_code": entry.get("course_code", ""),
+                    "source_course_code": entry.get("source_course_code", ""),
+                    "course_name": entry.get("course_name", ""),
+                    "course_identity": entry.get("course_identity", ""),
                     "rooms": entry.get("rooms", []) or [],
                 }
             )
@@ -524,17 +576,23 @@ def derive_multi_sitting_details(
     """Extract multi-sitting sections from a schedule list or pre-grouped dict.
 
     A section is considered "multi-sitting" when its room-assignment
-    output contains entries whose ``section`` name carries a split
-    marker (``"/"`` for oversize-split, ``"a"``/``"b"`` for halve-split,
-    or non-empty ``_split_from`` field). For each such logical section
-    we emit one detail entry summarising:
+    output contains split parts assigned to multiple rooms or slots.
+    New assignments preserve the official section label, stable section
+    key and student count in ``section_parts``. These rows are grouped by
+    course identity and section key; punctuation in an official label is
+    never interpreted as an allocation suffix. Slash markers and
+    ``_split_from`` remain accepted only for callers without section keys.
+    Each detail entry summarises:
 
+    - ``course_code``, ``course_name``, ``course_identity``: the exam.
     - ``section``: the original section label.
+    - ``section_key``, ``term_section_id``, ``mapping_status``: recorded
+      teaching-section provenance, when supplied by the allocator.
     - ``enrolment``: total student count across all sittings.
     - ``max_room_cap``: the largest room capacity encountered for any
       sub-sitting (informational; helps the registrar see why splitting
       was necessary).
-    - ``sittings``: count of sub-entries this logical section produced.
+    - ``sittings``: count of room assignments this logical section uses.
     - ``slots``: list of slot keys (``"day:period"``) the sub-sittings
       occupy. Same slot repeated = within-slot room split. Different
       slots = across-slot multi-sitting.
@@ -550,7 +608,9 @@ def derive_multi_sitting_details(
     if not by_slot:
         return []
 
-    by_logical: dict[str, dict[str, Any]] = {}
+    from core.services.course_identity import planner_course_key
+
+    by_logical: dict[tuple[str, str], dict[str, Any]] = {}
 
     # ``by_slot`` is structured by slot. Each slot has a list of
     # course entries; each entry has its own ``rooms`` list with
@@ -566,53 +626,78 @@ def derive_multi_sitting_details(
             rooms = entry.get("rooms")
             if not isinstance(rooms, list):
                 continue
+            course_code = str(entry.get("course_code") or "")
+            course_name = str(entry.get("course_name") or "")
+            course_identity = str(entry.get("course_identity") or "") or planner_course_key(
+                entry.get("source_course_code") or course_code, course_name
+            )
             for r in rooms:
                 if not isinstance(r, dict):
                     continue
-                section_label = str(r.get("section", ""))
-                split_from = r.get("_split_from")
-                # A section qualifies as multi-sitting if either:
-                # (a) its name carries the "/" or trailing "a"/"b"
-                #     split marker introduced by _split_oversized_sections
-                #     or the in-place halver, OR
-                # (b) it has a non-empty ``_split_from`` field.
-                logical: str | None = None
-                if isinstance(split_from, str) and split_from:
-                    logical = split_from
-                elif "/" in section_label:
-                    logical = section_label.rsplit("/", 1)[0]
-                elif section_label and section_label[-1] in ("a", "b") and len(section_label) > 1:
-                    # Heuristic — only treat as split if there's another
-                    # entry with the trailing-stripped name. We resolve
-                    # this in the second pass below.
-                    pass
-                if logical is None:
-                    continue
-                bucket = by_logical.setdefault(
-                    logical,
-                    {
-                        "section": logical,
-                        "enrolment": 0,
-                        "max_room_cap": 0,
-                        "sittings": 0,
-                        "slots": [],
-                        "rooms": [],
-                        "incomplete": False,
-                    },
-                )
-                bucket["enrolment"] += int(r.get("student_count", 0) or 0)
-                bucket["max_room_cap"] = max(
-                    bucket["max_room_cap"],
-                    int(r.get("room_capacity", 0) or 0),
-                )
-                bucket["sittings"] += 1
-                bucket["slots"].append(str(slot_key))
-                room_code = str(r.get("room_code", ""))
-                bucket["rooms"].append(room_code)
-                if room_code in ("", "UNASSIGNED"):
-                    bucket["incomplete"] = True
-                if not slot_key:
-                    bucket["incomplete"] = True
+                parts_raw = r.get("section_parts")
+                has_parts = isinstance(parts_raw, list) and bool(parts_raw)
+                parts = parts_raw if isinstance(parts_raw, list) and parts_raw else [r]
+                # Parts of the same logical section may be packed back into
+                # one room. Sum their students, but count that room only once.
+                counts_in_room: dict[str, int] = defaultdict(int)
+                section_meta: dict[str, dict[str, Any]] = {}
+                for part in parts:
+                    if not isinstance(part, dict):
+                        continue
+                    section_label = str(part.get("section", ""))
+                    section_key = str(part.get("section_key") or "")
+                    split_from = part.get("_split_from")
+                    logical: str | None = None
+                    if section_key:
+                        logical = section_key
+                        section_meta[logical] = {
+                            "section": section_label,
+                            "section_key": section_key,
+                            "term_section_id": part.get("term_section_id"),
+                            "mapping_status": part.get("mapping_status", "mapped"),
+                            "gender": part.get("gender", r.get("gender", "")),
+                        }
+                    elif isinstance(split_from, str) and split_from:
+                        logical = split_from
+                    elif not has_parts and "/" in section_label:
+                        logical = section_label.rsplit("/", 1)[0]
+                    if logical is not None:
+                        counts_in_room[logical] += int(part.get("student_count", 0) or 0)
+                for logical, student_count in counts_in_room.items():
+                    bucket = by_logical.setdefault(
+                        (course_identity, logical),
+                        {
+                            "course_code": course_code,
+                            "course_name": course_name,
+                            "course_identity": course_identity,
+                            "section": logical,
+                            **section_meta.get(logical, {}),
+                            "enrolment": 0,
+                            "max_room_cap": 0,
+                            "sittings": 0,
+                            "slots": [],
+                            "rooms": [],
+                            "incomplete": False,
+                        },
+                    )
+                    part_gender = str(section_meta.get(logical, {}).get("gender") or "")
+                    if part_gender:
+                        genders = set(filter(None, str(bucket.get("gender") or "").split("/")))
+                        genders.add(part_gender)
+                        bucket["gender"] = "/".join(
+                            sorted(genders, key=lambda value: (value != "M", value))
+                        )
+                    bucket["enrolment"] += student_count
+                    bucket["max_room_cap"] = max(
+                        bucket["max_room_cap"],
+                        int(r.get("room_capacity", 0) or 0),
+                    )
+                    bucket["sittings"] += 1
+                    bucket["slots"].append(str(slot_key))
+                    room_code = str(r.get("room_code", ""))
+                    bucket["rooms"].append(room_code)
+                    if room_code in ("", "UNASSIGNED") or not slot_key:
+                        bucket["incomplete"] = True
 
     out: list[dict[str, Any]] = []
     for detail in by_logical.values():
@@ -623,8 +708,16 @@ def derive_multi_sitting_details(
             continue
         slot_summary = ", ".join(detail["slots"])
         room_summary = ", ".join(detail["rooms"])
+        course_label = detail["course_code"]
+        if detail["course_name"]:
+            course_label += f" — {detail['course_name']}"
+        section_label = detail["section"] or (
+            "Ambiguous section"
+            if detail.get("mapping_status") == "ambiguous"
+            else "Section not recorded"
+        )
         detail["audit_text"] = (
-            f"Section {detail['section']} requires "
+            f"{course_label}: section {section_label} requires "
             f"{detail['sittings']} sittings "
             f"({detail['enrolment']} students, "
             f"slots: {slot_summary}, rooms: {room_summary})"
@@ -632,7 +725,14 @@ def derive_multi_sitting_details(
         if detail["incomplete"]:
             detail["audit_text"] += " — INCOMPLETE: missing room or slot data"
         out.append(detail)
-    out.sort(key=lambda d: d["section"])
+    out.sort(
+        key=lambda d: (
+            d["course_code"],
+            d["course_identity"],
+            d["section"],
+            d.get("section_key", ""),
+        )
+    )
     return out
 
 
@@ -909,13 +1009,21 @@ def derive_status_surface(
         # signals — degrade to legacy-incomplete rather than pretending
         # the run is "clean".
         legacy_incomplete = True
-    schedule = payload.get("schedule") if isinstance(payload.get("schedule"), list) else []
+    schedule_raw = payload.get("schedule")
+    schedule = schedule_raw if isinstance(schedule_raw, list) else []
 
     overflow_count = sum(1 for e in schedule if isinstance(e, dict) and e.get("day") == "OVERFLOW")
     if overflow_count > 0:
         flags.append("overflow")
 
     unassigned_rooms = int(qa.get("unassigned_room_sections", 0) or 0)
+    room_qa = qa.get("rooms")
+    if isinstance(room_qa, dict):
+        unassigned_rows = room_qa.get("unassigned_room_sections")
+        if isinstance(unassigned_rows, list):
+            unassigned_rooms = max(unassigned_rooms, len(unassigned_rows))
+        elif isinstance(unassigned_rows, int):
+            unassigned_rooms = max(unassigned_rooms, unassigned_rows)
     multi_sitting_count = int(qa.get("multi_sitting_sections", 0) or 0)
     multi_sitting_details = qa.get("multi_sitting_details") or []
     incomplete_sittings = sum(
@@ -932,7 +1040,7 @@ def derive_status_surface(
         flags.append("room_action_required")
 
     # Manual override: prefer the explicit qa.manual_override_count
-    # signal added in v2 builds. Fall back to qa.conflict_count for
+    # (same-slot and bucket-day violations). Fall back to qa.conflict_count for
     # legacy v1 rows (with legacy_incomplete_qa flag raised — the
     # source-schema check above usually catches this already, but the
     # fallback also fires when a v2-claimed row arrived missing the
@@ -942,8 +1050,31 @@ def derive_status_surface(
     else:
         manual_override_count = int(qa.get("conflict_count", 0) or 0)
         legacy_incomplete = True
+    # A fixed exam can violate the one-exam-per-bucket-per-day rule
+    # without creating a same-slot student collision. That hard violation
+    # must also prevent a misleading "clean" headline.
+    bucket_violation_count = int(qa.get("bucket_day_violations_count", 0) or 0)
+    bucket_violation_rows = qa.get("bucket_day_violations")
+    if isinstance(bucket_violation_rows, list):
+        bucket_violation_count = max(bucket_violation_count, len(bucket_violation_rows))
+    manual_override_count = max(manual_override_count, bucket_violation_count)
     if manual_override_count > 0:
         flags.append("manual_override")
+
+    section_mapping = qa.get("section_mapping")
+    section_mapping_incomplete = isinstance(section_mapping, dict) and (
+        int(section_mapping.get("missing_enrollments", 0) or 0) > 0
+        or int(section_mapping.get("ambiguous_enrollments", 0) or 0) > 0
+    )
+    if section_mapping_incomplete:
+        flags.append("section_mapping_incomplete")
+
+    daily_limit_exceeded = int(qa.get("students_over_limit_per_day", 0) or 0) > 0
+    heavy_credit_day = int(qa.get("heavy_day_students", 0) or 0) > 0
+    if daily_limit_exceeded:
+        flags.append("daily_limit_exceeded")
+    if heavy_credit_day:
+        flags.append("heavy_credit_day")
 
     thin_clash_risk = qa.get("thin_clash_risk") or []
     if isinstance(thin_clash_risk, list) and thin_clash_risk:
@@ -960,6 +1091,10 @@ def derive_status_surface(
         primary = "requires_room_action"
     elif manual_override_count > 0:
         primary = "contains_manual_override"
+    elif section_mapping_incomplete:
+        primary = "requires_section_review"
+    elif daily_limit_exceeded or heavy_credit_day:
+        primary = "contains_workload_warnings"
     elif flags and "approved_thin_conflicts" in flags:
         primary = "clean_with_approved_thin_conflicts"
     else:
@@ -992,6 +1127,8 @@ def _fill_ok_defaults(payload: dict[str, Any]) -> None:
     payload.setdefault("courses_count", 0)
     payload.setdefault("conflicts", [])
     payload.setdefault("conflicts_count", 0)
+    payload.setdefault("exam_review", None)
+    payload.setdefault("operations_snapshot", None)
     payload.setdefault("slots", [])
     payload.setdefault("schedule", [])
     payload.setdefault("qa", {})
@@ -1002,11 +1139,8 @@ def _fill_ok_defaults(payload: dict[str, Any]) -> None:
     payload.setdefault("rooms_count", 0)
     payload.setdefault("assign_rooms", {})
     payload.setdefault("seed", None)
-    # v2 status surface defaults so consumers never KeyError when
-    # reading the headline or flag list. The actual derivation runs in
-    # the v1->v2 migrator (or at write time for fresh v2 builds);
-    # these defaults only fire if a caller hand-crafts a payload
-    # without status data — the surface stays consistent.
+    # Status defaults for sentinels and direct filler callers. The public
+    # normalizer derives missing/outdated status before these defaults.
     payload.setdefault("primary_status", "clean")
     payload.setdefault("status_flags", [])
     payload.setdefault("status_derivation_version", STATUS_DERIVATION_VERSION)
@@ -1159,6 +1293,24 @@ def normalise_exam_run_payload(raw: Any) -> ExamRunDisplayPayload:
         "future_version_unrenderable",
     ):
         payload["status"] = "feasibility_error" if payload.get("feasibility_error") else "ok"
+
+    # Status rules evolve independently of stored schedule shape. Refresh
+    # only missing/older derivations from measured QA; a newer policy is
+    # retained. This changes the display copy, never the saved run or slots.
+    rules_version = payload.get("status_derivation_version")
+    if (
+        not isinstance(rules_version, int)
+        or rules_version < STATUS_DERIVATION_VERSION
+        or "primary_status" not in payload
+        or "status_flags" not in payload
+    ):
+        try:
+            primary, flags = derive_status_surface(payload, source_schema_version=version)
+        except (TypeError, ValueError) as exc:
+            return _unrenderable(f"QA status could not be derived: {exc}")
+        payload["primary_status"] = primary
+        payload["status_flags"] = flags
+        payload["status_derivation_version"] = STATUS_DERIVATION_VERSION
 
     status: ExamRunStatus = payload["status"]
     if status == "ok":

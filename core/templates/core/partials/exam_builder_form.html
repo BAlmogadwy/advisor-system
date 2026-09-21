@@ -1,0 +1,93 @@
+{% load i18n %}
+<div id="examSettingsControls">
+  <div class="et-setup-grid">
+    <section class="et-section et-config-panel" aria-labelledby="examConfigHeading">
+      <div class="et-section-heading"><span class="et-step" aria-hidden="true">01</span><div>
+        <h2 id="examConfigHeading">{% if LANGUAGE_CODE == 'ar' %}إعدادات الجدول{% else %}Timetable setup{% endif %}</h2>
+        <p>{% if LANGUAGE_CODE == 'ar' %}حدد أيام الاختبارات والفترات المتاحة يومياً.{% else %}Set the exam days and daily time periods.{% endif %}</p>
+      </div></div>
+      <div class="et-basic-fields">
+        <div class="et-label-field"><label class="form-label" for="etLabel">{% if LANGUAGE_CODE == 'ar' %}اسم الجدول{% else %}Timetable name{% endif %}</label><input id="etLabel" class="form-control" placeholder="{% if LANGUAGE_CODE == 'ar' %}مثال: الاختبارات النهائية{% else %}e.g. Semester 1 final exams{% endif %}" autocomplete="off"></div>
+        <div><label class="form-label" for="etStartDay">{% if LANGUAGE_CODE == 'ar' %}يوم البداية{% else %}Starting day{% endif %}</label><select id="etStartDay" class="form-select">
+          <option value="Sun" selected>{% if LANGUAGE_CODE == 'ar' %}الأحد{% else %}Sunday{% endif %}</option><option value="Mon">{% if LANGUAGE_CODE == 'ar' %}الإثنين{% else %}Monday{% endif %}</option><option value="Tue">{% if LANGUAGE_CODE == 'ar' %}الثلاثاء{% else %}Tuesday{% endif %}</option><option value="Wed">{% if LANGUAGE_CODE == 'ar' %}الأربعاء{% else %}Wednesday{% endif %}</option><option value="Thu">{% if LANGUAGE_CODE == 'ar' %}الخميس{% else %}Thursday{% endif %}</option>
+        </select></div>
+        <div><label class="form-label" for="etNumDays">{% if LANGUAGE_CODE == 'ar' %}عدد أيام الاختبارات{% else %}Exam days{% endif %}</label><input id="etNumDays" type="text" inputmode="numeric" pattern="[0-9]*" class="form-control" value="5" aria-describedby="etCalendarSummary"></div>
+        <div><label class="form-label" for="etMaxPerDay">{% if LANGUAGE_CODE == 'ar' %}الحد المستهدف يومياً{% else %}Daily exam target{% endif %}</label><input id="etMaxPerDay" type="text" inputmode="numeric" pattern="[0-9]*" class="form-control" value="2" aria-describedby="etDailyHelp"></div>
+      </div>
+      <p id="etDailyHelp" class="et-field-help">{% if LANGUAGE_CODE == 'ar' %}لكل طالب. يظهر تجاوز الحد في تقرير الجودة.{% else %}Per student. Any excess is reported in the quality checks.{% endif %}</p>
+      <details id="etCalendarDetails" class="et-calendar"><summary id="etCalendarSummary">{% if LANGUAGE_CODE == 'ar' %}عرض أيام الاختبارات{% else %}View exam days{% endif %}</summary><div id="dayPreview"></div></details>
+      <div class="et-periods-block">
+        <div class="et-periods-heading"><h3>{% if LANGUAGE_CODE == 'ar' %}الفترات اليومية{% else %}Daily periods{% endif %}</h3><button type="button" id="etAddPeriod" class="btn btn-sm btn-outline-secondary">＋ {% if LANGUAGE_CODE == 'ar' %}إضافة فترة{% else %}Add period{% endif %}</button></div>
+        <div id="etPeriodsRepeater" lang="en" dir="ltr">
+          <div class="et-period-row"><span class="et-period-number" aria-hidden="true">1</span><input type="text" placeholder="HH:MM" class="form-control et-period-start" value="08:00"><span class="et-period-sep">–</span><input type="text" placeholder="HH:MM" class="form-control et-period-end" value="10:00"><button type="button" class="btn btn-sm btn-outline-secondary et-period-remove">×</button></div>
+          <div class="et-period-row"><span class="et-period-number" aria-hidden="true">2</span><input type="text" placeholder="HH:MM" class="form-control et-period-start" value="10:30"><span class="et-period-sep">–</span><input type="text" placeholder="HH:MM" class="form-control et-period-end" value="12:30"><button type="button" class="btn btn-sm btn-outline-secondary et-period-remove">×</button></div>
+          <div class="et-period-row"><span class="et-period-number" aria-hidden="true">3</span><input type="text" placeholder="HH:MM" class="form-control et-period-start" value="13:00"><span class="et-period-sep">–</span><input type="text" placeholder="HH:MM" class="form-control et-period-end" value="15:00"><button type="button" class="btn btn-sm btn-outline-secondary et-period-remove">×</button></div>
+        </div>
+        <p id="etPeriodsHelp" class="et-field-help">{% if LANGUAGE_CODE == 'ar' %}توقيت 24 ساعة، مثل 16 أو 16:30. تظهر الفترات المكتملة تلقائياً في خيارات التثبيت.{% else %}24-hour time, e.g. 16 or 16:30. Pin options update as you type.{% endif %}</p>
+        <div id="etPeriodsFeedback" class="et-field-error d-none" role="status" aria-live="polite"></div>
+        <input type="hidden" id="etPeriods" value="08:00-10:00,10:30-12:30,13:00-15:00">
+      </div>
+    </section>
+    <section class="et-section et-scope-panel" aria-labelledby="examScopeHeading">
+      <div class="et-section-heading"><span class="et-step" aria-hidden="true">02</span><div><h2 id="examScopeHeading">{% if LANGUAGE_CODE == 'ar' %}البرامج وفئات الطلاب{% else %}Programs & student groups{% endif %}</h2><p>{% if LANGUAGE_CODE == 'ar' %}اختر الطلاب الذين يشملهم الجدول ثم حمّل مقرراتهم.{% else %}Choose the student groups, then load their courses.{% endif %}</p></div></div>
+      <fieldset><legend class="form-label">{% if LANGUAGE_CODE == 'ar' %}البرامج{% else %}Programs{% endif %} <span id="progCount"></span></legend><div id="progList"><span class="et-field-help">{% if LANGUAGE_CODE == 'ar' %}جارٍ التحميل...{% else %}Loading…{% endif %}</span></div></fieldset>
+      <fieldset><legend class="form-label">{% if LANGUAGE_CODE == 'ar' %}فئات الطلاب{% else %}Student groups{% endif %} <span id="secCount"></span></legend><div id="secList"><span class="et-field-help">{% if LANGUAGE_CODE == 'ar' %}جارٍ التحميل...{% else %}Loading…{% endif %}</span></div></fieldset>
+      <p id="examEnrollmentSource" class="et-field-help">{% if LANGUAGE_CODE == 'ar' %}مصدر المقررات وأعداد الطلاب: التسجيلات الفعلية في الجداول الدراسية المستوردة للطلاب.{% else %}Course and student-count source: actual enrollments from imported student timetables.{% endif %}</p>
+      <div class="et-scope-footer"><button id="loadCoursesBtn" type="button" class="btn btn-outline-primary">{% if LANGUAGE_CODE == 'ar' %}تحميل المقررات{% else %}Load Courses{% endif %}</button><p class="et-field-help">{% if LANGUAGE_CODE == 'ar' %}أعد التحميل بعد تغيير البرامج أو فئات الطلاب.{% else %}Reload after changing programs or student groups.{% endif %}</p></div>
+    </section>
+  </div>
+
+  <section class="et-section et-courses-panel" aria-labelledby="examCoursesHeading">
+    <div class="et-section-heading"><span class="et-step" aria-hidden="true">03</span><div><h2 id="examCoursesHeading">{% if LANGUAGE_CODE == 'ar' %}مقررات الاختبارات{% else %}Exam courses{% endif %}</h2><p>{% if LANGUAGE_CODE == 'ar' %}راجع المقررات المشمولة. البحث لا يغيّر اختياراتك.{% else %}Review what is included. Searching keeps your selections.{% endif %}</p></div><span id="courseCount" class="et-selection-count"></span></div>
+    <div id="courseEmptyState" class="et-course-empty">{% if LANGUAGE_CODE == 'ar' %}حمّل مقررات البرامج وفئات الطلاب المحددة للبدء.{% else %}Load courses for the selected programs and student groups to begin.{% endif %}</div>
+    <div id="coursePreview" class="d-none">
+      <div class="et-course-toolbar">
+        <div class="et-course-search"><label class="form-label" for="courseSearch">{% if LANGUAGE_CODE == 'ar' %}البحث في المقررات{% else %}Find a course{% endif %}</label><input id="courseSearch" type="search" class="form-control" placeholder="{% if LANGUAGE_CODE == 'ar' %}رمز المقرر أو اسمه أو البرنامج{% else %}Course code, name, or program{% endif %}" autocomplete="off"></div>
+        <div><label class="form-label" for="courseVisibility">{% if LANGUAGE_CODE == 'ar' %}عرض{% else %}Show{% endif %}</label><select id="courseVisibility" class="form-select"><option value="all">{% if LANGUAGE_CODE == 'ar' %}جميع المقررات{% else %}All courses{% endif %}</option><option value="selected">{% if LANGUAGE_CODE == 'ar' %}المحددة{% else %}Selected{% endif %}</option><option value="unselected">{% if LANGUAGE_CODE == 'ar' %}غير المحددة{% else %}Not selected{% endif %}</option><option value="online">{% if LANGUAGE_CODE == 'ar' %}الإلكترونية{% else %}Online{% endif %}</option></select></div>
+      </div>
+      <div class="et-course-actions"><span id="courseSearchCount" role="status" aria-live="polite"></span><button type="button" id="selectVisibleCourses" class="btn btn-sm btn-outline-secondary">{% if LANGUAGE_CODE == 'ar' %}تحديد الظاهر{% else %}Select shown{% endif %}</button><button type="button" id="deselectVisibleCourses" class="btn btn-sm btn-outline-secondary">{% if LANGUAGE_CODE == 'ar' %}إلغاء تحديد الظاهر{% else %}Deselect shown{% endif %}</button>
+        <details class="et-selection-menu"><summary>{% if LANGUAGE_CODE == 'ar' %}اختيارات سريعة{% else %}Selection presets{% endif %}</summary><div><p>{% if LANGUAGE_CODE == 'ar' %}تُطبق على جميع المقررات المحمّلة، بما فيها المخفية بالبحث.{% else %}Applies to all loaded courses, including search results that are hidden.{% endif %}</p><button type="button" id="toggleAllCourses" class="btn btn-sm btn-outline-secondary"></button><button type="button" id="selectComputerCourses" class="btn btn-sm btn-outline-secondary"></button><button type="button" id="selectGeneralCourses" class="btn btn-sm btn-outline-secondary"></button><button type="button" id="toggleOnlineCourses" class="btn btn-sm btn-outline-secondary"></button></div></details>
+      </div>
+      <div class="et-course-table-head" aria-hidden="true"><span></span><span>{% if LANGUAGE_CODE == 'ar' %}المقرر{% else %}Course{% endif %}</span><span>{% if LANGUAGE_CODE == 'ar' %}البرامج{% else %}Programs{% endif %}</span><span>{% if LANGUAGE_CODE == 'ar' %}الساعات{% else %}Credits{% endif %}</span><span>{% if LANGUAGE_CODE == 'ar' %}الطلاب{% else %}Students{% endif %}</span></div>
+      <div id="courseList" role="group" aria-labelledby="examCoursesHeading"></div>
+      <div id="courseNoMatches" class="et-course-empty" hidden>{% if LANGUAGE_CODE == 'ar' %}لا توجد نتائج. جرّب رمزاً أو اسماً أو برنامجاً آخر.{% else %}No matching courses. Try another code, name, or program.{% endif %}</div>
+    </div>
+  </section>
+
+  <section id="examPinEditor" class="et-fixed-exams et-section d-none" aria-labelledby="examPinHeading">
+    <div class="et-section-heading"><span class="et-step" aria-hidden="true">04</span><div><h2 id="examPinHeading">{% if LANGUAGE_CODE == 'ar' %}مواعيد اختبارات ثابتة{% else %}Fixed exam times{% endif %} <span id="examPinCount"></span></h2><p>{% if LANGUAGE_CODE == 'ar' %}اختياري — أضف الاختبارات المجدولة من كلية أخرى قبل البناء.{% else %}Optional — add exams already scheduled by another college.{% endif %}</p></div><button id="clearExamPins" type="button" class="btn btn-sm btn-outline-secondary d-none">{% if LANGUAGE_CODE == 'ar' %}إلغاء تثبيت الكل{% else %}Unpin all{% endif %}</button></div>
+    <div class="et-pin-fields">
+      <div class="et-pin-course-field">
+        <label for="examPinCourseSearch" class="form-label">{% if LANGUAGE_CODE == 'ar' %}المقرر{% else %}Course to pin{% endif %}</label>
+        <div id="examPinCoursePicker" class="et-course-picker">
+          <input id="examPinCourseSearch" class="form-control" type="text" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-haspopup="listbox" aria-controls="examPinCourseResults" aria-describedby="examPinCourseHelp" autocomplete="off" spellcheck="false" placeholder="{% if LANGUAGE_CODE == 'ar' %}ابحث برمز المقرر أو اسمه{% else %}Search course code or name{% endif %}">
+          <button id="examPinCourseToggle" type="button" class="et-course-picker-toggle" tabindex="-1" aria-label="{% if LANGUAGE_CODE == 'ar' %}عرض المقررات{% else %}Show courses{% endif %}" aria-expanded="false" aria-controls="examPinCourseResults"><svg viewBox="0 0 20 20" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="m5 7.5 5 5 5-5"/></svg></button>
+          <div id="examPinCoursePopup" class="et-course-picker-popup" hidden>
+            <div id="examPinCourseResults" role="listbox" aria-label="{% if LANGUAGE_CODE == 'ar' %}المقررات المطابقة{% else %}Matching courses{% endif %}"></div>
+            <p id="examPinCourseEmpty" class="et-course-picker-empty" hidden>{% if LANGUAGE_CODE == 'ar' %}لا توجد مقررات مطابقة ضمن المقررات المحددة للاختبار.{% else %}No matches among the courses selected for this timetable.{% endif %}</p>
+          </div>
+        </div>
+        <select id="examPinCourse" hidden tabindex="-1" aria-hidden="true"></select>
+        <span id="examPinCourseHelp" class="visually-hidden">{% if LANGUAGE_CODE == 'ar' %}اكتب رمز المقرر، ثم استخدم الأسهم وEnter للاختيار. Escape يلغي البحث.{% else %}Type a course code, then use the arrow keys and Enter to select. Escape cancels the search.{% endif %}</span>
+        <span id="examPinCourseSearchStatus" class="visually-hidden" role="status" aria-live="polite"></span>
+      </div>
+      <div><label for="examPinDay" class="form-label">{% if LANGUAGE_CODE == 'ar' %}اليوم{% else %}Pinned day{% endif %}</label><select id="examPinDay" class="form-select"></select></div>
+      <div><label for="examPinPeriod" class="form-label">{% if LANGUAGE_CODE == 'ar' %}الفترة{% else %}Pinned period{% endif %}</label><select id="examPinPeriod" class="form-select" aria-describedby="examPinNotice"></select></div>
+      <div><button id="applyExamPin" type="button" class="btn btn-outline-primary">{% if LANGUAGE_CODE == 'ar' %}تثبيت المقرر{% else %}Pin course{% endif %}</button></div>
+    </div>
+    <p id="examPinNotice" role="status" aria-live="polite"></p>
+    <div id="examPinTable" class="table-responsive d-none"><table class="table table-sm align-middle"><thead><tr><th>{% if LANGUAGE_CODE == 'ar' %}المقرر{% else %}Course{% endif %}</th><th>{% if LANGUAGE_CODE == 'ar' %}اليوم{% else %}Day{% endif %}</th><th>{% if LANGUAGE_CODE == 'ar' %}الفترة{% else %}Period{% endif %}</th><th><span class="visually-hidden">{% if LANGUAGE_CODE == 'ar' %}الإجراءات{% else %}Actions{% endif %}</span></th></tr></thead><tbody id="examPinRows"></tbody></table></div>
+  </section>
+
+  <details class="et-options"><summary>{% if LANGUAGE_CODE == 'ar' %}خيارات الجدولة المتقدمة{% else %}Advanced scheduling options{% endif %}</summary><div class="et-options-fields">
+    <label><input id="etRandomize" type="checkbox" checked><span><strong>{% if LANGUAGE_CODE == 'ar' %}تنويع الجدول{% else %}Shuffle{% endif %}</strong><small>{% if LANGUAGE_CODE == 'ar' %}إنشاء توزيع مختلف في كل عملية بناء.{% else %}Generate a different arrangement with each build.{% endif %}</small></span></label>
+    <label><input id="etRelaxThin" type="checkbox"><span><strong>{% if LANGUAGE_CODE == 'ar' %}السماح بتعارضات المقررات الصغيرة{% else %}Allow tiny-course clashes{% endif %}</strong><small>{% if LANGUAGE_CODE == 'ar' %}يسمح باختبارات متزامنة للمقررات ضمن العتبة، ويُظهر التعارضات في التقرير.{% else %}Allow simultaneous exams below the enrollment threshold; report the conflicts.{% endif %}</small></span></label>
+    <div><label class="form-label" for="etThinThreshold">{% if LANGUAGE_CODE == 'ar' %}الحد الأقصى للطلاب{% else %}Enrollment threshold{% endif %}</label><input id="etThinThreshold" type="text" inputmode="numeric" pattern="[0-9]*" class="form-control" value="4" disabled aria-label="{% if LANGUAGE_CODE == 'ar' %}عتبة الصغيرة{% else %}Thin threshold{% endif %}"></div>
+    <small id="etSeedInfo" class="text-secondary d-none"></small>
+  </div></details>
+  <div class="et-build-footer"><div><strong>{% if LANGUAGE_CODE == 'ar' %}ملخص الإعداد{% else %}Build summary{% endif %}</strong><div id="examBuildSummary" role="status" aria-live="polite">{% if LANGUAGE_CODE == 'ar' %}حمّل المقررات للمتابعة.{% else %}Load courses to continue.{% endif %}</div></div><div class="et-build-actions">
+    <button id="buildBtn" type="button" class="btn btn-primary" disabled>{% if LANGUAGE_CODE == 'ar' %}بناء الجدول{% else %}Build Timetable{% endif %}</button>
+  </div></div>
+</div>
+<div id="exportDraftNotice" role="status" class="alert alert-warning d-none"></div>
+<div id="etStatus" role="status" aria-live="polite" class="alert alert-info">{% if LANGUAGE_CODE == 'ar' %}حدد البرامج وفئات الطلاب ثم حمّل المقررات.{% else %}Choose programs and student groups, then load courses.{% endif %}</div>

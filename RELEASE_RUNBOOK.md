@@ -35,6 +35,17 @@ RESTORE_OK C:\...\runtime\release_snapshots\release_candidate_YYYYMMDD_HHMMSS
 3. Run smoke checks (`/health`, login, report summary, key exports).
 4. If failed, stop app, restore snapshot, rerun smoke checks.
 
+## Exam Committee rollback boundary
+
+Before rolling back to code that predates the `EXAM_COMMITTEE` role, deactivate
+every account in that group while the current access controls are still running.
+Older code treats an unrecognised role as `ADVISOR`, so leaving these accounts
+active would remove their exam-only access restriction. Keep them inactive until
+the role and its middleware allowlist are restored, then verify their access
+before reactivating them. A code-only rollback can leave the additive
+`SectionInstructor` table and constraints in place; do not reverse those
+migrations or discard imported assignments just to run the previous application.
+
 ## Production web domains
 
 The Render web service accepts the direct Render hostname plus both custom-domain

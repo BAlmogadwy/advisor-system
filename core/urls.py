@@ -56,8 +56,10 @@ from .db_admin_views import (
     elective_placeholders_view,
 )
 from .dev_student_advisor_lab_views import dev_student_advisor_v21_lab_view
+from .exam_department_views import exam_department_export_view, exam_department_options_view
 from .exam_views import (
     exam_timetable_build_view,
+    exam_timetable_copy_view,
     exam_timetable_delete_view,
     exam_timetable_detail_view,
     exam_timetable_draft_impact_view,
@@ -735,6 +737,21 @@ urlpatterns = [
         "ops/exam-timetable/<int:run_id>/export.xlsx",
         login_required(exam_timetable_export_view),
         name="exam_timetable_export",
+    ),
+    path(
+        "ops/exam-timetable/<int:run_id>/departments/",
+        login_required(exam_department_options_view),
+        name="exam_department_options",
+    ),
+    path(
+        "ops/exam-timetable/<int:run_id>/departments/export/",
+        login_required(exam_department_export_view),
+        name="exam_department_export",
+    ),
+    path(
+        "ops/exam-timetable/<int:run_id>/copy/",
+        login_required(exam_timetable_copy_view),
+        name="exam_timetable_copy",
     ),
     path(
         "ops/exam-timetable/<int:run_id>/delete/",

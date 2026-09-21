@@ -4,127 +4,35 @@
 
 {% block title %}{% if LANGUAGE_CODE == 'ar' %}جدول الاختبارات{% else %}Exam Timetable Builder{% endif %}{% endblock %}
 
-{% block extra_css %}{# All exam-timetable styles live in static/css/global.css (V2 unified + EXAM TIMETABLE sections). #}{% endblock %}
+{% block main_attrs %}data-exam-builder="true" data-can-delete-exam-timetable="{{ can_delete_exam_timetable|yesno:'true,false' }}"{% endblock %}
+{% block main_padding %}p-4 exam-builder-page{% endblock %}
+{% block extra_css %}<link href="{% static 'css/page-exam-timetable.css' %}?v=20" rel="stylesheet">{% endblock %}
 
 {% block page_heading %}{% if LANGUAGE_CODE == 'ar' %}جدول الاختبارات{% else %}Exam Timetable{% endif %}{% endblock %}
 
 {% block page_chips %}
-  <span class="ph-chip ph-chip-role">{{ role }}</span>
+  <span class="ph-chip ph-chip-role">{% if role == 'EXAM_COMMITTEE' %}{% if LANGUAGE_CODE == 'ar' %}لجنة الاختبارات{% else %}Exam Committee{% endif %}{% else %}{{ role }}{% endif %}</span>
   <span class="ph-chip ph-chip-gray">{% if LANGUAGE_CODE == 'ar' %}إنشاء → جدولة → تقرير{% else %}Create → Schedule → Report{% endif %}</span>
 {% endblock %}
 
 {% block page_intro %}
       <h2>{% if LANGUAGE_CODE == 'ar' %}أداة بناء جدول الاختبارات{% else %}Exam Timetable Builder{% endif %}</h2>
-      <div class="panel-sub">{% if LANGUAGE_CODE == 'ar' %}إنشاء جداول اختبارات خالية من التعارض بناءً على بيانات تسجيل الطلاب.{% else %}Generate conflict-free exam schedules based on student enrollment data.{% endif %}</div>
+      <div class="panel-sub">{% if LANGUAGE_CODE == 'ar' %}أنشئ جدول الاختبارات وراجع المواعيد والتعارضات بناءً على تسجيل الطلاب.{% else %}Build an exam timetable and review exam times and conflicts using student enrollments.{% endif %}</div>
 {% endblock %}
 
 {% block content %}
-  <!-- ─── Input Form ─── -->
-  <div class="et-panel">
-    <h6 class="mb-3">{% if LANGUAGE_CODE == 'ar' %}إعدادات الجدول{% else %}Timetable Settings{% endif %}</h6>
-    <div class="row g-2">
-      <div class="col-md-3">
-        <label class="form-label" for="etLabel">{% if LANGUAGE_CODE == 'ar' %}التسمية{% else %}Label{% endif %}</label>
-        <input id="etLabel" class="form-control" autofocus placeholder="{% if LANGUAGE_CODE == 'ar' %}مثال: اختبارات نهائية{% else %}e.g. Final Exams{% endif %}">
-      </div>
-      <div class="col-md-2">
-        <label class="form-label" for="etStartDay">{% if LANGUAGE_CODE == 'ar' %}يوم البداية{% else %}Starting day{% endif %}</label>
-        <select id="etStartDay" class="form-select">
-          <option value="Sun" selected>{% if LANGUAGE_CODE == 'ar' %}الأحد{% else %}Sunday{% endif %}</option>
-          <option value="Mon">{% if LANGUAGE_CODE == 'ar' %}الإثنين{% else %}Monday{% endif %}</option>
-          <option value="Tue">{% if LANGUAGE_CODE == 'ar' %}الثلاثاء{% else %}Tuesday{% endif %}</option>
-          <option value="Wed">{% if LANGUAGE_CODE == 'ar' %}الأربعاء{% else %}Wednesday{% endif %}</option>
-          <option value="Thu">{% if LANGUAGE_CODE == 'ar' %}الخميس{% else %}Thursday{% endif %}</option>
-        </select>
-      </div>
-      <div class="col-md-2">
-        <label class="form-label" for="etNumDays">{% if LANGUAGE_CODE == 'ar' %}عدد أيام الاختبارات{% else %}Exam days{% endif %}</label>
-        <input id="etNumDays" type="text" inputmode="numeric" pattern="[0-9]*" class="form-control form-control-compact" value="5" min="1" max="60">
-      </div>
-      <div class="col-md-5">
-        <label class="form-label">{% if LANGUAGE_CODE == 'ar' %}الفترات{% else %}Periods{% endif %}</label>
-        <div id="etPeriodsRepeater" class="d-flex flex-column gap-1" lang="en" dir="ltr">
-          <div class="et-period-row d-flex align-items-center gap-1">
-            <input type="text" inputmode="numeric" pattern="\d{2}:\d{2}" placeholder="HH:MM" class="form-control form-control-compact et-period-start" value="08:00">
-            <span class="et-period-sep">–</span>
-            <input type="text" inputmode="numeric" pattern="\d{2}:\d{2}" placeholder="HH:MM" class="form-control form-control-compact et-period-end" value="10:00">
-            <button type="button" class="btn btn-sm btn-outline-secondary et-period-remove et-period-remove-btn" title="{% if LANGUAGE_CODE == 'ar' %}إزالة{% else %}Remove{% endif %}">&times;</button>
-          </div>
-          <div class="et-period-row d-flex align-items-center gap-1">
-            <input type="text" inputmode="numeric" pattern="\d{2}:\d{2}" placeholder="HH:MM" class="form-control form-control-compact et-period-start" value="10:30">
-            <span class="et-period-sep">–</span>
-            <input type="text" inputmode="numeric" pattern="\d{2}:\d{2}" placeholder="HH:MM" class="form-control form-control-compact et-period-end" value="12:30">
-            <button type="button" class="btn btn-sm btn-outline-secondary et-period-remove et-period-remove-btn" title="{% if LANGUAGE_CODE == 'ar' %}إزالة{% else %}Remove{% endif %}">&times;</button>
-          </div>
-          <div class="et-period-row d-flex align-items-center gap-1">
-            <input type="text" inputmode="numeric" pattern="\d{2}:\d{2}" placeholder="HH:MM" class="form-control form-control-compact et-period-start" value="13:00">
-            <span class="et-period-sep">–</span>
-            <input type="text" inputmode="numeric" pattern="\d{2}:\d{2}" placeholder="HH:MM" class="form-control form-control-compact et-period-end" value="15:00">
-            <button type="button" class="btn btn-sm btn-outline-secondary et-period-remove et-period-remove-btn" title="{% if LANGUAGE_CODE == 'ar' %}إزالة{% else %}Remove{% endif %}">&times;</button>
-          </div>
-        </div>
-        <button type="button" id="etAddPeriod" class="btn btn-sm btn-outline-secondary mt-1 et-add-period-btn">＋ {% if LANGUAGE_CODE == 'ar' %}إضافة فترة{% else %}Add period{% endif %}</button>
-        <!-- Hidden input keeps backward compatibility for API -->
-        <input type="hidden" id="etPeriods" value="08:00-10:00,10:30-12:30,13:00-15:00">
-      </div>
-      <div class="col-md-2">
-        <label class="form-label" for="etMaxPerDay">{% if LANGUAGE_CODE == 'ar' %}الحد الأقصى/يوم{% else %}Max exams/day{% endif %}</label>
-        <input id="etMaxPerDay" type="text" inputmode="numeric" pattern="[0-9]*" class="form-control form-control-compact" value="2" min="1" max="10">
-      </div>
-    </div>
-    <div class="mt-2">
-      <small class="text-secondary">{% if LANGUAGE_CODE == 'ar' %}الأيام المولّدة:{% else %}Generated days:{% endif %}</small>
-      <small id="dayPreview" class="font-monospace text-primary"></small>
-    </div>
-    <div class="row g-2 mt-2">
-      <div class="col-md-6">
-        <label class="form-label">{% if LANGUAGE_CODE == 'ar' %}البرامج{% else %}Programs{% endif %} <small class="text-secondary" id="progCount"></small></label>
-        <div id="progList" class="d-flex flex-wrap gap-1 p-2 border rounded" style="min-height:36px;max-height:120px;overflow-y:auto;">
-          <small class="text-secondary">{% if LANGUAGE_CODE == 'ar' %}جارٍ التحميل...{% else %}Loading...{% endif %}</small>
-        </div>
-      </div>
-      <div class="col-md-6">
-        <label class="form-label">{% if LANGUAGE_CODE == 'ar' %}الشُّعب{% else %}Sections{% endif %} <small class="text-secondary" id="secCount"></small></label>
-        <div id="secList" class="d-flex flex-wrap gap-1 p-2 border rounded" style="min-height:36px;max-height:120px;overflow-y:auto;">
-          <small class="text-secondary">{% if LANGUAGE_CODE == 'ar' %}جارٍ التحميل...{% else %}Loading...{% endif %}</small>
-        </div>
-      </div>
-    </div>
-    <div class="mt-3 d-flex gap-2 align-items-center flex-wrap">
-      <button id="loadCoursesBtn" class="btn btn-outline-primary">{% if LANGUAGE_CODE == 'ar' %}تحميل المقررات{% else %}Load Courses{% endif %}</button>
-      <button id="buildBtn" class="btn btn-primary" disabled>{% if LANGUAGE_CODE == 'ar' %}بناء الجدول{% else %}Build Timetable{% endif %}</button>
-      <button id="saveLoadedBtn" class="btn btn-outline-success d-none" disabled>{% if LANGUAGE_CODE == 'ar' %}حفظ التغييرات{% else %}Save Changes{% endif %}</button>
-      <button id="optimizeLoadedBtn" class="btn btn-outline-primary d-none" disabled>{% if LANGUAGE_CODE == 'ar' %}تحسين من السجل{% else %}Optimize From Loaded Run{% endif %}</button>
-      <label class="form-check form-switch mb-0 ms-2 d-flex align-items-center gap-1 u-cursor-pointer" title="{% if LANGUAGE_CODE == 'ar' %}تبديل عشوائي: كل بناء ينتج جدول مختلف{% else %}Shuffle: each build produces a different timetable variant{% endif %}">
-        <input id="etRandomize" class="form-check-input" type="checkbox" checked>
-        <span class="form-check-label small">{% if LANGUAGE_CODE == 'ar' %}عشوائي{% else %}Shuffle{% endif %}</span>
-      </label>
-      <label class="form-check form-switch mb-0 ms-2 d-flex align-items-center gap-1 u-cursor-pointer" title="{% if LANGUAGE_CODE == 'ar' %}اسمح بتعارضات نفس الفترة للمقررات الصغيرة جداً (≤N طالب) وأبلغ عنها في تقرير الجودة — ليس مفتاح تحسين{% else %}Allow tiny-course same-slot clashes (≤N enrolled students); report them in QA. This is a policy toggle, not an optimisation knob.{% endif %}">
-        <input id="etRelaxThin" class="form-check-input" type="checkbox">
-        <span class="form-check-label small">{% if LANGUAGE_CODE == 'ar' %}اسمح بتعارضات الصغيرة{% else %}Allow tiny-course clashes{% endif %}</span>
-      </label>
-      <input id="etThinThreshold" type="text" inputmode="numeric" pattern="[0-9]*" class="form-control form-control-compact" value="4" min="0" max="10" style="width:56px;" disabled aria-label="{% if LANGUAGE_CODE == 'ar' %}عتبة الصغيرة{% else %}Thin threshold{% endif %}">
-      <small id="etSeedInfo" class="text-secondary ms-1 d-none"></small>
-    </div>
-    <!-- Course preview list (populated after Load Courses) -->
-    <div id="coursePreview" class="mt-2 d-none">
-      <div class="d-flex align-items-center gap-2 mb-1 flex-wrap">
-        <label class="form-label mb-0">{% if LANGUAGE_CODE == 'ar' %}المقررات{% else %}Courses{% endif %} <small class="text-secondary" id="courseCount"></small></label>
-        <a href="#" id="selectComputerCourses" class="small text-decoration-none"></a>
-        <span class="text-secondary small select-sep d-none">·</span>
-        <a href="#" id="selectGeneralCourses" class="small text-decoration-none"></a>
-        <span class="text-secondary small select-sep d-none">·</span>
-        <a href="#" id="toggleOnlineCourses" class="small text-decoration-none"></a>
-        <span class="text-secondary small select-sep d-none">·</span>
-        <a href="#" id="toggleAllCourses" class="small text-decoration-none"></a>
-      </div>
-      <div id="courseList" class="p-2 border rounded" style="min-height:36px;max-height:260px;overflow-y:auto;"></div>
-    </div>
-    <div id="etStatus" role="alert" aria-live="polite" class="alert alert-info mt-2 py-2 mb-0">{% if LANGUAGE_CODE == 'ar' %}جاهز. حدد الفلاتر ثم انقر تحميل المقررات.{% else %}Ready. Select filters then click Load Courses.{% endif %}</div>
-  </div>
+  <div id="examRequestError" class="alert alert-danger et-request-error" role="alert" hidden></div>
+  <details id="examSetupDetails" class="et-workspace-details et-setup-details" open>
+    <summary id="examSetupSummary">{% if LANGUAGE_CODE == 'ar' %}إعدادات الجدول والمقررات والمواعيد المثبتة{% else %}Timetable setup, courses and fixed times{% endif %}</summary>
+    <div class="et-setup-details-content">{% include "core/partials/exam_builder_form.html" %}</div>
+  </details>
 
   <!-- ─── Results (hidden until built) ─── -->
   <div id="etResults" class="d-none">
+    <details id="examChangesDetails" class="et-workspace-details et-changes-details">
+      <summary id="examChangesSummary">{% if LANGUAGE_CODE == 'ar' %}التغييرات منذ آخر حفظ{% else %}Changes since last save{% endif %}</summary>
+      <div id="examChangesContent" class="et-changes-content"></div>
+    </details>
     <!-- v2 honest status surface: primary_status headline + status_flags
          pills. The headline picks the most severe state; flags preserve
          every non-exclusive fact so a registrar never loses sight of
@@ -135,141 +43,183 @@
       data-clean="{% if LANGUAGE_CODE == 'ar' %}نظيف{% else %}Clean{% endif %}"
       data-clean_with_approved_thin_conflicts="{% if LANGUAGE_CODE == 'ar' %}نظيف مع تعارضات صغيرة معتمدة{% else %}Clean (with approved tiny-course clashes){% endif %}"
       data-requires_room_action="{% if LANGUAGE_CODE == 'ar' %}يتطلب إجراء على القاعات{% else %}Requires room action{% endif %}"
+      data-requires_section_review="{% if LANGUAGE_CODE == 'ar' %}شعب المقررات تحتاج مراجعة{% else %}Teaching sections need review{% endif %}"
       data-contains_overflow="{% if LANGUAGE_CODE == 'ar' %}يحتوي على فترات إضافية{% else %}Contains overflow exams{% endif %}"
-      data-contains_manual_override="{% if LANGUAGE_CODE == 'ar' %}يحتوي على تجاوزات يدوية{% else %}Contains manual override conflicts{% endif %}"
+      data-contains_manual_override="{% if LANGUAGE_CODE == 'ar' %}يحتوي على مخالفات في الجدول{% else %}Contains schedule violations{% endif %}"
+      data-contains_workload_warnings="{% if LANGUAGE_CODE == 'ar' %}يحتوي على تنبيهات للعبء الدراسي{% else %}Contains workload warnings{% endif %}"
       data-infeasible="{% if LANGUAGE_CODE == 'ar' %}غير قابل للتحقيق{% else %}Infeasible{% endif %}"
       data-unrenderable="{% if LANGUAGE_CODE == 'ar' %}لا يمكن عرضه{% else %}Cannot render this run{% endif %}"
       data-future_version_unrenderable="{% if LANGUAGE_CODE == 'ar' %}بُني بإصدار أحدث{% else %}Created by a newer system version{% endif %}"
       data-flag-approved_thin_conflicts="{% if LANGUAGE_CODE == 'ar' %}تعارضات صغيرة معتمدة{% else %}approved thin conflicts{% endif %}"
       data-flag-room_action_required="{% if LANGUAGE_CODE == 'ar' %}يتطلب إجراء على القاعات{% else %}room action required{% endif %}"
       data-flag-overflow="{% if LANGUAGE_CODE == 'ar' %}فترات إضافية{% else %}overflow{% endif %}"
-      data-flag-manual_override="{% if LANGUAGE_CODE == 'ar' %}تجاوز يدوي{% else %}manual override{% endif %}"
-      data-flag-multi_sitting_required="{% if LANGUAGE_CODE == 'ar' %}جلسات متعددة{% else %}multi-sitting required{% endif %}"
+      data-flag-manual_override="{% if LANGUAGE_CODE == 'ar' %}مخالفات في الجدول{% else %}schedule violations{% endif %}"
+      data-flag-section_mapping_incomplete="{% if LANGUAGE_CODE == 'ar' %}ربط شعب المقررات غير مكتمل{% else %}teaching-section mapping incomplete{% endif %}"
+      data-flag-daily_limit_exceeded="{% if LANGUAGE_CODE == 'ar' %}تجاوز الحد اليومي للاختبارات{% else %}daily exam limit exceeded{% endif %}"
+      data-flag-heavy_credit_day="{% if LANGUAGE_CODE == 'ar' %}أيام ذات عبء دراسي مرتفع{% else %}heavy credit days{% endif %}"
+      data-flag-multi_sitting_required="{% if LANGUAGE_CODE == 'ar' %}توزيع على عدة قاعات{% else %}split across rooms{% endif %}"
       data-flag-legacy_incomplete_qa="{% if LANGUAGE_CODE == 'ar' %}بيانات قديمة غير كاملة{% else %}legacy / incomplete QA data{% endif %}">
     </div>
-    <div id="kStatusBanner" class="et-panel d-none mb-2" style="border-left:4px solid var(--bs-primary);padding:10px 14px;">
+    <div id="kStatusBanner" class="et-panel et-status-banner d-none mb-2">
       <div class="d-flex align-items-center gap-2 flex-wrap">
-        <span class="text-secondary small">{% if LANGUAGE_CODE == 'ar' %}الحالة{% else %}Status{% endif %}:</span>
-        <span id="kStatusPrimary" class="badge" style="font-size:0.95rem;">—</span>
+        <span id="kStatusLabel" class="text-secondary small">{% if LANGUAGE_CODE == 'ar' %}الحالة{% else %}Status{% endif %}:</span>
+        <span id="kStatusPrimary" class="badge">—</span>
         <span id="kStatusFlags" class="d-flex gap-1 flex-wrap"></span>
       </div>
     </div>
+    <section id="examSectionMappingNotice" class="et-section-mapping-notice" aria-labelledby="examSectionMappingHeading" hidden>
+      <div><h3 id="examSectionMappingHeading">{% if LANGUAGE_CODE == 'ar' %}شعب المقررات تحتاج مراجعة{% else %}Teaching sections need review{% endif %}</h3><p id="examSectionMappingText" role="status"></p></div>
+      <button id="examSectionMappingReview" type="button" class="btn btn-outline-secondary" data-open-drill="section-mapping" aria-controls="kpiDrill" aria-expanded="false">{% if LANGUAGE_CODE == 'ar' %}مراجعة بيانات الشعب{% else %}Review section gaps{% endif %}</button>
+    </section>
     <div id="draftImpactBanner" class="alert alert-warning py-2 mb-2 d-none">
       {% if LANGUAGE_CODE == 'ar' %}تأثير مبدئي بعد النقل. احفظ التغييرات أو حسّن من السجل لتحديث القاعات والتصدير نهائياً.{% else %}Draft impact after move. Save Changes or Optimize From Loaded Run to refresh rooms and final export.{% endif %}
     </div>
+    <details id="examSummaryDetails" class="et-workspace-details et-summary-details">
+      <summary>{% if LANGUAGE_CODE == 'ar' %}الملخص الكامل{% else %}Full summary{% endif %}</summary>
     <!-- KPI Row -->
-    <div class="et-panel">
-      <h6 class="mb-2">{% if LANGUAGE_CODE == 'ar' %}الملخص{% else %}Summary{% endif %}</h6>
-      <div class="row g-2">
-        <div class="col-md-3"><div class="kpi"><div class="k">{% if LANGUAGE_CODE == 'ar' %}المقررات{% else %}Courses{% endif %}</div><div class="v" id="kCourses">0</div></div></div>
-        <div class="col-md-3"><div class="kpi"><div class="k">{% if LANGUAGE_CODE == 'ar' %}الطلاب{% else %}Students{% endif %}</div><div class="v" id="kStudents">0</div></div></div>
-        <div class="col-md-3"><div class="kpi"><div class="k">{% if LANGUAGE_CODE == 'ar' %}الفترات المستخدمة{% else %}Slots used{% endif %}</div><div class="v" id="kSlots">0</div></div></div>
-        <div class="col-md-3"><div class="kpi kpi-click" data-drill="conflicts"><div class="k">{% if LANGUAGE_CODE == 'ar' %}التعارضات{% else %}Conflicts{% endif %}</div><div class="v" id="kConflicts">0</div></div></div>
+    <div class="et-panel" id="examSummaryCards">
+      <h3 class="et-summary-section-title">{% if LANGUAGE_CODE == 'ar' %}الاختبارات والعبء الدراسي{% else %}Exams and student workload{% endif %}</h3>
+      <div class="et-summary-grid">
+        <div class="et-summary-cell"><div class="kpi"><div class="k">{% if LANGUAGE_CODE == 'ar' %}المقررات{% else %}Courses{% endif %}</div><div class="v" id="kCourses">0</div></div></div>
+        <div class="et-summary-cell"><div class="kpi"><div class="k">{% if LANGUAGE_CODE == 'ar' %}الطلاب{% else %}Students{% endif %}</div><div class="v" id="kStudents">0</div></div></div>
+        <div class="et-summary-cell"><div class="kpi"><div class="k">{% if LANGUAGE_CODE == 'ar' %}الفترات المستخدمة{% else %}Slots used{% endif %}</div><div class="v" id="kSlots">0</div></div></div>
+        <div class="et-summary-cell"><div class="kpi kpi-click" role="button" tabindex="0" aria-controls="kpiDrill" aria-expanded="false" data-drill="conflicts"><div class="k">{% if LANGUAGE_CODE == 'ar' %}التعارضات{% else %}Conflicts{% endif %}</div><div class="v" id="kConflicts">0</div></div></div>
+        <div class="et-summary-cell"><div class="kpi"><div class="k">{% if LANGUAGE_CODE == 'ar' %}أقصى اختبارات/يوم/طالب{% else %}Max exams/day/student{% endif %}</div><div class="v" id="kMaxDay">0</div></div></div>
+        <div class="et-summary-cell"><div class="kpi kpi-click" role="button" tabindex="0" aria-controls="kpiDrill" aria-expanded="false" data-drill="overload"><div class="k" id="kOverLabel">{% if LANGUAGE_CODE == 'ar' %}طلاب تجاوزوا الحد{% else %}Students over limit/day{% endif %}</div><div class="v" id="kOver2">0</div></div></div>
+        <div class="et-summary-cell"><div class="kpi"><div class="k">{% if LANGUAGE_CODE == 'ar' %}أقصى ساعات معتمدة/يوم{% else %}Max credit load/day{% endif %}</div><div class="v" id="kMaxCredit">0</div></div></div>
+        <div class="et-summary-cell"><div class="kpi kpi-click" role="button" tabindex="0" aria-controls="kpiDrill" aria-expanded="false" data-drill="heavy"><div class="k">{% if LANGUAGE_CODE == 'ar' %}طلاب بيوم ثقيل{% else %}Heavy day students{% endif %}</div><div class="v" id="kHeavyDay">0</div></div></div>
       </div>
-      <div class="row g-2 mt-1">
-        <div class="col-md-3"><div class="kpi"><div class="k">{% if LANGUAGE_CODE == 'ar' %}حواف التعارض{% else %}Conflict edges{% endif %}</div><div class="v" id="kEdges">0</div></div></div>
-        <div class="col-md-3"><div class="kpi"><div class="k">{% if LANGUAGE_CODE == 'ar' %}أقصى اختبارات/يوم/طالب{% else %}Max exams/day/student{% endif %}</div><div class="v" id="kMaxDay">0</div></div></div>
-        <div class="col-md-3"><div class="kpi kpi-click" data-drill="overload"><div class="k" id="kOverLabel">{% if LANGUAGE_CODE == 'ar' %}طلاب تجاوزوا الحد{% else %}Students over limit/day{% endif %}</div><div class="v" id="kOver2">0</div></div></div>
+      <div id="kThinRow" class="et-summary-grid d-none">
+        <div class="et-summary-cell et-summary-span-2"><div class="kpi kpi-click" role="button" tabindex="0" aria-controls="kpiDrill" aria-expanded="false" data-drill="thin-courses" title="{% if LANGUAGE_CODE == 'ar' %}مقررات صغيرة جدول دون مراعاة تعارضاتها{% else %}Thin courses scheduled without honouring their conflicts{% endif %}"><div class="k">{% if LANGUAGE_CODE == 'ar' %}مقررات صغيرة (مخففة){% else %}Thin courses relaxed{% endif %}</div><div class="v" id="kThinCount">0</div></div></div>
+        <div class="et-summary-cell et-summary-span-2"><div class="kpi kpi-click" role="button" tabindex="0" aria-controls="kpiDrill" aria-expanded="false" data-drill="thin-clash" title="{% if LANGUAGE_CODE == 'ar' %}طلاب لديهم اختباران في نفس الفترة بسبب التخفيف{% else %}Students with two exams in the same slot from relaxation — pin one course to fix{% endif %}"><div class="k">{% if LANGUAGE_CODE == 'ar' %}تعارضات فعلية بسبب التخفيف{% else %}Realised relaxation clashes{% endif %}</div><div class="v" id="kThinClash">0</div></div></div>
       </div>
-      <div class="row g-2 mt-1">
-        <div class="col-md-3"><div class="kpi"><div class="k">{% if LANGUAGE_CODE == 'ar' %}مجموعات البرنامج/الفصل{% else %}Programme-term buckets{% endif %}</div><div class="v" id="kBuckets">0</div></div></div>
-        <div class="col-md-3"><div class="kpi"><div class="k">{% if LANGUAGE_CODE == 'ar' %}انتهاكات يوم المجموعة{% else %}Bucket day violations{% endif %}</div><div class="v" id="kBucketViol">0</div></div></div>
-        <div class="col-md-3"><div class="kpi"><div class="k">{% if LANGUAGE_CODE == 'ar' %}أقصى ساعات معتمدة/يوم{% else %}Max credit load/day{% endif %}</div><div class="v" id="kMaxCredit">0</div></div></div>
-        <div class="col-md-3"><div class="kpi kpi-click" data-drill="heavy"><div class="k">{% if LANGUAGE_CODE == 'ar' %}طلاب بيوم ثقيل{% else %}Heavy day students{% endif %}</div><div class="v" id="kHeavyDay">0</div></div></div>
+      <h3 class="et-summary-section-title">{% if LANGUAGE_CODE == 'ar' %}توزيع القاعات{% else %}Room allocation{% endif %}</h3>
+      <div class="et-summary-grid">
+        <div class="et-summary-cell"><div class="kpi"><div class="k">{% if LANGUAGE_CODE == 'ar' %}القاعات المستخدمة{% else %}Rooms used{% endif %}</div><div class="v" id="kRoomsUsed">0</div></div></div>
+        <div class="et-summary-cell"><div class="kpi"><div class="k">{% if LANGUAGE_CODE == 'ar' %}متوسط الإشغال{% else %}Avg utilization{% endif %}</div><div class="v" id="kRoomUtil">0%</div></div></div>
+        <div class="et-summary-cell"><div class="kpi kpi-click" role="button" tabindex="0" aria-controls="kpiDrill" aria-expanded="false" data-drill="room-unassigned"><div class="k">{% if LANGUAGE_CODE == 'ar' %}مجموعات دون قاعة{% else %}Unassigned room groups{% endif %}</div><div class="v" id="kRoomUnassigned">0</div></div></div>
+        <div class="et-summary-cell"><div class="kpi kpi-click" role="button" tabindex="0" aria-controls="kpiDrill" aria-expanded="false" data-drill="room-double"><div class="k">{% if LANGUAGE_CODE == 'ar' %}حجوزات مزدوجة{% else %}Double bookings{% endif %}</div><div class="v" id="kRoomDouble">0</div></div></div>
       </div>
-      <div class="row g-2 mt-1">
-        <div class="col-md-3"><div class="kpi"><div class="k">{% if LANGUAGE_CODE == 'ar' %}القاعات المستخدمة{% else %}Rooms used{% endif %}</div><div class="v" id="kRoomsUsed">0</div></div></div>
-        <div class="col-md-3"><div class="kpi"><div class="k">{% if LANGUAGE_CODE == 'ar' %}متوسط الإشغال{% else %}Avg utilization{% endif %}</div><div class="v" id="kRoomUtil">0%</div></div></div>
-        <div class="col-md-3"><div class="kpi"><div class="k">{% if LANGUAGE_CODE == 'ar' %}أقسام بدون قاعة{% else %}Unassigned sections{% endif %}</div><div class="v" id="kRoomUnassigned">0</div></div></div>
-        <div class="col-md-3"><div class="kpi"><div class="k">{% if LANGUAGE_CODE == 'ar' %}حجوزات مزدوجة{% else %}Double bookings{% endif %}</div><div class="v" id="kRoomDouble">0</div></div></div>
+      <!-- Room splitting keeps the official teaching section name intact. -->
+      <div id="kMultiSittingRow" class="et-summary-grid d-none">
+        <div class="et-summary-cell et-summary-span-2"><div class="kpi kpi-click" role="button" tabindex="0" aria-controls="kpiDrill" aria-expanded="false" data-drill="multi-sitting" title="{% if LANGUAGE_CODE == 'ar' %}شعب وُزع طلابها على أكثر من قاعة — انقر للتفاصيل{% else %}Teaching sections whose students are split across room groups — click for details{% endif %}"><div class="k">{% if LANGUAGE_CODE == 'ar' %}شعب موزعة على قاعات{% else %}Sections split across rooms{% endif %}</div><div class="v" id="kMultiSittingCount">0</div></div></div>
       </div>
-      <!-- v2 multi-sitting QA tile: surfaces sections that needed
-           multiple sittings (split across slots/rooms because no
-           single room could fit them). Display + drilldown only;
-           does NOT enter ranking. -->
-      <div id="kMultiSittingRow" class="row g-2 mt-1 d-none">
-        <div class="col-md-6"><div class="kpi kpi-click" data-drill="multi-sitting" title="{% if LANGUAGE_CODE == 'ar' %}أقسام تتطلب جلسات متعددة لأنها لا تتسع في قاعة واحدة — انقر للتفاصيل{% else %}Sections that needed multiple sittings because no single room could fit them — click for details{% endif %}"><div class="k">{% if LANGUAGE_CODE == 'ar' %}أقسام بجلسات متعددة{% else %}Sections requiring multi-sitting{% endif %}</div><div class="v" id="kMultiSittingCount">0</div></div></div>
-      </div>
-      <div id="kThinRow" class="row g-2 mt-1 d-none">
-        <div class="col-md-6"><div class="kpi kpi-click" data-drill="thin-courses" title="{% if LANGUAGE_CODE == 'ar' %}مقررات صغيرة جدول دون مراعاة تعارضاتها{% else %}Thin courses scheduled without honouring their conflicts{% endif %}"><div class="k">{% if LANGUAGE_CODE == 'ar' %}مقررات صغيرة (مخففة){% else %}Thin courses relaxed{% endif %}</div><div class="v" id="kThinCount">0</div></div></div>
-        <div class="col-md-6"><div class="kpi kpi-click" data-drill="thin-clash" title="{% if LANGUAGE_CODE == 'ar' %}طلاب لديهم اختباران في نفس الفترة بسبب التخفيف{% else %}Students with two exams in the same slot from relaxation — pin one course to fix{% endif %}"><div class="k">{% if LANGUAGE_CODE == 'ar' %}تعارضات فعلية بسبب التخفيف{% else %}Realised relaxation clashes{% endif %}</div><div class="v" id="kThinClash">0</div></div></div>
-      </div>
-      <!-- v3 telemetry: building-footprint card. Display-only — surfaces
-           operational pain so the registrar can later decide whether to
-           promote building affinity to a real objective. Does NOT enter
-           any ranking, scheduler, or candidate-selection logic. -->
-      <div id="kFootprintRow" class="row g-2 mt-1 d-none">
-        <div class="col-md-12"><div class="kpi" title="{% if LANGUAGE_CODE == 'ar' %}بصمة المبنى لكل فترة — إخباري فقط، لا يؤثر على ترتيب المرشحين{% else %}Building footprint per slot — informational only, no effect on candidate ranking.{% endif %}"><div class="k">{% if LANGUAGE_CODE == 'ar' %}أكبر بصمة فترة{% else %}Largest slot footprint{% endif %}</div><div class="v" id="kFootprintLargest" style="font-size:0.95rem;font-weight:500;">—</div></div></div>
-      </div>
-      <!-- v3 telemetry: enrolment-snapshot integrity card. Helps the
-           registrar answer "why does this exported schedule differ from
-           what I expected?" by recording the input data state at build
-           time. Display-only. -->
-      <div id="kSnapshotRow" class="row g-2 mt-1 d-none">
-        <div class="col-md-3"><div class="kpi" title="{% if LANGUAGE_CODE == 'ar' %}وقت قراءة بيانات التسجيل{% else %}When the build read the enrolment data{% endif %}"><div class="k">{% if LANGUAGE_CODE == 'ar' %}وقت اللقطة{% else %}Snapshot time{% endif %}</div><div class="v" id="kSnapshotTime" style="font-size:0.85rem;">—</div></div></div>
-        <div class="col-md-3"><div class="kpi"><div class="k">{% if LANGUAGE_CODE == 'ar' %}الأقسام في اللقطة{% else %}Sections in snapshot{% endif %}</div><div class="v" id="kSnapshotSections">0</div></div></div>
-        <div class="col-md-3"><div class="kpi" title="{% if LANGUAGE_CODE == 'ar' %}يستخدم مسار StudentCourse الاحتياطي بدلاً من بيانات الفصل{% else %}Used StudentCourse fallback path instead of TermSection data{% endif %}"><div class="k">{% if LANGUAGE_CODE == 'ar' %}مسار احتياطي؟{% else %}Fallback path?{% endif %}</div><div class="v" id="kSnapshotFallback">—</div></div></div>
-        <div class="col-md-3"><div class="kpi" title="{% if LANGUAGE_CODE == 'ar' %}مجموع تجزئة المدخلات SHA-256 — لتأكيد عدم تغير البيانات{% else %}sha256 of canonical enrolment input — confirms data hasn't drifted{% endif %}"><div class="k">{% if LANGUAGE_CODE == 'ar' %}بصمة المدخلات{% else %}Input checksum{% endif %}</div><div class="v" id="kSnapshotHash" style="font-family:monospace;font-size:0.7rem;">—</div></div></div>
-      </div>
-      <!-- Drilldown detail panel (hidden until a KPI is clicked) -->
-      <div id="kpiDrill" class="mt-2 d-none">
-        <div class="d-flex align-items-center justify-content-between mb-1">
-          <h6 class="mb-0" id="kpiDrillTitle"></h6>
-          <button id="kpiDrillClose" class="btn btn-sm btn-outline-secondary py-0 px-2">&times;</button>
+    </div>
+    </details>
+      <!-- Kept outside collapsed summary so quick metrics can open details. -->
+      <div id="kpiDrill" class="et-panel et-drill-panel d-none" aria-labelledby="kpiDrillTitle">
+        <div class="et-drill-heading">
+          <h3 id="kpiDrillTitle"></h3>
+          <button id="kpiDrillClose" type="button" class="btn btn-sm btn-outline-secondary py-0 px-2" aria-label="{% if LANGUAGE_CODE == 'ar' %}إغلاق التفاصيل{% else %}Close details{% endif %}">&times;</button>
         </div>
-        <div class="table-responsive" style="max-height:340px;overflow-y:auto;">
+        <p id="examDrillNotice" class="et-drill-notice" role="status" hidden></p>
+        <div id="examDrillViewport" class="et-drill-viewport" role="region" tabindex="0" aria-labelledby="kpiDrillTitle">
           <table class="table table-sm table-hover mb-0 et-drill-table">
             <thead id="kpiDrillHead"></thead>
             <tbody id="kpiDrillBody"></tbody>
           </table>
         </div>
       </div>
-    </div>
-
     <!-- QA Warnings -->
     <div id="qaWarnings" class="et-panel d-none" hidden>
       <h6 class="mb-2 et-qa-title">{% if LANGUAGE_CODE == 'ar' %}تحذيرات الجودة{% else %}QA Warnings{% endif %}</h6>
       <div id="qaBody"></div>
     </div>
 
-    <!-- Schedule Grid -->
-    <div class="et-panel">
-      <div class="d-flex align-items-center justify-content-between mb-2 gap-2">
-        <h6 class="mb-0">{% if LANGUAGE_CODE == 'ar' %}جدول الاختبارات{% else %}Exam Schedule{% endif %}</h6>
-        <div class="d-flex align-items-center gap-2 ms-auto">
-          <a id="exportXlsx" href="#" class="btn btn-sm btn-outline-success d-none"
-             title="{% if LANGUAGE_CODE == 'ar' %}تحميل جدول الامتحانات كملف إكسل{% else %}Download exam timetable as Excel file{% endif %}">
-            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" viewBox="0 0 16 16" style="vertical-align:-2px;margin-inline-end:3px"><path d="M.5 9.9a.5.5 0 0 1 .5.5v2.5a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-2.5a.5.5 0 0 1 1 0v2.5a2 2 0 0 1-2 2H2a2 2 0 0 1-2-2v-2.5a.5.5 0 0 1 .5-.5"/><path d="M7.646 11.854a.5.5 0 0 0 .708 0l3-3a.5.5 0 0 0-.708-.708L8.5 10.293V1.5a.5.5 0 0 0-1 0v8.793L5.354 8.146a.5.5 0 1 0-.708.708z"/></svg>
-            {% if LANGUAGE_CODE == 'ar' %}تصدير إكسل{% else %}Export Excel{% endif %}
-          </a>
-          <input id="schedFilter" class="form-control form-control-sm" style="max-width:300px" placeholder="{% if LANGUAGE_CODE == 'ar' %}تصفية: AI=برنامج، CS*=رمز المقرر{% else %}Filter: AI=program, CS*=course code{% endif %}">
-        </div>
+    <!-- Schedule workspace: controls stay with their own scrolling grid. -->
+    <section id="examScheduleWorkspace" class="et-panel et-schedule-workspace" aria-labelledby="examScheduleHeading">
+      <div class="et-schedule-heading">
+        <div><h2 id="examScheduleHeading">{% if LANGUAGE_CODE == 'ar' %}جدول الاختبارات{% else %}Exam Schedule{% endif %}</h2><p id="examRunSummary" class="et-run-summary"></p></div>
+        <input id="schedFilter" class="form-control form-control-sm" aria-label="{% if LANGUAGE_CODE == 'ar' %}تصفية الاختبارات حسب البرنامج أو رمز المقرر{% else %}Filter exams by program or course code{% endif %}" placeholder="{% if LANGUAGE_CODE == 'ar' %}تصفية: AI=برنامج، CS*=رمز المقرر{% else %}Filter: AI=program, CS*=course code{% endif %}">
       </div>
-      <div class="table-responsive" id="schedGrid"></div>
+      <section id="examEditToolbar" class="et-edit-toolbar" aria-labelledby="examEditHeading">
+        <h3 id="examEditHeading" class="visually-hidden">{% if LANGUAGE_CODE == 'ar' %}تعديل الجدول{% else %}Edit timetable{% endif %}</h3>
+        <div class="et-edit-controls">
+          <label class="et-live-control" for="examLiveUpdate"><input id="examLiveUpdate" type="checkbox" role="switch" checked><span id="examLiveMode">{% if LANGUAGE_CODE == 'ar' %}التحديث المباشر مفعّل{% else %}Live update: on{% endif %}</span></label>
+          <div class="et-check-controls"><button id="checkDraftBtn" type="button" class="btn btn-outline-primary">{% if LANGUAGE_CODE == 'ar' %}فحص التغييرات{% else %}Check changes{% endif %}</button></div>
+          <div class="et-undo-controls" role="group" aria-label="{% if LANGUAGE_CODE == 'ar' %}سجل التعديلات{% else %}Edit history{% endif %}"><button id="undoExamBtn" type="button" class="btn btn-outline-secondary" disabled>{% if LANGUAGE_CODE == 'ar' %}تراجع{% else %}Undo{% endif %}</button><button id="redoExamBtn" type="button" class="btn btn-outline-secondary" disabled>{% if LANGUAGE_CODE == 'ar' %}إعادة{% else %}Redo{% endif %}</button></div>
+          <button id="optimizeLoadedBtn" type="button" class="btn btn-outline-secondary" disabled>{% if LANGUAGE_CODE == 'ar' %}تحسين الجدول الحالي{% else %}Optimize current timetable{% endif %}</button>
+          <div class="et-save-controls"><button id="saveLoadedBtn" type="button" class="btn btn-primary d-none" disabled>{% if LANGUAGE_CODE == 'ar' %}حفظ التغييرات{% else %}Save Changes{% endif %}</button><a id="exportXlsx" href="#" class="btn btn-outline-success d-none" title="{% if LANGUAGE_CODE == 'ar' %}تحميل جدول الاختبارات المحفوظ كملف إكسل{% else %}Download the saved timetable as Excel{% endif %}">{% if LANGUAGE_CODE == 'ar' %}تصدير إكسل{% else %}Export Excel{% endif %}</a><button id="departmentFilesBtn" type="button" class="btn btn-outline-secondary d-none" aria-haspopup="dialog" aria-controls="examDepartmentDialog">{% if LANGUAGE_CODE == 'ar' %}ملفات الأقسام{% else %}Department files{% endif %}</button></div>
+        </div>
+        <div class="et-edit-feedback">
+          <span id="examCheckStatus" class="et-check-status" role="status" aria-live="polite"></span>
+          <span id="examChangeCount" class="et-change-count"></span>
+          <div id="examQuickMetrics" class="et-quick-metrics" role="group" aria-label="{% if LANGUAGE_CODE == 'ar' %}مؤشرات الجدول الأساسية{% else %}Essential timetable metrics{% endif %}"></div>
+          <details id="examEditingHelpDetails" class="et-edit-help">
+            <summary>{% if LANGUAGE_CODE == 'ar' %}مساعدة التعديل{% else %}Editing help{% endif %}</summary>
+            <div><p id="examEditHelp">{% if LANGUAGE_CODE == 'ar' %}اسحب لنقل اختبار. انقر مرتين أو استخدم زر التثبيت لتثبيت موعده.{% else %}Drag to move an exam. Double-click or use Pin to fix its time.{% endif %}</p><p>{% if LANGUAGE_CODE == 'ar' %}الفحص يحدّث النتائج دون تغيير مواعيد الاختبارات. التحسين قد ينقل الاختبارات غير المثبتة.{% else %}Checking updates results while keeping exam times. Optimization may move unpinned exams.{% endif %}</p></div>
+          </details>
+        </div>
+        <div id="examEditorRequestError" class="alert alert-danger et-request-error" role="alert" hidden></div>
+        <section id="examSourceReviewNotice" class="et-section-mapping-notice" aria-labelledby="examSourceReviewHeading" hidden>
+          <div><h3 id="examSourceReviewHeading">{% if LANGUAGE_CODE == 'ar' %}راجع مصدر المقررات قبل المتابعة{% else %}Review the course source before continuing{% endif %}</h3><p>{% if LANGUAGE_CODE == 'ar' %}بُني هذا الجدول بمصدر تسجيلات سابق. حمّل المقررات لمراجعة التسجيلات الفعلية في الجداول الدراسية المستوردة، ثم أعد البناء قبل الفحص أو الحفظ أو التحسين أو التصدير. تبقى المواعيد الحالية هنا حتى تختار استبدالها.{% else %}This timetable was built with an earlier enrollment source. Load Courses to review actual enrollments from imported student timetables, then rebuild before checking, saving, optimizing or exporting. Its current placements remain here until you choose to replace them.{% endif %}</p></div>
+          <button id="reviewExamCourseSource" type="button" class="btn btn-outline-secondary">{% if LANGUAGE_CODE == 'ar' %}مراجعة مصدر المقررات{% else %}Review course source{% endif %}</button>
+        </section>
+      </section>
+      <section id="examReviewPanel" class="et-review-panel" aria-labelledby="examReviewHeading">
+        <h3 id="examReviewHeading" class="visually-hidden">{% if LANGUAGE_CODE == 'ar' %}مراجعة المقررات في الجدول{% else %}Review timetable courses{% endif %}</h3>
+        <div class="et-review-controls">
+          <div class="et-review-field">
+            <label for="examReviewMode">{% if LANGUAGE_CODE == 'ar' %}عرض البطاقات{% else %}Card view{% endif %}</label>
+            <select id="examReviewMode" class="form-select form-select-sm" aria-describedby="examReviewHelp">
+              <option value="size" selected>{% if LANGUAGE_CODE == 'ar' %}حجم الاختبار{% else %}Exam size{% endif %}</option>
+              <option value="neutral">{% if LANGUAGE_CODE == 'ar' %}بدون ألوان{% else %}No colours{% endif %}</option>
+              <option value="term">{% if LANGUAGE_CODE == 'ar' %}الفصل الدراسي{% else %}Study term{% endif %}</option>
+              <option value="students">{% if LANGUAGE_CODE == 'ar' %}الطلاب المشتركون{% else %}Shared students{% endif %}</option>
+            </select>
+          </div>
+          <div id="examReviewPlanField" class="et-review-field et-review-plan" hidden>
+            <label for="examReviewPlan">{% if LANGUAGE_CODE == 'ar' %}الخطة الدراسية{% else %}Study plan{% endif %}</label>
+            <select id="examReviewPlan" class="form-select form-select-sm" aria-describedby="examReviewHelp">
+              <option value="">{% if LANGUAGE_CODE == 'ar' %}اختر الخطة الدراسية{% else %}Choose a study plan{% endif %}</option>
+            </select>
+          </div>
+          <p id="examReviewHelp" class="et-review-help">{% if LANGUAGE_CODE == 'ar' %}تصنّف الألوان الاختبارات حسب عدد الطلاب ضمن المجموعات المحددة. مرّر المؤشر لعرض العدد الدقيق من آخر تحقق.{% else %}Colours group exams by student count for the selected groups. Hover for the exact count from the last check.{% endif %}</p>
+        </div>
+        <div id="examSizeLegend" class="et-size-legend" role="group" aria-label="{% if LANGUAGE_CODE == 'ar' %}عدد الطلاب المسجلين لكل اختبار{% else %}Enrolled students per exam{% endif %}">
+          <span class="et-size-legend-label">{% if LANGUAGE_CODE == 'ar' %}الطلاب لكل اختبار:{% else %}Students per exam:{% endif %}</span>
+          <span class="et-size-key" data-exam-size="1-30"><bdi dir="ltr">1–30</bdi></span>
+          <span class="et-size-key" data-exam-size="31-60"><bdi dir="ltr">31–60</bdi></span>
+          <span class="et-size-key" data-exam-size="61-100"><bdi dir="ltr">61–100</bdi></span>
+          <span class="et-size-key" data-exam-size="101-150"><bdi dir="ltr">101–150</bdi></span>
+          <span class="et-size-key" data-exam-size="151-200"><bdi dir="ltr">151–200</bdi></span>
+          <span class="et-size-key" data-exam-size="201-plus"><bdi dir="ltr">201+</bdi></span>
+          <span id="examSizeZero" class="et-size-key" data-exam-size="zero" hidden>0</span>
+          <span id="examSizeUnknown" class="et-size-key" data-exam-size="unknown" hidden>{% if LANGUAGE_CODE == 'ar' %}غير مسجل{% else %}Not recorded{% endif %}</span>
+        </div>
+        <div id="examTermLegend" class="et-term-legend" role="group" aria-label="{% if LANGUAGE_CODE == 'ar' %}فصول الخطة الدراسية{% else %}Study-plan terms{% endif %}" hidden></div>
+        <div class="et-related-context">
+          <p id="examRelatedSummary" class="et-related-summary" hidden></p>
+          <button id="examRelatedClear" type="button" class="btn btn-sm btn-outline-secondary" hidden>{% if LANGUAGE_CODE == 'ar' %}مسح التركيز{% else %}Clear focus{% endif %}</button>
+        </div>
+        <p id="examReviewStatus" class="et-review-status" role="status" aria-live="polite" aria-atomic="true"></p>
+      </section>
+      <div id="schedGrid" class="et-schedule-viewport" role="region" tabindex="0" aria-labelledby="examScheduleHeading"></div>
+      <p id="examFindStatus" class="visually-hidden" role="status"></p>
       <div id="pinBar" class="et-pin-bar d-none">
         <span id="pinCount"></span>
         <a href="#" id="clearPins">{% if LANGUAGE_CODE == 'ar' %}مسح التثبيت{% else %}Clear all pins{% endif %}</a>
-        <small class="text-secondary">{% if LANGUAGE_CODE == 'ar' %}انقر نقراً مزدوجاً لإلغاء تثبيت مقرر{% else %}Double-click a pinned course to unpin{% endif %}</small>
+        <small class="text-secondary">{% if LANGUAGE_CODE == 'ar' %}انقر مرتين أو استخدم زر التثبيت. ألغِ التثبيت قبل السحب.{% else %}Double-click or use Pin. Unpin an exam before dragging it.{% endif %}</small>
       </div>
-    </div>
+    </section>
 
     <!-- Conflict Matrix (collapsed by default) -->
     <div class="et-panel" id="matrixPanel">
       <div class="d-flex align-items-center justify-content-between mb-2">
-        <h6 class="mb-0">{% if LANGUAGE_CODE == 'ar' %}مصفوفة التعارضات{% else %}Conflict Matrix{% endif %}</h6>
+        <h3 class="et-summary-section-title mb-0" id="examMatrixHeading">{% if LANGUAGE_CODE == 'ar' %}مصفوفة التعارضات{% else %}Conflict Matrix{% endif %}</h3>
         <div class="d-flex gap-2">
-          <button id="matrixFullscreen" class="btn btn-sm btn-outline-secondary" title="{% if LANGUAGE_CODE == 'ar' %}ملء الشاشة{% else %}Fullscreen{% endif %}">&#x26F6;</button>
-          <button id="toggleMatrix" class="btn btn-sm btn-outline-secondary">{% if LANGUAGE_CODE == 'ar' %}عرض{% else %}Show{% endif %}</button>
+          <button id="matrixFullscreen" type="button" class="btn btn-sm btn-outline-secondary" aria-controls="matrixPanel" aria-label="{% if LANGUAGE_CODE == 'ar' %}عرض مصفوفة التعارضات بملء الشاشة{% else %}Open conflict matrix fullscreen{% endif %}" title="{% if LANGUAGE_CODE == 'ar' %}ملء الشاشة{% else %}Fullscreen{% endif %}">&#x26F6;</button>
+          <button id="toggleMatrix" type="button" class="btn btn-sm btn-outline-secondary" aria-controls="conflictMatrix" aria-expanded="false">{% if LANGUAGE_CODE == 'ar' %}عرض{% else %}Show{% endif %}</button>
         </div>
       </div>
       <div id="conflictMatrix" class="d-none">
         <div class="et-matrix-toolbar">
           <span class="et-matrix-title">{% if LANGUAGE_CODE == 'ar' %}مصفوفة التعارضات{% else %}Conflict Matrix{% endif %}</span>
           <div class="et-zoom-controls">
-            <button class="et-zoom-btn" id="etZoomOut" title="{% if LANGUAGE_CODE == 'ar' %}تصغير{% else %}Zoom out{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}تصغير{% else %}Zoom out{% endif %}">&#x2212;</button>
+            <button type="button" class="et-zoom-btn" id="etZoomOut" title="{% if LANGUAGE_CODE == 'ar' %}تصغير{% else %}Zoom out{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}تصغير{% else %}Zoom out{% endif %}">&#x2212;</button>
             <span class="et-zoom-level" id="etZoomLevel" aria-live="polite">100%</span>
-            <button class="et-zoom-btn" id="etZoomIn" title="{% if LANGUAGE_CODE == 'ar' %}تكبير{% else %}Zoom in{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}تكبير{% else %}Zoom in{% endif %}">+</button>
-            <button class="et-zoom-btn" id="etZoomFit" title="{% if LANGUAGE_CODE == 'ar' %}ملائمة العرض{% else %}Fit to view{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}ملائمة العرض{% else %}Fit to view{% endif %}">{% if LANGUAGE_CODE == 'ar' %}ملائمة{% else %}Fit{% endif %}</button>
+            <button type="button" class="et-zoom-btn" id="etZoomIn" title="{% if LANGUAGE_CODE == 'ar' %}تكبير{% else %}Zoom in{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}تكبير{% else %}Zoom in{% endif %}">+</button>
+            <button type="button" class="et-zoom-btn" id="etZoomFit" title="{% if LANGUAGE_CODE == 'ar' %}ملائمة العرض{% else %}Fit to view{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}ملائمة العرض{% else %}Fit to view{% endif %}">{% if LANGUAGE_CODE == 'ar' %}ملائمة{% else %}Fit{% endif %}</button>
           </div>
         </div>
         <div class="et-matrix-empty" id="etMatrixEmpty">
@@ -279,7 +229,7 @@
             <div class="empty-hint">{% if LANGUAGE_CODE == 'ar' %}قم بتحميل المقررات وبناء الجدول لعرض مصفوفة التعارضات{% else %}Load courses and build a timetable to see the conflict matrix{% endif %}</div>
           </div>
         </div>
-        <div class="et-matrix-viewport" id="etMatrixViewport">
+        <div class="et-matrix-viewport" id="etMatrixViewport" role="region" tabindex="0" aria-labelledby="examMatrixHeading">
           <div class="et-matrix-scaler" id="etMatrixScaler" style="transform-origin: top {% if LANGUAGE_CODE == 'ar' %}right{% else %}left{% endif %};">
             <div id="matrixGrid"></div>
           </div>
@@ -288,15 +238,24 @@
     </div>
   </div>
 
+  <dialog id="examMoveDialog" class="et-move-dialog" aria-labelledby="examMoveTitle" aria-describedby="examMoveHelp">
+    <h2 id="examMoveTitle">{% if LANGUAGE_CODE == 'ar' %}نقل اختبار{% else %}Move exam{% endif %}</h2>
+    <p id="examMoveHelp" class="et-dialog-help">{% if LANGUAGE_CODE == 'ar' %}اختر اليوم والفترة لهذا الاختبار.{% else %}Choose the destination day and period for this exam.{% endif %}</p>
+    <div class="et-move-fields"><div><label for="examMoveDay" class="form-label">{% if LANGUAGE_CODE == 'ar' %}اليوم{% else %}Day{% endif %}</label><select id="examMoveDay" class="form-select"></select></div><div><label for="examMovePeriod" class="form-label">{% if LANGUAGE_CODE == 'ar' %}الفترة{% else %}Period{% endif %}</label><select id="examMovePeriod" class="form-select"></select></div></div>
+    <div class="et-move-actions"><button id="cancelExamMove" type="button" class="btn btn-outline-secondary">{% if LANGUAGE_CODE == 'ar' %}إلغاء{% else %}Cancel{% endif %}</button><button id="confirmExamMove" type="button" class="btn btn-primary">{% if LANGUAGE_CODE == 'ar' %}نقل الاختبار{% else %}Move exam{% endif %}</button></div>
+  </dialog>
+
+  {% include "core/partials/exam_department_export.html" %}
+
   <!-- ─── History ─── -->
-  <div class="et-panel">
-    <h6 class="mb-2">{% if LANGUAGE_CODE == 'ar' %}السجل السابق{% else %}Previous Runs{% endif %}</h6>
+  <details id="examHistoryDetails" class="et-panel et-history-panel">
+    <summary id="examHistorySummary">{% if LANGUAGE_CODE == 'ar' %}الجداول المحفوظة{% else %}Saved timetables{% endif %}</summary>
     <div id="historyList"><small class="text-secondary">{% if LANGUAGE_CODE == 'ar' %}جارٍ التحميل...{% else %}Loading...{% endif %}</small></div>
     <div id="historyPagination" class="pg-bar d-none mt-2">
       <div class="pg-info" id="historyShowing"></div>
       <div class="pg-nav" id="historyPages"></div>
     </div>
-  </div>
+  </details>
 {% endblock %}
 
 {% block extra_js %}
@@ -304,5 +263,6 @@
   const LANGUAGE_CODE = "{{ LANGUAGE_CODE|default:'en' }}";
   const djCsrfToken = "{{ csrf_token }}";
 </script>
-<script src="{% static 'js/page-exam-timetable.js' %}?v=2"></script>
+<script src="{% static 'js/exam-review.js' %}?v=4"></script>
+<script src="{% static 'js/page-exam-timetable.js' %}?v=26"></script>
 {% endblock %}

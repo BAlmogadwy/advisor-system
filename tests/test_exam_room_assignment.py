@@ -2,7 +2,7 @@
 Tests for exam timetable room assignment (Phase 2).
 
 Covers:
-  - build_section_enrollment: grouping, counts, gender detection, fallbacks
+  - build_section_enrollment: scraped sections, counts, gender, no course fallback
   - check_room_feasibility: oversized sections
   - _merge_same_course_sections: merge when combined fits
   - assign_rooms_to_schedule: gender separation, no cross-course sharing,
@@ -154,8 +154,8 @@ def test_build_section_enrollment_picks_preferred_room() -> None:
     assert m1["preferred_room"] == "ROOM-A"
 
 
-def test_build_section_enrollment_fallback_to_student_course() -> None:
-    """Course with no StudentTermSection falls back to StudentCourse."""
+def test_build_section_enrollment_never_falls_back_to_student_course() -> None:
+    """Studying-course rows cannot invent actual scraped exam enrolments."""
     Course.objects.create(course_code="FALLBK1", credit_hours=3)
     s = Student.objects.create(student_id=9100, program="ROOMTEST", section="F")
     StudentCourse.objects.create(
@@ -165,10 +165,7 @@ def test_build_section_enrollment_fallback_to_student_course() -> None:
     )
 
     enrolment = build_section_enrollment({"FALLBK1"})
-    assert len(enrolment["FALLBK1"]) == 1
-    synth = enrolment["FALLBK1"][0]
-    assert synth["student_count"] == 1
-    assert synth["gender"] == "F"
+    assert enrolment == {}
 
 
 def test_check_room_feasibility_flags_oversized_section() -> None:
@@ -252,7 +249,7 @@ def test_assign_rooms_no_cross_course_sharing_in_same_slot() -> None:
     assert not (a1_rooms & a2_rooms)
 
 
-def test_assign_rooms_prefers_previously_used_room() -> None:
+def test_assign_rooms_preserves_large_rooms_before_using_preference() -> None:
     _make_rooms()
     rooms = list(Room.objects.values("room_code", "capacity", "section"))
 
@@ -263,8 +260,8 @@ def test_assign_rooms_prefers_previously_used_room() -> None:
         ]
     }
     assign_rooms_to_schedule(schedule, enrolment, rooms)
-    # Even though M-25 is tighter (25-20=5), the preferred room wins
-    assert schedule[0]["rooms"][0]["room_code"] == "M-50"
+    # The smallest fitting room wins; preference only breaks equal-capacity ties.
+    assert schedule[0]["rooms"][0]["room_code"] == "M-25"
 
 
 def test_assign_rooms_falls_back_to_tightest_when_no_preference() -> None:
@@ -282,11 +279,8 @@ def test_assign_rooms_falls_back_to_tightest_when_no_preference() -> None:
     assert schedule[0]["rooms"][0]["room_code"] == "M-25"
 
 
-def test_assign_rooms_splits_merged_group_when_big_room_unavailable() -> None:
-    """When a merged group can't fit (e.g. biggest same-gender room was
-    taken by another course), fall back to placing each constituent
-    section individually instead of marking the whole group UNASSIGNED.
-    """
+def test_assign_rooms_seats_every_student_with_one_unavoidable_section_split() -> None:
+    """Three ten-student sections require one split across two fifteen-seat rooms."""
     # Rooms: one big M room (50) + two small M rooms (15 each).
     Room.objects.create(room_code="M-BIG", capacity=50, section="M")
     Room.objects.create(room_code="M-SM1", capacity=15, section="M")
@@ -294,9 +288,9 @@ def test_assign_rooms_splits_merged_group_when_big_room_unavailable() -> None:
     rooms = list(Room.objects.values("room_code", "capacity", "section"))
 
     # Two courses in the same slot:
-    #   HOG1 takes the only big M room with a 40-student merged group.
+    #   HOG1 takes the only big M room with a whole 40-student section.
     #   SPL1 has 3 M sections of 10 each that would merge to 30 — but
-    #   the big room is gone, so it must split into individuals.
+    #   the big room is gone, so one original section must be split.
     schedule = [
         {"course_code": "HOG1", "slot_index": 0, "day": "Sun", "period": "9"},
         {"course_code": "SPL1", "slot_index": 0, "day": "Sun", "period": "9"},
@@ -318,17 +312,34 @@ def test_assign_rooms_splits_merged_group_when_big_room_unavailable() -> None:
     hog_rooms = {r["room_code"] for r in schedule[0]["rooms"]}
     assert "M-BIG" in hog_rooms
 
-    # SPL1 couldn't merge into M-BIG, so it split and each section got
-    # its own small room.  One section still can't fit (only 2 small
-    # rooms available) so it lands UNASSIGNED — but 2/3 are placed.
+    # Repair fills both small rooms and divides only one official section.
     spl_assignments = schedule[1]["rooms"]
     assigned_codes = [a["room_code"] for a in spl_assignments if a["room_code"] != "UNASSIGNED"]
     assert "M-SM1" in assigned_codes
     assert "M-SM2" in assigned_codes
-    # The failed one is a single section (not the merged block)
-    unassigned_sections = [a["section"] for a in spl_assignments if a["room_code"] == "UNASSIGNED"]
-    assert len(unassigned_sections) == 1
-    assert unassigned_sections[0] in ("M1", "M2", "M3")
+    assert "UNASSIGNED" not in {a["room_code"] for a in spl_assignments}
+    assert sorted(a["student_count"] for a in spl_assignments) == [15, 15]
+    for section in ("M1", "M2", "M3"):
+        assert (
+            sum(
+                part["student_count"]
+                for allocation in spl_assignments
+                for part in allocation["section_parts"]
+                if part["section"] == section
+            )
+            == 10
+        )
+    assert (
+        sum(
+            sum(
+                any(part["section"] == section for part in a["section_parts"])
+                for a in spl_assignments
+            )
+            > 1
+            for section in ("M1", "M2", "M3")
+        )
+        == 1
+    )
 
 
 def test_assign_rooms_auto_splits_oversized_section() -> None:
@@ -400,7 +411,7 @@ def test_assign_rooms_skips_overflow_entries() -> None:
     assert schedule[0]["rooms"] == []
 
 
-def test_assign_rooms_no_rooms_available_noop() -> None:
+def test_assign_rooms_no_rooms_available_reports_unassigned_demand() -> None:
     schedule = [{"course_code": "Z1", "slot_index": 0, "day": "Sun", "period": "9"}]
     enrolment = {
         "Z1": [
@@ -408,7 +419,12 @@ def test_assign_rooms_no_rooms_available_noop() -> None:
         ]
     }
     assign_rooms_to_schedule(schedule, enrolment, rooms=[])
-    assert schedule[0]["rooms"] == []
+    assert len(schedule[0]["rooms"]) == 1
+    assignment = schedule[0]["rooms"][0]
+    assert assignment["room_code"] == "UNASSIGNED"
+    assert assignment["section"] == "M1"
+    assert assignment["student_count"] == 10
+    assert assignment["gender"] == "M"
 
 
 def test_build_exam_timetable_end_to_end_with_rooms() -> None:

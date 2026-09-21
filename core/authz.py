@@ -7,6 +7,7 @@ from django.http import HttpRequest, HttpResponseBase, JsonResponse
 
 from core.services.rbac import (
     ROLE_ADVISOR,
+    ROLE_EXAM_COMMITTEE,
     ROLE_GENERAL_ADVISOR,
     ROLE_STUDENT,
     ROLE_SUPER_ADMIN,
@@ -14,6 +15,7 @@ from core.services.rbac import (
 )
 
 ROLE_ORDER = {
+    ROLE_EXAM_COMMITTEE: 0,  # independent exam-only role, below all advisor tiers
     ROLE_STUDENT: 0,  # below every advisor tier: role_required(ADVISOR+) denies students
     ROLE_ADVISOR: 1,
     ROLE_GENERAL_ADVISOR: 2,

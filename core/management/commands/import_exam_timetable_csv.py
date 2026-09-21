@@ -14,6 +14,8 @@ from django.db import transaction
 
 from core.models import ExamTimetableRun, Room
 from core.services.course_identity import planner_course_key
+from core.services.exam_operations_snapshot import build_exam_operations_snapshot
+from core.services.exam_review import build_exam_review
 from core.services.exam_run_schema import (
     STATUS_DERIVATION_VERSION,
     compute_enrolment_snapshot,
@@ -22,6 +24,7 @@ from core.services.exam_run_schema import (
     derive_status_surface,
     stamp_schema_version,
 )
+from core.services.exam_sections import EXAM_ENROLLMENT_SOURCE, summarize_exam_section_mapping
 from core.services.exam_timetable import (
     _build_qa,
     _build_room_qa,
@@ -32,7 +35,9 @@ from core.services.exam_timetable import (
     build_enrolled_sets_with_meta,
     build_plan_term_buckets,
     check_room_feasibility,
+    select_exam_course_enrollments,
 )
+from core.services.student_helpers import normalize_code
 
 REQUIRED_COLUMNS = {"Day", "Date", "Period", "Time", "Course Name", "Course Code"}
 
@@ -122,7 +127,8 @@ def _source_for_display(display_code: str) -> str:
 
 def _build_enrolment_for_manual_courses(
     manual_meta: dict[str, dict[str, str]],
-) -> tuple[dict[str, set[int]], dict[str, dict[str, str]]]:
+) -> tuple[dict[str, set[int]], dict[str, dict]]:
+    """Resolve CSV names to scraped identities, never infer membership from aliases."""
     db_enrolled, db_meta = build_enrolled_sets_with_meta()
     db_by_source: dict[str, list[str]] = defaultdict(list)
     for display, meta in db_meta.items():
@@ -131,29 +137,34 @@ def _build_enrolment_for_manual_courses(
     for displays in db_by_source.values():
         displays.sort()
 
-    enrolled: dict[str, set[int]] = {}
-    merged_meta: dict[str, dict[str, str]] = {}
+    resolved: list[dict] = []
     for display, meta in manual_meta.items():
-        source = _clean(meta.get("source_course_code")) or _source_for_display(display)
-        matched_display = display if display in db_enrolled else ""
-        if not matched_display:
-            candidates = db_by_source.get(source, [])
-            if len(candidates) == 1:
-                matched_display = candidates[0]
-            elif display in candidates:
-                matched_display = display
-
-        enrolled[display] = set(db_enrolled.get(matched_display, set()))
-        db_match_meta = db_meta.get(matched_display, {})
-        merged_meta[display] = {
-            "source_course_code": source,
-            "course_name": _clean(meta.get("course_name"))
-            or _clean(db_match_meta.get("course_name")),
-            "course_identity": _clean(db_match_meta.get("course_identity"))
-            or _clean(meta.get("course_identity"))
-            or source,
-        }
-    return enrolled, merged_meta
+        source = normalize_code(
+            _source_for_display(_clean(meta.get("source_course_code")) or display)
+        )
+        candidates = db_by_source.get(source, [])
+        if not candidates:
+            raise CommandError(
+                f"Course {display} has no actual scraped timetable enrollments in the current term."
+            )
+        if len(candidates) == 1:
+            # A harmless CSV spelling alias is unambiguous only for one identity.
+            matched_display = candidates[0]
+        else:
+            identity = planner_course_key(source, meta.get("course_name"))
+            matches = [code for code in candidates if db_meta[code]["course_identity"] == identity]
+            if len(matches) != 1:
+                names = "; ".join(db_meta[code]["course_name"] for code in candidates)
+                raise CommandError(
+                    f"Course {display} has multiple scraped course identities. "
+                    f"Use its exact course name to choose one: {names}."
+                )
+            matched_display = matches[0]
+        resolved.append({"course_code": display, **db_meta[matched_display]})
+    try:
+        return select_exam_course_enrollments(resolved, db_enrolled, db_meta)
+    except ValueError as exc:
+        raise CommandError(str(exc)) from exc
 
 
 def _import_payload(
@@ -215,19 +226,25 @@ def _import_payload(
 
     enrolled_sets, course_meta = _build_enrolment_for_manual_courses(manual_meta)
     for entry in schedule_entries:
-        meta = course_meta.get(entry["course_code"], {})
-        entry["course_identity"] = meta.get("course_identity") or entry["course_identity"]
+        entry.update(course_meta[entry["course_code"]])
 
     course_list = sorted(manual_meta)
-    credit_map = build_credit_map(course_list)
+    source_credits = build_credit_map({meta["source_course_code"] for meta in course_meta.values()})
+    credit_map = {
+        display: source_credits[meta["source_course_code"]] for display, meta in course_meta.items()
+    }
     conflicts, _adj = build_conflict_graph(enrolled_sets)
     ptb, _cb = build_plan_term_buckets(set(course_list), course_meta=course_meta)
 
-    section_enrollment: dict[str, list[dict[str, Any]]] = {}
+    operations_sections: dict[str, list[dict]] = {}
+    section_enrollment = _build_section_enrollment_from_enrolled_sets(
+        enrolled_sets,
+        course_meta=course_meta,
+        operations_sections=operations_sections,
+    )
     rooms_list: list[dict[str, Any]] = []
     room_feasibility: list[dict[str, Any]] = []
     if assign_rooms:
-        section_enrollment = _build_section_enrollment_from_enrolled_sets(enrolled_sets)
         rooms_list = list(
             Room.objects.all().values(
                 "room_code", "capacity", "section", "department", "building", "floor"
@@ -259,23 +276,16 @@ def _import_payload(
     qa["thin_clash_risk"] = []
     qa["multi_sitting_details"] = derive_multi_sitting_details(schedule_entries)
     qa["multi_sitting_sections"] = len(qa["multi_sitting_details"])
-    qa["manual_override_count"] = qa.get("conflict_count", 0)
-    qa["manual_override_details"] = list(qa.get("same_slot_conflicts", []))
     qa["building_footprint"] = derive_building_footprint(schedule_entries)
 
     sections_total = sum(len(v) for v in section_enrollment.values())
-    synthetic_all = sum(
-        1
-        for sections in section_enrollment.values()
-        for section in sections
-        if str(section.get("section", "")).upper() == "ALL"
-    )
     qa["enrolment_snapshot"] = compute_enrolment_snapshot(
         enrolled_sets,
         sections_count=sections_total,
-        fallback_used=bool(synthetic_all and synthetic_all == len(section_enrollment)),
-        synthetic_all_sections_count=synthetic_all,
+        fallback_used=False,
+        synthetic_all_sections_count=0,
     )
+    qa["section_mapping"] = summarize_exam_section_mapping(section_enrollment, course_meta)
 
     all_students: set[int] = set()
     for student_ids in enrolled_sets.values():
@@ -292,11 +302,14 @@ def _import_payload(
     ]
     draft: dict[str, Any] = {
         "status": "ok",
+        "enrollment_source": EXAM_ENROLLMENT_SOURCE,
+        "enrollment_scope": {"programs": [], "sections": []},
         "students_count": len(all_students),
         "courses": course_list,
         "courses_count": len(course_list),
         "conflicts": conflicts,
         "conflicts_count": len(conflicts),
+        "exam_review": build_exam_review(conflicts),
         "slots": slots,
         "schedule": sorted(
             schedule_entries,
@@ -308,6 +321,9 @@ def _import_payload(
         "credit_map": credit_map,
         "seed": None,
         "section_enrollment": section_enrollment,
+        "operations_snapshot": build_exam_operations_snapshot(
+            schedule_entries, operations_sections
+        ),
         "rooms_count": len(rooms_list),
         "assign_rooms": assign_rooms,
         "rebuild_mode": "manual_csv_import",
