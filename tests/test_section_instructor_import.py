@@ -658,3 +658,58 @@ def test_a_table_inside_a_cell_does_not_bleed_into_the_shape_check():
     assert len(result.rows) == 1
     assert result.rows[0].section == "M27"
     assert result.skipped == 0
+
+
+@pytest.mark.django_db
+def test_only_known_sections_imports_nothing_for_sections_we_lack(report):
+    """The operator asked to match against our own sections only.
+
+    Nothing is invented and nothing is carried for a section we do not hold — and
+    the drop is reported, because a silent narrowing reads as "the report had
+    nothing more to give".
+    """
+    TermSection.objects.create(
+        course_code="CS", course_number="111", course_key="CS111", section="M27"
+    )
+    out = io.StringIO()
+    call_command(
+        "import_section_instructors", "--file", report, "--only-known-sections", stdout=out
+    )
+    assert [s.section for s in SectionInstructor.objects.all()] == ["M27"]
+    assert "dropped 1 assignment" in out.getvalue()
+
+
+@pytest.mark.django_db
+def test_only_known_sections_still_writes_no_meetings(report):
+    """The explicit instruction: match sections, take instructors, touch nothing else."""
+    ts = TermSection.objects.create(
+        course_code="CS", course_number="111", course_key="CS111", section="M27"
+    )
+    TermSectionMeeting.objects.create(
+        term_section=ts, day="SUN", start_time="10:30", end_time="11:45", room="A1"
+    )
+    before = _snapshot_everything()
+    call_command(
+        "import_section_instructors",
+        "--file",
+        report,
+        "--only-known-sections",
+        stdout=io.StringIO(),
+    )
+    after = _snapshot_everything()
+    for name in _MUST_NOT_CHANGE:
+        assert after[name] == before[name], f"the import modified {name}"
+
+
+@pytest.mark.django_db
+def test_only_known_sections_errors_rather_than_importing_nothing(report):
+    from django.core.management.base import CommandError
+
+    with pytest.raises(CommandError):
+        call_command(
+            "import_section_instructors",
+            "--file",
+            report,
+            "--only-known-sections",
+            stdout=io.StringIO(),
+        )

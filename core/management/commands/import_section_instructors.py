@@ -76,11 +76,21 @@ class Command(BaseCommand):
             choices=("primary", "co", "lab"),
             help="Role to record for the imported assignment (default: primary).",
         )
+        parser.add_argument(
+            "--only-known-sections",
+            action="store_true",
+            help=(
+                "Import an assignment only where the section already exists locally. "
+                "Without it, an assignment for a not-yet-scraped section is kept and "
+                "resolves when that section arrives."
+            ),
+        )
 
     def handle(self, *args: Any, **options: Any) -> None:
         files: list[str] = list(options["files"])
         dry_run: bool = bool(options["dry_run"])
         role: str = str(options["role"])
+        only_known: bool = bool(options["only_known_sections"])
 
         rows_by_key: dict[tuple[str, str], Any] = {}
         source_of: dict[tuple[str, str], str] = {}
@@ -152,6 +162,21 @@ class Command(BaseCommand):
             )
         }
         matched = [r for r in assignable if (r.course_key, r.section) in known]
+        if only_known:
+            # The operator asked to record only what our own sections can carry.
+            # Everything else is dropped here, loudly — a silent narrowing would
+            # read as "the report had nothing more to give".
+            dropped = len(assignable) - len(matched)
+            assignable = matched
+            if dropped:
+                self.stdout.write(
+                    self.style.WARNING(
+                        f"--only-known-sections: dropped {dropped} assignment(s) "
+                        f"for sections not present locally."
+                    )
+                )
+            if not assignable:
+                raise CommandError("No assignment matched a local section; nothing to import.")
 
         # Key people by the normalised id, not the raw string: two spellings of
         # one person are one creation, and previewing them as two made --dry-run
@@ -173,7 +198,11 @@ class Command(BaseCommand):
         self.stdout.write("")
         self.stdout.write(f"sections carrying an instructor : {len(assignable)}")
         self.stdout.write(f"  matching a local section      : {len(matched)}")
-        self.stdout.write(f"  no local section (kept anyway): {len(assignable) - len(matched)}")
+        self.stdout.write(
+            f"  no local section              : "
+            f"{0 if only_known else len(assignable) - len(matched)}"
+            f"{' (dropped)' if only_known else ' (kept anyway)'}"
+        )
         self.stdout.write(f"distinct instructors            : {len(names)}")
         self.stdout.write(f"  already known                 : {len(names) - len(new_names)}")
         self.stdout.write(f"  to be created                 : {len(new_names)}")
