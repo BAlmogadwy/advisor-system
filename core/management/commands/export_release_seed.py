@@ -58,6 +58,7 @@ ALLOWED_MODELS = (
     "core.prerequisite",
     "core.programmerequirement",
     "core.room",
+    "core.sectioninstructor",
     "core.student",
     "core.studentcourse",
     "core.termsection",
@@ -72,6 +73,7 @@ FILTER_DESCRIPTIONS = (
     "Export section memberships, meetings, and student links only for exported sections.",
     "Remove STUDENT-role UserScope rows that do not resolve to an exported Student.",
     "Remove non-staff student accounts left unscoped solely by that invalid scope.",
+    "Export only global registrar SectionInstructor rows (scenario is null).",
 )
 
 SQLITE_SNAPSHOT_ALIAS = "release_seed_frozen_snapshot"
@@ -414,7 +416,10 @@ def _queryset_for_model(
         queryset = queryset.exclude(pk__in=removable_users)
     elif label == "core.userscope":
         queryset = queryset.exclude(user_id__in=invalid_scope_users)
-    elif label == "core.termsection":
+    elif label in {"core.termsection", "core.sectioninstructor"}:
+        # TimetableScenario is outside the profile, so a scenario-owned row would
+        # load with a dangling scenario_id and fail the deferred constraint check
+        # after the target is already flushed.
         queryset = queryset.filter(scenario__isnull=True)
     elif label in {"core.termsectionprogram", "core.termsectionmeeting"}:
         queryset = queryset.filter(term_section__scenario__isnull=True)

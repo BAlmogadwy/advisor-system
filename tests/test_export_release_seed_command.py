@@ -32,6 +32,7 @@ from core.models import (
     AuditLog,
     Course,
     Instructor,
+    SectionInstructor,
     Student,
     StudentCourse,
     StudentTermSection,
@@ -360,3 +361,53 @@ def test_release_seed_records_preserve_datetime_and_time_microseconds(tmp_path):
         cls=ReleaseSeedJSONEncoder,
     )
     assert encoded_time == '"09:10:11.654321"'
+
+
+def test_section_instructor_export_carries_global_rows_and_drops_scenario_rows(tmp_path):
+    """The registrar's per-section assignments must survive a production rebuild.
+
+    ``_flush_target_database`` truncates the target, so a model missing from the
+    signed profile is erased rather than replaced.  Scenario-owned rows must stay
+    out: ``TimetableScenario`` is not in the profile, so such a row would load with
+    a dangling ``scenario_id`` and fail the deferred constraint check only *after*
+    production had already been flushed.
+    """
+
+    instructor = Instructor.objects.create(
+        full_name="Registrar Named Teacher",
+        normalised_name="registrar named teacher",
+    )
+    global_link = SectionInstructor.objects.create(
+        scenario=None,
+        course_key="CS113",
+        section="M1",
+        instructor=instructor,
+        role="primary",
+        source="registrar",
+    )
+    scenario = TimetableScenario.objects.create(
+        academic_year="1448", term="1", name="section-instructor-scope"
+    )
+    scenario_link = SectionInstructor.objects.create(
+        scenario=scenario,
+        course_key="CS113",
+        section="S1",
+        instructor=instructor,
+        role="primary",
+        source="generated",
+    )
+
+    _, _, manifest, records = _export(tmp_path / "section-instructor-release.json.gz")
+
+    assert "core.sectioninstructor" in manifest["profile"]["allowed_models"]
+    exported = {record["pk"] for record in records if record["model"] == "core.sectioninstructor"}
+    assert global_link.pk in exported
+    assert scenario_link.pk not in exported
+
+    counts = manifest["fixture"]["per_model"]["core.sectioninstructor"]
+    assert counts == {"source": 2, "exported": 1, "filtered": 1}
+
+    record = _record(records, "core.sectioninstructor", global_link.pk)
+    assert record["fields"]["course_key"] == "CS113"
+    assert record["fields"]["section"] == "M1"
+    assert record["fields"]["scenario"] is None
