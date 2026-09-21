@@ -96,11 +96,13 @@ from core.services.virtual_advisor import (
     _credit_policy_evidence_citations,
     _fabricated_policy_ids,
     _policy_evidence_for_prompt,
+    _policy_ids_in_text,
     _retrieved_citations,
     _sanitize_history,
     _seed_policy_evidence,
     _summarise_tool_args,
     _tool_message,
+    _without_unverified_credit_limits,
 )
 from core.services.virtual_advisor_capabilities import get_default_registry
 
@@ -6525,6 +6527,16 @@ def _policy_grounding(
     return required, "none_matched"
 
 
+def _v2_policy_required(question: str) -> bool:
+    """Use the current domain contract for V2 without changing tool routing."""
+    from core.services.advisor_intent import route_intent
+    from core.services.policy_contract import build_policy_contract_state
+
+    return build_policy_contract_state(
+        question, [], grounding_state="not_consulted", intent=route_intent(question)
+    ).required
+
+
 def _legacy_v2_arguments(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
     """Remove V2.1-only controls from a non-semantic legacy model call."""
 
@@ -7468,7 +7480,7 @@ def answer_student_advisor_v2(
             required_exact_fact_tools.add("build_timetable_proposal")
         if requires_graduation_what_if:
             required_exact_fact_tools.add("graduation_progress")
-        policy_contract_required = requires_policy_contract(clean_question)
+        policy_contract_required = _v2_policy_required(clean_question)
 
     # A graduation what-if whose scenario is written in the student's own
     # words is fully determined server-side: the classifier names the tool
@@ -8535,21 +8547,27 @@ def answer_student_advisor_v2(
     credit_evidence = _credit_policy_evidence_citations({"tool_results": local_results})
     if credit_evidence is not None:
         local_results.append(credit_evidence)
+    credit_policy_unavailable = bool(credit_evidence is not None and not credit_evidence.get("ok"))
+    if credit_policy_unavailable:
+        local_results = _without_unverified_credit_limits(local_results)
+        validation_results = _without_unverified_credit_limits(validation_results)
+        presentation = None
 
     citations = _retrieved_citations(local_results)
     unresolved_policy_ids = _unresolved_policy_ids(local_results)
     policy_required_now, policy_grounding_state = _policy_grounding(
         clean_question,
         local_results,
-        required_override=policy_contract_required if _semantic_planning else None,
+        required_override=policy_contract_required,
     )
+    allowed_policy_ids = {str(citation.get("policy_id") or "") for citation in citations}
     direct_policy_ids = {
         str(policy.get("policy_id") or "").strip()
         for result in local_results
         if isinstance(result, dict) and result.get("tool") == "policy_lookup" and result.get("ok")
         for policy in result.get("direct_policy_evidence") or []
         if isinstance(policy, dict) and str(policy.get("policy_id") or "").strip()
-    }
+    } & allowed_policy_ids
 
     # ── one terminal candidate pipeline ─────────────────────────────────
     #
@@ -8602,37 +8620,34 @@ def answer_student_advisor_v2(
             text = remove_false_media_incapability(text)
 
         policy_evidence_missing = bool(
-            _semantic_planning and policy_required_now and policy_grounding_state != "retrieved"
+            policy_required_now and policy_grounding_state != "retrieved"
         )
         direct_citation_missing = bool(
-            _semantic_planning
-            and policy_required_now
+            policy_required_now
             and policy_grounding_state == "retrieved"
-            and not any(policy_id in text for policy_id in direct_policy_ids)
+            and not (_policy_ids_in_text(text) & direct_policy_ids)
         )
         citation_failed = bool(
             policy_evidence_missing
+            or credit_policy_unavailable
             or direct_citation_missing
             or _bad_citations(text, citations)
             or _fabricated_policy_ids(text, citations)
         )
         if citation_failed:
-            if safe_graduation and not policy_contract_required:
+            if safe_graduation and not policy_required_now and not credit_policy_unavailable:
                 text = safe_graduation
                 citation_failed = False
                 used_graduation_fallback = True
             else:
                 refusal = _citation_refusal(language, answer_style)
-                if _semantic_planning:
-                    verified_data = _verified_evidence_fallback(
-                        language,
-                        validation_results,
-                        answer_style,
-                        preferred_tools=(set(required_exact_fact_tools) or None),
-                    )
-                    text = "\n\n".join(part for part in (verified_data, refusal) if part)
-                else:
-                    text = refusal
+                verified_data = _verified_evidence_fallback(
+                    language,
+                    validation_results,
+                    answer_style,
+                    preferred_tools=(set(required_exact_fact_tools) or None),
+                )
+                text = "\n\n".join(part for part in (verified_data, refusal) if part)
 
         portal_failed = _claims_portal_action(text)
         if portal_failed:
@@ -8709,7 +8724,7 @@ def answer_student_advisor_v2(
             "internal_sanitized": sanitized_internal,
             "policy_uncertainty_failed": policy_uncertainty_failed,
             "policy_grounding_failed": bool(
-                _semantic_planning and policy_required_now and citation_failed
+                (policy_required_now or credit_policy_unavailable) and citation_failed
             ),
         }
 
@@ -8793,7 +8808,11 @@ def answer_student_advisor_v2(
             if repaired_candidate is not None
             else list(evidence_validation_initial)
         )
-        if repaired_candidate is not None and not evidence_validation_after_repair:
+        if (
+            repaired_candidate is not None
+            and not evidence_validation_after_repair
+            and not repaired_candidate["citation_refused"]
+        ):
             chosen = repaired_candidate
             evidence_validation_outcome = "repaired"
         else:
@@ -8815,7 +8834,11 @@ def answer_student_advisor_v2(
             )
             if fallback_candidate is not None and not fallback_candidate["violations"]:
                 chosen = fallback_candidate
-                evidence_validation_outcome = "verified_fallback"
+                if fallback_candidate["policy_grounding_failed"]:
+                    evidence_validation_outcome = "abstained"
+                    grounding_refused = True
+                else:
+                    evidence_validation_outcome = "verified_fallback"
             else:
                 chosen = {
                     "text": _evidence_abstention(language, channel_profile),
@@ -8895,7 +8918,7 @@ def answer_student_advisor_v2(
     cited_policy_ids = [
         str(item.get("policy_id") or "")
         for item in citations
-        if str(item.get("policy_id") or "") in answer
+        if str(item.get("policy_id") or "") in _policy_ids_in_text(answer)
     ]
 
     return {
@@ -8938,6 +8961,7 @@ def answer_student_advisor_v2(
             "policy_required": policy_required,
             "policy_prefetched": policy_prefetched,
             "policy_grounding": grounding,
+            "credit_policy_unavailable": credit_policy_unavailable,
             "citation_refused": citation_refused,
             "grounding_refused": grounding_refused,
             "portal_claim_refused": portal_claim_refused,

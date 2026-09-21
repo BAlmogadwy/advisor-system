@@ -82,7 +82,9 @@ def test_a_drifted_constant_withholds_the_citation_rather_than_attaching_a_wrong
     found = _credit_policy_evidence_citations(
         {"context": {"recommendation_policy": _main_term_evidence()}}
     )
-    assert found is None
+    assert found["ok"] is False
+    assert found["error_code"] == "CREDIT_POLICY_UNAVAILABLE"
+    assert found["citable"] == []
 
 
 # ── which figures get a citation, and which must never ───────────

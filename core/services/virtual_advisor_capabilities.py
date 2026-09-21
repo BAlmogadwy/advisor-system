@@ -783,53 +783,48 @@ def _resolve_elective_slot(
     term: int | str | None = None,
     limit: int | None = _MAX_COURSE_MATCHES,
 ) -> list[dict[str, Any]] | None:
-    """Return the real courses that can fill an elective slot, or None if not a slot.
+    """Validated options for a declared slot in one planning term; None for a course."""
+    from core.models import ProgrammeRequirement
+    from core.services.elective_validation import ElectiveMappingError, ElectiveSelection
+    from core.services.planner_drafts import planning_term
 
-    A placeholder is recognised by its ProgrammeRequirement.type — `Program
-    Elective`, exactly — not by guessing at the code shape, and not by the word
-    "elective" either. `Free Elective` and `University Elective` are declared
-    electives students TAKE: 111 have passed FE1, 139 GSE1. See `is_elective_slot`.
-    """
-    from core.models import ElectiveCourse, ElectiveTermMapping, ProgrammeRequirement
-    from core.services.academic_state import programme_variants
-
-    req = ProgrammeRequirement.objects.filter(course_code__iexact=course_code)
-    if program:
-        req = req.filter(program__iexact=program)
-    row = req.values("type", "program").first()
-    if not row or not is_elective_slot(row.get("type")):
+    if not program:
+        programs = {
+            normalize_code(row["program"])
+            for row in ProgrammeRequirement.objects.filter(course_code__iexact=course_code).values(
+                "program", "type"
+            )
+            if is_elective_slot(row["type"])
+        }
+        if len(programs) != 1:
+            return None
+        program = programs.pop()
+    if academic_year in (None, "") or term in (None, ""):
+        default_year, default_term = planning_term()
+        academic_year = academic_year or default_year
+        term = term or default_term
+    try:
+        selection = ElectiveSelection(program, str(academic_year), term)
+    except ElectiveMappingError:
+        return []
+    requirement, _ = selection.requirement(course_code)
+    if requirement is None:
         return None
-
-    prog = program or str(row.get("program") or "")
-    mappings = ElectiveTermMapping.objects.filter(
-        placeholder_code__iexact=course_code,
-        programme__in=programme_variants(prog),
-    )
-    if academic_year not in (None, "") and term not in (None, ""):
-        mappings = mappings.filter(academic_year=str(academic_year), term=int(term))
-    mapped_ids = mappings.values_list("elective_id", flat=True)
-
-    options: list[dict[str, Any]] = []
-    for e in ElectiveCourse.objects.filter(id__in=list(mapped_ids)).values(
-        "course_code", "course_name", "credit_hours", "prerequisites_csv"
-    ):
-        prereqs = [
-            p.strip().upper() for p in str(e["prerequisites_csv"] or "").split(",") if p.strip()
-        ]
-        options.append(
-            {
-                "course_code": e["course_code"],
-                "course_name": e["course_name"],
-                "credit_hours": e["credit_hours"],
-                "prerequisites": prereqs,
-            }
-        )
-    ordered = sorted(options, key=lambda o: o["course_code"])
-    # `limit=None` means every option. The cap is a DISPLAY limit — a chat answer
-    # listing thirty electives is unreadable — and a caller deciding what a student
-    # is ALLOWED to take must not inherit it, or the eleventh option alphabetically
-    # becomes a course they are told they may not take.
-    return ordered if limit is None else ordered[:limit]
+    _status, options, _problems = selection.resolve(course_code)
+    result = [
+        {
+            "course_code": option["course_code"],
+            "course_name": option["course_name"],
+            "credit_hours": option["credit_hours"],
+            "prerequisites": [
+                normalize_code(code)
+                for code in str(option["prerequisites_csv"] or "").split(",")
+                if code.strip()
+            ],
+        }
+        for option in options
+    ]
+    return result if limit is None else result[:limit]
 
 
 def _exec_course_prerequisites(
@@ -843,6 +838,8 @@ def _exec_course_prerequisites(
         Student,
     )
     from core.services.academic_state import programme_variants
+    from core.services.elective_validation import ElectiveMappingError, ElectiveSelection
+    from core.services.planner_drafts import planning_term
     from core.services.student_helpers import get_prerequisites
 
     course_code = normalize_code(args.get("course_code"))
@@ -880,6 +877,10 @@ def _exec_course_prerequisites(
         mapping_term = int(raw_term) if raw_term not in (None, "") else None
     except (TypeError, ValueError):
         mapping_term = None
+    if mapping_year is None or mapping_term is None:
+        default_year, default_term = planning_term()
+        mapping_year = mapping_year or default_year
+        mapping_term = mapping_term or int(default_term)
     elective_options = _resolve_elective_slot(
         course_code,
         program,
@@ -930,13 +931,17 @@ def _exec_course_prerequisites(
                 )
             if program:
                 mappings = mappings.filter(programme__in=programme_variants(program))
-            placeholders = sorted(
-                {
-                    normalize_code(value)
-                    for value in mappings.values_list("placeholder_code", flat=True)
-                    if normalize_code(value)
-                }
-            )
+            placeholders = set()
+            for mapping in mappings.values("programme", "placeholder_code"):
+                try:
+                    selection = ElectiveSelection(
+                        program or mapping["programme"], mapping_year, mapping_term
+                    )
+                except ElectiveMappingError:
+                    continue
+                status, approved, _ = selection.resolve(mapping["placeholder_code"])
+                if status == "READY" and any(option["id"] == row["id"] for option in approved):
+                    placeholders.add(normalize_code(mapping["placeholder_code"]))
             prerequisites = [
                 normalize_code(value)
                 for value in str(row.get("prerequisites_csv") or "").split(",")
@@ -948,7 +953,7 @@ def _exec_course_prerequisites(
                     "course_name": str(row.get("course_name") or "").strip(),
                     "credit_hours": int(row.get("credit_hours") or 0),
                     "prerequisites": prerequisites,
-                    "fulfills_elective_slots": placeholders,
+                    "fulfills_elective_slots": sorted(placeholders),
                 }
             )
         return {
@@ -961,8 +966,9 @@ def _exec_course_prerequisites(
             "per_program": options_by_program,
             "note": (
                 "This is a concrete elective course. fulfills_elective_slots is "
-                "term-scoped; an empty list means no mapping is recorded for the "
-                "requested term, not that the catalogue course does not exist."
+                "limited to validated choices for the requested term; an empty list "
+                "means no approved choice is published, not that the catalogue "
+                "course does not exist."
             ),
             "tool": "course_prerequisites",
         }
@@ -3356,7 +3362,9 @@ def _exec_build_timetable_proposal(
     # must_take_courses receives the hard must-take flag.
     explicit_codes = [*raw_codes, *required, *pin_by_code]
     try:
-        requested, _ = validate_draft_selection(int(student_id), explicit_codes, {})
+        requested, _ = validate_draft_selection(
+            int(student_id), explicit_codes, {}, academic_year=str(year), term=term
+        )
     except ValueError as exc:
         failure = {
             "course_code": "",
@@ -3378,6 +3386,8 @@ def _exec_build_timetable_proposal(
             int(student_id),
             requested,
             tuple(requested_pins),
+            academic_year=str(year),
+            term=term,
         )
     except SectionPinResolutionError as exc:
         return {
@@ -3400,7 +3410,7 @@ def _exec_build_timetable_proposal(
         Student.objects.filter(student_id=student_id).values_list("program", flat=True).first()
         or ""
     ).strip()
-    permitted = permitted_course_codes(program)
+    permitted = permitted_course_codes(program, academic_year=str(year), term=term)
     raw_recommended = [
         normalize_code(code)
         for code in (recommend_next_courses(int(student_id), int(year), int(term)) or [])

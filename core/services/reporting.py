@@ -1,11 +1,12 @@
 import time
 from collections import Counter, defaultdict
 
-from core.models import ElectiveTermMapping, ProgrammeRequirement, Student, StudentCourse
+from core.models import ProgrammeRequirement, Student, StudentCourse
 from core.services.course_identity import planner_course_key
+from core.services.elective_validation import ElectiveMappingError, ElectiveSelection
 from core.services.eligibility import evaluate_prerequisites
 from core.services.recommender_batch import batch_recommend, batch_recommend_multi_program
-from core.services.student_helpers import normalize_code
+from core.services.student_helpers import is_elective_slot, normalize_code
 
 _aggregate_cache: dict[tuple, tuple[float, tuple[int, "Counter[str]"]]] = {}
 _AGGREGATE_CACHE_TTL = 300  # 5 minutes
@@ -239,22 +240,28 @@ def resolve_elective_recommendations(
     if not programmes:
         return all_recs
 
-    mappings: dict[str, dict[str, list]] = defaultdict(lambda: defaultdict(list))
-    for mapping in (
-        ElectiveTermMapping.objects.filter(
-            academic_year=str(year),
-            term=semester,
-            programme__in=programmes,
-        )
-        .select_related("elective")
-        .order_by("programme", "placeholder_code", "elective__course_code")
-    ):
-        mappings[str(mapping.programme)][normalize_code(mapping.placeholder_code)].append(
-            mapping.elective
-        )
-
-    if not mappings:
-        return all_recs
+    selections = {}
+    unscoped_ordinary = {}
+    for programme in programmes:
+        try:
+            selections[normalize_code(programme)] = ElectiveSelection(
+                programme, str(year), semester
+            )
+        except ElectiveMappingError:
+            # Ordinary plan recommendations also run before a planning term has
+            # been chosen (the recommender uses semester=0 for that case). Their
+            # validity does not depend on an elective publication. Keep only
+            # unambiguous, declared ordinary courses; a placeholder or standalone
+            # catalogue option still needs a valid year/term to be actionable.
+            requirements = defaultdict(list)
+            for row in ProgrammeRequirement.objects.values("program", "course_code", "type"):
+                if normalize_code(row["program"]) == normalize_code(programme):
+                    requirements[normalize_code(row["course_code"])].append(row)
+            unscoped_ordinary[normalize_code(programme)] = {
+                code
+                for code, rows in requirements.items()
+                if code and len(rows) == 1 and not is_elective_slot(rows[0]["type"])
+            }
 
     sc_qs = StudentCourse.objects.filter(student_id__in=student_ids).select_related("course")
     passed: dict[int, set[str]] = defaultdict(set)
@@ -271,9 +278,10 @@ def resolve_elective_recommendations(
 
     for sid, recs in all_recs.items():
         student_programme = program if isinstance(program, str) else student_programs.get(int(sid))
-        programme_mappings = mappings.get(str(student_programme), {})
-        if not programme_mappings:
-            resolved[sid] = recs
+        selection = selections.get(normalize_code(student_programme or ""))
+        if selection is None:
+            ordinary = unscoped_ordinary.get(normalize_code(student_programme or ""), set())
+            resolved[sid] = [code for code in recs if normalize_code(code) in ordinary]
             continue
 
         student_passed = passed.get(int(sid), set())
@@ -282,16 +290,25 @@ def resolve_elective_recommendations(
 
         for code in recs:
             norm = normalize_code(code)
-            electives = programme_mappings.get(norm)
-            if not electives:
+            requirement, _ = selection.requirement(norm)
+            if (
+                requirement is None
+                and norm not in selection.mappings
+                and len(selection.requirements.get(norm, [])) <= 1
+            ):
                 student_resolved.append(code)
+                continue
+            # A placeholder with no valid current publication cannot become a
+            # concrete recommendation, even if an old mapping still exists.
+            status, electives, _ = selection.resolve(norm)
+            if status != "READY":
                 continue
 
             eligible = []
             for elective in electives:
                 prereqs = [
                     normalize_code(part)
-                    for part in str(elective.prerequisites_csv or "").split(",")
+                    for part in str(elective["prerequisites_csv"] or "").split(",")
                     if part.strip()
                 ]
                 earned, registered = student_credits.get(int(sid), (0, 0))
@@ -304,7 +321,7 @@ def resolve_elective_recommendations(
                     registered_credits=registered,
                 )
                 if outcome.met:
-                    eligible.append(normalize_code(elective.course_code))
+                    eligible.append(elective["course_code"])
 
             if eligible:
                 pick = min(eligible, key=lambda c: (assignment_count[c], c))

@@ -106,7 +106,11 @@ def _workspace_json(draft: Any, *, prefer_arabic_names: bool = False) -> dict[st
     program = str(student.get("program") or "").strip()
     _earned = student.get("total_earned_credits") or 0
     _registered = student.get("current_registered_credits") or 0
-    permitted = permitted_course_codes(program) if program else set()
+    permitted = (
+        permitted_course_codes(program, academic_year=draft.academic_year, term=draft.term)
+        if program
+        else set()
+    )
     passed, studying = get_student_passed_and_studying(draft.student_id)
     passed = {normalize_code(code) for code in passed}
     studying = {normalize_code(code) for code in studying}

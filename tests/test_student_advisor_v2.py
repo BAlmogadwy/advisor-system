@@ -1049,27 +1049,27 @@ def test_persistent_internal_labels_are_humanised_without_shipping_schema_names(
 
 
 def test_an_unresolved_policy_forces_one_bounded_uncertainty_revision(monkeypatch):
+    from core.services.virtual_advisor import _seed_policy_evidence
+
+    approved, _ = _seed_policy_evidence("الانسحاب من المقرر")
+    governing = dict(approved["direct_policy_evidence"][0])
+    governing["source_is_unclear_on"] = "The source does not settle its GPA effect."
+    governing["decision_use"] = "EXPLANATORY_ONLY"
+    policy_id = governing["policy_id"]
     evidence = {
         "tool": "policy_lookup",
         "ok": True,
-        "direct_policy_evidence": [
-            {
-                "policy_id": "TU.AMBIGUOUS",
-                "statement_ar": "يرصد الرمز في السجل.",
-                "decision_use": "EXPLANATORY_ONLY",
-                "source_is_unclear_on": "The source does not settle its GPA effect.",
-            }
-        ],
-        "citable": [],
-        "policies": [],
+        "direct_policy_evidence": [governing],
+        "citable": approved["citable"],
+        "policies": [governing],
     }
     monkeypatch.setattr(
         "core.services.student_advisor_v2._seed_policy_evidence",
         lambda _question, _scope: (evidence, "retrieved"),
     )
     client = FakeClient(
-        _answer_turn("The symbol definitely has no GPA effect."),
-        _answer_turn("The source does not settle the symbol's GPA effect."),
+        _answer_turn(f"The symbol definitely has no GPA effect. [{policy_id}]"),
+        _answer_turn(f"The source does not settle the symbol's GPA effect. [{policy_id}]"),
     )
 
     result = answer_student_advisor_v2(

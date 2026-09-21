@@ -208,7 +208,7 @@ const SB = {
 };
 
 /* ── API helpers ── */
-async function api(url, opts = {}) {
+async function api(url, opts = {}, onError = null) {
   const o = Object.assign({ credentials: 'same-origin', headers: {} }, opts);
   if (opts.method && opts.method !== 'GET') {
     o.headers['X-CSRFToken'] = CSRF;
@@ -219,11 +219,13 @@ async function api(url, opts = {}) {
       let msg = `${r.status}`;
       try { const d = await r.json(); msg = d.error?.message || d.error || d.message || msg; } catch {}
       console.error('api error', url, msg);
+      if (onError) onError(msg);
       return null;
     }
     return await r.json();
   } catch (e) {
     console.error(e);
+    if (onError) onError(e.message || String(e));
     return null;
   }
 }
@@ -7296,6 +7298,11 @@ function openElectivesModal() {
         const t = parseInt(document.getElementById('twsElecTerm').value.trim());
         const prog = (document.getElementById('twsElecProg').value || '').trim().toUpperCase();
         if (!y || !t || !prog) { notify.error(IS_AR ? 'أدخل السنة والفصل والبرنامج' : 'Enter year, term, programme'); return false; }
+        const list = document.getElementById('twsElecList');
+        if (list.dataset.loadedScope !== JSON.stringify([y, t, prog])) {
+          notify.error(IS_AR ? 'حمّل الربط لهذا البرنامج والفصل قبل الحفظ' : 'Load mappings for this programme and term before saving');
+          return false;
+        }
         const mappings = [];
         document.querySelectorAll('#twsElecList .elec-chk:checked').forEach(chk => {
           mappings.push({ placeholder_code: chk.dataset.ph, course_code: chk.dataset.code });
@@ -7303,9 +7310,10 @@ function openElectivesModal() {
         const data = await api('/ops/electives/mapping/set/', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ academic_year: y, term: t, programme: prog, mappings }),
-        });
+        }, message => notify.error(message));
         if (!data) return false;
-        notify.success(IS_AR ? `تم حفظ ${data.created} ربط` : `${data.created} mappings saved`);
+        if (!data.ok) { notify.error(data.error || (IS_AR ? 'تعذّر حفظ الربط' : 'Mappings were not saved')); return false; }
+        notify.success(IS_AR ? `تم حفظ ${data.total} ربط` : `${data.total} mappings saved`);
       } },
     ],
   });
@@ -7321,15 +7329,40 @@ async function loadElectivesInto(listEl) {
   const t = parseInt(document.getElementById('twsElecTerm').value.trim());
   const prog = (document.getElementById('twsElecProg').value || '').trim().toUpperCase();
   if (!y || !t || !prog) { notify.error(IS_AR ? 'أدخل السنة والفصل والبرنامج' : 'Enter year, term, programme'); return; }
+  const requestId = String((Number(listEl.dataset.requestId) || 0) + 1);
+  listEl.dataset.requestId = requestId;
+  delete listEl.dataset.loadedScope;
   listEl.innerHTML = `<div class="tws-empty-state"><span class="ic">◌</span>${IS_AR ? 'جاري التحميل…' : 'Loading…'}</div>`;
   const [catData, mapData, phData] = await Promise.all([
     api(`/ops/electives/catalogue/?programme=${encodeURIComponent(prog)}`),
     api(`/ops/electives/mapping/?academic_year=${encodeURIComponent(y)}&term=${encodeURIComponent(t)}&programme=${encodeURIComponent(prog)}`),
     api(`/ops/electives/placeholders/?programme=${encodeURIComponent(prog)}`),
   ]);
+  if (!listEl.isConnected || listEl.dataset.requestId !== requestId) return;
+  if (!catData || !mapData || !phData) {
+    listEl.innerHTML = `<div class="tws-empty-state">${IS_AR ? 'تعذّر تحميل الربط. أعد المحاولة.' : 'Mappings could not be loaded. Try again.'}</div>`;
+    return;
+  }
   const catalogue = (catData && catData.items) || [];
   const currentMappings = (mapData && mapData.items) || [];
   const placeholders = (phData && phData.items) || [];
+  const represented = new Set();
+  const complete = currentMappings.every(mapping => {
+    const pair = JSON.stringify([mapping.placeholder_code, mapping.course_code]);
+    const visible = placeholders.some(slot => slot.course_code === mapping.placeholder_code)
+      && catalogue.some(course => course.course_code === mapping.course_code && course.id === mapping.elective_id);
+    if (!visible || represented.has(pair)) return false;
+    represented.add(pair);
+    return true;
+  });
+  if (!complete) {
+    const message = IS_AR
+      ? 'بعض الروابط المحفوظة لا يمكن عرضها. أصلح ملكية المقررات أو متطلبات الخطة أو الروابط المكررة قبل تعديل هذا النطاق.'
+      : 'Some saved mappings cannot be displayed. Repair catalogue ownership, plan placeholders, or duplicate mappings before editing this scope.';
+    listEl.innerHTML = `<div class="tws-empty-state">${esc(message)}</div>`;
+    notify.error(message);
+    return;
+  }
   if (!catalogue.length) {
     listEl.innerHTML = `<div class="tws-empty-state"><span class="ic">—</span>${IS_AR ? 'لا يوجد كتالوج اختيارية' : 'No elective catalogue'}</div>`;
     return;
@@ -7361,6 +7394,7 @@ async function loadElectivesInto(listEl) {
       </div>
     </div>`;
   }).join('');
+  listEl.dataset.loadedScope = JSON.stringify([y, t, prog]);
 }
 
 /* ── Bottom panel (Demand · Resources) ── */

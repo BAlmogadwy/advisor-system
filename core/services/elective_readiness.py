@@ -31,8 +31,6 @@ from typing import Any
 from django.db import models
 
 from core.models import (
-    ElectiveCourse,
-    ElectiveTermMapping,
     ProgrammeRequirement,
     Student,
 )
@@ -85,74 +83,21 @@ def student_message(status: str) -> str:
 
 
 def _problems(program: str, slot_credits: int, options: list[dict[str, Any]]) -> list[str]:
-    problems: list[str] = []
-    foreign = sorted(
-        {
-            normalize_code(o["programme"])
-            for o in options
-            if o["programme"] and normalize_code(o["programme"]) != program
-        }
-    )
-    if foreign:
-        problems.append(f"cross-programme mapping from {', '.join(foreign)}")
-    if slot_credits:
-        wrong = [
-            o["course_code"]
-            for o in options
-            if o["credit_hours"] and int(o["credit_hours"]) != slot_credits
-        ]
-        if wrong:
-            problems.append(
-                f"credit mismatch (slot {slot_credits}h): {', '.join(sorted(wrong)[:3])}"
-            )
-    return problems
+    from core.services.elective_validation import option_problems
+
+    return option_problems(program, slot_credits, options)
 
 
 def slot_status(
     program: str, slot_code: str, academic_year: str, term: str
 ) -> tuple[str, list[dict[str, Any]], list[str]]:
-    """`(status, options, problems)` for ONE slot.
+    """Return only currently validated options, including supported programme fallback."""
+    from core.services.elective_validation import ElectiveMappingError, ElectiveSelection
 
-    Options come back only when the slot is `READY`. A caller that received them in
-    any other state would be one `if` away from rendering a list the gate exists to
-    withhold.
-    """
-    program = normalize_code(program)
-    slot_code = normalize_code(slot_code)
-
-    row = (
-        ProgrammeRequirement.objects.filter(program__iexact=program, course_code__iexact=slot_code)
-        .values("type", "credit_hours")
-        .first()
-    )
-    if row is None or not is_elective_slot(row["type"]):
-        return NOT_PUBLISHED, [], ["not an elective slot for this programme"]
-
-    ids = list(
-        ElectiveTermMapping.objects.filter(
-            programme__iexact=program,
-            placeholder_code__iexact=slot_code,
-            academic_year=str(academic_year),
-            term=str(term),
-        ).values_list("elective_id", flat=True)
-    )
-    if not ids:
-        return NOT_PUBLISHED, [], []
-
-    options = list(
-        ElectiveCourse.objects.filter(id__in=ids).values(
-            "course_code", "course_name", "programme", "credit_hours", "prerequisites_csv"
-        )
-    )
-    if not options:
-        # Unreachable while the FK cascades — see the module docstring. Handled
-        # rather than asserted, because "impossible" is a claim about today's schema.
-        return MAPPED_BUT_EMPTY, [], ["mapping resolves to no course"]
-
-    problems = _problems(program, int(row["credit_hours"] or 0), options)
-    if problems:
-        return INVALID_MAPPING, [], problems
-    return READY, options, []
+    try:
+        return ElectiveSelection(program, academic_year, term).resolve(slot_code)
+    except ElectiveMappingError as exc:
+        return NOT_PUBLISHED, [], [str(exc)]
 
 
 def readiness(academic_year: str = "", term: str = "") -> list[dict[str, Any]]:

@@ -1824,6 +1824,32 @@ def _find_credit_block(obj: Any, depth: int = 0) -> dict[str, Any] | None:
     return None
 
 
+def _without_unverified_credit_limits(obj: Any) -> Any:
+    """Keep academic facts and advisory caps, withholding unverified regulations."""
+    if isinstance(obj, dict):
+        if "max_recommended_credit_hours" in obj:
+            return {
+                key: value
+                for key, value in obj.items()
+                if key
+                in {
+                    "max_recommended_credit_hours",
+                    "recommended_credit_hours",
+                    "credit_hours_unknown_for",
+                }
+            } | {
+                "policy_status": "unavailable",
+                "regulatory_range_instruction": (
+                    "The regulatory credit limits could not be verified. Do not state "
+                    "a registration limit or treat the advisory cap as permission."
+                ),
+            }
+        return {key: _without_unverified_credit_limits(value) for key, value in obj.items()}
+    if isinstance(obj, list | tuple):
+        return [_without_unverified_credit_limits(value) for value in obj]
+    return obj
+
+
 def _credit_policy_evidence_citations(context: dict[str, Any]) -> dict[str, Any] | None:
     """Make the credit-load figures citable from the records that state them.
 
@@ -1832,6 +1858,8 @@ def _credit_policy_evidence_citations(context: dict[str, Any]) -> dict[str, Any]
     Returns None when the block carries no regulatory figure — the advisory cap of
     18 is this system's own and no page of the guide says it, so lending it a
     citation would be the same defect pointed the other way.
+    A failed lookup or inconsistent backing record returns an explicit failed
+    capability result; callers must withhold regulatory claims in that case.
     """
     from core.services.credit_policy import backing_citations, verify_against_store
     from core.services.policy_store import get_policy_store
@@ -1843,16 +1871,30 @@ def _credit_policy_evidence_citations(context: dict[str, Any]) -> dict[str, Any]
     if not wanted:
         return None
 
-    drift = verify_against_store()
+    unavailable = {
+        "tool": "policy_lookup",
+        "ok": False,
+        "error_code": "CREDIT_POLICY_UNAVAILABLE",
+        "error": "The regulatory credit limits could not be verified.",
+        "policies": [],
+        "direct_policy_evidence": [],
+        "citable": [],
+    }
+    try:
+        drift = verify_against_store()
+        result = get_policy_store().lookup(policy_ids=wanted) if not drift else {}
+    except Exception:
+        logger.exception("Credit-policy evidence is unavailable")
+        return unavailable
     if drift:
         # The constants and the records disagree. Citing page 23 for a figure page 23
         # does not contain would pass every mechanical check, so withhold instead.
         logger.error("credit_policy constants disagree with the policy store: %s", drift)
-        return None
+        return unavailable
 
-    result = get_policy_store().lookup(policy_ids=wanted)
-    if not result.get("policies"):
-        return None
+    retrieved_ids = {row.get("policy_id") for row in result.get("policies") or []}
+    if not result.get("ok") or not set(wanted).issubset(retrieved_ids):
+        return unavailable
     result["tool"] = "policy_lookup"
     result["note"] = (
         "These records state the credit-load figures already present in "
@@ -2060,9 +2102,14 @@ def _bad_citations(answer: str, citations: list[dict[str, Any]]) -> list[dict[st
     if claimed:
         try:
             verdict = get_policy_store().validate_citations(claimed, citations)
-        except Exception:  # pragma: no cover - never fail an answer on a store error
-            logger.exception("Citation validation failed; treating citations as unchecked")
-            verdict = {"rejected": []}
+        except Exception:
+            logger.exception("Citation validation failed; rejecting unchecked citations")
+            verdict = {
+                "rejected": [
+                    {"citation": citation, "reason": "POLICY_STORE_UNAVAILABLE"}
+                    for citation in claimed
+                ]
+            }
         for item in verdict.get("rejected") or []:
             problems.append(
                 {
@@ -2820,6 +2867,8 @@ def answer_virtual_advisor(
         context["credit_policy_evidence"] = _policy_evidence_for_prompt(
             boundary.project_tool_result("policy_lookup", seeded_credit)
         )
+        if not seeded_credit.get("ok"):
+            context = _without_unverified_credit_limits(context)
 
     provider_tool_results = [
         boundary.project_tool_result("policy_lookup", r) for r in agent_tool_results
@@ -3086,8 +3135,20 @@ def answer_virtual_advisor(
     telemetry["secondary_families"] = [str(f) for f in route.secondary_families]
     answer_language = _answer_language(question)
     policy_abstained = False
+    credit_policy_unavailable = any(
+        row.get("error_code") == "CREDIT_POLICY_UNAVAILABLE" for row in agent_tool_results
+    )
 
-    if contract.retrieval_missing:
+    if credit_policy_unavailable:
+        telemetry["policy_contract_failure"] = "credit_policy_unavailable"
+        telemetry["credit_policy_unavailable"] = True
+        telemetry["policy_grounding"] = "unavailable"
+        answer = _POLICY_ABSTENTION_AR if answer_language == "Arabic" else _POLICY_ABSTENTION_EN
+        policy_abstained = True
+        context = _without_unverified_credit_limits(context)
+        tool_results = _without_unverified_credit_limits(tool_results)
+        agent_tool_results = _without_unverified_credit_limits(agent_tool_results)
+    elif contract.retrieval_missing:
         # Unreachable through any normal path now that retrieval is server-side
         # and unconditional. Kept because "we never looked" must never be able to
         # become "here is the rule": if it ever happens it is a programming

@@ -36,8 +36,8 @@ HERE = pathlib.Path(__file__).resolve().parent
 DEFAULT_CONTRACT_PATH = HERE / "v21_semantic_plan_cases.yaml"
 
 CONTRACT_NAME = "advisor_v21_semantic_plan"
-CONTRACT_VERSION = "2.8"
-MAX_CONTRACT_CASES = 60
+CONTRACT_VERSION = "2.9"
+MAX_CONTRACT_CASES = 72
 VALID_MODES = frozenset({"execute", "clarify", "direct", "unsupported"})
 VALID_CLARIFICATION_KINDS = frozenset(
     {

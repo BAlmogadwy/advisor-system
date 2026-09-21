@@ -105,8 +105,8 @@ jobs:
     #
     # This job is not a duplicate of the suite; it is the only place those
     # guarantees are tested. Deliberately narrow: migrations, the planner
-    # lifecycle, the five real threaded concurrency tests, and the timetable-delta
-    # PostgreSQL lock regression. Widening it to the
+    # lifecycle, the five real threaded planner concurrency tests, the timetable-delta
+    # lock regression, and the three elective publication lock regressions. Widening it to the
     # full suite on PostgreSQL is a separate decision with its own cost.
     name: planner (PostgreSQL 16)
     runs-on: ubuntu-latest
@@ -128,8 +128,8 @@ jobs:
       DATABASE_URL: postgresql://advisor:advisor_test_password@localhost:5432/advisor_test
       # Turns a SKIP into a FAILURE. Without it, a malformed DATABASE_URL, a
       # settings override or a service that never became healthy would produce a
-      # green job containing five skips — which looks exactly like a green job
-      # containing five passes.
+      # green job containing skips — which looks exactly like a green job
+      # containing passes.
       REQUIRE_POSTGRES_TESTS: '1'
     steps:
       - uses: actions/checkout@v4
@@ -161,19 +161,21 @@ jobs:
           pytest -q -p no:randomly \
             tests/test_planner_draft_lifecycle.py \
             tests/test_planner_draft_concurrency.py \
+            tests/test_elective_mapping_concurrency.py \
             tests/test_timetable_delta_import_postgres.py \
             --maxfail=1
       - name: Fail if the PostgreSQL-only tests did not actually run
-        # Belt and braces alongside REQUIRE_POSTGRES_TESTS: assert all six
+        # Belt and braces alongside REQUIRE_POSTGRES_TESTS: assert all nine
         # PostgreSQL-only tests reported as PASSED, not merely that the job exited 0.
         run: |
           pytest -q -p no:randomly \
             tests/test_planner_draft_concurrency.py \
+            tests/test_elective_mapping_concurrency.py \
             tests/test_timetable_delta_import_postgres.py \
             --no-header -rA 2>&1 | tee /tmp/conc.txt
           passed=$(grep -c '^PASSED' /tmp/conc.txt || true)
           echo "concurrency tests passed: $passed"
-          test "$passed" -eq 6 || { echo "expected 6 passing PostgreSQL tests"; exit 1; }
+          test "$passed" -eq 9 || { echo "expected 9 passing PostgreSQL tests"; exit 1; }
 
   production-preflight:
     # This job mirrors the dependency boundary Render actually deploys. The

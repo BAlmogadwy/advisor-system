@@ -63,8 +63,8 @@ def _case(contract: dict, case_id: str) -> dict:
 
 def test_contract_is_versioned_focused_private_and_balanced(contract: dict) -> None:
     assert contract["meta"]["name"] == "advisor_v21_semantic_plan"
-    assert contract["meta"]["version"] == "2.8"
-    assert contract["meta"]["count"] == len(contract["cases"]) == 57
+    assert contract["meta"]["version"] == "2.9"
+    assert contract["meta"]["count"] == len(contract["cases"]) == 67
     assert tuple(contract["meta"]["scoring_dimensions"]) == SCORE_DIMENSIONS
     assert {case["language"] for case in contract["cases"]} == {"ar-SA", "en"}
     assert sum(case["case_type"] == "regex_false_positive" for case in contract["cases"]) >= 8
@@ -74,13 +74,13 @@ def test_contract_is_versioned_focused_private_and_balanced(contract: dict) -> N
 def test_contract_case_count_remains_bounded_above_current_growth(contract: dict) -> None:
     oversized = copy.deepcopy(contract)
     template = _case(oversized, "V21-SP-033")
-    for index in range(58, 63):
+    for index in range(68, 74):
         extra = copy.deepcopy(template)
         extra["id"] = f"V21-SP-{index:03d}"
         oversized["cases"].append(extra)
     oversized["meta"]["count"] = len(oversized["cases"])
 
-    with pytest.raises(ContractValidationError, match="between 20 and 60"):
+    with pytest.raises(ContractValidationError, match="between 20 and 72"):
         validate_contract(oversized)
 
 
@@ -89,6 +89,65 @@ def test_contract_tool_surface_matches_v21_runtime(contract: dict) -> None:
 
     assert tuple(contract["meta"]["tool_surface"]) == V21_TOOL_SURFACE
     assert V21_TOOL_SURFACE == STUDENT_V21_TOOL_NAMES
+
+
+@pytest.mark.parametrize(
+    "case_id", ["V21-SP-058", "V21-SP-059", "V21-SP-060", "V21-SP-062", "V21-SP-067"]
+)
+def test_implicit_policy_omission_fails_the_frozen_contract(contract: dict, case_id: str) -> None:
+    case = _case(contract, case_id)
+    omitted = _perfect_plan(case)
+    omitted["requested_outcomes"].remove("policy_rule")
+    omitted["evidence_requests"] = [
+        request
+        for request in omitted["evidence_requests"]
+        if request["capability"] != "policy_lookup"
+    ]
+    if not omitted["requested_outcomes"]:
+        omitted.update(decision="direct", requested_outcomes=["general_conversation"])
+
+    scored = score_case(case, omitted)
+    assert scored["dimensions"]["outcomes_correct"] is False
+    assert scored["dimensions"]["required_tools_correct"] is False
+
+
+@pytest.mark.parametrize("case_id", ["V21-SP-063", "V21-SP-064", "V21-SP-065", "V21-SP-066"])
+def test_registration_words_cannot_justify_policy_on_negative_cases(
+    contract: dict, case_id: str
+) -> None:
+    case = _case(contract, case_id)
+    invented_policy = {
+        "decision": "execute",
+        "requested_outcomes": ["policy_rule"],
+        "evidence_requests": [
+            {"capability": "policy_lookup", "arguments": {"query": case["question"]}}
+        ],
+        "clarification_kind": "none",
+    }
+
+    scored = score_case(case, invented_policy)
+    assert scored["dimensions"]["forbidden_tools_correct"] is False
+    assert scored["dimensions"]["outcomes_correct"] is False
+
+
+def test_next_term_request_cannot_silently_recommend_for_the_configured_term(
+    contract: dict,
+) -> None:
+    case = _case(contract, "V21-SP-061")
+    wrong_term_plan = _perfect_plan(case)
+    wrong_term_plan.update(
+        decision="execute",
+        clarification_kind="none",
+        clarification_question="",
+        evidence_requests=[
+            {"capability": "policy_lookup", "arguments": {"query": case["question"]}},
+            {"capability": "recommend_courses", "arguments": {}},
+        ],
+    )
+
+    scored = score_case(case, wrong_term_plan)
+    assert scored["dimensions"]["mode_correct"] is False
+    assert scored["dimensions"]["forbidden_tools_correct"] is False
 
 
 def test_eval_outcome_owners_match_runtime_and_saudi_scorer() -> None:
@@ -616,7 +675,7 @@ def test_batch_rejects_missing_duplicate_and_unknown_case_ids(contract: dict) ->
 def test_comparison_gate_requires_absolute_quality_and_measurable_lift(contract: dict) -> None:
     candidate_rows = _perfect_rows(contract)
     baseline_rows = copy.deepcopy(candidate_rows)
-    for row in baseline_rows["rows"][:6]:
+    for row in baseline_rows["rows"][: (len(contract["cases"]) + 9) // 10]:
         row["plan"] = {"decision": "direct", "evidence_requests": []}
     candidate = score_batch(candidate_rows, contract)
     baseline = score_batch(baseline_rows, contract)

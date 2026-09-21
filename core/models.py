@@ -245,6 +245,25 @@ class ElectiveTermMapping(models.Model):
         return f"Map({self.placeholder_code}->{self.elective.course_code} {self.academic_year}T{self.term})"
 
 
+class ElectiveMappingScope(models.Model):
+    """Stable transaction lock, including before a term's first mapping exists."""
+
+    academic_year = models.TextField()
+    term = models.PositiveSmallIntegerField()
+    programme = models.TextField()
+
+    class Meta:
+        db_table = "elective_mapping_scopes"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["academic_year", "term", "programme"], name="uq_elective_mapping_scope"
+            )
+        ]
+
+    def __str__(self) -> str:
+        return f"Elective mappings: {self.programme} {self.academic_year}/{self.term}"
+
+
 class AcademicAdvisor(models.Model):
     advisor_id = models.TextField(primary_key=True)
     full_name = models.TextField()
