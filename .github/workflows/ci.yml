@@ -280,6 +280,7 @@ jobs:
               Prerequisite,
               ProgrammeRequirement,
               Room,
+              SectionInstructor,
               Student,
               StudentCourse,
               StudentTermSection,
@@ -384,6 +385,14 @@ jobs:
               section="M",
               instructor=instructor,
               role="primary",
+          )
+          SectionInstructor.objects.create(
+              scenario=None,
+              course_key=planned_course.course_code,
+              section="M1",
+              instructor=instructor,
+              role="primary",
+              source="registrar",
           )
           section = TermSection.objects.create(
               source_tag="release-rehearsal",
@@ -674,7 +683,7 @@ jobs:
             --confirm-connection-fence FENCE_NEW_CONNECTIONS_AND_RESTORE_AFTER_IMPORT \
             --allow-nonproduction-postgres-rehearsal \
             | tee /tmp/advisor-release-import.log
-          grep -Fq 'across 18 models.' /tmp/advisor-release-import.log
+          grep -Fq 'across 19 models.' /tmp/advisor-release-import.log
       - name: Verify replacement content, relations, and runtime purge
         run: |
           python - <<'PY'
@@ -699,6 +708,7 @@ jobs:
               AuditLog,
               Course,
               CourseInstructor,
+              SectionInstructor,
               Student,
               StudentCourse,
               StudentLoginOTP,
@@ -751,6 +761,13 @@ jobs:
           assert CourseInstructor.objects.select_related("instructor").get(
               program="AI", course_code="CS112", section="M"
           ).instructor.normalised_name == "release rehearsal instructor"
+          # The registrar's per-section assignment must survive the flush+reload,
+          # and must arrive scenario-null: TimetableScenario is outside the profile.
+          section_instructor = SectionInstructor.objects.select_related("instructor").get(
+              course_key="CS112", section="M1"
+          )
+          assert section_instructor.scenario_id is None
+          assert section_instructor.instructor.normalised_name == "release rehearsal instructor"
 
           records, counts = _serialise_records("default")
           assert canonical_content_sha256(records) == manifest["fixture"]["canonical_content_sha256"]

@@ -389,7 +389,7 @@ def test_success_replaces_allowed_data_and_removes_runtime_rows(tmp_path, monkey
         output = _replace(fixture, manifest, database=alias)
 
         assert "Imported" in output
-        assert "across 18 models" in output
+        assert "across 19 models" in output
         assert Student.objects.using(alias).filter(pk=source_student.pk, program="AI").exists()
         assert not Student.objects.using(alias).filter(pk=target.pk).exists()
         assert Course.objects.using(alias).filter(course_code="AI101").exists()

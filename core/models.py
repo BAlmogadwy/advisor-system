@@ -390,9 +390,10 @@ class SectionInstructor(models.Model):
     never a dependency.
 
     The release-seed import is NOT in that list and no key can survive it:
-    ``_flush_target_database`` truncates every table in the target before loading,
-    so this one is replaced like any other — which is the intended behaviour for a
-    rebuild, not a loss.
+    ``_flush_target_database`` truncates every table in the target before loading.
+    This table is therefore carried in the signed ``ALLOWED_MODELS`` profile and
+    reloaded from the seed, so a rebuild replaces it rather than dropping it.  Only
+    the global (``scenario`` NULL) rows are exported — see below.
 
     ``scenario`` NULL means a registrar/global section — the only kind the importer
     writes.  Scenario-scoped rows are supported for symmetry with ``TermSection``
