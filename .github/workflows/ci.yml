@@ -683,7 +683,7 @@ jobs:
             --confirm-connection-fence FENCE_NEW_CONNECTIONS_AND_RESTORE_AFTER_IMPORT \
             --allow-nonproduction-postgres-rehearsal \
             | tee /tmp/advisor-release-import.log
-          grep -Fq 'across 18 models.' /tmp/advisor-release-import.log
+          grep -Fq 'across 19 models.' /tmp/advisor-release-import.log
       - name: Verify replacement content, relations, and runtime purge
         run: |
           python - <<'PY'
