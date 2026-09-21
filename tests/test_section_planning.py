@@ -157,6 +157,9 @@ def test_compute_section_plan_full_status() -> None:
 
 def test_section_planning_resolves_mapped_elective_placeholder() -> None:
     """Mapped elective placeholders are counted as real deliverable courses."""
+    ProgrammeRequirement.objects.create(
+        program="DS", course_code="DS2", type="Program Elective", credit_hours=3
+    )
     student = Student.objects.create(student_id=440000001, program="DS", section="M")
     ai201 = _create_course("AI201", credit_hours=3)
     ds332 = _create_course("DS332", credit_hours=4)

@@ -340,12 +340,21 @@ def test_capacity_policy_rejects_nonsense():
 pytestmark = pytest.mark.django_db
 
 
-def _plan(program, code, credits=3, capacity=None, online=False, term=1, name=None):
+def _plan(
+    program,
+    code,
+    credits=3,
+    capacity=None,
+    online=False,
+    term=1,
+    name=None,
+    requirement_type="mandatory",
+):
     ProgrammeRequirement.objects.create(
         program=program,
         course_code=code,
         course_name=name or code,
-        type="mandatory",
+        type=requirement_type,
         programme_term=term,
         credit_hours=credits,
         is_online=online,
@@ -971,7 +980,7 @@ def test_the_seam_writes_instructor_names_into_every_meeting():
 
 
 def test_a_resolved_elective_is_an_offering_students_can_be_counted_against():
-    _plan("AI", "AI1")
+    _plan("AI", "AI1", requirement_type="Program Elective")
     _map("AI463", "AI1")
     for sid in range(4001, 4011):
         _student(sid, "AI", "M")
@@ -992,7 +1001,7 @@ def test_a_resolved_elective_inherits_the_slot_it_fills():
     """Programmes and plan terms come from the placeholder, because that is where
     a student meets the course — and they decide both the room pool it may use
     and the board it is drawn on."""
-    _plan("AI", "AI1", term=7)
+    _plan("AI", "AI1", term=7, requirement_type="Program Elective")
     _map("AI463", "AI1")
     for sid in range(4101, 4106):
         _student(sid, "AI", "M")
@@ -1004,6 +1013,23 @@ def test_a_resolved_elective_inherits_the_slot_it_fills():
     assert target.programs == frozenset({"AI"})
     assert target.terms == frozenset({7}), "it must land where the plan puts the slot"
     assert target.course_name == "Real AI463", "the timetable must print the real course name"
+
+
+@pytest.mark.parametrize("owner,credits", [("", 3), ("OTHER", 3), ("AI", 0), ("AI", -1), ("AI", 2)])
+def test_invalid_elective_publication_cannot_create_scheduler_demand(owner, credits):
+    _plan("AI", "AI1", requirement_type="Program Elective")
+    _plan("AI", "AI101")
+    _map("AI463", "AI1")
+    ElectiveCourse.objects.filter(course_code="AI463").update(programme=owner, credit_hours=credits)
+    for sid in range(4111, 4116):
+        _student(sid, "AI", "M")
+    _room("M-1", "M")
+    snap = build_snapshot(
+        academic_year="1448", term=1, gender="M", programs=["AI"], default_capacity=25
+    )
+    assert all(offering.course_code != "AI463" for offering in snap.offerings)
+    ordinary = next(offering for offering in snap.offerings if offering.course_code == "AI101")
+    assert sum(ordinary.id in demand.offering_ids for demand in snap.demand) == 5
 
 
 def test_an_unmappable_placeholder_is_still_scheduled_under_its_own_name():
@@ -1024,7 +1050,7 @@ def test_an_unmappable_placeholder_is_still_scheduled_under_its_own_name():
 def test_a_clean_run_reports_nothing_unmatched():
     """The other half — the report has to stay empty when nothing is lost, or it
     is noise nobody will read."""
-    _plan("AI", "AI1")
+    _plan("AI", "AI1", requirement_type="Program Elective")
     _map("AI463", "AI1")
     for sid in range(4401, 4404):
         _student(sid, "AI", "M")
@@ -1042,7 +1068,7 @@ def test_an_approval_reaches_both_the_slot_and_the_course_that_fills_it():
 
     Before, only target->placeholder existed, so an approval naming the slot
     never reached the course that actually has the sections."""
-    _plan("AI", "AI1")
+    _plan("AI", "AI1", requirement_type="Program Elective")
     _map("AI463", "AI1")
     for sid in range(4501, 4506):
         _student(sid, "AI", "M")
@@ -1072,7 +1098,7 @@ def test_an_approval_for_one_programme_does_not_staff_another_programmes_course(
     teach AI463 for CS counted as staffing for an AI-only AI463 offering -- the
     exact widening the placeholder fold was written to prevent, arriving through
     the front door instead."""
-    _plan("AI", "AI1")
+    _plan("AI", "AI1", requirement_type="Program Elective")
     _plan("CS", "CS101")
     _map("AI463", "AI1", programme="AI")
     for sid in range(4601, 4606):
