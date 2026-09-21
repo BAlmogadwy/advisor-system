@@ -1,9 +1,14 @@
-from collections import defaultdict, deque
+from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
 from core.models import Prerequisite, Student, StudentCourse
-from core.services.recommender import get_all_department_courses
+from core.services import course_priority
+from core.services.eligibility import evaluate_prerequisites
+from core.services.recommender import (
+    calculate_real_student_term,
+    get_all_department_courses,
+)
 from core.services.student_helpers import (
     normalize_code,
 )
@@ -35,58 +40,23 @@ def _get_all_filtered_students(
 
 
 def _build_unlock_graph_for_program(program: str) -> dict[str, set[str]]:
-    program = program.strip().upper()
-    plan_courses = [normalize_code(r["code"]) for r in get_all_department_courses(program)]
-    g: dict[str, set[str]] = {c: set() for c in plan_courses}
+    """Compatibility wrapper for the canonical programme dependency graph."""
 
-    rows = Prerequisite.objects.filter(
-        program=program,
-    ).values_list("course_code", "prerequisite_course_code")
-    for course_code, prereq_cell in rows:
-        if not course_code or prereq_cell is None:
-            continue
-        course_norm = normalize_code(course_code)
-        g.setdefault(course_norm, set())
-        for p in str(prereq_cell).split(","):
-            p_norm = normalize_code(p)
-            if not p_norm:
-                continue
-            g.setdefault(p_norm, set())
-            g[p_norm].add(course_norm)
-    return g
+    return course_priority.build_program_dependency_graph(program)
 
 
 def _single_source_dist(graph: dict[str, set[str]], source: str) -> dict[str, int]:
-    dist = {source: 0}
-    q: deque[str] = deque([source])
-    while q:
-        u = q.popleft()
-        for v in graph.get(u, set()):
-            if v in dist:
-                continue
-            dist[v] = dist[u] + 1
-            q.append(v)
-    return dist
+    """Compatibility wrapper for callers of the former local helper."""
+
+    return course_priority.dependency_distances(graph, source)
 
 
 def _compute_priority_scores(
     graph: dict[str, set[str]], discount: str = "1_over_d"
 ) -> dict[str, float]:
-    scores: dict[str, float] = {}
-    for node in graph.keys():
-        dist_map = _single_source_dist(graph, node)
-        score = 0.0
-        for _, d in dist_map.items():
-            if d == 0:
-                continue
-            if discount == "none":
-                score += 1.0
-            elif discount == "half_power_d":
-                score += 0.5 ** (d - 1)
-            else:
-                score += 1.0 / d
-        scores[node] = score
-    return scores
+    """Compatibility wrapper preserving the report's unrounded float values."""
+
+    return course_priority.compute_downstream_importance_scores(graph, discount=discount)
 
 
 def _build_course_term_map(program: str) -> dict[str, int | None]:
@@ -104,6 +74,32 @@ def _matches_term_parity(course_term: int | None, term_parity: int) -> bool:
         return False
     desired_remainder = 1 if term_parity == 0 else 0
     return (course_term % 2) == desired_remainder
+
+
+def _current_curriculum_term(
+    student_id: int,
+    current_academic_year: int,
+    current_semester: int,
+) -> int | None:
+    """Return the student's 1-based plan term for a main semester.
+
+    ``calculate_real_student_term`` returns the number of main terms completed
+    at the supplied calendar point.  The course plan is 1-based, so the term
+    currently due is one greater.  Summer and implausible pre-enrolment dates
+    are deliberately not assigned a plan term for this report.
+    """
+
+    if current_semester not in {1, 2}:
+        return None
+    term = (
+        calculate_real_student_term(
+            student_id,
+            current_academic_year,
+            current_semester,
+        )
+        + 1
+    )
+    return term if term >= 1 else None
 
 
 def _prereqs_visual_style(course: str, program: str) -> set[str]:
@@ -128,10 +124,26 @@ def _is_eligible(
     passed: set[str],
     studying: set[str],
     studying_counts_as_passed: bool,
+    credits: tuple[int, int] = (0, 0),
 ) -> bool:
-    prereqs = prereqs_map.get(course, set())
-    satisfied = set(passed) | (set(studying) if studying_counts_as_passed else set())
-    return prereqs.issubset(satisfied)
+    """Delegates to THE shared prerequisite check.
+
+    This used to be a plain ``prereqs.issubset(satisfied)``, which silently
+    treated the curriculum's ``90(HOURS)`` gate as a course code that can never
+    be satisfied — so every hour-gated capstone was reported "missing but not
+    eligible" no matter how many credits the student had earned. The shared
+    helper splits the gate out and evaluates it properly; ``credits`` is passed
+    in because this runs over a whole cohort and must not query per course.
+    """
+    earned, registered = credits
+    return evaluate_prerequisites(
+        prereqs_map.get(course, set()),
+        passed,
+        studying,
+        strict_passed_only=not studying_counts_as_passed,
+        earned_credits=earned,
+        registered_credits=registered,
+    ).met
 
 
 def run_missing_high_priority_report(
@@ -153,13 +165,17 @@ def run_missing_high_priority_report(
     if not students:
         return {"count": 0, "results": [], "filters": {}}
 
-    # Batch-load student programs (1 query instead of N)
+    # Batch-load student programs AND credits (1 query instead of N). The
+    # credits feed the hour-gate half of the prerequisite check; taking them
+    # here keeps that check free of per-course queries.
     _student_programs: dict[int, str] = {}
-    for sid_val, prog_val in Student.objects.filter(student_id__in=students).values_list(
-        "student_id", "program"
-    ):
+    _student_credits: dict[int, tuple[int, int]] = {}
+    for sid_val, prog_val, earned_val, reg_val in Student.objects.filter(
+        student_id__in=students
+    ).values_list("student_id", "program", "total_earned_credits", "current_registered_credits"):
         if prog_val:
             _student_programs[sid_val] = prog_val
+        _student_credits[sid_val] = (earned_val or 0, reg_val or 0)
 
     # Batch-load passed/studying (1 query instead of N)
     _sc_rows = list(
@@ -214,15 +230,31 @@ def run_missing_high_priority_report(
 
         passed_n = _student_passed.get(sid, set())
         studying_n = _student_studying.get(sid, set())
+        current_curriculum_term = _current_curriculum_term(sid, year, semester)
+        if current_curriculum_term is None:
+            continue
 
         candidates: list[tuple[str, float]] = []
         for course in universe:
             if course in passed_n or course in studying_n:
                 continue
+            course_term = term_map.get(course)
+            # "Missing" is a due-state, not merely prerequisite readiness.
+            # A high-impact course from a later plan term must not flag a
+            # student who is fully registered for the term they are in.
+            if course_term is None or course_term > current_curriculum_term:
+                continue
             score = float(scores.get(course, 0.0))
             if score < min_score:
                 continue
-            if _is_eligible(course, prereqs_map, passed_n, studying_n, studying_counts_as_passed):
+            if _is_eligible(
+                course,
+                prereqs_map,
+                passed_n,
+                studying_n,
+                studying_counts_as_passed,
+                _student_credits.get(sid, (0, 0)),
+            ):
                 candidates.append((course, score))
 
         candidates.sort(key=lambda x: x[1], reverse=True)
@@ -247,13 +279,17 @@ def run_missing_high_priority_report(
 
     items = []
     for sid in sorted(per_student_grouped.keys()):
-        row = per_student_grouped[sid]
-        in_this_rows = [{"course_code": c, "score": float(s)} for c, s in row.get("in_this", [])]
-        other_rows = [{"course_code": c, "score": float(s)} for c, s in row.get("other", [])]
+        grouped_row = per_student_grouped[sid]
+        in_this_rows = [
+            {"course_code": c, "score": float(s)} for c, s in grouped_row.get("in_this", [])
+        ]
+        other_rows = [
+            {"course_code": c, "score": float(s)} for c, s in grouped_row.get("other", [])
+        ]
         items.append(
             {
                 "student_id": sid,
-                "program": row.get("program", ""),
+                "program": grouped_row.get("program", ""),
                 "missing_this_parity": in_this_rows,
                 "missing_other": other_rows,
                 "missing_total": len(in_this_rows) + len(other_rows),

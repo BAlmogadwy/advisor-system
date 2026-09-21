@@ -9,7 +9,10 @@ class CoreConfig(AppConfig):
         from django.db.backends.signals import connection_created
 
         def _enable_wal(sender: object, connection: object, **kwargs: object) -> None:
-            if getattr(connection, "vendor", None) == "sqlite":
+            settings_dict = getattr(connection, "settings_dict", {})
+            if getattr(connection, "vendor", None) == "sqlite" and not settings_dict.get(
+                "RELEASE_SEED_READ_ONLY"
+            ):
                 cursor = connection.cursor()  # type: ignore[attr-defined]
                 cursor.execute("PRAGMA journal_mode=WAL;")
                 cursor.execute("PRAGMA synchronous=NORMAL;")

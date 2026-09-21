@@ -198,7 +198,7 @@ def test_a_gpa_below_the_table_reports_the_tables_silence_not_a_verdict(plan):
     """
     card = gpa_band(1.62)
     assert card["band_ar"] == ""
-    assert card["note_ar"] == "لا ينطبق تقدير عام على هذا المعدل في الجدول المعتمد."
+    assert card["note_ar"] == ("لا تتضمن لائحة التقديرات المعتمدة تقديرًا عامًا لهذا المعدل.")
     for forbidden in ("إنذار", "فصل", "خطر", "تحذير"):
         assert forbidden not in card["note_ar"], forbidden
 

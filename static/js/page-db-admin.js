@@ -51,7 +51,10 @@ async function callJson(url, options = {}, outId = null, btn = null) {
       data = await r.json();
     } else {
       const body = await r.text();
-      const snippet = body.replace(/<[^>]+>/g,' ').replace(/\s+/g,' ').trim().slice(0,300);
+      const looksLikeHtml = ct.includes('text/html') || /^\s*</.test(body);
+      const snippet = looksLikeHtml
+        ? ''
+        : body.replace(/\s+/g,' ').trim().slice(0,300);
       data = { error: `HTTP ${r.status} ${r.statusText}${snippet ? ': ' + snippet : ''}` };
     }
     if (outId) writeOut(outId, data);
@@ -82,6 +85,288 @@ function disableDeleteBtn(btn) {
     if (btn._origHtml) btn.innerHTML = btn._origHtml;
     clearTimeout(btn._confirmTimer);
   }
+}
+
+/* ── Section: Clear current section snapshot ── */
+const ssPreviewBtn = q('ssPreview');
+const ssClearBtn = q('ssClear');
+let ssPreviewState = null;
+
+function snapshotNumber(data, keys) {
+  for (const key of keys) {
+    const value = Number(data?.[key]);
+    if (Number.isFinite(value)) return value;
+  }
+  return 0;
+}
+
+function snapshotPreviewPayload(data) {
+  if (data && data.preview && typeof data.preview === 'object') return data.preview;
+  return data || {};
+}
+
+function setSnapshotStatus(kind, message) {
+  const el = q('ssStatus');
+  if (!el) return;
+  el.classList.remove('d-none', 'is-error', 'is-success', 'is-info');
+  el.classList.add(`is-${kind || 'info'}`);
+  el.textContent = String(message || '');
+}
+
+function clearSnapshotStatus() {
+  const el = q('ssStatus');
+  if (!el) return;
+  el.classList.add('d-none');
+  el.textContent = '';
+}
+
+function invalidateSnapshotPreview({ hide = true, announce = false } = {}) {
+  const hadPreview = Boolean(ssPreviewState?.token);
+  ssPreviewState = null;
+  if (ssClearBtn) disableDeleteBtn(ssClearBtn);
+  if (hide) q('ssPreviewResult')?.classList.add('d-none');
+  if (announce && hadPreview) {
+    setSnapshotStatus('info', IS_AR
+      ? 'تغيّر نطاق المسح. شغّل المعاينة مرة أخرى قبل المتابعة.'
+      : 'The clear scope changed. Run Preview again before continuing.');
+  }
+}
+
+function snapshotFilterPayload() {
+  const program = String(q('ssProgram')?.value || '').trim().toUpperCase();
+  const gender = String(q('ssGender')?.value || 'ALL').trim().toUpperCase();
+  return { program, gender, all_programs: !program };
+}
+
+function snapshotScopeLabel(payload) {
+  const programEl = q('ssProgram');
+  const genderEl = q('ssGender');
+  const programLabel = programEl?.selectedOptions?.[0]?.textContent?.trim() || payload.program;
+  const genderLabel = genderEl?.selectedOptions?.[0]?.textContent?.trim() || payload.gender;
+  return IS_AR
+    ? `النطاق: ${programLabel} · ${genderLabel}`
+    : `Scope: ${programLabel} · ${genderLabel}`;
+}
+
+function snapshotPrograms(value) {
+  if (Array.isArray(value)) return value;
+  if (value == null || value === '') return [];
+  return String(value).split(',').map(item => item.trim()).filter(Boolean);
+}
+
+function renderSnapshotSample(rows, total) {
+  const wrap = q('ssSampleWrap');
+  const body = q('ssSampleBody');
+  if (!wrap || !body) return;
+  body.innerHTML = '';
+
+  if (!Array.isArray(rows) || rows.length === 0) {
+    wrap.classList.add('d-none');
+    return;
+  }
+
+  rows.forEach(row => {
+    const programs = snapshotPrograms(row.programs || row.program_codes || row.programme_codes);
+    const programmeHtml = programs.length
+      ? programs.map(program => `<span class="dba-program-chip">${esc(program)}</span>`).join('')
+      : `<span class="text-secondary">${IS_AR ? 'غير محدد' : 'Unassigned'}</span>`;
+    const meetings = Array.isArray(row.meetings)
+      ? row.meetings.length
+      : snapshotNumber(row, ['meetings_count', 'meeting_count']);
+    const isRetained = row.action === 'retain';
+    const actionLabel = isRetained
+      ? (IS_AR ? 'سيُحتفظ بها' : 'Retained')
+      : (IS_AR ? 'ستُمسح' : 'Will clear');
+    const tr = document.createElement('tr');
+    if (isRetained) tr.classList.add('is-retained');
+    tr.innerHTML =
+      `<td><bdi class="dba-snapshot-code">${esc(row.course_code || row.course_key || row.code || '—')}</bdi></td>` +
+      `<td><bdi>${esc(row.section || row.section_code || '—')}</bdi></td>` +
+      `<td><div class="dba-program-chips">${programmeHtml}</div></td>` +
+      `<td>${esc(String(meetings))}</td>` +
+      `<td>${esc(row.source_tag || row.source || '—')}</td>` +
+      `<td><span class="dba-snapshot-action ${isRetained ? 'is-retained' : 'is-delete'}">${actionLabel}</span></td>`;
+    body.appendChild(tr);
+  });
+
+  q('ssSampleCaption').textContent = IS_AR
+    ? `عرض ${rows.length} من ${total}`
+    : `Showing ${rows.length} of ${total}`;
+  wrap.classList.remove('d-none');
+}
+
+function renderSnapshotPreview(data, filters) {
+  const payload = snapshotPreviewPayload(data);
+  const matchedSections = snapshotNumber(payload, ['sections_count', 'term_sections_count', 'section_count']);
+  const physicalSections = payload.physical_sections_count != null
+    ? Number(payload.physical_sections_count) || 0
+    : matchedSections;
+  const counts = {
+    matched: matchedSections,
+    sections: physicalSections,
+    meetings: snapshotNumber(payload, ['meetings_count', 'meeting_count']),
+    links: snapshotNumber(payload, ['student_links_count', 'student_term_sections_count', 'links_count']),
+    students: snapshotNumber(payload, ['students_count', 'affected_students_count', 'distinct_students_count']),
+    memberships: snapshotNumber(payload, ['memberships_count', 'program_memberships_count']),
+  };
+  const token = String(payload.preview_token || payload.token || data?.preview_token || '');
+  const confirmationPhrase = String(
+    payload.confirmation_phrase || payload.confirm_phrase || data?.confirmation_phrase || `CLEAR ${counts.sections}`
+  );
+  const rows = payload.sample_sections || payload.samples || payload.sections_preview ||
+    (Array.isArray(payload.sections) ? payload.sections : []);
+
+  q('ssSectionsCount').textContent = String(counts.sections);
+  q('ssMeetingsCount').textContent = String(counts.meetings);
+  q('ssLinksCount').textContent = String(counts.links);
+  q('ssStudentsCount').textContent = String(counts.students);
+  q('ssScope').textContent = payload.scope_label || snapshotScopeLabel(filters);
+  const expiresSeconds = snapshotNumber(payload, ['preview_expires_in_seconds']);
+  const expiresMinutes = expiresSeconds > 0 ? Math.max(1, Math.ceil(expiresSeconds / 60)) : 0;
+  q('ssPreviewReady').textContent = expiresMinutes > 0
+    ? (IS_AR ? `صالحة لمدة ${expiresMinutes} دقائق` : `Valid for ${expiresMinutes} min`)
+    : (IS_AR ? 'معاينة جاهزة' : 'Preview ready');
+  renderSnapshotSample(rows, matchedSections);
+
+  const sharedCount = snapshotNumber(payload, ['shared_sections_count']);
+  const retainedCount = snapshotNumber(payload, ['retained_sections_count', 'shared_retained_count', 'shared_sections_retained']);
+  const protectedCount = snapshotNumber(payload, ['protected_sections_count']);
+  const warningMessages = [];
+  if (Array.isArray(payload.warnings)) {
+    payload.warnings.filter(Boolean).forEach(warning => {
+      if (typeof warning === 'string') {
+        warningMessages.push(warning);
+        return;
+      }
+      /* Shared and planner warnings are rendered from the exact counts below. */
+      if (warning.code === 'shared_sections_retained' || warning.code === 'planner_sections_retained') return;
+      if (warning.code === 'unassigned_sections') {
+        warningMessages.push(warning.included
+          ? (IS_AR
+            ? `يتضمن هذا المسح ${warning.count || 0} شعبة غير مرتبطة بأي برنامج.`
+            : `This clear includes ${warning.count || 0} section(s) not assigned to a programme.`)
+          : (IS_AR
+            ? `سيتم الاحتفاظ بـ ${warning.count || 0} شعبة غير مرتبطة ببرنامج لعدم إمكانية مطابقتها مع هذا النطاق.`
+            : `${warning.count || 0} unassigned section(s) will be retained because they cannot be matched to this programme.`));
+        return;
+      }
+      if (warning.message) warningMessages.push(String(warning.message));
+    });
+  }
+  const sharedNote = q('ssSharedNote');
+  if (sharedNote) {
+    const notes = [];
+    if (retainedCount > 0) {
+      notes.push(IS_AR
+        ? `سيتم الاحتفاظ بـ ${retainedCount} شعبة لأنها مشتركة مع برامج خارج النطاق أو محمية بمرجع في المخطط.`
+        : `${retainedCount} section(s) will be retained because they are shared outside this scope or protected by a planner reference.`);
+    } else if (sharedCount > 0) {
+      notes.push(IS_AR
+        ? `يتضمن النطاق ${sharedCount} شعبة مشتركة. راجع البرامج الظاهرة في الجدول قبل المتابعة.`
+        : `This scope includes ${sharedCount} shared section(s). Review the programmes shown below before continuing.`);
+    }
+    if (protectedCount > 0) {
+      notes.push(IS_AR
+        ? `${protectedCount} شعبة محمية بمرجع في المخطط ولن تُحذف فعلياً.`
+        : `${protectedCount} section(s) are protected by planner references and will not be physically deleted.`);
+    }
+    notes.push(...warningMessages);
+    if (notes.length > 0) {
+      sharedNote.textContent = notes.join('\n');
+      sharedNote.classList.remove('d-none');
+    } else {
+      sharedNote.textContent = '';
+      sharedNote.classList.add('d-none');
+    }
+  }
+
+  q('ssPreviewResult').classList.remove('d-none');
+  ssPreviewState = { token, confirmationPhrase, counts, filters };
+
+  if (counts.matched > 0 && token) {
+    enableDeleteBtn(ssClearBtn);
+    setSnapshotStatus('success', IS_AR
+      ? 'اكتملت المعاينة. راجع التأثير ثم أكد المسح.'
+      : 'Preview complete. Review the impact, then confirm the clear.');
+  } else {
+    disableDeleteBtn(ssClearBtn);
+    setSnapshotStatus('info', counts.matched === 0
+      ? (IS_AR ? 'لا توجد شعب حالية تطابق هذا النطاق.' : 'No current sections match this scope.')
+      : (IS_AR ? 'تعذر تفويض المسح. أعد تشغيل المعاينة.' : 'Clear authorization was not issued. Run Preview again.'));
+  }
+}
+
+if (ssPreviewBtn) {
+  ssPreviewBtn.addEventListener('click', async () => {
+    invalidateSnapshotPreview({ hide: true });
+    clearSnapshotStatus();
+    const filters = snapshotFilterPayload();
+    const data = await callJson('/ops/db/section-snapshot/preview/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(filters),
+    }, null, ssPreviewBtn);
+
+    if (!data || data.error || data.ok === false || data.scraper_running) {
+      const message = data?.error || data?.message || data?.blocked_reason || (IS_AR ? 'فشلت معاينة النطاق.' : 'Scope preview failed.');
+      setSnapshotStatus('error', message);
+      return;
+    }
+    renderSnapshotPreview(data, filters);
+  });
+
+  ['ssProgram', 'ssGender'].forEach(id => {
+    q(id)?.addEventListener('change', () => invalidateSnapshotPreview({ hide: true, announce: true }));
+  });
+}
+
+if (ssClearBtn) {
+  ssClearBtn.addEventListener('click', async () => {
+    if (!ssPreviewState?.token) {
+      invalidateSnapshotPreview({ hide: true });
+      setSnapshotStatus('info', IS_AR ? 'شغّل المعاينة مرة أخرى قبل المسح.' : 'Run Preview again before clearing.');
+      return;
+    }
+
+    const phrase = ssPreviewState.confirmationPhrase;
+    const counts = ssPreviewState.counts;
+    const ok = await dlg.confirm({
+      title: IS_AR ? 'مسح لقطة الشعب الحالية؟' : 'Clear current section snapshot?',
+      body: IS_AR
+        ? `<p>سيتم حذف <strong>${counts.sections}</strong> شعبة فعلياً و<strong>${counts.meetings}</strong> موعد و<strong>${counts.links}</strong> رابط جدول، وإزالة <strong>${counts.memberships}</strong> ارتباط بالبرامج ضمن النطاق الذي عاينته.</p><p>لا يمكن التراجع عن هذا الإجراء من هذه الشاشة.</p>`
+        : `<p>This will physically delete <strong>${counts.sections}</strong> section(s), <strong>${counts.meetings}</strong> meeting(s), <strong>${counts.links}</strong> timetable link(s), and remove <strong>${counts.memberships}</strong> programme membership(s) from the previewed scope.</p><p>This cannot be undone from this screen.</p>`,
+      typed: phrase,
+      confirmText: IS_AR ? 'مسح اللقطة' : 'Clear snapshot',
+      kind: 'danger',
+    });
+    if (!ok) return;
+
+    const state = ssPreviewState;
+    const data = await callJson('/ops/db/section-snapshot/clear/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ preview_token: state.token, confirm: phrase }),
+    }, null, ssClearBtn);
+
+    invalidateSnapshotPreview({ hide: false });
+    if (!data || data.error || data.ok === false) {
+      setSnapshotStatus('error', data?.error || data?.message || (IS_AR ? 'تعذر مسح لقطة الشعب.' : 'Could not clear the section snapshot.'));
+      return;
+    }
+
+    const result = snapshotPreviewPayload(data);
+    const deleted = result.deleted && typeof result.deleted === 'object' ? result.deleted : {};
+    const deletedSections = snapshotNumber(deleted, ['sections']) || snapshotNumber(result, ['deleted_sections_count', 'sections_deleted']) || state.counts.sections;
+    const deletedMeetings = snapshotNumber(deleted, ['meetings']) || snapshotNumber(result, ['deleted_meetings_count', 'meetings_deleted']) || state.counts.meetings;
+    const deletedLinks = snapshotNumber(deleted, ['student_links']) || snapshotNumber(result, ['deleted_student_links_count', 'student_links_deleted', 'student_term_sections_deleted']) || state.counts.links;
+    const backupFile = String(result.backup?.backup_file || result.backup_file || '');
+    const backupNote = backupFile
+      ? (IS_AR ? ` تم إنشاء نسخة احتياطية: ${backupFile}` : ` Backup created: ${backupFile}`)
+      : '';
+    setSnapshotStatus('success', IS_AR
+      ? `تم المسح بنجاح: ${deletedSections} شعبة، ${deletedMeetings} موعد، ${deletedLinks} رابط جدول.${backupNote}`
+      : `Snapshot cleared: ${deletedSections} section(s), ${deletedMeetings} meeting(s), and ${deletedLinks} timetable link(s).${backupNote}`);
+  });
 }
 
 /* ── Section: Delete students ── */
@@ -168,6 +453,9 @@ q('iImport').onclick = async () => {
 };
 
 /* ── Section: Term sections ── */
+let termPreviewState = null;
+let termPreviewRequestGeneration = 0;
+
 function setTermStep(step) {
   ['tStep1','tStep2','tStep3'].forEach((id, i) => {
     const el = q(id);
@@ -178,59 +466,284 @@ function setTermStep(step) {
   });
 }
 
-q('tPreview').onclick = async () => {
-  setTermStep(2);
-  const data = await callJson('/ops/db/preview-term-sections/', {
-    method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({
-      csv_path:     q('tCsvPath').value,
-      academic_year: q('tYear').value,
-      term:          q('tTerm').value,
-      is_department: q('tDept').checked
-    })
-  }, 'tOut', q('tPreview'));
+function termImportNumber(data, keys) {
+  for (const key of keys) {
+    const value = Number(data?.[key]);
+    if (Number.isFinite(value)) return value;
+  }
+  return 0;
+}
+
+function selectedTermDefaultPrograms() {
+  return Array.from(document.querySelectorAll('.t-default-program:checked'))
+    .map(input => String(input.value || '').trim().toUpperCase())
+    .filter(Boolean)
+    .sort();
+}
+
+function currentTermImportPayload() {
+  const source = document.querySelector('input[name="tSourceTag"]:checked');
+  return {
+    csv_path: String(q('tCsvPath')?.value || '').trim(),
+    source_tag: String(source?.value || 'other').trim().toLowerCase(),
+    default_programs: selectedTermDefaultPrograms(),
+  };
+}
+
+function sameTermImportPayload(left, right) {
+  if (!left || !right) return false;
+  const leftPrograms = Array.isArray(left.default_programs) ? left.default_programs : [];
+  const rightPrograms = Array.isArray(right.default_programs) ? right.default_programs : [];
+  return left.csv_path === right.csv_path
+    && left.source_tag === right.source_tag
+    && leftPrograms.length === rightPrograms.length
+    && leftPrograms.every((value, index) => value === rightPrograms[index]);
+}
+
+function invalidateTermPreview({ hide = true, announce = false } = {}) {
+  const hadPreview = termPreviewReady;
+  termPreviewRequestGeneration += 1;
+  termPreviewReady = false;
+  termPreviewState = null;
+  disableDeleteBtn(q('tImport'));
+  if (hide) q('tPreviewWrap')?.classList.add('d-none');
+  setTermStep(1);
+  if (announce && hadPreview) {
+    notify.warning(IS_AR
+      ? 'تغيّرت إعدادات الاستيراد. شغّل المعاينة مرة أخرى.'
+      : 'Import settings changed. Run Preview again.');
+  }
+}
+
+function renderTermPrograms(programs) {
+  const values = Array.isArray(programs) ? programs.filter(Boolean) : [];
+  if (!values.length) {
+    return `<span class="dba-programme-unassigned">${IS_AR ? 'غير معيّنة' : 'Unassigned'}</span>`;
+  }
+  return `<div class="dba-program-chips">${values.map(value => `<span class="dba-program-chip">${esc(value)}</span>`).join('')}</div>`;
+}
+
+function renderTermImportPreview(data, requestPayload) {
+  const impact = data.impact && typeof data.impact === 'object' ? data.impact : data;
+  const sections = termImportNumber(impact, ['sections_unique', 'sections_in_file', 'sections_count']);
+  const meetings = termImportNumber(impact, ['meeting_rows_unique', 'meeting_rows_in_file', 'total_rows']);
+  const sectionsNew = termImportNumber(impact, ['sections_new', 'new_sections_count']);
+  const sectionsExisting = termImportNumber(impact, ['sections_existing', 'existing_sections_count']);
+  const assignments = termImportNumber(impact, ['programme_assignments_effective', 'programme_assignments_count']);
+  const membershipAdds = termImportNumber(impact, ['membership_adds', 'program_links_to_add']);
+  const membershipRemoves = termImportNumber(impact, ['membership_removes', 'program_links_to_remove']);
+  const membershipSourceChanges = termImportNumber(impact, ['membership_source_changes', 'membership_promotions']);
+  const predictedUnassigned = termImportNumber(impact, ['predicted_fully_unassigned_sections', 'predicted_unassigned_count']);
+  const previewRows = Array.isArray(data.preview_rows) ? data.preview_rows : [];
+  const canImport = data.can_import === true || (
+    data.can_import == null && sections > 0 && predictedUnassigned === 0
+  );
+  const confirmationPhrase = String(data.confirmation_phrase || `IMPORT ${sections}`);
+  const previewFingerprint = String(data.preview_fingerprint || '');
+
+  const metrics = {
+    tMetricSections: sections,
+    tMetricMeetings: meetings,
+    tMetricNew: sectionsNew,
+    tMetricExisting: sectionsExisting,
+    tMetricAssignments: assignments,
+    tMetricAdd: membershipAdds,
+    tMetricRemove: membershipRemoves,
+    tMetricSourceChanges: membershipSourceChanges,
+    tMetricUnassigned: predictedUnassigned,
+  };
+  Object.entries(metrics).forEach(([id, value]) => { q(id).textContent = String(value); });
 
   const body = q('tTableBody');
   body.innerHTML = '';
-  if (!data.error && Array.isArray(data.preview_rows)) {
-    for (const row of data.preview_rows) {
-      const tr = document.createElement('tr');
-      tr.innerHTML = `<td>${esc(row.course_code||'')}</td><td>${esc(row.course_number||'')}</td><td>${esc(row.section||'')}</td><td>${esc(row.day||'')}</td><td>${esc(row.start_time||'')}</td><td>${esc(row.end_time||'')}</td><td>${esc(row.room||'')}</td><td>${esc(row.instructor||'')}</td><td><span class="badge text-bg-secondary">${esc(row.source_tag||'')}</span></td>`;
-      body.appendChild(tr);
-    }
-    q('tTableWrap').classList.remove('d-none');
-    termPreviewReady = true;
-    q('tImport').disabled = false;
+  previewRows.forEach(row => {
+    const rawPrograms = Array.isArray(row.programs) ? row.programs.filter(Boolean) : [];
+    const effectivePrograms = Array.isArray(row.effective_programs)
+      ? row.effective_programs.filter(Boolean)
+      : rawPrograms;
+    const assignmentSource = row.programme_source || row.program_source || row.assignment_source ||
+      (rawPrograms.length ? 'csv' : effectivePrograms.length ? 'default' : 'unassigned');
+    const assignmentKey = ['csv', 'default', 'preserved', 'mixed'].includes(assignmentSource)
+      ? assignmentSource
+      : 'unassigned';
+    const assignmentLabels = {
+      csv: IS_AR ? 'من CSV' : 'CSV',
+      default: IS_AR ? 'افتراضي' : 'Default',
+      preserved: IS_AR ? 'محفوظ من النظام' : 'Preserved',
+      mixed: IS_AR ? 'مصادر مختلطة' : 'Mixed sources',
+      unassigned: IS_AR ? 'غير معيّن' : 'Unassigned',
+    };
+    const assignmentLabel = assignmentLabels[assignmentKey];
+    const code = row.course_key || `${row.course_code || ''}${row.course_number || ''}`;
+    const time = [row.start_time, row.end_time].filter(Boolean).join('–') || '—';
+    const tr = document.createElement('tr');
+    tr.innerHTML =
+      `<td><bdi class="dba-snapshot-code">${esc(code || '—')}</bdi><small>${esc(row.course_name || '')}</small></td>` +
+      `<td><bdi>${esc(row.section || '—')}</bdi></td>` +
+      `<td>${esc(row.day || '—')}</td>` +
+      `<td><bdi>${esc(time)}</bdi></td>` +
+      `<td>${esc(row.room || '—')}</td>` +
+      `<td>${renderTermPrograms(effectivePrograms)}</td>` +
+      `<td><span class="dba-assignment-source is-${assignmentKey}">${esc(assignmentLabel)}</span></td>`;
+    body.appendChild(tr);
+  });
+  q('tTableWrap').classList.toggle('d-none', previewRows.length === 0);
+  q('tSampleCaption').textContent = IS_AR
+    ? `عرض ${previewRows.length} من ${meetings}`
+    : `Showing ${previewRows.length} of ${meetings}`;
+
+  const defaults = Array.isArray(data.default_programs)
+    ? data.default_programs
+    : requestPayload.default_programs;
+  const statusParts = [];
+  if (data.has_program_column) {
+    statusParts.push(IS_AR
+      ? 'عثر النظام على قيم برامج في CSV؛ لها الأولوية، وتُستخدم الاختيارات الافتراضية للصفوف غير الموسومة فقط.'
+      : 'Programme values were found in the CSV; they take precedence, while selected defaults apply only to untagged rows.');
+  } else if (defaults.length) {
+    statusParts.push(IS_AR
+      ? `لا يحتوي CSV على عمود برامج. ستُستخدم البرامج الافتراضية: ${defaults.join('، ')}.`
+      : `The CSV has no programme column. Defaults will be used: ${defaults.join(', ')}.`);
+  } else {
+    statusParts.push(IS_AR
+      ? 'لا يحتوي CSV على عمود برامج ولم تُحدد برامج افتراضية.'
+      : 'The CSV has no programme column and no default programmes were selected.');
+  }
+  if (predictedUnassigned > 0) {
+    statusParts.push(IS_AR
+      ? `الاستيراد محجوب لأن ${predictedUnassigned} شعبة ستبقى بلا برنامج بعد الدمج.`
+      : `${predictedUnassigned} section(s) would remain without a programme after the merge.`);
+  } else if (data.program_membership_status === 'legacy_preserve') {
+    statusParts.push(IS_AR
+      ? 'سيحتفظ النظام بتعيينات البرامج الموجودة للشعب المطابقة.'
+      : 'Existing programme assignments will be preserved for matching sections.');
+  } else if (data.program_membership_warning) {
+    statusParts.push(String(data.program_membership_warning));
+  }
+  q('tProgrammeStatus').textContent = statusParts.join(' ');
+
+  q('tPreviewStatus').textContent = canImport
+    ? (IS_AR ? `المعاينة جاهزة لدمج ${sections} شعبة.` : `Preview is ready to merge ${sections} section(s).`)
+    : (IS_AR ? 'الاستيراد محجوب. عالج التحذير الظاهر ثم أعد المعاينة.' : 'Import is blocked. Resolve the warning, then preview again.');
+  q('tCanImportBadge').textContent = canImport
+    ? (IS_AR ? 'جاهز للاستيراد' : 'Ready to import')
+    : (IS_AR ? 'الاستيراد محجوب' : 'Import blocked');
+  q('tCanImportBadge').classList.toggle('is-blocked', !canImport);
+  q('tPreviewWrap').classList.remove('d-none');
+
+  termPreviewReady = canImport && /^[0-9a-f]{64}$/.test(previewFingerprint);
+  termPreviewState = {
+    requestPayload,
+    sections,
+    meetings,
+    membershipAdds,
+    membershipRemoves,
+    membershipSourceChanges,
+    confirmationPhrase,
+    previewFingerprint,
+  };
+  if (termPreviewReady) {
+    enableDeleteBtn(q('tImport'));
     setTermStep(3);
   } else {
-    q('tTableWrap').classList.add('d-none');
-    termPreviewReady = false;
-    q('tImport').disabled = true;
-    setTermStep(1);
+    disableDeleteBtn(q('tImport'));
+    setTermStep(2);
+  }
+}
+
+q('tPreview').onclick = async () => {
+  invalidateTermPreview({ hide: true });
+  setTermStep(2);
+  const requestPayload = currentTermImportPayload();
+  const requestGeneration = termPreviewRequestGeneration;
+  const data = await callJson('/ops/db/preview-term-sections/', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify(requestPayload)
+  }, null, q('tPreview'));
+
+  if (
+    requestGeneration !== termPreviewRequestGeneration
+    || !sameTermImportPayload(requestPayload, currentTermImportPayload())
+  ) {
+    return;
+  }
+  writeOut('tOut', data);
+
+  if (data && !data.error && Array.isArray(data.preview_rows)) {
+    renderTermImportPreview(data, requestPayload);
+  } else {
+    invalidateTermPreview({ hide: true });
   }
 };
 
+q('tCsvPath').addEventListener('input', () => invalidateTermPreview({ announce: true }));
+document.querySelectorAll('input[name="tSourceTag"], .t-default-program').forEach(input => {
+  input.addEventListener('change', () => invalidateTermPreview({ announce: true }));
+});
+
 q('tImport').onclick = async () => {
-  if (!termPreviewReady) { notify.warning(T.runPreviewFirst); return; }
-  const ok = await dlg.confirm({
-    title: IS_AR ? 'إدراج الصفوف المصفّاة؟' : 'Insert normalised rows?',
+  if (!termPreviewReady || !termPreviewState) { notify.warning(T.runPreviewFirst); return; }
+  const state = termPreviewState;
+  const confirmation = await dlg.confirm({
+    title: IS_AR ? 'دمج الشعب الحالية؟' : 'Merge current sections?',
     body: IS_AR
-      ? '<p>سيُدرج هذا جميع الصفوف المعروضة في المعاينة في قاعدة البيانات.</p>'
-      : '<p>This will insert all rows shown in the preview into the database.</p>',
-    confirmText: IS_AR ? 'إدراج الكل' : 'Insert all',
+      ? `<p>سيتم دمج <strong>${state.sections}</strong> شعبة و<strong>${state.meetings}</strong> صف موعد في اللقطة الحالية. أثر البرامج: ${state.membershipAdds} إضافة، ${state.membershipRemoves} إزالة، ${state.membershipSourceChanges} تغيير مصدر. لن تُحذف الشعب غير الموجودة في الملف.</p>`
+      : `<p>This will merge <strong>${state.sections}</strong> section(s) and <strong>${state.meetings}</strong> meeting row(s) into the current snapshot. Programme impact: ${state.membershipAdds} add, ${state.membershipRemoves} remove, ${state.membershipSourceChanges} source change. Sections outside the file will not be deleted.</p>`,
+    typed: state.confirmationPhrase,
+    confirmText: IS_AR ? 'تأكيد الدمج' : 'Confirm merge',
     kind: 'info',
   });
-  if (!ok) return;
-  await callJson('/ops/db/import-term-sections/', {
+  if (!confirmation) return;
+  if (
+    !termPreviewReady
+    || termPreviewState !== state
+    || !sameTermImportPayload(state.requestPayload, currentTermImportPayload())
+  ) {
+    invalidateTermPreview({ hide: true });
+    notify.warning(IS_AR
+      ? 'تغيّرت إعدادات الاستيراد. شغّل المعاينة مرة أخرى.'
+      : 'Import settings changed. Run Preview again.');
+    return;
+  }
+  if (confirmation !== state.confirmationPhrase) {
+    notify.warning(IS_AR
+      ? `اكتب ${state.confirmationPhrase} بالحروف والمسافات نفسها.`
+      : `Type ${state.confirmationPhrase} with the exact letters and spacing.`);
+    return;
+  }
+  const data = await callJson('/ops/db/import-term-sections/', {
     method:'POST', headers:{'Content-Type':'application/json'},
     body: JSON.stringify({
-      csv_path:         q('tCsvPath').value,
-      academic_year:    q('tYear').value,
-      term:             q('tTerm').value,
-      is_department:    q('tDept').checked,
-      truncate_existing: q('tTruncate').checked
+      ...state.requestPayload,
+      confirm: confirmation,
+      preview_fingerprint: state.previewFingerprint,
     })
   }, 'tOut', q('tImport'));
+  if (data && ['preview_stale', 'preview_required'].includes(data.code)) {
+    invalidateTermPreview({ hide: true });
+    notify.warning(IS_AR
+      ? 'تغيّر الملف أو بيانات الشعب. شغّل المعاينة مرة أخرى قبل الدمج.'
+      : 'The file or section data changed. Run Preview again before merging.');
+    return;
+  }
+  if (data && !data.error && data.ok !== false) {
+    termPreviewReady = false;
+    termPreviewState = null;
+    disableDeleteBtn(q('tImport'));
+    setTermStep(3);
+    q('tPreviewStatus').textContent = IS_AR
+      ? 'اكتمل الدمج. شغّل معاينة جديدة قبل أي استيراد آخر.'
+      : 'Merge complete. Run a new preview before another import.';
+    q('tCanImportBadge').textContent = IS_AR ? 'تم الاستيراد' : 'Imported';
+    notify.success(IS_AR ? 'تم دمج الشعب الحالية بنجاح.' : 'Current sections were merged successfully.');
+  } else {
+    invalidateTermPreview({ hide: false });
+    q('tPreviewStatus').textContent = IS_AR
+      ? 'انتهت صلاحية المعاينة أو فشل الدمج. شغّل معاينة جديدة.'
+      : 'The preview expired or the merge failed. Run a new preview.';
+    q('tCanImportBadge').textContent = IS_AR ? 'المعاينة منتهية' : 'Preview expired';
+    q('tCanImportBadge').classList.add('is-blocked');
+  }
 };
 
 /* ── Section: Oracle plan import ── */

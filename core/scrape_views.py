@@ -1,8 +1,10 @@
 import csv
 import io
+import logging
 from pathlib import Path
 
 from django.conf import settings
+from django.core import signing
 from django.http import HttpRequest, JsonResponse
 from django.views.decorators.http import require_GET, require_POST
 
@@ -10,9 +12,15 @@ from core.authz import role_required, throttle
 from core.services.audit import log_audit_event
 from core.services.rbac import ROLE_SUPER_ADMIN
 from core.services.scrape_ops import get_scrape_status, start_batch_scrape, stop_batch_scrape
+from core.services.scrape_student_source import inspect_database_student_source
 
 # Allowed directory for CSV uploads (data/ under project root)
 _ALLOWED_CSV_DIR = Path(settings.BASE_DIR) / "data"
+logger = logging.getLogger(__name__)
+_DATABASE_ROSTER_TOKEN_SALT = (  # nosec B105 -- public domain separator, not a credential
+    "core.scrape.database-roster.v1"
+)
+_DATABASE_ROSTER_TOKEN_MAX_AGE_SECONDS = 15 * 60
 
 
 def _validate_csv_path(raw_path: str) -> tuple[Path | None, str | None]:
@@ -42,32 +50,128 @@ def _validate_csv_path(raw_path: str) -> tuple[Path | None, str | None]:
     return resolved, None
 
 
-def _to_int(value: str | None, default: int) -> int:
-    try:
-        return int(value) if value is not None else default
-    except ValueError:
-        return default
+def _reject_scrape_start(
+    request: HttpRequest,
+    *,
+    error: str,
+    error_code: str,
+    status: int,
+    audit_error_text: str | None = None,
+) -> JsonResponse:
+    """Audit a validated mutation rejection without retaining paths or tokens."""
+    requested_source = (request.POST.get("student_source") or "csv").strip().lower()
+    source = requested_source if requested_source in {"csv", "database"} else "invalid"
+    log_audit_event(
+        request,
+        action="scrape.batch_start",
+        status="error",
+        details={"student_source": source[:32], "error_code": error_code},
+        error_text=audit_error_text if audit_error_text is not None else error,
+    )
+    return JsonResponse(
+        {"ok": False, "error": error, "error_code": error_code},
+        status=status,
+    )
 
 
 @role_required(ROLE_SUPER_ADMIN)
 @throttle(max_calls=3, window_seconds=120)
+@require_POST
 def scrape_start_view(request: HttpRequest) -> JsonResponse:
-    """Start batch scrape.  Accepts GET with query params (legacy JS compat).
+    """Start a guarded background scrape from CSV or the current DB roster."""
+    try:
+        concurrency = int(request.POST.get("concurrency") or "2")
+    except (TypeError, ValueError):
+        return _reject_scrape_start(
+            request,
+            error="concurrency must be an integer between 1 and 8",
+            error_code="invalid_concurrency",
+            status=400,
+        )
+    if concurrency < 1 or concurrency > 8:
+        return _reject_scrape_start(
+            request,
+            error="concurrency must be between 1 and 8",
+            error_code="invalid_concurrency",
+            status=400,
+        )
 
-    CSRF note: protected by @role_required (auth check) + @throttle.
-    The dashboard JS sends ``fetch(url)`` (GET) — changing to POST would
-    require a coordinated frontend update.
-    """
-    concurrency = _to_int(request.GET.get("concurrency"), 2)
-    students_csv = request.GET.get("students_csv", "").strip() or None
+    student_source = (request.POST.get("student_source") or "csv").strip().lower()
+    if student_source not in {"csv", "database"}:
+        return _reject_scrape_start(
+            request,
+            error="student_source must be 'csv' or 'database'",
+            error_code="invalid_student_source",
+            status=400,
+        )
+    students_csv = request.POST.get("students_csv", "").strip() or None
 
-    if students_csv is not None:
+    if student_source == "database" and students_csv is not None:
+        return _reject_scrape_start(
+            request,
+            error="students_csv cannot be combined with the database student source",
+            error_code="ambiguous_student_source",
+            status=400,
+        )
+    expected_database_student_count: int | None = None
+    expected_database_roster_sha256 = ""
+    if student_source == "database":
+        roster_token = (request.POST.get("database_roster_token") or "").strip()
+        if not roster_token:
+            return _reject_scrape_start(
+                request,
+                error="Refresh the database student roster before starting.",
+                error_code="database_roster_token_required",
+                status=409,
+            )
+        try:
+            approved_roster = signing.loads(
+                roster_token,
+                salt=_DATABASE_ROSTER_TOKEN_SALT,
+                max_age=_DATABASE_ROSTER_TOKEN_MAX_AGE_SECONDS,
+            )
+            expected_database_student_count = int(approved_roster["count"])
+            expected_database_roster_sha256 = str(approved_roster["sha256"])
+        except (signing.BadSignature, KeyError, TypeError, ValueError):
+            return _reject_scrape_start(
+                request,
+                error="The database student roster approval is invalid or expired; refresh it.",
+                error_code="database_roster_token_invalid",
+                status=409,
+            )
+    if student_source == "csv" and students_csv is not None:
         path, error = _validate_csv_path(students_csv)
         if error:
-            return JsonResponse({"ok": False, "error": error}, status=400)
+            return _reject_scrape_start(
+                request,
+                error=error,
+                error_code="invalid_csv_path",
+                status=400,
+                audit_error_text="CSV path validation failed",
+            )
         students_csv = str(path)
 
-    result = start_batch_scrape(concurrency=concurrency, students_csv=students_csv)
+    result = start_batch_scrape(
+        concurrency=concurrency,
+        students_csv=students_csv,
+        student_source=student_source,
+        expected_database_student_count=expected_database_student_count,
+        expected_database_roster_sha256=expected_database_roster_sha256,
+    )
+    result_params = result.get("params")
+    params = result_params if isinstance(result_params, dict) else {}
+    log_audit_event(
+        request,
+        action="scrape.batch_start",
+        status="ok" if result.get("ok") else "error",
+        details={
+            "student_source": student_source,
+            "student_count": params.get("student_count"),
+            "concurrency": concurrency,
+            "pid": result.get("pid"),
+        },
+        error_text=str(result.get("error") or ""),
+    )
     code = 200 if result.get("ok") else 409
     return JsonResponse(result, status=code)
 
@@ -79,9 +183,51 @@ def scrape_status_view(request: HttpRequest) -> JsonResponse:
 
 
 @role_required(ROLE_SUPER_ADMIN)
+@require_GET
+def scrape_source_summary_view(request: HttpRequest) -> JsonResponse:
+    try:
+        summary = inspect_database_student_source()
+    except Exception:
+        logger.exception("Database student source summary failed")
+        return JsonResponse(
+            {"ok": False, "error": "Could not inspect the database student roster."},
+            status=503,
+        )
+    return JsonResponse(
+        {
+            "ok": True,
+            "database": {
+                "total": summary["total"],
+                "valid": summary["valid"],
+                "excluded": summary["excluded"],
+                "invalid": summary["invalid"],
+                "ready": summary["ready"],
+                "excluded_reasons": summary["excluded_reasons"],
+                "roster_token": signing.dumps(
+                    {
+                        "count": summary["valid"],
+                        "sha256": summary["roster_sha256"],
+                    },
+                    salt=_DATABASE_ROSTER_TOKEN_SALT,
+                    compress=True,
+                ),
+            },
+        }
+    )
+
+
+@role_required(ROLE_SUPER_ADMIN)
+@require_POST
 def scrape_stop_view(request: HttpRequest) -> JsonResponse:
-    """Stop batch scrape.  GET for legacy JS compat (see scrape_start_view)."""
+    """Stop the currently running batch scraper."""
     result = stop_batch_scrape()
+    log_audit_event(
+        request,
+        action="scrape.batch_stop",
+        status="ok" if result.get("ok") else "error",
+        details={"pid": result.get("pid")},
+        error_text=str(result.get("error") or ""),
+    )
     code = 200 if result.get("ok") else 409
     return JsonResponse(result, status=code)
 

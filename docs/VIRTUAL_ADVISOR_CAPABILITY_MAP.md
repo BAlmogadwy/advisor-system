@@ -64,6 +64,41 @@ all answers correct and grounded, latency 19-121s.
   `VIRTUAL_ADVISOR_MAX_TOOL_ITERATIONS` (5),
   `VIRTUAL_ADVISOR_MAX_TOOL_CALLS` (12).
 
+### V2.1 compound student decisions (implemented 2026-08-23)
+
+Three student-safe capabilities now perform evidence joins on the server instead
+of asking the LLM to correlate independent tool results:
+
+| Capability | Typed arguments | Positive status | Bounded negative / gap statuses |
+|---|---|---|---|
+| `build_timetable_proposal` | `mode`, ceiling `max_credits?`, exact-total `target_credits?`, `must_take_courses?`, `pinned_sections?` | `PROPOSALS_GENERATED`, `NO_ADDITIONAL_COURSES` | `CONSTRAINTS_UNSATISFIED` with closed `target_credit_status` when an exact target cannot be met by the bounded search |
+| `recommend_feasible_course_addition` | `candidate_courses?`, `objective=balanced\|faster_graduation\|unlock_impact\|timetable_fit`, total `max_credits?`, exact `additional_credit_hours?`, retained-baseline `pinned_sections?` | `RECOMMENDATION_FOUND` | `NO_ELIGIBLE_CANDIDATES`, `NO_FEASIBLE_ADDITION_IN_RECORDED_SNAPSHOT`, `NO_VERIFIED_FASTER_GRADUATION_IN_BOUNDED_SEARCH`, `CONSTRAINTS_UNSATISFIED`, `NOT_DETERMINABLE` |
+| `rank_current_course_drop_impact` | `course_codes?`, `objective=least_graduation_delay\|lowest_academic_priority\|prerequisite_continuity\|balanced`, future-term `max_credits?` | `RANKING_AVAILABLE` | `NO_REGISTERED_CURRENT_COURSES`, `BASELINE_REVIEW_REQUIRED`, `NOT_DETERMINABLE` |
+| `improve_current_timetable` | `objective=balanced\|faster_graduation\|academic_priority\|schedule_quality`, `credit_load_policy=preserve\|not_increase\|within_policy`, `max_credits?`, `allow_course_replacements?` | `IMPROVEMENTS_FOUND` | `NO_VERIFIED_IMPROVEMENT_IN_BOUNDED_SEARCH`, `NO_REGISTERED_CURRENT_TIMETABLE`, `BASELINE_REVIEW_REQUIRED`, `CONSTRAINTS_UNSATISFIED`, `NOT_DETERMINABLE` |
+
+All three resolve the student from the authenticated scope and are registered
+with `read_only=True` for the same student/adviser scope matrix as the existing
+student planning tools. They expose `can_register=false`, `can_save=false`, and
+equivalent mutation flags; no executor writes a draft, timetable, registration,
+or scenario record. `EXPECTED_PLAN` provenance is never presented as a current
+registration.
+
+`additional_credit_hours` is filtered before the 20-candidate addition bound, so
+a matching course cannot be hidden behind known credit mismatches. Replacement
+credit predicates are likewise applied before graduation and certification result
+limits. `faster_graduation` requires an `EARLIER` result from a completed scenario;
+a completed but unchanged forecast is a typed bounded negative. Timetable
+improvement requires `allow_course_replacements=true` for graduation/academic
+objectives and `false` for a section-only schedule-quality objective.
+
+External-provider use is fail-closed. Each tool has an explicit `PROJECT` entry
+and field-by-field projector in `llm_remote_privacy.py`. The projectors remove
+student ids, staff identity, rooms, internal section ids, debug data, and
+unreviewed free text while preserving typed objectives, constraints, course
+codes, public section labels/meeting times, search bounds, and academic deltas.
+Adding a field to a local result does not transmit it until its projector is
+updated deliberately.
+
 ## Non-Negotiables
 
 - Do not add a new endpoint when an existing endpoint or service already answers the intent.

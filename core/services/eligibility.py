@@ -1,4 +1,6 @@
 import re
+from collections.abc import Iterable
+from dataclasses import dataclass
 
 from core.models import ElectiveCourse, ProgrammeRequirement, Student
 from core.services.student_helpers import (
@@ -29,8 +31,152 @@ def split_hour_prereqs(prereqs: list[str]) -> tuple[list[str], int]:
     return courses, required_hours
 
 
+def effective_credits(earned: int, registered: int, *, strict_passed_only: bool = False) -> int:
+    """Credits that count toward an hour gate under the chosen mode.
+
+    THE single definition of relaxed vs strict for hour gates. Relaxed counts
+    currently-registered credits as if they will be earned; strict counts only
+    what is already earned. Both the eligibility report and the batch
+    recommender consume this — a second inline copy of the rule is how the two
+    screens once came to disagree about who may take a capstone.
+    """
+    return int(earned or 0) if strict_passed_only else int(earned or 0) + int(registered or 0)
+
+
+def scenario_effective_credits(registrar_total: int, plan_credits_passed: int) -> int:
+    """Credits an hour gate sees inside a PROJECTED plan, from two disagreeing sources.
+
+    A scenario that schedules future courses at ``ProgrammeRequirement.credit_hours``
+    must denominate its starting total the same way, or credits vanish at the seam:
+    a plan course already passed is never re-scheduled, because the scenario knows
+    it is passed, and never added, because the registrar aggregate omits it.
+    Fourteen DS2 students hold a ``passed`` CS111 the registrar does not count, and
+    the six second-cohort plans gate co-op at exactly ``plan_total - co-op credits``
+    — so those four credits were the whole difference between a forecast and none.
+
+    The larger of the two. A no-op wherever the sources agree, which is 3724 of
+    3741 students, and it preserves credits earned outside the plan (transfers, a
+    programme change) because those live only in the registrar aggregate.
+
+    A HEURISTIC, not an identity. Writing ``R_in`` for the registrar's credits
+    against in-plan passes, ``O`` for its outside-plan credits and
+    ``S = plan_credits_passed - R_in`` for the shortfall at the seam::
+
+        max(R_in + O, R_in + S) = R_in + max(O, S)      what this returns
+        R_in + S + O                                    what is actually held
+        loss = min(O, S)
+
+    A student with BOTH a registrar seam and genuine outside-plan credit loses the
+    smaller of the two. The exact value is not computable here: the registrar
+    aggregate is a single number, so ``R_in`` and ``O`` cannot be separated out of
+    it, and inventing a decomposition would inflate credits on a guess. The
+    conservative under-count is the right failure direction for a gate.
+
+    Latent today for two independent reasons, neither of them by design: an
+    out-of-plan registration contributes 0 to the baseline credit total, and all
+    six second-cohort gates sit at exactly ``plan_total - co-op credits``, so the
+    end state lands on the gate either way. Raise any gate above that and the loss
+    starts to matter.
+
+    DELIBERATELY NOT used by :func:`hour_gate`. That answers "may this student
+    register for this course NOW", where the registrar's own total is the
+    authority and a projection has no standing. This answers "will the student
+    reach the gate along this simulated path". A report can therefore show a
+    reconciled scenario gate beside an unreconciled factual one; they are answers
+    to different questions and the asymmetry is the point, not drift.
+    """
+
+    return max(int(registrar_total or 0), int(plan_credits_passed or 0))
+
+
+def prereq_satisfied(
+    prereq: str,
+    passed: set[str],
+    studying: set[str],
+    *,
+    strict_passed_only: bool = False,
+) -> bool:
+    """Is a single course prerequisite met under the chosen mode?
+
+    THE single definition of relaxed vs strict for course prerequisites:
+    relaxed accepts a course currently being studied; strict demands a pass.
+    """
+    return prereq in passed or (not strict_passed_only and prereq in studying)
+
+
+@dataclass(frozen=True)
+class PrerequisiteOutcome:
+    """Whether one course's prerequisites are met, and precisely what is not."""
+
+    met: bool
+    missing_courses: list[str]
+    required_hours: int
+    effective_hours: int
+    hours_met: bool
+
+    @property
+    def missing(self) -> list[str]:
+        """What to SHOW a user: unmet course codes, plus the hour gate if short.
+
+        The hour token is re-emitted in its curriculum form (``90(HOURS)``) only
+        when the gate is genuinely unmet, so a display list never contains a
+        pseudo-code that the student has in fact satisfied.
+        """
+        out = list(self.missing_courses)
+        if not self.hours_met:
+            out.append(f"{self.required_hours}(HOURS)")
+        return out
+
+
+def evaluate_prerequisites(
+    raw_prereqs: Iterable[str],
+    passed: set[str],
+    studying: set[str],
+    *,
+    strict_passed_only: bool = False,
+    earned_credits: int = 0,
+    registered_credits: int = 0,
+) -> PrerequisiteOutcome:
+    """THE prerequisite check. Every screen consumes this one.
+
+    The curriculum encodes "you need N credit hours" as a pseudo-prerequisite
+    such as ``90(HOURS)``. It is NOT a course code: compared against a student's
+    course list it can never match, so any caller that skips the split marks
+    every capstone permanently blocked — measured at 68 live students across 13
+    courses, every one of whom had actually met the gate. That is why the split
+    lives inside this function rather than being each caller's job to remember.
+
+    Deliberately PURE: credits are passed in, not queried. Batch callers
+    (recommender_batch, high_priority_missing) pre-load them for hundreds of
+    students at once, and a helper that queried per course would reintroduce the
+    N+1 they exist to avoid. ``hour_gate`` is the single-student wrapper that
+    does the lookup.
+    """
+    courses, required = split_hour_prereqs([str(p) for p in raw_prereqs])
+    missing_courses = [
+        c
+        for c in courses
+        if not prereq_satisfied(c, passed, studying, strict_passed_only=strict_passed_only)
+    ]
+    effective = effective_credits(
+        earned_credits, registered_credits, strict_passed_only=strict_passed_only
+    )
+    hours_met = required <= 0 or effective >= required
+    return PrerequisiteOutcome(
+        met=not missing_courses and hours_met,
+        missing_courses=missing_courses,
+        required_hours=required,
+        effective_hours=effective,
+        hours_met=hours_met,
+    )
+
+
 def hour_gate(
-    student_id: int | str, required_hours: int, *, strict_passed_only: bool = False
+    student_id: int | str,
+    required_hours: int,
+    *,
+    strict_passed_only: bool = False,
+    registered_credits_override: int | None = None,
 ) -> dict[str, object]:
     """Evaluate a credit-hour gate for one student.
 
@@ -43,7 +189,9 @@ def hour_gate(
         .first()
     )
     earned, current = (row[0] or 0, row[1] or 0) if row else (0, 0)
-    effective = earned if strict_passed_only else earned + current
+    if registered_credits_override is not None:
+        current = max(0, int(registered_credits_override))
+    effective = effective_credits(earned, current, strict_passed_only=strict_passed_only)
     return {
         "required": int(required_hours),
         "earned": int(earned),
@@ -125,18 +273,15 @@ def build_course_eligibility_report(
         if not prereqs:
             prereqs = _get_elective_prerequisites(code, prog)
 
-        # Separate hour-based prerequisites from course prerequisites
-        import re
-
-        _hour_pat = re.compile(r"^(\d+)\s*\(?\s*HOURS?\s*\)?$", re.IGNORECASE)
-        course_prereqs: list[str] = []
-        required_hours = 0
-        for p in prereqs:
-            m = _hour_pat.match(p)
-            if m:
-                required_hours = int(m.group(1))
-            else:
-                course_prereqs.append(p)
+        # Credits for the whole cohort in ONE query. Fetching them per student
+        # inside the loop is a query per student for a figure that never varies
+        # within the request.
+        credits_by_student: dict[int, tuple[int, int]] = {
+            row[0]: (row[1] or 0, row[2] or 0)
+            for row in Student.objects.filter(student_id__in=students).values_list(
+                "student_id", "total_earned_credits", "current_registered_credits"
+            )
+        }
 
         for sid in students:
             passed, studying = get_student_passed_and_studying(sid)
@@ -151,26 +296,17 @@ def build_course_eligibility_report(
                     )
                 continue
 
-            # Check hour-based prerequisite
-            hour_ok = True
-            if required_hours > 0:
-                stu = (
-                    Student.objects.filter(student_id=sid)
-                    .values_list("total_earned_credits", "current_registered_credits")
-                    .first()
-                )
-                earned, current = (stu[0] or 0, stu[1] or 0) if stu else (0, 0)
-                effective = earned if strict_passed_only else earned + current
-                if effective < required_hours:
-                    hour_ok = False
-
-            if strict_passed_only:
-                missing = [p for p in course_prereqs if p not in passed]
-            else:
-                missing = [p for p in course_prereqs if p not in passed and p not in studying]
-            if not hour_ok:
-                missing.append(f"{required_hours}(HOURS)")
-            ok = len(missing) == 0
+            earned, current = credits_by_student.get(sid, (0, 0))
+            outcome = evaluate_prerequisites(
+                prereqs,
+                passed,
+                studying,
+                strict_passed_only=strict_passed_only,
+                earned_credits=earned,
+                registered_credits=current,
+            )
+            missing = outcome.missing
+            ok = outcome.met
             if ok:
                 eligible_ids.append(sid)
             else:

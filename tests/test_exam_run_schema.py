@@ -40,6 +40,7 @@ Test inventory
 from __future__ import annotations
 
 import json
+from copy import deepcopy
 from datetime import UTC, datetime
 from io import StringIO
 
@@ -134,6 +135,7 @@ def _v3_ok_payload() -> dict:
     """
     payload = _v2_ok_payload()
     payload["schema_version"] = 3
+    payload["status_derivation_version"] = STATUS_DERIVATION_VERSION
     payload["qa"]["building_footprint"] = {
         "buildings_used_per_slot": {},
         "buildings_used_per_gender_per_slot": {},
@@ -153,20 +155,23 @@ def _v3_ok_payload() -> dict:
     return payload
 
 
-def test_identity_v3() -> None:
-    """A fully-formed v3 payload normalises to itself."""
+def test_v3_payload_migrates_to_current_schema() -> None:
+    """A v3 payload retains its measurements and marks review data unavailable."""
     payload = _v3_ok_payload()
     out = normalise_exam_run_payload(payload)
     for key, value in payload.items():
+        if key == "schema_version":
+            continue
         assert out[key] == value, f"key {key!r} mutated by normaliser"
-    assert out["schema_version"] == 3
+    assert out["schema_version"] == EXAM_RUN_SCHEMA_VERSION
+    assert out["exam_review"] is None
 
 
-def test_v1_payload_migrates_to_v3() -> None:
-    """A v1 payload runs through both migrators and ends up at v3."""
+def test_v1_payload_migrates_to_current_schema() -> None:
+    """A v1 payload runs through every migrator to the current schema."""
     payload = _v1_ok_payload()
     out = normalise_exam_run_payload(payload)
-    assert out["schema_version"] == 3
+    assert out["schema_version"] == EXAM_RUN_SCHEMA_VERSION
     assert out["status"] == "ok"
     # v2 keys derived.
     assert "primary_status" in out
@@ -179,12 +184,12 @@ def test_v1_payload_migrates_to_v3() -> None:
     assert out["qa"]["enrolment_snapshot"]["source_hash"] == ""
 
 
-def test_v2_payload_migrates_to_v3() -> None:
+def test_v2_payload_migrates_to_current_schema() -> None:
     """A v2 payload (with the v2 status surface but no telemetry)
     gets the v3 telemetry blocks filled to empty defaults."""
     payload = _v2_ok_payload()
     out = normalise_exam_run_payload(payload)
-    assert out["schema_version"] == 3
+    assert out["schema_version"] == EXAM_RUN_SCHEMA_VERSION
     assert "building_footprint" in out["qa"]
     assert "enrolment_snapshot" in out["qa"]
 
@@ -808,6 +813,56 @@ def test_status_surface_clean() -> None:
     assert flags == []
 
 
+@pytest.mark.parametrize("missing,ambiguous", [(100, 0), (0, 2), (3, 4)])
+def test_measured_section_gaps_prevent_clean_status(missing, ambiguous) -> None:
+    payload = _v2_ok_payload()
+    payload["qa"]["section_mapping"] = {
+        "mapped_sections": 10,
+        "mapped_enrollments": 200,
+        "missing_enrollments": missing,
+        "ambiguous_enrollments": ambiguous,
+    }
+    original = deepcopy(payload)
+    assert derive_status_surface(payload) == (
+        "requires_section_review",
+        ["section_mapping_incomplete"],
+    )
+    assert payload == original
+
+
+@pytest.mark.parametrize(
+    "mapping", [None, {}, {"missing_enrollments": 0, "ambiguous_enrollments": 0}]
+)
+def test_absent_or_zero_section_mapping_counts_do_not_invent_gaps(mapping) -> None:
+    payload = _v2_ok_payload()
+    payload["qa"]["section_mapping"] = mapping
+    assert derive_status_surface(payload) == ("clean", [])
+
+
+@pytest.mark.parametrize(
+    "qa,overflow,expected,flag",
+    [
+        ({}, True, "contains_overflow", "overflow"),
+        (
+            {"rooms": {"unassigned_room_sections": [{}]}},
+            False,
+            "requires_room_action",
+            "room_action_required",
+        ),
+        ({"manual_override_count": 1}, False, "contains_manual_override", "manual_override"),
+    ],
+)
+def test_hard_status_precedes_section_review_but_preserves_flag(qa, overflow, expected, flag):
+    payload = _v2_ok_payload()
+    payload["qa"].update(qa)
+    payload["qa"]["section_mapping"] = {"missing_enrollments": 1}
+    if overflow:
+        payload["schedule"] = [{"course_code": "CS111", "day": "OVERFLOW"}]
+    primary, flags = derive_status_surface(payload)
+    assert primary == expected
+    assert {flag, "section_mapping_incomplete"} <= set(flags)
+
+
 def test_status_surface_overflow_promotes_to_overflow() -> None:
     """An overflow entry on the schedule promotes the headline."""
     payload = _v2_ok_payload()
@@ -979,7 +1034,7 @@ def test_status_surface_legacy_flag_quiet_on_current_source_schema() -> None:
     """A row authored at the current schema version is authoritative
     by definition — no legacy_incomplete_qa flag."""
     payload = _v3_ok_payload()
-    primary, flags = derive_status_surface(payload, source_schema_version=3)
+    primary, flags = derive_status_surface(payload, source_schema_version=EXAM_RUN_SCHEMA_VERSION)
     assert primary == "clean"
     assert "legacy_incomplete_qa" not in flags
 
@@ -1046,7 +1101,7 @@ def test_derive_multi_sitting_detects_split_sections_via_slash_marker() -> None:
     assert d["slots"] == ["MON:P1", "MON:P1"]
     assert d["rooms"] == ["A101", "A102"]
     assert d["incomplete"] is False
-    assert "GS" not in d["audit_text"]  # the audit text references the section, not GS101
+    assert "GS101" in d["audit_text"]
     assert "M5" in d["audit_text"]
     assert "2 sittings" in d["audit_text"]
 

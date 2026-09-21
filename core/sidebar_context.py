@@ -9,6 +9,7 @@ from django.http import HttpRequest
 
 from core.services.rbac import (
     ROLE_ADVISOR,
+    ROLE_EXAM_COMMITTEE,
     ROLE_GENERAL_ADVISOR,
     ROLE_SUPER_ADMIN,
     ensure_role_groups,
@@ -29,7 +30,9 @@ def get_sidebar_context(request: HttpRequest) -> dict[str, object]:
         "user_advisor_id": str(scope.get("advisor_id", "")),
         "can_admin_advisors": role == ROLE_SUPER_ADMIN,
         "can_view_portfolio": role in {ROLE_SUPER_ADMIN, ROLE_GENERAL_ADVISOR, ROLE_ADVISOR},
+        "can_graduation_planning": role == ROLE_SUPER_ADMIN,
         "can_db_admin": role == ROLE_SUPER_ADMIN,
-        "can_exam_timetable": role == ROLE_SUPER_ADMIN,
+        "can_exam_timetable": role in {ROLE_SUPER_ADMIN, ROLE_EXAM_COMMITTEE},
+        "can_delete_exam_timetable": role == ROLE_SUPER_ADMIN,
         "can_section_planning": role in {ROLE_SUPER_ADMIN, ROLE_GENERAL_ADVISOR},
     }

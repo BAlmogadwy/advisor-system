@@ -114,6 +114,68 @@ def test_the_repetition_question_still_gets_no_duration_record():
     assert direct == set(), "the store governs no course-repetition limit"
 
 
+def test_a_study_extension_question_reaches_the_programme_duration_record():
+    direct = _direct("هل أحتاج تمديد مدة الدراسة؟")
+
+    assert "TU.DISMISSAL.DURATION_EXCEEDED" in direct
+    assert "TU.DISMISSAL.THREE_WARNINGS" not in direct
+
+
+def test_a_dialectal_duration_delay_question_reaches_only_the_duration_record():
+    direct = _direct("كم ترم أقدر أتأخر عن المدة النظامية بدون ما يفصلوني؟")
+
+    assert "TU.DISMISSAL.DURATION_EXCEEDED" in direct
+    assert "TU.REENROLMENT.WINDOW" not in direct
+
+
+def test_a_deferral_count_question_reaches_the_deferral_maximum():
+    assert "TU.DEFERRAL.MAXIMUM" in _direct("كم مرة أقدر أوقف ترم أو أأجل؟")
+
+
+def test_delaying_one_course_is_not_whole_term_deferral():
+    assert "TU.DEFERRAL.MAXIMUM" not in _direct("هل أقدر أأجل مادة واحدة؟")
+
+
+def test_permitted_absence_percentage_reaches_deprivation_threshold():
+    direct = _direct("كم نسبة الغياب المسموح بها قبل الحرمان؟")
+
+    assert "TU.ATTENDANCE.DEPRIVATION_THRESHOLD" in direct
+
+
+def test_dialectal_exam_cheating_question_reaches_conduct_policy():
+    direct = _direct("طالب انمسك معه ورقة في اختبار النصفي، وش العقوبة؟")
+
+    assert "TU.CONDUCT.CHEATING" in direct
+
+
+def test_higher_level_course_question_reaches_registration_priority_rule():
+    direct = _direct("أقدر أنزل مادة من مستوى أعلى؟")
+
+    assert "TU.REGISTRATION.STRUGGLING_STUDENTS" in direct
+
+
+def test_semester_excuse_gpa_question_reaches_the_unresolved_symbol_table():
+    direct = _direct("هل الاعتذار عن الترم يأثر على المعدل؟")
+
+    assert "TU.EXCUSE.TRANSCRIPT_MARK" in direct
+    assert "TU.GRADE.SPECIAL_SYMBOLS" in direct
+
+
+def test_lab_section_change_question_reaches_registration_authority_rules():
+    direct = _direct("أقدر أغير شعبة العملي بدون ما أغير المحاضرة؟")
+
+    assert "TU.REG.STUDENT_CHOICES_FINAL" in direct
+    assert "TU.REG.ADVISER_CAN_REGISTER_DIRECTLY" in direct
+
+
+def test_past_tense_withdrawal_load_question_reaches_the_minimum_load_bar():
+    direct = _direct(
+        "أنا مسجل هالترم كم ساعة؟ ولو انسحبت من مادة وحدة بينزل عبئي عن الحد الأدنى ولا لا؟"
+    )
+
+    assert "TU.WITHDRAWAL.MINIMUM_LOAD_BAR" in direct
+
+
 # ── q271: documents vs the rest of graduation ────────────────────
 
 
@@ -153,6 +215,36 @@ def test_the_default_role_is_background_not_direct():
     )
     assert roles["direct_policy_evidence"] == []
     assert roles["background_policy_evidence"][0]["role"] == BACKGROUND_ONLY
+
+
+def test_ordinary_load_question_excludes_expected_graduate_request_rule():
+    roles = _roles("هل أستطيع إضافة 19 ساعة؟")
+    direct = {row["policy_id"] for row in roles["direct_policy_evidence"]}
+    irrelevant = {row["policy_id"] for row in roles["irrelevant_policy_evidence"]}
+
+    assert "TU.LOAD.SEMESTER_RANGE" in direct
+    assert "TU.LOAD.EXPECTED_GRADUATE_REQUEST" not in direct
+    assert "TU.LOAD.EXPECTED_GRADUATE_REQUEST" in irrelevant
+
+
+def test_expected_graduate_rule_requires_explicit_question_or_matching_status():
+    store = get_policy_store()
+    ordinary = store.lookup(query="هل أستطيع إضافة 19 ساعة؟", limit=8)
+    by_status = classify(
+        ordinary["policies"],
+        question="هل أستطيع إضافة 19 ساعة؟",
+        topics=ordinary["matched_topics"],
+        store=store,
+        student_status="GRADUATION EXPECTED",
+    )
+    explicit = _roles("أنا متوقع التخرج، كيف أقدم طلب تسجيل المقررات؟")
+
+    assert "TU.LOAD.EXPECTED_GRADUATE_REQUEST" in {
+        row["policy_id"] for row in by_status["direct_policy_evidence"]
+    }
+    assert "TU.LOAD.EXPECTED_GRADUATE_REQUEST" in {
+        row["policy_id"] for row in explicit["direct_policy_evidence"]
+    }
 
 
 def test_every_returned_policy_carries_a_role_and_a_reason():
@@ -269,6 +361,29 @@ def test_a_governed_question_still_offers_citations():
     citable = {c["policy_id"] for c in result["citable"]}
     direct = {p["policy_id"] for p in result["direct_policy_evidence"]}
     assert citable == direct and citable
+
+
+def test_active_student_load_lookup_does_not_cite_expected_graduate_rule():
+    from core.models import Student
+    from core.services.virtual_advisor_capabilities import ROLE_STUDENT, build_default_registry
+
+    student = Student.objects.create(
+        student_id=4500001,
+        name="Student",
+        program="AI",
+        section="M",
+        status="ACTIVE",
+    )
+    result = build_default_registry().execute(
+        "policy_lookup",
+        {"query": "هل استطيع اضافة 19 ساعة؟", "limit": 8},
+        scope={"role": ROLE_STUDENT, "student_id": student.student_id},
+    )
+
+    assert {row["policy_id"] for row in result["citable"]} == {"TU.LOAD.SEMESTER_RANGE"}
+    assert "TU.LOAD.EXPECTED_GRADUATE_REQUEST" in {
+        row["policy_id"] for row in result["irrelevant_policy_evidence"]
+    }
 
 
 def test_the_index_reloads_when_asked():

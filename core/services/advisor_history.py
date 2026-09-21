@@ -93,3 +93,114 @@ def load_visible_history(
     # The most recent window, still in chronological order — a history that ends
     # mid-exchange reads as if the adviser ignored the last thing said.
     return turns[-max_messages:]
+
+
+def load_profiled_history(
+    conversation: Any,
+    *,
+    channel_profile: str,
+    exclude_message_id: Any = None,
+    max_messages: int = MAX_HISTORY_MESSAGES,
+) -> list[dict[str, str]]:
+    """History only from turns created under one explicit channel profile.
+
+    A shared conversation may also contain web answers or older channel answers
+    produced before a stricter data boundary existed. The student-message
+    server-owned generation profile is the durable provenance marker; assistants
+    are admitted only when they directly answer one of those marked questions.
+    """
+
+    profile = str(channel_profile or "")
+    if not profile:
+        return []
+
+    settled = (
+        conversation.messages.filter(status__in=_SETTLED)
+        .exclude(pk=exclude_message_id)
+        .select_related("in_reply_to")
+        .order_by("sequence", "created_at")
+    )
+    allowed_questions: set[Any] = set()
+    turns: list[dict[str, str]] = []
+    for message in settled:
+        text = str(message.content or "").strip()
+        if not text:
+            continue
+        if message.role == AdvisorMessage.ROLE_STUDENT:
+            if str(message.generation_profile or "") != profile:
+                continue
+            allowed_questions.add(message.pk)
+            turns.append({"role": "user", "content": text, "channel_profile": profile})
+        elif (
+            message.role == AdvisorMessage.ROLE_ASSISTANT
+            and message.in_reply_to_id in allowed_questions
+        ):
+            text = _POLICY_MARKER.sub("", text).strip()
+            if text:
+                turns.append(
+                    {
+                        "role": "assistant",
+                        "content": text,
+                        "channel_profile": profile,
+                    }
+                )
+    return turns[-max_messages:]
+
+
+def load_latest_profile_presentation(
+    conversation: Any,
+    *,
+    channel_profile: str = "",
+    exclude_message_id: Any = None,
+    planning_term: str = "",
+    max_messages: int = 12,
+) -> dict[str, Any]:
+    """Newest normalized presentation produced under this channel profile.
+
+    The artifact is deliberately loaded separately from prose history.  It is a
+    bounded, already student-visible view model, not a raw tool result, and its
+    provenance is the generation profile on the question the assistant answered.
+    This prevents a Telegram follow-up from inheriting a richer web artifact (or
+    vice versa) while still allowing ordinary multi-turn transformations such as
+    replacing course codes with the names already present in a graduation card.
+
+    ``planning_term`` binds the card to the term now being answered.  A card is
+    admitted to this turn as verified evidence, and the postcondition checker
+    then measures the answer against it, so an unbounded lookback would let a
+    snapshot from a term the student has since left support a claim about the
+    current one - last term's plan rendered as this term's answer, passing the
+    very gate meant to prevent it.  A blank value keeps the caller's previous
+    unbounded behaviour rather than silently dropping every card.
+
+    ``max_messages`` bounds the scan.  A conversation has no size cap, and this
+    runs on every turn: without a bound, a student's own long conversation makes
+    each later turn load more full answer bodies and presentation JSON than the
+    last, to find at most one row.
+    """
+    from core.services.advisor_presentations import normalise_presentation
+
+    profile = str(channel_profile or "")
+    wanted_term = str(planning_term or "").strip()
+    messages = (
+        conversation.messages.filter(
+            role=AdvisorMessage.ROLE_ASSISTANT,
+            status__in=_SETTLED,
+            in_reply_to__isnull=False,
+            # The profile is a server-owned column on the question, so this
+            # belongs in the query rather than in a Python loop that has to
+            # load every settled answer to discard most of them.
+            in_reply_to__generation_profile=profile,
+        )
+        .exclude(in_reply_to_id=exclude_message_id)
+        .only("presentation", "sequence", "created_at")
+        .order_by("-sequence", "-created_at")[:max_messages]
+    )
+    for message in messages:
+        presentation = normalise_presentation(message.presentation)
+        if not presentation:
+            continue
+        if wanted_term and str(presentation.get("planning_term") or "") != wanted_term:
+            # A card for another term is not evidence about this one.
+            continue
+        return presentation
+    return {}

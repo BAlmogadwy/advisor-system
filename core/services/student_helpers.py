@@ -88,6 +88,33 @@ def get_prerequisites(course_code: str, program: str) -> list[str]:
     return prereqs
 
 
+def get_program_prerequisites(program: str) -> dict[str, list[str]]:
+    """Load every prerequisite cell for a programme in one database query.
+
+    Callers that evaluate a whole plan or many what-if scenarios should use this
+    snapshot instead of issuing one query per course. Duplicate rows and the
+    comma-separated storage format retain exactly the ordering semantics of
+    :func:`get_prerequisites`.
+    """
+
+    program_n = str(program).strip().upper()
+    rows = Prerequisite.objects.filter(program=program_n).values_list(
+        "course_code",
+        "prerequisite_course_code",
+    )
+    prerequisites: dict[str, list[str]] = {}
+    for raw_course_code, cell in rows:
+        course_code = normalize_code(raw_course_code)
+        if not course_code or cell is None:
+            continue
+        parsed = prerequisites.setdefault(course_code, [])
+        for raw_prerequisite in str(cell).split(","):
+            prerequisite = normalize_code(raw_prerequisite)
+            if prerequisite:
+                parsed.append(prerequisite)
+    return prerequisites
+
+
 def get_prerequisites_visualizer_style(course_code: str, program: str) -> list[str]:
     rows = Prerequisite.objects.filter(
         course_code=course_code,
@@ -104,7 +131,10 @@ def get_prerequisites_visualizer_style(course_code: str, program: str) -> list[s
     return prereqs
 
 
-def get_student_passed_and_studying(student_id: int | str) -> tuple[set[str], set[str]]:
+def get_student_course_status_sets(
+    student_id: int | str,
+) -> tuple[set[str], set[str], set[str]]:
+    """Return canonical passed, studying, and failed course-code sets."""
     rows = (
         StudentCourse.objects.filter(
             student_id=student_id,
@@ -115,10 +145,18 @@ def get_student_passed_and_studying(student_id: int | str) -> tuple[set[str], se
 
     passed: set[str] = set()
     studying: set[str] = set()
+    failed: set[str] = set()
     for code, status in rows:
         c = normalize_code(code)
         if status == "passed":
             passed.add(c)
         elif status == "studying":
             studying.add(c)
+        elif status == "failed":
+            failed.add(c)
+    return passed, studying, failed
+
+
+def get_student_passed_and_studying(student_id: int | str) -> tuple[set[str], set[str]]:
+    passed, studying, _failed = get_student_course_status_sets(student_id)
     return passed, studying

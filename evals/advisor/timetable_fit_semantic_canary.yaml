@@ -1,0 +1,21 @@
+meta:
+  name: v21_timetable_fit_semantic_canary
+  schema_version: 1
+  count: 1
+  locale: ar-SA
+  purpose: >-
+    Focused evaluator canary that distinguishes an explicit section-availability and
+    clash-fit objective from generic balanced course selection.
+
+cases:
+  - id: V21-TIMETABLE-FIT-001
+    category_id: add_one
+    grounded_utterance_ar: "اختر لي المقرر الإضافي اللي عنده أكبر عدد من الشعب غير المتعارضة مع جدولي"
+    contract:
+      support: read_only_partial
+      mode: execute
+      requested_outcomes: [course_addition]
+      expected_tools: [recommend_feasible_course_addition]
+      required_controls:
+        recommend_feasible_course_addition:
+          objective: timetable_fit

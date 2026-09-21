@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import random
 import threading
+import time
 from dataclasses import dataclass
 from typing import Any
 
 from core.models import TermSection, TermSectionMeeting
+from core.services.section_programmes import filter_sections_for_program
 from core.services.student_sections import gender_section_filter
 
 try:
@@ -56,6 +58,35 @@ def _norm_course_key(value: Any) -> str:
     return str(value or "").replace(" ", "").upper()
 
 
+def _nonnegative_int_or_none(value: Any) -> int | None:
+    """Return a stored non-negative count without confusing NULL with zero."""
+    if value is None or value == "":
+        return None
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed >= 0 else None
+
+
+def _remaining_capacity(option: dict[str, Any]) -> int | None:
+    """Known seats left, or ``None`` when either capacity fact is unknown.
+
+    ``TermSection.available_capacity`` is the section's maximum capacity despite
+    its historical name; ``registered_count`` is the current occupancy.
+    """
+    maximum = _nonnegative_int_or_none(option.get("available_capacity"))
+    registered = _nonnegative_int_or_none(option.get("registered_count"))
+    if maximum is None or registered is None:
+        return None
+    return max(0, maximum - registered)
+
+
+def _known_full_section(option: dict[str, Any]) -> bool:
+    remaining = _remaining_capacity(option)
+    return remaining == 0 if remaining is not None else False
+
+
 def _option_course_key(option: dict[str, Any]) -> str:
     key = _norm_course_key(option.get("course_key"))
     if key:
@@ -71,6 +102,43 @@ def _display_course_label(row: dict[str, Any]) -> str:
     code = _option_course_key(row)
     section = str(row.get("section", "") or "").strip()
     return f"{code} {section}".strip()
+
+
+class _SolverDeadline:
+    """One wall-clock budget shared by every solver invocation in a build.
+
+    Methods B and C are hand-written branch-and-bound over (course x section).
+    Method A is CP-SAT. Its per-solve cap is also clipped to the time remaining
+    here, so asking each method for alternatives cannot multiply the request's
+    advertised budget.
+
+    Expiring is not an error: the search returns the best answer found so far,
+    which is what branch-and-bound has at every moment anyway.
+    """
+
+    __slots__ = ("_deadline", "expired")
+
+    def __init__(self, seconds: float) -> None:
+        self._deadline = time.monotonic() + max(0.1, float(seconds))
+        self.expired = False
+
+    def reached(self) -> bool:
+        if self.expired:
+            return True
+        if time.monotonic() >= self._deadline:
+            self.expired = True
+        return self.expired
+
+    def remaining(self) -> float:
+        """Seconds left for a solver call, or zero once the shared budget expires."""
+        if self.reached():
+            return 0.0
+        return max(0.0, self._deadline - time.monotonic())
+
+
+#: Wall-clock budget for ALL exhaustive search in one build request, including
+#: repeated CP-SAT solves used to generate alternative plans.
+SOLVER_BUDGET_SECONDS = 10.0
 
 
 def _to_minutes(t: str) -> int:
@@ -193,27 +261,72 @@ def _section_meetings(term_section_id: int) -> list[Meeting]:
     return out
 
 
+def _strict_clock_minutes(value: Any) -> int | None:
+    parts = str(value or "").strip().split(":")
+    if len(parts) not in {2, 3} or any(not part.isdigit() for part in parts):
+        return None
+    hour, minute = int(parts[0]), int(parts[1])
+    second = int(parts[2]) if len(parts) == 3 else 0
+    if not 0 <= hour <= 23 or not 0 <= minute <= 59 or second != 0:
+        return None
+    return hour * 60 + minute
+
+
 def _catalog_for_courses(
-    year: str, term: str, course_codes: list[str], gender: str = ""
+    year: str,
+    term: str,
+    course_codes: list[str],
+    gender: str = "",
+    program: str | None = None,
 ) -> dict[str, list[dict[str, Any]]]:  # year/term kept for API compatibility
     if not course_codes:
         return {}
     wanted = {str(c).replace(" ", "").upper() for c in course_codes}
     qs = TermSection.objects.filter(scenario__isnull=True, course_key__in=wanted)
-    if gender:
-        # Gender-segregated: only schedule the student into their own cohort's
-        # sections (plus any ungendered section).
-        qs = qs.filter(gender_section_filter(gender))
-    rows = qs.order_by("course_code", "course_number", "section").values_list(
-        "id",
-        "course_code",
-        "course_number",
-        "course_key",
-        "section",
-        "course_name",
-        "registered_count",
-        "available_capacity",
+    # ``None`` means an intentionally unscoped staff build. A supplied blank
+    # value came from a student profile and must fail closed.
+    if program is not None:
+        qs = filter_sections_for_program(qs, program)
+    # Always applied, including for a staff build with no student in scope.
+    # gender_section_filter's blank branch exists precisely to exclude the
+    # other branch's YM/YF sections from an unscoped catalogue; skipping the
+    # call entirely made that branch unreachable, so the staff build path went
+    # on offering other-branch sections after every student-facing read had
+    # stopped. A gendered value additionally narrows to the student's cohort.
+    qs = qs.filter(gender_section_filter(gender))
+    rows = list(
+        qs.order_by("course_code", "course_number", "section").values_list(
+            "id",
+            "course_code",
+            "course_number",
+            "course_key",
+            "section",
+            "course_name",
+            "registered_count",
+            "available_capacity",
+        )
     )
+    meetings_by_section: dict[int, list[Meeting]] = {int(row[0]): [] for row in rows}
+    meeting_issues_by_section: dict[int, list[str]] = {int(row[0]): [] for row in rows}
+    for section_id, day, start, end in (
+        TermSectionMeeting.objects.filter(term_section_id__in=meetings_by_section)
+        .order_by("term_section_id", "day", "start_time", "end_time", "id")
+        .values_list("term_section_id", "day", "start_time", "end_time")
+    ):
+        if not start or not end:
+            meeting_issues_by_section[int(section_id)].append("MISSING_MEETING_DATA")
+            continue
+        raw_day = str(day or "").strip()
+        meetings_by_section[int(section_id)].append(
+            Meeting(
+                day=DAY_MAP.get(raw_day, raw_day),
+                start=str(start),
+                end=str(end),
+            )
+        )
+    for section_id, meetings in meetings_by_section.items():
+        if not meetings and not meeting_issues_by_section[section_id]:
+            meeting_issues_by_section[section_id].append("MISSING_MEETING_DATA")
     out: dict[str, list[dict[str, Any]]] = {}
     for sid, code, num, course_key, sec, name, reg, cap in rows:
         full = _norm_course_key(course_key) or _norm_course_key(f"{code or ''}{num or ''}")
@@ -225,12 +338,61 @@ def _catalog_for_courses(
                 "course_number": "",
                 "section": str(sec or ""),
                 "course_name": str(name or ""),
-                "registered_count": int(reg) if reg is not None and str(reg).isdigit() else None,
-                "available_capacity": int(cap) if cap is not None and str(cap).isdigit() else 0,
-                "meetings": _section_meetings(int(sid)),
+                "registered_count": _nonnegative_int_or_none(reg),
+                "available_capacity": _nonnegative_int_or_none(cap),
+                "meetings": meetings_by_section[int(sid)],
+                **(
+                    {"meeting_issue_codes": meeting_issues_by_section[int(sid)]}
+                    if meeting_issues_by_section[int(sid)]
+                    else {}
+                ),
             }
         )
     return out
+
+
+def _complete_catalogue(
+    catalog: dict[str, list[dict[str, Any]]],
+) -> tuple[dict[str, list[dict[str, Any]]], dict[str, list[dict[str, Any]]]]:
+    """Exclude sections whose timetable cannot safely participate in a solver.
+
+    A section with no meetings, a partly blank meeting set, or a malformed time
+    must not look like an all-day-free option.  Keep bounded diagnostics so the
+    caller can distinguish incomplete local evidence from an absent section.
+    """
+
+    complete: dict[str, list[dict[str, Any]]] = {}
+    issues: dict[str, list[dict[str, Any]]] = {}
+    for code, options in catalog.items():
+        clean_options: list[dict[str, Any]] = []
+        for option in options:
+            reason_codes = {
+                str(value).strip().upper()
+                for value in option.get("meeting_issue_codes") or []
+                if str(value).strip()
+            }
+            meetings = list(option.get("meetings") or [])
+            if not meetings:
+                reason_codes.add("MISSING_MEETING_DATA")
+            for meeting in meetings:
+                day = str(getattr(meeting, "day", "") or "").strip().upper()
+                start = _strict_clock_minutes(getattr(meeting, "start", ""))
+                end = _strict_clock_minutes(getattr(meeting, "end", ""))
+                if day not in _DAY_INDEX:
+                    reason_codes.add("INVALID_MEETING_DAY")
+                if start is None or end is None or end <= start:
+                    reason_codes.add("INVALID_MEETING_TIME")
+            if reason_codes:
+                issues.setdefault(code, []).append(
+                    {
+                        "section": str(option.get("section") or ""),
+                        "reason_codes": sorted(reason_codes),
+                    }
+                )
+            else:
+                clean_options.append(option)
+        complete[code] = clean_options
+    return complete, issues
 
 
 def _choose(
@@ -404,7 +566,9 @@ def _bitmask_build_option_b(
     strict_per_course: bool,
     consider_capacity: bool,
     max_credits: int = 0,
+    target_credits: int | None = None,
     credits_map: dict[str, int] | None = None,
+    deadline: _SolverDeadline | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     # Collect must_take codes for hard-constraint enforcement
     must_take_codes: set[str] = set()
@@ -470,12 +634,12 @@ def _bitmask_build_option_b(
                 }
             )
             unscheduled_codes.add(code)
-            if strict_per_course:
+            if strict_per_course or code in must_take_codes:
                 strict_blockers.append(code)
             continue
         course_options.append((code, filtered_opts))
 
-    if strict_per_course and strict_blockers:
+    if strict_blockers:
         for code in strict_blockers:
             if code in unscheduled_codes:
                 continue
@@ -511,22 +675,40 @@ def _bitmask_build_option_b(
         for o in selected_opts:
             all_meetings.extend(o.get("meetings", []))
             if consider_capacity:
-                cap_total += int(o.get("available_capacity") or 0)
+                cap_total += int(_remaining_capacity(o) or 0)
         gap_minutes = _gap_minutes_from_meetings(all_meetings)
         # maximize: scheduled, then fewer days, then fewer gaps, then more capacity
         return (scheduled, -day_count, -gap_minutes, cap_total)
 
     _cr_map = credits_map or {}
     _max_cr = max_credits if max_credits and max_credits > 0 else 0
+    _target_cr = int(target_credits) if target_credits is not None else None
+    remaining_credit_upper_bound = [0] * (len(course_options) + 1)
+    for idx in range(len(course_options) - 1, -1, -1):
+        code, _opts = course_options[idx]
+        remaining_credit_upper_bound[idx] = remaining_credit_upper_bound[idx + 1] + int(
+            _cr_map.get(code, 0) or 0
+        )
 
     def dfs(i: int, used_mask: int, chosen: list[dict[str, Any]], used_cr: int) -> None:
         nonlocal best_score, best_selected
 
+        # Budget check first. Branch-and-bound always holds a valid best-so-far,
+        # so stopping early costs the answer's optimality, never its validity.
+        if deadline is not None and deadline.reached():
+            return
+
+        if _target_cr is not None and (
+            used_cr > _target_cr or used_cr + remaining_credit_upper_bound[i] < _target_cr
+        ):
+            return
         remaining = len(course_options) - i
         if best_score is not None and len(chosen) + remaining < best_score[0]:
             return
 
         if i >= len(course_options):
+            if _target_cr is not None and used_cr != _target_cr:
+                return
             cur = score_of(chosen, used_mask)
             if (
                 best_score is None
@@ -546,7 +728,9 @@ def _bitmask_build_option_b(
             dfs(i + 1, used_mask, chosen, used_cr)
 
         # credit-cap check: skip if adding this course would exceed the cap
-        if _max_cr and not is_must and (used_cr + course_cr) > _max_cr:
+        if (_max_cr and (used_cr + course_cr) > _max_cr) or (
+            _target_cr is not None and (used_cr + course_cr) > _target_cr
+        ):
             return
 
         for opt in opts:
@@ -592,7 +776,9 @@ def _bitmask_build_option_c(
     keep_registered: bool,
     strict_per_course: bool,
     max_credits: int = 0,
+    target_credits: int | None = None,
     credits_map: dict[str, int] | None = None,
+    deadline: _SolverDeadline | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     # Collect must_take codes for hard-constraint enforcement
     must_take_codes: set[str] = set()
@@ -660,12 +846,12 @@ def _bitmask_build_option_c(
                 }
             )
             unscheduled_codes.add(code)
-            if strict_per_course:
+            if strict_per_course or code in must_take_codes:
                 strict_blockers.append(code)
             continue
         course_options.append((code, filtered_opts))
 
-    if strict_per_course and strict_blockers:
+    if strict_blockers:
         for code in strict_blockers:
             if code in unscheduled_codes:
                 continue
@@ -719,15 +905,33 @@ def _bitmask_build_option_c(
 
     _cr_map = credits_map or {}
     _max_cr = max_credits if max_credits and max_credits > 0 else 0
+    _target_cr = int(target_credits) if target_credits is not None else None
+    remaining_credit_upper_bound = [0] * (len(course_options) + 1)
+    for idx in range(len(course_options) - 1, -1, -1):
+        code, _opts = course_options[idx]
+        remaining_credit_upper_bound[idx] = remaining_credit_upper_bound[idx + 1] + int(
+            _cr_map.get(code, 0) or 0
+        )
 
     def dfs(i: int, cur_days: list[int], chosen: list[dict[str, Any]], used_cr: int) -> None:
         nonlocal best_key, best_selected
 
+        # Budget check first. Branch-and-bound always holds a valid best-so-far,
+        # so stopping early costs the answer's optimality, never its validity.
+        if deadline is not None and deadline.reached():
+            return
+
+        if _target_cr is not None and (
+            used_cr > _target_cr or used_cr + remaining_credit_upper_bound[i] < _target_cr
+        ):
+            return
         remaining = len(course_options) - i
         if best_key is not None and len(chosen) + remaining < best_key[0]:
             return
 
         if i >= len(course_options):
+            if _target_cr is not None and used_cr != _target_cr:
+                return
             key = score_key(chosen)
             if best_key is None or key > best_key or (key == best_key and random.random() < 0.5):
                 best_key = key
@@ -743,7 +947,9 @@ def _bitmask_build_option_c(
             dfs(i + 1, cur_days, chosen, used_cr)
 
         # credit-cap check: skip if adding this course would exceed the cap
-        if _max_cr and not is_must and (used_cr + course_cr) > _max_cr:
+        if (_max_cr and (used_cr + course_cr) > _max_cr) or (
+            _target_cr is not None and (used_cr + course_cr) > _target_cr
+        ):
             return
 
         for opt in opts:
@@ -795,9 +1001,27 @@ def _cp_build_option(
     strict_per_course: bool,
     consider_capacity: bool,
     max_credits: int = 0,
+    target_credits: int | None = None,
     credits_map: dict[str, int] | None = None,
+    deadline: _SolverDeadline | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     if cp_model is None:
+        if target_credits is not None:
+            # The greedy compatibility fallback cannot prove an exact credit
+            # total.  Reuse the bounded DFS solver so exact requests remain
+            # fail-closed even when OR-Tools is unavailable.
+            return _bitmask_build_option_b(
+                shortlist,
+                catalog,
+                baseline,
+                keep_registered,
+                strict_per_course=strict_per_course,
+                consider_capacity=consider_capacity,
+                max_credits=max_credits,
+                target_credits=target_credits,
+                credits_map=credits_map,
+                deadline=deadline,
+            )
         return _choose(shortlist, catalog, baseline, keep_registered, strategy=profile)
 
     # Collect must_take codes for hard-constraint enforcement
@@ -832,6 +1056,36 @@ def _cp_build_option(
         eligible.append({**c, "_code": code})
 
     if not eligible:
+        return [], unscheduled
+
+    def _budget_exhausted_result() -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        if deadline is not None:
+            deadline.expired = True
+        for course in eligible:
+            code = str(course["_code"])
+            if code not in unscheduled_codes:
+                unscheduled.append(
+                    {
+                        "course_code": code,
+                        "reason": "Solver search budget exhausted before a placement was certified",
+                        "reason_code": "SEARCH_BUDGET_EXHAUSTED",
+                        "details": [],
+                    }
+                )
+        return [], unscheduled
+
+    def _model_invalid_result() -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        for course in eligible:
+            code = str(course["_code"])
+            if code not in unscheduled_codes:
+                unscheduled.append(
+                    {
+                        "course_code": code,
+                        "reason": "The timetable solver rejected its generated model",
+                        "reason_code": "SOLVER_MODEL_INVALID",
+                        "details": [],
+                    }
+                )
         return [], unscheduled
 
     model = cp_model.CpModel()
@@ -896,7 +1150,7 @@ def _cp_build_option(
         else:
             model.Add(sum(var_by_sid[s] for s in sids) <= 1)
 
-    if strict_per_course and strict_blockers:
+    if strict_blockers:
         for code in strict_blockers:
             if code in unscheduled_codes:
                 continue
@@ -915,27 +1169,39 @@ def _cp_build_option(
         if a in var_by_sid and b in var_by_sid:
             model.Add(var_by_sid[a] + var_by_sid[b] <= 1)
 
-    # Credit-cap constraint: total scheduled credits ≤ max_credits
+    # Credit controls are intentionally distinct: max_credits is a ceiling,
+    # while target_credits is an exact total for the scheduled course set.
     _cr_map = credits_map or {}
     _max_cr = max_credits if max_credits and max_credits > 0 else 0
-    if _max_cr:
-        credit_terms = []
-        for code, sids in course_to_sids.items():
-            cr = _cr_map.get(code, 0)
-            if cr > 0:
-                for sid in sids:
-                    if sid in var_by_sid:
-                        credit_terms.append(cr * var_by_sid[sid])
+    _target_cr = int(target_credits) if target_credits is not None else None
+    credit_terms = []
+    for code, sids in course_to_sids.items():
+        cr = _cr_map.get(code, 0)
+        if cr > 0:
+            for sid in sids:
+                if sid in var_by_sid:
+                    credit_terms.append(cr * var_by_sid[sid])
+    if _target_cr is not None:
         if credit_terms:
-            model.Add(sum(credit_terms) <= _max_cr)
+            model.Add(sum(credit_terms) == _target_cr)
+        elif _target_cr != 0:
+            return [], [
+                *unscheduled,
+                {
+                    "course_code": "",
+                    "reason": "No exact-credit timetable can be formed from the bounded candidate set",
+                    "details": [],
+                },
+            ]
+    if _max_cr and credit_terms:
+        model.Add(sum(credit_terms) <= _max_cr)
 
     # Soft objective terms
     selected_sum = sum(var_by_sid.values())
 
     # Capacity preference (prefer options with more open seats)
     cap_sum = sum(
-        (int(option_by_sid[sid].get("available_capacity") or 0) * var_by_sid[sid])
-        for sid in var_by_sid
+        (int(_remaining_capacity(option_by_sid[sid]) or 0) * var_by_sid[sid]) for sid in var_by_sid
     )
     if not consider_capacity:
         cap_sum = 0
@@ -1050,15 +1316,28 @@ def _cp_build_option(
         + w_cap * cap_sum
     )
 
+    cp_seconds = 8.0
+    if deadline is not None:
+        remaining = deadline.remaining()
+        if remaining <= 0:
+            return _budget_exhausted_result()
+        cp_seconds = min(cp_seconds, remaining)
+
     solver = cp_model.CpSolver()
-    solver.parameters.max_time_in_seconds = 8.0
+    solver.parameters.max_time_in_seconds = cp_seconds
     solver.parameters.num_search_workers = 8
     # Randomize search so each run can produce different optimal/feasible results
     solver.parameters.randomize_search = True
     solver.parameters.random_seed = random.randint(0, 2**31 - 1)
     res = solver.Solve(model)
 
+    if res == cp_model.UNKNOWN:
+        return _budget_exhausted_result()
+    if res == cp_model.MODEL_INVALID:
+        return _model_invalid_result()
     if res not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+        if deadline is not None and deadline.reached():
+            return _budget_exhausted_result()
         pair_set = {(a, b) for (a, b) in _get_conflict_pairs(option_by_sid)}
         pair_set |= {(b, a) for (a, b) in pair_set}
         for c in eligible:
@@ -1145,8 +1424,44 @@ def build_plans(
     strict_per_course: bool = False,
     consider_capacity: bool = True,
     max_credits: int = 0,
+    target_credits: int | None = None,
     gender: str = "",
+    program: str | None = None,
+    # DEFAULT ON. This gate existed, was correct, and was never switched on by
+    # the adviser-facing build view — so a section with no meetings, a blank
+    # meeting set or a malformed time ("aa:bb" parses to -1, which _overlap
+    # reads as "no valid meeting") entered the solver as an all-week-free
+    # option. It could not conflict with anything, so the optimiser PREFERRED
+    # it, and the adviser was shown "conflicts: 0" for a timetable containing a
+    # course with no real slot. A safety gate that must be opted into is a gate
+    # that gets forgotten; the permissive behaviour is now the thing you ask for.
+    require_complete_meetings: bool = True,
 ) -> dict[str, Any]:
+    must_take_codes = {
+        str(item.get("course_code", "")).replace(" ", "").upper()
+        for item in shortlist
+        if item.get("must_take") and str(item.get("course_code", "")).strip()
+    }
+
+    # A pin is singular: the last valid value is the exact section allowed for
+    # that course.  The list-shaped payload is retained for API compatibility
+    # with older clients, but it is not an "acceptable alternatives" list.
+    pinned_id_by_code: dict[str, int] = {}
+    for item in shortlist:
+        code = str(item.get("course_code", "")).replace(" ", "").upper()
+        pinned_raw = item.get("pinned_sections") or []
+        if not code or not isinstance(pinned_raw, list):
+            continue
+        for pinned in pinned_raw:
+            if not isinstance(pinned, dict):
+                continue
+            try:
+                term_section_id = int(pinned.get("term_section_id") or 0)
+            except (TypeError, ValueError):
+                continue
+            if term_section_id > 0:
+                pinned_id_by_code[code] = term_section_id
+
     codes = sorted(
         {
             str(x.get("course_code", "")).replace(" ", "").upper()
@@ -1154,27 +1469,29 @@ def build_plans(
             if str(x.get("course_code", "")).strip()
         }
     )
-    catalog = _catalog_for_courses(year, term, codes, gender)
+    catalog = _catalog_for_courses(year, term, codes, gender, program)
+    incomplete_meetings: dict[str, list[dict[str, Any]]] = {}
+    if require_complete_meetings:
+        catalog, incomplete_meetings = _complete_catalogue(catalog)
 
-    # Filter catalog for courses with pinned (advisor-selected) sections.
-    # When pinned_sections is present, the builder only considers those
-    # specific term_section_ids instead of all available sections.
-    for item in shortlist:
-        pinned_raw = item.get("pinned_sections") or []
-        if not isinstance(pinned_raw, list) or not pinned_raw:
-            continue
-        code = str(item.get("course_code", "")).replace(" ", "").upper()
-        pinned_ids: set[int] = set()
-        for _p in pinned_raw:
-            if isinstance(_p, dict):
-                _tid = _p.get("term_section_id")
-                if _tid is not None:
-                    pinned_ids.add(int(_tid))  # type: ignore[call-overload]
-        if pinned_ids and code in catalog:
+    # A pinned section is an exact hard constraint. Other sections for the
+    # course are removed before any solver or alternative-generation pass.
+    for code, pinned_id in pinned_id_by_code.items():
+        if code in catalog:
             catalog[code] = [
                 s
                 for s in catalog[code]
-                if int(s.get("term_section_id") or 0) in pinned_ids  # type: ignore[call-overload]
+                if int(s.get("term_section_id") or 0) == pinned_id  # type: ignore[call-overload]
+            ]
+
+    # Capacity is a hard eligibility rule unless the caller explicitly allows
+    # full sections. Unknown counts stay eligible: they are not evidence that a
+    # section has reached capacity. Filtering here makes A, B, C and the
+    # no-OR-Tools fallback follow the same contract.
+    if consider_capacity:
+        for code, section_options in catalog.items():
+            catalog[code] = [
+                option for option in section_options if not _known_full_section(option)
             ]
 
     # Build course → credits mapping for max-credit enforcement
@@ -1184,6 +1501,77 @@ def build_plans(
         cr = int(item.get("credits", 0) or 0)
         if cr > 0:
             credits_map[code] = cr
+
+    rejected_unscheduled: list[list[dict[str, Any]]] = []
+    rejected_hard_failures: list[dict[str, Any]] = []
+
+    def _hard_requirement_failures(
+        selected: list[dict[str, Any]], unscheduled: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        selected_by_code = {_option_course_key(item): item for item in selected}
+        unscheduled_by_code = {
+            str(item.get("course_code", "")).replace(" ", "").upper(): item for item in unscheduled
+        }
+        failures: list[dict[str, Any]] = []
+
+        for code in sorted(must_take_codes):
+            if code in selected_by_code:
+                continue
+            detail = unscheduled_by_code.get(code, {}).get(
+                "reason", "No valid section satisfies the current constraints"
+            )
+            failures.append(
+                {
+                    "kind": "must_take",
+                    "course_code": code,
+                    "reason": f"Must-take course could not be scheduled: {detail}",
+                }
+            )
+
+        for code, pinned_id in sorted(pinned_id_by_code.items()):
+            selected_item = selected_by_code.get(code)
+            if selected_item is None:
+                continue
+            selected_id = int(selected_item.get("term_section_id") or 0)
+            if selected_id != pinned_id:
+                failures.append(
+                    {
+                        "kind": "pinned_section",
+                        "course_code": code,
+                        "reason": "The generated option did not use the exact pinned section",
+                        "term_section_id": pinned_id,
+                    }
+                )
+
+        if max_credits and max_credits > 0:
+            scheduled_credits = sum(credits_map.get(code, 0) for code in selected_by_code)
+            if scheduled_credits > max_credits:
+                failures.append(
+                    {
+                        "kind": "max_credits",
+                        "course_code": "",
+                        "reason": (
+                            f"Generated option has {scheduled_credits} credits, "
+                            f"above the {max_credits}-credit limit"
+                        ),
+                    }
+                )
+
+        if target_credits is not None:
+            scheduled_credits = sum(credits_map.get(code, 0) for code in selected_by_code)
+            if scheduled_credits != int(target_credits):
+                failures.append(
+                    {
+                        "kind": "target_credits",
+                        "course_code": "",
+                        "reason": (
+                            f"Generated option has {scheduled_credits} credits; "
+                            f"the exact requested total is {int(target_credits)} credits"
+                        ),
+                    }
+                )
+
+        return failures
 
     def _catalog_without_sids(excluded: set[int]) -> dict[str, list[dict[str, Any]]]:
         if not excluded:
@@ -1202,6 +1590,13 @@ def build_plans(
             )
         )
 
+    # ONE budget for the whole request, shared by every exhaustive search it
+    # runs. Per-solver budgets would multiply: three methods x three variants
+    # each is nine searches, so a 5s-per-search cap is a 45s request. The
+    # request is synchronous — this number is a promise to the caller about how
+    # long the page can block, so it belongs to the request, not the solver.
+    solver_deadline = _SolverDeadline(SOLVER_BUDGET_SECONDS)
+
     def _run_method(
         method: str, cat: dict[str, list[dict[str, Any]]]
     ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
@@ -1215,7 +1610,9 @@ def build_plans(
                 strict_per_course=strict_per_course,
                 consider_capacity=consider_capacity,
                 max_credits=max_credits,
+                target_credits=target_credits,
                 credits_map=credits_map,
+                deadline=solver_deadline,
             )
         if method == "B":
             return _bitmask_build_option_b(
@@ -1226,7 +1623,9 @@ def build_plans(
                 strict_per_course=strict_per_course,
                 consider_capacity=consider_capacity,
                 max_credits=max_credits,
+                target_credits=target_credits,
                 credits_map=credits_map,
+                deadline=solver_deadline,
             )
         return _bitmask_build_option_c(
             shortlist,
@@ -1235,8 +1634,90 @@ def build_plans(
             keep_registered,
             strict_per_course=strict_per_course,
             max_credits=max_credits,
+            target_credits=target_credits,
             credits_map=credits_map,
+            deadline=solver_deadline,
         )
+
+    def _annotate_incomplete_meeting_evidence(
+        unscheduled: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        annotated: list[dict[str, Any]] = []
+        # Every annotated row carries a STRUCTURED reason_code as well as its
+        # English sentence. Downstream consumers (the advisor's unplaced list,
+        # the Arabic draft view) used to recognise reasons by string prefix, so
+        # rewording a sentence here silently reclassified it as "OTHER" and the
+        # Arabic page fell back to a generic line. The code is the contract; the
+        # sentence is free to improve.
+        for row in unscheduled:
+            item = dict(row)
+            code = str(item.get("course_code") or "").replace(" ", "").upper()
+            if item.get("reason_code"):
+                annotated.append(item)
+                continue
+            details = incomplete_meetings.get(code) or []
+            if details:
+                item["reason"] = "Section meeting data is incomplete or invalid"
+                item["reason_code"] = "MEETING_DATA_INCOMPLETE"
+                item["details"] = details
+            elif not catalog.get(code):
+                # No section at all is a different problem from "did not fit",
+                # and the adviser's next move differs: chase the timetable, not
+                # the constraints.
+                item["reason"] = "No section of this course is offered to this student this term"
+                item["reason_code"] = "NOT_ON_FILE"
+                item["details"] = []
+            else:
+                # Generic "could not fit" carried a hint describing the SOLVER
+                # ("Profile B uses bitmask optimization: fewest days then
+                # smallest gaps") - true, and of no use to an adviser deciding
+                # what to change. Name the binding constraint instead.
+                course_credits = int(credits_map.get(code, 0) or 0)
+                if max_credits and course_credits > max_credits:
+                    item["reason"] = (
+                        f"{code} is {course_credits} credits, above the "
+                        f"{max_credits}-credit limit set for this build"
+                    )
+                    item["reason_code"] = "DID_NOT_FIT"
+                    item["details"] = [
+                        {"course_credits": course_credits, "credit_limit": max_credits}
+                    ]
+                elif max_credits:
+                    item["reason"] = (
+                        "Could not fit alongside the other courses within the "
+                        f"{max_credits}-credit limit, or its sections clash"
+                    )
+                    item["reason_code"] = "DID_NOT_FIT"
+                    item["details"] = [
+                        {
+                            "course_credits": course_credits,
+                            "credit_limit": max_credits,
+                            "sections_considered": len(catalog.get(code) or []),
+                        }
+                    ]
+                else:
+                    item["reason"] = "Every section of this course clashes with the chosen plan"
+                    item["reason_code"] = "ALL_SECTIONS_CLASH"
+                    item["details"] = [{"sections_considered": len(catalog.get(code) or [])}]
+            annotated.append(item)
+        return annotated
+
+    def _timeout_diagnostics(
+        unscheduled: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """Replace only unproved solver conclusions with an honest cutoff reason."""
+        annotated: list[dict[str, Any]] = []
+        for row in unscheduled:
+            item = dict(row)
+            reason = str(item.get("reason") or "")
+            if item.get("reason_code") == "SEARCH_BUDGET_EXHAUSTED" or reason.startswith(
+                ("Could not fit", "Model infeasible")
+            ):
+                item["reason"] = "Solver search budget exhausted before a placement was certified"
+                item["reason_code"] = "SEARCH_BUDGET_EXHAUSTED"
+                item["details"] = []
+            annotated.append(item)
+        return annotated
 
     def _top_k_method(
         method: str, k: int = 3
@@ -1247,6 +1728,8 @@ def build_plans(
         visited_excl: set[tuple[int, ...]] = set()
 
         while queue and len(results) < k:
+            if solver_deadline.reached():
+                break
             excl = queue.pop(0)
             excl_key = tuple(sorted(excl))
             if excl_key in visited_excl:
@@ -1255,8 +1738,37 @@ def build_plans(
 
             cat = _catalog_without_sids(excl)
             sel, uns = _run_method(method, cat)
+            timed_out = solver_deadline.reached()
+            if timed_out:
+                uns = _timeout_diagnostics(uns)
+            uns = _annotate_incomplete_meeting_evidence(uns)
+            if any(str(item.get("reason_code") or "") == "SOLVER_MODEL_INVALID" for item in uns):
+                rejected_unscheduled.append(uns)
+                break
+            hard_failures = _hard_requirement_failures(sel, uns)
+            if timed_out and (not sel or hard_failures):
+                if not any(
+                    str(item.get("reason_code") or "") == "SEARCH_BUDGET_EXHAUSTED" for item in uns
+                ):
+                    uns.append(
+                        {
+                            "course_code": "",
+                            "reason": (
+                                "Solver search budget exhausted before a placement was certified"
+                            ),
+                            "reason_code": "SEARCH_BUDGET_EXHAUSTED",
+                            "details": [],
+                        }
+                    )
+                rejected_unscheduled.append(uns)
+                break
+            if hard_failures:
+                rejected_hard_failures.extend(hard_failures)
+                rejected_unscheduled.append(uns)
+                continue
             sig = _sig(sel)
             if not sig:
+                rejected_unscheduled.append(uns)
                 continue
             if sig in seen:
                 continue
@@ -1271,8 +1783,6 @@ def build_plans(
                 if nk not in visited_excl:
                     queue.append(nxt)
 
-        if not results:
-            results.append(_run_method(method, _catalog_without_sids(set())))
         return results
 
     def fmt_option(
@@ -1299,6 +1809,12 @@ def build_plans(
                         {"day": m.day, "start_time": m.start, "end_time": m.end}
                         for m in s.get("meetings", [])
                     ],
+                    # Internal evidence marker consumed by deterministic callers
+                    # that must certify a complete timetable.  The ordinary
+                    # planner may still display a recorded section whose time is
+                    # incomplete, but it must never silently turn that section
+                    # into a clash-free proof.
+                    "meeting_issue_codes": list(s.get("meeting_issue_codes") or []),
                 }
                 for s in sel
             ],
@@ -1311,11 +1827,23 @@ def build_plans(
         for i, (sel, uns) in enumerate(variants, start=1):
             options.append(fmt_option(f"{method}{i}", method, i, sel, uns))
 
+    fallback_unscheduled = max(rejected_unscheduled, key=len, default=[])
     best = (
         max(options, key=lambda x: x["scheduled"])
         if options
-        else {"scheduled": 0, "target": len(shortlist), "unscheduled": []}
+        else {
+            "scheduled": 0,
+            "target": len(shortlist),
+            "unscheduled": fallback_unscheduled,
+        }
     )
+
+    hard_failures_by_key: dict[tuple[str, str], dict[str, Any]] = {}
+    if not options:
+        for failure in rejected_hard_failures:
+            key = (str(failure.get("kind", "")), str(failure.get("course_code", "")))
+            hard_failures_by_key.setdefault(key, failure)
+    hard_constraint_failures = list(hard_failures_by_key.values())
 
     swap_suggestions: list[dict[str, Any]] = []
     if keep_registered and suggest_swaps and best["unscheduled"]:
@@ -1335,8 +1863,13 @@ def build_plans(
             "target": best["target"],
             "conflicts": len(best["unscheduled"]),
             "swaps_required": len(swap_suggestions),
-            "best_feasible": True,
+            "best_feasible": bool(options),
+            "hard_constraint_failures": hard_constraint_failures,
         },
         "options": options,
+        # Diagnostics for callers that need to explain why no valid option was
+        # emitted. This is deliberately outside ``options``: an empty mapping is
+        # not a timetable result.
+        "unscheduled": best["unscheduled"],
         "swap_suggestions": swap_suggestions,
     }

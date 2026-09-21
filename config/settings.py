@@ -12,6 +12,7 @@ https://docs.djangoproject.com/en/5.2/ref/settings/
 
 import os
 from pathlib import Path
+from typing import Any
 
 import dj_database_url
 from django.core.exceptions import ImproperlyConfigured
@@ -59,6 +60,7 @@ INSTALLED_APPS = [
     "django.contrib.staticfiles",
     "core",
     "whatsapp_gateway",
+    "telegram_gateway",
     # New timetabling subsystem. Deliberately isolated from core's timetable
     # engine: shares no code, no tables and no state, so it cannot regress the
     # timetable in production use today. See docs/SCHEDULER-BLUEPRINT.md.
@@ -71,9 +73,12 @@ MIDDLEWARE = [
     "django.contrib.sessions.middleware.SessionMiddleware",
     # Must be after SessionMiddleware and before CommonMiddleware.
     "django.middleware.locale.LocaleMiddleware",
+    # Student pages default to Arabic when no explicit language cookie exists.
+    "core.middleware.StudentPortalDefaultsMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
+    "core.middleware.ExamCommitteeAccessMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
 ]
@@ -117,6 +122,27 @@ else:
         }
     }
 
+
+# SQLite allows one writer.  A deferred transaction that reads and then writes
+# can therefore fail immediately with SQLITE_BUSY_SNAPSHOT when the scraper
+# commits between those two statements; the connection timeout cannot rescue a
+# read snapshot that is no longer promotable.  The adviser rate limiter has that
+# exact shape.  Acquire the writer slot at the start of writable atomic blocks so
+# SQLite's busy timeout applies before any read snapshot is established.  Apply
+# the same defaults to SQLite DATABASE_URL configurations, while leaving frozen
+# read-only fixture URIs alone (BEGIN IMMEDIATE is itself a write transaction).
+def _configure_sqlite_transaction_options(database: Any) -> None:
+    if database.get("ENGINE") != "django.db.backends.sqlite3":
+        return
+    options = database.setdefault("OPTIONS", {})
+    options.setdefault("timeout", 30)
+    name = str(database.get("NAME") or "").lower()
+    if "?mode=ro" not in name and "&mode=ro" not in name:
+        options.setdefault("transaction_mode", "IMMEDIATE")
+
+
+_configure_sqlite_transaction_options(DATABASES["default"])
+
 # Cache backend for rate limiting and login throttling
 CACHES = {
     "default": {
@@ -134,6 +160,63 @@ LOCAL_LLM_MODEL = os.getenv("LOCAL_LLM_MODEL", "")
 LOCAL_LLM_TIMEOUT_SECONDS = float(os.getenv("LOCAL_LLM_TIMEOUT_SECONDS", "120"))
 LOCAL_LLM_MAX_TOKENS = int(os.getenv("LOCAL_LLM_MAX_TOKENS", "1400"))
 LOCAL_LLM_ALLOW_REMOTE = os.getenv("LOCAL_LLM_ALLOW_REMOTE", "false").lower() == "true"
+
+# ── which LLM backend the adviser speaks to ──────────────────────
+# "local"   — the OpenAI-compatible server above (LM Studio &c.)
+# "alibaba" — Alibaba Cloud Model Studio, OpenAI-compatible endpoint
+#
+# Returning to local is this one variable and a restart. There is no prompt fork,
+# no tool-registry fork and no branch to change. An unknown value fails at
+# configuration time rather than silently falling back, because "the backend I
+# did not intend" is worse than "the adviser refused to start".
+LLM_BACKEND = os.getenv("LLM_BACKEND", "local").strip().lower()
+
+# Alibaba Cloud Model Studio. Empty by default: the adviser is local until
+# somebody deliberately configures otherwise, and every one of these is REQUIRED
+# before the alibaba backend will start. The model is never discovered from the
+# workspace — a silent choice of model is a silent choice of price.
+ALIBABA_LLM_BASE_URL = os.getenv("ALIBABA_LLM_BASE_URL", "")
+ALIBABA_LLM_API_KEY = os.getenv("ALIBABA_LLM_API_KEY", "")
+ALIBABA_LLM_MODEL = os.getenv("ALIBABA_LLM_MODEL", "")
+# Non-thinking for the first provider comparison: the local model has already
+# spent whole tool turns on hidden reasoning, and comparing two providers while
+# also changing reasoning mode measures neither.
+ALIBABA_LLM_ENABLE_THINKING = os.getenv("ALIBABA_LLM_ENABLE_THINKING", "false").lower() == "true"
+ALIBABA_LLM_TIMEOUT_SECONDS = float(os.getenv("ALIBABA_LLM_TIMEOUT_SECONDS", "75"))
+ALIBABA_LLM_MAX_TOKENS = int(os.getenv("ALIBABA_LLM_MAX_TOKENS", "3000"))
+# One retry, not two: retries mostly cover 429/5xx, which the circuit breaker
+# now handles better than a second 75-second re-timeout does, and each retry
+# multiplies the worst-case turn on a single-instance service.
+# 90, not 60: every latency number in this repository (the 2026-08-01 live
+# batch, p50 79.9s over answer_student_advisor_v2; the capability map's
+# 19-121s range) sits above 60, and gunicorn's --timeout 120 is the ceiling
+# this must leave headroom under.  Those measurements are the LOCAL backend -
+# Alibaba has never been timed; rerun evals/advisor/run_live_batch.py against
+# it before tightening this value.
+STUDENT_ADVISOR_V2_TURN_BUDGET_SECONDS = float(
+    os.getenv("STUDENT_ADVISOR_V2_TURN_BUDGET_SECONDS", "90")
+)
+ALIBABA_LLM_MAX_RETRIES = int(os.getenv("ALIBABA_LLM_MAX_RETRIES", "1"))
+
+# THE EGRESS KILL SWITCH. The transport refuses every Alibaba network request
+# unless this is explicitly true — regardless of LLM_BACKEND, regardless of which
+# code path constructed the client.
+#
+# It exists because selecting a backend turned out not to be a strong enough
+# control. Two live calls happened on this branch that should not have: one from
+# a test whose HTTP stub was written and never installed, and one from acting on
+# an ambiguous instruction. Neither was prevented by anything structural.
+#
+# Tests use a mocked transport and never need this. Keep it false until a review
+# authorises the next call.
+ALIBABA_LLM_ALLOW_LIVE_REQUESTS = (
+    os.getenv("ALIBABA_LLM_ALLOW_LIVE_REQUESTS", "false").lower() == "true"
+)
+
+# The evaluation JUDGE is configured separately and defaults to local, ON PURPOSE.
+# Judging Alibaba-generated answers with Alibaba confounds the comparison: a
+# provider marking its own homework is not a measurement.
+EVAL_JUDGE_LLM_BACKEND = os.getenv("EVAL_JUDGE_LLM_BACKEND", "local").strip().lower()
 
 # Virtual advisor agent loop (native LLM tool calling over the capability
 # registry). Env-overridable kill-switch: set to "false" to revert to the
@@ -154,6 +237,41 @@ VIRTUAL_ADVISOR_TOOL_TURN_TIMEOUT_SECONDS = float(
     os.getenv("VIRTUAL_ADVISOR_TOOL_TURN_TIMEOUT_SECONDS", "75")
 )
 
+# Student Advisor V2: one read-only academic agent, with no timetable, section,
+# registration, save, apply, or university-portal mutation capability.  Off until
+# its focused evaluation wins against the current student adviser.
+# Default ON: render.yaml already sets this true for the live service, so the
+# default only governs environments WITHOUT the variable - previews, rollbacks,
+# new services - which are exactly where the unguarded legacy path must not
+# silently become the student's adviser again.
+STUDENT_ADVISOR_V2_ENABLED = os.getenv("STUDENT_ADVISOR_V2_ENABLED", "true").lower() == "true"
+# Student Advisor V2.1: schema-constrained semantic planning. This is an
+# independent rollout switch, deliberately OFF until the V2.1 evaluation gate
+# passes. V2 must remain enabled while this is true so disabling only V2.1 has
+# an explicit rollback target; the runtime dispatcher enforces that invariant.
+STUDENT_ADVISOR_V21_ENABLED = os.getenv("STUDENT_ADVISOR_V21_ENABLED", "false").lower() == "true"
+# Local V2.1 browser launcher. DEBUG, this explicit switch, a loopback peer, and
+# an authenticated superuser are all required by the view; false is the only safe
+# default because the launcher intentionally changes the current session identity.
+ALLOW_DEV_STUDENT_ADVISOR_LAB = (
+    os.getenv("ALLOW_DEV_STUDENT_ADVISOR_LAB", "false").lower() == "true"
+)
+# The semantic plan is one compact, forced-schema inference within the existing
+# V2 wall-clock budget. Its own cap prevents planning from consuming the answer
+# budget; the evidence-call ceiling remains STUDENT_ADVISOR_V2_MAX_TOOL_CALLS.
+STUDENT_ADVISOR_V21_PLAN_MAX_TOKENS = int(os.getenv("STUDENT_ADVISOR_V21_PLAN_MAX_TOKENS", "900"))
+STUDENT_ADVISOR_V21_PLAN_TIMEOUT_SECONDS = float(
+    os.getenv("STUDENT_ADVISOR_V21_PLAN_TIMEOUT_SECONDS", "45")
+)
+STUDENT_ADVISOR_V2_MAX_TOOL_ITERATIONS = int(
+    os.getenv("STUDENT_ADVISOR_V2_MAX_TOOL_ITERATIONS", "4")
+)
+STUDENT_ADVISOR_V2_MAX_TOOL_CALLS = int(os.getenv("STUDENT_ADVISOR_V2_MAX_TOOL_CALLS", "8"))
+STUDENT_ADVISOR_V2_MAX_TOKENS = int(os.getenv("STUDENT_ADVISOR_V2_MAX_TOKENS", "1800"))
+STUDENT_ADVISOR_V2_TOOL_TIMEOUT_SECONDS = float(
+    os.getenv("STUDENT_ADVISOR_V2_TOOL_TIMEOUT_SECONDS", "75")
+)
+
 # WhatsApp Advisor Gateway. Keep credentials out of the repository.
 WHATSAPP_CLOUD_API_VERSION = os.getenv("WHATSAPP_CLOUD_API_VERSION", "v23.0")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "")
@@ -163,42 +281,174 @@ WHATSAPP_REQUIRE_SIGNATURE = (
 )
 WHATSAPP_ACCESS_TOKEN = os.getenv("WHATSAPP_ACCESS_TOKEN", "")
 WHATSAPP_PHONE_NUMBER_ID = os.getenv("WHATSAPP_PHONE_NUMBER_ID", "")
-WHATSAPP_STUDENT_EMAIL_DOMAIN = os.getenv("WHATSAPP_STUDENT_EMAIL_DOMAIN", "")
 WHATSAPP_OTP_TTL_SECONDS = int(os.getenv("WHATSAPP_OTP_TTL_SECONDS", "300"))
 WHATSAPP_OTP_MAX_ATTEMPTS = int(os.getenv("WHATSAPP_OTP_MAX_ATTEMPTS", "5"))
 WHATSAPP_ALLOW_SUPER_ADMIN = os.getenv("WHATSAPP_ALLOW_SUPER_ADMIN", "false").lower() == "true"
 
-DEFAULT_FROM_EMAIL = os.getenv("DEFAULT_FROM_EMAIL", "advisor-bot@localhost")
+# Telegram Advisor Gateway. Keep credentials out of the repository.
+#
+# The channel is a TRANSPORT for the existing Student Advisor — it holds no prompt
+# and no model client of its own, and every one of these settings is either a
+# credential or a switch. See docs/TELEGRAM-ADVISOR-CHANNEL.md.
+#
+# Default OFF. A deployment that has not decided to run this feature must not
+# acquire a public webhook by upgrading.
+TELEGRAM_ADVISOR_ENABLED = os.getenv("TELEGRAM_ADVISOR_ENABLED", "false").lower() == "true"
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
+# Telegram echoes this in `X-Telegram-Bot-Api-Secret-Token` on every webhook call.
+# Unset means the webhook refuses everything — deliberately NOT relaxed under
+# DEBUG the way WHATSAPP_REQUIRE_SIGNATURE is, because "open in development" is a
+# default that travels.
+TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
+TELEGRAM_BOT_USERNAME = os.getenv("TELEGRAM_BOT_USERNAME", "")
+# Origin the linking URL is built from, e.g. https://advisor.example.edu. Without
+# it `/link` fails closed rather than sending a token pointing nowhere.
+TELEGRAM_PUBLIC_BASE_URL = os.getenv("TELEGRAM_PUBLIC_BASE_URL", "")
+TELEGRAM_LINK_TOKEN_TTL_SECONDS = int(os.getenv("TELEGRAM_LINK_TOKEN_TTL_SECONDS", "900"))
+# Linking is an account-security decision, so an old authenticated browser session
+# is not enough. The successful student login timestamp is stored in that exact
+# session and must still be within this window when the invitation is approved.
+TELEGRAM_LINK_AUTH_MAX_AGE_SECONDS = int(os.getenv("TELEGRAM_LINK_AUTH_MAX_AGE_SECONDS", "600"))
+# Bound the amount of normalized question text one chat can leave waiting in the
+# durable queue. The generation rate limit still governs model calls; this cap
+# protects storage when messages arrive faster than the worker can drain them.
+TELEGRAM_MAX_PENDING_PER_LINK = int(os.getenv("TELEGRAM_MAX_PENDING_PER_LINK", "10"))
+TELEGRAM_API_TIMEOUT_SECONDS = float(os.getenv("TELEGRAM_API_TIMEOUT_SECONDS", "30"))
+# Drain a newly committed queue job in the webhook process. Debugging only — a
+# turn can take ~90 s and Telegram redelivers anything it does not get a prompt
+# 200 for. Production must leave this false and run telegram_advisor_worker.
+# Pytest drains inline regardless of this value.
+TELEGRAM_DISPATCH_SYNC = os.getenv("TELEGRAM_DISPATCH_SYNC", "false").lower() == "true"
+# Separate privacy/operations switch for timetable images. A week grid is a
+# compact record of where a student is and when, and Telegram retains it as a
+# file. When enabled, the durable worker materialises only a typed photo recipe,
+# renders from the stored assistant message, and tracks photo progress separately
+# from the legacy-compatible text cursor.
+# Default ON (owner decision 2026-08-22): production has run with both image
+# kinds enabled since launch, and a fresh environment silently downgrading to
+# text-only cards was the surprise, not the picture.  The env vars remain the
+# per-deployment off switches.
+TELEGRAM_SEND_TIMETABLE_IMAGES = (
+    os.getenv("TELEGRAM_SEND_TIMETABLE_IMAGES", "true").lower() == "true"
+)
+# A graduation map reveals much more of a student's academic progression than a
+# weekly timetable, so it keeps its own independent switch: turning timetable
+# pictures off must never silently decide graduation pictures, or vice versa.
+TELEGRAM_SEND_GRADUATION_IMAGES = (
+    os.getenv("TELEGRAM_SEND_GRADUATION_IMAGES", "true").lower() == "true"
+)
+# Optional local-development origin for the headless browser. It must stay on
+# loopback; a public hostname would expose the short-lived signed card URL. When
+# empty, the durable worker starts a card-only Django listener on an ephemeral
+# loopback port and serves only the renderer's exact source-asset allowlist.
+TELEGRAM_INTERNAL_BASE_URL = os.getenv("TELEGRAM_INTERNAL_BASE_URL", "")
 
-# Email / SMTP (Gmail app-password). Credentials come from .env, never the repo.
-# Falls back to the console backend when no password is set, so dev works without
-# credentials and real mail starts the moment EMAIL_HOST_PASSWORD is filled in.
-EMAIL_HOST = os.getenv("EMAIL_HOST", "smtp.gmail.com")
+# The card renderer fetches over loopback, so the loopback Host must be allowed —
+# otherwise `CommonMiddleware` answers 400 DisallowedHost and the screenshot waits
+# 15 s for an attribute that will never appear. Added HERE rather than left to
+# DJANGO_ALLOWED_HOSTS because the operator sets that to the public hostname and
+# has no reason to guess that an internal fetch also needs a home.
+if TELEGRAM_SEND_TIMETABLE_IMAGES or TELEGRAM_SEND_GRADUATION_IMAGES:
+    for _loopback in ("127.0.0.1", "localhost"):
+        if _loopback not in ALLOWED_HOSTS:
+            ALLOWED_HOSTS.append(_loopback)
+
+# Twilio SendGrid is the production student-email transport.  It is disabled by
+# default so a local checkout never opens an external socket accidentally.
+SENDGRID_API_KEY = os.getenv("SENDGRID_API_KEY", "").strip()
+SENDGRID_FROM_EMAIL = os.getenv("SENDGRID_FROM_EMAIL", "").strip()
+SENDGRID_FROM_NAME = os.getenv("SENDGRID_FROM_NAME", "بوابة الطالب").strip() or "بوابة الطالب"
+SENDGRID_TIMEOUT_SECONDS = int(os.getenv("SENDGRID_TIMEOUT_SECONDS", "3"))
+# Shared by student login, WhatsApp account linking, and the manual delivery
+# check. Essentials 50K launch cap: three requests per current student plus a
+# small operational reserve. Monitor monthly usage before raising it.
+SENDGRID_MAX_SUBMISSIONS = int(os.getenv("SENDGRID_MAX_SUBMISSIONS", "4700"))
+SENDGRID_SUBMISSION_WINDOW_SECONDS = int(os.getenv("SENDGRID_SUBMISSION_WINDOW_SECONDS", "86400"))
+STUDENT_OTP_SENDGRID_ENABLED = os.getenv("STUDENT_OTP_SENDGRID_ENABLED", "false").lower() == "true"
+STUDENT_OTP_RESEND_DELAY_SECONDS = int(os.getenv("STUDENT_OTP_RESEND_DELAY_SECONDS", "50"))
+STUDENT_OTP_RESPONSE_FLOOR_SECONDS = max(
+    0.0, float(os.getenv("STUDENT_OTP_RESPONSE_FLOOR_SECONDS", "3.5"))
+)
+# Production delivery must finish its provider/state transition before the
+# request can be lost to a deploy or worker restart.  Keep the setting for
+# explicit local compatibility, but the production guard below rejects it.
+STUDENT_OTP_ASYNC_EMAIL = os.getenv("STUDENT_OTP_ASYNC_EMAIL", "false").lower() == "true"
+
+# Django's email settings remain for harmless local/dev compatibility with
+# management commands and tests. Production OTP delivery does not use them.
+# The non-debug default remains SMTP (pointing at localhost) instead of console,
+# so an accidental legacy call cannot print a plaintext OTP into hosted logs.
+EMAIL_HOST = os.getenv("EMAIL_HOST", "localhost")
 EMAIL_PORT = int(os.getenv("EMAIL_PORT", "587"))
 EMAIL_USE_TLS = os.getenv("EMAIL_USE_TLS", "true").lower() == "true"
 EMAIL_HOST_USER = os.getenv("EMAIL_HOST_USER", "")
 EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD", "")
 EMAIL_TIMEOUT = int(os.getenv("EMAIL_TIMEOUT", "20"))
-EMAIL_BACKEND = os.getenv(
-    "EMAIL_BACKEND",
-    "django.core.mail.backends.smtp.EmailBackend"
-    if EMAIL_HOST_PASSWORD
-    else "django.core.mail.backends.console.EmailBackend",
+_SMTP_EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
+_CONSOLE_EMAIL_BACKEND = "django.core.mail.backends.console.EmailBackend"
+EMAIL_BACKEND = os.getenv("EMAIL_BACKEND", "").strip() or (
+    _SMTP_EMAIL_BACKEND if EMAIL_HOST_PASSWORD or not DEBUG else _CONSOLE_EMAIL_BACKEND
 )
-# Student OTP-login email domain (deterministic {student_id}@domain).
+# Historical environment-variable name retained so existing worker/cron settings
+# do not drift during deployment. It now means that the process cannot serve the
+# public student-email routes and therefore does not need SendGrid credentials.
+ALLOW_NO_SMTP_PROCESS = os.getenv("ALLOW_NO_SMTP_PROCESS", "false").lower() == "true"
+DEFAULT_FROM_EMAIL = (
+    os.getenv("DEFAULT_FROM_EMAIL", "").strip() or SENDGRID_FROM_EMAIL or "advisor-bot@localhost"
+)
+
+
+def _require_production_sendgrid(
+    *,
+    debug: bool,
+    allow_no_smtp_process: bool,
+    enabled: bool,
+    api_key: str,
+    from_email: str,
+    async_email: bool = False,
+    max_submissions: int = 4700,
+    submission_window_seconds: int = 86_400,
+) -> None:
+    """Require the sole production OTP transport on every public web process."""
+
+    if debug or allow_no_smtp_process:
+        return
+    if not enabled:
+        raise ImproperlyConfigured("STUDENT_OTP_SENDGRID_ENABLED must be true in production.")
+    if async_email:
+        raise ImproperlyConfigured("STUDENT_OTP_ASYNC_EMAIL must be false in production.")
+    missing = []
+    if not api_key.strip():
+        missing.append("SENDGRID_API_KEY")
+    if not from_email.strip():
+        missing.append("SENDGRID_FROM_EMAIL")
+    if missing:
+        raise ImproperlyConfigured(
+            ", ".join(missing) + " are required for production student OTP delivery."
+        )
+    if max_submissions < 1:
+        raise ImproperlyConfigured("SENDGRID_MAX_SUBMISSIONS must be positive.")
+    if submission_window_seconds < 1:
+        raise ImproperlyConfigured("SENDGRID_SUBMISSION_WINDOW_SECONDS must be positive.")
+
+
+_require_production_sendgrid(
+    debug=DEBUG,
+    allow_no_smtp_process=ALLOW_NO_SMTP_PROCESS,
+    enabled=STUDENT_OTP_SENDGRID_ENABLED,
+    api_key=SENDGRID_API_KEY,
+    from_email=SENDGRID_FROM_EMAIL,
+    async_email=STUDENT_OTP_ASYNC_EMAIL,
+    max_submissions=SENDGRID_MAX_SUBMISSIONS,
+    submission_window_seconds=SENDGRID_SUBMISSION_WINDOW_SECONDS,
+)
+# Student OTP-login email domain. The canonical cohort-aware local-part rule is
+# implemented centrally in core.services.student_identity.student_email.
 STUDENT_EMAIL_DOMAIN = os.getenv("STUDENT_EMAIL_DOMAIN", "taibahu.edu.sa")
 STUDENT_OTP_TTL_SECONDS = int(os.getenv("STUDENT_OTP_TTL_SECONDS", "600"))  # code lifetime
 STUDENT_OTP_MAX_ATTEMPTS = int(os.getenv("STUDENT_OTP_MAX_ATTEMPTS", "5"))  # verify tries per code
 STUDENT_OTP_MAX_SENDS = int(os.getenv("STUDENT_OTP_MAX_SENDS", "3"))  # codes per window per id
 STUDENT_OTP_SEND_WINDOW_SECONDS = int(os.getenv("STUDENT_OTP_SEND_WINDOW_SECONDS", "900"))
-STUDENT_OTP_ASYNC_EMAIL = os.getenv("STUDENT_OTP_ASYNC_EMAIL", "true").lower() == "true"
-# TESTING ONLY: send every student OTP to this address instead of the student's real
-# university mailbox, so testing never emails an actual student. Leave EMPTY in production.
-STUDENT_OTP_REDIRECT_EMAIL = os.getenv("STUDENT_OTP_REDIRECT_EMAIL", "").strip()
-# TESTING ONLY: log a student in from the University ID alone, with NO code. This is a
-# full authentication bypass — it requires BOTH DEBUG and this explicit opt-in, exactly
-# like ALLOW_DEV_ROLE_SWITCH, and is inert in any production deployment (DEBUG=False).
-STUDENT_LOGIN_NO_OTP = DEBUG and os.getenv("STUDENT_LOGIN_NO_OTP", "").lower() == "true"
 # Behind a trusted reverse proxy (e.g. Render), derive the client IP from the
 # right-most X-Forwarded-For entry (the one the proxy appended, unspoofable).
 # Leave off for direct/dev, where REMOTE_ADDR is the real peer.
@@ -210,7 +460,8 @@ NEO4J_USERNAME = os.getenv("NEO4J_USERNAME", "neo4j")
 NEO4J_PASSWORD = os.getenv("NEO4J_PASSWORD", "")
 NEO4J_DATABASE = os.getenv("NEO4J_DATABASE", "neo4j")
 
-# Portal credentials for scraper/runtime commands
+# Portal credentials for scraper/runtime commands. The username is the full
+# university Microsoft UPN/email used by Entra ID, not the retired portal ID.
 PORTAL_ADMIN_USERNAME = os.getenv("PORTAL_ADMIN_USERNAME", "")
 PORTAL_ADMIN_PASSWORD = os.getenv("PORTAL_ADMIN_PASSWORD", "")
 
@@ -219,7 +470,32 @@ ADMIN_USERNAME = PORTAL_ADMIN_USERNAME
 ADMIN_PASSWORD = PORTAL_ADMIN_PASSWORD
 
 # Portal URLs (kept for compatibility with migrated/legacy scraper modules)
-PORTAL_LOGIN_URL = "https://eas.taibahu.edu.sa/TaibahReg/teachers_login.jsp"
+PORTAL_LOGIN_URL = os.getenv(
+    "PORTAL_LOGIN_URL",
+    "https://eas.taibahu.edu.sa/TaibahReg/staffLogin.do?ex=preLogin",
+)
+PORTAL_SSO_TIMEOUT_MS = int(os.getenv("PORTAL_SSO_TIMEOUT_MS", "120000"))
+
+# Where the operator-minted portal session lives. An attended `portal_login`
+# writes it; the scraper reuses it. It is a live credential, so it is kept out
+# of version control and is never copied to a server.
+PORTAL_SESSION_STATE_PATH = os.getenv(
+    "PORTAL_SESSION_STATE_PATH", str(BASE_DIR / ".portal_session.json")
+)
+
+# Let the scraper drive Microsoft Entra ITSELF with PORTAL_ADMIN_PASSWORD,
+# instead of reusing a session a person signed in for.
+#
+# OFF by default and it should stay off for a human staff account: an
+# unattended sign-in cannot answer MFA, consent or a Conditional Access
+# interrupt, and every automated mis-step counts against Entra smart lockout
+# and ADFS extranet lockout. Turn it on only for an account the university has
+# approved for unattended use.
+PORTAL_UNATTENDED_LOGIN = os.getenv("PORTAL_UNATTENDED_LOGIN", "false").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+}
 STUDENT_PLAN_URL = "https://eas.taibahu.edu.sa/TaibahReg/studentStudyPlanEnquiryEng.do?ex=preEx"
 STUDENT_TIMETABLE_URL = "https://eas.taibahu.edu.sa/TaibahReg/studentSchedualEnquiry.do?ex=preEx"
 
@@ -344,6 +620,12 @@ LOGGING = {
             "class": "logging.StreamHandler",
             "formatter": "verbose",
         },
+        # The SendGrid transport's dependency logs request payloads and
+        # Authorization headers at DEBUG.  OTPs, recipients, and API keys must
+        # never reach application logs even if another logger becomes verbose.
+        "discard_vendor_email": {
+            "class": "logging.NullHandler",
+        },
     },
     "loggers": {
         "django": {
@@ -359,6 +641,16 @@ LOGGING = {
         "django.security": {
             "handlers": ["console"],
             "level": "DEBUG" if DEBUG else "WARNING",
+            "propagate": False,
+        },
+        "python_http_client.client": {
+            "handlers": ["discard_vendor_email"],
+            "level": "WARNING",
+            "propagate": False,
+        },
+        "sendgrid": {
+            "handlers": ["discard_vendor_email"],
+            "level": "WARNING",
             "propagate": False,
         },
     },

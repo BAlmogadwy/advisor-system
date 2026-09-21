@@ -119,6 +119,8 @@ const IS_AR = document.documentElement.lang === 'ar';
     idle: IS_AR ? 'خامل' : 'Idle',
     scrapeRunning: IS_AR ? 'قيد التنفيذ' : 'Running',
     scrapeFailed: IS_AR ? 'فشل' : 'Failed',
+    scrapeStatusUnavailable: IS_AR ? 'تعذّر تحميل حالة أداة الجلب.' : 'Could not load scraper status.',
+    scrapeControlUnavailable: IS_AR ? 'العملية تعمل لكن مقبض التحكم فُقد بعد إعادة تشغيل خدمة الويب. لا يمكن إيقاف معرّف عملية غير موثوق؛ أعد تشغيل الخدمة أو الحاوية قبل أي تشغيل جديد.' : 'The scraper is running, but its control handle was lost after a web restart. An unverified PID cannot be stopped; restart the service or container before another run.',
     noLogsYet: IS_AR ? 'لا توجد سجلات حتى الآن.' : 'No logs yet.',
     noScrapeHistory: IS_AR ? 'لا يوجد سجل عمليات' : 'No scrape history',
     runScrapeHint: IS_AR ? 'شغّل عملية جلب لعرض السجل هنا' : 'Run a scrape to see history here',
@@ -135,6 +137,18 @@ const IS_AR = document.documentElement.lang === 'ar';
     stopScrapeBody: IS_AR ? 'سيتم إرسال إشارة إيقاف. قد يُكمل الطالب الجاري معالجته.' : 'This will send a stop signal. Any in-progress student may still complete.',
     stopScraping: IS_AR ? 'إيقاف الجلب' : 'Stop scraping',
     failedStopScrape: (err) => IS_AR ? `تعذّر إيقاف الجلب: ${err}` : `Failed to stop scrape: ${err}`,
+
+    sourceLabel: IS_AR ? 'مصدر الطلاب:' : 'Student source:',
+    databaseStudents: IS_AR ? 'الطلاب الحاليون في قاعدة البيانات' : 'Current database students',
+    databaseStudentsReady: (eligible, excluded) => IS_AR ? `${eligible} طالب مؤهلون للجلب؛ تم استبعاد ${excluded} سجل غير حالي أو غير صالح.` : `${eligible} current students are eligible to scrape; ${excluded} terminal, inactive, or invalid records are excluded.`,
+    databaseRosterDescription: (eligible, excluded) => IS_AR ? `${eligible} مؤهلون، ${excluded} مستبعدون` : `${eligible} eligible, ${excluded} excluded`,
+    databaseStudentsInvalid: (count) => IS_AR ? `لا يمكن البدء: توجد ${count} سجلات طلاب ناقصة أو غير صالحة.` : `Cannot start: ${count} database student records are incomplete or invalid.`,
+    databaseStudentsEmpty: IS_AR ? 'لا يوجد طلاب في قاعدة البيانات.' : 'There are no students in the database.',
+    databaseStudentsNoneEligible: IS_AR ? 'لا يوجد طلاب حاليون مؤهلون للجلب في قاعدة البيانات.' : 'There are no eligible current students to scrape.',
+    databaseSourceUnavailable: IS_AR ? 'تعذّر فحص طلاب قاعدة البيانات.' : 'Could not inspect the database student roster.',
+    csvSource: IS_AR ? 'ملف CSV' : 'CSV file',
+    csvSourceReady: IS_AR ? 'سيتم استخدام ملف CSV المحدد، أو data/students_list.csv عند ترك المسار فارغًا.' : 'The selected CSV will be used, or data/students_list.csv when the path is empty.',
+    invalidConcurrency: IS_AR ? 'يجب أن يكون عدد المسارات بين 1 و8.' : 'Concurrency must be between 1 and 8.',
 
     // ── Debug Report ──
     debugReport: IS_AR ? 'تقرير التشخيص' : 'Debug report',
@@ -312,8 +326,8 @@ const IS_AR = document.documentElement.lang === 'ar';
     // native scroll-to-anchor behaviour that location.hash causes.
     history.pushState(null, '', '#' + target);
 
-    if (target === 'scrape') {
-      await refreshScrapeStatus();
+    if (target === 'scrape' && q('scrape')) {
+      await Promise.all([refreshScrapeStatus(), syncScrapeSourceUi()]);
     }
   }));
 
@@ -346,6 +360,7 @@ const IS_AR = document.documentElement.lang === 'ar';
   q('resetBatch').onclick = () => {
     q('batchProgram').value = '';
     q('batchSection').value = '';
+    q('batchMode').value = 'strict';
     const tbody = document.querySelector('#batchTable tbody');
     if (tbody) tbody.innerHTML = `<tr><td colspan="5"><div class="ap-empty"><span class="ap-empty-icon"><span class="i empty-icon-32"><svg viewBox="0 0 24 24"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg></span></span><div class="ap-empty-title">${T.noBatchData}</div><div class="ap-empty-hint">${T.setBatchFilters}</div></div></td></tr>`;
     q('batchMetrics').classList.add('d-none');
@@ -355,6 +370,7 @@ const IS_AR = document.documentElement.lang === 'ar';
     q('batchTopChips').innerHTML = `<div class="empty-note">${T.runBatchHint}</div>`;
     const bpEl = document.getElementById('batchPager'); if (bpEl) bpEl.innerHTML = '';
     setUpdated('batchUpdated');
+    syncExportCenterLinks();
   };
 
   function batchProgramTags(row) {
@@ -378,7 +394,8 @@ const IS_AR = document.documentElement.lang === 'ar';
 
     const year = q('batchYear').value, semester = q('batchSemester').value;
     const program = q('batchProgram').value, section = q('batchSection').value;
-    const url = `/report/summary/?year=${year}&semester=${semester}&program=${encodeURIComponent(program)}&section=${encodeURIComponent(section)}`;
+    const mode = q('batchMode').value;
+    const url = `/report/summary/?year=${encodeURIComponent(year)}&semester=${encodeURIComponent(semester)}&program=${encodeURIComponent(program)}&section=${encodeURIComponent(section)}&mode=${encodeURIComponent(mode)}`;
 
     const tbody = document.querySelector('#batchTable tbody');
     if (tbody) {
@@ -399,8 +416,8 @@ const IS_AR = document.documentElement.lang === 'ar';
       return;
     }
 
-    q('batchCsv').href = `/export/aggregate.csv?year=${year}&semester=${semester}&program=${encodeURIComponent(program)}&section=${encodeURIComponent(section)}`;
-    q('batchXlsx').href = `/export/aggregate.xlsx?year=${year}&semester=${semester}&program=${encodeURIComponent(program)}&section=${encodeURIComponent(section)}`;
+    q('batchCsv').href = `/export/aggregate.csv?year=${encodeURIComponent(year)}&semester=${encodeURIComponent(semester)}&program=${encodeURIComponent(program)}&section=${encodeURIComponent(section)}&mode=${encodeURIComponent(mode)}`;
+    q('batchXlsx').href = `/export/aggregate.xlsx?year=${encodeURIComponent(year)}&semester=${encodeURIComponent(semester)}&program=${encodeURIComponent(program)}&section=${encodeURIComponent(section)}&mode=${encodeURIComponent(mode)}`;
     q('batchSummary').href = url;
 
     if (!res.ok || !Array.isArray(data.top_recommended_courses)) {
@@ -418,6 +435,7 @@ const IS_AR = document.documentElement.lang === 'ar';
     q('batchMetricTerm').textContent = `${data.year}/${data.semester}`;
     q('batchMetricStudents').textContent = String(data.student_count ?? 0);
     q('batchMetricTopCount').textContent = String(data.top_recommended_courses.length);
+    q('batchMetricMode').textContent = data.mode || (data.strict_passed_only ? 'strict' : 'relaxed');
     q('batchMetrics').classList.remove('d-none');
 
     if (tbody) {
@@ -1205,7 +1223,99 @@ const IS_AR = document.documentElement.lang === 'ar';
     q('loadStudentPlan').innerHTML = `<span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></span>${T.loadPlanBtn}`;
   };
 
+  const scrapePanel = q('scrape');
   let scrapeAutoTimer = null;
+  let scrapeIsRunning = false;
+  let scrapeStatusKnown = false;
+  let scrapeDatabaseReady = false;
+  let scrapeDatabaseCount = null;
+  let scrapeDatabaseExcluded = null;
+  let scrapeDatabaseRosterToken = '';
+  let scrapeSourceRequestId = 0;
+  let scrapeStatusRequestId = 0;
+
+  function selectedScrapeSource() {
+    return q('scrapeSource')?.value === 'csv' ? 'csv' : 'database';
+  }
+
+  function updateScrapeStartAvailability() {
+    const startButton = q('scrapeStart');
+    if (!scrapePanel || !startButton) return;
+    const databaseBlocked = selectedScrapeSource() === 'database' && !scrapeDatabaseReady;
+    startButton.disabled = !scrapeStatusKnown || scrapeIsRunning || databaseBlocked;
+  }
+
+  async function refreshScrapeSourceSummary() {
+    if (!scrapePanel) return;
+    const meta = q('scrapeSourceMeta');
+    if (!meta) return;
+    const requestId = ++scrapeSourceRequestId;
+    const requestedSource = selectedScrapeSource();
+    scrapeDatabaseReady = false;
+    scrapeDatabaseCount = null;
+    scrapeDatabaseExcluded = null;
+    scrapeDatabaseRosterToken = '';
+    updateScrapeStartAvailability();
+    if (requestedSource !== 'database') {
+      meta.className = 'meta-banner meta-info mb-10';
+      meta.textContent = T.csvSourceReady;
+      return;
+    }
+
+    meta.className = 'meta-banner meta-info mb-10';
+    meta.textContent = IS_AR ? 'جارٍ فحص طلاب قاعدة البيانات…' : 'Checking database student roster…';
+    try {
+      const res = await fetch('/ops/scrape/source-summary/');
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data.error || `${T.databaseSourceUnavailable} (${res.status})`);
+      }
+      if (!data.ok || !data.database) {
+        throw new Error(data.error || T.databaseSourceUnavailable);
+      }
+      if (requestId !== scrapeSourceRequestId || selectedScrapeSource() !== requestedSource) return;
+      const summary = data.database;
+      scrapeDatabaseCount = Number(summary.valid ?? 0);
+      scrapeDatabaseExcluded = Number(summary.excluded ?? 0);
+      scrapeDatabaseRosterToken = typeof summary.roster_token === 'string' ? summary.roster_token : '';
+      scrapeDatabaseReady = Boolean(summary.ready);
+      if (scrapeDatabaseReady && !scrapeDatabaseRosterToken) {
+        throw new Error(T.databaseSourceUnavailable);
+      }
+      if (scrapeDatabaseReady) {
+        meta.className = 'meta-banner meta-info mb-10';
+        meta.textContent = T.databaseStudentsReady(scrapeDatabaseCount, scrapeDatabaseExcluded);
+      } else if (Number(summary.total ?? 0) === 0) {
+        meta.className = 'meta-banner meta-danger mb-10';
+        meta.textContent = T.databaseStudentsEmpty;
+      } else if (Number(summary.valid ?? 0) === 0) {
+        meta.className = 'meta-banner meta-danger mb-10';
+        meta.textContent = T.databaseStudentsNoneEligible;
+      } else {
+        meta.className = 'meta-banner meta-danger mb-10';
+        meta.textContent = T.databaseStudentsInvalid(Number(summary.invalid ?? 0));
+      }
+    } catch (err) {
+      if (requestId !== scrapeSourceRequestId || selectedScrapeSource() !== requestedSource) return;
+      console.error('[refreshScrapeSourceSummary] Request failed:', err);
+      scrapeDatabaseReady = false;
+      scrapeDatabaseRosterToken = '';
+      meta.className = 'meta-banner meta-danger mb-10';
+      meta.textContent = T.databaseSourceUnavailable;
+    }
+    updateScrapeStartAvailability();
+  }
+
+  async function syncScrapeSourceUi() {
+    if (!scrapePanel) return;
+    const isCsv = selectedScrapeSource() === 'csv';
+    q('scrapeCsvWrap').classList.toggle('d-none', !isCsv);
+    q('scrapeCsv').disabled = !isCsv;
+    await refreshScrapeSourceSummary();
+  }
+
+  const scrapeSourceSelect = q('scrapeSource');
+  if (scrapeSourceSelect) scrapeSourceSelect.onchange = syncScrapeSourceUi;
 
   function stopScrapeAutoRefresh() {
     if (scrapeAutoTimer !== null) {
@@ -1215,24 +1325,44 @@ const IS_AR = document.documentElement.lang === 'ar';
   }
 
   function startScrapeAutoRefresh() {
-    if (scrapeAutoTimer !== null) return;
+    if (!scrapePanel || scrapeAutoTimer !== null) return;
     scrapeAutoTimer = setInterval(async () => {
-      const scrapePanelVisible = q('scrape').classList.contains('active');
+      const scrapePanelVisible = scrapePanel.classList.contains('active');
       if (!scrapePanelVisible) return;
       await refreshScrapeStatus();
     }, 3000);
   }
 
   async function refreshScrapeStatus() {
+    if (!scrapePanel) return;
+    const requestId = ++scrapeStatusRequestId;
     let res, data;
     try {
       res = await fetch('/ops/scrape/status/');
-      data = await res.json();
+      data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data.error || `${T.scrapeStatusUnavailable} (${res.status})`);
+      }
+      if (typeof data.running !== 'boolean') {
+        throw new Error(T.scrapeStatusUnavailable);
+      }
+      if (requestId !== scrapeStatusRequestId) return;
     } catch (err) {
-      console.error('[refreshScrapeStatus] Network error:', err);
+      if (requestId !== scrapeStatusRequestId) return;
+      console.error('[refreshScrapeStatus] Request failed:', err);
+      scrapeStatusKnown = false;
+      updateScrapeStartAvailability();
+      q('scrapeStop').disabled = true;
+      const statusMeta = q('scrapeMeta');
+      statusMeta.className = 'meta-banner meta-danger meta-mono mb-10';
+      statusMeta.textContent = T.scrapeStatusUnavailable;
+      stopScrapeAutoRefresh();
       notify.error('Failed to refresh scrape status', err.message || String(err));
       return;
     }
+
+    scrapeStatusKnown = true;
+    scrapeIsRunning = Boolean(data.running);
 
     const hasFailureTrace = typeof data.log_tail === 'string' && data.log_tail.includes('Traceback');
     let statusHtml = '<span class="status-dot status-stopped"></span>' + T.idle;
@@ -1247,7 +1377,14 @@ const IS_AR = document.documentElement.lang === 'ar';
     q('scrapeMetricStarted').textContent = String(data.started_at ?? '-');
     q('scrapeMetricStopped').textContent = String(data.stopped_at ?? '-');
 
-    q('scrapeMeta').textContent = `action=${data.last_action ?? '-'} log=${data.log_path}`;
+    const statusMeta = q('scrapeMeta');
+    if (data.running && data.process_control_available === false) {
+      statusMeta.className = 'meta-banner meta-warn meta-mono mb-10';
+      statusMeta.textContent = T.scrapeControlUnavailable;
+    } else {
+      statusMeta.className = 'meta-banner meta-info meta-mono mb-10';
+      statusMeta.textContent = `action=${data.last_action ?? '-'} log=${data.log_path ?? '-'}`;
+    }
     q('scrapeUpdatedAt').textContent = `${T.lastUpdate}: ${new Date().toLocaleTimeString()}`;
     const logEl = q('scrapeOut');
     const rawLog = data.log_tail || '';
@@ -1274,8 +1411,8 @@ const IS_AR = document.documentElement.lang === 'ar';
       logEl.scrollTop = logEl.scrollHeight;
     }
 
-    q('scrapeStart').disabled = Boolean(data.running);
-    q('scrapeStop').disabled = !Boolean(data.running);
+    updateScrapeStartAvailability();
+    q('scrapeStop').disabled = !scrapeIsRunning || data.process_control_available === false;
 
     const historyBody = document.querySelector('#scrapeHistoryTable tbody');
     if (historyBody) {
@@ -1288,10 +1425,17 @@ const IS_AR = document.documentElement.lang === 'ar';
         if (pagerEl) pagerEl.classList.add('d-none');
       } else {
         const allRows = history.slice().reverse().map((h) => {
-          const evt = h.event ?? '-';
+          const evt = String(h.event ?? '-');
           const evtPill = evt === 'started' ? 'pill-g' : evt === 'stopped' ? 'pill-a' : evt === 'failed' ? 'pill-r' : 'pill-b';
           const evtLabel = evt === 'started' ? T.started : evt === 'stopped' ? T.stopped : evt === 'failed' ? T.failed : evt;
-          return `<tr class="cr-row"><td class="font-mono fs-11 text-t3">${h.at ?? '-'}</td><td><span class="pill ${evtPill} fs-11" style="padding:3px 10px"><span class="pill-dot" style="width:6px;height:6px;border-radius:50%;display:inline-block;margin-inline-end:5px;background:currentColor;opacity:0.5"></span>${evtLabel}</span></td><td class="font-mono">${h.pid ?? '-'}</td><td>${h.concurrency ?? '-'}</td><td class="font-mono fs-11" style="max-width:200px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap">${h.students_csv ?? '-'}</td></tr>`;
+          let source = '-';
+          if (h.student_source === 'database') {
+            const count = h.student_count === null || h.student_count === undefined ? '' : ` (${h.student_count})`;
+            source = `${T.databaseStudents}${count}`;
+          } else if (h.student_source === 'csv' || h.students_csv) {
+            source = h.students_csv || T.csvDefault;
+          }
+          return `<tr class="cr-row"><td class="font-mono fs-11 text-t3">${esc(h.at ?? '-')}</td><td><span class="pill ${evtPill} fs-11" style="padding:3px 10px"><span class="pill-dot" style="width:6px;height:6px;border-radius:50%;display:inline-block;margin-inline-end:5px;background:currentColor;opacity:0.5"></span>${esc(evtLabel)}</span></td><td class="font-mono">${esc(h.pid ?? '-')}</td><td>${esc(h.concurrency ?? '-')}</td><td class="font-mono fs-11" style="max-width:200px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap">${esc(source)}</td></tr>`;
         });
         if (cntEl) cntEl.textContent = history.length;
         /* ── Paginate scrape history (5 rows per page) ── */
@@ -1332,26 +1476,52 @@ const IS_AR = document.documentElement.lang === 'ar';
     }
   }
 
-  q('scrapeStart').onclick = async () => {
-    const concurrency = q('scrapeConcurrency').value || '2';
-    const studentsCsv = q('scrapeCsv').value || '';
+  const scrapeStartButton = q('scrapeStart');
+  if (scrapeStartButton) scrapeStartButton.onclick = async () => {
+    const concurrency = Number(q('scrapeConcurrency').value || '2');
+    if (!Number.isInteger(concurrency) || concurrency < 1 || concurrency > 8) {
+      notify.error(T.invalidConcurrency);
+      return;
+    }
+    const studentSource = selectedScrapeSource();
+    const studentsCsv = studentSource === 'csv' ? (q('scrapeCsv').value || '') : '';
+    if (studentSource === 'database' && !scrapeDatabaseReady) {
+      notify.error(T.databaseSourceUnavailable);
+      await refreshScrapeSourceSummary();
+      return;
+    }
+    const sourceDescription = studentSource === 'database'
+      ? `${T.databaseStudents}: ${T.databaseRosterDescription(scrapeDatabaseCount, scrapeDatabaseExcluded)}`
+      : `${T.csvSource}: ${studentsCsv || T.csvDefault}`;
 
     const ok = await dlg.confirm({
       title: T.startScrapeTitle,
       body: `<p>${T.startScrapeBody}</p>
              <p><strong>${T.concurrencyLabel}</strong> ${concurrency}<br>
-             <strong>${T.csvLabel}</strong> ${studentsCsv || T.csvDefault}</p>`,
+             <strong>${T.sourceLabel}</strong> ${esc(sourceDescription)}</p>`,
       confirmText: T.startScraping,
       cancelText: T.cancel,
       kind: 'info',
     });
     if (!ok) return;
 
-    q('scrapeStart').disabled = true;
-    q('scrapeStop').disabled = false;
-    const url = `/ops/scrape/start/?concurrency=${encodeURIComponent(concurrency)}&students_csv=${encodeURIComponent(studentsCsv)}`;
+    scrapeStatusKnown = false;
+    updateScrapeStartAvailability();
+    q('scrapeStop').disabled = true;
     try {
-      const res = await fetch(url);
+      const res = await fetch('/ops/scrape/start/', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8',
+          'X-CSRFToken': csrfToken,
+        },
+        body: new URLSearchParams({
+          concurrency: String(concurrency),
+          student_source: studentSource,
+          students_csv: studentsCsv,
+          database_roster_token: studentSource === 'database' ? scrapeDatabaseRosterToken : '',
+        }),
+      });
       const data = await res.json();
       q('scrapeMeta').textContent = JSON.stringify(data, null, 2);
       if (!res.ok) notify.error(T.failedStartScrape(data.error || res.statusText));
@@ -1359,10 +1529,11 @@ const IS_AR = document.documentElement.lang === 'ar';
       q('scrapeMeta').textContent = T.failedStartScrape(err);
       notify.error('Failed to start scrape', err.message || String(err));
     }
-    await refreshScrapeStatus();
+    await Promise.all([refreshScrapeStatus(), syncScrapeSourceUi()]);
   };
 
-  q('scrapeStop').onclick = async () => {
+  const scrapeStopButton = q('scrapeStop');
+  if (scrapeStopButton) scrapeStopButton.onclick = async () => {
     const ok = await dlg.confirm({
       title: T.stopScrapeTitle,
       body: `<p>${T.stopScrapeBody}</p>`,
@@ -1371,10 +1542,14 @@ const IS_AR = document.documentElement.lang === 'ar';
     });
     if (!ok) return;
 
-    q('scrapeStop').disabled = true;
-    q('scrapeStart').disabled = false;
+    scrapeStatusKnown = false;
+    updateScrapeStartAvailability();
+    scrapeStopButton.disabled = true;
     try {
-      const res = await fetch('/ops/scrape/stop/');
+      const res = await fetch('/ops/scrape/stop/', {
+        method: 'POST',
+        headers: { 'X-CSRFToken': csrfToken },
+      });
       const data = await res.json();
       q('scrapeMeta').textContent = JSON.stringify(data, null, 2);
       if (!res.ok) notify.error(T.failedStopScrape(data.error || res.statusText));
@@ -1386,7 +1561,8 @@ const IS_AR = document.documentElement.lang === 'ar';
   };
 
   /* ── Oracle Student List Generator ──────────────────────────── */
-  q('oracleStudentsBtn').onclick = async () => {
+  const oracleStudentsButton = q('oracleStudentsBtn');
+  if (oracleStudentsButton) oracleStudentsButton.onclick = async () => {
     const fileInput = q('oracleStudentsFile');
     const program = q('oracleStudentsProgram').value.trim();
     const section = q('oracleStudentsSection').value.trim();
@@ -1419,7 +1595,9 @@ const IS_AR = document.documentElement.lang === 'ar';
       const data = await res.json();
       if (data.ok) {
         resultEl.textContent = `✅ Generated ${data.count} students → ${data.path} (skipped: ${data.skipped})`;
-        // Auto-fill the CSV path field
+        // The generated file is an explicit CSV scrape source.
+        q('scrapeSource').value = 'csv';
+        await syncScrapeSourceUi();
         q('scrapeCsv').value = data.path;
         notify.success(`Student list generated: ${data.count} students`);
       } else {
@@ -1556,9 +1734,9 @@ const IS_AR = document.documentElement.lang === 'ar';
     const btn = q('dbgRun');
     btn.disabled = true;
     btn.innerHTML = '<span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 12h14M12 5l7 7-7 7"/></svg></span>' + T.running;
-    const url = `/report/recommendation-debug/?year=${encodeURIComponent(q('dbgYear').value)}&semester=${encodeURIComponent(q('dbgSemester').value)}&section=${encodeURIComponent(q('dbgSection').value)}&program=${encodeURIComponent(q('dbgProgram').value)}&join_years=${encodeURIComponent(q('dbgJoin').value)}&limit=${encodeURIComponent(q('dbgLimit').value)}`;
-    q('dbgCsv').href = `/export/recommendation-debug.csv?year=${encodeURIComponent(q('dbgYear').value)}&semester=${encodeURIComponent(q('dbgSemester').value)}&section=${encodeURIComponent(q('dbgSection').value)}&program=${encodeURIComponent(q('dbgProgram').value)}&join_years=${encodeURIComponent(q('dbgJoin').value)}&limit=${encodeURIComponent(q('dbgLimit').value)}`;
-    q('dbgXlsx').href = `/export/recommendation-debug.xlsx?year=${encodeURIComponent(q('dbgYear').value)}&semester=${encodeURIComponent(q('dbgSemester').value)}&section=${encodeURIComponent(q('dbgSection').value)}&program=${encodeURIComponent(q('dbgProgram').value)}&join_years=${encodeURIComponent(q('dbgJoin').value)}&limit=${encodeURIComponent(q('dbgLimit').value)}`;
+    const url = `/report/recommendation-debug/?year=${encodeURIComponent(q('dbgYear').value)}&semester=${encodeURIComponent(q('dbgSemester').value)}&section=${encodeURIComponent(q('dbgSection').value)}&program=${encodeURIComponent(q('dbgProgram').value)}&join_years=${encodeURIComponent(q('dbgJoin').value)}&limit=${encodeURIComponent(q('dbgLimit').value)}&mode=${encodeURIComponent(q('dbgMode').value)}`;
+    q('dbgCsv').href = `/export/recommendation-debug.csv?year=${encodeURIComponent(q('dbgYear').value)}&semester=${encodeURIComponent(q('dbgSemester').value)}&section=${encodeURIComponent(q('dbgSection').value)}&program=${encodeURIComponent(q('dbgProgram').value)}&join_years=${encodeURIComponent(q('dbgJoin').value)}&limit=${encodeURIComponent(q('dbgLimit').value)}&mode=${encodeURIComponent(q('dbgMode').value)}`;
+    q('dbgXlsx').href = `/export/recommendation-debug.xlsx?year=${encodeURIComponent(q('dbgYear').value)}&semester=${encodeURIComponent(q('dbgSemester').value)}&section=${encodeURIComponent(q('dbgSection').value)}&program=${encodeURIComponent(q('dbgProgram').value)}&join_years=${encodeURIComponent(q('dbgJoin').value)}&limit=${encodeURIComponent(q('dbgLimit').value)}&mode=${encodeURIComponent(q('dbgMode').value)}`;
     const tbody = document.querySelector('#dbgTable tbody');
     if (!tbody) return;
 
@@ -1588,6 +1766,7 @@ const IS_AR = document.documentElement.lang === 'ar';
       return;
     }
     q('dbgMeta').textContent = T.debugMeta(data.count, data.filters?.section || '-', data.filters?.program || '-', (data.filters?.join_year_prefixes || []).join(',') || '-');
+    if (data.filters?.mode) q('dbgMeta').textContent += ` • mode=${data.filters.mode}`;
     q('dbgMeta').className = 'meta-banner meta-info';
     const withRec = (data.items || []).filter((x) => (x.recommended_courses || []).length > 0).length;
     q('dbgCount').textContent = String(data.count || 0);
@@ -2070,8 +2249,19 @@ const IS_AR = document.documentElement.lang === 'ar';
     document.dispatchEvent(new Event('dashboard:badges:update'));
   }
 
+  function syncHighPriorityParity() {
+    const semester = Number(q('hpSemester')?.value);
+    if ((semester === 1 || semester === 2) && q('hpParity')) {
+      q('hpParity').value = String(semester - 1);
+    }
+  }
+
+  q('hpSemester')?.addEventListener('input', syncHighPriorityParity);
+  syncHighPriorityParity();
+
   q('hpRun').onclick = async () => {
     if (!requireFields(['hpYear','hpSemester'], 'hpMeta', T.highPriorityReport)) return;
+    syncHighPriorityParity();
     const btn = q('hpRun');
     btn.disabled = true;
     btn.textContent = T.running;
@@ -2122,7 +2312,8 @@ const IS_AR = document.documentElement.lang === 'ar';
     if (!href || href === '#') return;
     const absolute = new URL(href, window.location.origin).toString();
     await navigator.clipboard.writeText(absolute);
-    q('scrapeMeta').textContent = T.linkCopied(label, absolute);
+    const scrapeMeta = q('scrapeMeta');
+    if (scrapeMeta) scrapeMeta.textContent = T.linkCopied(label, absolute);
     toast(T.labelCopied(label), true);
   }
 
@@ -2140,11 +2331,11 @@ const IS_AR = document.documentElement.lang === 'ar';
     const sid = q('studentIdInput')?.value || '';
     const year = q('batchYear')?.value || q('dbgYear')?.value || '';
     const sem = q('batchSemester')?.value || q('dbgSemester')?.value || '';
-    q('exStudentCsv').href = sid && year !== '' && sem !== '' ? `/export/student.csv?student_id=${encodeURIComponent(sid)}&year=${encodeURIComponent(year)}&semester=${encodeURIComponent(sem)}` : '#';
-    q('exAggregateCsv').href = `/export/aggregate.csv?year=${encodeURIComponent(q('batchYear')?.value || '')}&semester=${encodeURIComponent(q('batchSemester')?.value || '')}&program=${encodeURIComponent(q('batchProgram')?.value || '')}&section=${encodeURIComponent(q('batchSection')?.value || '')}`;
+    q('exStudentCsv').href = sid && year !== '' && sem !== '' ? `/export/student.csv?student_id=${encodeURIComponent(sid)}&year=${encodeURIComponent(year)}&semester=${encodeURIComponent(sem)}&mode=${encodeURIComponent(q('studentRecommendationMode')?.value || 'strict')}` : '#';
+    q('exAggregateCsv').href = `/export/aggregate.csv?year=${encodeURIComponent(q('batchYear')?.value || '')}&semester=${encodeURIComponent(q('batchSemester')?.value || '')}&program=${encodeURIComponent(q('batchProgram')?.value || '')}&section=${encodeURIComponent(q('batchSection')?.value || '')}&mode=${encodeURIComponent(q('batchMode')?.value || 'strict')}`;
     q('exPlanCsv').href = sid ? `/export/student-plan.csv?student_id=${encodeURIComponent(sid)}` : '#';
     q('exDebugCsv').href = `/export/recommendation-debug.csv?year=${encodeURIComponent(q('dbgYear')?.value || '')}&semester=${encodeURIComponent(q('dbgSemester')?.value || '')}&section=${encodeURIComponent(q('dbgSection')?.value || '')}&program=${encodeURIComponent(q('dbgProgram')?.value || '')}&join_years=${encodeURIComponent(q('dbgJoin')?.value || '')}&limit=${encodeURIComponent(q('dbgLimit')?.value || '')}`;
-    q('exEligibilityCsv').href = `/export/course-eligibility.csv?course_code=${encodeURIComponent(q('elCourse')?.value || '')}&section=${encodeURIComponent(q('elSection')?.value || '')}&program=${encodeURIComponent(q('elProgram')?.value || '')}&join_years=${encodeURIComponent(q('elJoin')?.value || '')}&mode=${encodeURIComponent(q('elMode')?.value || 'relaxed')}`;
+    q('exEligibilityCsv').href = `/export/course-eligibility.csv?course_code=${encodeURIComponent(q('elCourse')?.value || '')}&section=${encodeURIComponent(q('elSection')?.value || '')}&program=${encodeURIComponent(q('elProgram')?.value || '')}&join_years=${encodeURIComponent(q('elJoin')?.value || '')}&mode=${encodeURIComponent(q('elMode')?.value || 'strict')}`;
     q('exAdvisorCsv').href = '/advisor-portfolio/';  // portfolio is now standalone
     q('exHighPriorityXlsx').href = `/export/missing-high-priority.xlsx?year=${encodeURIComponent(q('hpYear')?.value || '')}&semester=${encodeURIComponent(q('hpSemester')?.value || '')}&section=${encodeURIComponent(q('hpSection')?.value || '')}&program=${encodeURIComponent(q('hpProgram')?.value || '')}&join_years=${encodeURIComponent(q('hpJoin')?.value || '')}&term_parity=${encodeURIComponent(q('hpParity')?.value || '0')}&discount=${encodeURIComponent(q('hpDiscount')?.value || '1_over_d')}&min_score=${encodeURIComponent(q('hpMinScore')?.value || '2.0')}&top_k=${encodeURIComponent(q('hpTopK')?.value || '10')}&studying_counts_as_passed=${encodeURIComponent(q('hpStudying')?.value || 'false')}`;
     requestSidebarBadgeUpdate();
@@ -2158,20 +2349,26 @@ const IS_AR = document.documentElement.lang === 'ar';
     });
   });
 
-  ['studentIdInput','batchYear','batchSemester','batchProgram','batchSection','dbgYear','dbgSemester','dbgSection','dbgProgram','dbgJoin','dbgLimit','cmYear','cmSemester','cmSection','cmProgram','cmJoin','cmLimit','elCourse','elSection','elProgram','elJoin','elMode','hpYear','hpSemester','hpSection','hpProgram','hpJoin','hpParity','hpDiscount','hpMinScore','hpTopK','hpStudying'].forEach((id) => {
+  ['studentIdInput','studentRecommendationMode','batchYear','batchSemester','batchProgram','batchSection','batchMode','dbgYear','dbgSemester','dbgSection','dbgProgram','dbgJoin','dbgLimit','dbgMode','cmYear','cmSemester','cmSection','cmProgram','cmJoin','cmLimit','elCourse','elSection','elProgram','elJoin','elMode','hpYear','hpSemester','hpSection','hpProgram','hpJoin','hpParity','hpDiscount','hpMinScore','hpTopK','hpStudying'].forEach((id) => {
     const el = q(id);
     if (el) el.addEventListener('change', syncExportCenterLinks);
   });
   syncExportCenterLinks();
 
-  q('batchSavePreset')?.addEventListener('click', () => savePreset('batch', ['batchYear','batchSemester','batchProgram','batchSection']));
-  q('batchLoadPreset')?.addEventListener('click', () => loadPreset('batch', ['batchYear','batchSemester','batchProgram','batchSection']));
-  q('dbgSavePreset')?.addEventListener('click', () => savePreset('debug', ['dbgYear','dbgSemester','dbgSection','dbgProgram','dbgJoin','dbgLimit']));
-  q('dbgLoadPreset')?.addEventListener('click', () => loadPreset('debug', ['dbgYear','dbgSemester','dbgSection','dbgProgram','dbgJoin','dbgLimit']));
+  q('batchSavePreset')?.addEventListener('click', () => savePreset('batch', ['batchYear','batchSemester','batchProgram','batchSection','batchMode']));
+  q('batchLoadPreset')?.addEventListener('click', () => {
+    loadPreset('batch', ['batchYear','batchSemester','batchProgram','batchSection','batchMode']);
+    syncExportCenterLinks();
+  });
+  q('dbgSavePreset')?.addEventListener('click', () => savePreset('debug', ['dbgYear','dbgSemester','dbgSection','dbgProgram','dbgJoin','dbgLimit','dbgMode']));
+  q('dbgLoadPreset')?.addEventListener('click', () => loadPreset('debug', ['dbgYear','dbgSemester','dbgSection','dbgProgram','dbgJoin','dbgLimit','dbgMode']));
   q('cmSavePreset')?.addEventListener('click', () => savePreset('conflictmatrix', ['cmYear','cmSemester','cmSection','cmProgram','cmJoin','cmLimit']));
   q('cmLoadPreset')?.addEventListener('click', () => loadPreset('conflictmatrix', ['cmYear','cmSemester','cmSection','cmProgram','cmJoin','cmLimit']));
   q('elSavePreset')?.addEventListener('click', () => savePreset('eligibility', ['elCourse','elSection','elProgram','elJoin','elMode']));
-  q('elLoadPreset')?.addEventListener('click', () => loadPreset('eligibility', ['elCourse','elSection','elProgram','elJoin','elMode']));
+  q('elLoadPreset')?.addEventListener('click', () => {
+    loadPreset('eligibility', ['elCourse','elSection','elProgram','elJoin','elMode']);
+    syncExportCenterLinks();
+  });
   q('elCopyIds')?.addEventListener('click', async () => {
     // Scrape every eligible ID from the table (paginateTable only hides rows, so all are in the DOM).
     const ids = Array.from(document.querySelectorAll('#elTable .cr-id'))
@@ -2258,7 +2455,8 @@ const IS_AR = document.documentElement.lang === 'ar';
     });
   });
 
-  q('scrapeRefresh').onclick = refreshScrapeStatus;
+  const scrapeRefreshButton = q('scrapeRefresh');
+  if (scrapeRefreshButton) scrapeRefreshButton.onclick = refreshScrapeStatus;
 
   /* ─────────────────────────────────────────────────────────────
      SKELETON ENGINE
@@ -2414,7 +2612,10 @@ const IS_AR = document.documentElement.lang === 'ar';
   });
 
   refreshAdvisorsDropdown();
-  refreshScrapeStatus();
+  if (scrapePanel) {
+    syncScrapeSourceUi();
+    refreshScrapeStatus();
+  }
   /* -- User Management JS → moved to standalone page at /user-management/ -- */
 
   /* ═══════════════════════════════════════════════════════════════

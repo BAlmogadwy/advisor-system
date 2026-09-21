@@ -32,7 +32,7 @@ from typing import Any
 
 #: Bumped when the meaning of a stored outcome changes, so a reader can tell a row
 #: written under different rules from one it can interpret.
-OUTCOME_SCHEMA_VERSION = "1.0"
+OUTCOME_SCHEMA_VERSION = "1.1"
 
 
 class ReasonCode:
@@ -47,6 +47,17 @@ class ReasonCode:
     JUDGE_REJECTED = "JUDGE_REJECTED"
     MODEL_UNAVAILABLE = "MODEL_UNAVAILABLE"
     STUDENT_REQUESTED = "STUDENT_REQUESTED"
+    #: The answer was withheld because it named identifiers the system could
+    #: not support. A sibling of a failed citation check, and it must be
+    #: reported for the same reason: a turn that ends in a refusal has not
+    #: answered the student, whatever the prose looks like.
+    OUTPUT_NOT_GROUNDED = "OUTPUT_NOT_GROUNDED"
+    #: The typed semantic planner correctly identified a deliverable that the
+    #: read-only adviser cannot provide (including a requested portal mutation).
+    CAPABILITY_UNSUPPORTED = "CAPABILITY_UNSUPPORTED"
+    #: A schema-valid plan omitted a requested deliverable or selected unrelated
+    #: evidence. No capability was executed under that incomplete contract.
+    SEMANTIC_PLAN_INCOMPLETE = "SEMANTIC_PLAN_INCOMPLETE"
 
     ALL = frozenset(
         {
@@ -59,6 +70,9 @@ class ReasonCode:
             JUDGE_REJECTED,
             MODEL_UNAVAILABLE,
             STUDENT_REQUESTED,
+            OUTPUT_NOT_GROUNDED,
+            CAPABILITY_UNSUPPORTED,
+            SEMANTIC_PLAN_INCOMPLETE,
         }
     )
 
@@ -176,6 +190,9 @@ _STUDENT_SCOPED_TOOLS = frozenset(
         "recommend_next_courses",
         "current_registrations",
         "remaining_requirements",
+        "recommend_feasible_course_addition",
+        "rank_current_course_drop_impact",
+        "improve_current_timetable",
     }
 )
 
@@ -260,13 +277,32 @@ def derive_outcome(
             missing_information=[],
         )
 
+    # GATED ON `policy_required`, and it has to be. Retrieval is now unconditional
+    # and server-side, so `policy_grounding` is a real state for every turn —
+    # including «وين قاعة GS112؟», where the store legitimately holds nothing
+    # governing. Before the prefetch such a turn recorded `not_consulted` and
+    # produced no reason code; ungated, the same turn would now record
+    # `none_matched` -> POLICY_NOT_FOUND -> ABSTAIN. Measured over the
+    # 284-question corpus that inverts the disposition of 83 questions, none of
+    # which asked for a rule. A missing rule is only a reason when a rule was owed.
+    #
+    # Defaults to True for a payload that predates the flag: an older stored turn
+    # keeps the behaviour it was written under.
     grounding = str(agent.get("policy_grounding") or "")
-    if grounding == "unavailable":
-        reasons.append(ReasonCode.POLICY_UNAVAILABLE)
-    elif grounding in {"none_matched", "none_governing"}:
-        reasons.append(ReasonCode.POLICY_NOT_FOUND)
+    policy_required = bool(agent.get("policy_required", True))
+    if policy_required:
+        if grounding == "unavailable":
+            reasons.append(ReasonCode.POLICY_UNAVAILABLE)
+        elif grounding in {"none_matched", "none_governing"}:
+            reasons.append(ReasonCode.POLICY_NOT_FOUND)
 
-    if any(r.get("conflicting_policy_evidence") for r in _policy_tool_results(agent)):
+    # Also gated. Unconditional retrieval surfaces conflicting records on 23 of the
+    # 284 corpus questions, and CONFLICTING_AUTHORITIES escalates unconditionally a
+    # few lines below — so ungating it would open a real adviser case because a
+    # timetable question's retrieval happened to touch two disagreeing records.
+    if policy_required and any(
+        r.get("conflicting_policy_evidence") for r in _policy_tool_results(agent)
+    ):
         reasons.append(ReasonCode.CONFLICTING_AUTHORITIES)
 
     if _asked_for_a_personal_decision(result, agent):
@@ -275,6 +311,26 @@ def derive_outcome(
     missing = validate_missing_information(result.get("missing_information") or [])
     if missing:
         reasons.append(ReasonCode.STUDENT_DATA_MISSING)
+
+    if agent.get("grounding_refused"):
+        # The output contract replaced the answer. Without this the turn persists
+        # as COMPLETED with a refusal in the body: the UI shows no status note,
+        # and `may_escalate` refuses the student a human with «هذه الإجابة لا
+        # تحتاج إلى مراجعة» — a refused answer presented as a resolved one.
+        reasons.append(ReasonCode.OUTPUT_NOT_GROUNDED)
+
+    semantic_outcomes = {
+        str(value or "") for value in (agent.get("semantic_plan_requested_outcomes") or [])
+    }
+    if (
+        agent.get("semantic_plan_decision") == "unsupported"
+        or "registration_action" in semantic_outcomes
+        or "credit_load_comparison" in semantic_outcomes
+    ):
+        reasons.append(ReasonCode.CAPABILITY_UNSUPPORTED)
+
+    if agent.get("semantic_outcome_coverage_refused"):
+        reasons.append(ReasonCode.SEMANTIC_PLAN_INCOMPLETE)
 
     if agent.get("judge_action") == "ESCALATE":
         reasons.append(ReasonCode.JUDGE_REJECTED)
@@ -290,8 +346,15 @@ def derive_outcome(
         or ReasonCode.CONFLICTING_AUTHORITIES in reasons
     ):
         disposition = "ESCALATE"
-    elif agent.get("citation_refused"):
-        # The answer was withheld because its citations could not be verified.
+    elif (
+        agent.get("citation_refused")
+        or agent.get("grounding_refused")
+        or ReasonCode.CAPABILITY_UNSUPPORTED in reasons
+        or ReasonCode.SEMANTIC_PLAN_INCOMPLETE in reasons
+    ):
+        # The answer was withheld — because its citations could not be verified,
+        # or because it named identifiers the evidence does not support. Both are
+        # the system declining to answer, not answering.
         disposition = "ABSTAIN"
     elif (
         ReasonCode.PROHIBITED_FOR_DECISION in reasons or ReasonCode.STUDENT_DATA_MISSING in reasons

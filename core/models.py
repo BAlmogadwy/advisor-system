@@ -1,8 +1,10 @@
 import uuid
+from typing import Any
 
 from django.conf import settings
 from django.db import models, transaction
 from django.db.models import F
+from django.db.models.functions import Trim, Upper
 
 
 class Student(models.Model):
@@ -47,6 +49,12 @@ class Course(models.Model):
 
 
 class StudentCourse(models.Model):
+    class Status(models.TextChoices):
+        PASSED = "passed", "Passed"
+        STUDYING = "studying", "Studying"
+        FAILED = "failed", "Failed"
+        NOT_TAKEN = "not_taken", "Not taken"
+
     student = models.ForeignKey(
         Student,
         on_delete=models.CASCADE,
@@ -58,7 +66,7 @@ class StudentCourse(models.Model):
         related_name="student_courses",
     )
     programme_term = models.IntegerField(null=True, blank=True)
-    status = models.TextField(blank=True, default="")
+    status = models.TextField(choices=Status.choices, default=Status.NOT_TAKEN)
     grade = models.TextField(blank=True, default="")
     mark = models.FloatField(null=True, blank=True)
     actual_term = models.TextField(blank=True, default="")
@@ -341,6 +349,132 @@ class CourseInstructor(models.Model):
         return f"CourseInstructor({self.program}/{self.course_code}/{self.section}->{self.instructor_id})"
 
 
+class SectionInstructor(models.Model):
+    """Who *does* teach one section, as opposed to who *may* teach the course.
+
+    ``CourseInstructor`` records eligibility at course granularity and cannot say
+    which of CS113's thirty-one sections a person holds — the live report names
+    eight different people across them.  The registrar publishes that decision per
+    section (``facultySectionsAvilableSeats.do`` — استاذ المادة against الشعبة), and
+    this table stores it.
+
+    **Keyed by natural identity, deliberately not by a ``TermSection`` FK.**  Four
+    operations delete section rows out from under an assignment:
+    ``scheduler.bridge`` on every ``plan()`` run, and ``db_admin_ops`` for the
+    section-snapshot clear and for external courses (93 of the 855 live sections),
+    plus the scenario cascade.  A FK would make an assignment a casualty of any of
+    them, which is what made the 2026-06 ``SectionInstructor`` (migration 0034,
+    dropped in 0035 with no data migration) fragile.
+    ``(scenario, course_key, section)`` is owned by the registrar, is already the
+    key ``ux_term_sections_global`` enforces, and survives all four.  A row may
+    therefore describe a section that does not exist yet; resolution is a join,
+    never a dependency.
+
+    The release-seed import is NOT in that list and no key can survive it:
+    ``_flush_target_database`` truncates every table in the target before loading,
+    so this one is replaced like any other — which is the intended behaviour for a
+    rebuild, not a loss.
+
+    ``scenario`` NULL means a registrar/global section — the only kind the importer
+    writes.  Scenario-scoped rows are supported for symmetry with ``TermSection``
+    but carry the caveat that a generated section's label is positional
+    (``S{index}``, recomputed from demand each build), so it is not a stable
+    identity.
+
+    This table changes no behaviour on its own: nothing reads it into the planner
+    yet, and nothing here writes ``TermSectionMeeting.instructor``.
+    """
+
+    scenario = models.ForeignKey(
+        "TimetableScenario",
+        on_delete=models.CASCADE,
+        related_name="section_instructors",
+        null=True,
+        blank=True,
+    )
+    course_key = models.TextField()  # normalised on write (strip + upper)
+    section = models.TextField()  # normalised on write (strip + upper)
+    instructor = models.ForeignKey(
+        Instructor,
+        on_delete=models.PROTECT,
+        related_name="section_links",
+    )
+    ROLE_CHOICES = (("primary", "Primary"), ("co", "Co-instructor"), ("lab", "Lab"))
+
+    role = models.TextField(default="primary", choices=ROLE_CHOICES)
+    source = models.TextField(blank=True, default="")  # provenance of the assignment
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "section_instructors"
+        constraints = [
+            # A unique index treats NULLs as distinct, so the scenario-owned and
+            # global cases need separate partial constraints — the same split
+            # ``TermSection`` uses, for the same reason.
+            models.UniqueConstraint(
+                fields=["scenario", "course_key", "section", "instructor"],
+                condition=models.Q(scenario__isnull=False),
+                name="ux_section_instructor_scenario",
+            ),
+            models.UniqueConstraint(
+                fields=["course_key", "section", "instructor"],
+                condition=models.Q(scenario__isnull=True),
+                name="ux_section_instructor_global",
+            ),
+            # Exactly one primary per section, mirroring
+            # ``ux_course_instructor_one_primary``.  Without it "primary" would be
+            # whichever row was inserted first — the defect migration 0035 fixed at
+            # course level and that the dropped 0034 model never had.
+            models.UniqueConstraint(
+                fields=["scenario", "course_key", "section"],
+                condition=models.Q(scenario__isnull=False, role="primary"),
+                name="ux_section_instructor_one_primary_scenario",
+            ),
+            models.UniqueConstraint(
+                fields=["course_key", "section"],
+                condition=models.Q(scenario__isnull=True, role="primary"),
+                name="ux_section_instructor_one_primary_global",
+            ),
+            # Enforced in the DATABASE, not in ``save()``.  The unique indexes
+            # compare raw stored text, and ``bulk_create`` / ``QuerySet.update``
+            # never call ``save()`` — so a Python-only normalisation let
+            # ``cs111``/``m27`` sit beside ``CS111``/``M27`` as a second primary,
+            # and let ``"   "`` pass a plain ``<> ''`` check.
+            models.CheckConstraint(
+                condition=models.Q(course_key=Upper(Trim(F("course_key"))))
+                & ~models.Q(course_key=""),
+                name="ck_si_course_key_normalised",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(section=Upper(Trim(F("section")))) & ~models.Q(section=""),
+                name="ck_si_section_normalised",
+            ),
+            # ``role`` participates in the one-primary partial index by literal
+            # value, so an unconstrained variant such as "Primary" would sit
+            # outside it and silently give a section two primaries.
+            models.CheckConstraint(
+                condition=models.Q(role__in=("primary", "co", "lab")),
+                name="ck_si_role_valid",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["course_key", "section"], name="idx_si_lookup"),
+            models.Index(fields=["instructor"], name="idx_si_instructor"),
+        ]
+
+    def __str__(self) -> str:
+        return f"SectionInstructor({self.course_key}/{self.section}->{self.instructor_id})"
+
+    def save(self, *args: Any, **kwargs: Any) -> None:
+        # Convenience for the ordinary path; the CHECK constraints are what make
+        # it a guarantee, because bulk_create and .update() skip this method.
+        self.course_key = (self.course_key or "").strip().upper()
+        self.section = (self.section or "").strip().upper()
+        self.role = (self.role or "primary").strip().lower()
+        super().save(*args, **kwargs)
+
+
 class TermSection(models.Model):
     # Scenario FK: scopes auto-generated sections to a specific scenario
     # so two scenarios can both have CS211/S1 independently.
@@ -388,6 +522,51 @@ class TermSection(models.Model):
         return f"TermSection({self.course_key}:{self.section})"
 
 
+class TermSectionProgram(models.Model):
+    """Programme membership for a global current-term section.
+
+    A section may serve more than one programme, so programme ownership is a
+    normalized link instead of a comma-separated field on ``TermSection``.
+    ``assignment_source`` distinguishes memberships observed through student
+    registrations from authoritative memberships supplied by a section import.
+    """
+
+    term_section = models.ForeignKey(
+        TermSection,
+        on_delete=models.CASCADE,
+        related_name="program_links",
+    )
+    program = models.CharField(max_length=32)
+    assignment_source = models.CharField(max_length=24, default="observed")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "term_section_programs"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["term_section", "program"],
+                name="uq_term_section_program",
+            ),
+            models.CheckConstraint(
+                condition=~models.Q(program=""),
+                name="ck_tsp_program_nonempty",
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=["program", "term_section"],
+                name="idx_tsp_program_section",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"TermSectionProgram({self.term_section_id}/{self.program})"
+
+    def save(self, *args: Any, **kwargs: Any) -> None:
+        self.program = (self.program or "").strip().upper()
+        super().save(*args, **kwargs)
+
+
 class TermSectionMeeting(models.Model):
     term_section = models.ForeignKey(
         TermSection,
@@ -425,6 +604,14 @@ class TermSectionMeeting(models.Model):
 
 
 class StudentTermSection(models.Model):
+    """One link from a student to a section, for one term, from one source.
+
+    ``source`` is not decoration: it is the difference between "the registrar
+    recorded this" and "an approved plan forecast this", and
+    ``core.services.timetable_snapshots`` is the only place that decides which is
+    which. See that module before reading a row's meaning off this table.
+    """
+
     student_id = models.IntegerField()
     academic_year = models.TextField()
     term = models.TextField()
@@ -440,15 +627,29 @@ class StudentTermSection(models.Model):
     class Meta:
         db_table = "student_term_sections"
         constraints = [
+            # ``source`` is part of the key BECAUSE a term may now hold both an
+            # expected plan and the registrar's snapshot at once. Without it the
+            # second snapshot cannot store the section the first one already
+            # names — which is every section the student actually registered in
+            # from the plan they were given, i.e. exactly the overlap the student
+            # portal exists to show. Two rows of the SAME source for one section
+            # remain impossible, which is the property the old key was protecting.
             models.UniqueConstraint(
-                fields=["student_id", "term_section"],
-                name="ux_student_term_sections_unique",
+                fields=["student_id", "academic_year", "term", "term_section", "source"],
+                name="ux_sts_student_term_section_source",
             ),
         ]
         indexes = [
             models.Index(
                 fields=["student_id"],
                 name="ix_sts_student",
+            ),
+            # Every snapshot read is (student, year, term) then a filter on class.
+            # With two snapshots per term the row count per student doubles, so the
+            # term is worth indexing rather than scanned out of the student's rows.
+            models.Index(
+                fields=["student_id", "academic_year", "term"],
+                name="ix_sts_student_term",
             ),
         ]
 
@@ -476,7 +677,23 @@ class UserScope(models.Model):
 
 class StudentLoginOTP(models.Model):
     """One-time email code for student login. The code itself is never stored —
-    only a salted SHA-256 hash. Short-lived, single-use, attempt-capped."""
+    only a salted SHA-256 hash. Short-lived, single-use, attempt-capped.
+
+    ``consumed`` is also the activation gate.  A provider-backed replacement is
+    created consumed and becomes usable only after the provider accepts it; this
+    lets a failed resend leave the previously delivered code usable.
+    """
+
+    class DeliveryChannel(models.TextChoices):
+        SMTP = "smtp", "SMTP"
+        SENDGRID = "sendgrid", "Twilio SendGrid"
+
+    class DeliveryStatus(models.TextChoices):
+        PENDING = "pending", "Pending"
+        ACCEPTED = "accepted", "Accepted"
+        FAILED = "failed", "Failed"
+        CANCELLED = "cancelled", "Cancelled"
+        SKIPPED = "skipped", "Historical / unknown"
 
     student_id = models.IntegerField(db_index=True)
     code_hash = models.CharField(max_length=64)
@@ -485,6 +702,28 @@ class StudentLoginOTP(models.Model):
     attempts = models.IntegerField(default=0)
     consumed = models.BooleanField(default=False)
     request_ip = models.CharField(max_length=64, blank=True, default="")
+    delivery_channel = models.CharField(
+        max_length=16,
+        choices=DeliveryChannel.choices,
+        default=DeliveryChannel.SMTP,
+        db_default=DeliveryChannel.SMTP,
+    )
+    delivery_status = models.CharField(
+        max_length=16,
+        choices=DeliveryStatus.choices,
+        default=DeliveryStatus.PENDING,
+        # The retained database default exists for the old web process during a
+        # rolling deploy. Those rows predate delivery receipts, so do not claim
+        # they are pending SendGrid work that the new process may cancel.
+        db_default=DeliveryStatus.SKIPPED,
+    )
+    delivery_finished_at = models.DateTimeField(null=True, blank=True)
+    provider_message_id = models.CharField(
+        max_length=255,
+        blank=True,
+        default="",
+        db_default="",
+    )
 
     class Meta:
         db_table = "core_student_login_otp"
@@ -810,7 +1049,7 @@ class ScenarioSectionBudget(models.Model):
     def __str__(self) -> str:
         return f"Budget({self.scenario_id}/{self.course_key or self.course_code})"
 
-    def save(self, *args, **kwargs) -> None:
+    def save(self, *args: Any, **kwargs: Any) -> None:
         if not self.course_key:
             self.course_key = self.course_code
         super().save(*args, **kwargs)
@@ -1559,11 +1798,12 @@ class FinalDisposition(models.TextChoices):
 
 
 class AdvisorMessage(models.Model):
-    """One turn. The student-visible body ONLY.
+    """One turn: its student-visible body and an optional safe view model.
 
-    Tool results and judge traces are deliberately absent: they name database
-    tables, quote row counts and cohort statistics, and belong in an operator
-    audit record rather than in something rendered to the person who asked.
+    Raw tool results and judge traces are deliberately absent: they name database
+    tables, quote row counts and cohort statistics. ``evidence_audit`` retains only
+    redacted hashes and closed outcome categories, and the presentation field
+    accepts only a server-whitelisted student display snapshot.
     """
 
     ROLE_STUDENT = "STUDENT"
@@ -1580,6 +1820,7 @@ class AdvisorMessage(models.Model):
     )
     role = models.CharField(max_length=16, choices=ROLE_CHOICES)
     content = models.TextField()
+    presentation = models.JSONField(default=dict, blank=True)
 
     # How the answer was reached. Per-message rather than per-conversation because a
     # single thread mixes grounded policy answers with pure student-data ones, and
@@ -1616,9 +1857,24 @@ class AdvisorMessage(models.Model):
     route = models.CharField(max_length=24, choices=ROUTE_CHOICES, blank=True, default="")
     prompt_version = models.CharField(max_length=40, blank=True, default="")
 
+    #: Redacted operator provenance only. This never contains the prompt, answer,
+    #: tool arguments or tool results: only closed categories and sha256 hashes of
+    #: the typed provider-visible evidence. Old and non-assistant rows are ``{}``.
+    evidence_audit = models.JSONField(default=dict, blank=True)
+
     # Set by the client per send. A retry after a dropped response reuses it, so a
     # network failure cannot turn one question into two stored turns.
     idempotency_key = models.CharField(max_length=64, blank=True, default="", db_index=True)
+
+    # Server-owned provenance for channel-specific evidence boundaries. Unlike
+    # idempotency_key this is never copied from request JSON, so a web client
+    # cannot label a full-record answer as safe Telegram history.
+    generation_profile = models.CharField(
+        max_length=32,
+        blank=True,
+        default="",
+        editable=False,
+    )
 
     # sha256 of the request that produced this turn. The unique key alone cannot
     # tell a genuine retry from a different question sent under a reused key; with
@@ -1685,7 +1941,7 @@ class AdvisorMessage(models.Model):
     def __str__(self) -> str:
         return f"Message({self.id}/{self.role})"
 
-    def save(self, *args, **kwargs):
+    def save(self, *args: Any, **kwargs: Any) -> None:
         """Claim the next position in the conversation on first write.
 
         Computed here rather than by the callers, because a message written without
@@ -1846,6 +2102,10 @@ class AdvisorEscalation(models.Model):
         JUDGE_REJECTED = ("JUDGE_REJECTED", "The answer did not survive review")
         MODEL_UNAVAILABLE = ("MODEL_UNAVAILABLE", "No answer could be produced")
         STUDENT_REQUESTED = ("STUDENT_REQUESTED", "The student asked for a human adviser")
+        OUTPUT_NOT_GROUNDED = (
+            "OUTPUT_NOT_GROUNDED",
+            "The answer named identifiers the evidence does not support",
+        )
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
 
@@ -1924,7 +2184,7 @@ class AdvisorEscalation(models.Model):
     def __str__(self) -> str:
         return f"{self.reference}({self.status})"
 
-    def save(self, *args, **kwargs):
+    def save(self, *args: Any, **kwargs: Any) -> None:
         if not self.reference:
             self.reference = allocate_escalation_reference()
         super().save(*args, **kwargs)

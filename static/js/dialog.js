@@ -12,6 +12,8 @@
  *   typed          – require the user to type this string to enable confirm (alias: typedConfirm)
  *   inputLabel     – show an input field with this label (auto-escaped)
  *   inputPlaceholder / inputHint / inputType – input configuration
+ *   defaultValue / maxLength / required – optional free-form input constraints
+ *   waitForClose    – resolve after removal and focus restoration (default false)
  */
 const dlg = (() => {
   const ICONS = {
@@ -50,6 +52,10 @@ const dlg = (() => {
       inputPlaceholder: opts.inputPlaceholder || opts.placeholder || '',
       inputHint:        opts.inputHint || opts.hint || '',
       inputType:        opts.inputType || opts.type || 'text',
+      defaultValue:     String(opts.defaultValue ?? ''),
+      maxLength:        Number.isInteger(opts.maxLength) && opts.maxLength > 0 ? opts.maxLength : null,
+      required:         opts.required === true,
+      waitForClose:     opts.waitForClose === true,
     };
   }
 
@@ -81,7 +87,7 @@ const dlg = (() => {
       inputHtml =
         `<div class="dlg-input-row">` +
           `<label for="dlg-input-field">${esc(o.inputLabel)}</label>` +
-          `<input id="dlg-input-field" class="dlg-input" type="${esc(o.inputType)}" placeholder="${esc(o.inputPlaceholder)}" autocomplete="off">` +
+          `<input id="dlg-input-field" class="dlg-input" type="${esc(o.inputType)}" placeholder="${esc(o.inputPlaceholder)}" value="${esc(o.defaultValue)}"${o.maxLength === null ? '' : ` maxlength="${o.maxLength}"`}${o.required ? ' required' : ''} autocomplete="off">` +
           (o.inputHint ? `<div class="dlg-input-hint">${esc(o.inputHint)}</div>` : '') +
         `</div>`;
     }
@@ -128,31 +134,45 @@ const dlg = (() => {
       const btnOk  = bd.querySelector('.btn-confirm');
       const btnNo  = bd.querySelector('.btn-cancel');
 
-      if (o.typedConfirm) { btnOk.disabled = true; }
+      const inputIsValid = () => !input || (o.typedConfirm
+        ? input.value.trim().toLowerCase() === o.typedConfirm.toLowerCase()
+        : (!o.required || Boolean(input.value.trim())) && (o.maxLength === null || input.value.length <= o.maxLength));
+      btnOk.disabled = !inputIsValid();
+      let closing = false;
 
       function close(val) {
+        if (closing) return;
+        closing = true;
         bd.classList.remove('open');
         releaseTrap();
         if (mainEl) mainEl.removeAttribute('aria-hidden');
-        setTimeout(() => { bd.remove(); if (previouslyFocused) previouslyFocused.focus(); }, 200);
-        resolve(val);
+        setTimeout(() => {
+          bd.remove();
+          if (previouslyFocused) previouslyFocused.focus();
+          if (o.waitForClose) resolve(val);
+        }, 200);
+        if (!o.waitForClose) resolve(val);
       }
 
       btnNo.addEventListener('click', () => close(false));
-      btnOk.addEventListener('click', () => close(input ? input.value || true : true));
+      btnOk.addEventListener('click', () => { if (inputIsValid()) close(input ? input.value || true : true); });
       bd.addEventListener('click', e => { if (e.target === bd) close(false); });
       bd.addEventListener('keydown', e => {
         if (e.key === 'Escape') close(false);
-        if (e.key === 'Enter' && !btnOk.disabled) close(input ? input.value || true : true);
+        if (e.key === 'Enter' && !btnOk.disabled && inputIsValid()) close(input ? input.value || true : true);
       });
 
-      if (input && o.typedConfirm) {
+      if (input) {
         input.addEventListener('input', () => {
-          btnOk.disabled = input.value.trim().toLowerCase() !== o.typedConfirm.toLowerCase();
+          btnOk.disabled = !inputIsValid();
         });
       }
 
-      setTimeout(() => { if (input) input.focus(); else btnOk.focus(); }, 50);
+      setTimeout(() => {
+        if (closing) return;
+        if (input) { input.focus(); if (o.defaultValue) input.select(); }
+        else btnOk.focus();
+      }, 50);
     });
   }
 

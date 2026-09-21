@@ -1,5 +1,29 @@
 # Instructor Assignment — feature note
 
+> ## ⚠️ HISTORICAL — parts of this document describe code that no longer exists
+>
+> Read this section before trusting anything below it. Three claims in this note are
+> **false as of 2026-09-21**, and they are the kind that cost hours:
+>
+> 1. **`SectionInstructor` as described here was deleted** two and a half hours after it
+>    landed (`2ba5bae`, migration `0035`, `DeleteModel` with no data migration). It was
+>    replaced by course-level `CourseInstructor(program, course_code, section M/F)`. The
+>    reason was a product rejection of scenario-scoped assignment and of the UI, not a
+>    defect. A **new, differently-keyed** `SectionInstructor` exists again since migration
+>    `0067` — see *Per-section assignment (2026-09)* below. It is not this one.
+> 2. **`TIMETABLE_INSTRUCTOR_LINKS_ENABLED` defaults to `true`**, not `false` — changed
+>    2026-07-16 (`config/settings.py`). The flag table below is wrong. There is no
+>    "flag-OFF by default" safety margin, and **no test compares a flag-ON board against a
+>    flag-OFF one**, so every "byte-identical" claim in this note is asserted rather than
+>    measured.
+> 3. **`tests/test_instructor_assignment.py` does not exist** (deleted in `2ba5bae`). The
+>    current tests are `tests/test_course_instructor_assignment.py` and
+>    `tests/test_section_instructor_import.py`.
+>
+> The endpoint list is likewise stale: `ops/instructors/{sections,assign,unassign}` and the
+> `ops/tw/...` drawer routes were removed. Current routes are
+> `ops/instructors/course-assignments/{,set,clear,assign-bulk,reconcile}`.
+
 A real instructor-assignment feature: a global `Instructor` entity, scenario-scoped
 section links, an assignment UI, a teaching-load report, and an opt-in multi-instructor
 planner clash. Replaces the 100 %-blank free-text `TermSectionMeeting.instructor`.

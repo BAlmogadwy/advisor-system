@@ -16,6 +16,7 @@ from core.models import (
     ProgrammeRequirement,
     Student,
     StudentCourse,
+    StudentTermSection,
     TermSection,
     TermSectionMeeting,
 )
@@ -23,10 +24,12 @@ from core.services.credit_policy import (
     RECOMMENDED_MAX_CREDITS,
     REGULATORY_MAX_CREDITS,
 )
+from core.services.eligibility import evaluate_prerequisites
 from core.services.planner_builder import build_plans
 from core.services.policy import require_student_scope
 from core.services.rbac import ROLE_ADVISOR, ROLE_GENERAL_ADVISOR, ROLE_SUPER_ADMIN, get_user_role
 from core.services.recommender import recommend_next_courses
+from core.services.section_programmes import filter_sections_for_program
 from core.services.student_helpers import get_student_passed_and_studying, normalize_code
 from core.services.student_sections import (
     UnknownStudentGender,
@@ -35,13 +38,21 @@ from core.services.student_sections import (
     gender_section_filter,
     get_student_term_baseline,
     replace_student_term_sections,
+    section_is_available_to_student,
+    snapshot_class_filter,
     student_gender,
     student_gender_strict,
 )
+from core.services.timetable_snapshots import Snapshot, SnapshotClass
 from core.settings_views import load_defaults
 from core.sidebar_context import get_sidebar_context
 
 logger = logging.getLogger(__name__)
+
+#: A shortlist is a term's worth of courses for one student. Anything past
+#: this is a malformed or hostile caller, not an adviser planning a term.
+MAX_SHORTLIST_COURSES = 40
+ELIGIBILITY_MODES = {"strict", "relaxed"}
 
 
 def _ok(data: dict[str, object], status: int = 200) -> JsonResponse:
@@ -81,6 +92,26 @@ def _validate_term_inputs(year: str, term: str) -> JsonResponse | None:
     return None
 
 
+def _int_field(value: object, field: str, *, default: int = 0) -> tuple[int, JsonResponse | None]:
+    """Coerce a numeric payload field, or refuse it with a 400.
+
+    ``int("three")`` raises ValueError, and these coercions sat OUTSIDE the
+    try block wrapping the build, so a typo in one shortlist row returned a raw
+    HTML 500 from a JSON endpoint. A malformed request is the caller's error and
+    must say so in the caller's language.
+    """
+    if value is None or value == "":
+        return default, None
+    if isinstance(value, bool):
+        return default, _err(f"{field} must be a number", code="VALIDATION_NUMERIC", status=400)
+    try:
+        return int(value), None
+    except (TypeError, ValueError):
+        return default, _err(
+            f"{field} must be a number, got {value!r}", code="VALIDATION_NUMERIC", status=400
+        )
+
+
 def _parse_student_id(student_id: str) -> tuple[int | None, JsonResponse | None]:
     if not student_id.isdigit():
         return None, _err("student_id must be numeric", code="VALIDATION_STUDENT_ID", status=400)
@@ -99,6 +130,25 @@ def _safe_json(request: HttpRequest) -> tuple[dict[str, object], JsonResponse | 
     if not isinstance(payload, dict):
         return {}, _err("JSON body must be an object", code="INVALID_JSON_SHAPE", status=400)
     return payload, None
+
+
+def _eligibility_mode(
+    payload: dict[str, object],
+) -> tuple[str | None, JsonResponse | None]:
+    """Parse the planner's eligibility policy, defaulting the screen to strict.
+
+    This is deliberately separate from the existing ``mode`` field, whose
+    ``keep``/``ignore`` values control how the registered timetable is handled.
+    """
+
+    mode = str(payload.get("eligibility_mode", "strict")).strip().lower()
+    if mode not in ELIGIBILITY_MODES:
+        return None, _err(
+            "eligibility_mode must be strict or relaxed",
+            code="VALIDATION_ELIGIBILITY_MODE",
+            status=400,
+        )
+    return mode, None
 
 
 @login_required(login_url="login")
@@ -131,6 +181,10 @@ def planner_context_view(request: HttpRequest) -> JsonResponse:
     student_id = str(payload.get("student_id", "")).strip()
     year = str(payload.get("academic_year", "")).strip()
     term = str(payload.get("term", "")).strip()
+    eligibility_mode, eligibility_err = _eligibility_mode(payload)
+    if eligibility_err:
+        return eligibility_err
+    assert eligibility_mode is not None
 
     if not student_id or not year or not term:
         return _err(
@@ -153,7 +207,14 @@ def planner_context_view(request: HttpRequest) -> JsonResponse:
         return scope_err
 
     try:
-        return _planner_context_inner(request, student_id, student_id_int, year, term)
+        return _planner_context_inner(
+            request,
+            student_id,
+            student_id_int,
+            year,
+            term,
+            eligibility_mode=eligibility_mode,
+        )
     except Exception as exc:
         logger.error("planner_context_view error for student=%s", student_id, exc_info=True)
         return _internal_error(exc)
@@ -165,6 +226,8 @@ def _planner_context_inner(
     student_id_int: int,
     year: str,
     term: str,
+    *,
+    eligibility_mode: str,
 ) -> JsonResponse:
     """Core logic extracted so the caller can catch unexpected exceptions."""
     student = (
@@ -177,6 +240,11 @@ def _planner_context_inner(
             "advisor_id",
             "gpa",
             "total_registered_credits",
+            # Needed by the hour-gate half of the prerequisite check below.
+            # Taken from THIS query rather than a second lookup: the students
+            # table was being hit eight times per request for one student.
+            "total_earned_credits",
+            "current_registered_credits",
         )
         .first()
     )
@@ -198,8 +266,12 @@ def _planner_context_inner(
         "credit_cap": RECOMMENDED_MAX_CREDITS,
         "regulatory_max_credits": REGULATORY_MAX_CREDITS,
     }
+    program = str(student_summary["program"] or "").strip()
+    _earned_credits = student["total_earned_credits"] or 0
+    _registered_credits = student["current_registered_credits"] or 0
+    gender = student_gender(student_id_int)
 
-    baseline = get_student_term_baseline(student_id, year, term)
+    baseline = get_student_term_baseline(student_id, year, term, snapshot=Snapshot.EFFECTIVE)
     if not baseline:
         # Auto-repair: build current snapshot mappings from studying courses when possible.
         studying_codes_qs = (
@@ -216,21 +288,27 @@ def _planner_context_inner(
         if wanted:
             from django.db.models import Min
 
-            mapped_qs = (
+            mapped_qs = filter_sections_for_program(
                 TermSection.objects.filter(
                     scenario__isnull=True,
                     course_key__in=wanted,
-                )
-                .values("course_key")
-                .annotate(sid=Min("id"))
+                ),
+                program,
             )
+            if gender:
+                mapped_qs = mapped_qs.filter(gender_section_filter(gender))
+            else:
+                mapped_qs = mapped_qs.none()
+            mapped_qs = mapped_qs.values("course_key").annotate(sid=Min("id"))
             mapped_ids = [int(x["sid"]) for x in mapped_qs if x["sid"] is not None]
             if mapped_ids:
                 try:
                     replace_student_term_sections(
                         student_id, year, term, mapped_ids, source="auto_from_studying"
                     )
-                    baseline = get_student_term_baseline(student_id, year, term)
+                    baseline = get_student_term_baseline(
+                        student_id, year, term, snapshot=Snapshot.EFFECTIVE
+                    )
                 except Exception:
                     logger.warning(
                         "Auto-map sections failed for student %s", student_id, exc_info=True
@@ -240,14 +318,17 @@ def _planner_context_inner(
 
     recommendation_warning = None
     try:
-        rec_codes = recommend_next_courses(student_id, int(year), int(term))
+        rec_codes = recommend_next_courses(
+            student_id,
+            int(year),
+            int(term),
+            strict_passed_only=eligibility_mode == "strict",
+        )
     except Exception as exc:
         rec_codes = []
         recommendation_warning = f"Recommendation engine fallback: {type(exc).__name__}"
 
     passed, studying = get_student_passed_and_studying(student_id)
-    program = str(student_summary["program"] or "").strip()
-
     recommendations: list[dict[str, object]] = []
     # Build credit map for the program
     pr_credit_map: dict[str, int] = {}
@@ -289,9 +370,22 @@ def _planner_context_inner(
         else:
             info = (code, "", pr_credit_map.get(code_n, 0))
 
+        # THE shared prerequisite check — not an inline diff. A raw comparison
+        # against passed/studying treats the curriculum's "90(HOURS)" gate as a
+        # course code that can never match, which marked every capstone Blocked
+        # and disabled its Add button for 68 live students who had all met the
+        # gate. evaluate_prerequisites splits the gate out and answers both.
         prereqs = _all_prereqs.get(code_n, []) if program else []
-        missing = [p for p in prereqs if p not in passed and p not in studying]
-        status = "Eligible" if not missing else "Blocked"
+        outcome = evaluate_prerequisites(
+            prereqs,
+            passed,
+            studying,
+            earned_credits=_earned_credits,
+            registered_credits=_registered_credits,
+            strict_passed_only=eligibility_mode == "strict",
+        )
+        missing = outcome.missing
+        status = "Eligible" if outcome.met else "Blocked"
         recommendations.append(
             {
                 "course_code": info[0] or code,
@@ -326,6 +420,8 @@ def _planner_context_inner(
                 "credits": credits_total,
             },
             "recommendations": recommendations,
+            "eligibility_mode": eligibility_mode,
+            "strict_passed_only": eligibility_mode == "strict",
             "year": year,
             "term": term,
             "warning": recommendation_warning,
@@ -383,7 +479,13 @@ def planner_save_student_sections_view(request: HttpRequest) -> JsonResponse:
 
     try:
         if cleaned:
-            valid_ids = set(TermSection.objects.filter(id__in=cleaned).values_list("id", flat=True))
+            selected_sections = list(
+                TermSection.objects.filter(
+                    id__in=cleaned,
+                    scenario__isnull=True,
+                )
+            )
+            valid_ids = {int(section.id) for section in selected_sections}
             invalid = [sid for sid in cleaned if sid not in valid_ids]
             if invalid:
                 return _err(
@@ -392,11 +494,130 @@ def planner_save_student_sections_view(request: HttpRequest) -> JsonResponse:
                     status=400,
                     details={"invalid_section_ids": invalid},
                 )
+            unavailable = [
+                int(section.id)
+                for section in selected_sections
+                if not section_is_available_to_student(section, student_id=student_id_int)
+            ]
+            if unavailable:
+                return _err(
+                    "Some sections are outside the student's programme or cohort",
+                    code="SECTION_NOT_AVAILABLE_TO_STUDENT",
+                    status=409,
+                    details={"section_ids": unavailable},
+                )
 
-        result = replace_student_term_sections(student_id, year, term, cleaned, source="planner")
-        return _ok(result)  # type: ignore[arg-type]
+        # WHAT THIS WRITE REMOVES. replace_student_term_sections is a REPLACE
+        # over the planner's own snapshot class, so any planner section the
+        # student had saved that is not in this option disappears - silently,
+        # and with no mention in the response. An adviser applying option B
+        # after option A had no way to know A's courses had gone. Read the
+        # before-state and report the difference.
+        previous = {
+            int(row.term_section_id): row
+            for row in StudentTermSection.objects.filter(
+                student_id=student_id_int,
+                academic_year=year,
+                term=term,
+                term_section__scenario__isnull=True,
+            )
+            .filter(snapshot_class_filter(SnapshotClass.WORKING))
+            .select_related("term_section")
+        }
+        removed = [
+            {
+                "term_section_id": tsid,
+                "course_code": str(getattr(row.term_section, "course_key", "") or ""),
+                "section": str(getattr(row.term_section, "section", "") or ""),
+            }
+            for tsid, row in previous.items()
+            if tsid not in set(cleaned)
+        ]
+
+        # DOES THE PLAN STILL FIT? The build ran against the timetable as it was
+        # then. Between building and applying, the registrar snapshot can move -
+        # another adviser, a re-scrape - and applying a stale option writes a
+        # clash nobody checked for. This does not block the write; it reports
+        # the clash so the adviser sees it in the same breath as the result.
+        clashes = _planner_apply_clashes(student_id, student_id_int, year, term, cleaned)
+
+        write_result = replace_student_term_sections(
+            student_id, year, term, cleaned, source="planner"
+        )
+        result: dict[str, object] = dict(write_result)
+        result["removed"] = removed
+        result["removed_count"] = len(removed)
+        result["clashes_with_registered"] = clashes
+        return _ok(result)
     except Exception as exc:
         return _internal_error(exc)
+
+
+def _planner_apply_clashes(
+    student_id: str,
+    student_id_int: int,
+    year: str,
+    term: str,
+    section_ids: list[int],
+) -> list[dict[str, object]]:
+    """Meetings in the applied plan that collide with the REGISTRAR's timetable.
+
+    The build ran against the timetable as it stood then. Between building and
+    applying, that can move — another adviser, a re-scrape — so a stale option
+    could be written straight over a real registration with nothing checking.
+    Reported, not enforced: an adviser may legitimately plan a change they
+    intend to make at the registrar. Silence was the problem, not the write.
+    """
+    registrar_rows = [
+        row
+        for row in get_student_term_baseline(student_id, year, term, snapshot=Snapshot.REGISTERED)
+        or []
+        if row.get("day") and row.get("start_time") and row.get("end_time")
+    ]
+    if not registrar_rows or not section_ids:
+        return []
+
+    def _minutes(value: object) -> int:
+        try:
+            hh, mm = str(value).strip().split(":")
+            return int(hh) * 60 + int(mm)
+        except (ValueError, AttributeError, TypeError):
+            return -1
+
+    busy: list[tuple[str, int, int, str]] = []
+    for row in registrar_rows:
+        start, end = _minutes(row.get("start_time")), _minutes(row.get("end_time"))
+        if start < 0 or end <= start:
+            continue
+        busy.append(
+            (
+                str(row.get("day") or "").strip().upper()[:3],
+                start,
+                end,
+                str(row.get("course_code") or row.get("course_key") or ""),
+            )
+        )
+
+    found: list[dict[str, object]] = []
+    for meeting in TermSectionMeeting.objects.filter(
+        term_section_id__in=section_ids
+    ).select_related("term_section"):
+        start, end = _minutes(meeting.start_time), _minutes(meeting.end_time)
+        if start < 0 or end <= start:
+            continue
+        day = str(meeting.day or "").strip().upper()[:3]
+        for busy_day, busy_start, busy_end, busy_code in busy:
+            if day == busy_day and start < busy_end and busy_start < end:
+                found.append(
+                    {
+                        "course_code": str(getattr(meeting.term_section, "course_key", "") or ""),
+                        "section": str(getattr(meeting.term_section, "section", "") or ""),
+                        "slot": f"{meeting.day} {meeting.start_time}-{meeting.end_time}",
+                        "clashes_with": busy_code,
+                    }
+                )
+                break
+    return found
 
 
 @login_required(login_url="login")
@@ -413,6 +634,14 @@ def planner_sections_catalog_view(request: HttpRequest) -> JsonResponse:
     term = str(payload.get("term", "")).strip()
     course_codes = payload.get("course_codes", [])
     student_id = str(payload.get("student_id", "")).strip()
+    # Positive contract used by the current UI. The older names remain accepted
+    # so bookmarked/older planner pages keep the former programme-safe default.
+    program_sections_only = bool(
+        payload.get(
+            "program_sections_only",
+            payload.get("strict_program", payload.get("strict_sections", True)),
+        )
+    )
 
     if not year or not term:
         return _err(
@@ -423,22 +652,52 @@ def planner_sections_catalog_view(request: HttpRequest) -> JsonResponse:
     if term_err:
         return term_err
 
+    # Naming a student here reveals that student's programme and cohort, so the
+    # caller must be allowed to see them — exactly as planner_context_view,
+    # planner_save_student_sections_view and planner_build_view already require.
+    # This endpoint was the one sibling that never asked, which let a scoped
+    # adviser probe another adviser's student. The no-student path is staff
+    # browsing the shared catalogue and stays scope-free by design.
+    if student_id:
+        scope_sid, scope_sid_err = _parse_student_id(student_id)
+        if scope_sid_err:
+            return scope_sid_err
+        if scope_sid is not None:
+            scope_err = require_student_scope(request, scope_sid)
+            if scope_err:
+                return scope_err
+
     try:
         ts_qs = TermSection.objects.filter(scenario__isnull=True)
         # Gender-segregated sections: only surface the student's own cohort
         # (M/F) sections. Gender is derived server-side from Student.section.
         #
         # When a student IS named their cohort must resolve, or we refuse: falling
-        # back to "" produced an all-pass filter and showed the other cohort. 722 of
-        # the 3,807 ids in StudentTermSection have no Student row, so this is not a
-        # theoretical branch. With no student named, all-pass is the intended
-        # behaviour — that is staff browsing the whole catalogue.
+        # back to "" produced an all-pass filter and showed the other cohort.
+        # (Historically 722 of 3,807 StudentTermSection ids had no Student row;
+        # today's data has none - this refusal is why that stayed harmless.)
+        # With no student named, the blank-gender filter still excludes the
+        # other branch's YM/YF sections - that is staff browsing the local
+        # catalogue, not an all-pass.
         if student_id:
             try:
                 gender = student_gender_strict(student_id)
             except UnknownStudentGender as exc:
                 return _err(str(exc), code="STUDENT_COHORT_UNRESOLVED", status=409)
             ts_qs = ts_qs.filter(gender_section_filter(gender))
+            if program_sections_only:
+                student_program = (
+                    Student.objects.filter(student_id=student_id)
+                    .values_list("program", flat=True)
+                    .first()
+                )
+                if not str(student_program or "").strip():
+                    return _err(
+                        "Student programme is not recorded",
+                        code="STUDENT_PROGRAM_UNRESOLVED",
+                        status=409,
+                    )
+                ts_qs = filter_sections_for_program(ts_qs, student_program)
         if isinstance(course_codes, list) and course_codes:
             normalized = [
                 str(c).replace(" ", "").strip().upper() for c in course_codes if str(c).strip()
@@ -446,7 +705,9 @@ def planner_sections_catalog_view(request: HttpRequest) -> JsonResponse:
             if normalized:
                 ts_qs = ts_qs.filter(course_key__in=normalized)
 
-        ts_qs = ts_qs.order_by("course_code", "course_number", "section")
+        ts_qs = ts_qs.prefetch_related("program_links").order_by(
+            "course_code", "course_number", "section"
+        )
 
         grouped: dict[int, dict[str, object]] = {}
         for ts in ts_qs:
@@ -460,6 +721,7 @@ def planner_sections_catalog_view(request: HttpRequest) -> JsonResponse:
                 "course_name": ts.course_name or "",
                 "available_capacity": ts.available_capacity,
                 "registered_count": ts.registered_count,
+                "programs": sorted(link.program for link in ts.program_links.all()),
                 "meetings": [],
             }
 
@@ -479,7 +741,13 @@ def planner_sections_catalog_view(request: HttpRequest) -> JsonResponse:
                         }
                     )
 
-        return _ok({"sections": list(grouped.values()), "count": len(grouped)})
+        return _ok(
+            {
+                "sections": list(grouped.values()),
+                "count": len(grouped),
+                "program_sections_only": program_sections_only,
+            }
+        )
     except Exception as exc:
         return _internal_error(exc)
 
@@ -498,14 +766,40 @@ def planner_build_view(request: HttpRequest) -> JsonResponse:
     year = str(payload.get("academic_year", "")).strip()
     term = str(payload.get("term", "")).strip()
     mode = str(payload.get("mode", "keep")).strip().lower()
-    strict_sections = bool(payload.get("strict_sections", False))
+    eligibility_mode, eligibility_err = _eligibility_mode(payload)
+    if eligibility_err:
+        return eligibility_err
+    assert eligibility_mode is not None
+    program_sections_only = bool(
+        payload.get(
+            "program_sections_only",
+            payload.get("strict_program", payload.get("strict_sections", True)),
+        )
+    )
+    allow_full_sections = bool(
+        payload.get("allow_full_sections", payload.get("ignore_capacity", False))
+    )
     shortlist = payload.get("shortlist", [])
-    baseline = payload.get("baseline", [])
+    # NOTE: payload["baseline"] is deliberately NOT read. The client still sends
+    # it, and older callers may too, but the build re-derives the registered
+    # timetable from the database below. Accepting it here is what let a stale
+    # browser copy decide what "Keep Registered" avoided.
     student_id = str(payload.get("student_id", "")).strip()
 
     if not year or not term:
         return _err(
             "academic_year and term are required", code="VALIDATION_REQUIRED_FIELDS", status=400
+        )
+    # REQUIRED. Without a student there is no gender filter and no programme
+    # filter, so the catalogue becomes the entire term and the exhaustive
+    # solvers have nothing to bound them: a 14-course shortlist held a
+    # synchronous request past 90 seconds. Every real caller sends one, and a
+    # build is meaningless without the student it is built for.
+    if not student_id:
+        return _err(
+            "student_id is required to build a timetable",
+            code="VALIDATION_REQUIRED_FIELDS",
+            status=400,
         )
     if not isinstance(shortlist, list):
         return _err("shortlist must be list", code="VALIDATION_LIST_REQUIRED", status=400)
@@ -520,16 +814,46 @@ def planner_build_view(request: HttpRequest) -> JsonResponse:
     # student_id is supplied the build only schedules that student's own cohort
     # sections, and the request is gated by the caller's student scope.
     gender = ""
+    program: str | None = None
+    student_id_for_baseline: int | None = None
     if student_id:
         student_id_int, sid_err = _parse_student_id(student_id)
         if sid_err:
             return sid_err
+        if student_id_int is None:
+            return _err(
+                "student_id must be numeric",
+                code="VALIDATION_STUDENT_ID",
+                status=400,
+            )
         scope_deny = require_student_scope(request, student_id_int)
         if scope_deny:
             return scope_deny
+        student_id_for_baseline = student_id_int
         gender = student_gender(student_id_int)
+        student_program = str(
+            Student.objects.filter(student_id=student_id_int)
+            .values_list("program", flat=True)
+            .first()
+            or ""
+        ).strip()
+        if program_sections_only and not student_program:
+            return _err(
+                "Student programme is not recorded",
+                code="STUDENT_PROGRAM_UNRESOLVED",
+                status=409,
+            )
+        program = student_program if program_sections_only else None
+
+    if len(shortlist) > MAX_SHORTLIST_COURSES:
+        return _err(
+            f"shortlist may not exceed {MAX_SHORTLIST_COURSES} courses",
+            code="VALIDATION_SHORTLIST_SIZE",
+            status=400,
+        )
 
     normalized_shortlist: list[dict[str, object]] = []
+    seen_codes: set[str] = set()
     for item in shortlist:
         if not isinstance(item, dict):
             return _err(
@@ -542,50 +866,152 @@ def planner_build_view(request: HttpRequest) -> JsonResponse:
             )
         pinned_raw = item.get("pinned_sections", [])
         pinned_sections: list[dict[str, object]] = []
-        if isinstance(pinned_raw, list):
-            for ps in pinned_raw:
-                if isinstance(ps, dict) and ps.get("term_section_id"):
-                    pinned_sections.append(
-                        {
-                            "term_section_id": int(ps["term_section_id"]),
-                            "section": str(ps.get("section", "")),
-                        }
-                    )
+        if not isinstance(pinned_raw, list):
+            return _err(
+                "pinned_sections must be a list",
+                code="VALIDATION_PINNED_SECTIONS",
+                status=400,
+            )
+        for ps in pinned_raw:
+            if not isinstance(ps, dict) or not ps.get("term_section_id"):
+                return _err(
+                    "Each pinned section must include term_section_id",
+                    code="VALIDATION_PINNED_SECTION",
+                    status=400,
+                )
+            try:
+                pinned_id = int(ps["term_section_id"])
+            except (TypeError, ValueError):
+                return _err(
+                    "Pinned term_section_id must be a positive integer",
+                    code="VALIDATION_PINNED_SECTION",
+                    status=400,
+                )
+            if pinned_id <= 0:
+                return _err(
+                    "Pinned term_section_id must be a positive integer",
+                    code="VALIDATION_PINNED_SECTION",
+                    status=400,
+                )
+            pinned_sections.append(
+                {
+                    "term_section_id": pinned_id,
+                    "section": str(ps.get("section", "")),
+                }
+            )
+        if len(pinned_sections) > 1:
+            return _err(
+                "Only one exact section may be pinned per course",
+                code="VALIDATION_PINNED_SECTION_COUNT",
+                status=400,
+            )
+
+        must_take_raw = item.get("must_take", False)
+        if isinstance(must_take_raw, bool):
+            must_take = must_take_raw
+        elif isinstance(must_take_raw, int) and must_take_raw in (0, 1):
+            must_take = bool(must_take_raw)
+        else:
+            return _err(
+                "must_take must be a boolean",
+                code="VALIDATION_MUST_TAKE",
+                status=400,
+            )
+
+        # ONE row per course. Without this, method A builds an unsatisfiable
+        # constraint (2*(v1+v2) == 1) and calls the course infeasible, while
+        # methods B and C treat the duplicates as two independent slots and
+        # return an option holding TWO sections of the same course, reported as
+        # fully scheduled. The only previous defence was a client-side check
+        # that compares codes case-sensitively where the rest of the file does
+        # not; correctness here must not depend on the caller.
+        if code in seen_codes:
+            return _err(
+                f"{code} appears more than once in the shortlist",
+                code="VALIDATION_SHORTLIST_DUPLICATE",
+                status=400,
+            )
+        seen_codes.add(code)
+
+        score, score_err = _int_field(item.get("score"), f"{code} score")
+        if score_err:
+            return score_err
+        credits, credits_err = _int_field(item.get("credits"), f"{code} credits")
+        if credits_err:
+            return credits_err
 
         normalized_shortlist.append(
             {
                 "course_code": code,
                 "priority": str(item.get("priority", "Med")),
-                "score": int(item.get("score", 0) or 0),
+                "score": score,
                 "status": str(item.get("status", "Eligible")),
                 "missing_prerequisites": item.get("missing_prerequisites", [])
                 if isinstance(item.get("missing_prerequisites", []), list)
                 else [],
-                "must_take": bool(item.get("must_take", False)),
-                "credits": int(item.get("credits", 0) or 0),
+                "must_take": must_take,
+                "credits": credits,
                 "pinned_sections": pinned_sections,
             }
         )
 
     keep_registered = mode != "ignore"
     suggest_swaps = bool(payload.get("swap", False))
-    strict_sections = bool(payload.get("strict_sections", False))
-    consider_capacity = not bool(payload.get("ignore_capacity", False))
-    max_credits = int(payload.get("max_credits", 0) or 0)  # type: ignore[call-overload]
+    enforce_capacity = not allow_full_sections
+    max_credits, max_credits_err = _int_field(payload.get("max_credits"), "max_credits")
+    if max_credits_err:
+        return max_credits_err
+    # THE BASELINE IS SERVER-DERIVED. "Keep Registered" promises the build
+    # avoids clashing with what the student is already registered for; taking
+    # that list from the request body made the promise only as good as whatever
+    # the browser last held. A stale tab, a timetable changed in another
+    # session, or simply an omitted field, and the build scheduled straight
+    # over real registrations. planner_context_view has always read this from
+    # the DB (get_student_term_baseline) - the build now does the same.
+    effective_baseline: list[dict[str, object]] = []
+    if keep_registered and student_id_for_baseline is not None:
+        try:
+            effective_baseline = list(
+                get_student_term_baseline(
+                    str(student_id_for_baseline), year, term, snapshot=Snapshot.EFFECTIVE
+                )
+                or []
+            )
+        except Exception:
+            logger.warning(
+                "planner_build_view: baseline re-derivation failed for student=%s",
+                student_id_for_baseline,
+                exc_info=True,
+            )
+            return _err(
+                "Could not read the student's registered timetable",
+                code="BASELINE_UNAVAILABLE",
+                status=409,
+            )
+
     try:
         result = build_plans(
             year,
             term,
             normalized_shortlist,
-            baseline if isinstance(baseline, list) else [],
+            effective_baseline,
             keep_registered,
             suggest_swaps=suggest_swaps,
-            strict_per_course=strict_sections,
-            consider_capacity=consider_capacity,
+            # The staff checkbox named "Strict" historically reached this
+            # unrelated exact-one-per-course constraint. It now controls
+            # programme scoping above; Must-take remains the course-level rule.
+            strict_per_course=False,
+            consider_capacity=enforce_capacity,
             max_credits=max_credits,
             gender=gender,
+            program=program,
         )
         result["mode"] = mode
+        result["eligibility_mode"] = eligibility_mode
+        result["constraints"] = {
+            "program_sections_only": program_sections_only,
+            "allow_full_sections": allow_full_sections,
+        }
         return _ok(result)
     except Exception as exc:
         return _internal_error(exc)

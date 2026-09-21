@@ -9,8 +9,10 @@ from core.models import (
     ScenarioStudentCourseRequest,
     ScenarioStudentMap,
     Student,
+    StudentCourse,
     TimetableScenario,
 )
+from core.services.timetable_assignment_models import RiskTier
 from core.services.timetable_generate import generate_workspace_scenario
 from core.services.timetable_optimizer_v2 import build_student_profiles_for_scenario
 
@@ -123,3 +125,51 @@ def test_optimizer_profiles_use_planner_course_keys_when_available() -> None:
     profiles = build_student_profiles_for_scenario(scenario.id)
 
     assert profiles["993101"].recommended_courses == ["CS111::PROGRAMMING_I"]
+
+
+def test_optimizer_risk_uses_failed_status_not_passing_or_withdrawal_grades() -> None:
+    scenario = TimetableScenario.objects.create(
+        academic_year="1448",
+        term="1",
+        name="Failed status risk test",
+    )
+    course = Course.objects.create(
+        course_code="VX101",
+        description="Risk Test Course",
+        credit_hours=3,
+    )
+
+    cases = (
+        (993201, "failed", "F", RiskTier.A),
+        (993202, "passed", "D", RiskTier.C),
+        (993203, "not_taken", "W", RiskTier.C),
+    )
+    for student_id, status, grade, _expected_tier in cases:
+        student = Student.objects.create(
+            student_id=student_id,
+            registration_no=str(student_id),
+            name=f"Student {student_id}",
+            program="AI",
+            section="M",
+            status="active",
+            total_earned_credits=60,
+        )
+        StudentCourse.objects.create(
+            student=student,
+            course=course,
+            status=status,
+            grade=grade,
+        )
+        ScenarioStudentCourseRequest.objects.create(
+            scenario=scenario,
+            student_id=student_id,
+            course_key="VX201",
+            course_code="VX201",
+            primary_term=4,
+            status=ScenarioStudentCourseRequest.STATUS_REQUESTED,
+        )
+
+    profiles = build_student_profiles_for_scenario(scenario.id)
+
+    for student_id, _status, _grade, expected_tier in cases:
+        assert profiles[str(student_id)].risk_tier == expected_tier

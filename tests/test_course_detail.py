@@ -13,6 +13,7 @@ import json
 import re
 
 import pytest
+from django.conf import settings
 from django.test import Client
 from django.urls import reverse
 
@@ -24,6 +25,7 @@ from core.models import (
     ProgrammeRequirement,
     Student,
     StudentCourse,
+    TermSection,
 )
 from core.services import student_otp
 from core.services.course_detail import (
@@ -117,6 +119,32 @@ def test_a_real_course_is_a_course(plan):
     assert d["kind"] == KIND_COURSE
     assert d["course_name"] == "Beta"
     assert d["prerequisites"][0]["course_code"] == "CA101"
+
+
+def test_arabic_student_routes_prefer_the_university_section_name(client_as_student):
+    TermSection.objects.create(
+        course_code="CB201",
+        course_number="201",
+        course_key="CB201",
+        course_name="اسم المقرر المعتمد",
+        section="M99",
+    )
+
+    api_url = reverse("student_course_detail", args=["CB201"])
+    page_url = reverse("student_course_detail_page", args=["CB201"])
+
+    arabic_api = client_as_student.get(api_url, headers={"accept-language": "ar"}).json()
+    arabic_page = client_as_student.get(
+        page_url, headers={"accept-language": "ar"}
+    ).content.decode()
+    # The student portal defaults to Arabic regardless of browser headers.
+    # Choosing English through Django's language switcher persists this cookie.
+    client_as_student.cookies[settings.LANGUAGE_COOKIE_NAME] = "en"
+    english_api = client_as_student.get(api_url, headers={"accept-language": "en"}).json()
+
+    assert arabic_api["course_name"] == "اسم المقرر المعتمد"
+    assert "اسم المقرر المعتمد" in arabic_page
+    assert english_api["course_name"] == "Beta"
 
 
 def test_an_elective_placeholder_is_a_slot_not_a_course(plan):
@@ -347,6 +375,15 @@ def test_a_course_page_shows_status_reasons_and_prerequisites(client_as_student)
     assert "يتطلب اجتياز" in body
 
 
+def test_a_course_page_keeps_the_student_navigation(client_as_student):
+    """A student subpage must not fall back to the staff sidebar when its view
+    forgets the shared navigation context."""
+    body = _page(client_as_student, "CB201").content.decode()
+    assert reverse("student_home") in body
+    assert reverse("student_advisor") in body
+    assert "/virtual-advisor/" not in body
+
+
 def test_an_unready_slot_shows_one_sentence_and_no_option_cards(client_as_student):
     """31 of 38 slots are unmapped, so this IS the screen for most students.
 
@@ -408,7 +445,7 @@ def test_the_planner_action_is_worded_as_planning_never_permission(client_as_stu
     """
     _passed("CA101")
     body = _page(client_as_student, "CB201").content.decode()
-    assert "does not register you" in body or "لا يسجّلك" in body, "the disclaimer is missing"
+    assert "does not register you" in body or "لن يسجّلك" in body, "the disclaimer is missing"
     for permission in ("يمكنك تسجيل", "eligible", "you may register", "you can register"):
         assert permission not in body, f"the screen implied permission: {permission}"
 
@@ -416,7 +453,7 @@ def test_the_planner_action_is_worded_as_planning_never_permission(client_as_stu
     from pathlib import Path
 
     template = Path("core/templates/core/student_course_detail.html").read_text(encoding="utf-8")
-    assert "هذا لا يسجّلك في المقرر." in template
+    assert "لن يسجّلك هذا الإجراء في المقرر." in template
     assert "does not register you" in template
 
 
@@ -446,7 +483,7 @@ def test_a_refusal_renders_as_a_page_not_a_line_of_json(client_as_student):
     assert response.status_code == 409
     body = response.content.decode()
     assert "<html" in body.lower(), "an HTML route answered with something else"
-    assert "لا يوجد برنامج دراسي" in body
+    assert "لا يظهر برنامج دراسي في ملفك" in body
 
 
 def test_the_page_refuses_a_non_student(client, plan):
@@ -974,7 +1011,7 @@ def test_a_passed_declared_elective_says_so_instead_of_withholding_options(decla
         d = _detail(code)
         assert d["kind"] == KIND_COURSE, f"{code}: a course the student passed, answered as a slot"
         assert d["your_status"] == "passed", f"{code}: {d.get('your_status')!r}"
-        assert d["status_ar"] == "اجتزتَ هذا المقرر."
+        assert d["status_ar"] == "حالة المقرر في سجلك: مجتاز."
         assert NOT_READY_AR not in (d.get("message_ar") or "")
         assert "options" not in d, f"{code}: offered options for a course, not a slot"
 
@@ -1013,7 +1050,7 @@ def test_a_passed_program_elective_reports_the_pass_not_the_gate(plan):
     _passed("CE1")
     d = _detail("CE1")
     assert d["your_status"] == "passed", "the slot branch still cannot say 'you did this'"
-    assert d["status_ar"] == "اجتزتَ هذا المقرر."
+    assert d["status_ar"] == "حالة المقرر في سجلك: مجتاز."
     assert d["message_ar"] != NOT_READY_AR, "told to wait for options they no longer need"
     assert d["message_ar"] == ""
     assert d["options"] == [], "offered a choice to a student who has already made it"
@@ -1049,7 +1086,7 @@ def test_a_slot_being_studied_is_not_an_open_question_either(plan):
     )
     d = _detail("CE1")
     assert d["your_status"] == "studying"
-    assert d["status_ar"] == ("تدرس هذا المقرر حاليًا، ويلزم اجتيازه.")
+    assert d["status_ar"] == ("حالة المقرر في سجلك: قيد الدراسة، ويلزم اجتيازه.")
     assert d["options"] == []
 
 

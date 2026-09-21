@@ -1,4 +1,4 @@
-"""Seed registered timetables from an approved registration-plan workbook.
+"""Seed expected next-term timetables from an approved registration-plan workbook.
 
 Dry-run by default, like every destructive command here. The report and the write
 compute the SAME plan from the same code, so what the dry run prints is what an
@@ -71,7 +71,7 @@ EXPECTED_HEADERS = {
 
 
 class Command(BaseCommand):
-    help = "Link students to term sections from a registration-plan workbook."
+    help = "Link students to expected next-term sections from a registration-plan workbook."
 
     def add_arguments(self, parser: Any) -> None:
         parser.add_argument("path")
@@ -137,6 +137,15 @@ class Command(BaseCommand):
         self.stdout.write(f"term {year}/{term}")
         self.stdout.write(f"workbook {path.name}  sha256 {digest[:16]}…")
         self.stdout.write(plan.summary())
+
+        # Notices are things the operator must SEE but which do not stop an apply.
+        # The registrar-collision report used to be a `Problem`, which blocked the
+        # import outright; demoting it to a notice without printing it anywhere
+        # would have removed the warning instead of softening it.
+        if plan.notices:
+            self.stdout.write(self.style.WARNING(f"\n{len(plan.notices)} notice(s):"))
+            for notice in plan.notices[:40]:
+                self.stdout.write(f"  {notice}")
 
         # Reported, never repaired. The owner's decision is link-only: a section
         # whose time moved in the plan keeps its database time, and a student would
@@ -206,6 +215,7 @@ class Command(BaseCommand):
                         },
                         "uncovered": plan.uncovered,
                         "time_disagreements": plan.time_disagreements,
+                        "notices": [str(n) for n in plan.notices],
                         "problems": [str(p) for p in plan.problems],
                         "links": plan.links,
                     },

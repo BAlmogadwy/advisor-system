@@ -32,6 +32,7 @@ from collections import defaultdict
 
 from core.models import Prerequisite, ProgrammeRequirement, Student, StudentCourse
 from core.services.credit_policy import RECOMMENDED_MAX_CREDITS
+from core.services.eligibility import effective_credits, prereq_satisfied
 from core.services.student_helpers import normalize_code
 
 # The ADVISORY cap this system fills up to — NOT the number of hours a student
@@ -80,6 +81,8 @@ def batch_recommend(
     program: str,
     current_academic_year: int,
     current_semester: int,
+    *,
+    strict_passed_only: bool = False,
 ) -> dict[int, list[str]]:
     """Recommend next-semester courses for all students in a programme.
 
@@ -104,10 +107,20 @@ def batch_recommend(
         Mapping of ``student_id`` -> ordered list of recommended course codes.
         Students with no recommendations are omitted from the dict.
 
+    strict_passed_only : bool
+        The same switch the course-eligibility screen exposes as
+        Relaxed/Strict. Relaxed (default) satisfies prerequisites with courses
+        currently being studied and counts registered credits toward hour
+        gates; strict accepts only what is already passed/earned. The rule
+        itself lives in ``core.services.eligibility`` so both screens agree.
+
     Business Rules
     ---------------
-    * Courses already passed or being studied are excluded.
-    * All prerequisites must be satisfied (passed **or** studying).
+    * Courses already passed or being studied are excluded (in either mode —
+      strict narrows what *satisfies a prerequisite*, not what a student is
+      allowed to sit again).
+    * All prerequisites must be satisfied (passed or studying; passed only
+      when ``strict_passed_only``).
     * Only courses whose term parity matches the *next* term are eligible.
     * Courses from earlier terms (past-due) are prioritised over current-term.
     * Within a priority tier, courses that unlock the most downstream courses
@@ -202,16 +215,26 @@ def batch_recommend(
         next_term_parity = next_term % 2
 
         def prereqs_ok(code: str) -> bool:  # noqa: B023
-            """True if every prerequisite for *code* has been passed or is being studied."""
+            """True if every prerequisite for *code* is met under the chosen mode.
+
+            The relaxed/strict rule is NOT restated here — it is consumed from
+            ``core.services.eligibility`` so this screen and the eligibility
+            screen can never drift apart on what satisfies a prerequisite.
+            """
             # Check hour-based prerequisite (e.g. "110(HOURS)")
             req_hours = hour_prereq_map.get(code, 0)
             if req_hours > 0:
                 earned, current = student_credits.get(sid, (0, 0))  # noqa: B023
-                # Relaxed: earned + current_registered (studying counts)
-                if earned + current < req_hours:
+                if (
+                    effective_credits(earned, current, strict_passed_only=strict_passed_only)
+                    < req_hours
+                ):
                     return False
             # Check course-based prerequisites
-            return all(pr in passed or pr in studying for pr in prereq_map.get(code, []))  # noqa: B023
+            return all(
+                prereq_satisfied(pr, passed, studying, strict_passed_only=strict_passed_only)  # noqa: B023
+                for pr in prereq_map.get(code, [])
+            )
 
         # Build candidate list: courses this student is eligible to take
         candidates: list[dict] = []
@@ -268,6 +291,8 @@ def batch_recommend_multi_program(
     student_ids: list[int],
     current_academic_year: int,
     current_semester: int,
+    *,
+    strict_passed_only: bool = False,
 ) -> dict[int, list[str]]:
     """Recommend courses for students across ALL programmes.
 
@@ -316,7 +341,13 @@ def batch_recommend_multi_program(
     # Run batch per program
     results: dict[int, list[str]] = {}
     for prog, prog_sids in by_program.items():
-        prog_results = batch_recommend(prog_sids, prog, current_academic_year, current_semester)
+        prog_results = batch_recommend(
+            prog_sids,
+            prog,
+            current_academic_year,
+            current_semester,
+            strict_passed_only=strict_passed_only,
+        )
         results.update(prog_results)
 
     return results

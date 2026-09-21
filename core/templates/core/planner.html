@@ -51,7 +51,7 @@
           </div>
 
           <!-- Input bar -->
-          <div class="filter-bar" style="margin-top:10px;margin-bottom:0;padding:10px 14px;flex-wrap:nowrap">
+          <div class="filter-bar" style="margin-top:10px;margin-bottom:0;padding:10px 14px;flex-wrap:wrap">
             <div class="fb-search flex-fill" style="min-width:0; max-width:140px"><span class="i i-sm" aria-hidden="true" style="flex-shrink:0"><svg viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></span><input id="studentId" autofocus placeholder="{% if LANGUAGE_CODE == 'ar' %}رقم الطالب{% else %}Student ID{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}رقم الطالب{% else %}Student ID{% endif %}"></div>
             <div class="fb-search" style="min-width:0;flex:0 0 80px"><span class="i i-sm" aria-hidden="true" style="flex-shrink:0"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></span><input class="w-100" id="year" value="{{ default_year }}" placeholder="{% if LANGUAGE_CODE == 'ar' %}سنة{% else %}Year{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}سنة{% else %}Year{% endif %}"></div>
             <div class="fb-search" style="min-width:0;flex:0 0 55px"><input class="w-100" id="term" value="{{ default_term }}" placeholder="{% if LANGUAGE_CODE == 'ar' %}فصل{% else %}Sem{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}فصل{% else %}Semester{% endif %}"></div>
@@ -59,8 +59,15 @@
               <option value="keep">{% if LANGUAGE_CODE == 'ar' %}الإبقاء على المسجّل{% else %}Keep Registered{% endif %}</option>
               <option value="ignore">{% if LANGUAGE_CODE == 'ar' %}تجاهل المسجّل (تخطيط فقط){% else %}Ignore Registered (planning only){% endif %}</option>
             </select></div>
+            <div class="fb-search flex-fill" style="min-width:260px; max-width:390px"><select id="eligibilityMode" aria-describedby="eligibilityModeHelp" aria-label="{% if LANGUAGE_CODE == 'ar' %}وضع أهلية المقررات{% else %}Course eligibility mode{% endif %}">
+              <option value="strict" selected>{% if LANGUAGE_CODE == 'ar' %}صارم — المتطلبات المجتازة والساعات المكتسبة فقط{% else %}Strict — passed prerequisites + earned credits only{% endif %}</option>
+              <option value="relaxed">{% if LANGUAGE_CODE == 'ar' %}مرن — يحتسب قيد الدراسة والساعات المسجلة{% else %}Relaxed — count studying + registered credits{% endif %}</option>
+            </select></div>
             <label class="d-flex align-items-center text-t3 u-cursor-pointer" style="gap:5px; font-size:11.5px; font-weight:500; white-space:nowrap; flex-shrink:0"><input id="swap" type="checkbox" style="accent-color:var(--teal)"> {% if LANGUAGE_CODE == 'ar' %}تبديلات{% else %}Swaps{% endif %}</label>
             <button id="fetchBtn" class="pl-btn pl-btn-primary" style="flex-shrink:0"><span class="i i-xs" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg></span>{% if LANGUAGE_CODE == 'ar' %}جلب{% else %}Fetch{% endif %}</button>
+          </div>
+          <div id="eligibilityModeHelp" class="fs-11 text-t4 mt-1">
+            {% if LANGUAGE_CODE == 'ar' %}الأهلية الصارمة هي الافتراضية. اختر «مرن» صراحةً لاحتساب المقررات قيد الدراسة والساعات المسجلة ضمن المتطلبات.{% else %}Strict eligibility is the default. Choose Relaxed explicitly to count courses being studied and currently registered credits toward prerequisites.{% endif %}
           </div>
 
           <!-- Planning mode banner -->
@@ -76,7 +83,7 @@
           </div>
 
           <!-- Workflow stepper -->
-          <div class="wf-stepper" style="margin-top:10px">
+          <div class="wf-stepper" style="margin-top:10px" role="group" aria-label="{% if LANGUAGE_CODE == 'ar' %}خطوات بناء الجدول{% else %}Timetable build steps{% endif %}">
             <button id="step1" class="wf-step active" type="button"><span class="wf-num">1</span>{% if LANGUAGE_CODE == 'ar' %}الطالب{% else %}Student{% endif %}</button>
             <div class="wf-sep"></div>
             <button id="step2" class="wf-step" type="button"><span class="wf-num">2</span>{% if LANGUAGE_CODE == 'ar' %}اختيار المقررات{% else %}Pick Courses{% endif %}</button>
@@ -169,6 +176,15 @@
             <div class="pane-head">
               <div class="pane-icon pane-icon-sky"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg></span></div>
               <div><h6 class="pane-title">{% if LANGUAGE_CODE == 'ar' %}المقررات والشعب المتاحة{% else %}Available Courses & Sections{% endif %}</h6><div class="pane-sub">{% if LANGUAGE_CODE == 'ar' %}الشعب مصنفة حسب التعارض والسعة{% else %}Sections color-coded by conflict & capacity{% endif %}</div></div>
+              <!-- This filter decides WHICH sections this panel lists, so it
+                   belongs beside them. It previously sat in the Builder panel,
+                   three screens down and ~700px BELOW the list it governs. -->
+              <div class="pl-checks align-items-center" style="margin-inline-start:auto">
+                <label title="{% if LANGUAGE_CODE == 'ar' %}يختار المنشئ فقط الشُعب المرتبطة ببرنامج الطالب، بما فيها الشُعب المشتركة المرتبطة بالبرنامج.{% else %}Use only sections explicitly linked to the student's programme, including shared sections linked to it.{% endif %}"><input id="programSectionsOnly" type="checkbox" checked> {% if LANGUAGE_CODE == 'ar' %}شُعب برنامج الطالب فقط{% else %}Only this student's programme{% endif %}</label>
+              <div class="fs-11 text-t4" style="flex-basis:100%; text-align:end; margin-top:2px">
+                {% if LANGUAGE_CODE == 'ar' %}عند إيقافه تظهر شُعب برامج أخرى أيضًا.{% else %}Uncheck to also list other programmes' sections.{% endif %}
+              </div>
+              </div>
             </div>
 
             <div class="chip-legend mb-2">
@@ -201,15 +217,17 @@
 
             <div class="d-flex flex-wrap align-items-center" style="gap:8px; margin-bottom:12px">
               <button id="runBuilder" class="pl-btn pl-btn-primary"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"/></svg></span>{% if LANGUAGE_CODE == 'ar' %}بناء{% else %}Build{% endif %}</button>
-              <button id="applyOption" class="pl-btn pl-btn-success"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></span>{% if LANGUAGE_CODE == 'ar' %}تطبيق{% else %}Apply{% endif %}</button>
+              <button id="applyOption" class="pl-btn pl-btn-success" disabled><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></span>{% if LANGUAGE_CODE == 'ar' %}تطبيق{% else %}Apply{% endif %}</button>
             </div>
             <div class="pl-checks align-items-center" style="margin-bottom:10px">
-              <label><input id="strictSections" type="checkbox"> {% if LANGUAGE_CODE == 'ar' %}صارم{% else %}Strict{% endif %}</label>
-              <label><input id="ignoreCapacity" type="checkbox"> {% if LANGUAGE_CODE == 'ar' %}تجاهل السعة{% else %}Ignore capacity{% endif %}</label>
+              <label title="{% if LANGUAGE_CODE == 'ar' %}يسمح بإدخال الشُعب التي بلغ عدد المسجلين فيها سعتها القصوى. هذا للتخطيط فقط ولا يحجز مقعدًا.{% else %}Allow sections whose registered count has reached capacity. Planning only; this does not reserve a seat.{% endif %}"><input id="allowFullSections" type="checkbox"> {% if LANGUAGE_CODE == 'ar' %}تضمين شُعب بلا مقاعد شاغرة{% else %}Include sections with no seats left{% endif %}</label>
               <label class="align-items-center" style="display:inline-flex; gap:4px">
                 {% if LANGUAGE_CODE == 'ar' %}الحد الأقصى ساعات{% else %}Max credits{% endif %}
-                <input class="text-center" id="maxCredits" type="text" inputmode="numeric" pattern="[0-9]*" value="17" dir="ltr" style="width:52px; padding:2px 4px; border:1px solid var(--border); border-radius:6px; font-size:12px; font-family:'Courier New',monospace">
+                <input class="text-center" id="maxCredits" type="text" inputmode="numeric" pattern="[0-9]*" value="17" dir="ltr" aria-describedby="maxCreditsHint" aria-label="{% if LANGUAGE_CODE == 'ar' %}الحد الأعلى للساعات{% else %}Maximum credits{% endif %}" style="width:52px; padding:2px 4px; border:1px solid var(--border); border-radius:6px; font-size:12px; font-family:'Courier New',monospace"><span id="maxCreditsHint" class="fs-11 text-t4" style="margin-inline-start:6px"></span>
               </label>
+            </div>
+            <div class="fs-11 text-t4" style="margin-top:-4px;margin-bottom:10px">
+              {% if LANGUAGE_CODE == 'ar' %}للتخطيط فقط — لا يحجز مقعدًا. الشُعب ذات السعة غير المعروفة لا تُعامل كممتلئة.{% else %}Planning only — this does not reserve a seat. Sections whose capacity is unknown are not treated as full.{% endif %}
             </div>
 
             <input id="selectedOption" type="hidden">
@@ -292,5 +310,5 @@
   const defaultYear = {{ default_year }};
   const defaultTerm = {{ default_term }};
 </script>
-<script src="{% static 'js/page-planner.js' %}?v=8"></script>
+<script src="{% static 'js/page-planner.js' %}?v=14"></script>
 {% endblock %}

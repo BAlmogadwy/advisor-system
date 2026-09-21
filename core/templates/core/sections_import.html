@@ -2,94 +2,166 @@
 {% load i18n static %}
 {% get_current_language as LANGUAGE_CODE %}
 
-{% block title %}{% if LANGUAGE_CODE == 'ar' %}استيراد الشعب (Oracle HTML){% else %}Sections Import (Oracle HTML){% endif %}{% endblock %}
+{% block title %}{% if LANGUAGE_CODE == 'ar' %}استيراد الشعب من Oracle{% else %}Oracle Sections Import{% endif %}{% endblock %}
 
-{% block extra_css %}{# All sections-import styles live in static/css/global.css (SECTIONS IMPORT section). #}{% endblock %}
+{% block extra_css %}
+<link rel="stylesheet" href="{% static 'css/page-sections-import.css' %}?v=1">
+{% endblock %}
 
 {% block page_heading %}{% if LANGUAGE_CODE == 'ar' %}استيراد الشعب{% else %}Sections Import{% endif %}{% endblock %}
 
 {% block page_chips %}
   <span class="ph-chip ph-chip-role">{{ role }}</span>
-  <span class="ph-chip ph-chip-gray">{% if LANGUAGE_CODE == 'ar' %}تحليل → مراجعة → تأكيد{% else %}Parse → Review → Insert{% endif %}</span>
+  <span class="ph-chip ph-chip-gray">{% if LANGUAGE_CODE == 'ar' %}معاينة قبل الإدخال{% else %}Preview before insert{% endif %}</span>
 {% endblock %}
 
 {% block page_intro %}
-      <h2>{% if LANGUAGE_CODE == 'ar' %}استيراد الشعب{% else %}Sections Import{% endif %}</h2>
-      <div class="panel-sub">{% if LANGUAGE_CODE == 'ar' %}تحليل ملفات Oracle HTML لمعاينة واستيراد شعب المقررات.{% else %}Parse Oracle HTML files to preview and import course sections into the system.{% endif %}</div>
+  <h2>{% if LANGUAGE_CODE == 'ar' %}تحديث لقطة الشعب الحالية{% else %}Update the current section snapshot{% endif %}</h2>
+  <div class="panel-sub">{% if LANGUAGE_CODE == 'ar' %}حمّل ملف Oracle، عيّن البرامج التي تخدمها الشعب، ثم راجع أثر الدمج قبل التأكيد.{% else %}Upload the Oracle file, assign the programmes served by its sections, then review the merge impact before confirming.{% endif %}</div>
 {% endblock %}
 
 {% block content %}
-  <div class="si-panel">
-    <div class="row g-2 align-items-end">
-      <div class="col-md-4">
-        <label class="form-label">{% if LANGUAGE_CODE == 'ar' %}ملف Oracle HTML{% else %}Oracle HTML file{% endif %}</label>
-        <div class="si-dropzone" id="siDropzone" role="button" tabindex="0" aria-label="{% if LANGUAGE_CODE == 'ar' %}أسقط ملف Oracle HTML هنا أو انقر للاستعراض{% else %}Drop Oracle HTML file here or click to browse{% endif %}">
-          <div class="si-dropzone-icon">
-            <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-              <polyline points="17 8 12 3 7 8"/>
-              <line x1="12" y1="3" x2="12" y2="15"/>
-            </svg>
-          </div>
-          <div class="si-dropzone-text">
-            <strong>{% if LANGUAGE_CODE == 'ar' %}أسقط ملف Oracle HTML هنا{% else %}Drop Oracle HTML file here{% endif %}</strong>
-            <span>{% if LANGUAGE_CODE == 'ar' %}أو انقر للاستعراض{% else %}or click to browse{% endif %}</span>
-          </div>
-          <span id="oracleFileName" class="si-dropzone-file">{% if LANGUAGE_CODE == 'ar' %}لم يتم اختيار ملف{% else %}No file chosen{% endif %}</span>
-          <input id="oracleFile" type="file" accept=".html,.htm,.txt" class="d-none">
+<div class="sections-import-page">
+  <section class="si-panel si-workflow-panel" aria-labelledby="siWorkflowTitle">
+    <div class="si-section-heading">
+      <div>
+        <p class="si-eyebrow">{% if LANGUAGE_CODE == 'ar' %}عملية آمنة من ثلاث خطوات{% else %}Safe three-step workflow{% endif %}</p>
+        <h2 id="siWorkflowTitle">{% if LANGUAGE_CODE == 'ar' %}الملف ← البرامج ← المعاينة{% else %}File → programmes → preview{% endif %}</h2>
+      </div>
+      <ol class="si-steps" aria-label="{% if LANGUAGE_CODE == 'ar' %}خطوات الاستيراد{% else %}Import steps{% endif %}">
+        <li><span>1</span>{% if LANGUAGE_CODE == 'ar' %}الملف{% else %}File{% endif %}</li>
+        <li><span>2</span>{% if LANGUAGE_CODE == 'ar' %}البرامج{% else %}Programmes{% endif %}</li>
+        <li><span>3</span>{% if LANGUAGE_CODE == 'ar' %}التأكيد{% else %}Confirm{% endif %}</li>
+      </ol>
+    </div>
+
+    <div class="si-input-grid">
+      <div class="si-input-block">
+        <label class="si-input-label" for="oracleFile">{% if LANGUAGE_CODE == 'ar' %}1. ملف Oracle HTML{% else %}1. Oracle HTML file{% endif %}</label>
+        <div class="si-dropzone" id="siDropzone" role="button" tabindex="0" aria-describedby="oracleFileHint oracleFileName">
+          <span class="si-dropzone-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+          </span>
+          <span class="si-dropzone-copy">
+            <strong>{% if LANGUAGE_CODE == 'ar' %}أسقط الملف هنا أو اختره من الجهاز{% else %}Drop the file here or browse your device{% endif %}</strong>
+            <small id="oracleFileHint">HTML, HTM · {% if LANGUAGE_CODE == 'ar' %}حتى 10 ميجابايت{% else %}up to 10 MB{% endif %}</small>
+          </span>
+          <span id="oracleFileName" class="si-dropzone-file">{% if LANGUAGE_CODE == 'ar' %}لم يتم اختيار ملف{% else %}No file selected{% endif %}</span>
+          <input id="oracleFile" type="file" accept=".html,.htm" class="visually-hidden">
         </div>
       </div>
-      <div class="col-md-3 form-check ms-3"><input id="dept" type="checkbox" class="form-check-input"><label class="form-check-label" for="dept">{% if LANGUAGE_CODE == 'ar' %}مقررات القسم فقط{% else %}Department courses only{% endif %}</label></div>
-      <div class="col-md-3 form-check"><input id="truncate" type="checkbox" class="form-check-input"><label class="form-check-label" for="truncate">{% if LANGUAGE_CODE == 'ar' %}استبدال جميع الشعب الحالية{% else %}Replace all existing sections{% endif %}</label></div>
-    </div>
-    <div class="mt-3 d-flex gap-2">
-      <button id="parseBtn" class="btn btn-primary">{% if LANGUAGE_CODE == 'ar' %}تحليل + معاينة{% else %}Parse + Preview{% endif %}</button>
-      <button id="insertBtn" class="btn btn-outline-danger" disabled>{% if LANGUAGE_CODE == 'ar' %}إدخال الكل{% else %}Insert all{% endif %}</button>
-      <button id="toggleTech" class="btn btn-outline-secondary">{% if LANGUAGE_CODE == 'ar' %}عرض التفاصيل التقنية{% else %}Show technical details{% endif %}</button>
-    </div>
-    <small class="text-secondary">{% if LANGUAGE_CODE == 'ar' %}قاعدة التصنيف: محدد = مقررات القسم، غير محدد = أخرى{% else %}Tag rule: checked = department, unchecked = other{% endif %}</small>
-    <div id="status" role="alert" aria-live="polite" class="alert alert-info mt-2 py-2 mb-0">{% if LANGUAGE_CODE == 'ar' %}جاهز.{% else %}Ready.{% endif %}</div>
-    <div id="techWrap" class="d-none"><pre id="out" class="mt-2 p-2 bg-light border rounded small">{% if LANGUAGE_CODE == 'ar' %}لا يوجد إجراء بعد.{% else %}No action yet.{% endif %}</pre></div>
-  </div>
 
-  <div class="si-panel">
-    <h6 class="mb-2">{% if LANGUAGE_CODE == 'ar' %}ملخص المعاينة{% else %}Preview summary{% endif %}</h6>
-    <div class="row g-2">
-      <div class="col-md-3"><div class="kpi"><div class="k">{% if LANGUAGE_CODE == 'ar' %}الصفوف الأولية{% else %}Raw rows{% endif %}</div><div class="v" id="kRaw">0</div></div></div>
-      <div class="col-md-3"><div class="kpi"><div class="k">{% if LANGUAGE_CODE == 'ar' %}بعد إزالة التكرار{% else %}Deduped rows{% endif %}</div><div class="v" id="kDedup">0</div></div></div>
-      <div class="col-md-3"><div class="kpi"><div class="k">{% if LANGUAGE_CODE == 'ar' %}المكررات المحذوفة{% else %}Duplicates removed{% endif %}</div><div class="v" id="kDup">0</div></div></div>
-      <div class="col-md-3"><div class="kpi"><div class="k">{% if LANGUAGE_CODE == 'ar' %}عدد الشعب{% else %}Sections count{% endif %}</div><div class="v" id="kSec">0</div></div></div>
+      <fieldset class="si-source-card">
+        <legend>{% if LANGUAGE_CODE == 'ar' %}تصنيف المصدر{% else %}Source classification{% endif %}</legend>
+        <label class="si-switch-row" for="dept">
+          <span>
+            <strong>{% if LANGUAGE_CODE == 'ar' %}مقررات القسم{% else %}Department courses{% endif %}</strong>
+            <small>{% if LANGUAGE_CODE == 'ar' %}يُحفظ التصنيف على كل شعبة في الملف.{% else %}The tag is stored on every section in this file.{% endif %}</small>
+          </span>
+          <input id="dept" type="checkbox" role="switch">
+        </label>
+      </fieldset>
     </div>
-  </div>
 
-  <div class="si-panel">
+    <fieldset class="si-program-selector" aria-describedby="programHelp programSelectionStatus">
+      <legend>{% if LANGUAGE_CODE == 'ar' %}2. البرامج التي تخدمها هذه الشعب{% else %}2. Programmes served by these sections{% endif %}</legend>
+      <div class="si-program-heading">
+        <p id="programHelp" class="si-help-text">{% if LANGUAGE_CODE == 'ar' %}ملف Oracle لا يحتوي على عمود للبرنامج. كل برنامج تختاره سيُربط بكل شعبة في هذا الاستيراد؛ ويمكن للشعبة الواحدة خدمة أكثر من برنامج.{% else %}Oracle does not provide a programme column. Every selected programme will be linked to every section in this import, and one section may serve multiple programmes.{% endif %}</p>
+        <div class="si-program-actions">
+          <button id="selectAllPrograms" type="button" class="si-text-button">{% if LANGUAGE_CODE == 'ar' %}اختيار الكل{% else %}Select all{% endif %}</button>
+          <button id="clearPrograms" type="button" class="si-text-button">{% if LANGUAGE_CODE == 'ar' %}مسح الاختيار{% else %}Clear{% endif %}</button>
+        </div>
+      </div>
+      <div id="programOptions" class="si-program-options">
+        {% for program in section_program_options %}
+          <label class="si-program-chip">
+            <input class="si-program-checkbox" type="checkbox" value="{{ program }}">
+            <span>{{ program }}</span>
+          </label>
+        {% empty %}
+          <div class="si-no-programs" role="alert">{% if LANGUAGE_CODE == 'ar' %}لا توجد رموز برامج في النظام. أضف متطلبات برنامج أولاً قبل الاستيراد.{% else %}No programme codes are configured. Add programme requirements before importing sections.{% endif %}</div>
+        {% endfor %}
+      </div>
+      <p id="programSelectionStatus" class="si-selection-status" aria-live="polite">{% if LANGUAGE_CODE == 'ar' %}لم يتم اختيار أي برنامج — سيكون الإدخال محظورًا.{% else %}No programme selected — Insert will remain blocked.{% endif %}</p>
+    </fieldset>
+
+    <aside class="si-merge-note" role="note">
+      <span class="si-merge-icon" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
+      </span>
+      <div>
+        <strong>{% if LANGUAGE_CODE == 'ar' %}هذا الاستيراد يدمج البيانات فقط{% else %}This import is merge-only{% endif %}</strong>
+        <p>{% if LANGUAGE_CODE == 'ar' %}يُحدّث الشعب الموجودة ويضيف الجديدة، ولا يحذف لقطة الشعب الحالية. إذا أردت استبدال اللقطة كاملة، استخدم عملية «مسح الشعب الحالية» الآمنة أولاً من إدارة قاعدة البيانات.{% else %}It updates matching sections and adds new ones; it never deletes the current snapshot. To replace the snapshot, first use the guarded “Clear Current Sections” operation in Database Admin.{% endif %}</p>
+      </div>
+      <a class="si-admin-link" href="{% url 'db_admin_page' %}">{% if LANGUAGE_CODE == 'ar' %}فتح إدارة قاعدة البيانات{% else %}Open Database Admin{% endif %}<span aria-hidden="true">↗</span></a>
+    </aside>
+
+    <div class="si-action-row">
+      <button id="parseBtn" type="button" class="btn btn-primary">{% if LANGUAGE_CODE == 'ar' %}تحليل ومعاينة الأثر{% else %}Parse and preview impact{% endif %}</button>
+      <button id="insertBtn" type="button" class="btn btn-outline-danger" disabled>{% if LANGUAGE_CODE == 'ar' %}إدخال الشعب{% else %}Insert sections{% endif %}</button>
+      <button id="toggleTech" type="button" class="btn btn-outline-secondary si-tech-toggle" aria-expanded="false" aria-controls="techWrap">{% if LANGUAGE_CODE == 'ar' %}التفاصيل التقنية{% else %}Technical details{% endif %}</button>
+    </div>
+    <div id="status" role="status" aria-live="polite" class="alert alert-info si-status">{% if LANGUAGE_CODE == 'ar' %}اختر ملفًا وبرنامجًا واحدًا على الأقل لبدء المعاينة.{% else %}Choose a file and at least one programme to begin the preview.{% endif %}</div>
+    <div id="techWrap" class="d-none" aria-label="{% if LANGUAGE_CODE == 'ar' %}استجابة النظام التقنية{% else %}Technical system response{% endif %}"><pre id="out" class="si-technical-output">{% if LANGUAGE_CODE == 'ar' %}لا يوجد إجراء بعد.{% else %}No action yet.{% endif %}</pre></div>
+  </section>
+
+  <section id="previewPanel" class="si-panel si-preview-panel" aria-labelledby="previewTitle">
+    <div class="si-section-heading si-preview-heading">
+      <div>
+        <p class="si-eyebrow">{% if LANGUAGE_CODE == 'ar' %}محسوبة مقابل قاعدة البيانات الحالية{% else %}Calculated against the current database{% endif %}</p>
+        <h2 id="previewTitle">{% if LANGUAGE_CODE == 'ar' %}3. أثر الاستيراد المتوقع{% else %}3. Expected import impact{% endif %}</h2>
+      </div>
+      <div id="effectivePrograms" class="si-effective-programs" aria-live="polite">{% if LANGUAGE_CODE == 'ar' %}لا توجد معاينة بعد{% else %}No preview yet{% endif %}</div>
+    </div>
+
+    <div class="si-impact-grid">
+      <article class="si-impact-card"><span>{% if LANGUAGE_CODE == 'ar' %}الشعب المتأثرة{% else %}Sections{% endif %}</span><strong id="kSections">0</strong></article>
+      <article class="si-impact-card"><span>{% if LANGUAGE_CODE == 'ar' %}اللقاءات{% else %}Meetings{% endif %}</span><strong id="kMeetings">0</strong></article>
+      <article class="si-impact-card is-positive"><span>{% if LANGUAGE_CODE == 'ar' %}شعب جديدة{% else %}New sections{% endif %}</span><strong id="kNew">0</strong></article>
+      <article class="si-impact-card"><span>{% if LANGUAGE_CODE == 'ar' %}شعب موجودة ستُحدّث{% else %}Existing sections{% endif %}</span><strong id="kExisting">0</strong></article>
+      <article class="si-impact-card"><span>{% if LANGUAGE_CODE == 'ar' %}تغييرات ارتباط البرامج{% else %}Membership changes{% endif %}</span><strong id="kMembership">0</strong></article>
+      <article class="si-impact-card is-warning"><span>{% if LANGUAGE_CODE == 'ar' %}شعب بلا برنامج بعد الدمج{% else %}Unassigned after merge{% endif %}</span><strong id="kUnassigned">0</strong></article>
+    </div>
+    <p id="impactDetails" class="si-impact-details">{% if LANGUAGE_CODE == 'ar' %}شغّل المعاينة لرؤية الشعب الجديدة والموجودة وتغييرات ارتباط البرامج.{% else %}Run Preview to see new and existing sections and programme membership changes.{% endif %}</p>
+  </section>
+
+  <section class="si-panel si-table-panel" aria-labelledby="previewRowsTitle">
+    <div class="si-table-heading">
+      <div>
+        <h2 id="previewRowsTitle">{% if LANGUAGE_CODE == 'ar' %}صفوف المعاينة{% else %}Preview rows{% endif %}</h2>
+        <p id="rowSummary">{% if LANGUAGE_CODE == 'ar' %}لم يتم تحليل أي صف بعد.{% else %}No rows parsed yet.{% endif %}</p>
+      </div>
+    </div>
     <div class="table-responsive">
-      <table class="table table-sm align-middle">
+      <table class="table table-sm align-middle si-preview-table">
         <thead><tr>
-          <th scope="col" class="si-filterable" data-filter="fCode">{% if LANGUAGE_CODE == 'ar' %}الرمز{% else %}Code{% endif %}<span class="si-filter-icon" id="fCodeIcon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg></span><div class="si-filter-pop" id="fCodePop"><input id="fCode" placeholder="{% if LANGUAGE_CODE == 'ar' %}تصفية حسب الرمز…{% else %}Filter by code…{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}تصفية حسب الرمز{% else %}Filter by code{% endif %}"><button class="si-filter-clear" id="fCodeClear">{% if LANGUAGE_CODE == 'ar' %}مسح{% else %}Clear{% endif %}</button></div></th>
-          <th scope="col">{% if LANGUAGE_CODE == 'ar' %}الرقم{% else %}No.{% endif %}</th>
+          <th scope="col" class="si-filterable" data-filter="fCode">{% if LANGUAGE_CODE == 'ar' %}المقرر{% else %}Course{% endif %}<button type="button" class="si-filter-icon" id="fCodeIcon" aria-label="{% if LANGUAGE_CODE == 'ar' %}فتح تصفية المقرر{% else %}Open course filter{% endif %}" aria-expanded="false" aria-controls="fCodePop"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg></button><div class="si-filter-pop" id="fCodePop"><label for="fCode">{% if LANGUAGE_CODE == 'ar' %}تصفية حسب المقرر{% else %}Filter by course{% endif %}</label><input id="fCode" placeholder="{% if LANGUAGE_CODE == 'ar' %}مثال: CS285{% else %}e.g. CS285{% endif %}"><button type="button" class="si-filter-clear" id="fCodeClear">{% if LANGUAGE_CODE == 'ar' %}مسح{% else %}Clear{% endif %}</button></div></th>
           <th scope="col">{% if LANGUAGE_CODE == 'ar' %}اسم المقرر{% else %}Course name{% endif %}</th>
-          <th scope="col" class="si-filterable" data-filter="fSection">{% if LANGUAGE_CODE == 'ar' %}الشعبة{% else %}Section{% endif %}<span class="si-filter-icon" id="fSectionIcon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg></span><div class="si-filter-pop" id="fSectionPop"><input id="fSection" placeholder="{% if LANGUAGE_CODE == 'ar' %}تصفية حسب الشعبة…{% else %}Filter by section…{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}تصفية حسب الشعبة{% else %}Filter by section{% endif %}"><button class="si-filter-clear" id="fSectionClear">{% if LANGUAGE_CODE == 'ar' %}مسح{% else %}Clear{% endif %}</button></div></th>
-          <th scope="col" class="si-filterable" data-filter="fDay">{% if LANGUAGE_CODE == 'ar' %}اليوم{% else %}Day{% endif %}<span class="si-filter-icon" id="fDayIcon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg></span><div class="si-filter-pop" id="fDayPop"><input id="fDay" placeholder="{% if LANGUAGE_CODE == 'ar' %}تصفية حسب اليوم…{% else %}Filter by day…{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}تصفية حسب اليوم{% else %}Filter by day{% endif %}"><button class="si-filter-clear" id="fDayClear">{% if LANGUAGE_CODE == 'ar' %}مسح{% else %}Clear{% endif %}</button></div></th>
-          <th scope="col">{% if LANGUAGE_CODE == 'ar' %}البداية{% else %}Start{% endif %}</th>
-          <th scope="col">{% if LANGUAGE_CODE == 'ar' %}النهاية{% else %}End{% endif %}</th>
+          <th scope="col" class="si-filterable" data-filter="fSection">{% if LANGUAGE_CODE == 'ar' %}الشعبة{% else %}Section{% endif %}<button type="button" class="si-filter-icon" id="fSectionIcon" aria-label="{% if LANGUAGE_CODE == 'ar' %}فتح تصفية الشعبة{% else %}Open section filter{% endif %}" aria-expanded="false" aria-controls="fSectionPop"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg></button><div class="si-filter-pop" id="fSectionPop"><label for="fSection">{% if LANGUAGE_CODE == 'ar' %}تصفية حسب الشعبة{% else %}Filter by section{% endif %}</label><input id="fSection" placeholder="M3"><button type="button" class="si-filter-clear" id="fSectionClear">{% if LANGUAGE_CODE == 'ar' %}مسح{% else %}Clear{% endif %}</button></div></th>
+          <th scope="col">{% if LANGUAGE_CODE == 'ar' %}البرامج الفعلية{% else %}Effective programmes{% endif %}</th>
+          <th scope="col" class="si-filterable" data-filter="fDay">{% if LANGUAGE_CODE == 'ar' %}اليوم{% else %}Day{% endif %}<button type="button" class="si-filter-icon" id="fDayIcon" aria-label="{% if LANGUAGE_CODE == 'ar' %}فتح تصفية اليوم{% else %}Open day filter{% endif %}" aria-expanded="false" aria-controls="fDayPop"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg></button><div class="si-filter-pop" id="fDayPop"><label for="fDay">{% if LANGUAGE_CODE == 'ar' %}تصفية حسب اليوم{% else %}Filter by day{% endif %}</label><input id="fDay"><button type="button" class="si-filter-clear" id="fDayClear">{% if LANGUAGE_CODE == 'ar' %}مسح{% else %}Clear{% endif %}</button></div></th>
+          <th scope="col">{% if LANGUAGE_CODE == 'ar' %}الوقت{% else %}Time{% endif %}</th>
           <th scope="col">{% if LANGUAGE_CODE == 'ar' %}السعة{% else %}Capacity{% endif %}</th>
           <th scope="col">{% if LANGUAGE_CODE == 'ar' %}المسجلون{% else %}Registered{% endif %}</th>
           <th scope="col">{% if LANGUAGE_CODE == 'ar' %}القاعة{% else %}Room{% endif %}</th>
           <th scope="col">{% if LANGUAGE_CODE == 'ar' %}المحاضر{% else %}Instructor{% endif %}</th>
-          <th scope="col">{% if LANGUAGE_CODE == 'ar' %}التصنيف{% else %}Tag{% endif %}</th>
+          <th scope="col">{% if LANGUAGE_CODE == 'ar' %}المصدر{% else %}Source{% endif %}</th>
         </tr></thead>
         <tbody id="tbody">
-          <tr><td colspan="12"><div class="empty-state"><span class="empty-icon"><span class="i i-xl" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></span></span><div class="empty-title">{% if LANGUAGE_CODE == 'ar' %}لا توجد بيانات بعد{% else %}No data yet{% endif %}</div><div class="empty-hint">{% if LANGUAGE_CODE == 'ar' %}اختر ملف Oracle HTML وانقر <strong>تحليل + معاينة</strong>{% else %}Select an Oracle HTML file and click <strong>Parse + Preview</strong>{% endif %}</div></div></td></tr>
+          <tr><td colspan="11"><div class="empty-state"><span class="empty-icon" aria-hidden="true"><span class="i i-xl"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></span></span><div class="empty-title">{% if LANGUAGE_CODE == 'ar' %}لا توجد بيانات بعد{% else %}No preview data yet{% endif %}</div><div class="empty-hint">{% if LANGUAGE_CODE == 'ar' %}اختر الملف والبرامج ثم شغّل المعاينة.{% else %}Choose the file and programmes, then run Preview.{% endif %}</div></div></td></tr>
         </tbody>
       </table>
     </div>
-  </div>
+  </section>
+</div>
 {% endblock %}
 
 {% block extra_js %}
 <script>
-  const LANGUAGE_CODE = "{{ LANGUAGE_CODE|default:'en' }}";
+  window.sectionsImportConfig = {
+    previewUrl: "{% url 'sections_import_preview' %}",
+    insertUrl: "{% url 'sections_import_insert' %}"
+  };
 </script>
-<script src="{% static 'js/page-sections-import.js' %}?v=2"></script>
+<script src="{% static 'js/page-sections-import.js' %}?v=4"></script>
 {% endblock %}

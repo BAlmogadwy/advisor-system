@@ -21,8 +21,10 @@ from core.models import (
     PlannerDraft,
     ProgrammeRequirement,
     Student,
+    StudentTermSection,
     TermSection,
     TermSectionMeeting,
+    TermSectionProgram,
 )
 from core.planner_draft_views import UNPLACED_AR, UNPLACED_AR_DEFAULT
 from core.services import planner_drafts as svc
@@ -59,6 +61,7 @@ def world():
             section = TermSection.objects.create(
                 course_code=code, course_key=code, course_name=name, section=label
             )
+            TermSectionProgram.objects.create(term_section=section, program="AI")
             TermSectionMeeting.objects.create(
                 term_section=section, day=day, start_time=start, end_time="10:15"
             )
@@ -67,6 +70,7 @@ def world():
     made[("CS113", "F1")] = TermSection.objects.create(
         course_code="CS113", course_key="CS113", course_name="PROGRAMMING II", section="F1"
     )
+    TermSectionProgram.objects.create(term_section=made[("CS113", "F1")], program="AI")
     return made
 
 
@@ -228,6 +232,9 @@ def test_rebuilding_without_a_confirmation_is_refused(owner_client, world, draft
     response = _post(owner_client, "planner_draft_generate", draft)
     assert response.status_code == 428
     assert response.json()["needs_confirmation"] is True
+    message = response.json()["error"]
+    assert "بدل الاحتفاظ بالجدول المرجعي المعروض أعلاه" in message
+    assert "الإبقاء على الشُعب التي ثبّتها يدويًا" in message
 
 
 def test_a_posted_confirmed_flag_is_not_a_confirmation(owner_client, world, draft, monkeypatch):
@@ -482,7 +489,7 @@ def test_an_expired_draft_cannot_be_used(owner_client, world, draft):
         expires_at=timezone.now() - timedelta(seconds=1)
     )
     draft.refresh_from_db()
-    for name in ("planner_draft_generate", "planner_draft_edit", "planner_draft_select"):
+    for name in ("planner_draft_generate", "planner_draft_edit"):
         assert _post(owner_client, name, draft, {"key": "x"}).status_code == 410, name
 
 
@@ -555,8 +562,8 @@ def test_the_fingerprint_has_no_clock_in_it(world):
 # ── 6. selection ─────────────────────────────────────────────────
 
 
-def test_selecting_writes_no_registration(owner_client, world, draft, monkeypatch):
-    """The single most important thing this feature does NOT do."""
+def test_saving_a_timetable_is_disabled_and_writes_nothing(owner_client, world, draft, monkeypatch):
+    """A V2 proposal remains on screen and cannot become stored state."""
     from core.models import StudentCourse, StudentTermSection
 
     _stub_solver(monkeypatch, world)
@@ -567,25 +574,27 @@ def test_selecting_writes_no_registration(owner_client, world, draft, monkeypatc
     response = _post(
         owner_client, "planner_draft_select", draft, {"key": draft.alternatives[0]["key"]}
     )
-    assert response.status_code == 200
+    assert response.status_code == 405
     assert (StudentCourse.objects.count(), StudentTermSection.objects.count()) == before
-    assert "لم يتم تسجيلك" in response.json()["message"]
+    draft.refresh_from_db()
+    assert draft.selected_alternative == ""
+    assert response.json()["code"] == "TIMETABLE_SAVE_DISABLED"
 
 
-def test_a_timetable_that_was_never_offered_cannot_be_selected(
+def test_a_timetable_that_was_never_offered_cannot_be_saved(
     owner_client, world, draft, monkeypatch
 ):
     _stub_solver(monkeypatch, world)
     svc.generate(draft)
     draft.refresh_from_db()
     response = _post(owner_client, "planner_draft_select", draft, {"key": "1-2-3"})
-    assert response.status_code == 409
+    assert response.status_code == 405
     draft.refresh_from_db()
     assert draft.selected_alternative == ""
 
 
-def test_nothing_can_be_selected_before_anything_is_generated(owner_client, world, draft):
-    assert _post(owner_client, "planner_draft_select", draft, {"key": "x"}).status_code == 409
+def test_nothing_can_be_saved_before_anything_is_generated(owner_client, world, draft):
+    assert _post(owner_client, "planner_draft_select", draft, {"key": "x"}).status_code == 405
 
 
 # ── 7. what reaches the browser ──────────────────────────────────
@@ -597,11 +606,412 @@ def test_the_response_carries_no_operator_metadata(owner_client, world, draft, m
     _post(owner_client, "planner_draft_generate", draft)
     body = owner_client.get(_url("planner_draft_detail", draft)).content.decode()
 
-    for leaked in ("fingerprint", "baseline", "registered_count", "instructor", "room", "source"):
+    for leaked in ("fingerprint", "baseline", "registered_count", "instructor", "room"):
         assert leaked not in body, leaked
     payload = json.loads(body)
     meeting = payload["alternatives"][0]["meetings"][0]
-    assert set(meeting) == {"course_code", "course_name", "section", "day", "start", "end"}
+    assert set(meeting) == {
+        "course_code",
+        "course_name",
+        "section",
+        "day",
+        "start",
+        "end",
+        "source",
+    }
+    assert meeting["source"] in {"current", "proposed"}
+
+
+def test_browser_alternative_preserves_its_own_coverage_and_unplaced_reasons(
+    owner_client, world, draft, monkeypatch
+):
+    """A partial A2 result must not become an anonymous complete timetable."""
+
+    svc.edit_draft(draft, course_codes=["CS113", "AI221"])
+
+    def partial(_request):
+        return {
+            "generated": 3,
+            "alternatives": [
+                {
+                    "key": "safe-key",
+                    "planner_options": ["A2"],
+                    "scheduled_courses": 1,
+                    "target_courses": 2,
+                    "course_count": 1,
+                    "credit_hours": 3,
+                    "days_on_campus": 1,
+                    "days": ["SUN"],
+                    "earliest_start": "09:00",
+                    "latest_end": "10:15",
+                    "courses": [
+                        {
+                            "course_code": "CS113",
+                            "section": "M1",
+                            "source": "proposed",
+                        }
+                    ],
+                    "meetings": [
+                        {
+                            "course_code": "CS113",
+                            "section": "M1",
+                            "day": "SUN",
+                            "start": "09:00",
+                            "end": "10:15",
+                            "source": "proposed",
+                        }
+                    ],
+                    "unplaced": [
+                        {
+                            "course_code": "AI221",
+                            "reason_code": "OMITTED_IN_THIS_VARIANT",
+                            "reason": "internal wording must not reach the browser",
+                        }
+                    ],
+                }
+            ],
+            "unplaced": [],
+        }
+
+    monkeypatch.setattr(svc, "build_student_options", partial)
+    option = _post(owner_client, "planner_draft_generate", draft).json()["alternatives"][0]
+
+    assert option["planner_options"] == ["A2"]
+    assert option["scheduled_courses"] == 1
+    assert option["target_courses"] == 2
+    assert option["complete"] is False
+    assert option["unplaced"][0]["course_code"] == "AI221"
+    assert option["unplaced"][0]["reason"] == UNPLACED_AR["OMITTED_IN_THIS_VARIANT"]
+    assert "internal wording" not in json.dumps(option)
+
+
+def test_workspace_discloses_catalogue_scope_and_requires_complete_times(
+    owner_client, world, draft
+):
+    TermSectionMeeting.objects.filter(term_section__course_key="AI221").delete()
+    workspace = owner_client.get(_url("planner_draft_detail", draft)).json()["workspace"]
+    courses = {row["course_code"]: row for row in workspace["catalog"]}
+
+    assert workspace["section_catalog_term_known"] is False
+    assert workspace["clash_check_scope"] == "recorded_complete_meeting_times"
+    assert courses["AI221"]["status"] == "offering_unknown"
+    assert courses["AI221"]["sections"] == []
+
+
+def test_workspace_identifies_an_expected_plan_baseline(owner_client, world, draft):
+    StudentTermSection.objects.create(
+        student_id=OWNER,
+        academic_year=draft.academic_year,
+        term=draft.term,
+        term_section=world[("CS113", "M1")],
+        source=f"registration_plan_{draft.academic_year}_t{draft.term}",
+    )
+
+    workspace = owner_client.get(_url("planner_draft_detail", draft)).json()["workspace"]
+
+    assert workspace["timetable_kind"] == "EXPECTED_PLAN"
+    assert {row["course_code"] for row in workspace["current_timetable"]} == {"CS113"}
+    assert workspace["registered_timetable"] == []
+    assert {row["course_code"] for row in workspace["expected_timetable"]} == {"CS113"}
+
+
+def test_workspace_keeps_coexisting_snapshots_separate_and_builds_from_registered(
+    owner_client, world, draft
+):
+    StudentTermSection.objects.create(
+        student_id=OWNER,
+        academic_year=draft.academic_year,
+        term=draft.term,
+        term_section=world[("CS113", "M1")],
+        source=f"registration_plan_{draft.academic_year}_t{draft.term}",
+    )
+    StudentTermSection.objects.create(
+        student_id=OWNER,
+        academic_year=draft.academic_year,
+        term=draft.term,
+        term_section=world[("AI221", "M1")],
+        source="scraper_timetable",
+    )
+
+    workspace = owner_client.get(_url("planner_draft_detail", draft)).json()["workspace"]
+
+    assert workspace["timetable_kind"] == "REGISTERED"
+    assert {row["course_code"] for row in workspace["current_timetable"]} == {"AI221"}
+    assert {row["course_code"] for row in workspace["registered_timetable"]} == {"AI221"}
+    assert {row["course_code"] for row in workspace["expected_timetable"]} == {"CS113"}
+
+
+def test_workspace_exposes_a_working_forecast_as_the_expected_timetable(owner_client, world, draft):
+    StudentTermSection.objects.create(
+        student_id=OWNER,
+        academic_year=draft.academic_year,
+        term=draft.term,
+        term_section=world[("AI221", "M1")],
+        source="planner",
+    )
+
+    workspace = owner_client.get(_url("planner_draft_detail", draft)).json()["workspace"]
+
+    assert workspace["timetable_kind"] == "EXPECTED_PLAN"
+    assert workspace["registered_timetable"] == []
+    assert {row["course_code"] for row in workspace["current_timetable"]} == {"AI221"}
+    assert {row["course_code"] for row in workspace["expected_timetable"]} == {"AI221"}
+
+
+def test_workspace_prefers_a_working_forecast_over_an_older_imported_plan(
+    owner_client, world, draft
+):
+    StudentTermSection.objects.create(
+        student_id=OWNER,
+        academic_year=draft.academic_year,
+        term=draft.term,
+        term_section=world[("CS113", "M1")],
+        source=f"registration_plan_{draft.academic_year}_t{draft.term}",
+    )
+    StudentTermSection.objects.create(
+        student_id=OWNER,
+        academic_year=draft.academic_year,
+        term=draft.term,
+        term_section=world[("AI221", "M1")],
+        source="planner",
+    )
+
+    workspace = owner_client.get(_url("planner_draft_detail", draft)).json()["workspace"]
+
+    assert workspace["timetable_kind"] == "EXPECTED_PLAN"
+    assert {row["course_code"] for row in workspace["current_timetable"]} == {"AI221"}
+    assert {row["course_code"] for row in workspace["expected_timetable"]} == {"AI221"}
+
+
+def test_generation_uses_the_same_registered_snapshot_that_it_fingerprints(
+    world, draft, monkeypatch
+):
+    StudentTermSection.objects.create(
+        student_id=OWNER,
+        academic_year=draft.academic_year,
+        term=draft.term,
+        term_section=world[("CS113", "M1")],
+        source=f"registration_plan_{draft.academic_year}_t{draft.term}",
+    )
+    StudentTermSection.objects.create(
+        student_id=OWNER,
+        academic_year=draft.academic_year,
+        term=draft.term,
+        term_section=world[("AI221", "M1")],
+        source="scraper_timetable",
+    )
+    seen = _stub_solver(monkeypatch, world)
+
+    generated = svc.generate(draft)
+
+    request = seen[0]
+    assert {row["course_code"] for row in request.baseline_override or ()} == {"AI221"}
+    assert {row["source"] for row in request.baseline_override or ()} == {"scraper_timetable"}
+    assert {row["course_code"] for row in generated.generated_inputs["baseline"]} == {"AI221"}
+
+
+def test_expected_plan_proposal_uses_neutral_and_expected_fields(world, monkeypatch):
+    from core.services.advisor_presentations import timetable_presentation_from_tool_results
+    from core.services.llm_remote_privacy import (
+        RemoteIdentityMap,
+        project_tool_result_for_remote,
+    )
+    from core.services.rbac import ROLE_STUDENT
+    from core.services.virtual_advisor_capabilities import _exec_build_timetable_proposal
+
+    StudentTermSection.objects.create(
+        student_id=OWNER,
+        academic_year="1448",
+        term="1",
+        term_section=world[("CS113", "M1")],
+        source="registration_plan_1448_t1",
+    )
+    monkeypatch.setattr(
+        "core.services.recommender.recommend_next_courses", lambda *_args, **_kwargs: []
+    )
+
+    def no_additions(request):
+        assert request.keep_current_sections is True
+        assert request.must_include == ()
+        return {"generated": 0, "alternatives": [], "unplaced": []}
+
+    monkeypatch.setattr("core.services.student_planner.build_student_options", no_additions)
+    result = _exec_build_timetable_proposal(
+        {"mode": "around_current"},
+        {"role": ROLE_STUDENT, "student_id": OWNER},
+        {"academic_year": 1448, "term": 1},
+    )
+
+    assert result["ok"] is True
+    assert result["baseline_kind"] == "EXPECTED_PLAN"
+    assert result["baseline_sections"] == result["expected_plan_sections"]
+    assert result["baseline_sections"][0]["course_code"] == "CS113"
+    assert result["baseline_credit_hours"] == result["expected_plan_credit_hours"] == 3
+    assert result["current_sections"] == []
+    assert result["current_credit_hours"] == 0
+
+    remote = project_tool_result_for_remote("build_timetable_proposal", result, RemoteIdentityMap())
+    assert remote["baseline_kind"] == "EXPECTED_PLAN"
+    assert remote["baseline_sections"] == remote["expected_plan_sections"]
+    assert remote["current_sections"] == []
+
+    presentation = timetable_presentation_from_tool_results([result])
+    assert presentation["baseline_kind"] == "EXPECTED_PLAN"
+    assert presentation["baseline_sections"] == presentation["expected_plan_sections"]
+    assert presentation["current_sections"] == []
+
+
+def test_expected_plan_legacy_builder_keeps_expected_provenance(world, monkeypatch):
+    from core.services.llm_remote_privacy import (
+        RemoteIdentityMap,
+        project_tool_result_for_remote,
+    )
+    from core.services.rbac import ROLE_STUDENT
+    from core.services.virtual_advisor_capabilities import _exec_build_my_timetable
+
+    StudentTermSection.objects.create(
+        student_id=OWNER,
+        academic_year="1448",
+        term="1",
+        term_section=world[("CS113", "M1")],
+        source="registration_plan_1448_t1",
+    )
+    monkeypatch.setattr(
+        "core.services.recommender.recommend_next_courses", lambda *_args, **_kwargs: []
+    )
+
+    result = _exec_build_my_timetable(
+        {},
+        {"role": ROLE_STUDENT, "student_id": OWNER},
+        {"academic_year": 1448, "term": 1},
+    )
+
+    assert result["ok"] is True
+    assert result["baseline_kind"] == "EXPECTED_PLAN"
+    assert result["retained_sections"][0]["source"] == "EXPECTED_PLAN"
+    assert "CURRENT_REGISTRATION" not in str(result["retained_sections"])
+
+    remote = project_tool_result_for_remote("build_my_timetable", result, RemoteIdentityMap())
+    assert remote["baseline_kind"] == "EXPECTED_PLAN"
+    assert remote["retained_sections"][0]["source"] == "EXPECTED_PLAN"
+
+
+def test_coexisting_plan_and_registrar_rows_resolve_to_the_registrar_snapshot(world, monkeypatch):
+    """These three tools used to fail closed on a term holding both snapshots.
+
+    Failing closed was right while a term holding both meant something had gone
+    wrong. A term now holds both by design, so the tools resolve instead: registrar
+    evidence supersedes a forecast for the same term, and the plan's course must not
+    appear anywhere the payload calls a registration. The refusal itself is kept and
+    is still exercised by the test below -- it just cannot be reached by two
+    snapshots legitimately coexisting.
+    """
+    from core.services.rbac import ROLE_STUDENT
+    from core.services.virtual_advisor_capabilities import (
+        _exec_build_timetable_proposal,
+        _exec_my_clash_free_sections,
+        _exec_my_timetable,
+    )
+
+    StudentTermSection.objects.create(
+        student_id=OWNER,
+        academic_year="1448",
+        term="1",
+        term_section=world[("CS113", "M1")],
+        source="registration_plan_1448_t1",
+    )
+    StudentTermSection.objects.create(
+        student_id=OWNER,
+        academic_year="1448",
+        term="1",
+        term_section=world[("AI221", "M1")],
+        source="scraper_timetable",
+    )
+    monkeypatch.setattr(
+        "core.services.recommender.recommend_next_courses", lambda *_args, **_kwargs: []
+    )
+
+    scope = {"role": ROLE_STUDENT, "student_id": OWNER}
+    ctx = {"academic_year": 1448, "term": 1}
+    results = [
+        _exec_my_timetable({}, scope, ctx),
+        _exec_my_clash_free_sections({"course_code": "CS113"}, scope, ctx),
+        _exec_build_timetable_proposal({"mode": "around_current"}, scope, ctx),
+    ]
+
+    for result in results:
+        # Success is spelled differently across these three executors; what matters
+        # is that none of them refused and none reported an unresolvable baseline.
+        assert result.get("ok", True) is True, result
+        assert result.get("reason") != "MIXED_TIMETABLE_SOURCES", result
+        assert result.get("baseline_kind") in (None, "REGISTERED"), result
+
+    timetable = results[0]
+    on_screen = {row["course_code"] for row in timetable["meetings"]}
+    assert on_screen == {"AI221"}, (
+        "the registrar snapshot supersedes the forecast for the same term, so the "
+        "planned-only course must not appear in a timetable the payload calls current"
+    )
+    assert timetable["schedule_kind"] == "REGISTERED"
+    assert timetable["is_expected_plan"] is False
+
+
+def test_a_mixed_baseline_handed_to_a_tool_is_still_refused(world, monkeypatch):
+    """The fail-closed path must stay alive even though the snapshot reader can no
+    longer produce a mixed set. It is the backstop for any future caller that
+    assembles rows itself, which is exactly how the original defect arrived."""
+    from core.services.rbac import ROLE_STUDENT
+    from core.services.virtual_advisor_capabilities import _exec_my_timetable
+
+    mixed = [
+        {
+            "course_code": "CS113",
+            "course_key": "CS113",
+            "course_name": "Planned",
+            "section": "M1",
+            "credits": 3,
+            "day": "SUN",
+            "start_time": "09:00",
+            "end_time": "10:15",
+            "room": "R1",
+            "instructor": "Staff",
+            "term_section_id": world[("CS113", "M1")].id,
+            "source": "registration_plan_1448_t1",
+        },
+        {
+            "course_code": "AI221",
+            "course_key": "AI221",
+            "course_name": "Registered",
+            "section": "M1",
+            "credits": 3,
+            "day": "MON",
+            "start_time": "09:00",
+            "end_time": "10:15",
+            "room": "R2",
+            "instructor": "Staff",
+            "term_section_id": world[("AI221", "M1")].id,
+            "source": "scraper_timetable",
+        },
+    ]
+    monkeypatch.setattr(
+        "core.services.student_sections.get_student_term_baseline",
+        lambda *_args, **_kwargs: [dict(row) for row in mixed],
+    )
+
+    result = _exec_my_timetable(
+        {},
+        {"role": ROLE_STUDENT, "student_id": OWNER},
+        {
+            "academic_year": 1448,
+            "term": 1,
+        },
+    )
+
+    assert result["ok"] is False
+    assert result["reason"] == "MIXED_TIMETABLE_SOURCES"
+    assert result["schedule_kind"] == "MIXED_REVIEW_REQUIRED"
+    assert "meetings" not in result
+    assert "baseline_sections" not in result
 
 
 def test_a_course_the_student_never_asked_for_is_marked_as_added(
@@ -692,6 +1102,17 @@ def test_the_page_carries_the_draft_id_and_nothing_else_about_it(owner_client, w
     assert "CS113" not in body, "the courses are fetched, not baked into the page"
 
 
+def test_the_student_planner_keeps_the_student_sidebar(owner_client, world, draft):
+    response = owner_client.get(reverse("student_planner_page", args=[str(draft.id)]))
+    body = response.content.decode()
+
+    assert response.context["role"] == "STUDENT"
+    assert "My Academic Record" in body or "سجلي الأكاديمي" in body
+    assert "Student Recommender" not in body
+    assert "Program Plan Viewer" not in body
+    assert "Virtual Advisor" not in body
+
+
 # ── 10. anonymity ────────────────────────────────────────────────
 
 
@@ -770,6 +1191,268 @@ def test_the_students_two_choices_actually_reach_the_solver(
 
     assert seen[0].keep_current_sections is False, "the rebuild choice never reached the solver"
     assert dict(seen[0].fixed_sections) == {"CS113": section.id}, "the pin never reached the solver"
+    assert seen[0].include_recommendations is False, (
+        "the solver silently restored recommendations the student removed on screen"
+    )
+
+
+def test_the_student_timetable_entry_point_is_scoped_to_the_session(
+    owner_client, world, monkeypatch
+):
+    monkeypatch.setattr(
+        "core.services.recommender.recommend_next_courses", lambda *_args, **_kwargs: ["CS113"]
+    )
+    response = owner_client.get(reverse("student_timetable_start"))
+    assert response.status_code == 302
+    created = PlannerDraft.objects.latest("created_at")
+    assert created.student_id == OWNER
+    assert created.course_codes == ["CS113"]
+    assert response.url == reverse("student_planner_page", args=[str(created.id)])
+
+
+def test_the_workspace_exposes_planning_controls_but_no_save_control(owner_client, world, draft):
+    detail = owner_client.get(_url("planner_draft_detail", draft)).json()
+    assert detail["workspace"]["can_save_timetable"] is False
+    assert detail["workspace"]["can_register_courses"] is False
+    assert detail["workspace"]["catalog"]
+    assert {section["label"] for section in detail["workspace"]["catalog"][0]["sections"]} <= {
+        "M1",
+        "M2",
+    }
+
+    page = owner_client.get(reverse("student_planner_page", args=[str(draft.id)])).content.decode()
+    assert "spGenerate" in page
+    assert "spCourseSearch" in page
+    assert "spApply" not in page
+    assert "spSave" not in page
+
+
+def test_chat_timetable_tool_returns_multiple_safe_proposals(world, monkeypatch):
+    from core.services.rbac import ROLE_STUDENT
+    from core.services.virtual_advisor_capabilities import _exec_build_timetable_proposal
+
+    monkeypatch.setattr(
+        "core.services.recommender.recommend_next_courses", lambda *_args, **_kwargs: []
+    )
+
+    def fake_builder(request):
+        assert request.keep_current_sections is False
+        assert request.include_recommendations is False
+        return {
+            "generated": 9,
+            "alternatives": [
+                {
+                    "planner_options": planner_options,
+                    "courses": [
+                        {
+                            "course_code": "CS113",
+                            "section": label,
+                            "credits": 3,
+                            "term_section_id": world[("CS113", label)].id,
+                        }
+                    ],
+                    "meetings": [
+                        {
+                            "course_code": "CS113",
+                            "section": label,
+                            "day": day,
+                            "start": start,
+                            "end": "10:15",
+                            "term_section_id": world[("CS113", label)].id,
+                        }
+                    ],
+                    "credit_hours": 3,
+                    "scheduled_courses": 1,
+                    "target_courses": 1,
+                    "unplaced": [],
+                    "days_on_campus": 1,
+                    "days": [day],
+                    "earliest_start": start,
+                    "latest_end": "10:15",
+                }
+                for label, day, start, planner_options in (
+                    ("M1", "SUN", "09:00", ["A1", "B1"]),
+                    ("M2", "MON", "13:00", ["A2"]),
+                )
+            ],
+            "unplaced": [],
+        }
+
+    monkeypatch.setattr("core.services.student_planner.build_student_options", fake_builder)
+    result = _exec_build_timetable_proposal(
+        {"mode": "from_scratch", "course_codes": ["CS113"]},
+        {"role": ROLE_STUDENT, "student_id": OWNER},
+        {"academic_year": 1448, "term": 1},
+    )
+
+    assert result["ok"] is True
+    assert len(result["alternatives"]) == 2
+    assert result["alternatives_generated"] == 9
+    assert result["distinct_alternatives"] == 2
+    assert result["alternatives"][0]["planner_options"] == ["A1", "B1"]
+    assert result["alternatives"][0]["scheduled_courses"] == 1
+    assert result["alternatives"][0]["target_courses"] == 1
+    assert result["can_save"] is False
+    assert result["can_register"] is False
+    assert "term_section_id" not in json.dumps(result)
+
+
+def test_chat_timetable_tool_distinguishes_no_target_from_failed_coverage(world, monkeypatch):
+    from core.services.rbac import ROLE_STUDENT
+    from core.services.virtual_advisor_capabilities import _exec_build_timetable_proposal
+
+    monkeypatch.setattr(
+        "core.services.recommender.recommend_next_courses", lambda *_args, **_kwargs: []
+    )
+
+    def nothing_to_schedule(request):
+        assert request.keep_current_sections is True
+        assert request.must_include == ()
+        return {
+            "generated": 0,
+            "alternatives": [],
+            "unplaced": [],
+            "reason": "NOTHING_TO_SCHEDULE",
+        }
+
+    monkeypatch.setattr("core.services.student_planner.build_student_options", nothing_to_schedule)
+    result = _exec_build_timetable_proposal(
+        {"mode": "around_current"},
+        {"role": ROLE_STUDENT, "student_id": OWNER},
+        {"academic_year": 1448, "term": 1},
+    )
+
+    assert result["ok"] is True
+    assert result["alternatives"] == []
+    assert result["no_additional_courses"] is True
+    assert result["alternatives_generated"] == 0
+
+
+@pytest.mark.parametrize(
+    ("maximum", "satisfied"),
+    ((12, False), (16, True), (18, True)),
+)
+def test_around_current_proposal_never_calls_an_over_cap_baseline_valid(
+    world, monkeypatch, maximum, satisfied
+):
+    from core.services.rbac import ROLE_STUDENT
+    from core.services.virtual_advisor_capabilities import _exec_build_timetable_proposal
+
+    # One deliberately high-credit synthetic course makes the boundary exact and
+    # avoids coupling this contract test to a large catalogue fixture.
+    ProgrammeRequirement.objects.filter(program="AI", course_code="CS113").update(credit_hours=16)
+    StudentTermSection.objects.create(
+        student_id=OWNER,
+        academic_year="1448",
+        term="1",
+        term_section=world[("CS113", "M1")],
+        source="scraper_timetable",
+    )
+    monkeypatch.setattr(
+        "core.services.recommender.recommend_next_courses", lambda *_args, **_kwargs: []
+    )
+    monkeypatch.setattr(
+        "core.services.student_planner.build_student_options",
+        lambda _request: {"generated": 0, "alternatives": [], "unplaced": []},
+    )
+
+    result = _exec_build_timetable_proposal(
+        {"mode": "around_current", "max_credits": maximum},
+        {"role": ROLE_STUDENT, "student_id": OWNER},
+        {"academic_year": 1448, "term": 1},
+    )
+
+    assert result["ok"] is True
+    assert result["baseline_credit_hours"] == 16
+    assert result["credit_ceiling"] == maximum
+    assert result["constraints_satisfied"] is satisfied
+    assert result["no_additional_courses"] is satisfied
+    assert result["alternatives"] == []
+    if satisfied:
+        assert result["constraint_failures"] == []
+    else:
+        assert len(result["constraint_failures"]) == 1
+        assert result["constraint_failures"][0]["course_code"] == ""
+        assert "16" in result["constraint_failures"][0]["reason"]
+        assert "12" in result["constraint_failures"][0]["reason"]
+
+
+def test_student_adapter_keeps_exact_planner_names_and_option_specific_coverage(world, monkeypatch):
+    """A/B/C provenance and partial coverage must survive the chat adapter."""
+    from core.services.student_planner import PlannerRequest, build_student_options
+
+    def mapping(code, label):
+        section = world[(code, label)]
+        return {
+            "course_code": code,
+            "section": label,
+            "term_section_id": section.id,
+            "meetings": [
+                {
+                    "day": "SUN" if label == "M1" else "MON",
+                    "start_time": "09:00" if label == "M1" else "13:00",
+                    "end_time": "10:15",
+                }
+            ],
+        }
+
+    full = [mapping("CS113", "M1"), mapping("AI221", "M1")]
+    partial = [mapping("CS113", "M2")]
+
+    def fake_build_plans(**kwargs):
+        assert kwargs["suggest_swaps"] is False
+        assert kwargs["strict_per_course"] is False
+        assert kwargs["consider_capacity"] is False
+        return {
+            "options": [
+                {
+                    "name": "A1",
+                    "scheduled": 2,
+                    "target": 2,
+                    "mappings": full,
+                    "unscheduled": [],
+                },
+                {
+                    "name": "B1",
+                    "scheduled": 2,
+                    "target": 2,
+                    "mappings": full,
+                    "unscheduled": [],
+                },
+                {
+                    "name": "A2",
+                    "scheduled": 1,
+                    "target": 2,
+                    "mappings": partial,
+                    "unscheduled": [{"course_code": "AI221", "reason": "ALL_SECTIONS_CLASH"}],
+                },
+            ]
+        }
+
+    monkeypatch.setattr("core.services.planner_builder.build_plans", fake_build_plans)
+    result = build_student_options(
+        PlannerRequest(
+            student_id=OWNER,
+            year=1448,
+            term=1,
+            must_include=("CS113", "AI221"),
+            keep_current_sections=False,
+            max_credits=18,
+            include_recommendations=False,
+        )
+    )
+
+    assert result["generated"] == 3
+    assert len(result["alternatives"]) == 2
+    assert result["alternatives"][0]["planner_options"] == ["A1", "B1"]
+    assert result["alternatives"][0]["scheduled_courses"] == 2
+    assert result["alternatives"][0]["target_courses"] == 2
+    assert result["alternatives"][1]["planner_options"] == ["A2"]
+    assert result["alternatives"][1]["scheduled_courses"] == 1
+    assert result["alternatives"][1]["target_courses"] == 2
+    assert result["alternatives"][1]["unplaced"][0]["course_code"] == "AI221"
+    assert result["alternatives"][1]["unplaced"][0]["reason_code"] == "OMITTED_IN_THIS_VARIANT"
+    assert result["unplaced"] == []
 
 
 def test_the_pinned_section_is_the_one_in_the_answer(owner_client, world, draft, monkeypatch):
@@ -860,12 +1543,14 @@ def test_the_course_names_are_really_looked_up(owner_client, world, draft, monke
     assert body["alternatives"][0]["meetings"][0]["course_name"] == "PROGRAMMING II"
 
 
-def test_the_chosen_timetable_is_marked_as_chosen(owner_client, world, draft, monkeypatch):
+def test_no_timetable_is_marked_as_saved(owner_client, world, draft, monkeypatch):
     _stub_solver(monkeypatch, world)
     body = _post(owner_client, "planner_draft_generate", draft).json()
     key = body["alternatives"][0]["key"]
-    after = _post(owner_client, "planner_draft_select", draft, {"key": key}).json()
-    assert [a["selected"] for a in after["alternatives"]] == [True]
+    refused = _post(owner_client, "planner_draft_select", draft, {"key": key})
+    assert refused.status_code == 405
+    after = owner_client.get(_url("planner_draft_detail", draft)).json()
+    assert [a["selected"] for a in after["alternatives"]] == [False]
 
 
 def test_the_handoff_defaults_to_the_students_own_recommendation(owner_client, world):

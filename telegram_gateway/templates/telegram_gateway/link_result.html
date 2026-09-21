@@ -1,0 +1,153 @@
+{% extends "core/base.html" %}
+{% load i18n %}{% get_current_language as LANGUAGE_CODE %}
+
+{% comment %}
+Every terminal state of the linking flow, in one template.
+
+`invalid` covers expired, already-used and never-existed alike. Telling them apart
+would say whether a token was ever real, which is the one thing somebody guessing
+at URLs wants to know.
+{% endcomment %}
+
+{% block title %}{% if LANGUAGE_CODE == 'ar' %}ربط تيليجرام{% else %}Telegram linking{% endif %}{% endblock %}
+
+{% block body %}
+<main id="main-content" class="login-wrap telegram-link-wrap" role="main" tabindex="-1">
+  <div class="login-card telegram-link-card telegram-link-card--result">
+    {% if state == "approved" %}
+      {% comment %}
+      The second half of the ceremony. The code is shown HERE and nowhere else,
+      and it is not sent to the chat — that is the whole point. The token proved
+      which chat opened the flow; this code proves the browser and the chat are
+      the same person, because only the chat the token was minted in can spend it.
+
+      The "never share" warning is load-bearing, not boilerplate: relaying this
+      code to somebody else is the one remaining way to complete a link the
+      student did not intend.
+      {% endcomment %}
+      <h1 class="login-title">{% if LANGUAGE_CODE == 'ar' %}خطوة أخيرة{% else %}One last step{% endif %}</h1>
+      <p class="login-sub">
+        {% if LANGUAGE_CODE == 'ar' %}
+          عُد إلى محادثتك مع البوت في تيليجرام وأرسل الأمر التالي:
+        {% else %}
+          Return to your Telegram chat with the bot and send:
+        {% endif %}
+      </p>
+      <p style="font-size:1.6rem;font-weight:700;letter-spacing:.15em;direction:ltr;
+                margin:1rem 0;padding:1rem;border-radius:12px;
+                border:1px solid var(--border, #d8dee9);">
+        /confirm {{ confirm_code }}
+      </p>
+      <p class="login-sub">
+        {% if LANGUAGE_CODE == 'ar' %}
+          <strong>لا تشارك هذا الرمز مع أي شخص.</strong> إذا طلبه منك أحد، فهو يحاول ربط
+          حسابك بمحادثته. لم يتم ربط أي شيء حتى الآن.
+        {% else %}
+          <strong>Never share this code.</strong> If anyone asks you for it, they are
+          trying to link your account to their chat. Nothing is linked yet.
+        {% endif %}
+      </p>
+
+    {% elif state == "linked" %}
+      <h1 class="login-title">{% if LANGUAGE_CODE == 'ar' %}تم الربط{% else %}Linked{% endif %}</h1>
+      <p class="login-sub">
+        {% if LANGUAGE_CODE == 'ar' %}
+          تم ربط حسابك. يمكنك العودة إلى تيليجرام وطرح سؤالك. لإلغاء الربط في أي وقت أرسل /unlink.
+        {% else %}
+          Your account is linked. Return to Telegram and ask your question. Send /unlink at any time to revoke.
+        {% endif %}
+      </p>
+
+    {% elif state == "unlinked" %}
+      <h1 class="login-title">{% if LANGUAGE_CODE == 'ar' %}تم إلغاء الربط{% else %}Unlinked{% endif %}</h1>
+      <p class="login-sub">
+        {% if LANGUAGE_CODE == 'ar' %}
+          لم يعد حساب تيليجرام قادرًا على الوصول إلى سجلك. سجل محادثاتك يبقى في حسابك الجامعي.
+        {% else %}
+          That Telegram account can no longer reach your record. Your conversation history remains in your university account.
+        {% endif %}
+      </p>
+
+    {% elif state == "not_linked" %}
+      <h1 class="login-title">{% if LANGUAGE_CODE == 'ar' %}لا يوجد ربط{% else %}No link{% endif %}</h1>
+      <p class="login-sub">
+        {% if LANGUAGE_CODE == 'ar' %}لا يوجد حساب تيليجرام مرتبط بحسابك حاليًا.{% else %}No Telegram account is currently linked.{% endif %}
+      </p>
+
+    {% elif state == "student_already_linked" %}
+      <h1 class="login-title">{% if LANGUAGE_CODE == 'ar' %}الحساب مرتبط بالفعل{% else %}Already linked{% endif %}</h1>
+      <p class="login-sub">
+        {% if LANGUAGE_CODE == 'ar' %}
+          حسابك مرتبط بمحادثة تيليجرام أخرى. ألغِ الربط الحالي أولًا ثم أعد المحاولة.
+        {% else %}
+          Your account is linked to a different Telegram chat. Unlink that one first, then try again.
+        {% endif %}
+      </p>
+      <p><a href="{% url 'telegram_link_manage' %}">{% if LANGUAGE_CODE == 'ar' %}إدارة الربط{% else %}Manage linking{% endif %}</a></p>
+
+    {% elif state == "chat_already_linked" %}
+      <h1 class="login-title">{% if LANGUAGE_CODE == 'ar' %}المحادثة مرتبطة بحساب آخر{% else %}Chat already linked{% endif %}</h1>
+      <p class="login-sub">
+        {% if LANGUAGE_CODE == 'ar' %}
+          محادثة تيليجرام هذه مرتبطة بحساب طالب آخر. أرسل /unlink من تيليجرام أولًا.
+        {% else %}
+          That Telegram chat is linked to a different student account. Send /unlink from Telegram first.
+        {% endif %}
+      </p>
+
+    {% elif state == "not_a_student" %}
+      <h1 class="login-title">{% if LANGUAGE_CODE == 'ar' %}غير متاح{% else %}Not available{% endif %}</h1>
+      <p class="login-sub">
+        {% if LANGUAGE_CODE == 'ar' %}
+          هذه الخدمة متاحة لحسابات الطلاب فقط.
+        {% else %}
+          This service is available to student accounts only.
+        {% endif %}
+      </p>
+
+    {% elif state == "signin" %}
+      <h1 class="login-title">{% if LANGUAGE_CODE == 'ar' %}يلزم تسجيل الدخول{% else %}Sign in required{% endif %}</h1>
+      <p class="login-sub">
+        {% if LANGUAGE_CODE == 'ar' %}سجّل الدخول بحسابك الجامعي ثم أعد المحاولة.{% else %}Sign in with your university account and try again.{% endif %}
+      </p>
+      <p><a href="{% url 'student_login' %}">{% if LANGUAGE_CODE == 'ar' %}تسجيل الدخول{% else %}Sign in{% endif %}</a></p>
+
+    {% elif state == "reauth" %}
+      <h1 class="login-title">{% if LANGUAGE_CODE == 'ar' %}تحقق من هويتك مرة أخرى{% else %}Verify your identity again{% endif %}</h1>
+      <p class="login-sub">
+        {% if LANGUAGE_CODE == 'ar' %}
+          ربط تيليجرام قرار حساس. انتهت صلاحية التحقق في هذه الجلسة، لذلك يلزم تسجيل الدخول مرة أخرى بالرمز الجامعي قبل المتابعة.
+        {% else %}
+          Linking Telegram is a sensitive account decision. This session is no longer recently verified, so sign in with a fresh university code before continuing.
+        {% endif %}
+      </p>
+      <form method="post" action="{% url 'telegram_link_reauthenticate' token %}">
+        {% csrf_token %}
+        <button type="submit" class="btn btn-primary" style="width:100%">
+          {% if LANGUAGE_CODE == 'ar' %}تسجيل الدخول والتحقق{% else %}Sign in and verify{% endif %}
+        </button>
+      </form>
+
+    {% elif state == "disabled" %}
+      <h1 class="login-title">{% if LANGUAGE_CODE == 'ar' %}الخدمة غير مفعّلة{% else %}Not enabled{% endif %}</h1>
+      <p class="login-sub">
+        {% if LANGUAGE_CODE == 'ar' %}قناة تيليجرام غير مفعّلة في هذه البيئة.{% else %}The Telegram channel is not enabled in this environment.{% endif %}
+      </p>
+
+    {% else %}
+      <h1 class="login-title">{% if LANGUAGE_CODE == 'ar' %}الرابط غير صالح{% else %}Invalid link{% endif %}</h1>
+      <p class="login-sub">
+        {% if LANGUAGE_CODE == 'ar' %}
+          انتهت صلاحية هذا الرابط أو سبق استخدامه. أرسل /link من تيليجرام للحصول على رابط جديد.
+        {% else %}
+          This link has expired or was already used. Send /link in Telegram for a new one.
+        {% endif %}
+      </p>
+    {% endif %}
+
+    <p style="margin-top:1.25rem"><a href="{% url 'student_home' %}">
+      {% if LANGUAGE_CODE == 'ar' %}العودة إلى بوابة الطالب{% else %}Back to the student portal{% endif %}
+    </a></p>
+  </div>
+</main>
+{% endblock %}

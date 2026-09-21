@@ -1,0 +1,215 @@
+meta:
+  purpose: >-
+    Production-shaped academic evidence for answer support and completeness tests.
+    The identifier is synthetic and must never resolve to a real student.
+  version: 1
+
+student:
+  student_id: EVAL_GOLDEN_STUDENT
+  section_cohort: M
+  program: AI
+  student_course:
+    studying:
+    - AI433
+    - MGT405
+    passed:
+    - AI201
+
+course_aliases:
+  AI1: AI463
+
+current_term:
+  academic_year: 1448
+  term: 1
+  registered:
+    tool: my_timetable
+    ok: true
+    schedule_kind: REGISTERED
+    is_expected_plan: false
+    registered_course_count: 3
+    registered_credit_hours: 9
+    registrations:
+    - course_code: AI433
+      section: M6
+      credits: 3
+      meeting_count: 2
+      scheduled: true
+    - course_code: CS372
+      section: M7
+      credits: 3
+      meeting_count: 1
+      scheduled: false
+    - course_code: MGT405
+      section: M7
+      credits: 3
+      meeting_count: 2
+      scheduled: true
+    meetings:
+    - course_code: AI433
+      section: M6
+      day: SUN
+      start: '09:00'
+      end: '10:15'
+      room: A-101
+      instructor: ''
+    - course_code: AI433
+      section: M6
+      day: TUE
+      start: '09:00'
+      end: '10:15'
+      room: A-101
+      instructor: ''
+    - course_code: MGT405
+      section: M7
+      day: MON
+      start: '10:30'
+      end: '11:45'
+      room: B-204
+      instructor: ''
+    - course_code: MGT405
+      section: M7
+      day: WED
+      start: '10:30'
+      end: '11:45'
+      room: B-204
+      instructor: ''
+    courses_without_a_time:
+    - CS372
+    note: >-
+      Registered evidence owns the current timetable even when StudentCourse does
+      not mark the same course as studying.
+
+  expected:
+    tool: my_timetable
+    ok: true
+    schedule_kind: EXPECTED_PLAN
+    is_expected_plan: true
+    expected_course_count: 3
+    expected_credit_hours: 9
+    registrations:
+    - course_code: AI463
+      section: M4
+      credits: 3
+      meeting_count: 2
+      scheduled: true
+    - course_code: CS424
+      section: M9
+      credits: 3
+      meeting_count: 2
+      scheduled: true
+    - course_code: AI482
+      section: M2
+      credits: 3
+      meeting_count: 0
+      scheduled: false
+    meetings: []
+    courses_without_a_time:
+    - AI482
+
+catalog_rows_excluded_from_student_tools:
+- course_code: AI463
+  section: YF4
+  exclusion: OTHER_BRANCH
+- course_code: CS424
+  section: YM3
+  exclusion: OTHER_BRANCH
+
+conflicting_raw_provenance:
+- course_code: AI433
+  section: M6
+  source: scraper_timetable
+  schedule_kind: REGISTERED
+- course_code: AI433
+  section: M6
+  source: expected_import
+  schedule_kind: EXPECTED_PLAN
+
+progress_evidence:
+  graduation:
+    tool: graduation_progress
+    ok: true
+    program: AI
+    plan_courses_passed: 32
+    plan_courses_total: 48
+    courses_remaining: 16
+    passed_credits_in_plan: 96
+    credits_earned_registrar: 100
+    credits_remaining_in_plan: 48
+    percent_complete: 67
+    estimated_additional_terms: 2
+    estimated_terms_including_planning_baseline: 3
+  prerequisite_state:
+    tool: my_progress
+    ok: true
+    counts:
+      open: 8
+      one_step: 3
+      locked: 8
+      passed: 32
+      studying: 3
+      failed: 0
+
+timetable_proposal:
+  tool_result:
+    tool: build_timetable_proposal
+    ok: true
+    planning_term: 1448/1
+    mode: around_current
+    alternatives:
+    - scheduled_courses: 2
+      proposed_credit_hours: 6
+      total_credit_hours: 15
+      courses:
+      - course_code: AI463
+        section: M4
+        credits: 3
+      - course_code: CS424
+        section: M9
+        credits: 3
+      meetings:
+      - course_code: AI463
+        section: M4
+        day: SUN
+        start: '09:00'
+        end: '10:15'
+      - course_code: AI463
+        section: M4
+        day: TUE
+        start: '09:00'
+        end: '10:15'
+      - course_code: CS424
+        section: M9
+        day: MON
+        start: '13:00'
+        end: '14:15'
+  presentation:
+    kind: timetable_proposals
+    planning_term: 1448/1
+    mode: around_current
+    alternatives:
+    - scheduled_courses: 2
+      proposed_credit_hours: 6
+      total_credit_hours: 15
+      courses:
+      - course_code: AI463
+        section: M4
+        credits: 3
+      - course_code: CS424
+        section: M9
+        credits: 3
+      meetings:
+      - course_code: AI463
+        section: M4
+        day: SUN
+        start: '09:00'
+        end: '10:15'
+      - course_code: AI463
+        section: M4
+        day: TUE
+        start: '09:00'
+        end: '10:15'
+      - course_code: CS424
+        section: M9
+        day: MON
+        start: '13:00'
+        end: '14:15'

@@ -25,6 +25,7 @@ urlpatterns = [
     # POST /i18n/setlang/  (used by your sidebar form)
     path("i18n/", include("django.conf.urls.i18n")),
     path("whatsapp/", include("whatsapp_gateway.urls")),
+    path("telegram/", include("telegram_gateway.urls")),
     # App routes (dashboard panels + standalone pages)
     path("", include("core.urls")),
 ]

@@ -4,7 +4,8 @@
   },
   "devDependencies": {
     "cytoscape": "^3.33.3",
-    "esbuild": "0.27.1"
+    "esbuild": "0.27.1",
+    "jsdom": "29.0.1"
   },
   "overrides": {
     "lodash": "4.18.1"

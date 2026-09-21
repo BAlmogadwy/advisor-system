@@ -26,6 +26,7 @@
         <span class="um-stat um-stat-super">{% if LANGUAGE_CODE == 'ar' %}مشرف عام{% else %}Super Admin{% endif %} <span class="um-stat-n" id="statSuper">0</span></span>
         <span class="um-stat um-stat-gen">{% if LANGUAGE_CODE == 'ar' %}مرشد عام{% else %}Gen. Advisor{% endif %} <span class="um-stat-n" id="statGen">0</span></span>
         <span class="um-stat um-stat-adv">{% if LANGUAGE_CODE == 'ar' %}مرشد{% else %}Advisor{% endif %} <span class="um-stat-n" id="statAdv">0</span></span>
+        <span class="um-stat">{% if LANGUAGE_CODE == 'ar' %}لجنة الاختبارات{% else %}Exam Committee{% endif %} <span class="um-stat-n" id="statExamCommittee">0</span></span>
         <span class="um-stat um-stat-off">{% if LANGUAGE_CODE == 'ar' %}معطّل{% else %}Disabled{% endif %} <span class="um-stat-n" id="statDisabled">0</span></span>
       </div>
 
@@ -58,6 +59,7 @@
                 <option value="SUPER_ADMIN">SUPER_ADMIN</option>
                 <option value="GENERAL_ACADEMIC_ADVISOR">GEN. ADVISOR</option>
                 <option value="ADVISOR" selected>ADVISOR</option>
+                <option value="EXAM_COMMITTEE">{% if LANGUAGE_CODE == 'ar' %}لجنة الاختبارات{% else %}Exam Committee{% endif %}</option>
               </select>
             </div>
             <div class="um-field um-field-scope um-scope-field" id="cAdvisorWrap">
@@ -91,6 +93,7 @@
               <option value="SUPER_ADMIN">SUPER_ADMIN</option>
               <option value="GENERAL_ACADEMIC_ADVISOR">GEN. ADVISOR</option>
               <option value="ADVISOR">ADVISOR</option>
+              <option value="EXAM_COMMITTEE">{% if LANGUAGE_CODE == 'ar' %}لجنة الاختبارات{% else %}Exam Committee{% endif %}</option>
             </select>
           </div>
           <div class="um-field um-field-scope um-scope-field" id="eAdvisorWrap">
@@ -132,6 +135,7 @@
           <option value="SUPER_ADMIN">{% if LANGUAGE_CODE == 'ar' %}مشرف عام{% else %}Super Admin{% endif %}</option>
           <option value="GENERAL_ACADEMIC_ADVISOR">{% if LANGUAGE_CODE == 'ar' %}مرشد عام{% else %}Gen. Advisor{% endif %}</option>
           <option value="ADVISOR">{% if LANGUAGE_CODE == 'ar' %}مرشد{% else %}Advisor{% endif %}</option>
+          <option value="EXAM_COMMITTEE">{% if LANGUAGE_CODE == 'ar' %}لجنة الاختبارات{% else %}Exam Committee{% endif %}</option>
         </select>
         <label for="umStatusFilter" class="sr-only">{% if LANGUAGE_CODE == 'ar' %}تصفية حسب الحالة{% else %}Filter by status{% endif %}</label>
         <select id="umStatusFilter" class="form-select" style="width:auto;min-width:120px;" onchange="filterTable()">
@@ -184,5 +188,5 @@
 {% endblock %}
 
 {% block extra_js %}
-<script src="{% static 'js/page-user-management.js' %}?v=1"></script>
+<script src="{% static 'js/page-user-management.js' %}?v=2"></script>
 {% endblock %}

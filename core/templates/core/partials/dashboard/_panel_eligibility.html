@@ -4,7 +4,7 @@
         <div class="fb-search fb-w-110"><input id="elSection" placeholder="{% if LANGUAGE_CODE == 'ar' %}الشعبة{% else %}Section{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}الشعبة{% else %}Section{% endif %}"></div>
         <div class="fb-search fb-w-120"><input id="elProgram" placeholder="{% if LANGUAGE_CODE == 'ar' %}البرنامج{% else %}Program{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}البرنامج{% else %}Program{% endif %}"></div>
         <div class="fb-search fb-w-110"><input id="elJoin" placeholder="{% if LANGUAGE_CODE == 'ar' %}سنوات الالتحاق{% else %}Join yrs{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}سنوات الالتحاق{% else %}Join years{% endif %}"></div>
-        <div class="fb-search" style="max-width:210px"><select id="elMode" aria-label="{% if LANGUAGE_CODE == 'ar' %}وضع التأهيل{% else %}Eligibility mode{% endif %}"><option value="relaxed" selected>{% if LANGUAGE_CODE == 'ar' %}مرن (مجتاز+يدرس){% else %}Relaxed (passed+studying){% endif %}</option><option value="strict">{% if LANGUAGE_CODE == 'ar' %}صارم (مجتاز فقط){% else %}Strict (passed only){% endif %}</option></select></div>
+        <div class="fb-search" style="max-width:230px"><select id="elMode" aria-label="{% if LANGUAGE_CODE == 'ar' %}وضع التأهيل{% else %}Eligibility mode{% endif %}"><option value="strict" selected>{% if LANGUAGE_CODE == 'ar' %}صارم (مجتاز + مكتسب فقط){% else %}Strict (passed + earned only){% endif %}</option><option value="relaxed">{% if LANGUAGE_CODE == 'ar' %}مرن (+ يدرس + مسجل){% else %}Relaxed (+ studying + registered){% endif %}</option></select></div>
         <div class="fb-spacer"></div>
         <button id="elRun" class="btn btn-primary">
           <span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></span>Check
@@ -25,7 +25,7 @@
         </div></div>
         <div class="flex-card"><div class="mc mc-royal">
           <div class="mc-head"><div class="mc-icon"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></span></div><div class="mc-lbl">Mode</div></div>
-          <div class="mc-val mc-val-sm" id="elModeBadge">relaxed</div>
+          <div class="mc-val mc-val-sm" id="elModeBadge">strict</div>
         </div></div>
         <div class="flex-card"><div class="mc mc-sky">
           <div class="mc-head"><div class="mc-icon"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg></span></div><div class="mc-lbl">Course</div></div>

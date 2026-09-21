@@ -1,4 +1,4 @@
-"""Seed registered timetables from an approved registration plan workbook.
+"""Seed expected next-term timetables from an approved registration plan workbook.
 
 Planning is side-effect-free: `build_plan()` parses, resolves and validates a
 deterministic plan. `apply_plan()` is the sole writer and applies only a validated
@@ -19,10 +19,19 @@ seating them at all.
 
 WHAT THIS WRITES INTO, AND WHY IT REFUSES SO MUCH
 
-`StudentTermSection` is the authoritative registered timetable. The student home
-screen, the adviser chat and the expected-versus-registered comparison all read
-it, so one wrong link propagates into three surfaces and contradicts nothing that
-would notice.
+`StudentTermSection` carries both snapshots. Academic year/term plus ``source``
+distinguish the expected plan (for example ``registration_plan_1448_t1``) from
+the registrar scrape (``scraper_timetable``). The student home screen, adviser
+chat and expected-versus-registered comparison all read it, so one wrong link
+propagates into three surfaces and contradicts nothing that would notice.
+
+Both snapshots now COEXIST for the same term. A scrape of a planned term used to
+delete that term's plan rows; it no longer does, because "the plan said five
+courses and the registrar recorded three" is the comparison this table exists to
+support, and it is only expressible while both halves are present. Each writer
+deletes only rows of its own provenance class -- see
+``core.services.timetable_snapshots`` -- and ``source`` is part of the uniqueness
+key so the two snapshots can name the same section.
 
 A data-integrity review of the first version found four of its seven claimed
 properties violated. Each is now enforced by the mechanism rather than asserted
@@ -101,7 +110,14 @@ class Plan:
     """What an apply would do. The same object the dry run prints."""
 
     links: list[dict[str, Any]] = field(default_factory=list)
+    #: Students who receive at least one physical-section link. Keep this count
+    #: separate from ``replacement_students``: a workbook student whose new plan
+    #: contains only a project, foundation retake, or uncovered online course has
+    #: no link to write, but their stale expected links still have to be removed.
     students: set[int] = field(default_factory=set)
+    #: Every validated student id present in the workbook detail sheet. This is
+    #: the authoritative replacement scope for the target expected term.
+    replacement_students: set[int] = field(default_factory=set)
     skipped_unplaceable: int = 0
     section_map: dict[tuple[str, str], Section] = field(default_factory=dict)
     #: course -> the registrations it could not carry, because NO section for
@@ -109,6 +125,11 @@ class Plan:
     uncovered: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
     time_disagreements: list[dict[str, Any]] = field(default_factory=list)
     problems: list[Problem] = field(default_factory=list)
+    #: Things the operator must SEE but which do not stop an apply. Separate from
+    #: ``problems`` because ``ok`` is defined as "no problems", so anything appended
+    #: there blocks the import — which is how a report meant to inform an operator
+    #: about registrar rows in the target term became a refusal to import at all.
+    notices: list[Problem] = field(default_factory=list)
 
     #: Conservation. Every detail row is accounted for by exactly one of these and
     #: `check_conservation` proves it. Without a rows-read counter, openpyxl's
@@ -138,17 +159,29 @@ class Plan:
     def ok(self) -> bool:
         return not self.problems
 
+    @property
+    def replacement_scope(self) -> set[int]:
+        """Students whose target-term expected snapshot this plan replaces.
+
+        Include link recipients defensively so a directly constructed/tampered
+        ``Plan`` cannot write a link outside its delete, collision, or existence
+        checks. ``build_plan`` itself always places link recipients in both sets.
+        """
+        return self.replacement_students | self.students
+
     def summary(self) -> str:
         return (
             f"{len(self.links)} section links for {len(self.students)} students, "
-            f"REPLACING {self.replaces} existing row(s) for those students; "
+            f"{len(self.replacement_scope)} workbook student(s) in replacement scope, "
+            f"REPLACING {self.replaces} existing row(s) for that scope; "
             f"{self.detail_rows_read} detail rows read "
             f"({self.blank_rows} blank, {self.duplicate_rows} duplicate, "
             f"{self.skipped_unplaceable} with no timeslot); "
             f"{sum(len(v) for v in self.uncovered.values())} row(s) in "
             f"{len(self.uncovered)} course(s) with no section on file; "
             f"{len(self.time_disagreements)} section(s) whose times differ from the "
-            f"database; {len(self.problems)} problem(s)"
+            f"database; {len(self.notices)} notice(s); "
+            f"{len(self.problems)} problem(s)"
         )
 
     def check_conservation(self) -> None:
@@ -403,6 +436,13 @@ def build_plan(
             )
             continue
 
+        # Presence in the validated detail sheet makes this student's expected
+        # target-term snapshot authoritative even when none of their rows can be
+        # represented as a physical section. Without this separate scope, a
+        # re-import that changed a student to only Project/Foundation/uncovered
+        # rows left their previous expected sections visible indefinitely.
+        plan.replacement_students.add(student_id)
+
         kind = str(row[3] or "").strip()
         if kind in UNPLACEABLE_KINDS:
             plan.skipped_unplaceable += 1
@@ -488,73 +528,95 @@ def build_plan(
     plan.check_conservation()
     if plan.ok:
         plan.replaces = count_rows_to_replace(plan, academic_year, term)
-        _check_cross_term_collisions(plan, academic_year, term)
+        _check_target_registered_collisions(plan, academic_year, term)
     return plan
 
 
 def count_rows_to_replace(plan: Plan, academic_year: str, term: str) -> int:
-    """Existing rows an apply would DELETE. Computed by the same code that reports."""
-    from core.models import StudentTermSection
+    """Existing rows an apply would DELETE. Computed by the same code that reports.
 
-    if not plan.students:
-        return 0
-    return StudentTermSection.objects.filter(
-        student_id__in=sorted(plan.students),
-        academic_year=str(academic_year),
-        term=str(term),
-    ).count()
-
-
-def _check_cross_term_collisions(plan: Plan, academic_year: str, term: str) -> None:
-    """Refuse rather than let a uniqueness constraint eat rows in silence.
-
-    `StudentTermSection` is unique on `(student_id, term_section)` ONLY, and
-    `TermSection` carries no year or term — the same 50 section rows are shared by
-    every term. So seeding term 2 for a student already seeded in term 1 collides:
-    the DELETE is year/term-scoped, the INSERT is not, and `ignore_conflicts` used
-    to swallow the difference and report the row as written.
+    Scoped to the EXPECTED class by the same predicate the delete uses, so the
+    number the dry run prints cannot drift from the rows the apply removes.
     """
     from core.models import StudentTermSection
+    from core.services.student_sections import snapshot_class_filter
+    from core.services.timetable_snapshots import SnapshotClass
 
-    if not plan.links:
-        return
-    wanted = {(link["student_id"], link["term_section_id"]) for link in plan.links}
-    clashing = StudentTermSection.objects.filter(student_id__in=sorted(plan.students)).exclude(
-        academic_year=str(academic_year), term=str(term)
+    scope = plan.replacement_scope
+    if not scope:
+        return 0
+    return (
+        StudentTermSection.objects.filter(
+            student_id__in=sorted(scope),
+            academic_year=str(academic_year),
+            term=str(term),
+        )
+        .filter(snapshot_class_filter(SnapshotClass.EXPECTED))
+        .count()
     )
-    for student_id, section_id, year, other in clashing.values_list(
-        "student_id", "term_section_id", "academic_year", "term"
-    ):
-        if (student_id, section_id) in wanted:
-            plan.problems.append(
-                Problem(
-                    f"student {student_id}",
-                    "CROSS_TERM_COLLISION",
-                    f"section #{section_id} is already recorded for {year}/{other}, and the "
-                    "uniqueness constraint spans terms — this row cannot be written without "
-                    "removing that one",
-                )
+
+
+def _check_target_registered_collisions(plan: Plan, academic_year: str, term: str) -> None:
+    """Report registrar rows already present for the target term. NOT a failure.
+
+    This used to be a hard refusal: "once a real scrape exists for the target term
+    ... importing a plan would turn actual registration back into a forecast".
+    That was true while a term could hold one snapshot, because writing the plan
+    meant destroying whatever was there.
+
+    It no longer is. ``apply_plan`` deletes only rows of the EXPECTED class, and the
+    uniqueness key now carries ``source``, so registrar rows are untouched by an
+    import and the two snapshots sit side by side. Importing a corrected plan into
+    an already-registered term is the case the expected-versus-registered comparison
+    is FOR, and refusing it would block the feature at its most useful moment.
+
+    The count is still reported, as a notice, because an operator importing into a
+    registered term should know that is what they are doing.
+    """
+    from core.models import StudentTermSection
+    from core.services.student_sections import snapshot_class_filter
+    from core.services.timetable_snapshots import SnapshotClass
+
+    scope = plan.replacement_scope
+    if not scope:
+        return
+    registered = StudentTermSection.objects.filter(
+        student_id__in=sorted(scope),
+        academic_year=str(academic_year),
+        term=str(term),
+        term_section__scenario__isnull=True,
+    ).exclude(snapshot_class_filter(SnapshotClass.EXPECTED))
+    sample = list(registered.values_list("student_id", "source")[:5])
+    if sample:
+        plan.notices.append(
+            Problem(
+                f"term {academic_year}/{term}",
+                "TARGET_TERM_HAS_REGISTRAR_ROWS",
+                f"{registered.count()} non-plan row(s) already exist for students in this "
+                f"import (sample: {sample}); they are preserved and the imported plan "
+                f"will sit beside them as the expected snapshot",
             )
+        )
 
 
 def check_students_exist(plan: Plan) -> list[int]:
-    """Student ids in the plan with no `Student` row. Never auto-created."""
+    """Student ids in the replacement scope with no `Student` row. Never created."""
     from core.models import Student
 
+    scope = plan.replacement_scope
     known = set(
-        Student.objects.filter(student_id__in=list(plan.students)).values_list(
-            "student_id", flat=True
-        )
+        Student.objects.filter(student_id__in=list(scope)).values_list("student_id", flat=True)
     )
-    return sorted(plan.students - known)
+    return sorted(scope - known)
 
 
 def apply_plan(plan: Plan, academic_year: str, term: str) -> dict[str, int]:
     """Write a validated plan atomically.
 
-    Replaces the term for THE STUDENTS IN THE PLAN ONLY. A student absent from the
-    workbook keeps whatever they have — the two the plan could not place are not
-    silently emptied by an import that never considered them.
+    Replaces the term for EVERY VALIDATED STUDENT IN THE WORKBOOK. A student absent
+    from the workbook keeps whatever they have. A student present with only a
+    project, foundation retake, or uncovered course has no new physical link, so
+    their stale expected links are removed rather than surviving the re-import.
 
     Every guard the command performs is repeated here. This function is exported,
     and `StudentTermSection.student_id` is a plain integer with no foreign key, so
@@ -564,6 +626,9 @@ def apply_plan(plan: Plan, academic_year: str, term: str) -> dict[str, int]:
     from django.db import transaction
 
     from core.models import StudentTermSection
+    from core.services.section_programmes import reconcile_observed_section_programs
+    from core.services.student_sections import snapshot_class_filter
+    from core.services.timetable_snapshots import SnapshotClass
 
     if not plan.ok:
         raise ValueError("refusing to apply a plan that failed validation")
@@ -583,11 +648,22 @@ def apply_plan(plan: Plan, academic_year: str, term: str) -> dict[str, int]:
         )
 
     with transaction.atomic():
-        removed = StudentTermSection.objects.filter(
-            student_id__in=sorted(plan.students),
+        replacement_scope = plan.replacement_scope
+        target_rows = StudentTermSection.objects.select_for_update().filter(
+            student_id__in=sorted(replacement_scope),
             academic_year=str(academic_year),
             term=str(term),
-        ).delete()[0]
+            term_section__scenario__isnull=True,
+        )
+        # The refusal that used to stand here — "refusing to replace registrar rows
+        # with an expected registration plan" — guarded a delete that could reach
+        # them. This delete cannot: it is scoped by the same class predicate the
+        # reader uses, and ``source`` is part of the uniqueness key, so registrar
+        # rows for this term survive an import and are compared against it instead.
+        rows_to_replace = target_rows.filter(snapshot_class_filter(SnapshotClass.EXPECTED))
+        affected_section_ids = set(rows_to_replace.values_list("term_section_id", flat=True))
+        affected_section_ids.update(int(link["term_section_id"]) for link in plan.links)
+        removed = rows_to_replace.delete()[0]
         # No `ignore_conflicts`: it turned a uniqueness violation into a silently
         # missing row while the caller was told the link had been written.
         # Cross-term collisions are detected in `build_plan`, so a violation here
@@ -614,6 +690,7 @@ def apply_plan(plan: Plan, academic_year: str, term: str) -> dict[str, int]:
             student_id__in=sorted(plan.students),
             academic_year=str(academic_year),
             term=str(term),
+            source=f"registration_plan_{academic_year}_t{term}",
         ).count()
 
         # INSIDE the transaction, and that is the whole point. Raising after the
@@ -625,6 +702,12 @@ def apply_plan(plan: Plan, academic_year: str, term: str) -> dict[str, int]:
             raise ValueError(
                 f"planned {len(plan.links)} links but {written} rows exist after the write"
             )
+
+        # ``apply_plan`` predates the central replacement helper and writes the
+        # link table directly. Keep the normalized programme membership snapshot
+        # in the same transaction so a successful plan can never leave stale
+        # ownership on removed sections or omit ownership on new sections.
+        reconcile_observed_section_programs(affected_section_ids)
 
     return {"removed": removed, "written": written, "students": len(plan.students)}
 

@@ -71,19 +71,19 @@ general advisor -> {"role": "GENERAL_ACADEMIC_ADVISOR", "departments": [...]}
 super admin -> denied on WhatsApp unless explicitly enabled later
 ```
 
-## Current Data Dependency
+## Student Email Resolution
 
-The current local DB has advisor email in `academic_advisors.email`, but the
-`students` table does not currently have a student email column. Production
-student linking therefore needs one of these before enabling student OTP:
+WhatsApp linking uses the same cohort-aware `student_email` resolver and
+`STUDENT_EMAIL_DOMAIN` setting as web student login. This prevents the two
+channels from constructing different university addresses for one student. An
+explicit student email, if the model gains one later, still takes precedence.
+Twilio SendGrid is the shared transactional transport for both channels.
+Every WhatsApp link-code submission therefore consumes the same durable global
+SendGrid allowance as web-login OTPs and the manual delivery test; it cannot
+bypass the configured provider cap through a different entry point.
 
-- add/import a verified student email column;
-- maintain a separate `student_contact_methods` table;
-- configure a university-issued deterministic email pattern only if the
-  institution guarantees it.
-
-The implementation foundation keeps the resolver explicit and fails closed if
-student email cannot be resolved.
+The resolver fails closed when an ID cannot be converted to a canonical
+university address; there is no WhatsApp-only domain override.
 
 ## Step-Up Authentication
 
@@ -220,7 +220,7 @@ System: refuse student data and suggest one-to-one chat.
 ### Phase 2: Controlled Pilot
 
 - Configure Meta webhook credentials in environment variables.
-- Configure verified student email source.
+- Confirm the shared `STUDENT_EMAIL_DOMAIN` and SendGrid sender identity.
 - Send/receive plain text.
 - Pilot with internal staff and test student records.
 - Keep super admin disabled.
@@ -254,7 +254,7 @@ System: refuse student data and suggest one-to-one chat.
 - Payload signatures are verified when app secret is configured.
 - Access token is not committed to the repo.
 - OTP is hashed with server secret.
-- Student email source is verified.
+- The shared cohort-aware student email rule is verified.
 - Super admin WhatsApp access is disabled.
 - Group chats cannot return academic records.
 - Rate limits are enabled.

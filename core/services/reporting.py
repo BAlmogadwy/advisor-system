@@ -3,6 +3,7 @@ from collections import Counter, defaultdict
 
 from core.models import ElectiveTermMapping, ProgrammeRequirement, Student, StudentCourse
 from core.services.course_identity import planner_course_key
+from core.services.eligibility import evaluate_prerequisites
 from core.services.recommender_batch import batch_recommend, batch_recommend_multi_program
 from core.services.student_helpers import normalize_code
 
@@ -37,6 +38,7 @@ def build_aggregate_counts(
     section: str | None = None,
     *,
     resolve_electives: bool = False,
+    strict_passed_only: bool = False,
 ) -> tuple[int, Counter[str]]:
     # Normalize comma-separated program string into a list
     if isinstance(program, str) and "," in program:
@@ -47,7 +49,14 @@ def build_aggregate_counts(
 
     # Normalize program for cache key (lists are not hashable)
     prog_key = tuple(program) if isinstance(program, list) else (str(program),)
-    cache_key = (year, semester, prog_key, str(section), bool(resolve_electives))
+    cache_key = (
+        year,
+        semester,
+        prog_key,
+        str(section),
+        bool(resolve_electives),
+        bool(strict_passed_only),
+    )
     cached = _aggregate_cache.get(cache_key)
     if cached and (time.time() - cached[0]) < _AGGREGATE_CACHE_TTL:
         return cached[1]
@@ -57,9 +66,20 @@ def build_aggregate_counts(
 
     # Batch recommender — single program or multi-program
     if program and isinstance(program, str):
-        all_recs = batch_recommend(student_ids, program, year, semester)
+        all_recs = batch_recommend(
+            student_ids,
+            program,
+            year,
+            semester,
+            strict_passed_only=strict_passed_only,
+        )
     else:
-        all_recs = batch_recommend_multi_program(student_ids, year, semester)
+        all_recs = batch_recommend_multi_program(
+            student_ids,
+            year,
+            semester,
+            strict_passed_only=strict_passed_only,
+        )
 
     if resolve_electives:
         all_recs = resolve_elective_recommendations(
@@ -67,6 +87,7 @@ def build_aggregate_counts(
             year=year,
             semester=semester,
             program=program,
+            strict_passed_only=strict_passed_only,
         )
 
     for recs in all_recs.values():
@@ -181,6 +202,7 @@ def resolve_elective_recommendations(
     year: int,
     semester: int,
     program: str | list[str] | None,
+    strict_passed_only: bool = False,
 ) -> dict[int, list[str]]:
     """Replace mapped elective placeholders with eligible real electives.
 
@@ -192,13 +214,20 @@ def resolve_elective_recommendations(
         return all_recs
 
     student_ids = list(all_recs.keys())
-    student_programs = {
-        int(sid): str(prog)
-        for sid, prog in Student.objects.filter(student_id__in=student_ids).values_list(
-            "student_id", "program"
-        )
-        if prog
-    }
+    student_programs: dict[int, str] = {}
+    student_credits: dict[int, tuple[int, int]] = {}
+    for sid, prog, earned, registered in Student.objects.filter(
+        student_id__in=student_ids
+    ).values_list(
+        "student_id",
+        "program",
+        "total_earned_credits",
+        "current_registered_credits",
+    ):
+        sid_int = int(sid)
+        if prog:
+            student_programs[sid_int] = str(prog)
+        student_credits[sid_int] = (int(earned or 0), int(registered or 0))
 
     if isinstance(program, str):
         programmes = [program]
@@ -265,7 +294,16 @@ def resolve_elective_recommendations(
                     for part in str(elective.prerequisites_csv or "").split(",")
                     if part.strip()
                 ]
-                if all(req in student_passed or req in student_studying for req in prereqs):
+                earned, registered = student_credits.get(int(sid), (0, 0))
+                outcome = evaluate_prerequisites(
+                    prereqs,
+                    student_passed,
+                    student_studying,
+                    strict_passed_only=strict_passed_only,
+                    earned_credits=earned,
+                    registered_credits=registered,
+                )
+                if outcome.met:
                     eligible.append(normalize_code(elective.course_code))
 
             if eligible:

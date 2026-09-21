@@ -1,8 +1,9 @@
 # MyUniProject — Academic Advising & Timetabling
 
 Django web app for academic advisors at a Saudi university. Single Django app
-(`core/`); SQLite locally, PostgreSQL on Render. Live at
-[advisor-system-v9zs.onrender.com](https://advisor-system-v9zs.onrender.com).
+(`core/`); SQLite locally, PostgreSQL on Render. The production custom domain is
+[smartacademicadviser.online](https://smartacademicadviser.online); the direct
+[Render origin](https://advisor-system-v9zs.onrender.com) remains available.
 
 ## Run locally
 
@@ -122,8 +123,9 @@ The tiered objective is **on by default**. The legacy path stays reachable with
 - OR-Tools (CP-SAT) for the V2 timetable polisher
 - openpyxl for styled multi-sheet XLSX exports (with rich-text colouring)
 - PostgreSQL on Render via `dj-database-url`
-- Pre-commit: ruff (passes), bandit (passes), mypy (skip with `SKIP=mypy` —
-  hook venv lacks `dj-database-url`)
+- Pre-commit: ruff and bandit are blocking; mypy is currently advisory while the
+  repository-wide typing backlog is reduced, so commits use `SKIP=mypy` and CI
+  still publishes the full type-check report.
 
 ## Deployment
 
@@ -139,7 +141,12 @@ the `advisor-block` card pattern. RTL-aware (Arabic + English).
 
 ## Security
 
-- Do not hardcode portal credentials — use `.env`
+- The scraper does not hold a portal password. An operator signs in once with
+  `manage.py portal_login`; the saved session is reused and is gitignored.
+- `.portal_session.json` is a live credential — never copy it to a server. If it
+  leaks, sign out of the portal to invalidate it.
+- The opt-in unattended path (`PORTAL_UNATTENDED_LOGIN`) fails closed when
+  Microsoft requires MFA, CAPTCHA, device approval, or any interactive step.
 - Rotate any leaked credentials immediately
 - `import_old/config/settings.py` is a historical reference only
 - Build endpoint throttled (3/2min in production, 20/2min in dev)

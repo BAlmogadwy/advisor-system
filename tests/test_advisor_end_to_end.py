@@ -156,7 +156,7 @@ class EndToEndTests(StaticLiveServerTestCase):
 
         # ── the student asks, and the adviser declines to decide ──
         with mock.patch(
-            "core.services.virtual_advisor.answer_virtual_advisor",
+            "core.services.student_advisor_v2.answer_student_advisor",
             return_value=_abstaining_answer(),
         ):
             page.goto(f"{self.live_server_url}{reverse('student_advisor')}")
@@ -175,7 +175,7 @@ class EndToEndTests(StaticLiveServerTestCase):
         page.wait_for_selector(".sa-preview")
         preview = page.locator(".sa-preview").inner_text()
         assert "سؤالك" in preview
-        assert "لن يتم إرسال المحادثات الأخرى" in preview
+        assert "لن تُرسل جلسات الإرشاد الأخرى" in preview
 
         page.fill(".sa-preview-note", "أحتاج قرارًا قبل نهاية الأسبوع.")
         page.click(".sa-preview-send")

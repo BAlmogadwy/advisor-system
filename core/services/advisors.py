@@ -122,23 +122,49 @@ def _to_float(value: object, default: float = 0.0) -> float:
 
 
 _HP_CACHE_TTL_SECONDS = 300
-_hp_missing_cache: dict[str, tuple[float, dict[int, list[dict[str, object]]]]] = {}
+_hp_missing_cache: dict[tuple[str, int, int], tuple[float, dict[int, list[dict[str, object]]]]] = {}
+
+
+def _report_parity_for_current_term(current_term: int) -> int:
+    """Translate the global semester number to the report's legacy flag.
+
+    Site defaults use the registrar-facing values ``1`` (first semester) and
+    ``2`` (second semester).  The high-priority report predates those defaults
+    and uses ``0`` for odd study-plan terms and ``1`` for even study-plan
+    terms, so passing ``currentTerm`` through unchanged reverses semester one.
+    """
+
+    if current_term not in (1, 2):
+        raise ValueError("currentTerm must be 1 or 2 for advisor portfolio parity")
+    return current_term - 1
 
 
 def _get_high_priority_by_program(program: str) -> dict[int, list[dict[str, object]]]:
     now = time.time()
-    cached = _hp_missing_cache.get(program)
+
+    # Use the global current semester.  Include it in the cache key so changing
+    # System Defaults switches the portfolio immediately rather than serving
+    # the previous semester's bucket until the five-minute TTL expires.
+    defaults = load_defaults()
+    current_year = _to_int(defaults.get("currentYear"), 1447)
+    current_term = _to_int(defaults.get("currentTerm"), 1)
+    cache_key = (program, current_year, current_term)
+
+    cached = _hp_missing_cache.get(cache_key)
     if cached and (now - cached[0]) < _HP_CACHE_TTL_SECONDS:
         return cached[1]
 
-    # Use only the new system defaults (currentYear / currentTerm)
-    defaults = load_defaults()
-    current_year = defaults.get("currentYear", 1447)
-    term_parity = defaults.get("currentTerm", 1)
+    # The portfolio's odd/even pattern is defined only for the two main
+    # semesters.  Do not invent a parity for any other configured term.
+    if current_term not in (1, 2):
+        _hp_missing_cache[cache_key] = (now, {})
+        return {}
+
+    term_parity = _report_parity_for_current_term(current_term)
 
     report = run_missing_high_priority_report(
         year=current_year,
-        semester=term_parity,
+        semester=current_term,
         section=None,
         program=program,
         join_year_prefixes=None,
@@ -166,12 +192,13 @@ def _get_high_priority_by_program(program: str) -> dict[int, list[dict[str, obje
                     "course_code": str(c.get("course_code", "")),
                     "score": _to_float(c.get("score", 0.0)),
                     "bucket": "this_parity",
+                    "term_pattern": "odd" if current_term == 1 else "even",
                 }
             )
         if merged:
             parsed[sid] = merged
 
-    _hp_missing_cache[program] = (now, parsed)
+    _hp_missing_cache[cache_key] = (now, parsed)
     # Cap cache size to prevent unbounded memory growth
     if len(_hp_missing_cache) > 20:
         oldest_key = min(_hp_missing_cache, key=lambda k: _hp_missing_cache[k][0])
@@ -351,6 +378,51 @@ def _apply_advisor_filters(
     return rows
 
 
+def _summarize_advisor_items(items: list[dict[str, Any]]) -> dict[str, Any]:
+    """Build the portfolio metrics for exactly the supplied student rows."""
+    gpas = [_to_float(item.get("gpa"), -1.0) for item in items if item.get("gpa") is not None]
+    by_program: dict[str, int] = {}
+    for item in items:
+        program = str(item.get("program") or "")
+        by_program[program] = by_program.get(program, 0) + 1
+
+    return {
+        "student_count": len(items),
+        "avg_gpa": round(sum(gpas) / len(gpas), 3) if gpas else None,
+        "low_gpa_count": sum(1 for gpa in gpas if gpa < 2.0),
+        "gpa_distribution": [
+            sum(1 for gpa in gpas if gpa < 2.0),
+            sum(1 for gpa in gpas if 2.0 <= gpa < 3.0),
+            sum(1 for gpa in gpas if 3.0 <= gpa < 3.5),
+            sum(1 for gpa in gpas if gpa >= 3.5),
+        ],
+        "program_breakdown": by_program,
+        "high_priority_missing_count": sum(
+            1 for item in items if bool(item.get("has_high_priority_missing"))
+        ),
+        "needs_attention_count": sum(1 for item in items if bool(item.get("needs_attention"))),
+        "very_high_risk_count": sum(
+            1 for item in items if _to_float(item.get("risk_score", 0.0)) >= 8.0
+        ),
+        "zero_current_term_hours_count": sum(
+            1 for item in items if _to_int(item.get("current_term_registered_hours", 0)) == 0
+        ),
+        "two_plus_high_priority_missing_count": sum(
+            1
+            for item in items
+            if len(
+                item.get("high_priority_missing_courses", [])
+                if isinstance(item.get("high_priority_missing_courses"), list)
+                else []
+            )
+            >= 2
+        ),
+        "current_term_registered_hours_total": sum(
+            _to_int(item.get("current_term_registered_hours", 0)) for item in items
+        ),
+    }
+
+
 #: Who this caller may read, or a refusal. FAIL CLOSED.
 #:
 #: The two views that read an adviser's roster each computed this inline, and both
@@ -491,10 +563,6 @@ def list_students_by_advisor(
         allow = {x.strip().upper() for x in allowed_departments if x and str(x).strip()}
         items = [x for x in items if str(x.get("program", "")).upper() in allow]
 
-    gpas = [_to_float(x.get("gpa"), -1.0) for x in items if x.get("gpa") is not None]
-    avg_gpa = round(sum(gpas) / len(gpas), 3) if gpas else None
-    low_gpa_count = sum(1 for x in gpas if x < 2.0)
-
     by_program: dict[str, int] = {}
     for item in items:
         p = str(item.get("program") or "")
@@ -571,6 +639,17 @@ def list_students_by_advisor(
         clamped_page = 1
         page_items = filtered_items
 
+    summary = _summarize_advisor_items(items)
+    items_by_program: dict[str, list[dict[str, Any]]] = {}
+    for item in items:
+        program = str(item.get("program") or "").strip().upper()
+        if program:
+            items_by_program.setdefault(program, []).append(item)
+    summary["program_summaries"] = {
+        program: _summarize_advisor_items(program_items)
+        for program, program_items in items_by_program.items()
+    }
+
     return {
         "advisor": advisor,
         "advisor_id": advisor_id,
@@ -586,32 +665,5 @@ def list_students_by_advisor(
             "program_filter": program_filter or "",
         },
         "items": page_items,
-        "summary": {
-            "avg_gpa": avg_gpa,
-            "low_gpa_count": low_gpa_count,
-            "program_breakdown": by_program,
-            "high_priority_missing_count": sum(
-                1 for s in items if bool(s.get("has_high_priority_missing"))
-            ),
-            "needs_attention_count": sum(1 for s in items if bool(s.get("needs_attention"))),
-            "very_high_risk_count": sum(
-                1 for s in items if _to_float(s.get("risk_score", 0.0)) >= 8.0
-            ),
-            "zero_current_term_hours_count": sum(
-                1 for s in items if _to_int(s.get("current_term_registered_hours", 0)) == 0
-            ),
-            "two_plus_high_priority_missing_count": sum(
-                1
-                for s in items
-                if len(
-                    s.get("high_priority_missing_courses", [])
-                    if isinstance(s.get("high_priority_missing_courses"), list)
-                    else []
-                )
-                >= 2
-            ),
-            "current_term_registered_hours_total": sum(
-                _to_int(s.get("current_term_registered_hours", 0)) for s in items
-            ),
-        },
+        "summary": summary,
     }

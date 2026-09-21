@@ -4,9 +4,17 @@ from django.contrib.auth import authenticate, login, logout
 from django.core.cache import cache
 from django.http import HttpRequest, HttpResponse
 from django.shortcuts import redirect, render
+from django.utils.http import url_has_allowed_host_and_scheme
+from django.views.decorators.cache import never_cache
 from django.views.decorators.http import require_http_methods, require_POST
 
-from core.services.rbac import ensure_role_groups, ensure_scope_schema
+from core.services.rbac import (
+    ROLE_EXAM_COMMITTEE,
+    ROLE_STUDENT,
+    ensure_role_groups,
+    ensure_scope_schema,
+    get_user_role,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -14,6 +22,25 @@ _LOGIN_MAX_FAILS = 5
 _LOGIN_LOCKOUT_SECONDS = 300
 
 
+def _safe_login_destination(request: HttpRequest) -> str:
+    """Return a same-origin login destination, or an empty string.
+
+    ``login_required`` adds ``?next=`` for protected pages such as the local
+    V2.1 launcher.  Preserve that destination without permitting an external
+    open redirect.
+    """
+
+    candidate = str(request.POST.get("next") or request.GET.get("next") or "").strip()
+    if candidate and url_has_allowed_host_and_scheme(
+        candidate,
+        allowed_hosts={request.get_host()},
+        require_https=request.is_secure(),
+    ):
+        return candidate
+    return ""
+
+
+@never_cache
 @require_http_methods(["GET", "POST"])
 def login_view(request: HttpRequest) -> HttpResponse:
     # RBAC bootstrap — log failures but never block login. authenticate()
@@ -28,8 +55,11 @@ def login_view(request: HttpRequest) -> HttpResponse:
     except Exception:
         logger.exception("ensure_scope_schema failed; continuing")
 
+    destination = _safe_login_destination(request)
     if request.user.is_authenticated:
-        return redirect("dashboard")
+        if get_user_role(request.user) == ROLE_EXAM_COMMITTEE:
+            return redirect("exam_timetable_page")
+        return redirect(destination or "dashboard")
 
     error = ""
     if request.method == "POST":
@@ -42,7 +72,11 @@ def login_view(request: HttpRequest) -> HttpResponse:
 
         if fails >= _LOGIN_MAX_FAILS:
             error = "Too many failed attempts. Please try again later."
-            return render(request, "core/login.html", {"error": error})
+            return render(
+                request,
+                "core/login.html",
+                {"error": error, "next": destination},
+            )
 
         user = authenticate(request, username=username, password=password)
         if user is None:
@@ -51,12 +85,22 @@ def login_view(request: HttpRequest) -> HttpResponse:
         else:
             cache.delete(fail_key)
             login(request, user)
-            return redirect("dashboard")
+            if get_user_role(user) == ROLE_EXAM_COMMITTEE:
+                return redirect("exam_timetable_page")
+            return redirect(destination or "dashboard")
 
-    return render(request, "core/login.html", {"error": error})
+    return render(request, "core/login.html", {"error": error, "next": destination})
 
 
 @require_POST
 def logout_view(request: HttpRequest) -> HttpResponse:
+    destination = "login"
+    if request.user.is_authenticated:
+        try:
+            if get_user_role(request.user) == ROLE_STUDENT:
+                destination = "student_login"
+        except Exception:
+            # A role lookup failure must not prevent a user from logging out.
+            logger.exception("Unable to resolve logout destination; using staff login")
     logout(request)
-    return redirect("login")
+    return redirect(destination)

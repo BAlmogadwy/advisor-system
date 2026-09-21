@@ -34,11 +34,30 @@ from core.services.exam_timetable import (
 pytestmark = pytest.mark.django_db
 
 
+def _enrol_scraped(student, course, label="M1", name="") -> None:
+    section, _ = TermSection.objects.get_or_create(
+        course_key=course.course_code,
+        section=label,
+        defaults={
+            "course_code": course.course_code,
+            "course_number": course.course_code[-3:],
+            "course_name": name,
+        },
+    )
+    StudentTermSection.objects.create(
+        student_id=student.student_id,
+        term_section=section,
+        academic_year="1447",
+        term="2",
+        source="scraper_timetable",
+    )
+
+
 def _setup_fixture() -> None:
-    """Create 3 students, 4 courses, overlapping studying enrolments."""
-    s1 = Student.objects.create(student_id=990001, program="TESTPROG")
-    s2 = Student.objects.create(student_id=990002, program="TESTPROG")
-    s3 = Student.objects.create(student_id=990003, program="TESTPROG")
+    """Create 3 students and 4 courses with actual scraped timetable links."""
+    s1 = Student.objects.create(student_id=990001, program="TESTPROG", section="M")
+    s2 = Student.objects.create(student_id=990002, program="TESTPROG", section="M")
+    s3 = Student.objects.create(student_id=990003, program="TESTPROG", section="M")
 
     c1 = Course.objects.create(course_code="EX101", credit_hours=3)
     c2 = Course.objects.create(course_code="EX102", credit_hours=3)
@@ -52,6 +71,8 @@ def _setup_fixture() -> None:
     StudentCourse.objects.create(student=s2, course=c3, status="studying", actual_term="")
     StudentCourse.objects.create(student=s3, course=c3, status="studying", actual_term="")
     StudentCourse.objects.create(student=s3, course=c4, status="studying", actual_term="")
+    for student, course in [(s1, c1), (s1, c2), (s2, c1), (s2, c2), (s2, c3), (s3, c3), (s3, c4)]:
+        _enrol_scraped(student, course)
 
 
 def test_build_enrolled_sets() -> None:
@@ -65,33 +86,23 @@ def test_build_enrolled_sets() -> None:
     assert enrolled["EX301"] == {990003}
 
 
-def test_build_enrolled_sets_uses_studying_courses_not_partial_section_snapshot() -> None:
+def test_build_enrolled_sets_does_not_fill_partial_scraped_snapshot_from_studying_courses() -> None:
     _setup_fixture()
-    ts = TermSection.objects.create(
-        course_code="EX",
-        course_number="101",
-        course_key="EX101",
-        course_name="Example",
-        section="M1",
-    )
-    StudentTermSection.objects.create(
-        student_id=990001,
-        academic_year="1447",
-        term="2",
-        term_section=ts,
-    )
+    StudentTermSection.objects.exclude(student_id=990001, term_section__course_key="EX101").delete()
 
     enrolled = build_enrolled_sets()
 
-    assert set(enrolled) == {"EX101", "EX102", "EX201", "EX301"}
+    assert enrolled == {"EX101": {990001}}
 
 
 def test_build_enrolled_sets_splits_same_code_by_program_course_name() -> None:
     course = Course.objects.create(course_code="DUP101", credit_hours=3)
-    s1 = Student.objects.create(student_id=991001, program="P1")
-    s2 = Student.objects.create(student_id=991002, program="P2")
+    s1 = Student.objects.create(student_id=991001, program="P1", section="M")
+    s2 = Student.objects.create(student_id=991002, program="P2", section="M")
     StudentCourse.objects.create(student=s1, course=course, status="studying")
     StudentCourse.objects.create(student=s2, course=course, status="studying")
+    _enrol_scraped(s1, course, "M1", "First Course")
+    _enrol_scraped(s2, course, "M2", "Second Course")
     ProgrammeRequirement.objects.create(
         program="P1",
         course_code="DUP101",
@@ -442,7 +453,7 @@ def test_full_pipeline_with_buckets() -> None:
 
 
 def test_preview_courses() -> None:
-    """build_enrolled_sets returns all studying courses with student sets."""
+    """build_enrolled_sets returns scraped timetable courses with student sets."""
     _setup_fixture()
     enrolled = build_enrolled_sets()
 
@@ -498,7 +509,7 @@ def test_build_without_selection_uses_all() -> None:
         periods=["08:00-10:00", "10:30-12:30"],
     )
 
-    # All 4 studying courses included
+    # All 4 scraped timetable courses included
     assert result["courses_count"] == 4
     assert len(result["schedule"]) == 4
 

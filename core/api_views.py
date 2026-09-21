@@ -41,10 +41,12 @@ def recommend_view(request: HttpRequest, student_id: int) -> JsonResponse:
     if year is None or semester is None:
         return JsonResponse({"error": "Invalid parameters"}, status=400)
 
+    mode = "relaxed" if request.GET.get("mode", "").strip().lower() == "relaxed" else "strict"
     recommendations = recommend_next_courses(
         student_id=student_id,
         current_academic_year=year,
         current_semester=semester,
+        strict_passed_only=mode == "strict",
     )
 
     return JsonResponse(
@@ -52,6 +54,7 @@ def recommend_view(request: HttpRequest, student_id: int) -> JsonResponse:
             "student_id": student_id,
             "current_academic_year": year,
             "current_semester": semester,
+            "mode": mode,
             "recommendations": recommendations,
             "count": len(recommendations),
         }

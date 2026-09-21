@@ -32,6 +32,9 @@ def test_visualizer_prereqs_and_programs() -> None:
 
 def test_parser_handles_logout_and_table_parsing() -> None:
     assert parse_study_plan("teachers_login.jsp") == []
+    assert parse_study_plan("staffLogin.do?ex=authLogin&key=dynamic") == []
+    assert parse_study_plan('<input id="i0116" name="loginfmt" type="email">') == []
+    assert parse_study_plan('<input id="userNameInput"><input id="passwordInput">') == []
     assert parse_timetable("services4GraduatedStudent.do") == set()
 
     html = """

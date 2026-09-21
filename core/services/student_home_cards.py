@@ -128,37 +128,23 @@ def unlock_leaders(report: dict[str, Any], limit: int = 3) -> list[dict[str, Any
     waiting on."
 
     THREE different numbers are available and they disagree — for AI331: 5 courses
-    name it as a prerequisite, 4 become takeable at once, 6 open eventually
-    through the chain. This uses the middle one, because it is the only one a
-    student can check for themselves the term after they pass it.
+    name it as a prerequisite, 3 are waiting on it and nothing else, 6 open
+    eventually through the chain. This uses the middle one, because it is the only
+    one a student can check for themselves the term after they pass it.
+
+    The rule itself now lives in `student_unlock.build_unlock_report`, which is
+    where the prerequisite records, the satisfied set and the credit-hour gates all
+    already are. Recomputing it from `graph.items` here compared course codes only,
+    so a course also short on credit hours counted as "waiting on this one alone"
+    — and this screen's whole claim is that the count is checkable.
     """
-    graph = report.get("graph") or {}
-    edges = graph.get("items") or []
-    names = graph.get("nameOf") or {}
+    names = (report.get("graph") or {}).get("nameOf") or {}
+    dependents = report.get("dependents") or {}
 
-    passed = {c["code"] for c in (report.get("done") or [])}
-    passed |= {c["code"] for c in (report.get("in_progress") or [])}
-
-    prereqs_of: dict[str, set[str]] = {}
-    for edge in edges:
-        course = str(edge.get("course_code") or "")
-        prereq = str(edge.get("prerequisite_course_code") or "")
-        if course and prereq:
-            prereqs_of.setdefault(course, set()).add(prereq)
-
-    blocked = {c["code"] for c in (report.get("locked_courses") or [])}
     leaders: list[dict[str, Any]] = []
     for candidate in report.get("open_courses") or []:
         code = candidate["code"]
-        # A blocked course is freed by `code` when `code` is its ONLY outstanding
-        # prerequisite. Counting every dependent instead would promise a student
-        # something passing one course cannot deliver.
-        freed = [
-            other
-            for other in blocked
-            if code in prereqs_of.get(other, set())
-            and not (prereqs_of.get(other, set()) - passed - {code})
-        ]
+        freed = list((dependents.get(code) or {}).get("waiting_only_on_this") or [])
         if freed:
             leaders.append(
                 {
@@ -187,7 +173,11 @@ def gpa_band(gpa: float | None) -> dict[str, Any]:
     from core.services.policy_store import get_policy_store
 
     if gpa is None:
-        return {"gpa": None, "band_ar": "", "note_ar": "لا يوجد معدل تراكمي مسجّل في النظام."}
+        return {
+            "gpa": None,
+            "band_ar": "",
+            "note_ar": "لا يظهر معدل تراكمي في البيانات المتاحة للنظام.",
+        }
 
     store = get_policy_store()
     record = next((r for r in store.records if r.get("policy_id") == _BANDS_POLICY), None)
@@ -219,7 +209,9 @@ def gpa_band(gpa: float | None) -> dict[str, Any]:
     return {
         "gpa": gpa,
         "band_ar": band_ar,
-        "note_ar": "" if band_ar else "لا ينطبق تقدير عام على هذا المعدل في الجدول المعتمد.",
+        "note_ar": (
+            "" if band_ar else "لا تتضمن لائحة التقديرات المعتمدة تقديرًا عامًا لهذا المعدل."
+        ),
         "citation": {
             "policy_id": _BANDS_POLICY,
             "page": source.get("page"),
@@ -262,7 +254,13 @@ def validate_band_table(bands: list[dict[str, Any]], scale: int = GPA_SCALE) -> 
             )
 
 
-def _registered_hours(student_id: int, academic_year: int, term: int) -> dict[str, Any]:
+def _registered_hours(
+    student_id: int,
+    academic_year: int,
+    term: int,
+    *,
+    current_term_rows: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     """Credit HOURS registered for the configured term, and where the figure came from.
 
     Three numbers were available and two of them are wrong for this card:
@@ -283,7 +281,10 @@ def _registered_hours(student_id: int, academic_year: int, term: int) -> dict[st
 
     try:
         summary = get_student_term_registration_summary(
-            int(student_id), str(academic_year), str(term)
+            int(student_id),
+            str(academic_year),
+            str(term),
+            baseline_rows=current_term_rows,
         )
     except Exception:  # noqa: BLE001 — one card degrades, the page does not
         return {
@@ -314,7 +315,14 @@ def _registered_hours(student_id: int, academic_year: int, term: int) -> dict[st
     }
 
 
-def build_student_home_cards(student_id: int, academic_year: int, term: int) -> dict[str, Any]:
+def build_student_home_cards(
+    student_id: int,
+    academic_year: int,
+    term: int,
+    *,
+    current_term_rows: list[dict[str, Any]] | None = None,
+    prefer_arabic_names: bool = False,
+) -> dict[str, Any]:
     """Everything the student home screen shows, decided here.
 
     ONE service, and the template renders it without interpreting anything. The
@@ -324,16 +332,60 @@ def build_student_home_cards(student_id: int, academic_year: int, term: int) -> 
     eventually disagree, and the one on screen is the one nobody tested.
     """
     from core.models import Student
+    from core.services.student_helpers import normalize_code
+    from core.services.student_sections import (
+        get_student_term_baseline,
+        section_gender,
+        student_gender,
+    )
     from core.services.student_unlock import build_unlock_report
+    from core.services.timetable_snapshots import Snapshot
 
-    report = build_unlock_report(int(student_id), int(academic_year), int(term))
+    if current_term_rows is None:
+        try:
+            # REGISTRAR evidence only. These are academic-summary cards: they state
+            # what the student is carrying, and the caller that passes rows in passes
+            # exactly this class for the same reason. An imported plan reaching here
+            # would make the cards assert hours nobody registered.
+            current_term_rows = get_student_term_baseline(
+                int(student_id),
+                str(academic_year),
+                str(term),
+                snapshot=Snapshot.REGISTERED,
+            )
+            gender = student_gender(student_id)
+            if gender:
+                current_term_rows = [
+                    row
+                    for row in current_term_rows
+                    if section_gender(str(row.get("section") or "")) in ("", gender)
+                ]
+        except Exception:  # noqa: BLE001 — all home cards still degrade together
+            current_term_rows = []
+    current_codes = {
+        normalize_code(row.get("course_key") or row.get("course_code") or "")
+        for row in current_term_rows
+        if normalize_code(row.get("course_key") or row.get("course_code") or "")
+    }
+    report = build_unlock_report(
+        int(student_id),
+        int(academic_year),
+        int(term),
+        additional_studying_codes=current_codes,
+        prefer_arabic_names=prefer_arabic_names,
+    )
     buckets = progress_buckets(report)
     student = Student.objects.filter(student_id=int(student_id)).values("gpa").first() or {}
 
     band = gpa_band(student.get("gpa"))
     leaders = unlock_leaders(report, limit=1)
     top = leaders[0] if leaders else None
-    registered = _registered_hours(int(student_id), int(academic_year), int(term))
+    registered = _registered_hours(
+        int(student_id),
+        int(academic_year),
+        int(term),
+        current_term_rows=current_term_rows,
+    )
 
     course_total = (
         buckets["open"]

@@ -32,6 +32,7 @@ from .course_detail_views import (
 from .db_admin_views import (
     db_admin_page,
     db_backup_snapshot_view,
+    db_clear_section_snapshot_view,
     db_delete_external_courses_view,
     db_delete_program_catalog_view,
     db_delete_students_view,
@@ -44,6 +45,7 @@ from .db_admin_views import (
     db_preview_delete_program_catalog_view,
     db_preview_delete_students_view,
     db_preview_oracle_plan_view,
+    db_preview_section_snapshot_view,
     db_preview_term_sections_view,
     db_programme_capacities_view,
     db_update_programme_capacities_view,
@@ -53,8 +55,11 @@ from .db_admin_views import (
     elective_mapping_set_view,
     elective_placeholders_view,
 )
+from .dev_student_advisor_lab_views import dev_student_advisor_v21_lab_view
+from .exam_department_views import exam_department_export_view, exam_department_options_view
 from .exam_views import (
     exam_timetable_build_view,
+    exam_timetable_copy_view,
     exam_timetable_delete_view,
     exam_timetable_detail_view,
     exam_timetable_draft_impact_view,
@@ -66,6 +71,7 @@ from .exam_views import (
 )
 from .group_availability_views import (
     group_availability_compute_view,
+    group_availability_export_xlsx_view,
     group_availability_page,
 )
 from .instructor_views import (
@@ -90,6 +96,7 @@ from .planner_draft_views import (
     draft_generate_view,
     draft_select_view,
     student_planner_page,
+    student_timetable_start_view,
 )
 from .planner_job_views import (
     planner_job_cancel,
@@ -104,7 +111,15 @@ from .planner_views import (
     planner_save_student_sections_view,
     planner_sections_catalog_view,
 )
-from .portfolio_views import advisor_portfolio_page
+from .portfolio_views import (
+    admin_graduation_planning_page,
+    admin_graduation_student_export_xlsx,
+    admin_graduation_student_page,
+    advisor_portfolio_page,
+    advisor_portfolio_student_graduation_export_xlsx,
+    advisor_portfolio_student_graduation_page,
+    advisor_portfolio_student_graduation_view,
+)
 from .profile_views import (
     profile_change_password_view,
     profile_change_username_view,
@@ -134,6 +149,7 @@ from .report_views import (
 )
 from .scrape_views import (
     oracle_students_csv_view,
+    scrape_source_summary_view,
     scrape_start_view,
     scrape_status_view,
     scrape_stop_view,
@@ -159,7 +175,9 @@ from .student_auth_views import (
     student_graduation_view,
     student_home_view,
     student_login_view,
+    student_otp_resend_view,
     student_otp_verify_view,
+    student_plan_map_view,
 )
 from .timetable_workspace_views import (
     timetable_workspace_graph_page,
@@ -251,7 +269,13 @@ urlpatterns = [
     path("logout/", logout_view, name="logout"),
     # Student OTP login (Uni ID -> email code); separate from advisor password login.
     path("student/login/", student_login_view, name="student_login"),
+    path("student/login/resend/", student_otp_resend_view, name="student_otp_resend"),
     path("student/login/verify/", student_otp_verify_view, name="student_otp_verify"),
+    path(
+        "ops/dev/student-advisor-v21/",
+        dev_student_advisor_v21_lab_view,
+        name="dev_student_advisor_v21_lab",
+    ),
     path(
         "student/",
         login_required(student_home_view, login_url="student_login"),
@@ -266,6 +290,11 @@ urlpatterns = [
         "student/courses/",
         login_required(student_courses_view, login_url="student_login"),
         name="student_courses",
+    ),
+    path(
+        "student/plan-map/",
+        login_required(student_plan_map_view, login_url="student_login"),
+        name="student_plan_map",
     ),
     # ONE surface over one course: a real course, an elective placeholder, or a code
     # that is in no plan of theirs. The URL names a COURSE — never a student, so
@@ -369,6 +398,11 @@ urlpatterns = [
         login_required(draft_select_view, login_url="student_login"),
         name="planner_draft_select",
     ),
+    path(
+        "student/timetable/",
+        login_required(student_timetable_start_view, login_url="student_login"),
+        name="student_timetable_start",
+    ),
     # The screen. Declared after the `drafts/…` routes so the literal segment wins;
     # they differ in length anyway, but order makes that independent of the pattern.
     path(
@@ -412,6 +446,11 @@ urlpatterns = [
         "ops/group-availability/compute/",
         group_availability_compute_view,
         name="group_availability_compute",
+    ),
+    path(
+        "ops/group-availability/export.xlsx",
+        group_availability_export_xlsx_view,
+        name="group_availability_export_xlsx",
     ),
     path("recommend/<int:student_id>/", recommend_view, name="recommend"),
     path("classify/", classify_view, name="classify"),
@@ -494,6 +533,11 @@ urlpatterns = [
     path("ops/electives/mapping/set/", elective_mapping_set_view, name="elective_mapping_set"),
     path("ops/electives/placeholders/", elective_placeholders_view, name="elective_placeholders"),
     path("ops/scrape/start/", scrape_start_view, name="scrape_start"),
+    path(
+        "ops/scrape/source-summary/",
+        scrape_source_summary_view,
+        name="scrape_source_summary",
+    ),
     path("ops/scrape/status/", scrape_status_view, name="scrape_status"),
     path("ops/scrape/stop/", scrape_stop_view, name="scrape_stop"),
     path("ops/scrape/oracle-students-csv/", oracle_students_csv_view, name="oracle_students_csv"),
@@ -505,6 +549,36 @@ urlpatterns = [
     path("ops/sections-import/insert/", sections_import_insert_view, name="sections_import_insert"),
     path("planner/", planner_page, name="planner_page"),
     path("advisor-portfolio/", advisor_portfolio_page, name="advisor_portfolio_page"),
+    path(
+        "graduation-planning/",
+        admin_graduation_planning_page,
+        name="admin_graduation_planning_page",
+    ),
+    path(
+        "graduation-planning/students/<int:student_id>/",
+        admin_graduation_student_page,
+        name="admin_graduation_student_page",
+    ),
+    path(
+        "graduation-planning/students/<int:student_id>/export.xlsx",
+        admin_graduation_student_export_xlsx,
+        name="admin_graduation_student_export_xlsx",
+    ),
+    path(
+        "advisor-portfolio/students/<int:student_id>/graduation/",
+        advisor_portfolio_student_graduation_page,
+        name="advisor_portfolio_student_graduation_page",
+    ),
+    path(
+        "advisor-portfolio/students/<int:student_id>/graduation/export.xlsx",
+        advisor_portfolio_student_graduation_export_xlsx,
+        name="advisor_portfolio_student_graduation_export_xlsx",
+    ),
+    path(
+        "api/advisor-portfolio/students/<int:student_id>/graduation/",
+        advisor_portfolio_student_graduation_view,
+        name="advisor_portfolio_student_graduation",
+    ),
     path("ops/planner/context/", planner_context_view, name="planner_context"),
     path(
         "ops/planner/save-student-sections/",
@@ -555,6 +629,16 @@ urlpatterns = [
         "ops/db/preview-delete-students/",
         db_preview_delete_students_view,
         name="db_preview_delete_students",
+    ),
+    path(
+        "ops/db/section-snapshot/preview/",
+        db_preview_section_snapshot_view,
+        name="db_preview_section_snapshot",
+    ),
+    path(
+        "ops/db/section-snapshot/clear/",
+        db_clear_section_snapshot_view,
+        name="db_clear_section_snapshot",
     ),
     path("ops/db/delete-students/", db_delete_students_view, name="db_delete_students"),
     path(
@@ -653,6 +737,21 @@ urlpatterns = [
         "ops/exam-timetable/<int:run_id>/export.xlsx",
         login_required(exam_timetable_export_view),
         name="exam_timetable_export",
+    ),
+    path(
+        "ops/exam-timetable/<int:run_id>/departments/",
+        login_required(exam_department_options_view),
+        name="exam_department_options",
+    ),
+    path(
+        "ops/exam-timetable/<int:run_id>/departments/export/",
+        login_required(exam_department_export_view),
+        name="exam_department_export",
+    ),
+    path(
+        "ops/exam-timetable/<int:run_id>/copy/",
+        login_required(exam_timetable_copy_view),
+        name="exam_timetable_copy",
     ),
     path(
         "ops/exam-timetable/<int:run_id>/delete/",

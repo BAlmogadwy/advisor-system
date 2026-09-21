@@ -162,6 +162,10 @@ _ESCALATION_PRIORITY = (
     "PROHIBITED_FOR_DECISION",
     "CONFLICTING_AUTHORITIES",
     "JUDGE_REJECTED",
+    # Beside JUDGE_REJECTED because it is the same kind of fact: the answer was
+    # produced and then found unfit. It outranks the "nothing was found" codes,
+    # which describe an absent source rather than a defective answer.
+    "OUTPUT_NOT_GROUNDED",
     "STUDENT_DATA_MISSING",
     "PROCEDURE_NOT_DOCUMENTED",
     "POLICY_NOT_FOUND",

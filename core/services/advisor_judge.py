@@ -293,6 +293,21 @@ def _judge_user_message(
             "topic": p.get("topic"),
             "decision_use": p.get("decision_use"),
             "says": (p.get("statement_ar") or p.get("title_ar") or "")[:500],
+            # Some approved rules carry their operative detail in structured
+            # fields, not in source_text_ar. Calendar bindings are the canonical
+            # case: judging only the prose makes a bound deadline look invented.
+            "structured_rule": p.get("rule") or {},
+            "exceptions": p.get("exceptions") or [],
+            # The remote adviser receives the privacy projection, where internal
+            # ambiguity prose is collapsed into ``source_leaves_unresolved``.
+            # The evaluator deliberately keeps the original local policy rows,
+            # so derive the same meaning here or the judge sees ``false`` for an
+            # open question that the answering model correctly saw as ``true``.
+            "source_leaves_unresolved": bool(
+                p.get("source_leaves_unresolved")
+                or p.get("source_is_unclear_on")
+                or p.get("open_question")
+            ),
             "page": (p.get("citation") or {}).get("page"),
         }
         for p in policies or []
@@ -393,17 +408,17 @@ def judge_answer(
 
         resolver = getattr(client, "resolve_model", None)
         resolved = model or (resolver(None) if callable(resolver) else "")
-        result = client.chat(
-            messages,
-            model=resolved,
-            temperature=0.0,
-            # The verdict is a short JSON object, but a thinking model spends its
-            # whole budget reasoning before emitting anything and the call fails with
-            # nothing returned. The prefill closes the think block; the larger budget
-            # covers models that ignore it.
-            max_tokens=JUDGE_MAX_TOKENS,
-            assistant_prefill=_assistant_prefill_for_model(str(resolved)),
-        )
+        chat_kwargs = {
+            "model": resolved,
+            "temperature": 0.0,
+            "max_tokens": JUDGE_MAX_TOKENS,
+        }
+        # Local thinking models need this to reach the short JSON verdict inside
+        # their token budget. Remote providers must opt in explicitly: Alibaba has
+        # no verified assistant-prefill support and correctly rejects the argument.
+        if bool(getattr(client, "supports_assistant_prefill", True)):
+            chat_kwargs["assistant_prefill"] = _assistant_prefill_for_model(str(resolved))
+        result = client.chat(messages, **chat_kwargs)
         scored = _parse_verdict(getattr(result, "content", ""))
     except Exception as exc:  # noqa: BLE001
         # A judge that cannot run must not silently clear the answer it was called

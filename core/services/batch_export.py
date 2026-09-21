@@ -23,6 +23,7 @@ def export_batch_recommender_xlsx(
     aggregate: dict[str, int],
     *,
     course_rows: list[dict[str, object]] | None = None,
+    strict_passed_only: bool = False,
 ) -> Path:
     """Export batch recommender results as styled XLSX."""
     try:
@@ -128,9 +129,20 @@ def export_batch_recommender_xlsx(
 
     scoped_sids = get_student_ids(program=program, section=section)
     if program and "," not in (program or ""):
-        all_recs = batch_recommend(scoped_sids, program, year, semester)
+        all_recs = batch_recommend(
+            scoped_sids,
+            program,
+            year,
+            semester,
+            strict_passed_only=strict_passed_only,
+        )
     else:
-        all_recs = batch_recommend_multi_program(scoped_sids, year, semester)
+        all_recs = batch_recommend_multi_program(
+            scoped_sids,
+            year,
+            semester,
+            strict_passed_only=strict_passed_only,
+        )
 
     # Build: course_code -> set of student_ids who need it
     course_to_students: dict[str, set[int]] = defaultdict(set)
@@ -177,9 +189,13 @@ def export_batch_recommender_xlsx(
     # Title
     prog_label = program or "All Programs"
     sec_label = f"Section {section}" if section else "All Sections"
+    mode_label = "Strict" if strict_passed_only else "Relaxed"
     ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=5)
     tc = ws.cell(row=1, column=1)
-    tc.value = f"Batch Recommender — {prog_label} | {sec_label} | {year}/T{semester} | {student_count} students"
+    tc.value = (
+        f"Batch Recommender — {prog_label} | {sec_label} | {year}/T{semester} | "
+        f"{mode_label} | {student_count} students"
+    )
     tc.fill = title_fill
     tc.font = title_font
     tc.alignment = Alignment(horizontal="center", vertical="center")
@@ -356,6 +372,8 @@ def export_batch_recommender_xlsx(
     ws_sum.cell(row=4, column=2, value=program or "All")
     ws_sum.cell(row=4, column=3, value="Section").font = Font(bold=True, size=9)
     ws_sum.cell(row=4, column=4, value=section or "All")
+    ws_sum.cell(row=5, column=1, value="Mode").font = Font(bold=True, size=9)
+    ws_sum.cell(row=5, column=2, value=mode_label)
 
     ws_sum.cell(row=6, column=1, value="Students Scanned").font = Font(bold=True, size=9)
     ws_sum.cell(row=6, column=2, value=student_count).font = Font(

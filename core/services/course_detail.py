@@ -36,23 +36,23 @@ KIND_NOT_IN_PLAN = "NOT_IN_PLAN"
 
 #: Where the student stands. `UNKNOWN` is a real answer and is not permission.
 STATUS_AR: dict[str, str] = {
-    "passed": "اجتزتَ هذا المقرر.",
-    "studying": "تدرس هذا المقرر حاليًا، ويلزم اجتيازه.",
-    "open_now": "استوفيتَ متطلباته السابقة.",
+    "passed": "حالة المقرر في سجلك: مجتاز.",
+    "studying": "حالة المقرر في سجلك: قيد الدراسة، ويلزم اجتيازه.",
+    "open_now": "المتطلبات السابقة لهذا المقرر مستوفاة وفق البيانات المتاحة.",
     "blocked": "لم تُستوفَ متطلباته السابقة بعد.",
-    "unknown": "لا نستطيع تحديد وضعك في هذا المقرر من البيانات المتاحة.",
+    "unknown": "لا يمكن تحديد حالة هذا المقرر في سجلك من البيانات المتاحة.",
 }
 
 #: A prerequisite's own state, said in one word so a list of five reads at a glance.
 PREREQ_STATUS_AR: dict[str, str] = {
     "passed": "مجتاز",
-    "studying": "تدرسه حاليًا",
+    "studying": "قيد الدراسة حاليًا",
     # NOT «تستطيع تسجيله الآن». That is a personalised registration-permission
     # claim — the very thing this surface refuses to make — wearing the clothes of a
     # status badge. It says what is true of the PREREQUISITE, not what the student
     # may do about it.
     "open": "متطلباته السابقة مستوفاة",
-    "blocked": "محجوب هو نفسه",
+    "blocked": "متطلباته غير مستوفاة أيضًا",
     "unknown": "غير معروف",
 }
 
@@ -63,15 +63,22 @@ PREREQ_STATUS_AR: dict[str, str] = {
 #: plan, so it has no name and no chain to point at.
 REASON_AR: dict[str, str] = {
     "MISSING_COURSE": "يتطلب اجتياز {course}.",
-    "MISSING_HOURS": "يتطلب {required} ساعة معتمدة، ولديك {effective} — تبقّى {remaining}.",
-    "UNKNOWN_PREREQ": "يذكر {course} كمتطلب سابق، وهو غير موجود في خطتك — راجع مرشدك.",
-    "ASK_ADVISOR": "راجع مرشدك الأكاديمي لمعرفة سبب الحجب.",
+    "MISSING_HOURS": (
+        "يتطلب إكمال {required} ساعة معتمدة. الساعات المحتسبة لك: {effective}، "
+        "والمتبقي لاستيفاء الشرط: {remaining}."
+    ),
+    "UNKNOWN_PREREQ": (
+        "تتضمن متطلبات المقرر {course}، لكن هذا المقرر غير موجود في بيانات خطتك. "
+        "راجع مرشدك الأكاديمي للتحقق."
+    ),
+    "ASK_ADVISOR": "تعذّر تحديد سبب عدم استيفاء المتطلبات؛ راجع مرشدك الأكاديمي.",
 }
-REASON_AR_DEFAULT = "راجع مرشدك الأكاديمي لمعرفة سبب الحجب."
+REASON_AR_DEFAULT = "تعذّر تحديد سبب عدم استيفاء المتطلبات؛ راجع مرشدك الأكاديمي."
 
-NOT_IN_PLAN_AR = "هذا المقرر ليس ضمن خطة برنامجك، فلا نستطيع تفسير وضعك فيه."
+NOT_IN_PLAN_AR = "هذا المقرر غير مدرج في بيانات خطتك الدراسية، لذلك لا يمكن تحديد حالته لك."
 NO_PROGRAMME_AR = (
-    "لا يوجد برنامج دراسي مسجَّل في ملفك، فلا توجد خطة يمكن الرجوع إليها. راجع القسم لتحديث بياناتك."
+    "لا يظهر برنامج دراسي في ملفك، لذلك لا يمكن الرجوع إلى خطة دراسية محددة. "
+    "راجع القسم الأكاديمي لتحديث بياناتك."
 )
 
 
@@ -140,6 +147,7 @@ def build_course_detail(
     academic_year: str = "",
     term: str = "",
     report: dict[str, Any] | None = None,
+    prefer_arabic_names: bool = False,
 ) -> dict[str, Any]:
     """Everything this surface shows, for one code, for one student.
 
@@ -157,7 +165,7 @@ def build_course_detail(
 
     code = normalize_code(course_code)
     if not code:
-        raise CourseDetailUnavailable("لم يُحدَّد رمز المقرر.")
+        raise CourseDetailUnavailable("لم يُحدّد رمز المقرر المطلوب.")
 
     program = str(
         Student.objects.filter(student_id=int(student_id)).values_list("program", flat=True).first()
@@ -211,6 +219,11 @@ def build_course_detail(
         return {**base, "kind": KIND_NOT_IN_PLAN, "message_ar": NOT_IN_PLAN_AR}
 
     if is_elective_slot(row["type"]):
+        from core.services.student_sections import arabic_term_section_course_names
+
+        slot_arabic_name = (
+            arabic_term_section_course_names([code]).get(code, "") if prefer_arabic_names else ""
+        )
         # BEFORE the gate: has this student already settled the slot? The registrar
         # records a result against the PLACEHOLDER code — 26 students have `DS1`
         # passed — so a slot is not automatically an open question.
@@ -226,7 +239,7 @@ def build_course_detail(
             return {
                 **base,
                 "kind": KIND_ELECTIVE_SLOT,
-                "course_name": str(row.get("course_name") or ""),
+                "course_name": slot_arabic_name or str(row.get("course_name") or ""),
                 "credit_hours": row.get("credit_hours") or 0,
                 "your_status": settled,
                 "status_ar": STATUS_AR.get(settled, STATUS_AR["unknown"]),
@@ -244,10 +257,17 @@ def build_course_detail(
         # them in any other state would be one `if` away from rendering the list
         # the gate exists to withhold.
         status, options, _problems = slot_status(program, code, academic_year, term)
+        option_arabic_names = (
+            arabic_term_section_course_names(
+                [code] + [normalize_code(option.get("course_code") or "") for option in options]
+            )
+            if prefer_arabic_names
+            else {}
+        )
         return {
             **base,
             "kind": KIND_ELECTIVE_SLOT,
-            "course_name": str(row.get("course_name") or ""),
+            "course_name": option_arabic_names.get(code) or str(row.get("course_name") or ""),
             "credit_hours": row.get("credit_hours") or 0,
             # A BOOLEAN, never the operational state name. `student_message`
             # deliberately says the same thing for every non-ready state so a
@@ -260,7 +280,10 @@ def build_course_detail(
             "options": [
                 {
                     "course_code": normalize_code(o.get("course_code") or ""),
-                    "course_name": str(o.get("course_name") or ""),
+                    "course_name": option_arabic_names.get(
+                        normalize_code(o.get("course_code") or "")
+                    )
+                    or str(o.get("course_name") or ""),
                     "credit_hours": o.get("credit_hours") or 0,
                     "prerequisites": [
                         {"course_code": normalize_code(c)}
@@ -276,7 +299,14 @@ def build_course_detail(
     # caller that already built one still passes it in rather than paying twice.
     if report is None:
         report = build_unlock_report(int(student_id), int(academic_year), int(term)) or {}
-    return _course_detail(code, program, row, report, base)
+    return _course_detail(
+        code,
+        program,
+        row,
+        report,
+        base,
+        prefer_arabic_names=prefer_arabic_names,
+    )
 
 
 def _course_detail(
@@ -285,6 +315,8 @@ def _course_detail(
     row: dict[str, Any],
     report: dict[str, Any],
     base: dict[str, Any],
+    *,
+    prefer_arabic_names: bool = False,
 ) -> dict[str, Any]:
     from core.services.eligibility import split_hour_prereqs
     from core.services.virtual_advisor import _course_names
@@ -303,19 +335,30 @@ def _course_detail(
             reasons = list(entry.get("reasons") or [])
             break
 
-    prereq_codes, hours_gate = split_hour_prereqs(get_prerequisites(code, program))
     graph = report.get("graph") or {}
     status_of = graph.get("statusOf") or {}
-
-    # Already computed by the report and thrown away by every caller: "if I pass
-    # this, what opens?" is the question a student asks next.
-    unlocks = sorted(
-        {
-            e["course_code"]
-            for e in (graph.get("items") or [])
-            if e.get("prerequisite_course_code") == code
-        }
+    graph_prerequisites = [
+        normalize_code(item.get("prerequisite_course_code"))
+        for item in graph.get("items") or []
+        if normalize_code(item.get("course_code")) == code
+        and normalize_code(item.get("prerequisite_course_code"))
+    ]
+    graph_codes = {normalize_code(value) for value in graph.get("extraNodes") or []}
+    prereq_codes, hours_gate = split_hour_prereqs(
+        graph_prerequisites if code in graph_codes else get_prerequisites(code, program)
     )
+
+    # "If I pass this, what opens?" — read from the report's own `dependents`
+    # rather than recounted from `graph.items` here.
+    #
+    # The local count was every edge naming this course, rendered under the heading
+    # «اجتيازه يفتح لك» / "Passing this opens". For AI331 that puts five courses
+    # under a sentence that is true of three: AI482 is also waiting on COE332 and
+    # AI491 on CS289, and neither opens the day AI331 is passed.
+    # `waiting_only_on_this` is the flag that separates them, and the template now
+    # renders the difference instead of hiding it behind one heading.
+    unlock_rows = ((report.get("dependents") or {}).get(code) or {}).get("listed") or []
+    unlocks = [r["code"] for r in unlock_rows]
 
     # AFTER `unlocks`, and including it. Looking the names up first meant every
     # downstream course rendered with an empty name — the list showed codes and
@@ -323,6 +366,16 @@ def _course_detail(
     names = _course_names(
         {code} | {normalize_code(c) for c in prereq_codes} | {normalize_code(u) for u in unlocks}
     )
+    if prefer_arabic_names:
+        from core.services.student_sections import arabic_term_section_course_names
+
+        names.update(
+            arabic_term_section_course_names(
+                {code}
+                | {normalize_code(c) for c in prereq_codes}
+                | {normalize_code(u) for u in unlocks}
+            )
+        )
 
     return {
         **base,
@@ -347,7 +400,16 @@ def _course_detail(
         "reasons": [
             {"kind": str(r.get("kind") or ""), "text_ar": _reason_ar(r, names)} for r in reasons
         ],
-        "unlocks": [{"course_code": u, "course_name": names.get(u, "")} for u in unlocks],
+        "unlocks": [
+            {
+                "course_code": r["code"],
+                "course_name": names.get(r["code"], "") or r["name"],
+                "waiting_only_on_this": r["waiting_only_on_this"],
+                "also_waiting_on": r["also_waiting_on"],
+                "also_short_on_credit_hours": r["also_waiting_on_credit_hours"],
+            }
+            for r in unlock_rows
+        ],
     }
 
 

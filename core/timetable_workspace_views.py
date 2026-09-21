@@ -78,6 +78,10 @@ from core.models import (
 from core.services.audit import log_audit_event
 from core.services.rbac import ROLE_GENERAL_ADVISOR, ROLE_SUPER_ADMIN, get_user_role
 from core.services.section_move_optimisation import section_move_optimisation_engine
+from core.services.section_programmes import (
+    filter_sections_for_delivery_board,
+    section_is_available_to_delivery_board,
+)
 from core.services.timetable_demand import compute_board_capacity
 from core.services.timetable_generate import generate_workspace_scenario
 from core.services.timetable_graph_twin import (
@@ -1299,10 +1303,14 @@ def tw_board_unplaced_view(request: HttpRequest, board_id: int) -> JsonResponse:
     except DeliveryBoard.DoesNotExist:
         return _err("Board not found", code="NOT_FOUND", status=404)
 
-    # Get term sections for this scenario (scenario-owned + global imported)
-    from django.db.models import Q
-
-    all_sections = TermSection.objects.filter(Q(scenario=board.scenario) | Q(scenario__isnull=True))
+    # Scenario-owned sections belong to this workspace. Global current-snapshot
+    # sections must explicitly serve the board's programme (shared memberships
+    # such as AI+DS naturally appear on both boards).
+    all_sections = filter_sections_for_delivery_board(
+        TermSection.objects.all(),
+        scenario_id=board.scenario_id,
+        program=board.program,
+    ).prefetch_related("program_links", "meetings")
 
     # Get sections already placed on this board
     placed_ids = set(
@@ -1325,11 +1333,16 @@ def tw_board_unplaced_view(request: HttpRequest, board_id: int) -> JsonResponse:
         ):
             continue
 
-        meetings = list(
-            TermSectionMeeting.objects.filter(term_section=ts).values(
-                "day", "start_time", "end_time", "room", "instructor"
-            )
-        )
+        meetings = [
+            {
+                "day": meeting.day,
+                "start_time": meeting.start_time,
+                "end_time": meeting.end_time,
+                "room": meeting.room,
+                "instructor": meeting.instructor,
+            }
+            for meeting in ts.meetings.all()
+        ]
         unplaced.append(
             {
                 "term_section_id": ts.id,
@@ -1339,6 +1352,7 @@ def tw_board_unplaced_view(request: HttpRequest, board_id: int) -> JsonResponse:
                 "section": ts.section,
                 "available_capacity": ts.available_capacity,
                 "registered_count": ts.registered_count,
+                "programs": sorted(link.program for link in ts.program_links.all()),
                 "meetings": meetings,
             }
         )
@@ -1536,6 +1550,17 @@ def tw_placement_create_view(request: HttpRequest) -> JsonResponse:
         ts = TermSection.objects.get(id=int(term_section_id))  # type: ignore[arg-type]
     except TermSection.DoesNotExist:
         return _err("TermSection not found", code="NOT_FOUND", status=404)
+
+    if not section_is_available_to_delivery_board(
+        ts,
+        scenario_id=board.scenario_id,
+        program=board.program,
+    ):
+        return _err(
+            "TermSection is outside this board's scenario or programme",
+            code="SECTION_NOT_AVAILABLE_TO_BOARD",
+            status=409,
+        )
 
     if OnlineCourseLookup().is_online_course_for_board(board, ts.course_code):
         room = ""

@@ -1,0 +1,30 @@
+<dialog id="examDepartmentDialog" class="et-move-dialog et-department-dialog" aria-labelledby="examDepartmentTitle" aria-describedby="examDepartmentHelp">
+  <h2 id="examDepartmentTitle">{% if LANGUAGE_CODE == 'ar' %}ملفات الأقسام{% else %}Department files{% endif %}</h2>
+  <p id="examDepartmentHelp" class="et-dialog-help">{% if LANGUAGE_CODE == 'ar' %}ملف إكسل لكل قسم، يشمل جميع اختبارات طلابه حسب برامجهم الدراسية، بما فيها المقررات من أقسام أخرى. تُجمع برامج الذكاء الاصطناعي وعلوم البيانات في ملف واحد.{% else %}One Excel workbook per department, covering all exams taken by its students, including courses from other departments. Artificial Intelligence and Data Science programs share one file.{% endif %}</p>
+  <p id="examDepartmentStatus" class="et-department-status" role="status" aria-live="polite" hidden></p>
+  <p id="examDepartmentError" class="alert alert-danger" role="alert" hidden></p>
+  <form id="examDepartmentForm" novalidate>
+    <fieldset id="examDepartmentFields" hidden disabled>
+      <legend class="visually-hidden">{% if LANGUAGE_CODE == 'ar' %}خيارات ملفات الأقسام{% else %}Department file options{% endif %}</legend>
+      <fieldset class="et-department-choice-group">
+        <legend>{% if LANGUAGE_CODE == 'ar' %}الأقسام{% else %}Departments{% endif %}</legend>
+        <label class="et-department-all"><input id="examDepartmentAll" type="checkbox"> {% if LANGUAGE_CODE == 'ar' %}تحديد الكل{% else %}Select all{% endif %}</label>
+        <div id="examDepartmentList" class="et-department-list"></div>
+      </fieldset>
+      <fieldset class="et-department-choice-group">
+        <legend>{% if LANGUAGE_CODE == 'ar' %}فئات الطلاب{% else %}Student groups{% endif %}</legend>
+        <div id="examDepartmentGenders" class="et-department-genders"></div>
+      </fieldset>
+      <div class="et-department-language">
+        <label for="examDepartmentLanguage">{% if LANGUAGE_CODE == 'ar' %}لغة الملف{% else %}File language{% endif %}</label>
+        <select id="examDepartmentLanguage" class="form-select form-select-sm"><option value="ar" selected>{% if LANGUAGE_CODE == 'ar' %}العربية{% else %}Arabic{% endif %}</option><option value="en">{% if LANGUAGE_CODE == 'ar' %}الإنجليزية{% else %}English{% endif %}</option></select>
+      </div>
+      <details id="examDepartmentDatesDetails" class="et-department-dates">
+        <summary>{% if LANGUAGE_CODE == 'ar' %}تواريخ الاختبارات (اختياري){% else %}Exam dates (optional){% endif %}</summary>
+        <p>{% if LANGUAGE_CODE == 'ar' %}أضف التاريخ الفعلي لكل يوم إن توفر. تُترك التواريخ غير المحددة فارغة في الملف.{% else %}Add the actual date for each day if available. Unspecified dates stay blank in the file.{% endif %}</p>
+        <div id="examDepartmentDates" class="et-department-date-grid"></div>
+      </details>
+    </fieldset>
+    <div class="et-move-actions"><button id="closeExamDepartment" type="button" class="btn btn-outline-secondary">{% if LANGUAGE_CODE == 'ar' %}إغلاق{% else %}Close{% endif %}</button><button id="downloadExamDepartments" type="submit" class="btn btn-primary" disabled>{% if LANGUAGE_CODE == 'ar' %}تنزيل الملفات{% else %}Download files{% endif %}</button></div>
+  </form>
+</dialog>

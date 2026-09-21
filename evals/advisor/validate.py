@@ -41,9 +41,17 @@ MODES = {"FULL", "PARTIAL", "EXPLAIN_ONLY", "UNSUPPORTED"}
 # Phrases that cannot be evaluated by any grader, human or automatic. A
 # must_not_contain built out of these tests nothing.
 VAGUE = {
-    "wrong information", "incorrect advice", "wrong answer", "hallucination",
-    "false information", "made up facts", "inaccurate", "anything wrong",
-    "معلومات خاطئة", "إجابة خاطئة", "معلومات غير صحيحة",
+    "wrong information",
+    "incorrect advice",
+    "wrong answer",
+    "hallucination",
+    "false information",
+    "made up facts",
+    "inaccurate",
+    "anything wrong",
+    "معلومات خاطئة",
+    "إجابة خاطئة",
+    "معلومات غير صحيحة",
 }
 
 
@@ -56,7 +64,9 @@ def load_policy_ids() -> set[str]:
             continue
         data = yaml.safe_load(path.read_text(encoding="utf-8"))
         if isinstance(data, list):
-            ids.update(str(r["policy_id"]) for r in data if isinstance(r, dict) and "policy_id" in r)
+            ids.update(
+                str(r["policy_id"]) for r in data if isinstance(r, dict) and "policy_id" in r
+            )
     return ids
 
 
@@ -64,7 +74,9 @@ def load_prohibited() -> set[str]:
     """Rules the store says cannot support a decision, whatever the approval status."""
     out: set[str] = set()
     for path in POLICIES.rglob("*.yaml"):
-        if path.name in ("sources.yaml", "evidence_map.yaml") or {"evidence", "tools"} & set(path.parts):
+        if path.name in ("sources.yaml", "evidence_map.yaml") or {"evidence", "tools"} & set(
+            path.parts
+        ):
             continue
         data = yaml.safe_load(path.read_text(encoding="utf-8"))
         if isinstance(data, list):
@@ -75,7 +87,7 @@ def load_prohibited() -> set[str]:
 
 
 def load_capability_names() -> tuple[set[str], set[str]]:
-    """Returns (all registered names, names a STUDENT may not call).
+    """Returns (V2-advertised names, names a STUDENT may not call).
 
     The adviser is student-only. A staff-scoped tool named in an expected answer is
     not a typo — it means the set expects an answer the registry will refuse to
@@ -90,17 +102,21 @@ def load_capability_names() -> tuple[set[str], set[str]]:
     os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings")
     django.setup()
     from core.services.rbac import ROLE_STUDENT
+    from core.services.student_advisor_v2 import STUDENT_V2_TOOL_NAMES
     from core.services.virtual_advisor_capabilities import get_default_registry
 
     reg = get_default_registry().capabilities
-    return set(reg), {n for n, c in reg.items() if ROLE_STUDENT not in c.allowed_roles}
+    advertised = set(STUDENT_V2_TOOL_NAMES)
+    return advertised, {name for name in advertised if ROLE_STUDENT not in reg[name].allowed_roles}
 
 
 def main() -> int:
     if not EXPECTED.exists():
         sys.exit(f"missing {EXPECTED} — run the annotation workflow first")
 
-    questions = {q["id"]: q for q in yaml.safe_load(QUESTIONS.read_text(encoding="utf-8"))["questions"]}
+    questions = {
+        q["id"]: q for q in yaml.safe_load(QUESTIONS.read_text(encoding="utf-8"))["questions"]
+    }
     expected = yaml.safe_load(EXPECTED.read_text(encoding="utf-8"))["expectations"]
 
     policy_ids = load_policy_ids()

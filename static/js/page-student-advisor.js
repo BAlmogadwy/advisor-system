@@ -19,58 +19,154 @@
   const convListEl = document.getElementById('saConvList');
   const convEmptyEl = document.getElementById('saConvEmpty');
   const newChatBtn = document.getElementById('saNewChat');
-  const welcomeEl = document.getElementById('saWelcome');
+  const emptyStateEl = document.getElementById('saEmptyState');
   const statusEl = document.getElementById('saStatus');
   const composerErrorEl = document.getElementById('saComposerError');
+  const layoutEl = document.getElementById('saAdvisorLayout');
+  const historyDrawerEl = document.getElementById('saConversationDrawer');
+  const historyToggleBtn = document.getElementById('saHistoryToggle');
+  const historyCloseBtn = document.getElementById('saHistoryClose');
+  const historyBackdropBtn = document.getElementById('saHistoryBackdrop');
+  const threadTitleEl = document.getElementById('saThreadTitle');
+  const jumpLatestBtn = document.getElementById('saJumpLatest');
   if (!formEl || !questionEl || !messagesEl || !sendBtn || !convListEl) return;
 
+  const newConversationTitle = newChatBtn
+    ? ((newChatBtn.querySelector('span:last-child') || newChatBtn).textContent || '').trim()
+    : '';
+
   const T = {
-    thinking:  AR ? 'جارٍ تجهيز الإجابة…' : 'Preparing the answer…',
-    failed:    AR ? 'تعذر إكمال الإجابة. حاول مرة أخرى.' : 'Could not complete the answer. Please try again.',
-    abstained: AR ? 'لا تتوفر معلومات موثوقة كافية للإجابة.' : 'There is not enough verified information to answer.',
-    escalated: AR ? 'تم تجهيز الحالة لمراجعة المرشد الأكاديمي.' : 'Prepared for academic adviser review.',
+    thinking:  AR ? 'جارٍ مراجعة سجلك الأكاديمي واللوائح ذات الصلة…' : 'Reviewing your academic record and relevant rules…',
+    failed:    AR ? 'لم نتمكّن من إعداد الإجابة.' : 'We could not complete the answer.',
+    interrupted: AR ? 'توقّف إعداد الإجابة قبل اكتمالها.' : 'Answer preparation stopped before it finished.',
+    abstained: AR ? 'لا تتوفر معلومات موثوقة كافية للإجابة عن هذا السؤال.' : 'There is not enough verified information to answer.',
+    escalated: AR ? 'تحتاج هذه الحالة إلى مراجعة المرشد الأكاديمي.' : 'Prepared for academic adviser review.',
     retry:     AR ? 'إعادة المحاولة' : 'Retry',
+    retryAnswer: AR ? 'إعادة محاولة إعداد الإجابة' : 'Retry preparing the answer',
     source:    AR ? 'المصدر' : 'Source',
     sources:   AR ? 'المصادر' : 'Sources',
-    details:   AR ? 'تفاصيل المصدر' : 'Source details',
-    policyId:  AR ? 'معرّف السياسة' : 'Policy ID',
-    policyIds: AR ? 'معرّفات السياسات' : 'Policy IDs',
-    effective: AR ? 'الفترة الفعالة' : 'Effective period',
-    approved:  AR ? 'حالة المصدر: معتمد' : 'Source status: approved',
+    details:   AR ? 'بيانات المصدر' : 'Source details',
+    policyId:  AR ? 'رمز القاعدة الأكاديمية' : 'Policy ID',
+    policyIds: AR ? 'رموز القواعد الأكاديمية' : 'Policy IDs',
+    effective: AR ? 'فترة سريان اللائحة' : 'Effective period',
+    approved:  AR ? 'المصدر معتمد' : 'Source status: approved',
     helpful:   AR ? 'هل كانت هذه الإجابة مفيدة؟' : 'Was this answer helpful?',
     yes:       AR ? 'نعم' : 'Yes',
     no:        AR ? 'لا' : 'No',
     thanks:    AR ? 'شكرًا لملاحظتك.' : 'Thank you for the feedback.',
     page:      AR ? 'ص' : 'p.',
-    untitled:  AR ? 'محادثة بدون عنوان' : 'Untitled conversation',
-    loadFail:  AR ? 'تعذر تحميل المحادثة.' : 'Could not load the conversation.',
+    untitled:  AR ? 'جلسة إرشاد بلا عنوان' : 'Untitled advising session',
+    loadFail:  AR ? 'تعذّر تحميل جلسة الإرشاد.' : 'Could not load the advising session.',
     me:        AR ? 'أنا' : 'Me',
-    sendFail:  AR ? 'تعذر إرسال سؤالك. حاول مرة أخرى.' : 'Could not send your question. Please try again.',
-    offline:   AR ? 'لا يوجد اتصال. سؤالك محفوظ، حاول مرة أخرى.' : 'No connection. Your question is kept — try again.',
-    why:       AR ? 'ما سبب عدم فائدة الإجابة؟' : 'Why was the answer not helpful?',
-    convList:  AR ? 'المحادثات' : 'Conversations',
+    sendFail:  AR ? 'تعذّر إرسال السؤال. أعد المحاولة.' : 'Could not send your question. Please try again.',
+    offline:   AR ? 'لا يتوفر اتصال بالشبكة. بقي السؤال في خانة الكتابة؛ أعد المحاولة بعد عودة الاتصال.' : 'No connection. Your question is kept — try again.',
+    why:       AR ? 'لماذا لم تكن الإجابة مفيدة؟' : 'Why was the answer not helpful?',
+    convList:  AR ? 'جلسات الإرشاد' : 'Advising sessions',
 
-    askHuman:  AR ? 'مراجعة المرشد الأكاديمي' : 'Ask an academic adviser',
-    sendCase:  AR ? 'إرسال الحالة للمرشد' : 'Send this case to an adviser',
+    timetableTitle: AR ? 'الجداول المقترحة' : 'Timetable alternatives',
+    planningOnly: AR
+      ? 'هذه جداول إرشادية فقط؛ لا يؤدي عرضها إلى حفظ جدول أو تسجيل مقرر في بوابة الجامعة.'
+      : 'Planning proposals only — nothing is saved and no course is registered here.',
+    currentSections: AR ? 'الشُعب المحتفَظ بها من الجدول المسجّل فعليًا' : 'Current retained sections',
+    expectedSections: AR ? 'الشُعب المحتفَظ بها من الجدول المتوقع' : 'Expected-plan sections retained',
+    plannerOption: AR ? 'الجدول المقترح' : 'Planner option',
+    creditHours: AR ? 'الساعات المعتمدة' : 'credits',
+    creditCeiling: AR
+      ? 'الحد الأعلى للساعات المعتمدة للجدول'
+      : 'Timetable credit ceiling',
+    exactCreditTarget: AR
+      ? 'المجموع الدقيق المطلوب لساعات الجدول'
+      : 'Exact timetable credit target',
+    creditHourUnit: AR ? 'ساعة معتمدة' : 'credit hours',
+    courseCoverage: AR ? 'المقررات المدرجة' : 'Courses scheduled',
+    meetings: AR ? 'مواعيد المحاضرات' : 'Meetings',
+    section: AR ? 'الشعبة' : 'section',
+    enforcedConstraints: AR ? 'الشروط المطلوب مراعاتها عند إنشاء الجدول' : 'Requested timetable constraints',
+    mustTake: AR ? 'مقرر طُلب إدراجه في كل جدول مقترح' : 'Must take',
+    pinnedSection: AR ? 'الشعبة المحدّدة' : 'Pinned section',
+    constraintProblems: AR ? 'تعذّر إنشاء جدول يحقق الشروط المطلوبة' : 'Requested constraints could not be satisfied',
+    noValidConstrainedOption: AR
+      ? 'لا يتوفر جدول يحقق جميع الشروط. لم يُعرض الجدول الجزئي على أنه خيار صالح؛ عدّل الشروط ثم أعد المحاولة.'
+      : 'No partial timetable is presented as valid. Adjust the requested constraint and try again.',
+    targetExceedsMaximum: AR
+      ? 'المجموع الدقيق المطلوب يتجاوز الحد الأعلى الفعّال، ولم يُخفّض الهدف تلقائيًا.'
+      : 'The exact requested total exceeds the effective credit ceiling; the target was not reduced automatically.',
+    retainedExceedsTarget: AR
+      ? 'ساعات الجدول المحتفَظ بها تتجاوز الهدف الدقيق، ووضع البناء حول الجدول الحالي لا يحذف مقرراته.'
+      : 'The retained timetable already exceeds the exact target, and around-current mode does not remove retained courses.',
+    noExactTargetOption: AR
+      ? 'لم يجد البحث المحدود A1–C3 جدولًا يساوي مجموع الساعات الدقيق، ولم يُعرض جدول أقل ساعات على أنه يحقق الهدف.'
+      : 'The bounded A1–C3 search did not find a timetable at the exact credit total; a lower-credit timetable is not shown as fulfillment.',
+    unplaced: AR ? 'مقررات لم تُدرج في هذا الجدول المقترح' : 'Not placed in this option',
+    noAdditions: AR ? 'لا توجد مقررات جديدة في هذا الجدول المقترح.' : 'This option has no additions.',
+    noAdditionalCourses: AR
+      ? 'أُبقي الجدول المسجّل فعليًا كما هو؛ فلا توجد مقررات إضافية طلبتها أو اقترحها النظام لإنشاء جدول مقترح آخر.'
+      : 'Your current timetable is retained; there is no requested or recommended additional course to build into a new option.',
+    noAdditionalExpectedCourses: AR
+      ? 'أُبقي الجدول المتوقع كما هو؛ فلا توجد مقررات إضافية طلبتها أو اقترحها النظام لإنشاء جدول مقترح آخر. الجدول المتوقع ليس تسجيلًا فعليًا.'
+      : 'Your expected timetable is retained; there is no requested or recommended additional course to build into a new option. This plan is not actual registration.',
+    replaceCourse: AR ? 'استبدال' : 'Replace',
+    replaceWith: AR ? 'بالمقرر' : 'with',
+    outsidePlanReplacement: AR
+      ? 'تنبيه: المقرر البديل غير مدرج في الخطة الدراسية المحفوظة في النظام؛ تحقّق عبر بوابة الجامعة من كيفية احتسابه ضمن متطلبات الخطة.'
+      : 'Caution: the replacement course is outside your recorded study plan; verify how it will count in the university portal.',
+
+    graduationMapTitle: AR ? 'المسار التقديري حتى إكمال الخطة الدراسية' : 'Scenario path to plan completion',
+    graduationMapComplete: AR
+      ? 'يشمل هذا التقدير جميع متطلبات الخطة الدراسية. وهو مسار إرشادي، وليس موعدًا رسميًا للتخرج.'
+      : 'The simulation reached every plan requirement. This is a planning estimate, not an official graduation date.',
+    graduationMapIncomplete: AR
+      ? 'تعرض الخريطة المقررات التي أمكن ترتيبها فقط، وتتوقف عند المتطلبات التي تعذّر حسمها؛ لذلك لا تمثل موعدًا نهائيًا للتخرج.'
+      : 'The map shows only what the simulation could schedule, then stops at unresolved requirements; it is not a final graduation date.',
+    graduationReadOnly: AR
+      ? 'هذا تقدير إرشادي فقط؛ لا يغيّر الجدول المسجّل فعليًا أو الجدول المتوقع، ولا يسجّل مقررات في بوابة الجامعة.'
+      : 'Read-only scenario — it does not change your timetable or register courses in the university portal.',
+    scenarioTerms: AR ? 'حسب الفصول التقديرية' : 'By scenario term',
+    prerequisiteChain: AR ? 'حسب سلسلة المتطلبات السابقة' : 'By prerequisite chain',
+    completedBefore: AR ? 'مجتاز قبل فصل البداية' : 'Passed before scenario',
+    planningBaselineScenario: AR ? 'فصل البداية' : 'Planning baseline term',
+    projectedScenario: AR ? 'فصل تقديري' : 'Projected term',
+    assumedBaseline: AR ? 'يُفترض اجتيازه بنهاية فصل البداية' : 'Assumed passed in the planning baseline term',
+    projectedCourse: AR ? 'مُدرج في فصل تقديري' : 'Planned in scenario',
+    unresolvedCourse: AR ? 'تعذّر تحديد فصل مناسب له' : 'Unresolved',
+    unresolvedRequirements: AR ? 'مقررات تعذّر إدراجها في الفصول التقديرية' : 'Requirements the simulation could not resolve',
+    missingPrerequisites: AR ? 'متطلبات سابقة غير مستوفاة' : 'Missing prerequisites',
+    creditGate: AR ? 'شرط الساعات المعتمدة' : 'Credit requirement',
+    scenarioChange: AR ? 'التغيير المفترض في فصل البداية' : 'Planning-baseline change in this scenario',
+    removed: AR ? 'المقررات المفترض حذفها:' : 'Removed',
+    noncompletion: AR
+      ? 'المقررات المفترض عدم اجتيازها بعد هذا الفصل:'
+      : 'Assumed not completed after this term',
+    added: AR ? 'المقررات المفترض إضافتها:' : 'Added',
+    maximumPerTerm: AR ? 'الحد الأعلى للساعات المعتمدة في كل فصل تقديري' : 'Simulation cap per term',
+    waitingTerm: AR ? 'لا توجد مقررات مدرجة في هذا الفصل التقديري' : 'no planned courses',
+    openFullMap: AR ? 'فتح الخريطة في عرض كامل' : 'Open full scenario map',
+    closeFullMap: AR ? 'إغلاق العرض الكامل' : 'Close full-screen map',
+    moreScenarioCourses: function (count) {
+      return AR ? 'عرض مقررات إضافية (' + count + ')' : 'Show ' + count + ' more courses';
+    },
+
+    askHuman:  AR ? 'طلب مراجعة من المرشد الأكاديمي' : 'Ask an academic adviser',
+    sendCase:  AR ? 'إرسال الحالة إلى المرشد الأكاديمي' : 'Send this case to an adviser',
     /* "may need" — never "has been approved" or "an adviser is looking at it".
        Nothing has been agreed at the point this is shown. */
-    mayNeed:   AR ? 'هذه الحالة قد تحتاج إلى مراجعة المرشد الأكاديمي.'
+    mayNeed:   AR ? 'قد تحتاج هذه الحالة إلى مراجعة المرشد الأكاديمي.'
                   : 'This case may need review by an academic adviser.',
-    willSend:  AR ? 'سيتم إرسال:' : 'What will be sent:',
-    wontSend:  AR ? 'لن يتم إرسال المحادثات الأخرى أو السجلات الداخلية للنظام.'
-                  : 'Your other conversations and the system’s internal records will not be sent.',
-    noteAsk:   AR ? 'هل ترغب في إضافة توضيح للمرشد؟' : 'Would you like to add anything for the adviser?',
+    willSend:  AR ? 'ستُرسل المعلومات الآتية إلى المرشد الأكاديمي:' : 'What will be sent:',
+    wontSend:  AR ? 'لن تُرسل جلسات الإرشاد الأخرى ولا السجلات الداخلية للنظام.'
+                  : 'Your other advising sessions and the system’s internal records will not be sent.',
+    noteAsk:   AR ? 'هل تريد إضافة توضيح للمرشد الأكاديمي؟' : 'Would you like to add anything for the adviser?',
     optional:  AR ? 'اختياري' : 'optional',
     confirm:   AR ? 'إرسال' : 'Send',
     cancel:    AR ? 'إلغاء' : 'Cancel',
-    caseSent:  AR ? 'تم إرسال الحالة للمرشد الأكاديمي' : 'Sent to an academic adviser',
+    caseSent:  AR ? 'أُرسلت الحالة إلى المرشد الأكاديمي' : 'Sent to an academic adviser',
     caseRef:   AR ? 'رقم الحالة' : 'Case number',
     caseState: AR ? 'الحالة' : 'Status',
     caseWhen:  AR ? 'تاريخ الإرسال' : 'Submitted',
     viewCase:  AR ? 'عرض الحالة' : 'View case',
-    backToChat: AR ? 'العودة للمحادثة' : 'Back to the conversation',
-    caseFail:  AR ? 'تعذر إرسال الحالة. لم يتغير شيء في محادثتك.'
-                  : 'Could not send the case. Nothing in your conversation changed.',
+    backToChat: AR ? 'العودة إلى جلسة الإرشاد' : 'Back to the advising session',
+    caseFail:  AR ? 'تعذّر إرسال الحالة. لم تتغيّر جلسة الإرشاد.'
+                  : 'Could not send the case. Nothing in your advising session changed.',
     adviserReply: AR ? 'رد المرشد الأكاديمي' : 'The adviser’s reply',
   };
 
@@ -80,12 +176,12 @@
      also mean rendering the stored evidence into the page, which is the one thing
      this screen must not do. */
   const SHARED_ITEMS = AR
-    ? [
+      ? [
         'سؤالك',
-        'إجابة المرشد الافتراضي',
+        'إجابة مرشد التخطيط الأكاديمي',
         'حالة الإجابة وسبب الإحالة',
-        'المصادر التي ظهرت مع الإجابة',
-        'المعلومات الناقصة المسجلة، إن وجدت',
+        'المصادر المعروضة مع الإجابة',
+        'المعلومات التي حُدّدت على أنها ناقصة، إن وجدت',
       ]
     : [
         'your question',
@@ -97,11 +193,11 @@
 
   const REASONS = [
     ['answer_incorrect',            AR ? 'الإجابة غير صحيحة'     : 'The answer is incorrect'],
-    ['did_not_understand_question', AR ? 'لم يفهم سؤالي'          : 'It misunderstood my question'],
-    ['information_outdated',        AR ? 'المعلومة غير محدثة'     : 'The information is outdated'],
-    ['missing_details',             AR ? 'الإجابة ناقصة'          : 'The answer is incomplete'],
-    ['citation_not_helpful',        AR ? 'المصدر غير مفيد'        : 'The source is not helpful'],
-    ['needed_human_adviser',        AR ? 'أحتاج إلى مرشد أكاديمي' : 'I need a human adviser'],
+    ['did_not_understand_question', AR ? 'الإجابة لا تتناول سؤالي' : 'It misunderstood my question'],
+    ['information_outdated',        AR ? 'المعلومات الواردة غير محدّثة' : 'The information is outdated'],
+    ['missing_details',             AR ? 'الإجابة لا تتضمن التفاصيل الكافية' : 'The answer is incomplete'],
+    ['citation_not_helpful',        AR ? 'المصدر لا يدعم الإجابة بوضوح' : 'The source is not helpful'],
+    ['needed_human_adviser',        AR ? 'أفضّل مراجعة مرشد أكاديمي' : 'I need a human adviser'],
   ];
 
   /* Statuses that carry a real answer beneath them. */
@@ -109,6 +205,7 @@
 
   let currentId = null;
   let busy = false;
+  let activeExpandedMapCloser = null;
   /* Keyed BY TURN, not one slot for the page. One slot breaks as soon as two
      questions fail: the second overwrites the key, so retrying the FIRST sends the
      second's key with the first's text. The server correctly refuses that as a
@@ -166,6 +263,102 @@
     if (text != null) node.textContent = text;
     return node;
   }
+
+  function labelledValue(label, value) {
+    return AR
+      ? label + ': \u2066' + String(value) + '\u2069'
+      : String(value) + ' ' + label;
+  }
+
+  /* The conversation list is navigation, not part of the academic answer. Keeping
+     it in an off-canvas drawer gives structured results the full workspace width
+     while preserving every existing conversation action. */
+  function setHistoryOpen(open, restoreFocus) {
+    if (!layoutEl || !historyDrawerEl || !historyToggleBtn) return;
+    layoutEl.classList.toggle('history-open', !!open);
+    historyDrawerEl.setAttribute('aria-hidden', String(!open));
+    historyToggleBtn.setAttribute('aria-expanded', String(!!open));
+    if (open && historyCloseBtn) historyCloseBtn.focus();
+    if (!open && restoreFocus) historyToggleBtn.focus();
+  }
+
+  if (historyToggleBtn) {
+    historyToggleBtn.addEventListener('click', function () {
+      setHistoryOpen(historyToggleBtn.getAttribute('aria-expanded') !== 'true', false);
+    });
+  }
+  if (historyCloseBtn) historyCloseBtn.addEventListener('click', function () { setHistoryOpen(false, true); });
+  if (historyBackdropBtn) historyBackdropBtn.addEventListener('click', function () { setHistoryOpen(false, true); });
+  document.addEventListener('keydown', function (event) {
+    if (event.key === 'Escape' && activeExpandedMapCloser) {
+      activeExpandedMapCloser();
+      return;
+    }
+    if (event.key === 'Escape' && layoutEl && layoutEl.classList.contains('history-open')) {
+      setHistoryOpen(false, true);
+    }
+  });
+
+  /* A compact one-line composer that grows only when the question needs it. The
+     cap prevents a long draft from shrinking the conversation into a sliver. */
+  function resizeComposer() {
+    questionEl.style.height = 'auto';
+    const height = Math.min(Math.max(questionEl.scrollHeight, 46), 144);
+    questionEl.style.height = height + 'px';
+    formEl.classList.toggle('is-expanded', height > 58);
+  }
+
+  questionEl.addEventListener('input', resizeComposer);
+  questionEl.addEventListener('keydown', function (event) {
+    if (event.key !== 'Enter' || event.shiftKey || event.isComposing) return;
+    event.preventDefault();
+    if (!sendBtn.disabled) formEl.requestSubmit(sendBtn);
+  });
+  resizeComposer();
+
+  /* The advisor is a workspace, not a fixed dashboard card. Measure the visible
+     viewport below the page heading so the composer sits at its lower edge. The
+     visual viewport matters on phones: it shrinks when the software keyboard
+     opens, while 100vh does not reliably do so. */
+  let workspaceResizeFrame = null;
+  function fitWorkspaceToViewport() {
+    workspaceResizeFrame = null;
+    if (!layoutEl) return;
+    const viewport = window.visualViewport;
+    const viewportTop = viewport ? viewport.offsetTop : 0;
+    const viewportBottom = viewport
+      ? viewport.offsetTop + viewport.height
+      : window.innerHeight;
+    const layoutTop = Math.max(layoutEl.getBoundingClientRect().top, viewportTop);
+    const keyboardOpen = !!viewport && viewport.height < window.innerHeight - 100;
+    const minimum = keyboardOpen ? 240 : (window.innerWidth <= 768 ? 360 : 480);
+    const available = Math.floor(viewportBottom - layoutTop - 12);
+    layoutEl.style.setProperty('--sa-workspace-height', Math.max(minimum, available) + 'px');
+  }
+  function scheduleWorkspaceFit() {
+    if (workspaceResizeFrame !== null) cancelAnimationFrame(workspaceResizeFrame);
+    workspaceResizeFrame = requestAnimationFrame(fitWorkspaceToViewport);
+  }
+  window.addEventListener('resize', scheduleWorkspaceFit, { passive: true });
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener('resize', scheduleWorkspaceFit, { passive: true });
+    window.visualViewport.addEventListener('scroll', scheduleWorkspaceFit, { passive: true });
+  }
+  scheduleWorkspaceFit();
+
+  function syncJumpLatest() {
+    if (!jumpLatestBtn) return;
+    const remaining = messagesEl.scrollHeight - messagesEl.clientHeight - messagesEl.scrollTop;
+    jumpLatestBtn.hidden = remaining < 120;
+  }
+
+  function scrollToLatest() {
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+    syncJumpLatest();
+  }
+
+  messagesEl.addEventListener('scroll', syncJumpLatest, { passive: true });
+  if (jumpLatestBtn) jumpLatestBtn.addEventListener('click', scrollToLatest);
 
   /* ── direction ───────────────────────────────────────────────────
      Two separate bidi defects lived on this screen, and both of them changed
@@ -356,7 +549,7 @@
     const groups = [];
     const byRef = new Map();
     citations.forEach(function (c) {
-      const key = [c.document_title, c.edition, c.page].join(' ');
+      const key = [c.document_title, c.edition, c.page].join('\u0000');
       let g = byRef.get(key);
       if (!g) {
         g = { citation: c, ids: [] };
@@ -523,7 +716,7 @@
     }
     const button = el(
       'button',
-      'btn btn-neutral btn-sm sa-escalate-btn' + (wanted ? ' btn-primary' : ''),
+      'btn btn-sm sa-escalate-btn' + (wanted ? ' btn-primary' : ' btn-neutral'),
       wanted ? T.sendCase : T.askHuman
     );
     button.type = 'button';
@@ -794,6 +987,583 @@
     return null;
   }
 
+  function renderThinkingMessage() {
+    const article = el('article', 'va-message sa-thinking-message');
+    article.id = 'saThinkingMessage';
+    article.setAttribute('aria-hidden', 'true');
+    article.appendChild(el('div', 'va-avatar', 'AI'));
+    const bubble = el('div', 'va-bubble');
+    bubble.appendChild(el('span', 'sa-thinking-label', T.thinking));
+    article.appendChild(bubble);
+    return article;
+  }
+
+  function showThinkingMessage() {
+    const existing = document.getElementById('saThinkingMessage');
+    if (existing) existing.remove();
+    messagesEl.appendChild(renderThinkingMessage());
+    scrollToLatest();
+  }
+
+  const TIMETABLE_DAYS = {
+    SUN: AR ? 'الأحد' : 'Sun',
+    MON: AR ? 'الاثنين' : 'Mon',
+    TUE: AR ? 'الثلاثاء' : 'Tue',
+    WED: AR ? 'الأربعاء' : 'Wed',
+    THU: AR ? 'الخميس' : 'Thu',
+    FRI: AR ? 'الجمعة' : 'Fri',
+    SAT: AR ? 'السبت' : 'Sat',
+  };
+
+  function ltrNode(tag, className, text) {
+    const node = el(tag, className, text);
+    node.setAttribute('dir', 'ltr');
+    return node;
+  }
+
+  function timetableCourseKey(row) {
+    const node = el('strong', 'sa-tt-course-key');
+    node.appendChild(ltrNode('bdi', null, String(row.course_code || '')));
+    if (row.section) {
+      node.appendChild(document.createTextNode(' · ' + T.section + ' '));
+      node.appendChild(ltrNode('bdi', null, String(row.section)));
+    }
+    return node;
+  }
+
+  function renderTimetablePresentation(presentation, language) {
+    if (!presentation || presentation.kind !== 'timetable_proposals') return null;
+    const alternatives = Array.isArray(presentation.alternatives)
+      ? presentation.alternatives : [];
+    const baselineKind = String(presentation.baseline_kind || 'REGISTERED').toUpperCase();
+    if (baselineKind === 'MIXED_REVIEW_REQUIRED') return null;
+    const baseline = Array.isArray(presentation.baseline_sections)
+      ? presentation.baseline_sections
+      : (baselineKind === 'EXPECTED_PLAN' && Array.isArray(presentation.expected_plan_sections)
+        ? presentation.expected_plan_sections
+        : (Array.isArray(presentation.current_sections) ? presentation.current_sections : []));
+    const mustTake = Array.isArray(presentation.must_take_courses)
+      ? presentation.must_take_courses.filter(Boolean) : [];
+    const pinned = Array.isArray(presentation.pinned_sections)
+      ? presentation.pinned_sections : [];
+    const rawCreditCeiling = Number(presentation.credit_ceiling);
+    const creditCeiling = Number.isFinite(rawCreditCeiling) && rawCreditCeiling > 0
+      ? rawCreditCeiling : null;
+    const rawTargetCredits = Number(presentation.target_credits);
+    const targetCredits = Number.isFinite(rawTargetCredits) && rawTargetCredits > 0
+      ? rawTargetCredits : null;
+    const constraintFailures = Array.isArray(presentation.constraint_failures)
+      ? presentation.constraint_failures : [];
+    const targetCreditStatus = String(presentation.target_credit_status || '').toUpperCase();
+    const targetStatusMessages = {
+      TARGET_EXCEEDS_EFFECTIVE_MAX: T.targetExceedsMaximum,
+      RETAINED_BASELINE_EXCEEDS_TARGET: T.retainedExceedsTarget,
+      NO_EXACT_ALTERNATIVE: T.noExactTargetOption,
+    };
+    const targetStatusMessage = targetStatusMessages[targetCreditStatus] || '';
+    if (!alternatives.length && !baseline.length && !mustTake.length
+        && !pinned.length && !constraintFailures.length && targetCredits === null
+        && !targetStatusMessage) return null;
+
+    const wrap = el('section', 'sa-timetable');
+    const dir = language === 'ar' ? 'rtl' : language === 'en' ? 'ltr' : (AR ? 'rtl' : 'ltr');
+    wrap.setAttribute('dir', dir);
+    wrap.setAttribute('aria-label', T.timetableTitle);
+
+    const heading = el('div', 'sa-tt-heading');
+    heading.appendChild(el('h4', 'sa-tt-title', T.timetableTitle));
+    if (presentation.planning_term) {
+      heading.appendChild(ltrNode('span', 'sa-tt-term', presentation.planning_term));
+    }
+    wrap.appendChild(heading);
+    wrap.appendChild(el('p', 'sa-tt-boundary', T.planningOnly));
+
+    const replacement = presentation.replacement && typeof presentation.replacement === 'object'
+      ? presentation.replacement : null;
+    const removedCourse = replacement && replacement.remove_course;
+    const addedCourse = replacement && replacement.add_course;
+    if (removedCourse && removedCourse.course_code && addedCourse && addedCourse.course_code) {
+      const notice = el('section', 'sa-tt-replacement');
+      notice.setAttribute('aria-label', T.replaceCourse);
+      const swap = el('p', 'sa-tt-replacement-swap');
+      swap.appendChild(el('span', null, T.replaceCourse + ' '));
+      swap.appendChild(ltrNode('strong', 'sa-tt-replacement-code is-removed', String(removedCourse.course_code)));
+      swap.appendChild(document.createTextNode(' ' + T.replaceWith + ' '));
+      swap.appendChild(ltrNode('strong', 'sa-tt-replacement-code is-added', String(addedCourse.course_code)));
+      notice.appendChild(swap);
+      if (replacement.outside_plan_addition === true) {
+        const caution = el('p', 'sa-tt-replacement-caution', T.outsidePlanReplacement);
+        caution.setAttribute('role', 'note');
+        notice.appendChild(caution);
+      }
+      wrap.appendChild(notice);
+    }
+
+    if (mustTake.length || pinned.length || creditCeiling !== null || targetCredits !== null) {
+      const constraints = el('section', 'sa-tt-constraints');
+      constraints.appendChild(el('h5', 'sa-tt-subtitle', T.enforcedConstraints));
+      const chips = el('div', 'sa-tt-constraint-chips');
+      mustTake.forEach(function (code) {
+        const chip = el('span', 'sa-tt-constraint-chip is-required');
+        chip.appendChild(el('span', null, T.mustTake + ': '));
+        chip.appendChild(ltrNode('bdi', null, String(code)));
+        chips.appendChild(chip);
+      });
+      pinned.forEach(function (row) {
+        if (!row || !row.course_code || !row.section_label) return;
+        const chip = el('span', 'sa-tt-constraint-chip is-pinned');
+        chip.appendChild(el('span', null, T.pinnedSection + ': '));
+        chip.appendChild(ltrNode('bdi', null, String(row.course_code)));
+        chip.appendChild(document.createTextNode(' · '));
+        chip.appendChild(ltrNode('bdi', null, String(row.section_label)));
+        chips.appendChild(chip);
+      });
+      if (creditCeiling !== null) {
+        const chip = el('span', 'sa-tt-constraint-chip is-credit-ceiling');
+        chip.appendChild(el('span', null, T.creditCeiling + ': '));
+        chip.appendChild(ltrNode('bdi', 'sa-tt-credit-ceiling-value', String(creditCeiling)));
+        chip.appendChild(document.createTextNode(' ' + T.creditHourUnit));
+        chips.appendChild(chip);
+      }
+      if (targetCredits !== null) {
+        const chip = el('span', 'sa-tt-constraint-chip is-credit-target');
+        chip.appendChild(el('span', null, T.exactCreditTarget + ': '));
+        chip.appendChild(ltrNode('bdi', 'sa-tt-credit-target-value', String(targetCredits)));
+        chip.appendChild(document.createTextNode(' ' + T.creditHourUnit));
+        chips.appendChild(chip);
+      }
+      constraints.appendChild(chips);
+      wrap.appendChild(constraints);
+    }
+
+    if (constraintFailures.length || targetStatusMessage) {
+      const alert = el('section', 'sa-tt-constraint-alert');
+      alert.setAttribute('role', 'alert');
+      alert.appendChild(el('h5', 'sa-tt-subtitle', T.constraintProblems));
+      if (targetStatusMessage) {
+        alert.appendChild(el('p', 'sa-tt-target-status', targetStatusMessage));
+      }
+      const visibleFailures = constraintFailures.filter(function (row) {
+        return !targetStatusMessage || (row && (row.course_code || row.section_label));
+      });
+      const list = el('ul', null);
+      visibleFailures.forEach(function (row) {
+        const item = el('li');
+        if (row && row.course_code) {
+          item.appendChild(ltrNode('strong', null, String(row.course_code)));
+          if (row.section_label) {
+            item.appendChild(document.createTextNode(' · '));
+            item.appendChild(ltrNode('bdi', null, String(row.section_label)));
+          }
+        }
+        if (row && row.reason) {
+          if (item.childNodes.length) item.appendChild(document.createTextNode(' — '));
+          item.appendChild(document.createTextNode(String(row.reason)));
+        }
+        list.appendChild(item);
+      });
+      if (visibleFailures.length) alert.appendChild(list);
+      if (!alternatives.length) {
+        alert.appendChild(el('p', 'sa-tt-empty', T.noValidConstrainedOption));
+      }
+      wrap.appendChild(alert);
+    }
+
+    if (baseline.length) {
+      const retained = el('details', 'sa-tt-current');
+      const retainedLabel = baselineKind === 'EXPECTED_PLAN'
+        ? T.expectedSections : T.currentSections;
+      retained.appendChild(el(
+        'summary',
+        null,
+        AR ? labelledValue(retainedLabel, baseline.length) : retainedLabel + ' (' + baseline.length + ')'
+      ));
+      const list = el('div', 'sa-tt-current-list');
+      baseline.forEach(function (course) {
+        const row = el('div', 'sa-tt-current-row');
+        row.appendChild(timetableCourseKey(course));
+        if (course.course_name) row.appendChild(el('span', 'sa-tt-course-name', course.course_name));
+        (course.meetings || []).forEach(function (meeting) {
+          row.appendChild(ltrNode('span', 'sa-tt-current-meeting', meeting));
+        });
+        list.appendChild(row);
+      });
+      retained.appendChild(list);
+      wrap.appendChild(retained);
+    }
+
+    if (!alternatives.length && presentation.no_additional_courses === true) {
+      wrap.appendChild(el(
+        'p',
+        'sa-tt-empty sa-tt-no-additional-courses',
+        baselineKind === 'EXPECTED_PLAN'
+          ? T.noAdditionalExpectedCourses : T.noAdditionalCourses
+      ));
+    }
+
+    const optionList = el('div', 'sa-tt-options');
+    alternatives.forEach(function (option, index) {
+      const details = el('details', 'sa-tt-option');
+      details.open = index === 0;
+      const summary = el('summary', 'sa-tt-summary');
+      const names = (option.planner_options || []).filter(Boolean);
+      const title = names.length ? names.join(' / ') : String(index + 1);
+      const optionName = el('strong', 'sa-tt-option-name');
+      optionName.appendChild(document.createTextNode(T.plannerOption + ' '));
+      optionName.appendChild(ltrNode('bdi', null, title));
+      summary.appendChild(optionName);
+
+      const coverage = Number(option.scheduled_courses || 0) + '/' + Number(option.target_courses || 0);
+      const credits = Number(option.total_credit_hours || option.proposed_credit_hours || 0);
+      const meta = el('span', 'sa-tt-summary-meta');
+      meta.appendChild(AR
+        ? el('span', 'sa-tt-coverage', labelledValue(T.courseCoverage, coverage))
+        : ltrNode('span', 'sa-tt-coverage', coverage));
+      if (credits) meta.appendChild(el('span', 'sa-tt-credits', labelledValue(T.creditHours, credits)));
+      summary.appendChild(meta);
+      details.appendChild(summary);
+
+      const body = el('div', 'sa-tt-option-body');
+      const meetings = Array.isArray(option.meetings) ? option.meetings : [];
+      if (meetings.length) {
+        body.appendChild(el('h5', 'sa-tt-subtitle', T.meetings));
+        const meetingList = el('ul', 'sa-tt-meetings');
+        meetings.forEach(function (meeting) {
+          const item = el('li', 'sa-tt-meeting');
+          const course = el('span', 'sa-tt-meeting-course');
+          course.appendChild(timetableCourseKey(meeting));
+          if (meeting.course_name) course.appendChild(el('small', null, meeting.course_name));
+          item.appendChild(course);
+
+          const when = el('span', 'sa-tt-when');
+          when.appendChild(el('span', 'sa-tt-day', TIMETABLE_DAYS[meeting.day] || meeting.day || ''));
+          when.appendChild(
+            ltrNode('bdi', 'sa-tt-time', String(meeting.start || '') + '–' + String(meeting.end || ''))
+          );
+          item.appendChild(when);
+          meetingList.appendChild(item);
+        });
+        body.appendChild(meetingList);
+      } else {
+        body.appendChild(el('p', 'sa-tt-empty', T.noAdditions));
+      }
+
+      const unplaced = Array.isArray(option.unplaced_courses) ? option.unplaced_courses : [];
+      if (unplaced.length) {
+        body.appendChild(el('h5', 'sa-tt-subtitle sa-tt-unplaced-title', T.unplaced));
+        const unplacedList = el('ul', 'sa-tt-unplaced');
+        unplaced.forEach(function (course) {
+          const item = el('li');
+          item.appendChild(ltrNode('strong', 'sa-tt-course-key', course.course_code || ''));
+          if (course.course_name) item.appendChild(document.createTextNode(' — ' + course.course_name));
+          if (course.reason) item.appendChild(el('span', 'sa-tt-reason', course.reason));
+          unplacedList.appendChild(item);
+        });
+        body.appendChild(unplacedList);
+      }
+      details.appendChild(body);
+      optionList.appendChild(details);
+    });
+    wrap.appendChild(optionList);
+    return wrap;
+  }
+
+  function graduationBandLabel(value) {
+    const label = String(value || '');
+    if (label === 'Completed before the scenario') return T.completedBefore;
+    if (label.indexOf('Planning baseline ') === 0) {
+      return T.planningBaselineScenario + (AR ? ': ' : ' ') + label.slice('Planning baseline '.length);
+    }
+    if (label.indexOf('Current ') === 0) {
+      // Backward compatibility for already stored presentation payloads.
+      return T.planningBaselineScenario + (AR ? ': ' : ' ') + label.slice('Current '.length);
+    }
+    if (label.indexOf('Projected ') === 0) {
+      return T.projectedScenario + (AR ? ': ' : ' ') + label.slice('Projected '.length);
+    }
+    return label;
+  }
+
+  function graduationGraphStrings(labels) {
+    const band = function (n) {
+      return graduationBandLabel(labels[String(n)] || String(n));
+    };
+    return {
+      termHeading: band,
+      pgNoTermBand: T.waitingTerm,
+      pgGateTip: function (h) {
+        return AR ? labelledValue(T.creditGate, h) : T.creditGate + ': ' + h + ' ' + T.creditHours;
+      },
+      pgInferredTip: AR ? 'موضع تقديري خارج الفصول المرتّبة' : 'position inferred outside the scenario order',
+      pgTermTip: band,
+      pgGate: T.creditGate,
+      pgInferred: AR ? 'موضع محدّد تقديريًا' : 'inferred position',
+      pgFoundation: AR ? 'بداية سلسلة المتطلبات' : 'chain start',
+      pgIntermediate: AR ? 'وسط سلسلة المتطلبات' : 'chain middle',
+      pgTerminal: AR ? 'نهاية سلسلة المتطلبات' : 'chain end',
+      pgHoverHint: AR ? 'مرّر على مقرر لإبراز سلسلة متطلباته' : 'hover to highlight a chain',
+      pgPassed: T.completedBefore,
+      pgStudying: T.assumedBaseline,
+      pgOpen: T.projectedCourse,
+      pgLocked: T.unresolvedCourse,
+      pgSameTermWarn: function (n) {
+        return AR ? 'علاقات متطلبات سابقة داخل الفصل نفسه: ' + n + '.' : n + ' prerequisite relation(s) within one term';
+      },
+      pgBackwardWarn: function (n) {
+        return AR ? 'علاقات يظهر فيها المتطلب السابق بعد المقرر الذي يعتمد عليه: ' + n + '.' : n + ' prerequisite relation(s) after their course';
+      },
+    };
+  }
+
+  function renderGraduationMobileList(graph, labels) {
+    const host = el('div', 'sa-grad-mobile');
+    const byTerm = new Map();
+    (graph.extraNodes || []).forEach(function (code) {
+      const term = Number(graph.termOf && graph.termOf[code]);
+      const key = Number.isFinite(term) ? term : 0;
+      if (!byTerm.has(key)) byTerm.set(key, []);
+      byTerm.get(key).push(code);
+    });
+    const statusText = {
+      passed: T.completedBefore,
+      studying: T.assumedBaseline,
+      open: T.projectedCourse,
+      locked: T.unresolvedCourse,
+    };
+    const statusClass = {
+      passed: 'is-passed', studying: 'is-studying', open: 'is-open', locked: 'is-locked',
+    };
+    const appendCourse = function (host, code) {
+      const status = (graph.statusOf && graph.statusOf[code]) || 'locked';
+      const item = el('span', 'sa-grad-course ' + (statusClass[status] || 'is-locked'));
+      item.title = ((graph.nameOf && graph.nameOf[code]) || code) + ' — ' + (statusText[status] || status);
+      item.appendChild(ltrNode('bdi', null, code));
+      host.appendChild(item);
+    };
+    Array.from(byTerm.keys()).sort(function (a, b) { return a - b; }).forEach(function (term) {
+      const section = el('section', 'sa-grad-mobile-term');
+      const codes = byTerm.get(term).sort();
+      section.appendChild(el(
+        'h5',
+        'sa-grad-band-title',
+        graduationBandLabel(labels[String(term)] || term) + ' (' + codes.length + ')'
+      ));
+      const courses = el('div', 'sa-grad-mobile-courses');
+      const previewLimit = 10;
+      codes.slice(0, previewLimit).forEach(function (code) { appendCourse(courses, code); });
+      section.appendChild(courses);
+      if (codes.length > previewLimit) {
+        const more = el('details', 'sa-grad-more');
+        more.appendChild(el('summary', null, T.moreScenarioCourses(codes.length - previewLimit)));
+        const remainder = el('div', 'sa-grad-mobile-courses');
+        codes.slice(previewLimit).forEach(function (code) { appendCourse(remainder, code); });
+        more.appendChild(remainder);
+        section.appendChild(more);
+      }
+      host.appendChild(section);
+    });
+    return host;
+  }
+
+  function renderGraduationPresentation(presentation, language) {
+    if (!presentation || presentation.kind !== 'graduation_scenario') return null;
+    const graph = presentation.graph || {};
+    if (!Array.isArray(graph.extraNodes) || !graph.extraNodes.length) return null;
+
+    const wrap = el('section', 'sa-graduation-map');
+    const dir = language === 'ar' ? 'rtl' : language === 'en' ? 'ltr' : (AR ? 'rtl' : 'ltr');
+    wrap.setAttribute('dir', dir);
+    wrap.setAttribute('aria-label', T.graduationMapTitle);
+
+    const heading = el('div', 'sa-tt-heading');
+    const title = presentation.program
+      ? T.graduationMapTitle + ' — ' + presentation.program : T.graduationMapTitle;
+    heading.appendChild(el('h4', 'sa-tt-title', title));
+    const headingActions = el('div', 'sa-grad-heading-actions');
+    if (presentation.planning_term) {
+      headingActions.appendChild(ltrNode('span', 'sa-tt-term', presentation.planning_term));
+    }
+    const expand = el('button', 'btn btn-sm sa-grad-expand', T.openFullMap);
+    expand.type = 'button';
+    expand.setAttribute('aria-expanded', 'false');
+    let mapPlaceholder = null;
+    function closeThisMap() { setMapExpanded(false); }
+    function setMapExpanded(state) {
+      if (state && activeExpandedMapCloser && activeExpandedMapCloser !== closeThisMap) {
+        activeExpandedMapCloser();
+      }
+      if (state && !mapPlaceholder && wrap.parentNode) {
+        mapPlaceholder = document.createComment('graduation-map-home');
+        wrap.parentNode.insertBefore(mapPlaceholder, wrap);
+        document.body.appendChild(wrap);
+      }
+      if (!state && mapPlaceholder && mapPlaceholder.parentNode) {
+        mapPlaceholder.parentNode.insertBefore(wrap, mapPlaceholder);
+        mapPlaceholder.remove();
+        mapPlaceholder = null;
+      }
+      wrap.classList.toggle('is-expanded', state);
+      document.documentElement.classList.toggle('sa-overlay-open', state);
+      expand.setAttribute('aria-expanded', String(state));
+      expand.textContent = state ? T.closeFullMap : T.openFullMap;
+      activeExpandedMapCloser = state ? closeThisMap
+        : (activeExpandedMapCloser === closeThisMap ? null : activeExpandedMapCloser);
+      if (state) {
+        if (!desktop.querySelector('.prereq-svg')) draw(selectedGraphMode);
+        wrap.setAttribute('role', 'dialog');
+        wrap.setAttribute('aria-modal', 'true');
+      } else {
+        wrap.removeAttribute('role');
+        wrap.removeAttribute('aria-modal');
+        if (document.contains(expand)) expand.focus();
+      }
+    }
+    expand.addEventListener('click', function () {
+      setMapExpanded(expand.getAttribute('aria-expanded') !== 'true');
+    });
+    wrap.addEventListener('keydown', function (event) {
+      if (event.key === 'Escape' && expand.getAttribute('aria-expanded') === 'true') {
+        setMapExpanded(false);
+        return;
+      }
+      if (event.key === 'Tab' && expand.getAttribute('aria-expanded') === 'true') {
+        const focusable = Array.from(wrap.querySelectorAll('button, summary, a[href]'))
+          .filter(function (node) { return !node.disabled && node.getClientRects().length; });
+        if (!focusable.length) return;
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+        if (event.shiftKey && document.activeElement === first) {
+          event.preventDefault();
+          last.focus();
+        } else if (!event.shiftKey && document.activeElement === last) {
+          event.preventDefault();
+          first.focus();
+        }
+      }
+    });
+    headingActions.appendChild(expand);
+    heading.appendChild(headingActions);
+    wrap.appendChild(heading);
+    wrap.appendChild(el(
+      'p',
+      'sa-grad-result ' + (presentation.simulation_completed ? 'is-complete' : 'is-incomplete'),
+      presentation.simulation_completed ? T.graduationMapComplete : T.graduationMapIncomplete
+    ));
+    wrap.appendChild(el('p', 'sa-tt-boundary', T.graduationReadOnly));
+
+    const removed = Array.isArray(presentation.removed_current_courses)
+      ? presentation.removed_current_courses : [];
+    const noncompletion = Array.isArray(presentation.noncompletion_current_courses)
+      ? presentation.noncompletion_current_courses : [];
+    const added = Array.isArray(presentation.added_current_courses)
+      ? presentation.added_current_courses : [];
+    const scenarioChanges = [
+      { label: T.removed, courses: removed },
+      { label: T.noncompletion, courses: noncompletion },
+      { label: T.added, courses: added }
+    ].filter(function (change) { return change.courses.length; });
+    if (scenarioChanges.length) {
+      const change = el('div', 'sa-grad-change');
+      change.appendChild(el('strong', null, T.scenarioChange + ': '));
+      scenarioChanges.forEach(function (scenarioChange, groupIndex) {
+        if (groupIndex) change.appendChild(document.createTextNode(' · '));
+        change.appendChild(document.createTextNode(scenarioChange.label + ' '));
+        scenarioChange.courses.forEach(function (course, index) {
+          if (index) change.appendChild(document.createTextNode(', '));
+          change.appendChild(ltrNode('bdi', null, course.code));
+        });
+      });
+      wrap.appendChild(change);
+    }
+
+    const panel = el('div', 'sa-grad-panel');
+    const toolbar = el('div', 'sa-grad-toolbar');
+    const modeGroup = el('div', 'pg-modes');
+    modeGroup.setAttribute('role', 'group');
+    const byTerm = el('button', 'pg-mode is-on', T.scenarioTerms);
+    byTerm.type = 'button'; byTerm.setAttribute('aria-pressed', 'true');
+    const byChain = el('button', 'pg-mode', T.prerequisiteChain);
+    byChain.type = 'button'; byChain.setAttribute('aria-pressed', 'false');
+    modeGroup.appendChild(byTerm); modeGroup.appendChild(byChain);
+    toolbar.appendChild(modeGroup);
+    if (presentation.max_credits_per_term) {
+      toolbar.appendChild(el(
+        'span', 'sa-tt-credits',
+        AR
+          ? labelledValue(T.maximumPerTerm, presentation.max_credits_per_term)
+          : T.maximumPerTerm + ': ' + presentation.max_credits_per_term + ' ' + T.creditHours
+      ));
+    }
+    panel.appendChild(toolbar);
+
+    const desktop = el('div', 'sa-grad-desktop');
+    desktop.setAttribute('dir', 'ltr');
+    desktop.setAttribute('role', 'img');
+    desktop.setAttribute('aria-label', T.graduationMapTitle);
+    panel.appendChild(desktop);
+    panel.appendChild(renderGraduationMobileList(graph, presentation.band_labels || {}));
+    wrap.appendChild(panel);
+
+    let selectedGraphMode = 'term';
+    const draw = function (mode) {
+      if (!window.PrereqGraph) return;
+      desktop.innerHTML = '';
+      window.PrereqGraph.render(graph.items || [], desktop, {
+        termOf: graph.termOf || {},
+        nameOf: graph.nameOf || {},
+        statusOf: graph.statusOf || {},
+        extraNodes: graph.extraNodes || [],
+        mode: mode,
+        t: graduationGraphStrings(presentation.band_labels || {}),
+      });
+    };
+    byTerm.addEventListener('click', function () {
+      selectedGraphMode = 'term';
+      byTerm.classList.add('is-on'); byTerm.setAttribute('aria-pressed', 'true');
+      byChain.classList.remove('is-on'); byChain.setAttribute('aria-pressed', 'false');
+      draw('term');
+    });
+    byChain.addEventListener('click', function () {
+      selectedGraphMode = 'depth';
+      byChain.classList.add('is-on'); byChain.setAttribute('aria-pressed', 'true');
+      byTerm.classList.remove('is-on'); byTerm.setAttribute('aria-pressed', 'false');
+      draw('depth');
+    });
+
+    const unresolved = Array.isArray(presentation.unresolved_requirements)
+      ? presentation.unresolved_requirements : [];
+    if (unresolved.length) {
+      const blockers = el('details', 'sa-grad-blockers');
+      blockers.open = !presentation.simulation_completed;
+      blockers.appendChild(el('summary', null, T.unresolvedRequirements + ' (' + unresolved.length + ')'));
+      const list = el('ul', 'sa-grad-blocker-list');
+      unresolved.forEach(function (row) {
+        const item = el('li', 'sa-grad-blocker');
+        item.appendChild(ltrNode('strong', null, row.code));
+        if (row.name) item.appendChild(document.createTextNode(' — ' + row.name));
+        if (Array.isArray(row.missing_prerequisites) && row.missing_prerequisites.length) {
+          const missing = el('span', 'sa-grad-blocker-reason');
+          missing.appendChild(document.createTextNode(T.missingPrerequisites + ': '));
+          row.missing_prerequisites.forEach(function (code, index) {
+            if (index) missing.appendChild(document.createTextNode(', '));
+            missing.appendChild(ltrNode('bdi', null, code));
+          });
+          item.appendChild(missing);
+        }
+        if (row.credit_hour_gate && row.credit_hour_gate.required) {
+          item.appendChild(el(
+            'span', 'sa-grad-blocker-reason',
+            T.creditGate + ': ' + row.credit_hour_gate.required + ' ' + T.creditHours
+          ));
+        }
+        list.appendChild(item);
+      });
+      blockers.appendChild(list);
+      wrap.appendChild(blockers);
+    }
+    return wrap;
+  }
+
   function renderMessage(message) {
     const role = message.role === 'ASSISTANT' ? 'assistant' : 'user';
     const article = el('article', 'va-message va-message-' + role);
@@ -803,9 +1573,41 @@
     article.appendChild(el('div', 'va-avatar', role === 'assistant' ? 'AI' : T.me));
     const bubble = el('div', 'va-bubble');
     bubble.appendChild(renderBody(displayBody(message), message.language));
+    const presentation = renderGraduationPresentation(message.presentation, message.language)
+      || renderTimetablePresentation(message.presentation, message.language);
+    if (presentation) bubble.appendChild(presentation);
 
     const note = statusNote(message.status);
-    if (note && message.status !== 'COMPLETED') {
+    const canRetry = role === 'user' && !!message.retry_token;
+    if (canRetry) {
+      /* Keep recovery as one compact state. The old sentence instructed the
+         student to retry and was followed by a second, visually detached Retry
+         button. The alert now explains only what happened; the one action says
+         what can be done. Each button is described by its own turn so multiple
+         failed questions remain distinguishable to assistive technology. */
+      const retryState = el('div', 'sa-retry-state');
+      const retryStatus = el(
+        'p',
+        'sa-status sa-status-failed',
+        message.status === 'FAILED' ? T.failed : T.interrupted
+      );
+      retryStatus.id = 'sa-retry-status-' + String(message.id || 'turn').replace(/[^A-Za-z0-9_-]/g, '-');
+      retryStatus.setAttribute('role', 'alert');
+      retryStatus.setAttribute('aria-atomic', 'true');
+      retryState.appendChild(retryStatus);
+
+      const retry = el('button', 'sa-retry');
+      retry.type = 'button';
+      retry.setAttribute('aria-label', T.retryAnswer);
+      retry.setAttribute('aria-describedby', retryStatus.id);
+      const retryIcon = el('span', 'sa-retry-icon', '↻');
+      retryIcon.setAttribute('aria-hidden', 'true');
+      retry.appendChild(retryIcon);
+      retry.appendChild(el('span', 'sa-retry-label', T.retry));
+      retry.addEventListener('click', function () { send(message.content, message.retry_token); });
+      retryState.appendChild(retry);
+      bubble.appendChild(retryState);
+    } else if (note && message.status !== 'COMPLETED') {
       bubble.appendChild(el('p', 'sa-status sa-status-' + String(message.status).toLowerCase(), note));
     }
 
@@ -831,13 +1633,6 @@
        turn instead of retyping it and creating a visual duplicate. Driven by the
        token rather than by the status: a turn abandoned mid-generation is stuck on
        PENDING, and it needs the same way out that a clean failure gets. */
-    if (role === 'user' && message.retry_token) {
-      const retry = el('button', 'btn btn-neutral btn-sm sa-retry', T.retry);
-      retry.type = 'button';
-      retry.addEventListener('click', function () { send(message.content, message.retry_token); });
-      bubble.appendChild(retry);
-    }
-
     article.appendChild(bubble);
     return article;
   }
@@ -850,15 +1645,24 @@
   }
 
   function renderMessages(messages) {
+    if (activeExpandedMapCloser) activeExpandedMapCloser();
+    document.documentElement.classList.remove('sa-overlay-open');
     messagesEl.innerHTML = '';
     const chat = messagesEl.closest('.va-chat');
     if (chat) chat.classList.toggle('has-messages', !!(messages && messages.length));
+    if (emptyStateEl) {
+      emptyStateEl.hidden = !!(messages && messages.length);
+      messagesEl.appendChild(emptyStateEl);
+    }
     if (!messages || !messages.length) {
-      if (welcomeEl) messagesEl.appendChild(welcomeEl);
+      syncJumpLatest();
       return;
     }
-    messages.forEach(function (m) { messagesEl.appendChild(renderMessage(m)); });
-    messagesEl.scrollTop = messagesEl.scrollHeight;
+    messages.forEach(function (m) {
+      const article = renderMessage(m);
+      messagesEl.appendChild(article);
+    });
+    scrollToLatest();
   }
 
   /* ── conversations ──────────────────────────────────────────── */
@@ -883,11 +1687,22 @@
          wrapper instead. */
       b.setAttribute('aria-current', c.id === currentId ? 'true' : 'false');
       b.title = title;  // the label is ellipsised; without this it is unrecoverable
-      b.addEventListener('click', function () { openConversation(c.id); });
+      b.addEventListener('click', function () {
+        setHistoryOpen(false, false);
+        openConversation(c.id);
+      });
       const li = el('li', 'sa-conv-item');
       li.appendChild(b);
       convListEl.appendChild(li);
     });
+    if (threadTitleEl) {
+      const active = conversations.find(function (c) { return c.id === currentId; });
+      const title = active
+        ? (active.title || T.untitled)
+        : (newConversationTitle || T.untitled);
+      threadTitleEl.textContent = '';
+      writeText(threadTitleEl, title);
+    }
   }
 
   async function loadConversations() {
@@ -950,11 +1765,11 @@
     if (wait >= 90) {
       const minutes = Math.ceil(wait / 60);
       return AR
-        ? `لقد أرسلت أسئلة كثيرة. يمكنك المحاولة بعد ${minutes} دقيقة تقريبًا.`
+        ? `تم بلوغ الحد المؤقت لعدد الأسئلة. مدة الانتظار التقريبية بالدقائق: ${minutes}.`
         : `That is a lot of questions. You can try again in about ${minutes} minutes.`;
     }
     return AR
-      ? `لقد أرسلت أسئلة كثيرة. يمكنك المحاولة بعد ${wait} ثانية.`
+      ? `تم بلوغ الحد المؤقت لعدد الأسئلة. مدة الانتظار بالثواني: ${wait}.`
       : `That is a lot of questions. You can try again in ${wait} seconds.`;
   }
 
@@ -977,8 +1792,11 @@
        the student a button the server is still refusing. */
     sendBtn.disabled = state || holdTimer !== null;
     questionEl.disabled = state;
+    formEl.classList.toggle('is-busy', state);
+    sendBtn.setAttribute('aria-busy', String(state));
     messagesEl.setAttribute('aria-busy', String(state));
     if (state) announce(T.thinking);
+    else if (!composerErrorEl || composerErrorEl.hidden) announce('');
   }
 
   function showComposerError(text) {
@@ -1020,10 +1838,10 @@
 
       if (!retryToken) {
         messagesEl.appendChild(renderMessage({
-          id: 'pending', role: 'STUDENT', content: question, status: 'PENDING',
+          id: 'pending', role: 'STUDENT', content: question, status: 'COMPLETED',
         }));
-        messagesEl.scrollTop = messagesEl.scrollHeight;
       }
+      showThinkingMessage();
 
       const res = await api(withId(cfg.urls.send, 'CONVERSATION_ID', id), {
         method: 'POST',
@@ -1032,6 +1850,7 @@
 
       if (res.ok) {
         questionEl.value = '';
+        resizeComposer();
         retryKeys.delete(slot);
         clearComposerError();
       } else if (res.status === 0) {
@@ -1040,8 +1859,13 @@
       } else if (res.status === 429) {
         showComposerError(waitMessage(res.retryAfter));
         holdSend(res.retryAfter);
+      } else if (res.status === 503 && res.retryAfter) {
+        /* Load shedding. The server says how long; "try again" without the
+           hold would invite a retry storm into a saturated service. */
+        showComposerError((res.body && res.body.error) || T.sendFail);
+        holdSend(res.retryAfter);
       } else {
-        showComposerError(T.sendFail);
+        showComposerError((res.body && res.body.error) || T.sendFail);
       }
 
       /* Re-read the whole conversation rather than appending what we think
@@ -1073,15 +1897,45 @@
   if (newChatBtn) {
     newChatBtn.addEventListener('click', async function () {
       currentId = null;
+      setHistoryOpen(false, false);
       renderMessages([]);
+      if (threadTitleEl) {
+        threadTitleEl.textContent = '';
+        writeText(threadTitleEl, newConversationTitle || T.untitled);
+      }
       try { window.history.replaceState(null, '', window.location.pathname); } catch (e) { /* ignore */ }
       await loadConversations();
       questionEl.focus();
     });
   }
 
-  /* A reload should land back where the student was: the URL if it names a
-     conversation, otherwise their most recent one. */
+  /* The timetable card, drawn by the SAME function the thread uses.
+
+     The Telegram channel sends a picture of the proposed timetable, and the
+     picture has to be of THIS card — not of a second one drawn server-side. A
+     Pillow or matplotlib re-implementation would be a second answer to "what does
+     a timetable look like", and this codebase has already paid for that twice
+     (the lecture grid duplicated in four places; three cohort classifiers
+     disagreeing about " M1"). Exporting the real function means the image cannot
+     drift from the screen the student is linked to, and Arabic shaping stays the
+     browser's job rather than becoming ours again.
+
+     Exposed only as a render entry point: it takes a presentation object that the
+     server has already put through `normalise_presentation`, and reaches nothing
+     else. */
+  window.__SA_RENDER_TIMETABLE_CARD__ = renderTimetablePresentation;
+  window.__SA_RENDER_GRADUATION_CARD__ = renderGraduationPresentation;
+
+  /* A card-only page has no thread, no session and no endpoints to call. Without
+     this guard the bootstrap below would fire there, request the conversation
+     list unauthenticated, and paint the "could not load" state into the very
+     screenshot we are taking. */
+  if (cfg.cardOnly) return;
+
+  /* A direct visit to the adviser is a fresh workspace. An existing conversation
+     opens only when its id is explicit in the URL (the History drawer writes that
+     id when a student selects a thread). This keeps history durable without making
+     yesterday's answer look like the starting point of every new visit. */
   (async function start() {
     const res = await api(cfg.urls.list, { method: 'GET' });
     if (!res.ok || !res.body) {
@@ -1093,9 +1947,6 @@
     const conversations = res.body.conversations || [];
     renderConversations(conversations);
     const wanted = new URLSearchParams(window.location.search).get('c');
-    /* Fall back to the most recent thread rather than an empty screen: the list is
-       already ordered by last activity, so [0] is where the student left off. */
-    const target = wanted || (conversations[0] && conversations[0].id);
-    if (target) await openConversation(target);
+    if (wanted) await openConversation(wanted);
   })();
 })();

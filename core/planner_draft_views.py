@@ -11,12 +11,9 @@ the request came through. These views parse, spend a budget, call it, and shape
 the reply.
 
 **What goes on the wire.** Course code and name, section label, day, start and
-end. Not rooms, not instructors, not registered counts, not term-section ids, not
-the baseline the solver saw, not the fingerprint — those sit in `generated_inputs`
-for the server's own use and describe the institution rather than the student's
-week. The only opaque handle that travels is an alternative's `key`, which the
-client sends back to say which timetable it chose and which resolves only against
-the alternatives stored on this student's own draft.
+end. Not rooms, not instructors, not registered counts, not the solver baseline,
+and not the fingerprint. Section ids cross only for the explicit pin control and
+are re-authorised against the signed-in student's cohort when posted back.
 """
 
 from __future__ import annotations
@@ -26,7 +23,7 @@ from typing import Any
 
 from django.core.exceptions import PermissionDenied
 from django.http import Http404, HttpRequest, JsonResponse
-from django.shortcuts import render
+from django.shortcuts import redirect, render
 from django.urls import reverse
 from django.views.decorators.http import require_GET, require_POST
 
@@ -41,21 +38,26 @@ from .services.planner_drafts import (
     DraftExpired,
     DraftRejected,
     create_draft,
+    credit_ceiling,
     edit_draft,
     generate,
     generation_is_stale,
     issue_rebuild_token,
     owned_draft,
-    select_alternative,
 )
 from .services.rate_limit import CONVERSATION, HISTORY, PLANNING
 from .services.rate_limit import release as _refund_budget
 from .services.student_planner import PlannerUnavailable
+from .sidebar_context import get_sidebar_context
 
 logger = logging.getLogger(__name__)
 
 
-def _names(codes: set[str]) -> dict[str, str]:
+def _request_prefers_arabic(request: HttpRequest) -> bool:
+    return str(getattr(request, "LANGUAGE_CODE", "") or "").lower().startswith("ar")
+
+
+def _names(codes: set[str], *, prefer_arabic_names: bool = False) -> dict[str, str]:
     """Course titles, from the resolver the adviser already uses.
 
     It searches four places — the course table, the programme plan, the elective
@@ -65,16 +67,272 @@ def _names(codes: set[str]) -> dict[str, str]:
     """
     from .services.virtual_advisor import _course_names
 
-    return _course_names(codes)
+    names = _course_names(codes)
+    if prefer_arabic_names:
+        from .services.student_sections import arabic_term_section_course_names
+
+        names.update(arabic_term_section_course_names(codes))
+    return names
+
+
+def _workspace_json(draft: Any, *, prefer_arabic_names: bool = False) -> dict[str, Any]:
+    """Student-safe facts needed to build a proposal on screen.
+
+    This is deliberately not the staff planner catalogue.  Identity and term come
+    from the owned draft; sections are cohort-filtered server-side; and rooms,
+    instructors, capacity, enrolment counts and internal source fields never cross
+    the HTTP boundary.
+    """
+    from core.models import Course, Prerequisite, ProgrammeRequirement, Student, TermSection
+    from core.services.eligibility import evaluate_prerequisites
+    from core.services.student_helpers import get_student_passed_and_studying, normalize_code
+    from core.services.student_planner import DEFAULT_CREDITS, permitted_course_codes
+    from core.services.student_sections import (
+        gender_section_filter,
+        get_student_term_baseline,
+        prefer_arabic_timetable_course_names,
+        student_gender_strict,
+        timetable_snapshot_kind,
+    )
+    from core.services.timetable_snapshots import Snapshot, forecast_rows
+    from core.services.timetable_snapshots import select as select_snapshot_rows
+
+    student = (
+        Student.objects.filter(student_id=draft.student_id)
+        .values("program", "total_earned_credits", "current_registered_credits")
+        .first()
+        or {}
+    )
+    program = str(student.get("program") or "").strip()
+    _earned = student.get("total_earned_credits") or 0
+    _registered = student.get("current_registered_credits") or 0
+    permitted = permitted_course_codes(program) if program else set()
+    passed, studying = get_student_passed_and_studying(draft.student_id)
+    passed = {normalize_code(code) for code in passed}
+    studying = {normalize_code(code) for code in studying}
+
+    requirements = list(
+        ProgrammeRequirement.objects.filter(program__iexact=program).values(
+            "course_code", "course_name", "credit_hours"
+        )
+    )
+    requirement_by_code = {
+        normalize_code(row.get("course_code") or ""): row for row in requirements
+    }
+    course_by_code = {
+        normalize_code(row.course_code): row
+        for row in Course.objects.filter(course_code__in=permitted)
+    }
+
+    prerequisites: dict[str, list[str]] = {}
+    for row in Prerequisite.objects.filter(program__iexact=program).values(
+        "course_code", "prerequisite_course_code"
+    ):
+        code = normalize_code(row.get("course_code") or "")
+        for raw in str(row.get("prerequisite_course_code") or "").split(","):
+            prerequisite = normalize_code(raw)
+            if code and prerequisite:
+                prerequisites.setdefault(code, []).append(prerequisite)
+
+    gender = student_gender_strict(draft.student_id)
+    sections_by_code: dict[str, list[Any]] = {}
+    from .services.section_programmes import filter_sections_for_program
+
+    section_qs = filter_sections_for_program(
+        TermSection.objects.filter(scenario__isnull=True),
+        program,
+    )
+    sections = list(
+        section_qs.filter(gender_section_filter(gender))
+        .prefetch_related("meetings")
+        .order_by("course_key", "section")
+    )
+    for section in sections:
+        code = normalize_code(
+            section.course_key or f"{section.course_code or ''}{section.course_number or ''}"
+        )
+        if code in permitted:
+            sections_by_code.setdefault(code, []).append(section)
+
+    try:
+        recommended = set(_recommended_codes(draft.student_id))
+    except Exception:
+        recommended = set()
+    requested = {normalize_code(code) for code in (draft.course_codes or [])}
+    names = _names(
+        permitted | requested | recommended,
+        prefer_arabic_names=prefer_arabic_names,
+    )
+
+    catalog: list[dict[str, Any]] = []
+    for code in permitted | requested | recommended:
+        code = normalize_code(code)
+        if not code or code in passed:
+            continue
+        requirement = requirement_by_code.get(code) or {}
+        course = course_by_code.get(code)
+        # THE shared prerequisite check. The inline set-difference this replaces
+        # could not tell a course code from the curriculum's "90(HOURS)" gate,
+        # so a student who had earned the hours still saw the course blocked.
+        missing = sorted(
+            evaluate_prerequisites(
+                prerequisites.get(code, []),
+                passed,
+                studying,
+                earned_credits=_earned,
+                registered_credits=_registered,
+            ).missing
+        )
+        safe_sections = []
+        for section in sections_by_code.get(code, []):
+            meetings = [
+                {
+                    "day": str(meeting.day or ""),
+                    "start": str(meeting.start_time or ""),
+                    "end": str(meeting.end_time or ""),
+                }
+                for meeting in sorted(
+                    section.meetings.all(),
+                    key=lambda item: (item.day or "", item.start_time or ""),
+                )
+                if meeting.day and meeting.start_time and meeting.end_time
+            ]
+            # A section with no complete recorded interval cannot support the
+            # screen's only scheduling guarantee: checking time overlap.  It may
+            # still exist in the source catalogue, but it is not a schedulable
+            # option here until its meeting data is complete.
+            if not meetings:
+                continue
+            safe_sections.append(
+                {
+                    "id": int(section.id),
+                    "label": str(section.section or ""),
+                    "meetings": meetings,
+                }
+            )
+        credits = int(
+            requirement.get("credit_hours")
+            or (getattr(course, "credit_hours", 0) if course else 0)
+            or DEFAULT_CREDITS
+        )
+        catalog.append(
+            {
+                "course_code": code,
+                "course_name": str(
+                    names.get(code)
+                    or requirement.get("course_name")
+                    or (getattr(course, "description", "") if course else "")
+                    or ""
+                ),
+                "credits": credits,
+                "recommended": code in recommended,
+                "studying": code in studying,
+                "status": "blocked"
+                if missing
+                else ("offering_unknown" if not safe_sections else "ready"),
+                "missing_prerequisites": missing,
+                "sections": safe_sections,
+            }
+        )
+    catalog.sort(
+        key=lambda row: (
+            not bool(row["recommended"]),
+            row["status"] != "ready",
+            str(row["course_code"]),
+        )
+    )
+
+    # Read the term once, then keep its two student-facing snapshots separate.
+    # The planner baseline follows the same precedence as every clash/occupancy
+    # reader: registrar evidence wins when it exists; an expected plan is only a
+    # fallback when no registrar snapshot has been recorded.  In particular,
+    # legitimate coexistence is not a mixed baseline and must never disable the
+    # planner.
+    timetable_rows = get_student_term_baseline(
+        draft.student_id, draft.academic_year, draft.term, snapshot=Snapshot.ANY
+    )
+    if prefer_arabic_names:
+        timetable_rows = prefer_arabic_timetable_course_names(timetable_rows)
+    registered_rows = [
+        dict(row) for row in select_snapshot_rows(timetable_rows, Snapshot.REGISTERED)
+    ]
+    expected_rows = [dict(row) for row in forecast_rows(timetable_rows)]
+    baseline = [dict(row) for row in select_snapshot_rows(timetable_rows, Snapshot.EFFECTIVE)]
+
+    def public_timetable(rows: list[dict[str, object]]) -> list[dict[str, object]]:
+        return [
+            {
+                "course_code": str(row.get("course_code") or row.get("course_key") or ""),
+                "course_name": str(row.get("course_name") or ""),
+                "section": str(row.get("section") or ""),
+                "credits": int(row.get("credits") or 0),
+                "day": str(row.get("day") or ""),
+                "start": str(row.get("start_time") or ""),
+                "end": str(row.get("end_time") or ""),
+            }
+            for row in rows
+        ]
+
+    current = public_timetable(baseline)
+    return {
+        "program": program,
+        "credit_ceiling": credit_ceiling(int(draft.term)),
+        "catalog": catalog,
+        "current_timetable": current,
+        # Explicit siblings make the provenance contract inspectable without
+        # asking the browser to infer it from a merged list.  `current_timetable`
+        # remains the single build baseline for compatibility with the UI.
+        "registered_timetable": public_timetable(registered_rows),
+        "expected_timetable": public_timetable(expected_rows),
+        "timetable_kind": {
+            "expected": "EXPECTED_PLAN",
+            "registered": "REGISTERED",
+            "empty": "EMPTY",
+        }[timetable_snapshot_kind(baseline)],
+        # `TermSection` is a current recorded catalogue without term columns.
+        # Never let a planning-term label turn that into a claim that the section
+        # is offered in that term.
+        "section_catalog_term_known": False,
+        "clash_check_scope": "recorded_complete_meeting_times",
+        "workspace_persistence": "temporary_draft",
+        "registration_action": "student_manual_portal_only",
+        "can_save_timetable": False,
+        "can_register_courses": False,
+    }
 
 
 def _alternative_json(
     alternative: dict[str, Any], names: dict[str, str], selected: str, requested: set[str]
 ) -> dict[str, Any]:
+    option_unplaced = [
+        {
+            "course_code": str(item.get("course_code") or ""),
+            "course_name": names.get(str(item.get("course_code") or ""), ""),
+            "reason": UNPLACED_AR.get(str(item.get("reason_code") or ""), UNPLACED_AR_DEFAULT),
+        }
+        for item in (alternative.get("unplaced") or [])
+    ]
+    scheduled = int(alternative.get("scheduled_courses") or 0)
+    target = int(alternative.get("target_courses") or 0)
     return {
         "key": alternative.get("key", ""),
-        "selected": bool(selected) and alternative.get("key") == selected,
+        # A V2 timetable is an on-screen proposal, not a stored preference.
+        # Keep the field false for compatibility with the existing response shape.
+        "selected": False,
         "credit_hours": alternative.get("credit_hours", 0),
+        "course_count": alternative.get("course_count", 0),
+        "days_on_campus": alternative.get("days_on_campus", 0),
+        "days": list(alternative.get("days") or []),
+        "earliest_start": alternative.get("earliest_start"),
+        "latest_end": alternative.get("latest_end"),
+        # The exact planner identities and its coverage statement are part of the
+        # answer, not operator trivia.  Dropping them made a 3/5 result look like a
+        # complete anonymous timetable in the browser.
+        "planner_options": [str(name) for name in (alternative.get("planner_options") or [])],
+        "scheduled_courses": scheduled,
+        "target_courses": target,
+        "complete": bool(target and scheduled >= target),
+        "unplaced": option_unplaced,
         "courses": [
             {
                 "course_code": c.get("course_code", ""),
@@ -85,6 +343,7 @@ def _alternative_json(
                 # because a course the student never named must not be presented as
                 # though they did.
                 "requested": str(c.get("course_code") or "") in requested,
+                "source": "current" if c.get("source") == "current" else "proposed",
                 # `term_section_id` is deliberately NOT here. It was carried for a
                 # pin affordance this screen does not yet have — so it was a raw
                 # primary key, per course, per alternative, shipped for nothing.
@@ -100,13 +359,14 @@ def _alternative_json(
                 "day": m.get("day", ""),
                 "start": m.get("start", ""),
                 "end": m.get("end", ""),
+                "source": "current" if m.get("source") == "current" else "proposed",
             }
             for m in alternative.get("meetings", [])
         ],
     }
 
 
-def _draft_json(draft: Any) -> dict[str, Any]:
+def _draft_json(draft: Any, *, prefer_arabic_names: bool = False) -> dict[str, Any]:
     codes = list(draft.course_codes or [])
     pins = dict(draft.fixed_sections or {})
     inputs = draft.generated_inputs or {}
@@ -118,7 +378,8 @@ def _draft_json(draft: Any) -> dict[str, Any]:
             str(c.get("course_code") or "")
             for a in (draft.alternatives or [])
             for c in a.get("courses", [])
-        }
+        },
+        prefer_arabic_names=prefer_arabic_names,
     )
 
     return {
@@ -147,7 +408,7 @@ def _draft_json(draft: Any) -> dict[str, Any]:
             # the other thing that invalidates a timetable — their registrations
             # moving underneath it — which no amount of version bumping can see.
             "is_stale": generation_is_stale(draft),
-            "selected_alternative": draft.selected_alternative,
+            "selected_alternative": "",
         },
         "alternatives": (
             [
@@ -171,6 +432,10 @@ def _draft_json(draft: Any) -> dict[str, Any]:
             }
             for u in unplaced
         ],
+        "workspace": _workspace_json(
+            draft,
+            prefer_arabic_names=prefer_arabic_names,
+        ),
     }
 
 
@@ -183,12 +448,21 @@ def _draft_json(draft: Any) -> dict[str, Any]:
 #: A closed vocabulary in, one sentence out, and an unknown code says only what is
 #: actually known.
 UNPLACED_AR: dict[str, str] = {
-    "NOT_ON_FILE": "لا توجد شُعب مسجَّلة لهذا المقرر في بياناتنا. راجع بوابة التسجيل للتأكد.",
-    "ALL_SECTIONS_CLASH": "كل الشُعب المطروحة لهذا المقرر تتعارض مع بقية جدولك.",
+    "NOT_ON_FILE": (
+        "لا تظهر لهذا المقرر شُعب في بيانات الشعب المتاحة للنظام. تحقّق من بوابة التسجيل."
+    ),
+    "ALL_SECTIONS_CLASH": (
+        "تتعارض مواعيد كل الشُعب المدرجة لهذا المقرر في بيانات النظام مع موعد آخر "
+        "في هذا الجدول المقترح."
+    ),
+    "MEETING_DATA_INCOMPLETE": (
+        "بيانات مواعيد إحدى شُعب هذا المقرر ناقصة أو غير صالحة؛ لذلك تعذّر التحقق من التعارضات."
+    ),
+    "OMITTED_IN_THIS_VARIANT": ("لا يتضمن هذا الجدول المقترح المقرر؛ قد يتضمنه جدول مقترح آخر."),
     "PREREQUISITES": "لم تُستوفَ متطلبات هذا المقرر السابقة بعد.",
-    "DID_NOT_FIT": "لم يتّسع له الجدول مع بقية المقررات ضمن الحدود المتاحة.",
+    "DID_NOT_FIT": "لم يتمكّن النظام من إضافته مع بقية المقررات ضمن قيود الجدول المحددة.",
 }
-UNPLACED_AR_DEFAULT = "تعذّر وضع هذا المقرر في الجدول."
+UNPLACED_AR_DEFAULT = "تعذّرت إضافة هذا المقرر إلى الجدول المقترح."
 
 
 def _refused(exc: Exception, status: int = 409) -> JsonResponse:
@@ -299,7 +573,7 @@ def draft_detail_view(request: HttpRequest, draft_id: str) -> JsonResponse:
     if over:
         return over
     draft = owned_draft(principal.student_id, draft_id)
-    return JsonResponse(_draft_json(draft))
+    return JsonResponse(_draft_json(draft, prefer_arabic_names=_request_prefers_arabic(request)))
 
 
 @require_POST
@@ -334,7 +608,7 @@ def draft_edit_view(request: HttpRequest, draft_id: str) -> JsonResponse:
         # Another tab moved the draft between our read and our write. 409 with the
         # reason, so the screen reloads instead of silently overwriting.
         return _refused(exc, status=409)
-    return JsonResponse(_draft_json(draft))
+    return JsonResponse(_draft_json(draft, prefer_arabic_names=_request_prefers_arabic(request)))
 
 
 @require_POST
@@ -363,8 +637,9 @@ def draft_confirm_rebuild_view(request: HttpRequest, draft_id: str) -> JsonRespo
             "version": draft.version,
             # Said plainly, because this is the sentence the student is agreeing to.
             "warning": (
-                "سيقترح النظام جدولًا جديدًا قد يتضمّن شُعبًا غير التي سجّلت فيها. "
-                "لن يتغيّر تسجيلك الفعلي؛ هذا اقتراح فقط."
+                "سيُنشئ النظام جدولًا مقترحًا جديدًا قد يستخدم شُعبًا مختلفة عن "
+                "الشُعب في الجدول المسجّل فعليًا. لن يتغيّر تسجيلك الفعلي؛ فالجدول "
+                "الجديد مقترح للتخطيط فقط."
             ),
         }
     )
@@ -423,32 +698,55 @@ def draft_generate_view(request: HttpRequest, draft_id: str) -> JsonResponse:
         # A replay: this version was already generated, and the result came from
         # storage rather than the solver. It has been paid for once already.
         _refund_budget(PLANNING, principal.student_id)
-    return JsonResponse(_draft_json(draft))
+    return JsonResponse(_draft_json(draft, prefer_arabic_names=_request_prefers_arabic(request)))
 
 
 @require_POST
 def draft_select_view(request: HttpRequest, draft_id: str) -> JsonResponse:
-    """Record a preference. NOT a registration — nothing downstream writes one."""
+    """Legacy endpoint retained as an explicit refusal.
+
+    V2 proposals stay on screen.  There is intentionally no server-side notion of
+    a student's chosen timetable and no path from this endpoint to registration.
+    """
     principal = _principal(request)
     if principal is None:
         return _forbidden()
-    payload, err = _body(request)
-    if err:
-        return err
-    over = _over_budget(CONVERSATION, principal.student_id)
-    if over:
-        return over
+    owned_draft(principal.student_id, draft_id)
+    return JsonResponse(
+        {
+            "error": (
+                "لا تحفظ أداة التخطيط الجدول المقترح في بوابة الجامعة. انسخ قائمة "
+                "المقررات والشُعب، ثم أدخلها بنفسك في بوابة الجامعة الرئيسية."
+            ),
+            "code": "TIMETABLE_SAVE_DISABLED",
+        },
+        status=405,
+    )
 
-    draft = owned_draft(principal.student_id, draft_id)
+
+@require_GET
+def student_timetable_start_view(request: HttpRequest):
+    """Open a new, short-lived planning workspace for the signed-in student."""
+    principal = _principal(request)
+    if principal is None:
+        raise PermissionDenied("هذه الصفحة متاحة للطلاب الذين سجّلوا دخولهم فقط.")
     try:
-        draft = select_alternative(draft, payload.get("key"))
-    except DraftExpired as exc:
-        return _refused(exc, status=410)
-    except DraftError as exc:
-        return _refused(exc, status=409)
-    data = _draft_json(draft)
-    data["message"] = "تم حفظ هذا الجدول كخيارك المفضل. لم يتم تسجيلك في أي مقرر."
-    return JsonResponse(data)
+        draft = create_draft(
+            student_id=principal.student_id,
+            course_codes=_recommended_codes(principal.student_id),
+            keep_current_sections=True,
+        )
+    except (DraftRejected, PlannerUnavailable) as exc:
+        return render(
+            request,
+            "core/student_planner_unavailable.html",
+            {
+                **get_sidebar_context(request),
+                "planner_error": str(exc),
+            },
+            status=409,
+        )
+    return redirect("student_planner_page", draft_id=str(draft.id))
 
 
 @require_GET
@@ -463,12 +761,13 @@ def student_planner_page(request: HttpRequest, draft_id: str):
     if principal is None:
         # An HTML route, so an HTML answer: a JsonResponse here would render as a
         # line of JSON in the browser window where a page should be.
-        raise PermissionDenied("This page is for signed-in students.")
+        raise PermissionDenied("هذه الصفحة متاحة للطلاب الذين سجّلوا دخولهم فقط.")
     draft = owned_draft(principal.student_id, draft_id)
     return render(
         request,
         "core/student_planner.html",
         {
+            **get_sidebar_context(request),
             # The id only. Courses, sections and alternatives are fetched, so the
             # template cannot become a second, divergent serialiser of the same row.
             "draft_id": str(draft.id),
@@ -483,5 +782,6 @@ __all__ = [
     "draft_edit_view",
     "draft_generate_view",
     "draft_select_view",
+    "student_timetable_start_view",
     "student_planner_page",
 ]

@@ -1,0 +1,52 @@
+{% extends "core/base.html" %}
+{% load i18n %}{% get_current_language as LANGUAGE_CODE %}
+
+{% comment %}
+Revocation from the web, for the case the bot cannot cover: a lost or stolen
+handset, where `/unlink` needs the very chat the student no longer controls.
+
+It reports only whether a link exists — not which Telegram account, not when, not
+from where. "Is anything connected, and can I disconnect it" is the whole question
+a person has at this screen.
+{% endcomment %}
+
+{% block title %}{% if LANGUAGE_CODE == 'ar' %}إدارة ربط تيليجرام{% else %}Manage Telegram linking{% endif %}{% endblock %}
+
+{% block body %}
+<main id="main-content" class="login-wrap telegram-link-wrap" role="main" tabindex="-1">
+  <div class="login-card telegram-link-card">
+    <h1 class="login-title">{% if LANGUAGE_CODE == 'ar' %}ربط تيليجرام{% else %}Telegram linking{% endif %}</h1>
+
+    {% if has_link %}
+      <p class="login-sub">
+        {% if LANGUAGE_CODE == 'ar' %}
+          يوجد حساب تيليجرام مرتبط بحسابك الجامعي.
+        {% else %}
+          A Telegram account is currently linked to your university account.
+        {% endif %}
+      </p>
+      <form method="post" action="{% url 'telegram_link_manage' %}">
+        {% csrf_token %}
+        <button type="submit" class="btn btn-primary" style="width:100%">
+          {% if LANGUAGE_CODE == 'ar' %}إلغاء الربط الآن{% else %}Unlink now{% endif %}
+        </button>
+      </form>
+    {% else %}
+      <p class="login-sub">
+        {% if LANGUAGE_CODE == 'ar' %}
+          لا يوجد حساب تيليجرام مرتبط. للربط، أرسل /link إلى بوت المرشد الأكاديمي في تيليجرام.
+        {% else %}
+          No Telegram account is linked. To link one, send /link to the adviser bot in Telegram.
+        {% endif %}
+      </p>
+    {% endif %}
+
+    <pre style="white-space:pre-wrap;text-align:start;font:inherit;margin:1.25rem 0;padding:1rem;
+                border:1px solid var(--border, #d8dee9);border-radius:12px;">{{ privacy_text }}</pre>
+
+    <p><a href="{% url 'student_home' %}">
+      {% if LANGUAGE_CODE == 'ar' %}العودة إلى بوابة الطالب{% else %}Back to the student portal{% endif %}
+    </a></p>
+  </div>
+</main>
+{% endblock %}

@@ -32,18 +32,24 @@ POLICIES = ROOT / "policies"
 def store_policy_ids() -> set[str]:
     ids: set[str] = set()
     for path in POLICIES.rglob("*.yaml"):
-        if path.name in ("sources.yaml", "evidence_map.yaml") or {"evidence", "tools"} & set(path.parts):
+        if path.name in ("sources.yaml", "evidence_map.yaml") or {"evidence", "tools"} & set(
+            path.parts
+        ):
             continue
         data = yaml.safe_load(path.read_text(encoding="utf-8"))
         if isinstance(data, list):
-            ids.update(str(r["policy_id"]) for r in data if isinstance(r, dict) and "policy_id" in r)
+            ids.update(
+                str(r["policy_id"]) for r in data if isinstance(r, dict) and "policy_id" in r
+            )
     return ids
 
 
 def prohibited_policy_ids() -> set[str]:
     out: set[str] = set()
     for path in POLICIES.rglob("*.yaml"):
-        if path.name in ("sources.yaml", "evidence_map.yaml") or {"evidence", "tools"} & set(path.parts):
+        if path.name in ("sources.yaml", "evidence_map.yaml") or {"evidence", "tools"} & set(
+            path.parts
+        ):
             continue
         data = yaml.safe_load(path.read_text(encoding="utf-8"))
         if isinstance(data, list):
@@ -60,11 +66,39 @@ def prohibited_policy_ids() -> set[str]:
 #: four different ways for attendance alone.
 STRUCTURAL = {
     # attendance: no field, no table, no service anywhere
-    57, 60, 181, 182, 183, 184, 186, 187, 189, 190, 191, 192, 193, 194, 195, 196, 197, 200,
+    57,
+    60,
+    181,
+    182,
+    183,
+    184,
+    186,
+    187,
+    189,
+    190,
+    191,
+    192,
+    193,
+    194,
+    195,
+    196,
+    197,
+    200,
     # actual_term empty on every row -> no event ordering, nothing "consecutive"
-    4, 46, 70, 173, 176, 177, 178, 180,
+    4,
+    46,
+    70,
+    173,
+    176,
+    177,
+    178,
+    180,
     # UniqueConstraint(student, course) -> attempt history unrepresentable
-    161, 162, 165, 166, 170,
+    161,
+    162,
+    165,
+    166,
+    170,
 }
 
 #: Facts no registered capability returns. Demanding these in must_contain makes the
@@ -80,14 +114,23 @@ UNSUPPLYABLE = {
 #: Guards the audit found stated in notes but never promoted to the enforceable list,
 #: or missing entirely on items that quote a dated or scoped figure.
 EXTRA_FORBIDDEN: dict[int, list[str]] = {
-    **{q: ["a 1448 term-1 date presented as applying to any other term"]
-       for q in (32, 34, 128, 130, 136, 143, 144)},
-    **{q: ["an opening date or a date range for a deadline the calendar states only as a closing date"]
-       for q in (34, 75, 136)},
-    29: ["quoting the 25% or 24-unit visiting-student figures as if they governed registration in another department"],
+    **{
+        q: ["a 1448 term-1 date presented as applying to any other term"]
+        for q in (32, 34, 128, 130, 136, 143, 144)
+    },
+    **{
+        q: [
+            "an opening date or a date range for a deadline the calendar states only as a closing date"
+        ]
+        for q in (34, 75, 136)
+    },
+    29: [
+        "quoting the 25% or 24-unit visiting-student figures as if they governed registration in another department"
+    ],
     24: ["asserting a seat will be opened, or that the student may enter a full section"],
     3: ["presenting the registrar's earned-credit total as the plan-remaining figure"],
 }
+
 
 #: A capability may be named only if it exists. Verified against the live registry.
 def registry_names() -> set[str]:
@@ -146,7 +189,9 @@ def normalise(items: list[dict]) -> tuple[list[dict], list[str]]:
         # 4. One code per structural gap.
         if qid in STRUCTURAL and e["answer_mode"] != "FULL":
             if e.get("reason_code") != "STRUCTURALLY_UNREPRESENTABLE":
-                log.append(f"q{qid}: reason_code {e.get('reason_code')} -> STRUCTURALLY_UNREPRESENTABLE")
+                log.append(
+                    f"q{qid}: reason_code {e.get('reason_code')} -> STRUCTURALLY_UNREPRESENTABLE"
+                )
                 e["reason_code"] = "STRUCTURALLY_UNREPRESENTABLE"
 
         # 5. reason_code is mandatory off FULL and forbidden on it.

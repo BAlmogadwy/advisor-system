@@ -29,6 +29,7 @@ services import models that would otherwise create import cycles.
 from __future__ import annotations
 
 import logging
+import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
@@ -58,6 +59,35 @@ _MAX_COURSE_MATCHES = 10
 #: student to the planner instead of paraphrasing a refusal, and the tests, which
 #: must be able to tell this refusal apart from every other `ok: False`.
 REBUILD_REQUIRES_PLANNER_CONFIRMATION = "REBUILD_REQUIRES_PLANNER_CONFIRMATION"
+MIXED_TIMETABLE_SOURCES = "MIXED_TIMETABLE_SOURCES"
+
+
+def _timetable_baseline_kind(rows: list[dict[str, Any]]) -> str:
+    """One external vocabulary for every timetable-producing capability."""
+    from core.services.student_sections import timetable_snapshot_kind
+
+    return {
+        "expected": "EXPECTED_PLAN",
+        "mixed": "MIXED_REVIEW_REQUIRED",
+        "registered": "REGISTERED",
+        "empty": "EMPTY",
+    }[timetable_snapshot_kind(rows)]
+
+
+def _mixed_timetable_error(*, tool: str, academic_year: Any, term: Any) -> dict[str, Any]:
+    """Fail closed instead of flattening two provenance classes into 'current'."""
+    return {
+        "ok": False,
+        "tool": tool,
+        "reason": MIXED_TIMETABLE_SOURCES,
+        "baseline_kind": "MIXED_REVIEW_REQUIRED",
+        "academic_year": academic_year,
+        "term": term,
+        "error": (
+            "This term contains both registrar and expected-plan timetable rows. "
+            "They cannot be combined into one current timetable; the snapshot needs review."
+        ),
+    }
 
 
 # ── Scope helpers ────────────────────────────────────────────────
@@ -295,6 +325,37 @@ def _ctx_year_term(
     return year, term, None
 
 
+def _section_snapshot_matches_requested_term(year: int, term: int, ctx: dict[str, Any]) -> bool:
+    """Whether the termless section table is known to represent this request.
+
+    Newer callers can name the section snapshot explicitly.  Older callers only
+    carry the server-configured planning term, which is also the term for which
+    the one live section snapshot is loaded.  Model-supplied ``args`` never count
+    as snapshot provenance.  If neither complete pair is available, timetable
+    certification must fail closed.
+    """
+
+    def _pair(year_key: str, term_key: str) -> tuple[int, int] | None:
+        try:
+            snapshot_year = int(ctx[year_key])
+            snapshot_term = int(ctx[term_key])
+        except (KeyError, TypeError, ValueError):
+            return None
+        if snapshot_year <= 0 or snapshot_term not in {1, 2, 3}:
+            return None
+        return snapshot_year, snapshot_term
+
+    explicit_keys = {
+        "section_snapshot_academic_year",
+        "section_snapshot_term",
+    }
+    if explicit_keys.intersection(ctx):
+        snapshot = _pair("section_snapshot_academic_year", "section_snapshot_term")
+    else:
+        snapshot = _pair("academic_year", "term")
+    return snapshot == (int(year), int(term))
+
+
 _FIND_STUDENTS_MESSAGE_ROWS = 30
 
 
@@ -362,25 +423,109 @@ def _exec_get_student_context(
     return {"ok": True, "student_context": context}
 
 
+_CODE_SHAPE = re.compile(r"[A-Za-z]{2,6}\s*-?\s*\d{1,4}\Z")
+
+
+def _split_code(code: str) -> tuple[str, str]:
+    letters = "".join(ch for ch in code if ch.isalpha())
+    digits = "".join(ch for ch in code if ch.isdigit())
+    return letters, digits
+
+
+def _letter_edit_distance(a: str, b: str) -> int:
+    """Plain Levenshtein over two short letter prefixes (length <= 6)."""
+    if a == b:
+        return 0
+    previous = list(range(len(b) + 1))
+    for i, ca in enumerate(a, 1):
+        current = [i]
+        for j, cb in enumerate(b, 1):
+            current.append(
+                min(
+                    previous[j] + 1,
+                    current[j - 1] + 1,
+                    previous[j - 1] + (ca != cb),
+                )
+            )
+        previous = current
+    return previous[-1]
+
+
+def _did_you_mean(unknown_code: str) -> list[dict[str, Any]]:
+    """Letter-part repairs with EXACTLY matching digits, nothing else.
+
+    «MATE243» is a typo of MATH243 - same digits, one letter wrong - and
+    suggesting the repair as DATA turns the model's typo-help instinct from
+    the audited speculation («ربما تقصد DS225», which does not exist) into a
+    grounded correction.  Digit-differing tokens get NO suggestion by design:
+    CS202 is one edit from both CS201 and CS212, and a nearest-neighbour
+    guess there is exactly the invented-guidance class this replaces.
+    """
+    from core.services.course_catalogue import known_courses
+
+    letters, digits = _split_code(unknown_code)
+    if not letters or not digits:
+        return []
+    # The distance budget scales with the prefix: a 2-letter prefix at
+    # distance 2 shares NO letter with its "repair" - CS202 drew EE202 and
+    # QZ202 from the live catalogue, which is the invented-guidance class
+    # again wearing the resolver's clothes.  distance <= len-1 keeps at
+    # least one typed letter alive in every suggestion.
+    max_distance = min(2, len(letters) - 1)
+    if max_distance < 1:
+        return []
+    candidates: list[dict[str, Any]] = []
+    for code, name in known_courses():
+        cand_letters, cand_digits = _split_code(code)
+        if cand_digits != digits:
+            continue
+        distance = _letter_edit_distance(letters, cand_letters)
+        if 0 < distance <= max_distance:
+            candidates.append(
+                {"candidate_code": code, "candidate_name": name, "distance": distance}
+            )
+    candidates.sort(key=lambda row: (row["distance"], row["candidate_code"]))
+    return candidates[:3]
+
+
 def _exec_lookup_course(
     args: dict[str, Any], scope: dict[str, Any], ctx: dict[str, Any]
 ) -> dict[str, Any]:
     from django.db.models import Q
 
-    from core.models import Course, ProgrammeRequirement
+    from core.models import Course, ElectiveCourse, ElectiveTermMapping, ProgrammeRequirement
+    from core.services.academic_state import programme_variants
 
     query = str(args.get("query") or "").strip()
     if not query:
         return {"ok": False, "error": "query is required."}
     program = str(args.get("program") or "").strip().upper()
+    if not program and str(scope.get("role") or "") == ROLE_STUDENT:
+        # A student's lookup defaults to THEIR programme — for NAME searches
+        # only.  Unscoped, a DS2 student's fuzzy search ranged over all 488
+        # courses of every programme - cross-programme search stays available,
+        # but as the model's explicit argument, not the accident of omitting
+        # one.  An EXACT code is different: whether it exists is a fact about
+        # the catalogue, not about the asker.  Scoping the exact branch made
+        # 418 of 490 real codes "unknown" to an AI student and then offered
+        # global-catalogue repairs for them - the machine-made version of the
+        # audited «ربما تقصد DS225».
+        from core.services.student_helpers import get_student_program
+
+        student_id, _error = _resolve_scoped_student_id(args, scope)
+        if student_id is not None:
+            program = str(get_student_program(student_id) or "").strip().upper()
 
     matches: dict[str, dict[str, Any]] = {}
 
-    exact = normalize_code(query)
+    # Fold Arabic-Indic digits and strip separators BEFORE matching: the
+    # catalogue rows are ASCII, and «MATH-243» / «MATH٢٤٣» are the same
+    # question as MATH243, not unknown codes.
+    from core.services.course_catalogue import known_course_codes, normalise_catalogue_code
+
+    exact = normalise_catalogue_code(query)
     if exact:
         req_qs = ProgrammeRequirement.objects.filter(course_code__iexact=exact)
-        if program:
-            req_qs = req_qs.filter(program=program)
         for row in req_qs.values(
             "course_code", "course_name", "program", "programme_term", "credit_hours"
         )[:_MAX_COURSE_MATCHES]:
@@ -398,10 +543,30 @@ def _exec_lookup_course(
             if prog and prog not in entry["programs"]:
                 entry["programs"].append(prog)
 
+    # A code can live ONLY in the Course table (no requirement row anywhere,
+    # no elective row).  Without this branch such a code exact-matched nothing
+    # and looked unknown despite being on the existence floor.
+    if exact and exact not in matches:
+        for row in Course.objects.filter(course_code__iexact=exact).values(
+            "course_code", "description", "credit_hours"
+        )[:_MAX_COURSE_MATCHES]:
+            code = normalize_code(row["course_code"])
+            matches.setdefault(
+                code,
+                {
+                    "course_code": code,
+                    "course_name": str(row.get("description") or "").strip(),
+                    "credit_hours": row.get("credit_hours"),
+                    "programs": [],
+                },
+            )
+
     name_query = Q(course_name__icontains=query)
     req_qs = ProgrammeRequirement.objects.filter(name_query)
     if program:
-        req_qs = req_qs.filter(program=program)
+        # The variant mapping (AI2→AI) the elective branch already applies:
+        # versioned programmes share the department catalogue.
+        req_qs = req_qs.filter(program__in=programme_variants(program))
     for row in req_qs.values(
         "course_code", "course_name", "program", "programme_term", "credit_hours"
     )[: _MAX_COURSE_MATCHES * 3]:
@@ -439,12 +604,169 @@ def _exec_lookup_course(
             if len(matches) >= _MAX_COURSE_MATCHES:
                 break
 
-    return {
+    # Concrete elective options often have no Course or ProgrammeRequirement
+    # row: their authority is ElectiveCourse plus a term mapping to the student's
+    # plan placeholder. Omitting that catalogue made lookup_course say AI463 did
+    # not exist while recommend_courses correctly linked it to AI1.
+    if len(matches) < _MAX_COURSE_MATCHES:
+        # The EXACT-code arm stays catalogue-wide, like the requirement branch
+        # above: whether a code exists is not a fact about the asker.  Only
+        # the fuzzy name arm takes the programme default.
+        name_arm = Q(course_name__icontains=query)
+        if program:
+            name_arm &= Q(programme__in=programme_variants(program))
+        elective_filter = Q(course_code__iexact=exact) | name_arm if exact else name_arm
+        elective_qs = ElectiveCourse.objects.filter(elective_filter)
+        for row in elective_qs.values(
+            "id", "course_code", "course_name", "programme", "credit_hours"
+        )[: _MAX_COURSE_MATCHES * 3]:
+            code = normalize_code(row["course_code"])
+            if not code:
+                continue
+            entry = matches.setdefault(
+                code,
+                {
+                    "course_code": code,
+                    "course_name": str(row.get("course_name") or "").strip(),
+                    "credit_hours": row.get("credit_hours"),
+                    "programs": [],
+                },
+            )
+            prog = str(row.get("programme") or "").strip().upper()
+            if prog and prog not in entry["programs"]:
+                entry["programs"].append(prog)
+            mapping_qs = ElectiveTermMapping.objects.filter(elective_id=row["id"])
+            raw_year, raw_term = ctx.get("academic_year"), ctx.get("term")
+            if raw_year not in (None, "") and raw_term not in (None, ""):
+                try:
+                    requested_term = int(raw_term)
+                except (TypeError, ValueError):
+                    requested_term = None
+                if requested_term is not None:
+                    mapping_qs = mapping_qs.filter(academic_year=str(raw_year), term=requested_term)
+            if program:
+                mapping_qs = mapping_qs.filter(programme__in=programme_variants(program))
+            placeholders = sorted(
+                {
+                    normalize_code(slot)
+                    for slot in mapping_qs.values_list("placeholder_code", flat=True)
+                    if normalize_code(slot)
+                }
+            )
+            if placeholders:
+                existing = set(entry.get("fulfills_elective_slots") or [])
+                entry["fulfills_elective_slots"] = sorted(existing | set(placeholders))
+            if len(matches) >= _MAX_COURSE_MATCHES:
+                break
+
+    if exact and exact not in matches and (_CODE_SHAPE.match(query) is not None or not matches):
+        # The row side of the fold.  The three exact arms above compare the
+        # database's RAW stored value, so a row stored as «AI-463» or
+        # «MATH٢٤٣» matches nothing even though the existence floor knows its
+        # normalised key - the lookup answered a silent empty for a code it
+        # would refuse to call unknown.  A python-side scan over the same
+        # three tables (1120 rows live), with the floor's own normalisation.
+        # The gate keeps it off the hot path: it runs for code-shaped queries
+        # and for searches that found NOTHING - an English NAME search with
+        # results folds its own text to a truthy "exact" that is never a
+        # matches key, and without the gate it paid three unfiltered scans
+        # per lookup.  The emitted course_code is the FLOOR key spelling: it
+        # is what the student typed and what the answer checker will accept.
+        for row in ProgrammeRequirement.objects.values(
+            "course_code", "course_name", "program", "credit_hours"
+        ):
+            if normalise_catalogue_code(row["course_code"]) != exact:
+                continue
+            entry = matches.setdefault(
+                exact,
+                {
+                    "course_code": exact,
+                    "course_name": str(row.get("course_name") or "").strip(),
+                    "credit_hours": row.get("credit_hours"),
+                    "programs": [],
+                },
+            )
+            prog = str(row.get("program") or "").strip().upper()
+            if prog and prog not in entry["programs"]:
+                entry["programs"].append(prog)
+        for row in ElectiveCourse.objects.values(
+            "id", "course_code", "course_name", "programme", "credit_hours"
+        ):
+            if normalise_catalogue_code(row["course_code"]) != exact:
+                continue
+            entry = matches.setdefault(
+                exact,
+                {
+                    "course_code": exact,
+                    "course_name": str(row.get("course_name") or "").strip(),
+                    "credit_hours": row.get("credit_hours"),
+                    "programs": [],
+                },
+            )
+            prog = str(row.get("programme") or "").strip().upper()
+            if prog and prog not in entry["programs"]:
+                entry["programs"].append(prog)
+            # The placeholder link is the whole point of the elective table
+            # (`AI463` means nothing to a student without `AI1`) - a
+            # separator-stored elective found WITHOUT it would re-open, for
+            # these rows, the recommend_courses divergence the elective
+            # branch above was written to close.
+            mapping_qs = ElectiveTermMapping.objects.filter(elective_id=row["id"])
+            raw_year, raw_term = ctx.get("academic_year"), ctx.get("term")
+            if raw_year not in (None, "") and raw_term not in (None, ""):
+                try:
+                    requested_term = int(raw_term)
+                except (TypeError, ValueError):
+                    requested_term = None
+                if requested_term is not None:
+                    mapping_qs = mapping_qs.filter(academic_year=str(raw_year), term=requested_term)
+            if program:
+                mapping_qs = mapping_qs.filter(programme__in=programme_variants(program))
+            placeholders = sorted(
+                {
+                    normalize_code(slot)
+                    for slot in mapping_qs.values_list("placeholder_code", flat=True)
+                    if normalize_code(slot)
+                }
+            )
+            if placeholders:
+                existing = set(entry.get("fulfills_elective_slots") or [])
+                entry["fulfills_elective_slots"] = sorted(existing | set(placeholders))
+        if exact not in matches:
+            for row in Course.objects.values("course_code", "description", "credit_hours"):
+                if normalise_catalogue_code(row["course_code"]) != exact:
+                    continue
+                matches[exact] = {
+                    "course_code": exact,
+                    "course_name": str(row.get("description") or "").strip(),
+                    "credit_hours": row.get("credit_hours"),
+                    "programs": [],
+                }
+                break
+
+    result: dict[str, Any] = {
         "ok": True,
         "query": query,
         "match_count": len(matches),
         "courses": list(matches.values()),
     }
+    if (
+        exact
+        and _CODE_SHAPE.match(query)
+        and exact not in matches
+        and exact not in known_course_codes()
+    ):
+        # The student named a code NO authority recognises.  Say so as DATA:
+        # the unresolved token (an echo the answer checker deliberately never
+        # mines as evidence) plus at most three letter-repair candidates that
+        # DO exist.  The floor's own catalogue is the existence authority
+        # here, NOT this function's matches: a code can be real and still
+        # produce no match rows (another programme's elective, a bare Course
+        # row), and "unknown" from this tool licenses the model to deny the
+        # course exists.
+        result["unknown_query"] = exact
+        result["did_you_mean"] = _did_you_mean(exact)
+    return result
 
 
 #: Re-exported so this module's callers keep their import, but there is now ONE
@@ -454,7 +776,12 @@ is_elective_slot = _is_elective_slot
 
 
 def _resolve_elective_slot(
-    course_code: str, program: str, *, limit: int | None = _MAX_COURSE_MATCHES
+    course_code: str,
+    program: str,
+    *,
+    academic_year: str | None = None,
+    term: int | str | None = None,
+    limit: int | None = _MAX_COURSE_MATCHES,
 ) -> list[dict[str, Any]] | None:
     """Return the real courses that can fill an elective slot, or None if not a slot.
 
@@ -464,6 +791,7 @@ def _resolve_elective_slot(
     electives students TAKE: 111 have passed FE1, 139 GSE1. See `is_elective_slot`.
     """
     from core.models import ElectiveCourse, ElectiveTermMapping, ProgrammeRequirement
+    from core.services.academic_state import programme_variants
 
     req = ProgrammeRequirement.objects.filter(course_code__iexact=course_code)
     if program:
@@ -473,9 +801,13 @@ def _resolve_elective_slot(
         return None
 
     prog = program or str(row.get("program") or "")
-    mapped_ids = ElectiveTermMapping.objects.filter(
-        placeholder_code__iexact=course_code, programme__iexact=prog
-    ).values_list("elective_id", flat=True)
+    mappings = ElectiveTermMapping.objects.filter(
+        placeholder_code__iexact=course_code,
+        programme__in=programme_variants(prog),
+    )
+    if academic_year not in (None, "") and term not in (None, ""):
+        mappings = mappings.filter(academic_year=str(academic_year), term=int(term))
+    mapped_ids = mappings.values_list("elective_id", flat=True)
 
     options: list[dict[str, Any]] = []
     for e in ElectiveCourse.objects.filter(id__in=list(mapped_ids)).values(
@@ -503,7 +835,14 @@ def _resolve_elective_slot(
 def _exec_course_prerequisites(
     args: dict[str, Any], scope: dict[str, Any], ctx: dict[str, Any]
 ) -> dict[str, Any]:
-    from core.models import Prerequisite, ProgrammeRequirement, Student
+    from core.models import (
+        ElectiveCourse,
+        ElectiveTermMapping,
+        Prerequisite,
+        ProgrammeRequirement,
+        Student,
+    )
+    from core.services.academic_state import programme_variants
     from core.services.student_helpers import get_prerequisites
 
     course_code = normalize_code(args.get("course_code"))
@@ -535,7 +874,18 @@ def _exec_course_prerequisites(
     # "prerequisites: []" for one reads as "this course has no prerequisites", which is
     # false for every slot whose real courses have them — ElectiveCourse carries a
     # prerequisites_csv per course. Resolve the slot and report the real options.
-    elective_options = _resolve_elective_slot(course_code, program)
+    raw_year, raw_term = ctx.get("academic_year"), ctx.get("term")
+    mapping_year = str(raw_year) if raw_year not in (None, "") else None
+    try:
+        mapping_term = int(raw_term) if raw_term not in (None, "") else None
+    except (TypeError, ValueError):
+        mapping_term = None
+    elective_options = _resolve_elective_slot(
+        course_code,
+        program,
+        academic_year=mapping_year,
+        term=mapping_term,
+    )
     if elective_options is not None:
         return {
             "ok": True,
@@ -547,6 +897,72 @@ def _exec_course_prerequisites(
                 "prerequisites of its own; each course that can fill it has its own. "
                 "Answer with the options and their prerequisites, never with "
                 "'this course has no prerequisites'."
+            ),
+            "tool": "course_prerequisites",
+        }
+
+    # A real elective option is intentionally outside ProgrammeRequirement: its
+    # plan identity is the placeholder selected by the term mapping. Read its own
+    # prerequisite CSV and expose that relationship instead of reporting the code
+    # as absent from every programme plan.
+    concrete_qs = ElectiveCourse.objects.filter(course_code__iexact=course_code)
+    if program:
+        concrete_qs = concrete_qs.filter(programme__in=programme_variants(program))
+    concrete_rows = list(
+        concrete_qs.values(
+            "id",
+            "course_code",
+            "course_name",
+            "programme",
+            "credit_hours",
+            "prerequisites_csv",
+        )[:12]
+    )
+    if concrete_rows:
+        options_by_program: list[dict[str, Any]] = []
+        for row in concrete_rows:
+            prog = str(row.get("programme") or "").strip().upper()
+            mappings = ElectiveTermMapping.objects.filter(elective_id=row["id"])
+            if mapping_year is not None and mapping_term is not None:
+                mappings = mappings.filter(
+                    academic_year=mapping_year,
+                    term=mapping_term,
+                )
+            if program:
+                mappings = mappings.filter(programme__in=programme_variants(program))
+            placeholders = sorted(
+                {
+                    normalize_code(value)
+                    for value in mappings.values_list("placeholder_code", flat=True)
+                    if normalize_code(value)
+                }
+            )
+            prerequisites = [
+                normalize_code(value)
+                for value in str(row.get("prerequisites_csv") or "").split(",")
+                if normalize_code(value)
+            ]
+            options_by_program.append(
+                {
+                    "program": prog,
+                    "course_name": str(row.get("course_name") or "").strip(),
+                    "credit_hours": int(row.get("credit_hours") or 0),
+                    "prerequisites": prerequisites,
+                    "fulfills_elective_slots": placeholders,
+                }
+            )
+        return {
+            "ok": True,
+            "course_code": course_code,
+            "is_elective_placeholder": False,
+            "is_concrete_elective": True,
+            "academic_year": mapping_year,
+            "term": mapping_term,
+            "per_program": options_by_program,
+            "note": (
+                "This is a concrete elective course. fulfills_elective_slots is "
+                "term-scoped; an empty list means no mapping is recorded for the "
+                "requested term, not that the catalogue course does not exist."
             ),
             "tool": "course_prerequisites",
         }
@@ -639,6 +1055,7 @@ def _exec_recommend_courses(
     args: dict[str, Any], scope: dict[str, Any], ctx: dict[str, Any]
 ) -> dict[str, Any]:
     from core.models import ElectiveCourse, ProgrammeRequirement, Student
+    from core.services.academic_state import AcademicStateUnavailable, build_student_academic_state
     from core.services.credit_policy import credit_policy_evidence
     from core.services.recommender import recommend_next_courses
     from core.services.virtual_advisor import _course_names
@@ -651,7 +1068,35 @@ def _exec_recommend_courses(
         return {"ok": False, "error": error}
 
     codes = recommend_next_courses(int(student_id), int(year), int(term))
-    names = _course_names(set(codes))
+    try:
+        academic_state = build_student_academic_state(int(student_id), str(year), str(term))
+    except AcademicStateUnavailable as exc:
+        return {"ok": False, "error": str(exc)}
+    # Exact evidence stays exact for display and credit totals. The expanded sets
+    # exist only to de-duplicate requirement aliases: production has REGISTERED
+    # AI1 while the recommender emits its concrete option AI463. Comparing strings
+    # alone called AI463 new even though the AI1 requirement was already occupied.
+    current_codes = list(academic_state.registered_course_codes)
+    expected_codes = list(academic_state.expected_course_codes)
+    current_equivalents = set(academic_state.registered_or_equivalent_course_codes)
+    expected_equivalents = set(academic_state.expected_or_equivalent_course_codes)
+    existing_codes = set(current_codes) | set(expected_codes)
+    new_codes = [
+        code
+        for code in codes
+        if code not in current_equivalents and code not in expected_equivalents
+    ]
+    # Registrar evidence wins when the same requirement also occurs in the
+    # expected plan. A recommendation belongs to one provenance bucket, not both.
+    already_current = [code for code in codes if code in current_equivalents]
+    already_expected = [
+        code for code in codes if code not in current_equivalents and code in expected_equivalents
+    ]
+    relevant_codes = set(codes) | existing_codes
+    names = _course_names(relevant_codes)
+    for course in academic_state.courses:
+        if course.course_code in relevant_codes and course.metadata.course_name:
+            names[course.course_code] = course.metadata.course_name
 
     profile = (
         Student.objects.filter(student_id=student_id).values("program", "status").first() or {}
@@ -661,7 +1106,7 @@ def _exec_recommend_courses(
     # unresolved 16-hour ceiling that must not be papered over with the general one.
     student_status = str(profile.get("status") or "").strip()
     credit_map: dict[str, int] = {}
-    credit_qs = ProgrammeRequirement.objects.filter(course_code__in=codes)
+    credit_qs = ProgrammeRequirement.objects.filter(course_code__in=relevant_codes)
     if program:
         for raw_code, hours in credit_qs.filter(program__iexact=program).values_list(
             "course_code", "credit_hours"
@@ -669,34 +1114,314 @@ def _exec_recommend_courses(
             credit_map.setdefault(normalize_code(raw_code), int(hours or 0))
     for raw_code, hours in credit_qs.values_list("course_code", "credit_hours"):
         credit_map.setdefault(normalize_code(raw_code), int(hours or 0))
-    catalogue_missing = [code for code in codes if code not in credit_map]
+    catalogue_missing = [code for code in relevant_codes if code not in credit_map]
     if catalogue_missing:
         for raw_code, hours in ElectiveCourse.objects.filter(
             course_code__in=catalogue_missing
         ).values_list("course_code", "credit_hours"):
             credit_map.setdefault(normalize_code(raw_code), int(hours or 0))
+    for course in academic_state.courses:
+        if course.course_code in relevant_codes and course.metadata.source.value not in {
+            "UNKNOWN",
+            "TERM_SECTION",
+        }:
+            credit_map[course.course_code] = course.metadata.credit_hours
+
+    def occupied_row(code: str, *, registered: bool) -> dict[str, Any]:
+        evidence_codes = (
+            academic_state.registered_supporting_course_codes(code)
+            if registered
+            else academic_state.expected_supporting_course_codes(code)
+        )
+        exact_codes = set(current_codes if registered else expected_codes)
+        return {
+            "course_code": code,
+            "course_name": names.get(code, ""),
+            "credit_hours": credit_map.get(code),
+            "match_kind": "DIRECT" if code in exact_codes else "ELECTIVE_ALIAS",
+            "evidence_course_codes": list(evidence_codes),
+        }
 
     return {
         "ok": True,
         "student_id": student_id,
         "academic_year": year,
         "term": term,
-        "recommendation_count": len(codes),
+        "recommendation_count": len(new_codes),
+        "recommendation_state": (
+            "NEW_RECOMMENDATIONS_FOUND" if new_codes else "NO_NEW_SYSTEM_RECOMMENDATION"
+        ),
         "recommendations": [
             {
                 "course_code": code,
                 "course_name": names.get(code, ""),
                 "credit_hours": credit_map.get(code),
             }
-            for code in codes
+            for code in new_codes
         ],
+        "already_in_current_timetable": [
+            occupied_row(code, registered=True) for code in already_current
+        ],
+        "already_in_expected_plan": [
+            occupied_row(code, registered=False) for code in already_expected
+        ],
+        "current_registered_credit_hours": sum(
+            credit_map[code] for code in current_codes if code in credit_map
+        ),
         "credit_policy": credit_policy_evidence(
-            recommended_credit_hours=sum(credit_map[code] for code in codes if code in credit_map),
-            unknown_for=[code for code in codes if code not in credit_map],
+            recommended_credit_hours=sum(
+                credit_map[code] for code in new_codes if code in credit_map
+            ),
+            unknown_for=[code for code in new_codes if code not in credit_map],
             term=term,
             student_status=student_status,
         ),
+        "note": (
+            "recommendations contains only courses not already in the registered timetable "
+            "or expected plan, including term-mapped elective aliases. match_kind "
+            "ELECTIVE_ALIAS means evidence_course_codes names the registered or expected "
+            "plan requirement that the recommendation would duplicate. Never call "
+            "already_in_expected_plan registered/current. "
+            "If recommendations is empty, say there is no new "
+            "system-recommended course rather than repeating a current course. That empty "
+            "list does not prove courses are closed/unavailable or that a credit cap caused "
+            "the result, so do not speculate about either."
+        ),
     }
+
+
+def _exec_course_choice_comparison(
+    args: dict[str, Any], scope: dict[str, Any], ctx: dict[str, Any]
+) -> dict[str, Any]:
+    """Compare two to four named courses from one verified planning baseline."""
+    from core.services.academic_state import AcademicStateUnavailable, build_student_academic_state
+    from core.services.course_choice_comparison import compare_course_choices
+
+    student_id, error = _resolve_scoped_student_id(args, scope)
+    if error:
+        return {"ok": False, "error": error, "tool": "course_choice_comparison"}
+    if student_id is None:
+        return {
+            "ok": False,
+            "error": "Student identity is required.",
+            "tool": "course_choice_comparison",
+        }
+    year, term, error = _ctx_year_term(args, ctx)
+    if error:
+        return {"ok": False, "error": error, "tool": "course_choice_comparison"}
+    timetable_evidence_available = _section_snapshot_matches_requested_term(
+        int(year), int(term), ctx
+    )
+
+    raw_codes = args.get("course_codes")
+    if not isinstance(raw_codes, list):
+        return {
+            "ok": False,
+            "error": "course_codes must be a list of two to four course codes.",
+            "tool": "course_choice_comparison",
+        }
+    codes = [normalize_code(code) for code in raw_codes if normalize_code(code)]
+    if len(codes) < 2 or len(codes) > 4:
+        return {
+            "ok": False,
+            "error": "Choose two to four course codes to compare.",
+            "tool": "course_choice_comparison",
+        }
+    if len(set(codes)) != len(codes):
+        return {
+            "ok": False,
+            "error": "Each compared course must be different.",
+            "tool": "course_choice_comparison",
+        }
+
+    objective = str(args.get("objective") or "balanced").strip().lower()
+    if objective not in {"balanced", "graduation", "unlock_impact", "timetable_fit"}:
+        return {
+            "ok": False,
+            "error": "Unsupported comparison objective.",
+            "tool": "course_choice_comparison",
+        }
+    try:
+        academic_state = build_student_academic_state(int(student_id), str(year), str(term))
+    except AcademicStateUnavailable:
+        academic_state = None
+    try:
+        return compare_course_choices(
+            int(student_id),
+            codes,
+            int(year),
+            int(term),
+            objective=objective,
+            timetable_evidence_available=timetable_evidence_available,
+            academic_state=academic_state,
+        )
+    except ValueError as exc:
+        return {"ok": False, "error": str(exc), "tool": "course_choice_comparison"}
+
+
+def _exec_feasible_course_replacements(
+    args: dict[str, Any], scope: dict[str, Any], ctx: dict[str, Any]
+) -> dict[str, Any]:
+    """Certify academically improving swaps against one complete timetable."""
+    from core.services.academic_state import AcademicStateUnavailable, build_student_academic_state
+    from core.services.course_replacement_feasibility import (
+        find_feasible_course_replacements,
+    )
+
+    student_id, error = _resolve_scoped_student_id(args, scope)
+    if error:
+        return {"ok": False, "error": error, "tool": "feasible_course_replacements"}
+    if student_id is None:
+        return {
+            "ok": False,
+            "error": "Student identity is required.",
+            "tool": "feasible_course_replacements",
+        }
+    year, term, error = _ctx_year_term(args, ctx)
+    if error:
+        return {"ok": False, "error": error, "tool": "feasible_course_replacements"}
+
+    remove_code = normalize_code(args.get("remove_course") or "")
+    add_code = normalize_code(args.get("add_course") or "")
+    if remove_code and add_code and remove_code == add_code:
+        return {
+            "ok": False,
+            "error": "The removed and added courses must be different.",
+            "tool": "feasible_course_replacements",
+        }
+
+    try:
+        academic_state = build_student_academic_state(int(student_id), str(year), str(term))
+    except AcademicStateUnavailable:
+        academic_state = None
+    remove_requirements = (
+        set(academic_state.requirement_course_codes_for(remove_code))
+        if academic_state is not None and remove_code
+        else set()
+    )
+    add_requirements = (
+        set(academic_state.requirement_course_codes_for(add_code))
+        if academic_state is not None and add_code
+        else set()
+    )
+    shared_requirements = sorted(remove_requirements & add_requirements)
+    remove_is_registered = bool(
+        academic_state is not None
+        and remove_code in set(academic_state.registered_or_equivalent_course_codes)
+    )
+    if shared_requirements and remove_is_registered:
+        return {
+            "ok": True,
+            "tool": "feasible_course_replacements",
+            "academic_year": int(year),
+            "term": int(term),
+            "baseline_kind": "REGISTERED",
+            "status": "NO_ACADEMIC_CHANGE",
+            "requested_remove_course": remove_code,
+            "requested_add_course": add_code,
+            "academic_search": {
+                "pairs_evaluated": 0,
+                "search_truncated": False,
+                "candidate_courses_considered": [add_code],
+            },
+            "certification_search": {
+                "academic_candidates_received": 0,
+                "timetable_candidates_checked": 0,
+                "certified_result_limit": 0,
+                "search_truncated": False,
+            },
+            "certified_replacements": [],
+            "rejected_replacements": [
+                {
+                    "remove_course": {"course_code": remove_code},
+                    "add_course": {"course_code": add_code},
+                    "academic": {
+                        "status": "ACADEMIC_NOT_IMPROVING",
+                        "reason_code": "SAME_ACADEMIC_REQUIREMENT",
+                        "requirement_course_codes": shared_requirements,
+                    },
+                    "timetable": {"status": "NOT_EVALUATED"},
+                }
+            ],
+            "rejected_replacements_count": 1,
+            "limitations": [
+                "Mapped elective aliases that fulfil the same programme requirement "
+                "are not an academic course replacement."
+            ],
+        }
+
+    if not _section_snapshot_matches_requested_term(int(year), int(term), ctx):
+        return {
+            "ok": True,
+            "tool": "feasible_course_replacements",
+            "academic_year": int(year),
+            "term": int(term),
+            "baseline_kind": "NOT_EVALUATED",
+            "status": "NOT_DETERMINABLE",
+            "requested_remove_course": remove_code or None,
+            "requested_add_course": add_code or None,
+            "academic_search": {
+                "pairs_evaluated": 0,
+                "search_truncated": False,
+                "candidate_courses_considered": [],
+            },
+            "certification_search": {
+                "academic_candidates_received": 0,
+                "timetable_candidates_checked": 0,
+                "certified_result_limit": 0,
+                "search_truncated": False,
+            },
+            "certified_replacements": [],
+            "rejected_replacements": [
+                {
+                    "remove_course": {"course_code": remove_code},
+                    "add_course": {"course_code": add_code},
+                    "academic": {"status": "NOT_EVALUATED"},
+                    "timetable": {
+                        "status": "NOT_DETERMINABLE",
+                        "reason_code": "SECTION_SNAPSHOT_TERM_MISMATCH",
+                        "reason": (
+                            "The section catalogue is not verified for the requested term, "
+                            "so a replacement timetable cannot be certified."
+                        ),
+                    },
+                }
+            ],
+            "rejected_replacements_count": 1,
+            "limitations": [
+                "The section catalogue is a recorded, termless snapshot and is not "
+                "verified for the requested term."
+            ],
+        }
+
+    try:
+        return {
+            "ok": True,
+            "tool": "feasible_course_replacements",
+            **find_feasible_course_replacements(
+                int(student_id),
+                int(year),
+                int(term),
+                remove_course=remove_code or None,
+                add_course=add_code or None,
+                max_credits_per_term=18,
+            ),
+        }
+    except (TypeError, ValueError) as exc:
+        return {
+            "ok": False,
+            "error": str(exc),
+            "tool": "feasible_course_replacements",
+        }
+    except Exception:
+        logger.exception("Feasible course replacement certification failed")
+        return {
+            "ok": False,
+            "error": (
+                "The verified replacement check could not be completed from the recorded data."
+            ),
+            "tool": "feasible_course_replacements",
+        }
 
 
 def _exec_graduation_shortfall(
@@ -900,10 +1625,44 @@ def _explain_reason(reason: dict[str, Any]) -> str:
     return "the adviser must confirm why this course is blocked"
 
 
+#: THE sentence for "the prerequisite records are met", written once so the two
+#: capabilities that report it cannot drift apart again. The old wording was "Every
+#: prerequisite is satisfied; it can be registered." — and `_exec_my_progress` said,
+#: three fields below it, that it does "not know which courses actually run this
+#: term or seat availability". One payload asserted a registration permission and
+#: denied having the evidence for it, and the model was left to pick which half to
+#: believe. It picked the permission.
+_PREREQS_SATISFIED_EXPLANATION = (
+    "All recorded prerequisite conditions are satisfied. This does not confirm that "
+    "a section is offered, that registration is permitted, or that a seat is available."
+)
+
+_UNLOCK_IMPACT_RANKING_BASIS = "SOLE_REMAINING_UNLOCK_COUNT_THEN_DOWNSTREAM_COUNT"
+
+
+def _impact_row(blocker: dict[str, Any] | None) -> dict[str, Any] | None:
+    """One open course with BOTH forward counts, under names that say which is which.
+
+    `build_unlock_report` calls them `frees_now` and `frees_eventually`, and a
+    reader who has not opened that module cannot tell that the second frees nothing
+    — it is the number of courses with this one somewhere in their chain. The
+    student screen rendered it as «يفتح لك 6 من مقرراتك المتبقية» when three open.
+    """
+    if not blocker:
+        return None
+    return {
+        "code": blocker["code"],
+        "course_name": blocker["name"],
+        "sole_remaining_prerequisite_count": blocker["frees_now"],
+        "on_prerequisite_chain_of_count": blocker["frees_eventually"],
+    }
+
+
 def _exec_my_progress(
     args: dict[str, Any], scope: dict[str, Any], ctx: dict[str, Any]
 ) -> dict[str, Any]:
     """Where the student stands: what is open now, what is blocked and why."""
+    from core.services.academic_state import AcademicStateUnavailable, build_student_academic_state
     from core.services.student_unlock import build_unlock_report
 
     student_id, error = _resolve_scoped_student_id(args, scope)
@@ -912,120 +1671,274 @@ def _exec_my_progress(
     year, term, error = _ctx_year_term(args, ctx)
     if error:
         return {"ok": False, "error": error}
+    requested_priority_limit = args.get("priority_limit")
+    if requested_priority_limit is not None and (
+        isinstance(requested_priority_limit, bool)
+        or not isinstance(requested_priority_limit, int)
+        or not 1 <= requested_priority_limit <= 20
+    ):
+        return {
+            "ok": False,
+            "error": "priority_limit must be an integer from 1 through 20.",
+        }
 
-    r = build_unlock_report(int(student_id), int(year), int(term))
+    try:
+        academic_state = build_student_academic_state(int(student_id), str(year), str(term))
+    except AcademicStateUnavailable as exc:
+        return {"ok": False, "error": str(exc)}
+    r = build_unlock_report(
+        int(student_id),
+        int(year),
+        int(term),
+        # Registrar section evidence fills holes in StudentCourse.studying. The
+        # overlay uses degree-plan identities, so registered AI463 activates AI1;
+        # EXPECTED evidence is deliberately absent from this set.
+        additional_studying_codes=set(academic_state.registered_requirement_course_codes),
+    )
     if not r:
         return {"ok": False, "error": f"No degree plan found for student {student_id}."}
 
     def why(c):
         return [_explain_reason(x) for x in c["reasons"]]
 
-    return {
+    unlock_impact_ranking = [_impact_row(b) for b in r["blockers"]]
+    result = {
         "student_id": int(student_id),
         "program": r["program"],
         "academic_year": year,
         "term": term,
+        "registered_requirement_course_codes": list(
+            academic_state.registered_requirement_course_codes
+        ),
+        "expected_plan_course_codes": list(academic_state.expected_course_codes),
+        "expected_plan_requirement_aliases": list(
+            academic_state.expected_or_equivalent_course_codes
+        ),
         "counts": r["counts"],
-        "most_useful_course_to_pass": r["top_blocker"],
-        "open_now": [
+        "most_useful_course_to_pass": _impact_row(r["top_blocker"]),
+        # Ranked, not just the winner. «رتّب لي AI331 و CS372 و AI352 حسب تأثير كل
+        # واحد» and «أي مقرر يفتح أكبر عدد مباشرة» both need an ORDER over several
+        # courses, and the payload carried a single `max()`. Ranking three named
+        # courses from one winner is not possible, so the answer was composed.
+        # This list is deliberately complete. The capability contract and note both
+        # say every academically open concrete course appears here; applying the
+        # generic 20-row display cap silently changed that claim for larger plans.
+        "unlock_impact_ranking": unlock_impact_ranking,
+        # The basis, stated. A ranking whose criterion is unnamed is read as "these
+        # are the courses that matter", and this one measures exactly one thing.
+        "unlock_impact_ranking_basis": _UNLOCK_IMPACT_RANKING_BASIS,
+        "unlock_impact_ranking_note": (
+            "Every course whose prerequisites are satisfied appears here, including "
+            "those that unlock nothing - a zero is a real answer, not a reason to omit "
+            "the course. Unlock impact is one criterion among several: a course may "
+            "still be required for graduation, be in this term's recommendation, or be "
+            "needed to reach a reasonable load, and none of those is measured here."
+        ),
+        "prerequisites_satisfied": [
             {
                 "code": c["code"],
-                "name": c["name"],
+                "course_name": c["name"],
                 "credits": c["credits"],
                 "fits_this_term": c["fits_this_term"],
             }
             for c in r["open_courses"][:_MAX_LIST_ROWS]
         ],
         "elective_slots": [c["code"] for c in r["elective_slots"]],
-        "blocked": [
+        "prerequisite_blocked": [
             {
                 "code": c["code"],
-                "name": c["name"],
+                "course_name": c["name"],
                 "steps_away": c["steps"],
-                "opens_n_courses": c["frees_eventually"],
+                # Was `opens_n_courses`, which is the count of courses with this one
+                # ANYWHERE in their remaining chain. Passing it removes one link from
+                # each; it opens none of them by itself, and for a course two steps
+                # down it may open none of them ever on its own.
+                "on_prerequisite_chain_of_count": c["frees_eventually"],
                 "nearest_course_you_can_take_now": (c["nearest_open"] or {}).get("code"),
                 "why": why(c),
             }
             for c in r["locked_courses"][:_MAX_LIST_ROWS]
         ],
         "note": (
-            "A course being studied satisfies a prerequisite but must still be passed. "
-            "This does not know which courses actually run this term or seat availability."
+            "Studying includes current registrar evidence overlaid onto StudentCourse status; "
+            "a mapped concrete elective activates its degree-plan placeholder. Expected-plan "
+            "courses are listed separately and do not become studying. A course being studied "
+            "satisfies a prerequisite but must still be passed. " + _PREREQS_SATISFIED_EXPLANATION
         ),
+        # `open_now` and `blocked` are GONE rather than aliased. Every consumer was
+        # checked: the privacy projector kept neither, no template or script reads
+        # this payload, and the only other reader is the model. Carrying both names
+        # would put two lists with one meaning into the same prompt — which is the
+        # defect class this commit exists to remove, not a mitigation of it.
+        "renamed_fields": {
+            "open_now": "prerequisites_satisfied",
+            "blocked": "prerequisite_blocked",
+        },
     }
+    if requested_priority_limit is not None:
+        requested_ranking = unlock_impact_ranking[:requested_priority_limit]
+        result.update(
+            {
+                # This V2.1 answer obligation is a projection, not a truncation
+                # of the canonical ranking retained above for audit and reuse.
+                "requested_priority_limit": requested_priority_limit,
+                "requested_unlock_impact_ranking": requested_ranking,
+                "requested_priority_limit_fulfilled": (
+                    len(requested_ranking) == requested_priority_limit
+                ),
+            }
+        )
+    return result
 
 
 def _exec_why_course_locked(
     args: dict[str, Any], scope: dict[str, Any], ctx: dict[str, Any]
 ) -> dict[str, Any]:
     """Explain ONE course: passed, studying, open now, or blocked and exactly why."""
+    from core.services.academic_state import AcademicStateUnavailable, build_student_academic_state
     from core.services.student_unlock import build_unlock_report
 
     student_id, error = _resolve_scoped_student_id(args, scope)
     if error:
         return {"ok": False, "error": error}
-    code = normalize_code(str(args.get("course_code") or ""))
-    if not code:
+    requested_code = normalize_code(str(args.get("course_code") or ""))
+    if not requested_code:
         return {"ok": False, "error": "course_code is required."}
     year, term, error = _ctx_year_term(args, ctx)
     if error:
         return {"ok": False, "error": error}
 
-    r = build_unlock_report(int(student_id), int(year), int(term))
+    academic_state = None
+    try:
+        academic_state = build_student_academic_state(int(student_id), str(year), str(term))
+    except AcademicStateUnavailable:
+        # Keep the established no-plan behavior below for incomplete profiles.
+        pass
+    requirement_codes = (
+        academic_state.requirement_course_codes_for(requested_code)
+        if academic_state is not None
+        else ()
+    )
+    report_code = requirement_codes[0] if len(requirement_codes) == 1 else requested_code
+    r = build_unlock_report(
+        int(student_id),
+        int(year),
+        int(term),
+        additional_studying_codes=(
+            set(academic_state.registered_requirement_course_codes)
+            if academic_state is not None
+            else None
+        ),
+    )
     if not r:
         return {"ok": False, "error": f"No degree plan found for student {student_id}."}
 
-    # The forward direction — "if I pass this, what opens?" — is already computed:
-    # build_unlock_report returns a `graph` of prerequisite edges that every caller
-    # so far has thrown away. It costs nothing to answer, and it is the question a
-    # student actually asks after being told a course is blocked.
-    graph = r.get("graph") or {}
-    unlocks = sorted(
-        {
-            edge["course_code"]
-            for edge in (graph.get("items") or [])
-            if edge.get("prerequisite_course_code") == code
-        }
+    # THE FORWARD DIRECTION, IN TWO FIELDS THAT ARE NOT THE SAME NUMBER.
+    #
+    # This used to emit one list, `unlocks_directly`, built from every graph edge
+    # whose `prerequisite_course_code` was this course. That is "X names this course
+    # among its prerequisites" — and the name promised "X opens when you pass this".
+    # On the controlled evaluation record, AI331 is named by five courses and only three of them are
+    # waiting on it alone; the other two also need CS289 and COE332. So the answer to
+    # «كم مقرر ينتظر AI331 وحده» was 5, and the true answer is 3.
+    #
+    # The field is not kept as an alias. Both readings are useful and both are
+    # published, but `unlocks_directly` is the name that carried the false one, and
+    # an alias would preserve exactly the claim this exists to withdraw.
+    deps = (r.get("dependents") or {}).get(report_code) or {}
+    listed_rows = deps.get("listed") or []
+    waiting_only = set(deps.get("waiting_only_on_this") or [])
+    state_course = academic_state.course(requested_code) if academic_state is not None else None
+    registered_support = (
+        list(academic_state.registered_supporting_course_codes(requested_code))
+        if academic_state is not None
+        else []
     )
-    status_of = graph.get("statusOf") or {}
-    name_of = graph.get("nameOf") or {}
+    expected_support = (
+        list(academic_state.expected_supporting_course_codes(requested_code))
+        if academic_state is not None
+        else []
+    )
+    display_name = state_course.metadata.course_name if state_course is not None else ""
     base = {
         "student_id": int(student_id),
-        "course_code": code,
-        "unlocks_directly": [
-            {"code": u, "name": name_of.get(u, ""), "current_status": status_of.get(u, "")}
-            for u in unlocks
+        "course_code": requested_code,
+        "requirement_course_code": report_code,
+        "registered_evidence_course_codes": registered_support,
+        "expected_plan_evidence_course_codes": expected_support,
+        # Catalogue direction: true of the programme, whatever this student passed.
+        "listed_as_prerequisite_for": [
+            {
+                "code": row["code"],
+                "course_name": row["name"],
+                "current_status": row["status"],
+                "still_also_waiting_on": row["also_waiting_on"],
+                "also_short_on_credit_hours": row["also_waiting_on_credit_hours"],
+            }
+            for row in listed_rows
         ],
-        "unlocks_directly_count": len(unlocks),
+        "listed_as_prerequisite_count": len(listed_rows),
+        # Student direction: what actually changes the day this course is passed.
+        "sole_remaining_prerequisite_for": [
+            {"code": row["code"], "course_name": row["name"]}
+            for row in listed_rows
+            if row["code"] in waiting_only
+        ],
+        "sole_remaining_prerequisite_count": len(waiting_only),
+        # Transitive, and moved into `base` from the blocked branch. AI331 is OPEN
+        # for this student, so «وش الفرق بين ما يفتحه مباشرة وما ينفتح عبر السلسلة»
+        # was asked of a payload that carried no chain number at all — the count
+        # existed only on the branch taken by courses that are themselves blocked.
+        "on_prerequisite_chain_of_count": deps.get("on_chain_of_count", 0),
+        "forward_relations_note": (
+            "listed_as_prerequisite_count counts courses that NAME this one as a "
+            "prerequisite. sole_remaining_prerequisite_count counts those for which "
+            "it is the last unmet condition — the ones that become "
+            "prerequisite-satisfied when it is passed. "
+            "on_prerequisite_chain_of_count counts courses with it anywhere in their "
+            "remaining chain; passing it removes one link and does not make them "
+            "takeable. The three are usually different numbers."
+        ),
     }
     for c in r["open_courses"]:
-        if c["code"] == code:
+        if c["code"] == report_code:
             return {
                 **base,
-                "status": "open_now",
-                "name": c["name"],
+                # Was "open_now", explained as "it can be registered" — a
+                # registration-permission claim this module says two fields later it
+                # cannot make. The status names the only thing that was checked.
+                "status": "PREREQUISITES_SATISFIED",
+                "prerequisites_satisfied": True,
+                "course_name": display_name or c["name"],
                 "fits_this_term": c["fits_this_term"],
-                "explanation": "Every prerequisite is satisfied; it can be registered.",
+                "explanation": _PREREQS_SATISFIED_EXPLANATION,
             }
     for c in r["done"]:
-        if c["code"] == code:
-            return {**base, "status": "passed", "name": c["name"], "explanation": "Already passed."}
+        if c["code"] == report_code:
+            return {
+                **base,
+                "status": "passed",
+                "prerequisites_satisfied": True,
+                "course_name": display_name or c["name"],
+                "explanation": "Already passed.",
+            }
     for c in r["in_progress"]:
-        if c["code"] == code:
+        if c["code"] == report_code:
             return {
                 **base,
                 "status": "studying",
-                "name": c["name"],
+                "prerequisites_satisfied": True,
+                "course_name": display_name or c["name"],
                 "explanation": "Being studied now; must still be passed.",
             }
     for c in r["locked_courses"]:
-        if c["code"] == code:
+        if c["code"] == report_code:
             return {
                 **base,
-                "status": "blocked",
-                "name": c["name"],
+                "status": "PREREQUISITE_BLOCKED",
+                "prerequisites_satisfied": False,
+                "course_name": display_name or c["name"],
                 "steps_away": c["steps"],
-                "opens_n_courses": c["frees_eventually"],
                 "nearest_course_you_can_take_now": (c["nearest_open"] or {}).get("code"),
                 "blocked_by": c["reasons"],
                 "explanation": (
@@ -1034,29 +1947,218 @@ def _exec_why_course_locked(
                     else "Blocked by prerequisite courses not yet passed or being studied."
                 ),
             }
-    return {"ok": False, "error": f"{code} is not in this student's degree plan."}
+    if expected_support:
+        return {
+            **base,
+            "status": "EXPECTED_PLAN_ONLY",
+            "prerequisites_satisfied": None,
+            "course_name": display_name,
+            "explanation": (
+                "This course is present only in expected-plan evidence for the requested "
+                "term; that does not make it registered or studying."
+            ),
+        }
+    return {
+        "ok": False,
+        "error": f"{requested_code} is not in this student's degree plan.",
+    }
 
 
 def _exec_graduation_progress(
     args: dict[str, Any], scope: dict[str, Any], ctx: dict[str, Any]
 ) -> dict[str, Any]:
-    """How far from graduating, with the prerequisite floor kept separate from the
-    pace assumption."""
-    from core.services.student_graduation import build_graduation_report
+    """How far from graduating plus a read-only 18-credit term scenario."""
+    from core.services.student_graduation import (
+        RECOMMENDED_CURRENT_TERM,
+        REGISTERED_TIMETABLE,
+        build_graduation_report,
+        build_graduation_what_if,
+    )
 
     student_id, error = _resolve_scoped_student_id(args, scope)
     if error:
         return {"ok": False, "error": error}
+
+    planning_baseline_kind = str(args.get("planning_baseline_kind") or RECOMMENDED_CURRENT_TERM)
+    if planning_baseline_kind not in {
+        RECOMMENDED_CURRENT_TERM,
+        REGISTERED_TIMETABLE,
+    }:
+        return {"ok": False, "error": "Unsupported graduation planning baseline."}
     year, term, error = _ctx_year_term(args, ctx)
     if error:
         return {"ok": False, "error": error}
 
-    g = build_graduation_report(int(student_id), int(year), int(term))
+    remove_courses = args.get("remove_current_courses") or []
+    noncompletion_courses = args.get("noncompletion_current_courses") or []
+    add_courses = args.get("add_current_courses") or []
+    search_replacements = bool(args.get("search_better_replacements", False))
+    if (
+        not isinstance(remove_courses, list)
+        or not isinstance(noncompletion_courses, list)
+        or not isinstance(add_courses, list)
+    ):
+        return {"ok": False, "error": "Planning-baseline course changes must be lists."}
+    if noncompletion_courses and planning_baseline_kind != REGISTERED_TIMETABLE:
+        return {
+            "ok": False,
+            "error": (
+                "A non-completion scenario requires the student's actual registered "
+                "timetable baseline."
+            ),
+        }
+    noncompletion_codes = {
+        normalize_code(code) for code in noncompletion_courses if normalize_code(code)
+    }
+    if noncompletion_codes and (remove_courses or add_courses or search_replacements):
+        return {
+            "ok": False,
+            "error": (
+                "A non-completion assumption must be the only course-change control in "
+                "the scenario; do not combine it with add, remove, or replacement search."
+            ),
+        }
+    effective_remove_courses = [*remove_courses, *noncompletion_courses]
+    if effective_remove_courses or add_courses or search_replacements:
+        g = build_graduation_what_if(
+            int(student_id),
+            int(year),
+            int(term),
+            planning_baseline_kind=planning_baseline_kind,
+            remove_current_courses=[str(code) for code in effective_remove_courses],
+            add_current_courses=[str(code) for code in add_courses],
+            search_better_replacements=search_replacements,
+        )
+    else:
+        g = build_graduation_report(
+            int(student_id),
+            int(year),
+            int(term),
+            planning_baseline_kind=planning_baseline_kind,
+        )
     if not g:
         return {"ok": False, "error": f"No degree plan found for student {student_id}."}
+    what_if = g.get("what_if")
+    if isinstance(what_if, dict) and noncompletion_codes:
+        evaluated_removals = [
+            row for row in what_if.get("removed_current_courses") or [] if isinstance(row, dict)
+        ]
+        what_if["noncompletion_current_courses"] = [
+            row
+            for row in evaluated_removals
+            if normalize_code(row.get("code") or "") in noncompletion_codes
+        ]
+        what_if["removed_current_courses"] = [
+            row
+            for row in evaluated_removals
+            if normalize_code(row.get("code") or "") not in noncompletion_codes
+        ]
+        what_if["scenario_semantics"] = "REGISTERED_COURSE_NONCOMPLETION"
+    comparison = what_if.get("comparison") if isinstance(what_if, dict) else None
+    comparison = comparison if isinstance(comparison, dict) else {}
+
+    # The owner's two-answer rule: when the registered timetable and the
+    # system's recommended term DISAGREE, one baseline answers "given what
+    # you actually enrolled in" and the other "given what the system
+    # advises" - the same read-only function, the other parameter.  The
+    # alternate is attached only when the same change VALIDATES against the
+    # other baseline (the dropped course must be in it) and the two
+    # baselines genuinely differ; otherwise it would restate the primary.
+    what_if_alternate: dict[str, Any] | None = None
+    if (
+        (remove_courses or add_courses)
+        and not noncompletion_courses
+        and not search_replacements
+        and isinstance(what_if, dict)
+        and what_if.get("valid")
+    ):
+        other_kind = (
+            REGISTERED_TIMETABLE
+            if planning_baseline_kind == RECOMMENDED_CURRENT_TERM
+            else RECOMMENDED_CURRENT_TERM
+        )
+        # The alternate is an ENHANCEMENT on top of a primary result the
+        # student is already owed.  The try covers the WHOLE alternate
+        # path - the second simulation AND the payload comparison after
+        # it - because un-isolated, any exception here rode up to the
+        # registry's catch-all and turned the call into ok:False: the
+        # successful primary died with the optional second one and the
+        # turn could only refuse.  Safe to swallow while the project
+        # runs WITHOUT ATOMIC_REQUESTS (autocommit): if that ever turns
+        # on, a swallowed DatabaseError would poison the request
+        # transaction for every later query.
+        try:
+            g_other = build_graduation_what_if(
+                int(student_id),
+                int(year),
+                int(term),
+                planning_baseline_kind=other_kind,
+                remove_current_courses=[str(code) for code in remove_courses],
+                add_current_courses=[str(code) for code in add_courses],
+            )
+            other_what_if = (g_other or {}).get("what_if")
+            if isinstance(other_what_if, dict) and other_what_if.get("valid"):
+
+                def _baseline_codes(container: dict[str, Any]) -> frozenset[str]:
+                    baseline = container.get("baseline") if isinstance(container, dict) else None
+                    rows = (
+                        baseline.get("planning_baseline_courses_assumed_passed")
+                        if isinstance(baseline, dict)
+                        else None
+                    )
+                    return frozenset(
+                        str(row.get("code") or "")
+                        for row in rows or []
+                        if isinstance(row, dict) and row.get("code")
+                    )
+
+                def _baseline_credits(container: dict[str, Any]) -> int:
+                    baseline = container.get("baseline") if isinstance(container, dict) else None
+                    if not isinstance(baseline, dict):
+                        return -1
+                    try:
+                        return int(baseline.get("planning_baseline_credits") or 0)
+                    except (TypeError, ValueError):
+                        return -1
+
+                other_codes = _baseline_codes(other_what_if)
+                primary_codes = _baseline_codes(what_if)
+                # Course sets decide; the credit totals are the fallback so a
+                # producer that stops emitting the display rows cannot silently
+                # disable the whole feature by making two ABSENT lists compare
+                # equal.
+                if other_codes and primary_codes:
+                    baselines_differ = other_codes != primary_codes
+                else:
+                    baselines_differ = _baseline_credits(other_what_if) != _baseline_credits(
+                        what_if
+                    )
+                if baselines_differ:
+                    what_if_alternate = {
+                        "planning_baseline_kind": other_kind,
+                        "what_if": other_what_if,
+                    }
+        except Exception:
+            logger.exception(
+                "Alternate-baseline what-if failed for student %s; answering on the primary only",
+                student_id,
+            )
+            what_if_alternate = None
     return {
         "student_id": int(student_id),
         "program": g["program"],
+        "planning_baseline_kind": g.get("planning_baseline_kind", planning_baseline_kind),
+        "planning_baseline_credits": int(
+            g.get(
+                "planning_baseline_credits",
+                g.get("registered_credits_at_planning_baseline") or 0,
+            )
+            or 0
+        ),
+        "planning_baseline_academic_year": g["planning_baseline_academic_year"],
+        "planning_baseline_term": g["planning_baseline_term"],
+        "scenario_academic_year": int(year),
+        "scenario_term": int(term),
         "plan_courses_passed": g["plan_courses_passed"],
         "plan_courses_total": g["plan_courses_total"],
         "percent_complete": g["percent_courses"],
@@ -1065,22 +2167,61 @@ def _exec_graduation_progress(
         "credits_earned_registrar": g["earned_credits_registrar"],
         "gpa": g["gpa"],
         "minimum_terms_by_prerequisites": g["chain_floor_terms"],
-        "terms_at_assumed_pace": g["pace_terms"],
-        "courses_per_term_assumed": g["courses_per_term"],
+        "minimum_terms_by_credit_capacity_after_planning_baseline": g[
+            "capacity_floor_terms_after_planning_baseline"
+        ],
+        "minimum_terms_by_credit_capacity_after_current": g["capacity_floor_terms_after_current"],
+        "lower_bound_additional_terms": g["lower_bound_additional_terms"],
+        "lower_bound_terms_including_planning_baseline": g[
+            "lower_bound_terms_including_planning_baseline"
+        ],
+        "lower_bound_terms_including_current": g["lower_bound_terms_including_current"],
+        "max_credits_per_term": g["max_credits_per_term"],
+        "estimated_additional_terms": g["estimated_additional_terms"],
+        "estimated_terms_including_planning_baseline": g[
+            "estimated_terms_including_planning_baseline"
+        ],
+        "estimated_terms_including_current": g["estimated_terms_including_current"],
         "terms_estimate": g["terms_estimate"],
+        "simulation_completed": g["simulation_completed"],
+        "simulated_terms_examined": g["simulated_terms_examined"],
+        "productive_terms_planned": g["productive_terms_planned"],
+        "term_plan": g["term_plan"],
+        "unresolved_requirements": g["unresolved_requirements"],
+        "scenario_graph": g.get("scenario_graph") or {},
+        "planning_baseline_courses_assumed_passed": g["planning_baseline_courses_assumed_passed"],
+        "current_courses_assumed_passed": g["current_courses_assumed_passed"],
+        "simulation_assumptions": g["simulation_assumptions"],
         "credit_hour_gates": g["hour_gates"],
         # Computed by build_graduation_report and previously dropped on the floor.
         # "can this be my last term?" is one of the most-asked questions and the
         # answer was already sitting in the report.
+        "plan_completion_in_planning_baseline_possible": g[
+            "plan_completion_in_planning_baseline_possible"
+        ],
         "final_term_possible": g["final_term_possible"],
         "passed_credits_in_plan": g["passed_credits_in_plan"],
+        "registered_credits_at_planning_baseline": g["registered_credits_at_planning_baseline"],
         "registered_credits_now": g["registered_credits_now"],
         "courses_in_progress": g["in_progress"],
+        "what_if": what_if,
+        "what_if_alternate_baseline": what_if_alternate,
+        # Promote the plan delta for simple clients while preserving it inside
+        # what_if.comparison as the authoritative structured comparison.
+        "plan_changed": comparison.get("plan_changed"),
+        "term_plan_changes": comparison.get("term_plan_changes") or [],
         "note": (
             "Registrar credits include courses outside the plan, so they are not a "
-            "fraction of the plan total. The prerequisite minimum cannot be beaten by "
-            "registering more courses in a term. final_term_possible means the PLAN "
-            "could be finished this term; graduation itself is a University Council "
+            "fraction of the plan total. The estimate repeatedly runs the existing "
+            "course recommender one main term ahead, assumes the selected planning-"
+            "baseline courses pass, then rolls each simulated term forward in memory "
+            "only. planning_baseline_kind states whether those starting courses are "
+            "system recommendations or the student's actual registered timetable; "
+            "the two sources must not be conflated. "
+            "It uses an 18-credit maximum for every simulated term and does not "
+            "guarantee offerings, seats, or first-attempt passes. final_term_possible "
+            "means the PLAN could be finished in the planning-baseline term; graduation "
+            "itself is a University Council "
             "decision (TU.GRADUATION.COUNCIL_AWARDS_DEGREE), so it must never be "
             "reported as 'you are graduating'."
         ),
@@ -1091,7 +2232,13 @@ def _exec_my_timetable(
     args: dict[str, Any], scope: dict[str, Any], ctx: dict[str, Any]
 ) -> dict[str, Any]:
     """The student's registered weekly schedule: day, time, course, section, room."""
-    from core.services.student_sections import get_student_term_baseline, student_gender
+    from core.services.student_sections import (
+        OTHER_BRANCH_SECTION_COHORT,
+        get_student_term_baseline,
+        section_gender,
+        student_gender,
+    )
+    from core.services.timetable_snapshots import Snapshot
 
     student_id, error = _resolve_scoped_student_id(args, scope)
     if error:
@@ -1100,7 +2247,9 @@ def _exec_my_timetable(
     if error:
         return {"ok": False, "error": error}
 
-    rows = get_student_term_baseline(int(student_id), str(year), str(term))
+    rows = get_student_term_baseline(
+        int(student_id), str(year), str(term), snapshot=Snapshot.EFFECTIVE
+    )
     if not rows:
         from core.models import StudentTermSection
 
@@ -1111,16 +2260,28 @@ def _exec_my_timetable(
         )
         if len(published) == 1:
             year, term = published[0]
-            rows = get_student_term_baseline(int(student_id), str(year), str(term))
+            rows = get_student_term_baseline(
+                int(student_id), str(year), str(term), snapshot=Snapshot.EFFECTIVE
+            )
 
     gender = student_gender(int(student_id))
     if gender:
         rows = [
             r
             for r in rows
-            if not str(r.get("section") or "").upper().startswith(("M", "F"))
-            or str(r.get("section") or "").upper().startswith(gender)
+            if section_gender(str(r.get("section") or ""))
+            not in (OTHER_BRANCH_SECTION_COHORT, "M" if gender == "F" else "F")
         ]
+    schedule_kind = _timetable_baseline_kind(rows)
+    if schedule_kind == "MIXED_REVIEW_REQUIRED":
+        mixed = _mixed_timetable_error(
+            tool="my_timetable",
+            academic_year=year,
+            term=term,
+        )
+        mixed["schedule_kind"] = schedule_kind
+        mixed["is_expected_plan"] = False
+        return mixed
     meetings = [
         {
             "day": r["day"],
@@ -1157,25 +2318,90 @@ def _exec_my_timetable(
             entry["scheduled"] = True
 
     registrations = sorted(by_section.values(), key=lambda x: (x["course_code"], x["section"]))
-    # Registered but with no meeting on file — real, and invisible in a meetings list.
     unscheduled = [r for r in registrations if not r["scheduled"]]
-    return {
+    credit_hours = sum(r["credits"] for r in registrations)
+    result = {
         "student_id": int(student_id),
         "academic_year": year,
         "term": term,
+        "schedule_kind": schedule_kind,
+        "is_expected_plan": schedule_kind == "EXPECTED_PLAN",
         "meetings": meetings[: _MAX_LIST_ROWS * 2],
         "registrations": registrations,
-        "registered_course_count": len(registrations),
-        "registered_credit_hours": sum(r["credits"] for r in registrations),
         "courses_without_a_time": sorted(r["course_code"] for r in unscheduled),
-        "note": (
-            "The timetable on file for the term shown; not a live seat count. "
-            "registered_credit_hours counts each course ONCE — the underlying rows are "
-            "per meeting, so adding them up over-counts a course that meets several "
-            "times a week. courses_without_a_time are genuinely registered; they simply "
-            "have no meeting recorded, so they do not appear in meetings."
-        ),
     }
+    if schedule_kind == "EXPECTED_PLAN":
+        result.update(
+            {
+                "expected_course_count": len(registrations),
+                "expected_credit_hours": credit_hours,
+                "note": (
+                    "This is an expected next-term planning snapshot, not actual university "
+                    "registration. Never describe these courses or sections as registered or "
+                    "current; the student must apply choices in the university portal."
+                ),
+            }
+        )
+    else:
+        result.update(
+            {
+                "registered_course_count": len(registrations),
+                "registered_credit_hours": credit_hours,
+                "note": (
+                    "The registered timetable on file for the term shown; not a live seat "
+                    "count. registered_credit_hours counts each course once. Courses without "
+                    "a time are registered rows whose meeting time is not recorded."
+                ),
+            }
+        )
+    return result
+
+
+def _plan_terms_with_canonical_readiness(terms: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Add `prerequisites_satisfied` beside `can_register`, without renaming it.
+
+    `can_register` is `report_views._build_student_plan_payload`'s field and it is
+    read by name in fifteen places across `page-dashboard.js` and `page-planner.js`,
+    plus `report_views` itself, which filters and counts on it. Renaming it there to
+    fix a description the MODEL reads would break two screens for no gain to either.
+
+    So the canonical name is added here, at the boundary where a language model is
+    the reader, and the legacy name travels beside it. Copied, not mutated: the same
+    payload objects are cached and served to those screens, and writing into them
+    would leak a field into the JSON the browser gets.
+
+    DERIVED FROM `missing_prereqs`, NOT COPIED FROM `can_register`. The first version
+    copied it, and a bit-for-bit copy gives the new name a predicate that is not the
+    one it names: `can_register` is `status == "not_taken" and prereqs_ok`, so every
+    course the student has already PASSED came back as
+    `prerequisites_satisfied: false` — 32 of 32 on the controlled evaluation
+    record. A field renamed
+    to say what it means has to mean it; otherwise the rename moves the defect
+    instead of removing it, and this one told the model that a course the student
+    passed still has prerequisites outstanding.
+
+    `missing_prereqs` already carries the hour gate: `report_views` appends
+    "146(HOURS)" to it when the gate is unmet, so a capstone short on credit hours is
+    not satisfied here either.
+    """
+    out = []
+    for level in terms:
+        courses = level.get("courses")
+        if not isinstance(courses, list):
+            out.append(level)
+            continue
+        out.append(
+            {
+                **level,
+                "courses": [
+                    {**c, "prerequisites_satisfied": not (c.get("missing_prereqs") or [])}
+                    if isinstance(c, dict)
+                    else c
+                    for c in courses
+                ],
+            }
+        )
+    return out
 
 
 def _exec_my_plan_by_term(
@@ -1188,12 +2414,31 @@ def _exec_my_plan_by_term(
     filtered list of what is open right now.
     """
     from core.report_views import _build_student_plan_payload
+    from core.services.academic_state import AcademicStateUnavailable, build_student_academic_state
 
     student_id, error = _resolve_scoped_student_id(args, scope)
     if error:
         return {"ok": False, "error": error}
 
-    payload, payload_err = _build_student_plan_payload(int(student_id))
+    academic_state = None
+    calendar_year, calendar_term, calendar_error = _ctx_year_term({}, ctx)
+    if calendar_error is None:
+        try:
+            academic_state = build_student_academic_state(
+                int(student_id), str(calendar_year), str(calendar_term)
+            )
+        except AcademicStateUnavailable:
+            # Preserve the established no-plan response below. Academic state is
+            # an overlay, not a new failure mode for this existing capability.
+            academic_state = None
+    payload, payload_err = _build_student_plan_payload(
+        int(student_id),
+        additional_studying_codes=(
+            set(academic_state.registered_requirement_course_codes)
+            if academic_state is not None
+            else None
+        ),
+    )
     if payload is None or payload_err is not None:
         return {"ok": False, "error": f"No degree plan found for student {student_id}."}
 
@@ -1220,14 +2465,29 @@ def _exec_my_plan_by_term(
         "ok": True,
         "student_id": int(student_id),
         "program": payload.get("program", ""),
+        "registered_requirement_course_codes": (
+            list(academic_state.registered_requirement_course_codes)
+            if academic_state is not None
+            else []
+        ),
+        "expected_plan_course_codes": (
+            list(academic_state.expected_course_codes) if academic_state is not None else []
+        ),
         "summary": payload.get("summary", {}),
-        "terms": terms,
+        "terms": _plan_terms_with_canonical_readiness(terms),
         "blocker_hints": payload.get("blocker_hints") or [],
         "note": (
             "Plan LEVELS, not calendar terms - programme_term is where a course sits in "
             "the degree plan, not when it is taught. status is passed / studying / "
-            "not_taken, and can_register reflects prerequisites ONLY, never whether a "
-            "section is being offered."
+            "failed / not_taken. prerequisites_satisfied is the canonical field and is the ONE "
+            "to read: it says the recorded prerequisite conditions are met, whatever "
+            "the student has already done, so a PASSED course is satisfied. "
+            "A studying status may be supported by current registrar sections even when "
+            "StudentCourse has not been updated; expected-plan evidence stays separate and "
+            "does not change status. can_register is a different, older boolean kept for the screens - it is "
+            "false for every passed and studying course, and it is NOT a registration "
+            "permission. Never read can_register as prerequisite state. "
+            + _PREREQS_SATISFIED_EXPLANATION
         ),
         "tool": "my_plan_by_term",
     }
@@ -1308,9 +2568,9 @@ def _student_sections_context(
     Returns ``(error, context)``. Three guards live here rather than in each caller,
     because getting any of them wrong is a silent wrong answer rather than a crash:
 
-    * **Cohort must resolve.** ``gender_section_filter("")`` is an ALL-PASS filter and
-      722 of the 3,807 ids in StudentTermSection have no Student row, so a fallback
-      would show the other cohort's sections. Refuse instead.
+    * **Cohort must resolve.** A blank catalogue scope may show both local cohorts,
+      but a named student must resolve to exactly M or F. Refuse rather than
+      guessing. YM/YF rows belong to another branch and are excluded for everyone.
     * **Sections are TERMLESS.** TermSection has no academic_year and no term column,
       so nothing here may be described as "next term's" sections. The student's own
       baseline does belong to a term, and that is reported separately.
@@ -1324,10 +2584,13 @@ def _student_sections_context(
         get_student_term_baseline,
         student_gender_strict,
     )
+    from core.services.timetable_snapshots import Snapshot
 
     student_id, error = _resolve_scoped_student_id(args, scope)
     if error:
         return {"ok": False, "error": error}, {}
+    if student_id is None:
+        return {"ok": False, "error": "student_id is required."}, {}
     year, term, error = _ctx_year_term(args, ctx)
     if error:
         return {"ok": False, "error": error}, {}
@@ -1349,8 +2612,36 @@ def _student_sections_context(
     if not codes:
         return {"ok": False, "error": "course_code (or course_codes) is required."}, {}
 
-    catalog = _catalog_for_courses(str(year), str(term), codes, gender)
-    baseline = get_student_term_baseline(int(student_id), str(year), str(term))
+    from core.models import Student, TermSection
+
+    program = str(
+        Student.objects.filter(student_id=student_id).values_list("program", flat=True).first()
+        or ""
+    ).strip()
+    if not program:
+        return {
+            "ok": False,
+            "error": "Student programme is not recorded.",
+            "reason": "PROGRAMME_UNRESOLVED",
+        }, {}
+    catalog = _catalog_for_courses(str(year), str(term), codes, gender, program)
+    global_section_counts = {
+        code: TermSection.objects.filter(
+            scenario__isnull=True,
+            course_key=code,
+        ).count()
+        for code in codes
+    }
+    baseline = get_student_term_baseline(
+        int(student_id), str(year), str(term), snapshot=Snapshot.EFFECTIVE
+    )
+    baseline_kind = _timetable_baseline_kind(baseline)
+    if baseline_kind == "MIXED_REVIEW_REQUIRED":
+        return _mixed_timetable_error(
+            tool="my_clash_free_sections",
+            academic_year=year,
+            term=term,
+        ), {}
     return None, {
         "student_id": int(student_id),
         "year": year,
@@ -1358,14 +2649,16 @@ def _student_sections_context(
         "gender": gender,
         "codes": codes,
         "catalog": catalog,
+        "global_section_counts": global_section_counts,
         "baseline": baseline,
+        "baseline_kind": baseline_kind,
     }
 
 
 def _exec_my_clash_free_sections(
     args: dict[str, Any], scope: dict[str, Any], ctx: dict[str, Any]
 ) -> dict[str, Any]:
-    """Which sections of a course fit the student's current timetable, and which do not."""
+    """Which sections fit the student's source-classified timetable baseline."""
     from core.services.planner_builder import DAY_MAP, Meeting, _overlap
 
     error, c = _student_sections_context(args, scope, ctx)
@@ -1374,7 +2667,7 @@ def _exec_my_clash_free_sections(
 
     # (meeting, label) pairs rather than a dict keyed on id(): identity of a freshly
     # built dataclass is not a stable key, and the pairing is what we actually need.
-    mine: list[tuple[Any, str]] = [
+    mine: list[tuple[Any, str, str]] = [
         (
             Meeting(
                 day=DAY_MAP.get(str(r.get("day") or ""), str(r.get("day") or "").upper()[:3]),
@@ -1382,6 +2675,7 @@ def _exec_my_clash_free_sections(
                 end=str(r.get("end_time") or ""),
             ),
             f"{r.get('course_code')} {r.get('section')}",
+            normalize_code(r.get("course_code")),
         )
         for r in c["baseline"]
         if r.get("start_time")
@@ -1390,36 +2684,91 @@ def _exec_my_clash_free_sections(
     results = []
     for code in c["codes"]:
         sections = c["catalog"].get(code) or []
+        baseline_sections_for_course = sorted(
+            {
+                str(row.get("section") or "").strip()
+                for row in c["baseline"]
+                if normalize_code(row.get("course_code")) == code
+                and str(row.get("section") or "").strip()
+            }
+        )
         if not sections:
+            recorded_sections_on_file = int(c["global_section_counts"].get(code) or 0)
+            status = (
+                "NOT_MATCHING_STUDENT_PROFILE" if recorded_sections_on_file > 0 else "NOT_ON_FILE"
+            )
             results.append(
                 {
                     "course_code": code,
                     "sections_on_file": 0,
+                    "recorded_sections_on_file": recorded_sections_on_file,
+                    "currently_registered_sections": (
+                        baseline_sections_for_course if c["baseline_kind"] == "REGISTERED" else []
+                    ),
+                    "expected_plan_sections": (
+                        baseline_sections_for_course
+                        if c["baseline_kind"] == "EXPECTED_PLAN"
+                        else []
+                    ),
+                    "baseline_sections": baseline_sections_for_course,
                     "clash_free": [],
                     "clashing": [],
                     # NOT "no sections available" — that claims the university offers
                     # none. Only 77 of 246 plan courses have any section on file.
-                    "status": "NOT_ON_FILE",
+                    "status": status,
                 }
             )
             continue
 
-        free, clashing = [], []
+        free, clashing, indeterminate = [], [], []
         for s in sections:
+            meeting_issue_codes = [
+                str(code or "").strip().upper()
+                for code in (s.get("meeting_issue_codes") or [])
+                if str(code or "").strip()
+            ]
+            if not s.get("meetings") and "MISSING_MEETING_DATA" not in meeting_issue_codes:
+                meeting_issue_codes.append("MISSING_MEETING_DATA")
+            if meeting_issue_codes:
+                indeterminate.append(
+                    {
+                        "section": s["section"],
+                        "meetings": [],
+                        "reason_codes": meeting_issue_codes,
+                        "status": "MEETING_DATA_INCOMPLETE",
+                    }
+                )
+                continue
             hits = []
             for sm in s["meetings"]:
-                for bm, label in mine:
+                # When the student is switching/checking a section of a course
+                # already in the timetable, replace that course's existing block
+                # before comparing. Otherwise M3 collides with its own three
+                # meetings and is reported as unusable precisely because it is
+                # already registered.
+                for bm, label, baseline_code in mine:
+                    if baseline_code == code:
+                        continue
                     if _overlap(sm, bm):
                         hits.append(
                             {
                                 "section_meeting": f"{sm.day} {sm.start}-{sm.end}",
                                 "conflicts_with": label,
-                                "registered_meeting": f"{bm.day} {bm.start}-{bm.end}",
+                                "baseline_meeting": f"{bm.day} {bm.start}-{bm.end}",
                             }
                         )
             entry = {
                 "section": s["section"],
                 "meetings": [f"{m.day} {m.start}-{m.end}" for m in s["meetings"]],
+                "is_baseline_section": str(s["section"]) in baseline_sections_for_course,
+                "is_current_section": (
+                    c["baseline_kind"] == "REGISTERED"
+                    and str(s["section"]) in baseline_sections_for_course
+                ),
+                "is_expected_plan_section": (
+                    c["baseline_kind"] == "EXPECTED_PLAN"
+                    and str(s["section"]) in baseline_sections_for_course
+                ),
             }
             if hits:
                 clashing.append({**entry, "conflicts": hits[:4]})
@@ -1430,9 +2779,18 @@ def _exec_my_clash_free_sections(
             {
                 "course_code": code,
                 "sections_on_file": len(sections),
+                "recorded_sections_on_file": int(c["global_section_counts"].get(code) or 0),
+                "currently_registered_sections": (
+                    baseline_sections_for_course if c["baseline_kind"] == "REGISTERED" else []
+                ),
+                "expected_plan_sections": (
+                    baseline_sections_for_course if c["baseline_kind"] == "EXPECTED_PLAN" else []
+                ),
+                "baseline_sections": baseline_sections_for_course,
                 "clash_free": free[:_MAX_LIST_ROWS],
                 "clashing": clashing[:_MAX_LIST_ROWS],
-                "status": "OK" if free else "ALL_CLASH",
+                "indeterminate": indeterminate[:_MAX_LIST_ROWS],
+                "status": ("OK" if free else "NOT_DETERMINABLE" if indeterminate else "ALL_CLASH"),
             }
         )
 
@@ -1440,14 +2798,23 @@ def _exec_my_clash_free_sections(
         "ok": True,
         "student_id": c["student_id"],
         "compared_against_term": f"{c['year']}/{c['term']}",
+        "baseline_kind": c["baseline_kind"],
         "courses": results,
         "note": (
-            "Compared against the timetable the student is registered in for the term "
-            "shown. Sections carry NO term of their own, so never call these 'next "
-            "term's' sections. status NOT_ON_FILE means the section catalogue holds "
+            "Compared against the stored baseline identified by baseline_kind. EXPECTED_PLAN "
+            "is planning data, not registration; MIXED_REVIEW_REQUIRED must not be presented "
+            "as one registered timetable. Sections carry NO term of their own, so never call these 'next "
+            "term's' sections. status NOT_ON_FILE means the entire section catalogue holds "
             "nothing for that course - it does NOT mean the university offers none, and "
-            "must not be reported as 'no sections available'. Seat counts are absent "
-            "from every section on file, so never say a section has room."
+            "must not be reported as 'no sections available'. status "
+            "NOT_MATCHING_STUDENT_PROFILE means sections are recorded globally but none "
+            "match the student's programme and study cohort; do not describe those rows as "
+            "missing. A section marked "
+            "is_current_section is registrar evidence; is_expected_plan_section is not. When "
+            "checking another section of the same course, the current section is replaced "
+            "before clash comparison. A row under indeterminate has incomplete meeting "
+            "evidence and must never be called clash-free. Seat counts are absent from "
+            "this result, so never say a section has room."
         ),
         "tool": "my_clash_free_sections",
     }
@@ -1476,10 +2843,35 @@ _UNPLACED_REASONS: dict[str, tuple[str, str]] = {
         "DID_NOT_FIT",
         "No combination satisfied all the limits given.",
     ),
+    "Section meeting data is incomplete or invalid": (
+        "MEETING_DATA_INCOMPLETE",
+        "A recorded section has missing or invalid meeting data, so clashes cannot be certified.",
+    ),
+    "Solver search budget exhausted": (
+        "SEARCH_BUDGET_EXHAUSTED",
+        "The timetable search reached its time limit before it could certify a placement.",
+    ),
+    "The timetable solver rejected its generated model": (
+        "SOLVER_MODEL_INVALID",
+        "The timetable solver could not validate this request; retry or ask an administrator.",
+    ),
 }
 
 
-def _translate_unplaced(raw: str) -> tuple[str, str]:
+def _translate_unplaced(raw: str, reason_code: str = "") -> tuple[str, str]:
+    """Map a builder reason to the closed vocabulary.
+
+    Prefers the builder's STRUCTURED ``reason_code`` and only falls back to
+    prefix-matching its English sentence for rows that predate the code. Matching
+    on prose meant any improvement to a reason string silently reclassified it as
+    OTHER, and the Arabic surface then showed its generic fallback.
+    """
+    code = str(reason_code or "").strip().upper()
+    if code:
+        for mapped_code, sentence in _UNPLACED_REASONS.values():
+            if mapped_code == code:
+                return mapped_code, sentence
+        return code, str(raw or "").strip()
     text = str(raw or "").strip()
     for prefix, mapped in _UNPLACED_REASONS.items():
         if text.startswith(prefix):
@@ -1505,67 +2897,12 @@ def _exec_build_my_timetable(
     some not. So ``unplaced`` and its reasons are returned as first-class output rather
     than being hidden behind a "no plan found".
     """
-    from core.models import ProgrammeRequirement, Student
-    from core.services.recommender import recommend_next_courses
-    from core.services.student_sections import (
-        UnknownStudentGender,
-        get_student_term_baseline,
-        student_gender_strict,
-    )
-
-    student_id, error = _resolve_scoped_student_id(args, scope)
-    if error:
-        return {"ok": False, "error": error}
-    year, term, error = _ctx_year_term(args, ctx)
-    if error:
-        return {"ok": False, "error": error}
-
-    try:
-        gender = student_gender_strict(int(student_id))
-    except UnknownStudentGender as exc:
-        return {"ok": False, "error": str(exc), "reason": "COHORT_UNRESOLVED"}
-
-    program = str(
-        Student.objects.filter(student_id=student_id).values_list("program", flat=True).first()
-        or ""
-    ).strip()
-    credits = {
-        r["course_code"]: int(r["credit_hours"] or 0)
-        for r in ProgrammeRequirement.objects.filter(program=program).values(
-            "course_code", "credit_hours"
-        )
-    }
-
-    # Courses to place: what the student asked for, else the official recommendation.
-    wanted = args.get("must_include") or []
-    if isinstance(wanted, str):
-        wanted = [wanted]
-    wanted = [normalize_code(c) for c in wanted if str(c).strip()]
-    recommended = [
-        normalize_code(c)
-        for c in (recommend_next_courses(int(student_id), int(year), int(term)) or [])
-    ]
-    codes = list(dict.fromkeys(wanted + recommended))
-    if not codes:
-        return {
-            "ok": True,
-            "student_id": int(student_id),
-            "placed": [],
-            "unplaced": [],
-            "note": (
-                "There is nothing to schedule: the recommender returned no courses for "
-                "this student and none were named. That usually means the plan is "
-                "complete or every remaining course is blocked."
-            ),
-            "tool": "build_my_timetable",
-        }
-
-    max_credits = args.get("max_credits")
-    try:
-        cap = int(max_credits) if max_credits not in (None, "") else 0
-    except (TypeError, ValueError):
-        return {"ok": False, "error": "max_credits must be an integer."}
-
+    # FIRST, before any import, query or recommendation. The check used to sit
+    # after an early return for "nothing to schedule", so a student with an empty
+    # plan asking for a rebuild got an ordinary empty result and no route — and
+    # now that the model is told to CALL for this, that silent path is the one it
+    # would hit. Refusing a rebuild must never depend on how much work the
+    # recommender happened to find first.
     # REBUILDING IS NOT AVAILABLE FROM CHAT. It is refused here, in the executor,
     # not merely undocumented in the schema.
     #
@@ -1601,14 +2938,153 @@ def _exec_build_my_timetable(
         }
     keep_current_sections = True
 
-    baseline = get_student_term_baseline(int(student_id), str(year), str(term))
+    from core.models import ProgrammeRequirement, Student
+    from core.services.recommender import recommend_next_courses
 
-    # Through the adapter, not around it. `student_planner._run_solver` calls itself
+    # Through the adapter, not around it. `student_planner.run_solver` calls itself
     # "the ONLY place student-facing code reaches the solver", and this — a
     # student-facing capability — was the counter-example, with the domain-to-solver
     # translation and all three pinned levers duplicated verbatim. Two sole sources
-    # of truth is none.
+    # of truth is none. Imported at the top of the body rather than beside the call,
+    # because DEFAULT_CREDITS is now the one credit fallback for the whole answer and
+    # every return path below needs it.
     from core.services.student_planner import DEFAULT_CREDITS, run_solver
+    from core.services.student_sections import (
+        UnknownStudentGender,
+        get_student_term_baseline,
+        student_gender_strict,
+    )
+    from core.services.timetable_provenance import (
+        baseline_sections,
+        build_timetable_facts,
+        verify,
+    )
+    from core.services.timetable_snapshots import Snapshot
+
+    student_id, error = _resolve_scoped_student_id(args, scope)
+    if error:
+        return {"ok": False, "error": error}
+    year, term, error = _ctx_year_term(args, ctx)
+    if error:
+        return {"ok": False, "error": error}
+
+    try:
+        gender = student_gender_strict(int(student_id))
+    except UnknownStudentGender as exc:
+        return {"ok": False, "error": str(exc), "reason": "COHORT_UNRESOLVED"}
+
+    program = str(
+        Student.objects.filter(student_id=student_id).values_list("program", flat=True).first()
+        or ""
+    ).strip()
+    if not program:
+        return {
+            "ok": False,
+            "error": "Student programme is not recorded.",
+            "reason": "PROGRAMME_UNRESOLVED",
+            "tool": "build_my_timetable",
+        }
+    credits = {
+        r["course_code"]: int(r["credit_hours"] or 0)
+        # `iexact`, matching `get_student_term_baseline` and
+        # `student_planner._course_credits`, which read the same table for the same
+        # fact. An exact match here gives a programme stored in any other case an
+        # EMPTY credit map — harmless while the only consumer was a display total,
+        # and not harmless now that `credit_summary` reconciles against the
+        # baseline's own credits. Dormant on today's data (0 of 4 live programmes
+        # differ in case), fixed because the two lookups have to agree.
+        for r in ProgrammeRequirement.objects.filter(program__iexact=program).values(
+            "course_code", "credit_hours"
+        )
+    }
+
+    max_credits = args.get("max_credits")
+    try:
+        cap = int(max_credits) if max_credits not in (None, "") else 0
+    except (TypeError, ValueError):
+        return {"ok": False, "error": "max_credits must be an integer."}
+
+    # Courses to place: what the student asked for, AND the official recommendation
+    # — kept as two lists the whole way to the answer. Merging them into one field
+    # called `requested` is what left TT21 «الجدول أضاف مقررًا أنا ما طلبته، من وين
+    # جاء؟» unanswerable: the payload asserted the student had asked for all four
+    # courses, so the model concluded the system keeps no record of who chose what.
+    wanted = args.get("must_include") or []
+    if isinstance(wanted, str):
+        wanted = [wanted]
+    wanted = [normalize_code(c) for c in wanted if str(c).strip()]
+    recommended = [
+        normalize_code(c)
+        for c in (recommend_next_courses(int(student_id), int(year), int(term)) or [])
+    ]
+    asked = list(dict.fromkeys(wanted + recommended))
+
+    baseline = get_student_term_baseline(
+        int(student_id), str(year), str(term), snapshot=Snapshot.EFFECTIVE
+    )
+    baseline_kind = _timetable_baseline_kind(baseline)
+    if baseline_kind == "MIXED_REVIEW_REQUIRED":
+        return _mixed_timetable_error(
+            tool="build_my_timetable",
+            academic_year=year,
+            term=term,
+        )
+    held_rows = baseline_sections(baseline)
+    held = {row["course_code"] for row in held_rows}
+
+    # A course the student is ALREADY registered in this term never goes to the
+    # solver. It cannot be scheduled twice, and sending it produces one of two wrong
+    # answers, both seen live on TT10: the solver prunes the student's own section
+    # because it collides with the student's own baseline, then either picks a
+    # DIFFERENT section of the same course — «تم الاحتفاظ بـ CS323-M1» followed by
+    # «CS323: شعبة M2» in one answer — or, when nothing else fits, reports
+    # ALL_SECTIONS_CLASH, which reads as "you cannot take AI331" about a course the
+    # student is sitting in.
+    #
+    # `recommend_next_courses` is what makes this the common case rather than an
+    # edge: it excludes PASSED and STUDYING courses, and a `StudentTermSection`
+    # registration is neither, so the term's own registrations come back as
+    # recommendations. They belong in `retained_sections`, and that is where they go.
+    codes = [c for c in asked if c not in held]
+
+    def _facts(mappings: list[dict[str, Any]], unscheduled: list[dict[str, Any]]) -> dict[str, Any]:
+        facts = build_timetable_facts(
+            student_id=int(student_id),
+            using_timetable_of_term=f"{year}/{term}",
+            requested_codes=wanted,
+            recommended_codes=recommended,
+            baseline=baseline,
+            mappings=mappings,
+            unscheduled=unscheduled,
+            credit_hours=credits,
+            default_credits=DEFAULT_CREDITS,
+            cap=cap,
+            baseline_kind=baseline_kind,
+            # `None`, not `[]`. Chat cannot pin a section — `must_include` names
+            # courses — so the key is absent rather than asserting nothing was pinned.
+            fixed_sections=None,
+        )
+        # Checked before the payload is built, so a contradiction costs one refused
+        # tool call instead of reaching a student as a sentence. `execute` turns the
+        # exception into ok=False and logs it.
+        verify(
+            facts,
+            baseline_codes={(r["course_code"], r.get("section", "")) for r in held_rows},
+            keep_current=keep_current_sections,
+        )
+        return facts.as_payload()
+
+    if not asked:
+        return {
+            "ok": True,
+            **_facts([], []),
+            "note": (
+                "There is nothing additional to schedule: the recommender returned no "
+                "courses and none were named. retained_sections are classified by "
+                "baseline_kind; EXPECTED_PLAN rows are planning evidence, not registration."
+            ),
+            "tool": "build_my_timetable",
+        }
 
     result = run_solver(
         year=str(year),
@@ -1618,66 +3094,2852 @@ def _exec_build_my_timetable(
         keep_current_sections=keep_current_sections,
         max_credits=cap,
         gender=gender,
+        program=program,
+        require_complete_meetings=True,
     )
 
     options = result.get("options") or []
     if not options:
+        raw_unplaced = result.get("unscheduled") or []
+        translated_unplaced: list[dict[str, Any]] = []
+        for entry in raw_unplaced:
+            reason_code, explanation = _translate_unplaced(
+                entry.get("reason"), str(entry.get("reason_code") or "")
+            )
+            translated_unplaced.append(
+                {
+                    "course_code": entry.get("course_code"),
+                    "reason_code": reason_code,
+                    "reason": explanation,
+                }
+            )
+        if not translated_unplaced:
+            translated_unplaced = [
+                {
+                    "course_code": course_code,
+                    "reason_code": None,
+                    "reason": "No valid timetable satisfies the current constraints.",
+                }
+                for course_code in codes
+            ]
+        reason_codes = ", ".join(
+            sorted(
+                {
+                    str(entry.get("reason_code") or "NO_VALID_TIMETABLE")
+                    for entry in translated_unplaced
+                }
+            )
+        )
         return {
             "ok": True,
-            "student_id": int(student_id),
-            "requested": codes,
-            "placed": [],
-            "unplaced": [{"course_code": c, "reason": "No plan could be built."} for c in codes],
-            "note": "No timetable could be built from the sections on file.",
+            **_facts([], translated_unplaced),
+            "alternatives_considered": 0,
+            "note": (
+                "No timetable could be built from the sections on file. Unplaced reason "
+                f"codes: {reason_codes}. NOT_ON_FILE means only that this system has no "
+                "section record for the course, never that the university does not offer it. "
+                "Any section under retained_sections remains part of the stored baseline. "
+                "Read baseline_kind: EXPECTED_PLAN means planning evidence and must not be "
+                "called registered."
+            ),
             "tool": "build_my_timetable",
         }
 
     best = max(options, key=lambda o: int(o.get("scheduled") or 0))
-    placed = [
-        {
-            "course_code": m.get("course_code"),
-            "section": m.get("section"),
-            "meetings": [
-                f"{mt.get('day')} {mt.get('start_time')}-{mt.get('end_time')}"
-                for mt in (m.get("meetings") or [])
-            ],
-            "credits": credits.get(str(m.get("course_code") or ""), None),
-        }
-        for m in (best.get("mappings") or [])
-    ]
-    unplaced = []
+    unscheduled = []
     for u in best.get("unscheduled") or []:
-        code, explanation = _translate_unplaced(u.get("reason"))
-        unplaced.append(
-            {
-                "course_code": u.get("course_code"),
-                "reason_code": code,
-                "reason": explanation,
-            }
+        code, explanation = _translate_unplaced(u.get("reason"), str(u.get("reason_code") or ""))
+        unscheduled.append(
+            {"course_code": u.get("course_code"), "reason_code": code, "reason": explanation}
         )
 
     return {
         "ok": True,
-        "student_id": int(student_id),
-        "using_timetable_of_term": f"{year}/{term}",
-        "requested": codes,
-        "placed": placed,
-        "placed_count": len(placed),
-        "unplaced": unplaced,
-        "unplaced_count": len(unplaced),
-        "planned_credit_hours": sum(p["credits"] or 0 for p in placed),
+        **_facts(best.get("mappings") or [], unscheduled),
         "alternatives_considered": len(options),
         "note": (
             "A SUGGESTION built from the sections on file, not a registration and not "
             "an offer of a seat - there are no seat counts in the data, so never say a "
-            "section has room. A partial result is normal: a course appears under "
-            "unplaced when no section of it is on file (reason_code NOT_ON_FILE - say "
-            "exactly that, never 'not available'), or when every section collides with "
-            "something already placed. Sections carry no term of their own; the "
-            "term shown is the one the student's current timetable belongs to. The "
-            "student still registers through the university portal."
+            "section has room. Every course and section carries where it came from: "
+            "source STUDENT_REQUEST means the student named it, SYSTEM_RECOMMENDATION "
+            "means the recommender chose it, CURRENT_REGISTRATION is registrar evidence, "
+            "and EXPECTED_PLAN is planning evidence only. baseline_kind decides which one "
+            "retained_sections carry. change RETAIN means it was kept untouched, ADD "
+            "means it is newly scheduled. Report retained_sections as kept and "
+            "new_sections as proposed; never present a retained section as new. A "
+            "partial result is normal: a course appears under unplaced_courses with "
+            "reason_code NOT_ON_FILE when no section of it is on file (say exactly "
+            "that, never 'not available'), with ALL_SECTIONS_CLASH when every section "
+            "collides with something already in the week, and with outcome "
+            "ALREADY_REGISTERED for registrar evidence or ALREADY_IN_EXPECTED_PLAN for "
+            "planning evidence - neither outcome is a scheduling failure. "
+            "credit_summary splits the hours already held from the hours this build "
+            "adds. Sections carry no term of their own; the term shown is the one the "
+            "stored baseline belongs to. The student still registers "
+            "through the university portal."
         ),
         "tool": "build_my_timetable",
+    }
+
+
+def _exec_build_timetable_proposal(
+    args: dict[str, Any], scope: dict[str, Any], ctx: dict[str, Any]
+) -> dict[str, Any]:
+    """Build several clash-checked proposals without changing or saving anything.
+
+    Unlike the legacy ``build_my_timetable`` capability, ``from_scratch`` is safe
+    here: it changes only the solver's occupancy rule for this response.  It never
+    edits the student's current section mappings and never creates a planner draft.
+    """
+    from core.models import ProgrammeRequirement, Student
+    from core.services.academic_state import AcademicStateUnavailable, build_student_academic_state
+    from core.services.planner_drafts import credit_ceiling
+    from core.services.recommender import recommend_next_courses
+    from core.services.student_planner import (
+        DEFAULT_CREDITS,
+        PlannerRequest,
+        SectionLabelPin,
+        SectionPinResolutionError,
+        build_student_options,
+        permitted_course_codes,
+        resolve_section_label_pins,
+        validate_draft_selection,
+    )
+    from core.services.student_sections import get_student_term_baseline
+    from core.services.timetable_provenance import baseline_sections
+    from core.services.timetable_snapshots import Snapshot
+    from core.services.virtual_advisor import _course_names
+
+    student_id, error = _resolve_scoped_student_id(args, scope)
+    if error:
+        return {"ok": False, "error": error, "tool": "build_timetable_proposal"}
+    year, term, error = _ctx_year_term(args, ctx)
+    if error:
+        return {"ok": False, "error": error, "tool": "build_timetable_proposal"}
+
+    mode = str(args.get("mode") or "around_current").strip().lower()
+    if mode not in {"around_current", "from_scratch"}:
+        return {
+            "ok": False,
+            "error": "mode must be around_current or from_scratch.",
+            "tool": "build_timetable_proposal",
+        }
+
+    raw_codes = args.get("course_codes") or []
+    if isinstance(raw_codes, str):
+        raw_codes = [raw_codes]
+    if not isinstance(raw_codes, list):
+        return {
+            "ok": False,
+            "error": "course_codes must be a list.",
+            "tool": "build_timetable_proposal",
+        }
+
+    raw_required = args.get("must_take_courses") or []
+    if not isinstance(raw_required, list):
+        return {
+            "ok": False,
+            "error": "must_take_courses must be a list.",
+            "must_take_courses": [],
+            "pinned_sections": [],
+            "constraints_satisfied": False,
+            "constraint_failures": [
+                {
+                    "course_code": "",
+                    "section_label": "",
+                    "reason": "must_take_courses must be a list of course codes.",
+                }
+            ],
+            "tool": "build_timetable_proposal",
+        }
+    required: list[str] = []
+    for raw_code in raw_required:
+        code = normalize_code(raw_code)
+        if not code:
+            return {
+                "ok": False,
+                "error": "Every must-take course must have a course code.",
+                "must_take_courses": required,
+                "pinned_sections": [],
+                "constraints_satisfied": False,
+                "constraint_failures": [
+                    {
+                        "course_code": "",
+                        "section_label": "",
+                        "reason": "Every must-take course must have a course code.",
+                    }
+                ],
+                "tool": "build_timetable_proposal",
+            }
+        if code not in required:
+            required.append(code)
+
+    raw_pins = args.get("pinned_sections") or []
+    if not isinstance(raw_pins, list):
+        return {
+            "ok": False,
+            "error": "pinned_sections must be a list.",
+            "must_take_courses": required,
+            "pinned_sections": [],
+            "constraints_satisfied": False,
+            "constraint_failures": [
+                {
+                    "course_code": "",
+                    "section_label": "",
+                    "reason": (
+                        "pinned_sections must be a list of course-code and section-label pairs."
+                    ),
+                }
+            ],
+            "tool": "build_timetable_proposal",
+        }
+    requested_pins: list[SectionLabelPin] = []
+    public_pins: list[dict[str, str]] = []
+    pin_by_code: dict[str, str] = {}
+    for raw_pin in raw_pins:
+        if not isinstance(raw_pin, dict) or set(raw_pin) - {"course_code", "section_label"}:
+            failure = {
+                "course_code": "",
+                "section_label": "",
+                "reason": ("Each pinned section must contain only course_code and section_label."),
+            }
+            return {
+                "ok": False,
+                "error": failure["reason"],
+                "must_take_courses": required,
+                "pinned_sections": public_pins,
+                "constraints_satisfied": False,
+                "constraint_failures": [failure],
+                "tool": "build_timetable_proposal",
+            }
+        code = normalize_code(raw_pin.get("course_code") or "")
+        label = str(raw_pin.get("section_label") or "").strip().upper()
+        if not code or not label:
+            failure = {
+                "course_code": code,
+                "section_label": label,
+                "reason": "Each pinned section requires a course code and a section label.",
+            }
+            return {
+                "ok": False,
+                "error": failure["reason"],
+                "must_take_courses": required,
+                "pinned_sections": public_pins,
+                "constraints_satisfied": False,
+                "constraint_failures": [failure],
+                "tool": "build_timetable_proposal",
+            }
+        previous = pin_by_code.get(code)
+        if previous is not None:
+            if previous == label:
+                continue
+            failure = {
+                "course_code": code,
+                "section_label": label,
+                "reason": f"More than one exact section was pinned for {code}; choose one.",
+            }
+            return {
+                "ok": False,
+                "error": failure["reason"],
+                "must_take_courses": required,
+                "pinned_sections": public_pins,
+                "constraints_satisfied": False,
+                "constraint_failures": [failure],
+                "tool": "build_timetable_proposal",
+            }
+        pin_by_code[code] = label
+        requested_pins.append(SectionLabelPin(course_code=code, section_label=label))
+        public_pins.append({"course_code": code, "section_label": label})
+
+    # Pins constrain a candidate but do not make it required.  Add each pinned
+    # course to the candidate set so the pin is meaningful; only
+    # must_take_courses receives the hard must-take flag.
+    explicit_codes = [*raw_codes, *required, *pin_by_code]
+    try:
+        requested, _ = validate_draft_selection(int(student_id), explicit_codes, {})
+    except ValueError as exc:
+        failure = {
+            "course_code": "",
+            "section_label": "",
+            "reason": str(exc),
+        }
+        return {
+            "ok": False,
+            "error": str(exc),
+            "must_take_courses": required,
+            "pinned_sections": public_pins,
+            "constraints_satisfied": False,
+            "constraint_failures": [failure],
+            "tool": "build_timetable_proposal",
+        }
+
+    try:
+        resolved_pins = resolve_section_label_pins(
+            int(student_id),
+            requested,
+            tuple(requested_pins),
+        )
+    except SectionPinResolutionError as exc:
+        return {
+            "ok": False,
+            "error": exc.reason,
+            "must_take_courses": required,
+            "pinned_sections": public_pins,
+            "constraints_satisfied": False,
+            "constraint_failures": [exc.as_failure()],
+            "tool": "build_timetable_proposal",
+        }
+    # Echo the canonical labels actually resolved from the current global
+    # snapshot.  Internal ids remain below this boundary.
+    public_pins = [
+        {"course_code": pin.course_code, "section_label": pin.section_label}
+        for pin in resolved_pins
+    ]
+
+    program = str(
+        Student.objects.filter(student_id=student_id).values_list("program", flat=True).first()
+        or ""
+    ).strip()
+    permitted = permitted_course_codes(program)
+    raw_recommended = [
+        normalize_code(code)
+        for code in (recommend_next_courses(int(student_id), int(year), int(term)) or [])
+    ]
+    raw_recommended = [code for code in raw_recommended if code and code in permitted]
+    try:
+        academic_state = build_student_academic_state(int(student_id), str(year), str(term))
+    except AcademicStateUnavailable:
+        academic_state = None
+    registered_equivalents = (
+        set(academic_state.registered_or_equivalent_course_codes)
+        if academic_state is not None
+        else set()
+    )
+    expected_equivalents = (
+        set(academic_state.expected_or_equivalent_course_codes)
+        if academic_state is not None
+        else set()
+    )
+    recommended_suppressed_registered = [
+        code for code in raw_recommended if code in registered_equivalents
+    ]
+    recommended_suppressed_expected = [
+        code
+        for code in raw_recommended
+        if code not in registered_equivalents and code in expected_equivalents
+    ]
+    recommended = [
+        code
+        for code in raw_recommended
+        if code not in registered_equivalents and code not in expected_equivalents
+    ]
+
+    baseline = get_student_term_baseline(
+        int(student_id), str(year), str(term), snapshot=Snapshot.EFFECTIVE
+    )
+    baseline_kind = _timetable_baseline_kind(baseline)
+    if baseline_kind == "MIXED_REVIEW_REQUIRED":
+        return _mixed_timetable_error(
+            tool="build_timetable_proposal",
+            academic_year=year,
+            term=term,
+        )
+    baseline_section_rows = baseline_sections(baseline)
+    held_codes = [normalize_code(row.get("course_code") or "") for row in baseline_section_rows]
+    resolved_pin_by_code = {pin.course_code: pin for pin in resolved_pins}
+    if mode == "around_current":
+        held_labels_by_code: dict[str, set[str]] = {}
+        for row in baseline_section_rows:
+            code = normalize_code(row.get("course_code") or "")
+            if not code:
+                continue
+            held_labels_by_code.setdefault(code, set()).add(
+                str(row.get("section") or "").strip().upper()
+            )
+        for code, pin in resolved_pin_by_code.items():
+            held_labels = held_labels_by_code.get(code)
+            if held_labels and held_labels != {pin.section_label}:
+                failure = {
+                    "course_code": code,
+                    "section_label": pin.section_label,
+                    "reason": (
+                        f"{code} is retained in section "
+                        f"{', '.join(sorted(label for label in held_labels if label)) or '(blank)'}; "
+                        f"section {pin.section_label} cannot be pinned in around-current mode. "
+                        "Use a from-scratch proposal to compare another section. Nothing was changed."
+                    ),
+                }
+                return {
+                    "ok": False,
+                    "error": failure["reason"],
+                    "tool": "build_timetable_proposal",
+                    "planning_term": f"{year}/{term}",
+                    "mode": mode,
+                    "baseline_kind": baseline_kind,
+                    "must_take_courses": required,
+                    "pinned_sections": public_pins,
+                    "constraints_satisfied": False,
+                    "constraint_failures": [failure],
+                }
+    if mode == "around_current":
+        planned_codes = [
+            code
+            for code in dict.fromkeys(requested + recommended)
+            if code and code not in held_codes
+        ]
+    else:
+        # A fresh arrangement keeps the current COURSES as candidates but is free
+        # to choose different sections for them. Nothing in the database changes.
+        planned_codes = [
+            code for code in dict.fromkeys(held_codes + requested + recommended) if code
+        ]
+
+    credits = {
+        normalize_code(row["course_code"]): int(row["credit_hours"] or 0)
+        for row in ProgrammeRequirement.objects.filter(program__iexact=program).values(
+            "course_code", "credit_hours"
+        )
+    }
+    baseline_credits = sum(
+        credits.get(normalize_code(row.get("course_code") or ""), DEFAULT_CREDITS)
+        for row in baseline_section_rows
+    )
+
+    policy_cap = credit_ceiling(int(term))
+    raw_cap = args.get("max_credits")
+    try:
+        requested_cap = int(raw_cap) if raw_cap not in (None, "") else policy_cap
+    except (TypeError, ValueError):
+        return {
+            "ok": False,
+            "error": "max_credits must be an integer.",
+            "tool": "build_timetable_proposal",
+        }
+    if requested_cap <= 0:
+        return {
+            "ok": False,
+            "error": "max_credits must be greater than zero.",
+            "tool": "build_timetable_proposal",
+        }
+    cap = min(requested_cap, policy_cap)
+
+    raw_target = args.get("target_credits")
+    if isinstance(raw_target, bool):
+        return {
+            "ok": False,
+            "error": "target_credits must be an integer.",
+            "tool": "build_timetable_proposal",
+        }
+    try:
+        target_credits = int(raw_target) if raw_target not in (None, "") else None
+    except (TypeError, ValueError):
+        return {
+            "ok": False,
+            "error": "target_credits must be an integer.",
+            "tool": "build_timetable_proposal",
+        }
+    if target_credits is not None and target_credits <= 0:
+        return {
+            "ok": False,
+            "error": "target_credits must be greater than zero.",
+            "tool": "build_timetable_proposal",
+        }
+
+    target_credit_status = "NOT_REQUESTED"
+    target_failure_reason = ""
+    if target_credits is not None:
+        target_credit_status = "PENDING"
+        if target_credits > cap:
+            target_credit_status = "TARGET_EXCEEDS_EFFECTIVE_MAX"
+            target_failure_reason = (
+                f"The exact {target_credits}-credit target exceeds the effective "
+                f"{cap}-credit maximum. The target was not clamped."
+            )
+        elif mode == "around_current" and baseline_credits > target_credits:
+            target_credit_status = "RETAINED_BASELINE_EXCEEDS_TARGET"
+            target_failure_reason = (
+                f"The retained baseline already has {baseline_credits} credits, above "
+                f"the exact {target_credits}-credit target. Around-current mode cannot "
+                "remove retained courses."
+            )
+
+    if target_failure_reason:
+        # This contradiction is already proven. Do not spend a bounded solver
+        # pass or silently clamp an exact target into a different request.
+        result: dict[str, Any] = {
+            "alternatives": [],
+            "unplaced": [],
+            "constraint_failures": [],
+            "generated": 0,
+        }
+    else:
+        result = build_student_options(
+            PlannerRequest(
+                student_id=int(student_id),
+                year=int(year),
+                term=int(term),
+                must_include=tuple(planned_codes),
+                required_courses=tuple(required),
+                keep_current_sections=mode == "around_current",
+                max_credits=cap,
+                target_credits=target_credits,
+                include_recommendations=False,
+                fixed_sections=tuple(
+                    (pin.course_code, pin.term_section_id) for pin in resolved_pins
+                ),
+                require_complete_meetings=True,
+            )
+        )
+
+    required_set = set(required)
+    raw_result_alternatives = list(result.get("alternatives") or [])
+
+    def _alternative_honours_constraints(alternative: dict[str, Any]) -> bool:
+        sections_by_code: dict[str, set[str]] = {}
+        for row in alternative.get("courses") or []:
+            code = normalize_code(row.get("course_code") or "")
+            if not code:
+                continue
+            sections_by_code.setdefault(code, set()).add(
+                str(row.get("section") or "").strip().upper()
+            )
+        if not required_set.issubset(sections_by_code):
+            return False
+        for code, label in pin_by_code.items():
+            selected_labels = sections_by_code.get(code)
+            # Pin-only courses remain optional, but any selected instance must be
+            # the exact requested section.
+            if selected_labels is not None and selected_labels != {label}:
+                return False
+        if target_credits is not None:
+            try:
+                alternative_credits = int(alternative.get("credit_hours"))
+            except (TypeError, ValueError):
+                return False
+            if alternative_credits != target_credits:
+                return False
+        return True
+
+    valid_result_alternatives = [
+        alternative
+        for alternative in raw_result_alternatives
+        if _alternative_honours_constraints(alternative)
+    ]
+
+    constraint_failures: list[dict[str, str]] = []
+
+    def _append_constraint_failure(code: str, reason: str) -> None:
+        normalized = normalize_code(code)
+        failure = {
+            "course_code": normalized,
+            "section_label": pin_by_code.get(normalized, ""),
+            "reason": str(reason or "A required timetable constraint could not be satisfied."),
+        }
+        identity = (failure["course_code"], failure["section_label"])
+        if any(
+            (row["course_code"], row["section_label"]) == identity for row in constraint_failures
+        ):
+            return
+        constraint_failures.append(failure)
+
+    if target_failure_reason:
+        _append_constraint_failure("", target_failure_reason)
+
+    if required_set and not valid_result_alternatives:
+        unplaced_by_code = {
+            normalize_code(row.get("course_code") or ""): str(row.get("reason") or "")
+            for row in (result.get("unplaced") or [])
+            if normalize_code(row.get("course_code") or "")
+        }
+        for row in result.get("constraint_failures") or []:
+            code = normalize_code(row.get("course_code") or "")
+            if code in required_set:
+                _append_constraint_failure(code, str(row.get("reason") or ""))
+        for code in sorted(required_set):
+            _append_constraint_failure(
+                code,
+                unplaced_by_code.get(code)
+                or "No valid timetable satisfies this required course under the current constraints.",
+            )
+
+    if target_credits is not None and not valid_result_alternatives:
+        if not target_failure_reason:
+            _append_constraint_failure(
+                "",
+                (
+                    "The bounded Planner A1-C3 search did not find an alternative "
+                    f"with exactly {target_credits} total credits under the current "
+                    "recorded sections and constraints. A lower-credit timetable is "
+                    "not presented as fulfillment of the exact target."
+                ),
+            )
+
+    all_codes = set(held_codes) | set(planned_codes)
+    for alternative in valid_result_alternatives:
+        all_codes.update(
+            normalize_code(row.get("course_code") or "") for row in alternative.get("courses") or []
+        )
+    names = _course_names({code for code in all_codes if code})
+
+    baseline_safe = [
+        {
+            "course_code": row.get("course_code", ""),
+            "course_name": row.get("course_name") or names.get(row.get("course_code", ""), ""),
+            "section": row.get("section", ""),
+            "credits": credits.get(normalize_code(row.get("course_code") or ""), DEFAULT_CREDITS),
+            "meetings": list(row.get("meetings") or []),
+        }
+        for row in baseline_section_rows
+    ]
+
+    if mode == "around_current" and baseline_credits > cap:
+        _append_constraint_failure(
+            "",
+            (
+                f"The retained baseline has {baseline_credits} credits, which exceeds "
+                f"the effective maximum of {cap}. Around-current mode cannot remove "
+                "registered or expected-plan courses."
+            ),
+        )
+
+    constraints_satisfied = not constraint_failures
+    target_credits_satisfied = (
+        target_credits is not None
+        and bool(valid_result_alternatives)
+        and all(
+            int(alternative.get("credit_hours") or 0) == target_credits
+            for alternative in valid_result_alternatives
+        )
+    )
+    if target_credits is not None and target_credit_status == "PENDING":
+        target_credit_status = "SATISFIED" if target_credits_satisfied else "NO_EXACT_ALTERNATIVE"
+    no_additional_courses = mode == "around_current" and not planned_codes and constraints_satisfied
+    if no_additional_courses or not constraints_satisfied:
+        # The shared planner deliberately treats a retained baseline as one safe
+        # fallback alternative.  In chat, however, that baseline already has its
+        # own section and there is no target coverage to compare.  Showing it a
+        # second time creates a fake 5/5 "proposal" and used to double both the
+        # course and credit totals.  A hard-constraint failure likewise cannot be
+        # presented as a valid alternative, even when the shared solver returned
+        # a best-effort schedule.
+        valid_result_alternatives = []
+
+    alternatives = []
+    for index, alternative in enumerate(valid_result_alternatives, start=1):
+        raw_course_rows = [
+            row for row in (alternative.get("courses") or []) if isinstance(row, dict)
+        ]
+        has_source_metadata = any("source" in row for row in raw_course_rows)
+        visible_course_rows = (
+            [row for row in raw_course_rows if row.get("source") != "current"]
+            if mode == "around_current" and has_source_metadata
+            else raw_course_rows
+        )
+        courses = [
+            {
+                "course_code": str(row.get("course_code") or ""),
+                "course_name": names.get(str(row.get("course_code") or ""), ""),
+                "section": str(row.get("section") or ""),
+                "credits": int(row.get("credits") or DEFAULT_CREDITS),
+            }
+            for row in visible_course_rows
+        ]
+        raw_meeting_rows = [
+            row for row in (alternative.get("meetings") or []) if isinstance(row, dict)
+        ]
+        visible_meeting_rows = (
+            [row for row in raw_meeting_rows if row.get("source") != "current"]
+            if mode == "around_current" and has_source_metadata
+            else raw_meeting_rows
+        )
+        meetings = [
+            {
+                "course_code": str(row.get("course_code") or ""),
+                "course_name": names.get(str(row.get("course_code") or ""), ""),
+                "section": str(row.get("section") or ""),
+                "day": str(row.get("day") or ""),
+                "start": str(row.get("start") or ""),
+                "end": str(row.get("end") or ""),
+            }
+            for row in visible_meeting_rows
+        ]
+        raw_credit_hours = int(alternative.get("credit_hours") or 0)
+        if mode == "around_current" and has_source_metadata:
+            proposed_credits = max(0, raw_credit_hours - baseline_credits)
+            total_credit_hours = raw_credit_hours
+            held_course_count = len({code for code in held_codes if code})
+            scheduled_courses = max(
+                0, int(alternative.get("scheduled_courses") or 0) - held_course_count
+            )
+            target_courses = max(0, int(alternative.get("target_courses") or 0) - held_course_count)
+            course_count = int(alternative.get("course_count") or 0)
+        else:
+            proposed_credits = raw_credit_hours
+            total_credit_hours = proposed_credits + (
+                baseline_credits if mode == "around_current" else 0
+            )
+            scheduled_courses = int(
+                alternative.get("scheduled_courses")
+                if alternative.get("scheduled_courses") is not None
+                else len(courses)
+            )
+            target_courses = int(
+                alternative.get("target_courses")
+                if alternative.get("target_courses") is not None
+                else len(planned_codes)
+            )
+            course_count = len(courses) + (len(baseline_safe) if mode == "around_current" else 0)
+        planner_options = [
+            str(name).strip().upper()
+            for name in alternative.get("planner_options") or []
+            if str(name).strip()
+        ]
+        alternative_unplaced = [
+            {
+                "course_code": str(row.get("course_code") or ""),
+                "course_name": names.get(str(row.get("course_code") or ""), ""),
+                "reason_code": str(row.get("reason_code") or ""),
+                "reason": str(row.get("reason") or ""),
+            }
+            for row in alternative.get("unplaced") or []
+        ]
+        alternatives.append(
+            {
+                "option": index,
+                "planner_options": planner_options,
+                "courses": courses,
+                "meetings": meetings,
+                "scheduled_courses": scheduled_courses,
+                "target_courses": target_courses,
+                "unplaced_courses": alternative_unplaced,
+                "course_count": course_count,
+                "proposed_credit_hours": proposed_credits,
+                "total_credit_hours": total_credit_hours,
+                "days_on_campus": int(alternative.get("days_on_campus") or 0),
+                "days": list(alternative.get("days") or []),
+                "earliest_start": alternative.get("earliest_start"),
+                "latest_end": alternative.get("latest_end"),
+            }
+        )
+
+    unplaced = [
+        {
+            "course_code": str(row.get("course_code") or ""),
+            "course_name": names.get(str(row.get("course_code") or ""), ""),
+            "reason_code": str(row.get("reason_code") or ""),
+            "reason": str(row.get("reason") or ""),
+        }
+        for row in result.get("unplaced") or []
+    ]
+    return {
+        "ok": True,
+        "tool": "build_timetable_proposal",
+        "planning_term": f"{year}/{term}",
+        "mode": mode,
+        "baseline_kind": baseline_kind,
+        "student_requested_courses": requested,
+        "system_recommended_courses": recommended,
+        "system_recommendations_suppressed_registered": (recommended_suppressed_registered),
+        "system_recommendations_suppressed_expected": recommended_suppressed_expected,
+        "must_take_courses": required,
+        "pinned_sections": public_pins,
+        "status": (
+            "CONSTRAINTS_UNSATISFIED"
+            if not constraints_satisfied
+            else ("NO_ADDITIONAL_COURSES" if no_additional_courses else "PROPOSALS_GENERATED")
+        ),
+        "constraints_satisfied": constraints_satisfied,
+        "constraint_failures": constraint_failures,
+        "target_credits": target_credits,
+        "target_credits_satisfied": target_credits_satisfied,
+        "target_credit_status": target_credit_status,
+        "baseline_sections": baseline_safe,
+        "baseline_credit_hours": baseline_credits,
+        # Compatibility fields remain truthful.  They are populated only when
+        # provenance establishes registrar evidence; expected-plan data has its
+        # own fields and must never arrive under a name containing "current".
+        "current_sections": baseline_safe if baseline_kind == "REGISTERED" else [],
+        "current_credit_hours": baseline_credits if baseline_kind == "REGISTERED" else 0,
+        "expected_plan_sections": (baseline_safe if baseline_kind == "EXPECTED_PLAN" else []),
+        "expected_plan_credit_hours": (baseline_credits if baseline_kind == "EXPECTED_PLAN" else 0),
+        "credit_ceiling": cap,
+        "alternatives": alternatives,
+        "unplaced_courses": unplaced,
+        # With no target courses the solver did not fail to fill the remaining
+        # credit ceiling: there was simply nothing to schedule. Keep that state
+        # explicit so neither prose nor UI invents an "18 of 19" coverage claim.
+        "no_additional_courses": no_additional_courses,
+        # The Planner always attempts A1-A3, B1-B3 and C1-C3. Identical section
+        # sets are collapsed for chat readability, while their exact Planner
+        # names remain on each distinct alternative above.
+        "alternatives_generated": (
+            0 if no_additional_courses else int(result.get("generated") or len(alternatives))
+        ),
+        "distinct_alternatives": len(alternatives),
+        "search": {
+            "bounded": True,
+            "planner_methods": ["A", "B", "C"],
+            "alternatives_per_method": 3,
+            "exact_target_enforced": target_credits is not None,
+        },
+        "registration_action": "STUDENT_MANUAL_PORTAL_ONLY",
+        "can_save": False,
+        "can_register": False,
+        "note": (
+            "These are clash-checked proposals from the sections on file, not live seat "
+            "availability and not registration. baseline_kind identifies whether the stored "
+            "baseline is REGISTERED or EXPECTED_PLAN; expected rows must never be called "
+            "registered/current. around_current keeps baseline_sections fixed and alternatives "
+            "list only the proposed additions. from_scratch "
+            "rebuilds the whole candidate course set. must_take_courses and pinned_sections "
+            "are the exact hard constraints used for this build. If constraints_satisfied is "
+            "false, explain constraint_failures and do not present a partial timetable as "
+            "valid. target_credits is an exact total for the complete proposal, distinct "
+            "from the credit_ceiling; when requested, every valid alternative has that exact "
+            "total. target_credit_status is closed and NO_EXACT_ALTERNATIVE is only a bounded "
+            "A1-C3 result, not proof about schedules outside this recorded candidate search. "
+            "planner_options are the exact A1-C3 "
+            "identities emitted by the Planner; multiple names on one alternative mean those "
+            "generator runs produced the same timetable. Name each distinct alternative in "
+            "prose with those identities and coverage. The interface renders every actual "
+            "section, day and time in a structured card, so do not duplicate all rows in prose. "
+            "Use each option's "
+            "own unplaced_courses. OMITTED_IN_THIS_VARIANT means another Planner option did "
+            "place that course, so tell the student to compare options; it does not mean the "
+            "course or its sections are absent, and it does not prove that no complete "
+            "clash-free arrangement exists. The finite A1-C3 output is not an exhaustive "
+            "search of every possible section combination. Use the natural-language reason in the answer "
+            "and do not print internal reason_code labels. State the Planner identities "
+            "and scheduled/target coverage for every returned alternative, including one that "
+            "placed zero of its target additions. If no_additional_courses is true, the Planner "
+            "had no target course to schedule: say the stored baseline is retained with no "
+            "proposed additions, using baseline_kind to call it registered or expected. Do "
+            "not invent Planner identities or describe baseline credits versus the credit "
+            "ceiling as coverage. Do not call an omission a clash unless its returned reason says "
+            "that; NOT_ON_FILE means only that no section is recorded here. Never say "
+            "timetable access is unavailable."
+        ),
+    }
+
+
+# ── V2.1 compound planning capabilities ─────────────────────────────────
+
+# These tools deliberately compose the existing academic, graduation, and
+# timetable engines on the server.  The model chooses an objective and hard
+# constraints; it never has to join independent evidence rows or invent a score.
+# Every status below is a closed, typed outcome.  An empty positive-result list
+# therefore remains answerable without turning into a generic model apology.
+_MAX_COMPOUND_CANDIDATES = 20
+_MAX_COMPOUND_OUTPUT_ROWS = 10
+_MAX_COMPOUND_PINS = 10
+_COMPOUND_LIMITATIONS = [
+    "All results are read-only suggestions; no course is registered, dropped, replaced, or saved.",
+    (
+        "Recorded sections prove only fit against the stored timetable snapshot; they do "
+        "not prove a live offering, available seat, capacity, or registration permission."
+    ),
+    (
+        "Graduation scenarios assume planned courses are passed on the first attempt and "
+        "cannot guarantee future offerings or a graduation date."
+    ),
+]
+
+
+def _compound_course_codes(value: Any) -> tuple[list[str], str | None]:
+    """Normalise one bounded model-supplied course-code list."""
+    if value in (None, ""):
+        return [], None
+    if isinstance(value, str):
+        value = [value]
+    if not isinstance(value, list):
+        return [], "course_codes must be a list."
+    codes: list[str] = []
+    for raw in value:
+        code = normalize_code(raw)
+        if not code:
+            return [], "Every course code must be non-empty."
+        if code not in codes:
+            codes.append(code)
+    if len(codes) > _MAX_COMPOUND_CANDIDATES:
+        return [], f"At most {_MAX_COMPOUND_CANDIDATES} course codes may be evaluated."
+    return codes, None
+
+
+def _compound_pinned_sections(
+    value: Any,
+) -> tuple[list[dict[str, str]], str | None]:
+    """Validate exact retained-baseline section pins for a compound search."""
+
+    if value in (None, ""):
+        return [], None
+    if not isinstance(value, list):
+        return [], "pinned_sections must be a list."
+    pins: list[dict[str, str]] = []
+    labels_by_code: dict[str, str] = {}
+    for raw in value:
+        if not isinstance(raw, dict) or set(raw) != {"course_code", "section_label"}:
+            return [], ("Each pinned section must contain exactly course_code and section_label.")
+        code = normalize_code(raw.get("course_code") or "")
+        label = str(raw.get("section_label") or "").strip().upper()
+        if not code or not label:
+            return [], "Every pinned section requires a course code and section label."
+        previous = labels_by_code.get(code)
+        if previous is not None and previous != label:
+            return [], f"Only one exact section may be pinned for {code}."
+        labels_by_code[code] = label
+        pin = {"course_code": code, "section_label": label}
+        if pin not in pins:
+            pins.append(pin)
+    if len(pins) > _MAX_COMPOUND_PINS:
+        return [], f"At most {_MAX_COMPOUND_PINS} exact sections may be pinned."
+    return pins, None
+
+
+def _compound_credit_cap(
+    args: dict[str, Any], term: int
+) -> tuple[int | None, int | None, str | None]:
+    """Return (effective cap, explicitly requested cap, error)."""
+    from core.services.planner_drafts import credit_ceiling
+
+    policy_cap = int(credit_ceiling(int(term)))
+    raw = args.get("max_credits")
+    if raw in (None, ""):
+        return policy_cap, None, None
+    try:
+        requested = int(raw)
+    except (TypeError, ValueError):
+        return None, None, "max_credits must be an integer."
+    if requested <= 0:
+        return None, requested, "max_credits must be greater than zero."
+    return min(requested, policy_cap), requested, None
+
+
+def _compound_graduation_term(
+    planning_year: int,
+    planning_term: int,
+    ctx: dict[str, Any],
+) -> tuple[int, int] | None:
+    """Return the server-owned site-current term used by graduation scenarios.
+
+    The section catalogue may intentionally be loaded for a planning/import
+    term that differs from the site's literal current term. Compound tools must
+    never silently reuse that planning clock for a registered-baseline forecast.
+    Older internal callers without the explicit keys retain their single-clock
+    behaviour.
+    """
+
+    raw_year = ctx.get("graduation_academic_year", planning_year)
+    raw_term = ctx.get("graduation_term", planning_term)
+    try:
+        year = int(raw_year)
+        term = int(raw_term)
+    except (TypeError, ValueError):
+        return None
+    if year <= 0 or term not in {1, 2, 3}:
+        return None
+    return year, term
+
+
+def _compound_incomplete_registered_codes(
+    student_id: int,
+    academic_year: int,
+    term: int,
+) -> list[str]:
+    """Registered courses whose section or complete meeting facts are missing."""
+
+    from core.services.student_sections import (
+        append_unmapped_studying_courses,
+        get_student_term_baseline,
+    )
+    from core.services.timetable_snapshots import Snapshot
+
+    mapped = get_student_term_baseline(
+        int(student_id),
+        str(academic_year),
+        str(term),
+        snapshot=Snapshot.REGISTERED,
+    )
+    complete = append_unmapped_studying_courses(
+        int(student_id),
+        [dict(row) for row in mapped],
+    )
+    incomplete: set[str] = set()
+    for row in complete:
+        code = normalize_code(row.get("course_key") or row.get("course_code") or "")
+        if not code:
+            continue
+        start = _compound_clock_minutes(row.get("start_time"))
+        end = _compound_clock_minutes(row.get("end_time"))
+        if (
+            str(row.get("source") or "") == "fallback_studying"
+            or not str(row.get("section") or "").strip()
+            or not str(row.get("day") or "").strip()
+            or start is None
+            or end is None
+            or end <= start
+        ):
+            incomplete.add(code)
+    return sorted(incomplete)
+
+
+def _public_graduation_delta(result: dict[str, Any] | None) -> dict[str, Any]:
+    """Project one explicit graduation scenario into a compact typed delta."""
+    raw = result or {}
+    what_if = raw.get("what_if") or {}
+    comparison = what_if.get("comparison") or {}
+    scenario = what_if.get("scenario") or {}
+    if not what_if:
+        return {
+            "status": "NOT_DETERMINABLE",
+            "timing_effect": "NOT_DETERMINABLE",
+            "reason_code": "GRADUATION_BASELINE_UNAVAILABLE",
+        }
+    if what_if.get("valid") is not True:
+        return {
+            "status": "INVALID_SCENARIO",
+            "timing_effect": "NOT_DETERMINABLE",
+            "validation_errors": [
+                {
+                    "kind": str(row.get("kind") or "INVALID_SCENARIO"),
+                    "course_code": normalize_code(row.get("course_code") or ""),
+                    "missing_prerequisites": [
+                        normalize_code(code)
+                        for code in row.get("missing_prerequisites") or []
+                        if normalize_code(code)
+                    ],
+                }
+                for row in what_if.get("validation_errors") or []
+                if isinstance(row, dict)
+            ][:20],
+        }
+    if not comparison:
+        return {
+            "status": "NOT_DETERMINABLE",
+            "timing_effect": "NOT_DETERMINABLE",
+            "reason_code": "GRADUATION_COMPARISON_UNAVAILABLE",
+        }
+
+    def blocker_codes(key: str) -> list[str]:
+        return sorted(
+            {
+                normalize_code(row.get("code") or "")
+                for row in comparison.get(key) or []
+                if isinstance(row, dict) and normalize_code(row.get("code") or "")
+            }
+        )[:50]
+
+    return {
+        "status": "EVALUATED",
+        "simulation_completed": scenario.get("simulation_completed") is True,
+        "timing_effect": str(comparison.get("timing_effect") or "NOT_DETERMINABLE"),
+        "term_difference": comparison.get("term_difference"),
+        "terms_saved": comparison.get("terms_saved"),
+        "exact_timing_comparison_available": (
+            comparison.get("exact_timing_comparison_available") is True
+        ),
+        "estimated_additional_terms": scenario.get("estimated_additional_terms"),
+        "lower_bound_additional_terms": scenario.get("lower_bound_additional_terms"),
+        "plan_changed": comparison.get("plan_changed") is True,
+        "blockers_resolved": blocker_codes("blockers_resolved"),
+        "blockers_improved": blocker_codes("blockers_improved"),
+        "blockers_introduced": blocker_codes("blockers_introduced"),
+        "deferred_courses": [
+            {
+                "course_code": normalize_code(row.get("code") or ""),
+                "future_sequence": row.get("future_sequence"),
+                "academic_year": row.get("academic_year"),
+                "term": row.get("term"),
+                "unresolved": row.get("unresolved") is True,
+            }
+            for row in comparison.get("deferred_courses") or []
+            if isinstance(row, dict) and normalize_code(row.get("code") or "")
+        ][:20],
+        "affected_future_course_codes": [
+            code
+            for code in dict.fromkeys(
+                normalize_code(row.get("code") or "")
+                for row in comparison.get("term_plan_changes") or []
+                if isinstance(row, dict)
+            )
+            if code
+        ][:50],
+    }
+
+
+def _compound_timetable_candidate(
+    candidate_code: str,
+    proposal: dict[str, Any],
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    """Return public feasibility evidence and matching bounded blockers."""
+    sections: dict[str, dict[str, Any]] = {}
+    for alternative in proposal.get("alternatives") or []:
+        if not isinstance(alternative, dict):
+            continue
+        meetings_by_section: dict[str, list[dict[str, Any]]] = {}
+        for meeting in alternative.get("meetings") or []:
+            if not isinstance(meeting, dict):
+                continue
+            if normalize_code(meeting.get("course_code") or "") != candidate_code:
+                continue
+            label = str(meeting.get("section") or "").strip().upper()
+            meetings_by_section.setdefault(label, []).append(
+                {
+                    "day": str(meeting.get("day") or ""),
+                    "start": str(meeting.get("start") or ""),
+                    "end": str(meeting.get("end") or ""),
+                }
+            )
+        for course in alternative.get("courses") or []:
+            if not isinstance(course, dict):
+                continue
+            if normalize_code(course.get("course_code") or "") != candidate_code:
+                continue
+            label = str(course.get("section") or "").strip().upper()
+            sections.setdefault(
+                label,
+                {
+                    "section": label,
+                    "credit_hours": int(course.get("credits") or 0),
+                    "meetings": meetings_by_section.get(label, []),
+                },
+            )
+
+    blockers: list[dict[str, Any]] = []
+    raw_blockers = [
+        # Prefer the Planner's typed unplaced reason over the generic hard-
+        # constraint summary (for example NOT_ON_FILE instead of the unsafe
+        # phrase "No sections available").
+        *(proposal.get("unplaced_courses") or []),
+        *(proposal.get("constraint_failures") or []),
+    ]
+    for row in raw_blockers:
+        if not isinstance(row, dict):
+            continue
+        code = normalize_code(row.get("course_code") or "")
+        if code not in {"", candidate_code}:
+            continue
+        blocker = {
+            "course_code": code or candidate_code,
+            "reason_code": str(row.get("reason_code") or "CONSTRAINT_NOT_SATISFIED"),
+            "reason": str(row.get("reason") or "The timetable constraint was not satisfied."),
+        }
+        identity = (blocker["course_code"], blocker["reason_code"], blocker["reason"])
+        if not any((b["course_code"], b["reason_code"], b["reason"]) == identity for b in blockers):
+            blockers.append(blocker)
+
+    section_rows = sorted(sections.values(), key=lambda row: row["section"])
+    feasible = (
+        bool(proposal.get("ok"))
+        and bool(proposal.get("constraints_satisfied"))
+        and bool(section_rows)
+    )
+    return (
+        {
+            "status": "FEASIBLE" if feasible else "NOT_FEASIBLE",
+            "baseline_kind": str(proposal.get("baseline_kind") or "NOT_DETERMINABLE"),
+            "credit_ceiling": proposal.get("credit_ceiling"),
+            "clash_free_sections": section_rows[:10],
+            "clash_free_section_count": len(section_rows),
+            "search_is_exhaustive": False,
+        },
+        blockers[:20],
+    )
+
+
+def _exec_recommend_feasible_course_addition(
+    args: dict[str, Any], scope: dict[str, Any], ctx: dict[str, Any]
+) -> dict[str, Any]:
+    """Choose one prerequisite-ready course that fits the recorded timetable.
+
+    This is intentionally a single server-owned join.  A model cannot safely
+    infer that a course in ``my_progress`` also appears in a separately generated
+    timetable, or compare graduation deltas returned on different turns.
+    """
+    from core.services.student_graduation import (
+        REGISTERED_TIMETABLE,
+        build_graduation_what_if,
+    )
+
+    tool = "recommend_feasible_course_addition"
+    student_id, error = _resolve_scoped_student_id(args, scope)
+    if error:
+        return {"ok": False, "tool": tool, "error": error}
+    year, term, error = _ctx_year_term(args, ctx)
+    if error:
+        return {"ok": False, "tool": tool, "error": error}
+
+    objective = str(args.get("objective") or "balanced").strip().lower()
+    supported_objectives = {
+        "balanced",
+        "faster_graduation",
+        "unlock_impact",
+        "timetable_fit",
+    }
+    if objective not in supported_objectives:
+        return {
+            "ok": False,
+            "tool": tool,
+            "error": (
+                "objective must be balanced, faster_graduation, unlock_impact, or timetable_fit."
+            ),
+        }
+    cap, requested_cap, error = _compound_credit_cap(args, int(term))
+    if error:
+        return {"ok": False, "tool": tool, "error": error}
+    assert cap is not None
+    raw_additional_credits = args.get("additional_credit_hours")
+    additional_credit_hours: int | None = None
+    if raw_additional_credits not in (None, ""):
+        try:
+            additional_credit_hours = int(raw_additional_credits)
+        except (TypeError, ValueError):
+            return {
+                "ok": False,
+                "tool": tool,
+                "error": "additional_credit_hours must be an integer.",
+            }
+        if not 1 <= additional_credit_hours <= 12:
+            return {
+                "ok": False,
+                "tool": tool,
+                "error": "additional_credit_hours must be between 1 and 12.",
+            }
+
+    requested_codes, error = _compound_course_codes(args.get("candidate_courses"))
+    if error:
+        return {"ok": False, "tool": tool, "error": error}
+    pinned_sections, error = _compound_pinned_sections(args.get("pinned_sections"))
+    if error:
+        return {"ok": False, "tool": tool, "error": error}
+    pinned_codes = {pin["course_code"] for pin in pinned_sections}
+    candidate_source = "STUDENT_FILTER" if requested_codes else "ALL_VERIFIED_OPEN_COURSES"
+    constraints = {
+        "addition_count": 1,
+        "keep_baseline_sections": True,
+        "pinned_sections": pinned_sections,
+        "requested_max_credits": requested_cap,
+        "effective_max_credits": cap,
+        "additional_credit_hours": additional_credit_hours,
+    }
+
+    def indeterminate_preflight(
+        reason_code: str,
+        *,
+        baseline_kind: str = "NOT_EVALUATED",
+        excluded_codes: list[str] | None = None,
+    ) -> dict[str, Any]:
+        excluded = [
+            {
+                "course_code": code,
+                "stage": "REGISTERED_TIMETABLE_BASELINE",
+                "outcome": "NOT_DETERMINABLE",
+                "reason_code": reason_code,
+                "reason": (
+                    "The registered course has no exact section/meeting mapping, so "
+                    "a clash-free addition cannot be certified."
+                ),
+            }
+            for code in (excluded_codes or [])
+        ]
+        return {
+            "ok": True,
+            "tool": tool,
+            "status": "NOT_DETERMINABLE",
+            "outcome": "FEASIBLE_SINGLE_COURSE_ADDITION",
+            "objective": objective,
+            "planning_term": f"{year}/{term}",
+            "baseline_kind": baseline_kind,
+            "baseline_credit_hours": None,
+            "reason_code": reason_code,
+            "constraints": constraints,
+            "candidate_source": candidate_source,
+            "recommendation_scope": "EVALUATED_CANDIDATES_ONLY",
+            "ranking_basis": {
+                "objective": objective,
+                "method": "DETERMINISTIC_LEXICOGRAPHIC",
+                "no_cross_dimension_weighted_score": True,
+            },
+            "search": {
+                "candidates_discovered": len(requested_codes),
+                "candidates_evaluated": 0,
+                "feasible_candidates_found": 0,
+                "objective_matches_found": 0,
+                "search_truncated": False,
+                "candidate_limit": _MAX_COMPOUND_CANDIDATES,
+                "timetable_search_exhaustive": False,
+            },
+            "recommended_addition": None,
+            "ranked_feasible_additions": [],
+            "excluded_candidates": excluded,
+            "excluded_candidates_count": len(excluded),
+            "limitations": list(_COMPOUND_LIMITATIONS),
+            "registration_action": "STUDENT_MANUAL_PORTAL_ONLY",
+            "can_save": False,
+            "can_register": False,
+        }
+
+    if not _section_snapshot_matches_requested_term(int(year), int(term), ctx):
+        return indeterminate_preflight("SECTION_SNAPSHOT_TERM_MISMATCH")
+    graduation_term = _compound_graduation_term(int(year), int(term), ctx)
+    if graduation_term is None:
+        return indeterminate_preflight("GRADUATION_CURRENT_TERM_UNAVAILABLE")
+    incomplete_registered = (
+        _compound_incomplete_registered_codes(int(student_id), int(year), int(term))
+        if graduation_term == (int(year), int(term))
+        else []
+    )
+    if incomplete_registered:
+        return indeterminate_preflight(
+            "REGISTERED_SECTION_MAPPING_INCOMPLETE",
+            baseline_kind="REGISTERED",
+            excluded_codes=incomplete_registered,
+        )
+
+    if pinned_sections:
+        from core.services.student_sections import get_student_term_baseline
+        from core.services.timetable_provenance import baseline_sections
+        from core.services.timetable_snapshots import Snapshot
+
+        retained = get_student_term_baseline(
+            int(student_id), str(year), str(term), snapshot=Snapshot.EFFECTIVE
+        )
+        retained_kind = _timetable_baseline_kind(retained)
+        retained_labels: dict[str, set[str]] = {}
+        for row in baseline_sections(retained):
+            code = normalize_code(row.get("course_code") or "")
+            if code:
+                retained_labels.setdefault(code, set()).add(
+                    str(row.get("section") or "").strip().upper()
+                )
+        mismatched_pins = [
+            pin["course_code"]
+            for pin in pinned_sections
+            if retained_labels.get(pin["course_code"]) != {pin["section_label"]}
+        ]
+        if retained_kind == "MIXED_REVIEW_REQUIRED":
+            return indeterminate_preflight(
+                MIXED_TIMETABLE_SOURCES,
+                baseline_kind=retained_kind,
+                excluded_codes=sorted(pinned_codes),
+            )
+        if mismatched_pins:
+            return indeterminate_preflight(
+                "PIN_NOT_IN_RETAINED_BASELINE",
+                baseline_kind=retained_kind,
+                excluded_codes=sorted(set(mismatched_pins)),
+            )
+
+    progress = _exec_my_progress({}, scope, {**ctx, "academic_year": year, "term": term})
+    recommendations = _exec_recommend_courses(
+        {}, scope, {**ctx, "academic_year": year, "term": term}
+    )
+    impact_by_code = {
+        normalize_code(row.get("code") or ""): row
+        for row in progress.get("unlock_impact_ranking") or []
+        if isinstance(row, dict) and normalize_code(row.get("code") or "")
+    }
+    open_by_code = {
+        normalize_code(row.get("code") or ""): row
+        for row in progress.get("prerequisites_satisfied") or []
+        if isinstance(row, dict) and normalize_code(row.get("code") or "")
+    }
+    recommendation_rows = {
+        normalize_code(row.get("course_code") or ""): row
+        for row in recommendations.get("recommendations") or []
+        if isinstance(row, dict) and normalize_code(row.get("course_code") or "")
+    }
+    recommendation_rank = {code: index + 1 for index, code in enumerate(recommendation_rows)}
+
+    if requested_codes:
+        complete_pool = [code for code in requested_codes if code not in pinned_codes]
+        candidate_source = "STUDENT_FILTER"
+    else:
+        # Official recommendations go first only to decide which rows fit into
+        # the explicit evaluation bound.  The final ranking below does not grant
+        # them an unexplained score bonus.
+        complete_pool = [
+            code
+            for code in dict.fromkeys([*recommendation_rows, *impact_by_code, *open_by_code])
+            if code not in pinned_codes
+        ]
+
+    def known_credit_hours(code: str) -> int | None:
+        raw = (
+            recommendation_rows.get(code, {}).get("credit_hours")
+            if recommendation_rows.get(code, {}).get("credit_hours") is not None
+            else open_by_code.get(code, {}).get("credits")
+        )
+        try:
+            return int(raw) if raw is not None else None
+        except (TypeError, ValueError):
+            return None
+
+    credit_prefilter_exclusions: list[dict[str, Any]] = []
+    bounded_pool: list[str] = []
+    for code in complete_pool:
+        known_credits = known_credit_hours(code)
+        if (
+            additional_credit_hours is not None
+            and known_credits is not None
+            and known_credits != additional_credit_hours
+        ):
+            credit_prefilter_exclusions.append(
+                {
+                    "course_code": code,
+                    "stage": "CREDIT_HOURS",
+                    "outcome": "DOES_NOT_MATCH_CONSTRAINT",
+                    "reason_code": "ADDITIONAL_CREDIT_HOURS_MISMATCH",
+                    "reason": (
+                        f"The course has {known_credits} verified credit hours, not "
+                        f"the requested {additional_credit_hours}."
+                    ),
+                }
+            )
+            continue
+        # Unknown credits remain eligible for bounded verification below.  They
+        # are never assumed to match the student's requested credit value.
+        bounded_pool.append(code)
+
+    candidate_codes = bounded_pool[:_MAX_COMPOUND_CANDIDATES]
+    candidates_discovered = len(complete_pool)
+    search_truncated = len(bounded_pool) > len(candidate_codes)
+
+    feasible_rows: list[dict[str, Any]] = []
+    exclusions: list[dict[str, Any]] = list(credit_prefilter_exclusions)
+    baseline_kind = "NOT_EVALUATED"
+    baseline_credit_hours: int | None = None
+    for code in candidate_codes:
+        eligibility = _exec_why_course_locked(
+            {"course_code": code},
+            scope,
+            {**ctx, "academic_year": year, "term": term},
+        )
+        eligibility_status = str(eligibility.get("status") or "NOT_DETERMINABLE")
+        if eligibility_status != "PREREQUISITES_SATISFIED":
+            exclusions.append(
+                {
+                    "course_code": code,
+                    "stage": "ACADEMIC_ELIGIBILITY",
+                    "outcome": (
+                        "NOT_ELIGIBLE"
+                        if eligibility_status
+                        in {"PREREQUISITE_BLOCKED", "passed", "studying", "EXPECTED_PLAN_ONLY"}
+                        else "NOT_DETERMINABLE"
+                    ),
+                    "reason_code": eligibility_status,
+                    "reason": str(
+                        eligibility.get("explanation")
+                        or eligibility.get("error")
+                        or "Prerequisite readiness could not be verified."
+                    ),
+                }
+            )
+            continue
+
+        proposal = _exec_build_timetable_proposal(
+            {
+                "mode": "around_current",
+                "course_codes": [code],
+                "must_take_courses": [code],
+                "pinned_sections": pinned_sections,
+                "max_credits": cap,
+            },
+            scope,
+            {**ctx, "academic_year": year, "term": term},
+        )
+        baseline_kind = str(proposal.get("baseline_kind") or baseline_kind)
+        if proposal.get("baseline_credit_hours") is not None:
+            baseline_credit_hours = int(proposal.get("baseline_credit_hours") or 0)
+        timetable, blockers = _compound_timetable_candidate(code, proposal)
+        if timetable["status"] != "FEASIBLE":
+            exclusions.append(
+                {
+                    "course_code": code,
+                    "stage": "TIMETABLE",
+                    "outcome": (
+                        "NOT_FEASIBLE_IN_RECORDED_SNAPSHOT"
+                        if proposal.get("ok")
+                        else "NOT_DETERMINABLE"
+                    ),
+                    "reason_code": (
+                        str(blockers[0].get("reason_code"))
+                        if blockers
+                        else "NO_COMPLETE_CLASH_FREE_PROPOSAL"
+                    ),
+                    "reason": (
+                        str(blockers[0].get("reason"))
+                        if blockers
+                        else str(
+                            proposal.get("error")
+                            or "No complete clash-free proposal placed this course."
+                        )
+                    ),
+                }
+            )
+            continue
+
+        candidate_credit_hours = (
+            recommendation_rows.get(code, {}).get("credit_hours")
+            if recommendation_rows.get(code, {}).get("credit_hours") is not None
+            else open_by_code.get(code, {}).get("credits")
+        )
+        if candidate_credit_hours is None and timetable.get("clash_free_sections"):
+            candidate_credit_hours = timetable["clash_free_sections"][0].get("credit_hours")
+        try:
+            candidate_credit_hours = (
+                int(candidate_credit_hours) if candidate_credit_hours is not None else None
+            )
+        except (TypeError, ValueError):
+            candidate_credit_hours = None
+        if additional_credit_hours is not None and candidate_credit_hours is None:
+            exclusions.append(
+                {
+                    "course_code": code,
+                    "stage": "CREDIT_HOURS",
+                    "outcome": "NOT_DETERMINABLE",
+                    "reason_code": "COURSE_CREDITS_UNKNOWN",
+                    "reason": "The course credit value is not verified.",
+                }
+            )
+            continue
+        if (
+            additional_credit_hours is not None
+            and candidate_credit_hours != additional_credit_hours
+        ):
+            exclusions.append(
+                {
+                    "course_code": code,
+                    "stage": "CREDIT_HOURS",
+                    "outcome": "DOES_NOT_MATCH_CONSTRAINT",
+                    "reason_code": "ADDITIONAL_CREDIT_HOURS_MISMATCH",
+                    "reason": (
+                        f"The course has {candidate_credit_hours} verified credit hours, not "
+                        f"the requested {additional_credit_hours}."
+                    ),
+                }
+            )
+            continue
+
+        graduation: dict[str, Any]
+        if baseline_kind == "REGISTERED" and graduation_term == (int(year), int(term)):
+            graduation = _public_graduation_delta(
+                build_graduation_what_if(
+                    int(student_id),
+                    graduation_term[0],
+                    graduation_term[1],
+                    planning_baseline_kind=REGISTERED_TIMETABLE,
+                    add_current_courses=[code],
+                    max_credits_per_term=cap,
+                )
+            )
+            if graduation.get("status") == "INVALID_SCENARIO":
+                exclusions.append(
+                    {
+                        "course_code": code,
+                        "stage": "GRADUATION_SCENARIO",
+                        "outcome": "NOT_ELIGIBLE",
+                        "reason_code": str(
+                            ((graduation.get("validation_errors") or [{}])[0]).get("kind")
+                            or "INVALID_SCENARIO"
+                        ),
+                        "reason": "The verified academic scenario rejected this addition.",
+                    }
+                )
+                continue
+        else:
+            graduation = {
+                "status": "NOT_EVALUATED",
+                "timing_effect": "NOT_DETERMINABLE",
+                "reason_code": (
+                    "PLANNING_TERM_IS_NOT_CURRENT_GRADUATION_TERM"
+                    if baseline_kind == "REGISTERED"
+                    else "REGISTERED_GRADUATION_BASELINE_UNAVAILABLE"
+                ),
+            }
+
+        impact = impact_by_code.get(code) or {}
+        recommendation = recommendation_rows.get(code) or {}
+        feasible_rows.append(
+            {
+                "course_code": code,
+                "course_name": str(
+                    recommendation.get("course_name")
+                    or open_by_code.get(code, {}).get("course_name")
+                    or eligibility.get("course_name")
+                    or ""
+                ),
+                "credit_hours": candidate_credit_hours,
+                "eligibility": {
+                    "status": "PREREQUISITES_SATISFIED",
+                    "requirement_course_code": normalize_code(
+                        eligibility.get("requirement_course_code") or code
+                    ),
+                },
+                "official_recommendation": {
+                    "included": code in recommendation_rows,
+                    "rank": recommendation_rank.get(code),
+                },
+                "unlock_impact": {
+                    "sole_remaining_prerequisite_count": int(
+                        impact.get("sole_remaining_prerequisite_count") or 0
+                    ),
+                    "on_prerequisite_chain_of_count": int(
+                        impact.get("on_prerequisite_chain_of_count") or 0
+                    ),
+                },
+                "timetable": timetable,
+                "graduation": graduation,
+            }
+        )
+
+    graduation_order = {
+        "EARLIER": 0,
+        "FORECAST_COMPLETED": 1,
+        "SAME": 2,
+        "UNRESOLVED_IMPROVEMENT": 3,
+        "NOT_DETERMINABLE": 4,
+        "LATER": 5,
+        "FORECAST_BECAME_UNRESOLVED": 6,
+        "UNRESOLVED_WORSE": 7,
+    }
+
+    def graduation_key(row: dict[str, Any]) -> tuple[Any, ...]:
+        grad = row["graduation"]
+        return (
+            graduation_order.get(str(grad.get("timing_effect") or ""), 9),
+            grad.get("estimated_additional_terms")
+            if isinstance(grad.get("estimated_additional_terms"), int)
+            else 999,
+        )
+
+    def rank_key(row: dict[str, Any]) -> tuple[Any, ...]:
+        unlock = row["unlock_impact"]
+        timetable = row["timetable"]
+        rec_rank = row["official_recommendation"].get("rank")
+        common = (
+            rec_rank if isinstance(rec_rank, int) else 999,
+            row["course_code"],
+        )
+        if objective == "faster_graduation":
+            return (
+                *graduation_key(row),
+                -unlock["sole_remaining_prerequisite_count"],
+                -unlock["on_prerequisite_chain_of_count"],
+                *common,
+            )
+        if objective == "unlock_impact":
+            return (
+                -unlock["sole_remaining_prerequisite_count"],
+                -unlock["on_prerequisite_chain_of_count"],
+                *graduation_key(row),
+                *common,
+            )
+        if objective == "timetable_fit":
+            return (
+                -int(timetable.get("clash_free_section_count") or 0),
+                *graduation_key(row),
+                -unlock["sole_remaining_prerequisite_count"],
+                *common,
+            )
+        return (
+            *graduation_key(row),
+            -unlock["sole_remaining_prerequisite_count"],
+            -unlock["on_prerequisite_chain_of_count"],
+            -int(timetable.get("clash_free_section_count") or 0),
+            *common,
+        )
+
+    feasible_rows.sort(key=rank_key)
+    for index, row in enumerate(feasible_rows, start=1):
+        row["rank"] = index
+
+    objective_rows = feasible_rows
+    if objective == "faster_graduation":
+        objective_rows = [
+            row
+            for row in feasible_rows
+            if str((row.get("graduation") or {}).get("status") or "") == "EVALUATED"
+            and (row.get("graduation") or {}).get("simulation_completed") is True
+            and str((row.get("graduation") or {}).get("timing_effect") or "") == "EARLIER"
+        ]
+
+    baseline_exceeds_cap = isinstance(baseline_credit_hours, int) and baseline_credit_hours > cap
+    if objective_rows:
+        status = "RECOMMENDATION_FOUND"
+    elif baseline_exceeds_cap:
+        status = "CONSTRAINTS_UNSATISFIED"
+    elif not candidate_codes and not credit_prefilter_exclusions:
+        status = "NO_ELIGIBLE_CANDIDATES"
+    elif objective == "faster_graduation" and feasible_rows:
+        evaluated_graduation = any(
+            str((row.get("graduation") or {}).get("status") or "") == "EVALUATED"
+            and (row.get("graduation") or {}).get("simulation_completed") is True
+            for row in feasible_rows
+        )
+        status = (
+            "NO_VERIFIED_FASTER_GRADUATION_IN_BOUNDED_SEARCH"
+            if evaluated_graduation
+            else "NOT_DETERMINABLE"
+        )
+    elif exclusions and all(row.get("outcome") == "NOT_DETERMINABLE" for row in exclusions):
+        status = "NOT_DETERMINABLE"
+    else:
+        status = "NO_FEASIBLE_ADDITION_IN_RECORDED_SNAPSHOT"
+    return {
+        "ok": True,
+        "tool": tool,
+        "status": status,
+        "outcome": "FEASIBLE_SINGLE_COURSE_ADDITION",
+        "objective": objective,
+        "planning_term": f"{year}/{term}",
+        "baseline_kind": baseline_kind,
+        "baseline_credit_hours": baseline_credit_hours,
+        "reason_code": ("BASELINE_EXCEEDS_EFFECTIVE_MAX_CREDITS" if baseline_exceeds_cap else ""),
+        "constraints": constraints,
+        "candidate_source": candidate_source,
+        "recommendation_scope": "EVALUATED_CANDIDATES_ONLY",
+        "ranking_basis": {
+            "objective": objective,
+            "method": "DETERMINISTIC_LEXICOGRAPHIC",
+            "no_cross_dimension_weighted_score": True,
+        },
+        "search": {
+            "candidates_discovered": candidates_discovered,
+            "candidates_evaluated": len(candidate_codes),
+            "feasible_candidates_found": len(feasible_rows),
+            "objective_matches_found": len(objective_rows),
+            "credit_prefiltered_count": len(credit_prefilter_exclusions),
+            "search_truncated": search_truncated,
+            "candidate_limit": _MAX_COMPOUND_CANDIDATES,
+            "timetable_search_exhaustive": False,
+        },
+        "recommended_addition": objective_rows[0] if objective_rows else None,
+        "ranked_feasible_additions": objective_rows[:_MAX_COMPOUND_OUTPUT_ROWS],
+        "excluded_candidates": exclusions[:_MAX_COMPOUND_OUTPUT_ROWS],
+        "excluded_candidates_count": len(exclusions),
+        "limitations": list(_COMPOUND_LIMITATIONS),
+        "registration_action": "STUDENT_MANUAL_PORTAL_ONLY",
+        "can_save": False,
+        "can_register": False,
+    }
+
+
+def _exec_rank_current_course_drop_impact(
+    args: dict[str, Any], scope: dict[str, Any], ctx: dict[str, Any]
+) -> dict[str, Any]:
+    """Rank pure-drop scenarios against one registrar timetable baseline."""
+    from core.models import Student
+    from core.services.course_priority import program_downstream_importance_scores
+    from core.services.student_graduation import (
+        REGISTERED_TIMETABLE,
+        build_graduation_what_if,
+    )
+    from core.services.student_sections import (
+        append_unmapped_studying_courses,
+        get_student_term_baseline,
+    )
+    from core.services.timetable_snapshots import Snapshot
+
+    tool = "rank_current_course_drop_impact"
+    student_id, error = _resolve_scoped_student_id(args, scope)
+    if error:
+        return {"ok": False, "tool": tool, "error": error}
+    year, term, error = _ctx_year_term(args, ctx)
+    if error:
+        return {"ok": False, "tool": tool, "error": error}
+    objective = str(args.get("objective") or "least_graduation_delay").strip().lower()
+    if objective not in {
+        "least_graduation_delay",
+        "lowest_academic_priority",
+        "prerequisite_continuity",
+        "balanced",
+    }:
+        return {
+            "ok": False,
+            "tool": tool,
+            "error": (
+                "objective must be least_graduation_delay, lowest_academic_priority, "
+                "prerequisite_continuity, or balanced."
+            ),
+        }
+    cap, requested_cap, error = _compound_credit_cap(args, int(term))
+    if error:
+        return {"ok": False, "tool": tool, "error": error}
+    assert cap is not None
+    requested_codes, error = _compound_course_codes(args.get("course_codes"))
+    if error:
+        return {"ok": False, "tool": tool, "error": error}
+
+    base_constraints = {
+        "change_kind": "PURE_DROP_ONE_COURSE",
+        "add_courses": [],
+        "requested_max_credits": requested_cap,
+        "effective_max_credits": cap,
+    }
+    base_result: dict[str, Any] = {
+        "ok": True,
+        "tool": tool,
+        "outcome": "CURRENT_COURSE_DROP_IMPACT_RANKING",
+        "objective": objective,
+        "planning_term": f"{year}/{term}",
+        "constraints": base_constraints,
+        "ranking_basis": {
+            "objective": objective,
+            "method": "DETERMINISTIC_LEXICOGRAPHIC",
+            "no_cross_dimension_weighted_score": True,
+        },
+        "registration_action": "STUDENT_MANUAL_PORTAL_ONLY",
+        "can_drop": False,
+        "can_save": False,
+        "limitations": list(_COMPOUND_LIMITATIONS),
+    }
+    graduation_term = _compound_graduation_term(int(year), int(term), ctx)
+    if graduation_term != (int(year), int(term)):
+        return {
+            **base_result,
+            "status": "NOT_DETERMINABLE",
+            "baseline_kind": "NOT_EVALUATED",
+            "reason_code": "PLANNING_TERM_IS_NOT_CURRENT_GRADUATION_TERM",
+            "ranked_drop_impacts": [],
+            "top_ranked_drop_candidate": None,
+            "excluded_courses": [],
+        }
+    if not _section_snapshot_matches_requested_term(int(year), int(term), ctx):
+        return {
+            **base_result,
+            "status": "NOT_DETERMINABLE",
+            "baseline_kind": "NOT_EVALUATED",
+            "reason_code": "SECTION_SNAPSHOT_TERM_MISMATCH",
+            "ranked_drop_impacts": [],
+            "top_ranked_drop_candidate": None,
+            "excluded_courses": [],
+        }
+
+    registered_baseline = get_student_term_baseline(
+        int(student_id), str(year), str(term), snapshot=Snapshot.REGISTERED
+    )
+    # Graduation forecasting already treats an unmapped scraped "studying" row
+    # as registrar evidence. Include the same course here so a drop-ranking does
+    # not silently omit it merely because no exact section mapping exists.
+    registered_baseline = append_unmapped_studying_courses(
+        int(student_id), [dict(row) for row in registered_baseline]
+    )
+    baseline = (
+        registered_baseline
+        if registered_baseline
+        else get_student_term_baseline(
+            int(student_id), str(year), str(term), snapshot=Snapshot.EFFECTIVE
+        )
+    )
+    baseline_kind = _timetable_baseline_kind(baseline)
+    base_result["baseline_kind"] = baseline_kind
+    if baseline_kind == "MIXED_REVIEW_REQUIRED":
+        return {
+            **base_result,
+            "status": "BASELINE_REVIEW_REQUIRED",
+            "reason_code": MIXED_TIMETABLE_SOURCES,
+            "ranked_drop_impacts": [],
+            "top_ranked_drop_candidate": None,
+            "excluded_courses": [],
+        }
+    if baseline_kind != "REGISTERED":
+        return {
+            **base_result,
+            "status": "NO_REGISTERED_CURRENT_COURSES",
+            "reason_code": (
+                "EXPECTED_PLAN_IS_NOT_REGISTRATION"
+                if baseline_kind == "EXPECTED_PLAN"
+                else "NO_REGISTERED_TIMETABLE_BASELINE"
+            ),
+            "ranked_drop_impacts": [],
+            "top_ranked_drop_candidate": None,
+            "excluded_courses": [],
+        }
+
+    current_by_code: dict[str, dict[str, Any]] = {}
+    for raw in baseline:
+        code = normalize_code(raw.get("course_key") or raw.get("course_code") or "")
+        if not code:
+            continue
+        current_by_code.setdefault(
+            code,
+            {
+                "course_code": code,
+                "course_name": str(raw.get("course_name") or ""),
+                "credit_hours": int(raw.get("credits") or 0),
+                "sections": set(),
+            },
+        )
+        label = str(raw.get("section") or "").strip().upper()
+        if label:
+            current_by_code[code]["sections"].add(label)
+
+    if requested_codes:
+        candidate_codes = [code for code in requested_codes if code in current_by_code]
+        excluded = [
+            {
+                "course_code": code,
+                "outcome": "NOT_IN_REGISTERED_CURRENT_TIMETABLE",
+                "reason_code": "NOT_IN_CURRENT_TIMETABLE",
+                "reason": "The course is not in the registered timetable baseline.",
+            }
+            for code in requested_codes
+            if code not in current_by_code
+        ]
+        candidate_source = "STUDENT_FILTER"
+    else:
+        candidate_codes = sorted(current_by_code)
+        excluded = []
+        candidate_source = "ALL_REGISTERED_CURRENT_COURSES"
+
+    program = str(
+        Student.objects.filter(student_id=student_id).values_list("program", flat=True).first()
+        or ""
+    ).strip()
+    downstream_importance = program_downstream_importance_scores(program) if program else {}
+    rows: list[dict[str, Any]] = []
+    for code in candidate_codes:
+        course_evidence = _exec_why_course_locked(
+            {"course_code": code},
+            scope,
+            {**ctx, "academic_year": year, "term": term},
+        )
+        requirement_code = normalize_code(course_evidence.get("requirement_course_code") or code)
+        graduation = _public_graduation_delta(
+            build_graduation_what_if(
+                int(student_id),
+                int(year),
+                int(term),
+                planning_baseline_kind=REGISTERED_TIMETABLE,
+                remove_current_courses=[code],
+                max_credits_per_term=cap,
+            )
+        )
+        if (
+            graduation.get("status") != "EVALUATED"
+            or graduation.get("simulation_completed") is not True
+        ):
+            excluded.append(
+                {
+                    "course_code": code,
+                    "outcome": "NOT_DETERMINABLE",
+                    "reason_code": str(
+                        graduation.get("reason_code")
+                        or (
+                            "GRADUATION_SCENARIO_INCOMPLETE"
+                            if graduation.get("status") == "EVALUATED"
+                            else ""
+                        )
+                        or ((graduation.get("validation_errors") or [{}])[0]).get("kind")
+                        or "GRADUATION_SCENARIO_NOT_DETERMINABLE"
+                    ),
+                    "reason": "The pure-drop graduation scenario could not be completed.",
+                }
+            )
+            continue
+        timing_effect = str(graduation.get("timing_effect") or "NOT_DETERMINABLE")
+        impact_status = {
+            "EARLIER": "NO_DETECTED_DELAY",
+            "FORECAST_COMPLETED": "NO_DETECTED_DELAY",
+            "UNRESOLVED_IMPROVEMENT": "NOT_DETERMINABLE",
+            "SAME": "NO_DETECTED_TERM_DELAY",
+            "LATER": "DELAYED",
+            "FORECAST_BECAME_UNRESOLVED": "FORECAST_WORSE",
+            "UNRESOLVED_WORSE": "FORECAST_WORSE",
+            "NOT_DETERMINABLE": "NOT_DETERMINABLE",
+        }.get(timing_effect, "NOT_DETERMINABLE")
+        current = current_by_code[code]
+        rows.append(
+            {
+                "course_code": code,
+                "course_name": current["course_name"],
+                "credit_hours": current["credit_hours"],
+                "sections": sorted(current["sections"]),
+                "impact_status": impact_status,
+                "academic_priority": {
+                    "requirement_course_code": requirement_code,
+                    "sole_remaining_prerequisite_count": int(
+                        course_evidence.get("sole_remaining_prerequisite_count") or 0
+                    ),
+                    "on_prerequisite_chain_of_count": int(
+                        course_evidence.get("on_prerequisite_chain_of_count") or 0
+                    ),
+                    "weighted_downstream_score": downstream_importance.get(requirement_code),
+                    "weighted_score_method": (
+                        "SUM_INVERSE_DISTANCE"
+                        if downstream_importance.get(requirement_code) is not None
+                        else None
+                    ),
+                },
+                "graduation": graduation,
+                "warning": (
+                    "NO_DETECTED_TERM_DELAY is a scenario result, not proof that dropping "
+                    "the course has no academic consequence. Inspect deferred and affected courses."
+                    if impact_status == "NO_DETECTED_TERM_DELAY"
+                    else ""
+                ),
+            }
+        )
+
+    risk_order = {
+        "NO_DETECTED_DELAY": 0,
+        "NO_DETECTED_TERM_DELAY": 1,
+        "DELAYED": 2,
+        "FORECAST_WORSE": 3,
+        "NOT_DETERMINABLE": 4,
+    }
+
+    def rank_key(row: dict[str, Any]) -> tuple[Any, ...]:
+        graduation = row["graduation"]
+        delay = graduation.get("term_difference")
+        delay_value = max(0, int(delay)) if isinstance(delay, int) else 999
+        blockers = len(graduation.get("blockers_introduced") or [])
+        affected = len(graduation.get("affected_future_course_codes") or [])
+        priority = row["academic_priority"]
+        weighted = priority.get("weighted_downstream_score")
+        if objective == "lowest_academic_priority":
+            return (
+                float(weighted) if isinstance(weighted, int | float) else float("inf"),
+                int(priority.get("sole_remaining_prerequisite_count") or 0),
+                int(priority.get("on_prerequisite_chain_of_count") or 0),
+                risk_order.get(row["impact_status"], 9),
+                delay_value,
+                affected,
+                row["course_code"],
+            )
+        if objective == "prerequisite_continuity":
+            return (
+                blockers,
+                affected,
+                risk_order.get(row["impact_status"], 9),
+                delay_value,
+                row["course_code"],
+            )
+        if objective == "balanced":
+            return (
+                risk_order.get(row["impact_status"], 9),
+                delay_value,
+                blockers,
+                affected,
+                row["course_code"],
+            )
+        return (
+            risk_order.get(row["impact_status"], 9),
+            delay_value,
+            blockers,
+            affected,
+            row["course_code"],
+        )
+
+    rows.sort(key=rank_key)
+    for index, row in enumerate(rows, start=1):
+        row["rank"] = index
+
+    determinable_rows = [row for row in rows if row["impact_status"] != "NOT_DETERMINABLE"]
+    if determinable_rows:
+        status = "RANKING_AVAILABLE"
+    elif not candidate_codes and not excluded:
+        status = "NO_REGISTERED_CURRENT_COURSES"
+    else:
+        status = "NOT_DETERMINABLE"
+    return {
+        **base_result,
+        "status": status,
+        "candidate_source": candidate_source,
+        "search": {
+            "registered_courses_found": len(current_by_code),
+            "drop_scenarios_evaluated": len(candidate_codes),
+            "determinable_scenarios": len(determinable_rows),
+            "search_truncated": False,
+        },
+        "top_ranked_drop_candidate": determinable_rows[0] if determinable_rows else None,
+        "ranked_drop_impacts": rows[:_MAX_COMPOUND_OUTPUT_ROWS],
+        "excluded_courses": excluded[:_MAX_COMPOUND_OUTPUT_ROWS],
+        "excluded_courses_count": len(excluded),
+    }
+
+
+def _compound_clock_minutes(value: Any) -> int | None:
+    parts = str(value or "").strip().split(":")
+    if len(parts) not in {2, 3} or any(not part.isdigit() for part in parts):
+        return None
+    hour, minute = int(parts[0]), int(parts[1])
+    second = int(parts[2]) if len(parts) == 3 else 0
+    if not 0 <= hour <= 23 or not 0 <= minute <= 59 or second != 0:
+        return None
+    return hour * 60 + minute
+
+
+def _compound_schedule_metrics(
+    rows: list[dict[str, Any]], *, baseline_shape: bool
+) -> dict[str, Any]:
+    """Compute only transparent quality measures supported by meeting rows."""
+    meetings: set[tuple[str, int, int]] = set()
+    issues: list[dict[str, Any]] = []
+    for row in rows:
+        day = str(row.get("day") or "").strip().upper()
+        start = _compound_clock_minutes(
+            row.get("start_time") if baseline_shape else row.get("start")
+        )
+        end = _compound_clock_minutes(row.get("end_time") if baseline_shape else row.get("end"))
+        if not day or start is None or end is None or end <= start:
+            issues.append(
+                {
+                    "course_code": normalize_code(row.get("course_code") or ""),
+                    "section": str(row.get("section") or "").strip().upper(),
+                    "reason_code": "MEETING_DATA_INCOMPLETE",
+                }
+            )
+            continue
+        meetings.add((day, start, end))
+    if issues:
+        return {
+            "status": "NOT_DETERMINABLE",
+            "days_on_campus": None,
+            "total_daily_span_minutes": None,
+            "earliest_start": None,
+            "latest_end": None,
+            "issues": issues[:20],
+        }
+    if not meetings:
+        return {
+            "status": "NOT_DETERMINABLE",
+            "days_on_campus": None,
+            "total_daily_span_minutes": None,
+            "earliest_start": None,
+            "latest_end": None,
+            "issues": [{"reason_code": "NO_MEETING_EVIDENCE"}],
+        }
+    by_day: dict[str, list[tuple[int, int]]] = {}
+    for day, start, end in meetings:
+        by_day.setdefault(day, []).append((start, end))
+    earliest = min(start for _day, start, _end in meetings)
+    latest = max(end for _day, _start, end in meetings)
+    return {
+        "status": "EVALUATED",
+        "days_on_campus": len(by_day),
+        "total_daily_span_minutes": sum(
+            max(end for _start, end in day_rows) - min(start for start, _end in day_rows)
+            for day_rows in by_day.values()
+        ),
+        "earliest_start": f"{earliest // 60:02d}:{earliest % 60:02d}",
+        "latest_end": f"{latest // 60:02d}:{latest % 60:02d}",
+        "issues": [],
+    }
+
+
+def _public_certified_replacement(row: dict[str, Any]) -> dict[str, Any]:
+    def course(value: Any) -> dict[str, Any]:
+        raw = value if isinstance(value, dict) else {}
+        return {
+            "course_code": normalize_code(raw.get("course_code") or raw.get("code") or ""),
+            "course_name": str(raw.get("course_name") or raw.get("name") or ""),
+            "credit_hours": int(raw.get("credits") or raw.get("credit_hours") or 0),
+        }
+
+    academic = row.get("academic_improvement") or {}
+    timetable = row.get("timetable") or {}
+    options = []
+    for raw_option in timetable.get("certified_options") or []:
+        if not isinstance(raw_option, dict):
+            continue
+        options.append(
+            {
+                "planner_options": [
+                    str(name)
+                    for name in raw_option.get("planner_options") or []
+                    if isinstance(name, str)
+                ][:20],
+                "scheduled_courses": raw_option.get("scheduled_courses"),
+                "target_courses": raw_option.get("target_courses"),
+                "credit_hours": raw_option.get("credit_hours"),
+                "days_on_campus": raw_option.get("days_on_campus"),
+                "complete_sections": [
+                    {
+                        "course_code": normalize_code(section.get("course_code") or ""),
+                        "course_name": str(section.get("course_name") or ""),
+                        "section": str(section.get("section") or "").strip().upper(),
+                        "credits": section.get("credits"),
+                        "meetings": [
+                            {
+                                "day": str(meeting.get("day") or ""),
+                                "start": str(meeting.get("start") or ""),
+                                "end": str(meeting.get("end") or ""),
+                            }
+                            for meeting in section.get("meetings") or []
+                            if isinstance(meeting, dict)
+                        ][:10],
+                    }
+                    for section in raw_option.get("complete_sections") or []
+                    if isinstance(section, dict)
+                ][:20],
+            }
+        )
+    return {
+        "remove_course": course(row.get("remove_course")),
+        "add_course": course(row.get("add_course")),
+        "outside_plan_addition": row.get("outside_plan_addition") is True,
+        "academic_improvement": {
+            "proven_improvement": academic.get("proven_improvement") is True,
+            "timing_effect": str(academic.get("timing_effect") or "NOT_DETERMINABLE"),
+            "term_difference": academic.get("term_difference"),
+            "terms_saved": academic.get("terms_saved"),
+            "improvement_basis": str(academic.get("improvement_basis") or "NONE"),
+            "blockers_resolved": [
+                normalize_code(code)
+                for code in academic.get("blockers_resolved") or []
+                if normalize_code(code)
+            ][:50],
+            "blockers_improved": [
+                normalize_code(code)
+                for code in academic.get("blockers_improved") or []
+                if normalize_code(code)
+            ][:50],
+            "blockers_introduced": [
+                normalize_code(code)
+                for code in academic.get("blockers_introduced") or []
+                if normalize_code(code)
+            ][:50],
+        },
+        "graduation_scenario": {
+            key: (row.get("graduation_scenario") or {}).get(key)
+            for key in (
+                "simulation_completed",
+                "estimated_additional_terms",
+                "lower_bound_additional_terms",
+            )
+        },
+        "timetable": {
+            "status": str(timetable.get("status") or "NOT_DETERMINABLE"),
+            "certified_options": options[:3],
+        },
+    }
+
+
+def _exec_improve_current_timetable(
+    args: dict[str, Any], scope: dict[str, Any], ctx: dict[str, Any]
+) -> dict[str, Any]:
+    """Find certified academic swaps and/or a measurably better section layout."""
+    from core.models import Student
+    from core.services.course_priority import program_downstream_importance_scores
+    from core.services.course_replacement_feasibility import (
+        find_feasible_course_replacements,
+    )
+    from core.services.student_sections import get_student_term_baseline
+    from core.services.timetable_snapshots import Snapshot
+
+    tool = "improve_current_timetable"
+    student_id, error = _resolve_scoped_student_id(args, scope)
+    if error:
+        return {"ok": False, "tool": tool, "error": error}
+    year, term, error = _ctx_year_term(args, ctx)
+    if error:
+        return {"ok": False, "tool": tool, "error": error}
+    objective = str(args.get("objective") or "balanced").strip().lower()
+    if objective not in {
+        "balanced",
+        "faster_graduation",
+        "academic_priority",
+        "schedule_quality",
+    }:
+        return {
+            "ok": False,
+            "tool": tool,
+            "error": (
+                "objective must be balanced, faster_graduation, academic_priority, "
+                "or schedule_quality."
+            ),
+        }
+    cap, requested_cap, error = _compound_credit_cap(args, int(term))
+    if error:
+        return {"ok": False, "tool": tool, "error": error}
+    assert cap is not None
+    raw_credit_load_policy = args.get("credit_load_policy")
+    legacy_preserve = args.get("preserve_credit_hours")
+    if raw_credit_load_policy in (None, ""):
+        credit_load_policy = "preserve" if legacy_preserve is not False else "within_policy"
+    else:
+        credit_load_policy = str(raw_credit_load_policy).strip().lower()
+    if credit_load_policy not in {"preserve", "not_increase", "within_policy"}:
+        return {
+            "ok": False,
+            "tool": tool,
+            "error": "credit_load_policy must be preserve, not_increase, or within_policy.",
+        }
+    if legacy_preserve is not None and not isinstance(legacy_preserve, bool):
+        return {"ok": False, "tool": tool, "error": "preserve_credit_hours must be boolean."}
+    if raw_credit_load_policy not in (None, "") and legacy_preserve is not None:
+        conflicting = (legacy_preserve is True and credit_load_policy != "preserve") or (
+            legacy_preserve is False and credit_load_policy == "preserve"
+        )
+        if conflicting:
+            return {
+                "ok": False,
+                "tool": tool,
+                "error": "preserve_credit_hours conflicts with credit_load_policy.",
+            }
+    preserve_credit_hours = credit_load_policy == "preserve"
+    allow_replacements = args.get("allow_course_replacements")
+    if allow_replacements is None:
+        allow_replacements = objective != "schedule_quality"
+    elif not isinstance(allow_replacements, bool):
+        return {"ok": False, "tool": tool, "error": "allow_course_replacements must be boolean."}
+    if objective in {"faster_graduation", "academic_priority"} and not allow_replacements:
+        return {
+            "ok": False,
+            "tool": tool,
+            "error": f"objective={objective} requires allow_course_replacements=true.",
+        }
+    if objective == "schedule_quality" and allow_replacements:
+        return {
+            "ok": False,
+            "tool": tool,
+            "error": "objective=schedule_quality requires allow_course_replacements=false.",
+        }
+
+    base: dict[str, Any] = {
+        "ok": True,
+        "tool": tool,
+        "outcome": "CURRENT_TIMETABLE_IMPROVEMENT",
+        "objective": objective,
+        "planning_term": f"{year}/{term}",
+        "constraints": {
+            "requested_max_credits": requested_cap,
+            "effective_max_credits": cap,
+            "preserve_credit_hours": preserve_credit_hours,
+            "credit_load_policy": credit_load_policy,
+            # Refined to min(baseline, cap) below once the registered baseline is read.
+            "maximum_result_credit_hours": cap,
+            "allow_course_replacements": allow_replacements,
+            "never_mutate_current_timetable": True,
+        },
+        "ranking_basis": {
+            "graduation": "ONLY_COMPLETE_FORECAST_IMPROVEMENTS",
+            "academic_priority": (
+                "VERIFIED_COMPLETE_FORECAST_IMPROVEMENT_THEN_CANONICAL_REPLACEMENT_ORDER"
+            ),
+            "schedule_quality": ("FEWER_CAMPUS_DAYS_THEN_SHORTER_TOTAL_DAILY_SPAN"),
+            "method": "DETERMINISTIC_LEXICOGRAPHIC",
+            "no_cross_dimension_weighted_score": True,
+        },
+        "registration_action": "STUDENT_MANUAL_PORTAL_ONLY",
+        "can_save": False,
+        "can_apply": False,
+        "can_register": False,
+        "limitations": list(_COMPOUND_LIMITATIONS),
+    }
+    graduation_term = _compound_graduation_term(int(year), int(term), ctx)
+    if graduation_term != (int(year), int(term)):
+        return {
+            **base,
+            "status": "NOT_DETERMINABLE",
+            "baseline_kind": "NOT_EVALUATED",
+            "reason_code": "PLANNING_TERM_IS_NOT_CURRENT_GRADUATION_TERM",
+            "recommended_change": None,
+            "graduation_improvements": [],
+            "schedule_quality_improvements": [],
+        }
+    if not _section_snapshot_matches_requested_term(int(year), int(term), ctx):
+        return {
+            **base,
+            "status": "NOT_DETERMINABLE",
+            "baseline_kind": "NOT_EVALUATED",
+            "reason_code": "SECTION_SNAPSHOT_TERM_MISMATCH",
+            "recommended_change": None,
+            "graduation_improvements": [],
+            "schedule_quality_improvements": [],
+        }
+
+    baseline = get_student_term_baseline(
+        int(student_id), str(year), str(term), snapshot=Snapshot.EFFECTIVE
+    )
+    baseline_kind = _timetable_baseline_kind(baseline)
+    base["baseline_kind"] = baseline_kind
+    if baseline_kind == "MIXED_REVIEW_REQUIRED":
+        return {
+            **base,
+            "status": "BASELINE_REVIEW_REQUIRED",
+            "reason_code": MIXED_TIMETABLE_SOURCES,
+            "recommended_change": None,
+            "graduation_improvements": [],
+            "schedule_quality_improvements": [],
+        }
+    if baseline_kind != "REGISTERED":
+        return {
+            **base,
+            "status": "NO_REGISTERED_CURRENT_TIMETABLE",
+            "reason_code": (
+                "EXPECTED_PLAN_IS_NOT_REGISTRATION"
+                if baseline_kind == "EXPECTED_PLAN"
+                else "NO_REGISTERED_TIMETABLE_BASELINE"
+            ),
+            "recommended_change": None,
+            "graduation_improvements": [],
+            "schedule_quality_improvements": [],
+        }
+
+    incomplete_registered = _compound_incomplete_registered_codes(
+        int(student_id), int(year), int(term)
+    )
+    if incomplete_registered:
+        return {
+            **base,
+            "status": "BASELINE_REVIEW_REQUIRED",
+            "reason_code": "REGISTERED_SECTION_MAPPING_INCOMPLETE",
+            "baseline_mapping_issues": [
+                {
+                    "course_code": code,
+                    "reason_code": "REGISTERED_SECTION_MAPPING_INCOMPLETE",
+                }
+                for code in incomplete_registered
+            ],
+            "recommended_change": None,
+            "graduation_improvements": [],
+            "schedule_quality_improvements": [],
+        }
+
+    current_codes = sorted(
+        {
+            normalize_code(row.get("course_key") or row.get("course_code") or "")
+            for row in baseline
+            if normalize_code(row.get("course_key") or row.get("course_code") or "")
+        }
+    )
+    credit_by_code: dict[str, int] = {}
+    for row in baseline:
+        code = normalize_code(row.get("course_key") or row.get("course_code") or "")
+        if code:
+            credit_by_code.setdefault(code, int(row.get("credits") or 0))
+    baseline_credits = sum(credit_by_code.values())
+    baseline_metrics = _compound_schedule_metrics(
+        [dict(row) for row in baseline if isinstance(row, dict)], baseline_shape=True
+    )
+    base["baseline"] = {
+        "course_codes": current_codes,
+        "credit_hours": baseline_credits,
+        "schedule_quality": baseline_metrics,
+    }
+    if preserve_credit_hours and baseline_credits > cap:
+        return {
+            **base,
+            "status": "CONSTRAINTS_UNSATISFIED",
+            "reason_code": "BASELINE_EXCEEDS_EFFECTIVE_MAX_CREDITS",
+            "constraint_failures": [
+                {
+                    "reason_code": "BASELINE_EXCEEDS_EFFECTIVE_MAX_CREDITS",
+                    "reason": (
+                        f"The registered baseline has {baseline_credits} credits, above the "
+                        f"effective maximum of {cap}; this read-only tool will not remove "
+                        "courses silently."
+                    ),
+                }
+            ],
+            "recommended_change": None,
+            "graduation_improvements": [],
+            "schedule_quality_improvements": [],
+        }
+
+    schedule_improvements: list[dict[str, Any]] = []
+    schedule_search: dict[str, Any] = {"attempted": False, "alternatives_checked": 0}
+    schedule_within_credit_policy = baseline_credits <= cap
+    base["constraints"]["maximum_result_credit_hours"] = (
+        min(cap, baseline_credits) if credit_load_policy == "not_increase" else cap
+    )
+    if objective in {"balanced", "schedule_quality"} and not schedule_within_credit_policy:
+        schedule_search.update(
+            {
+                "attempted": True,
+                "constraints_satisfied": False,
+                "alternatives_checked": 0,
+                "search_exhaustive": False,
+                "constraint_failures": [
+                    {
+                        "course_code": "",
+                        "section_label": "",
+                        "reason_code": "BASELINE_EXCEEDS_EFFECTIVE_MAX_CREDITS",
+                        "reason": (
+                            "An exact-course section rearrangement retains the baseline credit "
+                            "hours, which exceed the effective maximum."
+                        ),
+                    }
+                ],
+            }
+        )
+    if objective in {"balanced", "schedule_quality"} and schedule_within_credit_policy:
+        schedule_search["attempted"] = True
+        proposal = _exec_build_timetable_proposal(
+            {
+                "mode": "from_scratch",
+                "course_codes": current_codes,
+                "must_take_courses": current_codes,
+                # Section-layout comparisons remain like-for-like even when the
+                # caller permits an academic replacement in the other branch.
+                "max_credits": max(1, baseline_credits),
+            },
+            scope,
+            {**ctx, "academic_year": year, "term": term},
+        )
+        schedule_search.update(
+            {
+                "execution_failed": proposal.get("ok") is not True,
+                "constraints_satisfied": proposal.get("constraints_satisfied") is True,
+                "alternatives_checked": len(proposal.get("alternatives") or []),
+                "search_exhaustive": False,
+                "constraint_failures": [
+                    {
+                        "course_code": normalize_code(row.get("course_code") or ""),
+                        "section_label": str(row.get("section_label") or ""),
+                        "reason_code": str(
+                            row.get("reason_code") or "TIMETABLE_CONSTRAINT_NOT_SATISFIED"
+                        ),
+                        "reason": str(row.get("reason") or ""),
+                    }
+                    for row in proposal.get("constraint_failures") or []
+                    if isinstance(row, dict)
+                ][:20],
+            }
+        )
+        current_sections: dict[str, set[str]] = {}
+        for row in baseline:
+            code = normalize_code(row.get("course_key") or row.get("course_code") or "")
+            label = str(row.get("section") or "").strip().upper()
+            if code:
+                current_sections.setdefault(code, set())
+                if label:
+                    current_sections[code].add(label)
+
+        baseline_quality_key = (
+            baseline_metrics.get("days_on_campus"),
+            baseline_metrics.get("total_daily_span_minutes"),
+        )
+        for alternative in proposal.get("alternatives") or []:
+            if not isinstance(alternative, dict):
+                continue
+            selected_codes = {
+                normalize_code(row.get("course_code") or "")
+                for row in alternative.get("courses") or []
+                if isinstance(row, dict) and normalize_code(row.get("course_code") or "")
+            }
+            if selected_codes != set(current_codes):
+                continue
+            if int(alternative.get("total_credit_hours") or 0) != baseline_credits:
+                continue
+            metrics = _compound_schedule_metrics(
+                [dict(row) for row in alternative.get("meetings") or [] if isinstance(row, dict)],
+                baseline_shape=False,
+            )
+            if (
+                baseline_metrics.get("status") != "EVALUATED"
+                or metrics.get("status") != "EVALUATED"
+            ):
+                continue
+            quality_key = (
+                int(metrics["days_on_campus"]),
+                int(metrics["total_daily_span_minutes"]),
+            )
+            if quality_key >= baseline_quality_key:
+                continue
+            selected_sections: dict[str, set[str]] = {}
+            for course in alternative.get("courses") or []:
+                code = normalize_code(course.get("course_code") or "")
+                label = str(course.get("section") or "").strip().upper()
+                if code:
+                    selected_sections.setdefault(code, set())
+                    if label:
+                        selected_sections[code].add(label)
+            changes = [
+                {
+                    "course_code": code,
+                    "from_sections": sorted(current_sections.get(code) or []),
+                    "to_sections": sorted(selected_sections.get(code) or []),
+                }
+                for code in current_codes
+                if current_sections.get(code, set()) != selected_sections.get(code, set())
+            ]
+            if not changes:
+                continue
+            schedule_improvements.append(
+                {
+                    "planner_options": [
+                        str(name)
+                        for name in alternative.get("planner_options") or []
+                        if isinstance(name, str)
+                    ][:20],
+                    "course_codes": current_codes,
+                    "credit_hours": baseline_credits,
+                    "changed_sections": changes,
+                    "before": baseline_metrics,
+                    "after": metrics,
+                    "improvement": {
+                        "campus_days_saved": int(baseline_metrics["days_on_campus"])
+                        - int(metrics["days_on_campus"]),
+                        "daily_span_minutes_saved": int(
+                            baseline_metrics["total_daily_span_minutes"]
+                        )
+                        - int(metrics["total_daily_span_minutes"]),
+                    },
+                    "meetings": [
+                        {
+                            "course_code": normalize_code(row.get("course_code") or ""),
+                            "section": str(row.get("section") or "").strip().upper(),
+                            "day": str(row.get("day") or ""),
+                            "start": str(row.get("start") or ""),
+                            "end": str(row.get("end") or ""),
+                        }
+                        for row in alternative.get("meetings") or []
+                        if isinstance(row, dict)
+                    ][:60],
+                }
+            )
+        schedule_improvements.sort(
+            key=lambda row: (
+                int(row["after"]["days_on_campus"]),
+                int(row["after"]["total_daily_span_minutes"]),
+                row["planner_options"],
+            )
+        )
+        for index, row in enumerate(schedule_improvements, start=1):
+            row["rank"] = index
+
+    graduation_improvements: list[dict[str, Any]] = []
+    graduation_search: dict[str, Any] = {"attempted": False}
+    if allow_replacements and objective in {
+        "balanced",
+        "faster_graduation",
+        "academic_priority",
+    }:
+        graduation_search["attempted"] = True
+        if credit_load_policy == "preserve":
+            replacement_credit_predicate = {"exact_result_credits": baseline_credits}
+        elif credit_load_policy == "not_increase":
+            replacement_credit_predicate = {"max_result_credits": min(cap, baseline_credits)}
+        else:
+            replacement_credit_predicate = {"max_result_credits": cap}
+        try:
+            replacement_result = find_feasible_course_replacements(
+                int(student_id),
+                int(year),
+                int(term),
+                max_credits_per_term=cap,
+                **replacement_credit_predicate,
+            )
+        except (TypeError, ValueError) as exc:
+            replacement_result = {
+                "status": "NOT_DETERMINABLE",
+                "certified_replacements": [],
+                "error": str(exc),
+            }
+        except Exception:
+            logger.exception("Current-timetable improvement search failed")
+            replacement_result = {
+                "status": "NOT_DETERMINABLE",
+                "certified_replacements": [],
+                "error": "The bounded replacement search could not be completed.",
+            }
+        graduation_improvements = [
+            _public_certified_replacement(row)
+            for row in replacement_result.get("certified_replacements") or []
+            if isinstance(row, dict)
+        ][:_MAX_COMPOUND_OUTPUT_ROWS]
+        certified_before_credit_policy = len(graduation_improvements)
+        predicate_filtered_count = int(
+            (replacement_result.get("certification_search") or {}).get(
+                "result_credit_predicate_filtered_count"
+            )
+            or 0
+        )
+
+        def credit_policy_allows(row: dict[str, Any]) -> bool:
+            removed = int((row.get("remove_course") or {}).get("credit_hours") or 0)
+            added = int((row.get("add_course") or {}).get("credit_hours") or 0)
+            result_credits = baseline_credits - removed + added
+            if result_credits > cap:
+                return False
+            if credit_load_policy == "preserve":
+                return result_credits == baseline_credits
+            if credit_load_policy == "not_increase":
+                return result_credits <= baseline_credits
+            return True
+
+        graduation_improvements = [
+            row for row in graduation_improvements if credit_policy_allows(row)
+        ]
+        certified_after_credit_policy = len(graduation_improvements)
+        objective_filtered_count = 0
+        if objective == "faster_graduation":
+            before_objective_filter = len(graduation_improvements)
+            graduation_improvements = [
+                row
+                for row in graduation_improvements
+                if str((row.get("academic_improvement") or {}).get("timing_effect") or "")
+                == "EARLIER"
+                and (row.get("graduation_scenario") or {}).get("simulation_completed") is True
+            ]
+            objective_filtered_count = before_objective_filter - len(graduation_improvements)
+        if objective == "academic_priority":
+            program = str(
+                Student.objects.filter(student_id=student_id)
+                .values_list("program", flat=True)
+                .first()
+                or ""
+            ).strip()
+            importance = program_downstream_importance_scores(program) if program else {}
+            for row in graduation_improvements:
+                remove_code = normalize_code(
+                    (row.get("remove_course") or {}).get("course_code") or ""
+                )
+                add_code = normalize_code((row.get("add_course") or {}).get("course_code") or "")
+                remove_evidence = _exec_why_course_locked(
+                    {"course_code": remove_code},
+                    scope,
+                    {**ctx, "academic_year": year, "term": term},
+                )
+                add_evidence = _exec_why_course_locked(
+                    {"course_code": add_code},
+                    scope,
+                    {**ctx, "academic_year": year, "term": term},
+                )
+                remove_requirement = normalize_code(
+                    remove_evidence.get("requirement_course_code") or remove_code
+                )
+                add_requirement = normalize_code(
+                    add_evidence.get("requirement_course_code") or add_code
+                )
+                removed_score = importance.get(remove_requirement)
+                added_score = importance.get(add_requirement)
+                row["academic_priority"] = {
+                    "weighted_score_method": "SUM_INVERSE_DISTANCE",
+                    "removed_requirement_course_code": remove_requirement,
+                    "added_requirement_course_code": add_requirement,
+                    "removed_weighted_downstream_score": removed_score,
+                    "added_weighted_downstream_score": added_score,
+                    "weighted_priority_gain": (
+                        float(added_score) - float(removed_score)
+                        if isinstance(added_score, int | float)
+                        and isinstance(removed_score, int | float)
+                        else None
+                    ),
+                    "added_sole_remaining_prerequisite_count": int(
+                        add_evidence.get("sole_remaining_prerequisite_count") or 0
+                    ),
+                    "added_on_prerequisite_chain_of_count": int(
+                        add_evidence.get("on_prerequisite_chain_of_count") or 0
+                    ),
+                }
+
+            def academic_priority_key(row: dict[str, Any]) -> tuple[Any, ...]:
+                priority = row.get("academic_priority") or {}
+                gain = priority.get("weighted_priority_gain")
+                added_score = priority.get("added_weighted_downstream_score")
+                academic = row.get("academic_improvement") or {}
+                return (
+                    -float(gain) if isinstance(gain, int | float) else float("inf"),
+                    -float(added_score) if isinstance(added_score, int | float) else float("inf"),
+                    -int(priority.get("added_sole_remaining_prerequisite_count") or 0),
+                    -int(priority.get("added_on_prerequisite_chain_of_count") or 0),
+                    -int(academic.get("terms_saved") or 0),
+                    (row.get("add_course") or {}).get("course_code") or "",
+                )
+
+            graduation_improvements.sort(key=academic_priority_key)
+        graduation_search.update(
+            {
+                "status": str(replacement_result.get("status") or "NOT_DETERMINABLE"),
+                "execution_failed": bool(replacement_result.get("error")),
+                "academic": {
+                    key: (replacement_result.get("academic_search") or {}).get(key)
+                    for key in (
+                        "pairs_evaluated",
+                        "search_truncated",
+                        "academic_improvements_found",
+                    )
+                },
+                "certification": {
+                    key: (replacement_result.get("certification_search") or {}).get(key)
+                    for key in (
+                        "academic_candidates_received",
+                        "timetable_candidates_checked",
+                        "search_truncated",
+                    )
+                },
+                "certified_improvements_found": len(graduation_improvements),
+                "credit_policy_rejections_count": (
+                    predicate_filtered_count
+                    + certified_before_credit_policy
+                    - certified_after_credit_policy
+                ),
+                "objective_rejections_count": objective_filtered_count,
+            }
+        )
+
+    search_execution_failed = bool(schedule_search.get("execution_failed")) or bool(
+        graduation_search.get("execution_failed")
+    )
+    if (
+        not search_execution_failed
+        and graduation_improvements
+        and objective
+        in {
+            "balanced",
+            "faster_graduation",
+            "academic_priority",
+        }
+    ):
+        recommended_change: dict[str, Any] | None = {
+            "kind": "COURSE_REPLACEMENT",
+            "replacement": graduation_improvements[0],
+        }
+    elif (
+        not search_execution_failed
+        and schedule_improvements
+        and objective in {"balanced", "schedule_quality"}
+    ):
+        recommended_change = {
+            "kind": "SECTION_REARRANGEMENT",
+            "schedule": schedule_improvements[0],
+        }
+    else:
+        recommended_change = None
+
+    if search_execution_failed:
+        status = "NOT_DETERMINABLE"
+    elif recommended_change:
+        status = "IMPROVEMENTS_FOUND"
+    elif not schedule_search.get("attempted") and not graduation_search.get("attempted"):
+        status = "NO_SEARCH_BRANCH_ENABLED"
+    elif (
+        schedule_search.get("attempted")
+        and baseline_metrics.get("status") != "EVALUATED"
+        and not graduation_search.get("attempted")
+    ):
+        status = "NOT_DETERMINABLE"
+    elif (
+        schedule_search.get("attempted")
+        and schedule_search.get("constraints_satisfied") is False
+        and not graduation_search.get("attempted")
+    ):
+        status = "CONSTRAINTS_UNSATISFIED"
+    else:
+        status = "NO_VERIFIED_IMPROVEMENT_IN_BOUNDED_SEARCH"
+    return {
+        **base,
+        "status": status,
+        "improvement_types_found": [
+            kind
+            for kind, found in (
+                ("COURSE_REPLACEMENT", bool(graduation_improvements)),
+                ("SECTION_REARRANGEMENT", bool(schedule_improvements)),
+            )
+            if found
+        ],
+        "recommended_change": recommended_change,
+        "graduation_improvements": graduation_improvements,
+        "schedule_quality_improvements": schedule_improvements[:3],
+        "search": {
+            "graduation_replacements": graduation_search,
+            "schedule_quality": schedule_search,
+            "bounded": True,
+        },
     }
 
 
@@ -1745,11 +6007,24 @@ def _exec_policy_lookup(
     # to supply a course-repetition percentage.
     from core.services.policy_applicability import classify
 
+    student_status = None
+    if _scope_role(scope) == ROLE_STUDENT:
+        from core.models import Student
+
+        own_student_id = (scope or {}).get("student_id")
+        if own_student_id is not None:
+            student_status = (
+                Student.objects.filter(student_id=own_student_id)
+                .values_list("status", flat=True)
+                .first()
+            )
+
     roles = classify(
         result["policies"],
         question=query or topic or "",
         topics=result.get("matched_topics") or [],
         store=store,
+        student_status=student_status,
     )
     result["question_concepts"] = roles["question_concepts"]
     result["direct_policy_evidence"] = roles["direct_policy_evidence"]
@@ -1812,7 +6087,7 @@ def build_default_registry() -> AdvisorCapabilityRegistry:
             description=(
                 "Find students in verified university records using filters: name "
                 "fragment, earned credits, GPA range, program, gender section "
-                "(M/F), advisor, and course status (passed / studying / missing). "
+                "(M/F), advisor, and course status (passed / studying / failed / missing). "
                 "Use for any cohort question ('list AI students who passed "
                 "AI331') and for finding students by name. The result includes "
                 "summary_stats over the matched rows for overview questions."
@@ -1858,7 +6133,8 @@ def build_default_registry() -> AdvisorCapabilityRegistry:
             name="get_student_context",
             description=(
                 "Full verified academic context for ONE student: profile, GPA, "
-                "earned credits, passed and studying courses, current-term "
+                "earned credits, passed/studying/failed courses, recorded failed-result "
+                "grades or marks when present, current-term "
                 "section registrations (authoritative for what the student is "
                 "registered in now — includes retakes and section labels), "
                 "remaining programme requirements, and next-term "
@@ -1888,8 +6164,11 @@ def build_default_registry() -> AdvisorCapabilityRegistry:
             description=(
                 "Resolve a vague course mention ('the project', 'data mining', "
                 "'AI thing') or a course code into exact course codes with names "
-                "and credit hours. Always use this before filtering by a course "
-                "the user named loosely."
+                "and credit hours. Concrete elective catalogue courses are included; "
+                "fulfills_elective_slots lists their term-scoped plan placeholders. "
+                "Always use this before filtering by a course the user named loosely. An exact "
+                "known code in a requirements/prerequisite question is already resolved: use "
+                "course_prerequisites directly and do not call this tool."
             ),
             parameters={
                 "type": "object",
@@ -1916,7 +6195,8 @@ def build_default_registry() -> AdvisorCapabilityRegistry:
                 "How many hours the student may actually register is a separate "
                 "figure, credit_policy.regulatory_max_credit_hours, which is higher "
                 "and may be absent for some terms. Use for 'what should I take next "
-                "term' questions."
+                "term' questions. Do not use this for a top-N ranking by unlock or "
+                "academic impact; my_progress owns that ranking."
             ),
             parameters={
                 "type": "object",
@@ -1937,13 +6217,421 @@ def build_default_registry() -> AdvisorCapabilityRegistry:
 
     registry.register(
         AdvisorCapability(
+            name="course_choice_comparison",
+            description=(
+                "Compare two to four exact course choices for this student from one "
+                "verified baseline. It keeps prerequisite readiness, recommendation "
+                "membership, direct personal unlocks, wider prerequisite-chain impact, "
+                "the project's discounted downstream-importance heuristic, recorded "
+                "clash-free section fit, and a fair graduation scenario separate. Use "
+                "for 'AI331 or DS341?', 'which opens more?', 'which fits my timetable?', "
+                "'if I take AI331 instead of DS341, which is better?', or a ranked "
+                "comparison when neither course is explicitly identified as a current "
+                "baseline removal. A weighted importance score is a planning "
+                "heuristic, never university policy. No section record does not mean the "
+                "university offers none, and no result proves live seats, registration "
+                "permission, course equivalence, or a portal action. Exact graduation "
+                "claims are returned only when the structured scenarios complete. A "
+                "mapped concrete elective carries requirement_course_code, and registrar "
+                "evidence makes either code ALREADY_IN_CURRENT_TIMETABLE/studying."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "student_id": {
+                        "type": "integer",
+                        "description": "Omit for the chatting student.",
+                    },
+                    "course_codes": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "minItems": 2,
+                        "maxItems": 4,
+                        "description": "Two to four distinct exact course codes.",
+                    },
+                    "academic_year": {"type": "integer"},
+                    "term": {"type": "integer"},
+                    "objective": {
+                        "type": "string",
+                        "enum": [
+                            "balanced",
+                            "graduation",
+                            "unlock_impact",
+                            "timetable_fit",
+                        ],
+                        "description": "The student's stated priority; balanced if unstated.",
+                    },
+                },
+                "required": ["course_codes"],
+                "additionalProperties": False,
+            },
+            allowed_roles=_ALL_ROLES,
+            executor=_exec_course_choice_comparison,
+        )
+    )
+
+    registry.register(
+        AdvisorCapability(
+            name="feasible_course_replacements",
+            description=(
+                "Find one-for-one replacements that pass both independent gates: the "
+                "existing graduation forecast proves an academic improvement, and the "
+                "existing Planner places every retained baseline course plus the replacement "
+                "in a complete clash-free timetable. Use for 'what can I replace without a "
+                "clash?', 'replace DS341 with the best feasible course', or 'will replacing "
+                "DS341 with CS285 improve graduation and fit my timetable?'. Optional "
+                "remove_course and add_course bind either side of the search. The baseline may "
+                "be REGISTERED or EXPECTED_PLAN and must be described accordingly. Use "
+                "this directional remove/add contract only when the student identifies a "
+                "baseline course to remove. For a symmetric 'take X instead of Y; which is "
+                "better?' choice, use course_choice_comparison. An empty argument object "
+                "is valid for a bounded search over recorded "
+                "one-for-one replacements when the student names neither side. This "
+                "capability has no objective argument; never add one. "
+                "Results use only the recorded, termless section snapshot, deliberately "
+                "ignore capacity, "
+                "and never prove live seats, current offering, registration permission, "
+                "equivalence, or a portal action. Replacing a placeholder with a mapped "
+                "option for that same requirement is NO_ACADEMIC_CHANGE, not an improving "
+                "swap. This capability is read-only."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "student_id": {
+                        "type": "integer",
+                        "description": "Omit for the chatting student.",
+                    },
+                    "remove_course": {
+                        "type": "string",
+                        "description": "Optional exact baseline course code to replace.",
+                    },
+                    "add_course": {
+                        "type": "string",
+                        "description": "Optional exact replacement course code to test.",
+                    },
+                    "academic_year": {"type": "integer"},
+                    "term": {"type": "integer"},
+                },
+                "additionalProperties": False,
+            },
+            allowed_roles=_ALL_ROLES,
+            executor=_exec_feasible_course_replacements,
+        )
+    )
+
+    registry.register(
+        AdvisorCapability(
+            name="recommend_feasible_course_addition",
+            description=(
+                "Recommend exactly one additional course by joining prerequisite readiness, "
+                "the current registered/expected timetable baseline, the recorded section "
+                "catalogue, unlock impact, official recommendation membership, and (when a "
+                "registered graduation baseline exists) a graduation what-if. Use for 'I can "
+                "add one course', 'which extra three-credit course should I take?', or 'pick "
+                "the feasible course that helps graduation most'. This is stronger than "
+                "calling my_progress and a timetable tool separately: every returned positive "
+                "candidate has a complete clash-free placement in the bounded Planner search. "
+                "candidate_courses restricts the comparison to exact codes the student named. "
+                "pinned_sections may retain exact sections already present in the recorded "
+                "baseline while the tool chooses the one additional course; a pin that is "
+                "not exactly present in that baseline fails closed instead of being treated "
+                "as a second implicit addition. Choose the objective from the student's stated "
+                "criterion: timetable space/fit -> timetable_fit; important, high-priority, "
+                "or not-low-priority -> unlock_impact; earlier graduation -> "
+                "faster_graduation; balanced only when no criterion is stated. Thus «من المواد "
+                "المتاحة، أي وحدة أهم أضيفها؟» / 'which important available course should I "
+                "add?' is this capability with unlock_impact only, not my_progress. By contrast, "
+                "«وش المادة اللي تستاهل أضيفها لجدولي أكثر؟» / 'which course is most worth "
+                "adding?' states no fit, priority, or graduation criterion, so use balanced. "
+                "Likewise, 'I have room for one course; what should I choose?' uses balanced. "
+                "If the student pins an exact recorded section and asks for the best course or "
+                "courses to add with it, use balanced with that exact pinned_sections value; "
+                "best modifies the addition, not a timetable-ranking preference. "
+                "The capability owns the selection and its criterion; do not add incidental "
+                "available/priority outcomes unless the student separately asks for their lists. "
+                "The result is read-only, does not prove a live seat or permission, and never "
+                "registers or saves anything. Preserve status and search_truncated: an empty "
+                "bounded result is not proof that no arrangement exists outside the search."
+                " RECOMMENDATION_FOUND means at least one candidate passed every check; "
+                "NO_ELIGIBLE_CANDIDATES means the verified pool was empty; "
+                "NO_FEASIBLE_ADDITION_IN_RECORDED_SNAPSHOT is bounded to recorded sections; "
+                "NO_VERIFIED_FASTER_GRADUATION_IN_BOUNDED_SEARCH means feasible additions "
+                "were found but none had a verified EARLIER graduation timing effect; "
+                "CONSTRAINTS_UNSATISFIED means the retained baseline already exceeds the "
+                "requested hard credit ceiling; "
+                "NOT_DETERMINABLE means required evidence could not be certified."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "student_id": {
+                        "type": "integer",
+                        "description": "Omit for the chatting student.",
+                    },
+                    "candidate_courses": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "maxItems": _MAX_COMPOUND_CANDIDATES,
+                        "description": (
+                            "Optional exact course codes to compare. Omit to evaluate the "
+                            "bounded union of verified open courses and official recommendations."
+                        ),
+                    },
+                    "objective": {
+                        "type": "string",
+                        "enum": [
+                            "balanced",
+                            "faster_graduation",
+                            "unlock_impact",
+                            "timetable_fit",
+                        ],
+                        "description": (
+                            "balanced compares graduation effect, personal unlock impact, and "
+                            "recorded section fit without a blended score; faster_graduation "
+                            "puts the complete forecast first; unlock_impact puts personal "
+                            "direct/chain counts first; timetable_fit puts the number of "
+                            "clash-free recorded sections first."
+                        ),
+                    },
+                    "max_credits": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "description": (
+                            "Hard total-credit ceiling including the retained baseline. Supply "
+                            "this only when the student explicitly states a total ceiling; "
+                            "never derive it by adding a typical course to the current load. "
+                            "The server also clamps it to the configured policy ceiling."
+                        ),
+                    },
+                    "additional_credit_hours": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 12,
+                        "description": (
+                            "Exact credit hours for the one added course, for example 3 in "
+                            "'I can add three hours'. This filters candidates; it is not the "
+                            "total timetable ceiling. Use max_credits for the total ceiling."
+                        ),
+                    },
+                    "pinned_sections": {
+                        "type": "array",
+                        "maxItems": _MAX_COMPOUND_PINS,
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "course_code": {"type": "string"},
+                                "section_label": {"type": "string"},
+                            },
+                            "required": ["course_code", "section_label"],
+                            "additionalProperties": False,
+                        },
+                        "description": (
+                            "Optional exact sections that the student explicitly asks to "
+                            "retain. Each pin must already match the recorded timetable "
+                            "baseline; otherwise the result is NOT_DETERMINABLE."
+                        ),
+                    },
+                    "academic_year": {"type": "integer"},
+                    "term": {"type": "integer"},
+                },
+                "additionalProperties": False,
+            },
+            allowed_roles=_ALL_ROLES,
+            executor=_exec_recommend_feasible_course_addition,
+        )
+    )
+
+    registry.register(
+        AdvisorCapability(
+            name="rank_current_course_drop_impact",
+            description=(
+                "Run a pure-drop graduation scenario for each course in the student's "
+                "REGISTERED current timetable and rank the determinable scenarios by the "
+                "requested objective. Use for 'which course can I drop with the least delay?', "
+                "'what is the least important course in my current timetable?', or to rank "
+                "several named current courses before withdrawal. It owns singleton drop "
+                "decisions too: «لو حذفت DS332 هل يتأخر تخرجي؟» / 'will dropping DS332 delay "
+                "graduation?' uses requested outcome graduation_impact alone (not "
+                "course_drop_impact) with least_graduation_delay; «وش بيصير لو انسحبت من "
+                "DS332؟» / "
+                "'what happens if I withdraw from DS332?' uses balanced; and «هل حذف DS332 يقفل "
+                "علي مواد؟» / 'will dropping DS332 block courses?' uses prerequisite_continuity. "
+                "Use only this compound for those questions, not graduation_progress or "
+                "why_course_locked. A request to choose the least-delay drop among several "
+                "named current courses has outcome course_drop_impact, not the singleton "
+                "graduation_impact label, and uses every named code in course_codes. "
+                "course_codes optionally restricts the comparison. A question asking which course in the current "
+                "timetable has no or the lowest academic priority uses "
+                "objective=lowest_academic_priority; it is a drop-impact decision, not a "
+                "general ranking from my_progress. This tool never treats EXPECTED_PLAN rows as "
+                "registered, never adds a replacement course, and never calls a no-detected "
+                "term delay 'no academic effect': deferred courses, changed future courses, "
+                "and introduced blockers remain explicit. It is read-only and cannot drop, "
+                "save, or apply anything. Policy/withdrawal permission is a separate question."
+                " RANKING_AVAILABLE ranks only completed scenarios; "
+                "NO_REGISTERED_CURRENT_COURSES keeps expected-plan rows separate; "
+                "BASELINE_REVIEW_REQUIRED identifies mixed provenance; NOT_DETERMINABLE never "
+                "becomes a low-impact recommendation."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "student_id": {
+                        "type": "integer",
+                        "description": "Omit for the chatting student.",
+                    },
+                    "course_codes": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "maxItems": _MAX_COMPOUND_CANDIDATES,
+                        "description": (
+                            "Optional exact registered course codes to compare. Omit to rank "
+                            "every course in the registered timetable baseline."
+                        ),
+                    },
+                    "objective": {
+                        "type": "string",
+                        "enum": [
+                            "least_graduation_delay",
+                            "lowest_academic_priority",
+                            "prerequisite_continuity",
+                            "balanced",
+                        ],
+                        "description": (
+                            "least_graduation_delay prioritises the forecast delta; "
+                            "lowest_academic_priority uses the verified programme dependency "
+                            "score and personal unlock counts before the graduation risk; "
+                            "prerequisite_continuity minimises introduced blockers and changed "
+                            "future courses; balanced uses the conservative graduation-risk order."
+                        ),
+                    },
+                    "max_credits": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "description": "Maximum credits per future simulated term.",
+                    },
+                    "academic_year": {"type": "integer"},
+                    "term": {"type": "integer"},
+                },
+                "additionalProperties": False,
+            },
+            allowed_roles=_ALL_ROLES,
+            executor=_exec_rank_current_course_drop_impact,
+        )
+    )
+
+    registry.register(
+        AdvisorCapability(
+            name="improve_current_timetable",
+            description=(
+                "Compare the student's REGISTERED timetable with two bounded kinds of "
+                "verified improvement: (1) a complete clash-free one-for-one course "
+                "replacement whose graduation forecast is proven better, and/or (2) a "
+                "from-scratch section rearrangement that preserves every current course and "
+                "credit hour while reducing campus days, then total daily span. Academic "
+                "replacement candidates are filtered by the explicit credit_load_policy. Use for "
+                "'can I improve my timetable without adding hours?', 'is there a schedule "
+                "that helps me graduate faster?', or 'compare my current schedule to a better "
+                "one'. objective selects the branch priority; allow_course_replacements=false "
+                "forces section-only improvement. A broad current-timetable review against "
+                "graduation speed or remaining terms uses objective=faster_graduation and "
+                "allow_course_replacements=true. 'Improve without increasing hours' uses "
+                "objective=balanced, credit_load_policy=not_increase, and replacements=true; "
+                "not_increase permits fewer hours and is not preserve. Use schedule_quality "
+                "with replacements=false only when the student explicitly limits the change "
+                "to section times or layout. The finite Planner search is not exhaustive. "
+                "This capability never changes, saves, drops, replaces, or registers anything."
+                " IMPROVEMENTS_FOUND contains a certified change; "
+                "NO_VERIFIED_IMPROVEMENT_IN_BOUNDED_SEARCH is not a global impossibility; "
+                "NO_REGISTERED_CURRENT_TIMETABLE, BASELINE_REVIEW_REQUIRED, "
+                "CONSTRAINTS_UNSATISFIED, and NOT_DETERMINABLE are explicit evidence gaps."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "student_id": {
+                        "type": "integer",
+                        "description": "Omit for the chatting student.",
+                    },
+                    "objective": {
+                        "type": "string",
+                        "enum": [
+                            "balanced",
+                            "faster_graduation",
+                            "academic_priority",
+                            "schedule_quality",
+                        ],
+                        "description": (
+                            "balanced checks both certified graduation replacements and section "
+                            "quality; faster_graduation checks complete-forecast replacements "
+                            "only; academic_priority re-ranks those certified replacements by "
+                            "verified dependency importance and personal unlock impact; "
+                            "schedule_quality compares section layouts only."
+                        ),
+                    },
+                    "max_credits": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "description": (
+                            "Hard ceiling for replacement scenarios; the server also clamps it "
+                            "to the configured policy ceiling."
+                        ),
+                    },
+                    "preserve_credit_hours": {
+                        "type": "boolean",
+                        "description": (
+                            "Compatibility shorthand. true means credit_load_policy=preserve; "
+                            "false means within_policy. Prefer credit_load_policy because 'do "
+                            "not increase' is a distinct constraint."
+                        ),
+                    },
+                    "credit_load_policy": {
+                        "type": "string",
+                        "enum": ["preserve", "not_increase", "within_policy"],
+                        "description": (
+                            "preserve requires the result to have exactly the baseline hours; "
+                            "not_increase permits fewer but never more hours; within_policy "
+                            "permits any result at or below the effective policy/max_credits "
+                            "ceiling. Defaults preserve. Section-only rearrangements always "
+                            "retain the exact current course set and hours."
+                        ),
+                    },
+                    "allow_course_replacements": {
+                        "type": "boolean",
+                        "description": (
+                            "Defaults true for balanced/faster_graduation/academic_priority and "
+                            "false for schedule_quality. Every replacement remains read-only."
+                        ),
+                    },
+                    "academic_year": {"type": "integer"},
+                    "term": {"type": "integer"},
+                },
+                "additionalProperties": False,
+            },
+            allowed_roles=_ALL_ROLES,
+            executor=_exec_improve_current_timetable,
+        )
+    )
+
+    registry.register(
+        AdvisorCapability(
             name="course_prerequisites",
             description=(
-                "Official prerequisites for one course (per program), including "
+                "CATALOGUE RELATIONSHIP ONLY: official prerequisites for one course (per "
+                "program), including "
                 "hour-based requirements like '90(HOURS)', plus the course's "
-                "plan term and credit hours. Use for 'can I/he take X' and "
-                "'why is X blocked' questions, combined with the student's "
-                "passed courses from get_student_context."
+                "plan term and credit hours. Elective placeholders return only the "
+                "options mapped in the requested term; a concrete option returns its own "
+                "prerequisites and fulfills_elective_slots. Use for catalogue questions such "
+                "as 'what are the official prerequisites for DS491?' independent of a student's "
+                "record. Exact-code questions such as «إيش متطلبات مقرر DS491؟» and «وش المتطلب "
+                "السابق لـ DS491؟» come directly here, not through lookup_course. Never use this "
+                "tool for corequisite questions: it exposes prerequisites only, so a standalone "
+                "corequisite deliverable is outside the available evidence capabilities. Never use this "
+                "catalogue-only tool for personalized 'can I take X?', "
+                "'why is X blocked?', or 'what am I missing before X?' questions; those require "
+                "why_course_locked."
             ),
             parameters={
                 "type": "object",
@@ -2066,13 +6754,37 @@ def build_default_registry() -> AdvisorCapabilityRegistry:
         AdvisorCapability(
             name="my_progress",
             description=(
-                "The student's full standing in their degree plan: how many courses are "
-                "open to register NOW (all prerequisites satisfied), how many are blocked, "
-                "which single course would unlock the most, and for every blocked course "
-                "why it is blocked, how many passes away it is, and the nearest course on "
-                "that chain they can take today. Use for 'what can I take', 'what is "
-                "blocking me', 'what should I do next'. Broader than recommend_courses, "
-                "which returns only the credit-capped suggestion for the coming term."
+                "The student's full standing in their degree plan, and the ONLY tool that "
+                "ranks courses by unlock impact. Returns: how many courses have every "
+                "recorded prerequisite satisfied (prerequisites_satisfied) and how many do "
+                "not (prerequisite_blocked); most_useful_course_to_pass; and "
+                "unlock_impact_ranking - every course they could pass now, ordered, each "
+                "with sole_remaining_prerequisite_count (courses waiting on it alone) and "
+                "on_prerequisite_chain_of_count (courses with it anywhere in their chain). "
+                "For every blocked course: why, how many passes away, and the nearest "
+                "course on that chain they can take today. Use for 'what can I take', "
+                "'what is blocking me', 'what should I do next', 'which course is most "
+                "important / highest priority', 'which course opens the most', and to rank "
+                "or compare several courses by impact, including a requested top-N list. A "
+                "request for the best five remaining courses by impact therefore needs this "
+                "tool once with priority_limit=5, not recommend_courses, and the impact "
+                "criterion is course_priority rather than graduation_impact. In a fresh/from-"
+                "scratch timetable build, an explicit request to prioritize courses that prevent "
+                "graduation delay still requires this capability for course_priority in addition "
+                "to build_timetable_proposal for timetable_build. 'Best available "
+                "courses' / «أفضل المواد المتاحة» requests both available_courses and "
+                "course_priority from this one capability. So does 'important courses I can "
+                "register but have not taken': registerable/not-taken asks for available_courses "
+                "and important asks for course_priority. Choosing one course to add instead "
+                "belongs to recommend_feasible_course_addition. A plain eligible-but-not-in-"
+                "current-timetable list without a positive importance/ranking criterion is "
+                "available_courses only from this capability; do not invent course_priority. "
+                "priority_limit "
+                "is only for an explicit top-N numeral and returns that exact prefix while "
+                "retaining the complete canonical ranking. Broader than recommend_courses, "
+                "which returns only the credit-capped suggestion for the coming term. "
+                "Prerequisite state only: it never establishes that a section is offered, "
+                "that registration is permitted, or that a seat is available."
             ),
             parameters={
                 "type": "object",
@@ -2083,6 +6795,16 @@ def build_default_registry() -> AdvisorCapabilityRegistry:
                     },
                     "academic_year": {"type": "integer"},
                     "term": {"type": "integer"},
+                    "priority_limit": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 20,
+                        "description": (
+                            "Exact N for an explicitly requested top-N unlock-impact ranking. "
+                            "Repeat the student's numeral exactly; omit when no top-N count "
+                            "was stated."
+                        ),
+                    },
                 },
                 "additionalProperties": False,
             },
@@ -2095,11 +6817,43 @@ def build_default_registry() -> AdvisorCapabilityRegistry:
         AdvisorCapability(
             name="why_course_locked",
             description=(
-                "Explain ONE named course for this student: whether it is already passed, "
-                "being studied, open to register now, or blocked - and if blocked, exactly "
-                "which prerequisite courses are missing or how many credit hours are short, "
-                "how many passes away it is, and the nearest course on the chain they can "
-                "take now. Use whenever a student asks about a specific course code."
+                "PERSONALIZED COURSE-STATE OWNER for ONE named course: use this, not "
+                "course_prerequisites (the REVERSE catalogue relation that reports what this "
+                "course itself requires), for 'can I take DS491?', 'why is DS491 blocked?', and "
+                "'what am I missing before DS491?' because these questions must evaluate the "
+                "authenticated student's record. In BOTH directions. Backward: whether the "
+                "student has "
+                "passed it, is studying it, has satisfied every recorded prerequisite "
+                "(PREREQUISITES_SATISFIED) or has not (PREREQUISITE_BLOCKED) - and if "
+                "blocked, exactly which prerequisite courses are missing or how many credit "
+                "hours are short, how many passes away it is, and the nearest course on the "
+                "chain they can take now. FORWARD - use this tool, not course_prerequisites, "
+                "for 'what does AI331 unlock', 'how many courses depend on AI331', 'which "
+                "courses are waiting on AI331', 'what opens if I pass it': it returns "
+                "listed_as_prerequisite_for / _count (courses that NAME it as a "
+                "prerequisite), sole_remaining_prerequisite_for / _count (those for which it "
+                "is the LAST unmet condition, so they become prerequisite-satisfied when it "
+                "is passed) and on_prerequisite_chain_of_count (courses with it anywhere in "
+                "their remaining chain). Those three are usually different numbers. For an "
+                "'if I fail X, which courses are affected?' scenario, this is the owning "
+                "forward prerequisite/dependency evidence; combine it with a concrete "
+                "graduation_progress non-passage scenario only when graduation impact is also "
+                "requested. For outcome minimality, «وش ناقصني عشان أسجل DS491؟» / 'what am "
+                "I missing before DS491?' is prerequisite_information only, while «ليه ما "
+                "أقدر أنزل DS491؟» / 'why can't I take DS491?' is course_eligibility only; "
+                "the same payload may contain both kinds of fact but does not create both "
+                "deliverables. But a combined 'can I take DS491 or am I still missing a "
+                "prerequisite?' explicitly requests both course_eligibility and "
+                "prerequisite_information from this one call. course_prerequisites answers only "
+                "the catalogue relationship - "
+                "what this course officially requires independent of the student's record - and "
+                "cannot answer either a personalized missing-state or forward-unlock question. "
+                "Prerequisite state only: it "
+                "overlays registrar evidence missing from StudentCourse, links a mapped "
+                "concrete elective to requirement_course_code, and keeps expected-plan "
+                "evidence separate from studying. It "
+                "never establishes that a section is offered, that registration is "
+                "permitted, or that a seat is available."
             ),
             parameters={
                 "type": "object",
@@ -2126,10 +6880,23 @@ def build_default_registry() -> AdvisorCapabilityRegistry:
             description=(
                 "How close this student is to graduating: courses passed of the plan total, "
                 "percent complete, courses and credits remaining, registrar credits earned, "
-                "GPA, any unmet credit-hour gate, and how many terms remain - split into the "
-                "minimum forced by prerequisite chains (which cannot be beaten) and the "
-                "estimate at an assumed pace. Use for 'when will I graduate', 'how much is "
-                "left', 'am I close to finishing'."
+                "GPA, any unmet credit-hour gate, and a read-only term-by-term scenario. The "
+                "scenario assumes the selected planning-baseline Planner courses pass, repeatedly calls the existing "
+                "recommender one main term ahead, and uses at most 18 credits in every term. "
+                "The planning_baseline_kind explicitly distinguishes current-term system "
+                "recommendations from the student's actual registered timetable. "
+                "It can compare read-only planning-baseline add/remove scenarios or search for a "
+                "one-course replacement that has a proven academic improvement. Use for "
+                "'when will I graduate', 'what if I do not take DS341', 'what if I replace "
+                "DS341 with MATH204', or 'can I replace a current course to improve graduation'."
+                " It always uses the fixed 18-credit simulation ceiling. It cannot compare "
+                "alternative credit loads (for example 12 versus 18), vary that ceiling, "
+                "or solve for a minimum load/course count that preserves graduation timing; "
+                "those requests are outside this capability. «إذا ما نزلت DS321 هذا الترم وش "
+                "يصير؟» / 'what if I do not take DS321 this term?' requests graduation_impact "
+                "from this capability only; do not add why_course_locked or "
+                "prerequisite_information unless dependency effects are separately requested. "
+                "An explicit drop/withdrawal decision belongs to rank_current_course_drop_impact."
             ),
             parameters={
                 "type": "object",
@@ -2140,6 +6907,54 @@ def build_default_registry() -> AdvisorCapabilityRegistry:
                     },
                     "academic_year": {"type": "integer"},
                     "term": {"type": "integer"},
+                    "planning_baseline_kind": {
+                        "type": "string",
+                        "enum": ["recommended_current_term", "registered_timetable"],
+                        "description": (
+                            "Starting-course provenance. recommended_current_term uses the "
+                            "system's recommendations for its current term; registered_timetable "
+                            "uses only the student's actual registered timetable."
+                        ),
+                    },
+                    "remove_current_courses": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "maxItems": 10,
+                        "description": (
+                            "Planning-baseline Planner course codes to remove only in this read-only "
+                            "graduation scenario."
+                        ),
+                    },
+                    "noncompletion_current_courses": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "maxItems": 10,
+                        "description": (
+                            "Exact registered course codes to assume are not successfully "
+                            "completed after this term in a read-only fail/non-passage scenario. "
+                            "Valid only with planning_baseline_kind=registered_timetable. This "
+                            "is semantically distinct from remove_current_courses, must not be "
+                            "combined with add/remove/replacement-search controls, and does not "
+                            "record a grade, withdrawal, or retake decision."
+                        ),
+                    },
+                    "add_current_courses": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "maxItems": 10,
+                        "description": (
+                            "Course codes to add only to the simulated planning-baseline term. "
+                            "They are assumed passed after that term, never immediately."
+                        ),
+                    },
+                    "search_better_replacements": {
+                        "type": "boolean",
+                        "description": (
+                            "When true, compare bounded one-for-one replacements of planning-baseline "
+                            "courses and return only academically proven improvements. Do not "
+                            "combine with explicit add/remove lists."
+                        ),
+                    },
                 },
                 "additionalProperties": False,
             },
@@ -2152,9 +6967,13 @@ def build_default_registry() -> AdvisorCapabilityRegistry:
         AdvisorCapability(
             name="my_timetable",
             description=(
-                "The student's registered weekly class schedule: day, start and end time, "
-                "course, section, room and instructor. Use for 'what is my schedule', 'when "
-                "is my class', 'what do I have on Monday', 'where is my class'."
+                "The student's stored weekly timetable with explicit schedule_kind: "
+                "REGISTERED is registrar evidence; EXPECTED_PLAN is a manually seeded "
+                "next-term plan and is not registration. Includes day, start/end time, "
+                "course, section, room and instructor. This tool reports what is recorded; it "
+                "cannot judge whether the chosen courses are academically right or high "
+                "priority. For 'did I register the right courses this term?', pair it with "
+                "my_progress and request current_timetable plus course_priority."
             ),
             parameters={
                 "type": "object",
@@ -2178,12 +6997,13 @@ def build_default_registry() -> AdvisorCapabilityRegistry:
             name="my_plan_by_term",
             description=(
                 "The student's whole degree plan laid out level by level: every course "
-                "marked passed / studying / not taken, and whether prerequisites allow "
+                "marked passed / studying / failed / not taken, and whether prerequisites allow "
                 "registering it now. Use for 'show me my plan', 'what is left in level "
                 "6', 'how much of the plan have I finished'. Broader than my_progress, "
                 "which returns only what is open now. Pass `term` to narrow to one plan "
-                "level. can_register reflects prerequisites ONLY - it says nothing about "
-                "whether a section is being taught."
+                "level. prerequisites_satisfied (legacy name: can_register) reflects the "
+                "recorded prerequisite conditions ONLY - it is not permission to register "
+                "and says nothing about whether a section is being taught."
             ),
             parameters={
                 "type": "object",
@@ -2231,13 +7051,19 @@ def build_default_registry() -> AdvisorCapabilityRegistry:
         AdvisorCapability(
             name="my_clash_free_sections",
             description=(
-                "For one or more courses, which sections fit the student's CURRENT "
-                "registered timetable and which collide - naming the course, day and "
+                "For one or more courses, which sections fit the student's stored "
+                "timetable baseline and which collide - naming the course, day and "
                 "both time ranges of every collision. Use for 'which section of X can I "
                 "take', 'does section F11 clash with my schedule', 'all the sections "
                 "clash, is that right'. status NOT_ON_FILE means no section is recorded "
-                "for that course; say exactly that, never 'no sections available'. There "
-                "are no seat counts, so never claim a section has room."
+                "for that course; say exactly that, never 'no sections available'. status "
+                "NOT_MATCHING_STUDENT_PROFILE means sections exist in the catalogue but none "
+                "match the student's programme and study cohort; state that distinction. There "
+                "are no seat counts, so call them recorded sections rather than available "
+                "sections, and never claim a section has room. Read baseline_kind first: "
+                "REGISTERED marks registrar evidence with is_current_section, while "
+                "EXPECTED_PLAN marks planning-only evidence with is_expected_plan_section. "
+                "MIXED_REVIEW_REQUIRED is refused rather than combined."
             ),
             parameters={
                 "type": "object",
@@ -2269,15 +7095,39 @@ def build_default_registry() -> AdvisorCapabilityRegistry:
                 "Build a clash-free weekly timetable for the student from the sections "
                 "on file. Use for 'build me a schedule', 'I must take X, can it fit', "
                 "'give me a plan under 12 hours'. Pass must_include for courses the "
-                "student insists on and max_credits for a ceiling. Returns placed AND "
-                "unplaced with a reason for each - a partial result is the normal "
-                "outcome and must be reported as such, never as a failure. It is a "
-                "SUGGESTION: it does not register anything and cannot promise a seat. "
-                "It ALWAYS keeps the sections the student is already registered in and "
-                "fits the new courses around them. Discarding those sections and "
-                "rebuilding the whole week is not available here at all: if the student "
-                "asks for that, tell them to open the planner and confirm it there. "
-                "Saying they confirm it to you is not confirmation."
+                "student insists on and max_credits for a ceiling. A partial result is "
+                "the normal outcome and must be reported as such, never as a failure. "
+                "It is a SUGGESTION: it does not register anything and cannot promise "
+                "a seat. It keeps the stored baseline sections and fits the new courses "
+                "around them. Read baseline_kind before naming that baseline: REGISTERED "
+                "is registrar evidence; EXPECTED_PLAN is planning-only evidence and must "
+                "never be called registered/current. The rows are listed in "
+                "retained_sections, so say what was kept from that list and never from memory. "
+                # The retention promise used to stand alone, with nothing in the
+                # payload behind it: `placed` holds only what the solver chose, and
+                # the baseline reaches the solver as an occupancy mask that never
+                # enters the result. The model was asked to assert a retention it had
+                # no evidence of, and on TT10 it did — «تم الاحتفاظ بـ CS323-M1» beside
+                # «CS323: شعبة M2», in one answer.
+                "student_requested_courses is what the student named; "
+                "system_recommended_courses is what the recommender chose. They are "
+                "separate because 'where did this course come from' is a question the "
+                "student actually asks, and one merged list cannot answer it. "
+                # The model must CALL for a rebuild request, not answer it. This
+                # used to read "not available here at all: tell them to open the
+                # planner", and the model obeyed — it never called, so the server
+                # never saw the request and the model authored the routing prose
+                # itself. Live, that became «لا يمكنني» plus advice to delete real
+                # registrations. Rebuilding IS available, through the planner's
+                # confirmed workflow; what is unavailable is doing it from chat.
+                "If the student asks to DISCARD their current sections and rebuild "
+                "the week from scratch, call this with keep_current_sections=false. "
+                "Chat always keeps the student's current sections; it cannot confirm "
+                "their removal itself. "
+                "Do not answer that request yourself and do not tell the student it "
+                "is impossible — it is not. The server will route them to the "
+                "planner, where the rebuild is confirmed. Saying they confirm it to "
+                "you is not confirmation."
             ),
             parameters={
                 "type": "object",
@@ -2295,6 +7145,16 @@ def build_default_registry() -> AdvisorCapabilityRegistry:
                         "type": "integer",
                         "description": "Credit ceiling for the plan. Omit for no cap.",
                     },
+                    "keep_current_sections": {
+                        "type": "boolean",
+                        "description": (
+                            "Omit, or true, for the normal case. Pass false ONLY when "
+                            "the student asks to discard their current registration and "
+                            "rebuild from scratch — the server refuses the rebuild here "
+                            "and routes them to the planner. It never changes a "
+                            "registration."
+                        ),
+                    },
                     "academic_year": {"type": "integer"},
                     "term": {"type": "integer"},
                 },
@@ -2302,6 +7162,138 @@ def build_default_registry() -> AdvisorCapabilityRegistry:
             },
             allowed_roles=_ALL_ROLES,
             executor=_exec_build_my_timetable,
+        )
+    )
+
+    registry.register(
+        AdvisorCapability(
+            name="build_timetable_proposal",
+            description=(
+                "Build multiple real, clash-checked timetable proposals from the existing "
+                "section catalogue. Use whenever the student asks to build/create a "
+                "timetable, build around current sections, rebuild from scratch, or show "
+                "alternatives without clashes. mode=around_current keeps baseline_sections "
+                "fixed and fits proposed additions around them. baseline_kind distinguishes "
+                "REGISTERED from planning-only EXPECTED_PLAN data; a mixed source state is "
+                "refused for review. mode=from_scratch may choose different sections for the "
+                "baseline course set, but still changes nothing. The result contains neutral "
+                "baseline_sections, truthful compatibility fields, and alternatives with actual "
+                "course/section/day/start/end values. planner_options preserves the exact "
+                "A1-A3, B1-B3 and C1-C3 identities from the Planner; several identities on "
+                "one alternative mean those runs found the same schedule. Each alternative "
+                "has its own scheduled/target counts and unplaced_courses; show the Planner "
+                "identity even when zero additions were placed, and preserve each unplaced "
+                "reason rather than calling every omission a clash. Use must_take_courses "
+                "for courses required in every result. Use "
+                "pinned_sections with course_code + section_label to restrict a course to "
+                "one exact recorded section; add the course to must_take_courses too when "
+                "that exact section is required in every result. Use target_credits only "
+                "when the student explicitly requests an exact total "
+                "timetable load; it is distinct from the max_credits ceiling and every valid "
+                "alternative must equal the target. Never answer such a request by saying "
+                "section times or clash detection are unavailable: call "
+                "this tool. System recommendations already occupied by a registered or "
+                "expected mapped elective are returned in separate suppression fields and "
+                "are not proposed again. When a fresh/from-scratch build explicitly asks to "
+                "prioritise courses that prevent graduation delay, the exact contract is both "
+                "timetable_build + course_priority and both this tool + my_progress; do not use "
+                "improve_current_timetable because the build is fresh. «ابنِ جدولاً كاملاً حول "
+                "DS341-M2 بدون تعارض» / 'build a full timetable around DS341-M2 without "
+                "conflicts' requests timetable_build only: clash checking and the exact pin are "
+                "part of this build, not a redundant timetable_feasibility outcome. An explicit "
+                "'create a new timetable from scratch' executes with mode=from_scratch even when "
+                "no course/load list is supplied. 'Build a timetable with at most 15 credits' "
+                "has no current/retain/around language, so it executes with mode=from_scratch "
+                "and max_credits=15 and needs no clarification. Generic build/create requests "
+                "use from_scratch. A new/full/build-the-rest request around explicit hard pins "
+                "also uses from_scratch with must_take_courses and pinned_sections so non-pinned "
+                "sections may vary. around_current freezes every baseline section and therefore "
+                "requires an explicit request to retain the whole current/baseline timetable or "
+                "add around that whole baseline. A 'light' request without an exact or maximum "
+                "credit-hour bound and a request to name one option as 'best' must clarify before "
+                "calling this tool; returned alternatives are neutral, not a certified ranking. "
+                "This tool never saves, "
+                "applies, registers, drops, "
+                "or reserves."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "student_id": {
+                        "type": "integer",
+                        "description": "Omit for the chatting student.",
+                    },
+                    "mode": {
+                        "type": "string",
+                        "enum": ["around_current", "from_scratch"],
+                        "description": (
+                            "around_current only when the student explicitly asks to retain the "
+                            "whole current/baseline timetable or add around that whole baseline; "
+                            "from_scratch for a fresh or generic build and for retaining only "
+                            "named current courses/sections so every non-pinned section may vary."
+                        ),
+                    },
+                    "course_codes": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": (
+                            "Optional candidate course codes. The Planner may omit a "
+                            "candidate when it does not fit; official recommendations are "
+                            "considered as additional candidates."
+                        ),
+                    },
+                    "must_take_courses": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": (
+                            "Hard required course codes. Every returned alternative must "
+                            "contain each course (or retain it from the around-current "
+                            "baseline); otherwise no alternative is returned as valid."
+                        ),
+                    },
+                    "pinned_sections": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "course_code": {"type": "string"},
+                                "section_label": {"type": "string"},
+                            },
+                            "required": ["course_code", "section_label"],
+                            "additionalProperties": False,
+                        },
+                        "description": (
+                            "Exact section filters named by course code and visible section "
+                            "label, for example AI331/M2. A pin does not by itself make the "
+                            "course required; also list it in must_take_courses when every "
+                            "alternative must contain it. Never send a database section id."
+                        ),
+                    },
+                    "max_credits": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "description": (
+                            "Optional preferred ceiling. The server never exceeds the "
+                            "configured policy ceiling."
+                        ),
+                    },
+                    "target_credits": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "description": (
+                            "Optional exact total credit hours for the complete proposed "
+                            "timetable, including retained baseline credits in around_current "
+                            "mode. This is equality, not a ceiling: never substitute it for "
+                            "max_credits or silently clamp it."
+                        ),
+                    },
+                    "academic_year": {"type": "integer"},
+                    "term": {"type": "integer"},
+                },
+                "additionalProperties": False,
+            },
+            allowed_roles=_ALL_ROLES,
+            executor=_exec_build_timetable_proposal,
         )
     )
 

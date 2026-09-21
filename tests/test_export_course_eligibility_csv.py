@@ -53,6 +53,8 @@ def test_export_course_eligibility_xlsx(monkeypatch: MonkeyPatch) -> None:
     response = client.get("/export/course-eligibility.csv?course_code=AI201&mode=relaxed")
 
     assert response.status_code == 200
+    assert response["X-Recommendation-Mode"] == "relaxed"
+    assert "eligibility_AI201_relaxed.xlsx" in response["Content-Disposition"]
     content_type = response["Content-Type"]
     assert "spreadsheet" in content_type or "xlsx" in content_type or "octet-stream" in content_type
     # Verify it's a valid XLSX by checking the magic bytes (PK zip header)
@@ -62,3 +64,12 @@ def test_export_course_eligibility_xlsx(monkeypatch: MonkeyPatch) -> None:
         else response.content
     )
     assert content[:2] == b"PK", "Response should be a valid XLSX (ZIP) file"
+
+
+def test_export_course_eligibility_rejects_invalid_mode() -> None:
+    _login_superadmin()
+
+    response = client.get("/export/course-eligibility.csv?course_code=AI201&mode=unknown")
+
+    assert response.status_code == 400
+    assert response.json()["error"] == "mode must be strict or relaxed"

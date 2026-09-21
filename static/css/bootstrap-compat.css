@@ -44,6 +44,7 @@
   flex-shrink: 0;
   width: 100%;
   padding-inline: 0.375rem;
+  box-sizing: border-box;
 }
 
 /* col-md (≥768px) */
@@ -73,6 +74,14 @@
 /* Grid gaps */
 .g-2  { gap: 0.5rem !important; }
 .g-3  { gap: 1rem !important; }
+
+/* Bootstrap gutters do not consume extra horizontal width. A literal `gap`
+   between two 50% columns makes the second column wrap, which left every
+   student KPI row occupying only one side of the screen. Keep the vertical
+   rhythm while the row's existing child padding supplies the horizontal
+   gutter. */
+.row.g-2 { column-gap: 0 !important; row-gap: 0.5rem !important; }
+.row.g-3 { column-gap: 0 !important; row-gap: 1rem !important; }
 .gap-1 { gap: 0.25rem !important; }
 .gap-2 { gap: 0.5rem !important; }
 .gap-3 { gap: 1rem !important; }
@@ -296,6 +305,18 @@ html[dir="rtl"] .form-select {
   background-color: var(--card, #fff);
   border: 1px solid var(--line, #dde3ed);
   border-radius: var(--radius, 10px);
+}
+
+/* Heading utilities used by semantic h2/h3 elements. Without this fallback,
+   `.h6` kept the browser's much larger h2 defaults and added a top margin inside
+   cards. */
+h6,
+.h6 {
+  margin-top: 0;
+  color: var(--t1, #1e1e4a);
+  font-size: 1rem;
+  font-weight: 700;
+  line-height: 1.35;
 }
 
 /* ── NAV ─────────────────────────────────────────────────── */

@@ -8,9 +8,10 @@ from core.models import UserScope
 ROLE_SUPER_ADMIN = "SUPER_ADMIN"
 ROLE_GENERAL_ADVISOR = "GENERAL_ACADEMIC_ADVISOR"
 ROLE_ADVISOR = "ADVISOR"
+ROLE_EXAM_COMMITTEE = "EXAM_COMMITTEE"
 ROLE_STUDENT = "STUDENT"
 
-ROLE_NAMES = [ROLE_SUPER_ADMIN, ROLE_GENERAL_ADVISOR, ROLE_ADVISOR]  # staff roles (validation)
+ROLE_NAMES = [ROLE_SUPER_ADMIN, ROLE_GENERAL_ADVISOR, ROLE_ADVISOR, ROLE_EXAM_COMMITTEE]
 # Every auth Group we seed, including the non-staff STUDENT role. STUDENT is kept
 # OUT of ROLE_NAMES so the staff admin UI cannot mint students — they are provisioned
 # only by the OTP login flow.
@@ -47,6 +48,10 @@ def get_user_role(user: Any) -> str:
     group_names = set(user.groups.values_list("name", flat=True))
     if ROLE_SUPER_ADMIN in group_names:
         return ROLE_SUPER_ADMIN
+    # Committee membership must not inherit access from leftover advisor groups.
+    # A student identity must never gain committee privileges from mixed groups.
+    if ROLE_EXAM_COMMITTEE in group_names:
+        return ROLE_STUDENT if ROLE_STUDENT in group_names else ROLE_EXAM_COMMITTEE
     if ROLE_GENERAL_ADVISOR in group_names:
         return ROLE_GENERAL_ADVISOR
     # A student is in the STUDENT group and must NEVER fall through to the ADVISOR

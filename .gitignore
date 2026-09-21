@@ -24,9 +24,14 @@ db.sqlite3
 db.sqlite3-journal
 db.sqlite3-shm
 db.sqlite3-wal
+db_*.sqlite3
+*.sqlite3-journal
+*.sqlite3-shm
+*.sqlite3-wal
 
 # Runtime & temp
 outputs/
+/.tmp/
 tmp/
 runtime/
 _adv_check.json
@@ -35,6 +40,8 @@ scripts/_fix_fetch.py
 data/debug_failures/
 data/students_list.csv
 data/failed_scrapes.csv
+# Programme-specific batch exports (AI.csv, CS.csv, COE.csv, ...)
+data/[A-Z]*.csv
 staticfiles/
 nul
 
@@ -60,3 +67,12 @@ datadump.json
 
 # Ad-hoc data exports (student lists, etc.) — generated, may contain PII
 *.xlsx
+data/superseded/
+# Extensionless workbook accidentally produced by a local export.
+/data$2
+
+# Per-student advisor evaluation outputs are generated and may contain student IDs.
+evals/advisor/live_batch_results_*.json
+
+# Operator-minted portal session (a live credential, never committed)
+.portal_session.json

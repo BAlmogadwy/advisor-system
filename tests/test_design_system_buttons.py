@@ -18,9 +18,9 @@ controls, or the screen-specific button systems.
 
 The scope that justified the global approach was also wrong. `\\bbtn\\b` matches
 INSIDE `btn-circle` — `\\b` fires at the hyphen — so "130 controls across 30
-templates" was about 5x too many. Tokenising the class attribute gives 19 template
-sites; three of those own a surface inline and were never affected, leaving 16,
-plus four buttons the adviser screen builds in JavaScript. Twenty.
+templates" was about 5x too many. The current screen has eleven explicit neutral
+template sites and four generated control types. Starter cards and failed-turn
+retry buttons keep their dedicated surfaces; prominent escalation stays primary.
 """
 
 from __future__ import annotations
@@ -81,12 +81,7 @@ NEUTRAL_TEMPLATE_SITES = {
     ("core/templates/core/partials/dashboard/_panel_conflict_matrix.html", "cmLoadPreset"),
     ("core/templates/core/partials/dashboard/_panel_conflict_matrix.html", "cmXlsx"),
     ("core/templates/core/section_planning.html", "spDeptFilterClear"),
-    ("core/templates/core/student_advisor.html", "example:graduate-ar"),
-    ("core/templates/core/student_advisor.html", "example:register-ar"),
-    ("core/templates/core/student_advisor.html", "example:withdraw-ar"),
-    ("core/templates/core/student_advisor.html", "example:graduate-en"),
-    ("core/templates/core/student_advisor.html", "example:register-en"),
-    ("core/templates/core/student_advisor.html", "example:withdraw-en"),
+    ("core/templates/core/student_advisor.html", "saHistoryToggle"),
     ("core/templates/core/student_graduation.html", "link:student_advisor"),
 }
 
@@ -98,8 +93,8 @@ INLINE_SURFACE_SITES = {
     ("core/templates/core/timetable_workspace.html", "twFullscreen"),
 }
 
-#: The four the adviser screen builds at runtime, by the class the constructor uses.
-NEUTRAL_JS_CONTROLS = {"sa-fb-btn", "sa-fb-reason", "sa-retry", "sa-escalate-btn"}
+#: Unconditional neutral constructors. Escalation chooses neutral or primary.
+NEUTRAL_JS_CONTROLS = {"sa-fb-btn", "sa-fb-reason", "sa-retry"}
 
 #: Arabic question text is the only stable handle the example chips have, so they
 #: are keyed by intent rather than by the sentence.
@@ -270,7 +265,10 @@ def test_the_javascript_built_adviser_controls_carry_it_too():
         )
         assert built, f"{name} is no longer built with el('button', …); the guard is blind"
         for classes in built:
+            if classes == "sa-retry":
+                continue  # failed turns use the dedicated danger retry surface
             assert "btn-neutral" in classes.split(), f"{name}: {classes!r}"
+    assert "'btn btn-sm sa-escalate-btn' + (wanted ? ' btn-primary' : ' btn-neutral')" in js
 
 
 def test_no_btn_neutral_reached_a_control_that_owns_a_surface():
@@ -564,9 +562,10 @@ class ButtonSurfaceTests(StaticLiveServerTestCase):
 
         from core.models import AdvisorConversation, RateLimitBucket
 
+        page = self._page()
         conversation = AdvisorConversation.objects.create(student_id=STUDENT)
         with mock.patch(
-            "core.services.virtual_advisor.answer_virtual_advisor",
+            "core.services.student_advisor_v2.answer_student_advisor",
             return_value={
                 "ok": True,
                 "answer": "الحد الأقصى خمسة انسحابات.",
@@ -590,7 +589,6 @@ class ButtonSurfaceTests(StaticLiveServerTestCase):
         assert response.status_code == 201, response.content
         RateLimitBucket.objects.all().delete()
 
-        page = self._page()
         page.goto(f"{self.live_server_url}{reverse('student_advisor')}?c={conversation.id}")
         page.wait_for_selector(".sa-feedback .sa-fb-btn")
 
@@ -723,6 +721,31 @@ class ButtonSurfaceTests(StaticLiveServerTestCase):
         assert measured["focused"] == measured["resting"], (
             f"focusing a disabled control changed how it looks: {measured}"
         )
+
+    def test_disabled_buttons_keep_their_boundary_in_both_themes(self):
+        page = self._page()
+        for theme in ("light", "dark"):
+            states = page.evaluate(
+                """theme => {
+                  document.documentElement.setAttribute('data-theme', theme);
+                  return [false, true].map(byClass => {
+                    const b = document.createElement('button');
+                    b.className = 'btn btn-neutral' + (byClass ? ' disabled' : '');
+                    b.disabled = !byClass;
+                    b.textContent = 'disabled';
+                    document.body.appendChild(b);
+                    const resting = getComputedStyle(b).boxShadow;
+                    b.focus();
+                    const focused = getComputedStyle(b).boxShadow;
+                    b.remove();
+                    return {byClass, resting, focused};
+                  });
+                }""",
+                theme,
+            )
+            for state in states:
+                assert _has_boundary(state["resting"]), (theme, state)
+                assert state["focused"] == state["resting"], (theme, state)
 
     def test_the_primary_button_still_shows_a_ring(self):
         """The focus gap is `--surface`, not `--card`, so the ring survives on a

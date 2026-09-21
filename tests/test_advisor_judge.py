@@ -60,6 +60,7 @@ class _ScriptedJudge:
     def __init__(self, content):
         self.content = content
         self.calls: list[list[dict]] = []
+        self.kwargs: list[dict] = []
 
     def resolve_model(self, requested=None):
         return requested or "fake-judge"
@@ -68,7 +69,8 @@ class _ScriptedJudge:
         from core.services.local_llm import ChatResult
 
         self.calls.append(messages)
-        return ChatResult(content=self.content, model="fake-judge", usage={}, raw={})
+        self.kwargs.append(kwargs)
+        return ChatResult(content=self.content, model="fake-judge", usage={})
 
 
 class _BrokenJudge:
@@ -347,6 +349,28 @@ def test_a_clean_semantic_verdict_returns_pass_end_to_end():
     assert verdict["judged_by"] == "semantic"
 
 
+def test_a_backend_without_prefill_support_can_run_the_semantic_judge():
+    judge = _ScriptedJudge(
+        '{"citation_integrity":"PASS","student_fact_accuracy":"PASS",'
+        '"concept_alignment":"PASS","claim_entailment":"PASS",'
+        '"policy_decision_authorisation":"PASS",'
+        '"personalised_conclusion_evidence":"PASS",'
+        '"unsupported_inference":"","confidence":"high"}'
+    )
+    judge.supports_assistant_prefill = False
+
+    verdict = judge_answer(
+        question="هل سأفصل؟",
+        answer="لا أستطيع تقرير ذلك من هذه القاعدة.",
+        policies=[_prohibited()],
+        citations=[],
+        client=judge,
+    )
+
+    assert verdict["judged_by"] == "semantic"
+    assert "assistant_prefill" not in judge.kwargs[0]
+
+
 def test_the_judge_sees_the_policy_decision_use_and_the_student_facts():
     """It cannot rule on authorisation without knowing what was licensed."""
     judge = _ScriptedJudge('{"policy_decision_authorisation":"PASS"}')
@@ -361,6 +385,57 @@ def test_the_judge_sees_the_policy_decision_use_and_the_student_facts():
     sent = judge.calls[0][1]["content"]
     assert "PROHIBITED_FOR_DECISION" in sent
     assert "2.76" in sent
+
+
+def test_the_judge_sees_structured_calendar_evidence_not_only_policy_prose():
+    judge = _ScriptedJudge('{"policy_decision_authorisation":"PASS"}')
+    policy = {
+        **_prohibited("TU.DEFERRAL.PROCEDURE", "study_deferral"),
+        "statement_ar": "يقدم الطلب وفق الموعد في التقويم الدراسي.",
+        "rule": {
+            "calendar_binding": {
+                "events": [
+                    {
+                        "deadline": {"gregorian": "15-أغسطس-2026"},
+                        "defers": "TERM_1",
+                    }
+                ]
+            }
+        },
+    }
+
+    judge_answer(
+        question="متى أؤجل الفصل الأول؟",
+        answer="آخر موعد 15 أغسطس 2026.",
+        policies=[policy],
+        citations=[],
+        client=judge,
+    )
+
+    sent = judge.calls[0][1]["content"]
+    assert "15-أغسطس-2026" in sent
+    assert "TERM_1" in sent
+
+
+def test_the_judge_derives_projected_unresolved_state_from_local_policy_rows():
+    """The answer model sees the remote boolean while the judge sees local rows."""
+    judge = _ScriptedJudge('{"claim_entailment":"PASS"}')
+    policy = {
+        **_explanatory(),
+        "open_question": "The source punctuation leaves two readings unresolved.",
+    }
+
+    judge_answer(
+        question="Is this point settled?",
+        answer="The available source leaves this point unresolved.",
+        policies=[policy],
+        citations=[],
+        client=judge,
+        force=True,
+    )
+
+    sent = judge.calls[0][1]["content"]
+    assert '"source_leaves_unresolved": true' in sent
 
 
 # ── the split, and the trap inside it ────────────────────────────

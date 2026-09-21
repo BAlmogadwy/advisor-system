@@ -9,11 +9,32 @@ logger = logging.getLogger(__name__)
 
 
 def _is_logout_or_service_page(html: str) -> bool:
+    """Is this a sign-in / service page rather than student data?
+
+    ONE definition, borrowed from the scraper rather than restated. This function
+    gained the SSO markers when the portal moved to Entra, but not the
+    authenticated-marker override that ``portal_scraper.is_logged_out_html`` uses
+    — so the two detectors answered opposite things about the same HTML. The
+    portal's shared navigation puts ``staffLogin.do?ex=preLogin`` on authenticated
+    pages too, so an authenticated study plan matched here and
+    ``parse_study_plan`` returned no rows for a page that was full of them: a
+    student silently scraped as having an empty plan.
+    """
     if not html:
         return True
+    from core.services.portal_scraper import is_logged_out_html
+
+    # The SSO markers go through the shared detector, which applies the
+    # authenticated-marker override. That override is the whole point: without it
+    # this function called an authenticated study plan a sign-in page.
+    if is_logged_out_html(html):
+        return True
+    # Markers this parser owns. The two `*_login.jsp` pages belong to the RETIRED
+    # portal, which no authenticated page links to any more, and the graduated-
+    # student page is a service surface rather than a sign-in — so none of them
+    # needs the override, and each on its own is enough to reject a response.
     return (
-        "<title>نظام الخدمات الالكترونية</title>" in html
-        or "teachers_login.jsp" in html
+        "teachers_login.jsp" in html
         or "student_login.jsp" in html
         or "services4GraduatedStudent.do" in html
     )
@@ -137,7 +158,7 @@ def parse_study_plan(html_content):
 def parse_student_profile(html_content):
     """Extract student profile info from the study plan header table.
 
-    Returns dict with keys: name, nationality, status, gpa,
+    Returns dict with keys: registration_no, name, nationality, status, gpa,
     total_registered_credits, total_earned_credits.
     """
     if _is_logout_or_service_page(html_content):
@@ -152,6 +173,10 @@ def parse_student_profile(html_content):
     result = {}
 
     field_map = {
+        # The portal itself spells this label ``Registeration``. Keep the
+        # correctly-spelled variant too in case the upstream typo is fixed.
+        "Registeration No": ("registration_no", str),
+        "Registration No": ("registration_no", str),
         "Student Name": ("name", str),
         "Nationality": ("nationality", str),
         "Student Status": ("status", str),
@@ -171,6 +196,20 @@ def parse_student_profile(html_content):
                         continue
                     raw = td.get_text(" ", strip=True)
                     if not raw:
+                        continue
+                    if key in {"total_registered_credits", "total_earned_credits"}:
+                        # New students with no earned/registered aggregate are
+                        # rendered by the portal as the literal sentinel
+                        # ``null``. It means zero here; arbitrary text still
+                        # survives as text and is rejected by the validator.
+                        if raw.casefold() == "null":
+                            result[key] = 0
+                            continue
+                    if key == "gpa" and raw.casefold() == "null":
+                        # The portal uses ``null`` for a student who does not
+                        # yet have a cumulative GPA. Preserve that distinction
+                        # instead of inventing a numeric value.
+                        result[key] = None
                         continue
                     try:
                         result[key] = converter(raw)
