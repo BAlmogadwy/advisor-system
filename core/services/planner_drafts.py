@@ -157,8 +157,10 @@ def create_draft(
     caller — chat, screen or otherwise — can plan a student into a term by naming
     one in a payload.
     """
-    codes, pinned = validate_draft_selection(int(student_id), course_codes, fixed_sections or {})
     year, term = planning_term()
+    codes, pinned = validate_draft_selection(
+        int(student_id), course_codes, fixed_sections or {}, academic_year=year, term=term
+    )
     return PlannerDraft.objects.create(
         student_id=int(student_id),
         academic_year=year,
@@ -199,7 +201,9 @@ def edit_draft(
 
         codes = locked.course_codes if course_codes is None else course_codes
         pins = locked.fixed_sections if fixed_sections is None else fixed_sections
-        validated_codes, validated_pins = validate_draft_selection(locked.student_id, codes, pins)
+        validated_codes, validated_pins = validate_draft_selection(
+            locked.student_id, codes, pins, academic_year=locked.academic_year, term=locked.term
+        )
         keep = (
             locked.keep_current_sections
             if keep_current_sections is None
@@ -402,6 +406,16 @@ def generate(draft: PlannerDraft, *, confirmation: Any = None) -> PlannerDraft:
         locked = _lock(draft)
         _require_live(locked)
 
+        # Recheck current publication/ownership even before returning a cached
+        # generation: a mapping can have been withdrawn since it was built.
+        codes, pins = validate_draft_selection(
+            locked.student_id,
+            locked.course_codes,
+            locked.fixed_sections,
+            academic_year=locked.academic_year,
+            term=locked.term,
+        )
+
         if locked.has_current_generation:
             # Someone else already generated this exact version.
             return locked
@@ -424,12 +438,6 @@ def generate(draft: PlannerDraft, *, confirmation: Any = None) -> PlannerDraft:
             locked.refresh_from_db()
             return locked
 
-        # Revalidated at generation time, not trusted from when the draft was made:
-        # a section can be withdrawn, and a student can change programme, between
-        # the draft being created and being acted on.
-        codes, pins = validate_draft_selection(
-            locked.student_id, locked.course_codes, locked.fixed_sections
-        )
         # From the DRAFT, never the request: see the field comment on the model.
         year, term = locked.academic_year, locked.term
         if not (year.isdigit() and term.isdigit()):

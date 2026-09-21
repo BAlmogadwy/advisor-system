@@ -17,7 +17,6 @@ from django.db.models import Count, Q, QuerySet
 from core.models import (
     Course,
     ElectiveCourse,
-    ElectiveTermMapping,
     Prerequisite,
     ProgrammeRequirement,
     Student,
@@ -670,56 +669,10 @@ def set_elective_term_mapping(
     programme: str,
     mappings: list[dict],
 ) -> dict:
-    """Set elective-to-placeholder mappings for a specific term.
+    """Validate the entire scoped replacement, then commit it atomically."""
+    from core.services.elective_validation import replace_mappings
 
-    Replaces all existing mappings for the given (year, term, programme).
-    Each mapping dict must have ``placeholder_code`` and ``course_code``.
-
-    Returns a summary dict.
-    """
-    programme = programme.strip().upper()
-    academic_year = str(academic_year).strip()
-
-    # Clear existing mappings for this term/programme
-    deleted, _ = ElectiveTermMapping.objects.filter(
-        academic_year=academic_year,
-        term=term,
-        programme=programme,
-    ).delete()
-
-    created = 0
-    errors: list[str] = []
-
-    for m in mappings:
-        placeholder = str(m.get("placeholder_code", "")).strip().upper().replace(" ", "")
-        course_code = str(m.get("course_code", "")).strip().upper().replace(" ", "")
-        if not placeholder or not course_code:
-            continue
-
-        try:
-            elective = ElectiveCourse.objects.get(programme=programme, course_code=course_code)
-        except ElectiveCourse.DoesNotExist:
-            errors.append(f"{course_code} not found in {programme} catalogue")
-            continue
-
-        ElectiveTermMapping.objects.create(
-            academic_year=academic_year,
-            term=term,
-            programme=programme,
-            placeholder_code=placeholder,
-            elective=elective,
-        )
-        created += 1
-
-    return {
-        "ok": True,
-        "programme": programme,
-        "academic_year": academic_year,
-        "term": term,
-        "cleared": deleted,
-        "created": created,
-        "errors": errors,
-    }
+    return replace_mappings(academic_year, term, programme, mappings)
 
 
 # -- Current section snapshot maintenance ------------------------------------

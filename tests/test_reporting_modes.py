@@ -3,7 +3,14 @@ from collections import Counter
 import pytest
 from pytest import MonkeyPatch
 
-from core.models import Course, ElectiveCourse, ElectiveTermMapping, Student, StudentCourse
+from core.models import (
+    Course,
+    ElectiveCourse,
+    ElectiveTermMapping,
+    ProgrammeRequirement,
+    Student,
+    StudentCourse,
+)
 from core.services import reporting
 
 pytestmark = pytest.mark.django_db
@@ -56,6 +63,10 @@ def test_aggregate_cache_separates_strict_and_relaxed(monkeypatch: MonkeyPatch) 
 
 
 def test_elective_resolution_applies_mode_to_courses_and_hour_gates() -> None:
+    for slot in ("DS2", "DS3"):
+        ProgrammeRequirement.objects.create(
+            program="DS", course_code=slot, type="Program Elective", credit_hours=3
+        )
     student = Student.objects.create(
         student_id=441000001,
         program="DS",

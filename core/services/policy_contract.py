@@ -69,6 +69,8 @@ it does claim. That is the direction to be wrong in.
 
 from __future__ import annotations
 
+import logging
+import re
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -78,6 +80,9 @@ from core.services.policy_store import (
     get_policy_store,
     raw_words_ordered,
 )
+
+logger = logging.getLogger(__name__)
+STORE_UNAVAILABLE = "STORE_UNAVAILABLE"
 
 #: Phrases that make a question a demand for a rule, grouped by the claim type
 #: they signal. The groups are `policy_applicability.NORMATIVE_CLAIM_TYPES`
@@ -347,6 +352,42 @@ def _policy_domain(intent: Any) -> str:
 #: Imported by value rather than referenced, so the two modules cannot drift.
 _DATA_DOMAINS = frozenset({"PLANNER_DATA", "TIMETABLE_DATA", "COURSE_DATA"})
 
+_INSTITUTIONAL_CLAIMS = frozenset({"INSTITUTIONAL_PERMISSION", "INSTITUTIONAL_CALENDAR"})
+_PERMISSION_ACTIONS = tuple(
+    expand_tokens_ordered(phrase)
+    for phrase in (
+        "اسجل شعبتين",
+        "اسجل شعبه",
+        "اغير الشعبه",
+        "احذف مقرر",
+        "انسحب مقرر",
+        "register conflicting sections",
+        "change section",
+        "withdraw course",
+    )
+)
+_CALENDAR_SUBJECTS = tuple(
+    expand_tokens_ordered(phrase)
+    for phrase in (
+        "تسجيل الرغبات",
+        "الحذف والاضافه",
+        "تسجيل المقررات",
+        "التسجيل بوابه الطالب",
+        "course registration",
+        "add drop",
+        "academic calendar",
+    )
+)
+_NONPOLICY_REQUEST = re.compile(
+    r"(?:"
+    r"(?:what|which)(?: (?:courses|classes))? can i take next"
+    r"|(?:اقدر|يمكنني|ينفع) (?:اغير|تغيير) (?:لون|الوان) (?:الجدول|جدولي)"
+    r"|(?:اقدر|يمكنني|ينفع) اسجل ملاحظه(?: عن جدولي)?"
+    r"|(?:اقدر|يمكنني) (?:اشوف|اعرض) جدولي"
+    r"|(?:وش|ما|اي)(?: هي)? المقررات (?:اللي|التي) (?:اقدر|يمكنني) اسجلها(?: هذا الفصل)?"
+    r")"
+)
+
 
 def policy_intent(question: str) -> tuple[str, ...]:
     """Which claim types this question asks for, and which regulated subjects.
@@ -369,16 +410,37 @@ def policy_intent(question: str) -> tuple[str, ...]:
         return ()
     words = expand_tokens_ordered(text)
     raw = raw_words_ordered(text)
+    # Full requests only: asking the interface to record a note or list ready
+    # courses is not institutional permission. Added policy clauses must still
+    # reach the ordinary contract instead of inheriting this exception.
+    if _NONPOLICY_REQUEST.fullmatch(" ".join(raw).casefold()):
+        return ()
     found: list[str] = []
     for claim, aliases in _COMPILED.items():
         for alias_words, _phrase in aliases:
             if alias_matches(alias_words, words, raw):
                 found.append(claim)
                 break
+    # Institutional objects narrow the broad permission/calendar signals. Merely
+    # "opening" a prerequisite, changing a colour, or recording a note must not
+    # turn a data question into a regulatory answer. These claims preserve the
+    # obligation even when the existing route selected a timetable/data domain.
+    if "PERMISSION" in found and any(
+        alias_matches(alias, words, raw) for alias in _PERMISSION_ACTIONS
+    ):
+        found.append("INSTITUTIONAL_PERMISSION")
+    if (
+        {"متي", "when", "deadline"} & {word.casefold() for word in raw} or "كم يوم" in " ".join(raw)
+    ) and any(alias_matches(alias, words, raw) for alias in _CALENDAR_SUBJECTS):
+        found.append("INSTITUTIONAL_CALENDAR")
     try:
         topics = get_policy_store().resolve_topics(text)
-    except Exception:  # pragma: no cover - a store outage must not decide intent
-        topics = []
+    except Exception:
+        # Losing the curated topic signal must not turn a request for a rule into
+        # an ordinary question. Current data-domain routing still owns its narrow
+        # obligation check; V2.1 derives its obligation from the semantic plan.
+        logger.exception("Policy store unavailable while determining policy intent")
+        return (*found, STORE_UNAVAILABLE)
     found.extend(f"TOPIC:{topic}" for topic, _score in topics[:2])
     return tuple(found)
 
@@ -531,7 +593,7 @@ def build_policy_contract_state(
             from core.services.advisor_intent import explicit_normative_claim_present
 
             explicit_normative_claim = explicit_normative_claim_present(question)
-        required = bool(explicit_normative_claim)
+        required = bool(explicit_normative_claim or _INSTITUTIONAL_CLAIMS.intersection(claims))
     else:
         required = bool(claims)
 
@@ -546,6 +608,7 @@ def build_policy_contract_state(
 
 
 __all__ = [
+    "STORE_UNAVAILABLE",
     "GROUNDING_NONE_GOVERNING",
     "GROUNDING_NONE_MATCHED",
     "GROUNDING_NOT_CONSULTED",

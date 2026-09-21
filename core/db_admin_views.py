@@ -1,6 +1,7 @@
 import json
 
 from django.contrib.auth.decorators import login_required
+from django.db import transaction
 from django.http import HttpRequest, HttpResponse, JsonResponse
 from django.shortcuts import render
 from django.views.decorators.http import require_GET, require_POST
@@ -27,8 +28,10 @@ from core.services.db_admin_ops import (
     run_integrity_checks,
     set_elective_term_mapping,
 )
+from core.services.elective_validation import ElectiveMappingError, programme_variants
 from core.services.rbac import ROLE_ADVISOR, ROLE_SUPER_ADMIN
 from core.services.section_programmes import normalize_section_program
+from core.services.student_helpers import is_elective_slot, normalize_code
 from core.services.term_sections import (
     import_term_sections_from_csv,
     preview_term_sections_from_csv,
@@ -843,12 +846,8 @@ def elective_catalogue_list_view(request: HttpRequest) -> JsonResponse:
     from core.models import ElectiveCourse
 
     programme = (request.GET.get("programme") or "").strip().upper()
-    qs = ElectiveCourse.objects.all()
-    if programme:
-        qs = qs.filter(programme=programme)
-
     data = list(
-        qs.order_by("programme", "course_code").values(
+        ElectiveCourse.objects.order_by("programme", "course_code", "id").values(
             "id",
             "course_code",
             "course_name",
@@ -858,6 +857,17 @@ def elective_catalogue_list_view(request: HttpRequest) -> JsonResponse:
             "prerequisites_csv",
         )
     )
+    if programme:
+        # The replacement writer accepts the curriculum's base catalogue too.
+        # Return exactly one checkbox per canonical code, preferring the same
+        # exact-programme owner as publication validation.
+        variants = programme_variants(programme)
+        choices = {}
+        for row in sorted(data, key=lambda row: normalize_code(row["programme"]) != programme):
+            owner, code = normalize_code(row["programme"]), normalize_code(row["course_code"])
+            if owner in variants and code:
+                choices.setdefault(code, {**row, "programme": owner, "course_code": code})
+        data = [choices[code] for code in sorted(choices)]
     return JsonResponse({"ok": True, "items": data, "count": len(data)})
 
 
@@ -874,23 +884,23 @@ def elective_mapping_set_view(request: HttpRequest) -> JsonResponse:
     if err:
         return err
 
-    year = str(payload.get("academic_year", "")).strip()
-    term = payload.get("term")
-    programme = str(payload.get("programme", "")).strip().upper()
-    mappings = payload.get("mappings", [])
+    try:
+        result = set_elective_term_mapping(
+            payload.get("academic_year"),
+            payload.get("term"),
+            payload.get("programme"),
+            payload.get("mappings"),
+        )
+    except ElectiveMappingError as exc:
+        return JsonResponse(exc.as_dict(), status=400)
 
-    if not year or term is None or not programme:
-        return JsonResponse({"error": "academic_year, term, programme required"}, status=400)
-
-    result = set_elective_term_mapping(year, int(term), programme, mappings)
-    from core.services.reporting import clear_aggregate_cache
-
-    clear_aggregate_cache()
-    log_audit_event(
-        request,
-        action="elective.mapping.set",
-        status="success",
-        details=result,
+    transaction.on_commit(
+        lambda: log_audit_event(
+            request,
+            action="elective.mapping.set",
+            status="success",
+            details=result,
+        )
     )
     return JsonResponse(result)
 
@@ -910,20 +920,26 @@ def elective_mapping_list_view(request: HttpRequest) -> JsonResponse:
     if year:
         qs = qs.filter(academic_year=year)
     if term:
+        if term not in {"1", "2", "3"}:
+            return JsonResponse({"ok": False, "error": "term must be 1, 2 or 3"}, status=400)
         qs = qs.filter(term=int(term))
-    if programme:
-        qs = qs.filter(programme=programme)
 
     data = []
     for m in qs.order_by("programme", "placeholder_code", "elective__course_code"):
+        owner = normalize_code(m.programme)
+        # This is an editor of one publication scope, so base publications stay
+        # separate. Catalogue fallback does not make their rows part of a clear.
+        if programme and owner != programme:
+            continue
         data.append(
             {
                 "id": m.id,
                 "academic_year": m.academic_year,
                 "term": m.term,
-                "programme": m.programme,
-                "placeholder_code": m.placeholder_code,
-                "course_code": m.elective.course_code,
+                "programme": owner,
+                "placeholder_code": normalize_code(m.placeholder_code),
+                "elective_id": m.elective_id,
+                "course_code": normalize_code(m.elective.course_code),
                 "course_name": m.elective.course_name,
                 "prerequisites_csv": m.elective.prerequisites_csv,
             }
@@ -937,25 +953,23 @@ def elective_mapping_list_view(request: HttpRequest) -> JsonResponse:
 def elective_placeholders_view(request: HttpRequest) -> JsonResponse:
     """List elective placeholder codes from ProgrammeRequirement for a programme.
 
-    Returns courses where type contains 'Elective' (Program Elective,
-    Free Elective, University Elective).
+    Only actual programme elective slots; Free/University Elective courses are
+    ordinary courses, not placeholders.
     """
     programme = (request.GET.get("programme") or "").strip().upper()
     if not programme:
         return JsonResponse({"error": "programme required"}, status=400)
 
-    qs = ProgrammeRequirement.objects.filter(
-        program=programme,
-        type="Program Elective",
-    ).order_by("programme_term", "course_code")
+    qs = ProgrammeRequirement.objects.order_by("programme_term", "course_code")
 
     items = [
         {
-            "course_code": pr.course_code,
+            "course_code": normalize_code(pr.course_code),
             "type": pr.type,
             "programme_term": pr.programme_term,
             "credit_hours": pr.credit_hours,
         }
         for pr in qs
+        if normalize_code(pr.program) == programme and is_elective_slot(pr.type)
     ]
     return JsonResponse({"ok": True, "items": items, "count": len(items)})

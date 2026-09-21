@@ -81,6 +81,7 @@ def compact_instructor_schedules(scenario_id: int) -> dict:
 
     from core.models import SectionPlacement, TermSectionMeeting, TimetableScenario
     from core.services.course_instructor_assignment import apply_primary_instructor
+    from core.services.timetable_autoplace import placeable_slots
     from core.services.timetable_candidate_eval import evaluate_generated_timetable_candidate
     from core.services.timetable_flags import is_tiered_objective_enabled
     from core.services.timetable_optimizer_v2 import (
@@ -123,8 +124,10 @@ def compact_instructor_schedules(scenario_id: int) -> dict:
     tier = {sid: p.risk_tier for sid, p in profiles.items()}
     code_of = {sid: s.course_code for sid, s in sbi.items()}
 
-    lec = [(_to_min(s["start"]), _to_min(s["end"])) for s in (scenario.slot_config or [])]
-    lab = [(_to_min(s["start"]), _to_min(s["end"])) for s in (scenario.lab_slot_config or [])]
+    lec = [(_to_min(s["start"]), _to_min(s["end"])) for s in placeable_slots(scenario.slot_config)]
+    lab = [
+        (_to_min(s["start"]), _to_min(s["end"])) for s in placeable_slots(scenario.lab_slot_config)
+    ]
     blocked = {(d.upper(), _to_min(st)) for (d, st) in blocked_slot_keys(scenario.blocked_slots)}
 
     # ── DB ↔ in-memory mapping for persistence ──
@@ -277,12 +280,16 @@ def compact_instructor_schedules(scenario_id: int) -> dict:
         sc = tuple(res.lexicographic_score)
         # Positions 0-3 are the hard feasibility block in BOTH layouts (legacy:
         # tier_a/unres/unassigned/clash; tiered: high-risk/clash/T1/T2-over), so
-        # this slice guards feasibility either way. Reserve is idx 5 legacy /
+        # each must be non-worsening independently: fewer high-risk unresolved
+        # students must not compensate for more total unresolved or clashes.
+        # Reserve is idx 5 legacy /
         # idx 6 tiered — reserve_used_of resolves it. In the tiered layout idx 5
         # is soft_unresolved (T3 + T2-within-tolerance): guard it too so
         # relocating instructor sessions can never strand a soft-tier student
         # that the legacy [5] slot used to protect via reserve.
-        if sc[0:4] > base_score[0:4] or reserve_used_of(sc) > reserve_used_of(base_score):
+        if any(sc[i] > base_score[i] for i in range(4)):
+            return False
+        if reserve_used_of(sc) > reserve_used_of(base_score):
             return False
         if is_tiered_score(sc) and sc[TI_SOFT] > base_score[TI_SOFT]:
             return False

@@ -2131,11 +2131,30 @@ $('twMapElectives').addEventListener('click', async () => {
       twFetch(`/ops/electives/mapping/?academic_year=${encodeURIComponent(year)}&term=${encodeURIComponent(term)}&programme=${encodeURIComponent(programme)}`),
       twFetch(`/ops/electives/placeholders/?programme=${encodeURIComponent(programme)}`),
     ]);
+    if (!catData || !mapData || !phData) {
+      throw new Error(IS_AR ? 'تعذّر تحميل الربط. أعد المحاولة.' : 'Mappings could not be loaded. Try again.');
+    }
     catalogue = (catData && catData.items) || [];
     currentMappings = (mapData && mapData.items) || [];
     placeholderCodes = (phData && phData.items) || [];
   } catch (e) {
     notify.error(e.message);
+    return;
+  }
+
+  const represented = new Set();
+  const complete = currentMappings.every(mapping => {
+    const pair = JSON.stringify([mapping.placeholder_code, mapping.course_code]);
+    const visible = placeholderCodes.some(slot => slot.course_code === mapping.placeholder_code)
+      && catalogue.some(course => course.course_code === mapping.course_code && course.id === mapping.elective_id);
+    if (!visible || represented.has(pair)) return false;
+    represented.add(pair);
+    return true;
+  });
+  if (!complete) {
+    notify.error(IS_AR
+      ? 'بعض الروابط المحفوظة لا يمكن عرضها. أصلح ملكية المقررات أو متطلبات الخطة أو الروابط المكررة قبل تعديل هذا النطاق.'
+      : 'Some saved mappings cannot be displayed. Repair catalogue ownership, plan placeholders, or duplicate mappings before editing this scope.');
     return;
   }
 
@@ -2208,7 +2227,7 @@ $('twMapElectives').addEventListener('click', async () => {
     body: JSON.stringify({academic_year: year, term: parseInt(term), programme, mappings}),
   });
   if (data && data.ok) {
-    notify.success(IS_AR ? `تم حفظ ${data.created} ربط` : `${data.created} mappings saved`);
+    notify.success(IS_AR ? `تم حفظ ${data.total} ربط` : `${data.total} mappings saved`);
   }
 });
 

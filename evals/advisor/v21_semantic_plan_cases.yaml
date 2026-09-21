@@ -1,8 +1,8 @@
 meta:
   name: advisor_v21_semantic_plan
-  version: "2.8"
-  built: "2026-09-02"
-  count: 57
+  version: "2.9"
+  built: "2026-09-21"
+  count: 67
   languages:
     - ar-SA
     - en
@@ -953,3 +953,146 @@ cases:
     forbidden_tools: [recommend_feasible_course_addition, build_timetable_proposal, my_timetable]
     required_arguments: {my_progress: {}}
     novelty_note: "A direct Saudi-Arabic eligibility paraphrase remains a plain available-course list."
+
+  - id: V21-SP-058
+    case_type: context_boundary
+    language: ar-SA
+    question: "هل أقدر أنزل شعبتين لو التداخل في أوقاتهما دقائق قليلة؟"
+    expected_goal: REGISTRATION_PERMISSION
+    expected_outcomes: [policy_rule]
+    expected_mode: execute
+    required_tools: [policy_lookup]
+    required_any: []
+    allowed_tools: [policy_lookup]
+    forbidden_tools: [my_timetable, my_clash_free_sections]
+    required_arguments: {policy_lookup: {query: "هل أقدر أنزل شعبتين لو التداخل في أوقاتهما دقائق قليلة؟"}}
+    novelty_note: "A paraphrase of audit question 22 asks whether a conflict is permitted, without requesting a check of recorded sections."
+
+  - id: V21-SP-059
+    case_type: context_boundary
+    language: ar-SA
+    question: "إذا اختباراتي متعارضة، مسموح أنقل نفسي لشعبة ثانية؟"
+    expected_goal: REGISTRATION_PERMISSION
+    expected_outcomes: [policy_rule]
+    expected_mode: execute
+    required_tools: [policy_lookup]
+    required_any: []
+    allowed_tools: [policy_lookup]
+    forbidden_tools: [my_timetable, build_timetable_proposal]
+    required_arguments: {policy_lookup: {query: "إذا اختباراتي متعارضة، مسموح أنقل نفسي لشعبة ثانية؟"}}
+    novelty_note: "A paraphrase of audit question 154 requests permission to change a section, not an exam timetable or a mutation."
+
+  - id: V21-SP-060
+    case_type: context_boundary
+    language: ar-SA
+    question: "كم تسبق بداية الدراسة نافذة إضافة وحذف مقررات التخصص في أول فصل من سنة 1448؟"
+    expected_goal: REGISTRATION_CALENDAR
+    expected_outcomes: [policy_rule]
+    expected_mode: execute
+    required_tools: [policy_lookup]
+    required_any: []
+    allowed_tools: [policy_lookup]
+    forbidden_tools: [my_progress, my_timetable]
+    required_arguments:
+      policy_lookup:
+        query: "كم تسبق بداية الدراسة نافذة إضافة وحذف مقررات التخصص في أول فصل من سنة 1448؟"
+    novelty_note: "A paraphrase of audit question 259 needs authoritative calendar evidence even without explicitly saying policy or guide."
+
+  - id: V21-SP-061
+    case_type: context_boundary
+    language: ar-SA
+    question: "وش موعد فتح الرغبات للترم الثاني، وبأي مقررات تنصحني له؟"
+    expected_goal: NEXT_TERM_CALENDAR_AND_RECOMMENDATION
+    expected_outcomes: [policy_rule, course_recommendation]
+    expected_mode: clarify
+    expected_clarification_kind: term_or_choice
+    required_tools: []
+    required_any: []
+    allowed_tools: []
+    forbidden_tools: [recommend_courses, my_progress]
+    required_arguments: {}
+    novelty_note: "A paraphrase of audit question 270 retains both requests but must clarify the essential second-term recommendation against the configured first-term planning context."
+
+  - id: V21-SP-062
+    case_type: unseen_paraphrase
+    language: en
+    question: "When does course registration open?"
+    expected_goal: REGISTRATION_CALENDAR
+    expected_outcomes: [policy_rule]
+    expected_mode: execute
+    required_tools: [policy_lookup]
+    required_any: []
+    allowed_tools: [policy_lookup]
+    forbidden_tools: [why_course_locked, my_progress]
+    required_arguments: {policy_lookup: {query: "When does course registration open?"}}
+    novelty_note: "The opening date is an institutional calendar fact, not prerequisite eligibility."
+
+  - id: V21-SP-063
+    case_type: regex_false_positive
+    language: ar-SA
+    question: "متى يفتح لي مقرر AI352 إذا اجتزت AI331؟"
+    expected_goal: PREREQUISITE_UNLOCKING
+    expected_outcomes: [prerequisite_information]
+    expected_mode: execute
+    required_tools: [why_course_locked]
+    required_any: []
+    allowed_tools: [why_course_locked]
+    forbidden_tools: [policy_lookup]
+    required_arguments: {why_course_locked: {course_code: AI352}}
+    novelty_note: "When a course opens after passing its prerequisite is a dependency question, not a calendar-policy request."
+
+  - id: V21-SP-064
+    case_type: regex_false_positive
+    language: en
+    question: "When will AI352 open after I pass AI331?"
+    expected_goal: PREREQUISITE_UNLOCKING
+    expected_outcomes: [prerequisite_information]
+    expected_mode: execute
+    required_tools: [why_course_locked]
+    required_any: []
+    allowed_tools: [why_course_locked]
+    forbidden_tools: [policy_lookup]
+    required_arguments: {why_course_locked: {course_code: AI352}}
+    novelty_note: "English course-opening language must preserve the prerequisite interpretation without inventing a registration date."
+
+  - id: V21-SP-065
+    case_type: regex_false_positive
+    language: ar-SA
+    question: "أقدر أغير لون الجدول؟"
+    expected_goal: UNSUPPORTED_UI_CUSTOMIZATION
+    expected_outcomes: [unsupported_request]
+    expected_mode: unsupported
+    required_tools: []
+    required_any: []
+    allowed_tools: []
+    forbidden_tools: [policy_lookup, my_timetable, build_timetable_proposal]
+    required_arguments: {}
+    novelty_note: "Changing a display colour is outside the academic evidence tools and is not a registration regulation."
+
+  - id: V21-SP-066
+    case_type: regex_false_positive
+    language: ar-SA
+    question: "أقدر أسجل ملاحظة عن جدولي؟"
+    expected_goal: UNSUPPORTED_NOTE_WRITING
+    expected_outcomes: [unsupported_request]
+    expected_mode: unsupported
+    required_tools: []
+    required_any: []
+    allowed_tools: []
+    forbidden_tools: [policy_lookup, my_timetable]
+    required_arguments: {}
+    novelty_note: "Recording a note is not course enrolment and no advertised capability persists personal notes."
+
+  - id: V21-SP-067
+    case_type: unseen_paraphrase
+    language: ar-SA
+    question: "اعرض جدولي وما الحد الأقصى للساعات المسموح بها؟"
+    expected_goal: CURRENT_TIMETABLE_AND_POLICY
+    expected_outcomes: [current_timetable, policy_rule]
+    expected_mode: execute
+    required_tools: [my_timetable, policy_lookup]
+    required_any: []
+    allowed_tools: [my_timetable, policy_lookup]
+    forbidden_tools: [build_timetable_proposal, recommend_courses]
+    required_arguments: {my_timetable: {}, policy_lookup: {query: "اعرض جدولي وما الحد الأقصى للساعات المسموح بها؟"}}
+    novelty_note: "A mixed request needs independent timetable evidence and governing credit-limit evidence; neither outcome may disappear."

@@ -133,7 +133,7 @@ def _typed_planning_result(
 
 def _weaker_baseline(contract: dict[str, Any]) -> dict[str, Any]:
     baseline = copy.deepcopy(_perfect_rows(contract))
-    for row in baseline["rows"][:6]:
+    for row in baseline["rows"][: (len(contract["cases"]) + 9) // 10]:
         row["plan"] = {
             "decision": "direct",
             "clarification_kind": "none",
@@ -166,7 +166,7 @@ def test_offline_report_reparses_all_cases_through_real_typed_planner(
     assert report["candidate_report"]["all_passed"] is True
     assert report["comparison_gate"]["passed"] is True
     assert report["comparison_gate"]["absolute_lift"] >= 0.10
-    assert len(report["rows"]) == 57
+    assert len(report["rows"]) == 67
 
 
 @pytest.mark.parametrize(
@@ -308,7 +308,7 @@ def test_report_preserves_only_closed_repair_attribution(
     "limits",
     [
         LiveLimits(max_provider_calls=0, max_total_tokens=1000),
-        LiveLimits(max_provider_calls=115, max_total_tokens=1000),
+        LiveLimits(max_provider_calls=135, max_total_tokens=1000),
         LiveLimits(max_provider_calls=1, max_total_tokens=0),
         LiveLimits(max_provider_calls=1, max_total_tokens=1000, max_plan_tokens=2001),
         LiveLimits(max_provider_calls=1, max_total_tokens=1000, timeout_seconds=61),
@@ -737,14 +737,14 @@ def test_live_runner_records_invalid_failure_and_continues_without_secret_text(
         client=object(),
         advertised_tools=schemas,
         plan_student_turn=fake_plan,
-        limits=LiveLimits(max_provider_calls=57, max_total_tokens=100_000_000),
+        limits=LiveLimits(max_provider_calls=67, max_total_tokens=100_000_000),
         model="same-model",
         year=1448,
         term=1,
     )
 
-    assert len(rows) == next_case == 57
-    assert metadata["usage"]["provider_calls"] == 57
+    assert len(rows) == next_case == 67
+    assert metadata["usage"]["provider_calls"] == 67
     assert metadata["collection_errors"] == [
         {"case_id": "V21-SP-001", "error_category": "SecretProviderError"}
     ]
@@ -935,7 +935,7 @@ def test_runner_output_file_remains_utf8_and_unescaped(tmp_path, capsys) -> None
 def test_v2_baseline_collector_receives_no_gold_fields(contract: dict[str, Any]) -> None:
     projected = v2_baseline_inputs(contract)
 
-    assert len(projected) == 57
+    assert len(projected) == 67
     assert all(set(case) <= {"id", "language", "question", "history"} for case in projected)
     assert all(
         not ({"expected_mode", "required_tools", "forbidden_tools", "expected_goal"} & set(case))
@@ -1047,7 +1047,7 @@ def test_bounded_v2_collection_produces_reusable_explicit_baseline(
         client=client,
         advertised_tools=v2_schemas,
         limits=LiveLimits(
-            max_provider_calls=57,
+            max_provider_calls=67,
             max_total_tokens=10_000_000,
             max_plan_tokens=1800,
         ),
@@ -1061,8 +1061,8 @@ def test_bounded_v2_collection_produces_reusable_explicit_baseline(
         collection_metadata=metadata,
     )
 
-    assert len(rows) == client.calls == 57
-    assert metadata["usage"]["provider_calls"] == 57
+    assert len(rows) == client.calls == 67
+    assert metadata["usage"]["provider_calls"] == 67
     assert metadata["usage"]["committed_token_ceiling"] <= 10_000_000
     assert artifact["baseline_collection"]["collection_valid"] is True
     assert artifact["baseline_collection"]["gold_labels_visible_to_collector"] is False
@@ -1089,7 +1089,7 @@ def test_collect_v2_cli_requires_confirmation_before_runtime_or_provider(
                 "--output",
                 str(tmp_path / "baseline.json"),
                 "--max-provider-calls",
-                "57",
+                "67",
                 "--max-total-tokens",
                 "10000000",
             ]
@@ -1228,7 +1228,7 @@ def test_collect_v2_cli_writes_scorer_compatible_artifact(
             "--collect-v2-baseline",
             "--confirm-live-external-request",
             "--max-provider-calls",
-            "57",
+            "67",
             "--max-total-tokens",
             "10000000",
             "--output",
@@ -1239,12 +1239,12 @@ def test_collect_v2_cli_writes_scorer_compatible_artifact(
 
     assert exit_code == 0
     artifact = json.loads(output.read_text(encoding="utf-8"))
-    assert len(artifact["rows"]) == 57
+    assert len(artifact["rows"]) == 67
     assert artifact["baseline_collection"]["collection_valid"] is True
     assert artifact["baseline_collection"]["method"].startswith("v2_first_model_turn")
     assert artifact["baseline_collection"]["budgets"]["max_retries"] == 0
     assert artifact["baseline_collection"]["transport"] == {
-        "http_calls": 57,
-        "http_responses": 57,
+        "http_calls": 67,
+        "http_responses": 67,
         "max_retries": 0,
     }

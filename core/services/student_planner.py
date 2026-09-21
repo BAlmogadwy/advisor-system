@@ -166,42 +166,39 @@ def run_solver(
     )
 
 
-def permitted_course_codes(program: str) -> set[str]:
-    """Every course this programme's student may legitimately put in a plan.
+def _permitted_course_credits(
+    program: str, *, academic_year: str = "", term: int | str = ""
+) -> dict[str, int]:
+    """Real plan courses and validated elective choices for one planning term."""
+    from core.services.elective_validation import ElectiveMappingError, ElectiveSelection
+    from core.services.planner_drafts import planning_term
+    from core.services.student_helpers import is_elective_slot
 
-    Plan membership alone is too narrow. A student filling an elective slot picks a
-    CONCRETE course that is permitted through that slot and is not itself a plan
-    row — rejecting it would refuse exactly the choice the elective screen exists to
-    offer.
-
-    The elective knowledge is not re-derived here. `_resolve_elective_slot` already
-    knows that a placeholder is recognised by its requirement TYPE rather than by
-    guessing at the code shape, and which concrete courses each slot maps to; this
-    asks it, once per placeholder.
-    """
-    from core.models import ProgrammeRequirement
-    from core.services.virtual_advisor_capabilities import _resolve_elective_slot, is_elective_slot
-
-    # `iexact`, like every other programme lookup here. Exact matching made a
-    # lowercase or oddly-cased `Student.program` yield an EMPTY permitted set —
-    # which then rejected every course the student named, with a message blaming
-    # the course.
-    rows = list(
-        ProgrammeRequirement.objects.filter(program__iexact=program).values("course_code", "type")
-    )
-    permitted = {normalize_code(r["course_code"]) for r in rows if r["course_code"]}
-
-    for row in rows:
-        # The shared predicate, not a second copy of the rule.
-        if not is_elective_slot(row.get("type")):
+    if not academic_year or not term:
+        default_year, default_term = planning_term()
+        academic_year = academic_year or default_year
+        term = term or default_term
+    try:
+        selection = ElectiveSelection(program, academic_year, term)
+    except ElectiveMappingError:
+        return {}
+    permitted = {
+        code: int(rows[0]["credit_hours"] or 0)
+        for code, rows in selection.requirements.items()
+        if len(rows) == 1 and code and not is_elective_slot(rows[0]["type"])
+    }
+    for code, rows in selection.requirements.items():
+        if len(rows) != 1 or not is_elective_slot(rows[0]["type"]):
             continue
-        # `limit=None`: the cap inside is for chat readability, and inheriting it
-        # here would turn a display decision into an authorisation one.
-        for option in _resolve_elective_slot(row["course_code"], program, limit=None) or []:
-            code = normalize_code(option.get("course_code") or "")
-            if code:
-                permitted.add(code)
+        _status, options, _problems = selection.resolve(code)
+        permitted.update({option["course_code"]: int(option["credit_hours"]) for option in options})
     return permitted
+
+
+def permitted_course_codes(
+    program: str, *, academic_year: str = "", term: int | str = ""
+) -> set[str]:
+    return set(_permitted_course_credits(program, academic_year=academic_year, term=term))
 
 
 def _course_credits(program: str) -> dict[str, int]:
@@ -472,6 +469,33 @@ def build_student_options(request: PlannerRequest) -> dict[str, Any]:
     required_addition_codes = (
         required_set - current_codes if request.keep_current_sections else set(required_set)
     )
+    # Every caller, including replacement simulations, crosses this boundary.
+    # Preserve retained registration evidence; fresh additions need a currently
+    # valid plan/publication identity, and their credits come from that identity.
+    permitted = _permitted_course_credits(
+        program, academic_year=str(request.year), term=request.term
+    )
+    invalid = [code for code in addition_codes if code not in permitted]
+    if invalid:
+        failures = [
+            {
+                "course_code": code,
+                "reason_code": "COURSE_NOT_CURRENTLY_SELECTABLE",
+                "reason": "This course is not an approved choice for this programme and term.",
+            }
+            for code in invalid
+        ]
+        return {
+            "student_id": student_id,
+            "term": f"{request.year}/{request.term}",
+            "requested": codes,
+            "alternatives": [],
+            "unplaced": failures,
+            "constraint_failures": failures,
+            "generated": 0,
+            "reason": "HARD_CONSTRAINTS_UNSATISFIED",
+        }
+    credits.update({code: permitted[code] for code in addition_codes})
     if not addition_codes and not current_mappings:
         if request.target_credits is not None:
             target = int(request.target_credits)
@@ -913,6 +937,9 @@ def validate_draft_selection(
     student_id: int,
     course_codes: Any,
     fixed_sections: Any,
+    *,
+    academic_year: str = "",
+    term: int | str = "",
 ) -> tuple[list[str], dict[str, int]]:
     """Re-derive what the draft is allowed to contain, from the student's own data.
 
@@ -942,7 +969,7 @@ def validate_draft_selection(
         Student.objects.filter(student_id=student_id).values_list("program", flat=True).first()
         or ""
     ).strip()
-    permitted = permitted_course_codes(program)
+    permitted = permitted_course_codes(program, academic_year=academic_year, term=term)
 
     codes: list[str] = []
     for raw in course_codes if isinstance(course_codes, list) else []:
@@ -1026,6 +1053,9 @@ def resolve_section_label_pins(
     student_id: int,
     course_codes: list[str],
     requested_pins: tuple[SectionLabelPin, ...],
+    *,
+    academic_year: str = "",
+    term: int | str = "",
 ) -> tuple[ResolvedSectionPin, ...]:
     """Resolve public section labels to private ids against the current snapshot.
 
@@ -1039,7 +1069,9 @@ def resolve_section_label_pins(
 
     normalized_codes = [normalize_code(code) for code in course_codes if normalize_code(code)]
     try:
-        validated_codes, _ = validate_draft_selection(student_id, normalized_codes, {})
+        validated_codes, _ = validate_draft_selection(
+            student_id, normalized_codes, {}, academic_year=academic_year, term=term
+        )
     except DraftRejected as exc:
         raise SectionPinResolutionError(
             course_code="",
@@ -1103,6 +1135,8 @@ def resolve_section_label_pins(
                 student_id,
                 validated_codes,
                 {code: int(section.id)},
+                academic_year=academic_year,
+                term=term,
             )
         except DraftRejected as exc:
             raise SectionPinResolutionError(
