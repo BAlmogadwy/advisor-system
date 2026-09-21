@@ -33,6 +33,7 @@ import random
 import re as _re
 from collections import defaultdict
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 from core.models import (
@@ -41,11 +42,16 @@ from core.models import (
     ProgrammeRequirement,
     Room,
     Student,
-    StudentCourse,
-    StudentTermSection,
-    TermSectionMeeting,
 )
-from core.services.course_identity import planner_course_key
+from core.services.course_identity import display_course_label, planner_course_key
+from core.services.exam_input_fingerprint import fingerprint_exam_inputs
+from core.services.exam_operations_snapshot import build_exam_operations_snapshot
+from core.services.exam_review import build_exam_review
+from core.services.exam_room_allocation import (
+    RoomAllocationContext,
+    allocate_period,
+    normalized_rooms,
+)
 from core.services.exam_run_schema import (
     STATUS_DERIVATION_VERSION,
     compute_enrolment_snapshot,
@@ -54,6 +60,19 @@ from core.services.exam_run_schema import (
     derive_status_surface,
     load_normalised_run,
     stamp_schema_version,
+)
+from core.services.exam_sections import (
+    EXAM_ENROLLMENT_SOURCE,
+    annotate_exam_room_groups,
+    exam_section_part,
+    exam_timetable_links,
+    resolve_exam_section_enrollment,
+    summarize_exam_section_mapping,
+)
+from core.services.student_sections import (
+    OTHER_BRANCH_SECTION_COHORT,
+    _section_course_key,
+    section_gender,
 )
 
 _DEPARTMENT_PREFIXES: set[str] = {"CS", "IS", "COE", "CYB", "AI", "DS"}
@@ -140,50 +159,13 @@ def _credit_pair_penalty(credits_on_day: list[int]) -> int:
 # ── 1. Enrolled sets ────────────────────────────────────────────
 
 
-def _effective_enrolment_ids(queryset) -> list[int]:
-    """Primary keys of the rows that count, resolved PER STUDENT.
-
-    A term may now hold an imported expected plan beside the registrar's snapshot.
-    Unfiltered, every query in this module unions the two: a student is counted
-    into a course they only planned, and counted TWICE where the plan and the
-    registration name different sections of one course. Each of those wrong numbers
-    becomes a room size, an invigilator count and a sitting on a student's own exam
-    sheet, and nothing in this module has a mixed-baseline guard to catch it.
-
-    Registrar evidence wins WHERE IT EXISTS, per student -- not per query. A term
-    mid-registration legitimately holds students at different stages: A has
-    registered, B has only the plan. Scoping the whole query to registrar rows
-    would drop B entirely, which on this project's current data means dropping
-    EVERYONE: the live database holds 1525 rows, all `registration_plan_1448_t1`
-    and not one `scraper_timetable`. `build_enrolled_sets_with_meta` would return
-    `({}, {})` and `build_section_enrollment` would collapse every course into one
-    synthetic "ALL" bucket carrying a single gender -- mixing M and F students into
-    one sitting on a gender-segregated campus.
-    """
-    from core.services.timetable_snapshots import classify_source, effective_class
-
-    by_student: dict[int, list[tuple[int, str]]] = defaultdict(list)
-    for pk, student_id, source in queryset.values_list("pk", "student_id", "source"):
-        by_student[int(student_id)].append((int(pk), str(source or "")))
-    keep: list[int] = []
-    for rows in by_student.values():
-        winner = effective_class({"source": source} for _pk, source in rows)
-        keep.extend(pk for pk, source in rows if classify_source(source) is winner)
-    return keep
-
-
-def _effective_enrolment(queryset):
-    """``queryset`` narrowed to the rows :func:`_effective_enrolment_ids` keeps."""
-    return queryset.filter(pk__in=_effective_enrolment_ids(queryset))
-
-
 def build_enrolled_sets(
     programs: list[str] | None = None,
     sections: list[str] | None = None,
 ) -> dict[str, set[int]]:
     """Return {course_code: {student_id, …}} for current-term enrolments.
 
-    Uses StudentCourse.status='studying' as the exam source of truth.
+    Uses only actual ``scraper_timetable`` student-section links.
     Same-code courses with different programme names are split into
     display keys such as "CS112 (1)" and "CS112 (2)".
 
@@ -192,134 +174,65 @@ def build_enrolled_sets(
         sections – only include students whose section is in this list
     When a filter is None or empty, it is ignored (all values pass).
     """
-    # Try StudentTermSection first (more accurate — actual section enrollments).
-    # Detect the latest academic year/term that has ANY data. The fallback
-    # only triggers when the source itself is empty — filters that match no
-    # students must not silently cross over to StudentCourse.
     enrolled, _meta = build_enrolled_sets_with_meta(programs=programs, sections=sections)
     return enrolled
-
-    latest = (
-        StudentTermSection.objects.order_by("-academic_year", "-term")
-        .values_list("academic_year", "term")
-        .first()
-    )
-
-    if latest is not None:
-        ay, tm = latest
-        qs = (
-            StudentTermSection.objects.filter(academic_year=ay, term=tm)
-            # Another branch's sections never size a room here: those stored
-            # links are not this campus' enrolments.
-            .exclude(term_section__section__istartswith="YM")
-            .exclude(term_section__section__istartswith="YF")
-            .select_related("term_section")
-        )
-
-        if programs:
-            student_ids = set(
-                Student.objects.filter(program__in=programs).values_list("student_id", flat=True)
-            )
-            qs = qs.filter(student_id__in=student_ids)
-        if sections:
-            student_ids_sec = set(
-                Student.objects.filter(section__in=sections).values_list("student_id", flat=True)
-            )
-            qs = qs.filter(student_id__in=student_ids_sec)
-
-        # NOTE: TermSection.course_code is the department prefix (e.g. "CS");
-        # the full course identifier matching Course.course_code is course_key
-        # (e.g. "CS101"). Grouping by course_code would collapse every CS
-        # course into one bucket and destroy the exam schedule.
-        rows = _effective_enrolment(qs).values_list("term_section__course_key", "student_id")
-        enrolled: dict[str, set[int]] = defaultdict(set)
-        for course_key, student_id in rows:
-            enrolled[course_key].add(student_id)
-        return dict(enrolled)
-
-    # Fallback: StudentCourse with status="studying" (no StudentTermSection data).
-    qs_sc = StudentCourse.objects.filter(status="studying").select_related("course", "student")
-    if programs:
-        qs_sc = qs_sc.filter(student__program__in=programs)
-    if sections:
-        qs_sc = qs_sc.filter(student__section__in=sections)
-
-    rows_sc = qs_sc.values_list("course__course_code", "student_id")
-    enrolled_sc: dict[str, set[int]] = defaultdict(set)
-    for course_code, student_id in rows_sc:
-        enrolled_sc[course_code].add(student_id)
-    return dict(enrolled_sc)
 
 
 def build_enrolled_sets_with_meta(
     programs: list[str] | None = None,
     sections: list[str] | None = None,
 ) -> tuple[dict[str, set[int]], dict[str, dict]]:
-    """Return selected students' studying courses plus display/source metadata."""
-    qs_sc = StudentCourse.objects.filter(status="studying").select_related("course", "student")
-    if programs:
-        qs_sc = qs_sc.filter(student__program__in=programs)
-    if sections:
-        qs_sc = qs_sc.filter(student__section__in=sections)
+    """Return actual scraped course memberships and canonical course metadata.
 
-    rows = list(
-        qs_sc.values_list(
-            "course__course_code",
-            "course__description",
-            "student_id",
-            "student__program",
+    Programme requirements supply names/identities, never student membership.
+    Academic 'studying', planned, manual and other fallback records cannot add
+    students or courses to an exam timetable.
+    """
+    links, year, term = exam_timetable_links()
+    profiles = Student.objects.all()
+    if programs:
+        profiles = profiles.filter(program__in=programs)
+    if sections:
+        profiles = profiles.filter(section__in=sections)
+    student_programs = dict(profiles.values_list("student_id", "program"))
+    if programs or sections:
+        links = links.filter(student_id__in=student_programs)
+    rows = []
+    for row in links.values(
+        "student_id",
+        "term_section__course_key",
+        "term_section__course_code",
+        "term_section__course_number",
+        "term_section__course_name",
+        "term_section__section",
+    ):
+        if section_gender(row["term_section__section"]) == OTHER_BRANCH_SECTION_COHORT:
+            continue
+        code = _section_course_key(
+            SimpleNamespace(
+                **{
+                    key: row[f"term_section__{key}"]
+                    for key in ("course_key", "course_code", "course_number")
+                }
+            )
         )
-    )
+        if code:
+            rows.append(
+                (
+                    code,
+                    row["term_section__course_name"],
+                    row["student_id"],
+                    student_programs.get(row["student_id"], ""),
+                )
+            )
     source_codes = {str(code) for code, _desc, _sid, _program in rows}
     if not source_codes:
-        latest = (
-            StudentTermSection.objects.order_by("-academic_year", "-term")
-            .values_list("academic_year", "term")
-            .first()
+        return {}, {}
+    catalogue_names = dict(
+        Course.objects.filter(course_code__in=source_codes).values_list(
+            "course_code", "description"
         )
-        if latest is None:
-            return {}, {}
-
-        ay, tm = latest
-        qs_sts = (
-            StudentTermSection.objects.filter(academic_year=ay, term=tm)
-            # Another branch's sections never size a room here: those stored
-            # links are not this campus' enrolments.
-            .exclude(term_section__section__istartswith="YM")
-            .exclude(term_section__section__istartswith="YF")
-            .select_related("term_section")
-        )
-        if programs:
-            student_ids = set(
-                Student.objects.filter(program__in=programs).values_list("student_id", flat=True)
-            )
-            qs_sts = qs_sts.filter(student_id__in=student_ids)
-        if sections:
-            student_ids_sec = set(
-                Student.objects.filter(section__in=sections).values_list("student_id", flat=True)
-            )
-            qs_sts = qs_sts.filter(student_id__in=student_ids_sec)
-
-        enrolled_sts: dict[str, set[int]] = defaultdict(set)
-        meta_sts: dict[str, dict] = {}
-        for course_key, course_name, student_id in _effective_enrolment(qs_sts).values_list(
-            "term_section__course_key",
-            "term_section__course_name",
-            "student_id",
-        ):
-            source_code = str(course_key or "").strip()
-            if not source_code:
-                continue
-            enrolled_sts[source_code].add(int(student_id))
-            meta_sts.setdefault(
-                source_code,
-                {
-                    "source_course_code": source_code,
-                    "course_name": str(course_name or "").strip(),
-                    "course_identity": planner_course_key(source_code, course_name),
-                },
-            )
-        return dict(enrolled_sts), meta_sts
+    )
 
     pr_rows = list(
         ProgrammeRequirement.objects.filter(course_code__in=source_codes).values_list(
@@ -332,18 +245,31 @@ def build_enrolled_sets_with_meta(
     pr_name_by_program_code = {
         (str(program), str(code)): str(name or "").strip() for program, code, name, _term in pr_rows
     }
+    online_requirements = ProgrammeRequirement.objects.filter(
+        course_code__in=source_codes, is_online=True
+    )
+    if programs:
+        online_requirements = online_requirements.filter(program__in=programs)
+    online_identities = {
+        planner_course_key(code, name)
+        for code, name in online_requirements.values_list("course_code", "course_name")
+    }
 
     enrolled_by_identity: dict[tuple[str, str], set[int]] = defaultdict(set)
     identity_name: dict[tuple[str, str], str] = {}
+    identity_programs: dict[tuple[str, str], set[str]] = defaultdict(set)
     for source, course_desc, student_id, program in rows:
         source_code = str(source)
         name = (
             pr_name_by_program_code.get((str(program), source_code))
+            or str(catalogue_names.get(source_code) or "").strip()
             or str(course_desc or "").strip()
         )
         identity = planner_course_key(source_code, name)
         enrolled_by_identity[(source_code, identity)].add(int(student_id))
         identity_name.setdefault((source_code, identity), name)
+        if program:
+            identity_programs[(source_code, identity)].add(str(program))
 
     identity_term_rank: dict[tuple[str, str], int] = {}
     for _program, source, name, term in pr_rows:
@@ -383,8 +309,64 @@ def build_enrolled_sets_with_meta(
             "source_course_code": source,
             "course_name": identity_name.get((source, identity), ""),
             "course_identity": identity,
+            "course_label": display_course_label(source, identity_name.get((source, identity))),
+            "programs": sorted(identity_programs[(source, identity)]),
+            "is_online": identity in online_identities or source.startswith(("GS", "GSE")),
+            "enrolled_count": len(student_ids),
+            "enrollment_source": EXAM_ENROLLMENT_SOURCE,
+            "academic_year": year,
+            "term": term,
         }
     return dict(enrolled), meta
+
+
+class ExamCoursesUnavailable(ValueError):
+    """A selection no longer has actual scraped timetable enrollments."""
+
+    def __init__(self, courses: list[str]):
+        self.unavailable_courses = courses
+        super().__init__(
+            "No actual scraped-timetable enrollments were found for: "
+            + ", ".join(courses)
+            + ". Load Courses again and select the current courses."
+        )
+
+
+def select_exam_course_enrollments(
+    entries: list[dict],
+    enrolled: dict[str, set[int]],
+    metadata: dict[str, dict],
+) -> tuple[dict[str, set[int]], dict[str, dict]]:
+    """Resolve saved/selected rows by the shared planner identity, never by suffix.
+
+    Display numbers can change when the selected population changes. Even a
+    single retained variant must match its name, not every enrollment with the
+    registrar code. Identity follows the shared planner's code-and-name rule.
+    """
+    by_identity = {meta["course_identity"]: code for code, meta in metadata.items()}
+    selected: dict[str, set[int]] = {}
+    selected_meta: dict[str, dict] = {}
+    seen_identities: set[str] = set()
+    for entry in entries:
+        display = str(entry.get("course_code") or "").strip()
+        if not display:
+            raise ValueError("A selected course is missing its course code.")
+        source = _source_code_for_display(display, entry.get("source_course_code"))
+        name = str(entry.get("course_name") or "").strip()
+        named_identity = planner_course_key(source, name)
+        identity = str(entry.get("course_identity") or named_identity)
+        if identity != named_identity:
+            raise ValueError(f"Course identity does not match the name for {display}.")
+        match = by_identity.get(identity)
+        if match is None:
+            raise ExamCoursesUnavailable([display])
+        meta = dict(metadata[match])
+        if display in selected or meta["course_identity"] in seen_identities:
+            raise ValueError(f"Course {display} was selected more than once.")
+        seen_identities.add(meta["course_identity"])
+        selected[display] = set(enrolled[match])
+        selected_meta[display] = meta
+    return selected, selected_meta
 
 
 # ── 2. Conflict graph ──────────────────────────────────────────
@@ -416,7 +398,7 @@ def build_conflict_graph(
     # Build adjacency dict (bidirectional) + flat edge list for the frontend
     conflicts: list[dict] = []
     adj: dict[str, dict[str, int]] = defaultdict(dict)
-    for (a, b), cnt in edge_counts.items():
+    for (a, b), cnt in sorted(edge_counts.items()):
         conflicts.append({"course_a": a, "course_b": b, "shared": cnt})
         adj[a][b] = cnt
         adj[b][a] = cnt
@@ -430,6 +412,7 @@ def build_conflict_graph(
 def build_plan_term_buckets(
     running_courses: set[str],
     course_meta: dict[str, dict] | None = None,
+    programs: list[str] | None = None,
 ) -> tuple[dict[tuple[str, int], set[str]], dict[str, list[tuple[str, int]]]]:
     """Map running courses to (program, programme_term) buckets.
 
@@ -448,10 +431,13 @@ def build_plan_term_buckets(
         source_to_display[source].append(display_code)
         identity_by_display[display_code] = identity
 
-    rows = ProgrammeRequirement.objects.filter(
+    requirements = ProgrammeRequirement.objects.filter(
         course_code__in=set(source_to_display),
         programme_term__isnull=False,
-    ).values_list("program", "course_code", "course_name", "programme_term")
+    )
+    if programs:
+        requirements = requirements.filter(program__in=programs)
+    rows = requirements.values_list("program", "course_code", "course_name", "programme_term")
 
     # Forward index: (program, term) → {course_codes}
     buckets: dict[tuple[str, int], set[str]] = defaultdict(set)
@@ -483,15 +469,21 @@ def build_plan_term_buckets(
 def check_bucket_feasibility(
     buckets: dict[tuple[str, int], set[str]],
     num_days: int,
+    pinned: list[dict[str, str]] | None = None,
 ) -> list[dict]:
-    """Return list of violations where a bucket has more courses than days.
+    """Return buckets that need more days after honoring deliberate pin overrides.
 
     Each violation: {program, programme_term, bucket_size, num_days, courses}
     Empty list means all buckets are feasible.
     """
     violations: list[dict] = []
+    pinned_days = {pin["course_code"]: pin["day"] for pin in pinned or []}
     for (program, term), courses in sorted(buckets.items()):
-        if len(courses) > num_days:
+        fixed_courses = courses & pinned_days.keys()
+        required_days = len(courses - fixed_courses) + len(
+            {pinned_days[course] for course in fixed_courses}
+        )
+        if required_days > num_days:
             violations.append(
                 {
                     "program": program,
@@ -502,6 +494,64 @@ def check_bucket_feasibility(
                 }
             )
     return violations
+
+
+def validate_exam_pins(
+    pinned: list[dict] | None,
+    courses: list[str],
+    slots: list[dict],
+    *,
+    schedule_entries: list[dict] | None = None,
+) -> list[dict[str, str]]:
+    """Resolve exact display codes and reject pins that cannot be honored.
+
+    Display codes distinguish named variants of the same registrar code. Never
+    collapse them to the source code or silently ignore an invalid fixed slot.
+    When saving a visible schedule, its placements must already match the pins.
+    """
+    if pinned is None:
+        return []
+    if not isinstance(pinned, list):
+        raise ValueError("Pinned exams must be a list of course, day and period entries.")
+    selected = set(courses)
+    available_slots = {(slot["day"], slot["period"]) for slot in slots}
+    placements = (
+        {entry["course_code"]: (entry["day"], entry["period"]) for entry in schedule_entries}
+        if schedule_entries is not None
+        else None
+    )
+    identities = {
+        entry["course_code"]: str(entry.get("course_identity") or "")
+        for entry in schedule_entries or []
+    }
+    normalized: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for pin in pinned:
+        if not isinstance(pin, dict) or any(
+            not isinstance(pin.get(field), str) or not pin[field].strip()
+            for field in ("course_code", "day", "period")
+        ):
+            raise ValueError("Each pinned exam must specify a course, day and period.")
+        course, day, period = (pin[field].strip() for field in ("course_code", "day", "period"))
+        if course not in selected:
+            raise ValueError(f"Pinned course {course} is not selected for this timetable.")
+        if (
+            pin.get("course_identity")
+            and identities.get(course)
+            and pin["course_identity"] != identities[course]
+        ):
+            raise ValueError(f"Pinned course {course} has an inconsistent course identity.")
+        if course in seen:
+            raise ValueError(f"Course {course} is pinned more than once.")
+        if (day, period) not in available_slots:
+            raise ValueError(f"Pinned course {course} uses a day or period outside this timetable.")
+        if placements is not None and placements.get(course) != (day, period):
+            raise ValueError(
+                f"Pinned course {course} does not match its visible schedule placement."
+            )
+        seen.add(course)
+        normalized.append({"course_code": course, "day": day, "period": period})
+    return normalized
 
 
 # ── 4. Greedy scheduler ───────────────────────────────────────
@@ -558,6 +608,8 @@ def schedule(
     Returns:
         list of {course_code, slot_index, day, period}
     """
+    pinned = validate_exam_pins(pinned, courses, slots)
+
     # ── Preparation: build lookup tables ──
     max_slot_idx = max((s["index"] for s in slots), default=-1)
     slot_by_index: dict[int, dict] = {s["index"]: s for s in slots}
@@ -650,9 +702,7 @@ def schedule(
             cc = pin.get("course_code", "")
             p_day = pin.get("day", "")
             p_period = pin.get("period", "")
-            si = dp_to_slot.get((p_day, p_period))
-            if si is None or cc not in set(courses):
-                continue
+            si = dp_to_slot[(p_day, p_period)]
             assignment[cc] = si
             slot_load[si] += 1
             day_load[p_day] += 1
@@ -850,9 +900,46 @@ def schedule(
 # ── 5. QA report ────────────────────────────────────────────────
 
 
+def apply_thin_conflict_policy(
+    enrolled_sets: dict[str, set[int]],
+    adjacency: dict[str, dict[str, int]],
+    threshold: int,
+) -> tuple[dict[str, dict[str, int]], list[dict]]:
+    """Return the shared relaxed graph and report without mutating its input."""
+    adj = {course: dict(neighbours) for course, neighbours in adjacency.items()}
+    thin_courses_report: list[dict] = []
+    if threshold > 0:
+        thin_set = {cc for cc, sids in enrolled_sets.items() if len(sids) <= threshold}
+        # Snapshot full neighbour list for every thin course BEFORE any
+        # mutation. Otherwise, when courses A and B are mutual thin
+        # neighbours, processing A first pops B's back-edge to A, so
+        # B's "dropped edges" report would be short by 1 and missing A
+        # from its neighbours list. The report must be independent of
+        # iteration order.
+        thin_neighbours = {cc: sorted(adj.get(cc, {}).keys()) for cc in thin_set}
+        for cc in sorted(thin_set):
+            dropped = thin_neighbours[cc]
+            thin_courses_report.append(
+                {
+                    "course_code": cc,
+                    "total_students": len(enrolled_sets[cc]),
+                    "dropped_edges": len(dropped),
+                    "neighbours": dropped,
+                }
+            )
+            adj[cc] = {}
+            for n in dropped:
+                if n in adj:
+                    adj[n].pop(cc, None)
+
+    return adj, thin_courses_report
+
+
 def _compute_thin_clash_risk(
     enrolled_sets: dict[str, set[int]],
     schedule_entries: list[dict],
+    *,
+    thin_courses: set[str] | None = None,
 ) -> list[dict]:
     """Walk the schedule and report any student whose exams collide in
     the same slot.
@@ -868,7 +955,7 @@ def _compute_thin_clash_risk(
         slot_to_courses[e["slot_index"]].append(e["course_code"])
 
     clashes: list[dict] = []
-    for si, course_codes in slot_to_courses.items():
+    for si, course_codes in sorted(slot_to_courses.items()):
         if len(course_codes) < 2:
             continue
         # Find students enrolled in 2+ of these courses
@@ -876,8 +963,8 @@ def _compute_thin_clash_risk(
         for cc in course_codes:
             for sid in enrolled_sets.get(cc, ()):
                 student_courses_in_slot[sid].append(cc)
-        for sid, ccs in student_courses_in_slot.items():
-            if len(ccs) >= 2:
+        for sid, ccs in sorted(student_courses_in_slot.items()):
+            if len(ccs) >= 2 and (thin_courses is None or thin_courses.intersection(ccs)):
                 clashes.append(
                     {
                         "student_id": sid,
@@ -886,6 +973,51 @@ def _compute_thin_clash_risk(
                     }
                 )
     return clashes
+
+
+def attach_exam_relaxation_qa(
+    qa: dict,
+    enrolled_sets: dict[str, set[int]],
+    schedule_entries: list[dict],
+    threshold: int,
+    thin_courses_report: list[dict],
+) -> None:
+    """Keep actual clashes visible while classifying only unrelaxed pairs as hard.
+
+    Removing a thin course's graph edges approves pairs involving that course;
+    it never approves a pair of two ordinary courses or a bucket-day violation.
+    A mixed student collision can therefore have both approved and hard pairs.
+    """
+    thin_courses = {row["course_code"] for row in thin_courses_report}
+    qa["thin_threshold"] = threshold
+    qa["thin_courses"] = thin_courses_report
+    qa["thin_clash_risk"] = (
+        _compute_thin_clash_risk(
+            enrolled_sets,
+            schedule_entries,
+            thin_courses=thin_courses,
+        )
+        if threshold
+        else []
+    )
+    hard_clashes = []
+    approved_only = 0
+    for row in qa["same_slot_conflicts"]:
+        ordinary = [course for course in row["courses"] if course not in thin_courses]
+        if len(ordinary) >= 2:
+            hard_clashes.append({**row, "courses": ordinary})
+        else:
+            approved_only += 1
+    qa["approved_thin_conflict_count"] = approved_only
+    qa["hard_conflict_count"] = len(hard_clashes)
+    details = [{"kind": "same_slot", **row} for row in hard_clashes] + [
+        {"kind": "bucket_day", **row} for row in qa["bucket_day_violations"]
+    ]
+    qa["manual_override_details"] = details
+    qa["manual_override_count"] = len(details)
+    qa["schedule_violation_details"] = details
+    qa["schedule_violation_count"] = len(details)
+    qa["violation_source"] = "current_placements"
 
 
 def _build_qa(
@@ -897,8 +1029,8 @@ def _build_qa(
 ) -> dict:
     """Validate the schedule and produce a QA report.
 
-    Checks hard-constraint violations (which should only happen with
-    user-pinned overrides) and computes soft-constraint metrics:
+    Checks hard-constraint violations in generated or manually moved exams
+    and computes soft-constraint metrics:
 
     Hard constraints:
       - Same-slot conflicts:    two courses sharing students in the same slot
@@ -918,6 +1050,11 @@ def _build_qa(
     # Lookup maps: course → its assigned slot index / day
     course_slot: dict[str, int] = {e["course_code"]: e["slot_index"] for e in schedule_entries}
     course_day: dict[str, str] = {e["course_code"]: e["day"] for e in schedule_entries}
+    day_order: dict[str, int] = {}
+    for entry in schedule_entries:
+        day_order[entry["day"]] = min(
+            day_order.get(entry["day"], entry["slot_index"]), entry["slot_index"]
+        )
     course_identity: dict[str, str] = {
         e["course_code"]: str(
             e.get("course_identity") or e.get("source_course_code") or e["course_code"]
@@ -930,8 +1067,8 @@ def _build_qa(
     # Invert enrolled_sets: student_id → [course_codes] so we can iterate
     # per-student and check their personal schedule for violations.
     student_courses: dict[int, list[str]] = defaultdict(list)
-    for cc, sids in enrolled_sets.items():
-        for sid in sids:
+    for cc, sids in sorted(enrolled_sets.items()):
+        for sid in sorted(sids):
             student_courses[sid].append(cc)
 
     _cm = credit_map or {}
@@ -948,7 +1085,7 @@ def _build_qa(
     heavy_day_details: list[dict] = []  # per-student, per-day heavy-credit records
 
     # ── Per-student validation ──
-    for sid, courses in student_courses.items():
+    for sid, courses in sorted(student_courses.items()):
         # Group this student's courses by slot and by day
         slot_groups: dict[int, list[str]] = defaultdict(list)
         day_groups: dict[str, list[str]] = defaultdict(list)
@@ -960,21 +1097,21 @@ def _build_qa(
             if day is not None:
                 day_groups[day].append(cc)
 
-        # If ≥2 courses land in the same slot → conflict (pinned override)
-        for si, ccs in slot_groups.items():
+        # If ≥2 courses land in the same slot, report a schedule violation.
+        for si, ccs in sorted(slot_groups.items()):
             if len(ccs) >= 2:
                 same_slot_conflicts.append(
                     {
                         "student_id": sid,
                         "slot_index": si,
-                        "courses": ccs,
+                        "courses": sorted(ccs),
                     }
                 )
 
         # ── Soft-constraint metrics per day ──
         has_overload = False  # does this student exceed the per-day cap?
         has_heavy_day = False  # does this student have a heavy credit pairing?
-        for _day, ccs in day_groups.items():
+        for _day, ccs in sorted(day_groups.items(), key=lambda item: day_order[item[0]]):
             if _day == "OVERFLOW":
                 continue  # OVERFLOW is a virtual day — skip for metrics
 
@@ -1027,8 +1164,8 @@ def _build_qa(
 
     # ── Bucket (programme-plan term) day-rule verification ──
     # Hard constraint B says no two courses from the same (program, term)
-    # bucket should share a day.  This can only be violated when the user
-    # pins courses that override the scheduler's hard-constraint logic.
+    # bucket should share a day. Pins and subsequent manual moves can both
+    # create violations; QA does not imply that a pin caused the problem.
     bucket_day_violations: list[dict] = []
     bucket_count = 0
     if plan_term_buckets:
@@ -1036,13 +1173,13 @@ def _build_qa(
         for (program, term), bucket_courses in sorted(plan_term_buckets.items()):
             # Group this bucket's courses by their assigned day
             day_groups_b: dict[str, dict[str, str]] = defaultdict(dict)
-            for cc in bucket_courses:
+            for cc in sorted(bucket_courses):
                 day = course_day.get(cc)
                 if day is not None and day != "OVERFLOW":
                     identity = course_identity.get(cc, cc)
                     day_groups_b[day].setdefault(identity, cc)
             # Any day with ≥2 bucket-mates is a violation
-            for day, ccs in day_groups_b.items():
+            for day, ccs in sorted(day_groups_b.items(), key=lambda item: day_order[item[0]]):
                 if len(ccs) >= 2:
                     bucket_day_violations.append(
                         {
@@ -1052,6 +1189,12 @@ def _build_qa(
                             "courses": sorted(ccs.values()),
                         }
                     )
+
+    # These are violation records, not one aggregate student count: a bucket
+    # violation and a student slot clash describe different scheduling rules.
+    manual_override_details = [
+        {"kind": "same_slot", **detail} for detail in same_slot_conflicts
+    ] + [{"kind": "bucket_day", **detail} for detail in bucket_day_violations]
 
     return {
         "total_courses": len(enrolled_sets),
@@ -1065,6 +1208,8 @@ def _build_qa(
         "bucket_count": bucket_count,
         "bucket_day_violations": bucket_day_violations,
         "bucket_day_violations_count": len(bucket_day_violations),
+        "manual_override_count": len(manual_override_details),
+        "manual_override_details": manual_override_details,
         "max_credit_load_per_day": max_credit_load_per_day,
         "heavy_day_students": heavy_day_students,
         "overload_details": overload_details,
@@ -1077,18 +1222,12 @@ def _build_qa(
 # Exam rooms are allocated AFTER the greedy slot scheduler has decided
 # which (day, period) every course goes into.  The workflow per slot:
 #
-#   1. Collect every demand unit scheduled in this slot, split by gender
-#      (M students use M rooms, F students use F rooms — separate
-#       buildings, same exam time, no cross-gender room sharing).
-#   2. Attempt same-course same-gender section merges (combined ≤ biggest
-#      available room) so small sections of one course collapse into one
-#      room rather than eating two rooms.
-#   3. Sort demand units by student_count DESC (largest first — classic
-#      best-fit-decreasing bin packing).
-#   4. For each unit, pick the tightest-fit available room; prefer the
-#      room the section normally uses during regular term meetings.
-#   5. Units that still don't fit get room_code="UNASSIGNED" and are
-#      reported by the QA layer.
+#   1. Place original sections largest first across every course in the period,
+#      using the smallest fitting compatible room (preference only breaks ties).
+#   2. Consolidate same-course sections without disturbing other courses.
+#   3. Jointly repair difficult room combinations before splitting sections.
+#   4. Preserve every student and original section identity; insufficient seats
+#      remain UNASSIGNED and are surfaced by QA. Exam times never change here.
 #
 # Constraints enforced:
 #   • Each room hosts at most one course per slot (no cross-course share)
@@ -1119,161 +1258,21 @@ def build_section_enrollment(
     programs: list[str] | None = None,
     sections: list[str] | None = None,
 ) -> dict[str, list[dict]]:
-    """Return per-section enrolment data for room assignment.
+    """Resolve actual scraped sections through the same exam population contract.
 
-    Result shape:
-        {
-          "CS101": [
-            {"section": "M7", "student_count": 32,
-             "preferred_room": "172FA003", "gender": "M"},
-            ...
-          ],
-          ...
-        }
-
-    Source of truth is StudentTermSection (latest academic_year / term),
-    grouped by the underlying TermSection.  Only course_codes passed in
-    are returned.  The ``programs`` / ``sections`` filters narrow the
-    student population the same way build_enrolled_sets does, so the
-    per-section counts stay consistent with the scheduled enrolled_sets.
-
-    Courses with no StudentTermSection data fall back to a synthetic
-    single "ALL" section sized from StudentCourse.status='studying' so
-    they still get a room assignment.
+    A raw source code can select several canonical course identities; their
+    result keys stay separate. There is no synthetic or academic-record fallback.
     """
-    wanted: set[str] = {str(c) for c in course_codes}
+    wanted = {str(code) for code in course_codes}
     if not wanted:
         return {}
-
-    # Latest (academic_year, term) that has any data — same approach as
-    # build_enrolled_sets so we stay on the same dataset.
-    latest = (
-        StudentTermSection.objects.order_by("-academic_year", "-term")
-        .values_list("academic_year", "term")
-        .first()
-    )
-
-    result: dict[str, list[dict]] = {}
-    sts_course_keys: set[str] = set()
-
-    if latest is not None:
-        ay, tm = latest
-        qs = (
-            StudentTermSection.objects.filter(
-                academic_year=ay,
-                term=tm,
-                term_section__course_key__in=list(wanted),
-            )
-            # Another branch's sections never size a room here: those stored
-            # links are not this campus' enrolments.
-            .exclude(term_section__section__istartswith="YM")
-            .exclude(term_section__section__istartswith="YF")
-            .select_related("term_section")
-        )
-
-        if programs:
-            student_ids = set(
-                Student.objects.filter(program__in=programs).values_list("student_id", flat=True)
-            )
-            qs = qs.filter(student_id__in=student_ids)
-        if sections:
-            student_ids_sec = set(
-                Student.objects.filter(section__in=sections).values_list("student_id", flat=True)
-            )
-            qs = qs.filter(student_id__in=student_ids_sec)
-
-        # Group by (course_key, term_section_id) and count distinct students.
-        # Also remember the section label so we can derive gender later.
-        per_section: dict[tuple[str, int], dict[str, Any]] = {}
-        for row in _effective_enrolment(qs).values(
-            "term_section_id",
-            "term_section__course_key",
-            "term_section__section",
-            "student_id",
-        ):
-            ck = row["term_section__course_key"]
-            tsid = row["term_section_id"]
-            key = (ck, tsid)
-            entry = per_section.setdefault(
-                key,
-                {
-                    "section": row["term_section__section"] or "",
-                    "student_ids": set(),
-                    "term_section_id": tsid,
-                },
-            )
-            entry["student_ids"].add(row["student_id"])
-
-        # Preferred room: for each TermSection, find the most-used room code
-        # across its TermSectionMeeting rows (classroom where the section
-        # normally meets during the term).
-        involved_ts_ids = {k[1] for k in per_section}
-        preferred_room_by_ts: dict[int, str] = {}
-        if involved_ts_ids:
-            meetings = TermSectionMeeting.objects.filter(
-                term_section_id__in=involved_ts_ids,
-            ).values_list("term_section_id", "room")
-            room_counts: dict[int, dict[str, int]] = defaultdict(lambda: defaultdict(int))
-            for tsid, room_code in meetings:
-                if room_code:
-                    room_counts[tsid][room_code] += 1
-            for tsid, counts in room_counts.items():
-                # Most-frequent wins; alphabetical as stable tiebreaker
-                preferred_room_by_ts[tsid] = max(
-                    counts.items(), key=lambda it: (it[1], -ord(it[0][0]) if it[0] else 0)
-                )[0]
-
-        for (course_key, _tsid), entry in per_section.items():
-            sts_course_keys.add(course_key)
-            section_label = entry["section"] or _SYNTHETIC_SECTION_LABEL
-            result.setdefault(course_key, []).append(
-                {
-                    "section": section_label,
-                    "student_count": len(entry["student_ids"]),
-                    "preferred_room": preferred_room_by_ts.get(entry["term_section_id"], ""),
-                    "gender": _section_gender(section_label),
-                }
-            )
-
-    # Fallback for courses with zero STS data — build one synthetic section
-    # from StudentCourse.status='studying', taking gender from the first
-    # enrolled student.  This guarantees every scheduled course gets room
-    # assignment even when timetable data is missing.
-    missing = wanted - sts_course_keys
-    if missing:
-        sc_qs = StudentCourse.objects.filter(
-            course__course_code__in=list(missing),
-            status="studying",
-        ).select_related("course", "student")
-        if programs:
-            sc_qs = sc_qs.filter(student__program__in=programs)
-        if sections:
-            sc_qs = sc_qs.filter(student__section__in=sections)
-
-        fallback: dict[str, dict[str, set[int] | str]] = {}
-        for sc in sc_qs.values("course__course_code", "student_id", "student__section"):
-            cc = sc["course__course_code"]
-            entry_f = fallback.setdefault(
-                cc, {"student_ids": set(), "gender": sc["student__section"] or "M"}
-            )
-            # student_ids is typed as set[int] in this shape
-            entry_f["student_ids"].add(sc["student_id"])  # type: ignore[union-attr]
-
-        for cc, entry_f in fallback.items():
-            sids = entry_f["student_ids"]
-            gender = str(entry_f["gender"]).strip().upper()[:1] or "M"
-            if gender not in ("M", "F"):
-                gender = "M"
-            result.setdefault(cc, []).append(
-                {
-                    "section": _SYNTHETIC_SECTION_LABEL,
-                    "student_count": len(sids),  # type: ignore[arg-type]
-                    "preferred_room": "",
-                    "gender": gender,
-                }
-            )
-
-    return result
+    enrolled, metadata = build_enrolled_sets_with_meta(programs=programs, sections=sections)
+    selected = {
+        code: members
+        for code, members in enrolled.items()
+        if code in wanted or metadata[code]["source_course_code"] in wanted
+    }
+    return resolve_exam_section_enrollment(selected, course_meta=metadata)
 
 
 def check_room_feasibility(
@@ -1282,11 +1281,10 @@ def check_room_feasibility(
 ) -> list[dict]:
     """Return sections that cannot fit in any single same-gender room.
 
-    A violation means even the largest room of the matching gender is
-    smaller than the section — the scheduler cannot place it without
-    splitting students, which we do not support.  Returns the list of
-    violations so the caller can surface them as warnings (does not
-    block the build — unassignable sections just get UNASSIGNED).
+    A violation means the largest compatible room is smaller than the
+    official section, so seating it requires multiple room groups. This
+    inventory check does not evaluate competition within a period; that
+    belongs to room allocation. It reports demand without blocking a build.
     """
     if not rooms:
         return []
@@ -1308,9 +1306,22 @@ def check_room_feasibility(
                         "gender": g,
                         "student_count": s["student_count"],
                         "max_room_capacity": max_cap,
+                        **{
+                            key: s[key]
+                            for key in ("section_key", "mapping_status", "term_section_id")
+                            if key in s
+                        },
                     }
                 )
-    return violations
+    return sorted(
+        violations,
+        key=lambda row: (
+            row["course_code"],
+            row["gender"],
+            str(row.get("section_key", "")),
+            row["section"],
+        ),
+    )
 
 
 def _split_oversized_sections(
@@ -1347,7 +1358,8 @@ def _split_oversized_sections(
             part_size = base + (1 if i < remainder else 0)
             out.append(
                 {
-                    "section": f"{s['section']}/{i + 1}",
+                    **s,
+                    "section": s["section"] if "section_key" in s else f"{s['section']}/{i + 1}",
                     "student_count": part_size,
                     "preferred_room": s.get("preferred_room", "") if i == 0 else "",
                     "gender": s.get("gender", "M"),
@@ -1420,276 +1432,63 @@ def assign_rooms_to_schedule(
     section_enrollment: dict[str, list[dict]],
     rooms: list[dict],
     seed: int | None = None,
+    *,
+    allocation_context: RoomAllocationContext | None = None,
 ) -> list[dict]:
-    """Assign rooms to every scheduled course, mutating ``schedule_entries``
-    in place and returning the list for chaining.
+    """Room original sections across each period without changing exam times.
 
-    For each slot:
-      1. Group courses scheduled in that slot by their per-gender sections.
-      2. Try to merge same-course same-gender sections.
-      3. Best-fit-decreasing assignment: tightest-fitting room wins, with
-         a preference bonus for the section's normal meeting room.
-      4. Rooms already taken in this slot are unavailable.
-      5. Unassignable demand units get room_code="UNASSIGNED".
-
-    Each entry in schedule_entries gains a ``rooms`` key:
-        [
-          {"section": "M7", "room_code": "172FA003",
-           "student_count": 32, "room_capacity": 35,
-           "gender": "M", "merged_from": ["M7"]},
-          ...
-        ]
-
-    OVERFLOW entries are skipped (they have no real slot).
-    When ``rooms`` is empty, every entry gets an empty ``rooms`` list.
+    Scheduling may use ``seed``; room assignment deliberately does not. Build,
+    fixed-time Check, Save and export must agree for identical authoritative
+    inputs. Existing room rows are replaced, making repeated calls idempotent.
     """
-    if not schedule_entries:
-        return schedule_entries
-
-    # Ensure every entry has a rooms slot even if we bail early
-    for e in schedule_entries:
-        e.setdefault("rooms", [])
-
-    if not rooms:
-        return schedule_entries
-
-    # Randomiser used for tie-breaking when a seed is provided.  Tied
-    # room candidates and tied demand groups are reservoir-sampled so
-    # the chosen one varies across runs — the overall quality stays
-    # identical because we only break ties, never override better picks.
-    rng = random.Random(seed) if seed is not None else None
-
-    # Pre-split rooms by gender; sort ASC by capacity so best-fit picks
-    # the tightest room first when iterating.
-    rooms_by_gender: dict[str, list[dict]] = {"M": [], "F": []}
-    for r in rooms:
-        g = str(r.get("section", "M")).upper() or "M"
-        if g in rooms_by_gender:
-            rooms_by_gender[g].append(r)
-    for g in rooms_by_gender:
-        rooms_by_gender[g].sort(key=lambda r: int(r.get("capacity", 0) or 0))
-
-    # Group schedule entries by slot_index so we can assign per-slot
+    inventory = normalized_rooms(rooms)
+    context = allocation_context or RoomAllocationContext()
     entries_by_slot: dict[int, list[dict]] = defaultdict(list)
-    for e in schedule_entries:
-        if e.get("day") == "OVERFLOW":
-            continue
-        entries_by_slot[e["slot_index"]].append(e)
-
-    def _pack_course_gender_group(
-        entry: dict,
-        sections: list[dict],
-        gender: str,
-        taken: set[tuple[str, str]],
-    ) -> None:
-        """Room-aware packing for one (course, gender) block.
-
-        Algorithm per (course, gender):
-          1. Sort remaining sections DESC by student_count.
-          2. Top section is the current "anchor".  Find all free same-
-             gender rooms whose capacity ≥ anchor.student_count.
-          3. If none: split the anchor in half and retry.  Only when
-             the anchor is already smaller than every remaining room
-             is it stamped UNASSIGNED (true capacity exhaustion).
-          4. Score candidates: preferred-room bonus, then tightest-fit.
-          5. Pack additional sections into the chosen room until no
-             more fit, largest-first.
-          6. Stamp one ``rooms`` record describing the packed block.
-          7. Remove packed sections from remaining; loop until empty.
-
-        Recursive splitting during step 3 handles the common case where
-        a big section would have fit earlier but all the biggest rooms
-        have been consumed by other courses in the same slot — halving
-        it puts it within reach of smaller rooms still available.
-        """
-        remaining = sorted(
-            (dict(s) for s in sections),
-            key=lambda s: int(s.get("student_count", 0) or 0),
-            reverse=True,
-        )
-
-        def _free_max_cap() -> int:
-            return max(
-                (
-                    int(r.get("capacity", 0) or 0)
-                    for r in rooms_by_gender.get(gender, [])
-                    if (str(r.get("room_code", "")), gender) not in taken
-                ),
-                default=0,
-            )
-
-        while remaining:
-            anchor = remaining[0]
-            anchor_count = int(anchor.get("student_count", 0) or 0)
-            preferred = anchor.get("preferred_room", "")
-
-            candidates = [
-                r
-                for r in rooms_by_gender.get(gender, [])
-                if (str(r.get("room_code", "")), gender) not in taken
-                and int(r.get("capacity", 0) or 0) >= anchor_count
-            ]
-
-            if not candidates:
-                # Before giving up, try to split the anchor in half —
-                # the other half could fit a smaller room.  We only
-                # truly give up when the anchor is already smaller than
-                # every free same-gender room (real capacity exhaustion)
-                # or when halving would drop the part below 1 student.
-                free_max = _free_max_cap()
-                if anchor_count >= 2 and free_max > 0 and anchor_count > free_max:
-                    # Split roughly in half and push both halves back.
-                    half_a = anchor_count // 2
-                    half_b = anchor_count - half_a
-                    base_label = anchor.get("_split_from") or anchor["section"]
-                    remaining.pop(0)
-                    remaining = [
-                        {
-                            "section": f"{anchor['section']}a",
-                            "student_count": half_a,
-                            "preferred_room": preferred,
-                            "gender": gender,
-                            "_split_from": base_label,
-                        },
-                        {
-                            "section": f"{anchor['section']}b",
-                            "student_count": half_b,
-                            "preferred_room": "",
-                            "gender": gender,
-                            "_split_from": base_label,
-                        },
-                    ] + remaining
-                    # Keep sorted so the loop's DESC invariant holds
-                    remaining.sort(
-                        key=lambda s: int(s.get("student_count", 0) or 0),
-                        reverse=True,
-                    )
-                    continue
-
-                entry["rooms"].append(
+    for entry in schedule_entries:
+        entry["rooms"] = []
+        if entry.get("day") != "OVERFLOW":
+            entries_by_slot[entry["slot_index"]].append(entry)
+    for _, entries in sorted(entries_by_slot.items()):
+        by_course = {entry["course_code"]: entry for entry in entries}
+        demands_by_gender: dict[str, list[dict]] = defaultdict(list)
+        for code in sorted(by_course):
+            for section in section_enrollment.get(code, []):
+                gender = str(section.get("gender", "U") or "U").upper()
+                demands_by_gender[gender].append(
                     {
-                        "section": anchor["section"],
-                        "room_code": "UNASSIGNED",
-                        "student_count": anchor_count,
-                        "room_capacity": 0,
+                        **section,
+                        "course_code": code,
+                        "course_identity": by_course[code].get("course_identity", code),
                         "gender": gender,
-                        "merged_from": [anchor["section"]],
                     }
                 )
-                remaining.pop(0)
-                continue
-
-            def _score(room: dict, pref: str = preferred, demand: int = anchor_count) -> tuple:
-                code = str(room.get("room_code", ""))
-                cap = int(room.get("capacity", 0) or 0)
-                return (0 if code == pref else 1, cap - demand)
-
-            # Pick the tightest-fit room.  When multiple rooms tie on
-            # the score and a seed is provided, reservoir-sample among
-            # them so the chosen room varies run-to-run.
-            if rng is None:
-                chosen = min(candidates, key=_score)
-            else:
-                best_room_score: tuple | None = None
-                chosen = candidates[0]
-                ties = 0
-                for r in candidates:
-                    rs = _score(r)
-                    if best_room_score is None or rs < best_room_score:
-                        best_room_score = rs
-                        chosen = r
-                        ties = 1
-                    elif rs == best_room_score:
-                        ties += 1
-                        if rng.random() < 1.0 / ties:
-                            chosen = r
-            chosen_code = str(chosen.get("room_code", ""))
-            chosen_cap = int(chosen.get("capacity", 0) or 0)
-            taken.add((chosen_code, gender))
-
-            # Pack more sections into the chosen room, largest-first,
-            # while they still fit.  This forms the merged block as we
-            # go so its shape matches the actual room we're using.
-            packed = [anchor]
-            running = anchor_count
-            remaining = remaining[1:]
-            still_left: list[dict] = []
-            for s in remaining:
-                sc = int(s.get("student_count", 0) or 0)
-                if running + sc <= chosen_cap:
-                    packed.append(s)
-                    running += sc
-                else:
-                    still_left.append(s)
-            remaining = still_left
-
-            entry["rooms"].append(
-                {
-                    "section": "+".join(p["section"] for p in packed)
-                    if len(packed) > 1
-                    else packed[0]["section"],
-                    "room_code": chosen_code,
-                    "student_count": running,
-                    "room_capacity": chosen_cap,
-                    "gender": gender,
-                    "merged_from": [p["section"] for p in packed],
-                }
-            )
-
-    for _si, entries in entries_by_slot.items():
-        # Rooms consumed in this slot (by room_code + gender)
-        taken: set[tuple[str, str]] = set()
-
-        # Build one "demand group" per (entry, gender) so we can sort
-        # ACROSS courses by the largest indivisible section each course
-        # needs.  This guarantees a 90-student single section beats a
-        # 40-section group of 6-student blocks for first pick.
-        groups: list[tuple[dict, str, list[dict], int]] = []
-        for entry in entries:
-            course_code = entry["course_code"]
-            sections_data = section_enrollment.get(course_code, [])
-            if not sections_data:
-                continue
-            for gender in ("M", "F"):
-                same_gender = [s for s in sections_data if s.get("gender") == gender]
-                if not same_gender:
-                    continue
-                # Pre-split any section that exceeds the biggest same-
-                # gender room — the registrar normally splits such huge
-                # sections into two sitting groups for exams.
-                max_cap_gender = max(
-                    (int(r.get("capacity", 0) or 0) for r in rooms_by_gender[gender]),
-                    default=0,
+        for gender, demands in sorted(demands_by_gender.items()):
+            period_rooms = [room for room in inventory if room["section"] == gender]
+            rows = allocate_period(demands, period_rooms, context)
+            groups: dict[tuple, list[dict]] = defaultdict(list)
+            for row in rows:
+                # Unseated original sections remain individually reviewable.
+                key = (
+                    row["course_code"],
+                    row["room_code"],
+                    str(row.get("section_key", row["section"]))
+                    if row["room_code"] == "UNASSIGNED"
+                    else "",
                 )
-                same_gender = _split_oversized_sections(same_gender, max_cap_gender)
-                max_section = max(int(s.get("student_count", 0) or 0) for s in same_gender)
-                groups.append((entry, gender, same_gender, max_section))
-
-        # Sort by the biggest indivisible section DESC: a group whose
-        # largest section is 90 students is placed before a group whose
-        # largest section is 7, regardless of total size.  When a seed
-        # is provided, groups with the same max-section value are
-        # shuffled so tied groups get varied priority each run.
-        if rng is None:
-            groups.sort(key=lambda g: -g[3])
-        else:
-            # Banded shuffle: groups are bucketed by max-section tier
-            # (bands of 10 students) and shuffled within each band
-            # before processing.  Wider than strict ties so adjacent
-            # sizes also mix.
-            groups.sort(key=lambda g: -g[3])
-            banded: dict[int, list] = defaultdict(list)
-            for g in groups:
-                banded[g[3] // 10].append(g)
-            groups = []
-            for band in sorted(banded.keys(), reverse=True):
-                members = banded[band]
-                rng.shuffle(members)
-                groups.extend(members)
-
-        for entry, gender, same_gender, _max_section in groups:
-            _pack_course_gender_group(entry, same_gender, gender, taken)
-
+                groups[key].append(row)
+            for (code, room_code, _), parts in sorted(groups.items()):
+                by_course[code]["rooms"].append(
+                    {
+                        "section": " + ".join(dict.fromkeys(p["section"] for p in parts)),
+                        "room_code": room_code,
+                        "student_count": sum(p["student_count"] for p in parts),
+                        "room_capacity": parts[0]["room_capacity"],
+                        "gender": gender,
+                        "merged_from": list(dict.fromkeys(p["section"] for p in parts)),
+                        "section_parts": [exam_section_part(p) for p in parts],
+                    }
+                )
+    annotate_exam_room_groups(schedule_entries)
     return schedule_entries
 
 
@@ -1702,6 +1501,8 @@ def _rebalance_invigilators_pass(
     plan_term_buckets: dict[tuple[str, int], set[str]] | None,
     course_buckets: dict[str, list[tuple[str, int]]] | None,
     max_iterations: int = 30,
+    pinned_courses: set[str] | None = None,
+    allocation_context: RoomAllocationContext | None = None,
 ) -> int:
     """Final post-pass that moves courses between days to flatten the
     per-day invigilator demand.
@@ -1726,8 +1527,14 @@ def _rebalance_invigilators_pass(
     if not schedule_entries or not rooms_list or not slots:
         return 0
 
+    from copy import deepcopy
+
+    from core.services.exam_room_allocation import RoomAllocationTimeout
+
     course_buckets = course_buckets or {}
     plan_term_buckets = plan_term_buckets or {}
+    pinned_courses = pinned_courses or set()
+    allocation_context = allocation_context or RoomAllocationContext()
 
     # Slot lookup helpers
     slots_by_day: dict[str, list[dict]] = defaultdict(list)
@@ -1738,7 +1545,13 @@ def _rebalance_invigilators_pass(
         """Clear current room assignments and re-run the full packer."""
         for e in schedule_entries:
             e["rooms"] = []
-        assign_rooms_to_schedule(schedule_entries, section_enrollment, rooms_list, seed=None)
+        assign_rooms_to_schedule(
+            schedule_entries,
+            section_enrollment,
+            rooms_list,
+            seed=None,
+            allocation_context=allocation_context,
+        )
 
     def _per_day_invigilators() -> dict[str, dict[str, int]]:
         """Return ``{day: {'M': int, 'F': int, 'total': int}}`` so the
@@ -1759,6 +1572,45 @@ def _rebalance_invigilators_pass(
                 per_day[e["day"]][gender] += invigs
                 per_day[e["day"]]["total"] += invigs
         return {k: dict(v) for k, v in per_day.items()}
+
+    def _room_safety() -> tuple[int, int, int]:
+        """Preserve seating coverage and whole sections before balancing staff.
+
+        Count rooms and any unseated remainder by original section and cohort.
+        Unassigned demand is measured against the captured enrollment, so a
+        missing output row cannot make an unsafe trial improve the staff load.
+        """
+        unseated = 0
+        section_rooms: dict[tuple[str, str, str], set[str]] = defaultdict(set)
+        for entry in schedule_entries:
+            if entry.get("day") == "OVERFLOW":
+                continue
+            expected = sum(
+                int(section.get("student_count", 0) or 0)
+                for section in section_enrollment.get(entry["course_code"], [])
+            )
+            seated = 0
+            identity = str(entry.get("course_identity") or entry["course_code"])
+            for room in entry.get("rooms", []) or []:
+                room_code = str(room.get("room_code") or "")
+                if room_code not in {"", "UNASSIGNED"}:
+                    seated += int(room.get("student_count", 0) or 0)
+                for part in room.get("section_parts") or [room]:
+                    logical = str(
+                        part.get("section_key")
+                        or part.get("_split_from")
+                        or part.get("section")
+                        or ""
+                    )
+                    gender = str(part.get("gender") or room.get("gender") or "")
+                    section_rooms[(identity, gender, logical)].add(room_code or "UNASSIGNED")
+            unseated += max(0, expected - seated)
+        parts = [len(rooms) for rooms in section_rooms.values()]
+        return (
+            unseated,
+            sum(count > 1 for count in parts),
+            sum(max(0, count - 1) for count in parts),
+        )
 
     def _balance_score(per_day: dict[str, dict[str, int]]) -> tuple[float, int, int]:
         """Score a per-day distribution.  Lower is flatter.
@@ -1806,6 +1658,7 @@ def _rebalance_invigilators_pass(
     _repack_all()
     current = _per_day_invigilators()
     base_score = _balance_score(current)
+    base_room_safety = _room_safety()
     moves_accepted = 0
 
     for _iter in range(max_iterations):
@@ -1823,8 +1676,12 @@ def _rebalance_invigilators_pass(
         current_slot_of = {e["course_code"]: e["slot_index"] for e in schedule_entries}
         current_day_of = {e["course_code"]: e["day"] for e in schedule_entries}
 
-        # Try every course on the hottest day
-        hot_entries = [e for e in schedule_entries if e.get("day") == hottest_day]
+        # Fixed external exams participate in load totals but may never move.
+        hot_entries = [
+            e
+            for e in schedule_entries
+            if e.get("day") == hottest_day and e["course_code"] not in pinned_courses
+        ]
         # Process larger courses first — they shift more invigilator weight
         hot_entries.sort(
             key=lambda e: -sum(
@@ -1849,36 +1706,54 @@ def _rebalance_invigilators_pass(
                     continue
 
                 # Tentative move
+                previous_rooms = [deepcopy(item.get("rooms", [])) for item in schedule_entries]
                 entry["slot_index"] = tsi
                 entry["day"] = target_slot["day"]
                 entry["period"] = target_slot["period"]
-                _repack_all()
+                try:
+                    _repack_all()
+                except RoomAllocationTimeout:
+                    # Allocation may have cleared or partially replaced rows.
+                    # Restore the exact validated incumbent and stop probing;
+                    # an exhausted deadline cannot support another safe trial.
+                    entry["slot_index"] = old_slot_idx
+                    entry["day"] = old_day
+                    entry["period"] = old_period
+                    for item, rooms_snapshot in zip(schedule_entries, previous_rooms, strict=True):
+                        item["rooms"] = rooms_snapshot
+                    return moves_accepted
                 new_per_day = _per_day_invigilators()
                 new_score = _balance_score(new_per_day)
+                new_room_safety = _room_safety()
 
                 # Accept only if strictly improving the lexicographic
                 # (combined-stddev, max-day, spread) score.  A 0.01
                 # tolerance on the stddev component prevents oscillation
                 # when several moves have indistinguishable impact.
-                accept = new_score[0] + 0.01 < base_score[0] or (
-                    abs(new_score[0] - base_score[0]) <= 0.01 and new_score[1:] < base_score[1:]
+                safe = all(
+                    new <= old for new, old in zip(new_room_safety, base_room_safety, strict=True)
+                )
+                accept = safe and (
+                    new_score[0] + 0.01 < base_score[0]
+                    or (
+                        abs(new_score[0] - base_score[0]) <= 0.01 and new_score[1:] < base_score[1:]
+                    )
                 )
                 if accept:
                     base_score = new_score
+                    base_room_safety = new_room_safety
                     current = new_per_day
                     moves_accepted += 1
                     improved = True
                     break
 
-                # Revert: restore entry fields AND re-pack so the rooms
-                # data also matches the reverted state.  Without the
-                # second repack the entry would briefly carry rooms from
-                # the failed move until the next successful move (or the
-                # final pass return) re-packed everything.
+                # Revert the exact validated room snapshot as well as time.
+                # This does not spend the repair budget again on unchanged data.
                 entry["slot_index"] = old_slot_idx
                 entry["day"] = old_day
                 entry["period"] = old_period
-                _repack_all()
+                for item, rooms_snapshot in zip(schedule_entries, previous_rooms, strict=True):
+                    item["rooms"] = rooms_snapshot
 
             if improved:
                 break
@@ -1886,10 +1761,8 @@ def _rebalance_invigilators_pass(
         if not improved:
             break
 
-    # Final re-pack so the returned schedule_entries always carry rooms
-    # data that matches their final slot assignments — important when
-    # the loop exits mid-iteration.
-    _repack_all()
+    # Accepted trials already carry validated rooms; rejected trials restore
+    # their exact incumbent. No further solve is needed after the last trial.
     return moves_accepted
 
 
@@ -1900,17 +1773,6 @@ def _build_room_qa(
     """QA metrics for room assignment — rooms used, utilisation, unassigned,
     and double-booking defensive check (should never trigger).
     """
-    if not rooms:
-        return {
-            "rooms_available": 0,
-            "rooms_used": 0,
-            "total_demand": 0,
-            "total_capacity_used": 0,
-            "avg_utilization": 0.0,
-            "unassigned_room_sections": [],
-            "room_double_bookings": [],
-        }
-
     rooms_used_keys: set[tuple[int, str]] = set()
     total_demand = 0
     total_capacity_used = 0
@@ -1927,11 +1789,26 @@ def _build_room_qa(
         lambda: {"M": 0, "F": 0, "total": 0}
     )
 
-    for e in schedule_entries:
+    for e in sorted(
+        schedule_entries,
+        key=lambda entry: (
+            int(entry.get("slot_index", -1)),
+            str(entry.get("course_identity") or entry["course_code"]),
+            entry["course_code"],
+        ),
+    ):
         if e.get("day") == "OVERFLOW":
             continue
         si = int(e.get("slot_index", -1))
-        for a in e.get("rooms", []):
+        for a in sorted(
+            e.get("rooms", []),
+            key=lambda room: (
+                str(room.get("room_code", "")),
+                str(room.get("gender", "")),
+                str(room.get("section", "")),
+                str(room.get("room_group", "")),
+            ),
+        ):
             code = a.get("room_code", "")
             if code == "UNASSIGNED":
                 unassigned.append(
@@ -1942,6 +1819,23 @@ def _build_room_qa(
                         "section": a.get("section", ""),
                         "student_count": int(a.get("student_count", 0) or 0),
                         "gender": a.get("gender", ""),
+                        **(
+                            {
+                                "section_parts": a["section_parts"],
+                                "room_group": a.get("room_group", ""),
+                                "mapping_status": a.get("mapping_status", ""),
+                                **{
+                                    key: e.get(key, "")
+                                    for key in (
+                                        "course_identity",
+                                        "source_course_code",
+                                        "course_name",
+                                    )
+                                },
+                            }
+                            if a.get("mapping_status")
+                            else {}
+                        ),
                     }
                 )
                 continue
@@ -1961,7 +1855,7 @@ def _build_room_qa(
                     {
                         "slot_index": si,
                         "room_code": code,
-                        "courses": [prev, e["course_code"]],
+                        "courses": sorted([prev, e["course_code"]]),
                     }
                 )
             else:
@@ -1990,36 +1884,20 @@ def _build_room_qa(
 
 def _build_section_enrollment_from_enrolled_sets(
     enrolled_sets: dict[str, set[int]],
+    *,
+    section_by_student: dict[int, str] | None = None,
+    course_meta: dict[str, dict] | None = None,
+    program_by_student: dict[int, str] | None = None,
+    operations_sections: dict[str, list[dict]] | None = None,
 ) -> dict[str, list[dict]]:
-    """Build exam room demand from the same student sets used for scheduling."""
-    student_ids: set[int] = set()
-    for sids in enrolled_sets.values():
-        student_ids.update(sids)
-    section_by_student = {
-        int(sid): str(section or "").strip()
-        for sid, section in Student.objects.filter(student_id__in=student_ids).values_list(
-            "student_id",
-            "section",
-        )
-    }
-    result: dict[str, list[dict]] = {}
-    for course_code, sids in enrolled_sets.items():
-        grouped: dict[str, set[int]] = defaultdict(set)
-        for sid in sids:
-            grouped[section_by_student.get(int(sid), "") or _SYNTHETIC_SECTION_LABEL].add(int(sid))
-        result[course_code] = [
-            {
-                "section": section_label,
-                "student_count": len(section_sids),
-                "preferred_room": "",
-                "gender": _section_gender(section_label),
-            }
-            for section_label, section_sids in sorted(
-                grouped.items(),
-                key=lambda item: (_section_gender(item[0]), item[0]),
-            )
-        ]
-    return result
+    """Use recorded teaching sections without changing the exam population."""
+    return resolve_exam_section_enrollment(
+        enrolled_sets,
+        course_meta=course_meta,
+        section_by_student=section_by_student,
+        program_by_student=program_by_student,
+        operations_sections=operations_sections,
+    )
 
 
 # ── 6. Orchestrator ────────────────────────────────────────────
@@ -2039,6 +1917,7 @@ def build_exam_timetable(
     rebalance_invigilators: bool = True,
     thin_conflict_threshold: int = 0,
     persist: bool = True,
+    selected_course_entries: list[dict] | None = None,
 ) -> dict:
     """
     End-to-end pipeline: build enrolled sets → conflict graph →
@@ -2087,12 +1966,34 @@ def build_exam_timetable(
     )
 
     # 1b. Filter to user-selected courses (if provided from preview step)
-    if selected_courses is not None:
+    if selected_course_entries is not None:
+        if selected_courses is not None and set(selected_courses) != {
+            entry.get("course_code") for entry in selected_course_entries
+        }:
+            raise ValueError("Selected course codes and identities must match.")
+        enrolled_sets, course_meta = select_exam_course_enrollments(
+            selected_course_entries, enrolled_sets, course_meta
+        )
+    elif selected_courses is not None:
         keep = set(selected_courses)
+        unavailable = sorted(keep - enrolled_sets.keys())
+        if unavailable:
+            raise ExamCoursesUnavailable(unavailable)
         enrolled_sets = {cc: sids for cc, sids in enrolled_sets.items() if cc in keep}
         course_meta = {cc: meta for cc, meta in course_meta.items() if cc in keep}
 
     course_list = sorted(enrolled_sets.keys())
+    if not course_list:
+        raise ValueError(
+            "No actual scraped-timetable enrollments match this selection. "
+            "Import student timetables, then Load Courses again."
+        )
+
+    slots = [
+        {"index": index, "day": day, "period": period}
+        for index, (day, period) in enumerate((day, period) for day in days for period in periods)
+    ]
+    pinned = validate_exam_pins(pinned, course_list, slots)
 
     # 1c. Build credit map for credit-weighted scoring
     credit_map = build_credit_map(course_list)
@@ -2104,44 +2005,16 @@ def build_exam_timetable(
     # 2. Conflict graph
     conflicts, adj = build_conflict_graph(enrolled_sets)
 
-    # 2b. Thin-conflict relaxation — when threshold > 0, drop courses
-    # with total enrolment <= threshold from the conflict graph entirely.
-    # They become degree-0 (no neighbours, no back-edges from peers) so
-    # the scheduler treats their tiny student conflicts as soft instead
-    # of hard. The realised same-slot clash count is computed below for
-    # transparency.
-    thin_courses_report: list[dict] = []
-    if thin_conflict_threshold > 0:
-        thin_set = {
-            cc for cc, sids in enrolled_sets.items() if len(sids) <= thin_conflict_threshold
-        }
-        # Snapshot full neighbour list for every thin course BEFORE any
-        # mutation. Otherwise, when courses A and B are mutual thin
-        # neighbours, processing A first pops B's back-edge to A, so
-        # B's "dropped edges" report would be short by 1 and missing A
-        # from its neighbours list. The report must be independent of
-        # iteration order.
-        thin_neighbours = {cc: sorted(adj.get(cc, {}).keys()) for cc in thin_set}
-        for cc in sorted(thin_set):
-            dropped = thin_neighbours[cc]
-            thin_courses_report.append(
-                {
-                    "course_code": cc,
-                    "total_students": len(enrolled_sets[cc]),
-                    "dropped_edges": len(dropped),
-                    "neighbours": dropped,
-                }
-            )
-            adj[cc] = {}
-            for n in dropped:
-                if n in adj:
-                    adj[n].pop(cc, None)
+    # Use the same relaxation policy for fresh builds and loaded optimization.
+    adj, thin_courses_report = apply_thin_conflict_policy(
+        enrolled_sets, adj, thin_conflict_threshold
+    )
 
     # 3. Programme-plan term buckets
-    ptb, cb = build_plan_term_buckets(set(course_list), course_meta=course_meta)
+    ptb, cb = build_plan_term_buckets(set(course_list), course_meta=course_meta, programs=programs)
 
     # 4. Feasibility pre-check
-    violations = check_bucket_feasibility(ptb, len(days))
+    violations = check_bucket_feasibility(ptb, len(days), pinned=pinned)
     if violations:
         return stamp_schema_version(
             {
@@ -2159,14 +2032,6 @@ def build_exam_timetable(
             }
         )
 
-    # 5. Slot pool (Cartesian product)
-    slots: list[dict] = []
-    idx = 0
-    for day in days:
-        for period in periods:
-            slots.append({"index": idx, "day": day, "period": period})
-            idx += 1
-
     # 6. Schedule (with day-spread + bucket + credit-pair constraints)
     schedule_entries = schedule(
         course_list,
@@ -2182,6 +2047,7 @@ def build_exam_timetable(
     )
     for entry in schedule_entries:
         meta = course_meta.get(entry["course_code"], {})
+        entry.update(meta)
         source = _source_code_for_display(entry["course_code"], meta.get("source_course_code"))
         entry["source_course_code"] = source
         entry["course_name"] = str(meta.get("course_name") or "")
@@ -2196,28 +2062,30 @@ def build_exam_timetable(
         credit_map=credit_map,
     )
 
-    # 7b. Thin-clash risk — when thin relaxation was active, surface any
-    # student who actually ended up with two same-slot exams as a result
-    # of the dropped conflict edges. Empty list when threshold == 0 or
-    # when no clashes materialised.
-    qa["thin_threshold"] = thin_conflict_threshold
-    qa["thin_courses"] = thin_courses_report
-    qa["thin_clash_risk"] = (
-        _compute_thin_clash_risk(enrolled_sets, schedule_entries)
-        if thin_conflict_threshold > 0
-        else []
-    )
-
     # 7b. Room assignment (Phase 2) — attach rooms to each schedule entry.
     # Feasibility violations and double-bookings are surfaced in QA but
     # never block the build: unfittable sections simply land in
     # "UNASSIGNED" and the UI flags them.
-    section_enrollment: dict[str, list[dict]] = {}
+    student_attribution = list(
+        Student.objects.filter(student_id__in=all_students)
+        .order_by("student_id")
+        .values("student_id", "program", "section")
+    )
+    operations_sections: dict[str, list[dict]] = {}
+    section_enrollment = _build_section_enrollment_from_enrolled_sets(
+        enrolled_sets,
+        course_meta=course_meta,
+        section_by_student={
+            row["student_id"]: str(row["section"] or "").strip() for row in student_attribution
+        },
+        program_by_student={row["student_id"]: row["program"] for row in student_attribution},
+        operations_sections=operations_sections,
+    )
     rooms_list: list[dict] = []
     room_feasibility: list[dict] = []
     room_qa: dict = {}
     if assign_rooms:
-        section_enrollment = _build_section_enrollment_from_enrolled_sets(enrolled_sets)
+        allocation_context = RoomAllocationContext()
         rooms_list = list(
             Room.objects.all().values(
                 "room_code", "capacity", "section", "department", "building", "floor"
@@ -2229,6 +2097,7 @@ def build_exam_timetable(
             section_enrollment,
             rooms_list,
             seed=seed,
+            allocation_context=allocation_context,
         )
 
         # 7c. Final optimisation — flatten per-day invigilator load by
@@ -2246,6 +2115,8 @@ def build_exam_timetable(
                 adj,
                 ptb,
                 cb,
+                pinned_courses={pin["course_code"] for pin in pinned},
+                allocation_context=allocation_context,
             )
 
         room_qa = _build_room_qa(schedule_entries, rooms_list)
@@ -2262,14 +2133,15 @@ def build_exam_timetable(
         qa["rooms"] = room_qa
         qa["room_feasibility_violations"] = room_feasibility
         qa["rebalance_moves"] = rebalance_moves
-        # Re-attach thin-relaxation report (lost in the QA rebuild above)
-        qa["thin_threshold"] = thin_conflict_threshold
-        qa["thin_courses"] = thin_courses_report
-        qa["thin_clash_risk"] = (
-            _compute_thin_clash_risk(enrolled_sets, schedule_entries)
-            if thin_conflict_threshold > 0
-            else []
-        )
+    # Defend the fixed-placement contract after all scheduling post-passes.
+    validate_exam_pins(pinned, course_list, slots, schedule_entries=schedule_entries)
+    attach_exam_relaxation_qa(
+        qa,
+        enrolled_sets,
+        schedule_entries,
+        thin_conflict_threshold,
+        thin_courses_report,
+    )
 
     # Bucket summary for the result (frontend renders bucket info cards)
     buckets_summary: list[dict] = []
@@ -2310,36 +2182,19 @@ def build_exam_timetable(
     qa["multi_sitting_sections"] = len(multi_sitting_details)
     qa["multi_sitting_details"] = multi_sitting_details
 
-    # Manual-override signal: in this system, all same_slot_conflicts
-    # come from registrar pinned overrides (the scheduler refuses to
-    # produce them otherwise). Surface explicitly under the v2-named
-    # keys so the status derivation doesn't need to fall back to
-    # legacy_incomplete_qa for fresh builds.
-    qa["manual_override_count"] = qa.get("conflict_count", 0)
-    qa["manual_override_details"] = list(qa.get("same_slot_conflicts", []))
-
     # ── v3 telemetry blocks (display-only — no ranking/scheduler effect) ──
     qa["building_footprint"] = derive_building_footprint(schedule_entries)
 
-    # Enrolment snapshot integrity: distinct sections counted from
-    # section_enrollment (a dict[course -> list[section_dict]]). The
-    # fallback flag is plumbed from build_enrolled_sets via a marker
-    # in the section labels: when the path used StudentCourse, every
-    # course gets a synthetic "ALL" section.
+    # Section demand comes exclusively from the scraped timetable. An official
+    # section may literally be named ALL; its label never indicates a fallback.
     _sections_total = sum(len(v) for v in section_enrollment.values())
-    _synthetic_all = sum(
-        1
-        for course, sections in section_enrollment.items()
-        for s in sections
-        if str(s.get("section", "")).upper() == "ALL"
-    )
-    _fallback_used = _synthetic_all > 0 and _synthetic_all == len(section_enrollment)
     qa["enrolment_snapshot"] = compute_enrolment_snapshot(
         enrolled_sets,
         sections_count=_sections_total,
-        fallback_used=_fallback_used,
-        synthetic_all_sections_count=_synthetic_all,
+        fallback_used=False,
+        synthetic_all_sections_count=0,
     )
+    qa["section_mapping"] = summarize_exam_section_mapping(section_enrollment, course_meta)
 
     # ── Assemble result dict ──
     # This dict is: (a) returned to the frontend as JSON, (b) persisted
@@ -2350,11 +2205,15 @@ def build_exam_timetable(
     # to know about the schema version constant.
     _draft: dict = {
         "status": "ok",
+        "enrollment_source": EXAM_ENROLLMENT_SOURCE,
+        "enrollment_scope": {"programs": programs or [], "sections": sections or []},
+        "pinned": pinned,
         "students_count": len(all_students),
         "courses": course_list,
         "courses_count": len(course_list),
         "conflicts": conflicts,
         "conflicts_count": len(conflicts),
+        "exam_review": build_exam_review(conflicts),
         "slots": slots,
         "schedule": schedule_entries,
         "qa": qa,
@@ -2363,6 +2222,9 @@ def build_exam_timetable(
         "credit_map": credit_map,
         "seed": seed,
         "section_enrollment": section_enrollment,
+        "operations_snapshot": build_exam_operations_snapshot(
+            schedule_entries, operations_sections
+        ),
         "rooms_count": len(rooms_list),
         "assign_rooms": assign_rooms,
     }
@@ -2373,6 +2235,17 @@ def build_exam_timetable(
     _draft["status_flags"] = status_flags
     _draft["status_derivation_version"] = STATUS_DERIVATION_VERSION
     result: dict = stamp_schema_version(_draft)
+    result["input_fingerprint"] = fingerprint_exam_inputs(
+        result=result,
+        enrolled_sets=enrolled_sets,
+        course_meta=course_meta,
+        student_attribution=student_attribution,
+        rooms=rooms_list,
+        days=days,
+        periods=periods,
+        max_per_day=max_per_day,
+        thin_conflict_threshold=thin_conflict_threshold,
+    )
 
     # Persist (skipped in multi-start exploration mode where we evaluate
     # many candidates and only persist the selected Pareto few).
@@ -2406,6 +2279,8 @@ def export_exam_timetable_xlsx(run_id: int) -> Path:
 
     Returns the Path to the written file (in the runtime/ directory).
     """
+    import math
+
     from openpyxl import Workbook  # type: ignore[import-untyped]
     from openpyxl.cell.rich_text import CellRichText, TextBlock  # type: ignore[import-untyped]
     from openpyxl.cell.text import InlineFont  # type: ignore[import-untyped]
@@ -2444,10 +2319,96 @@ def export_exam_timetable_xlsx(run_id: int) -> Path:
             "the exam scheduler and cannot be exported by this version. "
             "Upgrade the application or rebuild the run."
         )
+    if data.get("enrollment_source") != EXAM_ENROLLMENT_SOURCE:
+        raise ValueError(
+            "This timetable uses an earlier enrollment source. Load Courses from "
+            "actual scraped timetables and rebuild before exporting."
+        )
 
     schedule = data["schedule"]  # list of {course_code, slot_index, day, period}
     slots = data["slots"]  # list of {index, day, period}
     qa = data["qa"]  # QA metrics dict from _build_qa()
+    course_entries = {entry["course_code"]: entry for entry in schedule}
+    pinned_codes = {pin["course_code"] for pin in data.get("pinned", [])}
+    section_enrollment = data.get("section_enrollment", {})
+
+    def _course_label(code: str) -> str:
+        entry = course_entries.get(code, {})
+        name = str(entry.get("course_name") or "")
+        return f"{code} — {name}" if name else code
+
+    def _gender_sections(code: str, gender: str) -> list[dict]:
+        return [s for s in section_enrollment.get(code, []) if s.get("gender") == gender]
+
+    def _section_label(section: dict) -> str:
+        """Display recorded labels literally; make missing attribution explicit."""
+        if section.get("mapping_status") == "ambiguous":
+            return "Ambiguous section"
+        return str(section.get("section") or "Section not recorded")
+
+    def _section_mapping_label(section: dict) -> str:
+        return {
+            "mapped": "Recorded",
+            "missing": "Section not recorded",
+            "ambiguous": "Ambiguous section",
+        }.get(str(section.get("mapping_status") or ""), "Not recorded in saved data")
+
+    def _room_section_parts(room: dict) -> list[dict]:
+        """Aggregate fragments by teaching section, without parsing its label."""
+        parts = room.get("section_parts") or []
+        grouped: dict[str, dict] = {}
+        for part in parts:
+            key = str(part.get("section_key") or "")
+            if not key:
+                # Older caller-provided allocation rows have no source identity.
+                return []
+            if key not in grouped:
+                grouped[key] = {**part, "student_count": 0}
+            grouped[key]["student_count"] += int(part.get("student_count", 0) or 0)
+        return list(grouped.values())
+
+    def _room_section_label(room: dict) -> str:
+        parts = _room_section_parts(room)
+        if not parts:
+            return _section_label(room)
+        if len(parts) == 1:
+            return _section_label(parts[0])
+        return "; ".join(f"{_section_label(part)} ({part['student_count']})" for part in parts)
+
+    def _room_mapping_label(room: dict) -> str:
+        parts = _room_section_parts(room)
+        if not parts:
+            return _section_mapping_label(room)
+        if len(parts) == 1:
+            return _section_mapping_label(parts[0])
+        return "; ".join(
+            f"{_section_label(part)}: {_section_mapping_label(part)}" for part in parts
+        )
+
+    def _status_label(value: str) -> str:
+        """Use the same registrar-facing English labels as the screen."""
+        labels = {
+            "clean": "Clean",
+            "clean_with_approved_thin_conflicts": "Clean (with approved tiny-course clashes)",
+            "requires_room_action": "Requires room action",
+            "contains_overflow": "Contains overflow exams",
+            "contains_manual_override": "Contains schedule violations",
+            "requires_section_review": "Teaching sections need review",
+            "contains_workload_warnings": "Contains workload warnings",
+            "infeasible": "Infeasible",
+            "unrenderable": "Cannot render this run",
+            "future_version_unrenderable": "Created by a newer system version",
+            "approved_thin_conflicts": "approved thin conflicts",
+            "room_action_required": "room action required",
+            "overflow": "overflow",
+            "manual_override": "schedule violations",
+            "section_mapping_incomplete": "teaching-section mapping incomplete",
+            "multi_sitting_required": "multi-sitting required",
+            "legacy_incomplete_qa": "legacy / incomplete QA data",
+            "daily_limit_exceeded": "daily exam limit exceeded",
+            "heavy_credit_day": "heavy credit days",
+        }
+        return labels.get(value, value.replace("_", " "))
 
     # ── Styling constants ──
     header_font = Font(bold=True, size=11)
@@ -2517,24 +2478,19 @@ def export_exam_timetable_xlsx(run_id: int) -> Path:
     _course_inline_font = InlineFont(rFont="Consolas", b=True, sz=10, color="064E3B")
     _room_inline_font = InlineFont(rFont="Consolas", b=False, sz=8, color="6B7280")
 
-    # Detect runs that pre-date the gender field on room dicts (Session 20+).
-    # Old runs render M/F sheets as blank grids by default — emit a single
-    # placeholder row instead so the registrar isn't confused by an empty sheet.
-    _has_gender_data = any("gender" in a for e in schedule for a in e.get("rooms", []) or ())
+    _has_gender_data = any(
+        section.get("gender") in ("M", "F")
+        for sections in section_enrollment.values()
+        for section in sections
+    )
 
     def _render_schedule_sheet(ws: Any, gender_filter: str | None) -> None:
-        """Render a day×period grid. If gender_filter is 'M' or 'F', a course
-        only appears in a cell when it has at least one room of that gender,
-        and only rooms of that gender are listed under the course.
-
-        For runs predating the gender field, a single placeholder row is
-        emitted instead of a blank grid.
-        """
+        """Filter attendance using the saved enrolment, including room gaps."""
         if gender_filter and not _has_gender_data:
             ws.append(
                 [
-                    f"This run pre-dates gender-aware room assignment. "
-                    f"Re-build the schedule to populate the {gender_filter} view."
+                    "Gender enrolment was not recorded for this run. "
+                    f"The {gender_filter} view cannot be determined."
                 ]
             )
             ws.column_dimensions["A"].width = 90
@@ -2546,21 +2502,17 @@ def export_exam_timetable_xlsx(run_id: int) -> Path:
                 continue
             all_rooms = e.get("rooms", [])
             if gender_filter:
-                matching = [
-                    a
-                    for a in all_rooms
-                    if a.get("gender") == gender_filter
-                    and a.get("room_code")
-                    and a.get("room_code") != "UNASSIGNED"
-                ]
-                if not matching:
+                if not _gender_sections(e["course_code"], gender_filter):
                     continue
-                room_codes = [a["room_code"] for a in matching]
+                matching = [a for a in all_rooms if a.get("gender") == gender_filter]
+                room_codes = [a.get("room_code") or "UNASSIGNED" for a in matching]
             else:
+                room_codes = [a.get("room_code") or "UNASSIGNED" for a in all_rooms]
+            if not room_codes:
                 room_codes = [
-                    a.get("room_code", "")
-                    for a in all_rooms
-                    if a.get("room_code") and a.get("room_code") != "UNASSIGNED"
+                    "Room assignment not requested"
+                    if not data.get("assign_rooms")
+                    else "UNASSIGNED"
                 ]
             grid_local.setdefault(e["day"], {}).setdefault(e["period"], []).append(e["course_code"])
             if room_codes:
@@ -2569,57 +2521,7 @@ def export_exam_timetable_xlsx(run_id: int) -> Path:
         ws.append(["Day \\ Period"] + period_order)
         style_header_row(ws, 1 + len(period_order))
 
-        for day in day_order:
-            row_idx = ws.max_row + 1
-            day_cell = ws.cell(row=row_idx, column=1, value=day)
-            day_cell.font = header_font
-            day_cell.border = thin_border
-            day_cell.alignment = left_align
-
-            for pi, period in enumerate(period_order):
-                courses = sorted(grid_local.get(day, {}).get(period, []))
-                cell = ws.cell(row=row_idx, column=2 + pi)
-                cell.border = thin_border
-                cell.alignment = center
-
-                def _label_blocks(
-                    code: str,
-                    p: str = period,
-                    d: str = day,
-                    leading_newline: bool = False,
-                ) -> list[TextBlock]:
-                    """Course header in dark bold teal, room list in light gray
-                    so the eye finds the course code at a glance.
-
-                    Any leading newline (used to separate stacked courses in a
-                    cell) is folded into the course-header text rather than a
-                    standalone "\\n" block — Excel rejects whitespace-only runs
-                    that lack xml:space="preserve" and shows a corruption dialog.
-                    """
-                    cr = _credit_map_sched.get(code, "")
-                    head = f"{code} {cr}cr" if cr else code
-                    if leading_newline:
-                        head = "\n" + head
-                    blocks: list[TextBlock] = [TextBlock(_course_inline_font, head)]
-                    rooms_line = rooms_by_entry.get((d, p, code), [])
-                    if rooms_line:
-                        blocks.append(TextBlock(_room_inline_font, "\n" + ", ".join(rooms_line)))
-                    return blocks
-
-                if not courses:
-                    cell.value = ""
-                elif len(courses) == 1:
-                    c = courses[0]
-                    cell.value = CellRichText(_label_blocks(c))
-                    cell.fill = _course_color_fill(c)
-                else:
-                    blocks: list[TextBlock] = []
-                    for i, c in enumerate(courses):
-                        blocks.extend(_label_blocks(c, leading_newline=(i > 0)))
-                    cell.value = CellRichText(blocks)
-                    cell.fill = _course_color_fill(courses[0])
-
-        _period_col_width = 24
+        _period_col_width = 32
         ws.column_dimensions["A"].width = 14
         for i, _p in enumerate(period_order, start=2):
             ws.column_dimensions[get_column_letter(i)].width = _period_col_width
@@ -2647,16 +2549,131 @@ def export_exam_timetable_xlsx(run_id: int) -> Path:
                 total += 1 + (max(0, len(seg) - 1) // cpl)
             return total
 
-        for r in range(2, ws.max_row + 1):
-            max_lines = 1
-            for c in range(2, ws.max_column + 1):
-                lines = _visual_lines(ws.cell(row=r, column=c).value, _period_col_width)
-                if lines > max_lines:
-                    max_lines = lines
-            # ~15 pt per wrapped line at size-10 is safe; add a small pad so
-            # descenders of the last line don't touch the border.
-            if max_lines > 1:
-                ws.row_dimensions[r].height = max_lines * 15 + 3
+        def _course_cells(code: str, day: str, period: str) -> list[CellRichText]:
+            """Keep one course per cell, continuing exceptionally long blocks.
+
+            Excel allows at most 409.5 points per row. Twenty-two estimated
+            text lines leave ample space below that limit without reducing
+            the font size or hiding part of a large course's room list.
+            """
+            cr = _credit_map_sched.get(code, "")
+            head = f"{code} {cr}cr" if cr else code
+            if code in pinned_codes:
+                head += " [FIXED]"
+            if course_entries[code].get("is_online"):
+                head += " [ONLINE]"
+            chunks = [CellRichText([TextBlock(_course_inline_font, head)])]
+            details = []
+            name = course_entries[code].get("course_name")
+            if name:
+                details.append(str(name))
+            rooms_line = rooms_by_entry.get((day, period, code), [])
+            if rooms_line:
+                details.append(", ".join(rooms_line))
+            for detail in details:
+                remaining = "\n" + detail
+                while remaining:
+                    current = chunks[-1]
+                    low, high = 0, len(remaining)
+                    # Fit the largest literal prefix, preserving all source
+                    # characters across continuation cells.
+                    while low < high:
+                        middle = (low + high + 1) // 2
+                        candidate = CellRichText(
+                            [*current, TextBlock(_room_inline_font, remaining[:middle])]
+                        )
+                        if _visual_lines(candidate, _period_col_width) <= 22:
+                            low = middle
+                        else:
+                            high = middle - 1
+                    if low:
+                        current.append(TextBlock(_room_inline_font, remaining[:low]))
+                        remaining = remaining[low:]
+                    if remaining:
+                        chunks.append(
+                            CellRichText(
+                                [
+                                    TextBlock(_course_inline_font, head + " [CONTINUED]\n"),
+                                ]
+                            )
+                        )
+            return chunks
+
+        day_border = Side(style="medium", color="0A8E6E")
+        for day in day_order:
+            period_cells = {
+                period: [
+                    (code, content)
+                    for code in sorted(grid_local.get(day, {}).get(period, []))
+                    for content in _course_cells(code, day, period)
+                ]
+                for period in period_order
+            }
+            row_count = max([1, *(len(cells) for cells in period_cells.values())])
+            first_row = ws.max_row + 1
+            for offset in range(row_count):
+                row_idx = first_row + offset
+                max_lines = 1
+                for pi, period in enumerate(period_order):
+                    cell = ws.cell(row=row_idx, column=2 + pi)
+                    cell.border = Border(
+                        left=thin_border.left,
+                        right=thin_border.right,
+                        top=day_border if offset == 0 else thin_border.top,
+                        bottom=day_border if offset == row_count - 1 else thin_border.bottom,
+                    )
+                    cell.alignment = center
+                    if offset < len(period_cells[period]):
+                        code, content = period_cells[period][offset]
+                        cell.value = content
+                        cell.fill = _course_color_fill(code)
+                        max_lines = max(max_lines, _visual_lines(content, _period_col_width))
+                ws.row_dimensions[row_idx].height = max_lines * 15 + 6
+                # Repeat the day so every row retains context across printed
+                # page breaks and viewers with limited merged-cell support.
+                day_cell = ws.cell(row=row_idx, column=1, value=day)
+                day_cell.font = header_font
+                day_cell.border = Border(
+                    left=thin_border.left,
+                    right=day_border,
+                    top=day_border if offset == 0 else thin_border.top,
+                    bottom=day_border if offset == row_count - 1 else thin_border.bottom,
+                )
+                day_cell.alignment = center
+                day_cell.fill = PatternFill("solid", fgColor="E8F5E9")
+
+        overflow = [
+            e
+            for e in schedule
+            if e.get("day") == "OVERFLOW"
+            and (not gender_filter or _gender_sections(e["course_code"], gender_filter))
+        ]
+        if overflow:
+            ws.append([])
+            ws.append(["UNSCHEDULED EXAMS — action required"])
+            ws.cell(ws.max_row, 1).font = header_font
+            for entry in overflow:
+                label = _course_label(entry["course_code"])
+                overflow_cells = (
+                    _course_cells(entry["course_code"], entry["day"], entry["period"])
+                    if _visual_lines(label, _period_col_width) > 22
+                    else [label]
+                )
+                for content in overflow_cells:
+                    ws.append([entry["day"], content])
+                    for cell in ws[ws.max_row]:
+                        cell.fill = danger_fill
+                        cell.alignment = left_align
+                    ws.row_dimensions[ws.max_row].height = (
+                        _visual_lines(content, _period_col_width) * 15 + 6
+                    )
+        ws.freeze_panes = "B2"
+        ws.print_title_rows = "1:1"
+        ws.sheet_properties.pageSetUpPr.fitToPage = True
+        ws.page_setup.orientation = "landscape"
+        ws.page_setup.paperSize = ws.PAPERSIZE_A3
+        ws.page_setup.fitToWidth = 1
+        ws.page_setup.fitToHeight = 0
 
     ws1 = wb.active
     ws1.title = "Schedule"
@@ -2669,17 +2686,45 @@ def export_exam_timetable_xlsx(run_id: int) -> Path:
     # ────────────────────────────────────────────────────────────
     ws2 = wb.create_sheet("Courses")
     _credit_map = data.get("credit_map", {})
-    ws2.append(["Course Code", "Credits", "Day", "Period", "Slot Index"])
-    style_header_row(ws2, 5)
+    ws2.append(
+        [
+            "Course Code",
+            "Credits",
+            "Day",
+            "Period",
+            "Slot Index",
+            "Course Name",
+            "Programmes",
+            "Enrolled Students",
+            "Online",
+            "Fixed Time",
+            "Source Course Code",
+        ]
+    )
+    style_header_row(ws2, 11)
 
     sorted_schedule = sorted(schedule, key=lambda e: (e.get("slot_index", 999), e["course_code"]))
     for e in sorted_schedule:
         cr = _credit_map.get(e["course_code"], "")
-        ws2.append([e["course_code"], cr, e["day"], e["period"], e.get("slot_index", "")])
+        ws2.append(
+            [
+                e["course_code"],
+                cr,
+                e["day"],
+                e["period"],
+                e.get("slot_index", ""),
+                e.get("course_name", ""),
+                ", ".join(e.get("programs", [])),
+                e.get("enrolled_count", ""),
+                "Yes" if e.get("is_online") else "No",
+                "Yes" if e["course_code"] in pinned_codes else "No",
+                e.get("source_course_code", e["course_code"]),
+            ]
+        )
 
     for r in range(2, ws2.max_row + 1):
         code_val = ws2.cell(row=r, column=1).value
-        for c in range(1, 6):
+        for c in range(1, 12):
             cell = ws2.cell(row=r, column=c)
             cell.border = thin_border
             cell.alignment = center
@@ -2691,6 +2736,12 @@ def export_exam_timetable_xlsx(run_id: int) -> Path:
     ws2.column_dimensions["C"].width = 14
     ws2.column_dimensions["D"].width = 18
     ws2.column_dimensions["E"].width = 12
+    ws2.column_dimensions["F"].width = 42
+    ws2.column_dimensions["G"].width = 24
+    for column_letter in ("H", "I", "J", "K"):
+        ws2.column_dimensions[column_letter].width = 18
+    ws2.freeze_panes = "B2"
+    ws2.auto_filter.ref = ws2.dimensions
 
     # ────────────────────────────────────────────────────────────
     # Sheet 2b / 2c: Students (M) / Students (F) — per-course gender totals
@@ -2699,32 +2750,74 @@ def export_exam_timetable_xlsx(run_id: int) -> Path:
         if not _has_gender_data:
             ws.append(
                 [
-                    f"This run pre-dates gender-aware room assignment. "
-                    f"Re-build the schedule to populate the {gender_filter} view."
+                    "Gender enrolment was not recorded for this run. "
+                    f"The {gender_filter} view cannot be determined."
                 ]
             )
             ws.column_dimensions["A"].width = 90
             return
 
-        ws.append(["Course Code", "Credits", "Day", "Period", "Sections", "Students"])
-        style_header_row(ws, 6)
+        ws.append(
+            [
+                "Course Code",
+                "Credits",
+                "Day",
+                "Period",
+                "Enrolled Sections",
+                "Exam Enrolments",
+                "Course Name",
+                "Fixed Time",
+                "Missing Section Enrolments",
+                "Ambiguous Section Enrolments",
+            ]
+        )
+        style_header_row(ws, 10)
 
-        rows: list[tuple[str, Any, str, str, int, int]] = []
+        rows: list[list[Any]] = []
         for e in sorted_schedule:
-            matching = [a for a in e.get("rooms", []) if a.get("gender") == gender_filter]
+            matching = _gender_sections(e["course_code"], gender_filter)
             if not matching:
                 continue
-            sections = len(matching)
+            sections = len(
+                {
+                    str(a.get("section_key") or a.get("section") or "")
+                    for a in matching
+                    if a.get("mapping_status", "mapped") == "mapped"
+                }
+            )
             students = sum(int(a.get("student_count", 0) or 0) for a in matching)
+            missing = sum(
+                int(a.get("student_count", 0) or 0)
+                for a in matching
+                if a.get("mapping_status") == "missing"
+            )
+            ambiguous = sum(
+                int(a.get("student_count", 0) or 0)
+                for a in matching
+                if a.get("mapping_status") == "ambiguous"
+            )
             cr = _credit_map.get(e["course_code"], "")
-            rows.append((e["course_code"], cr, e["day"], e["period"], sections, students))
+            rows.append(
+                [
+                    e["course_code"],
+                    cr,
+                    e["day"],
+                    e["period"],
+                    sections,
+                    students,
+                    e.get("course_name", ""),
+                    "Yes" if e["course_code"] in pinned_codes else "No",
+                    missing,
+                    ambiguous,
+                ]
+            )
 
         for row in rows:
             ws.append(list(row))
 
         for r in range(2, ws.max_row + 1):
             code_val = ws.cell(row=r, column=1).value
-            for c in range(1, 7):
+            for c in range(1, 11):
                 cell = ws.cell(row=r, column=c)
                 cell.border = thin_border
                 cell.alignment = center
@@ -2735,14 +2828,22 @@ def export_exam_timetable_xlsx(run_id: int) -> Path:
             total_sections = sum(r[4] for r in rows)
             total_students = sum(r[5] for r in rows)
             total_row = ws.max_row + 1
-            ws.cell(row=total_row, column=1, value="TOTAL").font = header_font
+            ws.cell(row=total_row, column=1, value="TOTAL EXAM ENROLMENTS").font = header_font
             ws.cell(row=total_row, column=5, value=total_sections).font = header_font
             ws.cell(row=total_row, column=6, value=total_students).font = header_font
-            for c in range(1, 7):
+            ws.cell(row=total_row, column=9, value=sum(r[8] for r in rows)).font = header_font
+            ws.cell(row=total_row, column=10, value=sum(r[9] for r in rows)).font = header_font
+            for c in range(1, 11):
                 cell = ws.cell(row=total_row, column=c)
                 cell.border = thin_border
                 cell.alignment = center
                 cell.fill = PatternFill("solid", fgColor="E8F5E9")
+        else:
+            ws.append([f"No {gender_filter} enrolments in this timetable", "", "", "", 0, 0])
+            ws.merge_cells(start_row=2, start_column=1, end_row=2, end_column=4)
+            for cell in ws[2]:
+                cell.border = thin_border
+                cell.alignment = left_align
 
         ws.column_dimensions["A"].width = 16
         ws.column_dimensions["B"].width = 10
@@ -2750,6 +2851,12 @@ def export_exam_timetable_xlsx(run_id: int) -> Path:
         ws.column_dimensions["D"].width = 18
         ws.column_dimensions["E"].width = 12
         ws.column_dimensions["F"].width = 12
+        ws.column_dimensions["G"].width = 42
+        ws.column_dimensions["H"].width = 14
+        ws.column_dimensions["I"].width = 22
+        ws.column_dimensions["J"].width = 22
+        ws.freeze_panes = "B2"
+        ws.auto_filter.ref = f"A1:J{1 + len(rows)}"
 
     _render_students_sheet(wb.create_sheet("Students (M)"), "M")
     _render_students_sheet(wb.create_sheet("Students (F)"), "F")
@@ -2758,12 +2865,34 @@ def export_exam_timetable_xlsx(run_id: int) -> Path:
     # Sheet 3: QA Summary
     # ────────────────────────────────────────────────────────────
     ws3 = wb.create_sheet("QA Summary")
+    room_qa = qa.get("rooms") if isinstance(qa, dict) else None
 
     # Key metrics as label-value pairs
     metrics = [
         ("Label", run.label),
+        ("Run ID", run_id),
+        ("Status", _status_label(str(data.get("primary_status", status) or ""))),
+        (
+            "Status Flags",
+            ", ".join(_status_label(str(flag)) for flag in data.get("status_flags", [])),
+        ),
+        ("Programmes in Scope", ", ".join(data.get("enrollment_scope", {}).get("programs", []))),
+        ("Sections in Scope", ", ".join(data.get("enrollment_scope", {}).get("sections", []))),
         ("Total Courses", qa.get("total_courses", data.get("courses_count", 0))),
-        ("Total Students", qa.get("total_students", data.get("students_count", 0))),
+        ("Unique Students", qa.get("total_students", data.get("students_count", 0))),
+        ("Fixed Exams", len(pinned_codes)),
+        ("Online Courses", sum(bool(e.get("is_online")) for e in schedule)),
+        ("Unscheduled Courses", sum(e.get("day") == "OVERFLOW" for e in schedule)),
+        ("Room Assignment Requested", "Yes" if data.get("assign_rooms") else "No"),
+        ("Split Sections", qa.get("multi_sitting_sections", 0)),
+        ("Unassigned Room Groups", len((room_qa or {}).get("unassigned_room_sections", []))),
+        ("Room Double Bookings", len((room_qa or {}).get("room_double_bookings", []))),
+        ("Thin Conflict Threshold", qa.get("thin_threshold", 0)),
+        ("Thin Clash Records", len(qa.get("thin_clash_risk", []))),
+        (
+            "Schedule Violations",
+            qa.get("schedule_violation_count", qa.get("manual_override_count", 0)),
+        ),
         ("Slots Used", qa.get("slots_used", 0)),
         ("Max Exams/Day/Student", qa.get("max_exams_per_day_per_student", 0)),
         ("Max Per Day Cap", qa.get("max_per_day", 2)),
@@ -2773,7 +2902,19 @@ def export_exam_timetable_xlsx(run_id: int) -> Path:
         ("Same-Slot Conflicts", qa.get("conflict_count", 0)),
         ("Programme Buckets", qa.get("bucket_count", 0)),
         ("Bucket Day Violations", qa.get("bucket_day_violations_count", 0)),
+        ("Approved-Only Student Clashes", qa.get("approved_thin_conflict_count", 0)),
+        ("Hard Student Clashes", qa.get("hard_conflict_count", qa.get("conflict_count", 0))),
     ]
+    section_mapping = qa.get("section_mapping") or {}
+    if section_mapping:
+        metrics.extend(
+            [
+                ("Recorded Teaching Sections", section_mapping.get("mapped_sections", 0)),
+                ("Mapped Section Enrolments", section_mapping.get("mapped_enrollments", 0)),
+                ("Missing Section Enrolments", section_mapping.get("missing_enrollments", 0)),
+                ("Ambiguous Section Enrolments", section_mapping.get("ambiguous_enrollments", 0)),
+            ]
+        )
 
     ws3.append(["Metric", "Value"])
     style_header_row(ws3, 2)
@@ -2790,10 +2931,26 @@ def export_exam_timetable_xlsx(run_id: int) -> Path:
         metric_name = ws3.cell(row=r, column=1).value
         metric_val = ws3.cell(row=r, column=2).value
         # Colour warning rows yellow/red
-        if metric_name == "Same-Slot Conflicts" and metric_val and int(metric_val) > 0:
+        if (
+            metric_name
+            in (
+                "Same-Slot Conflicts",
+                "Unscheduled Courses",
+                "Unassigned Room Groups",
+                "Room Double Bookings",
+            )
+            and metric_val
+            and int(metric_val) > 0
+        ):
             ws3.cell(row=r, column=1).fill = danger_fill
             ws3.cell(row=r, column=2).fill = danger_fill
-        elif metric_name in ("Students Over Limit", "Bucket Day Violations", "Heavy Day Students"):
+        elif metric_name in (
+            "Students Over Limit",
+            "Bucket Day Violations",
+            "Heavy Day Students",
+            "Missing Section Enrolments",
+            "Ambiguous Section Enrolments",
+        ):
             if metric_val and int(metric_val) > 0:
                 ws3.cell(row=r, column=1).fill = warn_fill
                 ws3.cell(row=r, column=2).fill = warn_fill
@@ -2816,7 +2973,7 @@ def export_exam_timetable_xlsx(run_id: int) -> Path:
                 [
                     conflict.get("student_id", ""),
                     conflict.get("slot_index", ""),
-                    ", ".join(conflict.get("courses", [])),
+                    ", ".join(_course_label(code) for code in conflict.get("courses", [])),
                 ]
             )
 
@@ -2839,7 +2996,7 @@ def export_exam_timetable_xlsx(run_id: int) -> Path:
                     v.get("program", ""),
                     v.get("programme_term", ""),
                     v.get("day", ""),
-                    ", ".join(v.get("courses", [])),
+                    ", ".join(_course_label(code) for code in v.get("courses", [])),
                 ]
             )
 
@@ -2847,11 +3004,130 @@ def export_exam_timetable_xlsx(run_id: int) -> Path:
     ws3.column_dimensions["B"].width = 16
     ws3.column_dimensions["C"].width = 18
     ws3.column_dimensions["D"].width = 30
+    ws3.column_dimensions["A"].width = 32
+    ws3.column_dimensions["B"].width = 48
+    ws3.column_dimensions["C"].width = 55
+    for title, details in (
+        ("Students Over Daily Limit", qa.get("overload_details", [])),
+        ("Heavy Credit Days", qa.get("heavy_day_details", [])),
+    ):
+        if not details:
+            continue
+        ws3.append([])
+        ws3.append([title])
+        ws3.cell(ws3.max_row, 1).font = header_font
+        ws3.append(["Student ID", "Day", "Courses"])
+        for detail in details:
+            ws3.append(
+                [
+                    detail.get("student_id", ""),
+                    detail.get("day", ""),
+                    ", ".join(_course_label(c["code"]) for c in detail.get("courses", [])),
+                ]
+            )
+    if qa.get("multi_sitting_details"):
+        ws3.append([])
+        ws3.append(["Split Section Details"])
+        ws3.cell(ws3.max_row, 1).font = header_font
+        for detail in qa["multi_sitting_details"]:
+            ws3.append([_section_label(detail), detail.get("audit_text", "")])
+    if data.get("pinned"):
+        ws3.append([])
+        ws3.append(["Fixed Exam Times"])
+        ws3.cell(ws3.max_row, 1).font = header_font
+        ws3.append(["Course", "Day", "Period"])
+        for pin in data["pinned"]:
+            ws3.append([_course_label(pin["course_code"]), pin["day"], pin["period"]])
+    for title, headers, details, row_builder in (
+        (
+            "Thin Clash Risk Details",
+            ["Student ID", "Slot Index", "Courses"],
+            qa.get("thin_clash_risk", []),
+            lambda detail: [
+                detail.get("student_id", ""),
+                detail.get("slot_index", ""),
+                ", ".join(_course_label(code) for code in detail.get("courses", [])),
+            ],
+        ),
+        (
+            "Unassigned Room Details",
+            [
+                "Course",
+                "Day",
+                "Period",
+                "Section",
+                "Students",
+                "Gender",
+                "Room Group",
+                "Section Mapping",
+            ],
+            (room_qa or {}).get("unassigned_room_sections", []),
+            lambda detail: [
+                _course_label(detail.get("course_code", "")),
+                detail.get("day", ""),
+                detail.get("period", ""),
+                _room_section_label(detail),
+                detail.get("student_count", 0),
+                detail.get("gender", ""),
+                detail.get("room_group", ""),
+                _room_mapping_label(detail),
+            ],
+        ),
+        (
+            "Room Double Booking Details",
+            ["Room", "Slot Index", "Courses"],
+            (room_qa or {}).get("room_double_bookings", []),
+            lambda detail: [
+                detail.get("room_code", ""),
+                detail.get("slot_index", ""),
+                ", ".join(_course_label(code) for code in detail.get("courses", [])),
+            ],
+        ),
+        (
+            "Room Capacity Warnings",
+            ["Course", "Section", "Gender", "Students", "Largest Room Capacity", "Section Mapping"],
+            qa.get("room_feasibility_violations", []),
+            lambda detail: [
+                _course_label(detail.get("course_code", "")),
+                _section_label(detail),
+                detail.get("gender", ""),
+                detail.get("student_count", 0),
+                detail.get("max_room_capacity", 0),
+                _section_mapping_label(detail),
+            ],
+        ),
+        (
+            "Section Mapping Gaps",
+            ["Course", "Gender", "Section Mapping", "Students", "Reason"],
+            section_mapping.get("details", []),
+            lambda detail: [
+                _course_label(detail.get("course_code", "")),
+                detail.get("gender", ""),
+                _section_mapping_label(detail),
+                detail.get("student_count", 0),
+                {
+                    "no_recorded_section": "No registered teaching section was found.",
+                    "multiple_recorded_sections": "More than one registered teaching section matches.",
+                }.get(detail.get("reason", ""), detail.get("reason", "")),
+            ],
+        ),
+    ):
+        if not details:
+            continue
+        ws3.append([])
+        ws3.append([title])
+        ws3.cell(ws3.max_row, 1).font = header_font
+        ws3.append(headers)
+        for detail in details:
+            ws3.append(row_builder(detail))
+    ws3.column_dimensions["E"].width = 20
+    ws3.column_dimensions["F"].width = 14
+    ws3.column_dimensions["G"].width = 20
+    ws3.column_dimensions["H"].width = 28
 
     # ────────────────────────────────────────────────────────────
-    # Sheet 4: Room Assignments (one row per assigned section)
+    # Sheet 4: Room Assignments (one row per physical room allocation)
     # ────────────────────────────────────────────────────────────
-    room_qa = qa.get("rooms") if isinstance(qa, dict) else None
     has_room_data = any(e.get("rooms") for e in schedule if e.get("day") != "OVERFLOW")
     if has_room_data:
         ws4 = wb.create_sheet("Room Assignments")
@@ -2866,9 +3142,15 @@ def export_exam_timetable_xlsx(run_id: int) -> Path:
                 "Room",
                 "Capacity",
                 "Utilization",
+                "Course Name",
+                "Fixed Time",
+                "Building",
+                "Floor",
+                "Room Group",
+                "Section Mapping",
             ]
         )
-        style_header_row(ws4, 9)
+        style_header_row(ws4, 15)
 
         # Sort by slot then course for a stable, readable ordering
         sorted_for_rooms = sorted(
@@ -2879,24 +3161,31 @@ def export_exam_timetable_xlsx(run_id: int) -> Path:
             for a in e.get("rooms", []) or []:
                 cap = int(a.get("room_capacity", 0) or 0)
                 cnt = int(a.get("student_count", 0) or 0)
-                util = f"{(cnt / cap * 100):.0f}%" if cap else "-"
+                util = cnt / cap if cap else None
                 ws4.append(
                     [
                         e["day"],
                         e["period"],
                         e["course_code"],
-                        a.get("section", ""),
+                        _room_section_label(a),
                         a.get("gender", ""),
                         cnt,
                         a.get("room_code", ""),
                         cap if cap else "",
                         util,
+                        e.get("course_name", ""),
+                        "Yes" if e["course_code"] in pinned_codes else "No",
+                        a.get("building", ""),
+                        a.get("floor", ""),
+                        a.get("room_group", ""),
+                        _room_mapping_label(a),
                     ]
                 )
+                ws4.cell(ws4.max_row, 9).number_format = "0%"
 
         for r in range(2, ws4.max_row + 1):
             code_val = ws4.cell(row=r, column=3).value
-            for c in range(1, 10):
+            for c in range(1, 16):
                 cell = ws4.cell(row=r, column=c)
                 cell.border = thin_border
                 cell.alignment = center
@@ -2904,7 +3193,7 @@ def export_exam_timetable_xlsx(run_id: int) -> Path:
                 ws4.cell(row=r, column=3).fill = _course_color_fill(str(code_val))
             room_val = ws4.cell(row=r, column=7).value
             if room_val == "UNASSIGNED":
-                for c in range(1, 10):
+                for c in range(1, 16):
                     ws4.cell(row=r, column=c).fill = danger_fill
 
         ws4.column_dimensions["A"].width = 10
@@ -2916,6 +3205,14 @@ def export_exam_timetable_xlsx(run_id: int) -> Path:
         ws4.column_dimensions["G"].width = 14
         ws4.column_dimensions["H"].width = 12
         ws4.column_dimensions["I"].width = 14
+        ws4.column_dimensions["J"].width = 42
+        ws4.column_dimensions["K"].width = 14
+        ws4.column_dimensions["L"].width = 18
+        ws4.column_dimensions["M"].width = 10
+        ws4.column_dimensions["N"].width = 24
+        ws4.column_dimensions["O"].width = 32
+        ws4.freeze_panes = "D2"
+        ws4.auto_filter.ref = ws4.dimensions
 
         # Append the room QA summary on the same sheet below the table
         if isinstance(room_qa, dict):
@@ -2925,11 +3222,11 @@ def export_exam_timetable_xlsx(run_id: int) -> Path:
             room_metrics: list[tuple[str, Any]] = [
                 ("Rooms Available", room_qa.get("rooms_available", 0)),
                 ("Rooms Used (slot × room)", room_qa.get("rooms_used", 0)),
-                ("Total Demand", room_qa.get("total_demand", 0)),
+                ("Assigned Students", room_qa.get("total_demand", 0)),
                 ("Capacity Used", room_qa.get("total_capacity_used", 0)),
                 (
                     "Avg Utilization",
-                    f"{(float(room_qa.get('avg_utilization', 0) or 0) * 100):.1f}%",
+                    float(room_qa.get("avg_utilization", 0) or 0),
                 ),
                 (
                     "Unassigned Sections",
@@ -2944,6 +3241,8 @@ def export_exam_timetable_xlsx(run_id: int) -> Path:
                 ws4.append([lbl, val])
                 rr = ws4.max_row
                 ws4.cell(row=rr, column=1).font = header_font
+                if lbl == "Avg Utilization":
+                    ws4.cell(rr, 2).number_format = "0.0%"
                 for c in range(1, 3):
                     ws4.cell(row=rr, column=c).border = thin_border
 
@@ -2959,7 +3258,7 @@ def export_exam_timetable_xlsx(run_id: int) -> Path:
         ws5.append(
             [
                 "Department courses (CS/IS/COE/CYB/AI/DS):  1 invigilator if room has <30 students, "
-                "2 if 30+"
+                "2 if 30+. Other unlisted course prefixes use this department rule."
             ]
         )
         ws5.append(
@@ -2968,12 +3267,15 @@ def export_exam_timetable_xlsx(run_id: int) -> Path:
                 "has more than 30 students, 0 otherwise"
             ]
         )
+        for note_row in (1, 2, 3):
+            ws5.merge_cells(start_row=note_row, start_column=1, end_row=note_row, end_column=13)
+            ws5.cell(note_row, 1).alignment = left_align
+            ws5.row_dimensions[note_row].height = 30 if note_row > 1 else 24
         ws5.append([])
 
         # ── Section B: daily summary ──
-        summary_header_row = ws5.max_row + 1
         ws5.append(["Day", "M Invigilators", "F Invigilators", "Total"])
-        style_header_row_at = summary_header_row
+        style_header_row_at = ws5.max_row
         for col in range(1, 5):
             cell = ws5.cell(row=style_header_row_at, column=col)
             cell.font = header_font_white
@@ -3033,7 +3335,6 @@ def export_exam_timetable_xlsx(run_id: int) -> Path:
 
         # ── Section C: per-room detail ──
         ws5.append([])
-        detail_header_row = ws5.max_row + 1
         ws5.append(
             [
                 "Day",
@@ -3045,9 +3346,14 @@ def export_exam_timetable_xlsx(run_id: int) -> Path:
                 "Students",
                 "Room",
                 "Invigilators",
+                "Course Name",
+                "Fixed Time",
+                "Room Group",
+                "Section Mapping",
             ]
         )
-        for col in range(1, 10):
+        detail_header_row = ws5.max_row
+        for col in range(1, 14):
             cell = ws5.cell(row=detail_header_row, column=col)
             cell.font = header_font_white
             cell.fill = header_fill
@@ -3061,7 +3367,13 @@ def export_exam_timetable_xlsx(run_id: int) -> Path:
         for e in sorted_for_invig:
             cc = e["course_code"]
             prefix = _course_prefix(cc)
-            ctype = "Department" if prefix in _DEPARTMENT_PREFIXES else "External"
+            ctype = (
+                "External"
+                if prefix in _EXTERNAL_PREFIXES
+                else "Department"
+                if prefix in _DEPARTMENT_PREFIXES
+                else "Other (department rule)"
+            )
             for a in e.get("rooms", []) or []:
                 if a.get("room_code") == "UNASSIGNED":
                     continue
@@ -3073,24 +3385,28 @@ def export_exam_timetable_xlsx(run_id: int) -> Path:
                         e["period"],
                         cc,
                         ctype,
-                        a.get("section", ""),
+                        _room_section_label(a),
                         a.get("gender", ""),
                         stu,
                         a.get("room_code", ""),
                         invigs,
+                        e.get("course_name", ""),
+                        "Yes" if cc in pinned_codes else "No",
+                        a.get("room_group", ""),
+                        _room_mapping_label(a),
                     ]
                 )
                 rr = ws5.max_row
-                for col in range(1, 10):
+                for col in range(1, 14):
                     ws5.cell(row=rr, column=col).border = thin_border
                     ws5.cell(row=rr, column=col).alignment = center
                 # Highlight rows with 0 invigilators (no department staffing needed)
                 if invigs == 0:
-                    for col in range(1, 10):
+                    for col in range(1, 14):
                         ws5.cell(row=rr, column=col).fill = PatternFill("solid", fgColor="EDEDED")
                 # Highlight rows with 2 invigilators (heavy room)
                 elif invigs >= 2:
-                    for col in range(1, 10):
+                    for col in range(1, 14):
                         ws5.cell(row=rr, column=col).fill = warn_fill
 
         ws5.column_dimensions["E"].width = 22
@@ -3098,9 +3414,86 @@ def export_exam_timetable_xlsx(run_id: int) -> Path:
         ws5.column_dimensions["G"].width = 10
         ws5.column_dimensions["H"].width = 14
         ws5.column_dimensions["I"].width = 14
+        ws5.column_dimensions["J"].width = 42
+        ws5.column_dimensions["K"].width = 14
+        ws5.column_dimensions["L"].width = 24
+        ws5.column_dimensions["M"].width = 32
+        # Rules and the daily summary can occupy most of a laptop screen.
+        # Let the whole report scroll instead of freezing that entire block.
+        ws5.freeze_panes = None
 
     # ── Write to disk ──
+    # All exported values are literal saved data. A course name or run label
+    # beginning with '=' must not turn into an executable Excel formula.
+    for sheet in wb:
+        sheet.print_area = sheet.dimensions
+        if sheet.title not in ("Schedule", "Schedule (M)", "Schedule (F)"):
+            sheet.sheet_properties.pageSetUpPr.fitToPage = True
+            sheet.page_setup.orientation = "landscape"
+            # Full course names and room detail make these wide tables.
+            # A3 leaves usable type at one page across; rows continue
+            # vertically instead of forcing a whole report onto one page.
+            sheet.page_setup.paperSize = sheet.PAPERSIZE_A3
+            sheet.page_setup.fitToWidth = 1
+            sheet.page_setup.fitToHeight = 0
+            if sheet.title in ("Courses", "Students (M)", "Students (F)", "Room Assignments"):
+                sheet.print_title_rows = "1:1"
+            elif sheet.title == "QA Summary":
+                sheet.freeze_panes = "B2"
+        for row in sheet:
+            for cell in row:
+                if cell.data_type == "f":
+                    cell.data_type = "s"
+                if cell.value is not None:
+                    cell.alignment = Alignment(
+                        horizontal=cell.alignment.horizontal or "left",
+                        vertical="center",
+                        wrap_text=True,
+                    )
+            if sheet.title not in ("Schedule", "Schedule (M)", "Schedule (F)"):
+                # Explicit heights travel reliably with wrapped text when
+                # opened or printed by Excel, including long course names.
+                row_index = row[0].row
+                fitted_height = 21.0
+                for cell in row:
+                    if cell.value is None:
+                        continue
+                    width = sheet.column_dimensions[cell.column_letter].width or 13
+                    for merged_range in sheet.merged_cells.ranges:
+                        if cell.coordinate in merged_range:
+                            width = sum(
+                                sheet.column_dimensions[get_column_letter(col)].width or 13
+                                for col in range(merged_range.min_col, merged_range.max_col + 1)
+                            )
+                            break
+                    # Allow for word wrapping and padding at the default
+                    # 11-point table font, without shrinking source text.
+                    line_width = max(8, int(width * 0.9))
+                    lines = sum(
+                        max(1, math.ceil(len(part) / line_width))
+                        for part in str(cell.value).split("\n")
+                    )
+                    fitted_height = max(fitted_height, lines * 15 + 6)
+                sheet.row_dimensions[row_index].height = min(
+                    409.5,
+                    max(sheet.row_dimensions[row_index].height or 0, fitted_height),
+                )
     RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
-    out = RUNTIME_DIR / f"exam_timetable_{run_id}.xlsx"
-    wb.save(str(out))
-    return out
+    # Each request owns its artifact. In particular, Windows cannot replace
+    # a fixed output path while another FileResponse is still reading it.
+    # The download view closes and removes this file after serving it.
+    import tempfile
+
+    with tempfile.NamedTemporaryFile(
+        dir=RUNTIME_DIR,
+        prefix=f"exam_timetable_{run_id}_",
+        suffix=".xlsx",
+        delete=False,
+    ) as temp:
+        temporary_path = Path(temp.name)
+    try:
+        wb.save(str(temporary_path))
+    except Exception:
+        temporary_path.unlink(missing_ok=True)
+        raise
+    return temporary_path

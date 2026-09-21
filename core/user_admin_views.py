@@ -9,6 +9,7 @@ from django.views.decorators.http import require_GET, require_POST
 from core.authz import role_required
 from core.services.audit import log_audit_event
 from core.services.rbac import (
+    ROLE_EXAM_COMMITTEE,
     ROLE_NAMES,
     ROLE_STUDENT,
     ROLE_SUPER_ADMIN,
@@ -85,6 +86,9 @@ def users_create_view(request: HttpRequest) -> JsonResponse:
             {"error": "username, password, and valid role are required"}, status=400
         )
 
+    if role == ROLE_EXAM_COMMITTEE:
+        advisor_id = departments = ""
+
     try:
         validate_password(password)
     except ValidationError as exc:
@@ -141,6 +145,31 @@ def users_update_role_view(request: HttpRequest) -> JsonResponse:
         )
 
     with transaction.atomic():
+        if role == ROLE_EXAM_COMMITTEE:
+            # A group change cannot remove Django's superuser override. Refuse
+            # instead of presenting an account as restricted when it is not.
+            user = User.objects.select_for_update().get(pk=user.pk)
+            if user.is_superuser:
+                return JsonResponse(
+                    {
+                        "error": "Remove Django superuser privileges before assigning Exam Committee."
+                    },
+                    status=409,
+                )
+            if user.is_active and get_user_role(user) == ROLE_SUPER_ADMIN:
+                active_admins = [
+                    u
+                    for u in User.objects.select_for_update().filter(is_active=True)
+                    if get_user_role(u) == ROLE_SUPER_ADMIN
+                ]
+                if len(active_admins) <= 1:
+                    return JsonResponse(
+                        {"error": "Cannot change the role of the last active SUPER_ADMIN user."},
+                        status=409,
+                    )
+            advisor_id = departments = ""
+            user.is_staff = False
+            user.save(update_fields=["is_staff"])
         user.groups.clear()
         user.groups.add(Group.objects.get(name=role))
         set_user_scope(int(user.id), advisor_id=advisor_id, departments=departments)

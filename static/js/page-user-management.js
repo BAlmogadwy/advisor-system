@@ -23,6 +23,7 @@ const T = {
   superAdmin:       IS_AR ? 'مشرف عام'                        : 'Super Admin',
   genAdvisor:       IS_AR ? 'مرشد عام'                        : 'Gen. Advisor',
   advisor:          IS_AR ? 'مرشد'                             : 'Advisor',
+  examCommittee:    IS_AR ? 'لجنة الاختبارات'                  : 'Exam Committee',
 
   // ── Status badges ──
   active:           IS_AR ? '● نشط'                            : '● Active',
@@ -158,12 +159,14 @@ function updateStats() {
   const supe = allUsers.filter(u => u.role === 'SUPER_ADMIN').length;
   const gen = allUsers.filter(u => u.role === 'GENERAL_ACADEMIC_ADVISOR').length;
   const adv = allUsers.filter(u => u.role === 'ADVISOR').length;
+  const examCommittee = allUsers.filter(u => u.role === 'EXAM_COMMITTEE').length;
   const disabled = allUsers.filter(u => !u.is_active).length;
 
   q('statTotal').textContent = total;
   q('statSuper').textContent = supe;
   q('statGen').textContent = gen;
   q('statAdv').textContent = adv;
+  q('statExamCommittee').textContent = examCommittee;
   q('statDisabled').textContent = disabled;
   q('umUserCount').textContent = T.nUsers(total);
 }
@@ -207,11 +210,15 @@ function renderTable(users) {
       ? `<span class="um-role-badge um-role-super">${T.superAdmin}</span>`
       : u.role === 'GENERAL_ACADEMIC_ADVISOR'
         ? `<span class="um-role-badge um-role-gen">${T.genAdvisor}</span>`
-        : `<span class="um-role-badge um-role-adv">${T.advisor}</span>`;
+        : u.role === 'EXAM_COMMITTEE'
+          ? `<span class="um-role-badge">${T.examCommittee}</span>`
+          : `<span class="um-role-badge um-role-adv">${T.advisor}</span>`;
+    const advisorId = u.role === 'EXAM_COMMITTEE' ? '' : u.advisor_id;
+    const departments = u.role === 'EXAM_COMMITTEE' ? [] : (u.departments || []);
 
     const activeBadge = u.is_active
-      ? `<span class="um-active-badge um-active-on" role="button" tabindex="0" onclick="event.stopPropagation();toggleActive('${u.username}',false)" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();event.stopPropagation();toggleActive('${u.username}',false)}" title="${T.clickToDisable}">${T.active}</span>`
-      : `<span class="um-active-badge um-active-off" role="button" tabindex="0" onclick="event.stopPropagation();toggleActive('${u.username}',true)" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();event.stopPropagation();toggleActive('${u.username}',true)}" title="${T.clickToEnable}">${T.disabled}</span>`;
+      ? `<span class="um-active-badge um-active-on" role="button" tabindex="0" data-user-action="toggle-active" data-enable="false" title="${T.clickToDisable}">${T.active}</span>`
+      : `<span class="um-active-badge um-active-off" role="button" tabindex="0" data-user-action="toggle-active" data-enable="true" title="${T.clickToEnable}">${T.disabled}</span>`;
 
     const lastLogin = u.last_login
       ? `<span class="um-time">${formatDate(u.last_login)}</span>`
@@ -221,20 +228,20 @@ function renderTable(users) {
       ? `<span class="um-time">${formatDate(u.date_joined)}</span>`
       : '<span class="um-time-never">—</span>';
 
-    return `<tr class="${isSelected ? 'um-selected' : ''}" data-username="${esc(u.username)}" onclick="selectUserFromRow(this)">
-      <td onclick="event.stopPropagation()"><input type="checkbox" class="um-check" ${isChecked ? 'checked' : ''} onchange="toggleBulkCheck('${esc(u.username)}', this.checked)"></td>
+    return `<tr class="${isSelected ? 'um-selected' : ''}" data-username="${esc(u.username)}">
+      <td data-user-action="bulk"><input type="checkbox" class="um-check" ${isChecked ? 'checked' : ''}></td>
       <td dir="auto"><span class="fw-semibold">${esc(u.username)}</span></td>
       <td>${roleBadge}</td>
-      <td dir="auto">${u.advisor_id ? esc(u.advisor_id) : '<span class="um-empty-cell">—</span>'}</td>
-      <td dir="auto">${(u.departments || []).length ? esc((u.departments||[]).join(', ')) : '<span class="um-empty-cell">—</span>'}</td>
+      <td dir="auto">${advisorId ? esc(advisorId) : '<span class="um-empty-cell">—</span>'}</td>
+      <td dir="auto">${departments.length ? esc(departments.join(', ')) : '<span class="um-empty-cell">—</span>'}</td>
       <td>${activeBadge}</td>
       <td>${lastLogin}</td>
       <td>${created}</td>
       <td>
         <div class="um-row-actions">
-          <button class="um-row-btn um-btn-edit" title="${T.editRoleScope}" aria-label="${T.edit}" onclick="event.stopPropagation();selectUser('${esc(u.username)}')"><span class="i i-13" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></span></button>
-          <button class="um-row-btn um-btn-key" title="${T.resetPassword}" aria-label="${T.resetPassword}" onclick="event.stopPropagation();resetPasswordFor('${esc(u.username)}')"><span class="i i-13" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg></span></button>
-          <button class="um-row-btn um-btn-del" title="${T.deleteUser}" aria-label="${T.deleteLabel}" onclick="event.stopPropagation();deleteUserFor('${esc(u.username)}')"><span class="i i-13" aria-hidden="true"><svg viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></span></button>
+          <button type="button" class="um-row-btn um-btn-edit" data-user-action="edit" title="${T.editRoleScope}" aria-label="${T.edit}"><span class="i i-13" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></span></button>
+          <button type="button" class="um-row-btn um-btn-key" data-user-action="reset-password" title="${T.resetPassword}" aria-label="${T.resetPassword}"><span class="i i-13" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg></span></button>
+          <button type="button" class="um-row-btn um-btn-del" data-user-action="delete" title="${T.deleteUser}" aria-label="${T.deleteLabel}"><span class="i i-13" aria-hidden="true"><svg viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></span></button>
         </div>
       </td>
     </tr>`;
@@ -242,6 +249,33 @@ function renderTable(users) {
 
   updateBulkBar();
 }
+
+// Usernames are data, never JavaScript source. Delegation also keeps actions
+// working after filtering, sorting and reloading the table.
+q('umTable')?.addEventListener('click', event => {
+  const row = event.target.closest('tbody tr[data-username]');
+  if (!row) return;
+  const action = event.target.closest('[data-user-action]');
+  const username = row.dataset.username;
+  if (!action) { selectUserFromRow(row); return; }
+  if (action.dataset.userAction === 'edit') selectUser(username);
+  else if (action.dataset.userAction === 'reset-password') resetPasswordFor(username);
+  else if (action.dataset.userAction === 'delete') deleteUserFor(username);
+  else if (action.dataset.userAction === 'toggle-active') toggleActive(username, action.dataset.enable === 'true');
+});
+q('umTable')?.addEventListener('change', event => {
+  if (!event.target.matches('tbody .um-check')) return;
+  const row = event.target.closest('tr[data-username]');
+  if (row) toggleBulkCheck(row.dataset.username, event.target.checked);
+});
+q('umTable')?.addEventListener('keydown', event => {
+  if (event.key !== 'Enter' && event.key !== ' ') return;
+  const action = event.target.closest('[data-user-action="toggle-active"]');
+  const row = action?.closest('tr[data-username]');
+  if (!row) return;
+  event.preventDefault();
+  toggleActive(row.dataset.username, action.dataset.enable === 'true');
+});
 
 function formatDate(iso) {
   if (!iso) return '—';
@@ -306,7 +340,7 @@ function updateScopeFields(roleId, advisorWrapId, deptWrapId) {
   const deptWrap = q(deptWrapId);
   if (!advisorWrap || !deptWrap) return;
 
-  if (role === 'SUPER_ADMIN') {
+  if (role === 'SUPER_ADMIN' || role === 'EXAM_COMMITTEE') {
     advisorWrap.classList.add('hidden');
     deptWrap.classList.add('hidden');
   } else if (role === 'GENERAL_ACADEMIC_ADVISOR') {
@@ -327,8 +361,8 @@ async function createUser() {
   const username = (q('cUsername')?.value || '').trim();
   const password = (q('cPassword')?.value || '').trim();
   const role = (q('cRole')?.value || '').trim();
-  const advisor_id = (q('cAdvisorId')?.value || '').trim();
-  const departments = (q('cDepartments')?.value || '').trim();
+  const advisor_id = role === 'EXAM_COMMITTEE' ? '' : (q('cAdvisorId')?.value || '').trim();
+  const departments = role === 'EXAM_COMMITTEE' ? '' : (q('cDepartments')?.value || '').trim();
 
   if (!username || !password) { notify.warning(T.usernamePasswordReq); return; }
 
@@ -350,11 +384,12 @@ async function createUser() {
    ═══════════════════════════════════════════════════════════════ */
 async function updateRole() {
   if (!selectedUsername) { notify.warning(T.noUserSelected); return; }
+  const role = q('eRole')?.value || '';
   const { res, data } = await apiPost('/ops/users/update-role/', {
     username: selectedUsername,
-    role: q('eRole')?.value || '',
-    advisor_id: (q('eAdvisorId')?.value || '').trim(),
-    departments: (q('eDepartments')?.value || '').trim(),
+    role,
+    advisor_id: role === 'EXAM_COMMITTEE' ? '' : (q('eAdvisorId')?.value || '').trim(),
+    departments: role === 'EXAM_COMMITTEE' ? '' : (q('eDepartments')?.value || '').trim(),
   });
   if (res.ok) {
     notify.success(T.roleUpdated, selectedUsername);
@@ -375,7 +410,7 @@ async function resetPassword() {
 async function resetPasswordFor(username) {
   const newPassword = await dlg.prompt({
     title: T.resetPwTitle,
-    body: T.resetPwBody(username),
+    body: T.resetPwBody(esc(username)),
     label: T.newPassword,
     placeholder: T.enterNewPw,
     kind: 'warning',
@@ -385,7 +420,7 @@ async function resetPasswordFor(username) {
 
   const ok = await dlg.confirm({
     title: T.confirmResetTitle,
-    body: T.confirmResetBody(username),
+    body: T.confirmResetBody(esc(username)),
     typed: 'RESET',
     confirmText: T.confirmReset,
     kind: 'warning',
@@ -403,7 +438,7 @@ async function resetPasswordFor(username) {
 async function toggleActive(username, enable) {
   const ok = await dlg.confirm({
     title: enable ? T.enableAccountTitle(username) : T.disableAccountTitle(username),
-    body: enable ? T.restoreAccess(username) : T.preventLogin(username),
+    body: enable ? T.restoreAccess(esc(username)) : T.preventLogin(esc(username)),
     typed: enable ? undefined : 'DISABLE',
     confirmText: enable ? T.enableAccount : T.disableAccount,
     kind: enable ? 'info' : 'warning',
@@ -430,7 +465,7 @@ async function deleteUser() {
 async function deleteUserFor(username) {
   const ok = await dlg.confirm({
     title: T.deleteAccountTitle,
-    body: T.deleteAccountBody(username),
+    body: T.deleteAccountBody(esc(username)),
     typed: username,
     confirmText: T.deleteConfirm,
     kind: 'danger',
@@ -514,7 +549,7 @@ async function bulkDisable() {
   const names = Array.from(bulkSelected);
   const ok = await dlg.confirm({
     title: T.bulkDisableTitle(names.length),
-    body: T.bulkDisableBody(names.join(', ')),
+    body: T.bulkDisableBody(esc(names.join(', '))),
     typed: 'DISABLE',
     confirmText: T.disableAll,
     kind: 'warning',
@@ -536,7 +571,7 @@ async function bulkEnable() {
   const names = Array.from(bulkSelected);
   const ok = await dlg.confirm({
     title: T.bulkEnableTitle(names.length),
-    body: T.bulkEnableBody(names.join(', ')),
+    body: T.bulkEnableBody(esc(names.join(', '))),
     confirmText: T.enableAll,
     kind: 'info',
   });

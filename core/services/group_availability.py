@@ -324,7 +324,9 @@ def _load_meetings_by_student(
     return meetings_by_student, enrolled
 
 
-def resolve_current_term() -> tuple[str, str]:
+def resolve_current_term(
+    *, source: str | None = None, global_sections_only: bool = False
+) -> tuple[str, str]:
     """Return the latest registered ``(academic_year, term)``.
 
     Mirrors the exam-timetable convention (``build_enrolled_sets`` orders by
@@ -335,12 +337,18 @@ def resolve_current_term() -> tuple[str, str]:
     Term discovery follows the same registered-only contract as schedule loading.
     An expected-plan-only future term must not make the page ignore the latest
     term for which the registrar actually recorded schedules.
+
+    A caller may require one exact registered source, such as the exam builder's
+    scraped-timetable policy. That source also controls term discovery; another
+    source must never advance its current term.
     """
+    registered = StudentTermSection.objects.filter(snapshot_class_filter(SnapshotClass.REGISTRAR))
+    if source is not None:
+        registered = registered.filter(source=source)
+    if global_sections_only:
+        registered = registered.filter(term_section__scenario__isnull=True)
     latest = (
-        StudentTermSection.objects.filter(snapshot_class_filter(SnapshotClass.REGISTRAR))
-        .order_by("-academic_year", "-term")
-        .values_list("academic_year", "term")
-        .first()
+        registered.order_by("-academic_year", "-term").values_list("academic_year", "term").first()
     )
     if not latest:
         return "", ""

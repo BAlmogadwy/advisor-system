@@ -1,0 +1,937 @@
+/* Exam builder: a task-oriented workspace. Kept local so the shared shell and
+   other planning screens retain their existing visual treatment. */
+/* The global ribbon sits outside main and above the shell's stacking context;
+   suppress that decoration only while this workspace is present. */
+body:has(main.exam-builder-page) > .side-decor { display: none; }
+
+main.exam-builder-page,
+#matrixPanel {
+  --et-bg: #f4f6f9;
+  --et-surface: #ffffff;
+  --et-subtle: #f8fafc;
+  --et-text: #172b45;
+  --et-muted: #52627a;
+  --et-icon: #6b7b90;
+  --et-border: #d8e0e9;
+  --et-field-border: #8796a8;
+  --et-accent: #087f72;
+  --et-accent-hover: #06685e;
+  --et-accent-soft: #edf7f5;
+  --et-selected-border: #81b9ae;
+  --et-danger: #b42332;
+  --et-danger-soft: #fff3f3;
+  --et-focus: #2368bf;
+  --et-warning: #85530a;
+  --et-warning-soft: #fff8e6;
+  --et-related: #3f719d;
+  --et-related-soft: #eef4f9;
+  background: var(--et-bg);
+  color: var(--et-text);
+  font-size: .875rem;
+  line-height: 1.5;
+  min-width: 0;
+}
+main.exam-builder-page *,
+main.exam-builder-page *::before,
+main.exam-builder-page *::after { box-sizing: border-box; }
+
+html[data-theme="dark"] main.exam-builder-page,
+html[data-theme="dark"] #matrixPanel {
+  --et-bg: #101923;
+  --et-surface: #172330;
+  --et-subtle: #1c2a39;
+  --et-text: #e8eef6;
+  --et-muted: #adbed2;
+  --et-icon: #8b9aaf;
+  --et-border: #354759;
+  --et-field-border: #6c8197;
+  --et-accent: #63d1bf;
+  --et-accent-hover: #8ee5d6;
+  --et-accent-soft: #18372f;
+  --et-selected-border: #477f72;
+  --et-danger: #ffabb5;
+  --et-danger-soft: #3b2029;
+  --et-focus: #8fbeff;
+  --et-warning: #f5cf85;
+  --et-warning-soft: #372c18;
+  --et-related: #9bbfe1;
+  --et-related-soft: #203348;
+  color-scheme: dark;
+}
+
+main.exam-builder-page > .content-wrap { max-width: 1480px; }
+main.exam-builder-page .page-intro { margin-block: 1.5rem; }
+main.exam-builder-page .page-intro h2 {
+  color: var(--et-text);
+  font-family: var(--font-body);
+  font-size: 1.5rem;
+  font-weight: 700;
+  letter-spacing: -.02em;
+  margin-bottom: .4rem;
+}
+main.exam-builder-page .panel-sub,
+main.exam-builder-page .text-secondary,
+main.exam-builder-page .form-text { color: var(--et-muted) !important; }
+main.exam-builder-page .panel-sub { max-width: 72ch; font-size: .875rem; }
+main.exam-builder-page .text-danger { color: var(--et-danger) !important; }
+main.exam-builder-page .text-primary { color: var(--et-accent) !important; }
+main.exam-builder-page :is(h2, h3, h4, h5, h6) { color: var(--et-text); }
+main.exam-builder-page :is(input, select, button, summary, a) { scroll-margin-block: 6rem; }
+
+/* Override the global raised/inset controls only inside this workspace. The
+   shared primitives currently use !important for these visual properties. */
+main.exam-builder-page .form-label {
+  color: var(--et-text) !important;
+  font-size: .8125rem !important;
+  font-weight: 600 !important;
+  text-transform: none;
+  letter-spacing: 0;
+  margin-bottom: .375rem;
+}
+main.exam-builder-page :is(.form-control, .form-select) {
+  min-height: 40px;
+  width: 100%;
+  max-width: 100% !important;
+  padding: .5rem .75rem !important;
+  border: 1px solid var(--et-field-border) !important;
+  border-radius: 6px !important;
+  background-color: var(--et-surface) !important;
+  color: var(--et-text) !important;
+  font-size: .875rem !important;
+  box-shadow: none !important;
+  transition: border-color .15s ease, outline-color .15s ease;
+}
+main.exam-builder-page .form-select { padding-inline-end: 2.25rem !important; }
+main.exam-builder-page .form-control::placeholder { color: var(--et-muted); opacity: 1; }
+main.exam-builder-page :is(.form-control, .form-select):hover { border-color: var(--et-muted) !important; }
+main.exam-builder-page :is(.form-control, .form-select):focus {
+  border-color: var(--et-focus) !important;
+  outline: 2px solid var(--et-focus) !important;
+  outline-offset: 2px;
+  background-color: var(--et-surface) !important;
+  box-shadow: none !important;
+}
+main.exam-builder-page :is(.form-control, .form-select):disabled { background-color: var(--et-subtle) !important; }
+main.exam-builder-page .form-control.is-invalid {
+  border-color: var(--et-danger) !important;
+  background-color: var(--et-danger-soft) !important;
+  background-image: none;
+}
+main.exam-builder-page input[type="checkbox"] { accent-color: var(--et-accent); cursor: pointer; }
+main.exam-builder-page .form-check-input {
+  width: 17px;
+  height: 17px;
+  border: 1px solid var(--et-field-border);
+  border-radius: 3px;
+  box-shadow: none;
+}
+main.exam-builder-page .form-check-input:checked { background-color: var(--et-accent); border-color: var(--et-accent); }
+main.exam-builder-page .form-text { margin-top: .5rem; font-size: .8125rem; line-height: 1.5; }
+main.exam-builder-page .et-field-help { margin: .5rem 0 0; color: var(--et-muted); font-size: .8125rem; line-height: 1.5; }
+main.exam-builder-page .et-field-error { color: var(--et-danger); }
+main.exam-builder-page .btn,
+main.exam-builder-page .btn.btn-sm {
+  min-height: 40px;
+  padding: .5rem .875rem !important;
+  border: 1px solid var(--et-field-border) !important;
+  border-radius: 6px !important;
+  background: var(--et-surface) !important;
+  color: var(--et-text) !important;
+  box-shadow: none !important;
+  font-size: .8125rem !important;
+  font-weight: 600 !important;
+  line-height: 1.35;
+  text-decoration: none;
+  transition: background-color .15s ease, border-color .15s ease !important;
+}
+main.exam-builder-page .btn:hover { background: var(--et-subtle) !important; border-color: var(--et-muted) !important; }
+main.exam-builder-page :is(.btn-primary, .btn-success) {
+  background: var(--et-accent) !important;
+  border-color: var(--et-accent) !important;
+  color: #fff !important;
+}
+main.exam-builder-page :is(.btn-primary, .btn-success):hover {
+  background: var(--et-accent-hover) !important;
+  border-color: var(--et-accent-hover) !important;
+}
+html[data-theme="dark"] main.exam-builder-page :is(.btn-primary, .btn-success) { color: #102b26 !important; }
+main.exam-builder-page :is(.btn-outline-primary, .btn-outline-success) { color: var(--et-accent) !important; border-color: var(--et-accent) !important; }
+main.exam-builder-page .btn-outline-danger { color: var(--et-danger) !important; }
+main.exam-builder-page .btn-outline-danger:hover { background: var(--et-danger-soft) !important; border-color: var(--et-danger) !important; }
+main.exam-builder-page .btn:disabled,
+main.exam-builder-page .btn.disabled {
+  opacity: 1;
+  background: var(--et-subtle) !important;
+  border-color: var(--et-border) !important;
+  color: var(--et-muted) !important;
+  cursor: not-allowed;
+  box-shadow: none !important;
+}
+html[data-theme="dark"] main.exam-builder-page .btn:is(:disabled, .disabled) { color: var(--et-muted) !important; }
+main.exam-builder-page :is(.btn, input[type="checkbox"], summary, .kpi-click, .et-del-btn, .et-copy-btn, .et-run-info):focus-visible,
+main.exam-builder-page .btn:focus {
+  outline: 2px solid var(--et-focus) !important;
+  outline-offset: 3px;
+  box-shadow: none !important;
+}
+
+main.exam-builder-page .et-setup-grid { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); gap: 20px; align-items: stretch; }
+main.exam-builder-page .et-section,
+main.exam-builder-page .et-panel {
+  min-width: 0;
+  margin-bottom: 20px;
+  padding: 24px;
+  border: 1px solid var(--et-border);
+  border-radius: 10px;
+  background: var(--et-surface);
+  box-shadow: none;
+}
+main.exam-builder-page .et-section-heading { display: flex; align-items: flex-start; gap: 12px; margin-bottom: 16px; }
+main.exam-builder-page .et-step {
+  display: inline-flex;
+  flex: 0 0 28px;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  margin-top: 1px;
+  border: 1px solid var(--et-border);
+  border-radius: 6px;
+  background: var(--et-subtle);
+  color: var(--et-muted);
+  font-size: .8125rem;
+  font-weight: 700;
+}
+main.exam-builder-page .et-section-heading h2 { margin: 0; font-family: var(--font-body); font-size: 1rem; font-weight: 700; line-height: 1.5; letter-spacing: 0; }
+main.exam-builder-page .et-section-heading p { margin: .25rem 0 0; color: var(--et-muted); font-size: .8125rem; line-height: 1.5; }
+main.exam-builder-page .et-section-heading > div { min-width: 0; }
+main.exam-builder-page .et-section-heading > :is(.et-selection-count, .btn) { margin-inline-start: auto; flex: 0 0 auto; }
+main.exam-builder-page .et-selection-count { padding: 5px 9px; border: 1px solid var(--et-border); border-radius: 4px; background: var(--et-subtle); white-space: nowrap; }
+main.exam-builder-page .et-basic-fields { display: grid; grid-template-columns: 1.2fr 1fr 1fr; gap: 12px; }
+main.exam-builder-page .et-basic-fields > :first-child { grid-column: 1 / -1; }
+main.exam-builder-page .et-basic-fields > * { min-width: 0; }
+main.exam-builder-page .et-basic-fields .form-control-compact { text-align: start; }
+main.exam-builder-page .et-periods-block { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--et-border); }
+main.exam-builder-page .et-periods-heading { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 12px; }
+main.exam-builder-page .et-periods-heading :is(h3, .form-label) { margin: 0; font-size: .875rem; font-weight: 600; }
+main.exam-builder-page #etPeriodsRepeater { display: grid !important; gap: 8px !important; max-width: 440px; }
+main.exam-builder-page #etPeriodsRepeater .et-period-row { display: grid !important; grid-template-columns: 28px minmax(0, 1fr) 14px minmax(0, 1fr) 36px; align-items: center; gap: 8px !important; }
+main.exam-builder-page .et-period-number { color: var(--et-muted); text-align: center; font-size: .8125rem; font-variant-numeric: tabular-nums; }
+main.exam-builder-page :is(.et-period-start, .et-period-end) { width: 100%; max-width: 100% !important; text-align: center; font-variant-numeric: tabular-nums; }
+main.exam-builder-page .et-period-sep { color: var(--et-muted); text-align: center; }
+main.exam-builder-page .et-period-remove { width: 36px; min-height: 36px; padding: .375rem !important; font-size: 1.2rem !important; border-color: transparent !important; color: var(--et-muted) !important; }
+main.exam-builder-page .et-period-remove:hover { color: var(--et-danger) !important; border-color: var(--et-danger) !important; background: var(--et-danger-soft) !important; }
+main.exam-builder-page #etPeriodsFeedback { padding: .6rem .75rem; border-inline-start: 3px solid var(--et-danger); border-radius: 3px; background: var(--et-danger-soft); font-size: .8125rem; }
+main.exam-builder-page #etCalendarDetails { margin-top: 8px; color: var(--et-muted); font-size: .8125rem; }
+main.exam-builder-page #etCalendarDetails summary { width: fit-content; padding: 6px 0; cursor: pointer; color: var(--et-text); font-weight: 500; }
+main.exam-builder-page #dayPreview { display: flex; flex-wrap: wrap; gap: 6px; padding-top: 8px; font-family: var(--font-body) !important; line-height: 1.8; }
+main.exam-builder-page #dayPreview > span { padding: 2px 7px; border: 1px solid var(--et-border); border-radius: 4px; background: var(--et-subtle); color: var(--et-muted); font-size: .75rem; }
+
+main.exam-builder-page .et-scope-panel { display: flex; flex-direction: column; }
+main.exam-builder-page .et-scope-panel fieldset { min-width: 0; min-inline-size: 0; padding: 0; margin: 0 0 22px; border: 0; }
+main.exam-builder-page .et-scope-panel legend { float: none; width: auto; margin-bottom: 10px; }
+main.exam-builder-page :is(#progList, #secList) { min-height: 0 !important; max-height: none !important; padding: 0 !important; border: 0 !important; border-radius: 0 !important; gap: 8px !important; overflow: visible !important; }
+main.exam-builder-page #progList { display: grid !important; grid-template-columns: repeat(4, minmax(0, 1fr)); }
+main.exam-builder-page #secList { display: flex !important; flex-wrap: wrap; }
+main.exam-builder-page :is(#progList, #secList) .et-chip {
+  display: flex;
+  min-width: 0;
+  min-height: 38px;
+  height: 38px;
+  box-sizing: border-box;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--et-border);
+  border-radius: 6px;
+  background: var(--et-surface);
+  color: var(--et-text);
+  font-size: .8125rem;
+  font-weight: 500;
+}
+main.exam-builder-page :is(#progList, #secList) .et-chip:has(input:checked) { border-color: var(--et-selected-border); background: var(--et-accent-soft); color: var(--et-text); }
+main.exam-builder-page :is(#progList, #secList) .et-chip:hover { border-color: var(--et-accent); }
+main.exam-builder-page #examSettingsControls .et-chip input[type="checkbox"] {
+  display: inline-block;
+  position: static;
+  flex: 0 0 16px;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  margin: 0;
+  overflow: visible;
+  clip: auto;
+  clip-path: none;
+  white-space: normal;
+  border: 1px solid var(--et-field-border);
+}
+main.exam-builder-page #examSettingsControls .et-chip:focus-within { outline: 2px solid var(--et-focus); outline-offset: 2px; }
+main.exam-builder-page :is(#progCount, #secCount, #courseCount) { color: var(--et-muted); font-size: .75rem; font-weight: 400; margin-inline-start: .375rem; }
+main.exam-builder-page #courseCount { margin-inline-start: auto; }
+main.exam-builder-page .et-scope-footer { display: flex; align-items: center; gap: 14px; padding-top: 20px; margin-top: auto; }
+main.exam-builder-page .et-scope-footer .btn { flex: 0 0 auto; }
+main.exam-builder-page .et-scope-footer :is(p, small) { margin: 0; color: var(--et-muted); font-size: .8125rem; line-height: 1.5; }
+
+main.exam-builder-page #courseEmptyState,
+main.exam-builder-page .et-course-empty { padding: 28px 20px; border: 1px dashed var(--et-border); border-radius: 6px; background: var(--et-subtle); color: var(--et-muted); text-align: center; }
+main.exam-builder-page #courseEmptyState p { max-width: 58ch; margin: .375rem auto 0; }
+main.exam-builder-page .et-course-toolbar { display: grid; grid-template-columns: minmax(0, 1fr) minmax(180px, .35fr); gap: 12px; align-items: end; margin-bottom: 12px; }
+main.exam-builder-page .et-course-toolbar > * { min-width: 0; }
+main.exam-builder-page .et-course-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; }
+main.exam-builder-page .et-course-actions .btn { min-height: 34px; padding: .375rem .65rem !important; font-size: .75rem !important; }
+main.exam-builder-page #courseSearchCount { margin-inline-end: auto; color: var(--et-muted); font-size: .8125rem; }
+main.exam-builder-page .et-selection-menu { position: relative; }
+main.exam-builder-page .et-selection-menu > summary { padding: 7px 10px; border: 1px solid var(--et-field-border); border-radius: 6px; color: var(--et-text); background: var(--et-surface); font-size: .75rem; font-weight: 600; cursor: pointer; }
+main.exam-builder-page .et-selection-menu[open] { flex-basis: 100%; }
+main.exam-builder-page .et-selection-menu[open] > summary { width: fit-content; background: var(--et-subtle); }
+main.exam-builder-page .et-selection-menu > div { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 8px; margin-top: 8px; padding: 12px; border: 1px solid var(--et-border); border-radius: 6px; background: var(--et-subtle); }
+main.exam-builder-page .et-selection-menu > div > p { grid-column: 1 / -1; }
+main.exam-builder-page .et-selection-menu p { margin: 0 0 4px; color: var(--et-muted); font-size: .75rem; line-height: 1.5; }
+main.exam-builder-page .et-selection-menu .btn { justify-content: flex-start; }
+main.exam-builder-page .et-course-table-head,
+main.exam-builder-page #courseList .et-course-option {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr) minmax(110px, .3fr) 80px 80px;
+  align-items: center;
+  gap: 16px;
+  padding: 12px 16px;
+}
+main.exam-builder-page .et-course-table-head { border: 1px solid var(--et-border); border-bottom: 0; border-radius: 6px 6px 0 0; background: var(--et-subtle); color: var(--et-muted); font-size: .75rem; font-weight: 600; overflow-y: auto; scrollbar-gutter: stable; }
+main.exam-builder-page #courseList { max-height: 440px !important; min-height: 0; padding: 0 !important; overflow-y: auto; overflow-x: hidden; overscroll-behavior-y: contain; scrollbar-gutter: stable; border: 1px solid var(--et-border) !important; border-radius: 0 0 6px 6px !important; background: var(--et-surface); }
+main.exam-builder-page #courseList .et-course-option {
+  width: 100%;
+  min-height: 66px;
+  margin: 0;
+  border: 0;
+  border-bottom: 1px solid var(--et-border);
+  border-radius: 0;
+  background: var(--et-surface);
+  color: var(--et-text);
+  font-size: .8125rem;
+  font-weight: 400;
+  cursor: pointer;
+}
+main.exam-builder-page #courseList .et-course-option:last-child { border-bottom: 0; }
+main.exam-builder-page #courseList .et-course-option.active,
+main.exam-builder-page #courseList .et-course-option:has(input:checked) { background: var(--et-accent-soft); color: var(--et-text); }
+main.exam-builder-page #courseList .et-course-option:hover { background: var(--et-subtle); }
+main.exam-builder-page #courseList .et-course-option:focus-within { position: relative; outline-offset: -3px; }
+main.exam-builder-page .et-course-main { display: block; min-width: 0; }
+main.exam-builder-page .et-course-code { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-inline-end: 8px; color: var(--et-text); font-size: .8125rem; font-weight: 700; }
+main.exam-builder-page .et-course-name { display: block; max-width: none; margin-top: 3px; color: var(--et-text); font-size: .8125rem; font-weight: 400; line-height: 1.45; overflow-wrap: anywhere; }
+main.exam-builder-page .et-course-plans,
+main.exam-builder-page .et-course-level,
+main.exam-builder-page .et-course-enrollment { color: var(--et-muted); font-size: .8125rem; line-height: 1.5; font-weight: 400; opacity: 1; overflow-wrap: anywhere; }
+main.exam-builder-page .et-course-enrollment { font-variant-numeric: tabular-nums; text-align: end; }
+main.exam-builder-page .et-mobile-label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+main.exam-builder-page .et-course-table-head > :last-child { text-align: end; }
+main.exam-builder-page .et-online-label,
+main.exam-builder-page .et-online-badge { display: inline-block; padding: 1px 6px; border-radius: 4px; border: 1px solid var(--et-border); background: var(--et-warning-soft); color: var(--et-warning); font-size: .6875rem; line-height: 1.5; font-weight: 500; }
+main.exam-builder-page .et-online-dot { color: var(--et-warning); }
+
+main.exam-builder-page .et-fixed-exams .et-pin-fields { display: grid; grid-template-columns: minmax(0, 2.2fr) minmax(120px, .8fr) minmax(150px, 1fr) auto; gap: 12px; align-items: end; }
+main.exam-builder-page .et-fixed-exams .et-pin-fields > div { min-width: 0; }
+main.exam-builder-page .et-pin-course-field { grid-column: auto; }
+main.exam-builder-page .et-course-picker { position: relative; min-width: 0; }
+main.exam-builder-page #examPinCourseSearch { padding-inline-end: 42px !important; }
+main.exam-builder-page .et-course-picker-toggle {
+  position: absolute;
+  inset-block: 1px;
+  inset-inline-end: 1px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  padding: 0;
+  border: 0;
+  border-radius: 0 5px 5px 0;
+  background: transparent;
+  color: var(--et-muted);
+  cursor: pointer;
+}
+main.exam-builder-page .et-course-picker-toggle:hover { color: var(--et-accent); background: var(--et-subtle); }
+main.exam-builder-page .et-course-picker-toggle:disabled { cursor: not-allowed; }
+html[dir="rtl"] main.exam-builder-page .et-course-picker-toggle { border-radius: 5px 0 0 5px; }
+main.exam-builder-page .et-course-picker-popup {
+  position: absolute;
+  inset-inline: 0;
+  top: calc(100% + 6px);
+  z-index: 40;
+  overflow: hidden;
+  border: 1px solid var(--et-field-border);
+  border-radius: 6px;
+  background: var(--et-surface);
+  box-shadow: 0 6px 20px rgb(15 35 55 / 16%);
+}
+main.exam-builder-page .et-course-picker[data-placement="above"] .et-course-picker-popup { top: auto; bottom: calc(100% + 6px); }
+main.exam-builder-page #examPinCourseResults { position: relative; max-height: 300px; overflow-y: auto; overscroll-behavior: contain; }
+main.exam-builder-page .et-course-picker-option {
+  display: grid;
+  min-height: 48px;
+  gap: 3px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--et-border);
+  color: var(--et-text);
+  font-size: .8125rem;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+main.exam-builder-page .et-course-picker-option:last-child { border-bottom: 0; }
+main.exam-builder-page .et-course-picker-option strong { width: fit-content; font-weight: 700; }
+main.exam-builder-page .et-course-picker-option small { color: var(--et-muted); font-size: .75rem; }
+main.exam-builder-page .et-course-picker-option:hover,
+main.exam-builder-page .et-course-picker-option.is-active { background: var(--et-accent-soft); box-shadow: inset 3px 0 var(--et-accent); }
+html[dir="rtl"] main.exam-builder-page .et-course-picker-option.is-active { box-shadow: inset -3px 0 var(--et-accent); }
+main.exam-builder-page .et-course-picker-empty { margin: 0; padding: 16px; color: var(--et-muted); font-size: .8125rem; }
+main.exam-builder-page #examPinNotice { margin-top: 12px !important; font-size: .8125rem; line-height: 1.5; color: var(--et-muted); }
+main.exam-builder-page .et-pin-invalid { background: var(--et-danger-soft) !important; }
+main.exam-builder-page .et-pin-problem { color: var(--et-danger); }
+main.exam-builder-page .et-pin-actions { gap: 8px; }
+main.exam-builder-page .et-options { margin-bottom: 20px; border: 1px solid var(--et-border); border-radius: 8px; background: var(--et-surface); }
+main.exam-builder-page .et-options > summary,
+main.exam-builder-page .et-history-panel > summary { padding: 16px 20px; color: var(--et-text); cursor: pointer; font-size: .875rem; font-weight: 600; }
+main.exam-builder-page .et-options-fields { display: flex; align-items: center; gap: 20px; flex-wrap: wrap; padding: 4px 20px 20px; }
+main.exam-builder-page .et-options-fields > label { display: flex; flex: 1 1 230px; align-items: flex-start; gap: 10px; margin: 0; }
+main.exam-builder-page .et-options-fields > label > input { flex: 0 0 16px; width: 16px; height: 16px; margin-top: 4px; }
+main.exam-builder-page .et-options-fields > label > span { display: grid; gap: 3px; }
+main.exam-builder-page .et-options-fields strong { color: var(--et-text); font-size: .8125rem; font-weight: 600; }
+main.exam-builder-page .et-options-fields small { color: var(--et-muted); font-size: .75rem; line-height: 1.5; }
+main.exam-builder-page .et-options-fields > div { flex: 0 0 155px; }
+main.exam-builder-page .et-options-fields .form-check { display: inline-flex; align-items: center; gap: 8px; padding: 0; margin: 0; }
+main.exam-builder-page .et-options-fields .form-check-input { float: none; margin: 0; }
+main.exam-builder-page .et-options-fields .form-control-compact { width: 74px; }
+main.exam-builder-page .et-build-footer {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px 20px;
+  margin-block: 0 20px;
+  border: 1px solid var(--et-border);
+  border-radius: 8px;
+  background: var(--et-surface);
+  box-shadow: 0 -2px 8px rgb(15 35 55 / 4%);
+}
+main.exam-builder-page #examBuildSummary { color: var(--et-muted); font-size: .8125rem; line-height: 1.5; }
+main.exam-builder-page #examBuildSummary strong { color: var(--et-text); font-weight: 600; }
+main.exam-builder-page .et-build-actions { display: flex; flex: 0 0 auto; align-items: center; flex-wrap: wrap; gap: 8px; }
+main.exam-builder-page #buildBtn { min-width: 156px; }
+main.exam-builder-page #etStatus { margin-block: 12px 20px; padding: 12px 16px; border: 1px solid var(--et-border); border-radius: 6px; background: var(--et-subtle); color: var(--et-muted); font-size: .8125rem; }
+main.exam-builder-page #etStatus.alert-danger { border-color: var(--et-danger); background: var(--et-danger-soft); color: var(--et-danger); }
+main.exam-builder-page #etStatus.alert-success { border-color: var(--et-selected-border); background: var(--et-accent-soft); color: var(--et-text); }
+main.exam-builder-page .alert-warning { border-color: var(--et-warning); background: var(--et-warning-soft); color: var(--et-warning); }
+main.exam-builder-page .et-request-error { margin-block: 0 12px; padding: 10px 12px; border: 1px solid var(--et-danger); border-radius: 6px; background: var(--et-danger-soft); color: var(--et-danger); font-size: .8125rem; line-height: 1.5; overflow-wrap: anywhere; }
+main.exam-builder-page #examEditorRequestError { margin-block: 10px 0; }
+main.exam-builder-page .et-request-error a { display: inline-flex; align-items: center; min-height: 36px; padding-inline: 6px; color: inherit; font-weight: 650; text-decoration: underline; text-underline-offset: 3px; }
+main.exam-builder-page .et-request-error a:focus-visible { outline: 2px solid var(--et-focus); outline-offset: 2px; border-radius: 3px; }
+main.exam-builder-page .et-request-error .et-source-review-action { margin-inline-start: 8px; min-height: 36px; white-space: normal; }
+
+/* The page owns vertical scrolling; only compact editing controls follow it. */
+main.exam-builder-page .et-workspace-details { min-width: 0; margin-block: 0 12px; border: 1px solid var(--et-border); border-radius: 8px; background: var(--et-surface); }
+main.exam-builder-page .et-workspace-details > summary { min-height: 46px; padding: 12px 16px; color: var(--et-text); font-size: .875rem; font-weight: 600; line-height: 1.5; cursor: pointer; overflow-wrap: anywhere; }
+main.exam-builder-page .et-workspace-details > summary:hover { background: var(--et-subtle); border-radius: 8px; }
+main.exam-builder-page .et-workspace-details[open] > summary { border-bottom: 1px solid var(--et-border); }
+main.exam-builder-page .et-details-meta { display: inline; margin-inline-start: 12px; color: var(--et-muted); font-size: .75rem; font-weight: 400; }
+main.exam-builder-page .et-setup-details { margin-bottom: 20px; }
+main.exam-builder-page .et-setup-details-content { padding: 16px; background: var(--et-bg); border-radius: 0 0 8px 8px; }
+main.exam-builder-page .et-setup-details-content > :last-child { margin-bottom: 0; }
+main.exam-builder-page #examSummaryCards { margin: 0; border: 0; border-radius: 0 0 8px 8px; }
+main.exam-builder-page .et-schedule-workspace { padding: 16px !important; }
+main.exam-builder-page .et-schedule-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px 16px; margin-bottom: 8px; }
+main.exam-builder-page .et-schedule-heading > div { min-width: 0; }
+main.exam-builder-page .et-schedule-heading h2 { margin: 0; font-size: 1rem; font-weight: 700; }
+main.exam-builder-page .et-schedule-heading #schedFilter { flex: 0 1 300px; min-width: 200px; min-height: 36px; }
+main.exam-builder-page .et-edit-toolbar { position: static; padding: 0 0 10px; margin: 0 0 10px; border-bottom: 1px solid var(--et-border); background: var(--et-surface); }
+main.exam-builder-page .et-edit-toolbar.et-toolbar-sticky { position: sticky; top: var(--exam-toolbar-top, 0px); z-index: 20; box-shadow: 0 4px 6px -5px var(--et-field-border); }
+main.exam-builder-page .et-run-summary { margin: 2px 0 0; color: var(--et-muted); font-size: .75rem; line-height: 1.4; overflow-wrap: anywhere; }
+main.exam-builder-page .et-change-count { color: var(--et-muted); font-size: .6875rem; }
+main.exam-builder-page .et-check-status { padding: 3px 7px; border: 1px solid var(--et-border); border-radius: 5px; color: var(--et-muted); background: var(--et-subtle); font-size: .6875rem; line-height: 1.4; }
+main.exam-builder-page :is(.et-check-status, .et-run-summary, .et-change-count):empty { display: none; }
+main.exam-builder-page .et-edit-controls { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 10px; margin-bottom: 8px; }
+main.exam-builder-page :is(.et-check-controls, .et-undo-controls, .et-save-controls) { display: flex; align-items: center; gap: 6px; }
+main.exam-builder-page .et-save-controls { margin-inline-start: auto; }
+main.exam-builder-page .et-edit-controls .btn { min-height: 34px; padding: 6px 9px !important; font-size: .75rem !important; line-height: 1.35; white-space: nowrap; }
+main.exam-builder-page .et-live-control { display: flex; align-items: center; gap: 7px; margin: 0; min-height: 34px; font-size: .75rem; font-weight: 600; cursor: pointer; }
+main.exam-builder-page #examLiveUpdate { width: 17px; height: 17px; accent-color: var(--et-accent); margin: 0; }
+main.exam-builder-page .et-edit-feedback { display: flex; align-items: center; flex-wrap: wrap; gap: 5px 10px; }
+main.exam-builder-page .et-edit-help { margin-inline-start: auto; color: var(--et-muted); font-size: .6875rem; }
+main.exam-builder-page .et-edit-help > summary { padding: 5px 0; cursor: pointer; }
+main.exam-builder-page .et-edit-help[open] { flex-basis: 100%; }
+main.exam-builder-page .et-edit-help > div { padding: 8px 12px; border: 1px solid var(--et-border); border-radius: 5px; background: var(--et-subtle); }
+main.exam-builder-page .et-edit-help p { margin: 0; font-size: .75rem; line-height: 1.5; }
+main.exam-builder-page .et-edit-help p + p { margin-top: 4px; }
+main.exam-builder-page .et-quick-metrics { display: flex; align-items: center; flex-wrap: wrap; gap: 5px; min-width: 0; padding: 2px; margin: -2px; }
+main.exam-builder-page .et-quick-metric { display: inline-flex; align-items: center; gap: 5px; min-height: 28px; padding: 3px 7px; border: 1px solid var(--et-border); border-radius: 5px; color: var(--et-text); background: var(--et-subtle); font: inherit; font-size: .6875rem; line-height: 1.3; text-align: start; cursor: pointer; }
+main.exam-builder-page .et-quick-metric:hover,
+main.exam-builder-page .et-quick-metric[aria-expanded="true"] { border-color: var(--et-accent); background: var(--et-accent-soft); }
+main.exam-builder-page .et-quick-label { color: var(--et-muted); }
+main.exam-builder-page .et-quick-value { font-size: .8125rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+main.exam-builder-page .et-quick-delta { font-size: .625rem; }
+main.exam-builder-page .et-quick-context { max-width: 230px; color: var(--et-muted); font-size: .625rem; line-height: 1.35; }
+main.exam-builder-page .et-kpi-delta { display: block; margin-top: 4px; font-size: .75rem; font-weight: 500; line-height: 1.4; }
+main.exam-builder-page :is(.et-kpi-delta, .et-quick-delta).is-better { color: var(--et-accent); }
+main.exam-builder-page :is(.et-kpi-delta, .et-quick-delta).is-worse { color: var(--et-danger); }
+main.exam-builder-page :is(.et-kpi-delta, .et-quick-delta).is-neutral { color: var(--et-muted); }
+main.exam-builder-page :is(.et-kpi-delta, .et-quick-delta).is-stale { color: var(--et-warning); text-decoration: underline dashed; text-underline-offset: 3px; }
+main.exam-builder-page :is(.et-kpi-delta, .et-quick-delta).is-unchanged { display: none; }
+main.exam-builder-page .et-quick-metric:focus-visible { outline: 2px solid var(--et-focus); outline-offset: 1px; }
+main.exam-builder-page .et-changes-content { padding: 0 16px 16px; }
+main.exam-builder-page .et-changes-content > p { margin: 12px 0 0; color: var(--et-muted); font-size: .8125rem; }
+main.exam-builder-page .et-change-group { margin-top: 16px; }
+main.exam-builder-page .et-change-group h4 { margin: 0 0 8px; color: var(--et-muted); font-size: .8125rem; font-weight: 600; }
+main.exam-builder-page .et-change-list { margin: 0; padding: 0; list-style: none; }
+main.exam-builder-page .et-change-item { display: grid; grid-template-columns: minmax(150px, 1fr) minmax(160px, 1fr) auto; align-items: center; gap: 8px 20px; padding-block: 10px; border-top: 1px solid var(--et-border); }
+main.exam-builder-page .et-change-course { min-width: 0; font-size: .8125rem; }
+main.exam-builder-page .et-change-course strong { display: inline-block; direction: ltr; unicode-bidi: isolate; }
+main.exam-builder-page .et-change-course .et-course-name { display: block; margin-top: 2px; color: var(--et-muted); font-size: .75rem; overflow-wrap: anywhere; }
+main.exam-builder-page .et-change-times { color: var(--et-muted); font-size: .8125rem; line-height: 1.6; overflow-wrap: anywhere; }
+main.exam-builder-page .et-drill-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+main.exam-builder-page .et-drill-actions:not(.et-course-card-actions) .btn { min-height: 34px; padding: 5px 9px !important; font-size: .75rem !important; white-space: nowrap; }
+main.exam-builder-page .et-drill-action-note { flex-basis: 100%; color: var(--et-muted); font-size: .6875rem; line-height: 1.5; }
+main.exam-builder-page .et-drill-action-note:empty { display: none; }
+main.exam-builder-page .et-drill-course-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); align-items: start; gap: 8px; min-width: 190px; white-space: normal; }
+main.exam-builder-page .et-drill-course.et-course-card { width: 210px; max-width: 100%; }
+main.exam-builder-page .et-drill-course-list > .et-course-card { width: 100%; max-width: 220px; }
+main.exam-builder-page .et-course-card > .et-drill-action-note { grid-column: 1 / -1; min-width: 0; margin: 2px 0 0; font-weight: 400; white-space: normal; overflow-wrap: anywhere; }
+main.exam-builder-page .et-section-mapping-notice { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px 16px; margin-block: 0 12px; padding: 12px 14px; border: 1px solid var(--et-warning); border-radius: 6px; background: var(--et-warning-soft); color: var(--et-warning); }
+main.exam-builder-page .et-section-mapping-notice > div { flex: 1 1 280px; min-width: 0; }
+main.exam-builder-page .et-section-mapping-notice h3 { margin: 0 0 4px; font-size: .875rem; font-weight: 650; color: inherit; }
+main.exam-builder-page .et-section-mapping-notice p { margin: 0; font-size: .8125rem; line-height: 1.5; }
+main.exam-builder-page .et-section-mapping-notice .btn { min-height: 40px; white-space: normal; }
+main.exam-builder-page .et-section-detail { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; white-space: normal; overflow-wrap: anywhere; }
+main.exam-builder-page .et-section-detail + .et-section-detail { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--et-border); }
+main.exam-builder-page .et-section-detail small,
+main.exam-builder-page .et-room-group { display: block; color: var(--et-muted); font-size: .75rem; line-height: 1.45; }
+main.exam-builder-page .et-section-detail .et-section-gap { color: var(--et-warning); }
+/* Timetable and report cards share neutral surfaces and plan-specific stripes. */
+main.exam-builder-page .et-course-card { background: var(--et-subtle) !important; color: var(--et-text); }
+main.exam-builder-page .et-drill-notice { margin-block: 12px; padding: 8px 12px; border: 1px solid var(--et-warning); border-radius: 5px; background: var(--et-warning-soft); color: var(--et-warning); font-size: .8125rem; }
+main.exam-builder-page #kpiDrillClose { min-width: 36px; min-height: 36px; }
+main.exam-builder-page :is(#kpiDrill, .et-workspace-details, #examScheduleWorkspace, #schedFilter) { scroll-margin-block: 16px; }
+main.exam-builder-page #schedGrid :is(.et-course, button) { scroll-margin: 8px; }
+main.exam-builder-page #schedGrid .et-course.et-found-exam { opacity: 1 !important; filter: none !important; outline: 3px solid var(--et-focus); outline-offset: 2px; box-shadow: 0 0 0 5px var(--et-surface); }
+main.exam-builder-page #examSummaryCards.et-calculation-stale { border-color: var(--et-warning); }
+main.exam-builder-page #examSummaryCards.et-calculation-stale .kpi .v { color: var(--et-muted); }
+main.exam-builder-page #kStatusBanner.et-calculation-stale .badge { background: var(--et-warning-soft) !important; color: var(--et-warning) !important; }
+main.exam-builder-page .et-room-tag.et-calculation-stale { color: var(--et-warning); border-bottom: 1px dashed currentColor; }
+main.exam-builder-page .et-grid .et-course > .et-room-tag.et-calculation-stale { color: var(--et-warning); }
+main.exam-builder-page .et-room-tag.et-calculation-stale::after { content: ' · previous'; font-style: italic; }
+html[lang="ar"] main.exam-builder-page .et-room-tag.et-calculation-stale::after { content: ' · سابقة'; }
+main.exam-builder-page .et-course-card .et-course-card-actions { display: flex; align-items: center; gap: 2px; grid-column: 2; grid-row: 1; margin: 0; flex-wrap: nowrap; }
+main.exam-builder-page .et-course-card .et-course-card-actions button { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 24px; width: 24px; height: 30px; min-height: 30px; margin: 0; padding: 5px 3px !important; border: 1px solid transparent !important; border-radius: 4px !important; background: transparent !important; color: var(--et-icon) !important; box-shadow: none !important; font: inherit; line-height: 1; cursor: pointer; }
+main.exam-builder-page .et-course-card .et-course-card-actions button:hover:not(:disabled) { color: var(--et-accent) !important; }
+main.exam-builder-page .et-course-card .et-course-card-actions button:focus-visible { color: var(--et-accent) !important; outline: 2px solid var(--et-focus); outline-offset: 1px; }
+main.exam-builder-page .et-course-card .et-course-card-actions button[aria-pressed="true"] { color: var(--et-accent) !important; }
+main.exam-builder-page .et-course-card .et-course-card-actions button[aria-pressed="true"] svg { stroke-width: 2.4; }
+main.exam-builder-page .et-course-card .et-course-card-actions button:disabled { opacity: .5; cursor: not-allowed; }
+main.exam-builder-page .et-course[draggable="false"] { cursor: default; }
+main.exam-builder-page .et-move-dialog { width: min(480px, calc(100vw - 32px)); max-height: calc(100vh - 48px); overflow-y: auto; padding: 24px; color: var(--et-text); background: var(--et-surface); border: 1px solid var(--et-border); border-radius: 10px; box-shadow: 0 16px 64px rgb(0 0 0 / 20%); }
+main.exam-builder-page .et-move-dialog::backdrop { background: rgb(15 23 42 / 45%); }
+main.exam-builder-page .et-move-dialog h2 { font-size: 1.0625rem; margin: 0 0 20px; line-height: 1.5; overflow-wrap: anywhere; }
+main.exam-builder-page .et-move-fields { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; }
+main.exam-builder-page .et-move-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 24px; }
+main.exam-builder-page .et-panel > h6 { font-family: var(--font-body); font-size: .9375rem; text-transform: none; letter-spacing: 0; }
+main.exam-builder-page .kpi { height: 100%; padding: 14px; border: 1px solid var(--et-border); border-radius: 6px; background: var(--et-subtle); box-shadow: none; }
+main.exam-builder-page .kpi .k { color: var(--et-muted); font-family: var(--font-body); font-size: .75rem; font-weight: 500; text-transform: none; letter-spacing: 0; }
+main.exam-builder-page .kpi .v { margin-top: 6px; color: var(--et-text); font-family: var(--font-body); font-size: 1.5rem; font-weight: 600; }
+main.exam-builder-page .kpi .v.warn { color: var(--et-danger); }
+main.exam-builder-page .kpi-click:hover,
+main.exam-builder-page .kpi-click.active { border-color: var(--et-accent); background: var(--et-accent-soft); box-shadow: none; }
+main.exam-builder-page :is(.table, .et-grid) { --bs-table-color: var(--et-text); --bs-table-bg: var(--et-surface); --bs-table-border-color: var(--et-border); --bs-table-hover-bg: var(--et-subtle); --bs-table-hover-color: var(--et-text); }
+main.exam-builder-page :is(.et-grid, .table) th { color: var(--et-muted); background: var(--et-subtle); font-size: .75rem; font-weight: 600; }
+main.exam-builder-page :is(.et-grid, .table) :is(th, td) { padding: .75rem; border-color: var(--et-border); }
+main.exam-builder-page #schedGrid { --exam-period-min-width: 184px; position: relative; isolation: isolate; height: auto; max-height: none; overflow-x: auto; overflow-y: hidden; overscroll-behavior: auto; border: 1px solid var(--et-border); border-radius: 6px; scroll-padding-inline: var(--exam-grid-row-header-width, 88px) 12px; }
+main.exam-builder-page #schedGrid:focus-visible { outline: 2px solid var(--et-focus); outline-offset: 3px; }
+main.exam-builder-page #schedGrid .et-grid { display: table; width: 100%; min-width: calc(88px + var(--exam-period-count, 1) * var(--exam-period-min-width)); table-layout: fixed; margin: 0; overflow: visible; border-collapse: separate; border-spacing: 0; }
+main.exam-builder-page #schedGrid .et-grid :is(th, td) { padding: 8px; border-width: 0 1px 1px 0; border-style: solid; border-color: var(--et-border); vertical-align: top; text-align: start; }
+main.exam-builder-page #schedGrid .et-grid td { min-width: 184px; padding: 6px; }
+main.exam-builder-page #schedGrid .et-grid thead th { position: static; top: auto; z-index: auto; padding-block: 10px; background: var(--et-subtle); color: var(--et-text); box-shadow: 0 1px 0 var(--et-field-border); }
+main.exam-builder-page #schedGrid .et-grid tbody th { position: sticky; inset-inline-start: 0; z-index: 2; width: 88px; min-width: 88px; background: var(--et-subtle); color: var(--et-text); box-shadow: 1px 0 0 var(--et-field-border); }
+main.exam-builder-page #schedGrid .et-grid thead th:first-child { inset-inline-start: auto; width: 88px; min-width: 88px; }
+main.exam-builder-page .et-grid-day-label { position: static; top: auto; display: block; }
+html[dir="rtl"] main.exam-builder-page #schedGrid .et-grid tbody th { box-shadow: -1px 0 0 var(--et-field-border); }
+main.exam-builder-page .et-slot-courses { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); align-items: start; gap: 4px; }
+main.exam-builder-page .et-course-card { display: grid; position: relative; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 2px 5px; min-width: 0; margin: 0; border-radius: 5px; padding: 6px; text-align: start; font-size: .78rem; font-weight: 600; }
+main.exam-builder-page .et-course-card .et-course-code { grid-column: 1; gap: 3px; margin: 0; min-width: 0; color: var(--et-text); font-size: .75rem; line-height: 1.3; }
+main.exam-builder-page .et-course-card .et-course-short-name { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; grid-column: 1 / -1; grid-row: 2; min-width: 0; max-height: 2.6em; overflow: hidden; white-space: normal; overflow-wrap: anywhere; color: var(--et-muted); font-size: .75rem; font-weight: 400; line-height: 1.3; }
+main.exam-builder-page .et-course-card :is(.et-pin-lock, .et-course-online) { display: inline-flex; flex: 0 0 auto; }
+main.exam-builder-page .et-course-card :is(.et-pin-lock, .et-course-online) svg { width: 12px; height: 12px; }
+main.exam-builder-page .et-course-card .et-course-online { color: var(--et-accent); }
+/* Full names are available in native titles and accessible labels. A popup
+   inside this scrolling grid would be clipped or obscure adjacent exams. */
+main.exam-builder-page .et-course-full-name { display: none; }
+
+/* Review colours express the selected study plan or a shared population.
+   Text badges and explicit warnings carry the meaning without colour alone. */
+main.exam-builder-page .et-review-panel { padding: 0 0 10px; margin-block: 0 10px; border-bottom: 1px solid var(--et-border); min-width: 0; }
+main.exam-builder-page .et-review-controls { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px 14px; }
+main.exam-builder-page .et-review-field { flex: 0 1 190px; min-width: 150px; }
+main.exam-builder-page .et-review-plan { flex-basis: 200px; }
+main.exam-builder-page .et-review-field > label { display: block; margin: 0 0 3px; color: var(--et-muted); font-size: .6875rem; font-weight: 600; }
+main.exam-builder-page .et-review-field > select { width: 100%; min-height: 36px; font-size: .8125rem; }
+main.exam-builder-page .et-review-help { flex: 1 1 240px; max-width: 64ch; margin: 0; padding-block-end: 5px; color: var(--et-muted); font-size: .75rem; line-height: 1.45; }
+main.exam-builder-page .et-review-status { margin: 7px 0 0; color: var(--et-muted); font-size: .75rem; line-height: 1.5; overflow-wrap: anywhere; }
+main.exam-builder-page .et-review-status:empty { display: none; }
+main.exam-builder-page .et-term-legend { display: flex; flex-wrap: wrap; gap: 5px; margin-block-start: 9px; }
+main.exam-builder-page .et-term-filter { display: inline-flex; align-items: center; justify-content: center; gap: 5px; min-height: 32px; margin: 0; padding: 5px 8px; border: 1px solid var(--et-border); border-radius: 4px; background: var(--et-surface); color: var(--et-text); font: inherit; font-size: .6875rem; line-height: 1.35; cursor: pointer; }
+main.exam-builder-page .et-term-filter::before { content: ''; width: 4px; height: 14px; border-radius: 2px; background: var(--et-term-color, var(--et-muted)); }
+main.exam-builder-page .et-term-filter[data-exam-term="all"]::before { display: none; }
+main.exam-builder-page .et-term-filter:hover { background: var(--et-subtle); border-color: var(--et-field-border); }
+main.exam-builder-page .et-term-filter[aria-pressed="true"] { border-color: var(--et-term-color, var(--et-accent)); background: var(--et-subtle); box-shadow: inset 0 0 0 1px var(--et-term-color, var(--et-accent)); font-weight: 650; }
+main.exam-builder-page .et-term-filter:disabled { cursor: not-allowed; color: var(--et-muted); }
+main.exam-builder-page .et-size-legend { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 12px; margin-block-start: 9px; color: var(--et-muted); font-size: .6875rem; line-height: 1.5; }
+main.exam-builder-page .et-size-legend-label { font-weight: 600; }
+main.exam-builder-page .et-size-key { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+main.exam-builder-page .et-size-key::before { content: ''; flex: 0 0 14px; width: 14px; height: 14px; border: 1px solid var(--et-size-stripe, var(--et-border)); border-inline-start-width: 3px; border-radius: 2px; background: var(--et-size-fill, var(--et-subtle)); }
+main.exam-builder-page .et-size-key[data-exam-size="unknown"]::before { border-style: dashed; }
+main.exam-builder-page .et-review-panel :is(button, select):focus-visible { outline: 2px solid var(--et-focus); outline-offset: 2px; }
+main.exam-builder-page .et-related-context { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; }
+main.exam-builder-page .et-related-context:has(> :not([hidden])) { margin-block-start: 9px; padding-block-start: 9px; border-top: 1px solid var(--et-border); }
+main.exam-builder-page .et-related-summary { flex: 1 1 220px; min-width: 0; margin: 0; color: var(--et-text); font-size: .75rem; line-height: 1.5; overflow-wrap: anywhere; }
+main.exam-builder-page #examRelatedClear { min-height: 34px; padding: 5px 9px !important; font-size: .75rem !important; }
+
+main.exam-builder-page [data-exam-term="1"] { --et-term-color: #5079a7; }
+main.exam-builder-page [data-exam-term="2"] { --et-term-color: #38877f; }
+main.exam-builder-page [data-exam-term="3"] { --et-term-color: #8667a6; }
+main.exam-builder-page [data-exam-term="4"] { --et-term-color: #9a7c37; }
+main.exam-builder-page [data-exam-term="5"] { --et-term-color: #4e879e; }
+main.exam-builder-page [data-exam-term="6"] { --et-term-color: #9b627f; }
+main.exam-builder-page [data-exam-term="7"] { --et-term-color: #737c43; }
+main.exam-builder-page [data-exam-term="8"] { --et-term-color: #6976a5; }
+main.exam-builder-page [data-exam-term="9"] { --et-term-color: #986b48; }
+main.exam-builder-page [data-exam-term="10"] { --et-term-color: #417f6a; }
+main.exam-builder-page [data-exam-term="11"] { --et-term-color: #687b8b; }
+main.exam-builder-page [data-exam-term="12"] { --et-term-color: #886d90; }
+html[data-theme="dark"] main.exam-builder-page [data-exam-term="1"] { --et-term-color: #93b7dc; }
+html[data-theme="dark"] main.exam-builder-page [data-exam-term="2"] { --et-term-color: #7bbdb5; }
+html[data-theme="dark"] main.exam-builder-page [data-exam-term="3"] { --et-term-color: #b9a0d0; }
+html[data-theme="dark"] main.exam-builder-page [data-exam-term="4"] { --et-term-color: #cbb774; }
+html[data-theme="dark"] main.exam-builder-page [data-exam-term="5"] { --et-term-color: #8dbbcf; }
+html[data-theme="dark"] main.exam-builder-page [data-exam-term="6"] { --et-term-color: #ce9fb7; }
+html[data-theme="dark"] main.exam-builder-page [data-exam-term="7"] { --et-term-color: #b0ba80; }
+html[data-theme="dark"] main.exam-builder-page [data-exam-term="8"] { --et-term-color: #a2aed8; }
+html[data-theme="dark"] main.exam-builder-page [data-exam-term="9"] { --et-term-color: #c4a286; }
+html[data-theme="dark"] main.exam-builder-page [data-exam-term="10"] { --et-term-color: #89bba5; }
+html[data-theme="dark"] main.exam-builder-page [data-exam-term="11"] { --et-term-color: #a1b4c4; }
+html[data-theme="dark"] main.exam-builder-page [data-exam-term="12"] { --et-term-color: #bba4c3; }
+
+/* Fixed enrollment bands follow teal, cyan, blue, indigo, violet and magenta.
+   Size changes only the surface and stripe, never card dimensions or status. */
+main.exam-builder-page [data-exam-size="1-30"] { --et-size-stripe: #247d70; --et-size-fill: #e2f3ee; }
+main.exam-builder-page [data-exam-size="31-60"] { --et-size-stripe: #287f99; --et-size-fill: #e2f2f8; }
+main.exam-builder-page [data-exam-size="61-100"] { --et-size-stripe: #386eac; --et-size-fill: #e5edf9; }
+main.exam-builder-page [data-exam-size="101-150"] { --et-size-stripe: #585ca6; --et-size-fill: #ece9fa; }
+main.exam-builder-page [data-exam-size="151-200"] { --et-size-stripe: #8259a5; --et-size-fill: #f1e8f8; }
+main.exam-builder-page [data-exam-size="201-plus"] { --et-size-stripe: #9c5589; --et-size-fill: #f8e8f2; }
+html[data-theme="dark"] main.exam-builder-page [data-exam-size="1-30"] { --et-size-stripe: #72bcad; --et-size-fill: #173932; }
+html[data-theme="dark"] main.exam-builder-page [data-exam-size="31-60"] { --et-size-stripe: #78bcd0; --et-size-fill: #193644; }
+html[data-theme="dark"] main.exam-builder-page [data-exam-size="61-100"] { --et-size-stripe: #91b5e4; --et-size-fill: #21334f; }
+html[data-theme="dark"] main.exam-builder-page [data-exam-size="101-150"] { --et-size-stripe: #aaa7e7; --et-size-fill: #302f4b; }
+html[data-theme="dark"] main.exam-builder-page [data-exam-size="151-200"] { --et-size-stripe: #c3a2e2; --et-size-fill: #3b2e4b; }
+html[data-theme="dark"] main.exam-builder-page [data-exam-size="201-plus"] { --et-size-stripe: #dca2c7; --et-size-fill: #442f41; }
+main.exam-builder-page :is([data-exam-size="zero"], [data-exam-size="unknown"]) { --et-size-stripe: var(--et-muted); --et-size-fill: var(--et-subtle); }
+
+main.exam-builder-page .et-course-card { border-color: var(--et-border) !important; border-inline-start: 3px solid var(--et-border) !important; }
+main.exam-builder-page .et-course-card[data-exam-term] { border-inline-start-color: var(--et-term-color, var(--et-muted)) !important; }
+main.exam-builder-page .et-course-card[data-exam-term="unknown"] { border-inline-start-style: dashed !important; }
+main.exam-builder-page .et-course-card[data-exam-term="multiple"] { border-inline-start-style: double !important; }
+main.exam-builder-page .et-course-card[data-exam-size] { background: var(--et-size-fill, var(--et-subtle)) !important; border-inline-start-color: var(--et-size-stripe, var(--et-muted)) !important; }
+main.exam-builder-page .et-course-card[data-exam-size="unknown"] { border-inline-start-style: dashed !important; }
+main.exam-builder-page .et-review-badges { display: flex; flex-wrap: wrap; align-items: center; grid-column: 1 / -1; gap: 4px; min-width: 0; }
+main.exam-builder-page .et-review-badges:empty { display: none; }
+main.exam-builder-page :is(.et-term-badge, .et-related-count) { display: inline-flex; align-items: center; gap: 3px; max-width: 100%; padding: 1px 4px; border: 1px solid var(--et-border); border-radius: 3px; color: var(--et-text); background: var(--et-surface); font-size: .625rem; font-weight: 600; line-height: 1.4; overflow-wrap: anywhere; }
+main.exam-builder-page .et-term-badge { border-inline-start: 3px solid var(--et-term-color, var(--et-muted)); }
+main.exam-builder-page .et-related-count { color: var(--et-related); border-color: var(--et-related); }
+main.exam-builder-page #schedGrid .et-course.et-related-match { background: var(--et-related-soft) !important; border-inline-start-color: var(--et-related) !important; }
+main.exam-builder-page #schedGrid .et-course.et-related-conflict { background: var(--et-danger-soft) !important; border-inline-start-color: var(--et-danger) !important; }
+main.exam-builder-page #schedGrid .et-course.et-related-conflict .et-related-count { color: var(--et-danger); border-color: var(--et-danger); }
+main.exam-builder-page #schedGrid .et-course.et-related-focus { background: var(--et-accent-soft) !important; border-color: var(--et-accent) !important; box-shadow: inset 0 0 0 1px var(--et-accent); }
+/* Search and review may dim the same course. Apply opacity once to the card,
+   never to both its enclosing slot and the card. Focus keeps actions readable. */
+main.exam-builder-page #schedGrid td.et-dim { opacity: 1; }
+main.exam-builder-page #schedGrid .et-course:is(.et-dim, .et-review-muted) { opacity: .45; }
+main.exam-builder-page #schedGrid .et-course:is(.et-dim, .et-review-muted):is(:hover, :focus-within) { opacity: 1; }
+main.exam-builder-page #schedGrid .et-course.et-review-muted { border-inline-start-color: var(--et-border) !important; }
+main.exam-builder-page .et-review-warning { display: inline-flex; align-items: center; gap: 3px; min-height: 16px; color: var(--et-danger); font-size: .625rem; line-height: 1.4; }
+main.exam-builder-page .et-review-warning svg { width: 14px; height: 14px; flex: 0 0 14px; }
+main.exam-builder-page .et-review-warning.is-stale { color: var(--et-muted); }
+main.exam-builder-page #schedGrid .et-related-action { display: none; }
+main.exam-builder-page #schedGrid.et-review-students .et-course-short-name { grid-column: 1; }
+main.exam-builder-page #schedGrid.et-review-students .et-related-action { display: inline-flex; grid-column: 2; grid-row: 2; justify-self: end; align-self: start; align-items: center; justify-content: center; width: 30px; height: 30px; margin: 0; padding: 5px; border: 1px solid transparent !important; border-radius: 4px; color: var(--et-icon); background: transparent !important; box-shadow: none !important; cursor: pointer; }
+main.exam-builder-page #schedGrid .et-related-action:hover:not(:disabled) { color: var(--et-related); }
+main.exam-builder-page #schedGrid .et-related-action:focus-visible { color: var(--et-accent); outline: 2px solid var(--et-focus); outline-offset: 1px; }
+main.exam-builder-page #schedGrid .et-related-action[aria-pressed="true"] { color: var(--et-accent); }
+main.exam-builder-page #schedGrid .et-related-action[aria-pressed="true"] svg { stroke-width: 2.4; }
+main.exam-builder-page #schedGrid .et-related-action:disabled { opacity: .5; cursor: not-allowed; }
+main.exam-builder-page .et-history-panel { padding: 0; }
+main.exam-builder-page .et-history-panel[open] > summary { border-bottom: 1px solid var(--et-border); }
+main.exam-builder-page .et-history-panel #historyList { padding: 8px 12px; }
+main.exam-builder-page .et-history-panel #historyPagination { padding: 12px; background: var(--et-subtle); border: 0; border-top: 1px solid var(--et-border); border-radius: 0 0 8px 8px; box-shadow: none; }
+main.exam-builder-page .et-history-item { min-height: 54px; padding: 10px 12px; border-radius: 4px; }
+main.exam-builder-page .et-history-item:hover { background: var(--et-subtle); }
+main.exam-builder-page .et-history-item.active { background: var(--et-accent-soft); }
+main.exam-builder-page .et-del-btn { min-width: 36px; min-height: 36px; opacity: 1; color: var(--et-muted); }
+main.exam-builder-page .et-del-btn:hover { background: var(--et-danger-soft); color: var(--et-danger); }
+main.exam-builder-page .et-copy-btn { flex-shrink: 0; min-width: 36px; min-height: 36px; padding: 4px 6px; border: 0; border-radius: 4px; background: transparent; color: var(--et-muted); cursor: pointer; }
+main.exam-builder-page .et-copy-btn:hover { background: var(--et-accent-soft); color: var(--et-accent); }
+
+/* Expanded reports share the same spacing and keyboard affordances. */
+main.exam-builder-page .et-status-banner { padding: 10px 14px !important; border-inline-start: 3px solid var(--et-accent); }
+main.exam-builder-page .et-status-banner.et-calculation-stale { border-inline-start-color: var(--et-warning); }
+main.exam-builder-page #kStatusBanner .badge { padding: 5px 8px; border: 1px solid var(--et-border); font-size: .75rem; font-weight: 600; line-height: 1.4; white-space: normal; text-align: start; }
+main.exam-builder-page #kStatusBanner .bg-success { color: var(--et-accent) !important; background: var(--et-accent-soft) !important; border-color: var(--et-selected-border); }
+main.exam-builder-page #kStatusBanner .bg-warning { color: var(--et-warning) !important; background: var(--et-warning-soft) !important; }
+main.exam-builder-page #kStatusBanner .bg-danger { color: var(--et-danger) !important; background: var(--et-danger-soft) !important; }
+main.exam-builder-page #kStatusBanner .bg-secondary { color: var(--et-muted) !important; background: var(--et-subtle) !important; }
+main.exam-builder-page .et-summary-section-title { margin: 20px 0 10px; font-size: .875rem; font-weight: 650; line-height: 1.4; }
+main.exam-builder-page #examSummaryCards > .et-summary-section-title:first-child { margin-top: 0; }
+main.exam-builder-page .et-summary-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin: 0 0 12px; }
+main.exam-builder-page .et-summary-grid > .et-summary-cell { width: auto; min-width: 0; margin: 0; padding: 0; }
+main.exam-builder-page .et-summary-grid > .et-summary-span-2 { grid-column: span 2; }
+main.exam-builder-page .et-summary-grid .kpi { padding: 12px; }
+main.exam-builder-page .et-summary-grid .kpi .v { font-size: 1.375rem; font-variant-numeric: tabular-nums; }
+main.exam-builder-page .et-summary-grid .kpi .k { line-height: 1.5; }
+main.exam-builder-page .et-drill-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+main.exam-builder-page .et-drill-heading h3 { margin: 5px 0 0; font-size: .9375rem; font-weight: 650; line-height: 1.4; }
+main.exam-builder-page .et-drill-viewport { max-height: min(440px, 48dvh); overflow: auto; border: 1px solid var(--et-border); border-radius: 6px; scroll-padding-block: 44px 10px; scrollbar-gutter: stable; }
+main.exam-builder-page .et-drill-viewport .et-drill-table { border-collapse: separate; border-spacing: 0; }
+main.exam-builder-page .et-drill-viewport thead th { position: sticky; top: 0; z-index: 2; background: var(--et-subtle); box-shadow: 0 1px 0 var(--et-border); white-space: nowrap; }
+main.exam-builder-page .et-drill-viewport tbody td { vertical-align: top; font-size: .8125rem; }
+main.exam-builder-page .et-drill-viewport .et-drill-actions:not(.et-course-card-actions) { margin-bottom: 3px; }
+main.exam-builder-page .et-drill-viewport:focus-visible { outline: 2px solid var(--et-focus); outline-offset: 3px; }
+main.exam-builder-page .et-move-dialog h2 { margin-bottom: 8px; font-size: 1rem; }
+main.exam-builder-page .et-dialog-help { margin: 0 0 22px; color: var(--et-muted); font-size: .8125rem; line-height: 1.5; }
+main.exam-builder-page .et-move-actions { padding-top: 16px; margin-top: 20px; border-top: 1px solid var(--et-border); }
+main.exam-builder-page .et-department-dialog { width: min(580px, calc(100vw - 32px)); }
+main.exam-builder-page .et-department-dialog fieldset { min-inline-size: 0; margin: 0; padding: 0; border: 0; }
+main.exam-builder-page .et-department-dialog .et-department-choice-group { margin-bottom: 20px; }
+main.exam-builder-page .et-department-dialog legend { float: none; width: auto; margin-bottom: 8px; font-size: .875rem; font-weight: 650; }
+main.exam-builder-page .et-department-list { display: grid; gap: 8px; max-height: 240px; overflow-y: auto; margin-top: 10px; padding: 2px; }
+main.exam-builder-page .et-department-option { display: flex; align-items: flex-start; gap: 10px; padding: 10px 12px; border: 1px solid var(--et-border); border-radius: 6px; cursor: pointer; }
+main.exam-builder-page .et-department-option:has(input:checked) { background: var(--et-accent-soft); border-color: var(--et-selected-border); }
+main.exam-builder-page .et-department-option input { margin-top: 4px; flex-shrink: 0; }
+main.exam-builder-page .et-department-option span { min-width: 0; }
+main.exam-builder-page .et-department-option strong { display: block; font-size: .875rem; overflow-wrap: anywhere; }
+main.exam-builder-page .et-department-option small { display: block; margin-top: 3px; color: var(--et-muted); font-size: .75rem; line-height: 1.5; }
+main.exam-builder-page :is(.et-department-all, .et-department-genders label) { display: inline-flex; align-items: center; gap: 6px; font-size: .8125rem; cursor: pointer; }
+main.exam-builder-page .et-department-genders { display: flex; flex-wrap: wrap; gap: 12px 22px; }
+main.exam-builder-page .et-department-language { display: flex; align-items: center; gap: 12px; font-size: .875rem; }
+main.exam-builder-page .et-department-language select { width: auto; min-width: 130px; }
+main.exam-builder-page .et-department-dates { margin-top: 20px; font-size: .8125rem; }
+main.exam-builder-page .et-department-dates summary { cursor: pointer; font-weight: 600; }
+main.exam-builder-page .et-department-dates p { color: var(--et-muted); margin: 10px 0; }
+main.exam-builder-page .et-department-date-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; }
+main.exam-builder-page .et-department-date-grid label { display: grid; gap: 5px; }
+main.exam-builder-page .et-department-status { color: var(--et-muted); font-size: .8125rem; }
+main.exam-builder-page .et-department-dialog input[type="checkbox"] { accent-color: var(--et-accent); }
+main.exam-builder-page .et-department-dialog :is(input, select, button, summary):focus-visible { outline: 2px solid var(--et-focus); outline-offset: 3px; }
+main.exam-builder-page #historyList .et-history-item + .et-history-item { border-top: 1px solid var(--et-border); }
+main.exam-builder-page #historyList .et-run-info { display: flex; align-items: center; flex-wrap: wrap; gap: 3px 16px; min-height: 36px; padding-block: 3px; }
+main.exam-builder-page #historyList .et-run-info strong { flex: 1 1 200px; font-size: .8125rem; font-weight: 600; line-height: 1.4; }
+main.exam-builder-page #historyList .et-run-info small { color: var(--et-muted); font-size: .75rem; white-space: nowrap; }
+main.exam-builder-page #historyPagination { gap: 12px; }
+main.exam-builder-page #historyPages { display: flex; align-items: center; flex-wrap: wrap; gap: 5px; }
+main.exam-builder-page #historyPages .pg-btn { min-width: 36px; height: 36px; border: 1px solid var(--et-border); border-radius: 5px; background: var(--et-surface); color: var(--et-text); box-shadow: none; font: inherit; font-size: .8125rem; }
+main.exam-builder-page #historyPages .pg-btn.active { background: var(--et-accent-soft); border-color: var(--et-selected-border); color: var(--et-accent); font-weight: 700; }
+main.exam-builder-page #historyPages .pg-btn:disabled { opacity: .5; cursor: not-allowed; }
+main.exam-builder-page #historyPages .pg-btn:focus-visible { outline: 2px solid var(--et-focus); outline-offset: 2px; }
+
+/* Fullscreen moves this panel to body, so its theme and controls are scoped to
+   its own ID instead of depending on the main workspace as an ancestor. */
+#matrixPanel { background: var(--et-surface); }
+#matrixPanel, #matrixPanel * { box-sizing: border-box; }
+#matrixPanel > .d-flex { gap: 12px; flex-wrap: wrap; }
+#matrixPanel #examMatrixHeading { margin: 0; color: var(--et-text); font-size: .9375rem; font-weight: 650; line-height: 1.4; }
+#matrixPanel .et-matrix-toolbar { padding: 8px 0; margin-bottom: 8px; gap: 12px; flex-wrap: wrap; }
+#matrixPanel .et-matrix-title { color: var(--et-muted); font-family: inherit; font-size: .75rem; font-weight: 500; letter-spacing: 0; text-transform: none; }
+#matrixPanel :is(.et-zoom-btn, .btn) { min-width: 36px; min-height: 36px; padding: 6px 10px !important; border: 1px solid var(--et-field-border) !important; border-radius: 6px !important; background: var(--et-surface) !important; color: var(--et-text) !important; box-shadow: none !important; font-family: inherit; font-size: .8125rem; font-weight: 600; }
+#matrixPanel :is(.et-zoom-btn, .btn):hover { border-color: var(--et-accent) !important; background: var(--et-accent-soft) !important; }
+#matrixPanel .et-zoom-level { min-width: 48px; color: var(--et-muted); font-size: .75rem; font-variant-numeric: tabular-nums; }
+#matrixPanel .et-matrix-viewport { max-height: 52dvh; overflow: auto; border: 1px solid var(--et-border); border-radius: 6px; background: var(--et-surface); scrollbar-gutter: stable; }
+#matrixPanel .et-matrix { display: table; overflow: visible; }
+#matrixPanel .et-matrix :is(th, td) { border-color: var(--et-border); }
+#matrixPanel .et-matrix th { background: var(--et-subtle); }
+#matrixPanel .et-matrix th, #matrixPanel .et-matrix thead th > span { color: var(--et-text); }
+#matrixPanel .et-matrix .cm-1 { color: #754a00; }
+html[data-theme="dark"] #matrixPanel .et-matrix .cm-1 { color: #f5cf85; }
+#matrixPanel :is(.btn, .et-zoom-btn, .et-matrix-viewport):focus-visible { outline: 2px solid var(--et-focus); outline-offset: 3px; }
+#matrixPanel .et-matrix [role="button"]:focus-visible { position: relative; outline: 3px solid var(--et-focus); outline-offset: -3px; z-index: 1; }
+#matrixPanel.matrix-fullscreen { padding: 20px; gap: 8px; border: 0; border-radius: 0; background: var(--et-bg); color: var(--et-text); box-shadow: none; }
+#matrixPanel.matrix-fullscreen #conflictMatrix { display: flex; flex-direction: column; min-height: 0; flex: 1; }
+#matrixPanel.matrix-fullscreen .et-matrix-viewport { flex: 1; max-height: none; min-height: 0; }
+
+@media (max-width: 1150px) {
+  main.exam-builder-page .et-setup-grid { grid-template-columns: minmax(0, 1fr); gap: 0; }
+  main.exam-builder-page .et-basic-fields { grid-template-columns: minmax(0, 1.7fr) repeat(3, minmax(0, 1fr)); }
+  main.exam-builder-page .et-basic-fields > :first-child { grid-column: auto; }
+  main.exam-builder-page #etPeriodsRepeater { max-width: 440px; }
+  main.exam-builder-page #progList { grid-template-columns: repeat(7, minmax(0, 1fr)); }
+  main.exam-builder-page .et-scope-footer { margin-top: 20px; padding-top: 0; }
+}
+
+@media (max-width: 800px) {
+  main.exam-builder-page .et-summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  main.exam-builder-page .et-summary-grid > .et-summary-span-2 { grid-column: auto; }
+  main.exam-builder-page .et-section,
+  main.exam-builder-page .et-panel { padding: 20px; }
+  main.exam-builder-page .et-section-heading { margin-bottom: 18px; }
+  main.exam-builder-page #progList { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  main.exam-builder-page .et-course-table-head,
+  main.exam-builder-page #courseList .et-course-option { grid-template-columns: 20px minmax(0, 1fr) 92px 56px 66px; gap: 10px; padding-inline: 12px; }
+  main.exam-builder-page .et-fixed-exams .et-pin-fields { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; }
+  main.exam-builder-page .et-fixed-exams .et-pin-course-field { grid-column: 1 / -1; }
+  main.exam-builder-page .et-build-footer { align-items: flex-start; flex-direction: column; gap: 10px; }
+  main.exam-builder-page .et-build-actions { width: 100%; }
+  main.exam-builder-page .et-build-actions .btn { flex: 1 1 auto; }
+  main.exam-builder-page .et-history-panel { padding: 0; }
+}
+
+@media (max-width: 600px) {
+  main.exam-builder-page .et-review-controls { gap: 7px 10px; }
+  main.exam-builder-page .et-review-field { flex: 1 1 calc(50% - 5px); min-width: 0; }
+  main.exam-builder-page .et-review-field > select { min-height: 40px; font-size: .75rem; }
+  main.exam-builder-page .et-review-help { flex-basis: 100%; padding: 0; font-size: .6875rem; }
+  main.exam-builder-page .et-term-filter { min-height: 38px; }
+  main.exam-builder-page #examRelatedClear { min-height: 40px; }
+  main.exam-builder-page #schedGrid.et-review-students .et-related-action { width: 36px; height: 36px; }
+  main.exam-builder-page #examSummaryCards { padding: 12px; }
+  main.exam-builder-page .et-summary-grid .kpi { padding: 10px; }
+  main.exam-builder-page .et-summary-grid .kpi .v { font-size: 1.25rem; }
+  main.exam-builder-page .et-drill-panel { padding: 12px !important; }
+  main.exam-builder-page .et-drill-viewport :is(th, td) { padding: 10px; }
+  main.exam-builder-page .et-move-dialog { padding: 20px; max-height: calc(100dvh - 32px); }
+  main.exam-builder-page .et-move-actions .btn { flex: 1; min-height: 44px; }
+  main.exam-builder-page #historyList .et-run-info { align-items: flex-start; flex-direction: column; gap: 4px; }
+  main.exam-builder-page #historyList .et-run-info strong { flex-basis: auto; }
+  main.exam-builder-page #historyPagination { flex-direction: column; align-items: flex-start; }
+  main.exam-builder-page #historyPages .pg-btn { min-width: 40px; height: 40px; }
+  #matrixPanel .et-matrix-toolbar { align-items: flex-start; flex-direction: column; gap: 8px; }
+  #matrixPanel :is(.et-zoom-btn, .btn) { min-height: 40px; min-width: 40px; }
+  #matrixPanel.matrix-fullscreen { padding: 12px; }
+  main.exam-builder-page .et-schedule-workspace { padding: 12px !important; }
+  main.exam-builder-page .et-schedule-heading { align-items: stretch; flex-direction: column; }
+  main.exam-builder-page .et-schedule-heading #schedFilter { flex-basis: auto; min-width: 0; }
+  main.exam-builder-page .et-edit-controls { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 6px; }
+  main.exam-builder-page .et-live-control { grid-column: 1 / 4; font-size: .6875rem; }
+  main.exam-builder-page #optimizeLoadedBtn { grid-column: 4 / 7; grid-row: 1; white-space: normal; }
+  main.exam-builder-page .et-check-controls { grid-column: 1 / 3; }
+  main.exam-builder-page .et-undo-controls { grid-column: 3 / 7; }
+  main.exam-builder-page .et-save-controls { grid-column: 1 / -1; margin: 0; }
+  main.exam-builder-page .et-save-controls > .btn { white-space: normal; }
+  main.exam-builder-page :is(.et-check-controls, .et-undo-controls, .et-save-controls) { min-width: 0; }
+  main.exam-builder-page :is(.et-check-controls, .et-undo-controls, .et-save-controls) > .btn { flex: 1 1 0; min-width: 0; }
+  main.exam-builder-page .et-edit-controls .btn { min-height: 42px; padding: 6px !important; font-size: .6875rem !important; }
+  main.exam-builder-page .et-edit-feedback { gap: 6px; }
+  main.exam-builder-page .et-quick-metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); flex-basis: 100%; gap: 5px; }
+  main.exam-builder-page .et-quick-metric { display: grid; grid-template-columns: minmax(0, 1fr) auto; min-width: 0; min-height: 38px; gap: 1px 4px; padding: 4px 5px; font-size: .625rem; }
+  main.exam-builder-page .et-quick-label { overflow-wrap: anywhere; }
+  main.exam-builder-page .et-quick-value { grid-column: 2; grid-row: 1 / 3; font-size: .9375rem; }
+  main.exam-builder-page .et-quick-delta { grid-column: 1; }
+  main.exam-builder-page .et-quick-context { grid-column: 1 / -1; max-width: none; }
+  main.exam-builder-page .et-edit-help { margin: 0; }
+  main.exam-builder-page .et-workspace-details > summary { padding-inline: 12px; font-size: .8125rem; }
+  main.exam-builder-page .et-setup-details-content { padding: 8px; }
+  main.exam-builder-page .et-details-meta { display: block; margin-inline-start: 16px; margin-top: 3px; }
+  main.exam-builder-page .et-changes-content { padding-inline: 12px; }
+  main.exam-builder-page .et-change-item { grid-template-columns: minmax(0, 1fr) auto; gap: 5px 8px; }
+  main.exam-builder-page .et-change-course { grid-column: 1; }
+  main.exam-builder-page .et-change-times { grid-column: 1; font-size: .75rem; }
+  main.exam-builder-page .et-change-item > .et-drill-actions { grid-column: 2; grid-row: 1 / 3; flex-direction: column; }
+  main.exam-builder-page .et-drill-actions:not(.et-course-card-actions) .btn { min-height: 44px; }
+  main.exam-builder-page .et-move-fields { grid-template-columns: minmax(0, 1fr); }
+  main.exam-builder-page .et-course-card .et-course-card-actions button { flex-basis: 36px; width: 36px; height: 36px; min-height: 36px; }
+  main.exam-builder-page .et-slot-courses { grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); }
+  main.exam-builder-page #schedGrid { --exam-period-min-width: 198px; }
+  main.exam-builder-page #schedGrid .et-grid td { min-width: 198px; }
+  main.exam-builder-page { padding: 16px !important; }
+  main.exam-builder-page .page-intro { margin-block: 18px; }
+  main.exam-builder-page .page-intro h2 { font-size: 1.25rem !important; }
+  main.exam-builder-page .panel-sub { font-size: .8125rem; }
+  main.exam-builder-page .et-section,
+  main.exam-builder-page .et-panel { padding: 16px; margin-bottom: 16px; border-radius: 8px; }
+  main.exam-builder-page .et-section-heading { gap: 10px; }
+  main.exam-builder-page .et-section-heading h2 { font-size: .9375rem; }
+  main.exam-builder-page :is(.et-courses-panel, .et-fixed-exams) .et-section-heading { flex-wrap: wrap; }
+  main.exam-builder-page :is(.et-courses-panel, .et-fixed-exams) .et-section-heading > div { flex: 1 1 calc(100% - 38px); }
+  main.exam-builder-page :is(.et-courses-panel, .et-fixed-exams) .et-section-heading > :is(.et-selection-count, .btn) { margin-inline-start: 38px; }
+  main.exam-builder-page #courseCount { margin-inline-start: 38px; }
+  main.exam-builder-page .et-basic-fields { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  main.exam-builder-page .et-basic-fields > :first-child { grid-column: 1 / -1; }
+  main.exam-builder-page .et-basic-fields > :nth-child(2) { grid-column: 1 / -1; }
+  main.exam-builder-page .et-periods-heading { align-items: center; }
+  main.exam-builder-page #etPeriodsRepeater .et-period-row { grid-template-columns: 20px minmax(0, 1fr) 12px minmax(0, 1fr) 32px; gap: 5px !important; }
+  main.exam-builder-page .et-period-remove { width: 32px; }
+  main.exam-builder-page #progList { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  main.exam-builder-page :is(#progList, #secList) .et-chip { padding: 8px; min-height: 40px; height: 40px; }
+  main.exam-builder-page .et-scope-footer { align-items: stretch; flex-direction: column; gap: 8px; }
+  main.exam-builder-page .et-course-toolbar { grid-template-columns: minmax(0, 1fr); gap: 10px; }
+  main.exam-builder-page .et-course-actions { gap: 6px; }
+  main.exam-builder-page #courseSearchCount { width: 100%; margin-bottom: 4px; }
+  main.exam-builder-page .et-selection-menu { flex-basis: 100%; }
+  main.exam-builder-page .et-selection-menu > summary { width: fit-content; }
+  main.exam-builder-page .et-selection-menu > div { inset-inline-start: 0; inset-inline-end: auto; max-width: 100%; }
+  main.exam-builder-page .et-course-actions .btn { min-height: 38px; }
+  main.exam-builder-page .et-course-table-head { display: none; }
+  main.exam-builder-page #courseList { max-height: 460px !important; border-radius: 6px !important; }
+  main.exam-builder-page #courseList .et-course-option { grid-template-columns: 20px minmax(0, 1fr) auto; gap: 5px 10px; padding: 12px; }
+  main.exam-builder-page #courseList .et-course-option > input { grid-column: 1; grid-row: 1 / span 3; align-self: start; margin-top: 3px; }
+  main.exam-builder-page .et-course-main { grid-column: 2 / -1; grid-row: 1; }
+  main.exam-builder-page .et-course-plans { grid-column: 2; grid-row: 2; font-size: .75rem; }
+  main.exam-builder-page .et-course-level { grid-column: 3; grid-row: 2; font-size: .75rem; }
+  main.exam-builder-page .et-course-enrollment { grid-column: 2 / -1; grid-row: 3; font-size: .75rem; text-align: start; }
+  main.exam-builder-page .et-mobile-label { position: static; width: auto; height: auto; margin: 0; overflow: visible; clip-path: none; white-space: normal; }
+  main.exam-builder-page .et-fixed-exams .et-pin-fields { grid-template-columns: minmax(0, 1fr); }
+  main.exam-builder-page .et-fixed-exams .et-pin-course-field { grid-column: auto; }
+  main.exam-builder-page .et-fixed-exams .et-pin-fields .btn { width: 100%; }
+  main.exam-builder-page .et-pin-actions { flex-wrap: wrap; }
+  main.exam-builder-page .et-options > summary,
+  main.exam-builder-page .et-history-panel > summary { padding: 16px; }
+  main.exam-builder-page .et-options-fields { align-items: flex-start; flex-direction: column; padding: 0 16px 16px; gap: 16px; }
+  main.exam-builder-page .et-options-fields > :is(label, div) { flex: 0 1 auto; }
+  main.exam-builder-page .et-options-fields > div { width: 100%; }
+  main.exam-builder-page .et-build-footer { padding: 12px; margin-bottom: 16px; }
+  main.exam-builder-page .et-build-actions { gap: 6px; }
+  main.exam-builder-page .et-build-actions .btn { min-height: 44px; }
+  main.exam-builder-page #etResults .et-panel > .d-flex { flex-wrap: wrap; }
+  main.exam-builder-page #etResults .et-panel > .d-flex > .d-flex { flex-wrap: wrap; width: 100%; }
+  main.exam-builder-page #schedFilter { max-width: 100% !important; }
+  main.exam-builder-page .et-history-panel { padding: 0; }
+}
+
+@media (pointer: coarse) {
+  main.exam-builder-page .et-term-filter,
+  main.exam-builder-page #examRelatedClear { min-height: 44px; }
+  main.exam-builder-page #schedGrid.et-review-students .et-related-action { width: 40px; height: 40px; }
+  main.exam-builder-page :is(.form-control, .form-select) { min-height: 44px; }
+  main.exam-builder-page #etPeriodsRepeater .et-period-row { grid-template-columns: 20px minmax(0, 1fr) 12px minmax(0, 1fr) 44px; }
+  main.exam-builder-page :is(.et-period-remove, .et-del-btn, .et-copy-btn),
+  main.exam-builder-page #kpiDrillClose,
+  main.exam-builder-page #historyPages .pg-btn { min-width: 44px; min-height: 44px; }
+  main.exam-builder-page .et-course-card .et-course-card-actions button { flex-basis: 40px; width: 40px; height: 40px; min-height: 40px; }
+  main.exam-builder-page .et-quick-metric,
+  main.exam-builder-page .et-edit-controls .btn,
+  main.exam-builder-page .et-drill-actions:not(.et-course-card-actions) .btn,
+  #matrixPanel :is(.et-zoom-btn, .btn) { min-height: 44px; }
+  main.exam-builder-page .et-course-picker-toggle { width: 44px; }
+  main.exam-builder-page #examPinCourseSearch { padding-inline-end: 48px !important; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  main.exam-builder-page *,
+  main.exam-builder-page *::before,
+  main.exam-builder-page *::after { transition: none !important; animation: none !important; }
+}
+
+/* Utility visibility wins over layout display declarations above. */
+main.exam-builder-page [hidden],
+main.exam-builder-page .d-none { display: none !important; }

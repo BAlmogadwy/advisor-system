@@ -4,9 +4,11 @@ from core.models import Student
 from core.services.audit import log_audit_event
 from core.services.rbac import (
     ROLE_ADVISOR,
+    ROLE_EXAM_COMMITTEE,
     ROLE_GENERAL_ADVISOR,
     ROLE_STUDENT,
     ROLE_SUPER_ADMIN,
+    get_user_role,
     get_user_scope,
 )
 
@@ -53,6 +55,9 @@ def allowed_programs_for_request(request: HttpRequest) -> set[str] | None:
     scope = get_user_scope(request.user)
     role = str(scope.get("role", ""))
 
+    if role == ROLE_EXAM_COMMITTEE:
+        return set()
+
     if role == ROLE_SUPER_ADMIN:
         return None
 
@@ -86,6 +91,14 @@ def require_program_scope(
     *,
     require_program_for_scoped: bool = True,
 ) -> JsonResponse | None:
+    if get_user_role(request.user) == ROLE_EXAM_COMMITTEE:
+        return _policy_deny(
+            request,
+            action="policy.program_scope",
+            reason_code="EXAM_COMMITTEE_EXAM_ONLY",
+            error="Exam Committee access is limited to exam timetables.",
+            status=403,
+        )
     allowed = allowed_programs_for_request(request)
     if allowed is None:
         _policy_allow(
@@ -127,6 +140,14 @@ def require_program_scope(
 
 
 def require_student_scope(request: HttpRequest, student_id: int) -> JsonResponse | None:
+    if get_user_role(request.user) == ROLE_EXAM_COMMITTEE:
+        return _policy_deny(
+            request,
+            action="policy.student_scope",
+            reason_code="EXAM_COMMITTEE_EXAM_ONLY",
+            error="Exam Committee access is limited to exam timetables.",
+            status=403,
+        )
     row = Student.objects.filter(student_id=student_id).values_list("advisor_id", "program").first()
     if not row:
         return _policy_deny(

@@ -691,20 +691,19 @@ def test_a_snapshot_must_be_the_enum_not_its_spelling(student_with_sections):
 # ---------------------------------------------------------------------------
 
 
-def test_exam_enrolment_still_works_on_a_plan_only_database(student_with_sections):
-    """The live database is exactly this shape -- 1525 rows, every one an imported
-    plan, not one registrar row. Scoping the exam queries to registrar evidence
-    emptied the whole pipeline: `build_section_enrollment` returned {} and the
-    caller fell back to one synthetic "ALL" bucket carrying a single gender,
-    mixing M and F students into one sitting on a gender-segregated campus.
-    """
-    from core.services.exam_timetable import build_section_enrollment
+def test_exam_enrolment_excludes_a_plan_only_database(student_with_sections):
+    """A registration forecast cannot supply the actual exam population."""
+    from core.services.exam_timetable import (
+        build_enrolled_sets_with_meta,
+        build_section_enrollment,
+    )
 
     _link(student_with_sections["SA101"], PLAN_SOURCE)
 
     result = build_section_enrollment({"SA101"})
 
-    assert [(row["section"], row["student_count"]) for row in result["SA101"]] == [("M1", 1)]
+    assert result == {}
+    assert build_enrolled_sets_with_meta() == ({}, {})
 
 
 def test_exam_enrolment_sets_resolve_per_student(student_with_sections):

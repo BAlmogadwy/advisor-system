@@ -13,11 +13,13 @@ from core.services.dashboard_command_center import build_dashboard_command_cente
 from core.services.policy import require_student_scope
 from core.services.rbac import (
     ROLE_ADVISOR,
+    ROLE_EXAM_COMMITTEE,
     ROLE_GENERAL_ADVISOR,
     ROLE_STUDENT,
     ROLE_SUPER_ADMIN,
     ensure_role_groups,
     ensure_scope_schema,
+    get_user_role,
     get_user_scope,
     set_user_scope,
 )
@@ -47,8 +49,8 @@ def dev_role_switch_view(request: HttpRequest) -> JsonResponse:
 
     # Caller-role guard: students self-provision via the OTP portal, so without this
     # a student could POST their way to SUPER_ADMIN on any DEBUG/staging instance.
-    if str(get_user_scope(request.user).get("role", "")) == ROLE_STUDENT:
-        return JsonResponse({"error": "Not available for student accounts."}, status=403)
+    if get_user_role(request.user) in {ROLE_STUDENT, ROLE_EXAM_COMMITTEE}:
+        return JsonResponse({"error": "Not available for restricted accounts."}, status=403)
 
     role = (request.POST.get("role") or "").strip()
     advisor_id = (request.POST.get("advisor_id") or "").strip()
@@ -80,6 +82,8 @@ def dev_role_switch_view(request: HttpRequest) -> JsonResponse:
 
 @login_required(login_url="login")
 def dashboard(request: HttpRequest) -> HttpResponse:
+    if get_user_role(request.user) == ROLE_EXAM_COMMITTEE:
+        return redirect("exam_timetable_page")
     student_id_raw = request.GET.get("student_id", "").strip()
     # Relaxed behavior is an explicit opt-in on the Student Recommender. Unknown
     # or missing values fail closed to strict instead of silently counting current

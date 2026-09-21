@@ -9,6 +9,7 @@ from django.views.decorators.cache import never_cache
 from django.views.decorators.http import require_http_methods, require_POST
 
 from core.services.rbac import (
+    ROLE_EXAM_COMMITTEE,
     ROLE_STUDENT,
     ensure_role_groups,
     ensure_scope_schema,
@@ -56,6 +57,8 @@ def login_view(request: HttpRequest) -> HttpResponse:
 
     destination = _safe_login_destination(request)
     if request.user.is_authenticated:
+        if get_user_role(request.user) == ROLE_EXAM_COMMITTEE:
+            return redirect("exam_timetable_page")
         return redirect(destination or "dashboard")
 
     error = ""
@@ -82,6 +85,8 @@ def login_view(request: HttpRequest) -> HttpResponse:
         else:
             cache.delete(fail_key)
             login(request, user)
+            if get_user_role(user) == ROLE_EXAM_COMMITTEE:
+                return redirect("exam_timetable_page")
             return redirect(destination or "dashboard")
 
     return render(request, "core/login.html", {"error": error, "next": destination})
