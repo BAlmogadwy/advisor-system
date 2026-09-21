@@ -44,8 +44,13 @@ def _console_safe(text: str, stream: Any) -> str:
     encoding = getattr(stream, "encoding", None) or "utf-8"
     try:
         text.encode(encoding)
-    except (UnicodeEncodeError, LookupError):
+    except UnicodeEncodeError:
         return text.encode(encoding, errors="replace").decode(encoding, errors="replace")
+    except LookupError:
+        # The stream names a codec that does not exist, so it cannot be used for
+        # the fallback either.  Drop to ASCII rather than re-raising the same
+        # error the guard was written to absorb.
+        return text.encode("ascii", errors="replace").decode("ascii")
     return text
 
 
@@ -78,14 +83,20 @@ class Command(BaseCommand):
         role: str = str(options["role"])
 
         rows_by_key: dict[tuple[str, str], Any] = {}
+        source_of: dict[tuple[str, str], str] = {}
+        cross_file_conflicts: list[str] = []
         for path in files:
             try:
                 result: ParseResult = parse_faculty_sections_file(path)
-            except FileNotFoundError as exc:
-                raise CommandError(f"No such file: {path}") from exc
+            except OSError as exc:
+                # FileNotFoundError, IsADirectoryError and PermissionError are all
+                # OSError; a saved page's sibling "_files" directory hits the last.
+                raise CommandError(
+                    f"Cannot read {_console_safe(path, self.stdout._out)}: {exc}"
+                ) from exc
             self.stdout.write(_console_safe(path, self.stdout._out))
-            for key, value in summarise(result).items():
-                self.stdout.write(f"    {key}: {value}")
+            for label, value in summarise(result).items():
+                self.stdout.write(f"    {label}: {value}")
             if result.duplicates:
                 # A real registrar contradiction, not the benign capacity repeat.
                 self.stdout.write(
@@ -95,7 +106,37 @@ class Command(BaseCommand):
                     )
                 )
             for row in result.rows:
-                rows_by_key.setdefault((row.course_key, row.section), row)
+                key = (row.course_key, row.section)
+                previous = rows_by_key.get(key)
+                if previous is None or (row.has_instructor and not previous.has_instructor):
+                    # Later files win, matching the shell habit of listing oldest
+                    # first — and a named instructor always beats a blank, so a
+                    # report that merely omits a section cannot erase it.
+                    rows_by_key[key] = row
+                    source_of[key] = path
+                elif row.has_instructor and row.instructor != previous.instructor:
+                    cross_file_conflicts.append(
+                        f"{row.course_key}/{row.section}: "
+                        f"{previous.instructor!r} ({_console_safe(source_of[key], self.stdout._out)})"
+                        f" -> {row.instructor!r}"
+                    )
+                    rows_by_key[key] = row
+                    source_of[key] = path
+
+        if cross_file_conflicts:
+            # Silently resolving these by argument order loses real assignments:
+            # on two saved snapshots of the male report, 105 of 305 shared sections
+            # disagreed and 22 assignments vanished depending on --file order.
+            self.stdout.write(
+                self.style.WARNING(
+                    f"\n{len(cross_file_conflicts)} section(s) disagree between files; "
+                    f"the LAST file listed wins:"
+                )
+            )
+            for line in cross_file_conflicts[:20]:
+                self.stdout.write(f"    {line}")
+            if len(cross_file_conflicts) > 20:
+                self.stdout.write(f"    ... and {len(cross_file_conflicts) - 20} more")
 
         assignable = [r for r in rows_by_key.values() if r.has_instructor]
         if not assignable:
@@ -112,14 +153,22 @@ class Command(BaseCommand):
         }
         matched = [r for r in assignable if (r.course_key, r.section) in known]
 
-        names = sorted({r.instructor for r in assignable})
-        existing = {
-            n: pk
-            for n, pk in Instructor.objects.filter(
-                normalised_name__in=[normalise_instructor(n) for n in names]
-            ).values_list("normalised_name", "pk")
-        }
-        new_names = [n for n in names if normalise_instructor(n) not in existing]
+        # Key people by the normalised id, not the raw string: two spellings of
+        # one person are one creation, and previewing them as two made --dry-run
+        # disagree with the run it was previewing.  The raw name is kept only as
+        # the display value for a newly created row.
+        display_by_norm: dict[str, str] = {}
+        for row in assignable:
+            norm = normalise_instructor(row.instructor)
+            if norm is not None:
+                display_by_norm.setdefault(norm, row.instructor)
+        names = sorted(display_by_norm)
+        existing = set(
+            Instructor.objects.filter(normalised_name__in=names).values_list(
+                "normalised_name", flat=True
+            )
+        )
+        new_names = [n for n in names if n not in existing]
 
         self.stdout.write("")
         self.stdout.write(f"sections carrying an instructor : {len(assignable)}")
@@ -136,18 +185,16 @@ class Command(BaseCommand):
         created_people, created_links, updated_links, unchanged = 0, 0, 0, 0
         with transaction.atomic():
             people: dict[str, Instructor] = {}
-            for name in names:
-                norm = normalise_instructor(name)
-                if norm is None:
-                    continue
+            for norm in names:
+                display = display_by_norm[norm]
                 person, was_created = Instructor.objects.get_or_create(
                     normalised_name=norm,
                     defaults={
-                        "full_name": name,
+                        "full_name": display,
                         # The report is Arabic, so the display name IS the Arabic
                         # name; record it in both so the roster reads correctly
                         # whichever field a screen prefers.
-                        "full_name_ar": name,
+                        "full_name_ar": display,
                         "is_active": True,
                     },
                 )
@@ -159,13 +206,40 @@ class Command(BaseCommand):
                 assigned = people.get(norm) if norm else None
                 if assigned is None:
                     continue
-                existing_primary = SectionInstructor.objects.filter(
+                section_rows = SectionInstructor.objects.filter(
                     scenario__isnull=True,
                     course_key=row.course_key,
                     section=row.section,
-                    role=role,
-                ).first()
-                if existing_primary is None:
+                )
+                # Probe by the identity the unique index actually enforces —
+                # (course_key, section, instructor), which carries no role.  A
+                # probe on role instead cannot see the row it is about to collide
+                # with, so a second run with a different --role, or a registrar
+                # promoting an existing co-instructor, raised IntegrityError and
+                # rolled back the entire import.
+                held_by_assigned = section_rows.filter(instructor=assigned).first()
+                holder_of_role = section_rows.filter(role=role).first()
+
+                if held_by_assigned is not None:
+                    if held_by_assigned.role == role:
+                        unchanged += 1
+                        continue
+                    # Promote or demote the person already linked to this section.
+                    # Free the target role first: the one-primary partial index
+                    # permits only one holder at a time.
+                    if holder_of_role is not None and holder_of_role.pk != held_by_assigned.pk:
+                        holder_of_role.delete()
+                    held_by_assigned.role = role
+                    held_by_assigned.source = SOURCE
+                    held_by_assigned.save(update_fields=["role", "source", "updated_at"])
+                    updated_links += 1
+                elif holder_of_role is not None:
+                    # The registrar reassigned the section to someone new.
+                    holder_of_role.instructor = assigned
+                    holder_of_role.source = SOURCE
+                    holder_of_role.save(update_fields=["instructor", "source", "updated_at"])
+                    updated_links += 1
+                else:
                     SectionInstructor.objects.create(
                         scenario=None,
                         course_key=row.course_key,
@@ -175,15 +249,6 @@ class Command(BaseCommand):
                         source=SOURCE,
                     )
                     created_links += 1
-                elif existing_primary.instructor_id != assigned.pk:
-                    # The registrar reassigned the section.  Replace rather than
-                    # add: the one-primary constraint permits exactly one.
-                    existing_primary.instructor = assigned
-                    existing_primary.source = SOURCE
-                    existing_primary.save(update_fields=["instructor", "source", "updated_at"])
-                    updated_links += 1
-                else:
-                    unchanged += 1
 
         self.stdout.write("")
         self.stdout.write(self.style.SUCCESS(f"instructors created : {created_people}"))

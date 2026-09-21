@@ -10,15 +10,18 @@ arrive in the reverse of their visual order::
     0 المسجل  1 المتاح  2 الخميس  3 الاربعاء  4 الثلاثاء  5 الاثنين  6 الاحد
     7 استاذ المادة  8 الشعبة  9 اسم المادة  10 رقم المقرر  11 رمز القسم  12 م
 
-The header is a single merged cell rather than a row of labelled cells, so the
-columns cannot be mapped by name.  Every row is therefore **shape-validated**
-before it is trusted: a row whose department, number, section label and serial do
-not match their expected forms is rejected and counted, so a change to the report
-surfaces as ``skipped`` rather than as silently transposed data.
+The report does carry a labelled header row, but it has **12** cells against the
+data's 13 — رمز المادة spans the department and number columns — so the labels do
+not line up with the cells they describe and cannot be used to map them.  Columns
+are therefore read positionally, and every row is **shape-validated** before it is
+trusted: a row whose department, number, section label and serial do not match
+their expected forms is rejected and counted.  A registrar column change surfaces
+as ``skipped``, never as silently transposed data.
 """
 
 from __future__ import annotations
 
+import codecs
 import email
 import re
 from dataclasses import dataclass
@@ -34,10 +37,17 @@ _I_NUMBER, _I_DEPT, _I_SERIAL = 10, 11, 12
 _DEPT_RE = re.compile(r"^[A-Za-z]{2,8}$")
 #: A course number is digits, occasionally with a trailing letter.
 _NUMBER_RE = re.compile(r"^[0-9]{1,4}[A-Za-z]?$")
-#: A section label is a campus letter then digits ("M27", "F3", "Y12").
-_SECTION_RE = re.compile(r"^[A-Za-z][0-9]{1,3}$")
+#: A section label is a campus prefix then digits.  The prefix is one or two
+#: letters: 984 of the 1148 global sections are "M27"/"F3", but 164 (14.3%) use a
+#: two-letter campus — YF 87, YM 74, OF 2, OM 1.  A one-letter pattern silently
+#: rejected every one of those.
+_SECTION_RE = re.compile(r"^[A-Za-z]{1,2}[0-9]{1,3}$")
 #: The report's own row counter.
 _SERIAL_RE = re.compile(r"^[0-9]{1,5}$")
+#: A row this close to 13 cells is a damaged data row worth counting; further
+#: from it and the row is page chrome.
+_NEAR_MISS_MIN, _NEAR_MISS_MAX = 10, 16
+
 #: Rows carrying the operator's print header are noise, not data.
 _HEADER_MARKER = "@taibahu.edu.sa"
 #: The registrar prints an em dash for "no value".
@@ -96,6 +106,12 @@ def _decode(raw: bytes) -> str:
             if not isinstance(payload, bytes):
                 continue
             charset = part.get_content_charset() or "utf-8"
+            try:
+                codecs.lookup(charset)
+            except LookupError:
+                # The saved MHTML names a codec Python does not have.  That is
+                # the operator's browser being odd, not a reason to abort.
+                charset = "utf-8"
             parts.append(payload.decode(charset, errors="replace"))
         if parts:
             return "\n".join(parts)
@@ -142,15 +158,28 @@ def _to_row(cells: list[str]) -> FacultySectionRow:
     )
 
 
+def _mergeable_number(a: int | None, b: int | None) -> bool:
+    """True when two printings of one figure can be reconciled.
+
+    Equal values, or one of them empty (``0``/``None``) — the reprint artefact.
+    Two different non-zero figures are a disagreement, not an artefact.
+    """
+    return a == b or not a or not b
+
+
 def _merge_repeat(
     previous: FacultySectionRow, current: FacultySectionRow
 ) -> FacultySectionRow | None:
     """Reconcile two printings of one section.
 
-    Returns the row to keep, or ``None`` when the two genuinely disagree.  Only
-    ``capacity`` and ``registered`` may differ — the report renders them as ``0``
-    on one pass — and the larger figure wins.  A difference in instructor, course
-    name or meetings is a real contradiction and is reported, not merged.
+    Returns the row to keep, or ``None`` when the two genuinely disagree.
+
+    The only difference this absorbs is the one the report actually produces: a
+    figure printed as ``0`` (or absent) on one pass and in full on another.  Two
+    *different* real figures are a registrar contradiction, not a reprint, and an
+    unconditional ``max()`` would have swallowed them — so ``_mergeable_number``
+    requires one side to be empty.  A difference in instructor, course name or
+    meetings is always a contradiction.
     """
     if previous == current:
         return previous
@@ -158,6 +187,10 @@ def _merge_repeat(
         previous.instructor != current.instructor
         or previous.course_name != current.course_name
         or previous.meetings != current.meetings
+    ):
+        return None
+    if not _mergeable_number(previous.capacity, current.capacity) or not _mergeable_number(
+        previous.registered, current.registered
     ):
         return None
     return FacultySectionRow(
@@ -195,27 +228,40 @@ def parse_faculty_sections(raw: bytes) -> ParseResult:
     skipped = 0
     duplicates = 0
 
-    for table in soup.find_all("table"):
-        for tr in table.find_all("tr"):
-            cells = [_clean(c.get_text(" ", strip=True)) for c in tr.find_all(["th", "td"])]
-            if len(cells) != _CELL_COUNT:
-                continue
-            if any(_HEADER_MARKER in c for c in cells):
-                continue
-            if not _row_is_wellformed(cells):
+    # Walk rows ONCE.  ``find_all`` is recursive and the report nests tables four
+    # deep, so iterating tables and then their rows visited every row four times —
+    # 1700 visits over 425 distinct <tr>.  The dedupe hid that for row data but
+    # multiplied ``skipped`` and ``duplicates`` by four, turning both counters into
+    # numbers no operator could act on.  ``recursive=False`` on the cells keeps a
+    # cell that itself contains a table from contributing its descendants' cells to
+    # the shape check.
+    for tr in soup.find_all("tr"):
+        cells = [
+            _clean(c.get_text(" ", strip=True)) for c in tr.find_all(["th", "td"], recursive=False)
+        ]
+        if len(cells) != _CELL_COUNT:
+            # A row that is nearly the right width is a damaged data row (a
+            # colspan collapses 13 cells to 12); count it.  Anything far off is
+            # page chrome and is not worth reporting.
+            if _NEAR_MISS_MIN <= len(cells) <= _NEAR_MISS_MAX:
                 skipped += 1
-                continue
-            row = _to_row(cells)
-            key = (row.course_key, row.section)
-            previous = seen.get(key)
-            if previous is None:
-                seen[key] = row
-                continue
-            merged = _merge_repeat(previous, row)
-            if merged is None:
-                duplicates += 1
-            else:
-                seen[key] = merged
+            continue
+        if any(_HEADER_MARKER in c for c in cells):
+            continue
+        if not _row_is_wellformed(cells):
+            skipped += 1
+            continue
+        row = _to_row(cells)
+        key = (row.course_key, row.section)
+        previous = seen.get(key)
+        if previous is None:
+            seen[key] = row
+            continue
+        merged = _merge_repeat(previous, row)
+        if merged is None:
+            duplicates += 1
+        else:
+            seen[key] = merged
 
     return ParseResult(rows=tuple(seen.values()), skipped=skipped, duplicates=duplicates)
 

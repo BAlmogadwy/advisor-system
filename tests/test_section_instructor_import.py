@@ -292,32 +292,369 @@ def test_import_keeps_an_assignment_whose_section_we_do_not_have(report):
     assert SectionInstructor.objects.count() == 2
 
 
+#: Every table the importer could plausibly reach.  Whole rows, not chosen
+#: columns: an earlier version of this test snapshotted four of the nine meeting
+#: fields and compared ``CourseInstructor`` counts that were both zero, so it
+#: would have passed while the import rewrote start_time, room or the section
+#: itself.
+_MUST_NOT_CHANGE = (
+    "TermSection",
+    "TermSectionMeeting",
+    "TermSectionProgram",
+    "CourseInstructor",
+    "StudentTermSection",
+)
+
+
+def _snapshot_everything():
+    from core import models as m
+
+    return {
+        name: list(getattr(m, name).objects.order_by("pk").values()) for name in _MUST_NOT_CHANGE
+    }
+
+
 @pytest.mark.django_db
 def test_import_touches_nothing_else(report):
-    """The inertness guarantee.
+    """The inertness guarantee, and the reason this feature is safe to land.
 
     Writing ``TermSectionMeeting.instructor`` activates the greedy clash filter,
     the workspace conflict badge, ``validate_placement``'s critical count and the
-    repair-eligibility gate — none of which has ever run against a populated
-    field.  This import must leave that field, and ``CourseInstructor``, exactly
-    as it found them.
+    repair-eligibility gate — none of which has ever executed against a populated
+    field (it is 0/2504 in production). So the claim is not merely "no test
+    broke": it is that the import writes to exactly two tables and no others.
     """
     ts = TermSection.objects.create(
         course_code="CS", course_number="111", course_key="CS111", section="M27"
     )
-    meeting = TermSectionMeeting.objects.create(
+    TermSectionMeeting.objects.create(
         term_section=ts, day="SUN", start_time="10:30", end_time="11:45", room="A1"
     )
-    before_meetings = list(
-        TermSectionMeeting.objects.values_list("id", "instructor", "room", "day")
+    CourseInstructor.objects.create(
+        program="CS",
+        course_code="CS111",
+        section="M",
+        instructor=Instructor.objects.create(full_name="Dr Course", normalised_name="dr course"),
     )
-    before_courses = CourseInstructor.objects.count()
+    before = _snapshot_everything()
 
     call_command("import_section_instructors", "--file", report, stdout=io.StringIO())
 
-    meeting.refresh_from_db()
-    assert meeting.instructor == ""
-    assert list(TermSectionMeeting.objects.values_list("id", "instructor", "room", "day")) == (
-        before_meetings
+    after = _snapshot_everything()
+    for name in _MUST_NOT_CHANGE:
+        assert after[name] == before[name], f"the import modified {name}"
+    # And the specific field whose population would wake the four dormant paths.
+    assert set(TermSectionMeeting.objects.values_list("instructor", flat=True)) == {""}
+
+
+# --------------------------------------------------------------------------
+# Gaps the adversarial review proved were unpinned.
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "broken,label",
+    [
+        ({"dept": "111"}, "department that is not letters"),
+        ({"number": "CS"}, "number that is not digits"),
+        ({"section": "oops"}, "section label with no digits"),
+        ({"serial": "x"}, "serial that is not a number"),
+    ],
+)
+def test_each_shape_check_is_load_bearing(broken, label):
+    """One malformed cell at a time.
+
+    The original test swapped dept and number, tripping two checks at once — so
+    any single surviving check kept it green.
+    """
+    result = parse_faculty_sections(_page(_row(**broken)))
+    assert result.rows == (), label
+    assert result.skipped == 1, label
+
+
+@pytest.mark.parametrize("section", ["M27", "F3", "YM1", "YF12", "OM2", "OF1"])
+def test_two_letter_campus_sections_are_accepted(section):
+    """164 of 1148 real global sections use YM/YF/OM/OF.
+
+    A one-letter campus pattern rejected all of them — 14.3% of the estate —
+    and counted each as malformed.
+    """
+    result = parse_faculty_sections(_page(_row(section=section)))
+    assert [r.section for r in result.rows] == [section.upper()]
+    assert result.skipped == 0
+
+
+def test_a_row_mangled_by_colspan_is_counted_not_silently_dropped():
+    twelve = "<tr>" + "".join(f"<td>{i}</td>" for i in range(12)) + "</tr>"
+    result = parse_faculty_sections(_page(_row(), twelve))
+    assert len(result.rows) == 1
+    assert result.skipped == 1
+
+
+def test_nested_tables_do_not_multiply_the_counters():
+    """``find_all`` is recursive; the live report nests tables four deep.
+
+    Iterating tables and then rows visited every row once per ancestor, inflating
+    ``skipped`` and ``duplicates`` fourfold and making both useless to an operator.
+    """
+    inner = "<table>" + _row() + _row(dept="111") + "</table>"
+    nested = ("<html><body><table><tr><td>" + inner + "</td></tr></table></body></html>").encode()
+    result = parse_faculty_sections(nested)
+    assert len(result.rows) == 1
+    assert result.skipped == 1
+
+
+def test_summary_reports_every_counter():
+    page = _page(
+        _row(section="M1"),
+        _row(section="M1", instructor="Dr Other"),  # a real contradiction
+        _row(section="M2", instructor="", serial="2"),
+        _row(section="M3", dept="111", serial="3"),  # malformed
     )
-    assert CourseInstructor.objects.count() == before_courses
+    assert summarise(parse_faculty_sections(page)) == {
+        "sections": 2,
+        "with_instructor": 1,
+        "distinct_instructors": 1,
+        "distinct_courses": 1,
+        "campuses": {"M": 2},
+        "skipped_malformed": 1,
+        "contradictory_duplicates": 1,
+    }
+
+
+def test_mhtml_is_decoded():
+    body = _page(_row(section="M55")).decode()
+    mhtml = (
+        "From: <Saved by Blink>\r\n"
+        "Snapshot-Content-Location: https://eas.taibahu.edu.sa/x\r\n"
+        'Content-Type: multipart/related; boundary="B"\r\n\r\n'
+        "--B\r\nContent-Type: text/html; charset=utf-8\r\n\r\n" + body + "\r\n--B--\r\n"
+    ).encode("utf-8")
+    assert [r.section for r in parse_faculty_sections(mhtml).rows] == ["M55"]
+
+
+def test_an_mhtml_naming_an_unknown_codec_still_parses():
+    """A browser can save a charset Python has never heard of.  That is not a
+    reason to abort an otherwise valid import."""
+    body = _page(_row(section="M56")).decode()
+    mhtml = (
+        "From: <Saved by Blink>\r\n"
+        "Snapshot-Content-Location: https://eas.taibahu.edu.sa/x\r\n"
+        'Content-Type: multipart/related; boundary="B"\r\n\r\n'
+        "--B\r\nContent-Type: text/html; charset=not-a-real-codec\r\n\r\n" + body + "\r\n--B--\r\n"
+    ).encode("utf-8")
+    assert [r.section for r in parse_faculty_sections(mhtml).rows] == ["M56"]
+
+
+def test_a_cp1256_page_is_decoded():
+    page = _page(_row(section="M57")).decode().encode("cp1256")
+    assert [r.section for r in parse_faculty_sections(page).rows] == ["M57"]
+
+
+def test_a_real_capacity_disagreement_is_not_hidden_by_the_merge():
+    """The merge exists for the 0-vs-real reprint.  Two genuine figures are a
+    contradiction, and max() would have swallowed it."""
+    result = parse_faculty_sections(_page(_row(capacity="25"), _row(capacity="40")))
+    assert result.duplicates == 1
+
+
+# --- model constraints the first pass left unpinned -----------------------
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("field", ["course_key", "section"])
+def test_blank_identity_is_rejected(field):
+    a = Instructor.objects.create(full_name="Dr A", normalised_name="dr a")
+    kwargs = {"course_key": "CS111", "section": "M27", field: "   "}
+    with pytest.raises(IntegrityError), transaction.atomic():
+        SectionInstructor.objects.bulk_create([SectionInstructor(instructor=a, **kwargs)])
+
+
+@pytest.mark.django_db
+def test_bulk_create_cannot_bypass_normalisation():
+    """``save()`` is a convenience; the CHECK is the guarantee.
+
+    The unique indexes compare raw text, so an unnormalised bulk insert would
+    have sat beside the canonical row as a second primary.
+    """
+    a = Instructor.objects.create(full_name="Dr A", normalised_name="dr a")
+    SectionInstructor.objects.create(course_key="CS111", section="M27", instructor=a)
+    with pytest.raises(IntegrityError), transaction.atomic():
+        SectionInstructor.objects.bulk_create(
+            [SectionInstructor(course_key="cs111", section="m27", instructor=a)]
+        )
+
+
+@pytest.mark.django_db
+def test_an_invalid_role_is_rejected_by_the_database():
+    """``role`` is matched by literal value in the one-primary partial index, so
+    'Primary' would sit outside it and give the section two primaries."""
+    a = Instructor.objects.create(full_name="Dr A", normalised_name="dr a")
+    with pytest.raises(IntegrityError), transaction.atomic():
+        SectionInstructor.objects.bulk_create(
+            [SectionInstructor(course_key="CS111", section="M27", instructor=a, role="Primary")]
+        )
+
+
+@pytest.mark.django_db
+def test_role_is_normalised_on_save():
+    a = Instructor.objects.create(full_name="Dr A", normalised_name="dr a")
+    link = SectionInstructor.objects.create(
+        course_key="CS111", section="M27", instructor=a, role=" CO "
+    )
+    link.refresh_from_db()
+    assert link.role == "co"
+
+
+@pytest.mark.django_db
+def test_one_primary_per_scenario_section():
+    a = Instructor.objects.create(full_name="Dr A", normalised_name="dr a")
+    b = Instructor.objects.create(full_name="Dr B", normalised_name="dr b")
+    scenario = TimetableScenario.objects.create(name="s1")
+    SectionInstructor.objects.create(
+        scenario=scenario, course_key="CS111", section="M27", instructor=a
+    )
+    with pytest.raises(IntegrityError), transaction.atomic():
+        SectionInstructor.objects.create(
+            scenario=scenario, course_key="CS111", section="M27", instructor=b
+        )
+
+
+@pytest.mark.django_db
+def test_the_same_person_cannot_be_linked_twice_to_one_scenario_section():
+    a = Instructor.objects.create(full_name="Dr A", normalised_name="dr a")
+    scenario = TimetableScenario.objects.create(name="s1")
+    SectionInstructor.objects.create(
+        scenario=scenario, course_key="CS111", section="M27", instructor=a
+    )
+    with pytest.raises(IntegrityError), transaction.atomic():
+        SectionInstructor.objects.create(
+            scenario=scenario, course_key="CS111", section="M27", instructor=a, role="co"
+        )
+
+
+# --- importer paths that previously raised IntegrityError ------------------
+
+
+@pytest.mark.django_db
+def test_running_again_with_a_different_role_does_not_crash(report):
+    """``ux_section_instructor_global`` has no role column, so the same person
+    cannot hold two roles on one section.  Probing by role could not see the row
+    it was about to collide with, and the whole 337-row import rolled back."""
+    call_command("import_section_instructors", "--file", report, stdout=io.StringIO())
+    call_command(
+        "import_section_instructors", "--file", report, "--role", "co", stdout=io.StringIO()
+    )
+    link = SectionInstructor.objects.get(section="M27")
+    assert link.role == "co"
+    assert SectionInstructor.objects.filter(section="M27").count() == 1
+
+
+@pytest.mark.django_db
+def test_promoting_an_existing_co_instructor_does_not_crash(report, tmp_path):
+    """Operator records a co-instructor; the registrar later makes them primary."""
+    call_command("import_section_instructors", "--file", report, stdout=io.StringIO())
+    newcomer = Instructor.objects.create(full_name="Dr New", normalised_name="dr new")
+    SectionInstructor.objects.create(
+        course_key="CS111", section="M27", instructor=newcomer, role="co"
+    )
+    promoted = tmp_path / "promoted.html"
+    promoted.write_bytes(_page(_row(section="M27", instructor="Dr New")))
+    call_command("import_section_instructors", "--file", str(promoted), stdout=io.StringIO())
+    rows = SectionInstructor.objects.filter(course_key="CS111", section="M27")
+    assert rows.count() == 1
+    assert rows.first().instructor == newcomer
+    assert rows.first().role == "primary"
+
+
+@pytest.mark.django_db
+def test_the_last_file_wins_and_the_disagreement_is_reported(tmp_path):
+    """Silently resolving cross-file conflicts by argument order lost real
+    assignments: on two snapshots of the male report, 105 of 305 shared sections
+    disagreed and 22 vanished depending on --file order."""
+    old = tmp_path / "old.html"
+    old.write_bytes(_page(_row(section="M27", instructor="Dr Old")))
+    new = tmp_path / "new.html"
+    new.write_bytes(_page(_row(section="M27", instructor="Dr New")))
+    out = io.StringIO()
+    call_command("import_section_instructors", "--file", str(old), "--file", str(new), stdout=out)
+    assert SectionInstructor.objects.get(section="M27").instructor.full_name == "Dr New"
+    assert "disagree between files" in out.getvalue()
+    assert "CS111/M27" in out.getvalue()
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("blank_first", [True, False])
+def test_a_named_instructor_beats_a_blank_whichever_order(tmp_path, blank_first):
+    """A report that merely omits a section must not erase an assignment, and a
+    blank is not a disagreement — reporting it as one would train operators to
+    ignore the warning that matters."""
+    blank = tmp_path / "blank.html"
+    blank.write_bytes(_page(_row(section="M27", instructor="")))
+    named = tmp_path / "named.html"
+    named.write_bytes(_page(_row(section="M27", instructor="Dr Real")))
+    order = [str(blank), str(named)] if blank_first else [str(named), str(blank)]
+    out = io.StringIO()
+    call_command("import_section_instructors", "--file", order[0], "--file", order[1], stdout=out)
+    assert SectionInstructor.objects.get(section="M27").instructor.full_name == "Dr Real"
+    assert "disagree between files" not in out.getvalue()
+
+
+@pytest.mark.django_db
+def test_a_directory_is_a_clean_error_not_a_traceback(tmp_path):
+    """A saved page sits beside a "_files" directory; globbing catches it."""
+    from django.core.management.base import CommandError
+
+    with pytest.raises(CommandError):
+        call_command("import_section_instructors", "--file", str(tmp_path), stdout=io.StringIO())
+
+
+@pytest.mark.django_db
+def test_instructor_names_are_deduped_case_insensitively(tmp_path):
+    """The original test used an Arabic name, where casefold() is the identity —
+    so it passed even with normalise_instructor replaced by str."""
+    page = tmp_path / "case.html"
+    page.write_bytes(
+        _page(
+            _row(section="M1", instructor="  Dr. A. Smith "),
+            _row(section="M2", instructor="DR. A. SMITH", serial="2"),
+        )
+    )
+    call_command("import_section_instructors", "--file", str(page), stdout=io.StringIO())
+    assert Instructor.objects.count() == 1
+    people = {link.instructor_id for link in SectionInstructor.objects.all()}
+    assert len(people) == 1
+
+
+@pytest.mark.django_db
+def test_dry_run_preview_matches_what_a_real_run_creates(tmp_path):
+    """The preview counted raw names, the write counted normalised ids, so two
+    spellings of one person previewed as two creations and produced one."""
+    page = tmp_path / "case.html"
+    page.write_bytes(
+        _page(
+            _row(section="M1", instructor="Dr A"),
+            _row(section="M2", instructor="dr a", serial="2"),
+        )
+    )
+    preview = io.StringIO()
+    call_command("import_section_instructors", "--file", str(page), "--dry-run", stdout=preview)
+    written = io.StringIO()
+    call_command("import_section_instructors", "--file", str(page), stdout=written)
+    assert "to be created                 : 1" in preview.getvalue()
+    assert "instructors created : 1" in written.getvalue()
+    assert Instructor.objects.count() == 1
+
+
+def test_a_table_inside_a_cell_does_not_bleed_into_the_shape_check():
+    """``find_all`` on a row is recursive, so a nested table's cells would be
+    counted as the row's own and push a good row off the 13-cell shape."""
+    inner = "<table><tr><td>x</td><td>y</td></tr></table>"
+    # Inject into the course-name cell: its text is not shape-validated, so the
+    # only thing that can break is the CELL COUNT — which is exactly what a
+    # recursive cell search would get wrong (13 cells become 15, row dropped).
+    poisoned = _row(course_name=f"Programming{inner}")
+    result = parse_faculty_sections(_page(poisoned))
+    assert len(result.rows) == 1
+    assert result.rows[0].section == "M27"
+    assert result.skipped == 0

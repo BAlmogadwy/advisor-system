@@ -4,6 +4,7 @@ from typing import Any
 from django.conf import settings
 from django.db import models, transaction
 from django.db.models import F
+from django.db.models.functions import Trim, Upper
 
 
 class Student(models.Model):
@@ -391,7 +392,9 @@ class SectionInstructor(models.Model):
         on_delete=models.PROTECT,
         related_name="section_links",
     )
-    role = models.TextField(default="primary")  # primary | co | lab
+    ROLE_CHOICES = (("primary", "Primary"), ("co", "Co-instructor"), ("lab", "Lab"))
+
+    role = models.TextField(default="primary", choices=ROLE_CHOICES)
     source = models.TextField(blank=True, default="")  # provenance of the assignment
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -426,13 +429,26 @@ class SectionInstructor(models.Model):
                 condition=models.Q(scenario__isnull=True, role="primary"),
                 name="ux_section_instructor_one_primary_global",
             ),
+            # Enforced in the DATABASE, not in ``save()``.  The unique indexes
+            # compare raw stored text, and ``bulk_create`` / ``QuerySet.update``
+            # never call ``save()`` — so a Python-only normalisation let
+            # ``cs111``/``m27`` sit beside ``CS111``/``M27`` as a second primary,
+            # and let ``"   "`` pass a plain ``<> ''`` check.
             models.CheckConstraint(
-                condition=~models.Q(course_key=""),
-                name="ck_si_course_key_nonempty",
+                condition=models.Q(course_key=Upper(Trim(F("course_key"))))
+                & ~models.Q(course_key=""),
+                name="ck_si_course_key_normalised",
             ),
             models.CheckConstraint(
-                condition=~models.Q(section=""),
-                name="ck_si_section_nonempty",
+                condition=models.Q(section=Upper(Trim(F("section")))) & ~models.Q(section=""),
+                name="ck_si_section_normalised",
+            ),
+            # ``role`` participates in the one-primary partial index by literal
+            # value, so an unconstrained variant such as "Primary" would sit
+            # outside it and silently give a section two primaries.
+            models.CheckConstraint(
+                condition=models.Q(role__in=("primary", "co", "lab")),
+                name="ck_si_role_valid",
             ),
         ]
         indexes = [
@@ -444,8 +460,11 @@ class SectionInstructor(models.Model):
         return f"SectionInstructor({self.course_key}/{self.section}->{self.instructor_id})"
 
     def save(self, *args: Any, **kwargs: Any) -> None:
+        # Convenience for the ordinary path; the CHECK constraints are what make
+        # it a guarantee, because bulk_create and .update() skip this method.
         self.course_key = (self.course_key or "").strip().upper()
         self.section = (self.section or "").strip().upper()
+        self.role = (self.role or "primary").strip().lower()
         super().save(*args, **kwargs)
 
 
