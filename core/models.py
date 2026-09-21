@@ -353,20 +353,27 @@ class SectionInstructor(models.Model):
     """Who *does* teach one section, as opposed to who *may* teach the course.
 
     ``CourseInstructor`` records eligibility at course granularity and cannot say
-    which of CS113's seven sections a person holds.  The registrar publishes that
-    decision per section (``facultySectionsAvilableSeats.do`` — استاذ المادة against
-    الشعبة), and this table stores it.
+    which of CS113's thirty-one sections a person holds — the live report names
+    eight different people across them.  The registrar publishes that decision per
+    section (``facultySectionsAvilableSeats.do`` — استاذ المادة against الشعبة), and
+    this table stores it.
 
-    **Keyed by natural identity, deliberately not by a ``TermSection`` FK.**  Five
-    paths delete section rows — ``scheduler.bridge`` on every ``plan()`` run,
-    ``db_admin_ops`` for the section-snapshot clear and for external courses, the
-    release-seed import's truncate, and the scenario cascade.  A FK would make an
-    assignment a casualty of any of them, which is what made the 2026-06
-    ``SectionInstructor`` (migration 0034, dropped in 0035 with no data migration)
-    fragile.  ``(scenario, course_key, section)`` is owned by the registrar, is
-    already the key ``ux_term_sections_global`` enforces, and survives every one of
-    those operations.  A row may therefore describe a section that does not exist
-    yet; resolution is a join, never a dependency.
+    **Keyed by natural identity, deliberately not by a ``TermSection`` FK.**  Four
+    operations delete section rows out from under an assignment:
+    ``scheduler.bridge`` on every ``plan()`` run, and ``db_admin_ops`` for the
+    section-snapshot clear and for external courses (93 of the 855 live sections),
+    plus the scenario cascade.  A FK would make an assignment a casualty of any of
+    them, which is what made the 2026-06 ``SectionInstructor`` (migration 0034,
+    dropped in 0035 with no data migration) fragile.
+    ``(scenario, course_key, section)`` is owned by the registrar, is already the
+    key ``ux_term_sections_global`` enforces, and survives all four.  A row may
+    therefore describe a section that does not exist yet; resolution is a join,
+    never a dependency.
+
+    The release-seed import is NOT in that list and no key can survive it:
+    ``_flush_target_database`` truncates every table in the target before loading,
+    so this one is replaced like any other — which is the intended behaviour for a
+    rebuild, not a loss.
 
     ``scenario`` NULL means a registrar/global section — the only kind the importer
     writes.  Scenario-scoped rows are supported for symmetry with ``TermSection``
