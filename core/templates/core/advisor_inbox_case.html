@@ -69,9 +69,9 @@
     {% csrf_token %}
 
     <div class="ai-action-row">
-      <button class="btn" type="button" data-ai-action="assign_to_me">Assign to me</button>
+      <button class="btn btn-neutral" type="button" data-ai-action="assign_to_me">Assign to me</button>
       {% for status in next_statuses %}
-        <button class="btn" type="button" data-ai-action="set_status" data-ai-status="{{ status }}">
+        <button class="btn btn-neutral" type="button" data-ai-action="set_status" data-ai-status="{{ status }}">
           Mark {{ status|lower }}
         </button>
       {% endfor %}
@@ -83,7 +83,7 @@
       <div>
         <label class="ai-label" for="ai-note">Internal note <span class="ai-muted">— the student never sees this</span></label>
         <textarea id="ai-note" rows="4" maxlength="4000"></textarea>
-        <button class="btn" type="button" data-ai-action="add_note" data-ai-source="ai-note">Add note</button>
+        <button class="btn btn-neutral" type="button" data-ai-action="add_note" data-ai-source="ai-note">Add note</button>
         {% if case.adviser_notes %}<pre class="ai-case-pre ai-notes" dir="auto">{{ case.adviser_notes }}</pre>{% endif %}
       </div>
       <div>
