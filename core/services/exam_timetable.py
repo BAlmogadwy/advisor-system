@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import itertools
 import json
+import logging
 import random
 
 # ── Invigilator calculation rules ──────────────────────────────
@@ -49,6 +50,7 @@ from core.services.exam_operations_snapshot import build_exam_operations_snapsho
 from core.services.exam_review import build_exam_review
 from core.services.exam_room_allocation import (
     RoomAllocationContext,
+    RoomAllocationTimeout,
     allocate_period,
     normalized_rooms,
 )
@@ -75,6 +77,7 @@ from core.services.student_sections import (
     section_gender,
 )
 
+logger = logging.getLogger(__name__)
 _DEPARTMENT_PREFIXES: set[str] = {"CS", "IS", "COE", "CYB", "AI", "DS"}
 _EXTERNAL_PREFIXES: set[str] = {"GS", "EDCT", "GSE", "ENV", "MATH", "STAT", "PHYS"}
 
@@ -1427,6 +1430,23 @@ def _merge_same_course_sections(
     return units
 
 
+def period_cohort_count(
+    schedule_entries: list[dict], section_enrollment: dict[str, list[dict]]
+) -> int:
+    """Upper bound on the ``allocate_period`` calls one full pack performs.
+
+    Rooming solves a separate allocation per scheduled slot per student cohort,
+    so this — not the course count — is what a wall budget has to be sized by.
+    """
+    slots = {entry["slot_index"] for entry in schedule_entries if entry.get("day") != "OVERFLOW"}
+    genders = {
+        str(section.get("gender", "U") or "U").upper()
+        for sections in section_enrollment.values()
+        for section in sections
+    }
+    return len(slots) * max(1, len(genders))
+
+
 def assign_rooms_to_schedule(
     schedule_entries: list[dict],
     section_enrollment: dict[str, list[dict]],
@@ -1442,12 +1462,14 @@ def assign_rooms_to_schedule(
     inputs. Existing room rows are replaced, making repeated calls idempotent.
     """
     inventory = normalized_rooms(rooms)
-    context = allocation_context or RoomAllocationContext()
     entries_by_slot: dict[int, list[dict]] = defaultdict(list)
     for entry in schedule_entries:
         entry["rooms"] = []
         if entry.get("day") != "OVERFLOW":
             entries_by_slot[entry["slot_index"]].append(entry)
+    context = allocation_context or RoomAllocationContext.for_periods(
+        period_cohort_count(schedule_entries, section_enrollment)
+    )
     for _, entries in sorted(entries_by_slot.items()):
         by_course = {entry["course_code"]: entry for entry in entries}
         demands_by_gender: dict[str, list[dict]] = defaultdict(list)
@@ -1529,12 +1551,12 @@ def _rebalance_invigilators_pass(
 
     from copy import deepcopy
 
-    from core.services.exam_room_allocation import RoomAllocationTimeout
-
     course_buckets = course_buckets or {}
     plan_term_buckets = plan_term_buckets or {}
     pinned_courses = pinned_courses or set()
-    allocation_context = allocation_context or RoomAllocationContext()
+    allocation_context = allocation_context or RoomAllocationContext.for_periods(
+        period_cohort_count(schedule_entries, section_enrollment)
+    )
 
     # Slot lookup helpers
     slots_by_day: dict[str, list[dict]] = defaultdict(list)
@@ -1654,8 +1676,25 @@ def _rebalance_invigilators_pass(
                     return True
         return False
 
-    # Make sure we start from a clean packing
-    _repack_all()
+    # Make sure we start from a clean packing. The mandatory pack has already
+    # produced a validated rooming, so this optional pass must never destroy
+    # it: an exhausted deadline here restores that rooming and declines to
+    # optimise rather than failing a build that had already succeeded.
+    incoming_rooms = [deepcopy(item.get("rooms", [])) for item in schedule_entries]
+    try:
+        _repack_all()
+    except RoomAllocationTimeout:
+        allocation_context.truncated = True
+        for item, rooms_snapshot in zip(schedule_entries, incoming_rooms, strict=True):
+            item["rooms"] = rooms_snapshot
+        logger.warning(
+            "exam invigilator rebalance skipped: room allocation deadline exhausted "
+            "before the opening repack (periods_solved=%s cache_hits=%s searches=%s)",
+            allocation_context.periods_solved,
+            allocation_context.cache_hits,
+            allocation_context.searches,
+        )
+        return 0
     current = _per_day_invigilators()
     base_score = _balance_score(current)
     base_room_safety = _room_safety()
@@ -1716,6 +1755,19 @@ def _rebalance_invigilators_pass(
                     # Allocation may have cleared or partially replaced rows.
                     # Restore the exact validated incumbent and stop probing;
                     # an exhausted deadline cannot support another safe trial.
+                    # This pass is optional, so the build continues — but the
+                    # optimisation is now incomplete and must say so.
+                    allocation_context.truncated = True
+                    logger.warning(
+                        "exam invigilator rebalance truncated after %s accepted move(s): "
+                        "room allocation deadline exhausted "
+                        "(periods_solved=%s cache_hits=%s searches=%s limited=%s)",
+                        moves_accepted,
+                        allocation_context.periods_solved,
+                        allocation_context.cache_hits,
+                        allocation_context.searches,
+                        allocation_context.limited_searches,
+                    )
                     entry["slot_index"] = old_slot_idx
                     entry["day"] = old_day
                     entry["period"] = old_period
@@ -2085,13 +2137,18 @@ def build_exam_timetable(
     room_feasibility: list[dict] = []
     room_qa: dict = {}
     if assign_rooms:
-        allocation_context = RoomAllocationContext()
         rooms_list = list(
             Room.objects.all().values(
                 "room_code", "capacity", "section", "department", "building", "floor"
             )
         )
         room_feasibility = check_room_feasibility(section_enrollment, rooms_list)
+        # Arm the shared deadline only now: the room query and the feasibility
+        # scan are not solver work, and on a networked database they were
+        # spending a budget meant for the search.
+        allocation_context = RoomAllocationContext.for_periods(
+            period_cohort_count(schedule_entries, section_enrollment)
+        )
         assign_rooms_to_schedule(
             schedule_entries,
             section_enrollment,

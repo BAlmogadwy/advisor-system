@@ -964,3 +964,39 @@ TIMETABLE_CHAIN_TIME_LIMIT_SECONDS = float(os.getenv("TIMETABLE_CHAIN_TIME_LIMIT
 TIMETABLE_CANDIDATE_GEN_BUDGET_SECONDS = float(
     os.getenv("TIMETABLE_CANDIDATE_GEN_BUDGET_SECONDS", "1.5")
 )
+
+# ── Exam rooming wall budget ────────────────────────────────────
+# The exam room allocator is bounded twice: a per-phase *deterministic* CP-SAT
+# limit fixes which allocation is produced (so Build, Check, Save and export
+# agree on any host), and a wall deadline decides only whether the phase is
+# allowed to finish at all. Raising these therefore cannot change a rooming —
+# but it CAN change a timetable, because the optional invigilator pass keeps
+# accepting improving day moves until the deadline cuts it off. On a host that
+# was truncating, a larger budget publishes the moves it could not finish.
+#
+# The budget is base + per-period, where a period is one slot × one student
+# cohort: a 15-day / 3-period build solves ~90 of them, a one-day build two.
+# Measured on the full 12-programme build, cold cache: ~3.3s for the mandatory
+# pack and ~7.8s for the invigilator pass on a developer workstation, several
+# times that on a 0.5-CPU production instance. The ceiling keeps one rooming
+# phase well inside the gunicorn worker timeout.
+#
+# To RAISE the budget, raise the base or the per-period rate: at 90 periods the
+# value is already below the ceiling, so raising the ceiling alone does nothing.
+
+
+def _float_env(name: str, default: str) -> float:
+    """A malformed budget must not take the site down at settings import.
+
+    These three are the knobs an operator reaches for *during* an incident, and
+    a Render dashboard field cleared rather than deleted arrives here as "".
+    """
+    try:
+        return float(os.getenv(name) or default)
+    except (TypeError, ValueError):
+        return float(default)
+
+
+EXAM_ROOM_BASE_SEARCH_SECONDS = _float_env("EXAM_ROOM_BASE_SEARCH_SECONDS", "10")
+EXAM_ROOM_PERIOD_SEARCH_SECONDS = _float_env("EXAM_ROOM_PERIOD_SEARCH_SECONDS", "0.5")
+EXAM_ROOM_MAX_SEARCH_SECONDS = _float_env("EXAM_ROOM_MAX_SEARCH_SECONDS", "60")
