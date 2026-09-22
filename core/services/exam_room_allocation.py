@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import copy
 import json
+import logging
 import time
 from collections import OrderedDict, defaultdict
 from dataclasses import dataclass, field
@@ -18,12 +19,64 @@ from threading import RLock
 
 from ortools.sat.python import cp_model
 
+logger = logging.getLogger(__name__)
+
 ROOM_ALLOCATION_POLICY_VERSION = 1
 _CACHE_SIZE = 512
 _CACHE: OrderedDict[str, list[dict]] = OrderedDict()
 _CACHE_LOCK = RLock()
-_SEARCH_SECONDS = 6.0
 _PHASE_DETERMINISTIC_LIMIT = 0.06
+# A wall deadline is a safety valve, never a work limit. For the rooming itself
+# that makes it invariant: an allocation is fixed by the per-phase deterministic
+# limit above, a wall stop raises rather than returning a partial result, so a
+# longer deadline changes only *whether* a rooming is produced, never *which*
+# one. It is NOT invariant for the build as a whole — the optional invigilator
+# pass in exam_timetable.py accepts improving day moves until this deadline cuts
+# it off, so a longer budget lets it finish moves it was already making and the
+# published placements can differ from a truncated run.
+#
+# The budget must cover the slowest supported host and grow with the problem: a
+# fifteen-day, three-period, twelve-programme exam build solves ~90 period/cohort
+# allocations where a one-day build solves two. A flat six seconds covered
+# neither. Measured cold-cache on that build on a developer workstation: ~3.3s
+# for the mandatory pack, ~7.8s for the invigilator pass — so the flat budget was
+# already truncating the optimisation on the fastest host there is, and a 0.5-CPU
+# production instance rejected real builds outright.
+_BASE_SEARCH_SECONDS = 10.0
+_PERIOD_SEARCH_SECONDS = 0.5
+_MAX_SEARCH_SECONDS = 60.0
+
+
+def _setting(name: str, default: float) -> float:
+    """Read a Django override without making this module require a settings module."""
+    try:
+        from django.conf import settings
+
+        value = getattr(settings, name, None)
+    except Exception:
+        return default
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        return default
+    return float(value)
+
+
+def search_budget_seconds(period_cohorts: int = 0) -> float:
+    """Wall budget for one rooming phase, sized by the periods it must solve."""
+    base = _setting("EXAM_ROOM_BASE_SEARCH_SECONDS", _BASE_SEARCH_SECONDS)
+    per_period = _setting("EXAM_ROOM_PERIOD_SEARCH_SECONDS", _PERIOD_SEARCH_SECONDS)
+    ceiling = _setting("EXAM_ROOM_MAX_SEARCH_SECONDS", _MAX_SEARCH_SECONDS)
+    try:
+        periods = max(0, int(period_cohorts))
+    except (TypeError, ValueError):
+        periods = 0
+    # Clamp each term: a negative override must not shrink the budget as the
+    # problem grows, and the floor keeps a misconfigured ceiling from arming a
+    # deadline that is already spent.
+    sized = max(0.0, base) + max(0.0, per_period) * periods
+    return max(1.0, min(max(1.0, ceiling), sized))
+
+
+TIMEOUT_MESSAGE = "Room checking reached its time limit. Your timetable has not been saved; please retry the check."
 
 
 class RoomAllocationTimeout(ValueError):
@@ -34,18 +87,40 @@ class RoomAllocationTimeout(ValueError):
 class RoomAllocationContext:
     """One shared wall deadline across a build and its room rebalance trials."""
 
-    deadline: float = field(default_factory=lambda: time.monotonic() + _SEARCH_SECONDS)
+    deadline: float = field(default_factory=lambda: time.monotonic() + search_budget_seconds())
+    #: The wall budget this deadline was armed with, for diagnostics only.
+    budget_seconds: float = field(default_factory=search_budget_seconds)
     cache_hits: int = 0
     periods_solved: int = 0
     searches: int = 0
     limited_searches: int = 0
+    #: Set by an optional, best-effort pass that absorbed the timeout instead of
+    #: failing the build, so callers can report the optimisation as truncated.
+    truncated: bool = False
+
+    @classmethod
+    def for_periods(cls, period_cohorts: int) -> RoomAllocationContext:
+        """Arm a deadline sized for a rooming phase of ``period_cohorts`` allocations."""
+        budget = search_budget_seconds(period_cohorts)
+        return cls(deadline=time.monotonic() + budget, budget_seconds=budget)
+
+    def expired(self) -> RoomAllocationTimeout:
+        """Report an exhausted phase, then hand back the error to raise."""
+        logger.warning(
+            "exam room allocation exhausted its %.1fs wall budget "
+            "(periods_solved=%s cache_hits=%s searches=%s limited_searches=%s)",
+            self.budget_seconds,
+            self.periods_solved,
+            self.cache_hits,
+            self.searches,
+            self.limited_searches,
+        )
+        return RoomAllocationTimeout(TIMEOUT_MESSAGE)
 
     def remaining(self) -> float:
         remaining = self.deadline - time.monotonic()
         if remaining <= 0:
-            raise RoomAllocationTimeout(
-                "Room checking reached its time limit. Your timetable has not been saved; please retry the check."
-            )
+            raise self.expired()
         return remaining
 
 
@@ -321,9 +396,7 @@ def _repair(
         ):
             # CP-SAT can stop just *before* its wall limit. In particular,
             # Windows clock resolution may still leave remaining() positive.
-            raise RoomAllocationTimeout(
-                "Room checking reached its time limit. Your timetable has not been saved; please retry the check."
-            )
+            raise context.expired()
         if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
             context.limited_searches += 1
             break
