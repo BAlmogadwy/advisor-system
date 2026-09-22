@@ -1819,61 +1819,141 @@ function repairedRun(ui, minimumChange) {
   return response({ ...data, run_id: 91, minimum_change: minimumChange });
 }
 
-test('a repair tells the registrar exactly which exams moved, and that it was the minimum', async t => {
+async function runRepair(t, minimumChange) {
   let ui;
   ui = await loadedEditor(t, {
-    onRequest: async url => url === '/ops/exam-timetable/build/'
-      ? repairedRun(ui, {
-          moves: [{ course_code: 'CS201', course_name: 'Algorithms', from: { day: 'Mon', period: '08:00-10:00' }, to: { day: 'Tue', period: '10:30-12:30' } }],
-          unseated: [], violations_before: 1, violations_after: 0, proven_minimal: true, status: 'OPTIMAL',
-        })
-      : undefined,
+    onRequest: async url => url === '/ops/exam-timetable/build/' ? repairedRun(ui, minimumChange) : undefined,
   });
   dropExam(ui, 'Wed');
   ui.$('minChangeBtn').click();
   await settle();
-  const status = ui.$('etStatus');
-  assert.ok(status.classList.contains('alert-success'), 'A fully legal result is a success');
-  assert.match(status.textContent, /CS201/);
-  assert.match(status.textContent, language === 'ar' ? /أقل عدد ممكن/ : /the fewest possible/);
-  // Times sit inside LTR isolates: unisolated, Arabic paints 08:00-10:00 as 10:00-08:00.
-  const times = [...status.querySelectorAll('bdi[dir="ltr"]')].map(node => node.textContent);
-  assert.ok(times.some(text => text.includes('08:00-10:00')), 'The origin time must be isolated');
-  assert.ok(times.some(text => text.includes('10:30-12:30')), 'The destination time must be isolated');
+  return ui;
+}
+
+const move = (code, from, to) => ({
+  course_code: code, course_name: '',
+  from: { day: from, period: '08:00-10:00' }, to: { day: to, period: '10:30-12:30' },
+});
+const solved = { unseated: [], violations_before: 1, violations_after: 0, proven_minimal: true, status: 'OPTIMAL' };
+
+// jsdom reads text whether or not it can be seen, which is how an invisible
+// report once passed every test here. Assert the thing a registrar needs.
+function assertVisible(ui, element) {
+  assert.ok(element.textContent.trim(), 'The report must say something');
+  for (let node = element; node; node = node.parentElement) {
+    assert.equal(node.hidden, false, `${node.id || node.tagName} hides the report`);
+    assert.equal(node.classList?.contains('d-none'), false, `${node.id || node.tagName} hides the report`);
+    if (node.tagName === 'DETAILS' && node !== element) {
+      assert.equal(node.open, true, `${node.id || 'a details element'} is collapsed around the report`);
+    }
+  }
+}
+
+test('the repair report is shown where the registrar can see it, not in the collapsed setup', async t => {
+  const ui = await runRepair(t, { ...solved, moves: [move('CS201', 'Mon', 'Tue')] });
+  const report = ui.$('examRepairReport');
+  assertVisible(ui, report);
+  assert.equal(ui.$('examSetupDetails').open, false, 'Setup still collapses for a saved run');
+  assert.equal(report.closest('#examSetupDetails'), null);
+  assert.equal(report.getAttribute('role'), 'status');
 });
 
-test('a repair that cannot clear the board says what is left and why, and does not claim success', async t => {
-  let ui;
-  ui = await loadedEditor(t, {
-    onRequest: async url => url === '/ops/exam-timetable/build/'
-      ? repairedRun(ui, { moves: [], unseated: ['CS301'], violations_before: 2, violations_after: 1, proven_minimal: true, status: 'OPTIMAL' })
-      : undefined,
+test('a repair tells the registrar exactly which exams moved, and that it was the minimum', async t => {
+  const ui = await runRepair(t, { ...solved, moves: [move('CS201', 'Mon', 'Tue')] });
+  const report = ui.$('examRepairReport');
+  assert.ok(report.classList.contains('is-clean'), 'A fully legal result is clean');
+  assert.match(report.textContent, /CS201/);
+  assert.match(report.textContent, language === 'ar' ? /أقل عدد ممكن/ : /the fewest possible/);
+  assert.match(report.textContent, language === 'ar' ? /الجداول المحفوظة/ : /Saved timetables/);
+  // Times sit inside LTR isolates: unisolated, Arabic paints 08:00-10:00 as 10:00-08:00.
+  const times = [...report.querySelectorAll('bdi[dir="ltr"]')].map(node => node.textContent);
+  assert.ok(times.some(text => text.includes('08:00-10:00')), 'The origin time must be isolated');
+  assert.ok(times.some(text => text.includes('10:30-12:30')), 'The destination time must be isolated');
+  // The arrow is aria-hidden, so the direction must be spoken in words.
+  assert.match(report.querySelector('.visually-hidden').textContent, language === 'ar' ? /إلى/ : /to/);
+});
+
+// Arabic agrees in five forms; a 1-versus-more test gets every count from two up wrong.
+for (const [count, arabic, english] of [
+  [1, /تم نقل اختبار واحد/, /Moved 1 exam\b/],
+  [2, /تم نقل اختبارين/, /Moved 2 exams/],
+  [3, /تم نقل 3 اختبارات/, /Moved 3 exams/],
+  [11, /تم نقل 11 اختباراً/, /Moved 11 exams/],
+]) {
+  test(`the move count agrees grammatically for ${count} exam${count === 1 ? '' : 's'}`, async t => {
+    const moves = Array.from({ length: count }, (_, index) => move(`CS${200 + index}`, 'Mon', 'Tue'));
+    const ui = await runRepair(t, { ...solved, moves });
+    assert.match(ui.$('examRepairReport').textContent, language === 'ar' ? arabic : english);
   });
-  dropExam(ui, 'Wed');
-  ui.$('minChangeBtn').click();
-  await settle();
-  const status = ui.$('etStatus');
-  assert.ok(status.classList.contains('alert-warning'), 'A board left with a clash is not a success');
-  assert.equal(status.classList.contains('alert-success'), false);
-  assert.match(status.textContent, language === 'ar' ? /الفائض/ : /Overflow/);
-  assert.match(status.textContent, language === 'ar' ? /ثبّتها أو نقلتها/ : /you pinned or moved/);
+}
+
+test('every moved exam is listed, with the long tail behind a disclosure rather than dropped', async t => {
+  const moves = Array.from({ length: 9 }, (_, index) => move(`CS${300 + index}`, 'Mon', 'Tue'));
+  const ui = await runRepair(t, { ...solved, moves });
+  const report = ui.$('examRepairReport');
+  for (const { course_code: code } of moves) assert.match(report.textContent, new RegExp(code));
+  const more = report.querySelector('details');
+  assert.ok(more, 'Moves past the first six must remain reachable');
+  assert.match(more.querySelector('summary').textContent, /9/);
+});
+
+test('a repair that cannot clear the board names what went to Overflow and does not claim success', async t => {
+  const ui = await runRepair(t, {
+    moves: [], unseated: ['CS301', 'CS302'], violations_before: 3, violations_after: 1, proven_minimal: true, status: 'OPTIMAL',
+  });
+  const report = ui.$('examRepairReport');
+  assert.ok(report.classList.contains('is-partial'), 'A board left with a clash is not clean');
+  assert.equal(report.classList.contains('is-clean'), false);
+  assert.match(report.textContent, /CS301/);
+  assert.match(report.textContent, /CS302/);
+  assert.match(report.textContent, language === 'ar' ? /فترة إضافية/ : /Overflow slot/);
+  assert.match(report.textContent, language === 'ar' ? /بقيت مخالفة واحدة/ : /1 rule break remains/);
+});
+
+test('a solver that did not finish is never reported as the registrar leaving clashes behind', async t => {
+  const ui = await runRepair(t, {
+    moves: [], unseated: [], violations_before: 3, violations_after: 3, proven_minimal: false, status: 'UNKNOWN',
+  });
+  const text = ui.$('examRepairReport').textContent;
+  assert.match(text, language === 'ar' ? /تعذّر إكمال الإصلاح/ : /could not finish/);
+  assert.doesNotMatch(text, language === 'ar' ? /نقلتَها منذ آخر حفظ/ : /you moved since the last save/);
 });
 
 test('a repair the solver could not prove minimal does not claim to be minimal', async t => {
-  let ui;
-  ui = await loadedEditor(t, {
-    onRequest: async url => url === '/ops/exam-timetable/build/'
-      ? repairedRun(ui, {
-          moves: [{ course_code: 'CS201', course_name: '', from: { day: 'Mon', period: '08:00-10:00' }, to: { day: 'Tue', period: '08:00-10:00' } }],
-          unseated: [], violations_before: 1, violations_after: 0, proven_minimal: false, status: 'FEASIBLE',
-        })
-      : undefined,
-  });
-  dropExam(ui, 'Wed');
-  ui.$('minChangeBtn').click();
+  const ui = await runRepair(t, { ...solved, proven_minimal: false, status: 'FEASIBLE', moves: [move('CS201', 'Mon', 'Tue')] });
+  assert.match(ui.$('examRepairReport').textContent, /CS201/);
+  assert.doesNotMatch(ui.$('examRepairReport').textContent, language === 'ar' ? /أقل عدد ممكن/ : /fewest possible/);
+});
+
+test('a repair on a board with nothing wrong says so rather than reporting a move', async t => {
+  const ui = await runRepair(t, { ...solved, violations_before: 0, moves: [] });
+  assert.match(ui.$('examRepairReport').textContent, language === 'ar' ? /لا يوجد ما يحتاج إصلاحاً/ : /Nothing to repair/);
+});
+
+test('the report clears as soon as the board is edited again', async t => {
+  const ui = await runRepair(t, { ...solved, moves: [move('CS201', 'Mon', 'Tue')] });
+  assert.ok(ui.$('examRepairReport').textContent.trim());
+  dropExam(ui, 'Thu');
   await settle();
-  assert.match(ui.$('etStatus').textContent, /CS201/);
-  assert.doesNotMatch(ui.$('etStatus').textContent, language === 'ar' ? /أقل عدد ممكن/ : /fewest possible/);
+  assert.equal(ui.$('examRepairReport').textContent, '', 'A stale report would describe a board that no longer exists');
+});
+
+test('a malformed report degrades instead of turning a saved repair into an error', async t => {
+  const ui = await runRepair(t, { ...solved, moves: [null, { course_code: 'CS201' }, move('CS202', 'Mon', 'Tue')] });
+  assert.match(ui.$('examRepairReport').textContent, /CS202/);
+  assert.doesNotMatch(ui.$('etStatus').className, /alert-danger/);
+});
+
+test('every server value is escaped in the repair report', async t => {
+  const payload = '<img src=x onerror=alert(1)>';
+  const ui = await runRepair(t, {
+    ...solved,
+    unseated: [payload],
+    violations_after: 1,
+    moves: [{ course_code: payload, course_name: '', from: { day: payload, period: payload }, to: { day: 'Tue', period: '08:00-10:00' } }],
+  });
+  assert.equal(ui.$('examRepairReport').querySelector('img'), null, 'Server text must never become markup');
+  assert.match(ui.$('examRepairReport').textContent, /<img src=x/);
 });
 
 function assertRepairMatchesOptimize(ui, when) {
@@ -1902,34 +1982,13 @@ test('Fix with fewest moves is offered exactly when Optimize is', async t => {
   assert.equal(ui.$('examEditToolbar').inert, false, 'A failed repair must permit retry');
 });
 
-test('a repair on a board with nothing wrong says so rather than reporting a move', async t => {
-  let ui;
-  ui = await loadedEditor(t, {
-    onRequest: async url => url === '/ops/exam-timetable/build/'
-      ? repairedRun(ui, { moves: [], unseated: [], violations_before: 0, violations_after: 0, proven_minimal: true, status: 'OPTIMAL' })
-      : undefined,
-  });
-  dropExam(ui, 'Wed');
-  ui.$('minChangeBtn').click();
-  await settle();
-  assert.match(ui.$('etStatus').textContent, language === 'ar' ? /لا يوجد ما يحتاج إصلاحاً/ : /Nothing to repair/);
-});
-
-test('course names from the server are escaped in the repair summary', async t => {
-  let ui;
-  ui = await loadedEditor(t, {
-    onRequest: async url => url === '/ops/exam-timetable/build/'
-      ? repairedRun(ui, {
-          moves: [{ course_code: '<img src=x onerror=alert(1)>', course_name: '', from: { day: 'Mon', period: '08:00-10:00' }, to: { day: 'Tue', period: '08:00-10:00' } }],
-          unseated: [], violations_before: 1, violations_after: 0, proven_minimal: true, status: 'OPTIMAL',
-        })
-      : undefined,
-  });
-  dropExam(ui, 'Wed');
-  ui.$('minChangeBtn').click();
-  await settle();
-  assert.equal(ui.$('etStatus').querySelector('img'), null, 'Server text must never become markup');
-  assert.match(ui.$('etStatus').textContent, /<img src=x/);
+test('both buttons explain themselves, in the page language', async t => {
+  const ui = await loadedEditor(t);
+  const fix = ui.$('minChangeBtn').getAttribute('title');
+  const optimize = ui.$('optimizeLoadedBtn').getAttribute('title');
+  assert.match(fix, language === 'ar' ? /مثبّت أو نقلتَه منذ آخر حفظ/ : /since the last save/);
+  assert.match(optimize, language === 'ar' ? /نقلتَها دون تثبيتها/ : /you moved and did not pin/);
+  assert.match(ui.$('examEditHelp').textContent, language === 'ar' ? /إصلاح بأقل تغيير/ : /Fix with fewest moves/);
 });
 
 test('failed or placement-changing check responses leave the draft visibly unchecked and retryable', async t => {
