@@ -264,6 +264,11 @@ def test_check_save_export_agree_without_pinning_manual_moves(
         patch.setattr(exam_views, "schedule", scheduling_is_forbidden)
         patch.setattr(exam_timetable, "schedule", scheduling_is_forbidden)
         patch.setattr(exam_timetable, "_rebalance_invigilators_pass", scheduling_is_forbidden)
+        # The evaluator holds its own reference to the pass; patch that too.
+        patch.setattr(
+            "core.services.exam_evaluation._rebalance_invigilators_pass",
+            scheduling_is_forbidden,
+        )
         count_before = ExamTimetableRun.objects.count()
         checked = _post(export_client, "exam_timetable_draft_impact", payload)
         assert ExamTimetableRun.objects.count() == count_before

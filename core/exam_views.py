@@ -528,10 +528,19 @@ def _loaded_request_context(payload: dict, schedule_raw: list) -> dict:
 
 
 def _rebuild_loaded_schedule(
-    *, label: str, expected_input_fingerprint: str | None = None, **kwargs
+    *,
+    label: str,
+    expected_input_fingerprint: str | None = None,
+    rebalance_invigilators: bool = False,
+    **kwargs,
 ) -> dict:
-    """Persist the same complete evaluation used by a non-saving Check."""
-    result = evaluate_exam_schedule(**kwargs)
+    """Persist the same complete evaluation used by a non-saving Check.
+
+    ``rebalance_invigilators`` is off for Save, which must persist the exact
+    board the registrar is looking at. Only Optimise turns it on, because only
+    Optimise re-solves the placements and so owes them the build post-pass.
+    """
+    result = evaluate_exam_schedule(**kwargs, rebalance_invigilators=rebalance_invigilators)
     if expected_input_fingerprint and expected_input_fingerprint != result["input_fingerprint"]:
         raise ExamInputsChanged(
             "Enrollment, course, room or policy inputs changed since the last check. "
@@ -631,6 +640,10 @@ def _optimise_loaded_schedule(
         )
     return _rebuild_loaded_schedule(
         label=label,
+        # Optimise re-solved every placement, discarding the day assignments the
+        # original build's invigilator pass chose. Re-run that pass so the
+        # optimised board is the same class of artefact a build produces.
+        rebalance_invigilators=True,
         days=days,
         periods=periods,
         max_per_day=max_per_day,

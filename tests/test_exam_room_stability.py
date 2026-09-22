@@ -299,6 +299,8 @@ def test_manual_move_reallocates_both_periods_without_moving_other_exams_and_sav
     monkeypatch.setattr("core.exam_views.schedule", forbidden)
     monkeypatch.setattr("core.services.exam_timetable.schedule", forbidden)
     monkeypatch.setattr("core.services.exam_timetable._rebalance_invigilators_pass", forbidden)
+    # The evaluator holds its own reference to the pass; patch that binding too.
+    monkeypatch.setattr("core.services.exam_evaluation._rebalance_invigilators_pass", forbidden)
     checked = _evaluate(built, moved, kept_pins)
     after = {row["course_code"]: row for row in checked["schedule"]}
     assert {room["room_code"] for room in after["DS113"]["rooms"]} == {"F26", "F23"}
@@ -516,3 +518,62 @@ def test_fingerprint_invalidates_real_input_or_policy_changes(change, monkeypatc
     else:
         inputs[change] = list(reversed(inputs[change]))
     assert exam_input_fingerprint.fingerprint_exam_inputs(**inputs) != before
+
+
+def _evaluate_board(schedule_raw, source, *, rebalance):
+    return evaluate_exam_schedule(
+        days=DAYS,
+        periods=PERIODS,
+        max_per_day=source["qa"]["max_per_day"],
+        schedule_raw=deepcopy(schedule_raw),
+        selected_courses=source["courses"],
+        assign_rooms=True,
+        seed=source["seed"],
+        thin_conflict_threshold=0,
+        programs=source["enrollment_scope"]["programs"],
+        sections=source["enrollment_scope"]["sections"],
+        pinned=[],
+        rebalance_invigilators=rebalance,
+    )
+
+
+def test_a_rebalanced_board_survives_a_fixed_time_check(tied_inventory):
+    """The Optimise path moves exams, then a Check must reproduce that board.
+
+    Optimise re-solves every placement and so runs the invigilator post-pass -
+    without it, day totals on a real board went from a spread of 2 to 45. That
+    pass is the only way a non-build path can move an exam, so the Build/Check
+    agreement this module defends has to survive it. The other tests here use a
+    board that is already flat, where the pass exits early without moving
+    anything and proves nothing about this.
+    """
+    built = build_exam_timetable(
+        label="Rebalanced",
+        days=DAYS,
+        periods=PERIODS,
+        programs=["DS", "AI"],
+        sections=["M", "F"],
+        seed=None,
+        rebalance_invigilators=False,
+        persist=False,
+    )
+    # Crowd the timetable onto Sunday so the post-pass has real work to do.
+    skewed = deepcopy(built["schedule"])
+    for index, row in enumerate(sorted(skewed, key=lambda r: r["course_identity"])):
+        slot = 0 if index < len(skewed) - 1 else 2
+        row["slot_index"] = slot
+        row["day"] = DAYS[slot // len(PERIODS)]
+        row["period"] = PERIODS[slot % len(PERIODS)]
+
+    optimised = _evaluate_board(skewed, built, rebalance=True)
+    assert optimised["qa"]["rebalance_moves"] > 0, (
+        "The fixture no longer exercises the post-pass; this test would prove nothing."
+    )
+
+    checked = _evaluate_board(optimised["schedule"], built, rebalance=False)
+    assert _placements(checked) == _placements(optimised)
+    assert _room_rows(checked) == _room_rows(optimised)
+    assert _report(checked) == _report(optimised)
+    assert _visible_report(checked) == _visible_report(optimised)
+    assert checked["input_fingerprint"] == optimised["input_fingerprint"]
+    assert ExamTimetableRun.objects.count() == 0

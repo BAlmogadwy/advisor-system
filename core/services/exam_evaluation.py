@@ -1,7 +1,14 @@
-"""Complete fixed-placement evaluation shared by Check and Save.
+"""Complete fixed-placement evaluation shared by Check, Save and Optimise.
 
 This module reads authoritative inputs and performs no database writes. It
-has no scheduler or rebalance dependency, so calculation cannot move exams.
+never schedules, so evaluation cannot choose where an exam sits.
+
+One caller is not a pure evaluation. Optimise re-solves every placement, which
+makes it a build, and a build owes the board the same invigilator post-pass that
+``build_exam_timetable`` runs — without it, Optimise silently undoes the balancing
+the original build paid for. That post-pass is therefore available here behind
+``rebalance_invigilators``, which defaults to off. Check and Save must never turn
+it on: both exist to report on the exact board they were handed.
 """
 
 from __future__ import annotations
@@ -13,6 +20,7 @@ from core.services.course_identity import planner_course_key
 from core.services.exam_input_fingerprint import fingerprint_exam_inputs
 from core.services.exam_operations_snapshot import build_exam_operations_snapshot
 from core.services.exam_review import build_exam_review
+from core.services.exam_room_allocation import RoomAllocationContext
 from core.services.exam_run_schema import (
     STATUS_DERIVATION_VERSION,
     compute_enrolment_snapshot,
@@ -26,6 +34,7 @@ from core.services.exam_timetable import (
     _build_qa,
     _build_room_qa,
     _build_section_enrollment_from_enrolled_sets,
+    _rebalance_invigilators_pass,
     _source_code_for_display,
     apply_thin_conflict_policy,
     assign_rooms_to_schedule,
@@ -35,6 +44,7 @@ from core.services.exam_timetable import (
     build_enrolled_sets_with_meta,
     build_plan_term_buckets,
     check_room_feasibility,
+    period_cohort_count,
     select_exam_course_enrollments,
     validate_exam_pins,
 )
@@ -178,6 +188,7 @@ def evaluate_exam_schedule(
     programs: list[str] | None = None,
     sections: list[str] | None = None,
     pinned: list[dict] | None = None,
+    rebalance_invigilators: bool = False,
 ) -> dict:
     """Evaluate exact exam placements without scheduling or persisting a run.
 
@@ -219,23 +230,9 @@ def evaluate_exam_schedule(
         credit_map[code] = source_credit_map.get(source, source_credit_map.get(code, 3))
 
     conflicts, full_adj = build_conflict_graph(enrolled_sets)
-    _adj, thin_courses = apply_thin_conflict_policy(
-        enrolled_sets, full_adj, thin_conflict_threshold
-    )
-    plan_term_buckets, _ = build_plan_term_buckets(set(course_list), course_meta, programs=programs)
-    qa = _build_qa(
-        enrolled_sets,
-        schedule_entries,
-        max_per_day=max_per_day,
-        plan_term_buckets=plan_term_buckets,
-        credit_map=credit_map,
-    )
-    attach_exam_relaxation_qa(
-        qa,
-        enrolled_sets,
-        schedule_entries,
-        thin_conflict_threshold,
-        thin_courses,
+    adj, thin_courses = apply_thin_conflict_policy(enrolled_sets, full_adj, thin_conflict_threshold)
+    plan_term_buckets, course_buckets = build_plan_term_buckets(
+        set(course_list), course_meta, programs=programs
     )
 
     student_attribution = list(
@@ -255,19 +252,62 @@ def evaluate_exam_schedule(
     )
     rooms_list: list[dict] = []
     room_feasibility: list[dict] = []
+    rebalance_moves = 0
     if assign_rooms:
         rooms_list = _rooms_with_metadata()
         room_feasibility = check_room_feasibility(section_enrollment, rooms_list)
         for entry in schedule_entries:
             entry["rooms"] = []
-        assign_rooms_to_schedule(schedule_entries, section_enrollment, rooms_list, seed=seed)
+        # One shared, size-sized deadline across the pack and every trial repack
+        # the post-pass performs, exactly as build_exam_timetable arms it.
+        allocation_context = RoomAllocationContext.for_periods(
+            period_cohort_count(schedule_entries, section_enrollment)
+        )
+        assign_rooms_to_schedule(
+            schedule_entries,
+            section_enrollment,
+            rooms_list,
+            seed=seed,
+            allocation_context=allocation_context,
+        )
+        if rebalance_invigilators and rooms_list and len(days) > 1:
+            rebalance_moves = _rebalance_invigilators_pass(
+                schedule_entries,
+                section_enrollment,
+                rooms_list,
+                slots,
+                adj,
+                plan_term_buckets,
+                course_buckets,
+                pinned_courses={pin["course_code"] for pin in pinned},
+                allocation_context=allocation_context,
+                enrolled_sets=enrolled_sets,
+                credit_map=credit_map,
+                max_per_day=max_per_day,
+            )
+            # The post-pass moves exams between days; a pin may not be one of them.
+            validate_exam_pins(pinned, course_list, slots, schedule_entries=schedule_entries)
         _attach_room_metadata(schedule_entries, rooms_list)
-        room_qa = _build_room_qa(schedule_entries, rooms_list)
-        qa["rooms"] = room_qa
-    else:
-        qa["rooms"] = _build_room_qa(schedule_entries, [])
+
+    # QA is computed over the FINAL board. When the post-pass ran, the placements
+    # it produced are the ones that get persisted, reported and exported.
+    qa = _build_qa(
+        enrolled_sets,
+        schedule_entries,
+        max_per_day=max_per_day,
+        plan_term_buckets=plan_term_buckets,
+        credit_map=credit_map,
+    )
+    attach_exam_relaxation_qa(
+        qa,
+        enrolled_sets,
+        schedule_entries,
+        thin_conflict_threshold,
+        thin_courses,
+    )
+    qa["rooms"] = _build_room_qa(schedule_entries, rooms_list if assign_rooms else [])
     qa["room_feasibility_violations"] = room_feasibility
-    qa["rebalance_moves"] = 0
+    qa["rebalance_moves"] = rebalance_moves
 
     buckets_summary = [
         {
