@@ -1514,6 +1514,67 @@ def assign_rooms_to_schedule(
     return schedule_entries
 
 
+#: Every student-facing soft metric _build_qa reports. Balancing staff may not
+#: make any of them worse, so the guard compares the whole tuple, not a total:
+#: a dimension left out of this list is a dimension nothing protects.
+#: These are AGGREGATES, not per-student guarantees - see student_load_signature.
+STUDENT_LOAD_METRICS = (
+    "students_over_limit_per_day",
+    "max_exams_per_day_per_student",
+    "max_credit_load_per_day",
+    "heavy_day_students",
+)
+
+
+def student_load_signature(
+    enrolled_sets: dict[str, set[int]],
+    schedule_entries: list[dict],
+    *,
+    max_per_day: int = 2,
+    plan_term_buckets: dict[tuple[str, int], set[str]] | None = None,
+    credit_map: dict[str, int] | None = None,
+) -> tuple[int, ...]:
+    """What a board costs its students, as a tuple that may never grow.
+
+    Staff balancing protects seats and invigilators and said nothing about
+    students, so it was free to flatten the staff curve by concentrating exams
+    onto somebody's day - and measurably did: on a real 167-course board it
+    drove heavy_day_students from 0 to 63 and max exams/day from 2 to 3 while
+    doing exactly what it had been asked to do.
+
+    What this does NOT promise: these are the aggregates _build_qa reports, so
+    two changes still read as neutral. A move can give a student a second exam
+    in a day whose credit pair scores below the heavy threshold, and it can
+    un-harm one student while harming another, leaving the counts flat. Both
+    match how the scheduler itself trades; neither is a per-student guarantee.
+    """
+    qa = _build_qa(
+        enrolled_sets,
+        schedule_entries,
+        max_per_day=max_per_day,
+        plan_term_buckets=plan_term_buckets,
+        credit_map=credit_map,
+    )
+    return tuple(int(qa.get(metric, 0) or 0) for metric in STUDENT_LOAD_METRICS)
+
+
+#: Trials a rooming deadline can afford per second, and the floor below which
+#: the pass is not worth starting. A trial costs ~0.15s of wall on a developer
+#: workstation, so ~1.4 per budget-second leaves room for the mandatory pack
+#: and keeps the deterministic cap, not the clock, as the binding constraint.
+TRIALS_PER_BUDGET_SECOND = 1.4
+MIN_TRIAL_BUDGET = 30
+MAX_TRIAL_BUDGET = 120
+
+
+def derive_trial_budget(budget_seconds: float | None) -> int:
+    """Scale the search with the deadline it has to finish inside."""
+    if not budget_seconds or budget_seconds <= 0:
+        return MIN_TRIAL_BUDGET
+    scaled = int(budget_seconds * TRIALS_PER_BUDGET_SECOND)
+    return max(MIN_TRIAL_BUDGET, min(MAX_TRIAL_BUDGET, scaled))
+
+
 def _rebalance_invigilators_pass(
     schedule_entries: list[dict],
     section_enrollment: dict[str, list[dict]],
@@ -1522,12 +1583,44 @@ def _rebalance_invigilators_pass(
     adj: dict[str, dict[str, int]],
     plan_term_buckets: dict[tuple[str, int], set[str]] | None,
     course_buckets: dict[str, list[tuple[str, int]]] | None,
-    max_iterations: int = 30,
+    *,
+    max_iterations: int = 200,
+    # A WORK budget, not a wall-clock one, so the same inputs produce the same
+    # board on a fast workstation and on the 0.5-CPU production instance.
+    #
+    # It has to be proportional to the deadline, because the deadline is
+    # anti-correlated with difficulty: search_budget_seconds sizes on
+    # period/cohorts, which SHRINKS as the exam period shortens, while the work
+    # GROWS, because the same courses pack into fewer, denser slots. Measured
+    # cold-cache on the real roster, guard on, against a flat cap of 120:
+    #
+    #   board      budget   work    repacks   headroom   spread after
+    #   15d x 3p    55.0s   9.96s      67       5.5x          2
+    #   14d x 3p    52.0s  13.95s      64       3.7x          2
+    #   12d x 3p    46.0s  20.22s     125       2.3x          5
+    #   10d x 3p    40.0s  16.54s     122       2.4x         25
+    #    8d x 3p    34.0s  17.91s     127       1.9x         50
+    #
+    # A flat cap is therefore tuned on the easiest shape and lets every shorter
+    # board run until the WALL stops it - which makes that board host-dependent
+    # and, at a 4x slowdown on twelve days, degrades it to spread 34, barely
+    # better than the defect this pass exists to fix. None means "derive it",
+    # which is what both production callers do.
+    max_trials: int | None = None,
     pinned_courses: set[str] | None = None,
     allocation_context: RoomAllocationContext | None = None,
+    enrolled_sets: dict[str, set[int]] | None = None,
+    credit_map: dict[str, int] | None = None,
+    max_per_day: int = 2,
+    caller: str = "unknown",
 ) -> int:
     """Final post-pass that moves courses between days to flatten the
     per-day invigilator demand.
+
+    ``enrolled_sets`` arms the student-load guard and every production caller
+    supplies it. Without it the pass can only see rooms and staff, and a move
+    that flattens the invigilator curve by pushing a third exam into a
+    student's day looks free.
 
     Local search:
       1. Recompute per-day invigilator totals using the current packing.
@@ -1695,20 +1788,55 @@ def _rebalance_invigilators_pass(
             allocation_context.searches,
         )
         return 0
+
+    def _student_safety() -> tuple[int, ...]:
+        if enrolled_sets is None:
+            return ()
+        return student_load_signature(
+            enrolled_sets,
+            schedule_entries,
+            max_per_day=max_per_day,
+            plan_term_buckets=plan_term_buckets,
+            credit_map=credit_map,
+        )
+
     current = _per_day_invigilators()
     base_score = _balance_score(current)
     base_room_safety = _room_safety()
+    base_student_safety = _student_safety()
     moves_accepted = 0
 
+    # Day pairs this search has already tried without finding an acceptable
+    # move. Exhausting one pair is not a reason to abandon the optimisation:
+    # before this, a single refused move on the widest pair ended the whole
+    # pass, so adding the student veto cut Build from 27 accepted moves to 8
+    # and left invigilator spread at 17 instead of 2 - with most of its wall
+    # budget unspent. Any accepted move reshapes the load, so the set clears.
+    exhausted_pairs: set[tuple[str, str]] = set()
+    trials_spent = 0
+    if max_trials is None:
+        max_trials = derive_trial_budget(
+            allocation_context.budget_seconds if allocation_context else None
+        )
+
     for _iter in range(max_iterations):
-        if not current:
+        if not current or trials_spent >= max_trials:
             break
-        # Sort days by total invigilator load — pick the worst hot/cold pair
-        days_by_load = sorted(current.items(), key=lambda x: x[1]["total"])
-        coldest_day, cold_counts = days_by_load[0]
-        hottest_day, hot_counts = days_by_load[-1]
-        if hot_counts["total"] - cold_counts["total"] <= 2:
-            break  # already pretty flat
+        # Widest remaining gap first; day names break ties so the search order
+        # is fixed by the board alone and never by dict ordering.
+        gaps = sorted(
+            (
+                (cold["total"] - hot["total"], hot_day, cold_day)
+                for hot_day, hot in current.items()
+                for cold_day, cold in current.items()
+                if hot["total"] - cold["total"] > 2
+            ),
+            key=lambda gap: (gap[0], gap[1], gap[2]),
+        )
+        pair = next((gap for gap in gaps if (gap[1], gap[2]) not in exhausted_pairs), None)
+        if pair is None:
+            break  # every worthwhile day pair is flat or already exhausted
+        _, hottest_day, coldest_day = pair
 
         improved = False
         # Snapshot current slot/day lookups
@@ -1745,6 +1873,7 @@ def _rebalance_invigilators_pass(
                     continue
 
                 # Tentative move
+                trials_spent += 1
                 previous_rooms = [deepcopy(item.get("rooms", [])) for item in schedule_entries]
                 entry["slot_index"] = tsi
                 entry["day"] = target_slot["day"]
@@ -1777,13 +1906,19 @@ def _rebalance_invigilators_pass(
                 new_per_day = _per_day_invigilators()
                 new_score = _balance_score(new_per_day)
                 new_room_safety = _room_safety()
+                new_student_safety = _student_safety()
 
                 # Accept only if strictly improving the lexicographic
                 # (combined-stddev, max-day, spread) score.  A 0.01
                 # tolerance on the stddev component prevents oscillation
                 # when several moves have indistinguishable impact.
+                # Safety is a veto, never a trade: staff balance may not be
+                # bought with seats, split sections or student exam days.
                 safe = all(
                     new <= old for new, old in zip(new_room_safety, base_room_safety, strict=True)
+                ) and all(
+                    new <= old
+                    for new, old in zip(new_student_safety, base_student_safety, strict=True)
                 )
                 accept = safe and (
                     new_score[0] + 0.01 < base_score[0]
@@ -1794,6 +1929,7 @@ def _rebalance_invigilators_pass(
                 if accept:
                     base_score = new_score
                     base_room_safety = new_room_safety
+                    base_student_safety = new_student_safety
                     current = new_per_day
                     moves_accepted += 1
                     improved = True
@@ -1810,11 +1946,32 @@ def _rebalance_invigilators_pass(
             if improved:
                 break
 
-        if not improved:
-            break
+        if improved:
+            # The board changed, so pairs that had nothing to offer may now.
+            # Completeness rather than a measurable gain: on the real 15-day
+            # board keeping the blacklist instead produced an identical
+            # timetable in 98 trials rather than 101, so no test pins this.
+            exhausted_pairs.clear()
+        else:
+            exhausted_pairs.add((hottest_day, coldest_day))
 
     # Accepted trials already carry validated rooms; rejected trials restore
     # their exact incumbent. No further solve is needed after the last trial.
+    #
+    # Say how the search ended. Converging, spending its trial budget and being
+    # vetoed into a standstill are three different outcomes that all used to
+    # look identical from outside - rebalance_moves alone cannot tell them
+    # apart, and the truncation warning fires on only one of them.
+    logger.info(
+        "exam invigilator rebalance: caller=%s outcome=%s moves=%s trials=%s/%s",
+        caller,
+        "deadline"
+        if allocation_context.truncated
+        else ("trial_budget" if trials_spent >= max_trials else "converged"),
+        moves_accepted,
+        trials_spent,
+        max_trials,
+    )
     return moves_accepted
 
 
@@ -2174,6 +2331,10 @@ def build_exam_timetable(
                 cb,
                 pinned_courses={pin["course_code"] for pin in pinned},
                 allocation_context=allocation_context,
+                enrolled_sets=enrolled_sets,
+                credit_map=credit_map,
+                max_per_day=max_per_day,
+                caller="build",
             )
 
         room_qa = _build_room_qa(schedule_entries, rooms_list)

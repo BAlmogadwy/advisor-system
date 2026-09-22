@@ -49,8 +49,15 @@ WEB_SERVICE_NAME = "advisor-system"
 WORKER_SERVICE_NAME = "advisor-telegram-worker"
 CRON_SERVICE_NAME = "advisor-purge-planner-drafts"
 EXPECTED_WEB_START_COMMAND = (
+    # --graceful-timeout must exceed the longest request a registrar can start.
+    # An exam Optimise that runs the invigilator post-pass takes ~45-66s on the
+    # 0.5-CPU instance, and gunicorn's 30s default killed it mid-flight on every
+    # deploy; the run row is only written once evaluation returns, so the
+    # registrar lost the work rather than merely waiting. Pair it with
+    # maxShutdownDelaySeconds in render.yaml, which bounds it from outside.
     "gunicorn config.wsgi --bind 0.0.0.0:$PORT --workers 1 "
-    "--worker-class gthread --threads 4 --timeout 120 --no-control-socket"
+    "--worker-class gthread --threads 4 --timeout 120 --graceful-timeout 150 "
+    "--no-control-socket"
 )
 EXPECTED_PROCFILE_WEB_COMMAND = f"web: {EXPECTED_WEB_START_COMMAND}"
 EXPECTED_WORKER_START_COMMAND = (

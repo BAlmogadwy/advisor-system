@@ -100,6 +100,9 @@ def test_check_and_save_never_schedule_and_calculate_all_changed_cards(editor, m
     monkeypatch.setattr("core.exam_views.schedule", forbidden)
     monkeypatch.setattr("core.services.exam_timetable.schedule", forbidden)
     monkeypatch.setattr("core.services.exam_timetable._rebalance_invigilators_pass", forbidden)
+    # The evaluator imports the pass into its own namespace, so patching only
+    # exam_timetable would leave this guard unable to see a Check that rebalanced.
+    monkeypatch.setattr("core.services.exam_evaluation._rebalance_invigilators_pass", forbidden)
     count = ExamTimetableRun.objects.count()
     result = check(client, payload)
     assert ExamTimetableRun.objects.count() == count

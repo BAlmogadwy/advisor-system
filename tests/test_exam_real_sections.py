@@ -431,6 +431,8 @@ def test_build_check_save_use_same_sections_and_reject_equal_count_section_drift
     monkeypatch.setattr(exam_views, "schedule", forbidden)
     monkeypatch.setattr(exam_timetable, "schedule", forbidden)
     monkeypatch.setattr(exam_timetable, "_rebalance_invigilators_pass", forbidden)
+    # The evaluator holds its own reference to the pass; patch that binding too.
+    monkeypatch.setattr("core.services.exam_evaluation._rebalance_invigilators_pass", forbidden)
     checked = _post(export_client, "exam_timetable_draft_impact", payload)
     assert ExamTimetableRun.objects.count() == count_before
     assert checked["section_enrollment"] == built["section_enrollment"]

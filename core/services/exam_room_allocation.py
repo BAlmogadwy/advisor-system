@@ -22,7 +22,11 @@ from ortools.sat.python import cp_model
 logger = logging.getLogger(__name__)
 
 ROOM_ALLOCATION_POLICY_VERSION = 1
-_CACHE_SIZE = 512
+# Sized for several concurrent requests, not one. A single exam Optimise that
+# runs the invigilator post-pass leaves ~260 entries (2.41 MB pickled), so at
+# 512 two concurrent registrars evicted each other's periods mid-flight and
+# paid for it in fresh CP-SAT solves against a ticking deadline.
+_CACHE_SIZE = 2048
 _CACHE: OrderedDict[str, list[dict]] = OrderedDict()
 _CACHE_LOCK = RLock()
 _PHASE_DETERMINISTIC_LIMIT = 0.06
