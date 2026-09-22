@@ -73,6 +73,8 @@ const T = {
   savingLoaded:   IS_AR ? 'جارٍ حفظ التغييرات...' : 'Saving loaded-run changes...',
   optimizing:     IS_AR ? 'جارٍ تحسين الجدول المحمّل...' : 'Optimizing from loaded run...',
   optimized:      IS_AR ? 'تم حفظ الجدول المحسّن.' : 'Optimized run saved.',
+  repairing:      IS_AR ? 'جارٍ إصلاح الجدول بأقل تغيير...' : 'Repairing with the fewest moves...',
+  repaired:       IS_AR ? 'تم حفظ الجدول بعد الإصلاح.' : 'Repaired run saved.',
   savedChanges:   IS_AR ? 'تم حفظ التغييرات.' : 'Loaded-run changes saved.',
   buildPinned:    IS_AR ? 'بناء ({n} مثبت)' : 'Build ({n} pinned)',
   show:           IS_AR ? 'عرض' : 'Show',
@@ -1039,8 +1041,14 @@ async function runLoadedRunAction(mode, button, busyText, successText) {
     _scheduleHasDraftMoves = false;
     updatePinBar();
     updateLoadedRunActions();
-    $('etStatus').textContent = successText;
-    $('etStatus').className = 'alert alert-success mt-2 py-2 mb-0';
+    if (data.minimum_change) {
+      const summary = describeMinimumChange(data.minimum_change);
+      $('etStatus').innerHTML = summary.html;
+      $('etStatus').className = `alert ${summary.clean ? 'alert-success' : 'alert-warning'} mt-2 py-2 mb-0`;
+    } else {
+      $('etStatus').textContent = successText;
+      $('etStatus').className = 'alert alert-success mt-2 py-2 mb-0';
+    }
     loadHistory();
   } catch (err) {
     $('etStatus').textContent = T.error + ': ' + showExamRequestError(err, 'save-optimize');
@@ -1058,6 +1066,10 @@ $('saveLoadedBtn')?.addEventListener('click', () => {
 
 $('optimizeLoadedBtn')?.addEventListener('click', () => {
   runLoadedRunAction('optimize_loaded', $('optimizeLoadedBtn'), T.optimizing, T.optimized);
+});
+
+$('minChangeBtn')?.addEventListener('click', () => {
+  runLoadedRunAction('minimum_change_repair', $('minChangeBtn'), T.repairing, T.repaired);
 });
 
 let _programCourses = {};   // { programName: Set([course_code, ...]) }
@@ -1485,6 +1497,11 @@ function updateLoadedRunActions() {
     optimizeBtn.classList.toggle('d-none', !hasLoadedSchedule);
     optimizeBtn.disabled = _builderBusy || needsExamSourceRebuild() || !hasLoadedSchedule;
   }
+  const minChangeBtn = $('minChangeBtn');
+  if (minChangeBtn) {
+    minChangeBtn.classList.toggle('d-none', !hasLoadedSchedule);
+    minChangeBtn.disabled = _builderBusy || needsExamSourceRebuild() || !hasLoadedSchedule;
+  }
   $('buildBtn').classList.toggle('d-none', hasLoadedSchedule);
   if (hasLoadedSchedule) {
     $('buildBtn').disabled = true;
@@ -1634,6 +1651,40 @@ function currentExamByIdentity(identity) {
 
 function currentExamIsSelected(entry) {
   return Boolean(entry && getCheckedValues('courseList').includes(entry.course_code));
+}
+
+/* Say exactly what the minimum-change repair did. The move list is the point
+   of the button: a registrar who pressed "fewest moves" needs to see which
+   exams moved and where, not just that the run was saved. */
+function describeMinimumChange(report) {
+  const moves = Array.isArray(report?.moves) ? report.moves : [];
+  const unseated = Array.isArray(report?.unseated) ? report.unseated : [];
+  const remaining = Number(report?.violations_after) || 0;
+  const arrow = IS_AR ? '←' : '→';
+  const parts = [];
+  if (!moves.length && !unseated.length && !remaining) {
+    parts.push(escapeAttr(IS_AR ? 'لا يوجد ما يحتاج إصلاحاً: لا يخالف أي اختبار القواعد.' : 'Nothing to repair: no exam breaks a rule.'));
+  } else if (moves.length) {
+    const count = moves.length;
+    const lead = IS_AR
+      ? `تم نقل ${count} ${count === 1 ? 'اختبار' : 'اختبارات'}${report?.proven_minimal ? ' وهو أقل عدد ممكن' : ''}:`
+      : `Moved ${count} exam${count === 1 ? '' : 's'}${report?.proven_minimal ? ', the fewest possible' : ''}:`;
+    const items = moves.slice(0, 6).map(move => `<li><strong><bdi dir="ltr">${escapeAttr(move.course_code)}</bdi></strong> <bdi dir="ltr">${escapeAttr(examLocation(move.from))}</bdi> <span aria-hidden="true">${arrow}</span> <bdi dir="ltr">${escapeAttr(examLocation(move.to))}</bdi></li>`).join('');
+    const more = moves.length > 6 ? `<li>${escapeAttr(IS_AR ? `و${moves.length - 6} أخرى` : `and ${moves.length - 6} more`)}</li>` : '';
+    parts.push(`${escapeAttr(lead)}<ul class="mb-0 mt-1">${items}${more}</ul>`);
+  }
+  if (unseated.length) {
+    parts.push(escapeAttr(IS_AR
+      ? `لم يوجد موعد نظامي لـ ${unseated.length} ${unseated.length === 1 ? 'اختبار' : 'اختبارات'} دون نقل اختبار ثبّته أو نقلته، فنُقلت إلى قائمة الفائض.`
+      : `${unseated.length} exam${unseated.length === 1 ? '' : 's'} had no legal slot without moving one you pinned or moved, so ${unseated.length === 1 ? 'it was' : 'they were'} sent to Overflow.`));
+  }
+  if (remaining) {
+    // Only exams the registrar froze can still clash: the repair never moves them.
+    parts.push(escapeAttr(IS_AR
+      ? `بقيت ${remaining} مخالفة بين اختبارات ثبّتها أو نقلتها؛ لم يتم تغييرها.`
+      : `${remaining} rule break${remaining === 1 ? '' : 's'} remain between exams you pinned or moved; those were left as you placed them.`));
+  }
+  return { html: parts.join(' '), clean: !remaining && !unseated.length };
 }
 
 function examLocation(entry) {

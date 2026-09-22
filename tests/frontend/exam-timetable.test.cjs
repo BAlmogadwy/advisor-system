@@ -1022,7 +1022,7 @@ for (const pinned of [true, false]) {
     assert.ok(ui.$('exportXlsx').getAttribute('href'));
     ui.input(ui.$('etNumDays'), '6');
     assert.equal(ui.$('exportXlsx').getAttribute('href'), null);
-    for (const id of ['saveLoadedBtn', 'optimizeLoadedBtn']) {
+    for (const id of ['saveLoadedBtn', 'optimizeLoadedBtn', 'minChangeBtn']) {
       ui.$(id).click();
       await settle();
       assert.ok(!ui.requests.some(request => request.url === '/ops/exam-timetable/build/'));
@@ -1061,7 +1061,7 @@ test('removing a used period blocks loaded Save and Optimize with recovery guida
   await settle();
   ui.rows()[0].querySelector('.et-period-remove').click();
   assert.equal(ui.$('exportXlsx').getAttribute('href'), null);
-  for (const id of ['saveLoadedBtn', 'optimizeLoadedBtn']) {
+  for (const id of ['saveLoadedBtn', 'optimizeLoadedBtn', 'minChangeBtn']) {
     ui.$(id).click();
     await settle();
     assert.ok(!ui.requests.some(request => request.url === '/ops/exam-timetable/build/'));
@@ -1798,6 +1798,138 @@ test('Optimize is explicit and uses unsaved current positions, pins and enrollme
   assert.deepEqual(payload.pinned, [{ course_code: courses[1].course_code, day: 'Wed', period: '08:00-10:00' }]);
   assert.deepEqual(payload.programs, ['AI', 'CS']);
   assert.deepEqual(payload.sections, ['F', 'M']);
+});
+
+test('Fix with fewest moves sends its own mode with the unsaved board and pins', async t => {
+  const ui = await loadedEditor(t);
+  dropExam(ui, 'Wed');
+  examChip(ui).querySelector('[data-exam-pin]').click();
+  assert.equal(ui.$('minChangeBtn').classList.contains('d-none'), false, 'Offered wherever Optimize is');
+  ui.$('minChangeBtn').click();
+  await settle();
+  assert.equal(buildRequests(ui).length, 1);
+  const payload = JSON.parse(buildRequests(ui)[0].body);
+  assert.equal(payload.mode, 'minimum_change_repair', 'Must never be routed as a full re-solve');
+  assert.equal(payload.base_schedule.find(entry => entry.course_identity === courses[1].course_identity).day, 'Wed');
+  assert.deepEqual(payload.pinned, [{ course_code: courses[1].course_code, day: 'Wed', period: '08:00-10:00' }]);
+});
+
+function repairedRun(ui, minimumChange) {
+  const data = evaluatedRun(JSON.parse(buildRequests(ui)[0].body));
+  return response({ ...data, run_id: 91, minimum_change: minimumChange });
+}
+
+test('a repair tells the registrar exactly which exams moved, and that it was the minimum', async t => {
+  let ui;
+  ui = await loadedEditor(t, {
+    onRequest: async url => url === '/ops/exam-timetable/build/'
+      ? repairedRun(ui, {
+          moves: [{ course_code: 'CS201', course_name: 'Algorithms', from: { day: 'Mon', period: '08:00-10:00' }, to: { day: 'Tue', period: '10:30-12:30' } }],
+          unseated: [], violations_before: 1, violations_after: 0, proven_minimal: true, status: 'OPTIMAL',
+        })
+      : undefined,
+  });
+  dropExam(ui, 'Wed');
+  ui.$('minChangeBtn').click();
+  await settle();
+  const status = ui.$('etStatus');
+  assert.ok(status.classList.contains('alert-success'), 'A fully legal result is a success');
+  assert.match(status.textContent, /CS201/);
+  assert.match(status.textContent, language === 'ar' ? /أقل عدد ممكن/ : /the fewest possible/);
+  // Times sit inside LTR isolates: unisolated, Arabic paints 08:00-10:00 as 10:00-08:00.
+  const times = [...status.querySelectorAll('bdi[dir="ltr"]')].map(node => node.textContent);
+  assert.ok(times.some(text => text.includes('08:00-10:00')), 'The origin time must be isolated');
+  assert.ok(times.some(text => text.includes('10:30-12:30')), 'The destination time must be isolated');
+});
+
+test('a repair that cannot clear the board says what is left and why, and does not claim success', async t => {
+  let ui;
+  ui = await loadedEditor(t, {
+    onRequest: async url => url === '/ops/exam-timetable/build/'
+      ? repairedRun(ui, { moves: [], unseated: ['CS301'], violations_before: 2, violations_after: 1, proven_minimal: true, status: 'OPTIMAL' })
+      : undefined,
+  });
+  dropExam(ui, 'Wed');
+  ui.$('minChangeBtn').click();
+  await settle();
+  const status = ui.$('etStatus');
+  assert.ok(status.classList.contains('alert-warning'), 'A board left with a clash is not a success');
+  assert.equal(status.classList.contains('alert-success'), false);
+  assert.match(status.textContent, language === 'ar' ? /الفائض/ : /Overflow/);
+  assert.match(status.textContent, language === 'ar' ? /ثبّتها أو نقلتها/ : /you pinned or moved/);
+});
+
+test('a repair the solver could not prove minimal does not claim to be minimal', async t => {
+  let ui;
+  ui = await loadedEditor(t, {
+    onRequest: async url => url === '/ops/exam-timetable/build/'
+      ? repairedRun(ui, {
+          moves: [{ course_code: 'CS201', course_name: '', from: { day: 'Mon', period: '08:00-10:00' }, to: { day: 'Tue', period: '08:00-10:00' } }],
+          unseated: [], violations_before: 1, violations_after: 0, proven_minimal: false, status: 'FEASIBLE',
+        })
+      : undefined,
+  });
+  dropExam(ui, 'Wed');
+  ui.$('minChangeBtn').click();
+  await settle();
+  assert.match(ui.$('etStatus').textContent, /CS201/);
+  assert.doesNotMatch(ui.$('etStatus').textContent, language === 'ar' ? /أقل عدد ممكن/ : /fewest possible/);
+});
+
+function assertRepairMatchesOptimize(ui, when) {
+  for (const property of ['disabled', 'hidden']) {
+    const read = id => property === 'hidden' ? ui.$(id).classList.contains('d-none') : ui.$(id).disabled;
+    assert.equal(read('minChangeBtn'), read('optimizeLoadedBtn'), `${when}: repair ${property} must match Optimize`);
+  }
+}
+
+test('Fix with fewest moves is offered exactly when Optimize is', async t => {
+  const fresh = await page(t, { loadCourses: true });
+  await settle();
+  assertRepairMatchesOptimize(fresh, 'before any timetable is loaded');
+  assert.equal(fresh.$('minChangeBtn').classList.contains('d-none'), true, 'Nothing to repair yet');
+
+  const ui = await loadedEditor(t);
+  assertRepairMatchesOptimize(ui, 'once a timetable is loaded');
+  assert.equal(ui.$('minChangeBtn').disabled, false);
+
+  ui.$('minChangeBtn').click();
+  // While the repair is in flight the whole toolbar is inert, so neither this
+  // nor Optimize can be fired a second time over the same board.
+  assert.equal(ui.$('examEditToolbar').inert, true);
+  await settle();
+  assertRepairMatchesOptimize(ui, 'after a repair request finishes');
+  assert.equal(ui.$('examEditToolbar').inert, false, 'A failed repair must permit retry');
+});
+
+test('a repair on a board with nothing wrong says so rather than reporting a move', async t => {
+  let ui;
+  ui = await loadedEditor(t, {
+    onRequest: async url => url === '/ops/exam-timetable/build/'
+      ? repairedRun(ui, { moves: [], unseated: [], violations_before: 0, violations_after: 0, proven_minimal: true, status: 'OPTIMAL' })
+      : undefined,
+  });
+  dropExam(ui, 'Wed');
+  ui.$('minChangeBtn').click();
+  await settle();
+  assert.match(ui.$('etStatus').textContent, language === 'ar' ? /لا يوجد ما يحتاج إصلاحاً/ : /Nothing to repair/);
+});
+
+test('course names from the server are escaped in the repair summary', async t => {
+  let ui;
+  ui = await loadedEditor(t, {
+    onRequest: async url => url === '/ops/exam-timetable/build/'
+      ? repairedRun(ui, {
+          moves: [{ course_code: '<img src=x onerror=alert(1)>', course_name: '', from: { day: 'Mon', period: '08:00-10:00' }, to: { day: 'Tue', period: '08:00-10:00' } }],
+          unseated: [], violations_before: 1, violations_after: 0, proven_minimal: true, status: 'OPTIMAL',
+        })
+      : undefined,
+  });
+  dropExam(ui, 'Wed');
+  ui.$('minChangeBtn').click();
+  await settle();
+  assert.equal(ui.$('etStatus').querySelector('img'), null, 'Server text must never become markup');
+  assert.match(ui.$('etStatus').textContent, /<img src=x/);
 });
 
 test('failed or placement-changing check responses leave the draft visibly unchecked and retryable', async t => {
