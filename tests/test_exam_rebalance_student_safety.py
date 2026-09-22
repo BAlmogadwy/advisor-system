@@ -489,3 +489,44 @@ def test_the_search_is_bounded_by_work_not_by_the_clock(monkeypatch):
         max_per_day=2,
     )
     assert moves <= 1, "One trial cannot produce two accepted moves."
+
+
+# ── the trial budget must track the deadline it has to finish inside ──
+
+
+@pytest.mark.parametrize(
+    "budget,expected",
+    [
+        (55.0, 77),  # 15 days x 3 periods: converges at 67, so nothing is lost
+        (46.0, 64),  # 12 days: a flat cap of 120 ran this until the wall stopped it
+        (34.0, 47),  # 8 days: the densest board gets the smallest search
+        (0.0, 30),  # no deadline reported -> the floor, never unbounded
+        (10_000.0, 120),
+    ],
+)
+def test_the_trial_budget_scales_with_the_rooming_deadline(budget, expected):
+    """A flat cap is tuned on the easiest board and lets denser ones truncate.
+
+    search_budget_seconds sizes on period/cohorts, which shrinks as the exam
+    period shortens while the work grows, so the shortest boards get both the
+    smallest deadline and the most to do.
+    """
+    assert exam_timetable.derive_trial_budget(budget) == expected
+
+
+def test_a_pass_with_no_context_still_bounds_itself(monkeypatch):
+    monkeypatch.setattr(exam_timetable, "assign_rooms_to_schedule", _pack)
+    entries = _entries()
+    exam_timetable._rebalance_invigilators_pass(
+        entries,
+        _enrollment(entries),
+        [{"room_code": "inventory-present"}],
+        SLOTS,
+        {},
+        {},
+        {},
+        pinned_courses={"CS102", "CS103", "CS104"},
+        enrolled_sets=SHARED,
+        credit_map=dict.fromkeys(SIZES, 3),
+        max_per_day=1,
+    )  # must not raise: max_trials is derived, not required

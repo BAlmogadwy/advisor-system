@@ -284,6 +284,7 @@ def evaluate_exam_schedule(
                 enrolled_sets=enrolled_sets,
                 credit_map=credit_map,
                 max_per_day=max_per_day,
+                caller="optimise",
             )
             # The post-pass moves exams between days; a pin may not be one of them.
             validate_exam_pins(pinned, course_list, slots, schedule_entries=schedule_entries)

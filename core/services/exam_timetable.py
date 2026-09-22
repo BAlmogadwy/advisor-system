@@ -1558,6 +1558,23 @@ def student_load_signature(
     return tuple(int(qa.get(metric, 0) or 0) for metric in STUDENT_LOAD_METRICS)
 
 
+#: Trials a rooming deadline can afford per second, and the floor below which
+#: the pass is not worth starting. A trial costs ~0.15s of wall on a developer
+#: workstation, so ~1.4 per budget-second leaves room for the mandatory pack
+#: and keeps the deterministic cap, not the clock, as the binding constraint.
+TRIALS_PER_BUDGET_SECOND = 1.4
+MIN_TRIAL_BUDGET = 30
+MAX_TRIAL_BUDGET = 120
+
+
+def derive_trial_budget(budget_seconds: float | None) -> int:
+    """Scale the search with the deadline it has to finish inside."""
+    if not budget_seconds or budget_seconds <= 0:
+        return MIN_TRIAL_BUDGET
+    scaled = int(budget_seconds * TRIALS_PER_BUDGET_SECOND)
+    return max(MIN_TRIAL_BUDGET, min(MAX_TRIAL_BUDGET, scaled))
+
+
 def _rebalance_invigilators_pass(
     schedule_entries: list[dict],
     section_enrollment: dict[str, list[dict]],
@@ -1568,28 +1585,34 @@ def _rebalance_invigilators_pass(
     course_buckets: dict[str, list[tuple[str, int]]] | None,
     *,
     max_iterations: int = 200,
-    # A WORK budget, not a wall-clock one, so the published board is the same on
-    # a fast workstation and on the 0.5-CPU production instance. Measured on the
-    # real 15-day board, cold cache, against the 55s rooming deadline that also
-    # covers the mandatory pack:
+    # A WORK budget, not a wall-clock one, so the same inputs produce the same
+    # board on a fast workstation and on the 0.5-CPU production instance.
     #
-    #   cap   Build spread   Optimise spread   deadline spent   headroom
-    #    90        3                9              10.2s          5.4x
-    #   120        2                8              14.0s          3.9x
-    #   150        2                4              16.5s          3.3x
+    # It has to be proportional to the deadline, because the deadline is
+    # anti-correlated with difficulty: search_budget_seconds sizes on
+    # period/cohorts, which SHRINKS as the exam period shortens, while the work
+    # GROWS, because the same courses pack into fewer, denser slots. Measured
+    # cold-cache on the real roster, guard on, against a flat cap of 120:
     #
-    # 120 is where Build converges (101 trials), so Build keeps the flatness it
-    # has today. Past that only Optimise improves, and it buys that by spending
-    # deadline a slow host does not have: if the wall stop wins, the pass
-    # truncates and the board becomes host-dependent, which is the thing this
-    # budget exists to prevent. Truncation is still graceful and logged, and
-    # every move it did accept passed the student guard.
-    max_trials: int = 120,
+    #   board      budget   work    repacks   headroom   spread after
+    #   15d x 3p    55.0s   9.96s      67       5.5x          2
+    #   14d x 3p    52.0s  13.95s      64       3.7x          2
+    #   12d x 3p    46.0s  20.22s     125       2.3x          5
+    #   10d x 3p    40.0s  16.54s     122       2.4x         25
+    #    8d x 3p    34.0s  17.91s     127       1.9x         50
+    #
+    # A flat cap is therefore tuned on the easiest shape and lets every shorter
+    # board run until the WALL stops it - which makes that board host-dependent
+    # and, at a 4x slowdown on twelve days, degrades it to spread 34, barely
+    # better than the defect this pass exists to fix. None means "derive it",
+    # which is what both production callers do.
+    max_trials: int | None = None,
     pinned_courses: set[str] | None = None,
     allocation_context: RoomAllocationContext | None = None,
     enrolled_sets: dict[str, set[int]] | None = None,
     credit_map: dict[str, int] | None = None,
     max_per_day: int = 2,
+    caller: str = "unknown",
 ) -> int:
     """Final post-pass that moves courses between days to flatten the
     per-day invigilator demand.
@@ -1791,6 +1814,10 @@ def _rebalance_invigilators_pass(
     # budget unspent. Any accepted move reshapes the load, so the set clears.
     exhausted_pairs: set[tuple[str, str]] = set()
     trials_spent = 0
+    if max_trials is None:
+        max_trials = derive_trial_budget(
+            allocation_context.budget_seconds if allocation_context else None
+        )
 
     for _iter in range(max_iterations):
         if not current or trials_spent >= max_trials:
@@ -1930,6 +1957,21 @@ def _rebalance_invigilators_pass(
 
     # Accepted trials already carry validated rooms; rejected trials restore
     # their exact incumbent. No further solve is needed after the last trial.
+    #
+    # Say how the search ended. Converging, spending its trial budget and being
+    # vetoed into a standstill are three different outcomes that all used to
+    # look identical from outside - rebalance_moves alone cannot tell them
+    # apart, and the truncation warning fires on only one of them.
+    logger.info(
+        "exam invigilator rebalance: caller=%s outcome=%s moves=%s trials=%s/%s",
+        caller,
+        "deadline"
+        if allocation_context.truncated
+        else ("trial_budget" if trials_spent >= max_trials else "converged"),
+        moves_accepted,
+        trials_spent,
+        max_trials,
+    )
     return moves_accepted
 
 
@@ -2292,6 +2334,7 @@ def build_exam_timetable(
                 enrolled_sets=enrolled_sets,
                 credit_map=credit_map,
                 max_per_day=max_per_day,
+                caller="build",
             )
 
         room_qa = _build_room_qa(schedule_entries, rooms_list)
