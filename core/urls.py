@@ -68,6 +68,7 @@ from .exam_views import (
     exam_timetable_job_active_view,
     exam_timetable_job_cancel_view,
     exam_timetable_job_result_view,
+    exam_timetable_job_seen_view,
     exam_timetable_job_view,
     exam_timetable_list_view,
     exam_timetable_page,
@@ -751,6 +752,11 @@ urlpatterns = [
         "ops/exam-timetable/jobs/<uuid:job_id>/cancel/",
         login_required(exam_timetable_job_cancel_view),
         name="exam_timetable_job_cancel",
+    ),
+    path(
+        "ops/exam-timetable/jobs/<uuid:job_id>/seen/",
+        login_required(exam_timetable_job_seen_view),
+        name="exam_timetable_job_seen",
     ),
     path(
         "ops/exam-timetable/list/",

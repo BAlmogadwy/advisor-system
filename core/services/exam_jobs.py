@@ -39,7 +39,7 @@ import socket
 import threading
 import time
 from datetime import timedelta
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from django.conf import settings
 from django.db import IntegrityError, close_old_connections, connection, transaction
@@ -47,7 +47,11 @@ from django.utils import timezone
 
 from core.models import ExamTimetableJob, ExamTimetableRun
 from core.services.exam_progress import ExamProgress, JobCancelled, reporting
-from core.services.job_runtime import SolverBusy, solver_slot
+from core.services.job_runtime import HOLDER_EXAM_JOB, SolverBusy, solver_holder, solver_slot
+from core.services.job_runtime import shutting_down as _shutting_down
+
+if TYPE_CHECKING:
+    from django.db.models import QuerySet
 
 logger = logging.getLogger(__name__)
 
@@ -75,13 +79,29 @@ _LIGHT_FIELDS = (
     "kind",
     "status",
     "submitted_by",
-    "client_token",
+    "result_run",
     "progress_json",
     "error_code",
     "submitted_at",
     "started_at",
     "finished_at",
+    "acknowledged_at",
+    "response_status",
+    "cancel_requested",
+    "submitted_by__username",
+    "submitted_by__first_name",
+    "submitted_by__last_name",
+    "cancelled_by",
+    "cancelled_by__username",
+    "cancelled_by__first_name",
+    "cancelled_by__last_name",
 )
+
+
+def _light() -> QuerySet[ExamTimetableJob]:
+    """Jobs as a request thread may load them: never the board, always the names."""
+    return Job.objects.select_related("submitted_by", "cancelled_by").only(*_LIGHT_FIELDS)
+
 
 #: The stages each kind of job reports, in order. A stage the job passes over
 #: - rooms turned off, nothing to repair - is shown as skipped, never as done.
@@ -141,18 +161,6 @@ def is_multistart(payload: dict) -> bool:
     )
 
 
-def _shutting_down() -> bool:
-    """Best effort: is this process's interpreter exiting?
-
-    ``_SHUTTING_DOWN`` is set first thing in ``threading._shutdown``, before the
-    exit hooks that join the planner's pool; the main thread is only marked
-    stopped after them. Either means a job must not start.
-    """
-    return bool(getattr(threading, "_SHUTTING_DOWN", False)) or not (
-        threading.main_thread().is_alive()
-    )
-
-
 # ── progress ─────────────────────────────────────────────────────────────────
 
 
@@ -169,6 +177,7 @@ class JobProgress(ExamProgress):
         self._plan = plan
         self._states = dict.fromkeys(plan, "pending")
         self._current: dict[str, Any] | None = None
+        self._waiting_for: dict | None = None
         self._stage_started: dict[str, float] = {}
         self.stage_ms: dict[str, int] = {}
         self.cancelled = threading.Event()
@@ -205,6 +214,14 @@ class JobProgress(ExamProgress):
         if self.cancelled.is_set():
             raise JobCancelled
 
+    def waiting_for(self, holder: dict | None) -> None:
+        """What a queued job is waiting on, so its page can say it."""
+        with self._lock:
+            changed = (holder or {}).get("kind") != (self._waiting_for or {}).get("kind")
+            self._waiting_for = holder
+        if changed:
+            self._changed(force=True)
+
     def finish(self, *, completed: bool) -> None:
         """Close the stages: a finished job skips what it never reached; a job
         that stopped marks where it stopped and leaves the rest pending."""
@@ -227,10 +244,13 @@ class JobProgress(ExamProgress):
                         states[key] = "done" if finished else "stopped"
                     elif finished and states[key] == "pending":
                         states[key] = "skipped"
-            return {
+            snapshot = {
                 "stages": [{"key": key, "state": states[key]} for key in self._plan],
                 "current": dict(self._current) if self._current else None,
             }
+            if self._waiting_for is not None:
+                snapshot["waiting_for"] = dict(self._waiting_for)
+            return snapshot
 
     def _close(self, key: str, state: str, now: float) -> None:
         self._states[key] = state
@@ -317,7 +337,7 @@ class _Flusher:
 # ── submit ───────────────────────────────────────────────────────────────────
 
 
-def submit(payload: dict, *, user) -> tuple[int, dict]:
+def submit(payload: dict, *, user, is_superadmin: bool = False) -> tuple[int, dict]:
     """Start one action in the background, or say why it cannot start now."""
     mode = str(payload.get("mode") or "").strip()
     if "base_schedule" in payload:
@@ -341,7 +361,6 @@ def submit(payload: dict, *, user) -> tuple[int, dict]:
             job = Job.objects.create(
                 kind=kind,
                 submitted_by=user if getattr(user, "is_authenticated", False) else None,
-                client_token=str(payload.get("client_token") or "")[:64],
                 editor_revision=editor_revision if isinstance(editor_revision, int) else 0,
                 request_payload=payload,
                 progress_json=_initial_progress(kind),
@@ -350,9 +369,22 @@ def submit(payload: dict, *, user) -> tuple[int, dict]:
     except IntegrityError:
         return 409, _busy_body(user)
     _log(job.id, kind, "submitted", user_id=getattr(user, "pk", None))
-    _dispatch(job.id)
-    fresh = Job.objects.only(*_LIGHT_FIELDS).get(pk=job.pk)
-    return 202, {"ok": True, "job": serialize(fresh, user=user)}
+    try:
+        _dispatch(job.id)
+    except Exception:
+        # A thread that cannot start (memory or thread pressure) must not leave
+        # a queued row holding the only lane until the sweep finds it.
+        logger.exception("exam job %s could not start", job.id)
+        _end(job.id, None, Job.STATUS_FAILED, error_code="server_error")
+        # Its owner is told in this answer, so it is not news on the next page open.
+        Job.objects.filter(pk=job.id).update(acknowledged_at=timezone.now())
+        return 503, {
+            "ok": False,
+            "error_code": "job_not_started",
+            "error": "The server could not start this action. Nothing was saved; try again.",
+        }
+    fresh = _light().get(pk=job.pk)
+    return 202, {"ok": True, "job": serialize(fresh, user=user, is_superadmin=is_superadmin)}
 
 
 def lane_busy() -> bool:
@@ -366,17 +398,7 @@ def busy_body(user) -> dict:
 
 
 def _busy_body(user) -> dict:
-    active = (
-        Job.objects.filter(lane="exam", status__in=Job.ACTIVE_STATUSES)
-        .select_related("submitted_by")
-        .only(
-            *_LIGHT_FIELDS,
-            "submitted_by__username",
-            "submitted_by__first_name",
-            "submitted_by__last_name",
-        )
-        .first()
-    )
+    active = _light().filter(lane="exam", status__in=Job.ACTIVE_STATUSES).first()
     holder: dict[str, Any] = {}
     if active is not None:
         mine = active.submitted_by_id is not None and active.submitted_by_id == getattr(
@@ -442,8 +464,14 @@ def run_job(job_id, *, threaded: bool = True) -> None:
         flusher = _Flusher(job.id, progress, threaded=threaded)
         flusher.start()
         waiting = progress
+
+        def give_up() -> bool:
+            waiting.waiting_for(solver_holder())
+            return waiting.cancelled.is_set() or _shutting_down()
+
         try:
-            with solver_slot(give_up=lambda: waiting.cancelled.is_set() or _shutting_down()):
+            with solver_slot(holder=HOLDER_EXAM_JOB, give_up=give_up):
+                waiting.waiting_for(None)
                 if _shutting_down() or not _claim(job.id):
                     outcome = _end_unstarted(job.id)
                     return
@@ -600,33 +628,58 @@ def _end(
 # ── read, cancel, sweep ──────────────────────────────────────────────────────
 
 
-def serialize(job: Job, *, user) -> dict:
+def serialize(job: Job, *, user, is_superadmin: bool = False) -> dict:
     progress = job.progress_json or {}
     mine = job.submitted_by_id is not None and job.submitted_by_id == getattr(user, "pk", None)
-    data = {
+    stopped_by_other = (
+        job.cancelled_by_id is not None and job.cancelled_by_id != job.submitted_by_id
+    )
+    return {
         "id": str(job.id),
         "kind": job.kind,
         "status": job.status,
         "stages": progress.get("stages") or [],
         "current": progress.get("current"),
+        "waiting_for": progress.get("waiting_for"),
         "error_code": job.error_code,
         "mine": mine,
+        # Runs are shared by the committee, so who is building is not private;
+        # a registrar waiting on a colleague's build should know whose it is.
+        "owner": _display_name(job.submitted_by),
+        "can_cancel": mine or is_superadmin,
+        "cancelled_by": _display_name(job.cancelled_by) if stopped_by_other else "",
+        "has_run": job.result_run_id is not None,
+        # It ended with the action's own refusal (a 4xx it answered), not a result.
+        "refused": (job.response_status or 0) >= 400,
+        # Asked to stop and not stopped yet: a second Stop would change nothing.
+        "stopping": job.cancel_requested and job.status in Job.ACTIVE_STATUSES,
+        "result_run_id": job.result_run_id,
         "submitted_at": _iso(job.submitted_at),
         "started_at": _iso(job.started_at),
         "finished_at": _iso(job.finished_at),
         "now": _iso(timezone.now()),
     }
-    if mine:
-        data["client_token"] = job.client_token
-    return data
 
 
-def poll(job_id, *, user) -> tuple[int, dict]:
+def poll(job_id, *, user, is_superadmin: bool = False) -> tuple[int, dict]:
     sweep_stale()
-    job = Job.objects.filter(pk=job_id).only(*_LIGHT_FIELDS).first()
+    job = _light().filter(pk=job_id).first()
     if job is None:
         return 404, {"ok": False, "error_code": "job_not_found", "error": "Job not found"}
-    return 200, {"ok": True, "job": serialize(job, user=user)}
+    return 200, {"ok": True, "job": serialize(job, user=user, is_superadmin=is_superadmin)}
+
+
+def seen(job_id, *, user) -> tuple[int, dict]:
+    """The owner's page has shown how it ended: do not show it again."""
+    owner = Job.objects.filter(pk=job_id).values_list("submitted_by_id", flat=True).first()
+    if owner is None and not Job.objects.filter(pk=job_id).exists():
+        return 404, {"ok": False, "error_code": "job_not_found", "error": "Job not found"}
+    if owner is None or owner != getattr(user, "pk", None):
+        return 403, {"ok": False, "error": "Only the person who started it can mark it seen."}
+    marked = Job.objects.filter(pk=job_id, acknowledged_at__isnull=True).update(
+        acknowledged_at=timezone.now()
+    )
+    return 200, {"ok": True, "marked": bool(marked)}
 
 
 def result(job_id, *, user) -> tuple[int, dict]:
@@ -666,59 +719,91 @@ def result(job_id, *, user) -> tuple[int, dict]:
     return 200, body
 
 
-def active(*, user) -> dict:
-    """What a page opening now should know: the job running, or the caller's
-    own saved result that finished while their page was closed."""
+def active(*, user, is_superadmin: bool = False, owed: str | None = None) -> dict:
+    """What a page opening now should know: the job running, and how the
+    caller's own latest job ended if it ended while their page was closed.
+
+    Both, when both are true: "the outcome will be shown here" must hold even
+    when a colleague's job is running as the registrar comes back.
+
+    ``owed``: the id of an ending a page was given beside a running job and is
+    now asking about again. It was news inside the window when the page got
+    it, so the window no longer applies to it; seen, superseded or deleted, it
+    is still not returned."""
     sweep_stale()
-    running = (
-        Job.objects.filter(lane="exam", status__in=Job.ACTIVE_STATUSES).only(*_LIGHT_FIELDS).first()
-    )
-    if running is not None:
-        return {"ok": True, "job": serialize(running, user=user)}
+    running = _light().filter(lane="exam", status__in=Job.ACTIVE_STATUSES).first()
+    ending = None
     if getattr(user, "is_authenticated", False):
-        unseen = (
-            Job.objects.filter(
-                submitted_by=user,
-                status=Job.STATUS_SUCCEEDED,
-                # An error answer is not a timetable to open; only a saved run is.
-                result_run__isnull=False,
-                acknowledged_at__isnull=True,
-                finished_at__gte=timezone.now() - UNSEEN_RESULT_WINDOW,
-            )
-            .only(*_LIGHT_FIELDS)
-            .order_by("-finished_at")
-            .first()
-        )
-        if unseen is not None:
-            return {"ok": True, "job": serialize(unseen, user=user)}
-    return {"ok": True, "job": None}
+        # Only the latest: an older result the registrar has since built past
+        # is not news, even if nobody ever opened it.
+        latest = _light().filter(submitted_by=user).order_by("-submitted_at").first()
+        if latest is not None and _unseen_ending(latest, windowed=str(latest.pk) != owed):
+            ending = serialize(latest, user=user, is_superadmin=is_superadmin)
+    if running is not None:
+        job = serialize(running, user=user, is_superadmin=is_superadmin)
+        return {"ok": True, "job": job, "ending": ending}
+    return {"ok": True, "job": ending}
+
+
+def _unseen_ending(job: Job, *, windowed: bool = True) -> bool:
+    if job.status in Job.ACTIVE_STATUSES or job.acknowledged_at is not None:
+        return False
+    if job.finished_at is None:
+        return False
+    if windowed and job.finished_at < timezone.now() - UNSEEN_RESULT_WINDOW:
+        return False
+    if (
+        job.status == Job.STATUS_SUCCEEDED
+        and job.result_run_id is None
+        and job.response_status == 200
+    ):
+        # Saved, then deleted from Saved timetables (its run link was nulled):
+        # nothing is left to show, and "nothing was built" would be untrue. A
+        # Fix that moved nothing keeps its answer, and is still news.
+        return Job.objects.filter(pk=job.pk).exclude(response_json={}).exists()
+    return True
 
 
 def cancel(job_id, *, user, is_superadmin: bool) -> tuple[int, dict]:
-    job = Job.objects.filter(pk=job_id).only(*_LIGHT_FIELDS).first()
+    job = _light().filter(pk=job_id).first()
     if job is None:
         return 404, {"ok": False, "error_code": "job_not_found", "error": "Job not found"}
     if not is_superadmin and job.submitted_by_id != getattr(user, "pk", None):
         return 403, {"ok": False, "error": "Only the person who started it can cancel it."}
     now = timezone.now()
+    stopped_by = user if getattr(user, "is_authenticated", False) else None
+    stopped_here = True
     if Job.objects.filter(pk=job.pk, status=Job.STATUS_QUEUED).update(
         status=Job.STATUS_CANCELLED,
         cancel_requested=True,
+        cancelled_by=stopped_by,
         error_code="cancelled",
         request_payload={},
         finished_at=now,
     ):
         _log(job.pk, job.kind, "cancelled")
-    elif not Job.objects.filter(pk=job.pk, status=Job.STATUS_RUNNING).update(cancel_requested=True):
-        job = Job.objects.only(*_LIGHT_FIELDS).get(pk=job.pk)
-        return 409, {
-            "ok": False,
-            "error_code": "job_finished",
-            "error": "It had already finished.",
-            "job": serialize(job, user=user),
-        }
-    job = Job.objects.only(*_LIGHT_FIELDS).get(pk=job.pk)
-    return 202, {"ok": True, "job": serialize(job, user=user)}
+    elif not Job.objects.filter(
+        pk=job.pk, status=Job.STATUS_RUNNING, cancel_requested=False
+    ).update(cancel_requested=True, cancelled_by=stopped_by):
+        # Not stopped by this call. A Stop already on its way to the job keeps
+        # whoever sent it first; a job that has ended cannot be stopped at all.
+        if not Job.objects.filter(
+            pk=job.pk, status=Job.STATUS_RUNNING, cancel_requested=True
+        ).exists():
+            job = _light().get(pk=job.pk)
+            return 409, {
+                "ok": False,
+                "error_code": "job_finished",
+                "error": "It had already finished.",
+                "job": serialize(job, user=user, is_superadmin=is_superadmin),
+            }
+        stopped_here = False
+    job = _light().get(pk=job.pk)
+    return 202, {
+        "ok": True,
+        "stopped_here": stopped_here,
+        "job": serialize(job, user=user, is_superadmin=is_superadmin),
+    }
 
 
 def sweep_stale() -> int:
@@ -741,8 +826,15 @@ def sweep_stale() -> int:
     swept = 0
     for row in rows:
         silent = row["heartbeat_at"] is None or row["heartbeat_at"] < now - STALE_AFTER
-        code = "server_restarted" if silent else "timed_out"
-        if Job.objects.filter(pk=row["id"], status__in=Job.ACTIVE_STATUSES).update(
+        if silent:
+            code = "server_restarted"
+        elif row["status"] == Job.STATUS_QUEUED:
+            code = "never_started"
+        else:
+            code = "timed_out"
+        # Only as it was read: a queued job that started meanwhile is not one
+        # that never started.
+        if Job.objects.filter(pk=row["id"], status=row["status"]).update(
             status=Job.STATUS_FAILED, error_code=code, request_payload={}, finished_at=now
         ):
             swept += 1

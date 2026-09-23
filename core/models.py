@@ -844,13 +844,20 @@ class ExamTimetableJob(models.Model):
         blank=True,
         related_name="exam_timetable_jobs",
     )
-    #: The page that submitted it; a result is applied only by that tab.
-    client_token = models.CharField(max_length=64, blank=True, default="")
     #: Echoed with a loaded board's result, so the page can tell it is for this edit.
     editor_revision = models.IntegerField(default=0)
     request_payload = models.JSONField(default=dict)
     progress_json = models.JSONField(default=dict)
     cancel_requested = models.BooleanField(default=False)
+    #: Who asked to stop it. Its owner is told when that was someone else - a
+    #: SUPER_ADMIN stopping a colleague's job.
+    cancelled_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="+",
+    )
     result_run = models.ForeignKey(
         ExamTimetableRun,
         on_delete=models.SET_NULL,
@@ -868,7 +875,7 @@ class ExamTimetableJob(models.Model):
     started_at = models.DateTimeField(null=True, blank=True)
     heartbeat_at = models.DateTimeField(null=True, blank=True)
     finished_at = models.DateTimeField(null=True, blank=True)
-    #: When the submitting page fetched the result, so a reload does not offer it again.
+    #: When its owner's page showed how it ended, so a reload does not show it again.
     acknowledged_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:

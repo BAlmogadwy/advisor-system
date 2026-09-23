@@ -71,8 +71,12 @@ def _loaded_payload(built, board, mode, **extra):
 
 
 def _post(client, payload, status):
+    # The page says it can follow a job; nothing else is ever answered with one.
     response = client.post(
-        reverse("exam_timetable_build"), payload, content_type="application/json"
+        reverse("exam_timetable_build"),
+        payload,
+        content_type="application/json",
+        HTTP_X_EXAM_JOBS="1",
     )
     assert response.status_code == status, response.content
     return response.json()
@@ -578,12 +582,14 @@ def test_a_page_opening_is_told_about_the_running_job_and_an_unseen_result(
 ):
     assert export_client.get(reverse("exam_timetable_job_active")).json()["job"] is None
     metadata, _, _ = clashing_pair
-    submitted = _post(export_client, _build_payload(metadata, client_token="tab-1"), 202)
+    submitted = _post(export_client, _build_payload(metadata), 202)
     job_id = submitted["job"]["id"]
 
     offered = export_client.get(reverse("exam_timetable_job_active")).json()["job"]
     assert offered["id"] == job_id, "It finished while the page was closed"
-    assert offered["client_token"] == "tab-1"
+    assert offered["mine"] is True
+    assert offered["has_run"] is True
+    assert offered["result_run_id"]
 
     _result(export_client, job_id)
     assert export_client.get(reverse("exam_timetable_job_active")).json()["job"] is None
@@ -619,6 +625,20 @@ def test_every_job_endpoint_needs_exam_access(client, django_user_model, jobs):
         assert getattr(client, method)(reverse(name, args=args)).status_code == 403, name
 
 
+def test_marking_seen_needs_exam_access_even_for_your_own_job(client, django_user_model, jobs):
+    """Owned by the caller, so only the role check can refuse it."""
+    advisor = django_user_model.objects.create_user(username="advisor", password="x")
+    client.force_login(advisor)
+    job = Job.objects.create(
+        kind=Job.KIND_BUILD,
+        status=Job.STATUS_FAILED,
+        submitted_by=advisor,
+        finished_at=timezone.now(),
+    )
+    assert client.post(reverse("exam_timetable_job_seen", args=[job.pk])).status_code == 403
+    assert Job.objects.get(pk=job.pk).acknowledged_at is None
+
+
 # ── the solver is shared, and the evaluation holds no transaction ────
 
 
@@ -640,14 +660,16 @@ def test_a_check_is_told_the_solver_is_busy_rather_than_waiting(
         "pinned": [],
     }
     url = reverse("exam_timetable_draft_impact")
-    with solver_slot():
+    with solver_slot(holder="planner"):
         # Jobs off: Check runs as it always has.
         assert export_client.post(url, check, content_type="application/json").status_code == 200
         jobs.EXAM_JOBS_ENABLED = True
         response = export_client.post(url, check, content_type="application/json")
     assert response.status_code == 503
     assert response.json()["error_code"] == "solver_busy"
-    assert response["Retry-After"]
+    # A planner run takes minutes, a Check seconds: the page says which it waits for.
+    assert response.json()["holder"]["kind"] == "planner"
+    assert response["Retry-After"] == "30", "A planner run is minutes long"
     assert export_client.post(url, check, content_type="application/json").status_code == 200
 
 

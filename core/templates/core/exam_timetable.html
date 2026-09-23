@@ -6,7 +6,7 @@
 
 {% block main_attrs %}data-exam-builder="true" data-can-delete-exam-timetable="{{ can_delete_exam_timetable|yesno:'true,false' }}"{% endblock %}
 {% block main_padding %}p-4 exam-builder-page{% endblock %}
-{% block extra_css %}<link href="{% static 'css/page-exam-timetable.css' %}?v=20" rel="stylesheet">{% endblock %}
+{% block extra_css %}<link href="{% static 'css/page-exam-timetable.css' %}?v=21" rel="stylesheet">{% endblock %}
 
 {% block page_heading %}{% if LANGUAGE_CODE == 'ar' %}جدول الاختبارات{% else %}Exam Timetable{% endif %}{% endblock %}
 
@@ -22,6 +22,24 @@
 
 {% block content %}
   <div id="examRequestError" class="alert alert-danger et-request-error" role="alert" hidden></div>
+  {# Outside the setup section, which collapses once a result renders, and outside everything setBuilderBusy makes inert: a live region there would be silent and Cancel unclickable. #}
+  <section id="examJobPanel" class="et-job-panel" aria-labelledby="examJobTitle" hidden>
+    <div class="et-job-head">
+      <h2 id="examJobTitle" class="et-job-title" tabindex="-1"></h2>
+      <span id="examJobClock" class="et-job-elapsed"></span>
+    </div>
+    <ol id="examJobStages" class="et-job-stages" role="list"></ol>
+    <div id="examJobBar" class="et-job-bar" hidden><span class="et-job-bar-fill"></span></div>
+    <p id="examJobDetail" class="et-job-detail"></p>
+    <p id="examJobNote" class="et-job-note"></p>
+    <div class="et-job-actions">
+      <button type="button" id="examJobCancel" class="btn btn-sm btn-outline-danger" hidden>{% if LANGUAGE_CODE == 'ar' %}إيقاف دون حفظ{% else %}Stop without saving{% endif %}</button>
+      <button type="button" id="examJobOpen" class="btn btn-sm btn-primary" hidden>{% if LANGUAGE_CODE == 'ar' %}فتح الجدول{% else %}Open timetable{% endif %}</button>
+      <button type="button" id="examJobClose" class="btn btn-sm btn-outline-secondary" hidden>{% if LANGUAGE_CODE == 'ar' %}إغلاق{% else %}Close{% endif %}</button>
+    </div>
+  </section>
+  {# Outside the panel: a live region inside a hidden section misses what is said as it opens. #}
+  <p id="examJobLive" class="visually-hidden" role="status" aria-live="polite"></p>
   <details id="examSetupDetails" class="et-workspace-details et-setup-details" open>
     <summary id="examSetupSummary">{% if LANGUAGE_CODE == 'ar' %}إعدادات الجدول والمقررات والمواعيد المثبتة{% else %}Timetable setup, courses and fixed times{% endif %}</summary>
     <div class="et-setup-details-content">{% include "core/partials/exam_builder_form.html" %}</div>
@@ -153,6 +171,8 @@
         </div>
         <div id="examRepairReport" class="et-repair-report" role="status" aria-live="polite"></div>
         <div id="examEditorRequestError" class="alert alert-danger et-request-error" role="alert" hidden></div>
+        {# News at the board, not an error: said aloud through #examJobLive. #}
+        <div id="examEditorNotice" class="alert alert-info et-request-error" hidden></div>
         <section id="examSourceReviewNotice" class="et-section-mapping-notice" aria-labelledby="examSourceReviewHeading" hidden>
           <div><h3 id="examSourceReviewHeading">{% if LANGUAGE_CODE == 'ar' %}راجع مصدر المقررات قبل المتابعة{% else %}Review the course source before continuing{% endif %}</h3><p>{% if LANGUAGE_CODE == 'ar' %}بُني هذا الجدول بمصدر تسجيلات سابق. حمّل المقررات لمراجعة التسجيلات الفعلية في الجداول الدراسية المستوردة، ثم أعد البناء قبل الفحص أو الحفظ أو التحسين أو التصدير. تبقى المواعيد الحالية هنا حتى تختار استبدالها.{% else %}This timetable was built with an earlier enrollment source. Load Courses to review actual enrollments from imported student timetables, then rebuild before checking, saving, optimizing or exporting. Its current placements remain here until you choose to replace them.{% endif %}</p></div>
           <button id="reviewExamCourseSource" type="button" class="btn btn-outline-secondary">{% if LANGUAGE_CODE == 'ar' %}مراجعة مصدر المقررات{% else %}Review course source{% endif %}</button>
@@ -266,5 +286,5 @@
   const djCsrfToken = "{{ csrf_token }}";
 </script>
 <script src="{% static 'js/exam-review.js' %}?v=4"></script>
-<script src="{% static 'js/page-exam-timetable.js' %}?v=26"></script>
+<script src="{% static 'js/page-exam-timetable.js' %}?v=27"></script>
 {% endblock %}

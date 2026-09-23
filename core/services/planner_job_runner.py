@@ -26,7 +26,7 @@ from django.db.models import Q
 from django.utils import timezone
 
 from core.models import PlannerJob
-from core.services.job_runtime import solver_slot
+from core.services.job_runtime import HOLDER_PLANNER, SolverBusy, shutting_down, solver_slot
 
 logger = logging.getLogger(__name__)
 
@@ -77,10 +77,26 @@ def _worker(job_id: str) -> None:
     try:
         # Its CP-SAT solves take turns with the exam jobs' and the exam Check's:
         # two at once on this 0.5-CPU, 512 MB host split the CPU and can OOM it.
-        with solver_slot():
+        # A job still waiting when the process starts to exit must not start: a
+        # full rebuild clears the board first and would be killed half-way.
+        with solver_slot(holder=HOLDER_PLANNER, give_up=shutting_down):
+            if shutting_down():
+                raise SolverBusy
             run_planner_job(job_id)
+    except SolverBusy:
+        _fail_unstarted(job_id)
     finally:
         close_old_connections()
+
+
+def _fail_unstarted(job_id: str) -> None:
+    PlannerJob.objects.filter(
+        id=job_id, status__in=[PlannerJob.STATUS_QUEUED, PlannerJob.STATUS_RUNNING]
+    ).update(
+        status=PlannerJob.STATUS_FAILED,
+        error_message="the server restarted before the job could start; nothing was changed",
+        finished_at=timezone.now(),
+    )
 
 
 def _dispatch_sync() -> bool:

@@ -108,3 +108,17 @@
   SIGTERM (~150 s); otherwise the sweep reports it honestly. A second registrar
   waits for the first to finish. Multistart stays synchronous: it persists
   several candidate runs outside one transaction.
+- **Rollout (2026-09-23):** jobs are on by default; `EXAM_JOBS_ENABLED=false` in
+  the service's environment is the rollback, and the page handles both answers.
+  Only a request carrying `X-Exam-Jobs: 1` - the page that can follow a job -
+  is answered with one. A tab still running the previous release's script, or
+  any other client, has the action run inside its request as before, but it
+  now takes turns: 409 `job_in_progress` while a job holds the lane, 503
+  `solver_busy` with `Retry-After` while a Check, a job or a planner run holds
+  the solver. The previous release's script shows those as the server's English
+  error text. The solver
+  slot records what holds it, so a turned-away Check or a queued job can say it
+  is waiting on a timetable-planner run (twelve to fifteen minutes) rather than
+  another exam action. With jobs on, a planner run therefore also holds up the
+  exam Check and Save for its whole length: the memory trade this decision
+  exists for.

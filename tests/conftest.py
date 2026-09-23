@@ -28,6 +28,16 @@ def _reset_generation_slots() -> None:  # noqa: PT004
 
 
 @pytest.fixture(autouse=True)
+def _exam_actions_answer_synchronously(settings) -> None:  # noqa: PT004
+    """Background jobs are on in production; a test opts in to them.
+
+    Every other test drives the build endpoint and reads the action's own
+    answer. With jobs on it would get a 202 and a job to follow instead.
+    """
+    settings.EXAM_JOBS_ENABLED = False
+
+
+@pytest.fixture(autouse=True)
 def _reset_solver_slot() -> None:  # noqa: PT004
     """A fresh solver slot per test.
 
@@ -39,8 +49,10 @@ def _reset_solver_slot() -> None:  # noqa: PT004
     from core.services import job_runtime
 
     job_runtime._SOLVER = threading.BoundedSemaphore(1)
+    job_runtime._holder = None
     yield
     job_runtime._SOLVER = threading.BoundedSemaphore(1)
+    job_runtime._holder = None
 
 
 @pytest.fixture(autouse=True)

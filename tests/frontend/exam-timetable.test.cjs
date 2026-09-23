@@ -37,7 +37,12 @@ function savedRun(periods = ['08:00-10:00', '10:30-12:30', '13:00-15:00']) {
   };
 }
 
-async function page(t, { history = [], initialCourses = courses, run = null, loadCourses = true, onRequest = null, liveUpdate = true, realDialogs = false, committee = false } = {}) {
+// /jobs/active/, asked plainly or about an owed ending (?owed=<id>).
+function isActive(url) {
+  return String(url).split('?')[0] === '/ops/exam-timetable/jobs/active/';
+}
+
+async function page(t, { history = [], initialCourses = courses, run = null, loadCourses = true, onRequest = null, liveUpdate = true, realDialogs = false, committee = false, activeJob = { ok: true, job: null }, poll = {}, browserFocus = false } = {}) {
   const errors = [];
   const console = new VirtualConsole();
   console.on('jsdomError', error => errors.push(error));
@@ -57,6 +62,40 @@ async function page(t, { history = [], initialCourses = courses, run = null, loa
     prompt: async options => { prompts.push(options); return false; },
   };
   window.HTMLElement.prototype.scrollIntoView = function (options) { scrollCalls.push({ element: this, options }); };
+  if (browserFocus) {
+    // Focus as a browser keeps it (jsdom does neither): a hidden element cannot
+    // take it, and a focused element that is hidden drops it to the body.
+    const hiddenNow = element => !element.isConnected || Boolean(element.closest('[hidden], .d-none'));
+    const focus = window.HTMLElement.prototype.focus;
+    window.HTMLElement.prototype.focus = function (...args) {
+      if (hiddenNow(this)) return undefined;
+      return focus.apply(this, args);
+    };
+    // Chromium's focus fixup is synchronous: read right after the hide,
+    // activeElement is already the body.
+    const active = Object.getOwnPropertyDescriptor(window.Document.prototype, 'activeElement');
+    Object.defineProperty(window.document, 'activeElement', {
+      configurable: true,
+      get() {
+        const at = active.get.call(this);
+        if (at && at !== this.body && hiddenNow(at)) {
+          at.blur();
+          return active.get.call(this);
+        }
+        return at;
+      },
+    });
+    new window.MutationObserver(() => {
+      const at = window.document.activeElement;
+      if (at && at !== window.document.body && hiddenNow(at)) at.blur();
+    }).observe(window.document, { attributes: true, subtree: true, childList: true, attributeFilter: ['hidden', 'class'] });
+  }
+  // jsdom reports a document as hidden unless told otherwise, and a hidden
+  // tab polls nothing: a job would wait for ever. Visible, as in a browser.
+  let hidden = false;
+  Object.defineProperty(window.document, 'hidden', { configurable: true, get: () => hidden });
+  Object.defineProperty(window.document, 'visibilityState', { configurable: true, get: () => (hidden ? 'hidden' : 'visible') });
+  const setHidden = value => { hidden = value; window.document.dispatchEvent(new window.Event('visibilitychange')); };
   window.fetch = async (url, options = {}) => {
     requests.push({ url, ...options });
     let data;
@@ -73,6 +112,7 @@ async function page(t, { history = [], initialCourses = courses, run = null, loa
       data = evaluatedRun(payload, run || savedRun());
     }
     else if (url === '/ops/exam-timetable/build/') data = { ok: false, error: 'Fixture ends at request validation' };
+    else if (isActive(url)) data = activeJob;
     else {
       const error = new Error(`Unexpected HTTP request: ${url}`);
       errors.push(error);
@@ -86,6 +126,8 @@ async function page(t, { history = [], initialCourses = courses, run = null, loa
     vm.runInContext(dialogSource, dom.getInternalVMContext(), { filename: 'dialog.js' });
   }
   vm.runInContext(reviewSource, dom.getInternalVMContext(), { filename: 'exam-review.js' });
+  // A job's polls wait nothing here; the page's own waits are for a real server.
+  window.__examJobPoll = { first: 0, quick: 0, steady: 0, slow: 0, slowAfter: 0, announce: 0, reveal: 0, stall: 0, minShown: 0, backoff: [0, 0, 0, 0], timeout: 2000, checkRetry: 30, ...poll };
   vm.runInContext(`const LANGUAGE_CODE = ${JSON.stringify(language)};\n${source}`, dom.getInternalVMContext(), { filename: 'page-exam-timetable.js' });
   const $ = id => window.document.getElementById(id);
   const emit = (element, type) => element.dispatchEvent(new window.Event(type, { bubbles: true }));
@@ -109,7 +151,7 @@ async function page(t, { history = [], initialCourses = courses, run = null, loa
     await settle();
     assert.equal($('courseList').querySelectorAll('input:checked').length, catalog.length);
   }
-  return { window, $, emit, input, select, options, rows, times, addPeriod, requests, dialogs, prompts, notifications, scrollCalls, setCourses(next) { catalog = next; } };
+  return { window, $, emit, input, select, options, rows, times, addPeriod, requests, dialogs, prompts, notifications, scrollCalls, setHidden, setCourses(next) { catalog = next; } };
 }
 
 function evaluatedRun(payload, original = savedRun()) {
@@ -2646,10 +2688,14 @@ test('successful Build navigates to the editor while later Save preserves the ed
   assert.equal(ui.scrollCalls.filter(call => call.element === ui.$('examScheduleWorkspace')).length, 1);
   dropExam(ui, 'Mon');
   ui.scrollCalls.length = 0;
+  // A click focuses the button, and the button goes inert: focus is lost.
+  ui.window.document.activeElement.blur();
   ui.$('saveLoadedBtn').click();
   await settle();
   assert.equal(ui.$('exportXlsx').getAttribute('href'), '/ops/exam-timetable/28/export.xlsx');
   assert.equal(ui.scrollCalls.length, 0, 'Saving an existing draft must keep the current viewport');
+  assert.equal(ui.$('saveLoadedBtn').disabled, true, 'Nothing is unsaved now');
+  assert.equal(ui.window.document.activeElement, ui.$('examEditHeading'), 'so focus goes to the board, never the page body');
 });
 
 test('numeric comparisons and changed slot labels have isolated left-to-right order in both languages', async t => {
@@ -3793,4 +3839,3763 @@ test('a throttled action says how long to wait, in the page language', async t =
   assert.match(banner.textContent, /42/, 'The wait the server sent must be shown');
   assert.match(banner.textContent, language === 'ar' ? /انتظر/ : /Wait 42 seconds/);
   assert.doesNotMatch(banner.textContent, /Rate limit exceeded/, 'The raw English server text must not leak through');
+});
+
+/* ── Background jobs: the page follows an action the server runs ── */
+
+const JOB_ID = '6f1c2a4e-0000-4000-8000-000000000001';
+const JOB_B = '6f1c2a4e-0000-4000-8000-000000000002';
+const JOB_PLAN = {
+  build: ['enrolments', 'conflicts', 'place_exams', 'check_rules', 'assign_rooms', 'balance_invigilators', 'save'],
+  optimize_loaded: ['read_board', 'place_exams', 'check_rules', 'assign_rooms', 'balance_invigilators', 'save'],
+  minimum_change_repair: ['read_board', 'fewest_moves', 'check_rules', 'assign_rooms', 'save'],
+  save_loaded_changes: ['read_board', 'check_rules', 'assign_rooms', 'balance_invigilators', 'save'],
+};
+const allDone = kind => Object.fromEntries(JOB_PLAN[kind].map(key => [key, 'done']));
+
+function jobFrame(kind, status, states = {}, current = null, extra = {}) {
+  return {
+    id: JOB_ID, kind, status, mine: true, can_cancel: true, owner: 'Registrar', has_run: false, result_run_id: null, error_code: '',
+    cancelled_by: '', waiting_for: null, refused: false, stopping: false,
+    submitted_at: '2026-09-23T10:00:00+00:00', started_at: '2026-09-23T10:00:01+00:00', finished_at: null, now: '2026-09-23T10:00:05+00:00',
+    stages: JOB_PLAN[kind].map(key => ({ key, state: states[key] || 'pending' })), current, ...extra,
+  };
+}
+const finishedFrame = (kind, extra = {}) => jobFrame(kind, 'succeeded', allDone(kind), { key: 'save', done: null, total: null },
+  { has_run: true, result_run_id: 93, finished_at: '2026-09-23T10:01:43+00:00', ...extra });
+const failedFrame = (kind, extra = {}) => jobFrame(kind, 'failed', { [JOB_PLAN[kind][0]]: 'done', [JOB_PLAN[kind][1]]: 'stopped' },
+  { key: JOB_PLAN[kind][1], done: null, total: null }, { error_code: 'server_error', finished_at: '2026-09-23T10:00:30+00:00', ...extra });
+const jobReply = (data, status = 200, headers = {}) => ({
+  ok: status < 400, status, json: async () => data, headers: { get: name => headers[name] ?? null },
+});
+const pollUrl = id => `/ops/exam-timetable/jobs/${id}/`;
+const seenUrl = id => `/ops/exam-timetable/jobs/${id}/seen/`;
+const historyLoads = ui => ui.requests.filter(request => request.url.startsWith('/ops/exam-timetable/list/')).length;
+const seenPosts = ui => ui.requests.filter(request => request.url === seenUrl(JOB_ID)).length;
+const stageStates = ui => Array.from(ui.$('examJobStages').children, item => item.className.replace('et-job-stage is-', ''));
+const buttonLabel = button => button.textContent.replace(/\s+/g, ' ').trim();
+const statusHidden = ui => ui.$('etStatus').classList.contains('d-none');
+
+// Waits by the clock, not by turns of the event loop: the page's own polls
+// are timers, and even a zero-delay timer is a millisecond away.
+async function until(predicate, message = 'Timed out waiting for the page') {
+  const deadline = Date.now() + 3000;
+  while (!predicate() && Date.now() < deadline) await pause(2);
+  assert.ok(predicate(), typeof message === 'function' ? message() : message);
+}
+
+// A fake server running one job. The test moves it on with advance(); each poll
+// meanwhile answers the current frame, as a real server would while it works.
+function jobServer(kind, frames, { result = null, resultStatus = 200 } = {}) {
+  const server = { index: 0, polls: 0, results: 0, cancels: 0, failures: 0, gone: false, override: null };
+  server.advance = () => { server.index = Math.min(server.index + 1, frames.length - 1); };
+  server.onRequest = async (url, options) => {
+    if (server.override) {
+      const answer = await server.override(url, options);
+      if (answer !== undefined) return answer;
+    }
+    if (url === '/ops/exam-timetable/build/') {
+      server.submitted = JSON.parse(options.body);
+      return jobReply({ ok: true, job: jobFrame(kind, 'queued') }, 202);
+    }
+    if (url === pollUrl(JOB_ID)) {
+      server.polls += 1;
+      if (server.gone) return jobReply({ ok: false, error_code: 'job_not_found', error: 'Job not found' }, 404);
+      if (server.failures > 0) {
+        server.failures -= 1;
+        throw new TypeError('Failed to fetch');
+      }
+      return jobReply({ ok: true, job: frames[server.index] });
+    }
+    if (url === `/ops/exam-timetable/jobs/${JOB_ID}/result/`) {
+      server.results += 1;
+      if (typeof result === 'function') return result();
+      if (result) return jobReply(result, resultStatus);
+      return response({ ...evaluatedRun(server.submitted), run_id: 93 });
+    }
+    if (url === `/ops/exam-timetable/jobs/${JOB_ID}/cancel/`) {
+      server.cancels += 1;
+      return jobReply({ ok: true, job: frames[server.index] }, 202);
+    }
+    if (url === seenUrl(JOB_ID)) return jobReply({ ok: true, marked: true });
+    return undefined;
+  };
+  return server;
+}
+
+const OPTIMISED = [
+  jobFrame('optimize_loaded', 'running', { read_board: 'done', place_exams: 'running' }, { key: 'place_exams', done: 3, total: 10 }),
+  jobFrame('optimize_loaded', 'running', { read_board: 'done', place_exams: 'done', check_rules: 'running' }, { key: 'check_rules', done: null, total: null }),
+  finishedFrame('optimize_loaded', { stages: JOB_PLAN.optimize_loaded.map(key => ({ key, state: ['assign_rooms', 'balance_invigilators'].includes(key) ? 'skipped' : 'done' })) }),
+];
+const TEXT = {
+  exams310: language === 'ar' ? 'تم توزيع 3 من 10 اختبارات' : '3 of 10 exams placed',
+  leave: language === 'ar' ? /يمكنك مغادرة الصفحة؛ إن عدت خلال ساعة/ : /You can leave this page\. If you come back within an hour/,
+  optimized: language === 'ar' ? 'تم تحسين الجدول' : 'Timetable optimized',
+  optimizing: language === 'ar' ? 'جارٍ تحسين الجدول الحالي' : 'Optimizing the current timetable',
+  optimizeFailed: language === 'ar' ? 'تعذّر تحسين الجدول' : 'Optimization failed',
+  optimizeStopped: language === 'ar' ? 'أُوقف تحسين الجدول' : 'Optimization stopped',
+  optimizeLost: language === 'ar' ? 'تعذّرت متابعة تحسين الجدول' : 'Lost track of the optimization',
+  building: language === 'ar' ? 'جارٍ بناء الجدول' : 'Building the timetable',
+  savedOwn: language === 'ar' ? /حُفظ، وهو معروض أدناه/ : /Saved\. It is open below/,
+  stopping: language === 'ar' ? /جارٍ الإيقاف/ : /Stopping/,
+  couldNotStop: language === 'ar' ? /تعذّر الإيقاف/ : /Could not stop it/,
+  tooLate: language === 'ar' ? /قبل إيقافها، وحُفظ الجدول الجديد/ : /before it could be stopped\. The new timetable was saved/,
+  tooLateNoRun: language === 'ar' ? /قبل إيقافها، ولم يُحفظ جدول جديد/ : /before it could be stopped, without saving a new timetable/,
+  stoppedOnScreen: language === 'ar' ? /أُوقفت العملية قبل حفظ أي شيء، والجدول المعروض لم يتغيّر/ : /Stopped before it saved anything\. The timetable on screen is unchanged/,
+  reference: /6f1c2a4e/,
+};
+
+// The job panel's sentences, as the page says them in each language.
+const W = language === 'ar' ? {
+  draft: 'التغييرات غير المحفوظة موجودة فقط في الصفحة التي أُجريت فيها ما دامت مفتوحة.',
+  recheck: {
+    away: 'فإن كانت تلك الصفحة ما تزال مفتوحة فافحص التغييرات فيها ثم احفظها، وإلا فافتح الجدول من «الجداول المحفوظة» وأعد إجراء التغييرات.',
+    followed: 'إن كانت الصفحة التي حفظت منها ما تزال مفتوحة فافحص التغييرات فيها ثم احفظها، وإلا فافتح الجدول من «الجداول المحفوظة» وأعد إجراء التغييرات.',
+    own: 'افحص التغييرات ثم احفظها.',
+  },
+  nothingSaved: 'لم يُحفظ شيء.',
+  advice: {
+    server_error: 'أعد تنفيذ العملية، وإن أخفقت مجدداً فتواصل مع الدعم الفني واذكر المرجع أدناه.',
+    server_restarted: 'ابدأ العملية من جديد، وإن توقفت مجدداً فتواصل مع الدعم الفني واذكر المرجع أدناه.',
+    timed_out: 'إن تجاوزت العملية المدة مجدداً فتواصل مع الدعم الفني واذكر المرجع أدناه.',
+    never_started: 'أعد تنفيذ العملية لاحقاً.',
+  },
+  reason: { inputs_changed: 'تغيّرت بيانات مصدر الجدول بعد آخر فحص.', check_required: 'لم تكن التغييرات قد فُحصت.' },
+  runDeleted: 'حُذف هذا الجدول من «الجداول المحفوظة».',
+  openedGone: 'الجدول الذي حاولت فتحه حُذف من «الجداول المحفوظة».',
+  savedGone: 'الجدول الذي حفظته هذه العملية حُذف من «الجداول المحفوظة».',
+  away: 'بينما كانت الصفحة مغلقة',
+} : {
+  draft: 'Unsaved changes exist only on the page they were made on, while it stays open.',
+  recheck: {
+    away: 'If that page is still open, check the changes there, then save; otherwise open the timetable from Saved timetables and make them again.',
+    followed: 'If the page you saved from is still open, check the changes there, then save; otherwise open the timetable from Saved timetables and make them again.',
+    own: 'Check the changes, then save.',
+  },
+  nothingSaved: 'Nothing was saved.',
+  advice: {
+    server_error: 'Try the action again; if it fails again, contact support and quote the reference below.',
+    server_restarted: 'Start the action again; if the server stops it again, contact support and quote the reference below.',
+    timed_out: 'If the action runs out of time again, contact support and quote the reference below.',
+    never_started: 'Try the action again later.',
+  },
+  reason: { inputs_changed: "the timetable's source data changed after the last check.", check_required: 'the changes had not been checked.' },
+  runDeleted: 'That timetable was deleted from Saved timetables.',
+  openedGone: 'The timetable you tried to open has been deleted from Saved timetables.',
+  savedGone: 'The timetable this action saved has since been deleted from Saved timetables.',
+  away: 'While this page was closed',
+};
+const endsWith = (text, ...parts) => assert.ok(text.endsWith(parts.join(' ')), `Said: ${text}`);
+
+async function optimiseAsJob(t, frames = OPTIMISED, { poll = {}, serverOptions = {}, beforeClick = null, activeJob } = {}) {
+  const server = jobServer('optimize_loaded', frames, serverOptions);
+  const ui = await loadedEditor(t, { poll, onRequest: server.onRequest, ...(activeJob ? { activeJob } : {}) });
+  if (beforeClick) beforeClick(ui, server);
+  ui.$('optimizeLoadedBtn').click();
+  return { ui, server };
+}
+
+function watchPanel(ui) {
+  const seen = { shownAt: null };
+  new ui.window.MutationObserver(() => {
+    if (!ui.$('examJobPanel').hidden && seen.shownAt === null) seen.shownAt = Date.now();
+  }).observe(ui.$('examJobPanel'), { attributes: true, attributeFilter: ['hidden'] });
+  return seen;
+}
+
+// ── what a running job shows ──
+
+test('a job shows the stage it is on, and a bar only for work the server counted', async t => {
+  const { ui, server } = await optimiseAsJob(t);
+  await until(() => stageStates(ui).includes('running'));
+  assert.equal(ui.$('examJobPanel').hidden, false);
+  assert.equal(stageStates(ui).join(), 'done,running,pending,pending,pending,pending');
+  const bar = ui.$('examJobBar');
+  assert.equal(bar.hidden, false);
+  assert.equal(bar.getAttribute('role'), 'progressbar');
+  assert.equal(bar.getAttribute('aria-valuenow'), '30');
+  assert.equal(ui.$('examJobDetail').textContent, TEXT.exams310, 'The count alone: the stage is named in the list');
+  assert.match(ui.$('examJobNote').textContent, TEXT.leave);
+
+  server.advance();
+  await until(() => stageStates(ui)[2] === 'running');
+  assert.equal(bar.hidden, true, 'A stage that counts nothing gets no bar');
+  for (const name of ['role', 'aria-label', 'aria-valuemin', 'aria-valuemax', 'aria-valuenow', 'aria-valuetext']) {
+    assert.equal(bar.getAttribute(name), null, `${name} left behind`);
+  }
+  assert.equal(ui.$('examJobDetail').textContent, '');
+});
+
+test('each counted stage says what it counts', async t => {
+  const rooms = jobFrame('optimize_loaded', 'running', { read_board: 'done', place_exams: 'done', check_rules: 'done', assign_rooms: 'running' }, { key: 'assign_rooms', done: 12, total: 40 });
+  const { ui, server } = await optimiseAsJob(t, [rooms, jobFrame('optimize_loaded', 'running', { read_board: 'done', place_exams: 'running' }, { key: 'place_exams', done: 0, total: 1 })]);
+  await until(() => stageStates(ui)[3] === 'running');
+  assert.equal(ui.$('examJobDetail').textContent, language === 'ar' ? 'القاعات للفترة 12 من 40' : 'Rooms for period 12 of 40');
+  assert.equal(ui.$('examJobBar').hidden, false);
+  server.advance();
+  if (language === 'en') await until(() => ui.$('examJobDetail').textContent === '0 of 1 exam placed');
+});
+
+test('the invigilator search is a ceiling, told in words and never drawn as a bar', async t => {
+  const balancing = jobFrame('optimize_loaded', 'running', { read_board: 'done', place_exams: 'done', check_rules: 'done', assign_rooms: 'done', balance_invigilators: 'running' }, { key: 'balance_invigilators', done: 5, total: 84 });
+  const { ui } = await optimiseAsJob(t, [balancing]);
+  await until(() => stageStates(ui)[4] === 'running');
+  assert.equal(ui.$('examJobBar').hidden, true);
+  assert.equal(ui.$('examJobDetail').textContent, language === 'ar' ? 'المحاولة 5 (الحد الأقصى 84)' : 'Attempt 5 (up to 84)');
+});
+
+test('a queued job says what it is waiting for, and only once the server has said', async t => {
+  const { ui, server } = await optimiseAsJob(t, [
+    jobFrame('optimize_loaded', 'queued'),
+    jobFrame('optimize_loaded', 'queued', {}, null, { waiting_for: { kind: 'check', seconds: 1 } }),
+    jobFrame('optimize_loaded', 'queued', {}, null, { waiting_for: { kind: 'planner', seconds: 240 } }),
+  ]);
+  await until(() => !ui.$('examJobPanel').hidden);
+  // Queued until its thread takes it: not yet a wait for anything.
+  assert.doesNotMatch(ui.$('examJobDetail').textContent, /busy|مشغول/);
+  assert.equal(ui.$('examJobTitle').textContent, TEXT.optimizing);
+  server.advance();
+  await until(() => (language === 'ar' ? /الخادم مشغول بعملية أخرى على الجدول/ : /busy with another timetable action\. Yours starts/).test(ui.$('examJobDetail').textContent));
+  assert.equal(ui.$('examJobTitle').textContent, language === 'ar' ? 'تحسين الجدول في الانتظار' : 'Waiting to optimize the timetable');
+  server.advance();
+  await until(() => (language === 'ar' ? /تخطيط الجدول الدراسي/ : /A timetable-planner run is using the server\. Yours starts automatically/).test(ui.$('examJobDetail').textContent));
+});
+test('the panel can be seen and used while the builder is busy', async t => {
+  const { ui } = await optimiseAsJob(t);
+  await until(() => !ui.$('examJobPanel').hidden);
+  const panel = ui.$('examJobPanel');
+  assert.equal(panel.closest('[inert]'), null, 'Nothing it lives in is inert');
+  assert.equal(panel.closest('details'), null, 'It is not inside a section that collapses');
+  assert.equal(ui.$('examJobCancel').hidden, false);
+  assert.equal(ui.$('examJobCancel').getAttribute('aria-disabled'), 'false');
+  assert.equal(ui.$('examEditToolbar').inert, true, 'The editor is locked meanwhile');
+});
+
+test('the page asks for a job; nothing else is answered with one', async t => {
+  const { ui } = await optimiseAsJob(t);
+  await until(() => !ui.$('examJobPanel').hidden);
+  const submit = ui.requests.find(request => request.url === '/ops/exam-timetable/build/');
+  assert.equal(submit.headers['X-Exam-Jobs'], '1');
+});
+
+test('a stage is announced once, not on every count', async t => {
+  const ticks = [1, 2, 3, 4].map(done => jobFrame('optimize_loaded', 'running', { read_board: 'done', place_exams: 'running' }, { key: 'place_exams', done, total: 10 }));
+  const { ui, server } = await optimiseAsJob(t, ticks);
+  const said = [];
+  const observer = new ui.window.MutationObserver(() => said.push(ui.$('examJobLive').textContent));
+  observer.observe(ui.$('examJobLive'), { childList: true, characterData: true, subtree: true });
+  for (let step = 1; step <= 3; step += 1) {
+    const shown = new RegExp(language === 'ar' ? `تم توزيع ${step} من 10` : `^${step} of 10`);
+    await until(() => shown.test(ui.$('examJobDetail').textContent));
+    server.advance();
+  }
+  await until(() => said.filter(Boolean).length > 0);
+  await pause(30);
+  observer.disconnect();
+  assert.equal(said.filter(Boolean).length, 1, `Announced: ${JSON.stringify(said)}`);
+  assert.match(said.filter(Boolean)[0], language === 'ar' ? /الخطوة 2 من 6/ : /Step 2 of 6/);
+});
+
+test('a stage passed before the announcement delay is never announced', async t => {
+  const { ui, server } = await optimiseAsJob(t, OPTIMISED.slice(0, 2), { poll: { announce: 300 } });
+  const said = [];
+  const observer = new ui.window.MutationObserver(() => said.push(ui.$('examJobLive').textContent));
+  observer.observe(ui.$('examJobLive'), { childList: true, characterData: true, subtree: true });
+  await until(() => stageStates(ui).includes('running'));
+  server.advance();
+  await until(() => stageStates(ui)[2] === 'running');
+  await pause(450);
+  observer.disconnect();
+  assert.deepEqual(said.filter(Boolean), [language === 'ar' ? 'الخطوة 3 من 6: التحقق من التعارضات والحد اليومي' : 'Step 3 of 6: Checking clashes and daily limits']);
+});
+
+// ── showing it only when it is worth showing ──
+
+test('a job that ends before it is worth showing never flashes a panel', async t => {
+  let seen;
+  const { ui, server } = await optimiseAsJob(t, [OPTIMISED[2]], {
+    poll: { reveal: 200, stall: 400 },
+    beforeClick: ui => { seen = watchPanel(ui); },
+  });
+  await until(() => server.results === 1 && /alert-success/.test(ui.$('etStatus').className));
+  await pause(300);
+  assert.equal(seen.shownAt, null, 'A sub-second job flashed the panel');
+});
+
+test('a short job seen running is still not shown before the threshold', async t => {
+  let seen;
+  const { ui, server } = await optimiseAsJob(t, OPTIMISED, {
+    // Three quick polls land far inside the threshold; three steady ones would not.
+    poll: { reveal: 2000, stall: 4000, first: 20, quick: 20, steady: 1000, slow: 1000, slowAfter: 60000 },
+    beforeClick: (ui, server) => {
+      seen = watchPanel(ui);
+      server.override = async url => {
+        if (url !== pollUrl(JOB_ID)) return undefined;
+        server.polls += 1;
+        return jobReply({ ok: true, job: server.polls <= 3 ? OPTIMISED[0] : OPTIMISED[2] });
+      };
+    },
+  });
+  await until(() => server.results === 1);
+  await pause(50);
+  assert.equal(server.polls, 4);
+  assert.equal(seen.shownAt, null, 'Ended before the threshold, so never shown');
+});
+test('a job still running past the threshold is shown, and stays long enough to read', async t => {
+  let seen;
+  const { ui, server } = await optimiseAsJob(t, OPTIMISED, {
+    // The stall reveal is beyond the wait below, so only a poll can show it.
+    poll: { reveal: 60, stall: 10000, first: 10, quick: 10, steady: 10, minShown: 300 },
+    beforeClick: (ui, server) => {
+      seen = watchPanel(ui);
+      // Running until the page has shown it, then finished at the next poll.
+      server.override = async url => {
+        if (url !== pollUrl(JOB_ID)) return undefined;
+        server.polls += 1;
+        return jobReply({ ok: true, job: seen.shownAt === null ? OPTIMISED[0] : OPTIMISED[2] });
+      };
+    },
+  });
+  await until(() => seen.shownAt !== null, 'Shown once seen running past the threshold');
+  await until(() => ui.$('examJobTitle').textContent === TEXT.optimized);
+  const gap = Date.now() - seen.shownAt;
+  assert.ok(gap >= 250, `Replaced after ${gap} ms`);
+  assert.equal(server.results, 1);
+});
+test('a job whose answers never come is shown anyway, without claiming the server is busy', async t => {
+  const { ui } = await optimiseAsJob(t, OPTIMISED, {
+    poll: { reveal: 50, stall: 80, timeout: 5000 },
+    beforeClick: (ui, server) => { server.override = async url => (url === pollUrl(JOB_ID) ? new Promise(() => {}) : undefined); },
+  });
+  await until(() => !ui.$('examJobPanel').hidden);
+  assert.equal(ui.$('examJobTitle').textContent, TEXT.optimizing, 'Nothing was heard of a wait');
+  assert.doesNotMatch(ui.$('examJobDetail').textContent, /busy|مشغول/);
+});
+test('focus moves to the panel when a job starts', async t => {
+  const { ui } = await optimiseAsJob(t);
+  await until(() => !ui.$('examJobPanel').hidden);
+  assert.equal(ui.window.document.activeElement, ui.$('examJobTitle'), 'The clicked button is inert now');
+  assert.ok(ui.scrollCalls.some(call => call.element === ui.$('examJobPanel')), 'and it is brought into view');
+});
+
+// ── how it ends ──
+
+test('a finished job ends in a done state and renders the result it saved', async t => {
+  const { ui, server } = await optimiseAsJob(t);
+  await until(() => stageStates(ui).includes('running'));
+  server.advance();
+  server.advance();
+  await until(() => server.results === 1 && /alert-success/.test(ui.$('etStatus').className));
+  assert.equal(ui.$('examJobPanel').hidden, false, 'It says what happened');
+  assert.equal(ui.$('examJobTitle').textContent, TEXT.optimized);
+  assert.match(ui.$('examJobDetail').textContent, TEXT.savedOwn);
+  assert.match(ui.$('examJobClock').textContent, language === 'ar' ? /استغرق\s*1:42/ : /Took\s*1:42/, 'Finished minus started, not now');
+  assert.equal(ui.$('examJobCancel').hidden, true);
+  assert.equal(ui.$('examJobClose').hidden, false);
+  assert.equal(ui.window.document.activeElement, ui.$('examEditHeading'), 'Focus goes to the result');
+});
+
+test('a failure names the stage, gives a reference, and is said once, in the panel', async t => {
+  const failed = jobFrame('optimize_loaded', 'failed', { read_board: 'done', place_exams: 'stopped' }, { key: 'place_exams', done: 4, total: 10 }, { error_code: 'server_error' });
+  const { ui, server } = await optimiseAsJob(t, [OPTIMISED[0], failed]);
+  await until(() => stageStates(ui).includes('running'));
+  server.advance();
+  await until(() => ui.$('examJobPanel').classList.contains('is-failed'));
+  assert.equal(stageStates(ui).join(), 'done,stopped,pending,pending,pending,pending', 'A stage never reached is never shown as done');
+  assert.equal(server.results, 0, 'A failed job has no result to apply');
+  assert.equal(ui.$('examJobTitle').textContent, TEXT.optimizeFailed);
+  assert.match(ui.$('examJobDetail').textContent, language === 'ar' ? /توقفت العملية عند «توزيع الاختبارات على الأيام والفترات»/ : /It stopped at “Placing exams in days and periods”/);
+  assert.match(ui.$('examJobNote').textContent, TEXT.reference);
+  await until(() => statusHidden(ui), 'Not repeated in the status line');
+  assert.equal(ui.$('examRequestError').hidden, true, 'nor in a banner');
+  assert.equal(ui.$('examJobPanel').querySelectorAll('[aria-current]').length, 0);
+  assert.equal(seenPosts(ui), 1, 'Shown, so not shown again on the next page load');
+});
+
+test('a job the server restart killed, and one that ran too long, say which', async t => {
+  for (const [code, pattern] of [['server_restarted', /server restarted|أُعيد تشغيل الخادم/], ['timed_out', /time limit|الحد الأقصى لمدة التنفيذ/]]) {
+    const failed = jobFrame('optimize_loaded', 'failed', { read_board: 'done', place_exams: 'stopped' }, { key: 'place_exams', done: 4, total: 10 }, { error_code: code });
+    const { ui, server } = await optimiseAsJob(t, [OPTIMISED[0], failed]);
+    await until(() => stageStates(ui).includes('running'));
+    server.advance();
+    await until(() => pattern.test(ui.$('examJobDetail').textContent), () => `${code}: ${ui.$('examJobDetail').textContent}`);
+  }
+});
+
+test('Stop waits for the server, and a stopped job is news, not an error', async t => {
+  const cancelled = jobFrame('optimize_loaded', 'cancelled', { read_board: 'done', place_exams: 'stopped' }, { key: 'place_exams', done: 3, total: 10 }, { error_code: 'cancelled' });
+  const { ui, server } = await optimiseAsJob(t, [OPTIMISED[0], cancelled]);
+  await until(() => stageStates(ui).includes('running'));
+  ui.$('examJobCancel').click();
+  await until(() => server.cancels === 1);
+  assert.equal(ui.$('examJobCancel').getAttribute('aria-disabled'), 'true');
+  assert.match(ui.$('examJobDetail').textContent, TEXT.stopping);
+  assert.match(ui.$('examJobLive').textContent, TEXT.stopping, 'Said, not only shown');
+  await pause(10);
+  assert.equal(ui.$('examJobPanel').classList.contains('is-cancelled'), false, 'Not stopped until the server says so');
+  assert.equal(ui.$('examJobCancel').getAttribute('aria-disabled'), 'true', 'Accepted is not stopped: still stopping');
+  assert.match(ui.$('examJobDetail').textContent, TEXT.stopping);
+
+  server.advance();
+  await until(() => ui.$('examJobPanel').classList.contains('is-cancelled'));
+  assert.equal(ui.$('examJobTitle').textContent, TEXT.optimizeStopped);
+  assert.match(ui.$('examJobDetail').textContent, TEXT.stoppedOnScreen);
+  assert.equal(ui.$('examJobPanel').classList.contains('is-failed'), false);
+  assert.equal(statusHidden(ui), true);
+  assert.equal(server.results, 0);
+});
+
+test('a stop the server refuses gives Stop back and says so while it is true', async t => {
+  const { ui, server } = await optimiseAsJob(t);
+  await until(() => stageStates(ui).includes('running'));
+  server.override = async url => url === `/ops/exam-timetable/jobs/${JOB_ID}/cancel/` ? jobReply({ ok: false }, 500) : undefined;
+  ui.$('examJobCancel').click();
+  await until(() => ui.$('examJobCancel').getAttribute('aria-disabled') === 'false' && TEXT.couldNotStop.test(ui.$('examJobNote').textContent));
+  await pause(20);
+  assert.match(ui.$('examJobNote').textContent, TEXT.couldNotStop, 'The answer outlives the next poll');
+  assert.equal(ui.$('examJobDetail').textContent, TEXT.exams310, 'The count goes on');
+  server.advance();
+  server.advance();
+  await until(() => server.results === 1 && /alert-success/.test(ui.$('etStatus').className));
+  assert.doesNotMatch(ui.$('examJobNote').textContent, TEXT.couldNotStop, 'Not "still running" once it has ended');
+});
+
+const NOTHING_MOVED = { ok: true, saved: false, minimum_change: { moves: [], unseated: [], violations_before: 0, violations_after: 0, already_overflow: 0, status: 'OPTIMAL' } };
+for (const [name, ended, expected, detail, result] of [
+  ['saved a timetable', finishedFrame('optimize_loaded'), TEXT.tooLate, TEXT.savedOwn, null],
+  ['saved nothing', finishedFrame('optimize_loaded', { has_run: false, result_run_id: null }), TEXT.tooLateNoRun, /report under the editing toolbar|التقرير أسفل شريط أدوات التعديل/, NOTHING_MOVED],
+]) {
+  test(`a stop that arrives after the job ${name} says so`, async t => {
+    const { ui, server } = await optimiseAsJob(t, [OPTIMISED[0], OPTIMISED[1], ended], { serverOptions: { result } });
+    await until(() => stageStates(ui).includes('running'));
+    server.override = async url => {
+      if (url !== `/ops/exam-timetable/jobs/${JOB_ID}/cancel/`) return undefined;
+      server.cancels += 1;
+      return jobReply({ ok: false, error_code: 'job_finished', error: 'x', job: ended }, 409);
+    };
+    ui.$('examJobCancel').click();
+    await until(() => server.cancels === 1 && expected.test(ui.$('examJobNote').textContent));
+    server.advance();
+    server.advance();
+    await until(() => server.results === 1);
+    await until(() => detail.test(ui.$('examJobDetail').textContent));
+    assert.match(ui.$('examJobNote').textContent, expected, 'Still true once it has ended');
+    if (result) assert.doesNotMatch(ui.$('examJobDetail').textContent, TEXT.savedOwn, 'Never "Saved" beside "without saving"');
+  });
+}
+
+test('a stop that arrives after the job failed claims nothing was saved', async t => {
+  const failed = jobFrame('optimize_loaded', 'failed', { read_board: 'done', place_exams: 'stopped' }, { key: 'place_exams', done: 4, total: 10 }, { error_code: 'server_error' });
+  const { ui, server } = await optimiseAsJob(t, [OPTIMISED[0], failed]);
+  await until(() => stageStates(ui).includes('running'));
+  server.override = async url => {
+    if (url !== `/ops/exam-timetable/jobs/${JOB_ID}/cancel/`) return undefined;
+    server.cancels += 1;
+    return jobReply({ ok: false, error_code: 'job_finished', error: 'x', job: failed }, 409);
+  };
+  ui.$('examJobCancel').click();
+  await until(() => server.cancels === 1 && ui.$('examJobCancel').getAttribute('aria-disabled') === 'false');
+  assert.doesNotMatch(ui.$('examJobNote').textContent, TEXT.tooLate);
+  assert.doesNotMatch(ui.$('examJobLive').textContent, TEXT.tooLate);
+  server.advance();
+  await until(() => ui.$('examJobPanel').classList.contains('is-failed'));
+});
+
+test('a stopped Build says it saved nothing, and nothing about a timetable on screen', async t => {
+  const frames = [
+    jobFrame('build', 'running', { enrolments: 'done', conflicts: 'running' }, { key: 'conflicts', done: null, total: null }),
+    jobFrame('build', 'cancelled', { enrolments: 'done', conflicts: 'stopped' }, { key: 'conflicts', done: null, total: null }, { error_code: 'cancelled' }),
+  ];
+  const server = jobServer('build', frames);
+  const ui = await page(t, { onRequest: server.onRequest });
+  ui.$('buildBtn').click();
+  await until(() => stageStates(ui).includes('running'));
+  server.advance();
+  await until(() => ui.$('examJobPanel').classList.contains('is-cancelled'));
+  assert.equal(ui.$('examJobTitle').textContent, language === 'ar' ? 'أُوقف بناء الجدول' : 'Build stopped');
+  assert.equal(ui.$('examJobDetail').textContent, language === 'ar' ? 'أُوقفت العملية قبل حفظ أي شيء.' : 'Stopped before it saved anything.');
+  await until(() => statusHidden(ui), 'The visible status line does not say it a second time');
+});
+
+test('the owner of a job someone else stopped is told who', async t => {
+  const stopped = jobFrame('optimize_loaded', 'cancelled', { read_board: 'done', place_exams: 'stopped' }, { key: 'place_exams', done: 3, total: 10 }, { error_code: 'cancelled', cancelled_by: 'Sara Admin' });
+  const { ui, server } = await optimiseAsJob(t, [OPTIMISED[0], stopped]);
+  await until(() => stageStates(ui).includes('running'));
+  server.advance();
+  await until(() => ui.$('examJobDetail').textContent.includes('⁨Sara Admin⁩'));
+  assert.match(ui.$('examJobDetail').textContent, language === 'ar' ? /أُوقفت العملية بطلب من/ : /Stopped by/);
+});
+
+test('a result that cannot be fetched is offered, not reported as a failure', async t => {
+  const { ui, server } = await optimiseAsJob(t, OPTIMISED, { serverOptions: { result: () => { throw new TypeError('Failed to fetch'); } } });
+  await until(() => stageStates(ui).includes('running'));
+  const before = historyLoads(ui);
+  server.advance();
+  server.advance();
+  await until(() => /could not be shown here|تعذّر عرضه هنا/.test(ui.$('examJobDetail').textContent));
+  assert.equal(server.results, 3, 'Asked again before giving up: the run is already saved');
+  assert.equal(ui.$('examJobTitle').textContent, TEXT.optimized, 'It was saved: a done title, never a red one');
+  assert.equal(ui.$('examJobPanel').classList.contains('is-failed'), false);
+  assert.equal(ui.$('examJobOpen').hidden, false, 'Offered, so nobody saves it twice');
+  assert.equal(ui.$('examJobCancel').hidden, true);
+  assert.doesNotMatch(ui.$('examJobNote').textContent, TEXT.reference);
+  await until(() => historyLoads(ui) > before, 'Saved timetables reloaded');
+});
+
+test('a Fix that moved nothing, once shown, says why and returns to the board', async t => {
+  const { ui, server } = await optimiseAsJob(t, [OPTIMISED[0], OPTIMISED[2]], {
+    serverOptions: { result: { ok: true, saved: false, minimum_change: { moves: [], unseated: [], violations_before: 0, violations_after: 0, already_overflow: 0, status: 'OPTIMAL' } } },
+  });
+  await until(() => stageStates(ui).includes('running'));
+  server.advance();
+  await until(() => server.results === 1);
+  await until(() => /report under the editing toolbar|التقرير أسفل شريط أدوات التعديل/.test(ui.$('examJobDetail').textContent));
+  assert.equal(ui.$('examJobPanel').hidden, false, 'Not a panel that vanishes under the reader');
+  await until(() => ui.window.document.activeElement === ui.$('examEditHeading'), 'Back to the board, where the report is');
+});
+
+test('a Fix that moved nothing, never shown, is reported as before', async t => {
+  const { ui, server } = await optimiseAsJob(t, [OPTIMISED[2]], {
+    poll: { reveal: 500, stall: 1000 },
+    serverOptions: { result: { ok: true, saved: false, minimum_change: { moves: [], unseated: [], violations_before: 0, violations_after: 0, already_overflow: 0, status: 'OPTIMAL' } } },
+  });
+  await until(() => server.results === 1);
+  await until(() => /nothing was saved|لم يُحفظ شيء/.test(ui.$('etStatus').textContent));
+  assert.equal(ui.$('examJobPanel').hidden, true);
+});
+
+test('a result the server has deleted is explained in the page language', async t => {
+  const { ui } = await optimiseAsJob(t, [OPTIMISED[2]], {
+    poll: { reveal: 500, stall: 1000 },
+    serverOptions: { result: { ok: false, error_code: 'run_deleted', error: 'That run was deleted.' }, resultStatus: 410 },
+  });
+  await until(() => /deleted|حُذف/.test(ui.$('etStatus').textContent));
+  if (language === 'ar') assert.doesNotMatch(ui.$('etStatus').textContent, /That run was deleted/);
+});
+
+test('a server that cannot start the action says so in the page language', async t => {
+  const ui = await loadedEditor(t, {
+    onRequest: async url => url === '/ops/exam-timetable/build/'
+      ? jobReply({ ok: false, error_code: 'job_not_started', error: 'The server could not start this action.' }, 503)
+      : undefined,
+  });
+  ui.$('optimizeLoadedBtn').click();
+  await until(() => /could not start this action|تعذّر على الخادم بدء/.test(ui.$('etStatus').textContent + ui.$('examEditorRequestError').textContent));
+  if (language === 'ar') assert.doesNotMatch(ui.$('examEditorRequestError').textContent, /The server could not/);
+});
+
+// ── when the connection or the session fails ──
+
+test('a lost connection says it is reconnecting, clears it, and never says the job failed', async t => {
+  const { ui, server } = await optimiseAsJob(t);
+  await until(() => stageStates(ui).includes('running'));
+  // Down until the page has said so: with no waits in tests, a single
+  // recovered poll would replace the message before anything could read it.
+  server.failures = Infinity;
+  await until(() => /reconnect|إعادة الاتصال/.test(ui.$('examJobDetail').textContent));
+  assert.match(ui.$('examJobLive').textContent, /reconnect|إعادة الاتصال/, 'Said once when it starts');
+  assert.equal(ui.$('examJobPanel').classList.contains('is-failed'), false);
+  server.failures = 0;
+  await until(() => ui.$('examJobDetail').textContent === TEXT.exams310, 'The message clears once contact returns');
+  server.advance();
+  server.advance();
+  await until(() => server.results === 1);
+});
+
+test('a poll that never answers counts as a lost connection', async t => {
+  const { ui, server } = await optimiseAsJob(t, OPTIMISED, { poll: { timeout: 30 } });
+  await until(() => stageStates(ui).includes('running'));
+  server.override = async url => (url === pollUrl(JOB_ID) ? new Promise(() => {}) : undefined);
+  await until(() => /reconnect|إعادة الاتصال/.test(ui.$('examJobDetail').textContent));
+});
+
+test('a failed poll waits the backoff before asking again', async t => {
+  const { ui, server } = await optimiseAsJob(t, OPTIMISED, { poll: { backoff: [150, 150, 150, 150] } });
+  await until(() => stageStates(ui).includes('running'));
+  server.failures = Infinity;
+  const before = server.polls;
+  await pause(60);
+  assert.ok(server.polls - before <= 2, `Polled ${server.polls - before} times inside one backoff`);
+});
+
+test('a session that ends mid-job keeps following it, and picks up again after sign-in', async t => {
+  const { ui, server } = await optimiseAsJob(t, OPTIMISED, { poll: { slow: 20 } });
+  await until(() => stageStates(ui).includes('running'));
+  let signedIn = false;
+  server.override = async url => {
+    if (url !== pollUrl(JOB_ID) || signedIn) return undefined;
+    server.polls += 1;
+    return { ok: false, status: 401, json: async () => ({}), headers: { get: () => null } };
+  };
+  await until(() => /session expired|انتهت جلسة/.test(ui.$('examJobDetail').textContent));
+  const link = ui.$('examJobNote').querySelector('a[target="_blank"]');
+  assert.ok(link && link.getAttribute('href').includes('/login/'), 'The way back in, in the panel');
+  assert.equal(ui.$('examRequestError').hidden, true, 'Not also in a banner that says "retry"');
+  assert.equal(ui.$('examEditorRequestError').hidden, true);
+  assert.equal(ui.$('examJobPanel').classList.contains('is-failed'), false, 'It did not fail: it is still running');
+  assert.equal(ui.$('examJobPanel').classList.contains('is-lost'), false);
+  assert.equal(ui.$('examJobCancel').hidden, true, 'Stop would only be refused');
+  const polls = server.polls;
+  await until(() => server.polls > polls + 1, 'Still asking, slowly');
+  assert.equal(ui.notifications.length, 0, 'No error toast: nothing failed');
+  assert.match(ui.$('examJobLive').textContent, /session expired|انتهت جلسة/, 'Said once');
+  signedIn = true;
+  await until(() => ui.$('examJobDetail').textContent === TEXT.exams310, 'Picked up again');
+  assert.equal(ui.$('examJobNote').querySelector('a'), null, 'The link goes once signed in');
+  server.advance();
+  server.advance();
+  await until(() => server.results === 1 && ui.$('examJobTitle').textContent === TEXT.optimized, 'and its result is applied');
+});
+
+test('access withdrawn mid-job stops following it, and does not say it stopped', async t => {
+  const { ui, server } = await optimiseAsJob(t);
+  await until(() => stageStates(ui).includes('running'));
+  server.override = async url => {
+    if (url !== pollUrl(JOB_ID)) return undefined;
+    server.polls += 1;
+    return jobReply({ error: 'Exam Committee or SUPER_ADMIN access required' }, 403);
+  };
+  await until(() => ui.$('examJobPanel').classList.contains('is-lost'));
+  assert.equal(ui.$('examJobTitle').textContent, TEXT.optimizeLost);
+  assert.match(ui.$('examJobDetail').textContent, /no longer have access|لم تعد لديك صلاحية/);
+  const polls = server.polls;
+  await pause(40);
+  assert.equal(server.polls, polls);
+  if (language === 'ar') assert.doesNotMatch(ui.$('examJobDetail').textContent, /access required/);
+});
+
+test('a job that no longer exists is reported plainly, with Saved timetables reloaded', async t => {
+  const { ui, server } = await optimiseAsJob(t);
+  await until(() => stageStates(ui).includes('running'));
+  const before = historyLoads(ui);
+  server.gone = true;
+  await until(() => ui.$('examJobPanel').classList.contains('is-lost'));
+  assert.match(ui.$('examJobDetail').textContent, /Saved timetables|الجداول المحفوظة/);
+  await until(() => historyLoads(ui) > before, 'The list the message points to was refreshed');
+  assert.equal(ui.$('examJobClose').hidden, false);
+  assert.equal(ui.$('examJobPanel').querySelectorAll('[aria-current]').length, 0, 'An ended job is on no step');
+  assert.equal(ui.$('examJobClock').textContent, '', 'An ending never seen has no length to state');
+});
+
+test('a hidden tab asks nothing, and asks at once when it is shown again', async t => {
+  const { ui, server } = await optimiseAsJob(t, OPTIMISED, { poll: { first: 5000, steady: 5000, slow: 5000 }, beforeClick: ui => ui.setHidden(true) });
+  await pause(40);
+  ui.setHidden(false);
+  await until(() => server.polls >= 1, 'Shown: asked at once, not after the wait');
+});
+
+test('a hidden tab polls nothing, however short the waits', async t => {
+  const { ui, server } = await optimiseAsJob(t, OPTIMISED, { poll: { first: 20, quick: 20, steady: 20, slow: 20 }, beforeClick: ui => ui.setHidden(true) });
+  await pause(150);
+  assert.equal(server.polls, 0, 'Hidden: nothing asked');
+  ui.setHidden(false);
+  await until(() => server.polls >= 1);
+});
+// ── someone else's job, a refusal, and a page opened later ──
+
+function theirs(kind, status, states, key, extra = {}) {
+  return jobFrame(kind, status, states, key ? { key, done: null, total: null } : null, { mine: false, can_cancel: false, owner: 'Huda', ...extra });
+}
+
+test('a refused action is shown where the registrar is looking, with whose job it waits for', async t => {
+  const running = theirs('build', 'running', { enrolments: 'done', conflicts: 'running' }, 'conflicts');
+  // Started after this page opened: the page learns of it only from the refusal.
+  let started = false;
+  const ui = await loadedEditor(t, {
+    onRequest: async url => {
+      if (url === '/ops/exam-timetable/build/') {
+        started = true;
+        return jobReply({ ok: false, error_code: 'job_in_progress', error: 'x', active_job: { kind: 'build', mine: false, owner: 'Huda', stage: 'conflicts' } }, 409);
+      }
+      if (isActive(url)) return jobReply({ ok: true, job: started ? running : null });
+      if (url === pollUrl(JOB_ID)) return jobReply({ ok: true, job: running });
+      return undefined;
+    },
+  });
+  assert.equal(ui.$('examJobPanel').hidden, true, 'Nothing was running when the page opened');
+  const action = buttonLabel(ui.$('optimizeLoadedBtn'));
+  ui.$('optimizeLoadedBtn').click();
+  await until(() => ui.$('examJobNote').textContent.includes(action));
+  assert.ok(ui.$('examJobNote').textContent.includes('⁨Huda⁩'));
+  assert.match(ui.$('examJobNote').textContent, language === 'ar' ? /لم يبدأ/ : /did not start/);
+  assert.equal(ui.window.document.activeElement, ui.$('examJobTitle'), 'Where the answer is');
+  assert.match(ui.$('examJobLive').textContent, language === 'ar' ? /لم يبدأ/ : /did not start/, 'and said');
+  assert.equal(ui.$('examJobCancel').hidden, true);
+  await until(() => statusHidden(ui), 'Not an error, and not said twice');
+  assert.equal(ui.$('examEditorRequestError').hidden, true);
+});
+
+test('refused because my own job is still running says so', async t => {
+  const mineRunning = jobFrame('build', 'running', { enrolments: 'done', conflicts: 'running' }, { key: 'conflicts', done: null, total: null });
+  let started = false;
+  const ui = await loadedEditor(t, {
+    onRequest: async url => {
+      if (url === '/ops/exam-timetable/build/') {
+        started = true;
+        return jobReply({ ok: false, error_code: 'job_in_progress', error: 'x', active_job: { kind: 'build', mine: true, owner: 'me' } }, 409);
+      }
+      if (isActive(url)) return jobReply({ ok: true, job: started ? mineRunning : null });
+      if (url === pollUrl(JOB_ID)) return jobReply({ ok: true, job: mineRunning });
+      return undefined;
+    },
+  });
+  ui.$('optimizeLoadedBtn').click();
+  await until(() => /a timetable action you started is still running|ما زالت عملية بدأتها/.test(ui.$('examJobNote').textContent));
+  assert.equal(ui.$('examJobCancel').hidden, false, 'My own job, from another tab: it can be stopped here');
+});
+
+function isSeen(element) {
+  return !element.hidden && !element.closest('[hidden], .d-none, details:not([open])');
+}
+
+test('a refusal whose job has already ended is told at the board: try again now', async t => {
+  const ui = await loadedEditor(t, {
+    onRequest: async url => url === '/ops/exam-timetable/build/'
+      ? jobReply({ ok: false, error_code: 'job_in_progress', error: 'x', active_job: { kind: 'build', mine: false, owner: 'Huda' } }, 409)
+      : undefined,
+  });
+  const action = buttonLabel(ui.$('optimizeLoadedBtn'));
+  ui.$('optimizeLoadedBtn').click();
+  await until(() => isSeen(ui.$('examEditorNotice')));
+  const notice = ui.$('examEditorNotice').textContent;
+  assert.ok(notice.includes(action), notice);
+  assert.match(notice, language === 'ar' ? /أعد المحاولة الآن/ : /Try again now/);
+  assert.equal(ui.$('examJobLive').textContent, notice, 'and said aloud');
+  ui.$('examSetupDetails').open = true;
+  assert.equal(isSeen(ui.$('etStatus')), false, 'Nothing stale waits in the setup section');
+});
+
+test('a refusal is told at the board even with an older ending on screen', async t => {
+  let submits = 0;
+  const ui = await loadedEditor(t, {
+    onRequest: async url => {
+      if (url === '/ops/exam-timetable/build/') {
+        submits += 1;
+        return submits === 1
+          ? jobReply({ ok: true, job: jobFrame('optimize_loaded', 'queued') }, 202)
+          : jobReply({ ok: false, error_code: 'job_in_progress', error: 'x', active_job: { kind: 'build', mine: false, owner: 'Huda' } }, 409);
+      }
+      if (url === pollUrl(JOB_ID)) return jobReply({ ok: true, job: failedFrame('optimize_loaded') });
+      if (url === seenUrl(JOB_ID)) return jobReply({ ok: true, marked: true });
+      return undefined;
+    },
+  });
+  ui.$('optimizeLoadedBtn').click();
+  await until(() => !ui.$('examJobClose').hidden && !ui.$('optimizeLoadedBtn').disabled);
+  ui.$('optimizeLoadedBtn').click();
+  await until(() => isSeen(ui.$('examEditorNotice')));
+  assert.match(ui.$('examEditorNotice').textContent, language === 'ar' ? /أعد المحاولة الآن/ : /Try again now/);
+});
+test("while someone else's job runs, the actions it would refuse are unavailable", async t => {
+  const frames = [
+    theirs('build', 'running', { enrolments: 'done', conflicts: 'running' }, 'conflicts'),
+    theirs('build', 'failed', { enrolments: 'done', conflicts: 'stopped' }, 'conflicts', { error_code: 'server_error', finished_at: '2026-09-23T10:00:30+00:00' }),
+  ];
+  let index = 0;
+  const ui = await loadedEditor(t, {
+    activeJob: { ok: true, job: frames[0] },
+    onRequest: async url => url === pollUrl(JOB_ID) ? jobReply({ ok: true, job: frames[index] }) : undefined,
+  });
+  await until(() => !ui.$('examJobPanel').hidden);
+  await until(() => ui.$('optimizeLoadedBtn').disabled && ui.$('minChangeBtn').disabled);
+  assert.match(ui.$('examJobNote').textContent, language === 'ar' ? /لا يمكن البناء أو التحسين/ : /are unavailable until it finishes/);
+  index = 1;
+  await until(() => ui.$('examJobPanel').classList.contains('is-failed'));
+  await until(() => !ui.$('optimizeLoadedBtn').disabled && !ui.$('minChangeBtn').disabled, 'Free again once it has ended');
+  assert.match(ui.$('examJobDetail').textContent, language === 'ar' ? /يمكنك الآن استخدام البناء/ : /You can use Build, Optimize, Fix and Save again\.$/);
+  assert.equal(seenPosts(ui), 0, "Someone else's job is not this registrar's to mark seen");
+});
+
+test("a page opened while someone else's job runs follows it, names them, and offers no stop", async t => {
+  const running = theirs('build', 'running', { enrolments: 'done', conflicts: 'running' }, 'conflicts', { owner: 'Huda Saleh' });
+  const ui = await page(t, {
+    activeJob: { ok: true, job: running },
+    onRequest: async url => url === pollUrl(JOB_ID) ? jobReply({ ok: true, job: running }) : undefined,
+  });
+  await until(() => !ui.$('examJobPanel').hidden);
+  assert.equal(ui.$('examJobCancel').hidden, true, 'Only the person who started it may stop it');
+  assert.equal(ui.$('examJobTitle').textContent, TEXT.building);
+  assert.ok(ui.$('examJobNote').textContent.includes('⁨Huda Saleh⁩'), 'The name is bidi-isolated');
+  assert.notEqual(ui.window.document.activeElement, ui.$('examJobTitle'), 'Opening the page does not move focus');
+});
+
+test("a colleague's job that saved a timetable says whose it is and offers to open it", async t => {
+  const frames = [
+    theirs('build', 'running', { enrolments: 'done', conflicts: 'running' }, 'conflicts'),
+    finishedFrame('build', { mine: false, can_cancel: false, owner: 'Huda', result_run_id: 77 }),
+  ];
+  let index = 0;
+  const ui = await page(t, {
+    activeJob: { ok: true, job: frames[0] },
+    onRequest: async url => {
+      if (url === pollUrl(JOB_ID)) return jobReply({ ok: true, job: frames[index] });
+      if (url === '/ops/exam-timetable/77/') return response({ ...savedRun(), run_id: 77 });
+      return undefined;
+    },
+  });
+  await until(() => !ui.$('examJobPanel').hidden);
+  index = 1;
+  await until(() => !ui.$('examJobOpen').hidden);
+  assert.match(ui.$('examJobDetail').textContent, language === 'ar' ? /حُفظت النتيجة جدولاً جديداً بطلب من/ : /Saved as a new timetable by/);
+  ui.$('examJobOpen').click();
+  await until(() => ui.$('examJobPanel').hidden);
+  assert.equal(seenPosts(ui), 0);
+});
+
+test("a page reopened during the registrar's own job can stop it, then offers the result", async t => {
+  const frames = [
+    jobFrame('build', 'running', { enrolments: 'done', conflicts: 'running' }, { key: 'conflicts', done: null, total: null }),
+    finishedFrame('build'),
+  ];
+  let index = 0;
+  const ui = await page(t, {
+    activeJob: { ok: true, job: frames[0] },
+    onRequest: async url => url === pollUrl(JOB_ID) ? jobReply({ ok: true, job: frames[index] }) : undefined,
+  });
+  await until(() => !ui.$('examJobPanel').hidden);
+  assert.equal(ui.$('examJobCancel').hidden, false, 'Own job: it can be stopped');
+  ui.$('examJobCancel').focus();
+  const before = historyLoads(ui);
+  index = 1;
+  await until(() => !ui.$('examJobOpen').hidden, 'Own finished job offered');
+  assert.ok(historyLoads(ui) > before, 'Saved timetables reloaded');
+  assert.equal(ui.window.document.activeElement, ui.$('examJobTitle'), 'Stop had focus and is gone: focus stays in the panel');
+});
+
+test('a job that failed while the page was closed is shown once', async t => {
+  const ui = await page(t, {
+    activeJob: { ok: true, job: failedFrame('build') },
+    onRequest: async url => (url === seenUrl(JOB_ID) ? jobReply({ ok: true, marked: true }) : undefined),
+  });
+  await until(() => ui.$('examJobPanel').classList.contains('is-failed'));
+  assert.equal(ui.$('examJobTitle').textContent, language === 'ar' ? 'تعذّر بناء الجدول' : 'Build failed');
+  assert.equal(ui.$('examJobClose').hidden, false);
+  await until(() => seenPosts(ui) === 1, 'Marked seen, so the next page load does not show it again');
+});
+
+test('a Save of mine refused while the page was closed is shown once, with why', async t => {
+  let results = 0;
+  const ui = await page(t, {
+    activeJob: { ok: true, job: finishedFrame('save_loaded_changes', { has_run: false, result_run_id: null, refused: true }) },
+    onRequest: async url => {
+      if (url !== `/ops/exam-timetable/jobs/${JOB_ID}/result/`) return undefined;
+      results += 1;
+      // A refusal the page has no words of its own for: the server's, kept in order.
+      return jobReply({ ok: false, error: 'The course list changed.' }, 409);
+    },
+  });
+  await until(() => ui.$('examJobPanel').classList.contains('is-refused'));
+  assert.equal(ui.$('examJobTitle').textContent, language === 'ar' ? 'لم تُحفظ التغييرات' : 'The changes were not saved');
+  assert.match(ui.$('examJobDetail').textContent, /The course list changed\./);
+  if (language === 'ar') assert.ok(ui.$('examJobDetail').textContent.includes('⁨The course list changed.⁩'), 'Isolated inside Arabic');
+  assert.match(ui.$('examJobDetail').textContent, language === 'ar' ? /لم يُحفظ جدول جديد/ : /No new timetable was saved/);
+  assert.equal(results, 1, 'Its stored answer was read, which also marks it seen');
+  assert.equal(ui.$('examJobOpen').hidden, true);
+  assert.equal(ui.$('examJobClose').hidden, false);
+});
+
+test("a colleague's refused Build is not headlined as built, and frees the actions", async t => {
+  const frames = [
+    theirs('build', 'running', { enrolments: 'done', conflicts: 'running' }, 'conflicts'),
+    finishedFrame('build', { mine: false, can_cancel: false, owner: 'Huda', has_run: false, result_run_id: null, refused: true }),
+  ];
+  let index = 0;
+  const ui = await page(t, {
+    activeJob: { ok: true, job: frames[0] },
+    onRequest: async url => url === pollUrl(JOB_ID) ? jobReply({ ok: true, job: frames[index] }) : undefined,
+  });
+  await until(() => !ui.$('examJobPanel').hidden);
+  index = 1;
+  await until(() => ui.$('examJobPanel').classList.contains('is-refused'));
+  assert.equal(ui.$('examJobTitle').textContent, language === 'ar' ? 'لم يُبنَ جدول' : 'No timetable was built');
+  assert.match(ui.$('examJobDetail').textContent, language === 'ar' ? /يمكنك الآن استخدام البناء/ : /You can use Build, Optimize, Fix and Save again\.$/);
+  assert.match(ui.$('examJobLive').textContent, language === 'ar' ? /^لم يُبنَ جدول/ : /^No timetable was built/);
+});
+
+test("a colleague's Fix that moved nothing is a finished Fix, not a refusal", async t => {
+  const frames = [
+    theirs('minimum_change_repair', 'running', { read_board: 'done', fewest_moves: 'running' }, 'fewest_moves'),
+    finishedFrame('minimum_change_repair', { mine: false, can_cancel: false, owner: 'Huda', has_run: false, result_run_id: null }),
+  ];
+  let index = 0;
+  const ui = await page(t, {
+    activeJob: { ok: true, job: frames[0] },
+    onRequest: async url => url === pollUrl(JOB_ID) ? jobReply({ ok: true, job: frames[index] }) : undefined,
+  });
+  await until(() => !ui.$('examJobPanel').hidden);
+  index = 1;
+  await until(() => !ui.$('examJobClose').hidden);
+  assert.equal(ui.$('examJobTitle').textContent, language === 'ar' ? 'اكتمل الإصلاح' : 'Fix finished');
+  assert.match(ui.$('examJobDetail').textContent, language === 'ar' ? /لم يُنقل أي اختبار/ : /No exam was moved/);
+});
+test('Open loads the saved run and only then stops offering it', async t => {
+  let seen = 0;
+  const ui = await page(t, {
+    activeJob: { ok: true, job: finishedFrame('build', { result_run_id: 77 }) },
+    onRequest: async url => {
+      if (url === '/ops/exam-timetable/77/') return response({ ...savedRun(), run_id: 77 });
+      if (url === seenUrl(JOB_ID)) { seen += 1; return jobReply({ ok: true, marked: true }); }
+      return undefined;
+    },
+  });
+  await until(() => !ui.$('examJobOpen').hidden);
+  assert.match(ui.$('examJobDetail').textContent, language === 'ar' ? /بينما كانت الصفحة مغلقة/ : /while this page was closed/);
+  assert.equal(seen, 0, 'Offered, not yet seen');
+  ui.$('examJobOpen').click();
+  await until(() => ui.requests.some(request => request.url === '/ops/exam-timetable/77/'));
+  await until(() => seen === 1 && ui.$('examJobPanel').hidden);
+  assert.equal(ui.requests.some(request => request.url.endsWith('/result/')), false, 'Opened by its run, not by fetching a 1 MB result');
+});
+
+test('Open keeps offering the result when the registrar keeps the draft on screen', async t => {
+  let seen = 0;
+  const ui = await loadedEditor(t, {
+    activeJob: { ok: true, job: finishedFrame('build', { result_run_id: 77 }) },
+    onRequest: async url => url === seenUrl(JOB_ID) ? (seen += 1, jobReply({ ok: true, marked: true })) : undefined,
+  });
+  await until(() => !ui.$('examJobOpen').hidden);
+  dropExam(ui, 'Mon');
+  let answer;
+  ui.window.dlg.confirm = options => { ui.dialogs.push(options); return new Promise(resolve => { answer = resolve; }); };
+  const asked = ui.dialogs.length;
+  ui.$('examJobOpen').click();
+  await until(() => ui.dialogs.length === asked + 1, 'Asked before discarding the draft');
+  assert.equal(ui.$('examJobOpen').getAttribute('aria-disabled'), 'true', 'Busy while it loads');
+  assert.equal(ui.$('examJobOpen').disabled, false, 'aria-disabled, never disabled: focus stays on it');
+  ui.$('examJobOpen').click();
+  await pause(10);
+  assert.equal(ui.dialogs.length, asked + 1, 'A second click starts nothing');
+  answer(false);
+  await until(() => ui.$('examJobOpen').getAttribute('aria-disabled') === 'false');
+  assert.equal(seen, 0, 'Declined: still unseen');
+  assert.equal(ui.$('examJobPanel').hidden, false);
+  assert.equal(ui.requests.some(request => request.url === '/ops/exam-timetable/77/'), false);
+});
+test('Close stops offering a result and puts focus somewhere it can be seen', async t => {
+  let seen = 0;
+  const ui = await page(t, {
+    activeJob: { ok: true, job: finishedFrame('build') },
+    onRequest: async url => url === seenUrl(JOB_ID) ? (seen += 1, jobReply({ ok: true, marked: true })) : undefined,
+  });
+  await until(() => !ui.$('examJobClose').hidden);
+  ui.$('examJobClose').focus();
+  ui.$('examJobClose').click();
+  await until(() => seen === 1);
+  assert.equal(ui.$('examJobPanel').hidden, true);
+  assert.equal(ui.window.document.activeElement, ui.$('examSetupSummary'), 'Nothing is loaded, so the setup, not a hidden heading');
+});
+
+test('Close after my own failed action returns focus to the button that started it', async t => {
+  const { ui, server } = await optimiseAsJob(t, [OPTIMISED[0], failedFrame('optimize_loaded')]);
+  await until(() => stageStates(ui).includes('running'));
+  server.advance();
+  await until(() => !ui.$('examJobClose').hidden && !ui.$('optimizeLoadedBtn').disabled);
+  ui.$('examJobClose').click();
+  assert.equal(ui.$('examJobPanel').hidden, true);
+  assert.equal(ui.window.document.activeElement, ui.$('optimizeLoadedBtn'));
+});
+
+test('a followed job that disappears ends as lost, with Close', async t => {
+  const running = theirs('build', 'running', { enrolments: 'done', conflicts: 'running' }, 'conflicts');
+  let gone = false;
+  const ui = await page(t, {
+    activeJob: { ok: true, job: running },
+    onRequest: async url => url === pollUrl(JOB_ID)
+      ? (gone ? jobReply({ ok: false, error_code: 'job_not_found', error: 'Job not found' }, 404) : jobReply({ ok: true, job: running }))
+      : undefined,
+  });
+  await until(() => !ui.$('examJobPanel').hidden);
+  const before = historyLoads(ui);
+  gone = true;
+  await until(() => ui.$('examJobPanel').classList.contains('is-lost'));
+  await until(() => historyLoads(ui) > before, 'The list the message points to was refreshed');
+  assert.equal(ui.$('examJobClose').hidden, false);
+  assert.equal(ui.$('examJobTitle').textContent, language === 'ar' ? 'تعذّرت متابعة بناء الجدول' : 'Lost track of the build');
+});
+
+test("stopping a colleague's job asks first, naming them", async t => {
+  const running = theirs('build', 'running', { enrolments: 'done', conflicts: 'running' }, 'conflicts', { can_cancel: true, owner: 'Huda' });
+  const ui = await page(t, {
+    activeJob: { ok: true, job: running },
+    onRequest: async url => url === pollUrl(JOB_ID) ? jobReply({ ok: true, job: running }) : undefined,
+  });
+  await until(() => !ui.$('examJobPanel').hidden);
+  assert.equal(ui.$('examJobCancel').hidden, false, 'A SUPER_ADMIN may stop it');
+  ui.$('examJobCancel').click();
+  await until(() => ui.dialogs.length === 1);
+  assert.ok(ui.dialogs[0].title.includes('Huda'));
+  assert.equal(ui.dialogs[0].confirmLabel, language === 'ar' ? 'إيقاف العملية' : 'Stop it');
+  await pause(20);
+  assert.equal(ui.requests.some(request => request.url.endsWith('/cancel/')), false, 'Declined: nothing stopped');
+  assert.equal(ui.$('examJobCancel').getAttribute('aria-disabled'), 'false');
+});
+
+test('a job ending in the background keeps the keyboard where it was in Saved timetables', async t => {
+  const frames = [
+    theirs('build', 'running', { enrolments: 'done', conflicts: 'running' }, 'conflicts'),
+    finishedFrame('build', { mine: false, can_cancel: false, owner: 'Huda' }),
+  ];
+  let index = 0;
+  const ui = await page(t, {
+    history: [{ id: 17, label: 'One' }, { id: 18, label: 'Two' }],
+    activeJob: { ok: true, job: frames[0] },
+    onRequest: async url => url === pollUrl(JOB_ID) ? jobReply({ ok: true, job: frames[index] }) : undefined,
+  });
+  await until(() => !ui.$('examJobPanel').hidden);
+  await until(() => ui.$('historyList').querySelectorAll('.et-copy-btn').length === 2);
+  ui.$('historyList').querySelectorAll('.et-copy-btn')[1].focus();
+  const before = historyLoads(ui);
+  index = 1;
+  await until(() => historyLoads(ui) > before && !ui.$('examJobOpen').hidden);
+  await settle();
+  const focused = ui.window.document.activeElement;
+  assert.ok(focused.classList.contains('et-copy-btn'), `Focus is on ${focused.id || focused.className}`);
+  assert.equal(focused.dataset.id, '18');
+});
+
+// ── two jobs: the panel follows one, and never the wrong one ──
+
+test('a new action takes away an ended panel at once, so its buttons never act on the wrong job', async t => {
+  let submits = 0;
+  const ui = await loadedEditor(t, {
+    onRequest: async url => {
+      if (url === '/ops/exam-timetable/build/') {
+        submits += 1;
+        return jobReply({ ok: true, job: { ...jobFrame('optimize_loaded', 'queued'), id: submits === 1 ? JOB_ID : JOB_B } }, 202);
+      }
+      if (url === pollUrl(JOB_ID)) return jobReply({ ok: true, job: failedFrame('optimize_loaded') });
+      if (url === pollUrl(JOB_B)) return jobReply({ ok: true, job: { ...OPTIMISED[0], id: JOB_B } });
+      if (url === seenUrl(JOB_ID)) return jobReply({ ok: true, marked: true });
+      return undefined;
+    },
+    poll: { reveal: 5000, stall: 5000 },
+  });
+  ui.$('optimizeLoadedBtn').click();
+  await until(() => !ui.$('examJobClose').hidden && !ui.$('optimizeLoadedBtn').disabled);
+  ui.scrollCalls.length = 0;
+  ui.$('optimizeLoadedBtn').click();
+  await until(() => submits === 2);
+  await until(() => ui.$('examJobPanel').hidden, 'The ended panel goes at once');
+  await pause(30);
+  assert.equal(ui.$('examJobPanel').hidden, true, 'and the new job is not shown before its time');
+  assert.equal(ui.scrollCalls.some(call => call.element === ui.$('examJobPanel')), false, 'No jump to the top');
+});
+
+test('after an ended panel, a quick action is still never shown and never waits', async t => {
+  let submits = 0;
+  const ui = await loadedEditor(t, {
+    onRequest: async (url, options) => {
+      if (url === '/ops/exam-timetable/build/') {
+        submits += 1;
+        return jobReply({ ok: true, job: { ...jobFrame('optimize_loaded', 'queued'), id: submits === 1 ? JOB_ID : JOB_B } }, 202);
+      }
+      if (url === pollUrl(JOB_ID)) return jobReply({ ok: true, job: failedFrame('optimize_loaded') });
+      if (url === pollUrl(JOB_B)) return jobReply({ ok: true, job: { ...OPTIMISED[2], id: JOB_B } });
+      if (url === `/ops/exam-timetable/jobs/${JOB_B}/result/`) return response({ ...evaluatedRun(JSON.parse(ui.requests.filter(r => r.url === '/ops/exam-timetable/build/').at(-1).body)), run_id: 94 });
+      if (url === seenUrl(JOB_ID)) return jobReply({ ok: true, marked: true });
+      return undefined;
+    },
+    poll: { reveal: 400, stall: 2000, minShown: 1500 },
+  });
+  ui.$('optimizeLoadedBtn').click();
+  await until(() => !ui.$('examJobClose').hidden && !ui.$('optimizeLoadedBtn').disabled);
+  const seen = watchPanel(ui);
+  ui.scrollCalls.length = 0;
+  const started = Date.now();
+  ui.$('optimizeLoadedBtn').click();
+  await until(() => /alert-success/.test(ui.$('etStatus').className));
+  assert.ok(Date.now() - started < 1000, `Took ${Date.now() - started} ms: no minimum-shown wait for a panel never shown`);
+  assert.equal(seen.shownAt, null);
+  assert.equal(ui.$('examJobPanel').hidden, true);
+  assert.equal(ui.scrollCalls.some(call => call.element === ui.$('examJobPanel')), false);
+});
+test('a page-load answer arriving after my own action started never takes its panel', async t => {
+  const theirsRunning = theirs('build', 'running', { enrolments: 'done', conflicts: 'running' }, 'conflicts');
+  let releaseActive;
+  const activeAnswered = new Promise(resolve => { releaseActive = resolve; });
+  const ui = await loadedEditor(t, {
+    onRequest: async url => {
+      if (isActive(url)) {
+        await activeAnswered;
+        return jobReply({ ok: true, job: theirsRunning });
+      }
+      if (url === '/ops/exam-timetable/build/') return jobReply({ ok: true, job: { ...jobFrame('optimize_loaded', 'queued'), id: JOB_B } }, 202);
+      if (url === pollUrl(JOB_ID)) return jobReply({ ok: true, job: theirsRunning });
+      if (url === pollUrl(JOB_B)) return jobReply({ ok: true, job: { ...OPTIMISED[0], id: JOB_B } });
+      return undefined;
+    },
+  });
+  ui.$('optimizeLoadedBtn').click();
+  await until(() => stageStates(ui).length === 6, 'Following my optimise');
+  releaseActive();
+  for (let sample = 0; sample < 30; sample += 1) {
+    await pause(2);
+    assert.equal(stageStates(ui).length, 6, `sample ${sample}: another job's stages were drawn`);
+  }
+  assert.equal(ui.$('examJobTitle').textContent, TEXT.optimizing);
+  assert.equal(ui.$('examJobCancel').hidden, false, 'My running job kept its Stop');
+});
+
+// ── Check ──
+
+test('a Check turned away because the solver is busy waits, and is not an error', async t => {
+  const ui = await loadedEditor(t, {
+    onRequest: async url => url === '/ops/exam-timetable/draft-impact/'
+      ? jobReply({ ok: false, error_code: 'solver_busy', error: 'Another timetable action is using the solver.', holder: { kind: 'planner', seconds: 240 } }, 503)
+      : undefined,
+  });
+  dropExam(ui, 'Wed');
+  ui.$('checkDraftBtn').click();
+  await until(() => ui.requests.some(request => request.url === '/ops/exam-timetable/draft-impact/'));
+  await until(() => /Waiting for the server|في انتظار الخادم/.test(ui.$('examCheckStatus').textContent));
+  assert.match(ui.$('draftImpactBanner').textContent, language === 'ar' ? /تخطيط الجدول الدراسي.*أعد الفحص عند انتهائها/ : /timetable-planner run is using the server\. Check again when it finishes/);
+  assert.equal(ui.$('examEditorRequestError').hidden, true, 'No error banner');
+  assert.equal(ui.notifications.length, 0, 'and no error toast');
+  if (language === 'ar') assert.doesNotMatch(ui.$('draftImpactBanner').textContent, /solver/);
+});
+
+test('a live check the solver turned away is tried again, quietly', async t => {
+  let asked = 0;
+  const ui = await loadedEditor(t, {
+    liveUpdate: true,
+    poll: { checkRetry: 30 },
+    onRequest: async url => {
+      if (url !== '/ops/exam-timetable/draft-impact/') return undefined;
+      asked += 1;
+      return asked === 1 ? jobReply({ ok: false, error_code: 'solver_busy', error: 'busy', holder: { kind: 'check', seconds: 1 } }, 503) : undefined;
+    },
+  });
+  dropExam(ui, 'Tue');
+  await until(() => asked >= 1, 'The live check ran');
+  await until(() => asked >= 2, 'and ran again after the wait');
+  await until(() => /Checked|تم التحقق/.test(ui.$('examCheckStatus').textContent));
+  assert.equal(ui.notifications.length, 0);
+});
+
+// ── what assistive technology is told ──
+
+test('the panel is labelled, and each stage says its state in words', async t => {
+  const { ui } = await optimiseAsJob(t);
+  await until(() => stageStates(ui).includes('running'));
+  assert.equal(ui.$('examJobLive').getAttribute('role'), 'status');
+  assert.equal(ui.$('examJobLive').getAttribute('aria-live'), 'polite');
+  assert.equal(ui.$('examJobPanel').contains(ui.$('examJobLive')), false, 'Not inside the panel that starts hidden');
+  assert.equal(ui.$('examJobPanel').getAttribute('aria-labelledby'), 'examJobTitle');
+  const stages = ui.$('examJobStages');
+  assert.equal(stages.querySelectorAll('[aria-current]').length, 1);
+  assert.equal(stages.querySelector('.is-running').getAttribute('aria-current'), 'step');
+  assert.match(stages.querySelector('.is-running').textContent, language === 'ar' ? /\(قيد التنفيذ\)/ : /\(in progress\)/);
+  assert.match(stages.querySelector('.is-done').textContent, language === 'ar' ? /\(تمّ\)/ : /\(done\)/);
+  assert.match(stages.querySelector('.is-pending').textContent, language === 'ar' ? /\(في الانتظار\)/ : /\(not started\)/);
+});
+
+test('the stage list is not rewritten while nothing in it changes', async t => {
+  const ticks = [1, 2, 3].map(done => jobFrame('optimize_loaded', 'running', { read_board: 'done', place_exams: 'running' }, { key: 'place_exams', done, total: 10 }));
+  const { ui, server } = await optimiseAsJob(t, ticks);
+  await until(() => stageStates(ui).includes('running'));
+  const first = ui.$('examJobStages').firstElementChild;
+  server.advance();
+  server.advance();
+  await until(() => ui.$('examJobDetail').textContent.startsWith(language === 'ar' ? 'تم توزيع 3' : '3 of'));
+  assert.equal(ui.$('examJobStages').firstElementChild, first, "A screen reader's place in the list survives a count");
+});
+
+test("someone else's job is announced when it starts, with whose it is, not stage by stage", async t => {
+  const frames = [
+    theirs('build', 'running', { enrolments: 'done', conflicts: 'running' }, 'conflicts'),
+    theirs('build', 'running', { enrolments: 'done', conflicts: 'done', place_exams: 'running' }, 'place_exams'),
+  ];
+  let index = 0;
+  const ui = await page(t, {
+    activeJob: { ok: true, job: frames[0] },
+    onRequest: async url => url === pollUrl(JOB_ID) ? jobReply({ ok: true, job: frames[index] }) : undefined,
+  });
+  await until(() => stageStates(ui)[1] === 'running');
+  const said = ui.$('examJobLive').textContent;
+  assert.ok(said.startsWith(language === 'ar' ? 'جارٍ بناء الجدول.' : 'Building the timetable.'), said);
+  assert.ok(said.includes('⁨Huda⁩'), said);
+  index = 1;
+  await until(() => stageStates(ui)[2] === 'running');
+  await pause(30);
+  assert.equal(ui.$('examJobLive').textContent, said);
+});
+
+test('elapsed time is measured on the server clock, not this computer', async t => {
+  const { ui } = await optimiseAsJob(t);
+  await until(() => stageStates(ui).includes('running'));
+  // Started 10:00:01 by the server, which said it was 10:00:05 when it took the job.
+  assert.match(ui.$('examJobClock').textContent, /0:0[4-6]/);
+  assert.match(ui.$('examJobClock').textContent, language === 'ar' ? /المدة المنقضية/ : /Elapsed/);
+});
+
+test("while someone else's job runs, Build and Save are unavailable too", async t => {
+  const running = theirs('build', 'running', { enrolments: 'done', conflicts: 'running' }, 'conflicts');
+  const fresh = await page(t, {
+    activeJob: { ok: true, job: running },
+    onRequest: async url => url === pollUrl(JOB_ID) ? jobReply({ ok: true, job: running }) : undefined,
+  });
+  await until(() => !fresh.$('examJobPanel').hidden);
+  assert.equal(fresh.$('buildBtn').disabled, true, 'Courses are loaded, but the lane is held');
+  const loaded = await loadedEditor(t, {
+    activeJob: { ok: true, job: running },
+    onRequest: async url => url === pollUrl(JOB_ID) ? jobReply({ ok: true, job: running }) : undefined,
+  });
+  await until(() => !loaded.$('examJobPanel').hidden);
+  dropExam(loaded, 'Mon');
+  await settle();
+  assert.equal(loaded.$('saveLoadedBtn').disabled, true, 'An unsaved draft, but the lane is held');
+});
+
+test('a Check turned away by an exam job shows that job, and checks the moment it ends', async t => {
+  const frames = [
+    theirs('build', 'running', { enrolments: 'done', conflicts: 'running' }, 'conflicts'),
+    theirs('build', 'failed', { enrolments: 'done', conflicts: 'stopped' }, 'conflicts', { error_code: 'server_error', finished_at: '2026-09-23T10:00:30+00:00' }),
+  ];
+  let index = 0;
+  let started = false;
+  let checks = 0;
+  const ui = await loadedEditor(t, {
+    liveUpdate: true,
+    poll: { checkRetry: 60000 },
+    onRequest: async url => {
+      if (isActive(url)) return jobReply({ ok: true, job: started ? frames[0] : null });
+      if (url === pollUrl(JOB_ID)) return jobReply({ ok: true, job: frames[index] });
+      if (url !== '/ops/exam-timetable/draft-impact/') return undefined;
+      checks += 1;
+      if (checks > 1) return undefined;
+      started = true;
+      return jobReply({ ok: false, error_code: 'solver_busy', error: 'busy', holder: { kind: 'exam_job', seconds: 3 } }, 503);
+    },
+  });
+  dropExam(ui, 'Tue');
+  await until(() => checks === 1 && /Waiting for the server|في انتظار الخادم/.test(ui.$('examCheckStatus').textContent));
+  await until(() => !ui.$('examJobPanel').hidden, 'The job holding the solver is shown');
+  assert.match(ui.$('draftImpactBanner').textContent, language === 'ar' ? /جدول الاختبارات/ : /Another exam timetable action is using the server/);
+  index = 1;
+  await until(() => checks === 2, 'Checked as soon as it ended, not after the long wait');
+});
+
+test("a busy answer's Retry-After says when to try again", async t => {
+  let checks = 0;
+  const ui = await loadedEditor(t, {
+    liveUpdate: true,
+    poll: { checkRetry: 60000 },
+    onRequest: async url => {
+      if (url !== '/ops/exam-timetable/draft-impact/') return undefined;
+      checks += 1;
+      return checks === 1
+        ? jobReply({ ok: false, error_code: 'solver_busy', error: 'busy', holder: { kind: 'check', seconds: 1 } }, 503, { 'Retry-After': '1' })
+        : undefined;
+    },
+  });
+  dropExam(ui, 'Tue');
+  await until(() => checks === 1);
+  await until(() => checks === 2, 'Asked again after the second the server named');
+});
+
+test('a Save the busy solver turned away says to save again, in the page language', async t => {
+  const ui = await loadedEditor(t, {
+    liveUpdate: false,
+    onRequest: async url => url === '/ops/exam-timetable/draft-impact/'
+      ? jobReply({ ok: false, error_code: 'solver_busy', error: 'Another timetable action is using the solver.', holder: { kind: 'planner', seconds: 240 } }, 503)
+      : undefined,
+  });
+  dropExam(ui, 'Wed');
+  ui.$('saveLoadedBtn').click();
+  await until(() => /Waiting for the server|في انتظار الخادم/.test(ui.$('examCheckStatus').textContent));
+  assert.match(ui.$('draftImpactBanner').textContent, language === 'ar' ? /أعد الحفظ عند انتهائها/ : /Save again when it finishes/);
+  await until(() => /Try again when it finishes|أعد المحاولة عند انتهائها/.test(ui.$('etStatus').textContent));
+  assert.match(ui.$('etStatus').className, /alert-info/, 'Not an error');
+  if (language === 'ar') assert.doesNotMatch(ui.$('etStatus').textContent, /solver/);
+  assert.equal(ui.notifications.length, 0);
+  assert.equal(ui.requests.some(request => request.url === '/ops/exam-timetable/build/'), false, 'Nothing was saved');
+});
+
+// ── the final review's findings ──
+
+test('a job known to have ended is never shown as running while its result loads', async t => {
+  let seen;
+  let release;
+  const resultArrives = new Promise(resolve => { release = resolve; });
+  const { ui, server } = await optimiseAsJob(t, [OPTIMISED[2]], {
+    poll: { reveal: 200, stall: 100 },
+    beforeClick: (ui, server) => {
+      seen = watchPanel(ui);
+      server.override = async url => {
+        if (url !== `/ops/exam-timetable/jobs/${JOB_ID}/result/`) return undefined;
+        server.results += 1;
+        await resultArrives;
+        return response({ ...evaluatedRun(server.submitted), run_id: 93 });
+      };
+    },
+  });
+  await until(() => server.results === 1);
+  await pause(250);
+  assert.equal(seen.shownAt, null, 'The stall reveal did not fire for a job already over');
+  release();
+  await until(() => /alert-success/.test(ui.$('etStatus').className));
+  assert.equal(seen.shownAt, null);
+});
+
+test('a shown job that has ended offers no Stop while its result loads', async t => {
+  let release;
+  const resultArrives = new Promise(resolve => { release = resolve; });
+  const { ui, server } = await optimiseAsJob(t, OPTIMISED, {
+    beforeClick: (ui, server) => {
+      server.override = async url => {
+        if (url !== `/ops/exam-timetable/jobs/${JOB_ID}/result/`) return undefined;
+        server.results += 1;
+        await resultArrives;
+        return response({ ...evaluatedRun(server.submitted), run_id: 93 });
+      };
+    },
+  });
+  await until(() => stageStates(ui).includes('running'));
+  assert.equal(ui.$('examJobCancel').hidden, false);
+  server.advance();
+  server.advance();
+  await until(() => server.results === 1);
+  assert.equal(ui.$('examJobCancel').hidden, true, 'Nothing is left to stop');
+  assert.match(ui.$('examJobClock').textContent, language === 'ar' ? /استغرق/ : /Took/, 'The clock stops at its end');
+  release();
+  await until(() => ui.$('examJobTitle').textContent === TEXT.optimized);
+});
+
+test('a Check turned away by an exam job shows it even with an older ending on screen', async t => {
+  const colleague = theirs('build', 'running', { enrolments: 'done', conflicts: 'running' }, 'conflicts');
+  let checks = 0;
+  let started = false;
+  const ui = await loadedEditor(t, {
+    liveUpdate: true,
+    activeJob: { ok: true, job: failedFrame('build') },
+    poll: { checkRetry: 60000 },
+    onRequest: async url => {
+      if (isActive(url)) return jobReply({ ok: true, job: started ? colleague : failedFrame('build') });
+      if (url === pollUrl(JOB_ID)) return jobReply({ ok: true, job: colleague });
+      if (url === seenUrl(JOB_ID)) return jobReply({ ok: true, marked: true });
+      if (url !== '/ops/exam-timetable/draft-impact/') return undefined;
+      checks += 1;
+      started = true;
+      return jobReply({ ok: false, error_code: 'solver_busy', error: 'busy', holder: { kind: 'exam_job', seconds: 2 } }, 503);
+    },
+  });
+  await until(() => ui.$('examJobPanel').classList.contains('is-failed'), 'An older ending on screen');
+  dropExam(ui, 'Tue');
+  await until(() => checks >= 1);
+  await until(() => ui.$('examJobTitle').textContent === TEXT.building, 'The job holding the solver is shown');
+  await until(() => ui.$('optimizeLoadedBtn').disabled && ui.$('minChangeBtn').disabled);
+});
+
+test('a live check waiting on a busy solver does not repeat itself', async t => {
+  let checks = 0;
+  const ui = await loadedEditor(t, {
+    liveUpdate: true,
+    poll: { checkRetry: 15 },
+    onRequest: async url => {
+      if (url !== '/ops/exam-timetable/draft-impact/') return undefined;
+      checks += 1;
+      return jobReply({ ok: false, error_code: 'solver_busy', error: 'busy', holder: { kind: 'check', seconds: 1 } }, 503);
+    },
+  });
+  dropExam(ui, 'Tue');
+  await until(() => checks >= 1);
+  await until(() => /Waiting for the server|في انتظار الخادم/.test(ui.$('examCheckStatus').textContent));
+  const said = [];
+  let repaints = 0;
+  new ui.window.MutationObserver(() => said.push(ui.$('examCheckStatus').textContent))
+    .observe(ui.$('examCheckStatus'), { childList: true, characterData: true, subtree: true });
+  new ui.window.MutationObserver(() => { repaints += 1; })
+    .observe(ui.$('examChangesContent'), { childList: true });
+  const before = checks;
+  await until(() => checks >= before + 4, 'It kept trying');
+  assert.equal(said.length, 0, `The check line spoke again: ${JSON.stringify(said)}`);
+  assert.equal(repaints, 0, 'Nothing changed, so the board was not redrawn');
+  assert.match(ui.$('examCheckStatus').textContent, /Waiting for the server|في انتظار الخادم/);
+});
+
+test('a poll whose body never arrives counts as a lost connection', async t => {
+  const { ui, server } = await optimiseAsJob(t, OPTIMISED, { poll: { timeout: 40 } });
+  await until(() => stageStates(ui).includes('running'));
+  server.override = async url => url === pollUrl(JOB_ID)
+    ? { ok: true, status: 200, json: () => new Promise(() => {}), headers: { get: name => (name === 'content-type' ? 'application/json' : null) } }
+    : undefined;
+  await until(() => /reconnect|إعادة الاتصال/.test(ui.$('examJobDetail').textContent));
+});
+
+test('a job ending in the background keeps the keyboard on the pager', async t => {
+  const frames = [
+    theirs('build', 'running', { enrolments: 'done', conflicts: 'running' }, 'conflicts'),
+    finishedFrame('build', { mine: false, can_cancel: false, owner: 'Huda' }),
+  ];
+  let index = 0;
+  const runs = Array.from({ length: 10 }, (_, i) => ({ id: 30 + i, label: `Run ${i}` }));
+  const ui = await page(t, {
+    activeJob: { ok: true, job: frames[0] },
+    onRequest: async url => {
+      if (url === pollUrl(JOB_ID)) return jobReply({ ok: true, job: frames[index] });
+      if (url.startsWith('/ops/exam-timetable/list/')) return response({ ok: true, runs, total: 25, total_pages: 3, page: 1 });
+      return undefined;
+    },
+  });
+  await until(() => !ui.$('examJobPanel').hidden);
+  await until(() => ui.$('historyPages').querySelector('[data-history-nav="next"]'));
+  ui.$('historyPages').querySelector('[data-history-nav="next"]').focus();
+  const before = historyLoads(ui);
+  index = 1;
+  await until(() => historyLoads(ui) > before && !ui.$('examJobOpen').hidden);
+  await settle();
+  assert.equal(ui.window.document.activeElement.dataset.historyNav, 'next');
+});
+
+test('a focused run pushed off the page leaves the keyboard on the row now in its place', async t => {
+  const frames = [
+    theirs('build', 'running', { enrolments: 'done', conflicts: 'running' }, 'conflicts'),
+    finishedFrame('build', { mine: false, can_cancel: false, owner: 'Huda' }),
+  ];
+  let index = 0;
+  let runs = Array.from({ length: 10 }, (_, i) => ({ id: 40 - i, label: `Run ${i}` }));
+  const ui = await page(t, {
+    activeJob: { ok: true, job: frames[0] },
+    onRequest: async url => {
+      if (url === pollUrl(JOB_ID)) return jobReply({ ok: true, job: frames[index] });
+      if (url.startsWith('/ops/exam-timetable/list/')) return response({ ok: true, runs, total: 10, total_pages: 1, page: 1 });
+      return undefined;
+    },
+  });
+  await until(() => !ui.$('examJobPanel').hidden);
+  await until(() => ui.$('historyList').querySelectorAll('.et-copy-btn').length === 10);
+  ui.$('historyList').querySelectorAll('.et-copy-btn')[9].focus();
+  // The colleague's new run arrives at the top, pushing the tenth row off.
+  runs = [{ id: 41, label: 'New' }, ...runs.slice(0, 9)];
+  const before = historyLoads(ui);
+  index = 1;
+  await until(() => historyLoads(ui) > before && !ui.$('examJobOpen').hidden);
+  await settle();
+  const focused = ui.window.document.activeElement;
+  assert.ok(focused.classList.contains('et-copy-btn'), `Focus is on ${focused.tagName}.${focused.className}`);
+  assert.equal(focused.closest('.et-history-item').dataset.id, '32', 'The row now tenth');
+});
+
+test('Optimize with unsaved edits says to keep the page open, not that it may be left', async t => {
+  const { ui } = await optimiseAsJob(t, OPTIMISED, { beforeClick: ui => dropExam(ui, 'Mon') });
+  await until(() => stageStates(ui).includes('running'));
+  assert.match(ui.$('examJobNote').textContent, language === 'ar' ? /أبقِ هذه الصفحة مفتوحة/ : /Keep this page open/);
+});
+
+test("a stop found on opening names no timetable on screen: this page never had one", async t => {
+  const stopped = jobFrame('optimize_loaded', 'cancelled', { read_board: 'done', place_exams: 'stopped' }, { key: 'place_exams', done: 3, total: 10 },
+    { error_code: 'cancelled', finished_at: '2026-09-23T10:00:30+00:00' });
+  const ui = await page(t, {
+    activeJob: { ok: true, job: stopped },
+    onRequest: async url => (url === seenUrl(JOB_ID) ? jobReply({ ok: true, marked: true }) : undefined),
+  });
+  await until(() => ui.$('examJobPanel').classList.contains('is-cancelled'));
+  // Said to be the registrar's own, then how it ended - with no timetable on
+  // screen - and where the draft it took is: only on the page that asked.
+  const detail = ui.$('examJobDetail').textContent;
+  assert.ok(detail.startsWith(W.away), `Said: ${detail}`);
+  endsWith(detail, language === 'ar' ? 'أُوقفت العملية قبل حفظ أي شيء.' : 'Stopped before it saved anything.', W.draft);
+});
+
+test('an action whose report could not be loaded, and that saved nothing, never says "Saved"', async t => {
+  const { ui, server } = await optimiseAsJob(t, [OPTIMISED[0], finishedFrame('optimize_loaded', { has_run: false, result_run_id: null })], {
+    serverOptions: { result: () => { throw new TypeError('Failed to fetch'); } },
+  });
+  await until(() => stageStates(ui).includes('running'));
+  server.advance();
+  await until(() => /could not be loaded here|تعذّر تحميل تقريرها/.test(ui.$('examJobDetail').textContent));
+  assert.doesNotMatch(ui.$('examJobDetail').textContent, /^Saved|^حُفظ/);
+  assert.equal(ui.$('examJobOpen').hidden, true);
+});
+
+test("a colleague's job waiting its turn is shown as waiting, not as running", async t => {
+  const waiting = theirs('build', 'queued', {}, null, { started_at: null, can_cancel: true, owner: 'Huda' });
+  const ui = await page(t, {
+    activeJob: { ok: true, job: waiting },
+    onRequest: async url => url === pollUrl(JOB_ID) ? jobReply({ ok: true, job: waiting }) : undefined,
+  });
+  await until(() => !ui.$('examJobPanel').hidden);
+  assert.equal(ui.$('examJobTitle').textContent, language === 'ar' ? 'بناء الجدول في الانتظار' : 'Waiting to build the timetable');
+  assert.match(ui.$('examJobNote').textContent, language === 'ar' ? /^أُضيفت هذه العملية إلى الانتظار.*بطلب من/ : /^Requested by/);
+  if (language === 'ar') assert.doesNotMatch(ui.$('examJobNote').textContent, /طلبها/, 'A verb that agrees with any name');
+  assert.doesNotMatch(ui.$('examJobNote').textContent, /Started|بدأت/);
+  assert.equal(ui.$('examJobClock').textContent, '', 'No running time for a job that has not run');
+  ui.$('examJobCancel').click();
+  await until(() => ui.dialogs.length === 1);
+  assert.match(ui.dialogs[0].body, language === 'ar' ? /ولم تبدأ بعد/ : /has not started/);
+});
+
+test("stopping a job whose owner's account is gone names nobody", async t => {
+  const running = theirs('build', 'running', { enrolments: 'done', conflicts: 'running' }, 'conflicts', { can_cancel: true, owner: '' });
+  const ui = await page(t, {
+    activeJob: { ok: true, job: running },
+    onRequest: async url => url === pollUrl(JOB_ID) ? jobReply({ ok: true, job: running }) : undefined,
+  });
+  await until(() => !ui.$('examJobPanel').hidden);
+  ui.$('examJobCancel').click();
+  await until(() => ui.dialogs.length === 1);
+  assert.equal(ui.dialogs[0].title, language === 'ar' ? 'إيقاف هذه العملية؟' : 'Stop this action?');
+  assert.doesNotMatch(ui.dialogs[0].body, /will see|وسيظهر/);
+});
+
+test('a job that ends while the stop dialog is open is still announced', async t => {
+  const frames = [
+    theirs('build', 'running', { enrolments: 'done', conflicts: 'running' }, 'conflicts', { can_cancel: true }),
+    theirs('build', 'failed', { enrolments: 'done', conflicts: 'stopped' }, 'conflicts', { can_cancel: true, error_code: 'server_error', finished_at: '2026-09-23T10:00:30+00:00' }),
+  ];
+  let index = 0;
+  const ui = await page(t, {
+    activeJob: { ok: true, job: frames[0] },
+    onRequest: async url => url === pollUrl(JOB_ID) ? jobReply({ ok: true, job: frames[index] }) : undefined,
+  });
+  await until(() => !ui.$('examJobPanel').hidden);
+  let answer;
+  const dialogButton = ui.window.document.createElement('button');
+  const main = ui.$('main-content');
+  ui.window.dlg.confirm = options => {
+    ui.dialogs.push(options);
+    // As dialog.js does: the page is hidden from assistive technology, and
+    // focus is in the dialog until it closes.
+    main.setAttribute('aria-hidden', 'true');
+    ui.window.document.body.append(dialogButton);
+    dialogButton.focus();
+    return new Promise(resolve => {
+      answer = value => { main.removeAttribute('aria-hidden'); dialogButton.remove(); resolve(value); };
+    });
+  };
+  ui.$('examJobCancel').click();
+  await until(() => ui.dialogs.length === 1);
+  const before = ui.$('examJobLive').textContent;
+  index = 1;
+  await until(() => ui.$('examJobPanel').classList.contains('is-failed'));
+  await pause(20);
+  assert.equal(ui.$('examJobLive').textContent, before, 'Not said into a page nobody can hear');
+  answer(true);
+  await until(() => /^Build failed|^تعذّر بناء الجدول/.test(ui.$('examJobLive').textContent), 'Its ending said again');
+  assert.equal(ui.window.document.activeElement, ui.$('examJobTitle'));
+  assert.equal(ui.requests.some(request => request.url.endsWith('/cancel/')), false, 'Nothing left to stop');
+});
+
+test('an offer is announced with what ended, not only what happened to it', async t => {
+  const ui = await page(t, { activeJob: { ok: true, job: finishedFrame('minimum_change_repair', { result_run_id: 77 }) } });
+  await until(() => !ui.$('examJobOpen').hidden);
+  assert.match(ui.$('examJobLive').textContent, language === 'ar' ? /^اكتمل الإصلاح\./ : /^Fix finished\./);
+});
+
+test("a colleague's job that never started does not tell the watcher to try again", async t => {
+  const frames = [
+    theirs('build', 'queued', {}, null, { started_at: null }),
+    theirs('build', 'failed', {}, null, { started_at: null, error_code: 'never_started', finished_at: '2026-09-23T10:30:00+00:00' }),
+  ];
+  let index = 0;
+  const ui = await page(t, {
+    activeJob: { ok: true, job: frames[0] },
+    onRequest: async url => url === pollUrl(JOB_ID) ? jobReply({ ok: true, job: frames[index] }) : undefined,
+  });
+  await until(() => !ui.$('examJobPanel').hidden);
+  index = 1;
+  await until(() => ui.$('examJobPanel').classList.contains('is-failed'));
+  assert.doesNotMatch(ui.$('examJobDetail').textContent, /Try again later|أعد المحاولة لاحقاً/);
+  assert.match(ui.$('examJobDetail').textContent, language === 'ar' ? /يمكنك الآن استخدام البناء/ : /You can use Build, Optimize, Fix and Save again/);
+});
+
+test('a job someone has asked to stop offers no second Stop on another page', async t => {
+  const stopping = theirs('build', 'running', { enrolments: 'done', conflicts: 'running' }, 'conflicts', { can_cancel: true, stopping: true });
+  const ui = await page(t, {
+    activeJob: { ok: true, job: { ...stopping, stopping: false } },
+    onRequest: async url => url === pollUrl(JOB_ID) ? jobReply({ ok: true, job: stopping }) : undefined,
+  });
+  await until(() => TEXT.stopping.test(ui.$('examJobDetail').textContent));
+  assert.equal(ui.$('examJobCancel').getAttribute('aria-disabled'), 'true');
+});
+
+test("a refusal behind a colleague's job still waiting its turn says so", async t => {
+  const waiting = theirs('build', 'queued', {}, null, { started_at: null });
+  let refused = false;
+  const ui = await loadedEditor(t, {
+    onRequest: async url => {
+      if (url === '/ops/exam-timetable/build/') {
+        refused = true;
+        return jobReply({ ok: false, error_code: 'job_in_progress', error: 'x', active_job: { kind: 'build', mine: false, owner: 'Huda' } }, 409);
+      }
+      if (isActive(url)) return jobReply({ ok: true, job: refused ? waiting : null });
+      if (url === pollUrl(JOB_ID)) return jobReply({ ok: true, job: waiting });
+      return undefined;
+    },
+  });
+  ui.$('optimizeLoadedBtn').click();
+  await until(() => /did not start|لم يبدأ/.test(ui.$('examJobNote').textContent));
+  assert.match(ui.$('examJobNote').textContent, language === 'ar' ? /تنتظر عملية أخرى على الجدول دورها/ : /is waiting its turn, requested by/);
+});
+
+test('an ending on screen is not replaced by an older one of mine', async t => {
+  let submits = 0;
+  let actives = 0;
+  const olderOffer = { ...finishedFrame('optimize_loaded', { result_run_id: 88 }), id: JOB_B };
+  const ui = await loadedEditor(t, {
+    liveUpdate: true,
+    poll: { checkRetry: 60000 },
+    onRequest: async url => {
+      if (url === '/ops/exam-timetable/build/') {
+        submits += 1;
+        return jobReply({ ok: true, job: jobFrame('optimize_loaded', 'queued') }, 202);
+      }
+      if (isActive(url)) {
+        actives += 1;
+        return jobReply({ ok: true, job: actives === 1 ? null : olderOffer });
+      }
+      if (url === pollUrl(JOB_ID)) return jobReply({ ok: true, job: failedFrame('optimize_loaded') });
+      if (url === seenUrl(JOB_ID)) return jobReply({ ok: true, marked: true });
+      if (url === '/ops/exam-timetable/draft-impact/') {
+        return jobReply({ ok: false, error_code: 'solver_busy', error: 'busy', holder: { kind: 'exam_job', seconds: 2 } }, 503);
+      }
+      return undefined;
+    },
+  });
+  ui.$('optimizeLoadedBtn').click();
+  await until(() => ui.$('examJobPanel').classList.contains('is-failed') && !ui.$('optimizeLoadedBtn').disabled);
+  dropExam(ui, 'Tue');
+  await until(() => actives >= 2, 'The job holding the solver was looked for');
+  await pause(30);
+  assert.equal(ui.$('examJobTitle').textContent, TEXT.optimizeFailed, 'Still the ending the registrar was reading');
+  assert.equal(ui.$('examJobOpen').hidden, true);
+});
+
+test('a result found on opening does not take the panel from an action started meanwhile', async t => {
+  let release;
+  const storedAnswer = new Promise(resolve => { release = resolve; });
+  const refusedAway = finishedFrame('save_loaded_changes', { has_run: false, result_run_id: null, refused: true });
+  const ui = await loadedEditor(t, {
+    activeJob: { ok: true, job: refusedAway },
+    onRequest: async url => {
+      if (url === `/ops/exam-timetable/jobs/${JOB_ID}/result/`) {
+        await storedAnswer;
+        return jobReply({ ok: false, error_code: 'inputs_changed', error: 'The course list changed.' }, 409);
+      }
+      if (url === '/ops/exam-timetable/build/') return jobReply({ ok: true, job: { ...jobFrame('optimize_loaded', 'queued'), id: JOB_B } }, 202);
+      if (url === pollUrl(JOB_B)) return jobReply({ ok: true, job: { ...OPTIMISED[0], id: JOB_B } });
+      return undefined;
+    },
+  });
+  ui.$('optimizeLoadedBtn').click();
+  await until(() => ui.$('examJobTitle').textContent === TEXT.optimizing);
+  release();
+  await pause(30);
+  assert.equal(ui.$('examJobTitle').textContent, TEXT.optimizing, 'The action running now keeps the panel');
+  assert.equal(ui.$('examJobCancel').hidden, false);
+});
+
+test("closing the panel does not make the board's check line speak", async t => {
+  const ui = await loadedEditor(t, {
+    activeJob: { ok: true, job: finishedFrame('build') },
+    onRequest: async url => (url === seenUrl(JOB_ID) ? jobReply({ ok: true, marked: true }) : undefined),
+  });
+  await until(() => !ui.$('examJobClose').hidden);
+  const said = [];
+  new ui.window.MutationObserver(() => said.push(ui.$('examCheckStatus').textContent))
+    .observe(ui.$('examCheckStatus'), { childList: true, characterData: true, subtree: true });
+  ui.$('examJobClose').click();
+  await pause(20);
+  assert.deepEqual(said, [], 'Nothing it says changed');
+});
+
+// ── the round-three verification's findings ──
+
+test('my infeasible Build found on opening says which courses do not fit', async t => {
+  const ui = await page(t, {
+    activeJob: { ok: true, job: finishedFrame('build', { has_run: false, result_run_id: null, refused: true }) },
+    onRequest: async url => url === `/ops/exam-timetable/jobs/${JOB_ID}/result/`
+      ? jobReply({ ok: false, feasibility_error: true, status: 'feasibility_error', violations: [{ program: 'AI', programme_term: 3, bucket_size: 7, num_days: 5, courses: ['AI301', 'AI302'] }] }, 400)
+      : undefined,
+  });
+  await until(() => ui.$('examJobPanel').classList.contains('is-refused'));
+  const detail = ui.$('examJobDetail').textContent;
+  assert.match(detail, /AI301/);
+  assert.match(detail, language === 'ar' ? /الجدول غير ممكن/ : /Infeasible schedule/);
+  assert.doesNotMatch(detail, /Request failed|فشل الطلب/);
+});
+
+for (const code of ['inputs_changed', 'check_required']) {
+  test(`a Save refused for ${code}, found on opening, gives its reason, where the draft is, and what to do`, async t => {
+    const ui = await page(t, {
+      activeJob: { ok: true, job: finishedFrame('save_loaded_changes', { has_run: false, result_run_id: null, refused: true }) },
+      onRequest: async url => url === `/ops/exam-timetable/jobs/${JOB_ID}/result/`
+        ? jobReply({ ok: false, error_code: code, error: 'Source inputs changed since the check.' }, 409)
+        : undefined,
+    });
+    await until(() => ui.$('examJobPanel').classList.contains('is-refused'));
+    // The reason, where the draft is, then a step for either case.
+    endsWith(ui.$('examJobDetail').textContent, W.reason[code], W.draft, W.recheck.away);
+    assert.doesNotMatch(ui.$('examJobDetail').textContent, /Source inputs changed/);
+  });
+}
+function activeAnswers(first, later) {
+  let asked = 0;
+  return () => { asked += 1; return jobReply({ ok: true, ...(asked === 1 ? first : later) }); };
+}
+
+test('an outcome of mine waiting behind a colleague’s job is shown after theirs, as mine', async t => {
+  const colleague = [
+    theirs('build', 'running', { enrolments: 'done', conflicts: 'running' }, 'conflicts'),
+    finishedFrame('build', { mine: false, can_cancel: false, owner: 'Huda' }),
+  ];
+  // The same kind as the colleague's: only the wording can tell them apart.
+  const mine = { ...failedFrame('build'), id: JOB_B };
+  const active = activeAnswers({ job: colleague[0], ending: mine }, { job: mine });
+  let index = 0;
+  let seenMine = 0;
+  const ui = await page(t, {
+    onRequest: async url => {
+      if (isActive(url)) return active();
+      if (url === pollUrl(JOB_ID)) return jobReply({ ok: true, job: colleague[index] });
+      if (url === seenUrl(JOB_B)) { seenMine += 1; return jobReply({ ok: true, marked: true }); }
+      return undefined;
+    },
+  });
+  await until(() => ui.$('examJobTitle').textContent === TEXT.building, "Following the colleague's job");
+  index = 1;
+  await until(() => !ui.$('examJobOpen').hidden, "Their saved timetable is offered first");
+  assert.match(ui.$('examJobDetail').textContent, language === 'ar' ? /حُفظت النتيجة جدولاً جديداً بطلب من/ : /Saved as a new timetable by/);
+  assert.equal(seenMine, 0, 'Mine not shown yet');
+  ui.$('examJobClose').click();
+  await until(() => ui.$('examJobPanel').classList.contains('is-failed'), 'Then mine');
+  assert.match(ui.$('examJobDetail').textContent, language === 'ar' ? /^بينما كانت الصفحة مغلقة، انتهت العملية التي بدأتها/ : /^While this page was closed, the action you started/);
+  assert.match(ui.$('examJobLive').textContent, language === 'ar' ? /بينما كانت الصفحة مغلقة/ : /While this page was closed/);
+  await until(() => seenMine === 1);
+  // Owed once, asked for once.
+  const asked = activeAsks(ui);
+  ui.$('examJobClose').click();
+  await pause(40);
+  assert.equal(activeAsks(ui), asked, 'Not asked for again');
+});
+test('a refusal notice goes when another timetable is opened', async t => {
+  const ui = await loadedEditor(t, {
+    history: [{ id: 17, label: 'One' }, { id: 18, label: 'Two' }],
+    onRequest: async url => {
+      if (url === '/ops/exam-timetable/build/') {
+        return jobReply({ ok: false, error_code: 'job_in_progress', error: 'x', active_job: { kind: 'build', mine: false, owner: 'Huda' } }, 409);
+      }
+      if (url === '/ops/exam-timetable/18/') return response({ ...savedRun(), run_id: 18 });
+      return undefined;
+    },
+  });
+  ui.$('optimizeLoadedBtn').click();
+  await until(() => !ui.$('examEditorNotice').hidden);
+  await ui.window.loadRun(18);
+  await settle();
+  assert.equal(ui.$('examEditorNotice').hidden, true);
+  assert.equal(ui.$('examEditorNotice').textContent, '');
+});
+
+test('a refusal notice goes when the panel starts following a job', async t => {
+  let started = false;
+  const colleague = theirs('build', 'running', { enrolments: 'done', conflicts: 'running' }, 'conflicts');
+  const ui = await loadedEditor(t, {
+    liveUpdate: true,
+    poll: { checkRetry: 60000 },
+    onRequest: async url => {
+      if (url === '/ops/exam-timetable/build/') {
+        return jobReply({ ok: false, error_code: 'job_in_progress', error: 'x', active_job: { kind: 'build', mine: false, owner: 'Huda' } }, 409);
+      }
+      if (isActive(url)) return jobReply({ ok: true, job: started ? colleague : null });
+      if (url === pollUrl(JOB_ID)) return jobReply({ ok: true, job: colleague });
+      if (url === '/ops/exam-timetable/draft-impact/') {
+        started = true;
+        return jobReply({ ok: false, error_code: 'solver_busy', error: 'busy', holder: { kind: 'exam_job', seconds: 2 } }, 503);
+      }
+      return undefined;
+    },
+  });
+  ui.$('optimizeLoadedBtn').click();
+  await until(() => !ui.$('examEditorNotice').hidden, 'Refused, and the job had ended');
+  dropExam(ui, 'Tue');
+  await until(() => ui.$('examJobTitle').textContent === TEXT.building);
+  assert.equal(ui.$('examEditorNotice').hidden, true, '"Try again now" is no longer true');
+});
+
+test('a refusal is said once when the setup section is open', async t => {
+  const ui = await loadedEditor(t, {
+    onRequest: async url => url === '/ops/exam-timetable/build/'
+      ? jobReply({ ok: false, error_code: 'job_in_progress', error: 'x', active_job: { kind: 'build', mine: false, owner: 'Huda' } }, 409)
+      : undefined,
+  });
+  ui.$('examSetupDetails').open = true;
+  const liveBefore = ui.$('examJobLive').textContent;
+  ui.$('optimizeLoadedBtn').click();
+  await until(() => /Try again now|أعد المحاولة الآن/.test(ui.$('etStatus').textContent));
+  assert.equal(ui.$('examJobLive').textContent, liveBefore, 'Not also said through the job live region');
+});
+
+test('a check left waiting is run once an action that changed nothing ends', async t => {
+  let checks = 0;
+  let planner = true;
+  const ui = await loadedEditor(t, {
+    liveUpdate: true,
+    poll: { checkRetry: 60000 },
+    onRequest: async url => {
+      if (url === '/ops/exam-timetable/build/') {
+        planner = false;
+        return jobReply({ ok: true, job: jobFrame('optimize_loaded', 'queued') }, 202);
+      }
+      if (url === pollUrl(JOB_ID)) return jobReply({ ok: true, job: failedFrame('optimize_loaded') });
+      if (url === seenUrl(JOB_ID)) return jobReply({ ok: true, marked: true });
+      if (url !== '/ops/exam-timetable/draft-impact/') return undefined;
+      checks += 1;
+      return planner ? jobReply({ ok: false, error_code: 'solver_busy', error: 'busy', holder: { kind: 'planner', seconds: 60 } }, 503) : undefined;
+    },
+  });
+  dropExam(ui, 'Tue');
+  await until(() => /Waiting for the server|في انتظار الخادم/.test(ui.$('examCheckStatus').textContent));
+  const before = checks;
+  ui.$('optimizeLoadedBtn').click();
+  await until(() => ui.$('examJobPanel').classList.contains('is-failed') && !ui.$('optimizeLoadedBtn').disabled);
+  await until(() => checks > before, 'The owed check runs');
+  await until(() => !/Waiting for the server|في انتظار الخادم/.test(ui.$('examCheckStatus').textContent));
+});
+
+test('Stop pressed after the session ended does not claim to be stopping', async t => {
+  const { ui, server } = await optimiseAsJob(t);
+  await until(() => stageStates(ui).includes('running'));
+  // The session ends just before Stop is pressed: every request is refused.
+  let signedIn = false;
+  server.override = async url => {
+    if (signedIn || ![pollUrl(JOB_ID), `/ops/exam-timetable/jobs/${JOB_ID}/cancel/`].includes(url)) return undefined;
+    if (url.endsWith('/cancel/')) server.cancels += 1;
+    else server.polls += 1;
+    return { ok: false, status: 401, json: async () => ({}), headers: { get: () => null } };
+  };
+  ui.$('examJobCancel').focus();
+  ui.$('examJobCancel').click();
+  await until(() => ui.$('examJobNote').querySelector('a[target="_blank"]'));
+  assert.doesNotMatch(ui.$('examJobDetail').textContent, TEXT.stopping);
+  assert.equal(ui.$('examJobCancel').hidden, true);
+  assert.equal(ui.window.document.activeElement, ui.$('examJobTitle'), 'Stop had focus and is gone');
+  signedIn = true;
+  await until(() => !ui.$('examJobCancel').hidden, 'Signed in again, Stop is back');
+  assert.equal(ui.$('examJobCancel').getAttribute('aria-disabled'), 'false');
+  ui.$('examJobCancel').click();
+  await until(() => server.cancels === 2);
+});
+
+test('a stop that reached the job anyway does not also say it could not stop it', async t => {
+  const stopping = { ...OPTIMISED[0], stopping: true };
+  const { ui, server } = await optimiseAsJob(t, [OPTIMISED[0], stopping]);
+  await until(() => stageStates(ui).includes('running'));
+  server.override = async url => {
+    if (url !== `/ops/exam-timetable/jobs/${JOB_ID}/cancel/`) return undefined;
+    server.cancels += 1;
+    throw new TypeError('Failed to fetch');
+  };
+  ui.$('examJobCancel').click();
+  await until(() => server.cancels === 1 && TEXT.couldNotStop.test(ui.$('examJobNote').textContent));
+  server.advance();
+  await until(() => TEXT.stopping.test(ui.$('examJobDetail').textContent));
+  assert.doesNotMatch(ui.$('examJobNote').textContent, TEXT.couldNotStop);
+  assert.equal(ui.$('examJobCancel').getAttribute('aria-disabled'), 'true');
+});
+
+test('a job known to be over says so while its result loads, and announces no stage', async t => {
+  let release;
+  const resultArrives = new Promise(resolve => { release = resolve; });
+  const { ui, server } = await optimiseAsJob(t, OPTIMISED, {
+    poll: { announce: 40 },
+    beforeClick: (ui, server) => {
+      server.override = async url => {
+        if (url !== `/ops/exam-timetable/jobs/${JOB_ID}/result/`) return undefined;
+        server.results += 1;
+        await resultArrives;
+        return response({ ...evaluatedRun(server.submitted), run_id: 93 });
+      };
+    },
+  });
+  await until(() => stageStates(ui).includes('running'));
+  const said = [];
+  new ui.window.MutationObserver(() => said.push(ui.$('examJobLive').textContent))
+    .observe(ui.$('examJobLive'), { childList: true, characterData: true, subtree: true });
+  server.index = 2;
+  await until(() => server.results === 1);
+  const sinceOver = said.length;
+  await pause(120);
+  assert.equal(ui.$('examJobTitle').textContent, language === 'ar' ? 'انتهى تحسين الجدول، جارٍ تحميل النتيجة' : 'Optimization finished, loading the result');
+  assert.doesNotMatch(ui.$('examJobNote').textContent, TEXT.leave);
+  assert.ok(said.slice(sinceOver).every(text => !/Step \d|الخطوة/.test(text)), `Said after it ended: ${JSON.stringify(said.slice(sinceOver))}`);
+  release();
+  await until(() => ui.$('examJobTitle').textContent === TEXT.optimized);
+});
+
+test('a pager that collapses leaves the keyboard on Saved timetables, not on a hidden button', async t => {
+  const frames = [
+    theirs('build', 'running', { enrolments: 'done', conflicts: 'running' }, 'conflicts'),
+    finishedFrame('build', { mine: false, can_cancel: false, owner: 'Huda' }),
+  ];
+  let index = 0;
+  let pages = 3;
+  const runs = Array.from({ length: 10 }, (_, i) => ({ id: 30 + i, label: `Run ${i}` }));
+  const ui = await page(t, {
+    activeJob: { ok: true, job: frames[0] },
+    onRequest: async url => {
+      if (url === pollUrl(JOB_ID)) return jobReply({ ok: true, job: frames[index] });
+      if (url.startsWith('/ops/exam-timetable/list/')) return response({ ok: true, runs, total: pages * 10, total_pages: pages, page: 1 });
+      return undefined;
+    },
+  });
+  await until(() => !ui.$('examJobPanel').hidden);
+  await until(() => ui.$('historyPages').querySelector('[data-history-nav="next"]'));
+  ui.$('historyPages').querySelector('[data-history-nav="next"]').focus();
+  pages = 1;
+  const before = historyLoads(ui);
+  index = 1;
+  await until(() => historyLoads(ui) > before && !ui.$('examJobOpen').hidden);
+  await settle();
+  assert.equal(ui.window.document.activeElement, ui.$('examHistorySummary'));
+});
+
+test('signed in again with focus on the sign-in link, focus stays in the panel', async t => {
+  const { ui, server } = await optimiseAsJob(t, OPTIMISED, { poll: { slow: 20 } });
+  await until(() => stageStates(ui).includes('running'));
+  let signedIn = false;
+  server.override = async url => {
+    if (url !== pollUrl(JOB_ID) || signedIn) return undefined;
+    server.polls += 1;
+    return { ok: false, status: 401, json: async () => ({}), headers: { get: () => null } };
+  };
+  await until(() => ui.$('examJobNote').querySelector('a'));
+  ui.$('examJobNote').querySelector('a').focus();
+  signedIn = true;
+  await until(() => !ui.$('examJobNote').querySelector('a'));
+  assert.equal(ui.window.document.activeElement, ui.$('examJobTitle'));
+});
+
+test('an ending while another dialog hides the page is said once the page is back', async t => {
+  const frames = [
+    theirs('build', 'running', { enrolments: 'done', conflicts: 'running' }, 'conflicts'),
+    theirs('build', 'failed', { enrolments: 'done', conflicts: 'stopped' }, 'conflicts', { error_code: 'server_error', finished_at: '2026-09-23T10:00:30+00:00' }),
+  ];
+  let index = 0;
+  const ui = await page(t, {
+    activeJob: { ok: true, job: frames[0] },
+    onRequest: async url => url === pollUrl(JOB_ID) ? jobReply({ ok: true, job: frames[index] }) : undefined,
+  });
+  await until(() => !ui.$('examJobPanel').hidden);
+  const before = ui.$('examJobLive').textContent;
+  ui.$('main-content').setAttribute('aria-hidden', 'true');
+  index = 1;
+  await until(() => ui.$('examJobPanel').classList.contains('is-failed'));
+  await pause(20);
+  assert.equal(ui.$('examJobLive').textContent, before, 'Nobody can hear it now');
+  ui.$('main-content').removeAttribute('aria-hidden');
+  await until(() => /^Build failed|^تعذّر بناء الجدول/.test(ui.$('examJobLive').textContent), 'Said when the page is back');
+});
+
+test('refused behind my own job that is still waiting its turn says so', async t => {
+  const mineWaiting = jobFrame('build', 'queued', {}, null, { started_at: null, waiting_for: { kind: 'planner', seconds: 90 } });
+  let started = false;
+  const ui = await loadedEditor(t, {
+    onRequest: async url => {
+      if (url === '/ops/exam-timetable/build/') {
+        started = true;
+        return jobReply({ ok: false, error_code: 'job_in_progress', error: 'x', active_job: { kind: 'build', mine: true, owner: 'me', status: 'queued' } }, 409);
+      }
+      if (isActive(url)) return jobReply({ ok: true, job: started ? mineWaiting : null });
+      if (url === pollUrl(JOB_ID)) return jobReply({ ok: true, job: mineWaiting });
+      return undefined;
+    },
+  });
+  ui.$('optimizeLoadedBtn').click();
+  await until(() => /did not start|لم يبدأ/.test(ui.$('examJobNote').textContent));
+  assert.match(ui.$('examJobNote').textContent, language === 'ar' ? /تنتظر دورها/ : /waiting its turn/);
+  assert.doesNotMatch(ui.$('examJobNote').textContent, /still running|قيد التنفيذ/);
+});
+
+test('a refusal the page could not follow names a waiting job as waiting', async t => {
+  const ui = await loadedEditor(t, {
+    onRequest: async url => {
+      if (url === '/ops/exam-timetable/build/') {
+        return jobReply({ ok: false, error_code: 'job_in_progress', error: 'x', active_job: { kind: 'build', mine: false, owner: 'Huda', status: 'queued' } }, 409);
+      }
+      if (isActive(url)) return jobReply({ ok: false }, 500);
+      return undefined;
+    },
+  });
+  ui.$('optimizeLoadedBtn').click();
+  await until(() => !ui.$('examEditorNotice').hidden);
+  assert.match(ui.$('examEditorNotice').textContent, language === 'ar' ? /تنتظر عملية أخرى على الجدول دورها/ : /is waiting its turn, requested by/);
+});
+
+test('a refusal notice goes when the courses are loaded afresh', async t => {
+  const ui = await loadedEditor(t, {
+    onRequest: async url => url === '/ops/exam-timetable/build/'
+      ? jobReply({ ok: false, error_code: 'job_in_progress', error: 'x', active_job: { kind: 'build', mine: false, owner: 'Huda' } }, 409)
+      : undefined,
+  });
+  ui.$('optimizeLoadedBtn').click();
+  await until(() => !ui.$('examEditorNotice').hidden);
+  ui.$('loadCoursesBtn').click();
+  await until(() => ui.$('examEditorNotice').hidden);
+});
+
+test('an ending while the department files dialog is open is said once it closes', async t => {
+  const frames = [
+    theirs('build', 'running', { enrolments: 'done', conflicts: 'running' }, 'conflicts'),
+    theirs('build', 'failed', { enrolments: 'done', conflicts: 'stopped' }, 'conflicts', { error_code: 'server_error', finished_at: '2026-09-23T10:00:30+00:00' }),
+  ];
+  let index = 0;
+  const ui = await page(t, {
+    activeJob: { ok: true, job: frames[0] },
+    onRequest: async url => url === pollUrl(JOB_ID) ? jobReply({ ok: true, job: frames[index] }) : undefined,
+  });
+  await until(() => !ui.$('examJobPanel').hidden);
+  const before = ui.$('examJobLive').textContent;
+  ui.$('examDepartmentDialog').setAttribute('open', '');
+  index = 1;
+  await until(() => ui.$('examJobPanel').classList.contains('is-failed'));
+  await pause(20);
+  assert.equal(ui.$('examJobLive').textContent, before, 'The rest of the page is inert while it is open');
+  ui.$('examDepartmentDialog').removeAttribute('open');
+  await until(() => /^Build failed|^تعذّر بناء الجدول/.test(ui.$('examJobLive').textContent));
+});
+
+test('an outcome of mine waiting behind a colleague’s job is shown even if that job is lost', async t => {
+  const running = theirs('build', 'running', { enrolments: 'done', conflicts: 'running' }, 'conflicts');
+  const mine = { ...failedFrame('optimize_loaded'), id: JOB_B };
+  const active = activeAnswers({ job: running, ending: mine }, { job: mine });
+  let gone = false;
+  const ui = await page(t, {
+    onRequest: async url => {
+      if (isActive(url)) return active();
+      if (url === pollUrl(JOB_ID)) return gone ? jobReply({ ok: false, error_code: 'job_not_found' }, 404) : jobReply({ ok: true, job: running });
+      if (url === seenUrl(JOB_B)) return jobReply({ ok: true, marked: true });
+      return undefined;
+    },
+  });
+  await until(() => ui.$('examJobTitle').textContent === TEXT.building);
+  gone = true;
+  await until(() => ui.$('examJobPanel').classList.contains('is-lost'), 'What happened to theirs is said first');
+  ui.$('examJobClose').click();
+  await until(() => ui.$('examJobTitle').textContent === TEXT.optimizeFailed);
+});
+test('an older outcome of mine is not shown over a newer action of mine', async t => {
+  const colleague = [
+    theirs('build', 'running', { enrolments: 'done', conflicts: 'running' }, 'conflicts'),
+    theirs('build', 'failed', { enrolments: 'done', conflicts: 'stopped' }, 'conflicts', { error_code: 'server_error', finished_at: '2026-09-23T10:00:30+00:00' }),
+  ];
+  const mine = { ...failedFrame('build'), id: '6f1c2a4e-0000-4000-8000-000000000003' };
+  // Once my new action has ended and its result was read, it is my latest.
+  const active = activeAnswers({ job: colleague[0], ending: mine }, { job: null });
+  let index = 0;
+  const ui = await loadedEditor(t, {
+    poll: { reveal: 500, stall: 1000 },
+    onRequest: async url => {
+      if (isActive(url)) return active();
+      if (url === pollUrl(JOB_ID)) return jobReply({ ok: true, job: colleague[index] });
+      if (url === '/ops/exam-timetable/build/') return jobReply({ ok: true, job: { ...jobFrame('optimize_loaded', 'queued'), id: JOB_B } }, 202);
+      if (url === pollUrl(JOB_B)) return jobReply({ ok: true, job: { ...OPTIMISED[2], id: JOB_B } });
+      if (url === `/ops/exam-timetable/jobs/${JOB_B}/result/`) return response({ ...savedRun(), run_id: 94 });
+      if (url.includes('/seen/')) return jobReply({ ok: true, marked: true });
+      return undefined;
+    },
+  });
+  await until(() => ui.$('examJobTitle').textContent === TEXT.building);
+  index = 1;
+  await until(() => ui.$('examJobPanel').classList.contains('is-failed') && !ui.$('optimizeLoadedBtn').disabled);
+  // The registrar goes straight on to an action of their own, which succeeds.
+  ui.$('optimizeLoadedBtn').click();
+  await until(() => /alert-success/.test(ui.$('etStatus').className));
+  await pause(40);
+  assert.doesNotMatch(ui.$('examJobDetail').textContent, /^While this page was closed|^بينما كانت الصفحة مغلقة/,
+    'The older failure is not the answer to the newer action');
+});
+test('a Stop answered with a page that is not the server’s answer is not taken as accepted', async t => {
+  const { ui, server } = await optimiseAsJob(t);
+  await until(() => stageStates(ui).includes('running'));
+  server.override = async url => url === `/ops/exam-timetable/jobs/${JOB_ID}/cancel/`
+    ? { ok: true, status: 200, json: async () => { throw new SyntaxError('not json'); }, headers: { get: name => (name === 'content-type' ? 'text/html' : null) } }
+    : undefined;
+  ui.$('examJobCancel').click();
+  await until(() => TEXT.couldNotStop.test(ui.$('examJobNote').textContent));
+  assert.equal(ui.$('examJobCancel').getAttribute('aria-disabled'), 'false', 'Stop can be tried again');
+});
+
+test('a failed Stop of a job another page has already stopped stays stopping', async t => {
+  const stopping = { ...OPTIMISED[0], stopping: true };
+  const { ui, server } = await optimiseAsJob(t, [OPTIMISED[0], stopping]);
+  await until(() => stageStates(ui).includes('running'));
+  let releaseCancel;
+  const cancelAnswered = new Promise(resolve => { releaseCancel = resolve; });
+  let stoppingSeen = false;
+  server.override = async url => {
+    if (url === `/ops/exam-timetable/jobs/${JOB_ID}/cancel/`) {
+      server.cancels += 1;
+      await cancelAnswered;
+      throw new TypeError('Failed to fetch');
+    }
+    // After the stopping frame, no poll comes to put things right.
+    if (url === pollUrl(JOB_ID) && stoppingSeen) return new Promise(() => {});
+    if (url === pollUrl(JOB_ID) && server.index === 1) stoppingSeen = true;
+    return undefined;
+  };
+  ui.$('examJobCancel').click();
+  await until(() => server.cancels === 1);
+  server.advance();
+  await until(() => stoppingSeen);
+  await pause(10);
+  releaseCancel();
+  await pause(20);
+  assert.match(ui.$('examJobDetail').textContent, TEXT.stopping);
+  assert.doesNotMatch(ui.$('examJobNote').textContent, TEXT.couldNotStop);
+  assert.equal(ui.$('examJobCancel').getAttribute('aria-disabled'), 'true');
+});
+test('refused behind my own waiting job the page could not follow says it is waiting', async t => {
+  const ui = await loadedEditor(t, {
+    onRequest: async url => {
+      if (url === '/ops/exam-timetable/build/') {
+        return jobReply({ ok: false, error_code: 'job_in_progress', error: 'x', active_job: { kind: 'build', mine: true, owner: 'me', status: 'queued' } }, 409);
+      }
+      if (isActive(url)) return jobReply({ ok: false }, 500);
+      return undefined;
+    },
+  });
+  ui.$('optimizeLoadedBtn').click();
+  await until(() => !ui.$('examEditorNotice').hidden);
+  assert.match(ui.$('examEditorNotice').textContent, language === 'ar' ? /تنتظر دورها/ : /waiting its turn/);
+});
+
+test('my own job is announced as waiting only once the server says what for', async t => {
+  const { ui, server } = await optimiseAsJob(t, [
+    jobFrame('optimize_loaded', 'queued'),
+    jobFrame('optimize_loaded', 'queued', {}, null, { waiting_for: { kind: 'planner', seconds: 240 } }),
+  ]);
+  await until(() => !ui.$('examJobPanel').hidden);
+  await pause(20);
+  assert.doesNotMatch(ui.$('examJobLive').textContent, /busy|مشغول|planner|تخطيط/);
+  server.advance();
+  await until(() => /planner|تخطيط/.test(ui.$('examJobLive').textContent), 'Said once the wait is real');
+});
+
+test('a Stop answered by the sign-in page says signed out at once', async t => {
+  const { ui, server } = await optimiseAsJob(t, OPTIMISED, { poll: { steady: 5000, slow: 5000 } });
+  await until(() => stageStates(ui).includes('running'));
+  server.override = async url => {
+    if (url !== `/ops/exam-timetable/jobs/${JOB_ID}/cancel/`) return undefined;
+    server.cancels += 1;
+    return { ok: false, status: 401, json: async () => ({}), headers: { get: () => null } };
+  };
+  const polls = server.polls;
+  ui.$('examJobCancel').click();
+  await until(() => ui.$('examJobNote').querySelector('a[target="_blank"]'), 'Signed out, before any poll could say so');
+  assert.equal(server.polls, polls);
+  assert.doesNotMatch(ui.$('examJobNote').textContent, TEXT.couldNotStop);
+});
+
+// ── the round-five verification's findings ──
+
+test('a refusal said in the setup section goes when the panel follows a new job', async t => {
+  let started = false;
+  const colleague = theirs('build', 'running', { enrolments: 'done', conflicts: 'running' }, 'conflicts');
+  const ui = await loadedEditor(t, {
+    liveUpdate: true,
+    poll: { checkRetry: 60000 },
+    onRequest: async url => {
+      if (url === '/ops/exam-timetable/build/') {
+        return jobReply({ ok: false, error_code: 'job_in_progress', error: 'x', active_job: { kind: 'build', mine: false, owner: 'Huda' } }, 409);
+      }
+      if (isActive(url)) return jobReply({ ok: true, job: started ? colleague : null });
+      if (url === pollUrl(JOB_ID)) return jobReply({ ok: true, job: colleague });
+      if (url === '/ops/exam-timetable/draft-impact/') {
+        started = true;
+        return jobReply({ ok: false, error_code: 'solver_busy', error: 'busy', holder: { kind: 'exam_job', seconds: 2 } }, 503);
+      }
+      return undefined;
+    },
+  });
+  ui.$('examSetupDetails').open = true;
+  ui.$('optimizeLoadedBtn').click();
+  await until(() => /Try again now|أعد المحاولة الآن/.test(ui.$('etStatus').textContent));
+  dropExam(ui, 'Tue');
+  await until(() => ui.$('examJobTitle').textContent === TEXT.building);
+  assert.doesNotMatch(ui.$('etStatus').textContent, /Try again now|أعد المحاولة الآن/, '"Try again now" is no longer true');
+});
+
+test('clearing a refusal from the status line leaves what was written there since', async t => {
+  let started = false;
+  const colleague = theirs('build', 'running', { enrolments: 'done', conflicts: 'running' }, 'conflicts');
+  const ui = await loadedEditor(t, {
+    liveUpdate: true,
+    poll: { checkRetry: 60000 },
+    onRequest: async url => {
+      if (url === '/ops/exam-timetable/build/') {
+        return jobReply({ ok: false, error_code: 'job_in_progress', error: 'x', active_job: { kind: 'build', mine: false, owner: 'Huda' } }, 409);
+      }
+      if (isActive(url)) return jobReply({ ok: true, job: started ? colleague : null });
+      if (url === pollUrl(JOB_ID)) return jobReply({ ok: true, job: colleague });
+      if (url === '/ops/exam-timetable/draft-impact/') {
+        started = true;
+        return jobReply({ ok: false, error_code: 'solver_busy', error: 'busy', holder: { kind: 'exam_job', seconds: 2 } }, 503);
+      }
+      return undefined;
+    },
+  });
+  ui.$('examSetupDetails').open = true;
+  ui.$('optimizeLoadedBtn').click();
+  await until(() => /Try again now|أعد المحاولة الآن/.test(ui.$('etStatus').textContent));
+  // Something else has the status line now.
+  ui.$('etStatus').textContent = 'Courses reloaded.';
+  dropExam(ui, 'Tue');
+  await until(() => ui.$('examJobTitle').textContent === TEXT.building);
+  assert.equal(ui.$('etStatus').textContent, 'Courses reloaded.', 'Not the notice\u2019s to clear');
+});
+
+test('a Save turned away keeps saying to save again once the builder is free', async t => {
+  let checks = 0;
+  const ui = await loadedEditor(t, {
+    liveUpdate: true,
+    poll: { checkRetry: 60000 },
+    onRequest: async url => {
+      if (url !== '/ops/exam-timetable/draft-impact/') return undefined;
+      checks += 1;
+      return jobReply({ ok: false, error_code: 'solver_busy', error: 'busy', holder: { kind: 'planner', seconds: 60 } }, 503);
+    },
+  });
+  dropExam(ui, 'Wed');
+  await until(() => checks >= 1);
+  const before = checks;
+  ui.$('saveLoadedBtn').click();
+  await until(() => checks > before && /Save again when it finishes|أعد الحفظ عند انتهائها/.test(ui.$('draftImpactBanner').textContent));
+  await pause(40);
+  assert.match(ui.$('draftImpactBanner').textContent, /Save again when it finishes|أعد الحفظ عند انتهائها/, 'Not overwritten by a background check');
+});
+
+test('a reconnecting notice held while the page was hidden is not said once contact is back', async t => {
+  const { ui, server } = await optimiseAsJob(t);
+  await until(() => stageStates(ui).includes('running'));
+  ui.$('main-content').setAttribute('aria-hidden', 'true');
+  server.failures = Infinity;
+  await until(() => /reconnect|إعادة الاتصال/.test(ui.$('examJobDetail').textContent));
+  server.failures = 0;
+  await until(() => ui.$('examJobDetail').textContent === TEXT.exams310, 'Contact is back');
+  const said = [];
+  new ui.window.MutationObserver(() => said.push(ui.$('examJobLive').textContent))
+    .observe(ui.$('examJobLive'), { childList: true, characterData: true, subtree: true });
+  ui.$('main-content').removeAttribute('aria-hidden');
+  await pause(30);
+  assert.ok(said.every(text => !/reconnect|إعادة الاتصال/.test(text)), `Said: ${JSON.stringify(said)}`);
+});
+
+test('an ending while the rest of the page is inert is said once it is not', async t => {
+  const frames = [
+    theirs('build', 'running', { enrolments: 'done', conflicts: 'running' }, 'conflicts'),
+    theirs('build', 'failed', { enrolments: 'done', conflicts: 'stopped' }, 'conflicts', { error_code: 'server_error', finished_at: '2026-09-23T10:00:30+00:00' }),
+  ];
+  let index = 0;
+  const ui = await page(t, {
+    activeJob: { ok: true, job: frames[0] },
+    onRequest: async url => url === pollUrl(JOB_ID) ? jobReply({ ok: true, job: frames[index] }) : undefined,
+  });
+  await until(() => !ui.$('examJobPanel').hidden);
+  const before = ui.$('examJobLive').textContent;
+  // As the fullscreen conflict matrix does to everything behind it.
+  ui.$('main-content').setAttribute('inert', '');
+  index = 1;
+  await until(() => ui.$('examJobPanel').classList.contains('is-failed'));
+  await pause(20);
+  assert.equal(ui.$('examJobLive').textContent, before, 'Nobody can hear it now');
+  ui.$('main-content').removeAttribute('inert');
+  await until(() => /^Build failed|^تعذّر بناء الجدول/.test(ui.$('examJobLive').textContent));
+});
+
+test('a job ending while a Saved-timetables dialog is open keeps the keyboard on its button', async t => {
+  const frames = [
+    theirs('build', 'running', { enrolments: 'done', conflicts: 'running' }, 'conflicts'),
+    finishedFrame('build', { mine: false, can_cancel: false, owner: 'Huda' }),
+  ];
+  let index = 0;
+  const ui = await page(t, {
+    history: [{ id: 17, label: 'One' }, { id: 18, label: 'Two' }],
+    activeJob: { ok: true, job: frames[0] },
+    onRequest: async url => url === pollUrl(JOB_ID) ? jobReply({ ok: true, job: frames[index] }) : undefined,
+  });
+  await until(() => !ui.$('examJobPanel').hidden);
+  await until(() => ui.$('historyList').querySelectorAll('.et-del-btn').length === 2);
+  const opener = ui.$('historyList').querySelectorAll('.et-del-btn')[1];
+  opener.focus();
+  let answer;
+  const main = ui.$('main-content');
+  const dialogButton = ui.window.document.createElement('button');
+  ui.window.dlg.confirm = options => {
+    // As dialog.js: the page is hidden, focus is in the dialog, and on close
+    // it is given back to the button that opened it.
+    const from = ui.window.document.activeElement;
+    main.setAttribute('aria-hidden', 'true');
+    ui.window.document.body.append(dialogButton);
+    dialogButton.focus();
+    return new Promise(resolve => {
+      answer = value => { main.removeAttribute('aria-hidden'); dialogButton.remove(); from.focus(); resolve(value); };
+    });
+  };
+  opener.click();
+  const before = historyLoads(ui);
+  index = 1;
+  await until(() => !ui.$('examJobOpen').hidden);
+  await pause(20);
+  assert.equal(historyLoads(ui), before, 'The list is not re-rendered under an open dialog');
+  answer(false);
+  await until(() => historyLoads(ui) > before, 'Reloaded once the page is back');
+  await settle();
+  const focused = ui.window.document.activeElement;
+  assert.ok(focused.classList.contains('et-del-btn'), `Focus is on ${focused.tagName}.${focused.className}`);
+  assert.equal(focused.dataset.id, '18');
+});
+
+test('a Build of mine turned down for courses without enrollments says so in the page language', async t => {
+  const ui = await page(t, {
+    activeJob: { ok: true, job: finishedFrame('build', { has_run: false, result_run_id: null, refused: true }) },
+    onRequest: async url => url === `/ops/exam-timetable/jobs/${JOB_ID}/result/`
+      ? jobReply({ ok: false, code: 'courses_unavailable', error: 'Some selected courses have no enrollments.', unavailable_courses: ['CS499'] }, 400)
+      : undefined,
+  });
+  await until(() => ui.$('examJobPanel').classList.contains('is-refused'));
+  assert.match(ui.$('examJobDetail').textContent, /CS499/);
+  assert.doesNotMatch(ui.$('examJobDetail').textContent, /Some selected courses have no enrollments/);
+  // A Build takes no draft with it: there is none to speak of.
+  assert.doesNotMatch(ui.$('examJobDetail').textContent, /unsaved changes|تغييرات غير محفوظة/);
+});
+
+test('a reason that already ends its sentence gets no second full stop', async t => {
+  const ui = await page(t, {
+    activeJob: { ok: true, job: finishedFrame('build', { has_run: false, result_run_id: null, refused: true }) },
+    onRequest: async url => url === `/ops/exam-timetable/jobs/${JOB_ID}/result/`
+      ? jobReply({ ok: false, error: 'The exam period has no usable days.' }, 400)
+      : undefined,
+  });
+  await until(() => ui.$('examJobPanel').classList.contains('is-refused'));
+  const detail = ui.$('examJobDetail').textContent;
+  assert.match(detail, /no usable days\.[⁦-⁩]*$/);
+  assert.doesNotMatch(detail, /\.[⁦-⁩]*\./, `Said: ${detail}`);
+});
+
+test('stopping a colleague’s job waits for the dialog to hand focus back first', async t => {
+  const running = theirs('build', 'running', { enrolments: 'done', conflicts: 'running' }, 'conflicts', { can_cancel: true });
+  const ui = await page(t, {
+    activeJob: { ok: true, job: running },
+    onRequest: async url => url === pollUrl(JOB_ID) ? jobReply({ ok: true, job: running }) : undefined,
+  });
+  await until(() => !ui.$('examJobPanel').hidden);
+  ui.$('examJobCancel').click();
+  await until(() => ui.dialogs.length === 1);
+  assert.equal(ui.dialogs[0].waitForClose, true);
+});
+
+test('an outcome of mine behind a colleague’s job is shown once their timetable is opened', async t => {
+  const colleague = [
+    theirs('build', 'running', { enrolments: 'done', conflicts: 'running' }, 'conflicts'),
+    finishedFrame('build', { mine: false, can_cancel: false, owner: 'Huda', result_run_id: 77 }),
+  ];
+  const mine = { ...failedFrame('optimize_loaded'), id: JOB_B };
+  const active = activeAnswers({ job: colleague[0], ending: mine }, { job: mine });
+  let index = 0;
+  const ui = await page(t, {
+    onRequest: async url => {
+      if (isActive(url)) return active();
+      if (url === pollUrl(JOB_ID)) return jobReply({ ok: true, job: colleague[index] });
+      if (url === '/ops/exam-timetable/77/') return response({ ...savedRun(), run_id: 77 });
+      if (url === seenUrl(JOB_B)) return jobReply({ ok: true, marked: true });
+      return undefined;
+    },
+  });
+  await until(() => ui.$('examJobTitle').textContent === TEXT.building);
+  index = 1;
+  await until(() => !ui.$('examJobOpen').hidden);
+  ui.$('examJobOpen').click();
+  await until(() => ui.$('examJobTitle').textContent === TEXT.optimizeFailed, 'Mine, once theirs is open');
+});
+test('a Save turned away while a colleague’s job ran is not checked in its place when that job ends', async t => {
+  const colleague = [
+    theirs('build', 'running', { enrolments: 'done', conflicts: 'running' }, 'conflicts'),
+    theirs('build', 'failed', { enrolments: 'done', conflicts: 'stopped' }, 'conflicts', { error_code: 'server_error', finished_at: '2026-09-23T10:00:30+00:00' }),
+  ];
+  let index = 0;
+  let started = false;
+  let checks = 0;
+  const ui = await loadedEditor(t, {
+    liveUpdate: false,
+    onRequest: async url => {
+      if (isActive(url)) return jobReply({ ok: true, job: started ? colleague[0] : null });
+      if (url === pollUrl(JOB_ID)) return jobReply({ ok: true, job: colleague[index] });
+      if (url !== '/ops/exam-timetable/draft-impact/') return undefined;
+      checks += 1;
+      started = true;
+      return jobReply({ ok: false, error_code: 'solver_busy', error: 'busy', holder: { kind: 'exam_job', seconds: 5 } }, 503);
+    },
+  });
+  dropExam(ui, 'Wed');
+  ui.$('examLiveUpdate').checked = true;
+  ui.$('saveLoadedBtn').click();
+  await until(() => ui.$('examJobTitle').textContent === TEXT.building && /Save again when it finishes|أعد الحفظ عند انتهائها/.test(ui.$('draftImpactBanner').textContent));
+  const before = checks;
+  index = 1;
+  await until(() => ui.$('examJobPanel').classList.contains('is-failed'));
+  await pause(40);
+  assert.equal(checks, before, 'Nothing was checked in place of the Save the registrar has to repeat');
+  assert.match(ui.$('draftImpactBanner').textContent, /Save again when it finishes|أعد الحفظ عند انتهائها/);
+});
+
+test('a signed-out notice held while the page was hidden is not said once signed in again', async t => {
+  const { ui, server } = await optimiseAsJob(t, OPTIMISED, { poll: { slow: 10 } });
+  await until(() => stageStates(ui).includes('running'));
+  let signedIn = false;
+  server.override = async url => {
+    if (url !== pollUrl(JOB_ID) || signedIn) return undefined;
+    server.polls += 1;
+    return { ok: false, status: 401, json: async () => ({}), headers: { get: () => null } };
+  };
+  ui.$('main-content').setAttribute('aria-hidden', 'true');
+  await until(() => /session expired|انتهت جلسة/.test(ui.$('examJobDetail').textContent));
+  signedIn = true;
+  await until(() => ui.$('examJobDetail').textContent === TEXT.exams310, 'Signed in again');
+  const said = [];
+  new ui.window.MutationObserver(() => said.push(ui.$('examJobLive').textContent))
+    .observe(ui.$('examJobLive'), { childList: true, characterData: true, subtree: true });
+  ui.$('main-content').removeAttribute('aria-hidden');
+  await pause(30);
+  assert.ok(said.every(text => !/session expired|انتهت جلسة/.test(text)), `Said: ${JSON.stringify(said)}`);
+});
+
+test('a stage held while the page was hidden is not said once the job is over', async t => {
+  let release;
+  const resultArrives = new Promise(resolve => { release = resolve; });
+  const { ui, server } = await optimiseAsJob(t, OPTIMISED, {
+    poll: { announce: 0 },
+    beforeClick: (ui, server) => {
+      ui.$('main-content').setAttribute('aria-hidden', 'true');
+      server.override = async url => {
+        if (url !== `/ops/exam-timetable/jobs/${JOB_ID}/result/`) return undefined;
+        server.results += 1;
+        await resultArrives;
+        return response({ ...evaluatedRun(server.submitted), run_id: 93 });
+      };
+    },
+  });
+  await until(() => stageStates(ui).includes('running'));
+  await pause(20);
+  server.index = 2;
+  await until(() => server.results === 1, 'Over, its result on the way');
+  const said = [];
+  new ui.window.MutationObserver(() => said.push(ui.$('examJobLive').textContent))
+    .observe(ui.$('examJobLive'), { childList: true, characterData: true, subtree: true });
+  ui.$('main-content').removeAttribute('aria-hidden');
+  await pause(30);
+  assert.ok(said.every(text => !/Step \d|الخطوة/.test(text)), `Said: ${JSON.stringify(said)}`);
+  release();
+  await until(() => ui.$('examJobTitle').textContent === TEXT.optimized);
+});
+
+test('an ending while the conflict matrix is fullscreen is said once it closes', async t => {
+  const frames = [
+    theirs('build', 'running', { enrolments: 'done', conflicts: 'running' }, 'conflicts'),
+    theirs('build', 'failed', { enrolments: 'done', conflicts: 'stopped' }, 'conflicts', { error_code: 'server_error', finished_at: '2026-09-23T10:00:30+00:00' }),
+  ];
+  let index = 0;
+  const ui = await loadedEditor(t, {
+    run: matrixRun(),
+    activeJob: { ok: true, job: frames[0] },
+    onRequest: async url => url === pollUrl(JOB_ID) ? jobReply({ ok: true, job: frames[index] }) : undefined,
+  });
+  await until(() => !ui.$('examJobPanel').hidden);
+  ui.$('toggleMatrix').click();
+  ui.$('matrixFullscreen').click();
+  assert.ok(ui.$('matrixPanel').classList.contains('matrix-fullscreen'));
+  const before = ui.$('examJobLive').textContent;
+  index = 1;
+  await until(() => ui.$('examJobPanel').classList.contains('is-failed'));
+  await pause(20);
+  assert.equal(ui.$('examJobLive').textContent, before, 'Everything behind the matrix is inert');
+  ui.$('matrixFullscreen').click();
+  await until(() => /^Build failed|^تعذّر بناء الجدول/.test(ui.$('examJobLive').textContent), 'Said once the matrix closes');
+});
+
+// ── the round-six verification's findings ──
+
+test('a job ending while the real Delete dialog is open keeps the keyboard on its button', async t => {
+  const frames = [
+    theirs('build', 'running', { enrolments: 'done', conflicts: 'running' }, 'conflicts'),
+    finishedFrame('build', { mine: false, can_cancel: false, owner: 'Huda' }),
+  ];
+  let index = 0;
+  const ui = await page(t, {
+    realDialogs: true,
+    history: [{ id: 17, label: 'One' }, { id: 18, label: 'Two' }],
+    activeJob: { ok: true, job: frames[0] },
+    onRequest: async url => url === pollUrl(JOB_ID) ? jobReply({ ok: true, job: frames[index] }) : undefined,
+  });
+  await until(() => !ui.$('examJobPanel').hidden);
+  await until(() => ui.$('historyList').querySelectorAll('.et-del-btn').length === 2);
+  const opener = ui.$('historyList').querySelectorAll('.et-del-btn')[1];
+  opener.focus();
+  opener.click();
+  await until(() => ui.window.document.querySelector('.dlg-backdrop'));
+  // As in a browser: the dialog has the keyboard, not the button that opened it.
+  await until(() => ui.window.document.activeElement.closest('.dlg-backdrop'), 'The dialog takes focus');
+  const before = historyLoads(ui);
+  index = 1;
+  await until(() => !ui.$('examJobOpen').hidden);
+  // The list answers at once: sooner than the dialog gives focus back.
+  ui.window.document.querySelector('.dlg-backdrop .btn-cancel').click();
+  await until(() => historyLoads(ui) > before, 'Reloaded once the dialog is gone');
+  await pause(300);
+  const focused = ui.window.document.activeElement;
+  assert.ok(focused.classList.contains('et-del-btn'), `Focus is on ${focused.tagName}.${focused.className}`);
+  assert.equal(focused.closest('.et-history-item').dataset.id, '18');
+});
+
+test('a Save of mine turned down for courses without enrollments, found on return, calls no draft unchanged', async t => {
+  const ui = await page(t, {
+    activeJob: { ok: true, job: finishedFrame('save_loaded_changes', { has_run: false, result_run_id: null, refused: true }) },
+    onRequest: async url => url === `/ops/exam-timetable/jobs/${JOB_ID}/result/`
+      ? jobReply({ ok: false, code: 'courses_unavailable', error: 'x', unavailable_courses: ['CS499'] }, 400)
+      : undefined,
+  });
+  await until(() => ui.$('examJobPanel').classList.contains('is-refused'));
+  assert.match(ui.$('examJobDetail').textContent, /CS499/);
+  assert.doesNotMatch(ui.$('examJobDetail').textContent, /draft is unchanged|لم تتغير مسودتك/i);
+  // Listed as the live page lists them, with its step; then where the draft
+  // is - and no "check again": checking would not bring the courses back.
+  endsWith(ui.$('examJobDetail').textContent, language === 'ar'
+    ? 'المستوردة. المقررات غير المتاحة: \u2066CS499\u2069. حمّل المقررات لمراجعة القائمة الحالية.'
+    : 'student timetables. Unavailable courses: CS499. Load Courses to review the current list.', W.draft);
+});
+
+test('my own saved timetable already open on the board is not offered again', async t => {
+  const colleague = [
+    theirs('build', 'running', { enrolments: 'done', conflicts: 'running' }, 'conflicts'),
+    theirs('build', 'failed', { enrolments: 'done', conflicts: 'stopped' }, 'conflicts', { error_code: 'server_error', finished_at: '2026-09-23T10:00:30+00:00' }),
+  ];
+  // My job saved run 17 while I was away - the run this page has open.
+  const mine = { ...finishedFrame('build', { result_run_id: 17 }), id: JOB_B };
+  const active = activeAnswers({ job: colleague[0], ending: mine }, { job: mine });
+  let index = 0;
+  let seenMine = 0;
+  const ui = await loadedEditor(t, {
+    onRequest: async url => {
+      if (isActive(url)) return active();
+      if (url === pollUrl(JOB_ID)) return jobReply({ ok: true, job: colleague[index] });
+      if (url === seenUrl(JOB_B)) { seenMine += 1; return jobReply({ ok: true, marked: true }); }
+      return undefined;
+    },
+  });
+  await until(() => ui.$('examJobTitle').textContent === TEXT.building);
+  index = 1;
+  await until(() => !ui.$('examJobClose').hidden && ui.$('examJobPanel').classList.contains('is-failed'));
+  ui.$('examJobClose').click();
+  await until(() => seenMine === 1, 'Marked seen: it is on the board');
+  assert.equal(ui.$('examJobPanel').hidden, true, 'Not offered to be opened again');
+});
+
+test('a job ending while the real discard-changes dialog is open keeps the keyboard on its row', async t => {
+  const frames = [
+    theirs('build', 'running', { enrolments: 'done', conflicts: 'running' }, 'conflicts'),
+    finishedFrame('build', { mine: false, can_cancel: false, owner: 'Huda' }),
+  ];
+  let index = 0;
+  const run = { ...savedRun(), pinned: [] };
+  const ui = await loadedEditor(t, {
+    run,
+    realDialogs: true,
+    history: [{ id: run.run_id, label: 'One' }, { id: 18, label: 'Two' }],
+    activeJob: { ok: true, job: frames[0] },
+    onRequest: async url => url === pollUrl(JOB_ID) ? jobReply({ ok: true, job: frames[index] }) : undefined,
+  });
+  await until(() => !ui.$('examJobPanel').hidden);
+  // Unsaved changes: opening another timetable asks first.
+  dropExam(ui, 'Tue');
+  await until(() => ui.$('historyList').querySelectorAll('.et-run-info').length === 2);
+  const opener = ui.$('historyList').querySelectorAll('.et-run-info')[1];
+  opener.focus();
+  opener.click();
+  await until(() => ui.window.document.querySelector('.dlg-backdrop'), 'The discard-changes dialog opens');
+  await until(() => ui.window.document.activeElement.closest('.dlg-backdrop'), 'The dialog takes focus');
+  const before = historyLoads(ui);
+  index = 1;
+  await until(() => !ui.$('examJobOpen').hidden);
+  // The list answers at once: sooner than the dialog gives focus back.
+  ui.window.document.querySelector('.dlg-backdrop .btn-cancel').click();
+  await until(() => historyLoads(ui) > before, 'Reloaded once the dialog is gone');
+  await pause(300);
+  const focused = ui.window.document.activeElement;
+  assert.ok(focused.classList.contains('et-run-info'), `Focus is on ${focused.tagName}.${focused.className}`);
+  assert.equal(focused.closest('.et-history-item').dataset.id, '18');
+});
+
+test('a newer action of mine drops the older outcome owed: the server offers only my latest', async t => {
+  const colleague = [
+    theirs('build', 'running', { enrolments: 'done', conflicts: 'running' }, 'conflicts'),
+    theirs('build', 'failed', { enrolments: 'done', conflicts: 'stopped' }, 'conflicts', { error_code: 'server_error', finished_at: '2026-09-23T10:00:30+00:00' }),
+  ];
+  const older = { ...failedFrame('build'), id: '6f1c2a4e-0000-4000-8000-000000000003' };
+  const active = activeAnswers({ job: colleague[0], ending: older }, { job: null });
+  const own = [{ ...OPTIMISED[0], id: JOB_B }, { ...OPTIMISED[2], id: JOB_B }];
+  let index = 0;
+  let step = 0;
+  const ui = await loadedEditor(t, {
+    onRequest: async url => {
+      if (isActive(url)) return active();
+      if (url === pollUrl(JOB_ID)) return jobReply({ ok: true, job: colleague[index] });
+      if (url === '/ops/exam-timetable/build/') return jobReply({ ok: true, job: { ...jobFrame('optimize_loaded', 'queued'), id: JOB_B } }, 202);
+      if (url === pollUrl(JOB_B)) return jobReply({ ok: true, job: own[step] });
+      if (url === `/ops/exam-timetable/jobs/${JOB_B}/result/`) return response({ ...savedRun(), run_id: 94 });
+      if (url.includes('/seen/')) return jobReply({ ok: true, marked: true });
+      return undefined;
+    },
+  });
+  await until(() => ui.$('examJobTitle').textContent === TEXT.building);
+  index = 1;
+  await until(() => ui.$('examJobPanel').classList.contains('is-failed') && !ui.$('optimizeLoadedBtn').disabled);
+  ui.$('optimizeLoadedBtn').click();
+  await until(() => stageStates(ui).includes('running'), 'My own action is shown');
+  step = 1;
+  await until(() => ui.$('examJobTitle').textContent === TEXT.optimized && !ui.$('examJobClose').hidden, 'Mine ended, on show');
+  const asked = activeAsks(ui);
+  ui.$('examJobClose').click();
+  await pause(40);
+  assert.equal(activeAsks(ui), asked, 'Nothing older is owed: not asked again');
+  assert.equal(ui.$('examJobPanel').hidden, true);
+});
+
+// Its acknowledgement lost, a job this page has shown is still unseen news to
+// the server: the page itself remembers it has shown it.
+const busyCheck = () => jobReply({ ok: false, error_code: 'solver_busy', error: 'busy', holder: { kind: 'exam_job', seconds: 2 } }, 503);
+const activeAsks = ui => ui.requests.filter(request => isActive(request.url)).length;
+
+test('my own failure shown here is not offered again as news from while the page was closed', async t => {
+  const server = jobServer('optimize_loaded', [OPTIMISED[0], failedFrame('optimize_loaded')]);
+  let ended = false;
+  let seenTries = 0;
+  server.override = async url => {
+    if (url === seenUrl(JOB_ID)) { seenTries += 1; throw new TypeError('Failed to fetch'); }
+    if (isActive(url)) return jobReply({ ok: true, job: ended ? failedFrame('optimize_loaded') : null });
+    if (url === '/ops/exam-timetable/draft-impact/') return busyCheck();
+    return undefined;
+  };
+  const ui = await loadedEditor(t, { liveUpdate: true, poll: { checkRetry: 60000 }, onRequest: server.onRequest });
+  ui.$('optimizeLoadedBtn').click();
+  await until(() => stageStates(ui).includes('running'));
+  server.advance();
+  ended = true;
+  await until(() => ui.$('examJobPanel').classList.contains('is-failed'));
+  await until(() => seenTries === 1, 'Marked seen - and the mark is lost');
+  ui.$('examJobClose').click();
+  const asked = activeAsks(ui);
+  // A check the builder turns away looks for the job holding it.
+  dropExam(ui, 'Tue');
+  await until(() => activeAsks(ui) > asked, 'The server is asked');
+  await pause(40);
+  assert.equal(ui.$('examJobPanel').hidden, true, 'Already shown here');
+});
+
+test('my own saved timetable offered here is not offered again as news from while the page was closed', async t => {
+  const frames = [
+    jobFrame('optimize_loaded', 'running', { read_board: 'done', place_exams: 'running' }, { key: 'place_exams', done: 3, total: 10 }),
+    finishedFrame('optimize_loaded'),
+  ];
+  let index = 0;
+  let seenTries = 0;
+  const ui = await loadedEditor(t, {
+    liveUpdate: true,
+    poll: { checkRetry: 60000 },
+    onRequest: async url => {
+      if (isActive(url)) return jobReply({ ok: true, job: frames[index] });
+      if (url === pollUrl(JOB_ID)) return jobReply({ ok: true, job: frames[index] });
+      if (url === seenUrl(JOB_ID)) { seenTries += 1; throw new TypeError('Failed to fetch'); }
+      if (url === '/ops/exam-timetable/draft-impact/') return busyCheck();
+      return undefined;
+    },
+  });
+  await until(() => ui.$('examJobTitle').textContent === TEXT.optimizing, 'Following my own job, found running');
+  index = 1;
+  await until(() => !ui.$('examJobOpen').hidden, 'Its timetable is offered');
+  ui.$('examJobClose').click();
+  await until(() => seenTries === 1, 'Marked seen - and the mark is lost');
+  const asked = activeAsks(ui);
+  dropExam(ui, 'Tue');
+  await until(() => activeAsks(ui) > asked, 'The server is asked');
+  await pause(40);
+  assert.equal(ui.$('examJobPanel').hidden, true, 'Already offered here');
+});
+
+// ── the round-seven verification's findings ──
+
+// A job of the colleague's that saves run 93, and one the registrar is shown.
+const HUDA_SAVES = [
+  theirs('build', 'running', { enrolments: 'done', conflicts: 'running' }, 'conflicts'),
+  finishedFrame('build', { mine: false, can_cancel: false, owner: 'Huda' }),
+];
+const run93 = () => ({ ...savedRun(), run_id: 93, label: 'Huda build' });
+const offered = ui => !ui.$('examJobPanel').hidden && !ui.$('examJobOpen').hidden;
+
+test('Copy keeps the keyboard on its row when a job ending reloads the list under the dialogs', async t => {
+  let index = 0;
+  const history = [{ id: 17, label: 'One' }, { id: 18, label: 'Two' }];
+  const ui = await loadedEditor(t, {
+    realDialogs: true,
+    history,
+    activeJob: { ok: true, job: HUDA_SAVES[0] },
+    onRequest: async url => url === pollUrl(JOB_ID) ? jobReply({ ok: true, job: HUDA_SAVES[index] }) : undefined,
+  });
+  await until(() => !ui.$('examJobPanel').hidden);
+  // Unsaved changes: the copy asks before replacing them.
+  dropExam(ui, 'Tue');
+  await until(() => ui.$('historyList').querySelectorAll('.et-copy-btn').length === 2);
+  const opener = ui.$('historyList').querySelectorAll('.et-copy-btn')[1];
+  opener.focus();
+  opener.click();
+  await until(() => ui.window.document.activeElement.closest('.dlg-backdrop'), 'The name dialog takes focus');
+  // Her job saved run 93: the list, newest first, now has it at the top.
+  history.unshift({ id: 93, label: 'Huda build' });
+  index = 1;
+  await until(() => offered(ui), 'Huda’s job ends under the dialog');
+  ui.window.document.querySelector('.dlg-backdrop .btn-confirm').click();
+  // The list reloads as the name dialog goes; the discard dialog opens.
+  await until(() => ui.window.document.querySelector('.dlg-backdrop')?.textContent.match(/Discard unsaved changes|تجاهل التغييرات/), 'The discard dialog opens');
+  await until(() => ui.window.document.activeElement.closest('.dlg-backdrop'), 'It takes focus');
+  ui.window.document.querySelector('.dlg-backdrop .btn-cancel').click();
+  await pause(300);
+  const focused = ui.window.document.activeElement;
+  assert.ok(focused.classList.contains('et-copy-btn'), `Focus is on ${focused.tagName}.${focused.id || focused.className}`);
+  assert.equal(focused.closest('.et-history-item').dataset.id, '18');
+});
+
+// The list's own reload keeps the keyboard's place here (focus is still on the
+// row when it re-renders): this guards the Copy's own ending, which used to
+// send focus to the Saved timetables summary.
+test('a failed Copy keeps the keyboard on its row when a job ending reloaded the list meanwhile', async t => {
+  let index = 0;
+  const ui = await loadedEditor(t, {
+    realDialogs: true,
+    history: [{ id: 17, label: 'One' }, { id: 18, label: 'Two' }],
+    activeJob: { ok: true, job: HUDA_SAVES[0] },
+    onRequest: async url => {
+      if (url === pollUrl(JOB_ID)) return jobReply({ ok: true, job: HUDA_SAVES[index] });
+      // Slower than the list: it has been re-rendered by the time this fails.
+      if (url.endsWith('/18/copy/')) { await pause(30); return jobReply({ ok: false, error: 'Server error' }, 500); }
+      return undefined;
+    },
+  });
+  await until(() => !ui.$('examJobPanel').hidden);
+  await until(() => ui.$('historyList').querySelectorAll('.et-copy-btn').length === 2);
+  const opener = ui.$('historyList').querySelectorAll('.et-copy-btn')[1];
+  opener.focus();
+  opener.click();
+  await until(() => ui.window.document.activeElement.closest('.dlg-backdrop'), 'The name dialog takes focus');
+  index = 1;
+  await until(() => offered(ui));
+  ui.window.document.querySelector('.dlg-backdrop .btn-confirm').click();
+  await until(() => copyRequests(ui).length === 1);
+  await until(() => /alert-danger/.test(ui.$('etStatus').className), 'The copy failed');
+  await pause(50);
+  const focused = ui.window.document.activeElement;
+  assert.ok(focused.classList.contains('et-copy-btn'), `Focus is on ${focused.tagName}.${focused.id || focused.className}`);
+  assert.equal(focused.closest('.et-history-item').dataset.id, '18');
+});
+
+test('my own saved timetable found on opening stops being offered once it is opened from Saved timetables', async t => {
+  let seen = 0;
+  const ui = await page(t, {
+    history: [{ id: 17, label: 'One' }, { id: 93, label: 'Mine' }],
+    activeJob: { ok: true, job: finishedFrame('build') },
+    onRequest: async url => {
+      if (url === '/ops/exam-timetable/93/') return response({ ...run93(), label: 'Mine' });
+      if (url === seenUrl(JOB_ID)) { seen += 1; return jobReply({ ok: true, marked: true }); }
+      return undefined;
+    },
+  });
+  await until(() => offered(ui));
+  ui.$('historyList').querySelector('.et-history-item[data-id="93"] .et-run-info').click();
+  await until(() => ui.$('examJobPanel').hidden, 'The offer has been taken up');
+  await until(() => seen === 1, 'And acknowledged');
+});
+
+test('a colleague’s saved timetable stops being offered once it is opened from Saved timetables', async t => {
+  let index = 0;
+  let seen = 0;
+  const ui = await page(t, {
+    history: [{ id: 17, label: 'One' }, { id: 93, label: 'Huda build' }],
+    activeJob: { ok: true, job: HUDA_SAVES[0] },
+    onRequest: async url => {
+      if (url === pollUrl(JOB_ID)) return jobReply({ ok: true, job: HUDA_SAVES[index] });
+      if (url === '/ops/exam-timetable/93/') return response(run93());
+      if (url.includes('/seen/')) { seen += 1; return jobReply({ ok: true, marked: true }); }
+      return undefined;
+    },
+  });
+  await until(() => !ui.$('examJobPanel').hidden);
+  index = 1;
+  await until(() => offered(ui));
+  ui.$('historyList').querySelector('.et-history-item[data-id="93"] .et-run-info').click();
+  // "It is not open on this page" is no longer true: the panel goes.
+  await until(() => ui.$('examJobPanel').hidden, 'The offer has been taken up');
+  await pause(20);
+  assert.equal(seen, 0, 'Not the registrar’s to acknowledge');
+});
+
+test('an offered timetable deleted meanwhile is said to be deleted, and not offered again', async t => {
+  let index = 0;
+  let gets = 0;
+  const ui = await page(t, {
+    activeJob: { ok: true, job: HUDA_SAVES[0] },
+    onRequest: async url => {
+      if (url === pollUrl(JOB_ID)) return jobReply({ ok: true, job: HUDA_SAVES[index] });
+      if (url === '/ops/exam-timetable/93/') { gets += 1; return jobReply({ ok: false, code: 'run_not_found', error: 'Run not found' }, 404); }
+      return undefined;
+    },
+  });
+  await until(() => !ui.$('examJobPanel').hidden);
+  index = 1;
+  await until(() => offered(ui));
+  ui.$('examJobOpen').focus();
+  ui.$('examJobOpen').click();
+  await until(() => ui.$('examJobOpen').hidden, 'Nothing is left to open');
+  assert.equal(ui.$('examJobDetail').textContent, W.runDeleted);
+  // Said where the load failed, too - in the page language, naming the one asked for.
+  assert.ok(ui.$('etStatus').textContent.includes(W.openedGone), 'In the page language, not the server’s');
+  assert.equal(ui.window.document.activeElement, ui.$('examJobTitle'), 'Open had focus; it is gone');
+  assert.equal(gets, 1);
+});
+
+test('deleting the offered timetable from Saved timetables says so in the panel', async t => {
+  let index = 0;
+  const ui = await page(t, {
+    history: [{ id: 17, label: 'One' }, { id: 93, label: 'Huda build' }],
+    activeJob: { ok: true, job: HUDA_SAVES[0] },
+    onRequest: async url => {
+      if (url === pollUrl(JOB_ID)) return jobReply({ ok: true, job: HUDA_SAVES[index] });
+      if (url === '/ops/exam-timetable/93/delete/') return jobReply({ ok: true });
+      return undefined;
+    },
+  });
+  ui.window.dlg.confirm = async () => true;
+  await until(() => !ui.$('examJobPanel').hidden);
+  index = 1;
+  await until(() => offered(ui));
+  await until(() => ui.$('historyList').querySelector('.et-history-item[data-id="93"] .et-del-btn'));
+  ui.$('historyList').querySelector('.et-history-item[data-id="93"] .et-del-btn').click();
+  await until(() => ui.$('examJobOpen').hidden, 'Nothing is left to open');
+  assert.equal(ui.$('examJobDetail').textContent, W.runDeleted);
+  assert.equal(ui.$('examJobLive').textContent, W.runDeleted, 'Nothing else said it: the panel does');
+});
+
+test('an owed outcome of mine is asked for about itself, and asked again when the answer does not come', async t => {
+  const running = theirs('build', 'running', { enrolments: 'done', conflicts: 'running' }, 'conflicts');
+  const failed = theirs('build', 'failed', { enrolments: 'done', conflicts: 'stopped' }, 'conflicts', { error_code: 'server_error', finished_at: '2026-09-23T10:00:30+00:00' });
+  const mine = { ...failedFrame('optimize_loaded'), id: JOB_B };
+  let asked = 0;
+  let index = 0;
+  const ui = await page(t, {
+    onRequest: async url => {
+      if (isActive(url)) {
+        asked += 1;
+        if (asked === 1) return jobReply({ ok: true, job: running, ending: mine });
+        if (asked === 2) throw new TypeError('Failed to fetch');
+        return jobReply({ ok: true, job: mine });
+      }
+      if (url === pollUrl(JOB_ID)) return jobReply({ ok: true, job: index ? failed : running });
+      if (url === seenUrl(JOB_B)) return jobReply({ ok: true, marked: true });
+      return undefined;
+    },
+  });
+  await until(() => ui.$('examJobTitle').textContent === TEXT.building);
+  index = 1;
+  await until(() => ui.$('examJobPanel').classList.contains('is-failed'));
+  ui.$('examJobClose').click();
+  // No further click: the lost answer is asked for again.
+  await until(() => ui.$('examJobTitle').textContent === TEXT.optimizeFailed, 'Mine, after the retry');
+  const owed = ui.requests.filter(request => isActive(request.url)).slice(1).map(request => request.url);
+  assert.deepEqual(owed, [`/ops/exam-timetable/jobs/active/?owed=${JOB_B}`, `/ops/exam-timetable/jobs/active/?owed=${JOB_B}`]);
+});
+
+test('an owed outcome of mine the server no longer offers is not shown from memory', async t => {
+  const colleague = [
+    theirs('build', 'running', { enrolments: 'done', conflicts: 'running' }, 'conflicts'),
+    theirs('build', 'failed', { enrolments: 'done', conflicts: 'stopped' }, 'conflicts', { error_code: 'server_error', finished_at: '2026-09-23T10:00:30+00:00' }),
+  ];
+  const mine = { ...failedFrame('optimize_loaded'), id: JOB_B };
+  // Seen in another tab meanwhile: the server has nothing to show.
+  const active = activeAnswers({ job: colleague[0], ending: mine }, { job: null });
+  let index = 0;
+  const ui = await page(t, {
+    onRequest: async url => {
+      if (isActive(url)) return active();
+      if (url === pollUrl(JOB_ID)) return jobReply({ ok: true, job: colleague[index] });
+      return undefined;
+    },
+  });
+  await until(() => ui.$('examJobTitle').textContent === TEXT.building);
+  index = 1;
+  await until(() => ui.$('examJobPanel').classList.contains('is-failed'));
+  const asked = activeAsks(ui);
+  ui.$('examJobClose').click();
+  await until(() => activeAsks(ui) > asked, 'The server is asked');
+  await pause(40);
+  assert.equal(ui.$('examJobPanel').hidden, true, 'The server decides');
+});
+
+test('an owed outcome of mine answered while the panel shows another ending waits for that one to close', async t => {
+  const first = theirs('build', 'running', { enrolments: 'done', conflicts: 'running' }, 'conflicts');
+  const firstFailed = theirs('build', 'failed', { enrolments: 'done', conflicts: 'stopped' }, 'conflicts', { error_code: 'server_error', finished_at: '2026-09-23T10:00:30+00:00' });
+  const second = { ...theirs('build', 'running', { enrolments: 'done', conflicts: 'running' }, 'conflicts'), id: JOB_B };
+  const secondFailed = { ...firstFailed, id: JOB_B };
+  const mineId = '6f1c2a4e-0000-4000-8000-000000000003';
+  const mine = { ...failedFrame('optimize_loaded'), id: mineId };
+  let plain = 0;
+  let firstIndex = 0;
+  let secondIndex = 0;
+  let releaseOwed = null;
+  let owedAsks = 0;
+  const ui = await loadedEditor(t, {
+    liveUpdate: true,
+    poll: { checkRetry: 60000 },
+    onRequest: async url => {
+      if (isActive(url) && url.includes('?owed=')) {
+        owedAsks += 1;
+        // The first re-ask is slow: the panel changes hands before it answers.
+        if (owedAsks === 1) await new Promise(resolve => { releaseOwed = resolve; });
+        return jobReply({ ok: true, job: mine });
+      }
+      if (isActive(url)) {
+        plain += 1;
+        // Past the hour by now: only the owed ask still brings it back.
+        return jobReply({ ok: true, job: plain === 1 ? first : (secondIndex ? secondFailed : second), ...(plain === 1 ? { ending: mine } : {}) });
+      }
+      if (url === pollUrl(JOB_ID)) return jobReply({ ok: true, job: firstIndex ? firstFailed : first });
+      if (url === pollUrl(JOB_B)) return jobReply({ ok: true, job: secondIndex ? secondFailed : second });
+      if (url === '/ops/exam-timetable/draft-impact/') return busyCheck();
+      if (url.includes('/seen/')) return jobReply({ ok: true, marked: true });
+      return undefined;
+    },
+  });
+  await until(() => ui.$('examJobTitle').textContent === TEXT.building);
+  firstIndex = 1;
+  await until(() => ui.$('examJobPanel').classList.contains('is-failed'));
+  ui.$('examJobClose').click();
+  await until(() => releaseOwed, 'The owed ending is asked for');
+  // Meanwhile a check is turned away: the page follows the job holding it,
+  // which ends before the owed answer comes.
+  dropExam(ui, 'Tue');
+  await until(() => ui.$('examJobTitle').textContent === TEXT.building && !ui.$('examJobPanel').hidden);
+  secondIndex = 1;
+  await until(() => ui.$('examJobPanel').classList.contains('is-failed'));
+  releaseOwed();
+  await pause(40);
+  assert.notEqual(ui.$('examJobTitle').textContent, TEXT.optimizeFailed, 'Not over the ending on screen');
+  ui.$('examJobClose').click();
+  await until(() => ui.$('examJobTitle').textContent === TEXT.optimizeFailed, 'Mine, once that one is closed');
+});
+
+test('my own saved timetable, replaced on the panel before I acted on it, is offered again as this page saw it', async t => {
+  const mineRunning = jobFrame('optimize_loaded', 'running', { read_board: 'done', place_exams: 'running' }, { key: 'place_exams', done: 3, total: 10 }, { can_cancel: true });
+  const mineSaved = finishedFrame('optimize_loaded');
+  const huda = [
+    { ...theirs('build', 'running', { enrolments: 'done', conflicts: 'running' }, 'conflicts'), id: JOB_B },
+    { ...theirs('build', 'failed', { enrolments: 'done', conflicts: 'stopped' }, 'conflicts', { error_code: 'server_error', finished_at: '2026-09-23T10:00:30+00:00' }), id: JOB_B },
+  ];
+  let mineIndex = 0;
+  let hudaIndex = 0;
+  let hudaStarted = false;
+  let seenMine = 0;
+  const ui = await loadedEditor(t, {
+    onRequest: async url => {
+      if (isActive(url)) {
+        if (url.includes('?owed=')) return jobReply({ ok: true, job: mineSaved });
+        // Unacknowledged, mine is still news to the server.
+        return jobReply({ ok: true, job: hudaStarted ? huda[hudaIndex] : (mineIndex ? mineSaved : mineRunning), ...(hudaStarted ? { ending: mineSaved } : {}) });
+      }
+      if (url === pollUrl(JOB_ID)) return jobReply({ ok: true, job: mineIndex ? mineSaved : mineRunning });
+      if (url === pollUrl(JOB_B)) return jobReply({ ok: true, job: huda[hudaIndex] });
+      if (url === '/ops/exam-timetable/build/') {
+        hudaStarted = true;
+        return jobReply({ ok: false, error_code: 'job_in_progress', error: 'x', active_job: { kind: 'build', mine: false, owner: 'Huda' } }, 409);
+      }
+      if (url === seenUrl(JOB_ID)) { seenMine += 1; return jobReply({ ok: true, marked: true }); }
+      return undefined;
+    },
+  });
+  // Found running on opening - mine, from another tab - and it saves.
+  await until(() => ui.$('examJobTitle').textContent === TEXT.optimizing);
+  mineIndex = 1;
+  await until(() => offered(ui), 'Mine is offered');
+  // Before acting on it, Optimize: Huda has just started, so it is refused and
+  // her job takes the panel.
+  ui.$('optimizeLoadedBtn').click();
+  await until(() => ui.$('examJobTitle').textContent === TEXT.building, 'Her job takes the panel');
+  hudaIndex = 1;
+  await until(() => ui.$('examJobPanel').classList.contains('is-failed'));
+  ui.$('examJobClose').click();
+  await until(() => offered(ui), 'Mine is offered again');
+  assert.equal(ui.$('examJobDetail').textContent, language === 'ar' ? 'اكتملت العملية التي بدأتها وحُفظ الجدول.' : 'The timetable action you started finished and was saved.',
+    'As this page saw it end, not "while this page was closed"');
+  assert.equal(seenMine, 0, 'Still not acted on');
+});
+
+test('a colleague’s refused action followed here says nothing about unsaved changes', async t => {
+  const frames = [
+    theirs('optimize_loaded', 'running', { read_board: 'done', place_exams: 'running' }, 'place_exams'),
+    finishedFrame('optimize_loaded', { mine: false, can_cancel: false, owner: 'Huda', has_run: false, result_run_id: null, refused: true }),
+  ];
+  let index = 0;
+  const ui = await page(t, {
+    activeJob: { ok: true, job: frames[0] },
+    onRequest: async url => url === pollUrl(JOB_ID) ? jobReply({ ok: true, job: frames[index] }) : undefined,
+  });
+  await until(() => !ui.$('examJobPanel').hidden);
+  index = 1;
+  await until(() => ui.$('examJobPanel').classList.contains('is-refused'));
+  const detail = ui.$('examJobDetail').textContent;
+  assert.match(detail, language === 'ar' ? /يمكنك الآن استخدام البناء/ : /You can use Build, Optimize, Fix and Save again\.$/);
+  assert.ok(!detail.includes(W.draft), `Said: ${detail}`);
+});
+
+test('a failure of mine followed from another tab, whose acknowledgement is lost, is not shown again', async t => {
+  const frames = [
+    jobFrame('optimize_loaded', 'running', { read_board: 'done', place_exams: 'running' }, { key: 'place_exams', done: 3, total: 10 }),
+    failedFrame('optimize_loaded'),
+  ];
+  let index = 0;
+  let seenTries = 0;
+  const ui = await loadedEditor(t, {
+    liveUpdate: true,
+    poll: { checkRetry: 60000 },
+    onRequest: async url => {
+      if (isActive(url)) return jobReply({ ok: true, job: frames[index] });
+      if (url === pollUrl(JOB_ID)) return jobReply({ ok: true, job: frames[index] });
+      if (url === seenUrl(JOB_ID)) { seenTries += 1; throw new TypeError('Failed to fetch'); }
+      if (url === '/ops/exam-timetable/draft-impact/') return busyCheck();
+      return undefined;
+    },
+  });
+  await until(() => ui.$('examJobTitle').textContent === TEXT.optimizing, 'Mine, from another tab');
+  index = 1;
+  await until(() => ui.$('examJobPanel').classList.contains('is-failed'));
+  await until(() => seenTries === 1, 'Marked seen - and the mark is lost');
+  ui.$('examJobClose').click();
+  const asked = activeAsks(ui);
+  dropExam(ui, 'Tue');
+  await until(() => activeAsks(ui) > asked, 'The server is asked');
+  await pause(40);
+  assert.equal(ui.$('examJobPanel').hidden, true, 'Already shown here');
+});
+
+for (const code of ['server_error', 'server_restarted', 'timed_out', 'never_started']) {
+  test(`a failure of mine (${code}) found on opening says where the draft is before advising`, async t => {
+    const ui = await page(t, {
+      activeJob: { ok: true, job: failedFrame('optimize_loaded', { error_code: code }) },
+      onRequest: async url => (url === seenUrl(JOB_ID) ? jobReply({ ok: true, marked: true }) : undefined),
+    });
+    await until(() => ui.$('examJobPanel').classList.contains('is-failed'));
+    const detail = ui.$('examJobDetail').textContent;
+    assert.ok(detail.includes([W.nothingSaved, W.draft, W.advice[code]].join(' ')), `Said: ${detail}`);
+    // Today's time needs no date.
+    assert.doesNotMatch(detail, language === 'ar' ? /يوم \d/ : / on \d/);
+  });
+}
+for (const code of ['inputs_changed', 'check_required']) {
+  test(`a Save of mine refused for ${code} in another tab, followed here, says what to do there`, async t => {
+    const frames = [
+      jobFrame('save_loaded_changes', 'running', { read_board: 'done' }, { key: 'read_board', done: null, total: null }),
+      finishedFrame('save_loaded_changes', { has_run: false, result_run_id: null, refused: true }),
+    ];
+    let index = 0;
+    const ui = await page(t, {
+      activeJob: { ok: true, job: frames[0] },
+      onRequest: async url => {
+        if (url === pollUrl(JOB_ID)) return jobReply({ ok: true, job: frames[index] });
+        if (url === `/ops/exam-timetable/jobs/${JOB_ID}/result/`) return jobReply({ ok: false, error_code: code, error: 'x' }, 409);
+        return undefined;
+      },
+    });
+    await until(() => !ui.$('examJobPanel').hidden);
+    index = 1;
+    await until(() => ui.$('examJobPanel').classList.contains('is-refused'));
+    const detail = ui.$('examJobDetail').textContent;
+    endsWith(detail, W.reason[code], W.recheck.followed);
+    assert.ok(!detail.includes(W.away) && !detail.includes(W.draft), 'Followed here, not found on return');
+  });
+}
+test('an owed outcome of mine is dropped, not asked for again, once an action of my own is accepted', async t => {
+  const colleague = [
+    theirs('build', 'running', { enrolments: 'done', conflicts: 'running' }, 'conflicts'),
+    theirs('build', 'failed', { enrolments: 'done', conflicts: 'stopped' }, 'conflicts', { error_code: 'server_error', finished_at: '2026-09-23T10:00:30+00:00' }),
+  ];
+  const older = { ...failedFrame('build'), id: JOB_B };
+  const JOB_C = '6f1c2a4e-0000-4000-8000-000000000003';
+  const own = [{ ...OPTIMISED[0], id: JOB_C }, { ...OPTIMISED[2], id: JOB_C }];
+  let index = 0;
+  let step = 0;
+  let submitted = false;
+  let releaseOwed = null;
+  const ui = await loadedEditor(t, {
+    onRequest: async url => {
+      if (isActive(url) && url.includes('?owed=')) {
+        // Slow: my own action is accepted before it answers.
+        await new Promise(resolve => { releaseOwed = resolve; });
+        return jobReply({ ok: true, job: own[step] });
+      }
+      if (isActive(url)) return jobReply({ ok: true, job: colleague[index], ending: older });
+      if (url === pollUrl(JOB_ID)) return jobReply({ ok: true, job: colleague[index] });
+      if (url === '/ops/exam-timetable/build/') { submitted = true; return jobReply({ ok: true, job: { ...jobFrame('optimize_loaded', 'queued'), id: JOB_C } }, 202); }
+      if (url === pollUrl(JOB_C)) return jobReply({ ok: true, job: own[step] });
+      if (url === `/ops/exam-timetable/jobs/${JOB_C}/result/`) return response({ ...savedRun(), run_id: 94 });
+      if (url.includes('/seen/')) return jobReply({ ok: true, marked: true });
+      return undefined;
+    },
+  });
+  await until(() => ui.$('examJobTitle').textContent === TEXT.building);
+  index = 1;
+  await until(() => ui.$('examJobPanel').classList.contains('is-failed') && !ui.$('optimizeLoadedBtn').disabled);
+  ui.$('examJobClose').click();
+  await until(() => releaseOwed, 'The owed ending is asked for');
+  ui.$('optimizeLoadedBtn').click();
+  await until(() => submitted && stageStates(ui).includes('running'), 'My own action is accepted and shown');
+  releaseOwed();
+  step = 1;
+  await until(() => ui.$('examJobTitle').textContent === TEXT.optimized && !ui.$('examJobClose').hidden, 'Mine ended, on show');
+  ui.$('examJobClose').click();
+  await pause(40);
+  const owedAsks = ui.requests.filter(request => isActive(request.url) && request.url.includes('?owed=')).length;
+  assert.equal(owedAsks, 1, 'Superseded by my own action: not asked for again');
+});
+
+test('my own outcome whose report could not load is shown again with its reason, as this page saw it end', async t => {
+  let results = 0;
+  const final = finishedFrame('optimize_loaded', { has_run: false, result_run_id: null, refused: true });
+  const server = jobServer('optimize_loaded', [OPTIMISED[0], final], {
+    result: () => {
+      results += 1;
+      // Lost three times while the page watched it end; answered later.
+      if (results <= 3) throw new TypeError('Failed to fetch');
+      return jobReply({ ok: false, error_code: 'inputs_changed', error: 'x' }, 409);
+    },
+  });
+  let ended = false;
+  server.override = async url => {
+    // Its answer never read, it is still news to the server.
+    if (isActive(url)) return jobReply({ ok: true, job: ended ? final : null });
+    if (url === '/ops/exam-timetable/draft-impact/') return busyCheck();
+    return undefined;
+  };
+  const ui = await loadedEditor(t, { liveUpdate: true, poll: { checkRetry: 60000 }, onRequest: server.onRequest });
+  ui.$('optimizeLoadedBtn').click();
+  await until(() => stageStates(ui).includes('running'));
+  server.advance();
+  ended = true;
+  await until(() => /could not be loaded here|تعذّر تحميل تقريرها/.test(ui.$('examJobDetail').textContent));
+  ui.$('examJobClose').click();
+  const asked = activeAsks(ui);
+  dropExam(ui, 'Tue');
+  await until(() => activeAsks(ui) > asked, 'The server is asked');
+  await until(() => /source data changed|بيانات مصدر الجدول/.test(ui.$('examJobDetail').textContent), 'Shown again, with its reason now');
+  const detail = ui.$('examJobDetail').textContent;
+  assert.ok(!detail.includes(W.away), 'This page saw it end');
+  // The draft is on this very page: the step is this page's.
+  endsWith(detail, W.reason.inputs_changed, W.recheck.own);
+});
+
+// ── the round-eight verification's findings ──
+
+test('a job whose timetable was opened before this page heard it ended offers nothing', async t => {
+  let index = 0;
+  let seen = 0;
+  const ui = await page(t, {
+    history: [{ id: 17, label: 'One' }, { id: 93, label: 'Huda build' }],
+    activeJob: { ok: true, job: HUDA_SAVES[0] },
+    onRequest: async url => {
+      if (url === pollUrl(JOB_ID)) return jobReply({ ok: true, job: HUDA_SAVES[index] });
+      if (url === '/ops/exam-timetable/93/') return response(run93());
+      if (url.includes('/seen/')) { seen += 1; return jobReply({ ok: true, marked: true }); }
+      return undefined;
+    },
+  });
+  await until(() => !ui.$('examJobPanel').hidden);
+  // Her run is committed; this page's next poll has not come yet.
+  ui.$('historyList').querySelector('.et-history-item[data-id="93"] .et-run-info').click();
+  await until(() => ui.$('historyList').querySelector('.et-history-item.active')?.dataset.id === '93', 'Run 93 is on the board');
+  index = 1;
+  await until(() => ui.$('examJobPanel').hidden, 'Nothing to offer: it is open already');
+  await pause(20);
+  assert.equal(ui.$('examJobPanel').hidden, true);
+  assert.equal(seen, 0, 'Not the registrar’s to acknowledge');
+});
+
+test('the offered timetable, deleted, opened from Saved timetables: the panel says so quietly and the list drops it', async t => {
+  let index = 0;
+  const history = [{ id: 17, label: 'One' }, { id: 93, label: 'Huda build' }];
+  const ui = await page(t, {
+    history,
+    activeJob: { ok: true, job: HUDA_SAVES[0] },
+    onRequest: async url => {
+      if (url === pollUrl(JOB_ID)) return jobReply({ ok: true, job: HUDA_SAVES[index] });
+      if (url === '/ops/exam-timetable/93/') return jobReply({ ok: false, code: 'run_not_found', error: 'Run not found' }, 404);
+      return undefined;
+    },
+  });
+  await until(() => !ui.$('examJobPanel').hidden);
+  index = 1;
+  await until(() => offered(ui));
+  const said = ui.$('examJobLive').textContent;
+  const loads = historyLoads(ui);
+  // Deleted meanwhile, by someone else.
+  history.splice(1, 1);
+  ui.$('historyList').querySelector('.et-history-item[data-id="93"] .et-run-info').click();
+  await until(() => ui.$('examJobOpen').hidden, 'Nothing is left to open');
+  assert.equal(ui.$('examJobDetail').textContent, W.runDeleted);
+  assert.ok(ui.$('etStatus').textContent.includes(W.openedGone));
+  assert.equal(ui.$('examJobLive').textContent, said, 'The failed load has said it aloud: not again');
+  await until(() => historyLoads(ui) > loads && !ui.$('historyList').querySelector('.et-history-item[data-id="93"]'), 'The list no longer shows it');
+});
+
+test('deleting the timetable my own action saved and opened stops the panel calling it open below', async t => {
+  const { ui, server } = await optimiseAsJob(t, OPTIMISED);
+  let saved = false;
+  server.override = async url => {
+    if (url.startsWith('/ops/exam-timetable/list/')) {
+      return jobReply({ ok: true, runs: saved ? [{ id: 93, label: 'Optimized' }, { id: 17, label: 'One' }] : [{ id: 17, label: 'One' }] });
+    }
+    if (url === '/ops/exam-timetable/93/delete/') return jobReply({ ok: true });
+    return undefined;
+  };
+  ui.window.dlg.confirm = async () => true;
+  await until(() => stageStates(ui).includes('running'));
+  saved = true;
+  server.advance();
+  server.advance();
+  await until(() => ui.$('examJobTitle').textContent === TEXT.optimized && !ui.$('examJobClose').hidden, 'Saved and open below');
+  await until(() => ui.$('historyList').querySelector('.et-history-item[data-id="93"] .et-del-btn'));
+  ui.$('historyList').querySelector('.et-history-item[data-id="93"] .et-del-btn').click();
+  await until(() => ui.$('examJobDetail').textContent === W.runDeleted, 'Said to be deleted');
+  assert.equal(ui.$('examJobLive').textContent, W.runDeleted, 'And said aloud: nothing else did');
+  await pause(20);
+  assert.equal(ui.$('examJobPanel').hidden, false, 'The deleted notice stays up as the board empties');
+});
+
+test('opening another timetable stops the panel calling my own result open below', async t => {
+  const { ui, server } = await optimiseAsJob(t, OPTIMISED);
+  await until(() => stageStates(ui).includes('running'));
+  server.advance();
+  server.advance();
+  await until(() => ui.$('examJobTitle').textContent === TEXT.optimized && !ui.$('examJobClose').hidden, 'Saved and open below');
+  // Run 17, the one this page had before.
+  ui.$('historyList').querySelector('.et-history-item[data-id="17"] .et-run-info').click();
+  await until(() => ui.$('examJobPanel').hidden, 'No longer true: the panel goes');
+});
+
+test('a Save of mine followed from another page, shown again after its report loads, keeps its step', async t => {
+  const frames = [
+    jobFrame('save_loaded_changes', 'running', { read_board: 'done' }, { key: 'read_board', done: null, total: null }),
+    finishedFrame('save_loaded_changes', { has_run: false, result_run_id: null, refused: true }),
+  ];
+  let index = 0;
+  let results = 0;
+  const ui = await loadedEditor(t, {
+    liveUpdate: true,
+    poll: { checkRetry: 60000 },
+    onRequest: async url => {
+      if (isActive(url)) return jobReply({ ok: true, job: frames[index] });
+      if (url === pollUrl(JOB_ID)) return jobReply({ ok: true, job: frames[index] });
+      if (url === `/ops/exam-timetable/jobs/${JOB_ID}/result/`) {
+        results += 1;
+        if (results <= 3) throw new TypeError('Failed to fetch');
+        return jobReply({ ok: false, error_code: 'inputs_changed', error: 'x' }, 409);
+      }
+      if (url === '/ops/exam-timetable/draft-impact/') return busyCheck();
+      return undefined;
+    },
+  });
+  await until(() => !ui.$('examJobPanel').hidden);
+  index = 1;
+  // Its report lost three times: no reason, and not acknowledged.
+  await until(() => ui.$('examJobPanel').classList.contains('is-refused'));
+  ui.$('examJobClose').click();
+  const asked = activeAsks(ui);
+  dropExam(ui, 'Tue');
+  await until(() => activeAsks(ui) > asked, 'The server is asked');
+  await until(() => ui.$('examJobDetail').textContent.includes(W.reason.inputs_changed), 'Shown again, with its reason');
+  endsWith(ui.$('examJobDetail').textContent, W.reason.inputs_changed, W.recheck.followed);
+});
+
+test('a Save of mine found on opening, shown again after its report loads, keeps where the draft is and its step', async t => {
+  const refused = finishedFrame('save_loaded_changes', { has_run: false, result_run_id: null, refused: true });
+  let results = 0;
+  const ui = await loadedEditor(t, {
+    liveUpdate: true,
+    poll: { checkRetry: 60000 },
+    activeJob: { ok: true, job: refused },
+    onRequest: async url => {
+      if (isActive(url)) return jobReply({ ok: true, job: refused });
+      if (url === `/ops/exam-timetable/jobs/${JOB_ID}/result/`) {
+        results += 1;
+        if (results <= 3) throw new TypeError('Failed to fetch');
+        return jobReply({ ok: false, error_code: 'check_required', error: 'x' }, 409);
+      }
+      if (url === '/ops/exam-timetable/draft-impact/') return busyCheck();
+      return undefined;
+    },
+  });
+  await until(() => /could not be loaded here|تعذّر تحميل تقريرها/.test(ui.$('examJobDetail').textContent) || ui.$('examJobPanel').classList.contains('is-refused'));
+  ui.$('examJobClose').click();
+  const asked = activeAsks(ui);
+  dropExam(ui, 'Tue');
+  await until(() => activeAsks(ui) > asked, 'The server is asked');
+  await until(() => ui.$('examJobDetail').textContent.includes(W.reason.check_required), 'Shown again, with its reason');
+  const detail = ui.$('examJobDetail').textContent;
+  assert.ok(!detail.includes(W.away), 'Not news from while the page was closed a second time');
+  endsWith(detail, W.reason.check_required, W.draft, W.recheck.away);
+});
+
+test('an ending of mine from another day says which day', async t => {
+  const failed = failedFrame('optimize_loaded', {
+    submitted_at: '2026-09-22T10:00:00+00:00',
+    finished_at: '2026-09-22T10:00:30+00:00',
+    now: '2026-09-23T10:00:05+00:00',
+  });
+  const ui = await page(t, {
+    activeJob: { ok: true, job: failed },
+    onRequest: async url => (url === seenUrl(JOB_ID) ? jobReply({ ok: true, marked: true }) : undefined),
+  });
+  await until(() => ui.$('examJobPanel').classList.contains('is-failed'));
+  assert.match(ui.$('examJobDetail').textContent, language === 'ar' ? /بدأتها يوم 22 سبتمبر الساعة / : /you started on 22 Sept? at /);
+});
+
+test('an owed outcome of mine the server cannot give is asked for a bounded number of times, then when the panel is next free', async t => {
+  const first = theirs('build', 'running', { enrolments: 'done', conflicts: 'running' }, 'conflicts');
+  const firstFailed = theirs('build', 'failed', { enrolments: 'done', conflicts: 'stopped' }, 'conflicts', { error_code: 'server_error', finished_at: '2026-09-23T10:00:30+00:00' });
+  const second = { ...first, id: JOB_B };
+  const secondFailed = { ...firstFailed, id: JOB_B };
+  const mineId = '6f1c2a4e-0000-4000-8000-000000000003';
+  const mine = { ...failedFrame('optimize_loaded'), id: mineId };
+  let plain = 0;
+  let firstIndex = 0;
+  let secondIndex = 0;
+  let serverBack = false;
+  const ui = await loadedEditor(t, {
+    liveUpdate: true,
+    poll: { checkRetry: 60000 },
+    onRequest: async url => {
+      if (isActive(url) && url.includes('?owed=')) {
+        if (!serverBack) throw new TypeError('Failed to fetch');
+        return jobReply({ ok: true, job: mine });
+      }
+      if (isActive(url)) {
+        plain += 1;
+        return jobReply({ ok: true, job: plain === 1 ? first : (secondIndex ? secondFailed : second), ...(plain === 1 ? { ending: mine } : {}) });
+      }
+      if (url === pollUrl(JOB_ID)) return jobReply({ ok: true, job: firstIndex ? firstFailed : first });
+      if (url === pollUrl(JOB_B)) return jobReply({ ok: true, job: secondIndex ? secondFailed : second });
+      if (url === '/ops/exam-timetable/draft-impact/') return busyCheck();
+      if (url.includes('/seen/')) return jobReply({ ok: true, marked: true });
+      return undefined;
+    },
+  });
+  const owedAsks = () => ui.requests.filter(request => isActive(request.url) && request.url.includes('?owed=')).length;
+  await until(() => ui.$('examJobTitle').textContent === TEXT.building);
+  firstIndex = 1;
+  await until(() => ui.$('examJobPanel').classList.contains('is-failed'));
+  ui.$('examJobClose').click();
+  // Once, then once per backoff step: never a loop against a server that is down.
+  await until(() => owedAsks() === 5, () => `Asked ${owedAsks()} times`);
+  await pause(60);
+  assert.equal(owedAsks(), 5, 'Bounded');
+  // Still owed: asked for again when the panel is next free.
+  serverBack = true;
+  dropExam(ui, 'Tue');
+  await until(() => ui.$('examJobTitle').textContent === TEXT.building && !ui.$('examJobPanel').hidden, 'Another job takes the panel');
+  secondIndex = 1;
+  await until(() => ui.$('examJobPanel').classList.contains('is-failed'));
+  ui.$('examJobClose').click();
+  await until(() => ui.$('examJobTitle').textContent === TEXT.optimizeFailed, 'Mine, at last');
+  assert.equal(owedAsks(), 6);
+});
+
+test('an owed outcome of mine is carried through a second colleague’s job', async t => {
+  const huda = theirs('build', 'running', { enrolments: 'done', conflicts: 'running' }, 'conflicts');
+  const hudaFailed = theirs('build', 'failed', { enrolments: 'done', conflicts: 'stopped' }, 'conflicts', { error_code: 'server_error', finished_at: '2026-09-23T10:00:30+00:00' });
+  const sara = { ...huda, id: JOB_B, owner: 'Sara' };
+  const saraFailed = { ...hudaFailed, id: JOB_B, owner: 'Sara' };
+  const mineId = '6f1c2a4e-0000-4000-8000-000000000003';
+  const mine = { ...failedFrame('optimize_loaded'), id: mineId };
+  let hudaIndex = 0;
+  let saraIndex = 0;
+  let owed = 0;
+  const ui = await page(t, {
+    onRequest: async url => {
+      if (isActive(url) && url.includes('?owed=')) {
+        owed += 1;
+        // Sara started as Huda's ended: the owed ending comes back beside hers.
+        return jobReply({ ok: true, ...(owed === 1 ? { job: saraIndex ? saraFailed : sara, ending: mine } : { job: mine }) });
+      }
+      if (isActive(url)) return jobReply({ ok: true, job: huda, ending: mine });
+      if (url === pollUrl(JOB_ID)) return jobReply({ ok: true, job: hudaIndex ? hudaFailed : huda });
+      if (url === pollUrl(JOB_B)) return jobReply({ ok: true, job: saraIndex ? saraFailed : sara });
+      if (url.includes('/seen/')) return jobReply({ ok: true, marked: true });
+      return undefined;
+    },
+  });
+  await until(() => ui.$('examJobTitle').textContent === TEXT.building);
+  hudaIndex = 1;
+  await until(() => ui.$('examJobPanel').classList.contains('is-failed'));
+  ui.$('examJobClose').click();
+  await until(() => ui.$('examJobTitle').textContent === TEXT.building && !ui.$('examJobPanel').hidden, 'Sara’s job takes the panel');
+  saraIndex = 1;
+  await until(() => ui.$('examJobPanel').classList.contains('is-failed'));
+  ui.$('examJobClose').click();
+  await until(() => ui.$('examJobTitle').textContent === TEXT.optimizeFailed, 'Mine, after hers');
+  assert.equal(owed, 2);
+});
+
+test('a copy opened on the board stops the panel calling my own result open below', async t => {
+  const { ui, server } = await optimiseAsJob(t, OPTIMISED);
+  let saved = false;
+  server.override = async url => {
+    if (url.startsWith('/ops/exam-timetable/list/')) {
+      return jobReply({ ok: true, runs: saved ? [{ id: 93, label: 'Optimized' }, { id: 17, label: 'One' }] : [{ id: 17, label: 'One' }] });
+    }
+    if (url === '/ops/exam-timetable/93/copy/') return { ...response({ ...savedRun(), run_id: 94, source_run_id: 93, label: 'Optimized copy' }), status: 201 };
+    return undefined;
+  };
+  ui.window.dlg.prompt = async () => 'Optimized copy';
+  await until(() => stageStates(ui).includes('running'));
+  saved = true;
+  server.advance();
+  server.advance();
+  await until(() => ui.$('examJobTitle').textContent === TEXT.optimized && !ui.$('examJobClose').hidden, 'Saved and open below');
+  await until(() => ui.$('historyList').querySelector('.et-history-item[data-id="93"] .et-copy-btn'));
+  ui.$('historyList').querySelector('.et-history-item[data-id="93"] .et-copy-btn').click();
+  await until(() => copyRequests(ui).length === 1);
+  await until(() => ui.$('examJobPanel').hidden, 'The copy is on the board now: the panel goes');
+});
+
+// ── the round-nine verification's findings ──
+
+async function ownSavedOpenBelow(t) {
+  const { ui, server } = await optimiseAsJob(t, OPTIMISED);
+  await until(() => stageStates(ui).includes('running'));
+  server.advance();
+  server.advance();
+  await until(() => ui.$('examJobTitle').textContent === TEXT.optimized && !ui.$('examJobClose').hidden, 'Saved and open below');
+  return { ui, server };
+}
+
+test('a programme filter change, emptying the board, stops the panel calling my result open below', async t => {
+  const { ui } = await ownSavedOpenBelow(t);
+  const chip = ui.$('progList').querySelector('input');
+  chip.checked = !chip.checked;
+  chip.dispatchEvent(new ui.window.Event('change', { bubbles: true }));
+  await until(() => ui.$('examJobPanel').hidden, 'Nothing is open below now');
+});
+
+test('Load Courses, emptying the board, stops the panel calling my result open below', async t => {
+  const { ui } = await ownSavedOpenBelow(t);
+  ui.$('loadCoursesBtn').click();
+  await until(() => ui.$('examJobPanel').hidden, 'Nothing is open below now');
+});
+
+test('an action whose saved timetable was deleted before its answer was read says so, not "this timetable"', async t => {
+  const { ui, server } = await optimiseAsJob(t, OPTIMISED, {
+    serverOptions: { result: { ok: false, error_code: 'run_deleted', error: 'That run was deleted.' }, resultStatus: 410 },
+  });
+  await until(() => stageStates(ui).includes('running'));
+  server.advance();
+  server.advance();
+  await until(() => [ui.$('etStatus'), ui.$('examEditorRequestError')].some(element => element.textContent.includes(W.savedGone)), 'Said, naming the saved one');
+  for (const element of [ui.$('etStatus'), ui.$('examEditorRequestError')]) {
+    assert.ok(!element.textContent.includes(W.runDeleted), `Said: ${element.textContent}`);
+  }
+});
+
+test('a Stop dialog closing after the panel went for the run on the board leaves the keyboard on the board', async t => {
+  const frames = [
+    theirs('build', 'running', { enrolments: 'done', conflicts: 'running' }, 'conflicts', { can_cancel: true }),
+    finishedFrame('build', { mine: false, can_cancel: false, owner: 'Huda' }),
+  ];
+  let index = 0;
+  const ui = await page(t, {
+    browserFocus: true,
+    realDialogs: true,
+    history: [{ id: 17, label: 'One' }, { id: 93, label: 'Huda build' }],
+    activeJob: { ok: true, job: frames[0] },
+    onRequest: async url => {
+      if (url === pollUrl(JOB_ID)) return jobReply({ ok: true, job: frames[index] });
+      if (url === '/ops/exam-timetable/93/') return response(run93());
+      return undefined;
+    },
+  });
+  await until(() => !ui.$('examJobPanel').hidden && !ui.$('examJobCancel').hidden);
+  ui.$('historyList').querySelector('.et-history-item[data-id="93"] .et-run-info').click();
+  await until(() => ui.$('historyList').querySelector('.et-history-item.active')?.dataset.id === '93');
+  ui.$('examJobCancel').focus();
+  ui.$('examJobCancel').click();
+  await until(() => ui.window.document.activeElement.closest('.dlg-backdrop'), 'The stop dialog takes focus');
+  index = 1;
+  await until(() => ui.$('examJobPanel').hidden, 'Its run is on the board: the panel goes');
+  ui.window.document.querySelector('.dlg-backdrop .btn-cancel').click();
+  await pause(300);
+  assert.equal(ui.window.document.activeElement, ui.$('examScheduleHeading'), `Focus is on ${ui.window.document.activeElement.id || ui.window.document.activeElement.tagName}`);
+});
+
+test('the panel going for the run on the board takes the keyboard out of it', async t => {
+  const frames = [
+    theirs('build', 'running', { enrolments: 'done', conflicts: 'running' }, 'conflicts', { can_cancel: true }),
+    finishedFrame('build', { mine: false, can_cancel: false, owner: 'Huda' }),
+  ];
+  let index = 0;
+  const ui = await page(t, {
+    browserFocus: true,
+    history: [{ id: 17, label: 'One' }, { id: 93, label: 'Huda build' }],
+    activeJob: { ok: true, job: frames[0] },
+    onRequest: async url => {
+      if (url === pollUrl(JOB_ID)) return jobReply({ ok: true, job: frames[index] });
+      if (url === '/ops/exam-timetable/93/') return response(run93());
+      return undefined;
+    },
+  });
+  await until(() => !ui.$('examJobPanel').hidden && !ui.$('examJobCancel').hidden);
+  ui.$('historyList').querySelector('.et-history-item[data-id="93"] .et-run-info').click();
+  await until(() => ui.$('historyList').querySelector('.et-history-item.active')?.dataset.id === '93');
+  ui.$('examJobCancel').focus();
+  index = 1;
+  await until(() => ui.$('examJobPanel').hidden);
+  assert.equal(ui.window.document.activeElement, ui.$('examScheduleHeading'), `Focus is on ${ui.window.document.activeElement.id || ui.window.document.activeElement.tagName}`);
+});
+
+test('a saved timetable of mine from another day says which day it was saved', async t => {
+  const saved = finishedFrame('build', {
+    submitted_at: '2026-09-22T10:00:00+00:00',
+    finished_at: '2026-09-22T10:01:43+00:00',
+    now: '2026-09-23T10:00:05+00:00',
+  });
+  const ui = await page(t, { activeJob: { ok: true, job: saved } });
+  await until(() => offered(ui));
+  assert.match(ui.$('examJobDetail').textContent, language === 'ar' ? /وحُفظ الجدول يوم 22 سبتمبر الساعة / : /it was saved on 22 Sept? at /);
+});
+
+test('deleting, or failing to open, another timetable leaves the offer alone', async t => {
+  let index = 0;
+  const ui = await page(t, {
+    history: [{ id: 17, label: 'One' }, { id: 18, label: 'Two' }, { id: 93, label: 'Huda build' }],
+    activeJob: { ok: true, job: HUDA_SAVES[0] },
+    onRequest: async url => {
+      if (url === pollUrl(JOB_ID)) return jobReply({ ok: true, job: HUDA_SAVES[index] });
+      if (url === '/ops/exam-timetable/17/delete/') return jobReply({ ok: true });
+      if (url === '/ops/exam-timetable/18/') return jobReply({ ok: false, code: 'run_not_found', error: 'Run not found' }, 404);
+      return undefined;
+    },
+  });
+  ui.window.dlg.confirm = async () => true;
+  await until(() => !ui.$('examJobPanel').hidden);
+  index = 1;
+  await until(() => offered(ui));
+  const detail = ui.$('examJobDetail').textContent;
+  ui.$('historyList').querySelector('.et-history-item[data-id="17"] .et-del-btn').click();
+  await until(() => ui.requests.some(request => request.url === '/ops/exam-timetable/17/delete/'));
+  await pause(30);
+  ui.$('historyList').querySelector('.et-history-item[data-id="18"] .et-run-info').click();
+  await until(() => ui.$('etStatus').textContent.includes(W.openedGone));
+  await pause(20);
+  assert.ok(offered(ui), 'Run 93 is still there to open');
+  assert.equal(ui.$('examJobDetail').textContent, detail);
+});
+
+test('an outcome of mine owed behind a job whose run is already on the board is shown when that panel goes', async t => {
+  const mine = { ...failedFrame('optimize_loaded'), id: JOB_B };
+  let index = 0;
+  const ui = await page(t, {
+    history: [{ id: 17, label: 'One' }, { id: 93, label: 'Huda build' }],
+    onRequest: async url => {
+      if (isActive(url)) return jobReply({ ok: true, ...(url.includes('?owed=') ? { job: mine } : { job: HUDA_SAVES[0], ending: mine }) });
+      if (url === pollUrl(JOB_ID)) return jobReply({ ok: true, job: HUDA_SAVES[index] });
+      if (url === '/ops/exam-timetable/93/') return response(run93());
+      if (url.includes('/seen/')) return jobReply({ ok: true, marked: true });
+      return undefined;
+    },
+  });
+  await until(() => ui.$('examJobTitle').textContent === TEXT.building);
+  ui.$('historyList').querySelector('.et-history-item[data-id="93"] .et-run-info').click();
+  await until(() => ui.$('historyList').querySelector('.et-history-item.active')?.dataset.id === '93');
+  index = 1;
+  await until(() => ui.$('examJobTitle').textContent === TEXT.optimizeFailed, 'Mine, as hers goes');
+});
+
+test('my own job from another page, whose run is already on the board, is acknowledged as it ends', async t => {
+  const frames = [
+    jobFrame('build', 'running', { enrolments: 'done', conflicts: 'running' }, { key: 'conflicts', done: null, total: null }),
+    finishedFrame('build'),
+  ];
+  let index = 0;
+  let seen = 0;
+  const ui = await page(t, {
+    history: [{ id: 17, label: 'One' }, { id: 93, label: 'Mine' }],
+    activeJob: { ok: true, job: frames[0] },
+    onRequest: async url => {
+      if (url === pollUrl(JOB_ID)) return jobReply({ ok: true, job: frames[index] });
+      if (url === '/ops/exam-timetable/93/') return response(run93());
+      if (url === seenUrl(JOB_ID)) { seen += 1; return jobReply({ ok: true, marked: true }); }
+      return undefined;
+    },
+  });
+  await until(() => !ui.$('examJobPanel').hidden);
+  ui.$('historyList').querySelector('.et-history-item[data-id="93"] .et-run-info').click();
+  await until(() => ui.$('historyList').querySelector('.et-history-item.active')?.dataset.id === '93');
+  index = 1;
+  await until(() => ui.$('examJobPanel').hidden);
+  await until(() => seen === 1, 'Its news taken up: acknowledged');
+});
+
+test('a Save of mine followed from another page keeps its step however many times it is shown again', async t => {
+  const frames = [
+    jobFrame('save_loaded_changes', 'running', { read_board: 'done' }, { key: 'read_board', done: null, total: null }),
+    finishedFrame('save_loaded_changes', { has_run: false, result_run_id: null, refused: true }),
+  ];
+  let index = 0;
+  let results = 0;
+  const ui = await loadedEditor(t, {
+    liveUpdate: true,
+    poll: { checkRetry: 60000 },
+    onRequest: async url => {
+      if (isActive(url)) return jobReply({ ok: true, job: frames[index] });
+      if (url === pollUrl(JOB_ID)) return jobReply({ ok: true, job: frames[index] });
+      if (url === `/ops/exam-timetable/jobs/${JOB_ID}/result/`) {
+        results += 1;
+        // Lost on two showings: read on the third.
+        if (results <= 6) throw new TypeError('Failed to fetch');
+        return jobReply({ ok: false, error_code: 'inputs_changed', error: 'x' }, 409);
+      }
+      if (url === '/ops/exam-timetable/draft-impact/') return busyCheck();
+      return undefined;
+    },
+  });
+  await until(() => !ui.$('examJobPanel').hidden);
+  index = 1;
+  await until(() => ui.$('examJobPanel').classList.contains('is-refused'));
+  for (const day of ['Tue', 'Wed']) {
+    const seenResults = results;
+    ui.$('examJobClose').click();
+    const asked = activeAsks(ui);
+    dropExam(ui, day);
+    await until(() => activeAsks(ui) > asked, 'The server is asked');
+    await until(() => results > seenResults && !ui.$('examJobPanel').hidden && ui.$('examJobPanel').classList.contains('is-refused'), 'Shown again');
+  }
+  await until(() => ui.$('examJobDetail').textContent.includes(W.reason.inputs_changed), 'With its reason, at last');
+  const detail = ui.$('examJobDetail').textContent;
+  endsWith(detail, W.reason.inputs_changed, W.recheck.followed);
+  assert.ok(!detail.includes(W.draft), 'Still followed from another page, not found on return');
+});
+
+// ── the round-ten verification's findings ──
+
+test('a Stop dialog closing after my owed outcome took the panel leaves the keyboard on its title', async t => {
+  const frames = [
+    theirs('build', 'running', { enrolments: 'done', conflicts: 'running' }, 'conflicts', { can_cancel: true }),
+    finishedFrame('build', { mine: false, can_cancel: false, owner: 'Huda' }),
+  ];
+  const mine = { ...failedFrame('optimize_loaded'), id: JOB_B };
+  let index = 0;
+  const ui = await page(t, {
+    browserFocus: true,
+    realDialogs: true,
+    history: [{ id: 17, label: 'One' }, { id: 93, label: 'Huda build' }],
+    onRequest: async url => {
+      if (isActive(url)) return jobReply({ ok: true, ...(url.includes('?owed=') ? { job: mine } : { job: frames[0], ending: mine }) });
+      if (url === pollUrl(JOB_ID)) return jobReply({ ok: true, job: frames[index] });
+      if (url === '/ops/exam-timetable/93/') return response(run93());
+      if (url.includes('/seen/')) return jobReply({ ok: true, marked: true });
+      return undefined;
+    },
+  });
+  await until(() => !ui.$('examJobPanel').hidden && !ui.$('examJobCancel').hidden);
+  ui.$('historyList').querySelector('.et-history-item[data-id="93"] .et-run-info').click();
+  await until(() => ui.$('historyList').querySelector('.et-history-item.active')?.dataset.id === '93');
+  ui.$('examJobCancel').focus();
+  ui.$('examJobCancel').click();
+  await until(() => ui.window.document.activeElement.closest('.dlg-backdrop'), 'The stop dialog takes focus');
+  index = 1;
+  await until(() => ui.$('examJobTitle').textContent === TEXT.optimizeFailed, 'My owed outcome takes the panel');
+  ui.window.document.querySelector('.dlg-backdrop .btn-cancel').click();
+  await pause(300);
+  assert.equal(ui.window.document.activeElement, ui.$('examJobTitle'), `Focus is on ${ui.window.document.activeElement.id || ui.window.document.activeElement.tagName}`);
+});
+
+test('the panel going for the run on the board leaves the keyboard where it was when it was elsewhere', async t => {
+  let index = 0;
+  const ui = await page(t, {
+    browserFocus: true,
+    history: [{ id: 17, label: 'One' }, { id: 93, label: 'Huda build' }],
+    activeJob: { ok: true, job: HUDA_SAVES[0] },
+    onRequest: async url => {
+      if (url === pollUrl(JOB_ID)) return jobReply({ ok: true, job: HUDA_SAVES[index] });
+      if (url === '/ops/exam-timetable/93/') return response(run93());
+      return undefined;
+    },
+  });
+  await until(() => !ui.$('examJobPanel').hidden);
+  ui.$('historyList').querySelector('.et-history-item[data-id="93"] .et-run-info').click();
+  await until(() => ui.$('historyList').querySelector('.et-history-item.active')?.dataset.id === '93');
+  // The registrar is typing in the board's filter.
+  ui.$('schedFilter').focus();
+  index = 1;
+  await until(() => ui.$('examJobPanel').hidden);
+  await pause(20);
+  assert.equal(ui.window.document.activeElement, ui.$('schedFilter'), 'Not taken from where the registrar is working');
+});
+
+test('a filter change leaves a colleague’s running job and its offer on the panel', async t => {
+  let index = 0;
+  const ui = await page(t, {
+    activeJob: { ok: true, job: HUDA_SAVES[0] },
+    onRequest: async url => url === pollUrl(JOB_ID) ? jobReply({ ok: true, job: HUDA_SAVES[index] }) : undefined,
+  });
+  const toggle = () => {
+    const chip = ui.$('progList').querySelector('input');
+    chip.checked = !chip.checked;
+    chip.dispatchEvent(new ui.window.Event('change', { bubbles: true }));
+  };
+  await until(() => ui.$('examJobTitle').textContent === TEXT.building);
+  toggle();
+  await pause(20);
+  assert.equal(ui.$('examJobPanel').hidden, false, 'Still following her job');
+  assert.equal(ui.$('examJobTitle').textContent, TEXT.building);
+  index = 1;
+  await until(() => offered(ui), 'Her ending is offered');
+  toggle();
+  await pause(20);
+  assert.ok(offered(ui), 'Her timetable is still there to open');
+});
+
+// ── the round-eleven verification's findings ──
+
+// In a browser, hiding the panel under the keyboard drops it to the body; the
+// action's own ending then puts it where the registrar works.
+test('my own Optimize turned down while the keyboard is on Stop leaves it on the board', async t => {
+  const server = jobServer('optimize_loaded', [OPTIMISED[0], finishedFrame('optimize_loaded', { has_run: false, result_run_id: null, refused: true })], {
+    result: { ok: false, error_code: 'inputs_changed', error: 'Source inputs changed since the check.' }, resultStatus: 409,
+  });
+  const ui = await loadedEditor(t, { browserFocus: true, onRequest: server.onRequest });
+  ui.$('optimizeLoadedBtn').click();
+  await until(() => stageStates(ui).includes('running') && !ui.$('examJobCancel').hidden);
+  ui.$('examJobCancel').focus();
+  server.advance();
+  await until(() => ui.$('examJobPanel').hidden, 'Turned down: reported where it always was');
+  await pause(20);
+  assert.equal(ui.window.document.activeElement, ui.$('examEditHeading'));
+});
+
+test('my own Build turned down while the keyboard is on Stop gives it back to Build', async t => {
+  const server = jobServer('build', [
+    jobFrame('build', 'running', { enrolments: 'done', conflicts: 'running' }, { key: 'conflicts', done: null, total: null }),
+    finishedFrame('build', { has_run: false, result_run_id: null, refused: true }),
+  ], { result: { ok: false, error: 'The exam period has no usable days.' }, resultStatus: 400 });
+  const ui = await page(t, { browserFocus: true, onRequest: server.onRequest });
+  ui.$('buildBtn').click();
+  await until(() => stageStates(ui).includes('running') && !ui.$('examJobCancel').hidden);
+  ui.$('examJobCancel').focus();
+  server.advance();
+  await until(() => ui.$('examJobPanel').hidden && /alert-danger/.test(ui.$('etStatus').className), 'Turned down: reported where it always was');
+  await pause(20);
+  assert.equal(ui.window.document.activeElement, ui.$('buildBtn'));
 });

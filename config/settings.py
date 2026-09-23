@@ -1017,8 +1017,9 @@ EXAM_ROOM_PERIOD_SEARCH_SECONDS = _float_env("EXAM_ROOM_PERIOD_SEARCH_SECONDS", 
 EXAM_ROOM_MAX_SEARCH_SECONDS = _float_env("EXAM_ROOM_MAX_SEARCH_SECONDS", "60")
 
 # Exam timetable Build / Optimize / Fix / Save run as background jobs the page
-# polls for their stages (core/services/exam_jobs.py). Off, the same action runs
-# inside the request and answers with the same status and body: the rollback.
-EXAM_JOBS_ENABLED = os.getenv("EXAM_JOBS_ENABLED", "false").strip().lower() == "true"
+# polls for their stages (core/services/exam_jobs.py). Set EXAM_JOBS_ENABLED=false
+# and the same action runs inside the request and answers with the same status
+# and body - the rollback, which the page handles without a change.
+EXAM_JOBS_ENABLED = os.getenv("EXAM_JOBS_ENABLED", "true").strip().lower() == "true"
 # Tests run a job on the submitting thread instead of its own.
 EXAM_JOBS_RUN_INLINE = False
