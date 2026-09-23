@@ -163,19 +163,21 @@ jobs:
             tests/test_planner_draft_concurrency.py \
             tests/test_elective_mapping_concurrency.py \
             tests/test_timetable_delta_import_postgres.py \
+            tests/test_exam_jobs_postgres.py \
             --maxfail=1
       - name: Fail if the PostgreSQL-only tests did not actually run
-        # Belt and braces alongside REQUIRE_POSTGRES_TESTS: assert all nine
+        # Belt and braces alongside REQUIRE_POSTGRES_TESTS: assert all eleven
         # PostgreSQL-only tests reported as PASSED, not merely that the job exited 0.
         run: |
           pytest -q -p no:randomly \
             tests/test_planner_draft_concurrency.py \
             tests/test_elective_mapping_concurrency.py \
             tests/test_timetable_delta_import_postgres.py \
+            tests/test_exam_jobs_postgres.py \
             --no-header -rA 2>&1 | tee /tmp/conc.txt
           passed=$(grep -c '^PASSED' /tmp/conc.txt || true)
           echo "concurrency tests passed: $passed"
-          test "$passed" -eq 9 || { echo "expected 9 passing PostgreSQL tests"; exit 1; }
+          test "$passed" -eq 11 || { echo "expected 11 passing PostgreSQL tests"; exit 1; }
 
   production-preflight:
     # This job mirrors the dependency boundary Render actually deploys. The

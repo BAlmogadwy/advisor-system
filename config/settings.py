@@ -653,6 +653,21 @@ LOGGING = {
             "level": "WARNING",
             "propagate": False,
         },
+        # gunicorn configures no root logger, so without these the app's own
+        # warnings reached Render only through Python's bare last-resort
+        # handler, and its INFO lines not at all.
+        # It still propagates: the root logger has no handler under gunicorn, so
+        # nothing prints twice, and a test capturing at the root still sees it.
+        "core": {
+            "handlers": ["console"],
+            "level": "WARNING",
+        },
+        # One line per exam job transition, with per-stage timings, and one per
+        # job the sweep fails - the sign of a deploy or an out-of-memory kill.
+        # No handler of its own: it reaches the console through "core".
+        "core.services.exam_jobs": {
+            "level": "INFO",
+        },
     },
 }
 
@@ -1000,3 +1015,10 @@ def _float_env(name: str, default: str) -> float:
 EXAM_ROOM_BASE_SEARCH_SECONDS = _float_env("EXAM_ROOM_BASE_SEARCH_SECONDS", "10")
 EXAM_ROOM_PERIOD_SEARCH_SECONDS = _float_env("EXAM_ROOM_PERIOD_SEARCH_SECONDS", "0.5")
 EXAM_ROOM_MAX_SEARCH_SECONDS = _float_env("EXAM_ROOM_MAX_SEARCH_SECONDS", "60")
+
+# Exam timetable Build / Optimize / Fix / Save run as background jobs the page
+# polls for their stages (core/services/exam_jobs.py). Off, the same action runs
+# inside the request and answers with the same status and body: the rollback.
+EXAM_JOBS_ENABLED = os.getenv("EXAM_JOBS_ENABLED", "false").strip().lower() == "true"
+# Tests run a job on the submitting thread instead of its own.
+EXAM_JOBS_RUN_INLINE = False

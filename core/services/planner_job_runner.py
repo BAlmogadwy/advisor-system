@@ -26,6 +26,7 @@ from django.db.models import Q
 from django.utils import timezone
 
 from core.models import PlannerJob
+from core.services.job_runtime import solver_slot
 
 logger = logging.getLogger(__name__)
 
@@ -74,7 +75,10 @@ def _get_executor() -> ThreadPoolExecutor:
 def _worker(job_id: str) -> None:
     close_old_connections()
     try:
-        run_planner_job(job_id)
+        # Its CP-SAT solves take turns with the exam jobs' and the exam Check's:
+        # two at once on this 0.5-CPU, 512 MB host split the CPU and can OOM it.
+        with solver_slot():
+            run_planner_job(job_id)
     finally:
         close_old_connections()
 

@@ -13,12 +13,11 @@ it on: both exist to report on the exact board they were handed.
 
 from __future__ import annotations
 
-from django.db import transaction
-
 from core.models import Room, Student
 from core.services.course_identity import planner_course_key
 from core.services.exam_input_fingerprint import fingerprint_exam_inputs
 from core.services.exam_operations_snapshot import build_exam_operations_snapshot
+from core.services.exam_progress import current as current_progress
 from core.services.exam_review import build_exam_review
 from core.services.exam_room_allocation import RoomAllocationContext
 from core.services.exam_run_schema import (
@@ -173,7 +172,6 @@ def _attach_room_metadata(schedule_entries: list[dict], rooms_list: list[dict]) 
                 room_row.setdefault("floor", str(meta.get("floor", "") or ""))
 
 
-@transaction.atomic
 def evaluate_exam_schedule(
     *,
     days: list[str],
@@ -194,7 +192,16 @@ def evaluate_exam_schedule(
 
     Canonical enrollment, credit, section and room inputs are captured once.
     Room assignment may change, but the submitted exam slots never do.
+
+    Deliberately not one transaction. It only reads, and on PostgreSQL's READ
+    COMMITTED a transaction gives the reads no common snapshot anyway; on
+    SQLite (ADR-004: IMMEDIATE) it took the database's one write lock for the
+    whole evaluation, so a background job could not record its progress until
+    the evaluation ended. Inputs that change underneath it change the input
+    fingerprint, and Save already refuses a fingerprint it did not review.
     """
+    progress = current_progress()
+    progress.stage("check_rules")
     schedule_entries = _normalise_loaded_schedule_entries(
         schedule_raw,
         days,
@@ -263,14 +270,17 @@ def evaluate_exam_schedule(
         allocation_context = RoomAllocationContext.for_periods(
             period_cohort_count(schedule_entries, section_enrollment)
         )
+        progress.stage("assign_rooms")
         assign_rooms_to_schedule(
             schedule_entries,
             section_enrollment,
             rooms_list,
             seed=seed,
             allocation_context=allocation_context,
+            on_period=progress.counter("assign_rooms"),
         )
         if rebalance_invigilators and rooms_list and len(days) > 1:
+            progress.stage("balance_invigilators")
             rebalance_moves = _rebalance_invigilators_pass(
                 schedule_entries,
                 section_enrollment,
@@ -285,6 +295,7 @@ def evaluate_exam_schedule(
                 credit_map=credit_map,
                 max_per_day=max_per_day,
                 caller="optimise",
+                on_trial=progress.counter("balance_invigilators"),
             )
             # The post-pass moves exams between days; a pin may not be one of them.
             validate_exam_pins(pinned, course_list, slots, schedule_entries=schedule_entries)

@@ -28,6 +28,22 @@ def _reset_generation_slots() -> None:  # noqa: PT004
 
 
 @pytest.fixture(autouse=True)
+def _reset_solver_slot() -> None:  # noqa: PT004
+    """A fresh solver slot per test.
+
+    It is process-global too, and every exam job waits on it: one test that
+    leaked it would hang every later job test forever instead of failing one.
+    """
+    import threading
+
+    from core.services import job_runtime
+
+    job_runtime._SOLVER = threading.BoundedSemaphore(1)
+    yield
+    job_runtime._SOLVER = threading.BoundedSemaphore(1)
+
+
+@pytest.fixture(autouse=True)
 def _reset_llm_circuit_breaker() -> None:  # noqa: PT004
     """The breaker is process-global by design; tests must each start closed.
 
