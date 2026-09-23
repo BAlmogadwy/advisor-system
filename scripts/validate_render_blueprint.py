@@ -112,6 +112,9 @@ WEB_FIXED_ENV_VALUES = {
     "STUDENT_OTP_SEND_WINDOW_SECONDS": "900",
     "STUDENT_OTP_ASYNC_EMAIL": "false",
     "IP_FROM_XFF": "true",
+    # Arenas default to eight per host CPU, not per the 0.5-CPU quota; two keep
+    # freed solver memory reusable across the gthread workers.
+    "MALLOC_ARENA_MAX": "2",
     "TELEGRAM_ADVISOR_ENABLED": "true",
     "TELEGRAM_PUBLIC_BASE_URL": EXPECTED_PUBLIC_ORIGIN,
     "TELEGRAM_LINK_TOKEN_TTL_SECONDS": "900",
