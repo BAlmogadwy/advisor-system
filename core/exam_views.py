@@ -59,6 +59,7 @@ from core.services.exam_timetable import (
     build_plan_term_buckets,
     export_exam_timetable_xlsx,
     schedule,
+    validate_exam_pins,
 )
 from core.services.rbac import ROLE_EXAM_COMMITTEE, ROLE_SUPER_ADMIN, get_user_role
 from core.sidebar_context import get_sidebar_context
@@ -318,8 +319,16 @@ def exam_timetable_build_view(request: HttpRequest) -> JsonResponse:
                 result = _optimise_loaded_schedule(label=label, **context)
             elif mode == "minimum_change_repair":
                 result = _minimum_change_schedule(
-                    label=label, source_placements=provenance["source_placements"], **context
+                    label=label,
+                    source_placements=provenance["source_placements"],
+                    carried_protection=provenance["source_repair_protected"],
+                    **context,
                 )
+            elif mode != "save_loaded_changes":
+                # Save used to be the fallthrough for any action. A request the
+                # server did not recognise then persisted the submitted board -
+                # clashes and all - and the page reported it as done.
+                raise ValueError(f"Unknown timetable action: {mode or 'none'}.")
             else:
                 reviewed_fingerprint = (
                     payload.get("expected_input_fingerprint") or source_fingerprint
@@ -456,7 +465,11 @@ def _saved_enrollment_scope(payload: dict) -> tuple[list[str], list[str]]:
 #: the evaluation. Every consumer splats the rest straight into an evaluator, so
 #: they must come out first - popping each one by hand at each call site is how a
 #: new key reaches evaluate_exam_schedule and turns Check into a 500.
-_PROVENANCE_KEYS = ("source_input_fingerprint", "source_placements")
+_PROVENANCE_KEYS = (
+    "source_input_fingerprint",
+    "source_placements",
+    "source_repair_protected",
+)
 
 
 def _split_provenance(context: dict) -> dict:
@@ -543,14 +556,24 @@ def _loaded_request_context(payload: dict, schedule_raw: list) -> dict:
         "thin_conflict_threshold": threshold,
         "pinned": payload.get("pinned", source.get("pinned", [])),
         "source_input_fingerprint": source.get("input_fingerprint"),
-        # Where each exam sat in the SAVED run. The minimum-change repair
-        # protects every exam the registrar has moved since, so it can never
-        # undo an edit by putting a dragged course back where it came from.
+        # Where each exam sat in the SAVED run, by (day, period). Slot numbers
+        # would be wrong: adding a period renumbers every later slot, which
+        # made almost the whole board look hand-moved and froze it. What
+        # protects an exam placed from off the board - dragged out of OVERFLOW,
+        # or added since the save - is the consumer's "absent or different"
+        # rule, so recording OVERFLOW origins here changes nothing; the map
+        # simply records every exam.
         "source_placements": {
-            entry["course_code"]: entry["slot_index"]
+            entry["course_code"]: (str(entry.get("day", "")), str(entry.get("period", "")))
             for entry in source.get("schedule", [])
-            if entry.get("day") != "OVERFLOW" and isinstance(entry.get("slot_index"), int)
+            if entry.get("course_code")
         },
+        # Exams a previous "Fix with fewest moves" had to protect. Each repair
+        # saves a run, and that run becomes the next baseline - so without
+        # carrying these forward, drag, Fix, drag, Fix lost the first drag.
+        "source_repair_protected": [
+            code for code in source.get("minimum_change_protected", []) if isinstance(code, str)
+        ],
     }
 
 
@@ -559,6 +582,7 @@ def _rebuild_loaded_schedule(
     label: str,
     expected_input_fingerprint: str | None = None,
     rebalance_invigilators: bool = False,
+    extra: dict | None = None,
     **kwargs,
 ) -> dict:
     """Persist the same complete evaluation used by a non-saving Check.
@@ -573,6 +597,11 @@ def _rebuild_loaded_schedule(
             "Enrollment, course, room or policy inputs changed since the last check. "
             "Check changes again before saving."
         )
+    # Provenance a mode wants remembered with the run, merged before it is
+    # saved so a reload from history carries it too. Top-level only: qa is
+    # compared between Build and Check, and nothing a Check cannot reproduce
+    # may live there.
+    result.update(extra or {})
     run = ExamTimetableRun.objects.create(
         label=label,
         result_json=json.dumps(result, ensure_ascii=False),
@@ -737,16 +766,18 @@ def _minimum_change_schedule(
     assign_rooms: bool,
     seed: int | None,
     thin_conflict_threshold: int,
-    source_placements: dict[str, int],
+    source_placements: dict[str, tuple[str, str]],
+    carried_protection: list[str] | None = None,
     programs: list[str] | None = None,
     sections: list[str] | None = None,
 ) -> dict:
     """Repair the registrar's board by moving as few exams as possible.
 
     Optimise answers "what is the best board?"; this answers "what is the
-    smallest change that makes this one legal?". Pinned exams and every exam
-    moved since the board was saved are frozen, so the registrar's own work is
-    never the thing that gets moved.
+    smallest change that makes this one legal?". Pinned exams, every exam moved
+    since the board was last saved, and every exam an earlier repair in this run
+    of repairs protected are all frozen, so the registrar's own work is never the
+    thing that gets moved.
     """
     base_entries = _normalise_loaded_schedule_entries(
         schedule_raw,
@@ -757,13 +788,28 @@ def _minimum_change_schedule(
     inputs = _loaded_solver_inputs(
         base_entries, days, periods, programs, sections, thin_conflict_threshold
     )
+    # Validate before use: a malformed pin 500'd here while Optimise returned a
+    # 400, and an unstripped code silently went unprotected.
+    pinned = validate_exam_pins(
+        pinned, inputs.course_list, inputs.slots, schedule_entries=base_entries
+    )
     current = {
         entry["course_code"]: int(entry["slot_index"])
         for entry in base_entries
         if entry.get("day") != "OVERFLOW"
     }
-    edited = {code for code, slot in current.items() if source_placements.get(code, slot) != slot}
-    protected = edited | {pin["course_code"] for pin in pinned or []}
+    # An exam counts as the registrar's if it now sits somewhere other than
+    # where the saved run had it - compared by (day, period), and an exam the
+    # saved run did not place on the board at all counts as moved.
+    edited = {
+        entry["course_code"]
+        for entry in base_entries
+        if entry.get("day") != "OVERFLOW"
+        and source_placements.get(entry["course_code"]) != (entry["day"], entry["period"])
+    }
+    carried = {code for code in carried_protection or [] if code in current}
+    hand_placed = edited | carried
+    protected = hand_placed | {pin["course_code"] for pin in pinned}
     repair = repair_minimum_change(
         placements=current,
         adj=inputs.adj,
@@ -806,7 +852,45 @@ def _minimum_change_schedule(
         else:
             repaired_entries.append(entry)
 
-    result = _rebuild_loaded_schedule(
+    def where(slot_index: int) -> dict[str, str]:
+        slot = slot_by_index[slot_index]
+        return {"day": slot["day"], "period": slot["period"]}
+
+    already_overflow = sum(1 for entry in base_entries if entry.get("day") == "OVERFLOW")
+    # Top-level keys, deliberately NOT in qa: the frontend compares qa between
+    # Build and a fixed-time Check, a Check cannot reproduce how a board was
+    # repaired, and the same key in qa would mark every saved run as changed
+    # and gate XLSX export. They ARE persisted, so a repaired run reloaded from
+    # history still says what the system moved and what it protected.
+    report = {
+        "moves": [
+            {
+                "course_code": code,
+                "course_name": inputs.meta_by_course.get(code, {}).get("course_name", ""),
+                "from": where(current[code]),
+                "to": where(repair.placements[code]),
+            }
+            for code in repair.moved
+        ],
+        "unseated": sorted(unseated),
+        "already_overflow": already_overflow,
+        "violations_before": repair.violations_before,
+        "violations_after": repair.violations_after,
+        "protected_count": len(protected),
+        # True when exams outside any clash had to step aside to make room -
+        # without it, a registrar sees an untouched exam move and cannot tell why.
+        "widened": repair.widened,
+        "proven_minimal": repair.proven_minimal,
+        "status": repair.status,
+    }
+    if not repair.moved and not unseated:
+        # Nothing to fix, nothing the rules let it fix, or no board found in
+        # time: the board is exactly the one submitted. Evaluating it again and
+        # saving it would add a duplicate run to the history and, when the
+        # registrar has unsaved drags, save them without the review Save asks
+        # for. The page keeps the draft and shows the report.
+        return {"saved": False, "minimum_change": report}
+    return _rebuild_loaded_schedule(
         label=label,
         # Never run the invigilator post-pass here: it relocates exams to
         # flatten staff load, which is precisely what this mode must not do.
@@ -823,34 +907,14 @@ def _minimum_change_schedule(
         thin_conflict_threshold=thin_conflict_threshold,
         rebuild_mode="minimum_change_from_loaded",
         pinned=pinned,
+        extra={
+            "minimum_change": report,
+            # Carried into the next repair, so drag, Fix, drag, Fix keeps the
+            # first drag. A plain Save starts a fresh baseline. Pins are not
+            # carried: they travel with the pin list, and unpinning must free them.
+            "minimum_change_protected": sorted(hand_placed),
+        },
     )
-
-    def where(slot_index: int) -> dict[str, str]:
-        slot = slot_by_index[slot_index]
-        return {"day": slot["day"], "period": slot["period"]}
-
-    # A top-level response key, deliberately NOT in qa: a fixed-time Check
-    # cannot reproduce how a board was repaired, and the frontend compares qa
-    # between Build and Check. The same key in qa would mark every saved run as
-    # changed and gate XLSX export.
-    result["minimum_change"] = {
-        "moves": [
-            {
-                "course_code": code,
-                "course_name": inputs.meta_by_course.get(code, {}).get("course_name", ""),
-                "from": where(current[code]),
-                "to": where(repair.placements[code]),
-            }
-            for code in repair.moved
-        ],
-        "unseated": sorted(unseated),
-        "violations_before": repair.violations_before,
-        "violations_after": repair.violations_after,
-        "protected_count": len(protected),
-        "proven_minimal": repair.proven_minimal,
-        "status": repair.status,
-    }
-    return result
 
 
 @require_POST

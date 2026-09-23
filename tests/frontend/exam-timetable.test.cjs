@@ -1910,6 +1910,19 @@ test('a repair that cannot clear the board names what went to Overflow and does 
   assert.match(report.textContent, language === 'ar' ? /بقيت مخالفة واحدة/ : /1 rule break remains/);
 });
 
+test('an exam that was never in a clash but moved to make room is explained', async t => {
+  const ui = await runRepair(t, { ...solved, widened: true, proven_minimal: false, status: 'FEASIBLE',
+    moves: [move('CS201', 'Mon', 'Tue'), move('CS202', 'Tue', 'Mon')] });
+  assert.match(ui.$('examRepairReport').textContent, language === 'ar' ? /لإفساح المجال/ : /moved to make room/);
+});
+
+test('the Overflow message states the fact without claiming a cause it cannot vouch for', async t => {
+  const ui = await runRepair(t, { moves: [], unseated: ['CS301'], violations_before: 1, violations_after: 0, proven_minimal: false, status: 'FEASIBLE' });
+  const text = ui.$('examRepairReport').textContent;
+  assert.match(text, /CS301/);
+  assert.doesNotMatch(text, language === 'ar' ? /دون تحريك اختبار مثبّت/ : /without moving a pinned exam/);
+});
+
 test('a solver that did not finish is never reported as the registrar leaving clashes behind', async t => {
   const ui = await runRepair(t, {
     moves: [], unseated: [], violations_before: 3, violations_after: 3, proven_minimal: false, status: 'UNKNOWN',
@@ -1928,6 +1941,34 @@ test('a repair the solver could not prove minimal does not claim to be minimal',
 test('a repair on a board with nothing wrong says so rather than reporting a move', async t => {
   const ui = await runRepair(t, { ...solved, violations_before: 0, moves: [] });
   assert.match(ui.$('examRepairReport').textContent, language === 'ar' ? /لا يوجد ما يحتاج إصلاحاً/ : /Nothing to repair/);
+});
+
+test('a repair that moves nothing keeps the draft on screen and says nothing was saved', async t => {
+  let ui;
+  ui = await loadedEditor(t, {
+    onRequest: async url => url === '/ops/exam-timetable/build/'
+      ? response({ ok: true, saved: false, minimum_change: { ...solved, moves: [], violations_after: 1, proven_minimal: false } })
+      : undefined,
+  });
+  dropExam(ui, 'Wed');
+  const dragged = courses[1].course_code;
+  const cellHolds = () => Array.from(ui.$('schedGrid').querySelectorAll('td[data-day="Wed"][data-period="08:00-10:00"]'))
+    .some(cell => cell.textContent.includes(dragged));
+  assert.ok(cellHolds(), 'The drag landed');
+  const historyLoads = () => ui.requests.filter(request => request.url.startsWith('/ops/exam-timetable/list/')).length;
+  const before = historyLoads();
+
+  ui.$('minChangeBtn').click();
+  await settle();
+
+  const report = ui.$('examRepairReport');
+  assertVisible(ui, report);
+  assert.match(report.textContent, language === 'ar' ? /اختبارات مثبّتة أو نقلتَها/ : /exams you moved since the last save/);
+  assert.doesNotMatch(report.textContent, language === 'ar' ? /حُفظت النتيجة/ : /Saved as a new timetable/);
+  assert.match(ui.$('etStatus').textContent, language === 'ar' ? /لم يُحفظ شيء/ : /nothing was saved/);
+  assert.doesNotMatch(ui.$('etStatus').className, /alert-success|alert-danger/);
+  assert.ok(cellHolds(), 'The registrar\'s unsaved drag was thrown away');
+  assert.equal(historyLoads(), before, 'Nothing was saved, so the history has nothing new to show');
 });
 
 test('the report clears as soon as the board is edited again', async t => {
@@ -3720,4 +3761,36 @@ test('section-review status is localized as a warning and its flag precedes work
   assert.match(ui.$('kStatusPrimary').textContent, language === 'ar' ? /شعب المقررات تحتاج مراجعة/ : /Teaching sections need review/);
   assert.match(ui.$('kStatusFlags').firstElementChild.textContent, language === 'ar' ? /ربط شعب المقررات غير مكتمل/ : /teaching-section mapping incomplete/);
   assert.equal(ui.$('examSectionMappingNotice').hidden, false);
+});
+
+test('a repair on a board with exams already in Overflow does not call the board clean', async t => {
+  const ui = await runRepair(t, {
+    moves: [], unseated: [], already_overflow: 2, violations_before: 0, violations_after: 0, proven_minimal: true, status: 'OPTIMAL',
+  });
+  const report = ui.$('examRepairReport');
+  assert.doesNotMatch(report.textContent, language === 'ar' ? /لا يوجد ما يحتاج إصلاحاً/ : /Nothing to repair/);
+  assert.match(report.textContent, language === 'ar' ? /فترة إضافية/ : /Overflow slot/);
+  assert.match(report.textContent, language === 'ar' ? /تحسين الجدول الحالي/ : /Optimize current timetable/);
+  assert.ok(report.classList.contains('is-partial'), 'Exams left in Overflow are not a finished board');
+});
+
+test('a throttled action says how long to wait, in the page language', async t => {
+  const ui = await loadedEditor(t, {
+    onRequest: async url => url === '/ops/exam-timetable/build/'
+      ? {
+          ok: false,
+          status: 429,
+          headers: { get: name => (name === 'Retry-After' ? '42' : 'application/json') },
+          json: async () => ({ error: 'Rate limit exceeded. Please try again later.' }),
+        }
+      : undefined,
+  });
+  dropExam(ui, 'Wed');
+  ui.$('minChangeBtn').click();
+  await settle();
+  const banner = ui.$('examEditorRequestError');
+  assert.equal(banner.hidden, false);
+  assert.match(banner.textContent, /42/, 'The wait the server sent must be shown');
+  assert.match(banner.textContent, language === 'ar' ? /انتظر/ : /Wait 42 seconds/);
+  assert.doesNotMatch(banner.textContent, /Rate limit exceeded/, 'The raw English server text must not leak through');
 });
