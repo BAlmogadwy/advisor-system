@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import re
+from dataclasses import dataclass
 from datetime import time
 from io import BytesIO
 
@@ -38,6 +39,7 @@ from core.services.exam_evaluation import (
     _normalise_loaded_schedule_entries,
     evaluate_exam_schedule,
 )
+from core.services.exam_min_change import repair_minimum_change
 from core.services.exam_multistart import (
     is_multistart_enabled,
     report_to_dict,
@@ -57,6 +59,7 @@ from core.services.exam_timetable import (
     build_plan_term_buckets,
     export_exam_timetable_xlsx,
     schedule,
+    validate_exam_pins,
 )
 from core.services.rbac import ROLE_EXAM_COMMITTEE, ROLE_SUPER_ADMIN, get_user_role
 from core.sidebar_context import get_sidebar_context
@@ -309,10 +312,23 @@ def exam_timetable_build_view(request: HttpRequest) -> JsonResponse:
     if "base_schedule" in payload:
         try:
             context = _loaded_request_context(payload, base_schedule_raw)
-            source_fingerprint = context.pop("source_input_fingerprint")
+            provenance = _split_provenance(context)
+            source_fingerprint = provenance["source_input_fingerprint"]
             if mode == "optimize_loaded":
                 context["seed"] = seed if randomize else context["seed"]
                 result = _optimise_loaded_schedule(label=label, **context)
+            elif mode == "minimum_change_repair":
+                result = _minimum_change_schedule(
+                    label=label,
+                    source_placements=provenance["source_placements"],
+                    carried_protection=provenance["source_repair_protected"],
+                    **context,
+                )
+            elif mode != "save_loaded_changes":
+                # Save used to be the fallthrough for any action. A request the
+                # server did not recognise then persisted the submitted board -
+                # clashes and all - and the page reported it as done.
+                raise ValueError(f"Unknown timetable action: {mode or 'none'}.")
             else:
                 reviewed_fingerprint = (
                     payload.get("expected_input_fingerprint") or source_fingerprint
@@ -445,6 +461,22 @@ def _saved_enrollment_scope(payload: dict) -> tuple[list[str], list[str]]:
     return scope["programs"], scope["sections"]
 
 
+#: Keys _loaded_request_context carries about the SOURCE run rather than about
+#: the evaluation. Every consumer splats the rest straight into an evaluator, so
+#: they must come out first - popping each one by hand at each call site is how a
+#: new key reaches evaluate_exam_schedule and turns Check into a 500.
+_PROVENANCE_KEYS = (
+    "source_input_fingerprint",
+    "source_placements",
+    "source_repair_protected",
+)
+
+
+def _split_provenance(context: dict) -> dict:
+    """Remove the source run's provenance, leaving only evaluator arguments."""
+    return {key: context.pop(key) for key in _PROVENANCE_KEYS}
+
+
 def _loaded_request_context(payload: dict, schedule_raw: list) -> dict:
     """Resolve source settings and reject identities outside the loaded run."""
     run_id = payload.get("previous_run_id")
@@ -524,6 +556,24 @@ def _loaded_request_context(payload: dict, schedule_raw: list) -> dict:
         "thin_conflict_threshold": threshold,
         "pinned": payload.get("pinned", source.get("pinned", [])),
         "source_input_fingerprint": source.get("input_fingerprint"),
+        # Where each exam sat in the SAVED run, by (day, period). Slot numbers
+        # would be wrong: adding a period renumbers every later slot, which
+        # made almost the whole board look hand-moved and froze it. What
+        # protects an exam placed from off the board - dragged out of OVERFLOW,
+        # or added since the save - is the consumer's "absent or different"
+        # rule, so recording OVERFLOW origins here changes nothing; the map
+        # simply records every exam.
+        "source_placements": {
+            entry["course_code"]: (str(entry.get("day", "")), str(entry.get("period", "")))
+            for entry in source.get("schedule", [])
+            if entry.get("course_code")
+        },
+        # Exams a previous "Fix with fewest moves" had to protect. Each repair
+        # saves a run, and that run becomes the next baseline - so without
+        # carrying these forward, drag, Fix, drag, Fix lost the first drag.
+        "source_repair_protected": [
+            code for code in source.get("minimum_change_protected", []) if isinstance(code, str)
+        ],
     }
 
 
@@ -532,6 +582,7 @@ def _rebuild_loaded_schedule(
     label: str,
     expected_input_fingerprint: str | None = None,
     rebalance_invigilators: bool = False,
+    extra: dict | None = None,
     **kwargs,
 ) -> dict:
     """Persist the same complete evaluation used by a non-saving Check.
@@ -546,6 +597,11 @@ def _rebuild_loaded_schedule(
             "Enrollment, course, room or policy inputs changed since the last check. "
             "Check changes again before saving."
         )
+    # Provenance a mode wants remembered with the run, merged before it is
+    # saved so a reload from history carries it too. Top-level only: qa is
+    # compared between Build and Check, and nothing a Check cannot reproduce
+    # may live there.
+    result.update(extra or {})
     run = ExamTimetableRun.objects.create(
         label=label,
         result_json=json.dumps(result, ensure_ascii=False),
@@ -560,6 +616,70 @@ class ExamInputsChanged(ValueError):
 
 class ExamCheckRequired(ValueError):
     """A source without provenance needs a reviewed Check before it can be saved."""
+
+
+@dataclass(frozen=True)
+class _LoadedSolverInputs:
+    """Everything a solver needs about a loaded board, built from one place.
+
+    Optimise and the minimum-change repair both reason about the same conflict
+    graph and the same buckets. Building them twice is how two solvers end up
+    quietly disagreeing about what a clash is.
+    """
+
+    meta_by_course: dict[str, dict]
+    course_list: list[str]
+    enrolled_sets: dict[str, set[int]]
+    adj: dict[str, dict[str, int]]
+    plan_term_buckets: dict[tuple[str, int], set[str]]
+    course_buckets: dict[str, list[tuple[str, int]]]
+    credit_map: dict[str, int]
+    slots: list[dict]
+
+
+def _loaded_solver_inputs(
+    base_entries: list[dict],
+    days: list[str],
+    periods: list[str],
+    programs: list[str] | None,
+    sections: list[str] | None,
+    thin_conflict_threshold: int,
+) -> _LoadedSolverInputs:
+    meta_by_course = {entry["course_code"]: entry for entry in base_entries}
+    course_list = sorted(meta_by_course)
+    enrolled_sets, course_meta = _build_loaded_course_enrollments(base_entries, programs, sections)
+    _conflicts, adj = build_conflict_graph(enrolled_sets)
+    adj, _thin_courses = apply_thin_conflict_policy(enrolled_sets, adj, thin_conflict_threshold)
+    plan_term_buckets, course_buckets = build_plan_term_buckets(
+        set(course_list), course_meta, programs=programs
+    )
+    source_credit_map = build_credit_map(
+        {
+            _source_code_for_display(entry["course_code"], entry.get("source_course_code"))
+            for entry in base_entries
+        }
+    )
+    credit_map = {
+        entry["course_code"]: source_credit_map.get(
+            _source_code_for_display(entry["course_code"], entry.get("source_course_code")),
+            3,
+        )
+        for entry in base_entries
+    }
+    slots = [
+        {"index": index, "day": day, "period": period}
+        for index, (day, period) in enumerate((day, period) for day in days for period in periods)
+    ]
+    return _LoadedSolverInputs(
+        meta_by_course=meta_by_course,
+        course_list=course_list,
+        enrolled_sets=enrolled_sets,
+        adj=adj,
+        plan_term_buckets=plan_term_buckets,
+        course_buckets=course_buckets,
+        credit_map=credit_map,
+        slots=slots,
+    )
 
 
 def _optimise_loaded_schedule(
@@ -583,53 +703,28 @@ def _optimise_loaded_schedule(
         periods,
         selected_courses,
     )
-    meta_by_course = {entry["course_code"]: entry for entry in base_entries}
-    course_list = sorted(meta_by_course)
-    enrolled_sets, course_meta = _build_loaded_course_enrollments(base_entries, programs, sections)
-    conflicts, adj = build_conflict_graph(enrolled_sets)
-    adj, _thin_courses = apply_thin_conflict_policy(enrolled_sets, adj, thin_conflict_threshold)
-    plan_term_buckets, course_buckets = build_plan_term_buckets(
-        set(course_list), course_meta, programs=programs
+    inputs = _loaded_solver_inputs(
+        base_entries, days, periods, programs, sections, thin_conflict_threshold
     )
-    source_credit_map = build_credit_map(
-        {
-            _source_code_for_display(entry["course_code"], entry.get("source_course_code"))
-            for entry in base_entries
-        }
-    )
-    credit_map = {
-        entry["course_code"]: source_credit_map.get(
-            _source_code_for_display(entry["course_code"], entry.get("source_course_code")),
-            3,
-        )
-        for entry in base_entries
-    }
-
-    slots: list[dict] = []
-    idx = 0
-    for day in days:
-        for period in periods:
-            slots.append({"index": idx, "day": day, "period": period})
-            idx += 1
     preferred_slots = {
         entry["course_code"]: int(entry.get("slot_index", 0) or 0) for entry in base_entries
     }
     optimised = schedule(
-        course_list,
-        adj,
-        slots,
-        enrolled_sets=enrolled_sets,
+        inputs.course_list,
+        inputs.adj,
+        inputs.slots,
+        enrolled_sets=inputs.enrolled_sets,
         max_per_day=max_per_day,
-        plan_term_buckets=plan_term_buckets,
-        course_buckets=course_buckets,
+        plan_term_buckets=inputs.plan_term_buckets,
+        course_buckets=inputs.course_buckets,
         pinned=pinned,
-        credit_map=credit_map,
+        credit_map=inputs.credit_map,
         preferred_slots=preferred_slots,
         seed=seed,
     )
     optimised_entries: list[dict] = []
     for entry in optimised:
-        meta = meta_by_course.get(entry["course_code"], {})
+        meta = inputs.meta_by_course.get(entry["course_code"], {})
         optimised_entries.append(
             {
                 **entry,
@@ -659,6 +754,169 @@ def _optimise_loaded_schedule(
     )
 
 
+def _minimum_change_schedule(
+    *,
+    label: str,
+    days: list[str],
+    periods: list[str],
+    max_per_day: int,
+    schedule_raw: list,
+    selected_courses: list[str] | None,
+    pinned: list[dict[str, str]] | None,
+    assign_rooms: bool,
+    seed: int | None,
+    thin_conflict_threshold: int,
+    source_placements: dict[str, tuple[str, str]],
+    carried_protection: list[str] | None = None,
+    programs: list[str] | None = None,
+    sections: list[str] | None = None,
+) -> dict:
+    """Repair the registrar's board by moving as few exams as possible.
+
+    Optimise answers "what is the best board?"; this answers "what is the
+    smallest change that makes this one legal?". Pinned exams, every exam moved
+    since the board was last saved, and every exam an earlier repair in this run
+    of repairs protected are all frozen, so the registrar's own work is never the
+    thing that gets moved.
+    """
+    base_entries = _normalise_loaded_schedule_entries(
+        schedule_raw,
+        days,
+        periods,
+        selected_courses,
+    )
+    inputs = _loaded_solver_inputs(
+        base_entries, days, periods, programs, sections, thin_conflict_threshold
+    )
+    # Validate before use: a malformed pin 500'd here while Optimise returned a
+    # 400, and an unstripped code silently went unprotected.
+    pinned = validate_exam_pins(
+        pinned, inputs.course_list, inputs.slots, schedule_entries=base_entries
+    )
+    current = {
+        entry["course_code"]: int(entry["slot_index"])
+        for entry in base_entries
+        if entry.get("day") != "OVERFLOW"
+    }
+    # An exam counts as the registrar's if it now sits somewhere other than
+    # where the saved run had it - compared by (day, period), and an exam the
+    # saved run did not place on the board at all counts as moved.
+    edited = {
+        entry["course_code"]
+        for entry in base_entries
+        if entry.get("day") != "OVERFLOW"
+        and source_placements.get(entry["course_code"]) != (entry["day"], entry["period"])
+    }
+    carried = {code for code in carried_protection or [] if code in current}
+    hand_placed = edited | carried
+    protected = hand_placed | {pin["course_code"] for pin in pinned}
+    repair = repair_minimum_change(
+        placements=current,
+        adj=inputs.adj,
+        slot_count=len(inputs.slots),
+        periods_per_day=len(periods),
+        plan_term_buckets=inputs.plan_term_buckets,
+        protected=protected,
+    )
+
+    slot_by_index = {slot["index"]: slot for slot in inputs.slots}
+    overflow_index = max(
+        [len(inputs.slots) - 1]
+        + [
+            int(entry["slot_index"])
+            for entry in base_entries
+            if entry.get("day") == "OVERFLOW" and isinstance(entry.get("slot_index"), int)
+        ]
+    )
+    unseated = set(repair.unseated)
+    repaired_entries: list[dict] = []
+    for entry in base_entries:
+        code = entry["course_code"]
+        if code in unseated:
+            # No legal slot exists without moving a protected exam. Park it in
+            # OVERFLOW rather than leave it on the slot that broke the rules.
+            overflow_index += 1
+            repaired_entries.append(
+                {
+                    **entry,
+                    "day": "OVERFLOW",
+                    "period": f"Extra-{overflow_index}",
+                    "slot_index": overflow_index,
+                }
+            )
+        elif code in repair.placements:
+            slot = slot_by_index[repair.placements[code]]
+            repaired_entries.append(
+                {**entry, "slot_index": slot["index"], "day": slot["day"], "period": slot["period"]}
+            )
+        else:
+            repaired_entries.append(entry)
+
+    def where(slot_index: int) -> dict[str, str]:
+        slot = slot_by_index[slot_index]
+        return {"day": slot["day"], "period": slot["period"]}
+
+    already_overflow = sum(1 for entry in base_entries if entry.get("day") == "OVERFLOW")
+    # Top-level keys, deliberately NOT in qa: the frontend compares qa between
+    # Build and a fixed-time Check, a Check cannot reproduce how a board was
+    # repaired, and the same key in qa would mark every saved run as changed
+    # and gate XLSX export. They ARE persisted, so a repaired run reloaded from
+    # history still says what the system moved and what it protected.
+    report = {
+        "moves": [
+            {
+                "course_code": code,
+                "course_name": inputs.meta_by_course.get(code, {}).get("course_name", ""),
+                "from": where(current[code]),
+                "to": where(repair.placements[code]),
+            }
+            for code in repair.moved
+        ],
+        "unseated": sorted(unseated),
+        "already_overflow": already_overflow,
+        "violations_before": repair.violations_before,
+        "violations_after": repair.violations_after,
+        "protected_count": len(protected),
+        # True when exams outside any clash had to step aside to make room -
+        # without it, a registrar sees an untouched exam move and cannot tell why.
+        "widened": repair.widened,
+        "proven_minimal": repair.proven_minimal,
+        "status": repair.status,
+    }
+    if not repair.moved and not unseated:
+        # Nothing to fix, nothing the rules let it fix, or no board found in
+        # time: the board is exactly the one submitted. Evaluating it again and
+        # saving it would add a duplicate run to the history and, when the
+        # registrar has unsaved drags, save them without the review Save asks
+        # for. The page keeps the draft and shows the report.
+        return {"saved": False, "minimum_change": report}
+    return _rebuild_loaded_schedule(
+        label=label,
+        # Never run the invigilator post-pass here: it relocates exams to
+        # flatten staff load, which is precisely what this mode must not do.
+        rebalance_invigilators=False,
+        days=days,
+        periods=periods,
+        max_per_day=max_per_day,
+        schedule_raw=repaired_entries,
+        programs=programs,
+        sections=sections,
+        selected_courses=selected_courses,
+        assign_rooms=assign_rooms,
+        seed=seed,
+        thin_conflict_threshold=thin_conflict_threshold,
+        rebuild_mode="minimum_change_from_loaded",
+        pinned=pinned,
+        extra={
+            "minimum_change": report,
+            # Carried into the next repair, so drag, Fix, drag, Fix keeps the
+            # first drag. A plain Save starts a fresh baseline. Pins are not
+            # carried: they travel with the pin list, and unpinning must free them.
+            "minimum_change_protected": sorted(hand_placed),
+        },
+    )
+
+
 @require_POST
 def exam_timetable_draft_impact_view(request: HttpRequest) -> JsonResponse:
     """Calculate all cards and rooms at the exact submitted exam times; never save."""
@@ -674,7 +932,7 @@ def exam_timetable_draft_impact_view(request: HttpRequest) -> JsonResponse:
     try:
         schedule_raw = payload.get("base_schedule", payload.get("schedule"))
         context = _loaded_request_context(payload, schedule_raw)
-        source_fingerprint = context.pop("source_input_fingerprint")
+        source_fingerprint = _split_provenance(context)["source_input_fingerprint"]
         result = evaluate_exam_schedule(**context)
         return JsonResponse(
             {

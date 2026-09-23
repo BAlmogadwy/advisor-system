@@ -1022,7 +1022,7 @@ for (const pinned of [true, false]) {
     assert.ok(ui.$('exportXlsx').getAttribute('href'));
     ui.input(ui.$('etNumDays'), '6');
     assert.equal(ui.$('exportXlsx').getAttribute('href'), null);
-    for (const id of ['saveLoadedBtn', 'optimizeLoadedBtn']) {
+    for (const id of ['saveLoadedBtn', 'optimizeLoadedBtn', 'minChangeBtn']) {
       ui.$(id).click();
       await settle();
       assert.ok(!ui.requests.some(request => request.url === '/ops/exam-timetable/build/'));
@@ -1061,7 +1061,7 @@ test('removing a used period blocks loaded Save and Optimize with recovery guida
   await settle();
   ui.rows()[0].querySelector('.et-period-remove').click();
   assert.equal(ui.$('exportXlsx').getAttribute('href'), null);
-  for (const id of ['saveLoadedBtn', 'optimizeLoadedBtn']) {
+  for (const id of ['saveLoadedBtn', 'optimizeLoadedBtn', 'minChangeBtn']) {
     ui.$(id).click();
     await settle();
     assert.ok(!ui.requests.some(request => request.url === '/ops/exam-timetable/build/'));
@@ -1798,6 +1798,238 @@ test('Optimize is explicit and uses unsaved current positions, pins and enrollme
   assert.deepEqual(payload.pinned, [{ course_code: courses[1].course_code, day: 'Wed', period: '08:00-10:00' }]);
   assert.deepEqual(payload.programs, ['AI', 'CS']);
   assert.deepEqual(payload.sections, ['F', 'M']);
+});
+
+test('Fix with fewest moves sends its own mode with the unsaved board and pins', async t => {
+  const ui = await loadedEditor(t);
+  dropExam(ui, 'Wed');
+  examChip(ui).querySelector('[data-exam-pin]').click();
+  assert.equal(ui.$('minChangeBtn').classList.contains('d-none'), false, 'Offered wherever Optimize is');
+  ui.$('minChangeBtn').click();
+  await settle();
+  assert.equal(buildRequests(ui).length, 1);
+  const payload = JSON.parse(buildRequests(ui)[0].body);
+  assert.equal(payload.mode, 'minimum_change_repair', 'Must never be routed as a full re-solve');
+  assert.equal(payload.base_schedule.find(entry => entry.course_identity === courses[1].course_identity).day, 'Wed');
+  assert.deepEqual(payload.pinned, [{ course_code: courses[1].course_code, day: 'Wed', period: '08:00-10:00' }]);
+});
+
+function repairedRun(ui, minimumChange) {
+  const data = evaluatedRun(JSON.parse(buildRequests(ui)[0].body));
+  return response({ ...data, run_id: 91, minimum_change: minimumChange });
+}
+
+async function runRepair(t, minimumChange) {
+  let ui;
+  ui = await loadedEditor(t, {
+    onRequest: async url => url === '/ops/exam-timetable/build/' ? repairedRun(ui, minimumChange) : undefined,
+  });
+  dropExam(ui, 'Wed');
+  ui.$('minChangeBtn').click();
+  await settle();
+  return ui;
+}
+
+const move = (code, from, to) => ({
+  course_code: code, course_name: '',
+  from: { day: from, period: '08:00-10:00' }, to: { day: to, period: '10:30-12:30' },
+});
+const solved = { unseated: [], violations_before: 1, violations_after: 0, proven_minimal: true, status: 'OPTIMAL' };
+
+// jsdom reads text whether or not it can be seen, which is how an invisible
+// report once passed every test here. Assert the thing a registrar needs.
+function assertVisible(ui, element) {
+  assert.ok(element.textContent.trim(), 'The report must say something');
+  for (let node = element; node; node = node.parentElement) {
+    assert.equal(node.hidden, false, `${node.id || node.tagName} hides the report`);
+    assert.equal(node.classList?.contains('d-none'), false, `${node.id || node.tagName} hides the report`);
+    if (node.tagName === 'DETAILS' && node !== element) {
+      assert.equal(node.open, true, `${node.id || 'a details element'} is collapsed around the report`);
+    }
+  }
+}
+
+test('the repair report is shown where the registrar can see it, not in the collapsed setup', async t => {
+  const ui = await runRepair(t, { ...solved, moves: [move('CS201', 'Mon', 'Tue')] });
+  const report = ui.$('examRepairReport');
+  assertVisible(ui, report);
+  assert.equal(ui.$('examSetupDetails').open, false, 'Setup still collapses for a saved run');
+  assert.equal(report.closest('#examSetupDetails'), null);
+  assert.equal(report.getAttribute('role'), 'status');
+});
+
+test('a repair tells the registrar exactly which exams moved, and that it was the minimum', async t => {
+  const ui = await runRepair(t, { ...solved, moves: [move('CS201', 'Mon', 'Tue')] });
+  const report = ui.$('examRepairReport');
+  assert.ok(report.classList.contains('is-clean'), 'A fully legal result is clean');
+  assert.match(report.textContent, /CS201/);
+  assert.match(report.textContent, language === 'ar' ? /أقل عدد ممكن/ : /the fewest possible/);
+  assert.match(report.textContent, language === 'ar' ? /الجداول المحفوظة/ : /Saved timetables/);
+  // Times sit inside LTR isolates: unisolated, Arabic paints 08:00-10:00 as 10:00-08:00.
+  const times = [...report.querySelectorAll('bdi[dir="ltr"]')].map(node => node.textContent);
+  assert.ok(times.some(text => text.includes('08:00-10:00')), 'The origin time must be isolated');
+  assert.ok(times.some(text => text.includes('10:30-12:30')), 'The destination time must be isolated');
+  // The arrow is aria-hidden, so the direction must be spoken in words.
+  assert.match(report.querySelector('.visually-hidden').textContent, language === 'ar' ? /إلى/ : /to/);
+});
+
+// Arabic agrees in five forms; a 1-versus-more test gets every count from two up wrong.
+for (const [count, arabic, english] of [
+  [1, /تم نقل اختبار واحد/, /Moved 1 exam\b/],
+  [2, /تم نقل اختبارين/, /Moved 2 exams/],
+  [3, /تم نقل 3 اختبارات/, /Moved 3 exams/],
+  [11, /تم نقل 11 اختباراً/, /Moved 11 exams/],
+]) {
+  test(`the move count agrees grammatically for ${count} exam${count === 1 ? '' : 's'}`, async t => {
+    const moves = Array.from({ length: count }, (_, index) => move(`CS${200 + index}`, 'Mon', 'Tue'));
+    const ui = await runRepair(t, { ...solved, moves });
+    assert.match(ui.$('examRepairReport').textContent, language === 'ar' ? arabic : english);
+  });
+}
+
+test('every moved exam is listed, with the long tail behind a disclosure rather than dropped', async t => {
+  const moves = Array.from({ length: 9 }, (_, index) => move(`CS${300 + index}`, 'Mon', 'Tue'));
+  const ui = await runRepair(t, { ...solved, moves });
+  const report = ui.$('examRepairReport');
+  for (const { course_code: code } of moves) assert.match(report.textContent, new RegExp(code));
+  const more = report.querySelector('details');
+  assert.ok(more, 'Moves past the first six must remain reachable');
+  assert.match(more.querySelector('summary').textContent, /9/);
+});
+
+test('a repair that cannot clear the board names what went to Overflow and does not claim success', async t => {
+  const ui = await runRepair(t, {
+    moves: [], unseated: ['CS301', 'CS302'], violations_before: 3, violations_after: 1, proven_minimal: true, status: 'OPTIMAL',
+  });
+  const report = ui.$('examRepairReport');
+  assert.ok(report.classList.contains('is-partial'), 'A board left with a clash is not clean');
+  assert.equal(report.classList.contains('is-clean'), false);
+  assert.match(report.textContent, /CS301/);
+  assert.match(report.textContent, /CS302/);
+  assert.match(report.textContent, language === 'ar' ? /فترة إضافية/ : /Overflow slot/);
+  assert.match(report.textContent, language === 'ar' ? /بقيت مخالفة واحدة/ : /1 rule break remains/);
+});
+
+test('an exam that was never in a clash but moved to make room is explained', async t => {
+  const ui = await runRepair(t, { ...solved, widened: true, proven_minimal: false, status: 'FEASIBLE',
+    moves: [move('CS201', 'Mon', 'Tue'), move('CS202', 'Tue', 'Mon')] });
+  assert.match(ui.$('examRepairReport').textContent, language === 'ar' ? /لإفساح المجال/ : /moved to make room/);
+});
+
+test('the Overflow message states the fact without claiming a cause it cannot vouch for', async t => {
+  const ui = await runRepair(t, { moves: [], unseated: ['CS301'], violations_before: 1, violations_after: 0, proven_minimal: false, status: 'FEASIBLE' });
+  const text = ui.$('examRepairReport').textContent;
+  assert.match(text, /CS301/);
+  assert.doesNotMatch(text, language === 'ar' ? /دون تحريك اختبار مثبّت/ : /without moving a pinned exam/);
+});
+
+test('a solver that did not finish is never reported as the registrar leaving clashes behind', async t => {
+  const ui = await runRepair(t, {
+    moves: [], unseated: [], violations_before: 3, violations_after: 3, proven_minimal: false, status: 'UNKNOWN',
+  });
+  const text = ui.$('examRepairReport').textContent;
+  assert.match(text, language === 'ar' ? /تعذّر إكمال الإصلاح/ : /could not finish/);
+  assert.doesNotMatch(text, language === 'ar' ? /نقلتَها منذ آخر حفظ/ : /you moved since the last save/);
+});
+
+test('a repair the solver could not prove minimal does not claim to be minimal', async t => {
+  const ui = await runRepair(t, { ...solved, proven_minimal: false, status: 'FEASIBLE', moves: [move('CS201', 'Mon', 'Tue')] });
+  assert.match(ui.$('examRepairReport').textContent, /CS201/);
+  assert.doesNotMatch(ui.$('examRepairReport').textContent, language === 'ar' ? /أقل عدد ممكن/ : /fewest possible/);
+});
+
+test('a repair on a board with nothing wrong says so rather than reporting a move', async t => {
+  const ui = await runRepair(t, { ...solved, violations_before: 0, moves: [] });
+  assert.match(ui.$('examRepairReport').textContent, language === 'ar' ? /لا يوجد ما يحتاج إصلاحاً/ : /Nothing to repair/);
+});
+
+test('a repair that moves nothing keeps the draft on screen and says nothing was saved', async t => {
+  let ui;
+  ui = await loadedEditor(t, {
+    onRequest: async url => url === '/ops/exam-timetable/build/'
+      ? response({ ok: true, saved: false, minimum_change: { ...solved, moves: [], violations_after: 1, proven_minimal: false } })
+      : undefined,
+  });
+  dropExam(ui, 'Wed');
+  const dragged = courses[1].course_code;
+  const cellHolds = () => Array.from(ui.$('schedGrid').querySelectorAll('td[data-day="Wed"][data-period="08:00-10:00"]'))
+    .some(cell => cell.textContent.includes(dragged));
+  assert.ok(cellHolds(), 'The drag landed');
+  const historyLoads = () => ui.requests.filter(request => request.url.startsWith('/ops/exam-timetable/list/')).length;
+  const before = historyLoads();
+
+  ui.$('minChangeBtn').click();
+  await settle();
+
+  const report = ui.$('examRepairReport');
+  assertVisible(ui, report);
+  assert.match(report.textContent, language === 'ar' ? /اختبارات مثبّتة أو نقلتَها/ : /exams you moved since the last save/);
+  assert.doesNotMatch(report.textContent, language === 'ar' ? /حُفظت النتيجة/ : /Saved as a new timetable/);
+  assert.match(ui.$('etStatus').textContent, language === 'ar' ? /لم يُحفظ شيء/ : /nothing was saved/);
+  assert.doesNotMatch(ui.$('etStatus').className, /alert-success|alert-danger/);
+  assert.ok(cellHolds(), 'The registrar\'s unsaved drag was thrown away');
+  assert.equal(historyLoads(), before, 'Nothing was saved, so the history has nothing new to show');
+});
+
+test('the report clears as soon as the board is edited again', async t => {
+  const ui = await runRepair(t, { ...solved, moves: [move('CS201', 'Mon', 'Tue')] });
+  assert.ok(ui.$('examRepairReport').textContent.trim());
+  dropExam(ui, 'Thu');
+  await settle();
+  assert.equal(ui.$('examRepairReport').textContent, '', 'A stale report would describe a board that no longer exists');
+});
+
+test('a malformed report degrades instead of turning a saved repair into an error', async t => {
+  const ui = await runRepair(t, { ...solved, moves: [null, { course_code: 'CS201' }, move('CS202', 'Mon', 'Tue')] });
+  assert.match(ui.$('examRepairReport').textContent, /CS202/);
+  assert.doesNotMatch(ui.$('etStatus').className, /alert-danger/);
+});
+
+test('every server value is escaped in the repair report', async t => {
+  const payload = '<img src=x onerror=alert(1)>';
+  const ui = await runRepair(t, {
+    ...solved,
+    unseated: [payload],
+    violations_after: 1,
+    moves: [{ course_code: payload, course_name: '', from: { day: payload, period: payload }, to: { day: 'Tue', period: '08:00-10:00' } }],
+  });
+  assert.equal(ui.$('examRepairReport').querySelector('img'), null, 'Server text must never become markup');
+  assert.match(ui.$('examRepairReport').textContent, /<img src=x/);
+});
+
+function assertRepairMatchesOptimize(ui, when) {
+  for (const property of ['disabled', 'hidden']) {
+    const read = id => property === 'hidden' ? ui.$(id).classList.contains('d-none') : ui.$(id).disabled;
+    assert.equal(read('minChangeBtn'), read('optimizeLoadedBtn'), `${when}: repair ${property} must match Optimize`);
+  }
+}
+
+test('Fix with fewest moves is offered exactly when Optimize is', async t => {
+  const fresh = await page(t, { loadCourses: true });
+  await settle();
+  assertRepairMatchesOptimize(fresh, 'before any timetable is loaded');
+  assert.equal(fresh.$('minChangeBtn').classList.contains('d-none'), true, 'Nothing to repair yet');
+
+  const ui = await loadedEditor(t);
+  assertRepairMatchesOptimize(ui, 'once a timetable is loaded');
+  assert.equal(ui.$('minChangeBtn').disabled, false);
+
+  ui.$('minChangeBtn').click();
+  // While the repair is in flight the whole toolbar is inert, so neither this
+  // nor Optimize can be fired a second time over the same board.
+  assert.equal(ui.$('examEditToolbar').inert, true);
+  await settle();
+  assertRepairMatchesOptimize(ui, 'after a repair request finishes');
+  assert.equal(ui.$('examEditToolbar').inert, false, 'A failed repair must permit retry');
+});
+
+test('both buttons explain themselves, in the page language', async t => {
+  const ui = await loadedEditor(t);
+  const fix = ui.$('minChangeBtn').getAttribute('title');
+  const optimize = ui.$('optimizeLoadedBtn').getAttribute('title');
+  assert.match(fix, language === 'ar' ? /مثبّت أو نقلتَه منذ آخر حفظ/ : /since the last save/);
+  assert.match(optimize, language === 'ar' ? /نقلتَها دون تثبيتها/ : /you moved and did not pin/);
+  assert.match(ui.$('examEditHelp').textContent, language === 'ar' ? /إصلاح بأقل تغيير/ : /Fix with fewest moves/);
 });
 
 test('failed or placement-changing check responses leave the draft visibly unchecked and retryable', async t => {
@@ -3529,4 +3761,36 @@ test('section-review status is localized as a warning and its flag precedes work
   assert.match(ui.$('kStatusPrimary').textContent, language === 'ar' ? /شعب المقررات تحتاج مراجعة/ : /Teaching sections need review/);
   assert.match(ui.$('kStatusFlags').firstElementChild.textContent, language === 'ar' ? /ربط شعب المقررات غير مكتمل/ : /teaching-section mapping incomplete/);
   assert.equal(ui.$('examSectionMappingNotice').hidden, false);
+});
+
+test('a repair on a board with exams already in Overflow does not call the board clean', async t => {
+  const ui = await runRepair(t, {
+    moves: [], unseated: [], already_overflow: 2, violations_before: 0, violations_after: 0, proven_minimal: true, status: 'OPTIMAL',
+  });
+  const report = ui.$('examRepairReport');
+  assert.doesNotMatch(report.textContent, language === 'ar' ? /لا يوجد ما يحتاج إصلاحاً/ : /Nothing to repair/);
+  assert.match(report.textContent, language === 'ar' ? /فترة إضافية/ : /Overflow slot/);
+  assert.match(report.textContent, language === 'ar' ? /تحسين الجدول الحالي/ : /Optimize current timetable/);
+  assert.ok(report.classList.contains('is-partial'), 'Exams left in Overflow are not a finished board');
+});
+
+test('a throttled action says how long to wait, in the page language', async t => {
+  const ui = await loadedEditor(t, {
+    onRequest: async url => url === '/ops/exam-timetable/build/'
+      ? {
+          ok: false,
+          status: 429,
+          headers: { get: name => (name === 'Retry-After' ? '42' : 'application/json') },
+          json: async () => ({ error: 'Rate limit exceeded. Please try again later.' }),
+        }
+      : undefined,
+  });
+  dropExam(ui, 'Wed');
+  ui.$('minChangeBtn').click();
+  await settle();
+  const banner = ui.$('examEditorRequestError');
+  assert.equal(banner.hidden, false);
+  assert.match(banner.textContent, /42/, 'The wait the server sent must be shown');
+  assert.match(banner.textContent, language === 'ar' ? /انتظر/ : /Wait 42 seconds/);
+  assert.doesNotMatch(banner.textContent, /Rate limit exceeded/, 'The raw English server text must not leak through');
 });

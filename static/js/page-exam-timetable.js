@@ -73,6 +73,9 @@ const T = {
   savingLoaded:   IS_AR ? 'جارٍ حفظ التغييرات...' : 'Saving loaded-run changes...',
   optimizing:     IS_AR ? 'جارٍ تحسين الجدول المحمّل...' : 'Optimizing from loaded run...',
   optimized:      IS_AR ? 'تم حفظ الجدول المحسّن.' : 'Optimized run saved.',
+  repairing:      IS_AR ? 'جارٍ إصلاح الجدول بأقل تغيير...' : 'Repairing with the fewest moves...',
+  repaired:       IS_AR ? 'تم حفظ الجدول بعد الإصلاح.' : 'Repaired run saved.',
+  repairUnchanged: IS_AR ? 'لم يُنقل أي اختبار، فلم يُحفظ شيء.' : 'No exam was moved, so nothing was saved.',
   savedChanges:   IS_AR ? 'تم حفظ التغييرات.' : 'Loaded-run changes saved.',
   buildPinned:    IS_AR ? 'بناء ({n} مثبت)' : 'Build ({n} pinned)',
   show:           IS_AR ? 'عرض' : 'Show',
@@ -103,6 +106,16 @@ async function readExamResponse(response) {
   if (kind) {
     const error = new Error(IS_AR ? 'انتهت جلسة تسجيل الدخول. سجّل الدخول في تبويب جديد ثم أعد المحاولة. تغييراتك محفوظة في هذا التبويب.' : 'Your session expired. Sign in in a new tab, then retry. Your changes remain in this tab.');
     error.examRequestKind = kind;
+    throw error;
+  }
+  if (response.status === 429) {
+    // The server sends Retry-After; without it the registrar saw an untranslated
+    // "Rate limit exceeded" and no idea how long to wait.
+    const wait = Math.max(0, Math.ceil(Number(response.headers?.get('Retry-After')) || 0));
+    const error = new Error(IS_AR
+      ? `طلبات كثيرة على الجدول في وقت قصير. ${wait ? `انتظر ${arabicCount(wait, AR_SECONDS)}` : 'انتظر قليلاً'} ثم أعد المحاولة. تغييراتك باقية في هذا التبويب.`
+      : `Too many timetable actions in a short time. ${wait ? `Wait ${wait} second${wait === 1 ? '' : 's'}` : 'Wait a moment'}, then retry. Your changes remain in this tab.`);
+    error.examRequestKind = 'throttled';
     throw error;
   }
   let data;
@@ -996,6 +1009,7 @@ function collectLoadedRunPayload(mode) {
 
 async function runLoadedRunAction(mode, button, busyText, successText) {
   if (_builderBusy) return;
+  clearRepairReport();
   let payload = collectLoadedRunPayload(mode);
   if (!payload) return;
   cancelDraftChecks();
@@ -1033,6 +1047,14 @@ async function runLoadedRunAction(mode, button, busyText, successText) {
     }
     clearExamRequestError('save-optimize');
     clearExamCourseSourceError();
+    if (data.saved === false) {
+      // The repair moved nothing, so the server saved nothing: the board on
+      // screen - and any unsaved drags on it - is still the registrar's draft.
+      $('etStatus').textContent = T.repairUnchanged;
+      $('etStatus').className = 'alert alert-info mt-2 py-2 mb-0';
+      if (data.minimum_change) showRepairReport(data.minimum_change, { saved: false });
+      return;
+    }
     hydrateHeaderFromRun({ ...data, label: payload.label });
     renderResults(data);
     _loadedRunForRebuild = true;
@@ -1041,6 +1063,9 @@ async function runLoadedRunAction(mode, button, busyText, successText) {
     updateLoadedRunActions();
     $('etStatus').textContent = successText;
     $('etStatus').className = 'alert alert-success mt-2 py-2 mb-0';
+    // renderResults collapses the setup section that holds etStatus, so the
+    // repair report goes to the editing area where it stays visible.
+    if (data.minimum_change) showRepairReport(data.minimum_change);
     loadHistory();
   } catch (err) {
     $('etStatus').textContent = T.error + ': ' + showExamRequestError(err, 'save-optimize');
@@ -1058,6 +1083,10 @@ $('saveLoadedBtn')?.addEventListener('click', () => {
 
 $('optimizeLoadedBtn')?.addEventListener('click', () => {
   runLoadedRunAction('optimize_loaded', $('optimizeLoadedBtn'), T.optimizing, T.optimized);
+});
+
+$('minChangeBtn')?.addEventListener('click', () => {
+  runLoadedRunAction('minimum_change_repair', $('minChangeBtn'), T.repairing, T.repaired);
 });
 
 let _programCourses = {};   // { programName: Set([course_code, ...]) }
@@ -1085,6 +1114,7 @@ let _evaluatedReportDirty = false;
 let _evaluatedInputsChanged = false;
 let _reviewedInputFingerprint = null;
 let _editorRevision = 0;
+let _repairReportRevision = null;  // the board revision the repair report describes
 let _renderingResults = false;
 let _checkState = 'checked';
 let _checkError = '';
@@ -1485,6 +1515,15 @@ function updateLoadedRunActions() {
     optimizeBtn.classList.toggle('d-none', !hasLoadedSchedule);
     optimizeBtn.disabled = _builderBusy || needsExamSourceRebuild() || !hasLoadedSchedule;
   }
+  // Once the board is edited again, the last report describes a board that
+  // no longer exists. Unsaved drags alone are not that: a repair that moved
+  // nothing leaves them in place, and its report is about exactly that board.
+  if (_editorRevision !== _repairReportRevision || !hasLoadedSchedule) clearRepairReport();
+  const minChangeBtn = $('minChangeBtn');
+  if (minChangeBtn) {
+    minChangeBtn.classList.toggle('d-none', !hasLoadedSchedule);
+    minChangeBtn.disabled = _builderBusy || needsExamSourceRebuild() || !hasLoadedSchedule;
+  }
   $('buildBtn').classList.toggle('d-none', hasLoadedSchedule);
   if (hasLoadedSchedule) {
     $('buildBtn').disabled = true;
@@ -1634,6 +1673,121 @@ function currentExamByIdentity(identity) {
 
 function currentExamIsSelected(entry) {
   return Boolean(entry && getCheckedValues('courseList').includes(entry.course_code));
+}
+
+/* Say exactly what the minimum-change repair did. The move list is the point
+   of the button: a registrar who pressed "fewest moves" needs to see which
+   exams moved and where, not just that a run was saved. */
+const AR_PLURAL = typeof Intl !== 'undefined' && Intl.PluralRules ? new Intl.PluralRules('ar') : null;
+// Arabic agrees in five forms (one, two, few 3-10, many 11-99, other 100+);
+// a 1-versus-more test gets every count from two upward wrong.
+function arabicCount(count, forms) {
+  const category = AR_PLURAL ? AR_PLURAL.select(count) : (count === 1 ? 'one' : 'other');
+  return (forms[category] || forms.other).replace('{n}', String(count));
+}
+
+const AR_SECONDS = { one: 'ثانية واحدة', two: 'ثانيتين', few: '{n} ثوانٍ', many: '{n} ثانيةً', other: '{n} ثانية' };
+const AR_EXAMS = { one: 'اختبار واحد', two: 'اختبارين', few: '{n} اختبارات', many: '{n} اختباراً', other: '{n} اختبار' };
+const AR_REMAINING = { one: 'بقيت مخالفة واحدة', two: 'بقيت مخالفتان', few: 'بقيت {n} مخالفات', many: 'بقيت {n} مخالفةً', other: 'بقيت {n} مخالفة' };
+const AR_UNSEATED = {
+  one: 'تعذّر إيجاد موعد لاختبار واحد، فنُقل',
+  two: 'تعذّر إيجاد موعد لاختبارين، فنُقلا',
+  few: 'تعذّر إيجاد موعد لـ{n} اختبارات، فنُقلت',
+  many: 'تعذّر إيجاد موعد لـ{n} اختباراً، فنُقلت',
+  other: 'تعذّر إيجاد موعد لـ{n} اختبار، فنُقلت',
+};
+
+const REPAIR_TEXT = {
+  moved: count => IS_AR ? `تم نقل ${arabicCount(count, AR_EXAMS)}` : `Moved ${count} exam${count === 1 ? '' : 's'}`,
+  proven: () => IS_AR ? '، وهذا أقل عدد ممكن' : ', the fewest possible',
+  showAll: count => IS_AR ? `عرض جميع التنقلات (${count})` : `Show all ${count} moves`,
+  remainingCount: count => IS_AR
+    ? arabicCount(count, AR_REMAINING)
+    : `${count} rule break${count === 1 ? ' remains' : 's remain'}`,
+  remaining: count => IS_AR
+    ? `${REPAIR_TEXT.remainingCount(count)} بين اختبارات مثبّتة أو نقلتَها منذ آخر حفظ، ولم يُغيَّر موعد أيٍّ منها.`
+    : `${REPAIR_TEXT.remainingCount(count)} between pinned exams or exams you moved since the last save; those exams were left where they are.`,
+  unseated: count => IS_AR
+    ? `${arabicCount(count, AR_UNSEATED)} إلى «${T.overflow}»:`
+    : `${count} exam${count === 1 ? '' : 's'} could not be placed, so ${count === 1 ? 'it was' : 'they were'} moved to the ${T.overflow}:`,
+  widened: () => IS_AR
+    ? 'بعض هذه الاختبارات لم يكن في أي تعارض، ونُقل لإفساح المجال.'
+    : 'Some of these exams were not in any clash; they were moved to make room.',
+  stillOverflow: count => IS_AR
+    ? `لا توجد تعارضات تحتاج إصلاحاً، لكن عدد الاختبارات في «${T.overflow}»: ${count}. استخدم «تحسين الجدول الحالي» لإعادة جدولتها.`
+    : `No clashes to repair, but ${count} exam${count === 1 ? ' is' : 's are'} still in the ${T.overflow}. Use Optimize current timetable to place ${count === 1 ? 'it' : 'them'}.`,
+  nothing: () => IS_AR
+    ? 'لا يوجد ما يحتاج إصلاحاً: لا تعارض بين الاختبارات، ولا يجتمع اختباران من الفصل الدراسي نفسه في يوم واحد.'
+    : 'Nothing to repair: no exams clash, and no study term has two exams on the same day.',
+  failed: count => IS_AR
+    ? `تعذّر إكمال الإصلاح، فلم يُنقل أي اختبار${count ? `، و${REPAIR_TEXT.remainingCount(count)}` : ''}. أعد المحاولة أو استخدم «تحسين الجدول الحالي».`
+    : `The repair could not finish, so no exam was moved.${count ? ` ${REPAIR_TEXT.remainingCount(count)}.` : ''} Try again, or use Optimize current timetable.`,
+  saved: () => IS_AR ? 'حُفظت النتيجة جدولاً جديداً في «الجداول المحفوظة».' : 'Saved as a new timetable in Saved timetables.',
+};
+
+function repairMoveItem(move) {
+  const arrow = IS_AR ? '←' : '→';
+  // The arrow is decorative; the hidden word is what a screen reader hears.
+  return `<li><strong><bdi dir="ltr">${escapeAttr(move.course_code)}</bdi></strong> `
+    + `<bdi dir="ltr">${escapeAttr(examLocation(move.from))}</bdi> `
+    + `<span aria-hidden="true">${arrow}</span><span class="visually-hidden">${IS_AR ? ' إلى ' : ' to '}</span> `
+    + `<bdi dir="ltr">${escapeAttr(examLocation(move.to))}</bdi></li>`;
+}
+
+function describeMinimumChange(report, { saved = true } = {}) {
+  // Whatever the server did is already done when this renders, so a malformed
+  // report must degrade to a plainer message rather than throw a red "Error".
+  const moves = (Array.isArray(report?.moves) ? report.moves : [])
+    .filter(move => move && typeof move.course_code === 'string' && move.from && move.to);
+  const unseated = (Array.isArray(report?.unseated) ? report.unseated : [])
+    .filter(code => typeof code === 'string');
+  const remaining = Number(report?.violations_after) || 0;
+  // Exams already parked in Overflow are not clashes this repair can see, but
+  // the board is not finished while they are there.
+  const alreadyOverflow = Number(report?.already_overflow) || 0;
+  const solved = ['OPTIMAL', 'FEASIBLE'].includes(report?.status);
+
+  if (!solved) {
+    // Never blame the registrar for a solver that did not finish.
+    return { html: `<p>${escapeAttr(REPAIR_TEXT.failed(remaining))}</p>`, clean: false };
+  }
+  const parts = [];
+  if (!moves.length && !unseated.length && !remaining) {
+    parts.push(`<p>${escapeAttr(alreadyOverflow ? REPAIR_TEXT.stillOverflow(alreadyOverflow) : REPAIR_TEXT.nothing())}</p>`);
+  }
+  if (moves.length) {
+    const lead = `${REPAIR_TEXT.moved(moves.length)}${report?.proven_minimal ? REPAIR_TEXT.proven() : ''}:`;
+    const shown = moves.slice(0, 6).map(repairMoveItem).join('');
+    const rest = moves.length > 6
+      ? `<details><summary>${escapeAttr(REPAIR_TEXT.showAll(moves.length))}</summary><ul>${moves.slice(6).map(repairMoveItem).join('')}</ul></details>`
+      : '';
+    parts.push(`<p>${escapeAttr(lead)}</p><ul>${shown}</ul>${rest}`);
+    if (report?.widened) parts.push(`<p>${escapeAttr(REPAIR_TEXT.widened())}</p>`);
+  }
+  if (unseated.length) {
+    const codes = unseated.map(code => `<bdi dir="ltr">${escapeAttr(code)}</bdi>`).join(IS_AR ? '، ' : ', ');
+    parts.push(`<p>${escapeAttr(REPAIR_TEXT.unseated(unseated.length))} ${codes}.</p>`);
+  }
+  if (remaining) parts.push(`<p>${escapeAttr(REPAIR_TEXT.remaining(remaining))}</p>`);
+  if (saved) parts.push(`<p>${escapeAttr(REPAIR_TEXT.saved())}</p>`);
+  return { html: parts.join(''), clean: !remaining && !unseated.length && !alreadyOverflow };
+}
+
+function showRepairReport(report, options) {
+  const region = $('examRepairReport');
+  if (!region) return;
+  _repairReportRevision = _editorRevision;
+  const summary = describeMinimumChange(report, options);
+  region.classList.toggle('is-clean', summary.clean);
+  region.classList.toggle('is-partial', !summary.clean);
+  region.innerHTML = summary.html;
+}
+
+function clearRepairReport() {
+  const region = $('examRepairReport');
+  if (!region || !region.innerHTML) return;
+  region.innerHTML = '';
+  region.classList.remove('is-clean', 'is-partial');
 }
 
 function examLocation(entry) {
