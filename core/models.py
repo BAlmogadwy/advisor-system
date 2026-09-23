@@ -793,6 +793,102 @@ class ExamTimetableRun(models.Model):
         return f"ExamTimetableRun({self.id}/{self.label})"
 
 
+class ExamTimetableJob(models.Model):
+    """One Build, Optimize, Fix or Save of the exam timetable, run in the background.
+
+    The page submits the action and polls this row for its stages instead of
+    holding a request open for a minute. Only one job may be active at a time,
+    across all users: the web service has half a CPU and 512 MB, and one CP-SAT
+    build is most of both. The database enforces that, so it holds even while an
+    old and a new instance overlap during a deploy.
+
+    A job saves its run and becomes SUCCEEDED in one transaction, so a cancel,
+    a crash or a restart can never leave a run in the history without a job
+    that says it finished.
+    """
+
+    STATUS_QUEUED = "queued"
+    STATUS_RUNNING = "running"
+    STATUS_SUCCEEDED = "succeeded"
+    STATUS_FAILED = "failed"
+    STATUS_CANCELLED = "cancelled"
+    STATUS_CHOICES = (
+        (STATUS_QUEUED, "Queued"),
+        (STATUS_RUNNING, "Running"),
+        (STATUS_SUCCEEDED, "Succeeded"),
+        (STATUS_FAILED, "Failed"),
+        (STATUS_CANCELLED, "Cancelled"),
+    )
+    ACTIVE_STATUSES = (STATUS_QUEUED, STATUS_RUNNING)
+
+    KIND_BUILD = "build"
+    KIND_OPTIMIZE = "optimize_loaded"
+    KIND_REPAIR = "minimum_change_repair"
+    KIND_SAVE = "save_loaded_changes"
+    KIND_CHOICES = (
+        (KIND_BUILD, "Build"),
+        (KIND_OPTIMIZE, "Optimize current timetable"),
+        (KIND_REPAIR, "Fix with fewest moves"),
+        (KIND_SAVE, "Save changes"),
+    )
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    kind = models.CharField(max_length=32, choices=KIND_CHOICES)
+    status = models.CharField(max_length=16, choices=STATUS_CHOICES, default=STATUS_QUEUED)
+    #: The one active job allowed at a time is enforced on this constant.
+    lane = models.CharField(max_length=16, default="exam", editable=False)
+    submitted_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="exam_timetable_jobs",
+    )
+    #: The page that submitted it; a result is applied only by that tab.
+    client_token = models.CharField(max_length=64, blank=True, default="")
+    #: Echoed with a loaded board's result, so the page can tell it is for this edit.
+    editor_revision = models.IntegerField(default=0)
+    request_payload = models.JSONField(default=dict)
+    progress_json = models.JSONField(default=dict)
+    cancel_requested = models.BooleanField(default=False)
+    result_run = models.ForeignKey(
+        ExamTimetableRun,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="jobs",
+    )
+    #: The HTTP status and body the action returned, except a saved run's
+    #: result, which is served from ``result_run`` rather than copied here.
+    response_status = models.PositiveSmallIntegerField(null=True, blank=True)
+    response_json = models.JSONField(default=dict)
+    error_code = models.CharField(max_length=40, blank=True, default="")
+    worker = models.CharField(max_length=128, blank=True, default="")
+    submitted_at = models.DateTimeField(auto_now_add=True)
+    started_at = models.DateTimeField(null=True, blank=True)
+    heartbeat_at = models.DateTimeField(null=True, blank=True)
+    finished_at = models.DateTimeField(null=True, blank=True)
+    #: When the submitting page fetched the result, so a reload does not offer it again.
+    acknowledged_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "exam_timetable_jobs"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["lane"],
+                condition=models.Q(status__in=("queued", "running")),
+                name="exam_job_one_active",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["status", "heartbeat_at"], name="exam_job_status_heartbeat"),
+            models.Index(fields=["submitted_by", "-submitted_at"], name="exam_job_user_recent"),
+        ]
+
+    def __str__(self) -> str:
+        return f"ExamTimetableJob({self.id}/{self.kind}/{self.status})"
+
+
 # ── Timetable Builder Workspace ─────────────────────────────────
 
 

@@ -530,3 +530,47 @@ def test_a_pass_with_no_context_still_bounds_itself(monkeypatch):
         credit_map=dict.fromkeys(SIZES, 3),
         max_per_day=1,
     )  # must not raise: max_trials is derived, not required
+
+
+def test_the_trial_count_it_reports_is_the_trial_count_it_spent(monkeypatch, caplog):
+    """A job shows "trial N of at most M" from this counter. It must end on the
+    number the pass itself logs, and count up one trial at a time."""
+    import logging
+
+    ticks = []
+    monkeypatch.setattr(exam_timetable, "assign_rooms_to_schedule", _pack)
+    entries = _two_move_entries()
+    enrollment = {
+        entry["course_code"]: [
+            {
+                "section": "F01",
+                "section_key": f"term-section:{index}",
+                "term_section_id": index,
+                "gender": "F",
+                "mapping_status": "mapped",
+                "student_count": TWO_MOVE_SIZES[entry["course_code"]],
+            }
+        ]
+        for index, entry in enumerate(entries, 1)
+    }
+    with caplog.at_level(logging.INFO, logger="core.services.exam_timetable"):
+        exam_timetable._rebalance_invigilators_pass(
+            entries,
+            enrollment,
+            [{"room_code": "inventory-present"}],
+            TWO_MOVE_SLOTS,
+            TWO_MOVE_ADJ,
+            {},
+            {},
+            max_iterations=20,
+            pinned_courses=set(TWO_MOVE_SIZES) - {"CS101", "CS102"},
+            allocation_context=RoomAllocationContext(),
+            enrolled_sets=TWO_MOVE_ENROLLED,
+            credit_map=TWO_MOVE_CREDITS,
+            max_per_day=2,
+            on_trial=lambda done, total: ticks.append((done, total)),
+        )
+    summary = next(r for r in caplog.records if "invigilator rebalance" in r.getMessage())
+    spent, ceiling = summary.args[3], summary.args[4]
+    assert spent > 0, "The board must make the pass try at least one move"
+    assert ticks == [(trial, ceiling) for trial in range(1, spent + 1)]

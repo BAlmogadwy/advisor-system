@@ -47,6 +47,8 @@ from core.models import (
 from core.services.course_identity import display_course_label, planner_course_key
 from core.services.exam_input_fingerprint import fingerprint_exam_inputs
 from core.services.exam_operations_snapshot import build_exam_operations_snapshot
+from core.services.exam_progress import Counter
+from core.services.exam_progress import current as current_progress
 from core.services.exam_review import build_exam_review
 from core.services.exam_room_allocation import (
     RoomAllocationContext,
@@ -572,9 +574,13 @@ def schedule(
     credit_map: dict[str, int] | None = None,
     preferred_slots: dict[str, int] | None = None,
     seed: int | None = None,
+    on_placed: Counter | None = None,
 ) -> list[dict]:
     """
     Greedy graph-coloring with day-spread soft constraint.
+
+    ``on_placed(done, total)`` is told as each course is taken up, for a job
+    that reports its progress; nothing else about the schedule depends on it.
 
     Hard constraints:
       A. No two conflicting courses in the same slot (student clash).
@@ -723,7 +729,9 @@ def schedule(
     #   2. If no slot survives → create OVERFLOW virtual slot
     #   3. Otherwise score each surviving candidate on 4-level soft priority
     #   4. Pick the candidate with the lowest (best) score tuple
-    for course in courses_sorted:
+    for done, course in enumerate(courses_sorted):
+        if on_placed is not None:
+            on_placed(done, len(courses_sorted))
         if course in assignment:
             continue  # already pinned by user
 
@@ -883,6 +891,8 @@ def schedule(
         # Update bucket-day tracking
         for bk in my_buckets:
             bucket_day_courses[bk][chosen_day].add(course)
+    if on_placed is not None:
+        on_placed(len(courses_sorted), len(courses_sorted))
 
     # ── Build result list sorted by slot index ──
     result: list[dict] = []
@@ -1454,12 +1464,16 @@ def assign_rooms_to_schedule(
     seed: int | None = None,
     *,
     allocation_context: RoomAllocationContext | None = None,
+    on_period: Counter | None = None,
 ) -> list[dict]:
     """Room original sections across each period without changing exam times.
 
     Scheduling may use ``seed``; room assignment deliberately does not. Build,
     fixed-time Check, Save and export must agree for identical authoritative
     inputs. Existing room rows are replaced, making repeated calls idempotent.
+
+    ``on_period(done, total)`` counts the (period, gender) packs, the unit the
+    solver works in, for a job that reports its progress.
     """
     inventory = normalized_rooms(rooms)
     entries_by_slot: dict[int, list[dict]] = defaultdict(list)
@@ -1470,6 +1484,7 @@ def assign_rooms_to_schedule(
     context = allocation_context or RoomAllocationContext.for_periods(
         period_cohort_count(schedule_entries, section_enrollment)
     )
+    packs: list[tuple[dict[str, dict], str, list[dict]]] = []
     for _, entries in sorted(entries_by_slot.items()):
         by_course = {entry["course_code"]: entry for entry in entries}
         demands_by_gender: dict[str, list[dict]] = defaultdict(list)
@@ -1484,32 +1499,39 @@ def assign_rooms_to_schedule(
                         "gender": gender,
                     }
                 )
-        for gender, demands in sorted(demands_by_gender.items()):
-            period_rooms = [room for room in inventory if room["section"] == gender]
-            rows = allocate_period(demands, period_rooms, context)
-            groups: dict[tuple, list[dict]] = defaultdict(list)
-            for row in rows:
-                # Unseated original sections remain individually reviewable.
-                key = (
-                    row["course_code"],
-                    row["room_code"],
-                    str(row.get("section_key", row["section"]))
-                    if row["room_code"] == "UNASSIGNED"
-                    else "",
-                )
-                groups[key].append(row)
-            for (code, room_code, _), parts in sorted(groups.items()):
-                by_course[code]["rooms"].append(
-                    {
-                        "section": " + ".join(dict.fromkeys(p["section"] for p in parts)),
-                        "room_code": room_code,
-                        "student_count": sum(p["student_count"] for p in parts),
-                        "room_capacity": parts[0]["room_capacity"],
-                        "gender": gender,
-                        "merged_from": list(dict.fromkeys(p["section"] for p in parts)),
-                        "section_parts": [exam_section_part(p) for p in parts],
-                    }
-                )
+        packs.extend(
+            (by_course, gender, demands) for gender, demands in sorted(demands_by_gender.items())
+        )
+    for done, (by_course, gender, demands) in enumerate(packs):
+        if on_period is not None:
+            on_period(done, len(packs))
+        period_rooms = [room for room in inventory if room["section"] == gender]
+        rows = allocate_period(demands, period_rooms, context)
+        groups: dict[tuple, list[dict]] = defaultdict(list)
+        for row in rows:
+            # Unseated original sections remain individually reviewable.
+            key = (
+                row["course_code"],
+                row["room_code"],
+                str(row.get("section_key", row["section"]))
+                if row["room_code"] == "UNASSIGNED"
+                else "",
+            )
+            groups[key].append(row)
+        for (code, room_code, _), parts in sorted(groups.items()):
+            by_course[code]["rooms"].append(
+                {
+                    "section": " + ".join(dict.fromkeys(p["section"] for p in parts)),
+                    "room_code": room_code,
+                    "student_count": sum(p["student_count"] for p in parts),
+                    "room_capacity": parts[0]["room_capacity"],
+                    "gender": gender,
+                    "merged_from": list(dict.fromkeys(p["section"] for p in parts)),
+                    "section_parts": [exam_section_part(p) for p in parts],
+                }
+            )
+    if on_period is not None:
+        on_period(len(packs), len(packs))
     annotate_exam_room_groups(schedule_entries)
     return schedule_entries
 
@@ -1613,6 +1635,7 @@ def _rebalance_invigilators_pass(
     credit_map: dict[str, int] | None = None,
     max_per_day: int = 2,
     caller: str = "unknown",
+    on_trial: Counter | None = None,
 ) -> int:
     """Final post-pass that moves courses between days to flatten the
     per-day invigilator demand.
@@ -1874,6 +1897,9 @@ def _rebalance_invigilators_pass(
 
                 # Tentative move
                 trials_spent += 1
+                if on_trial is not None:
+                    # A ceiling, not an estimate: the search may converge first.
+                    on_trial(trials_spent, max_trials)
                 previous_rooms = [deepcopy(item.get("rooms", [])) for item in schedule_entries]
                 entry["slot_index"] = tsi
                 entry["day"] = target_slot["day"]
@@ -2168,6 +2194,8 @@ def build_exam_timetable(
                            runner to evaluate candidates before
                            persisting only the selected ones.
     """
+    progress = current_progress()
+    progress.stage("enrolments")
     # 1. Enrolled sets
     enrolled_sets, course_meta = build_enrolled_sets_with_meta(
         programs=programs,
@@ -2212,6 +2240,7 @@ def build_exam_timetable(
         all_students |= sids
 
     # 2. Conflict graph
+    progress.stage("conflicts")
     conflicts, adj = build_conflict_graph(enrolled_sets)
 
     # Use the same relaxation policy for fresh builds and loaded optimization.
@@ -2242,6 +2271,7 @@ def build_exam_timetable(
         )
 
     # 6. Schedule (with day-spread + bucket + credit-pair constraints)
+    progress.stage("place_exams")
     schedule_entries = schedule(
         course_list,
         adj,
@@ -2253,6 +2283,7 @@ def build_exam_timetable(
         pinned=pinned,
         credit_map=credit_map,
         seed=seed,
+        on_placed=progress.counter("place_exams"),
     )
     for entry in schedule_entries:
         meta = course_meta.get(entry["course_code"], {})
@@ -2263,6 +2294,7 @@ def build_exam_timetable(
         entry["course_identity"] = str(meta.get("course_identity") or source)
 
     # 7. QA report — validate hard constraints and compute quality metrics
+    progress.stage("check_rules")
     qa = _build_qa(
         enrolled_sets,
         schedule_entries,
@@ -2306,12 +2338,14 @@ def build_exam_timetable(
         allocation_context = RoomAllocationContext.for_periods(
             period_cohort_count(schedule_entries, section_enrollment)
         )
+        progress.stage("assign_rooms")
         assign_rooms_to_schedule(
             schedule_entries,
             section_enrollment,
             rooms_list,
             seed=seed,
             allocation_context=allocation_context,
+            on_period=progress.counter("assign_rooms"),
         )
 
         # 7c. Final optimisation — flatten per-day invigilator load by
@@ -2321,6 +2355,7 @@ def build_exam_timetable(
         # when there's nothing meaningful to balance (single day).
         rebalance_moves = 0
         if rebalance_invigilators and rooms_list and len(days) > 1:
+            progress.stage("balance_invigilators")
             rebalance_moves = _rebalance_invigilators_pass(
                 schedule_entries,
                 section_enrollment,
@@ -2335,6 +2370,7 @@ def build_exam_timetable(
                 credit_map=credit_map,
                 max_per_day=max_per_day,
                 caller="build",
+                on_trial=progress.counter("balance_invigilators"),
             )
 
         room_qa = _build_room_qa(schedule_entries, rooms_list)

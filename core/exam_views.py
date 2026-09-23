@@ -19,7 +19,9 @@ Endpoints:
 from __future__ import annotations
 
 import json
+import logging
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import time
 from io import BytesIO
@@ -32,6 +34,7 @@ from django.views.decorators.http import require_GET, require_POST
 
 from core.authz import throttle
 from core.models import ExamTimetableRun, Student
+from core.services import exam_jobs
 from core.services.audit import log_audit_event
 from core.services.exam_evaluation import (
     _build_loaded_course_enrollments,
@@ -45,6 +48,8 @@ from core.services.exam_multistart import (
     report_to_dict,
     run_multistart,
 )
+from core.services.exam_progress import JobCancelled
+from core.services.exam_progress import current as current_progress
 from core.services.exam_run_schema import (
     load_normalised_run,
 )
@@ -61,8 +66,11 @@ from core.services.exam_timetable import (
     schedule,
     validate_exam_pins,
 )
+from core.services.job_runtime import SolverBusy, solver_slot
 from core.services.rbac import ROLE_EXAM_COMMITTEE, ROLE_SUPER_ADMIN, get_user_role
 from core.sidebar_context import get_sidebar_context
+
+logger = logging.getLogger(__name__)
 
 
 def _require_super_admin(request: HttpRequest) -> JsonResponse | None:
@@ -80,10 +88,8 @@ def _require_exam_access(request: HttpRequest) -> JsonResponse | None:
 
 
 def _exam_validation_error(exc: ValueError) -> JsonResponse:
-    payload = {"ok": False, "error": str(exc)}
-    if isinstance(exc, ExamCoursesUnavailable):
-        payload.update(code="courses_unavailable", unavailable_courses=exc.unavailable_courses)
-    return JsonResponse(payload, status=400)
+    status, body = _validation_error(exc)
+    return JsonResponse(body, status=status)
 
 
 @require_GET
@@ -223,19 +229,34 @@ def exam_timetable_preview_courses_view(request: HttpRequest) -> JsonResponse:
     return JsonResponse({"ok": True, "courses": courses})
 
 
-# Throttle: looser in development for fast tuning, tighter in production
-# to keep this expensive endpoint from being hammered.
+# Throttle for the synchronous path: looser in development for fast tuning,
+# tighter in production to keep this expensive endpoint from being hammered.
 _BUILD_MAX_CALLS = 20 if settings.DEBUG else 3
+# A background job is guarded by the one-active-job rule, not by counting calls:
+# drag, Fix, drag, Fix, Save already spent three. This only stops abuse.
+_JOB_SUBMIT_MAX_CALLS = 20
+
+#: Persists a finished result as a run and returns its id.
+RunSaver = Callable[[str, dict], int]
+
+
+def _save_run(label: str, result: dict) -> int:
+    return ExamTimetableRun.objects.create(
+        label=label,
+        result_json=json.dumps(result, ensure_ascii=False),
+    ).id
 
 
 @require_POST
-@throttle(max_calls=_BUILD_MAX_CALLS, window_seconds=120)
 def exam_timetable_build_view(request: HttpRequest) -> JsonResponse:
-    """Build (or rebuild) the exam timetable.
+    """Build, optimise, repair or save the exam timetable.
 
     Accepts JSON body with: label, days, periods, max_per_day,
     programs, sections, selected_courses, pinned overrides,
     and optional randomize flag for varied timetable generation.
+
+    With background jobs on, this only submits: the answer is 202 and a job to
+    poll, and the action's own status and body arrive with the job's result.
     """
     deny = _require_exam_access(request)
     if deny:
@@ -247,7 +268,64 @@ def exam_timetable_build_view(request: HttpRequest) -> JsonResponse:
         return JsonResponse({"ok": False, "error": "Invalid JSON"}, status=400)
     if not isinstance(payload, dict):
         return JsonResponse({"ok": False, "error": "Expected a JSON object."}, status=400)
+    # A job's seed is drawn when it is submitted; the browser never chooses one.
+    payload.pop("_seed", None)
+    if exam_jobs.jobs_enabled() and not exam_jobs.is_multistart(payload):
+        return _submit_exam_job(request, payload)
+    return _run_exam_action_now(request, payload)
 
+
+@throttle(max_calls=_JOB_SUBMIT_MAX_CALLS, window_seconds=120)
+def _submit_exam_job(request: HttpRequest, payload: dict) -> JsonResponse:
+    status, body = exam_jobs.submit(payload, user=request.user)
+    return JsonResponse(body, status=status)
+
+
+@throttle(max_calls=_BUILD_MAX_CALLS, window_seconds=120)
+def _run_exam_action_now(request: HttpRequest, payload: dict) -> JsonResponse:
+    if not exam_jobs.jobs_enabled():
+        status, body = execute_exam_action(payload)
+        return JsonResponse(body, status=status)
+    # With jobs on, only multistart runs here. It still takes turns with them:
+    # it may not start while a job holds the lane, nor share the solver.
+    if exam_jobs.lane_busy():
+        return JsonResponse(exam_jobs.busy_body(request.user), status=409)
+    try:
+        with solver_slot(wait=False):
+            status, body = execute_exam_action(payload)
+    except SolverBusy:
+        return _solver_busy_response()
+    return JsonResponse(body, status=status)
+
+
+def _solver_busy_response() -> JsonResponse:
+    response = JsonResponse(
+        {
+            "ok": False,
+            "error_code": "solver_busy",
+            "error": "Another timetable action is using the solver. Try again in a moment.",
+        },
+        status=503,
+    )
+    response["Retry-After"] = "5"
+    return response
+
+
+def _validation_error(exc: ValueError) -> tuple[int, dict]:
+    body = {"ok": False, "error": str(exc)}
+    if isinstance(exc, ExamCoursesUnavailable):
+        body.update(code="courses_unavailable", unavailable_courses=exc.unavailable_courses)
+    return 400, body
+
+
+def execute_exam_action(payload: dict, *, save: RunSaver = _save_run) -> tuple[int, dict]:
+    """Run one exam timetable action; return the HTTP status and body for the page.
+
+    The synchronous view and the background job both call this, so the page
+    receives the same status and body either way. ``save`` persists a finished
+    result: at once for the synchronous view; for a job, in the same
+    transaction that marks the job finished.
+    """
     # ── Extract raw values from JSON payload ──
     label = str(payload.get("label", "")).strip()
     selected_courses_raw = payload.get("selected_courses", None)
@@ -256,30 +334,25 @@ def exam_timetable_build_view(request: HttpRequest) -> JsonResponse:
         not isinstance(selected_entries, list)
         or any(not isinstance(entry, dict) for entry in selected_entries)
     ):
-        return JsonResponse(
-            {"ok": False, "error": "selected_course_entries must be a list of courses"}, status=400
-        )
+        return 400, {"ok": False, "error": "selected_course_entries must be a list of courses"}
     pinned = payload.get("pinned", [])
     if not isinstance(pinned, list):
-        return JsonResponse(
-            {
-                "ok": False,
-                "error": "Pinned exams must be a list of course, day and period entries.",
-            },
-            status=400,
-        )
+        return 400, {
+            "ok": False,
+            "error": "Pinned exams must be a list of course, day and period entries.",
+        }
     randomize = payload.get("randomize", False)
     assign_rooms = bool(payload.get("assign_rooms", True))
     thin_threshold_raw = payload.get("thin_conflict_threshold", 0)
     mode = str(payload.get("mode") or "").strip()
 
     if not label:
-        return JsonResponse({"ok": False, "error": "label is required"}, status=400)
+        return 400, {"ok": False, "error": "label is required"}
 
     try:
         days, periods, max_per_day = _exam_header_settings(payload)
     except ValueError as exc:
-        return _exam_validation_error(exc)
+        return _validation_error(exc)
 
     # Thin-conflict threshold: courses with total enrolment <= this value
     # are dropped from the conflict graph. 0 = current behaviour.
@@ -302,26 +375,26 @@ def exam_timetable_build_view(request: HttpRequest) -> JsonResponse:
         else None
     )
 
-    # Generate a random seed when the user enables randomised tie-breaking.
-    # Each build produces a different timetable variant; the seed is stored
-    # in the result so it can be reproduced if needed.
-    import random as _rnd
-
-    seed = _rnd.randint(1, 2**31 - 1) if randomize else None
+    # Randomised tie-breaking draws a seed per build, stored with the result so
+    # it can be reproduced. A job draws it when it is submitted, so the seed is
+    # part of what was asked for rather than of when it happened to run.
+    seed = exam_jobs.resolve_seed(payload) if randomize else None
     base_schedule_raw = payload.get("base_schedule")
     if "base_schedule" in payload:
         try:
+            current_progress().stage("read_board")
             context = _loaded_request_context(payload, base_schedule_raw)
             provenance = _split_provenance(context)
             source_fingerprint = provenance["source_input_fingerprint"]
             if mode == "optimize_loaded":
                 context["seed"] = seed if randomize else context["seed"]
-                result = _optimise_loaded_schedule(label=label, **context)
+                result = _optimise_loaded_schedule(label=label, save=save, **context)
             elif mode == "minimum_change_repair":
                 result = _minimum_change_schedule(
                     label=label,
                     source_placements=provenance["source_placements"],
                     carried_protection=provenance["source_repair_protected"],
+                    save=save,
                     **context,
                 )
             elif mode != "save_loaded_changes":
@@ -340,29 +413,26 @@ def exam_timetable_build_view(request: HttpRequest) -> JsonResponse:
                     )
                 result = _rebuild_loaded_schedule(
                     label=label,
+                    save=save,
                     **context,
                     expected_input_fingerprint=reviewed_fingerprint,
                 )
-            return JsonResponse(
-                {"ok": True, "editor_revision": payload.get("editor_revision", 0), **result}
-            )
+            return 200, {"ok": True, "editor_revision": payload.get("editor_revision", 0), **result}
         except ExamCheckRequired as exc:
-            return JsonResponse(
-                {"ok": False, "error_code": "check_required", "error": str(exc)}, status=409
-            )
+            return 409, {"ok": False, "error_code": "check_required", "error": str(exc)}
         except ExamInputsChanged as exc:
-            return JsonResponse(
-                {"ok": False, "error_code": "inputs_changed", "error": str(exc)}, status=409
-            )
+            return 409, {"ok": False, "error_code": "inputs_changed", "error": str(exc)}
         except ValueError as exc:
-            return _exam_validation_error(exc)
-        except Exception as exc:
-            return JsonResponse({"ok": False, "error": str(exc)}, status=500)
+            return _validation_error(exc)
+        except JobCancelled:
+            raise
+        except Exception:
+            return _server_error("loaded timetable action", mode)
 
     try:
         programs, sections = _selected_enrollment_scope(payload)
     except ValueError as exc:
-        return _exam_validation_error(exc)
+        return _validation_error(exc)
 
     # Multi-start is feature-flagged. When TIMETABLE_EXAM_MULTISTART_ENABLED
     # is set and the request opts in (``multistart=True``), the runner
@@ -370,7 +440,7 @@ def exam_timetable_build_view(request: HttpRequest) -> JsonResponse:
     # Pareto candidates ("recommended" / "lowest_overflow" /
     # "lowest_overload" / "best_room_feasibility") in a single response.
     # The single-run path remains the default; existing client code is
-    # unaffected.
+    # unaffected. It never runs as a background job (see exam_jobs).
     multistart_requested = bool(payload.get("multistart", False))
     if multistart_requested and is_multistart_enabled():
         # Optional inputs; sensible defaults match the peer-review plan.
@@ -406,18 +476,13 @@ def exam_timetable_build_view(request: HttpRequest) -> JsonResponse:
                 previous_run_id=previous_run_id,
             )
         except ValueError as exc:
-            return _exam_validation_error(exc)
-        except Exception as exc:
-            return JsonResponse({"ok": False, "error": str(exc)}, status=500)
+            return _validation_error(exc)
+        except Exception:
+            return _server_error("multistart build", mode)
 
         if report.feasibility_error is not None and not report.candidates_by_role:
-            return JsonResponse(
-                {"ok": False, "multistart": report_to_dict(report)},
-                status=400,
-            )
-        return JsonResponse(
-            {"ok": True, "mode": "multistart", "multistart": report_to_dict(report)}
-        )
+            return 400, {"ok": False, "multistart": report_to_dict(report)}
+        return 200, {"ok": True, "mode": "multistart", "multistart": report_to_dict(report)}
 
     try:
         result = build_exam_timetable(
@@ -433,15 +498,33 @@ def exam_timetable_build_view(request: HttpRequest) -> JsonResponse:
             seed=seed,
             assign_rooms=assign_rooms,
             thin_conflict_threshold=thin_conflict_threshold,
+            persist=False,
         )
         # Check for feasibility error (bucket too large for available days)
         if result.get("feasibility_error"):
-            return JsonResponse({"ok": False, **result}, status=400)
-        return JsonResponse({"ok": True, **result})
+            return 400, {"ok": False, **result}
+        result["run_id"] = save(label, result)
+        return 200, {"ok": True, **result}
     except ValueError as exc:
-        return _exam_validation_error(exc)
-    except Exception as exc:
-        return JsonResponse({"ok": False, "error": str(exc)}, status=500)
+        return _validation_error(exc)
+    except JobCancelled:
+        raise
+    except Exception:
+        return _server_error("build", mode)
+
+
+def _server_error(action: str, mode: str) -> tuple[int, dict]:
+    """A failure the page cannot act on: logged in full, reported plainly.
+
+    The exception text used to go to the browser, which leaked internals and
+    told the registrar nothing they could use.
+    """
+    logger.exception("exam timetable %s failed (mode=%s)", action, mode or "build")
+    return 500, {
+        "ok": False,
+        "error": "The timetable could not be produced because of a server error. "
+        "Nothing was saved. Please try again.",
+    }
 
 
 def _saved_enrollment_scope(payload: dict) -> tuple[list[str], list[str]]:
@@ -583,6 +666,7 @@ def _rebuild_loaded_schedule(
     expected_input_fingerprint: str | None = None,
     rebalance_invigilators: bool = False,
     extra: dict | None = None,
+    save: RunSaver = _save_run,
     **kwargs,
 ) -> dict:
     """Persist the same complete evaluation used by a non-saving Check.
@@ -602,11 +686,7 @@ def _rebuild_loaded_schedule(
     # compared between Build and Check, and nothing a Check cannot reproduce
     # may live there.
     result.update(extra or {})
-    run = ExamTimetableRun.objects.create(
-        label=label,
-        result_json=json.dumps(result, ensure_ascii=False),
-    )
-    result["run_id"] = run.id
+    result["run_id"] = save(label, result)
     return result
 
 
@@ -696,6 +776,7 @@ def _optimise_loaded_schedule(
     thin_conflict_threshold: int,
     programs: list[str] | None = None,
     sections: list[str] | None = None,
+    save: RunSaver = _save_run,
 ) -> dict:
     base_entries = _normalise_loaded_schedule_entries(
         schedule_raw,
@@ -709,6 +790,8 @@ def _optimise_loaded_schedule(
     preferred_slots = {
         entry["course_code"]: int(entry.get("slot_index", 0) or 0) for entry in base_entries
     }
+    progress = current_progress()
+    progress.stage("place_exams")
     optimised = schedule(
         inputs.course_list,
         inputs.adj,
@@ -721,6 +804,7 @@ def _optimise_loaded_schedule(
         credit_map=inputs.credit_map,
         preferred_slots=preferred_slots,
         seed=seed,
+        on_placed=progress.counter("place_exams"),
     )
     optimised_entries: list[dict] = []
     for entry in optimised:
@@ -751,6 +835,7 @@ def _optimise_loaded_schedule(
         thin_conflict_threshold=thin_conflict_threshold,
         rebuild_mode="optimized_from_loaded",
         pinned=pinned,
+        save=save,
     )
 
 
@@ -770,6 +855,7 @@ def _minimum_change_schedule(
     carried_protection: list[str] | None = None,
     programs: list[str] | None = None,
     sections: list[str] | None = None,
+    save: RunSaver = _save_run,
 ) -> dict:
     """Repair the registrar's board by moving as few exams as possible.
 
@@ -810,6 +896,7 @@ def _minimum_change_schedule(
     carried = {code for code in carried_protection or [] if code in current}
     hand_placed = edited | carried
     protected = hand_placed | {pin["course_code"] for pin in pinned}
+    current_progress().stage("fewest_moves")
     repair = repair_minimum_change(
         placements=current,
         adj=inputs.adj,
@@ -907,6 +994,7 @@ def _minimum_change_schedule(
         thin_conflict_threshold=thin_conflict_threshold,
         rebuild_mode="minimum_change_from_loaded",
         pinned=pinned,
+        save=save,
         extra={
             "minimum_change": report,
             # Carried into the next repair, so drag, Fix, drag, Fix keeps the
@@ -915,6 +1003,22 @@ def _minimum_change_schedule(
             "minimum_change_protected": sorted(hand_placed),
         },
     )
+
+
+def _check_under_solver_slot(context: dict) -> dict | None:
+    """Run a Check's evaluation, or return None if the solver is busy.
+
+    With background jobs on, a Check waits for no one: it holds one of four
+    request threads, and a job can hold the solver for a minute. Off, it runs
+    as it always has - the page that knows the busy answer ships with the jobs.
+    """
+    if not exam_jobs.jobs_enabled():
+        return evaluate_exam_schedule(**context)
+    try:
+        with solver_slot(wait=False):
+            return evaluate_exam_schedule(**context)
+    except SolverBusy:
+        return None
 
 
 @require_POST
@@ -933,7 +1037,9 @@ def exam_timetable_draft_impact_view(request: HttpRequest) -> JsonResponse:
         schedule_raw = payload.get("base_schedule", payload.get("schedule"))
         context = _loaded_request_context(payload, schedule_raw)
         source_fingerprint = _split_provenance(context)["source_input_fingerprint"]
-        result = evaluate_exam_schedule(**context)
+        result = _check_under_solver_slot(context)
+        if result is None:
+            return _solver_busy_response()
         return JsonResponse(
             {
                 "ok": True,
@@ -947,8 +1053,62 @@ def exam_timetable_draft_impact_view(request: HttpRequest) -> JsonResponse:
         )
     except ValueError as exc:
         return _exam_validation_error(exc)
-    except Exception as exc:
-        return JsonResponse({"ok": False, "error": str(exc)}, status=500)
+    except Exception:
+        status, body = _server_error("check", "draft_impact")
+        return JsonResponse(body, status=status)
+
+
+def _job_response(status: int, body: dict) -> JsonResponse:
+    return JsonResponse(body, status=status)
+
+
+@require_GET
+def exam_timetable_job_active_view(request: HttpRequest) -> JsonResponse:
+    """The job a page opening now should show: the one running, or the caller's
+    own result that finished while their page was closed."""
+    deny = _require_exam_access(request)
+    if deny:
+        return deny
+    return JsonResponse(exam_jobs.active(user=request.user))
+
+
+@require_GET
+def exam_timetable_job_view(request: HttpRequest, job_id) -> JsonResponse:
+    """Poll a job's status and stages. Cheap: never loads the payload or result."""
+    deny = _require_exam_access(request)
+    if deny:
+        return deny
+    return _job_response(*exam_jobs.poll(job_id, user=request.user))
+
+
+@require_GET
+def exam_timetable_job_result_view(request: HttpRequest, job_id) -> JsonResponse:
+    """The finished action's own status and body, as the synchronous view gives them."""
+    deny = _require_exam_access(request)
+    if deny:
+        return deny
+    return _job_response(*exam_jobs.result(job_id, user=request.user))
+
+
+@require_POST
+def exam_timetable_job_cancel_view(request: HttpRequest, job_id) -> JsonResponse:
+    deny = _require_exam_access(request)
+    if deny:
+        return deny
+    status, body = exam_jobs.cancel(
+        job_id,
+        user=request.user,
+        is_superadmin=get_user_role(request.user) == ROLE_SUPER_ADMIN,
+    )
+    if status == 202 and not body["job"]["mine"]:
+        # Only a SUPER_ADMIN gets here; stopping someone else's work is recorded.
+        log_audit_event(
+            request,
+            action="exam_timetable.cancel_others_job",
+            status="success",
+            details={"job_id": body["job"]["id"], "kind": body["job"]["kind"]},
+        )
+    return _job_response(status, body)
 
 
 @require_GET

@@ -76,3 +76,35 @@
   legitimate and momentary. It is also not wired into CI, where every job runs
   against an empty database and the check would prove nothing; `tests/
   test_curriculum_integrity.py` builds a plan first so it cannot pass vacuously.
+
+## ADR-007: Exam timetable actions run as one-at-a-time background jobs in the web process
+- **Decision:** Build, Optimize, Fix and Save of the exam timetable run as an
+  `ExamTimetableJob` on a dedicated thread inside the web process, behind
+  `EXAM_JOBS_ENABLED`. The page submits (202), polls the job's named stages, and
+  fetches the action's own status and body when it ends. One job may be active
+  at a time across all users, enforced by a partial unique constraint; a second
+  submit is refused (409) with the holder and stage, never queued. The job saves
+  its run and marks itself SUCCEEDED in one transaction. A job whose heartbeat
+  stops is failed, never retried. CP-SAT work in the process — exam jobs, the
+  planner's jobs and, with jobs on, the exam Check — takes turns on one solver
+  slot (`core.services.job_runtime`).
+- **Status:** Accepted
+- **Date:** 2026-09-23
+- **Rationale:** The registrar asked to see progress. The actions held a request
+  thread for up to two minutes on a 0.5-CPU, 512 MB instance and reported nothing
+  until they ended. A worker service would redeploy on the same push, cost a
+  second instance, and share the Telegram worker's memory if co-located; a
+  progress side-channel would still pin a request thread and lose the build on
+  reload. Three reviews (architecture, backend, frontend) chose the in-process
+  job and found the traps it must avoid: a thread pool's exit hook starts queued
+  work during shutdown, so there is no queue; a progress write from inside the
+  evaluation's transaction was invisible until commit, so progress is written
+  from its own thread and connection and the read-only evaluation no longer
+  opens a transaction; an OOM-killed job leaves its row RUNNING, so staleness is
+  judged by heartbeat.
+- **Consequences:** `execute_exam_action` is the single implementation both paths
+  call, so the synchronous view is a rollback the page cannot tell apart. A job
+  survives a deploy only if it finishes within gunicorn's graceful window after
+  SIGTERM (~150 s); otherwise the sweep reports it honestly. A second registrar
+  waits for the first to finish. Multistart stays synchronous: it persists
+  several candidate runs outside one transaction.
