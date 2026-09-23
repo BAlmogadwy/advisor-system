@@ -36,6 +36,7 @@ class ExamCommitteeAccessMiddleware:
             "exam_timetable_job",
             "exam_timetable_job_result",
             "exam_timetable_job_cancel",
+            "exam_timetable_job_seen",
             "exam_timetable_draft_impact",
             "exam_timetable_list",
             "exam_timetable_detail",

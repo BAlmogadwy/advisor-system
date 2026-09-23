@@ -58,7 +58,9 @@ def test_exam_page_frontend_interactions(tmp_path: Path, language: str, suite: s
         capture_output=True,
         text=True,
         encoding="utf-8",
-        timeout=60,
+        # A guard against a hung run, not a budget: the suite takes ~40 s here
+        # and 1.4-1.8x that on a CI runner, and it only grows.
+        timeout=240,
         check=False,
     )
     assert result.returncode == 0, result.stdout + result.stderr

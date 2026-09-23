@@ -46,6 +46,18 @@ before reactivating them. A code-only rollback can leave the additive
 `SectionInstructor` table and constraints in place; do not reverse those
 migrations or discard imported assignments just to run the previous application.
 
+## Exam timetable background jobs
+
+- **Rollback without a deploy:** set `EXAM_JOBS_ENABLED=false` on the web service
+  and restart it. Build, Optimize, Fix and Save then run inside the request as
+  they did before ADR-007; the page handles either answer.
+- **Changing the `exam_timetable_jobs` table:** while `preDeployCommand` runs
+  `migrate`, the previous instance is still serving and may be running a job
+  whose progress writer and final save write this table for up to 150 s. Never
+  drop or rename one of its columns in the same release that stops using it:
+  release the code that no longer reads it first, then drop it in a later one.
+  Adding a nullable column is safe in one step.
+
 ## Production web domains
 
 The Render web service accepts the direct Render hostname plus both custom-domain

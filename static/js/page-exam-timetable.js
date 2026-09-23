@@ -134,6 +134,16 @@ async function readExamResponse(response) {
   return data;
 }
 
+// The buckets that make a Build infeasible, one line each.
+function infeasibleItems(violations) {
+  return violations.map(v => T.infeasItem
+    .replace('{prog}', v.program)
+    .replace('{term}', v.programme_term)
+    .replace('{size}', v.bucket_size)
+    .replace('{days}', v.num_days)
+    .replace('{courses}', (v.courses || []).join(', ')));
+}
+
 function examResponseError(data) {
   const code = data.code || data.error_code;
   if (code === 'run_not_copyable') return new Error(IS_AR
@@ -144,6 +154,31 @@ function examResponseError(data) {
     error.examRequestKind = 'enrollment-source-changed';
     return error;
   }
+  if (code === 'job_in_progress') {
+    const holder = data.active_job || {};
+    const started = holder.status !== 'queued';
+    const refused = new Error(holder.mine ? JOB_TEXT.mineRunning(started) : JOB_TEXT.othersRunning(holder.owner || '', started));
+    refused.examInfo = true;
+    return refused;
+  }
+  if (code === 'solver_busy') {
+    // Not an error: the solver is someone else's for now.
+    const busy = new Error(JOB_TEXT.solverBusy(data.holder));
+    busy.examRequestKind = 'solver-busy';
+    busy.examInfo = true;
+    busy.examHolder = data.holder || null;
+    return busy;
+  }
+  if (code === 'job_not_started') return new Error(JOB_TEXT.notStarted);
+  if (code === 'job_not_found') return new Error(JOB_TEXT.jobNotFound);
+  if (code === 'run_deleted' || code === 'run_not_found') {
+    // Worded for wherever an error is shown - beside another timetable, too;
+    // JOB_TEXT.runDeleted is the panel's own sentence.
+    const gone = new Error(code === 'run_not_found' ? JOB_TEXT.openedGone : JOB_TEXT.savedGone);
+    gone.examRunGone = true;
+    return gone;
+  }
+  if (typeof code === 'string' && code.startsWith('job_')) return new Error(JOB_TEXT.noResult);
   if (code !== 'courses_unavailable') return new Error(data.error || T.reqFailed);
   const unavailable = Array.isArray(data.unavailable_courses) ? data.unavailable_courses.map(String).join(', ') : '';
   const error = new Error((IS_AR
@@ -761,6 +796,8 @@ $('etRelaxThin').addEventListener('change', () => {
       updateChipCount(id, id === 'progList' ? 'progCount' : 'secCount', $(id).querySelectorAll('input').length);
     }
     enterFreshBuildMode();
+    // Not inside enterFreshBuildMode: a delete has just said "deleted" there.
+    settleJobPanel();
     clearCoursePreview();
     $('etStatus').textContent = T.filtersChanged;
     $('etStatus').className = 'alert alert-info mt-2 py-2 mb-0';
@@ -791,6 +828,7 @@ $('loadCoursesBtn').addEventListener('click', async () => {
 
     const courses = data.courses ?? [];
     enterFreshBuildMode();
+    settleJobPanel();
     _currentResultData = null;
     _loadedRunForRebuild = false;
     _scheduleHasDraftMoves = false;
@@ -851,6 +889,7 @@ $('buildBtn').addEventListener('click', async () => {
   if (thinThreshold === null) return;
 
   $('buildBtn').disabled = true;
+  clearJobNotice();
   setBuilderBusy(true);
   $('etStatus').textContent = T.building;
   $('etStatus').className = 'alert alert-info mt-2 py-2 mb-0';
@@ -887,26 +926,12 @@ $('buildBtn').addEventListener('click', async () => {
       previous_run_id: _currentResultData?.run_id,
       base_schedule: baseSchedule && baseSchedule.length ? baseSchedule : undefined,
     };
-    const res = await fetch('/ops/exam-timetable/build/', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCsrfToken() || CSRF },
-      body: JSON.stringify(payload),
-    });
-    const data = await readExamResponse(res);
+    const { res, data, refusal } = await submitExamAction(payload, 'build', $('buildBtn'));
     if (!res.ok || !data.ok) {
       if (data.feasibility_error && data.violations) {
-        let msg = T.infeasible + '\n';
-        data.violations.forEach(v => {
-          msg += '\n• ' + T.infeasItem
-            .replace('{prog}', v.program)
-            .replace('{term}', v.programme_term)
-            .replace('{size}', v.bucket_size)
-            .replace('{days}', v.num_days)
-            .replace('{courses}', v.courses.join(', '));
-        });
-        throw new Error(msg);
+        throw new Error(`${T.infeasible}\n${infeasibleItems(data.violations).map(item => `\n• ${item}`).join('')}`);
       }
-      throw examResponseError(data);
+      throw Object.assign(examResponseError(data), { examRefusal: refusal });
     }
 
     clearExamRequestError('build');
@@ -920,12 +945,16 @@ $('buildBtn').addEventListener('click', async () => {
     $('etStatus').className = 'alert alert-success mt-2 py-2 mb-0';
     loadHistory();
   } catch (err) {
-    $('etStatus').textContent = T.error + ': ' + showExamRequestError(err, 'build');
-    $('etStatus').className = 'alert alert-danger mt-2 py-2 mb-0';
+    if (err.examJobKind || err.examInfo) reportJobOutcome(err);
+    else {
+      $('etStatus').textContent = T.error + ': ' + showExamRequestError(err, 'build');
+      $('etStatus').className = 'alert alert-danger mt-2 py-2 mb-0';
+    }
   } finally {
     setBuilderBusy(false);
     updateLoadedRunActions();
     if (navigateToResult) focusExamEditor();
+    else if (document.activeElement === document.body && !$('buildBtn').disabled) $('buildBtn').focus({ preventScroll: true });
   }
 });
 
@@ -1007,12 +1036,1410 @@ function collectLoadedRunPayload(mode) {
   };
 }
 
+/* ── Background jobs: an action runs on the server and reports its stages ── */
+// Build, Optimize, Fix and Save used to be one request that said nothing for a
+// minute or two. With jobs on, the server answers 202 and a job to follow; any
+// other answer is the action's own final answer, exactly as before - which is
+// also what the page gets when jobs are off.
+//
+// The panel follows one job at a time. Every follow has a sequence number, and
+// anything that arrives for an older follow - a poll still in flight when the
+// registrar starts a new action - is dropped rather than painted over it.
+//
+// Once a timetable is loaded, the builder's status line is inside a closed
+// section, so the panel is the one place an action's outcome is shown and
+// announced; the status line is cleared rather than repeating it.
+
+// Tests shorten the waits; the page itself never sets this.
+const JOB_POLL = {
+  // Until the panel is shown the page asks often, so a short job is known to
+  // have ended before anything is shown; after that, every second and a half.
+  first: 300, quick: 300, steady: 1500, slow: 3000, slowAfter: 30000,
+  // A job still running after this is shown; one that ends sooner never is.
+  // With no answer at all, it is shown after `stall` regardless.
+  reveal: 1000, stall: 3000,
+  // Once shown, the panel stays this long before the result replaces it, so a
+  // job ending just after it appeared does not jump the page twice.
+  minShown: 1500,
+  announce: 1000,
+  backoff: [2000, 4000, 8000, 15000],
+  resultRetries: 3,
+  // A poll unanswered this long counts as a lost connection.
+  timeout: 20000,
+  // A Check turned away because the solver is busy tries again after this,
+  // unless the server said how long to wait.
+  checkRetry: 5000,
+  ...(window.__examJobPoll || {}),
+};
+
+// Isolates, so a Latin name or a clock time keeps its order inside Arabic text.
+const isolate = text => `⁨${text}⁩`;
+const isolateLtr = text => `⁦${text}⁩`;
+function clockTime(iso) {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return '';
+  return isolateLtr(`${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`);
+}
+// The day of a job's time, when it is not the day the server says it is now:
+// an ending kept for this page can be shown the next morning, and "13:00"
+// alone would read as today.
+function jobDay(iso, nowIso) {
+  const date = new Date(iso);
+  const now = nowIso ? new Date(nowIso) : new Date();
+  if (Number.isNaN(date.getTime()) || Number.isNaN(now.getTime())) return '';
+  if (date.toDateString() === now.toDateString()) return '';
+  return new Intl.DateTimeFormat(IS_AR ? 'ar-u-nu-latn' : 'en-GB', { day: 'numeric', month: 'short' }).format(date);
+}
+function duration(seconds) {
+  const whole = Math.max(0, Math.floor(seconds));
+  return `${Math.floor(whole / 60)}:${String(whole % 60).padStart(2, '0')}`;
+}
+
+// The button says "Stop without saving", so a stop the registrar asked for is
+// "stopped"; a crash is "failed"; a job the page can no longer see is "lost";
+// one the action itself turned down - inputs changed, a Build that cannot fit -
+// is "refused", and says nothing was made. "Waiting" is a job not started yet.
+const JOB_KIND = {
+  build: IS_AR
+    ? { waiting: 'بناء الجدول في الانتظار', running: 'جارٍ بناء الجدول', finishing: 'انتهى البناء، جارٍ تحميل النتيجة', done: 'تم بناء الجدول', refused: 'لم يُبنَ جدول', failed: 'تعذّر بناء الجدول', cancelled: 'أُوقف بناء الجدول', lost: 'تعذّرت متابعة بناء الجدول' }
+    : { waiting: 'Waiting to build the timetable', running: 'Building the timetable', finishing: 'Build finished, loading the result', done: 'Timetable built', refused: 'No timetable was built', failed: 'Build failed', cancelled: 'Build stopped', lost: 'Lost track of the build' },
+  optimize_loaded: IS_AR
+    ? { waiting: 'تحسين الجدول في الانتظار', running: 'جارٍ تحسين الجدول الحالي', finishing: 'انتهى تحسين الجدول، جارٍ تحميل النتيجة', done: 'تم تحسين الجدول', refused: 'لم يُحسَّن الجدول', failed: 'تعذّر تحسين الجدول', cancelled: 'أُوقف تحسين الجدول', lost: 'تعذّرت متابعة تحسين الجدول' }
+    : { waiting: 'Waiting to optimize the timetable', running: 'Optimizing the current timetable', finishing: 'Optimization finished, loading the result', done: 'Timetable optimized', refused: 'The timetable was not optimized', failed: 'Optimization failed', cancelled: 'Optimization stopped', lost: 'Lost track of the optimization' },
+  // "Finished", not "fixed": a repair can leave rule breaks it could not clear.
+  minimum_change_repair: IS_AR
+    ? { waiting: 'الإصلاح بأقل تغيير في الانتظار', running: 'جارٍ الإصلاح بأقل تغيير', finishing: 'انتهى الإصلاح، جارٍ تحميل النتيجة', done: 'اكتمل الإصلاح', refused: 'لم يُطبَّق الإصلاح', failed: 'تعذّر الإصلاح', cancelled: 'أُوقف الإصلاح', lost: 'تعذّرت متابعة الإصلاح' }
+    : { waiting: 'Waiting to fix with the fewest moves', running: 'Fixing with the fewest moves', finishing: 'Fix finished, loading the result', done: 'Fix finished', refused: 'The fix was not applied', failed: 'Fix failed', cancelled: 'Fix stopped', lost: 'Lost track of the fix' },
+  save_loaded_changes: IS_AR
+    ? { waiting: 'حفظ التغييرات في الانتظار', running: 'جارٍ حفظ التغييرات', finishing: 'انتهى الحفظ، جارٍ تحميل النتيجة', done: 'تم حفظ التغييرات', refused: 'لم تُحفظ التغييرات', failed: 'تعذّر الحفظ', cancelled: 'أُوقف الحفظ', lost: 'تعذّرت متابعة الحفظ' }
+    : { waiting: 'Waiting to save the changes', running: 'Saving changes', finishing: 'Save finished, loading the result', done: 'Changes saved', refused: 'The changes were not saved', failed: 'Save failed', cancelled: 'Save stopped', lost: 'Lost track of the save' },
+};
+const jobTitles = kind => JOB_KIND[kind] || JOB_KIND.build;
+const JOB_STAGE = IS_AR ? {
+  enrolments: 'قراءة تسجيلات الطلاب',
+  conflicts: 'حصر المقررات ذات الطلاب المشتركين',
+  place_exams: 'توزيع الاختبارات على الأيام والفترات',
+  check_rules: 'التحقق من التعارضات والحد اليومي',
+  assign_rooms: 'توزيع القاعات',
+  balance_invigilators: 'موازنة أعباء المراقبة',
+  save: 'حفظ الجدول',
+  read_board: 'قراءة الجدول الحالي',
+  fewest_moves: 'تحديد أقل عدد من الاختبارات يلزم نقلها',
+} : {
+  enrolments: 'Reading student enrollments',
+  conflicts: 'Finding courses with shared students',
+  place_exams: 'Placing exams in days and periods',
+  check_rules: 'Checking clashes and daily limits',
+  assign_rooms: 'Assigning rooms',
+  balance_invigilators: 'Balancing invigilation duties',
+  save: 'Saving the timetable',
+  read_board: 'Reading the current timetable',
+  fewest_moves: 'Finding the fewest exams to move',
+};
+const JOB_STATE = IS_AR
+  ? { done: 'تمّ', running: 'قيد التنفيذ', pending: 'في الانتظار', skipped: 'لم يلزم', stopped: 'توقّف التنفيذ هنا' }
+  : { done: 'done', running: 'in progress', pending: 'not started', skipped: 'not needed', stopped: 'stopped here' };
+const JOB_HOLDER = IS_AR ? {
+  planner: 'تستخدم عملية تخطيط الجدول الدراسي الخادم الآن',
+  exam: 'تستخدم عملية أخرى على جدول الاختبارات الخادم الآن',
+  other: 'تستخدم عملية أخرى الخادم الآن',
+} : {
+  planner: 'A timetable-planner run is using the server',
+  exam: 'Another exam timetable action is using the server',
+  other: 'Another timetable action is using the server',
+};
+// An exam job, one run inside its request, or a multistart build: all exam work.
+const HOLDER_GROUP = { planner: 'planner', exam_job: 'exam', exam_sync: 'exam', multistart: 'exam' };
+const holderText = holder => JOB_HOLDER[HOLDER_GROUP[holder?.kind]] || JOB_HOLDER.other;
+const JOB_TEXT = {
+  step: (index, count, stage) => IS_AR ? `الخطوة ${index} من ${count}: ${stage}` : `Step ${index} of ${count}: ${stage}`,
+  count: current => {
+    const { key, done, total } = current;
+    if (key === 'place_exams') {
+      return IS_AR ? `تم توزيع ${done} من ${arabicCount(total, AR_EXAMS)}` : `${done} of ${total} exam${total === 1 ? '' : 's'} placed`;
+    }
+    // Rooms are assigned a period at a time, so that is what is counted.
+    if (key === 'assign_rooms') return IS_AR ? `القاعات للفترة ${done} من ${total}` : `Rooms for period ${done} of ${total}`;
+    // A ceiling, not a target: the search can finish early, so no bar either.
+    if (key === 'balance_invigilators') return IS_AR ? `المحاولة ${done} (الحد الأقصى ${total})` : `Attempt ${done} (up to ${total})`;
+    return IS_AR ? `${done} من ${total}` : `${done} of ${total}`;
+  },
+  elapsed: IS_AR ? 'المدة المنقضية' : 'Elapsed',
+  took: IS_AR ? 'استغرق' : 'Took',
+  queued: (mine, waitingFor) => {
+    if (waitingFor?.kind === 'planner') {
+      return IS_AR
+        ? `${holderText(waitingFor)}، و${mine ? 'ستبدأ عمليتك' : 'ستبدأ هذه العملية'} تلقائياً عند انتهائها.`
+        : `${holderText(waitingFor)}. ${mine ? 'Yours starts' : 'It starts'} automatically when that finishes.`;
+    }
+    return mine
+      ? (IS_AR ? 'الخادم مشغول بعملية أخرى على الجدول، وستبدأ عمليتك تلقائياً عند فراغه.' : 'The server is busy with another timetable action. Yours starts automatically when it is free.')
+      : (IS_AR ? 'في انتظار الخادم؛ ستبدأ تلقائياً عند فراغه.' : 'Waiting for the server; it starts automatically when the server is free.');
+  },
+  leave: IS_AR ? 'يمكنك مغادرة الصفحة؛ إن عدت خلال ساعة فستظهر النتيجة هنا.' : 'You can leave this page. If you come back within an hour, the outcome will be shown here.',
+  // Unsaved edits exist only in this tab: if the action fails, they are gone.
+  keepOpen: IS_AR ? 'أبقِ هذه الصفحة مفتوحة؛ تغييراتك غير المحفوظة موجودة هنا فقط حتى تنتهي العملية.' : 'Keep this page open: your unsaved changes exist only here until it finishes.',
+  startedBy: (owner, time) => IS_AR
+    ? `بدأت هذه العملية${time ? ` الساعة ${time}` : ''}${owner ? ` بطلب من ${isolate(owner)}` : ''}. لا يمكن البناء أو التحسين أو الإصلاح أو الحفظ حتى تنتهي.`
+    : `Started${owner ? ` by ${isolate(owner)}` : ''}${time ? ` at ${time}` : ''}. Build, Optimize, Fix and Save are unavailable until it finishes.`,
+  // A job that has not started yet was only asked for.
+  // «بطلب من», as every other owner sentence: it agrees with any name.
+  requestedBy: (owner, time) => IS_AR
+    ? `أُضيفت هذه العملية إلى الانتظار${time ? ` الساعة ${time}` : ''}${owner ? ` بطلب من ${isolate(owner)}` : ''}. لا يمكن البناء أو التحسين أو الإصلاح أو الحفظ حتى تنتهي.`
+    : `Requested${owner ? ` by ${isolate(owner)}` : ''}${time ? ` at ${time}` : ''}. Build, Optimize, Fix and Save are unavailable until it finishes.`,
+  refusedOther: (action, owner, time, started) => {
+    if (!started) {
+      return IS_AR
+        ? `لم يبدأ «${action}». تنتظر عملية أخرى على الجدول دورها${owner ? ` بطلب من ${isolate(owner)}` : ''}؛ أعد المحاولة بعد انتهائها.`
+        : `“${action}” did not start. Another timetable action is waiting its turn${owner ? `, requested by ${isolate(owner)}` : ''}; try again when it finishes.`;
+    }
+    return IS_AR
+      ? `لم يبدأ «${action}». تجري عملية أخرى على الجدول${owner ? ` بطلب من ${isolate(owner)}` : ''}${time ? ` منذ الساعة ${time}` : ''}؛ أعد المحاولة بعد انتهائها.`
+      : `“${action}” did not start. Another timetable action is running${owner ? `, started by ${isolate(owner)}` : ''}${time ? ` at ${time}` : ''}; try again when it finishes.`;
+  },
+  refusedMine: (action, started) => IS_AR
+    ? `لم يبدأ «${action}»: ما زالت عملية بدأتها ${started ? 'قيد التنفيذ' : 'تنتظر دورها'}.`
+    : `“${action}” did not start: a timetable action you started is ${started ? 'still running' : 'waiting its turn'}.`,
+  // Refused while another ran, which has ended since: nothing waits now.
+  refusedEnded: action => IS_AR
+    ? `لم يبدأ${action ? ` «${action}»` : ''} لأن عملية أخرى كانت قيد التنفيذ، وقد انتهت. أعد المحاولة الآن.`
+    : `${action ? `“${action}”` : 'It'} did not start because another action was running; it has finished. Try again now.`,
+  cancelling: IS_AR ? 'جارٍ الإيقاف… قد يستغرق ذلك بضع ثوانٍ.' : 'Stopping… this can take a few seconds.',
+  cancelFailed: IS_AR ? 'تعذّر الإيقاف. العملية ما زالت قيد التنفيذ.' : 'Could not stop it. It is still running.',
+  cancelTooLate: IS_AR ? 'اكتملت العملية قبل إيقافها، وحُفظ الجدول الجديد.' : 'It finished before it could be stopped. The new timetable was saved.',
+  cancelTooLateNoRun: IS_AR ? 'اكتملت العملية قبل إيقافها، ولم يُحفظ جدول جديد.' : 'It finished before it could be stopped, without saving a new timetable.',
+  cancelled: onScreen => IS_AR
+    ? `أُوقفت العملية قبل حفظ أي شيء${onScreen ? '، والجدول المعروض لم يتغيّر' : ''}.`
+    : `Stopped before it saved anything.${onScreen ? ' The timetable on screen is unchanged.' : ''}`,
+  cancelledBy: (name, onScreen) => IS_AR
+    ? `أُوقفت العملية بطلب من ${isolate(name)} قبل حفظ أي شيء${onScreen ? '، والجدول المعروض لم يتغيّر' : ''}.`
+    : `Stopped by ${isolate(name)} before it saved anything.${onScreen ? ' The timetable on screen is unchanged.' : ''}`,
+  stopOther: {
+    // The title is escaped by the dialog; the body is HTML and escapes its own.
+    // A job whose owner's account was removed has no name to give.
+    title: owner => {
+      if (!owner) return IS_AR ? 'إيقاف هذه العملية؟' : 'Stop this action?';
+      return IS_AR ? `إيقاف عملية ${isolate(owner)}؟` : `Stop ${isolate(owner)}’s action?`;
+    },
+    body: (owner, took, started) => {
+      const name = escapeAttr(isolate(owner));
+      const time = `<bdi dir="ltr">${took}</bdi>`;
+      if (IS_AR) {
+        return `${started ? `مضى على تنفيذها ${time}.` : `تنتظر منذ ${time} ولم تبدأ بعد.`} لن يُحفظ شيء منها${owner ? `، وسيظهر لـ${name} أنها أُوقفت` : ''}.`;
+      }
+      return `${started ? `It has run for ${time}.` : `It has waited ${time} and has not started.`} Nothing it has done will be saved${owner ? `, and ${name} will see that it was stopped` : ''}.`;
+    },
+    confirm: IS_AR ? 'إيقاف العملية' : 'Stop it',
+    keep: IS_AR ? 'متابعة التنفيذ' : 'Keep running',
+  },
+  // `lost`, when given, says where the draft is - before the retry and
+  // support advice, so the registrar knows what there is to try again with.
+  // The advice names the action: after that sentence, "it" would not.
+  failed: (stage, mine, lost = '') => IS_AR
+    ? `توقفت العملية عند «${stage}». لم يُحفظ شيء.${lost}${mine ? ' أعد تنفيذ العملية، وإن أخفقت مجدداً فتواصل مع الدعم الفني واذكر المرجع أدناه.' : ''}`
+    : `It stopped at “${stage}”. Nothing was saved.${lost}${mine ? ' Try the action again; if it fails again, contact support and quote the reference below.' : ''}`,
+  restarted: (mine, lost = '') => IS_AR
+    ? `أُعيد تشغيل الخادم أثناء التنفيذ فتوقفت العملية. لم يُحفظ شيء.${lost}${mine ? ' ابدأ العملية من جديد، وإن توقفت مجدداً فتواصل مع الدعم الفني واذكر المرجع أدناه.' : ''}`
+    : `The server restarted while this was running, so it stopped. Nothing was saved.${lost}${mine ? ' Start the action again; if the server stops it again, contact support and quote the reference below.' : ''}`,
+  timedOut: (mine, lost = '') => IS_AR
+    ? `تجاوزت العملية الحد الأقصى لمدة التنفيذ فأوقفها الخادم. لم يُحفظ شيء.${lost}${mine ? ' إن تجاوزت العملية المدة مجدداً فتواصل مع الدعم الفني واذكر المرجع أدناه.' : ''}`
+    : `It ran longer than the time limit, so the server stopped it. Nothing was saved.${lost}${mine ? ' If the action runs out of time again, contact support and quote the reference below.' : ''}`,
+  neverStarted: (mine, lost = '') => IS_AR
+    ? `انتظرت العملية طويلاً دون أن تبدأ فأُوقفت. لم يُحفظ شيء.${lost}${mine ? ' أعد تنفيذ العملية لاحقاً.' : ''}`
+    : `It waited too long to start, so it was stopped. Nothing was saved.${lost}${mine ? ' Try the action again later.' : ''}`,
+  actionsFree: IS_AR ? ' يمكنك الآن استخدام البناء والتحسين والإصلاح والحفظ.' : ' You can use Build, Optimize, Fix and Save again.',
+  reference: id => IS_AR ? `المرجع: ${isolateLtr(String(id).slice(0, 8))}` : `Reference: ${String(id).slice(0, 8)}`,
+  reconnecting: IS_AR ? 'انقطع الاتصال بالخادم. قد تكون العملية مستمرة؛ جارٍ إعادة الاتصال…' : 'Lost contact with the server. The action may still be running; reconnecting…',
+  signedOut: IS_AR
+    ? 'انتهت جلسة تسجيل الدخول. سجّل الدخول من جديد في تبويب جديد؛ العملية مستمرة، وستتابعها هذه الصفحة بعد تسجيل دخولك.'
+    : 'Your session expired. Sign in again in a new tab; the action keeps running, and this page picks it up again once you have.',
+  signIn: IS_AR ? 'تسجيل الدخول في تبويب جديد' : 'Sign in in a new tab',
+  gone: IS_AR ? 'لم تعد هذه الصفحة قادرة على متابعة العملية. إن اكتملت فستجد الجدول في «الجداول المحفوظة».' : 'This page can no longer follow it. If it finished, it is in Saved timetables.',
+  noAccess: IS_AR ? 'لم تعد لديك صلاحية متابعة هذه العملية، وقد تكون ما زالت قيد التنفيذ.' : 'You no longer have access to follow this action. It may still be running.',
+  savedOwn: IS_AR ? 'حُفظ، وهو معروض أدناه وفي «الجداول المحفوظة».' : 'Saved. It is open below and listed in Saved timetables.',
+  savedUnfetched: IS_AR
+    ? 'حُفظ الجدول لكن تعذّر عرضه هنا. افتحه الآن، أو لاحقاً من «الجداول المحفوظة».'
+    : 'Saved, but it could not be shown here. Open it now, or later from Saved timetables.',
+  unfetchedNoRun: IS_AR
+    ? 'اكتملت العملية دون حفظ جدول جديد، لكن تعذّر تحميل تقريرها هنا.'
+    : 'It finished without saving a new timetable, but its report could not be loaded here.',
+  noMoves: IS_AR
+    ? 'لم يُنقل أي اختبار، فلم يُحفظ شيء. يوضّح التقرير أسفل شريط أدوات التعديل السبب.'
+    : 'No exam was moved, so nothing was saved. The report under the editing toolbar says why.',
+  // A Fix seen from elsewhere: the report belongs to the page that asked for it.
+  movedNothing: IS_AR ? 'لم يُنقل أي اختبار، فلم يُحفظ شيء.' : 'No exam was moved, so nothing was saved.',
+  notSaved: reason => {
+    // A reason ends the sentence: it gets its full stop unless it has one.
+    const end = reason && !/[.!?؟]$/.test(reason.replace(/[\u2066-\u2069]/g, '')) ? '.' : '';
+    return IS_AR
+      ? `لم يُحفظ جدول جديد${reason ? `: ${reason}${end}` : '.'}`
+      : `No new timetable was saved${reason ? `: ${reason}${end}` : '.'}`;
+  },
+  // Found on returning: the page that asked may be closed, reloaded, left, or
+  // still open in another tab. Which, this page cannot know - the draft lives
+  // in the page, not the tab - so it says what is true in every case.
+  draftGone: IS_AR
+    ? ' التغييرات غير المحفوظة موجودة فقط في الصفحة التي أُجريت فيها ما دامت مفتوحة.'
+    : ' Unsaved changes exist only on the page they were made on, while it stays open.',
+  // What to do about a Save turned down because the changes need checking, by
+  // how this page met it: found on returning, followed from another page of
+  // the registrar's, or asked for here.
+  recheck: {
+    away: IS_AR
+      ? ' فإن كانت تلك الصفحة ما تزال مفتوحة فافحص التغييرات فيها ثم احفظها، وإلا فافتح الجدول من «الجداول المحفوظة» وأعد إجراء التغييرات.'
+      : ' If that page is still open, check the changes there, then save; otherwise open the timetable from Saved timetables and make them again.',
+    followed: IS_AR
+      ? ' إن كانت الصفحة التي حفظت منها ما تزال مفتوحة فافحص التغييرات فيها ثم احفظها، وإلا فافتح الجدول من «الجداول المحفوظة» وأعد إجراء التغييرات.'
+      : ' If the page you saved from is still open, check the changes there, then save; otherwise open the timetable from Saved timetables and make them again.',
+    own: IS_AR ? ' افحص التغييرات ثم احفظها.' : ' Check the changes, then save.',
+  },
+  finishedAway: (time, day = '') => IS_AR
+    ? `اكتملت العملية التي بدأتها بينما كانت الصفحة مغلقة، وحُفظ الجدول${day ? ` يوم ${day}` : ''}${time ? ` الساعة ${time}` : ''}.`
+    : `The timetable action you started finished while this page was closed; it was saved${day ? ` on ${day}` : ''}${time ? ` at ${time}` : ''}.`,
+  finishedSaved: IS_AR ? 'اكتملت العملية التي بدأتها وحُفظ الجدول.' : 'The timetable action you started finished and was saved.',
+  finishedNoRun: IS_AR ? 'اكتملت العملية دون حفظ جدول جديد.' : 'It finished without saving a new timetable.',
+  savedByOther: owner => IS_AR
+    ? `حُفظت النتيجة جدولاً جديداً${owner ? ` بطلب من ${isolate(owner)}` : ''}، ولم تُفتح في هذه الصفحة.`
+    : `Saved as a new timetable${owner ? ` by ${isolate(owner)}` : ''}. It is not open on this page.`,
+  othersRunning: (owner, started = true) => {
+    if (!started) {
+      return IS_AR
+        ? `تنتظر عملية أخرى على الجدول دورها${owner ? ` بطلب من ${isolate(owner)}` : ''}. انتظر حتى تنتهي ثم أعد المحاولة.`
+        : `Another timetable action is waiting its turn${owner ? `, requested by ${isolate(owner)}` : ''}. Wait for it to finish, then try again.`;
+    }
+    return IS_AR
+      ? `تجري الآن عملية أخرى على الجدول${owner ? ` بطلب من ${isolate(owner)}` : ''}. انتظر حتى تنتهي ثم أعد المحاولة.`
+      : `Another timetable action is running${owner ? `, started by ${isolate(owner)}` : ''}. Wait for it to finish, then try again.`;
+  },
+  mineRunning: (started = true) => {
+    if (!started) return IS_AR ? 'ما زالت عملية بدأتها تنتظر دورها. انتظر حتى تنتهي.' : 'A timetable action you started is waiting its turn. Wait for it to finish.';
+    return IS_AR ? 'ما زالت عملية بدأتها قيد التنفيذ. انتظر حتى تنتهي.' : 'A timetable action you started is still running. Wait for it to finish.';
+  },
+  // Why a Save was turned down, in the page's words.
+  // The check compares everything the timetable is built from: courses,
+  // rooms, enrollments and policy - so the reason names the source, not a part.
+  inputsChanged: IS_AR ? 'تغيّرت بيانات مصدر الجدول بعد آخر فحص' : "the timetable's source data changed after the last check",
+  checkRequired: IS_AR ? 'لم تكن التغييرات قد فُحصت' : 'the changes had not been checked',
+  // Listed as the live page lists them - a code may carry its own brackets,
+  // "CS111 (2)" - and with the step the live page gives, which belongs to the
+  // reason and so stays with it, before where the draft is.
+  coursesUnavailable: list => IS_AR
+    ? `بعض المقررات المختارة ليس لها تسجيلات في الجداول الدراسية المستوردة${list ? `. المقررات غير المتاحة: ${isolateLtr(list)}` : ''}. حمّل المقررات لمراجعة القائمة الحالية`
+    : `some selected courses have no enrollments in the imported student timetables${list ? `. Unavailable courses: ${list}` : ''}. Load Courses to review the current list`,
+  // One of the registrar's own, found on returning: said to be theirs, so it
+  // is never read as the job the page was just showing.
+  yoursWhileAway: (time, day = '') => IS_AR
+    ? `بينما كانت الصفحة مغلقة، انتهت العملية التي بدأتها${day ? ` يوم ${day}` : ''}${time ? ` الساعة ${time}` : ''}. `
+    : `While this page was closed, the action you started${day ? ` on ${day}` : ''}${time ? ` at ${time}` : ''} ended. `,
+  solverBusy: holder => IS_AR ? `${holderText(holder)}. أعد المحاولة عند انتهائها.` : `${holderText(holder)}. Try again when it finishes.`,
+  checkWaitLive: holder => IS_AR ? `${holderText(holder)}، وستُفحص تغييراتك عند انتهائها.` : `${holderText(holder)}. Your changes will be checked when it finishes.`,
+  checkWaitManual: holder => IS_AR ? `${holderText(holder)}. أعد الفحص عند انتهائها.` : `${holderText(holder)}. Check again when it finishes.`,
+  saveWait: holder => IS_AR ? `${holderText(holder)}. أعد الحفظ عند انتهائها.` : `${holderText(holder)}. Save again when it finishes.`,
+  notStarted: IS_AR ? 'تعذّر على الخادم بدء هذه العملية. لم يُحفظ شيء؛ أعد المحاولة.' : 'The server could not start this action. Nothing was saved; try again.',
+  jobNotFound: IS_AR ? 'لم تعد هذه العملية متاحة.' : 'That timetable action is no longer available.',
+  runDeleted: IS_AR ? 'حُذف هذا الجدول من «الجداول المحفوظة».' : 'That timetable was deleted from Saved timetables.',
+  // Said where any load failed - beside the timetable on the board, too - so it
+  // names the one that was asked for.
+  openedGone: IS_AR ? 'الجدول الذي حاولت فتحه حُذف من «الجداول المحفوظة».' : 'The timetable you tried to open has been deleted from Saved timetables.',
+  savedGone: IS_AR ? 'الجدول الذي حفظته هذه العملية حُذف من «الجداول المحفوظة».' : 'The timetable this action saved has since been deleted from Saved timetables.',
+  noResult: IS_AR ? 'لا توجد نتيجة لهذه العملية.' : 'That timetable action has no result to open.',
+};
+
+let _jobFollowSeq = 0;
+let _jobFollow = null;       // the follow the panel belongs to
+let _jobTicker = null;
+let _jobAnnounceTimer = null;
+
+function jobHeaders() {
+  return { 'Content-Type': 'application/json', 'X-CSRFToken': getCsrfToken() || CSRF };
+}
+
+// One request and its body, bounded as a whole: a connection that goes quiet
+// after the headers - a result is about a megabyte - would otherwise stall the
+// follow with the builder locked. Resolves to { res, data } or { res, error }
+// when the body is not the JSON expected; rejects when nothing usable came back
+// in time, which counts as a lost connection.
+async function jobRequest(url, options = {}) {
+  const controller = typeof AbortController === 'function' ? new AbortController() : null;
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => {
+      controller?.abort();
+      reject(new TypeError('The server did not answer in time.'));
+    }, JOB_POLL.timeout);
+  });
+  const exchange = (async () => {
+    const res = await fetch(url, controller ? { ...options, signal: controller.signal } : options);
+    try {
+      return { res, data: await readExamResponse(res) };
+    } catch (error) {
+      return { res, error };
+    }
+  })();
+  try {
+    return await Promise.race([exchange, timeout]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function jobError(kind, message) {
+  const error = new Error(message);
+  error.examJobKind = kind;
+  return error;
+}
+
+const jobPause = ms => new Promise(resolve => setTimeout(resolve, ms));
+const followIsCurrent = follow => Boolean(follow) && follow === _jobFollow && follow.seq === _jobFollowSeq;
+const jobIsOver = job => ['succeeded', 'failed', 'cancelled'].includes(job?.status);
+
+// Someone else's job - or one of the registrar's own from another tab - holds
+// the one lane: Build, Optimize, Fix and Save would only be refused.
+function jobLaneHeldByOther() {
+  return Boolean(_jobFollow && !_jobFollow.own && !_jobFollow.outcome);
+}
+
+function jobLaneChanged() {
+  updateLoadedRunActions();
+  // A Check turned away while the job held the solver can run now.
+  if (_checkState === 'waiting' && _checkWaitLive && !jobLaneHeldByOther()) scheduleDraftCheck({ delay: 0 });
+}
+
+function startFollow(job, { own = false, kind = job.kind, origin = null } = {}) {
+  clearInterval(_jobTicker);
+  clearTimeout(_jobAnnounceTimer);
+  if (_jobFollow) clearTimeout(_jobFollow.revealTimer);
+  _jobFollowSeq += 1;
+  const now = Date.parse(job.now) || Date.now();
+  _jobFollow = {
+    seq: _jobFollowSeq,
+    id: job.id,
+    kind,
+    own,
+    origin,
+    mine: own || Boolean(job.mine),
+    canCancel: own || Boolean(job.can_cancel),
+    owner: job.owner || '',
+    job,
+    // Elapsed time is measured on the server's clock, not this computer's.
+    clockOffset: now - Date.now(),
+    startedAt: Date.now(),
+    revealedAt: 0,
+    stageKey: null,
+    revealed: false,
+    cancelling: false,
+    cancelAnswer: null,
+    reconnecting: false,
+    signedOut: false,
+    refusal: null,
+    // Unsaved edits went with the action and exist only in this tab.
+    draftAtRisk: false,
+    offer: false,
+    outcome: null,
+    message: '',
+    pendingAnnounce: null,
+  };
+  $('examJobLive').textContent = '';
+  clearJobNotice();
+  if (!own) jobLaneChanged();
+  return _jobFollow;
+}
+
+function revealJobPanel(follow, { focus = false } = {}) {
+  if (!followIsCurrent(follow) || follow.revealed) return;
+  clearTimeout(follow.revealTimer);
+  follow.revealed = true;
+  follow.revealedAt = Date.now();
+  const panel = $('examJobPanel');
+  panel.hidden = false;
+  paintJobPanel(follow);
+  if (!follow.outcome) {
+    clearInterval(_jobTicker);
+    _jobTicker = setInterval(() => paintJobClock(follow), 1000);
+    if (!follow.own) {
+      const title = `${jobHeadline(follow)}.`;
+      announceJob(follow, follow.mine ? title : `${title} ${ownerNote(follow)}`);
+    }
+  }
+  if (focus) focusJobPanel();
+}
+
+// A job not yet started is waiting, not running: its title, its note and its
+// clock all say so.
+const jobHasStarted = job => Boolean(job.started_at);
+function jobHeadline(follow) {
+  const titles = jobTitles(follow.kind);
+  if (follow.outcome) return titles[follow.outcome] || titles.done;
+  if (jobIsOver(follow.job)) return titles.finishing;
+  return jobIsWaiting(follow) ? titles.waiting : titles.running;
+}
+// The page's own job reads 'queued' until its thread takes it; that is a wait
+// only once the server says what for. Someone else's queued job has not started.
+const jobIsWaiting = follow => follow.job.status === 'queued' && (!follow.own || Boolean(follow.job.waiting_for));
+function ownerNote(follow) {
+  const job = follow.job;
+  return jobHasStarted(job)
+    ? JOB_TEXT.startedBy(follow.owner, clockTime(job.started_at))
+    : JOB_TEXT.requestedBy(follow.owner, clockTime(job.submitted_at));
+}
+
+// The button that started an action is inert while it runs, and focus would
+// fall to the page body; the panel is where the action is.
+function focusJobPanel() {
+  $('examJobTitle').focus({ preventScroll: true });
+  $('examJobPanel').scrollIntoView({ block: 'nearest', inline: 'nearest' });
+}
+
+function paintJobClock(follow) {
+  if (!followIsCurrent(follow) || !follow.revealed) return;
+  const job = follow.job;
+  // The time it ran, never the time it waited for its turn.
+  const started = Date.parse(job.started_at);
+  const clock = $('examJobClock');
+  const finished = Date.parse(job.finished_at);
+  const ended = Boolean(follow.outcome) || jobIsOver(job);
+  if (Number.isNaN(started) || (ended && Number.isNaN(finished))) {
+    // Not started yet, or an ending the page never saw: no length to state.
+    clock.textContent = '';
+    return;
+  }
+  if (ended) {
+    clock.innerHTML = `${escapeAttr(JOB_TEXT.took)} <bdi dir="ltr">${duration((finished - started) / 1000)}</bdi>`;
+    return;
+  }
+  clock.innerHTML = `<span class="visually-hidden">${escapeAttr(JOB_TEXT.elapsed)} </span>`
+    + `<bdi dir="ltr">${duration((Date.now() + follow.clockOffset - started) / 1000)}</bdi>`;
+}
+
+// While the live region cannot be heard - a dialog set aria-hidden on <main>,
+// the fullscreen matrix or a menu made the rest of the page inert, a native
+// modal is open - what it would say waits, and is said once it can be heard,
+// if it is still true then.
+function pageHiddenFromAssistiveTech() {
+  for (let node = $('examJobLive'); node; node = node.parentElement) {
+    if (node.inert || node.hasAttribute('inert') || node.getAttribute('aria-hidden') === 'true') return true;
+  }
+  // dlg.js un-hides <main> as it starts to close, and gives focus back only as
+  // it removes its backdrop: until then the page is not back.
+  return Boolean($('examMoveDialog')?.open) || Boolean($('examDepartmentDialog')?.open)
+    || Boolean(document.querySelector('.dlg-backdrop'));
+}
+
+// `stillTrue`: asked again before a deferred announcement is made - a lost
+// connection that came back, or a stage long passed, is not news any more.
+function announceJob(follow, text, stillTrue = () => true) {
+  if (!followIsCurrent(follow) || !text) return;
+  clearTimeout(_jobAnnounceTimer);
+  if (pageHiddenFromAssistiveTech()) {
+    follow.pendingAnnounce = { text, stillTrue };
+    return;
+  }
+  follow.pendingAnnounce = null;
+  $('examJobLive').textContent = text;
+}
+
+function pageExposedAgain() {
+  if (pageHiddenFromAssistiveTech()) return;
+  // A Saved-timetables reload a job ending owed while a dialog was open.
+  if (_historyReloadOwed) {
+    _historyReloadOwed = false;
+    loadHistory();
+  }
+  const follow = _jobFollow;
+  const pending = follow?.pendingAnnounce;
+  if (!pending) return;
+  follow.pendingAnnounce = null;
+  if (!pending.stillTrue()) return;
+  // Cleared first, so the same words are heard again.
+  $('examJobLive').textContent = '';
+  setTimeout(() => { if (followIsCurrent(follow)) $('examJobLive').textContent = pending.text; }, 0);
+}
+
+{
+  const exposure = new MutationObserver(pageExposedAgain);
+  exposure.observe(document.body, { attributes: true, subtree: true, attributeFilter: ['aria-hidden', 'inert', 'open'] });
+  // A dlg.js backdrop is a child of <body>: its removal is when focus is back.
+  // Its own observer: observing the same node again would replace the options
+  // above, not add to them.
+  new MutationObserver(pageExposedAgain).observe(document.body, { childList: true });
+}
+
+// Saved timetables is reloaded when a job ends, at a moment nobody chose. With
+// a dialog open, a re-render would detach the button the dialog gives focus
+// back to; the reload waits until the page is back.
+let _historyReloadOwed = false;
+function reloadHistoryForJob() {
+  if (pageHiddenFromAssistiveTech()) _historyReloadOwed = true;
+  else loadHistory();
+}
+
+function refusalText(follow) {
+  const { action, mine } = follow.refusal;
+  const job = follow.job;
+  return mine
+    ? JOB_TEXT.refusedMine(action, jobHasStarted(job))
+    : JOB_TEXT.refusedOther(action, follow.owner, clockTime(job.started_at), jobHasStarted(job));
+}
+
+// The stored answer of an action that saved nothing, as a reason in the page's
+// language: the buckets that did not fit, a known refusal, or the server's own
+// words - isolated, so they keep their order inside Arabic.
+function jobRefusalReason(data) {
+  if (data?.feasibility_error && Array.isArray(data.violations)) {
+    return `${T.infeasible} ${infeasibleItems(data.violations).join('; ')}`;
+  }
+  const code = data?.code || data?.error_code;
+  if (code === 'inputs_changed') return JOB_TEXT.inputsChanged;
+  if (code === 'check_required') return JOB_TEXT.checkRequired;
+  // Said as a reason, not as the live page's advice: the draft it would speak
+  // of may be gone with the page that submitted it. (A job's result carries
+  // only these codes - execute_exam_action - or a feasibility report, or an
+  // error in words.)
+  if (code === 'courses_unavailable') {
+    return JOB_TEXT.coursesUnavailable(Array.isArray(data.unavailable_courses) ? data.unavailable_courses.map(String).join(', ') : '');
+  }
+  if (typeof data?.error === 'string' && data.error) return IS_AR ? isolate(data.error) : data.error;
+  return '';
+}
+
+// Write only what changed: a screen reader's place in the list, and the title
+// that has focus, must not be reset every second and a half.
+function setJobText(element, text) {
+  if (element.textContent !== text) element.textContent = text;
+}
+
+function paintJobPanel(follow) {
+  if (!followIsCurrent(follow) || !follow.revealed) return;
+  const job = follow.job;
+  const outcome = follow.outcome;
+  // Known to be over - its result still on its way - it is no longer running.
+  const over = Boolean(outcome) || jobIsOver(job);
+  const panel = $('examJobPanel');
+  panel.classList.toggle('is-failed', outcome === 'failed');
+  panel.classList.toggle('is-cancelled', outcome === 'cancelled');
+  panel.classList.toggle('is-lost', outcome === 'lost');
+  panel.classList.toggle('is-refused', outcome === 'refused');
+  setJobText($('examJobTitle'), jobHeadline(follow));
+
+  const stages = Array.isArray(job.stages) ? job.stages : [];
+  const states = stages.map(stage => (JOB_STATE[stage.state] ? stage.state : 'pending'));
+  const list = $('examJobStages');
+  const signature = `${over}|${stages.map((stage, index) => `${stage.key}:${states[index]}`).join(',')}`;
+  if (list.dataset.signature !== signature) {
+    list.dataset.signature = signature;
+    list.innerHTML = stages.map((stage, index) => {
+      const state = states[index];
+      const label = escapeAttr(JOB_STAGE[stage.key] || stage.key);
+      // A job that has ended is on no step, whatever its last report said.
+      const current = state === 'running' && !over ? ' aria-current="step"' : '';
+      return `<li class="et-job-stage is-${state}"${current}>${label}`
+        + `<span class="visually-hidden"> (${escapeAttr(JOB_STATE[state])})</span></li>`;
+    }).join('');
+  }
+
+  const current = job.current && typeof job.current === 'object' ? job.current : null;
+  const counted = !outcome && job.status === 'running' && current
+    && Number.isFinite(current.done) && Number.isFinite(current.total) && current.total > 0;
+  const bar = $('examJobBar');
+  if (counted && current.key !== 'balance_invigilators') {
+    // A bar only for work the server can count exactly.
+    const fraction = Math.max(0, Math.min(1, current.done / current.total));
+    if (bar.dataset.stage !== current.key) {
+      // A new stage starts from empty; it must not animate back from full.
+      const fill = bar.firstElementChild;
+      fill.style.transition = 'none';
+      bar.style.setProperty('--et-job-fraction', '0');
+      void fill.offsetWidth;
+      fill.style.transition = '';
+      bar.dataset.stage = current.key;
+    }
+    bar.hidden = false;
+    bar.style.setProperty('--et-job-fraction', String(fraction));
+    bar.setAttribute('role', 'progressbar');
+    bar.setAttribute('aria-label', JOB_STAGE[current.key] || current.key);
+    bar.setAttribute('aria-valuemin', '0');
+    bar.setAttribute('aria-valuemax', '100');
+    bar.setAttribute('aria-valuenow', String(Math.round(fraction * 100)));
+    bar.setAttribute('aria-valuetext', JOB_TEXT.count(current));
+  } else {
+    bar.hidden = true;
+    delete bar.dataset.stage;
+    for (const name of ['role', 'aria-label', 'aria-valuemin', 'aria-valuemax', 'aria-valuenow', 'aria-valuetext']) bar.removeAttribute(name);
+  }
+
+  let detail = '';
+  if (outcome) detail = follow.message;
+  else if (follow.signedOut) detail = JOB_TEXT.signedOut;
+  else if (follow.cancelling) detail = JOB_TEXT.cancelling;
+  else if (follow.reconnecting) detail = JOB_TEXT.reconnecting;
+  else if (jobIsWaiting(follow)) detail = JOB_TEXT.queued(follow.mine, job.waiting_for);
+  else if (counted) detail = JOB_TEXT.count(current);
+  setJobText($('examJobDetail'), detail);
+
+  let note = '';
+  const tooLate = ['too_late', 'too_late_no_run'].includes(follow.cancelAnswer) && (!outcome || outcome === 'done' || outcome === 'refused');
+  // Over, a job is not running for anyone: no refusal, owner line or promise
+  // about leaving the page belongs to it.
+  if (!over && follow.refusal) note = refusalText(follow);
+  else if (follow.cancelAnswer === 'refused' && !over) note = JOB_TEXT.cancelFailed;
+  else if (tooLate) note = follow.cancelAnswer === 'too_late' ? JOB_TEXT.cancelTooLate : JOB_TEXT.cancelTooLateNoRun;
+  else if (!over && !follow.mine) note = ownerNote(follow);
+  else if (!over && follow.own) note = follow.draftAtRisk ? JOB_TEXT.keepOpen : JOB_TEXT.leave;
+  else if ((outcome === 'failed' || outcome === 'lost') && follow.id) note = JOB_TEXT.reference(follow.id);
+  paintJobNote(follow, note);
+
+  const cancel = $('examJobCancel');
+  // Signed out, a Stop would only be refused; over, there is nothing to stop.
+  const hideCancel = over || !follow.canCancel || follow.signedOut;
+  // A browser drops the keyboard to the page body the moment a focused button
+  // is hidden: it moves to the title first, still in the panel.
+  if (hideCancel && !cancel.hidden && document.activeElement === cancel) $('examJobTitle').focus({ preventScroll: true });
+  cancel.hidden = hideCancel;
+  cancel.setAttribute('aria-disabled', String(follow.cancelling));
+  $('examJobOpen').hidden = !follow.offer;
+  $('examJobClose').hidden = !outcome;
+  paintJobClock(follow);
+
+  // Say a new stage once, after a moment, and only the latest; never every
+  // tick of a count, and for someone else's job, only its start and end.
+  const key = current?.key || null;
+  if (!over && follow.mine && key && key !== follow.stageKey) {
+    follow.stageKey = key;
+    const index = stages.findIndex(stage => stage.key === key);
+    clearTimeout(_jobAnnounceTimer);
+    _jobAnnounceTimer = setTimeout(() => {
+      if (!followIsCurrent(follow) || follow.outcome) return;
+      announceJob(follow, JOB_TEXT.step(index + 1, stages.length, JOB_STAGE[key] || key),
+        () => follow.stageKey === key && !follow.outcome && !jobIsOver(follow.job));
+    }, JOB_POLL.announce);
+  }
+}
+
+// Signed out, the note is the way back in: a link, kept while the state lasts
+// rather than rebuilt on every poll.
+function paintJobNote(follow, text) {
+  const note = $('examJobNote');
+  if (!follow.outcome && follow.signedOut) {
+    if (note.dataset.kind === 'sign-in') return;
+    note.dataset.kind = 'sign-in';
+    const link = document.createElement('a');
+    const destination = new URL('/login/', window.location.origin);
+    destination.searchParams.set('next', window.location.pathname + window.location.search);
+    link.href = destination.href;
+    link.target = '_blank';
+    link.rel = 'noopener';
+    link.textContent = JOB_TEXT.signIn;
+    note.replaceChildren(link);
+    return;
+  }
+  if (note.dataset.kind === 'sign-in') {
+    const hadFocus = note.contains(document.activeElement);
+    delete note.dataset.kind;
+    note.textContent = '';
+    if (hadFocus) $('examJobTitle').focus({ preventScroll: true });
+  }
+  setJobText(note, text);
+}
+
+const jobEndingText = follow => [jobHeadline(follow), follow.message].filter(Boolean).join('. ');
+
+// End a follow: 'done', 'refused', 'failed', 'cancelled' or 'lost'. The panel
+// stays with what happened, announced once, until it is closed or replaced.
+// `quiet`: the caller shows the result itself, so a panel never shown stays so.
+function finishFollow(follow, job, outcome, message, { quiet = false } = {}) {
+  if (!followIsCurrent(follow)) return;
+  if (job) follow.job = job;
+  follow.outcome = outcome;
+  follow.message = message || '';
+  follow.cancelling = false;
+  follow.reconnecting = false;
+  follow.signedOut = false;
+  if (quiet && !follow.revealed) {
+    hideJobPanel(follow);
+    return;
+  }
+  clearInterval(_jobTicker);
+  clearTimeout(_jobAnnounceTimer);
+  const panel = $('examJobPanel');
+  const focusInPanel = panel.contains(document.activeElement);
+  const focusLost = !document.activeElement || document.activeElement === document.body;
+  const wasShown = follow.revealed;
+  revealJobPanel(follow);
+  paintJobPanel(follow);
+  announceJob(follow, jobEndingText(follow));
+  // After the registrar's own result, the caller takes focus to it.
+  const callerMovesFocus = follow.own && outcome === 'done' && !follow.offer;
+  if (!callerMovesFocus && (focusInPanel || (focusLost && follow.own))) $('examJobTitle').focus({ preventScroll: true });
+  if (!wasShown && follow.own) panel.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  // Shown now, so not again when the page is next opened.
+  if (follow.mine && !_jobsEndedHere.has(follow.id)) _jobsEndedHere.set(follow.id, follow.own ? 'own' : follow.metAway ? 'away' : 'followed');
+  if (follow.mine && (outcome === 'failed' || outcome === 'cancelled')) markJobSeen(follow.id);
+  jobLaneChanged();
+}
+
+function hideJobPanel(follow = _jobFollow) {
+  if (follow && !followIsCurrent(follow)) return;
+  clearInterval(_jobTicker);
+  clearTimeout(_jobAnnounceTimer);
+  if (follow) clearTimeout(follow.revealTimer);
+  $('examJobPanel').hidden = true;
+  _jobFollow = null;
+  _jobFollowSeq += 1;
+  jobLaneChanged();
+}
+
+// Wait, but never while the tab is hidden: a hidden tab polls nothing, and the
+// moment it is shown again it polls at once.
+function jobWait(ms) {
+  return new Promise(resolve => {
+    if (!document.hidden) {
+      setTimeout(resolve, ms);
+      return;
+    }
+    const onVisible = () => {
+      if (document.hidden) return;
+      document.removeEventListener('visibilitychange', onVisible);
+      resolve();
+    };
+    document.addEventListener('visibilitychange', onVisible);
+  });
+}
+
+// Resolves to the job's final state, or to null if the panel moved on to
+// another job. Throws only when this page can no longer follow it.
+async function pollExamJob(follow) {
+  let delay = JOB_POLL.first;
+  let failures = 0;
+  for (;;) {
+    await jobWait(delay);
+    if (!followIsCurrent(follow)) return null;
+    let job;
+    try {
+      const { res, data, error } = await jobRequest(`/ops/exam-timetable/jobs/${follow.id}/`, { headers: jobHeaders() });
+      if (res.status === 404) throw jobError('lost', JOB_TEXT.gone);
+      if (res.status === 429) {
+        // Polls are not throttled; if something is, wait as long as it asks.
+        delay = (Number(res.headers?.get?.('Retry-After')) || 0) * 1000 || JOB_POLL.backoff.at(-1);
+        continue;
+      }
+      if (error) throw error;
+      // Access withdrawn, or a request the server will never accept: asking
+      // again changes nothing, and "reconnecting" would be a lie.
+      if (res.status === 403) throw jobError('lost', JOB_TEXT.noAccess);
+      if (res.status >= 400 && res.status < 500 && res.status !== 408) throw jobError('lost', JOB_TEXT.gone);
+      if (!res.ok || !data.ok) throw examResponseError(data);
+      job = data.job;
+    } catch (err) {
+      if (!followIsCurrent(follow)) return null;
+      if (err.examJobKind) throw err;
+      if (err.examRequestKind === 'auth') {
+        // Signed out, but the job goes on. Keep asking, slowly: signing in
+        // again in another tab shares the cookie, and the next answer resumes.
+        // Said once, in the panel, with the way back in - never "retry", which
+        // would run a job that is still running a second time.
+        if (!follow.signedOut) {
+          markSignedOut(follow);
+          if (!follow.revealed) revealJobPanel(follow, { focus: follow.own });
+        }
+        delay = JOB_POLL.slow;
+        continue;
+      }
+      // Anything else is the network or a passing server error: the job may
+      // well still be running, so it is never reported as failed for that.
+      failures += 1;
+      if (failures >= 2 && !follow.reconnecting) {
+        follow.reconnecting = true;
+        if (!follow.revealed) revealJobPanel(follow, { focus: follow.own });
+        paintJobPanel(follow);
+        announceJob(follow, JOB_TEXT.reconnecting, () => follow.reconnecting);
+      }
+      delay = JOB_POLL.backoff[Math.min(failures, JOB_POLL.backoff.length) - 1];
+      continue;
+    }
+    if (!followIsCurrent(follow)) return null;
+    failures = 0;
+    follow.reconnecting = false;
+    follow.signedOut = false;
+    follow.job = job;
+    follow.owner = job.owner || follow.owner;
+    follow.canCancel = follow.own || Boolean(job.can_cancel);
+    // Someone has asked it to stop: no second Stop, here or on another page,
+    // and no "could not stop it" beside "stopping".
+    if (job.stopping) {
+      follow.cancelling = true;
+      if (follow.cancelAnswer === 'refused') follow.cancelAnswer = null;
+    }
+    const over = jobIsOver(job);
+    if (over) {
+      // Ended: a stall reveal now would show a finished job as running, the
+      // clock stops at its end, and no stage is announced after it.
+      clearTimeout(follow.revealTimer);
+      clearInterval(_jobTicker);
+      clearTimeout(_jobAnnounceTimer);
+    }
+    // Shown only once it has been seen running past the threshold, so a short
+    // job is known to have ended before anything is shown.
+    if (!over && !follow.revealed && Date.now() - follow.startedAt >= JOB_POLL.reveal) revealJobPanel(follow, { focus: follow.own });
+    paintJobPanel(follow);
+    if (over) return job;
+    if (jobIsWaiting(follow) && follow.mine && follow.revealed && !follow.queuedSaid) {
+      follow.queuedSaid = true;
+      announceJob(follow, JOB_TEXT.queued(true, job.waiting_for), () => jobIsWaiting(follow));
+    }
+    if (!follow.revealed) delay = JOB_POLL.quick;
+    else delay = Date.now() - follow.startedAt > JOB_POLL.slowAfter ? JOB_POLL.slow : JOB_POLL.steady;
+  }
+}
+
+// Signed out, but the job goes on: said once, in the panel, with the way back
+// in. Stop is hidden meanwhile; if it had focus, focus stays in the panel.
+function markSignedOut(follow) {
+  const hadStop = document.activeElement === $('examJobCancel');
+  follow.signedOut = true;
+  follow.cancelling = false;
+  follow.cancelAnswer = null;
+  paintJobPanel(follow);
+  if (hadStop) $('examJobTitle').focus({ preventScroll: true });
+  announceJob(follow, JOB_TEXT.signedOut, () => follow.signedOut);
+}
+
+// The finished action's own answer; asked a few times, because the run is
+// already saved and a registrar told only "retry" would save it twice.
+async function fetchJobResult(jobId) {
+  let delay = 0;
+  for (let attempt = 0; attempt < JOB_POLL.resultRetries; attempt += 1) {
+    if (delay) await jobWait(delay);
+    try {
+      const { res, data, error } = await jobRequest(`/ops/exam-timetable/jobs/${jobId}/result/`, { headers: jobHeaders() });
+      if (!error) return { res, data };
+      if (error.examRequestKind === 'auth') return null;
+    } catch (_) {
+      // Lost or too slow: asked again below.
+    }
+    delay = JOB_POLL.backoff[Math.min(attempt, JOB_POLL.backoff.length - 1)];
+  }
+  return null;
+}
+
+// `own`: this page submitted it, so "the timetable on screen" is the one it
+// was working on. Seen from anywhere else, no board on screen is involved.
+function jobEndMessage(job, mine, own = false, lost = '') {
+  const onScreen = own && job.kind !== 'build';
+  if (job.status === 'cancelled') {
+    return (job.cancelled_by ? JOB_TEXT.cancelledBy(job.cancelled_by, onScreen) : JOB_TEXT.cancelled(onScreen)) + lost;
+  }
+  if (job.error_code === 'server_restarted') return JOB_TEXT.restarted(mine, lost);
+  if (job.error_code === 'timed_out') return JOB_TEXT.timedOut(mine, lost);
+  if (job.error_code === 'never_started') return JOB_TEXT.neverStarted(mine, lost);
+  const stage = JOB_STAGE[job.current?.key] || jobTitles(job.kind).running;
+  return JOB_TEXT.failed(stage, mine, lost);
+}
+
+const actionLabel = button => (button?.textContent || '').replace(/\s+/g, ' ').trim();
+
+// Submit an action; resolve to { res, data } exactly as the old single request
+// did, whether the server ran it at once or as a job. A refusal because a job
+// is running also carries `refusal`: whether the panel now shows that job.
+async function submitExamAction(payload, kind, origin) {
+  const res = await fetch('/ops/exam-timetable/build/', {
+    // Only a page that can follow a job asks for one.
+    method: 'POST', headers: { ...jobHeaders(), 'X-Exam-Jobs': '1' }, body: JSON.stringify(payload),
+  });
+  if (res.status !== 202) {
+    const data = await readExamResponse(res);
+    if (res.status === 409 && data.error_code === 'job_in_progress') {
+      // Show that job where the registrar is looking, with why this action
+      // did not start.
+      const action = actionLabel(origin);
+      const shown = await resumeExamJob({ refusal: { action, mine: Boolean(data.active_job?.mine) }, origin });
+      return { res, data, refusal: { shown, action } };
+    }
+    return { res, data };
+  }
+  const submitted = await readExamResponse(res);
+  return followOwnJob(submitted.job, kind, origin);
+}
+
+async function followOwnJob(job, kind, origin) {
+  // An ended panel still on screen goes: its buttons must never act on this
+  // job, and a short action must not be shown just because one was up already.
+  if (_jobFollow?.outcome) hideJobPanel(_jobFollow);
+  // An older outcome still owed is superseded: the server offers only the
+  // registrar's latest job, and this one is it.
+  _ownEndingOwed = null;
+  _ownActionsAccepted += 1;
+  const follow = startFollow(job, { own: true, kind, origin });
+  follow.draftAtRisk = kind === 'save_loaded_changes' || hasUnsavedEdits();
+  follow.revealTimer = setTimeout(() => revealJobPanel(follow, { focus: true }), JOB_POLL.stall);
+  let final;
+  try {
+    final = await pollExamJob(follow);
+  } catch (err) {
+    finishFollow(follow, null, 'lost', err.message);
+    reloadHistoryForJob();
+    throw err;
+  }
+  if (!final) throw jobError('superseded', '');
+  if (final.status !== 'succeeded') {
+    const outcome = final.status === 'cancelled' ? 'cancelled' : 'failed';
+    const message = jobEndMessage(final, true, true);
+    finishFollow(follow, final, outcome, message);
+    throw jobError(outcome, message);
+  }
+  const fetched = await fetchJobResult(final.id);
+  if (!fetched) {
+    if (final.result_run_id) {
+      // Saved, but its answer never came: offer it, so nobody saves it twice.
+      follow.offer = true;
+      finishFollow(follow, final, 'done', JOB_TEXT.savedUnfetched);
+      reloadHistoryForJob();
+      throw jobError('unfetched', JOB_TEXT.savedUnfetched);
+    }
+    finishFollow(follow, final, noRunOutcome(final), JOB_TEXT.unfetchedNoRun);
+    throw jobError('unfetched', JOB_TEXT.unfetchedNoRun);
+  }
+  if (follow.revealed) await jobPause(Math.max(0, follow.revealedAt + JOB_POLL.minShown - Date.now()));
+  const revealed = follow.revealed;
+  const { res, data } = fetched;
+  if (res.ok && data.ok && data.run_id) finishFollow(follow, final, 'done', JOB_TEXT.savedOwn, { quiet: true });
+  // A Fix with nothing it could move saves nothing; the report says why.
+  else if (res.ok && data.ok && data.saved === false && revealed) finishFollow(follow, final, 'done', JOB_TEXT.noMoves);
+  // Any other answer - inputs the action refused - is reported as it always was.
+  else hideJobPanel(follow);
+  return { ...fetched, revealed };
+}
+
+// A success that saved no run: a Fix with nothing to move finished; anything
+// else was the action turning the request down.
+const noRunOutcome = job => (job.kind === 'minimum_change_repair' && !job.refused ? 'done' : 'refused');
+
+// On page load, on a Check the solver turned away, or refused because a job is
+// running: follow the job that holds the lane without taking the builder, or
+// show how the registrar's own latest job ended while the page was closed.
+// Resolves to 'shown' once the panel shows it, 'ended' if the job it would
+// show has ended, or 'unknown' if the server could not say; the job is then
+// followed in the background.
+async function resumeExamJob({ refusal = null, origin = null, owed = null } = {}) {
+  let job;
+  let ownEnding = null;
+  // Asked about by id, the ending this page was promised is kept past the
+  // server's hour: it was news when the page was given it.
+  const url = `/ops/exam-timetable/jobs/active/${owed ? `?owed=${encodeURIComponent(owed)}` : ''}`;
+  try {
+    const { res, data } = await jobRequest(url, { headers: jobHeaders() });
+    if (!res.ok || !data) return 'unknown';
+    job = data.job;
+    ownEnding = data.ending?.mine ? data.ending : null;
+  } catch (_) {
+    return 'unknown';
+  }
+  const current = _jobFollow;
+  if (current && !current.outcome) {
+    // Already following it: say why this action did not start.
+    if (refusal && (!job || job.id === current.id)) {
+      tellRefusal(current, refusal, origin);
+      return 'shown';
+    }
+    return 'unknown';
+  }
+  if (!job) return 'ended';
+  if (jobIsOver(job)) {
+    // Between the refusal and this answer it ended: nothing holds the lane. An
+    // ending already on screen is not replaced by an older one.
+    // The ending owed, with the panel taken meanwhile: it waits for the panel.
+    if (owed && current && String(job.id) === owed) return 'deferred';
+    if (refusal || !job.mine || current || _jobsSeenHere.has(String(job.id))) return 'ended';
+    await showJobEnding(job, null);
+    return 'shown';
+  }
+  const follow = startFollow(job, { origin });
+  if (!job.mine && ownEnding) _ownEndingOwed = String(ownEnding.id);
+  revealJobPanel(follow);
+  if (refusal) tellRefusal(follow, refusal, origin);
+  watchJob(follow);
+  return 'shown';
+}
+
+function tellRefusal(follow, refusal, origin) {
+  if (!followIsCurrent(follow)) return;
+  follow.refusal = refusal;
+  if (origin) follow.origin = origin;
+  if (!follow.revealed) revealJobPanel(follow);
+  paintJobPanel(follow);
+  focusJobPanel();
+  announceJob(follow, refusalText(follow));
+}
+
+async function watchJob(follow) {
+  let final;
+  try {
+    final = await pollExamJob(follow);
+  } catch (err) {
+    finishFollow(follow, null, 'lost', err.message);
+    reloadHistoryForJob();
+    return;
+  }
+  if (!final || !followIsCurrent(follow)) return;
+  reloadHistoryForJob();
+  await showJobEnding(final, follow);
+}
+
+// A registrar back while someone else's job ran was promised their own outcome
+// on return. Once that job's ending is closed, or its timetable opened - the
+// panel free - the server is asked again about it: what it says then is
+// current (seen elsewhere meanwhile, or its run deleted, it is not offered).
+// An action of their own supersedes it (followOwnJob). An answer that does not
+// come is asked for again, a few times; the panel taken meanwhile, it waits.
+let _ownEndingOwed = null;      // the id of that job
+let _ownActionsAccepted = 0;
+async function offerPendingOwnEnding() {
+  const owed = _ownEndingOwed;
+  if (!owed) return;
+  _ownEndingOwed = null;
+  const actions = _ownActionsAccepted;
+  for (let attempt = 0; ; attempt += 1) {
+    const shown = await resumeExamJob({ owed });
+    // An action of their own since has superseded it.
+    if (actions !== _ownActionsAccepted) return;
+    // The panel taken meanwhile, or no answer over and over: still owed, and
+    // asked for when the panel is next free.
+    const waits = shown === 'deferred' || (shown === 'unknown' && (_jobFollow || attempt >= JOB_POLL.backoff.length));
+    if (waits) {
+      if (!_ownEndingOwed) _ownEndingOwed = owed;
+      return;
+    }
+    if (shown !== 'unknown') return;
+    await jobWait(JOB_POLL.backoff[attempt]);
+  }
+}
+
+// Jobs this page has marked seen: never offered again, whatever a lost or
+// slower acknowledgement leaves the server saying. (Reading a job's answer
+// needs no entry: the server acknowledges it before answering.) An ending only
+// drawn is not acknowledged: replaced before the registrar acted on it, it is
+// offered again once the panel is free.
+const _jobsSeenHere = new Set();
+// Jobs of the registrar's own this page has shown, by how it first met them:
+// 'own' (asked for here), 'followed' (from another page), 'away' (found on
+// opening). Shown again, they are not news "from while the page was closed",
+// and their next step is the one they first had.
+const _jobsEndedHere = new Map();
+
+// How a job this page did not submit ended: followed here, or found on opening.
+async function showJobEnding(job, follow) {
+  const mine = Boolean(job.mine);
+  // Met before on this page, it is not news from while the page was closed.
+  const met = _jobsEndedHere.get(job.id);
+  if (job.status === 'succeeded' && job.has_run) {
+    // A saved timetable: open it here, or leave it in Saved timetables.
+    let message = JOB_TEXT.savedByOther(job.owner);
+    if (mine) {
+      message = follow || met
+        ? JOB_TEXT.finishedSaved
+        : JOB_TEXT.finishedAway(clockTime(job.finished_at), jobDay(job.finished_at, job.now));
+    }
+    offerJobResult(job, message, follow);
+    return;
+  }
+  // Found on opening, the registrar's own is said to be theirs - and the draft
+  // it took is only on the page that asked for it.
+  const away = !follow && mine && !met ? JOB_TEXT.yoursWhileAway(clockTime(job.submitted_at), jobDay(job.submitted_at, job.now)) : '';
+  const how = follow ? (follow.own ? 'own' : 'followed') : (met || 'away');
+  const lost = mine && how === 'away' && job.kind !== 'build' ? JOB_TEXT.draftGone : '';
+  if (job.status === 'succeeded') {
+    // Ended without a new timetable. The registrar's own is told why: its
+    // stored answer (fetching it also marks it seen), and what to do next.
+    const outcome = noRunOutcome(job);
+    let message = outcome === 'done' ? JOB_TEXT.movedNothing : JOB_TEXT.notSaved('');
+    let next = '';
+    if (mine) {
+      const fetched = await fetchJobResult(job.id);
+      if (fetched && !(fetched.res.ok && fetched.data?.ok)) {
+        message = JOB_TEXT.notSaved(jobRefusalReason(fetched.data));
+        const code = fetched.data?.code || fetched.data?.error_code;
+        if (['inputs_changed', 'check_required'].includes(code)) next = JOB_TEXT.recheck[how];
+      }
+    } else {
+      message += JOB_TEXT.actionsFree;
+    }
+    endShownJob(job, follow, outcome, away + message + lost + next);
+    return;
+  }
+  const outcome = job.status === 'cancelled' ? 'cancelled' : 'failed';
+  endShownJob(job, follow, outcome, away + jobEndMessage(job, mine, false, mine ? lost : '') + (mine ? '' : JOB_TEXT.actionsFree));
+}
+
+// End the follow it was watched on; one found on opening takes the panel only
+// if nothing else has taken it meanwhile.
+function endShownJob(job, follow, outcome, message) {
+  if (follow) {
+    finishFollow(follow, job, outcome, message);
+  } else if (!_jobFollow) {
+    const found = startFollow(job);
+    found.metAway = true;
+    finishFollow(found, job, outcome, message);
+  }
+}
+
+function offerJobResult(job, message, follow = null) {
+  // Its timetable already on the board - opened from Saved timetables before
+  // this page heard the job had ended: nothing to offer, and "not open on this
+  // page" would be untrue. The news has been taken up.
+  if (job.result_run_id != null && String(job.result_run_id) === String(_currentRunId)) {
+    if (job.mine) markJobSeen(job.id);
+    if (follow && followIsCurrent(follow)) {
+      const hadFocus = $('examJobPanel').contains(document.activeElement);
+      hideJobPanel(follow);
+      if (hadFocus) focusPastJobPanel();
+      offerPendingOwnEnding();
+    }
+    return;
+  }
+  const focusInPanel = $('examJobPanel').contains(document.activeElement);
+  const offer = follow && followIsCurrent(follow) ? follow : startFollow(job);
+  clearInterval(_jobTicker);
+  offer.job = job;
+  offer.offer = true;
+  offer.outcome = 'done';
+  offer.message = message;
+  offer.cancelling = false;
+  offer.reconnecting = false;
+  if (offer.mine && !_jobsEndedHere.has(offer.id)) _jobsEndedHere.set(offer.id, offer.own ? 'own' : follow ? 'followed' : 'away');
+  revealJobPanel(offer);
+  paintJobPanel(offer);
+  announceJob(offer, jobEndingText(offer));
+  // Stop, which may have had focus, is gone now.
+  if (focusInPanel) $('examJobTitle').focus({ preventScroll: true });
+  jobLaneChanged();
+}
+
+function markJobSeen(jobId) {
+  _jobsSeenHere.add(String(jobId));
+  jobRequest(`/ops/exam-timetable/jobs/${jobId}/seen/`, { method: 'POST', headers: jobHeaders() }).catch(() => {});
+}
+
+$('examJobCancel')?.addEventListener('click', async () => {
+  const follow = _jobFollow;
+  if (!follow?.revealed || follow.outcome || follow.cancelling || !follow.canCancel) return;
+  if (!follow.mine) {
+    // Stopping a colleague's work: say whose, and that they will be told.
+    const started = jobHasStarted(follow.job);
+    const since = Date.parse(started ? follow.job.started_at : follow.job.submitted_at);
+    const confirmed = await dlg.confirm({
+      title: JOB_TEXT.stopOther.title(follow.owner),
+      body: JOB_TEXT.stopOther.body(follow.owner, duration((Date.now() + follow.clockOffset - since) / 1000), started),
+      icon: 'warning',
+      confirmLabel: JOB_TEXT.stopOther.confirm,
+      cancelLabel: JOB_TEXT.stopOther.keep,
+      confirmClass: 'danger',
+      // Resolved once focus is back on Stop, so what follows moves it on.
+      waitForClose: true,
+    });
+    if (!followIsCurrent(follow)) {
+      // The panel moved on while the dialog was open - its run opened on the
+      // board, or an owed ending of mine took it - and the dialog gave focus
+      // back to a Stop that is hidden: in a browser, to nothing.
+      const at = document.activeElement;
+      const lost = !at || at === document.body || ($('examJobPanel').contains(at) && Boolean(at.closest('[hidden]')));
+      if (lost) {
+        if ($('examJobPanel').hidden) focusPastJobPanel();
+        else $('examJobTitle').focus({ preventScroll: true });
+      }
+      return;
+    }
+    if (follow.outcome) {
+      // It ended while the dialog was open (its ending is said as the page
+      // comes back); Stop, where the dialog returns focus, is gone.
+      $('examJobTitle').focus({ preventScroll: true });
+      return;
+    }
+    if (!confirmed || follow.cancelling) return;
+  }
+  follow.cancelling = true;
+  follow.cancelAnswer = null;
+  paintJobPanel(follow);
+  announceJob(follow, JOB_TEXT.cancelling, () => follow.cancelling);
+  let answer = 'refused';
+  try {
+    const { res, data, error } = await jobRequest(`/ops/exam-timetable/jobs/${follow.id}/cancel/`, { method: 'POST', headers: jobHeaders() });
+    // Signed out, the request lands on the sign-in page - a 200 that stopped nothing.
+    if (error?.examRequestKind === 'auth') answer = 'signed_out';
+    else if (res.ok && !error) answer = 'accepted';
+    else if (res.status === 409) {
+      // It ended first. Only a success that saved something was "saved"; any
+      // other ending the next poll reports as it is.
+      const ended = data?.job;
+      if (ended?.status === 'succeeded') answer = ended.has_run ? 'too_late' : 'too_late_no_run';
+      else answer = 'ended';
+    }
+  } catch (_) {
+    answer = 'refused';
+  }
+  // Accepted: it stays "stopping" until the job itself says it stopped.
+  if (answer === 'accepted' || !followIsCurrent(follow) || follow.outcome) return;
+  if (answer === 'signed_out') {
+    markSignedOut(follow);
+    return;
+  }
+  // A stop sent from elsewhere has reached it meanwhile: it is stopping anyway.
+  if (answer === 'refused' && follow.job?.stopping) return;
+  follow.cancelling = false;
+  follow.cancelAnswer = answer === 'ended' ? null : answer;
+  paintJobPanel(follow);
+  if (answer === 'refused') announceJob(follow, JOB_TEXT.cancelFailed);
+  else if (answer === 'too_late') announceJob(follow, JOB_TEXT.cancelTooLate);
+  else if (answer === 'too_late_no_run') announceJob(follow, JOB_TEXT.cancelTooLateNoRun);
+});
+
+$('examJobOpen')?.addEventListener('click', async () => {
+  const follow = _jobFollow;
+  const open = $('examJobOpen');
+  // Never the run already on the board: an offer is not drawn for it
+  // (offerJobResult), and loading it from anywhere takes the offer up
+  // (settleJobPanel).
+  if (!follow?.revealed || !follow.offer || !follow.job?.result_run_id || open.getAttribute('aria-disabled') === 'true') return;
+  // aria-disabled, not disabled: focus stays on the button while it loads.
+  open.setAttribute('aria-disabled', 'true');
+  try {
+    // loadRun asks before discarding a draft; if the registrar keeps it, the
+    // offer stays, and nothing has been marked seen. Opened - or found deleted -
+    // loadRun settles the panel.
+    await loadRun(follow.job.result_run_id);
+  } finally {
+    open.setAttribute('aria-disabled', 'false');
+  }
+});
+
+// The board shows another timetable now, or none: a panel offering the one on
+// the board has been taken up, and one saying the registrar's own result "is
+// open below" no longer is true.
+function settleJobPanel() {
+  const follow = _jobFollow;
+  if (!follow?.revealed || !follow.outcome || !followIsCurrent(follow)) return;
+  const onBoard = String(follow.job?.result_run_id) === String(_currentRunId);
+  const stale = follow.offer ? onBoard : follow.own && follow.outcome === 'done' && follow.job?.result_run_id != null && !onBoard;
+  if (!stale) return;
+  if (follow.offer && follow.mine) markJobSeen(follow.id);
+  hideJobPanel(follow);
+  offerPendingOwnEnding();
+}
+
+// The timetable a panel names was deleted: nothing is left to open, and the
+// panel says so instead of offering it, or calling it open below. A load
+// that found it gone has already said so aloud, so that one repaints quietly.
+function jobRunGone(runId, { announce = true } = {}) {
+  const follow = _jobFollow;
+  if (!follow?.revealed || !followIsCurrent(follow) || !(follow.offer || follow.outcome === 'done')) return;
+  if (String(follow.job?.result_run_id) !== String(runId)) return;
+  const hadOpen = document.activeElement === $('examJobOpen');
+  if (follow.offer && follow.mine) markJobSeen(follow.id);
+  follow.offer = false;
+  follow.message = JOB_TEXT.runDeleted;
+  paintJobPanel(follow);
+  if (announce) announceJob(follow, follow.message);
+  // Open, which had focus, is gone.
+  if (hadOpen) $('examJobTitle').focus({ preventScroll: true });
+}
+
+// Where the keyboard goes when the panel it was in goes: the button that
+// started the job if it can take it, else the board, else the setup.
+function focusPastJobPanel(origin = null) {
+  const usable = element => element && !element.disabled && !element.closest('[inert], [hidden], .d-none, details:not([open])');
+  const fallback = $('etResults').classList.contains('d-none') ? $('examSetupSummary') : $('examScheduleHeading');
+  const target = usable(origin) ? origin : fallback;
+  if (!target) return;
+  if (!target.matches('button, a, input, select, textarea, summary')) target.setAttribute('tabindex', '-1');
+  // Scrolled to: the button that started it is usually far below the panel.
+  target.focus();
+}
+
+$('examJobClose')?.addEventListener('click', () => {
+  const follow = _jobFollow;
+  if (!follow?.revealed) return;
+  if (follow.offer && follow.mine) markJobSeen(follow.id);
+  const origin = follow.origin;
+  hideJobPanel(follow);
+  focusPastJobPanel(origin);
+  offerPendingOwnEnding();
+});
+
+// A job's outcome, or a refusal because one is running, is news, not an error,
+// and it is said once, where the registrar is looking.
+function reportJobOutcome(err) {
+  const status = $('etStatus');
+  const quiet = () => {
+    status.textContent = '';
+    status.className = 'alert mt-2 py-2 mb-0 d-none';
+  };
+  // The registrar's own job: the panel shows how it ended, and says it.
+  if (err.examJobKind) {
+    quiet();
+    return;
+  }
+  // A Save the busy solver turned away: the board's check line says it.
+  if (err.examRequestKind === 'solver-busy') {
+    status.textContent = err.message;
+    status.className = 'alert alert-info mt-2 py-2 mb-0';
+    return;
+  }
+  // Refused because a job holds the lane: the panel says so when it could
+  // show that job. When the job had already ended, nothing waits any more.
+  const refusal = err.examRefusal;
+  if (refusal?.shown === 'shown') {
+    quiet();
+    return;
+  }
+  showJobNotice(refusal?.shown === 'ended' ? JOB_TEXT.refusedEnded(refusal.action) : err.message);
+}
+
+// Once a timetable is loaded, the builder's status line is inside a closed
+// section: news for the registrar goes to the board, and is said aloud there.
+function showJobNotice(message) {
+  const status = $('etStatus');
+  // Before a timetable is loaded, or with the setup section opened, the
+  // status line is seen - and heard - where the registrar is.
+  if ($('etResults').classList.contains('d-none') || $('examSetupDetails').open) {
+    status.textContent = message;
+    status.className = 'alert alert-info mt-2 py-2 mb-0';
+    status.dataset.jobNotice = message;
+    return;
+  }
+  status.textContent = '';
+  status.className = 'alert mt-2 py-2 mb-0 d-none';
+  const notice = $('examEditorNotice');
+  notice.textContent = message;
+  notice.hidden = false;
+  $('examJobLive').textContent = message;
+}
+
+function clearJobNotice() {
+  const notice = $('examEditorNotice');
+  if (notice) {
+    notice.hidden = true;
+    notice.textContent = '';
+  }
+  // Said in the status line instead, it goes the same way - and only if the
+  // line still says it.
+  const status = $('etStatus');
+  if (status?.dataset.jobNotice !== undefined) {
+    const stillSaysIt = status.textContent === status.dataset.jobNotice;
+    delete status.dataset.jobNotice;
+    // Written over since by something else: that is not the notice's to clear.
+    if (stillSaysIt) {
+      status.textContent = '';
+      status.className = 'alert mt-2 py-2 mb-0 d-none';
+    }
+  }
+}
+
 async function runLoadedRunAction(mode, button, busyText, successText) {
   if (_builderBusy) return;
   clearRepairReport();
+  clearJobNotice();
   let payload = collectLoadedRunPayload(mode);
   if (!payload) return;
   cancelDraftChecks();
+  let focusAfterAction = false;
   button.disabled = true;
   setBuilderBusy(true);
   $('etStatus').textContent = busyText;
@@ -1031,19 +2458,17 @@ async function runLoadedRunAction(mode, button, busyText, successText) {
       payload.expected_input_fingerprint = _currentResultData.input_fingerprint;
     }
     payload.editor_revision = _editorRevision;
-    const res = await fetch('/ops/exam-timetable/build/', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCsrfToken() || CSRF },
-      body: JSON.stringify(payload),
-    });
-    const data = await readExamResponse(res);
+    const { res, data, revealed, refusal } = await submitExamAction(payload, mode, button);
+    // The panel moved the view to the top of the page: bring the registrar back
+    // to the board, where the result - or the report of why nothing moved - is.
+    focusAfterAction = Boolean(revealed);
     if (!res.ok || !data.ok) {
       if (data.error_code === 'inputs_changed') {
         _evaluatedEditorSignature = null;
         _checkState = 'error';
         _checkError = data.error;
       }
-      throw examResponseError(data);
+      throw Object.assign(examResponseError(data), { examRefusal: refusal });
     }
     clearExamRequestError('save-optimize');
     clearExamCourseSourceError();
@@ -1068,12 +2493,27 @@ async function runLoadedRunAction(mode, button, busyText, successText) {
     if (data.minimum_change) showRepairReport(data.minimum_change);
     loadHistory();
   } catch (err) {
-    $('etStatus').textContent = T.error + ': ' + showExamRequestError(err, 'save-optimize');
-    $('etStatus').className = 'alert alert-danger mt-2 py-2 mb-0';
+    if (err.examJobKind || err.examInfo) reportJobOutcome(err);
+    else {
+      $('etStatus').textContent = T.error + ': ' + showExamRequestError(err, 'save-optimize');
+      $('etStatus').className = 'alert alert-danger mt-2 py-2 mb-0';
+    }
   } finally {
     button.disabled = false;
     setBuilderBusy(false);
     updateLoadedRunActions();
+    // The panel moved the view away, so the result is brought back; otherwise
+    // the viewport stays, and focus never stays on the body after the button
+    // that had it went inert.
+    if (focusAfterAction) focusExamEditor();
+    else if (document.activeElement === document.body) {
+      // Save disables itself once nothing is unsaved; the board keeps focus then.
+      if (!button.disabled) button.focus({ preventScroll: true });
+      else {
+        $('examEditHeading').setAttribute('tabindex', '-1');
+        $('examEditHeading').focus({ preventScroll: true });
+      }
+    }
   }
 }
 
@@ -1118,6 +2558,9 @@ let _repairReportRevision = null;  // the board revision the repair report descr
 let _renderingResults = false;
 let _checkState = 'checked';
 let _checkError = '';
+// A 'waiting' Check from live update tries again by itself; one the registrar
+// asked for (Check, Save) waits for them to ask again.
+let _checkWaitLive = false;
 let _checkRequestError = null;
 let _sourceCoursesRejected = false;
 let _sourceRebuildRequired = false;
@@ -1467,6 +2910,9 @@ function setBuilderBusy(busy) {
   // A loaded result is rendered while busy; its disabled buttons must be
   // released when the request finishes, even if no editor value changed.
   updateLoadedRunActions();
+  // A Check left waiting for the solver lost its retry to the busy builder;
+  // with the builder free, it is owed now.
+  if (!busy && _checkState === 'waiting' && _checkWaitLive) scheduleDraftCheck({ delay: 0 });
 }
 
 function updateBuildSummary() {
@@ -1507,13 +2953,15 @@ function updateLoadedRunActions() {
   );
   const saveBtn = $('saveLoadedBtn');
   const optimizeBtn = $('optimizeLoadedBtn');
+  // The panel says whose job it is and that these wait for it.
+  const laneHeld = jobLaneHeldByOther();
   if (saveBtn) {
     saveBtn.classList.toggle('d-none', !hasLoadedSchedule);
-    saveBtn.disabled = _builderBusy || needsExamSourceRebuild() || !hasLoadedSchedule || !_scheduleHasDraftMoves;
+    saveBtn.disabled = _builderBusy || laneHeld || needsExamSourceRebuild() || !hasLoadedSchedule || !_scheduleHasDraftMoves;
   }
   if (optimizeBtn) {
     optimizeBtn.classList.toggle('d-none', !hasLoadedSchedule);
-    optimizeBtn.disabled = _builderBusy || needsExamSourceRebuild() || !hasLoadedSchedule;
+    optimizeBtn.disabled = _builderBusy || laneHeld || needsExamSourceRebuild() || !hasLoadedSchedule;
   }
   // Once the board is edited again, the last report describes a board that
   // no longer exists. Unsaved drags alone are not that: a repair that moved
@@ -1522,14 +2970,14 @@ function updateLoadedRunActions() {
   const minChangeBtn = $('minChangeBtn');
   if (minChangeBtn) {
     minChangeBtn.classList.toggle('d-none', !hasLoadedSchedule);
-    minChangeBtn.disabled = _builderBusy || needsExamSourceRebuild() || !hasLoadedSchedule;
+    minChangeBtn.disabled = _builderBusy || laneHeld || needsExamSourceRebuild() || !hasLoadedSchedule;
   }
   $('buildBtn').classList.toggle('d-none', hasLoadedSchedule);
   if (hasLoadedSchedule) {
     $('buildBtn').disabled = true;
     $('buildBtn').title = T.loadedRunAction;
   } else {
-    $('buildBtn').disabled = _builderBusy || !_coursesLoaded || !getCheckedValues('courseList').length;
+    $('buildBtn').disabled = _builderBusy || laneHeld || !_coursesLoaded || !getCheckedValues('courseList').length;
     $('buildBtn').title = '';
   }
   updateExportState();
@@ -1538,6 +2986,7 @@ function updateLoadedRunActions() {
 
 function enterFreshBuildMode() {
   clearExamCourseSourceError();
+  clearJobNotice();
   cancelDraftChecks();
   _currentResultData = null;
   _loadedRunForRebuild = false;
@@ -1861,10 +3310,13 @@ function updateEditingStatus() {
     stale: IS_AR ? 'تغييرات لم يتم التحقق منها' : 'Changes not checked',
     loading: IS_AR ? 'جارٍ التحقق…' : 'Checking…',
     error: IS_AR ? 'تعذر التحقق — أعد المحاولة' : 'Check failed — retry',
+    waiting: IS_AR ? 'في انتظار الخادم' : 'Waiting for the server',
     review: IS_AR ? 'بيانات المصدر تحتاج مراجعة' : 'Source data needs review',
     source: IS_AR ? 'مراجعة مصدر المقررات مطلوبة' : 'Course source review required',
   };
-  if ($('examCheckStatus')) $('examCheckStatus').textContent = hasSchedule ? (labels[state] || labels.stale) + dirtyLabel : '';
+  const checkStatus = $('examCheckStatus');
+  const checkText = hasSchedule ? (labels[state] || labels.stale) + dirtyLabel : '';
+  if (checkStatus && checkStatus.textContent !== checkText) checkStatus.textContent = checkText;
   $('etResults').dataset.calculationState = hasSchedule ? state : '';
   for (const id of ['examSummaryCards', 'kStatusBanner', 'kpiDrill']) {
     $(id)?.classList.toggle('et-calculation-stale', hasSchedule && !fresh);
@@ -1872,11 +3324,12 @@ function updateEditingStatus() {
   const banner = $('draftImpactBanner');
   if (banner) {
     banner.classList.toggle('d-none', !hasSchedule || sourceRebuild || (fresh && state !== 'review'));
-    banner.textContent = state === 'review'
+    const bannerText = state === 'review'
       ? (IS_AR ? 'انقر «تحقق من التغييرات» لمراجعة بيانات المصدر المحدثة قبل الحفظ.' : 'Click Check changes to review the updated source data before saving.')
-      : state === 'error' && _checkError ? _checkError : (IS_AR
+      : (state === 'error' || state === 'waiting') && _checkError ? _checkError : (IS_AR
       ? 'الأرقام والتفاصيل المعروضة تخص آخر تحقق. تحقق من التغييرات لتحديثها؛ لن يتم نقل أي اختبار.'
       : 'Cards and details show the last checked arrangement. Check changes to update them; no exam will be moved.');
+    if (banner.textContent !== bannerText) banner.textContent = bannerText;
   }
   if ($('examLiveMode')) $('examLiveMode').textContent = $('examLiveUpdate')?.checked ? (IS_AR ? 'التحديث المباشر: مفعّل' : 'Live update: on') : (IS_AR ? 'التحديث المباشر: متوقف' : 'Live update: off');
   if ($('examRunSummary') && _currentResultData) {
@@ -1907,7 +3360,7 @@ function cancelDraftChecks() {
   _draftImpactSeq++;
 }
 
-function scheduleDraftCheck() {
+function scheduleDraftCheck({ delay = LIVE_UPDATE_DELAY } = {}) {
   clearTimeout(_checkTimer);
   _checkTimer = null;
   if (!_currentResultData || needsExamSourceRebuild() || _builderBusy || !_scheduleHasDraftMoves
@@ -1915,7 +3368,7 @@ function scheduleDraftCheck() {
   _checkTimer = setTimeout(() => {
     _checkTimer = null;
     refreshDraftImpact();
-  }, LIVE_UPDATE_DELAY);
+  }, delay);
 }
 
 function updateCurrentScheduleMove(courseCode, day, period) {
@@ -1954,11 +3407,15 @@ async function refreshDraftImpact({ force = false, review = false } = {}) {
   const signature = editorSignature();
   const seq = ++_draftImpactSeq;
   payload.editor_revision = revision;
-  const loadingAnchor = captureExamWorkspaceAnchor();
-  _checkState = 'loading';
-  _checkError = '';
-  updateEditingStatus();
-  restoreExamWorkspaceAnchor(loadingAnchor);
+  // A live retry while the solver is busy keeps saying it is waiting: it does
+  // not flash "Checking…" and back on every attempt.
+  if (force || _checkState !== 'waiting') {
+    const loadingAnchor = captureExamWorkspaceAnchor();
+    _checkState = 'loading';
+    _checkError = '';
+    updateEditingStatus();
+    restoreExamWorkspaceAnchor(loadingAnchor);
+  }
   const task = (async () => {
     try {
       const res = await fetch('/ops/exam-timetable/draft-impact/', {
@@ -1968,7 +3425,12 @@ async function refreshDraftImpact({ force = false, review = false } = {}) {
       });
       const data = await readExamResponse(res);
       if (seq !== _draftImpactSeq || runId !== _currentRunId || revision !== _editorRevision || signature !== editorSignature()) return false;
-      if (!res.ok || !data.ok) throw examResponseError(data);
+      if (!res.ok || !data.ok) {
+        const error = examResponseError(data);
+        const retryAfter = Number(res.headers?.get?.('Retry-After'));
+        if (retryAfter > 0) error.examRetryAfter = retryAfter * 1000;
+        throw error;
+      }
       if (data.editor_revision !== revision) throw new Error(IS_AR ? 'استجابة تحقق قديمة. أعد التحقق.' : 'The check response does not match this edit. Check again.');
       const checkedPlacements = new Map((data.schedule || []).map(entry => [entry.course_identity || entry.course_code, entry]));
       if (checkedPlacements.size !== payload.base_schedule.length || payload.base_schedule.some(entry => {
@@ -1989,10 +3451,28 @@ async function refreshDraftImpact({ force = false, review = false } = {}) {
     } catch (err) {
       if (seq === _draftImpactSeq && runId === _currentRunId && revision === _editorRevision) {
         const workspaceAnchor = captureExamWorkspaceAnchor();
-        _checkState = 'error';
         _checkRequestError = err;
-        _checkError = showExamRequestError(err, 'check');
-        updateLoadedRunActions();
+        let changed = true;
+        if (err.examRequestKind === 'solver-busy') {
+          // Not a failure: the solver is someone else's for now. Say so where
+          // the board is, show the job holding it, and check again after.
+          // Live, it tries again by itself; Check and Save were asked for, so
+          // the registrar is told to ask again - each in its own words.
+          let waitText = JOB_TEXT.checkWaitLive(err.examHolder);
+          if (force) waitText = review ? JOB_TEXT.checkWaitManual(err.examHolder) : JOB_TEXT.saveWait(err.examHolder);
+          changed = _checkState !== 'waiting' || _checkError !== waitText;
+          _checkState = 'waiting';
+          _checkError = waitText;
+          _checkWaitLive = !force;
+          if (!force) scheduleDraftCheck({ delay: err.examRetryAfter || JOB_POLL.checkRetry });
+          // An ended panel still on screen is not the job holding the solver.
+          if (err.examHolder?.kind === 'exam_job' && (!_jobFollow || _jobFollow.outcome)) resumeExamJob();
+        } else {
+          _checkState = 'error';
+          _checkError = showExamRequestError(err, 'check');
+        }
+        // Unchanged, repainting would only make the board's live lines speak again.
+        if (changed) updateLoadedRunActions();
         restoreExamWorkspaceAnchor(workspaceAnchor);
       }
       return false;
@@ -2525,6 +4005,9 @@ function buildProgramCoursesMap(bucketsSummary) {
 
 /* ── Render Results ── */
 function renderResults(data, { evaluation = false, preserveViewport = true } = {}) {
+  // A new board: a notice about the one before no longer applies. A Check
+  // re-renders the same board, and leaves it.
+  if (!evaluation) clearJobNotice();
   const workspaceAnchor = evaluation && preserveViewport ? captureExamWorkspaceAnchor() : null;
   const openDrillType = !$('kpiDrill').classList.contains('d-none') ? $('kpiDrill').dataset.type : null;
   const matrixOpen = !$('conflictMatrix').classList.contains('d-none');
@@ -3726,10 +5209,12 @@ async function loadHistory(page) {
     const totalPages = data.total_pages ?? 1;
     const total = data.total ?? 0;
     _historyPage = data.page ?? 1;
+    const kept = captureHistoryFocus();
 
     if (!runs.length) {
       $('historyList').innerHTML = `<small class="text-secondary">${T.noHistory}</small>`;
       $('historyPagination').classList.add('d-none');
+      restoreHistoryFocus(kept);
       return;
     }
 
@@ -3772,6 +5257,7 @@ async function loadHistory(page) {
     } else {
       $('historyPagination').classList.add('d-none');
     }
+    restoreHistoryFocus(kept);
   } catch (err) {
     if (request === _historyRequest) showExamRequestError(err, 'history');
   } finally {
@@ -3779,9 +5265,52 @@ async function loadHistory(page) {
   }
 }
 
+// Reloaded while someone reads it - a job ending in the background, or their
+// own page change - the list and its pager keep the keyboard's place: the same
+// control, or its nearest stand-in, and never the page body.
+function captureHistoryFocus() {
+  const active = document.activeElement;
+  if (!active || active === document.body) return null;
+  if ($('historyList').contains(active)) {
+    const rows = Array.from($('historyList').querySelectorAll('.et-history-item'));
+    const row = active.closest('.et-history-item');
+    return {
+      region: 'list',
+      id: row?.dataset.id,
+      index: Math.max(0, rows.indexOf(row)),
+      kind: ['et-run-info', 'et-copy-btn', 'et-del-btn'].find(name => active.classList.contains(name)),
+    };
+  }
+  if ($('historyPages').contains(active)) {
+    return { region: 'pages', nav: active.dataset.historyNav || '', page: active.dataset.historyPage };
+  }
+  return null;
+}
+
+function restoreHistoryFocus(kept) {
+  // Only focus that the re-render dropped - or left on a control now hidden -
+  // is put back; never taken from elsewhere.
+  const active = document.activeElement;
+  if (!kept || (active && active !== document.body && !active.closest('.d-none, [hidden]'))) return;
+  let target = null;
+  if (kept.region === 'list') {
+    const rows = Array.from($('historyList').querySelectorAll('.et-history-item'));
+    const row = rows.find(item => item.dataset.id === String(kept.id)) || rows[Math.min(kept.index, rows.length - 1)];
+    target = row?.querySelector(`.${kept.kind || 'et-run-info'}`) || row?.querySelector('.et-run-info');
+  } else {
+    const buttons = Array.from($('historyPages').querySelectorAll('[data-history-page]'));
+    target = buttons.find(button => (kept.nav
+      ? button.dataset.historyNav === kept.nav
+      : !button.dataset.historyNav && button.dataset.historyPage === kept.page));
+    if (!target || target.disabled) target = buttons.find(button => button.getAttribute('aria-current') === 'page');
+  }
+  if (!target || target.disabled || target.closest('.d-none, [hidden]')) target = $('examHistorySummary');
+  target?.focus({ preventScroll: true });
+}
+
 function renderHistoryPagination(pages) {
   const wrap = $('historyPages');
-  let html = `<button type="button" class="pg-btn" data-history-page="${_historyPage-1}" aria-label="${IS_AR ? 'الصفحة السابقة' : 'Previous page'}" ${_historyPage<=1?'disabled':''}>‹</button>`;
+  let html = `<button type="button" class="pg-btn" data-history-page="${_historyPage-1}" data-history-nav="prev" aria-label="${IS_AR ? 'الصفحة السابقة' : 'Previous page'}" ${_historyPage<=1?'disabled':''}>‹</button>`;
   for (let i = 1; i <= pages; i++) {
     if (pages > 7 && i > 2 && i < pages - 1 && Math.abs(i - _historyPage) > 1) {
       if (i === 3 || i === pages - 2) html += '<span class="et-pagination-ellipsis">…</span>';
@@ -3789,7 +5318,7 @@ function renderHistoryPagination(pages) {
     }
     html += `<button type="button" class="pg-btn ${i===_historyPage?'active':''}" data-history-page="${i}" aria-label="${IS_AR ? 'صفحة' : 'Page'} ${i}"${i === _historyPage ? ' aria-current="page"' : ''}>${i}</button>`;
   }
-  html += `<button type="button" class="pg-btn" data-history-page="${_historyPage+1}" aria-label="${IS_AR ? 'الصفحة التالية' : 'Next page'}" ${_historyPage>=pages?'disabled':''}>›</button>`;
+  html += `<button type="button" class="pg-btn" data-history-page="${_historyPage+1}" data-history-nav="next" aria-label="${IS_AR ? 'الصفحة التالية' : 'Next page'}" ${_historyPage>=pages?'disabled':''}>›</button>`;
   wrap.innerHTML = html;
 }
 
@@ -3821,6 +5350,7 @@ async function deleteRun(runId, label) {
     clearExamRequestError('delete');
 
     notify.success(T.deleted);
+    jobRunGone(runId);
 
     // If the deleted run was the currently loaded one, hide the results panel.
     // We hide (not clear innerHTML) so the DOM elements remain for the next build.
@@ -3870,6 +5400,10 @@ async function copyRun(runId, label, trigger) {
     && context.signature === editorSignature() && context.revision === _editorRevision;
   const changedMessage = IS_AR ? 'تغيّر الجدول أثناء تجهيز النسخة. أعد المحاولة.' : 'The timetable changed while preparing the copy. Try again.';
   let navigateToResult = false;
+  // Where the keyboard goes back to if the list is re-rendered meanwhile - a
+  // job ending in the background reloads it - and the button is gone.
+  const rows = Array.from($('historyList').querySelectorAll('.et-history-item'));
+  const kept = { region: 'list', id: String(runId), index: Math.max(0, rows.indexOf(trigger?.closest('.et-history-item'))), kind: 'et-copy-btn' };
   setBuilderBusy(true);
   try {
     const name = await dlg.prompt({
@@ -3909,6 +5443,7 @@ async function copyRun(runId, label, trigger) {
       _scheduleHasDraftMoves = false;
       updatePinBar();
       navigateToResult = true;
+      settleJobPanel();
     }
     $('etStatus').textContent = message;
     $('etStatus').className = 'alert alert-success mt-2 py-2 mb-0';
@@ -3920,7 +5455,8 @@ async function copyRun(runId, label, trigger) {
   } finally {
     setBuilderBusy(false);
     if (navigateToResult) focusExamEditor();
-    else (trigger?.isConnected ? trigger : $('examHistorySummary')).focus({ preventScroll: true });
+    else if (trigger?.isConnected) trigger.focus({ preventScroll: true });
+    else restoreHistoryFocus(kept);
     // A queued live check may have reached its timer while the dialog was open.
     scheduleDraftCheck();
   }
@@ -3932,15 +5468,18 @@ window.addEventListener('beforeunload', event => {
   event.returnValue = '';
 });
 
+// Resolves to 'loaded', 'gone' (deleted meanwhile), 'failed', or nothing when
+// it did not try (busy, or the registrar kept their draft).
 async function loadRun(runId) {
-  if (_builderBusy) return;
-  if (!await confirmDiscardDraft() || _builderBusy) return;
+  if (_builderBusy) return undefined;
+  if (!await confirmDiscardDraft() || _builderBusy) return undefined;
   cancelDraftChecks();
   setBuilderBusy(true);
   $('etStatus').textContent = T.loadingRun;
   $('etStatus').className = 'alert alert-info mt-2 py-2 mb-0';
 
   let navigateToResult = false;
+  let outcome = 'failed';
   try {
     const res = await fetch(`/ops/exam-timetable/${runId}/`, {
       headers: { 'X-CSRFToken': getCsrfToken() || CSRF },
@@ -3963,17 +5502,28 @@ async function loadRun(runId) {
     $('historyList').querySelectorAll('.et-history-item').forEach(el => {
       el.classList.toggle('active', el.dataset.id === String(runId));
     });
+    outcome = 'loaded';
+    settleJobPanel();
   } catch (err) {
+    if (err.examRunGone) {
+      outcome = 'gone';
+      // However it was asked for - Open, or its row - a panel naming it says
+      // so, and the list stops showing it.
+      jobRunGone(runId, { announce: false });
+      loadHistory();
+    }
     $('etStatus').textContent = T.error + ': ' + showExamRequestError(err, 'load');
     $('etStatus').className = 'alert alert-danger mt-2 py-2 mb-0';
   } finally {
     setBuilderBusy(false);
     if (navigateToResult) focusExamEditor();
   }
+  return outcome;
 }
 
 // Load history on page load
 loadHistory();
+resumeExamJob();
 
 /* ── Export Excel click feedback ── */
 $('exportXlsx')?.addEventListener('click', function(event) {
@@ -4065,6 +5615,7 @@ $('exportXlsx')?.addEventListener('click', function(event) {
       panel.removeAttribute('aria-labelledby');
       background.forEach(({ element, inert }) => { element.inert = inert; });
       background = [];
+      pageExposedAgain();
       document.body.style.overflow = originalOverflow;
       document.removeEventListener('keydown', onKeyDown);
       if (originalParent) {

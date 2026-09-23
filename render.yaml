@@ -15,6 +15,9 @@ services:
     # OTP request limits are durable database counters shared across processes.
     # gthread still allows concurrent requests. Gunicorn 25.1's control thread can deadlock a gthread
     # worker during fork (upstream #3509), so keep its control socket disabled.
+    # Do not add --max-requests: exam timetable jobs run on non-daemon threads in
+    # this worker (ADR-007), so a recycled worker lingers until its job ends while
+    # the arbiter waits, and no worker serves for up to --timeout.
     startCommand: gunicorn config.wsgi --bind 0.0.0.0:$PORT --workers 1 --worker-class gthread --threads 4 --timeout 120 --graceful-timeout 150 --no-control-socket
     envVars:
       - key: DJANGO_SECRET_KEY

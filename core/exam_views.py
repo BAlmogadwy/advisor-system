@@ -66,7 +66,16 @@ from core.services.exam_timetable import (
     schedule,
     validate_exam_pins,
 )
-from core.services.job_runtime import SolverBusy, solver_slot
+from core.services.job_runtime import (
+    HOLDER_CHECK,
+    HOLDER_EXAM_JOB,
+    HOLDER_EXAM_SYNC,
+    HOLDER_MULTISTART,
+    HOLDER_PLANNER,
+    SolverBusy,
+    solver_holder,
+    solver_slot,
+)
 from core.services.rbac import ROLE_EXAM_COMMITTEE, ROLE_SUPER_ADMIN, get_user_role
 from core.sidebar_context import get_sidebar_context
 
@@ -80,9 +89,18 @@ def _require_super_admin(request: HttpRequest) -> JsonResponse | None:
     return None
 
 
+def _exam_role(request: HttpRequest) -> str:
+    """The caller's role, looked up once per request."""
+    role = getattr(request, "_exam_role", None)
+    if role is None:
+        role = get_user_role(request.user)
+        request._exam_role = role  # type: ignore[attr-defined]
+    return role
+
+
 def _require_exam_access(request: HttpRequest) -> JsonResponse | None:
     """Exam runs are shared; access depends on role, never their creator."""
-    if get_user_role(request.user) not in {ROLE_SUPER_ADMIN, ROLE_EXAM_COMMITTEE}:
+    if _exam_role(request) not in {ROLE_SUPER_ADMIN, ROLE_EXAM_COMMITTEE}:
         return JsonResponse({"error": "Exam Committee or SUPER_ADMIN access required"}, status=403)
     return None
 
@@ -270,14 +288,24 @@ def exam_timetable_build_view(request: HttpRequest) -> JsonResponse:
         return JsonResponse({"ok": False, "error": "Expected a JSON object."}, status=400)
     # A job's seed is drawn when it is submitted; the browser never chooses one.
     payload.pop("_seed", None)
-    if exam_jobs.jobs_enabled() and not exam_jobs.is_multistart(payload):
+    # Only a page that can follow a job asks for one. A tab still running the
+    # previous release's script, or any other client, has the action run inside
+    # its request as before - but, with jobs on, it takes turns: 409 while a job
+    # holds the lane, 503 while anything holds the solver.
+    if (
+        exam_jobs.jobs_enabled()
+        and request.headers.get("X-Exam-Jobs") == "1"
+        and not exam_jobs.is_multistart(payload)
+    ):
         return _submit_exam_job(request, payload)
     return _run_exam_action_now(request, payload)
 
 
 @throttle(max_calls=_JOB_SUBMIT_MAX_CALLS, window_seconds=120)
 def _submit_exam_job(request: HttpRequest, payload: dict) -> JsonResponse:
-    status, body = exam_jobs.submit(payload, user=request.user)
+    status, body = exam_jobs.submit(
+        payload, user=request.user, is_superadmin=_is_superadmin(request)
+    )
     return JsonResponse(body, status=status)
 
 
@@ -286,28 +314,36 @@ def _run_exam_action_now(request: HttpRequest, payload: dict) -> JsonResponse:
     if not exam_jobs.jobs_enabled():
         status, body = execute_exam_action(payload)
         return JsonResponse(body, status=status)
-    # With jobs on, only multistart runs here. It still takes turns with them:
-    # it may not start while a job holds the lane, nor share the solver.
+    # With jobs on, what runs here - multistart, or a client that did not ask
+    # for a job - takes turns with them: it may not start while a job holds the
+    # lane, nor share the solver.
     if exam_jobs.lane_busy():
         return JsonResponse(exam_jobs.busy_body(request.user), status=409)
+    holder = HOLDER_MULTISTART if exam_jobs.is_multistart(payload) else HOLDER_EXAM_SYNC
     try:
-        with solver_slot(wait=False):
+        with solver_slot(holder=holder, wait=False):
             status, body = execute_exam_action(payload)
-    except SolverBusy:
-        return _solver_busy_response()
+    except SolverBusy as busy:
+        return _solver_busy_response(busy.holder)
     return JsonResponse(body, status=status)
 
 
-def _solver_busy_response() -> JsonResponse:
+def _solver_busy_response(holder: dict | None) -> JsonResponse:
     response = JsonResponse(
         {
             "ok": False,
             "error_code": "solver_busy",
-            "error": "Another timetable action is using the solver. Try again in a moment.",
+            "error": "Another timetable action is using the solver. Try again when it finishes.",
+            # What it waits for: a planner run takes minutes, a Check seconds.
+            "holder": holder,
         },
         status=503,
     )
-    response["Retry-After"] = "5"
+    # A planner run holds it for minutes, an exam job one or two - and the page
+    # following that job checks again the moment it ends - a Check seconds.
+    # Asking more often would only log a refusal each time.
+    kind = (holder or {}).get("kind")
+    response["Retry-After"] = {HOLDER_PLANNER: "30", HOLDER_EXAM_JOB: "15"}.get(kind, "5")
     return response
 
 
@@ -1005,8 +1041,8 @@ def _minimum_change_schedule(
     )
 
 
-def _check_under_solver_slot(context: dict) -> dict | None:
-    """Run a Check's evaluation, or return None if the solver is busy.
+def _check_under_solver_slot(context: dict) -> dict:
+    """Run a Check's evaluation; raises SolverBusy if the solver is taken.
 
     With background jobs on, a Check waits for no one: it holds one of four
     request threads, and a job can hold the solver for a minute. Off, it runs
@@ -1014,11 +1050,8 @@ def _check_under_solver_slot(context: dict) -> dict | None:
     """
     if not exam_jobs.jobs_enabled():
         return evaluate_exam_schedule(**context)
-    try:
-        with solver_slot(wait=False):
-            return evaluate_exam_schedule(**context)
-    except SolverBusy:
-        return None
+    with solver_slot(holder=HOLDER_CHECK, wait=False):
+        return evaluate_exam_schedule(**context)
 
 
 @require_POST
@@ -1033,13 +1066,19 @@ def exam_timetable_draft_impact_view(request: HttpRequest) -> JsonResponse:
         return JsonResponse({"ok": False, "error": "Invalid JSON"}, status=400)
     if not isinstance(payload, dict):
         return JsonResponse({"ok": False, "error": "Expected a JSON object."}, status=400)
+    # Busy is answered before the saved board (about 1.4 MB) is read and checked:
+    # a refused Check must not take CPU from the job it waits for. The slot
+    # itself, taken below, stays the real test - this one can race.
+    if exam_jobs.jobs_enabled() and (busy_with := solver_holder()) is not None:
+        return _solver_busy_response(busy_with)
     try:
         schedule_raw = payload.get("base_schedule", payload.get("schedule"))
         context = _loaded_request_context(payload, schedule_raw)
         source_fingerprint = _split_provenance(context)["source_input_fingerprint"]
-        result = _check_under_solver_slot(context)
-        if result is None:
-            return _solver_busy_response()
+        try:
+            result = _check_under_solver_slot(context)
+        except SolverBusy as busy:
+            return _solver_busy_response(busy.holder)
         return JsonResponse(
             {
                 "ok": True,
@@ -1062,6 +1101,19 @@ def _job_response(status: int, body: dict) -> JsonResponse:
     return JsonResponse(body, status=status)
 
 
+def _is_superadmin(request: HttpRequest) -> bool:
+    return _exam_role(request) == ROLE_SUPER_ADMIN
+
+
+@require_POST
+def exam_timetable_job_seen_view(request: HttpRequest, job_id) -> JsonResponse:
+    """The submitter opened or closed an offered result; stop offering it."""
+    deny = _require_exam_access(request)
+    if deny:
+        return deny
+    return _job_response(*exam_jobs.seen(job_id, user=request.user))
+
+
 @require_GET
 def exam_timetable_job_active_view(request: HttpRequest) -> JsonResponse:
     """The job a page opening now should show: the one running, or the caller's
@@ -1069,7 +1121,12 @@ def exam_timetable_job_active_view(request: HttpRequest) -> JsonResponse:
     deny = _require_exam_access(request)
     if deny:
         return deny
-    return JsonResponse(exam_jobs.active(user=request.user))
+    # Only ever compared with the caller's own latest job id: any other value
+    # simply matches nothing.
+    owed = request.GET.get("owed") or None
+    return JsonResponse(
+        exam_jobs.active(user=request.user, is_superadmin=_is_superadmin(request), owed=owed)
+    )
 
 
 @require_GET
@@ -1078,7 +1135,9 @@ def exam_timetable_job_view(request: HttpRequest, job_id) -> JsonResponse:
     deny = _require_exam_access(request)
     if deny:
         return deny
-    return _job_response(*exam_jobs.poll(job_id, user=request.user))
+    return _job_response(
+        *exam_jobs.poll(job_id, user=request.user, is_superadmin=_is_superadmin(request))
+    )
 
 
 @require_GET
@@ -1098,10 +1157,11 @@ def exam_timetable_job_cancel_view(request: HttpRequest, job_id) -> JsonResponse
     status, body = exam_jobs.cancel(
         job_id,
         user=request.user,
-        is_superadmin=get_user_role(request.user) == ROLE_SUPER_ADMIN,
+        is_superadmin=_is_superadmin(request),
     )
-    if status == 202 and not body["job"]["mine"]:
-        # Only a SUPER_ADMIN gets here; stopping someone else's work is recorded.
+    if status == 202 and body.get("stopped_here") and not body["job"]["mine"]:
+        # Only a SUPER_ADMIN gets here; stopping someone else's work is recorded
+        # - once, by whoever actually stopped it.
         log_audit_event(
             request,
             action="exam_timetable.cancel_others_job",
@@ -1155,7 +1215,10 @@ def exam_timetable_detail_view(request: HttpRequest, run_id: int) -> JsonRespons
     try:
         run = ExamTimetableRun.objects.get(id=run_id)
     except ExamTimetableRun.DoesNotExist:
-        return JsonResponse({"ok": False, "error": "Run not found"}, status=404)
+        # Coded, so a page offering this run can say it was deleted.
+        return JsonResponse(
+            {"ok": False, "code": "run_not_found", "error": "Run not found"}, status=404
+        )
 
     # Single read path: the normaliser handles legacy / corrupt /
     # missing-key payloads gracefully (returns ``status="unrenderable"``
