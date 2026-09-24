@@ -1,6 +1,11 @@
 import pytest
 
 from core.services import llm_backend, rbac
+from tests import browser_isolation
+
+# Every browser context a test opens stays on the test server: no page load
+# or "networkidle" waits on the internet (see tests/browser_isolation.py).
+browser_isolation.install()
 
 
 @pytest.fixture(autouse=True)
