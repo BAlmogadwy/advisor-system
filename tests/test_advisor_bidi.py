@@ -149,29 +149,25 @@ VISUAL_ORDER_JS = """
       range.setEnd(node, i + 1);
       const box = range.getBoundingClientRect();
       if (!box.width && !box.height) continue;   // collapsed whitespace
-      glyphs.push({ ch: node.data[i], x: box.left, top: box.top, bottom: box.bottom });
+      glyphs.push({ ch: node.data[i], x: box.left, mid: (box.top + box.bottom) / 2, h: box.bottom - box.top });
     }
   }
   if (!glyphs.length) return '';
-  /* Group into lines by OVERLAP, not by rounding the top into fixed bands.
-     Arabic and Latin glyphs on one line have different box tops — the Arabic
-     fallback font sits differently from the Latin one — so a fixed band splits a
-     single line in two whenever those tops straddle a boundary, silently
-     reordering the string every assertion here reads. Two glyphs share a line
-     when their boxes overlap vertically at all. */
-  glyphs.sort((a, b) => a.top - b.top);
+  /* Group into lines by CENTRE, neither by rounding the top into fixed bands
+     nor by any overlap. Arabic and Latin glyphs on one line have different box
+     tops - the Arabic font sits differently from the Latin one - so a fixed band
+     splits a single line in two whenever those tops straddle a boundary. And a
+     font whose boxes are taller than the line pitch overlaps the NEXT line, so
+     grouping by any overlap merges neighbouring lines into one. Two glyphs share
+     a line when their centres are within half a glyph's height. */
+  glyphs.sort((a, b) => a.mid - b.mid);
   const lines = [];
   glyphs.forEach((g) => {
-    const line = lines.find((l) => g.top < l.bottom && g.bottom > l.top);
-    if (line) {
-      line.items.push(g);
-      line.top = Math.min(line.top, g.top);
-      line.bottom = Math.max(line.bottom, g.bottom);
-    } else {
-      lines.push({ top: g.top, bottom: g.bottom, items: [g] });
-    }
+    const line = lines.find((l) => Math.abs(g.mid - l.mid) < Math.min(g.h, l.h) / 2);
+    if (line) line.items.push(g);
+    else lines.push({ mid: g.mid, h: g.h, items: [g] });
   });
-  lines.sort((a, b) => a.top - b.top);
+  lines.sort((a, b) => a.mid - b.mid);
   return lines
     .map((l) => l.items.sort((a, b) => a.x - b.x).map((g) => g.ch).join(''))
     .join('\\n');

@@ -373,12 +373,26 @@ class PortfolioDeadEndTests(PortfolioBrowserTests):
             """
             (() => {
               const realFetch = window.fetch.bind(window);
+              window.__rosterRequests = 0;
               window.fetch = (input, init) => {
                 const url = typeof input === 'string' ? input : input.url;
                 if (url.includes('/report/students-by-advisor/')) {
+                  window.__rosterRequests += 1;
                   return new Promise((resolve, reject) => {
+                    // Every roster request is held; the latest is the one released.
                     window.__releasePortfolioFetch = () => {
-                      realFetch(input, init).then(resolve, reject);
+                      realFetch(input, init).then(response => {
+                        // What the late answer carried: a roster to repopulate
+                        // with, or the test would prove nothing.
+                        response.clone().json().then(data => {
+                          window.__lateAnswer = { ok: response.ok, items: (data.items || []).length };
+                        });
+                        resolve(response);
+                      }, error => {
+                        // A page may abort the stale request instead: correct too.
+                        window.__lateAnswer = { aborted: init?.signal?.aborted === true };
+                        reject(error);
+                      });
                     };
                   });
                 }
@@ -388,11 +402,29 @@ class PortfolioDeadEndTests(PortfolioBrowserTests):
             """
         )
         self._open(page)
-        page.wait_for_function("() => typeof window.__releasePortfolioFetch === 'function'")
+        page.wait_for_function("() => window.__rosterRequests === 1")
+        # A load of the adviser's own whose promise this test holds: it settles
+        # once the page has applied or discarded the late answer, however long
+        # that takes on a busy machine. Released only once ITS request is the one
+        # held, whatever the page awaits before asking.
+        page.evaluate(
+            "() => { window.__lateLoad = Promise.resolve(loadStudents(USER_ADVISOR_ID))"
+            ".finally(() => { window.__lateLoadSettled = true; }); }"
+        )
+        page.wait_for_function("() => window.__rosterRequests === 2")
 
         page.evaluate("clearPortfolio()")
         page.evaluate("window.__releasePortfolioFetch()")
-        page.wait_for_timeout(750)
+        page.wait_for_function("() => window.__lateLoadSettled === true", timeout=20_000)
+        page.wait_for_function("() => window.__lateAnswer !== undefined", timeout=20_000)
+        assert page.evaluate("() => window.__lateAnswer") in (
+            {"ok": True, "items": 3},
+            {"aborted": True},
+        )
+        # Work a load hands off without waiting for it would land after the
+        # promise settles: look once more. A pause AFTER the wait can only miss
+        # such a regression; it never fails a correct page.
+        page.wait_for_timeout(500)
 
         assert page.evaluate("() => currentAdvisorId") == ""
         assert page.evaluate("() => allStudents.length") == 0
