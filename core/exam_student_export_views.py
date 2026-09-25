@@ -28,7 +28,7 @@ from core.services.audit import (
     log_audit_event,
     record_audit_event,
 )
-from core.services.exam_rosters import ExportRefused, build_roster_model
+from core.services.exam_rosters import ExportRefused, ListsTermMismatch, build_roster_model
 from core.services.exam_student_export import (
     ExportOptionsError,
     parse_export_options,
@@ -95,6 +95,15 @@ def _json_body(request: HttpRequest) -> object:
 def _handled(exc: Exception) -> JsonResponse:
     if isinstance(exc, ExamTimetableRun.DoesNotExist):
         return _error(404, "not_found", "Run not found")
+    if isinstance(exc, ListsTermMismatch):
+        # The two terms, so the dialog can say them in the page's language.
+        return _error(
+            exc.status,
+            exc.code,
+            str(exc),
+            live_term=list(exc.live),
+            saved_term=list(exc.saved),
+        )
     if isinstance(exc, ExportRefused):
         return _error(exc.status, exc.code, str(exc))
     if isinstance(exc, ExportOptionsError):
@@ -186,6 +195,7 @@ def exam_student_export_view(request: HttpRequest, run_id: int):
                     500,
                     "export_failed",
                     f"The file could not be made. Nothing was downloaded. Reference {reference}.",
+                    reference=reference,
                 )
     except (
         ExamTimetableRun.DoesNotExist,

@@ -134,6 +134,9 @@ def test_rebuild_required_and_term_mismatch_are_409_with_nothing_audited(run, co
     for view in VIEWS:
         response = _post(committee, run.pk, PAYLOAD, view)
         assert response.status_code == 409 and response.json()["code"] == "lists_term_mismatch"
+        # The terms themselves, so the dialog can say them in Arabic too.
+        assert response.json()["live_term"] == ["1448", "1"]
+        assert response.json()["saved_term"] == ["1448", "2"]
     data["section_enrollment"] = {}
     save_payload(run, data)
     response = _post(committee, run.pk, PAYLOAD)
@@ -257,6 +260,7 @@ def test_a_render_failure_after_the_audit_is_recorded_and_sends_nothing(
     failed = AuditLog.objects.get(action="exam_timetable.export_students_failed")
     reference = "EXR-" + audited.entry_hash[:8].upper()
     assert json.loads(failed.details_json) == {"run_id": run.pk, "reference": reference}
+    assert response.json()["reference"] == reference
 
 
 def test_one_file_per_group_downloads_a_zip(run, committee):
