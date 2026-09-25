@@ -52,6 +52,7 @@ from collections import Counter, defaultdict
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import datetime, time
+from functools import cached_property
 
 from django.utils import timezone
 
@@ -658,6 +659,10 @@ class RosterModel:
     @property
     def exams(self) -> dict[str, ExamFacts]:
         return self.saved.exams
+
+    @cached_property
+    def group_index(self) -> dict[tuple[str, str, str], SectionGroup]:
+        return {(g.exam, g.section_key, g.gender): g for g in self.groups}
 
     @property
     def changed_groups(self) -> list[SectionGroup]:
