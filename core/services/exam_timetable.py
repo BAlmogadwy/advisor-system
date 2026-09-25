@@ -345,17 +345,25 @@ def select_exam_course_enrollments(
     entries: list[dict],
     enrolled: dict[str, set[int]],
     metadata: dict[str, dict],
+    *,
+    missing_out: list[str] | None = None,
 ) -> tuple[dict[str, set[int]], dict[str, dict]]:
     """Resolve saved/selected rows by the shared planner identity, never by suffix.
 
     Display numbers can change when the selected population changes. Even a
     single retained variant must match its name, not every enrollment with the
     registrar code. Identity follows the shared planner's code-and-name rule.
+
+    ``missing_out`` makes a vanished identity a reported fact instead of an
+    error: its display code is appended there and the course is left out of the
+    result. Readers that verify a saved run against the live lists need that;
+    every scheduling caller keeps the refusal by passing nothing.
     """
     by_identity = {meta["course_identity"]: code for code, meta in metadata.items()}
     selected: dict[str, set[int]] = {}
     selected_meta: dict[str, dict] = {}
     seen_identities: set[str] = set()
+    seen_displays: set[str] = set()
     for entry in entries:
         display = str(entry.get("course_code") or "").strip()
         if not display:
@@ -367,14 +375,18 @@ def select_exam_course_enrollments(
         if identity != named_identity:
             raise ValueError(f"Course identity does not match the name for {display}.")
         match = by_identity.get(identity)
-        if match is None:
+        if match is None and missing_out is None:
             raise ExamCoursesUnavailable([display])
-        meta = dict(metadata[match])
-        if display in selected or meta["course_identity"] in seen_identities:
+        if display in seen_displays or identity in seen_identities:
             raise ValueError(f"Course {display} was selected more than once.")
-        seen_identities.add(meta["course_identity"])
+        seen_displays.add(display)
+        seen_identities.add(identity)
+        if match is None:
+            if missing_out is not None:
+                missing_out.append(display)
+            continue
         selected[display] = set(enrolled[match])
-        selected_meta[display] = meta
+        selected_meta[display] = dict(metadata[match])
     return selected, selected_meta
 
 
