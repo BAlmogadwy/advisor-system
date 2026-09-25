@@ -16,13 +16,13 @@ import os
 import re
 import subprocess
 import sys
+import xml.etree.ElementTree as ET
 import zipfile
 from datetime import date, time
 from io import BytesIO
 from pathlib import Path
 
 import pytest
-from lxml import etree
 from openpyxl import load_workbook
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet import _writer as openpyxl_writer
@@ -602,7 +602,11 @@ def test_ids_are_integers_formatted_0_and_dates_times_are_typed(run):
     rooms = book["Rooms"]
     use = rooms.cell(2, [c.value for c in rooms[1]].index("Use") + 1)
     assert isinstance(use.value, float) and use.number_format == "0%"
-    assert "—" not in _sheet_xml(content)["Student exams"]
+    # No placeholder dash in any cell. Scoped to <sheetData>: the print header
+    # legitimately reads "Confidential — exam administration only", and whether
+    # that dash is escaped depends on which XML writer openpyxl picked.
+    sheet_data = re.search(r"<sheetData>.*</sheetData>", _sheet_xml(content)["Student exams"], re.S)
+    assert sheet_data and "—" not in sheet_data.group(0)
 
 
 def test_difference_is_a_signed_delta(run):
@@ -686,9 +690,14 @@ def test_internal_links_use_locations_never_external_targets(run):
 
 def test_workbook_default_font_is_arial_11(run):
     content, *_ = _export(run, language="en")
-    styles = _parts(content)["xl/styles.xml"]
-    first = re.search(r"<fonts[^>]*><font>(.*?)</font>", styles).group(1)
-    assert '<name val="Arial"/>' in first and '<sz val="11"/>' in first
+    # Parsed, not string-matched: lxml writes <name val="Arial"/> and the stdlib
+    # writer production uses writes <name val="Arial" />.
+    ns = {"m": "http://schemas.openxmlformats.org/spreadsheetml/2006/main"}
+    font0 = ET.fromstring(_parts(content)["xl/styles.xml"].encode("utf-8")).find(
+        "m:fonts/m:font", ns
+    )
+    assert font0.find("m:name", ns).get("val") == "Arial"
+    assert font0.find("m:sz", ns).get("val") == "11"
 
 
 def test_the_writer_never_uses_max_row_and_is_write_only():
@@ -1429,7 +1438,7 @@ def test_a_choice_with_no_students_is_an_empty_scope(run):
 
 def _cf_rules(content, title):
     """Each conditional-formatting block as (sqref, [formula text, ...]), XML-decoded."""
-    root = etree.fromstring(_sheet_xml(content)[title].encode("utf-8"))
+    root = ET.fromstring(_sheet_xml(content)[title].encode("utf-8"))
     ns = {"m": "http://schemas.openxmlformats.org/spreadsheetml/2006/main"}
     return [
         (block.get("sqref"), [f.text for f in block.findall(".//m:formula", ns)])
