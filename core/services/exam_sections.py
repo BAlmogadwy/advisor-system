@@ -86,9 +86,10 @@ def resolve_exam_section_enrollment(
     source_links, year, term = exam_timetable_links()
     candidates: dict[tuple[int, str], dict[int, dict]] = defaultdict(dict)
     if year and term:
-        links = source_links.filter(
-            student_id__in=all_students,
-        ).values(
+        # Read the term's links and keep this population's, rather than send
+        # ``student_id IN (...)`` with thousands of IDs: SQLite answers that
+        # ~20x slower than it reads every link of the term.
+        links = source_links.values(
             "student_id",
             "term_section_id",
             "term_section__course_key",
@@ -98,6 +99,9 @@ def resolve_exam_section_enrollment(
         )
         wanted = set(source_codes.values())
         for row in links:
+            sid = int(row["student_id"])
+            if sid not in all_students:
+                continue
             code = _section_course_key(
                 SimpleNamespace(
                     **{
@@ -114,7 +118,6 @@ def resolve_exam_section_enrollment(
                 or allowed_gender == OTHER_BRANCH_SECTION_COHORT
             ):
                 continue
-            sid = int(row["student_id"])
             cohort = str(section_by_student.get(sid, "") or "").strip().upper()
             if cohort not in {"M", "F"} or (allowed_gender and allowed_gender != cohort):
                 continue
