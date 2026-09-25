@@ -172,8 +172,12 @@ def test_bad_options_are_400_named_against_their_field(run, committee, body, cod
 
 
 def test_oversized_or_malformed_bodies_are_400(run, committee):
-    huge = {**PAYLOAD, "prepared_for": "x" * 40000}
-    assert _post(committee, run.pk, huge).status_code == 400
+    # Otherwise valid: the download ignores pickers, so only the size cap can refuse it.
+    huge = {**PAYLOAD, "pickers": {"padding": "x" * 40000}}
+    response = _post(committee, run.pk, huge)
+    assert response.status_code == 400 and response.json()["field"] == "body"
+    small = {**PAYLOAD, "pickers": {"padding": "x"}}
+    assert _post(committee, run.pk, small).status_code == 200
     response = committee.post(_url(run.pk), "{not json", content_type="application/json")
     assert response.status_code == 400 and response.json()["field"] == "body"
 

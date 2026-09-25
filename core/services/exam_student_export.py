@@ -1056,9 +1056,12 @@ def _group_in_scope(group: SectionGroup, options: ExportOptions, model: RosterMo
 
 
 def _token(text: str) -> str:
-    """An ASCII file-name token: "(2)" -> "-2", ":" dropped, nothing else survives."""
-    text = re.sub(r"\s*\((\d+)\)", r"-\1", str(text))
-    text = text.replace(":", "")
+    """An ASCII file-name token: "PHYS103 (2)" -> "PHYS103-2", ":" dropped.
+
+    Every other run of characters outside ``A-Za-z0-9-`` becomes one hyphen,
+    so an Arabic-only label yields "" and the caller supplies an ASCII fallback.
+    """
+    text = str(text).replace(":", "")
     text = re.sub(r"[^A-Za-z0-9-]+", "-", text)
     return re.sub(r"-{2,}", "-", text).strip("-")
 

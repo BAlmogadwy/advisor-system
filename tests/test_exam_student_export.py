@@ -1071,3 +1071,48 @@ def test_a_file_with_no_flagged_student_keeps_one_empty_flags_row(run):
     assert all(cell.value is None for cell in book["Flags"][2])
     guide = {row[0]: (row[1], row[2]) for row in book["About"].iter_rows(values_only=True)}
     assert guide["Flags"] == (0, "0 rows — no student in this file has two exams on one day")
+
+
+def test_flagged_only_keeps_every_row_of_flagged_students_and_nobody_else(run):
+    content, name, *_ = _export(run, language="en", rows="flagged")
+    rows = _records(_book(content), "Student exams", "StudentExams")
+    students = {r["Student ID"] for r in rows}
+    flagged = {r["Student ID"] for r in rows if "Yes" in (r["Clash"], r["Same day"])}
+    assert students == flagged and students
+    assert not students & set(MALE_AI)
+    assert {r["Exam"] for r in rows if r["Student ID"] == MALE_CS[1]} == {
+        "MATH101",
+        "CS101",
+        "PHYS103 (1)",
+    }
+    assert "_flagged_" in name
+
+
+def test_a_gone_section_is_listed_with_no_rows_and_explained(run):
+    StudentTermSection.objects.filter(term_section__section="F2").delete()
+    content, *_ = _export(run, language="en", scope={"kind": "course", "exam": "CS101"})
+    book = _book(content)
+    sections = {s["Section"]: s for s in _records(book, "Sections", "ExamSections")}
+    gone = sections["F2"]
+    assert (gone["Membership"], gone["Students now"], gone["Rows in this file"]) == (
+        "Gone since save",
+        0,
+        0,
+    )
+    assert gone["Difference"] == -gone["Students at save"]
+    changes = _records(book, "Checks and changes", "ChangeLog")
+    assert [(c["Section"], c["What changed"]) for c in changes] == [("F2", "Gone since save")]
+
+
+@pytest.mark.parametrize(
+    "text, token",
+    [
+        ("PHYS103 (2)", "PHYS103-2"),
+        ("W1-Sun", "W1-Sun"),
+        ("172:FA 001", "172FA-001"),
+        ("a - b", "a-b"),
+        ("قاعة", ""),
+    ],
+)
+def test_file_name_tokens_are_ascii(text, token):
+    assert export._token(text) == token
