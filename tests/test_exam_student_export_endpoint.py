@@ -228,6 +228,56 @@ def test_a_busy_export_slot_answers_503(run, committee, monkeypatch):
     assert response.status_code == 503 and response.json()["code"] == "export_slot_busy"
 
 
+class _SlotSpy:
+    """Stands in for the export slot and records how each request asks for it."""
+
+    def __init__(self, free: bool) -> None:
+        self.free = free
+        self.calls: list[dict] = []
+
+    def acquire(self, blocking=True, timeout=None):
+        self.calls.append({"blocking": blocking, "timeout": timeout})
+        return self.free
+
+    def release(self):
+        pass
+
+
+def test_a_preflight_never_waits_for_the_export_slot_and_a_download_does(
+    run, committee, monkeypatch
+):
+    # A waiting preflight holds a request thread; four of them are the whole
+    # worker (Procfile: 1 worker x 4 gthreads), so only a download may wait.
+    busy = _SlotSpy(free=False)
+    monkeypatch.setattr(views, "_EXPORT_SLOT", busy)
+    response = _post(committee, run.pk, PAYLOAD, VIEWS[0])
+    assert response.status_code == 503 and response.json()["code"] == "export_slot_busy"
+    assert busy.calls == [{"blocking": False, "timeout": None}]
+    free = _SlotSpy(free=True)
+    monkeypatch.setattr(views, "_EXPORT_SLOT", free)
+    assert _post(committee, run.pk, PAYLOAD).status_code == 200
+    assert free.calls == [{"blocking": True, "timeout": views.EXPORT_SLOT_WAIT_SECONDS}]
+
+
+def test_a_deeply_nested_body_is_400_not_a_server_error(run, committee):
+    nested = "[" * 5000 + "]" * 5000  # 10 KB: well inside the size cap
+    for view in VIEWS:
+        response = committee.post(_url(run.pk, view), nested, content_type="application/json")
+        assert response.status_code == 400, view
+        assert (response.json()["code"], response.json()["field"]) == ("invalid_options", "body")
+
+
+def test_a_refused_date_names_its_day_in_the_answer(run, committee):
+    for view in VIEWS:
+        response = _post(committee, run.pk, {**PAYLOAD, "dates": {"Mon": "2026-12-13"}}, view)
+        assert response.status_code == 400
+        body = response.json()
+        assert (body["field"], body["day"]) == ("dates", "Mon"), view
+    response = _post(committee, run.pk, {**PAYLOAD, "dates": {"Fri": "2026-12-18"}})
+    assert response.json()["field"] == "dates" and "day" not in response.json()
+    assert not AuditLog.objects.exists()
+
+
 # ── The audited download ───────────────────────────────────────
 
 
@@ -338,6 +388,30 @@ def test_preflight_counts_without_ids_or_names_and_is_not_audited(run, committee
     assert not any(student_name(sid) in text for sid in ALL_IDS)
     assert response["Cache-Control"] == "private, no-store"
     assert not AuditLog.objects.exists()
+
+
+def test_choices_are_sent_only_to_a_dialog_that_does_not_hold_them(run, committee):
+    first = _post(committee, run.pk, {"scope": {"kind": "all"}}, VIEWS[0]).json()
+    digest = first["choices_digest"]
+    assert re.fullmatch(r"[0-9a-f]{16}", digest) and first["choices"]["exams"]
+    assert digest == export.choices_digest(first["choices"])
+    again = _post(
+        committee, run.pk, {"scope": {"kind": "all"}, "known_choices": digest}, VIEWS[0]
+    ).json()
+    assert "choices" not in again and again["choices_digest"] == digest
+    assert again["counts"] == first["counts"], "counts never depend on the digest"
+    stale = _post(
+        committee, run.pk, {"scope": {"kind": "all"}, "known_choices": "0" * 16}, VIEWS[0]
+    ).json()
+    assert stale["choices"] == first["choices"]
+    # The lists change: a section is gone, so the choices the dialog holds are stale.
+    StudentTermSection.objects.filter(term_section__section="F2").delete()
+    changed = _post(
+        committee, run.pk, {"scope": {"kind": "all"}, "known_choices": digest}, VIEWS[0]
+    ).json()
+    assert changed["choices_digest"] != digest and "choices" in changed
+    # A download takes the key too, and ignores it.
+    assert _post(committee, run.pk, {**PAYLOAD, "known_choices": digest}).status_code == 200
 
 
 def test_preflight_without_a_scope_returns_the_check_and_pickers(run, committee):

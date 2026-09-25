@@ -141,6 +141,13 @@ class ExamStudentExportBrowserTests(StaticLiveServerTestCase):
         self.assertEqual(exams, ["MATH101"] * math)
         self.assertEqual(header[:5], ["Student ID", "Name", "Program", "Department", "Group"])
 
+        # Enter in a field submits; the options lock while the file is made,
+        # and Chromium would drop focus to the page with them.
+        page.locator("#examStudentPreparedFor").fill("Dean")
+        with page.expect_download(timeout=30_000):
+            page.locator("#examStudentPreparedFor").press("Enter")
+        expect(page.locator("#examStudentExportDownload")).to_be_focused()
+
         page.keyboard.press("Escape")
         expect(page.locator("#examStudentExportDialog")).to_be_hidden()
         expect(page.locator("#examStudentDataBtn")).to_be_focused()
@@ -171,9 +178,17 @@ class ExamStudentExportBrowserTests(StaticLiveServerTestCase):
         expect(page.locator('[data-scope-count="all"]')).to_have_text(
             f"الأسطر: {len(self.sittings)}"
         )
-        # Full screen at phone width, with nothing wider than the screen.
+        # Full screen at phone width, with nothing wider than the screen: the
+        # sheet's own padding and height, not the older .et-move-dialog ones.
         box = page.locator("#examStudentExportDialog").bounding_box()
         self.assertEqual((round(box["x"]), round(box["width"])), (0, 375))
+        self.assertEqual((round(box["y"]), round(box["height"])), (0, 812))
+        self.assertEqual(
+            page.evaluate(
+                "getComputedStyle(document.getElementById('examStudentExportDialog')).padding"
+            ),
+            "0px",
+        )
         overflow = page.evaluate(
             """() => [...document.querySelectorAll('#examStudentExportDialog *')]
                 .filter(node => node.getBoundingClientRect().width > 0)

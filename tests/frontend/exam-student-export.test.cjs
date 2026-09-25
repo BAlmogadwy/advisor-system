@@ -201,11 +201,13 @@ async function page(t, { run = savedRun(), server = exportServer(), browserFocus
   window.dlg = { confirm: async () => false, prompt: async () => false };
   window.HTMLElement.prototype.scrollIntoView = function () {};
   if (browserFocus) {
-    // Focus as a browser keeps it (jsdom does neither): a hidden element, or
-    // one in a closed dialog, cannot take it; a focused element that becomes
-    // hidden drops it to the body. The PR #115 model, plus closed dialogs.
+    // Focus as a browser keeps it (jsdom does neither): a hidden or disabled
+    // element, or one in a closed dialog or a disabled fieldset, cannot take
+    // it; a focused element that becomes so drops it to the body. The PR #115
+    // model, plus closed dialogs and disabled controls.
     const hiddenNow = element => !element.isConnected
-      || Boolean(element.closest('[hidden], .d-none, dialog:not([open])'));
+      || Boolean(element.closest('[hidden], .d-none, dialog:not([open]), fieldset[disabled]'))
+      || element.disabled === true;
     const focus = window.HTMLElement.prototype.focus;
     window.HTMLElement.prototype.focus = function (...args) {
       if (hiddenNow(this)) return undefined;
@@ -257,7 +259,7 @@ async function page(t, { run = savedRun(), server = exportServer(), browserFocus
     if (this.download) downloads.at(-1).saved = { href: this.href, filename: this.download };
   };
   window.__examJobPoll = { first: 0, quick: 0, steady: 0, slow: 0, slowAfter: 0, announce: 0, reveal: 0, stall: 0, minShown: 0, backoff: [0, 0, 0, 0], timeout: 2000, checkRetry: 30 };
-  window.__examStudentExportTiming = { debounce: 0, revoke: 0 };
+  window.__examStudentExportTiming = { debounce: 0, revoke: 0, busy: [0, 0] };
   const context = dom.getInternalVMContext();
   SOURCES.forEach(([filename, code]) => vm.runInContext(code, context, { filename }));
   vm.runInContext(`const LANGUAGE_CODE = ${JSON.stringify(language)};\n${PAGE}`, context, { filename: 'page-exam-timetable.js' });
@@ -621,12 +623,12 @@ test('a refused run says why, shows no counts, and never downloads', async t => 
 
 // ── Options ─────────────────────────────────────────────────
 
-test('an option change re-prices once, dims the old counts meanwhile, and a superseded answer is dropped', async t => {
+test('an option change re-prices once, one preflight is out at a time, and the latest options follow its answer', async t => {
   const server = exportServer();
   const ui = await opened(t, { server });
-  const first = hold();
-  const second = hold();
-  server.queue('preflight', first.answer, second.answer);
+  const earlier = hold();
+  const latest = hold();
+  server.queue('preflight', earlier.answer, latest.answer);
   ui.tick(ui.window.document.querySelector('input[name="examStudentGroup"][value="F"]'), false);
   ui.tick(ui.$('examStudentOneFile'), false);
   await idle();
@@ -635,19 +637,34 @@ test('an option change re-prices once, dims the old counts meanwhile, and a supe
   assert.equal(ui.$('examStudentExportDownload').getAttribute('aria-disabled'), 'true');
   assert.equal(ui.text('examStudentExportReason'), say('Updating the counts for these choices…', 'جارٍ تحديث الأعداد لهذه الاختيارات…'));
   assert.ok(ui.window.document.querySelector('[data-scope-count="all"]').classList.contains('is-waiting'));
+  assert.equal(scopeCount(ui, 'all'), say('57 rows', 'الأسطر: 57'), 'the old count stays, dimmed, while its new one is coming');
   assert.equal(ui.$('examStudentExportScope').getAttribute('aria-busy'), 'true');
 
+  // A change while that preflight is out neither aborts it nor sends another:
+  // the server would still work through an aborted one.
   ui.radio('examStudentRows', 'flagged').click();
   await idle();
+  ui.radio('examStudentContents', 'summary').click();
+  await idle();
+  assert.equal(server.requests('preflight').length, 2);
+  assert.equal(server.requests('preflight')[1].options.signal.aborted, false);
+  earlier.release(json(matches({ counts: { ...matches().counts, rows: 45, scope_rows: { ...matches().counts.scope_rows, all: 45 } },
+    files: [{ name: 'exam_students_all_r17_ar_<REF>.xlsx', gender: null, rows: 45 }] })));
+  await idle();
+  assert.equal(server.requests('preflight').length, 3, 'its answer sends the options chosen meanwhile, once');
+  assert.deepEqual(server.body('preflight'), {
+    ...DEFAULT_BODY, groups: ['M'], one_file_per_group: false, rows: 'flagged', contents: 'summary', pickers: PICKERS,
+  });
+  // Priced for Every student, so still dimmed: flagged rows are on their way.
+  assert.equal(scopeCount(ui, 'all'), say('45 rows', 'الأسطر: 45'));
+  assert.ok(ui.window.document.querySelector('[data-scope-count="all"]').classList.contains('is-waiting'));
+  assert.equal(ui.$('examStudentExportDownload').getAttribute('aria-disabled'), 'true');
+  latest.release(json(matches({ counts: { ...matches().counts, rows: 9, scope_rows: { ...matches().counts.scope_rows, all: 9 } },
+    files: [{ name: 'exam_students_all_flagged_summary_r17_ar_<REF>.xlsx', gender: null, rows: 9 }] })));
+  await idle();
   assert.equal(server.requests('preflight').length, 3);
-  assert.equal(server.calls.filter(call => call.kind === 'preflight')[1].options.signal.aborted, true);
-  assert.equal(server.body('preflight').rows, 'flagged');
-  second.release(json(matches({ counts: { ...matches().counts, rows: 9, scope_rows: { ...matches().counts.scope_rows, all: 9 } },
-    files: [{ name: 'exam_students_all_flagged_r17_ar_<REF>.xlsx', gender: null, rows: 9 }] })));
-  await idle();
-  first.release(json(matches({ counts: { ...matches().counts, rows: 999, scope_rows: { all: 999 } } })));
-  await idle();
   assert.equal(scopeCount(ui, 'all'), say('9 rows', 'الأسطر: 9'));
+
   assert.equal(ui.text('examStudentExportSummary'), say('1 file · 9 rows · downloads now', 'ملف واحد · الأسطر: 9 · يُنزَّل الآن'));
   assert.equal(ui.window.document.querySelector('[data-scope-count="all"]').classList.contains('is-waiting'), false);
   assert.equal(ui.$('examStudentExportDownload').getAttribute('aria-disabled'), 'false');
@@ -657,6 +674,21 @@ test('an option change re-prices once, dims the old counts meanwhile, and a supe
   ui.emit(ui.$('examStudentPreparedFor'), 'change');
   await idle();
   assert.equal(server.requests('preflight').length, 3);
+
+  // An option no count depends on re-prices the file list, never the counts:
+  // they stay current, undimmed, while its answer is on its way.
+  const language = hold();
+  server.queue('preflight', language.answer);
+  ui.radio('examStudentLanguage', 'en').click();
+  await idle();
+  assert.equal(ui.text('examStudentExportReason'), say('Updating the counts for these choices…', 'جارٍ تحديث الأعداد لهذه الاختيارات…'));
+  assert.equal(scopeCount(ui, 'all'), say('9 rows', 'الأسطر: 9'));
+  assert.equal(ui.window.document.querySelector('[data-scope-count="all"]').classList.contains('is-waiting'), false);
+  assert.equal(ui.window.document.querySelector('[data-group-count="M"]').classList.contains('is-waiting'), false);
+  assert.ok(ui.$('examStudentExportSummary').classList.contains('is-waiting'), 'the file names carry the language');
+  language.release(json(matches({ counts: { ...matches().counts, rows: 9, scope_rows: { ...matches().counts.scope_rows, all: 9 } },
+    files: [{ name: 'exam_students_all_flagged_summary_r17_en_<REF>.xlsx', gender: null, rows: 9 }] })));
+  await idle();
 });
 
 test('a department shortcut picks exactly its programs, pressed again every program, and none ticked asks nothing', async t => {
@@ -894,12 +926,6 @@ test('a failed check keeps Download waiting and Try again asks again', async t =
   await idle();
   assert.equal(server.requests('export').length, 0);
 
-  server.queue('preflight', json({ ok: false, code: 'invalid_options', field: 'dates', error: 'W1-Sun is not a Sunday' }, 400));
-  ui.$('examStudentExportRetry').click();
-  await idle();
-  assert.equal(ui.text('examStudentExportErrorText'), say(
-    "Check the exam dates: each date must fall on its day's weekday, and dates must follow the order of the days.",
-    'راجع تواريخ الاختبارات: يجب أن يوافق كل تاريخ يوم الأسبوع في تسميته، وأن تتبع التواريخ ترتيب الأيام.'));
   server.queue('preflight', json({ ok: false, code: 'invalid_options', field: 'scope.exam', error: 'Choose an exam from this timetable.' }, 400));
   ui.$('examStudentExportRetry').click();
   await idle();
@@ -908,10 +934,269 @@ test('a failed check keeps Download waiting and Try again asks again', async t =
     'تغيّرت الاختيارات المتاحة في هذا الجدول. أغلق النافذة ثم افتحها مجدداً.'));
   ui.$('examStudentExportRetry').click();
   await idle();
-  assert.equal(server.requests('preflight').length, 4);
+  assert.equal(server.requests('preflight').length, 3);
   assert.equal(ui.$('examStudentExportError').hidden, true);
   assert.equal(ui.$('examStudentExportCheck').dataset.state, 'matches');
   assert.equal(ui.$('examStudentExportDownload').getAttribute('aria-disabled'), 'false');
+});
+
+test('a failure for options already replaced asks for the new ones instead of saying it', async t => {
+  const server = exportServer();
+  const ui = await opened(t, { server });
+  for (const failed of [
+    json({ ok: false, error: 'An uncoded server message' }, 500),
+    async () => { throw new server.window.TypeError('Failed to fetch'); },
+  ]) {
+    const out = hold();
+    server.queue('preflight', out.answer);
+    ui.tick(ui.$('examStudentOneFile'), !ui.$('examStudentOneFile').checked);
+    await idle();
+    const asked = server.requests('preflight').length;
+    ui.radio('examStudentRows', ui.radio('examStudentRows', 'all').checked ? 'flagged' : 'all').click();
+    await idle();
+    out.release(typeof failed === 'function' ? failed() : failed);
+    await idle();
+    assert.equal(server.requests('preflight').length, asked + 1, 'the options chosen meanwhile are asked for');
+    assert.equal(server.body('preflight').rows, checkedRows(ui));
+    assert.equal(ui.$('examStudentExportError').hidden, true);
+    assert.equal(ui.$('examStudentExportDownload').getAttribute('aria-disabled'), 'false');
+  }
+});
+
+const checkedRows = ui => (ui.radio('examStudentRows', 'all').checked ? 'all' : 'flagged');
+
+test('a refusal that answers after the options moved still refuses, and asks nothing more', async t => {
+  for (const [refused, state] of [
+    [json({ ok: false, code: 'rebuild_required', error: 'x' }), 'refused'],
+    [json({ ok: false, code: 'not_found', error: 'Run not found' }, 404), 'refused'],
+  ]) {
+    const server = exportServer();
+    const ui = await opened(t, { server });
+    const out = hold();
+    server.queue('preflight', out.answer);
+    ui.tick(ui.$('examStudentOneFile'), false);
+    await idle();
+    ui.radio('examStudentRows', 'flagged').click();
+    await idle();
+    const asked = server.requests('preflight').length;
+    out.release(refused);
+    await idle();
+    assert.equal(ui.$('examStudentExportCheck').dataset.state, state);
+    assert.equal(server.requests('preflight').length, asked, 'a refused run is not asked again');
+    assert.equal(ui.$('examStudentExportDownload').getAttribute('aria-disabled'), 'true');
+    ui.$('examStudentExportCancel').click();
+  }
+});
+
+test('a refused date names its day and marks its input, offers no Try again, and a new date clears it', async t => {
+  const server = exportServer();
+  const ui = await opened(t, { server, browserFocus: true });
+  const input = day => ui.$('examStudentDates').querySelector(`input[data-day="${day}"]`);
+  server.queue('preflight', json({ ok: false, code: 'invalid_options', field: 'dates', day: 'Mon', error: 'The date for Mon must match its weekday.' }, 400));
+  input('Mon').value = '2026-12-15';
+  ui.emit(input('Mon'), 'change');
+  await idle();
+  const refused = say(
+    "Check the date for Mon: it must fall on that day's weekday and follow the order of the days.",
+    'راجع تاريخ Mon: يجب أن يوافق يوم الأسبوع في تسميته، وأن يتبع ترتيب الأيام.');
+  assert.equal(ui.text('examStudentExportErrorText'), refused);
+  assert.deepEqual(Array.from(ui.$('examStudentExportErrorText').querySelectorAll('bdi'), bdi => [bdi.textContent, bdi.dir]), [['Mon', 'ltr']]);
+  assert.equal(ui.$('examStudentExportRetry').hidden, true, 'the same dates again cannot succeed');
+  assert.equal(ui.$('examStudentDatesDetails').open, true);
+  assert.equal(input('Mon').getAttribute('aria-invalid'), 'true');
+  assert.equal(input('Mon').getAttribute('aria-describedby'), 'examStudentExportErrorText');
+  assert.equal(input('Sun').hasAttribute('aria-invalid'), false);
+  assert.equal(ui.$('examStudentExportDownload').getAttribute('aria-disabled'), 'true');
+  assert.equal(ui.text('examStudentExportReason'), say('Enter a valid date or leave the field blank.', 'أدخل تاريخاً صحيحاً أو اترك الحقل فارغاً.'));
+  // No date changes a count, so the counts stand; the file list does not.
+  assert.equal(scopeCount(ui, 'all'), say('57 rows', 'الأسطر: 57'));
+  assert.equal(ui.text('examStudentExportSummary'), '');
+  assert.equal(ui.$('examStudentExportFiles').hidden, true);
+
+  input('Mon').value = '2026-12-14';
+  ui.emit(input('Mon'), 'change');
+  await idle();
+  assert.equal(input('Mon').hasAttribute('aria-invalid'), false);
+  assert.equal(input('Mon').hasAttribute('aria-describedby'), false);
+  assert.equal(ui.$('examStudentExportError').hidden, true);
+  assert.equal(ui.$('examStudentExportDownload').getAttribute('aria-disabled'), 'false');
+
+  // Refused on Download: the refused day's input takes focus to be fixed.
+  server.queue('export', json({ ok: false, code: 'invalid_options', field: 'dates', day: 'Sun', error: 'x' }, 400));
+  ui.$('examStudentExportDownload').focus();
+  ui.$('examStudentExportDownload').click();
+  await idle();
+  assert.equal(ui.window.document.activeElement, input('Sun'));
+  assert.equal(input('Sun').getAttribute('aria-invalid'), 'true');
+  assert.equal(ui.$('examStudentExportRetry').hidden, true);
+  assert.equal(ui.$('examStudentExportDownload').getAttribute('aria-disabled'), 'true');
+  ui.$('examStudentExportDownload').click();
+  await idle();
+  assert.equal(server.requests('export').length, 1, 'the refused dates are not sent again');
+
+  // A refusal naming no day says what dates need, in general.
+  server.queue('preflight', json({ ok: false, code: 'invalid_options', field: 'dates', error: 'Exam dates must use YYYY-MM-DD.' }, 400));
+  ui.emit(input('Sun'), 'change');
+  await idle();
+  assert.equal(ui.text('examStudentExportErrorText'), say(
+    "Check the exam dates: each date must fall on its day's weekday, and dates must follow the order of the days.",
+    'راجع تواريخ الاختبارات: يجب أن يوافق كل تاريخ يوم الأسبوع في تسميته، وأن تتبع التواريخ ترتيب الأيام.'));
+});
+
+test('counts priced for other options are cleared when the new ones cannot be priced, and the file list with them', async t => {
+  const server = exportServer();
+  const ui = await opened(t, { server });
+  const rows = n => say(`${n} rows`, `الأسطر: ${n}`);
+  const groups = () => Array.from(ui.window.document.querySelectorAll('input[name="examStudentGroup"]')).filter(box => !box.closest('[hidden]'));
+  const asked = server.requests('preflight').length;
+  groups().forEach(box => ui.tick(box, false));
+  await idle();
+  assert.equal(server.requests('preflight').length, asked);
+  assert.equal(ui.text('examStudentExportReason'), say('Tick at least one group.', 'اختر فئة واحدة على الأقل.'));
+  for (const kind of ['section', 'course', 'room', 'period', 'day', 'all']) {
+    assert.equal(scopeCount(ui, kind), '', `${kind} was priced for groups no longer ticked`);
+    assert.equal(ui.window.document.querySelector(`[data-scope-count="${kind}"]`).classList.contains('is-waiting'), false);
+  }
+  // The group counts are for this scope whichever groups are ticked.
+  assert.equal(groupCount(ui, 'M'), rows(45));
+  assert.equal(ui.text('examStudentExportSummary'), '');
+  assert.equal(ui.$('examStudentExportFiles').hidden, true);
+
+  groups().forEach(box => ui.tick(box, true));
+  await idle();
+  assert.equal(scopeCount(ui, 'all'), rows(57));
+  assert.notEqual(ui.text('examStudentExportSummary'), '');
+
+  ui.$('examStudentAllPrograms').click();
+  await idle();
+  assert.equal(ui.text('examStudentExportReason'), say('Choose at least one program.', 'اختر برنامجاً واحداً على الأقل.'));
+  assert.deepEqual(['all', 'course'].map(kind => scopeCount(ui, kind)), ['', '']);
+  assert.equal(groupCount(ui, 'M'), '', 'group counts are per program');
+  assert.equal(ui.text('examStudentExportSummary'), '');
+  ui.$('examStudentAllPrograms').click();
+  await idle();
+
+  // A period with no room: the room and the period it mirrors were priced
+  // for the old period; the other scopes still hold.
+  ui.choose('examStudentRoomPeriod', '4');
+  await idle();
+  assert.equal(ui.text('examStudentExportReason'), say('Complete the choice of exams.', 'أكمل اختيار الاختبارات.'));
+  assert.deepEqual(['room', 'period'].map(kind => scopeCount(ui, kind)), ['', '']);
+  assert.deepEqual(['course', 'day', 'all'].map(kind => scopeCount(ui, kind)), [42, 54, 57].map(rows));
+  assert.equal(groupCount(ui, 'M'), '', 'group counts were for the whole-timetable scope');
+  assert.equal(ui.text('examStudentExportSummary'), '');
+
+  // A failed check keeps every count that did not depend on what changed:
+  // the day's rows were priced with the day picker, which still says Sun.
+  ui.choose('examStudentDay', 'Sun');
+  await idle();
+  assert.equal(scopeCount(ui, 'day'), rows(54));
+  server.queue('preflight', async () => { throw new server.window.TypeError('Failed to fetch'); });
+  ui.radio('examStudentScope', 'all').click();
+  await idle();
+  assert.equal(ui.$('examStudentExportError').hidden, false);
+  assert.deepEqual(['day', 'all', 'course'].map(kind => scopeCount(ui, kind)), [54, 57, 42].map(rows));
+  assert.equal(groupCount(ui, 'M'), '', 'group counts were for the day scope');
+  assert.equal(ui.text('examStudentExportSummary'), '');
+
+  // A failed check for new options clears what depended on them.
+  ui.$('examStudentExportRetry').click();
+  await idle();
+  server.queue('preflight', async () => { throw new server.window.TypeError('Failed to fetch'); });
+  ui.radio('examStudentRows', 'flagged').click();
+  await idle();
+  assert.equal(ui.$('examStudentExportError').hidden, false);
+  assert.equal(scopeCount(ui, 'all'), '');
+  assert.equal(groupCount(ui, 'M'), '');
+  assert.equal(ui.text('examStudentExportSummary'), '');
+  assert.equal(ui.$('examStudentExportFiles').hidden, true);
+});
+
+test('while another export holds the server, the check waits and asks again, then offers Try again', async t => {
+  const server = exportServer();
+  const busyAnswer = () => json({ ok: false, code: 'export_slot_busy', error: 'x' }, 503);
+  const held = hold();
+  server.queue('preflight', busyAnswer(), held.answer);
+  const ui = await opened(t, { server });
+  assert.equal(server.requests('preflight').length, 2, 'asked again after the pause');
+  assert.equal(ui.$('examStudentExportError').hidden, true, 'a busy server is a wait, not yet an error');
+  assert.equal(ui.text('examStudentExportReason'), say(
+    'Another export is being prepared; the counts will update when it finishes.',
+    'يجري تجهيز تصدير آخر؛ ستُحدَّث الأعداد عند انتهائه.'));
+  held.release(json(matches()));
+  await idle();
+  assert.equal(ui.$('examStudentExportCheck').dataset.state, 'matches');
+  assert.equal(ui.$('examStudentExportDownload').getAttribute('aria-disabled'), 'false');
+
+  // Busy past every pause (two in these tests): said, with Try again.
+  server.queue('preflight', busyAnswer(), busyAnswer(), busyAnswer());
+  ui.tick(ui.$('examStudentOneFile'), false);
+  await idle();
+  assert.equal(server.requests('preflight').length, 5);
+  assert.equal(ui.text('examStudentExportErrorText'), say('Another export is being prepared. Try again in a moment.', 'يجري تجهيز تصدير آخر. أعد المحاولة بعد قليل.'));
+  assert.equal(ui.$('examStudentExportRetry').hidden, false);
+  assert.equal(ui.text('examStudentExportReason'), say('The counts could not be updated. Try again.', 'تعذّر تحديث الأعداد. أعد المحاولة.'));
+  ui.$('examStudentExportRetry').click();
+  await idle();
+  assert.equal(server.requests('preflight').length, 6);
+  assert.equal(ui.$('examStudentExportError').hidden, true);
+});
+
+test('the choices are read once and again only when the server says they changed', async t => {
+  const server = exportServer();
+  const withDigest = (digest, extra = {}) => json(matches({ choices_digest: digest, ...extra }));
+  const noChoices = digest => { const answer = matches({ choices_digest: digest }); delete answer.choices; return json(answer); };
+  server.queue('preflight', withDigest('d1'), noChoices('d1'));
+  const ui = await opened(t, { server });
+  assert.equal('known_choices' in server.body('preflight', 0), false, 'a new dialog asks for the choices');
+  ui.tick(ui.$('examStudentOneFile'), false);
+  await idle();
+  assert.equal(server.body('preflight').known_choices, 'd1');
+  assert.deepEqual(values(ui.$('examStudentCourse')), ['MATH101', 'CS101', 'CS9', 'CS10', 'PHYS103 (2)', 'GS104'], 'an answer without choices keeps the pickers');
+  assert.equal(ui.$('examStudentExportCheck').dataset.state, 'matches');
+
+  const fewer = choices();
+  fewer.exams = fewer.exams.filter(exam => exam.code !== 'GS104');
+  server.queue('preflight', withDigest('d2', { choices: fewer }));
+  ui.tick(ui.$('examStudentOneFile'), true);
+  await idle();
+  assert.equal(values(ui.$('examStudentCourse')).includes('GS104'), false, 'changed choices are read');
+  ui.tick(ui.$('examStudentOneFile'), false);
+  await idle();
+  assert.equal(server.body('preflight').known_choices, 'd2');
+  // The digest is an optimisation, never an option: it does not re-price.
+  assert.equal(server.requests('preflight').length, 4);
+
+  ui.$('examStudentExportCancel').click();
+  ui.$('examStudentDataBtn').click();
+  await idle();
+  assert.equal('known_choices' in server.body('preflight'), false, 'a reopened dialog starts from the saved run');
+});
+
+test('the check panel is rewritten only when what it says changes', async t => {
+  const server = exportServer();
+  const ui = await opened(t, { server });
+  const region = ui.$('examStudentExportCheck').querySelector('[aria-live]');
+  const changes = [];
+  const observer = new ui.window.MutationObserver(records => changes.push(...records));
+  observer.observe(region, { childList: true, subtree: true, characterData: true });
+  ui.radio('examStudentRows', 'flagged').click();
+  await idle();
+  ui.radio('examStudentLanguage', 'en').click();
+  await idle();
+  assert.equal(server.requests('preflight').length, 3);
+  await settle();
+  assert.equal(observer.takeRecords().length + changes.length, 0, 'the same check said again would be announced again');
+
+  server.queue('preflight', json(matches({ check: { ...matches().check, status: 'changed', changed: [
+    { exam: 'MATH101', section: 'M1', mapping_status: 'mapped', gender: 'M', saved: 30, now: 31, membership: 'changed', program_mix: 'matches' },
+  ] } })));
+  ui.radio('examStudentRows', 'all').click();
+  await idle();
+  await settle();
+  assert.ok(observer.takeRecords().length + changes.length > 0);
+  assert.equal(ui.$('examStudentExportCheck').dataset.state, 'changed');
+  observer.disconnect();
 });
 
 // ── Closing ─────────────────────────────────────────────────
@@ -946,6 +1231,54 @@ test('Cancel, the close button and Escape close the dialog, stop a download, and
   assert.equal(ui.$('examStudentExportDialog').open, false);
   assert.equal(ui.window.document.activeElement, ui.$('examStudentDataBtn'));
   assert.equal(ui.$('examStudentExportClose').getAttribute('aria-label'), say('Close', 'إغلاق'));
+});
+
+test('Try again and an Enter in a field keep keyboard focus in the dialog', async t => {
+  const server = exportServer();
+  const ui = await opened(t, { server, browserFocus: true });
+  const { document } = ui.window;
+  const download = ui.$('examStudentExportDownload');
+  server.queue('export', json({ ok: false, code: 'export_slot_busy', error: 'x' }, 503));
+  download.click();
+  await idle();
+  const retry = ui.$('examStudentExportRetry');
+  assert.equal(retry.hidden, false);
+  const held = hold();
+  server.queue('export', held.answer);
+  retry.focus();
+  assert.equal(document.activeElement, retry);
+  retry.click();
+  await idle();
+  assert.equal(retry.hidden, true);
+  assert.equal(document.activeElement, download, 'the hidden Try again hands focus to Download');
+  held.release(json({ ok: false, code: 'export_slot_busy', error: 'x' }, 503));
+  await idle();
+  assert.equal(document.activeElement, download);
+
+  // Enter in Prepared for submits; the options lock while the file is made.
+  const prepared = ui.$('examStudentPreparedFor');
+  prepared.value = 'Dean';
+  prepared.focus();
+  assert.equal(document.activeElement, prepared);
+  const making = hold();
+  server.queue('export', making.answer);
+  ui.$('examStudentExportForm').dispatchEvent(new ui.window.Event('submit', { bubbles: true, cancelable: true }));
+  await idle();
+  assert.equal(prepared.closest('fieldset').disabled, true);
+  assert.equal(document.activeElement, download, 'focus waits on Download, never on the page');
+  making.release(file());
+  await idle();
+  assert.equal(document.activeElement, download);
+  assert.equal(ui.downloads.length, 1);
+
+  // Try again on a failed check does the same.
+  server.queue('preflight', async () => { throw new server.window.TypeError('Failed to fetch'); });
+  ui.tick(ui.$('examStudentOneFile'), false);
+  await idle();
+  retry.focus();
+  retry.click();
+  await idle();
+  assert.equal(document.activeElement, download);
 });
 
 test('a timetable loaded under the open dialog stops it exporting the old one', async t => {

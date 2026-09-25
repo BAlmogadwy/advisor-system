@@ -9,8 +9,12 @@ checkable on the bytes.
 from __future__ import annotations
 
 import ast
+import dataclasses
 import hashlib
+import os
 import re
+import subprocess
+import sys
 import zipfile
 from datetime import date, time
 from io import BytesIO
@@ -22,9 +26,9 @@ from openpyxl import load_workbook
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet import _writer as openpyxl_writer
 
-from core.models import Student, StudentTermSection
+from core.models import Course, ProgrammeRequirement, Student, StudentTermSection
 from core.services import exam_student_export as export
-from core.services.exam_rosters import build_roster_model
+from core.services.exam_rosters import CHANGED, build_roster_model
 from core.services.exam_student_export import (
     EmptyScope,
     ExportOptionsError,
@@ -827,6 +831,235 @@ def test_overflow_rows_are_not_scheduled_and_carry_no_day(run):
     assert rows[-1]["Exam"] == "CS101"
 
 
+def _status(book):
+    return next(r[1] for r in book["About"].iter_rows(values_only=True) if r[0] == "Status")
+
+
+def _first_cells(book, sheet, table):
+    _header, rows = _rows(book, sheet, table)
+    return [row[0] for row in rows]
+
+
+def test_a_changed_section_with_no_row_in_the_file_is_listed_explained_and_reconciled(run):
+    # Every IS student leaves MATH101 M1; its CS and AI students stay, so an
+    # IS file of MATH101 has no M1 row, yet M1 is what changed for it.
+    StudentTermSection.objects.filter(
+        student_id__in=MALE_IS, term_section__course_key="MATH101"
+    ).delete()
+    for rows in ("all", "flagged"):
+        content, *_ = _export(
+            run,
+            language="en",
+            scope={"kind": "course", "exam": "MATH101"},
+            programs=["IS"],
+            rows=rows,
+        )
+        book = _book(content)
+        sections = {
+            (s["Section"], s["Group"]): s for s in _records(book, "Sections", "ExamSections")
+        }
+        m1 = sections[("M1", "Male")]
+        assert (m1["Membership"], m1["Rows in this file"], m1["Selected programs at save"]) == (
+            "Changed",
+            0,
+            10,
+        ), rows
+        changes = _records(book, "Checks and changes", "ChangeLog")
+        assert [(c["Exam"], c["Section"], c["What changed"]) for c in changes] == [
+            ("MATH101", "M1", "Changed")
+        ], rows
+        if rows == "all":
+            # Check 11's difference is exactly what the Sections sheet shows.
+            check = _records(book, "Checks and changes", "ExportChecks")[10]
+            assert check["Result"] == "Differs"
+            assert check["Saved (timetable screen)"] == sum(
+                s["Selected programs at save"] for s in sections.values()
+            )
+            assert check["Now / this file"] == sum(
+                s["Rows in this file"] for s in sections.values()
+            )
+    # A changed section with no student of the file's programmes, saved or
+    # live, is another programme's change: not this file's.
+    StudentTermSection.objects.filter(
+        student_id=MALE_CS[1], term_section__course_key="CS101"
+    ).delete()
+    content, *_ = _export(run, language="en", programs=["IS"])
+    changed = {
+        (c["Exam"], c["Section"])
+        for c in _records(_book(content), "Checks and changes", "ChangeLog")
+    }
+    assert ("MATH101", "M1") in changed and ("CS101", "M2") not in changed
+
+
+def test_a_file_whose_sections_did_not_change_never_says_every_section_matches(run):
+    StudentTermSection.objects.filter(term_section__section="F2").delete()
+    # A programme change elsewhere is a difference elsewhere too.
+    Student.objects.filter(student_id=MALE_AI[0]).update(program="CS")
+    content, *_ = _export(run, language="en", scope={"kind": "course", "exam": "PHYS103 (1)"})
+    book = _book(content)
+    assert _first_cells(book, "Checks and changes", "ChangeLog") == [
+        f"No changes in this file's sections; 2 sections elsewhere in the timetable "
+        f"differ from saved timetable #{run.pk}."
+    ]
+    assert _status(book).startswith("≠ Changed since #")
+    content, *_ = _export(run, language="ar", scope={"kind": "course", "exam": "PHYS103 (1)"})
+    assert _first_cells(_book(content), SHEETS["ar"][8], "ChangeLog") == [
+        "لا تغييرات في شعب هذا الملف. الشعب المختلفة في بقية الجدول عن الجدول المحفوظ رقم "
+        f"\u200e{run.pk}\u200f: 2."
+    ]
+
+
+def test_a_changed_section_belongs_to_a_programme_file_by_its_saved_or_live_students(run):
+    model = build_roster_model(run)
+    m1 = next(g for g in model.groups if (g.exam, g.section) == ("MATH101", "M1"))
+    options = parse_export_options({"scope": {"kind": "all"}, "programs": ["IS"]}, model)
+    everyone = ("M", "F", "U")
+
+    def belongs(**changes):
+        group = dataclasses.replace(m1, **changes)
+        return export._changed_in_file(group, options, model, everyone)
+
+    assert not belongs(), "an unchanged section is not a change"
+    changed = {"membership": CHANGED}
+    assert belongs(**changed, saved_program_counts={"IS": 3}, live_program_counts={})
+    assert belongs(**changed, saved_program_counts={}, live_program_counts={"IS": 1})
+    assert not belongs(**changed, saved_program_counts={"CS": 3}, live_program_counts={"CS": 4})
+    assert belongs(live_program_counts={"IS": 11}), "a programme-mix change is a change"
+    assert not export._changed_in_file(
+        dataclasses.replace(m1, **changed), options, model, ("F",)
+    ), "another group's section"
+    other = parse_export_options({"scope": {"kind": "course", "exam": "CS101"}}, model)
+    assert not export._changed_in_file(
+        dataclasses.replace(m1, **changed), other, model, everyone
+    ), "another exam's section"
+
+
+def test_a_programme_change_alone_is_a_change_wherever_the_status_is_said(run):
+    # Same students, so the lists codes still agree; the saved programme
+    # counts do not, and neither About, the dialog nor the audit says "matches".
+    Student.objects.filter(student_id=MALE_CS[5]).update(program="CS2")
+    content, _name, _type, prepared = _export(
+        run, language="en", scope={"kind": "course", "exam": "MATH101"}, programs=["CS2"]
+    )
+    book = _book(content)
+    assert _status(book).startswith("≠ Changed since #")
+    assert "2 of 9 sections differ" in _status(book)
+    assert prepared.audit_details()["check"] == {
+        "status": "changed",
+        "sections_changed": 0,
+        "program_mix_changed": 2,
+        "exams_missing": 0,
+        "no_seat": 0,
+    }
+    summary = export.preflight_summary(prepared.model, None)
+    assert (summary["check"]["status"], summary["check"]["program_mix_changed"]) == ("changed", 2)
+    info = {r["Key"]: r["Value"] for r in _records(book, "File info", "FileInfo")}
+    assert info["lists_match"] == "true", "lists_match is the lists codes: students only"
+    changes = _records(book, "Checks and changes", "ChangeLog")
+    assert [(c["Exam"], c["What changed"]) for c in changes] == [("MATH101", "Program mix changed")]
+
+
+def test_the_change_log_says_why_an_unscheduled_or_unroomed_exam_seats_nobody(run):
+    scraped_exam_registration(FEMALE_IS[0], "CS101", section_label="F2")
+    scraped_exam_registration(FEMALE_IS[1], "CS101", section_label="F9")
+
+    def effects():
+        content, *_ = _export(run, language="en", scope={"kind": "course", "exam": "CS101"})
+        changes = _records(_book(content), "Checks and changes", "ChangeLog")
+        return {c["Section"]: (c["Effect in this file"], c["What to do"]) for c in changes}
+
+    # Scheduled and roomed: the extra student and the new section have no seat.
+    assert effects() == {
+        "F2": (
+            "1 students have no seat; rooms were sized for 6.",
+            "Timetable › Check changes › Save to resize rooms.",
+        ),
+        "F9": (
+            "1 students have no seat: this section did not exist when the timetable was saved.",
+            "Timetable › Check changes › Save to resize rooms.",
+        ),
+    }
+    data = saved_payload(run)
+    entry = next(e for e in data["schedule"] if e["course_code"] == "CS101")
+    entry.update(day="OVERFLOW", period="Extra-9", slot_index=9, rooms=[])
+    save_payload(run, data)
+    assert effects() == {
+        "F2": (
+            "1 more students than saved; the exam is not scheduled.",
+            "Timetable › Check changes › Save to update the saved counts.",
+        ),
+        "F9": (
+            "1 students: this section did not exist when the timetable was saved, "
+            "and the exam is not scheduled.",
+            "Timetable › Check changes › Save to update the saved counts.",
+        ),
+    }
+    data = saved_payload(run)
+    for item in data["schedule"]:
+        item["rooms"] = []
+    entry = next(e for e in data["schedule"] if e["course_code"] == "CS101")
+    entry.update(day="Sun", period="13:00-15:00", slot_index=1)
+    data["assign_rooms"] = False
+    save_payload(run, data)
+    assert effects() == {
+        "F2": (
+            "1 more students than saved; rooms were not assigned in this timetable.",
+            "Timetable › Check changes › Save to update the saved counts.",
+        ),
+        "F9": (
+            "1 students: this section did not exist when the timetable was saved, "
+            "and rooms were not assigned in this timetable.",
+            "Timetable › Check changes › Save to update the saved counts.",
+        ),
+    }
+
+
+@pytest.fixture
+def shared_label_run():
+    """Adds SHR101, whose one section label names no cohort, taken by both."""
+    build_population()
+    course = Course.objects.create(course_code="SHR101", description="SHARED", credit_hours=3)
+    for program in ("AI", "IS"):
+        ProgrammeRequirement.objects.create(
+            program=program,
+            course_code="SHR101",
+            course_name="SHARED",
+            programme_term=1,
+            credit_hours=3,
+        )
+    for sid in [*MALE_AI[:4], *FEMALE_IS[:4]]:
+        scraped_exam_registration(sid, course, section_label="01")
+    return build_saved_run()
+
+
+def test_a_label_shared_by_both_cohorts_is_counted_and_numbered_like_the_build(shared_label_run):
+    data = saved_payload(shared_label_run)
+    shared = [d for d in data["qa"]["multi_sitting_details"] if d["course_code"] == "SHR101"]
+    assert [(d["sittings"], d["gender"]) for d in shared] == [(2, "M/F")], "the build's own view"
+    content, *_ = _export(shared_label_run, language="en")
+    book = _book(content)
+    check = _records(book, "Checks and changes", "ExportChecks")[9]
+    assert check["Check"] == "Sections split across rooms"
+    assert (check["Saved (timetable screen)"], check["Now / this file"], check["Result"]) == (
+        2,
+        2,
+        "OK",
+    )
+    sections = {
+        (s["Exam"], s["Section"], s["Group"]): s for s in _records(book, "Sections", "ExamSections")
+    }
+    # Each cohort sits whole in one room: its part is 1 of 1, as its rows say.
+    for group, ids in (("Male", MALE_AI[:4]), ("Female", FEMALE_IS[:4])):
+        ranges = sections[("SHR101", "01", group)]["Rooms and ID ranges"]
+        assert re.fullmatch(rf"[MF]-[ABC] \(1 of 1\): {ids[0]}–{ids[-1]} \(4\)", ranges), ranges
+    rows = _records(book, "Student exams", "StudentExams")
+    assert {r["Room basis"] for r in rows if r["Exam"] == "SHR101"} == {"Whole section"}
+    m1 = sections[("MATH101", "M1", "Male")]["Rooms and ID ranges"]
+    assert re.fullmatch(
+        r"M-[ABC] \(1 of 2\): \d+–\d+ \(\d+\) · M-[ABC] \(2 of 2\): \d+–\d+ \(\d+\)", m1
+    ), m1
+
+
 # ── Privacy ────────────────────────────────────────────────────
 
 
@@ -887,6 +1120,77 @@ def test_scoped_files_list_only_their_own_exams_rooms_and_sections(run):
     )
     rows = _records(_book(content), "Student exams", "StudentExams")
     assert rows and {r["Exam room"] for r in rows} == {"M-B"}
+
+
+# ── Characters XML cannot hold ─────────────────────────────────
+
+XML_ILLEGAL = "\ufffe\uffff\x0b\x1f"
+
+
+def test_characters_xml_cannot_hold_never_reach_a_cell(run):
+    run.label = f"Final{XML_ILLEGAL} v3"
+    run.save(update_fields=["label"])
+    Student.objects.filter(student_id=MALE_CS[0]).update(name=f"BAD{XML_ILLEGAL}NAME")
+    data = saved_payload(run)
+    entry = next(e for e in data["schedule"] if e["course_code"] == "CS101")
+    entry["course_name"] = "PROGRAMMING\uffff I"
+    # A day label heads a Programs-by-day column, and names its Table column.
+    for item in [*data["slots"], *data["schedule"]]:
+        if item["day"] == "Mon":
+            item["day"] = "Mon\uffff"
+    save_payload(run, data)
+    content, *_ = _export(run, language="en")
+    for text in _parts(content).values():
+        assert not export.XML_ILLEGAL_RE.search(text)
+    book = _book(content)
+    info = {r["Key"]: r["Value"] for r in _records(book, "File info", "FileInfo")}
+    assert info["run_label"] == "Final v3"
+    rows = _records(book, "Student exams", "StudentExams")
+    # The roster folds the whitespace controls into one space; the rest is dropped.
+    assert {r["Name"] for r in rows if r["Student ID"] == MALE_CS[0]} == {"BAD NAME"}
+    assert {r["Course name"] for r in rows if r["Exam"] == "CS101"} == {"PROGRAMMING I"}
+    header, _rows_ = _rows(book, "Programs by day", "ProgramDays")
+    assert "Mon" in header
+    assert [c.name for c in book["Programs by day"].tables["ProgramDays"].tableColumns] == header
+
+
+def test_without_lxml_as_deployed_only_cleaned_text_saves_a_readable_workbook():
+    """Production has no lxml: openpyxl's stdlib writer escapes nothing it cannot hold."""
+    script = """
+import io, re, sys
+import openpyxl.xml
+from openpyxl import Workbook, load_workbook
+assert openpyxl.xml.LXML is False, "the stdlib writer must be under test"
+pattern = re.compile(sys.argv[1])
+def saved(text):
+    book = Workbook(write_only=True)
+    sheet = book.create_sheet("S")
+    sheet.append([text])
+    buffer = io.BytesIO()
+    book.save(buffer)
+    return buffer.getvalue()
+raw = "Dean \\uffff office \\ufffe"
+try:
+    load_workbook(io.BytesIO(saved(raw)))
+except Exception:
+    pass
+else:
+    raise SystemExit("an uncleaned workbook opened, so this proves nothing")
+book = load_workbook(io.BytesIO(saved(pattern.sub("", raw))))
+assert book["S"]["A1"].value == "Dean  office ", book["S"]["A1"].value
+print("ok")
+"""
+    env = {**os.environ, "OPENPYXL_LXML": "False"}
+    result = subprocess.run(
+        [sys.executable, "-c", script, export.XML_ILLEGAL_RE.pattern],
+        env=env,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=120,
+        check=False,
+    )
+    assert result.returncode == 0 and result.stdout.strip() == "ok", result.stdout + result.stderr
 
 
 # ── Determinism and naming ─────────────────────────────────────
@@ -1009,6 +1313,8 @@ def test_reference_appears_in_about_file_info_and_properties(run):
         ({"scope": {"kind": "all"}, "programs": ["XX"]}, "programs"),
         ({"scope": {"kind": "all"}, "groups": []}, "groups"),
         ({"scope": {"kind": "all"}, "prepared_for": "x" * 81}, "prepared_for"),
+        ({"scope": {"kind": "all"}, "prepared_for": "Dean \uffff office"}, "prepared_for"),
+        ({"scope": {"kind": "all"}, "prepared_for": "Dean \ufffe office"}, "prepared_for"),
         ({"scope": {"kind": "all"}, "student_ids": [1]}, "student_ids"),
         ({"scope": {"kind": "all"}, "dates": {"Sun": "2026-12-14"}}, "dates"),
     ],
@@ -1018,6 +1324,22 @@ def test_invalid_options_name_their_field(run, payload, field):
     with pytest.raises(ExportOptionsError) as error:
         parse_export_options(payload, model)
     assert error.value.field == field and error.value.code == "invalid_options"
+
+
+@pytest.mark.parametrize(
+    "dates, day",
+    [
+        ({"Sun": "2026-12-14"}, "Sun"),  # a Monday
+        ({"Sun": "2026-12-13", "Mon": "2026-12-07"}, "Mon"),  # a Monday, out of day order
+        ({"Mon": "2026-13-01"}, "Mon"),
+        ({"Fri": "2026-12-18"}, ""),  # no such day: no one input to mark
+    ],
+)
+def test_a_refused_date_names_the_day_to_fix(run, dates, day):
+    model = build_roster_model(run)
+    with pytest.raises(ExportOptionsError) as error:
+        parse_export_options({"scope": {"kind": "all"}, "dates": dates}, model)
+    assert (error.value.field, error.value.day) == ("dates", day)
 
 
 def test_a_choice_with_no_students_is_an_empty_scope(run):

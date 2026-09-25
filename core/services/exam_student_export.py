@@ -19,8 +19,14 @@ Rules this module enforces
   "(timetable)" count come from the whole run; ID ranges and "in this file"
   figures come from the file's own rows, so a CS file never shows another
   programme's IDs, not even as the end of a range.
+* **Every difference is listed where it applies.** Sections and the
+  ChangeLog list each section of the file's exams, groups and programmes that
+  differs from the save - its students or its programme counts - whether or
+  not it still has a row in the file, so check 11 can always be reconciled.
+  "Every section matches" is said only when the whole timetable does.
 * **Excel safety.** IDs are integers formatted ``0`` (never scientific or
-  ``#,##0``); a string starting with ``=`` is forced to text; no merged cells,
+  ``#,##0``); a string starting with ``=`` is forced to text; every string
+  loses what XML 1.0 cannot hold (U+FFFE, U+FFFF too); no merged cells,
   no hidden anything, sheet names are fixed strings; ``ws.max_row`` is never
   used (it is quadratic in write-only mode); the write-only spool files, which
   hold student rows on local disk, are removed even when writing fails.
@@ -32,6 +38,7 @@ Rules this module enforces
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import re
 import warnings
@@ -46,7 +53,7 @@ from zipfile import ZIP_STORED, ZipFile
 from django.utils import timezone
 from openpyxl import Workbook
 from openpyxl.cell import WriteOnlyCell
-from openpyxl.cell.cell import ILLEGAL_CHARACTERS_RE, Cell
+from openpyxl.cell.cell import Cell
 from openpyxl.formatting.rule import FormulaRule
 from openpyxl.packaging.custom import IntProperty, StringProperty
 from openpyxl.styles import Alignment, Font, PatternFill
@@ -58,7 +65,12 @@ from openpyxl.worksheet.hyperlink import Hyperlink
 from openpyxl.worksheet.properties import PageSetupProperties
 from openpyxl.worksheet.table import Table, TableStyleInfo
 
-from core.services.exam_department_export import _DEPARTMENTS, day_weekday, parse_exam_dates
+from core.services.exam_department_export import (
+    _DEPARTMENTS,
+    ExamDateError,
+    day_weekday,
+    parse_exam_dates,
+)
 from core.services.exam_rosters import (
     BASIS_NO_SEAT,
     BASIS_NOT_SCHEDULED,
@@ -132,8 +144,10 @@ class ExportOptionsError(ValueError):
 
     code = "invalid_options"
 
-    def __init__(self, message: str, *, field: str = "") -> None:
+    def __init__(self, message: str, *, field: str = "", day: str = "") -> None:
         self.field = field
+        # For ``field == "dates"``: the day whose date is refused, when one is.
+        self.day = day
         super().__init__(message)
 
 
@@ -680,8 +694,8 @@ _FILE_INFO_MEANING: dict[str, tuple[str, str]] = {
         "بصمة قوائم الشعب الآن؛ تساوي البصمة المحفوظة فقط إذا لم يتغيّر شيء.",
     ),
     "lists_match": (
-        "Whether every section matches the saved timetable.",
-        "هل تطابق كل الشعب الجدول المحفوظ.",
+        "Whether every section's students match the saved timetable (the two lists codes are equal); programme counts are checked on Checks and changes.",
+        "هل يطابق طلاب كل شعبة الجدول المحفوظ (تتساوى بصمتا القوائم)؛ أعداد البرامج تُطابَق في صفحة المطابقة والتغييرات.",
     ),
     "sections_total": (
         "Section groups in the saved timetable and the lists.",
@@ -804,6 +818,7 @@ _OPTION_KEYS = {
     "dates",
     "prepared_for",
     "pickers",
+    "known_choices",
 }
 _SCOPE_FIELDS = {
     "section": ("exam", "section_key", "gender"),
@@ -915,13 +930,14 @@ def parse_export_options(
         raise ExportOptionsError("Choose Arabic or English for the file.", field="language")
     try:
         dates = parse_exam_dates(payload.get("dates", {}), model.saved.days)
-    except ValueError as exc:
-        raise ExportOptionsError(str(exc), field="dates") from exc
+    except ExamDateError as exc:
+        raise ExportOptionsError(str(exc), field="dates", day=exc.day) from exc
     prepared_for = payload.get("prepared_for", "")
     if (
         not isinstance(prepared_for, str)
         or len(prepared_for.strip()) > PREPARED_FOR_MAX
-        or re.search(r"[\x00-\x1f\x7f\ud800-\udfff]", prepared_for)
+        or re.search(r"[\x00-\x1f\x7f]", prepared_for)
+        or XML_ILLEGAL_RE.search(prepared_for)
     ):
         raise ExportOptionsError(
             f"Prepared for must be plain text of {PREPARED_FOR_MAX} characters or fewer.",
@@ -1194,8 +1210,9 @@ class PreparedExport:
             "prepared_for": options.prepared_for,
             "exam_dates_source": "entered" if options.dates else "not_set",
             "check": {
-                "status": "matches" if model.lists_match else "changed",
+                "status": "matches" if model.unchanged else "changed",
                 "sections_changed": len(model.changed_groups),
+                "program_mix_changed": _mix_only_changes(model),
                 "exams_missing": len(model.missing_exams),
                 "no_seat": whole_run_no_seat(model),
             },
@@ -1235,6 +1252,11 @@ def whole_run_no_seat(model: RosterModel) -> int:
         for sid in group.members
         if model.basis(group, sid) == BASIS_NO_SEAT
     )
+
+
+def _mix_only_changes(model: RosterModel) -> int:
+    """Groups with the saved students whose per-programme counts moved."""
+    return sum(1 for g in model.groups if g.membership == MATCHES and g.program_mix != MATCHES)
 
 
 def _data_sha256(rows: Iterable[tuple]) -> str:
@@ -1406,16 +1428,7 @@ def _prepare_file(
         group
         for group in model.groups
         if (group.exam, group.section_key, group.gender) in groups_with_rows
-        or (
-            group.membership == GONE
-            and options.rows == "all"
-            and group.gender in file_groups
-            and _group_in_scope(group, options, model)
-            and (
-                not options.programs
-                or any(group.saved_program_counts.get(p) for p in options.programs)
-            )
-        )
+        or _changed_in_file(group, options, model, file_groups)
     ]
     tables: dict[str, list[tuple]] = {}
     exam_rows = _student_exam_rows(context, sittings)
@@ -1447,6 +1460,26 @@ def _prepare_file(
         sections=len(file_groups_list),
         data_sha256=_data_sha256(tables[digest_table]),
         no_changes=not change_rows,
+    )
+
+
+def _changed_in_file(
+    group: SectionGroup, options: ExportOptions, model: RosterModel, file_groups: tuple[str, ...]
+) -> bool:
+    """A section that differs from the save and belongs to this file, rows or not.
+
+    Its students may all have left the file's programmes (or it is gone), so
+    it has no row here; it is still listed on Sections and in the ChangeLog,
+    because check 11 counts its saved students and the reader must see why
+    the rows differ. The same scope, group and programme tests as check 11.
+    """
+    if group.membership == MATCHES and group.program_mix == MATCHES:
+        return False
+    if group.gender not in file_groups or not _group_in_scope(group, options, model):
+        return False
+    return not options.programs or any(
+        group.saved_program_counts.get(program) or group.live_program_counts.get(program)
+        for program in options.programs
     )
 
 
@@ -1590,15 +1623,22 @@ def _flag_rows(context: _Context, sittings: list[Sitting]) -> list[tuple]:
     return rows
 
 
-def _part_text(part: RoomPart, lang: str) -> str:
+def _part_text(part: RoomPart, position: int, total: int, lang: str) -> str:
+    """A room part as "M-B (2 of 2)", numbered within its own section group.
+
+    Never the saved ``room_group_index``/``room_group_count``: the build
+    numbers those per section_key across BOTH cohorts, so a label with no
+    gender shared by male and female students would read "(2 of 2)" for a
+    group that sits whole in one room. The position is the seat order.
+    """
     label = part.room_code if part.assigned else _w(BASIS_UNASSIGNED, lang)
     of = _pick(lang, "of", "من")
-    return f"{label} ({part.room_group_index} {of} {part.room_group_count})"
+    return f"{label} ({position} {of} {total})"
 
 
 def _ranges_text(group: SectionGroup, rows: list[Sitting], lang: str, full: bool) -> str:
     pieces = []
-    for part in group.parts:
+    for position, part in enumerate(group.parts, 1):
         ids = sorted(
             s.student_id
             for s in rows
@@ -1606,7 +1646,8 @@ def _ranges_text(group: SectionGroup, rows: list[Sitting], lang: str, full: bool
         )
         if ids:
             pieces.append(
-                f"{_part_text(part, lang)}: " + (_id_range(ids) if full else str(len(ids)))
+                f"{_part_text(part, position, len(group.parts), lang)}: "
+                + (_id_range(ids) if full else str(len(ids)))
             )
     for basis in (BASIS_NO_SEAT, BASIS_UNASSIGNED, BASIS_NOT_SCHEDULED):
         count = sum(
@@ -1934,6 +1975,12 @@ def _check_rows(
     two_plus = sum(
         1 for days in model.flags.days.values() if any(len(e) >= 2 for e in days.values())
     )
+    # The build counts a split section per (course, section_key) across both
+    # cohorts (``derive_multi_sitting_details``); so does this recount.
+    parts_per_section: Counter = Counter()
+    for group in model.groups:
+        parts_per_section[(group.exam, group.section_key)] += len(group.parts)
+    split_now = sum(1 for parts in parts_per_section.values() if parts > 1)
     unassigned_saved = len((qa.get("rooms") or {}).get("unassigned_room_sections") or [])
     unassigned_now = sum(
         1
@@ -2043,7 +2090,7 @@ def _check_rows(
             "Sections split across rooms",
             "شعب موزعة على قاعات",
             num(qa.get("multi_sitting_sections")),
-            sum(1 for g in model.groups if len(g.parts) > 1),
+            split_now,
             screen("Sections split across rooms", "شعب موزعة على قاعات"),
             "Sections the timetable split across rooms.",
             "شعب وزعها الجدول على أكثر من قاعة.",
@@ -2158,6 +2205,18 @@ def _change_rows(context: _Context, groups: list[SectionGroup]) -> list[tuple]:
         extra = now - group.saved_count
         no_seat = sum(1 for sid in group.members if model.basis(group, sid) == BASIS_NO_SEAT)
         split = len(group.parts) > 1
+        # Seats exist only for a scheduled exam in a timetable that assigned
+        # rooms; anything else is said as what it is, never as "no seat".
+        roomed = exam.scheduled and model.saved.assign_rooms
+        unroomed = (
+            _pick(lang, "the exam is not scheduled", "الاختبار غير مجدول")
+            if not exam.scheduled
+            else _pick(
+                lang,
+                "rooms were not assigned in this timetable",
+                "لم تُوزَّع القاعات في هذا الجدول",
+            )
+        )
         if membership == MATCHES:
             what = _w("mix_changed", lang)
             effect = _pick(
@@ -2174,24 +2233,44 @@ def _change_rows(context: _Context, groups: list[SectionGroup]) -> list[tuple]:
             )
         elif membership == NEW:
             what = _w(NEW, lang)
-            effect = _pick(
-                lang,
-                f"{now} students have no seat: this section did not exist when the timetable was saved.",
-                f"{now} طالباً بلا مقعد: لم تكن هذه الشعبة موجودة عند حفظ الجدول.",
+            effect = (
+                _pick(
+                    lang,
+                    f"{now} students have no seat: this section did not exist when the timetable was saved.",
+                    f"{now} طالباً بلا مقعد: لم تكن هذه الشعبة موجودة عند حفظ الجدول.",
+                )
+                if roomed
+                else _pick(
+                    lang,
+                    f"{now} students: this section did not exist when the timetable was saved, and {unroomed}.",
+                    f"{now} طالباً: لم تكن هذه الشعبة موجودة عند حفظ الجدول، و{unroomed}.",
+                )
             )
         else:
             what = _w(CHANGED, lang)
-            if extra > 0:
+            if extra > 0 and roomed:
                 effect = _pick(
                     lang,
                     f"{no_seat} students have no seat; rooms were sized for {group.saved_count}.",
                     f"{no_seat} طالباً بلا مقعد؛ حُددت القاعات لعدد {group.saved_count}.",
                 )
-            elif extra < 0:
+            elif extra > 0:
+                effect = _pick(
+                    lang,
+                    f"{extra} more students than saved; {unroomed}.",
+                    f"عدد الطلاب أكثر بـ {extra} مما حُفظ؛ {unroomed}.",
+                )
+            elif extra < 0 and roomed:
                 effect = _pick(
                     lang,
                     f"{-extra} fewer students than saved; rooms were sized for {group.saved_count}.",
                     f"عدد الطلاب أقل بـ {-extra} مما حُفظ؛ حُددت القاعات لعدد {group.saved_count}.",
+                )
+            elif extra < 0:
+                effect = _pick(
+                    lang,
+                    f"{-extra} fewer students than saved; {unroomed}.",
+                    f"عدد الطلاب أقل بـ {-extra} مما حُفظ؛ {unroomed}.",
                 )
             else:
                 effect = _pick(
@@ -2199,21 +2278,26 @@ def _change_rows(context: _Context, groups: list[SectionGroup]) -> list[tuple]:
                     "The same number of students, but not the same students.",
                     "عدد الطلاب نفسه لكنهم ليسوا الطلاب أنفسهم.",
                 )
-            if split:
+            if split and roomed:
                 effect += _pick(lang, " Split boundary recomputed.", " أُعيد حساب حدود التقسيم.")
-        todo = (
-            _pick(
-                lang,
-                "Timetable › Check changes › Save to resize rooms.",
-                "الجدول › التحقق من التغييرات › حفظ لإعادة تحديد القاعات.",
-            )
-            if membership in {CHANGED, NEW, GONE}
-            else _pick(
+        if membership == MATCHES:
+            todo = _pick(
                 lang,
                 "Timetable › Check changes › Save to refresh the programme counts.",
                 "الجدول › التحقق من التغييرات › حفظ لتحديث أعداد البرامج.",
             )
-        )
+        elif roomed:
+            todo = _pick(
+                lang,
+                "Timetable › Check changes › Save to resize rooms.",
+                "الجدول › التحقق من التغييرات › حفظ لإعادة تحديد القاعات.",
+            )
+        else:
+            todo = _pick(
+                lang,
+                "Timetable › Check changes › Save to update the saved counts.",
+                "الجدول › التحقق من التغييرات › حفظ لتحديث الأعداد المحفوظة.",
+            )
         rows.append(
             (
                 exam.code,
@@ -2260,8 +2344,16 @@ def _change_rows(context: _Context, groups: list[SectionGroup]) -> list[tuple]:
 # ── Rendering ──────────────────────────────────────────────────
 
 
+#: Everything outside XML 1.0's ``Char`` production. openpyxl's own
+#: ILLEGAL_CHARACTERS_RE covers only C0 controls: U+FFFE, U+FFFF and lone
+#: surrogates pass it, and the writer used in production (no lxml) then saves
+#: a workbook that neither Excel nor openpyxl will open.
+XML_ILLEGAL_RE = re.compile(r"[^\t\n\r\x20-\ud7ff\ue000-\ufffd\U00010000-\U0010ffff]")
+
+
 def _clean(value: str) -> str:
-    return ILLEGAL_CHARACTERS_RE.sub("", value)
+    """Drop what an XML part cannot hold, from every string a cell gets."""
+    return XML_ILLEGAL_RE.sub("", value)
 
 
 class _Styles:
@@ -2703,7 +2795,8 @@ def _program_day_columns(item: PreparedFile, lang: str) -> tuple[list[str], list
     taken = {header.casefold() for header in fixed} | {_PROGRAM_DAYS_NS.header(lang).casefold()}
     days = []
     for day in item.day_headers:
-        header = " ".join(day.split())
+        # The only header not fixed by this module: a timetable day label.
+        header = _clean(" ".join(day.split()))
         while header.casefold() in taken:
             header += _pick(lang, " (day)", " (يوم)")
         taken.add(header.casefold())
@@ -2780,18 +2873,34 @@ def _write_checks(ws, spec: SheetSpec, render: _Render, *, header, selected, lay
     writer.blank(2)
     changes = render.item.tables["ChangeLog"]
     if not changes:
-        changes = [
-            (
-                _pick(
-                    lang,
-                    f"No changes: every section matches saved timetable #{render.model.saved.run_id}.",
-                    f"لا تغييرات: كل الشعب مطابقة للجدول المحفوظ رقم {_iso(render.model.saved.run_id, lang)}",
-                ),
-                *([None] * (len(CHANGE_LOG.columns) - 1)),
-            )
-        ]
+        changes = [(_no_changes_text(render), *([None] * (len(CHANGE_LOG.columns) - 1)))]
     writer.table(CHANGE_LOG, changes)
     writer.finish_tables()
+
+
+def _no_changes_text(render: _Render) -> str:
+    """The one ChangeLog row of a file none of whose sections changed.
+
+    "Every section matches" is said only when it is true of the whole
+    timetable; a scoped file can be untouched while sections elsewhere differ,
+    and About (whole-timetable) says so on the same workbook.
+    """
+    lang, model = render.lang, render.model
+    run_id = model.saved.run_id
+    if model.unchanged:
+        return _pick(
+            lang,
+            f"No changes: every section matches saved timetable #{run_id}.",
+            f"لا تغييرات: كل الشعب مطابقة للجدول المحفوظ رقم {_iso(run_id, lang)}",
+        )
+    elsewhere = len(model.differing_groups)
+    return _pick(
+        lang,
+        f"No changes in this file's sections; {elsewhere:,} sections elsewhere in the timetable "
+        f"differ from saved timetable #{run_id}.",
+        f"لا تغييرات في شعب هذا الملف. الشعب المختلفة في بقية الجدول عن الجدول المحفوظ رقم "
+        f"{_iso(run_id, lang)}: {elsewhere:,}.",
+    )
 
 
 def _write_file_info(
@@ -2904,7 +3013,7 @@ def _status_text(render: _Render) -> tuple[str, bool]:
     lang, model = render.lang, render.model
     run_id = model.saved.run_id
     total = len(model.groups)
-    if model.lists_match:
+    if model.unchanged:
         return (
             _pick(
                 lang,
@@ -2913,7 +3022,8 @@ def _status_text(render: _Render) -> tuple[str, bool]:
             ),
             True,
         )
-    differ = len(model.changed_groups)
+    # Students or programme counts: either one is a difference the file marks.
+    differ = len(model.differing_groups)
     no_seat = whole_run_no_seat(model)
     missing = len(model.missing_exams)
     extra_en = f"; {missing} exams are no longer in the lists" if missing else ""
@@ -3237,15 +3347,13 @@ def sittings_by_group(sittings: Iterable[Sitting]) -> dict[str, int]:
 def _check_summary(model: RosterModel) -> dict:
     counts = Counter(group.membership for group in model.groups)
     return {
-        "status": "matches" if model.lists_match else "changed",
+        "status": "matches" if model.unchanged else "changed",
         "sections_total": len(model.groups),
         "sections_matching": counts[MATCHES],
         "sections_changed": counts[CHANGED],
         "sections_new": counts[NEW],
         "sections_gone": counts[GONE],
-        "program_mix_changed": sum(
-            1 for g in model.groups if g.membership == MATCHES and g.program_mix != MATCHES
-        ),
+        "program_mix_changed": _mix_only_changes(model),
         "exams_missing": list(model.missing_exams),
         "changed": [
             {
@@ -3258,8 +3366,7 @@ def _check_summary(model: RosterModel) -> dict:
                 "membership": group.membership,
                 "program_mix": group.program_mix,
             }
-            for group in model.groups
-            if group.membership != MATCHES or group.program_mix != MATCHES
+            for group in model.differing_groups
         ],
         "no_seat": whole_run_no_seat(model),
         "lists_code_saved": model.lists_code_saved,
@@ -3267,9 +3374,9 @@ def _check_summary(model: RosterModel) -> dict:
     }
 
 
-def export_choices(model: RosterModel) -> dict:
+def export_choices(model: RosterModel, sittings: list[Sitting] | None = None) -> dict:
     """What the dialog's pickers offer: timetable facts with row counts."""
-    sittings = all_sittings(model)
+    sittings = all_sittings(model) if sittings is None else sittings
     by_exam = Counter(s.exam.code for s in sittings)
     by_group = Counter((s.group.exam, s.group.section_key, s.group.gender) for s in sittings)
     by_slot = Counter(s.exam.slot_index for s in sittings if s.exam.scheduled)
@@ -3362,15 +3469,32 @@ def export_choices(model: RosterModel) -> dict:
     }
 
 
+def choices_digest(choices: dict) -> str:
+    """A short checksum of the picker choices, so a dialog that holds them is not re-sent them."""
+    canonical = json.dumps(choices, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16]
+
+
 def preflight_summary(
-    model: RosterModel, options: ExportOptions | None, *, pickers: object = None
+    model: RosterModel,
+    options: ExportOptions | None,
+    *,
+    pickers: object = None,
+    known_choices: object = None,
 ) -> dict:
     """The dialog's check panel, pickers and counts. No student ID or name.
 
     ``pickers`` may carry every picker's current value (exam, section_key,
     gender, slot_index, room_code, day) so one call prices every scope choice.
+    ``choices`` (~200 KB on a whole run) is sent only when it differs from the
+    ``known_choices`` digest the dialog already holds; ``choices_digest`` is
+    always sent. The choices do not depend on the options, only on the run and
+    the lists, so a dialog re-pricing its options gets counts alone.
     """
     saved = model.saved
+    sittings = all_sittings(model)
+    choices = export_choices(model, sittings)
+    digest = choices_digest(choices)
     body: dict[str, Any] = {
         "ok": True,
         "run": {
@@ -3381,12 +3505,13 @@ def preflight_summary(
             "term": saved.term,
         },
         "check": _check_summary(model),
-        "choices": export_choices(model),
+        "choices_digest": digest,
         "mode": "sync",
     }
+    if known_choices != digest:
+        body["choices"] = choices
     if options is None:
         return body
-    sittings = all_sittings(model)
     chosen = [s for s in sittings if _selected(s, options, model)]
     values = pickers if isinstance(pickers, dict) else {}
     scope_rows: dict[str, int] = {}

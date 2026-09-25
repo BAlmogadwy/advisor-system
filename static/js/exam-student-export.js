@@ -12,6 +12,11 @@
  * - Counts and the Download label come from the preflight, re-run (debounced)
  *   on every option that changes them. Until it first answers, counts are the
  *   saved figures, prefixed "about", and Download waits with its reason said.
+ *   One preflight is out at a time: options changed meanwhile are sent when
+ *   it answers, so a burst of changes costs the server two rebuilds, not one
+ *   per change. A figure is shown as current only while every option it
+ *   depends on is the one it was priced with; otherwise it is dimmed while a
+ *   new answer is on its way, and cleared when none is.
  * - Only timetable facts and options are sent, never a student ID. The file
  *   name comes from Content-Disposition and the reference from
  *   X-Export-Reference.
@@ -27,7 +32,9 @@
   const copyNode = $('examStudentExportCopy');
   if (!host || !dialog || !copyNode) return;
 
-  const TIMING = { debounce: 300, revoke: 1000, ...(window.__examStudentExportTiming || {}) };
+  // busy: pauses before asking again while another export holds the server's
+  // one export slot (the preflight never queues for it); then Try again.
+  const TIMING = { debounce: 300, revoke: 1000, busy: [500, 1000, 2000, 3000, 4000, 5000], ...(window.__examStudentExportTiming || {}) };
   const STORE_KEY = 'exam-student-export';
   const GENDERS = ['M', 'F', 'U'];
   const SCOPES = ['section', 'course', 'room', 'period', 'day', 'all'];
@@ -86,11 +93,17 @@
   let facts = null;       // what the pickers offer
   let saved = null;       // the run's saved counts, "about" until the preflight answers
   let answer = null;      // the last preflight answer
+  let answeredFor = null; // the options that answer's counts were priced for
+  let choicesDigest = ''; // the server's digest of the choices the pickers hold
   let refusal = null;     // a gate refused this run: { code, live, saved }
-  let failure = null;     // { content: () => node|text, retry, blocks }
+  let failure = null;     // { content: () => node|text, retry, blocks, reason }
   let pending = false;    // a preflight for the current options is on its way
+  let inFlight = false;   // a preflight is out; the next waits for its answer
+  let slotWaits = 0;      // "another export is being prepared" answers in a row
   let busy = false;       // a download is on its way
   let stale = false;      // the board changed under the dialog
+  let lastCheck = '';     // what the check panel says, so it is announced once
+  let refusedDate = null; // the date input to focus once the options unlock
   let timer = 0;
   let preflightToken = 0;
   let downloadToken = 0;
@@ -255,6 +268,36 @@
     else value.prepared_for = $('examStudentPreparedFor').value.trim();
     return value;
   }
+
+  const optionsOf = () => body({ forPreflight: true });
+  const keyOf = value => JSON.stringify(value);
+
+  // What each count was priced with. A scope's rows depend on the programs,
+  // groups and rows and on that scope's own fields: the chosen scope's, or
+  // the picker values every other scope is priced with.
+  const SCOPE_FIELDS = {
+    section: ['exam', 'section_key', 'gender'], course: ['exam'], room: ['slot_index', 'room_code'],
+    period: ['slot_index'], day: ['day'], all: [],
+  };
+  function fieldsOf(options, kind) {
+    const source = options.scope.kind === kind ? options.scope : options.pickers;
+    return SCOPE_FIELDS[kind].map(name => source[name] ?? null);
+  }
+
+  // "Every program" travels as none, so none ticked must not pass for it.
+  const noProgram = () => Boolean(facts?.programs) && !programBoxes().some(box => box.checked);
+
+  function pricedWith(options, filters, kinds) {
+    return Boolean(answeredFor)
+      && !(filters.includes('programs') && noProgram())
+      && filters.every(key => keyOf(answeredFor[key]) === keyOf(options[key]))
+      && kinds.every(kind => keyOf(fieldsOf(answeredFor, kind)) === keyOf(fieldsOf(options, kind)));
+  }
+
+  const scopePriced = (kind, options) => pricedWith(options, ['programs', 'groups', 'rows'], [kind]);
+  // Group counts are for the chosen scope whatever groups are ticked.
+  const groupsPriced = options => answeredFor?.scope.kind === options.scope.kind
+    && pricedWith(options, ['programs', 'rows'], [options.scope.kind]);
 
   // Why these options can be neither priced nor downloaded, before asking.
   function invalidReason() {
@@ -475,6 +518,11 @@
   function renderCheck() {
     const state = checkState();
     const check = answer?.check;
+    // The panel is a polite live region: rewriting the same words would
+    // announce them again on every option change, so only a change is said.
+    const said = keyOf([state, ['matches', 'changed'].includes(state) ? check : null, state === 'refused' ? refusal : null]);
+    if (said === lastCheck) return;
+    lastCheck = said;
     $('examStudentExportCheck').dataset.state = state;
     $('examStudentExportCheckMark').textContent = { matches: '✓', changed: '≠', refused: '✕' }[state] || '';
     const detail = $('examStudentExportCheckDetail');
@@ -504,11 +552,12 @@
     note.hidden = !note.childNodes.length;
   }
 
-  // The saved figures, "about", until the first answer; then the preflight's.
-  function scopeFigure(kind) {
+  // The saved figures, "about", until the first answer; then the preflight's,
+  // for as long as they were priced with these options or new ones are coming.
+  function scopeFigure(kind, options) {
     if (answer) {
       const n = answer.counts?.scope_rows?.[kind];
-      return n === undefined ? null : rowsCopy(n);
+      return n === undefined || !(pending || scopePriced(kind, options)) ? null : rowsCopy(n);
     }
     if (!saved || !defaultFilters() || !complete(scope(kind))) return null;
     const value = scope(kind);
@@ -523,18 +572,22 @@
     return copy('about-rows', { n: count(n) });
   }
 
+  // A count priced with other options is dimmed while its new one is on its
+  // way and cleared when none is (options that cannot be priced, a failure).
   function renderCounts() {
+    const options = optionsOf();
     const waiting = pending && Boolean(answer);
     SCOPES.forEach(kind => {
       const cell = dialog.querySelector(`[data-scope-count="${kind}"]`);
-      cell.replaceChildren((!refusal && scopeFigure(kind)) || '');
-      cell.classList.toggle('is-waiting', waiting);
+      cell.replaceChildren((!refusal && scopeFigure(kind, options)) || '');
+      cell.classList.toggle('is-waiting', waiting && !scopePriced(kind, options));
     });
+    const grouped = groupsPriced(options);
     GENDERS.forEach(gender => {
       const cell = dialog.querySelector(`[data-group-count="${gender}"]`);
       const n = answer?.counts?.groups?.[gender];
-      cell.replaceChildren(!refusal && n !== undefined ? rowsCopy(n) : '');
-      cell.classList.toggle('is-waiting', waiting);
+      cell.replaceChildren(!refusal && n !== undefined && (pending || grouped) ? rowsCopy(n) : '');
+      cell.classList.toggle('is-waiting', waiting && !grouped);
     });
     $('examStudentExportScope').setAttribute('aria-busy', String(pending));
   }
@@ -545,7 +598,8 @@
     if (refusal) return 'refused';
     const invalid = invalidReason();
     if (invalid) return invalid;
-    if (failure?.blocks) return 'reason-failed';
+    if (failure?.blocks) return failure.reason || 'reason-failed';
+    if (pending && slotWaits) return 'reason-busy';
     if (!answer) return 'reason-checking';
     if (pending) return 'reason-updating';
     if (!answer.counts?.rows) return 'reason-empty';
@@ -563,8 +617,10 @@
     why.hidden = !reason;
     dialog.querySelectorAll('.et-export-step').forEach(fieldset => { fieldset.disabled = busy; });
 
-    // Files and rows for the options last priced; dimmed while re-pricing.
-    const files = !refusal && answer?.counts?.rows ? answer.files || [] : [];
+    // Files and rows for the options last priced: dimmed while re-pricing,
+    // and gone once these options cannot be priced or pricing them failed.
+    const current = !failure && !invalidReason() && Boolean(answeredFor) && keyOf(answeredFor) === keyOf(optionsOf());
+    const files = !refusal && answer?.counts?.rows && (pending || current) ? answer.files || [] : [];
     $('examStudentExportSummary').replaceChildren(files.length
       ? copy('summary', { files: copy(`files-${Math.min(files.length, 3)}`), rows: rowsCopy(answer.counts.rows) }) : '');
     const list = $('examStudentExportFiles');
@@ -611,18 +667,40 @@
 
   function abortAll() {
     clearTimeout(timer);
+    timer = 0;
     preflightToken++;
     downloadToken++;
     preflightController?.abort();
     downloadController?.abort();
     preflightController = null;
     downloadController = null;
+    inFlight = false;
+    slotWaits = 0;
     pending = false;
     busy = false;
   }
 
+  // A refused date is marked on its own input, which says why through the
+  // error text; any change of the options clears the mark.
+  function markDate(day, focus) {
+    const input = dateInputs().find(item => item.dataset.day === day);
+    if (!input) return;
+    $('examStudentDatesDetails').open = true;
+    input.setAttribute('aria-invalid', 'true');
+    input.setAttribute('aria-describedby', 'examStudentExportErrorText');
+    // A download locks the options: the input takes focus once they unlock.
+    if (focus) refusedDate = input;
+  }
+
+  function clearDateMark() {
+    dateInputs().forEach(input => {
+      input.removeAttribute('aria-invalid');
+      input.removeAttribute('aria-describedby');
+    });
+  }
+
   // A refusal of the run, or a failure of this attempt.
-  function problem(status, data, retry, blocks) {
+  function problem(status, data, { retry, blocks, focus = false }) {
     const code = data.code || data.error_code || '';
     if (status === 404 || code === 'not_found' || code === 'run_not_found') {
       refusal = { code: 'not_found' };
@@ -632,10 +710,20 @@
       refusal = { code, live: data.live_term, saved: data.saved_term };
       return;
     }
+    if (code === 'invalid_options' && data.field === 'dates') {
+      // Sending the same dates again cannot succeed: no Try again, and
+      // Download waits until a date changes.
+      const day = typeof data.day === 'string' ? data.day : '';
+      markDate(day, focus);
+      failure = {
+        content: () => (day ? copy('error-date-day', { day: ltr(day) }) : copy('error-dates')),
+        retry: null, blocks: true, reason: 'reason-dates',
+      };
+      return;
+    }
     let content;
     if (['export_slot_busy', 'audit_unavailable', 'empty_scope'].includes(code)) content = () => copy(`error-${code}`);
     else if (code === 'export_failed') content = () => copy('error-export_failed', { reference: ltr(data.reference || '') });
-    else if (code === 'invalid_options' && data.field === 'dates') content = () => copy('error-dates');
     else if (code === 'invalid_options') content = () => copy('error-options');
     else content = () => data.error || copy('error-download');
     failure = { content, retry, blocks };
@@ -646,49 +734,91 @@
   function schedulePreflight({ now = false } = {}) {
     if (!context || stale) return;
     clearTimeout(timer);
-    preflightToken++;
-    preflightController?.abort();
-    preflightController = null;
+    timer = 0;
     failure = null;
+    slotWaits = 0;
+    clearDateMark();
     pending = !refusal && !invalidReason();
     render();
-    if (pending) timer = setTimeout(runPreflight, now ? 0 : TIMING.debounce);
+    if (pending) later(now ? 0 : TIMING.debounce);
   }
 
+  function later(ms) {
+    timer = setTimeout(() => {
+      timer = 0;
+      runPreflight();
+    }, ms);
+  }
+
+  // After an answer (or a failure) for the options `sent`: if the options
+  // moved on meanwhile - the user, or the server's reading adding a choice -
+  // ask for them now, unless a debounce is still counting down.
+  function askAgainIfMoved(sent) {
+    pending = !refusal && !invalidReason() && keyOf(optionsOf()) !== sent;
+    if (pending && !timer) runPreflight();
+  }
+
+  const isRefusal = (status, data) => status === 404 || status === 409
+    || ['not_found', 'run_not_found'].includes(data.code || data.error_code || '');
+
   async function runPreflight() {
-    if (!isCurrent()) return;
+    // One at a time: the answer on its way asks again for newer options.
+    if (inFlight || !isCurrent()) return;
     const mine = ++preflightToken;
     const controller = new AbortController();
     preflightController = controller;
-    const sent = JSON.stringify(body({ forPreflight: true }));
+    inFlight = true;
+    const options = optionsOf();
+    const sent = keyOf(options);
+    // The choices hardly change; the server re-sends them only when they do.
+    const payload = choicesDigest ? { ...options, known_choices: choicesDigest } : options;
     try {
-      const response = await fetch(endpoint('preflight/'), { method: 'POST', headers: headers(), body: sent, signal: controller.signal });
+      const response = await fetch(endpoint('preflight/'), {
+        method: 'POST', headers: headers(), body: JSON.stringify(payload), signal: controller.signal,
+      });
       const data = await host.readResponse(response);
       if (mine !== preflightToken || !isCurrent()) return;
-      pending = false;
+      inFlight = false;
       if (!response.ok || !data.ok) {
-        problem(response.status, data, () => schedulePreflight({ now: true }), true);
+        if ((data.code || '') === 'export_slot_busy' && slotWaits < TIMING.busy.length) {
+          // Another export holds the server's one slot: wait, then ask again.
+          later(TIMING.busy[slotWaits++]);
+          render();
+          return;
+        }
+        if (!isRefusal(response.status, data) && keyOf(optionsOf()) !== sent) {
+          // A failure for options already replaced: ask for the new ones.
+          askAgainIfMoved(sent);
+        } else {
+          pending = false;
+          problem(response.status, data, { retry: () => schedulePreflight({ now: true }), blocks: true });
+        }
         render();
         return;
       }
+      slotWaits = 0;
       refusal = null;
       answer = data;
-      facts = factsFromChoices(data.choices);
-      renderPickers();
-      // The server's reading can add a choice, such as a group new since the
-      // save; if that moved an option, these counts belong to other options.
-      if (JSON.stringify(body({ forPreflight: true })) !== sent) {
-        schedulePreflight({ now: true });
-        return;
+      answeredFor = options;
+      if (data.choices) {
+        facts = factsFromChoices(data.choices);
+        renderPickers();
       }
+      if (typeof data.choices_digest === 'string') choicesDigest = data.choices_digest;
+      askAgainIfMoved(sent);
       render();
     } catch (error) {
       if (mine !== preflightToken || error?.name === 'AbortError') return;
-      pending = false;
-      failure = { content: thrown(error), retry: () => schedulePreflight({ now: true }), blocks: true };
+      inFlight = false;
+      if (keyOf(optionsOf()) !== sent) askAgainIfMoved(sent);
+      else {
+        pending = false;
+        failure = { content: thrown(error), retry: () => schedulePreflight({ now: true }), blocks: true };
+      }
       render();
     } finally {
       if (preflightController === controller) preflightController = null;
+      if (mine === preflightToken) inFlight = false;
     }
   }
 
@@ -699,6 +829,9 @@
 
   async function download() {
     if (!context || blockReason() || !isCurrent()) return;
+    // The options lock while the file is made: focus in them (Enter in a
+    // field submits) would fall to the page, so it waits on Download.
+    if (document.activeElement?.closest?.('.et-export-step')) $('examStudentExportDownload').focus({ preventScroll: true });
     const mine = ++downloadToken;
     const controller = new AbortController();
     downloadController = controller;
@@ -715,7 +848,7 @@
       const type = response.headers?.get('content-type') || '';
       if (!response.ok || !FILE_TYPES.test(type)) {
         const data = await host.readResponse(response);
-        if (mine === downloadToken) problem(response.status, data, download, false);
+        if (mine === downloadToken) problem(response.status, data, { retry: download, blocks: false, focus: true });
         return;
       }
       const blob = await response.blob();
@@ -743,6 +876,8 @@
         busy = false;
         downloadController = null;
         render();
+        refusedDate?.focus();
+        refusedDate = null;
       }
     }
   }
@@ -773,6 +908,8 @@
     facts = factsFromRun(run);
     saved = savedCounts(run);
     answer = null;
+    answeredFor = null;
+    choicesDigest = '';
     refusal = null;
     failure = null;
     stale = false;
@@ -834,7 +971,14 @@
     event.preventDefault();
     download();
   });
-  $('examStudentExportRetry').addEventListener('click', () => failure?.retry?.());
+  $('examStudentExportRetry').addEventListener('click', () => {
+    const retry = failure?.retry;
+    if (!retry) return;
+    // Trying again hides this button; focus waits on Download, whose
+    // description says what is happening, instead of falling to the page.
+    $('examStudentExportDownload').focus({ preventScroll: true });
+    retry();
+  });
 
   // Choosing in a row's picker chooses that row; the two exam pickers and
   // the two period pickers are one value each on the server, so they agree.

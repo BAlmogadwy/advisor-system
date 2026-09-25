@@ -163,6 +163,7 @@ def test_unchanged_lists_match_every_group_and_reproduce_saved_qa(saved_run):
     assert {group.membership for group in model.groups} == {MATCHES}
     assert {group.program_mix for group in model.groups} == {MATCHES}
     assert model.lists_code_saved == model.lists_code_now and model.lists_match
+    assert model.unchanged and model.differing_groups == []
     assert len(model.groups) == sum(len(rows) for rows in data["section_enrollment"].values())
     # The recomputed clash set is exactly the build's hard-constraint report.
     clashes = {(sid, slot) for sid in model.flags.days for slot in _clash_slots(model.flags, sid)}
@@ -256,6 +257,12 @@ def test_programme_change_inside_one_identity_changes_mix_not_membership(saved_r
     assert m1.membership == MATCHES
     assert m1.program_mix == CHANGED
     assert m1.live_program_counts["CS"] == m1.saved_program_counts["CS"] + 1
+    # The students match, so the lists codes do; what a reader is told
+    # "matches" must still not: the saved department counts no longer hold.
+    assert model.lists_match and model.lists_code_saved == model.lists_code_now
+    assert not model.unchanged
+    assert [(g.exam, g.section) for g in model.differing_groups] == [("MATH101", "M1")]
+    assert model.changed_groups == []
 
 
 def test_changed_split_section_moves_its_boundary_and_leftovers_have_no_seat(saved_run):

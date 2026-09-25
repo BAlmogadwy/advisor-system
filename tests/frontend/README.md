@@ -81,14 +81,19 @@ The `exam-student-export.test.cjs` suite runs the same page with the Student
 data dialog (`static/js/exam-student-export.js`). It covers the button's
 Department-files rule and its stated reason, the in-place link from Department
 files, focus on open and back to the opener (the `browserFocus` model, which
-here also treats a closed `<dialog>` as unfocusable), pickers from the saved run
-and then from the preflight, "about" saved figures, debounced re-pricing that
-drops superseded answers, the Matches/Changed/Refused/unchecked check states,
-programme shortcuts, groups new since the save, exact request bodies, the blob
-download with the server's file name and reference, inline errors with Try
-again, and a board change under the open dialog. The real endpoints, a real
-workbook and Chromium focus and layout are covered by
-`tests/test_exam_student_export_browser.py`.
+here also treats a closed `<dialog>`, a disabled control and a disabled
+fieldset as unfocusable), pickers from the saved run and then from the
+preflight, "about" saved figures, debounced re-pricing with one preflight out
+at a time (options changed meanwhile follow its answer; a failure for replaced
+options asks again), the choices digest, waiting while another export holds
+the server, counts shown only while priced with the current options (dimmed
+while re-priced, cleared when they cannot be), the Matches/Changed/Refused/
+unchecked check states announced once, programme shortcuts, groups new since
+the save, exact request bodies, the blob download with the server's file name
+and reference, inline errors with Try again (focus stays in the dialog), a
+refused date named and marked on its input, Enter in a field, and a board
+change under the open dialog. The real endpoints, a real workbook and Chromium
+focus and layout are covered by `tests/test_exam_student_export_browser.py`.
 
 Network behavior is tested with deterministic responses. These tests do not
 create real saved runs, delete database rows, execute the optimizer, or inspect

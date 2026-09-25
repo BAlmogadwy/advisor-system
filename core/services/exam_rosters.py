@@ -669,8 +669,28 @@ class RosterModel:
         return [group for group in self.groups if group.membership != MATCHES]
 
     @property
+    def differing_groups(self) -> list[SectionGroup]:
+        """Groups whose students OR per-programme counts differ from the save."""
+        return [
+            group
+            for group in self.groups
+            if group.membership != MATCHES or group.program_mix != MATCHES
+        ]
+
+    @property
     def lists_match(self) -> bool:
+        """Every group's students match: the two lists codes are equal."""
         return self.lists_code_saved == self.lists_code_now and not self.missing_exams
+
+    @property
+    def unchanged(self) -> bool:
+        """What a reader is told "matches": the students AND the programme counts.
+
+        A programme change inside one course identity leaves every fingerprint
+        (and so ``lists_match``) intact while the saved department counts no
+        longer hold, so a status that says "matches" must check both.
+        """
+        return self.lists_match and not self.differing_groups
 
     def basis(self, group: SectionGroup, student_id: int) -> str:
         return sitting_basis(self.saved, group, student_id)

@@ -53,6 +53,11 @@ EXPORT_MODE = "sync"
 
 # One roster rebuild at a time per process: the four gthreads share 512 MB
 # with CP-SAT solves, and a whole-run export holds ~40 MB while it works.
+# Only a download waits for the slot. A preflight never queues: the dialog
+# re-prices on every option change, so waiting preflights could hold every
+# request thread of the single worker (Procfile: 1 worker x 4 gthreads)
+# behind one whole-run download. A busy preflight answers 503 at once and
+# the dialog asks again after a short pause.
 _EXPORT_SLOT = threading.BoundedSemaphore(1)
 EXPORT_SLOT_WAIT_SECONDS = 20
 
@@ -62,8 +67,13 @@ class ExportSlotBusy(Exception):
 
 
 @contextmanager
-def _export_slot() -> Iterator[None]:
-    if not _EXPORT_SLOT.acquire(timeout=EXPORT_SLOT_WAIT_SECONDS):
+def _export_slot(*, wait: bool) -> Iterator[None]:
+    acquired = (
+        _EXPORT_SLOT.acquire(timeout=EXPORT_SLOT_WAIT_SECONDS)
+        if wait
+        else _EXPORT_SLOT.acquire(blocking=False)
+    )
+    if not acquired:
         raise ExportSlotBusy
     try:
         yield
@@ -88,7 +98,9 @@ def _json_body(request: HttpRequest) -> object:
         raise ExportOptionsError("Export options are too large.", field="body")
     try:
         return json.loads(request.body.decode("utf-8") or "{}")
-    except (UnicodeDecodeError, ValueError) as exc:
+    # RecursionError: a small body of deeply nested brackets exhausts the
+    # decoder's stack; it is malformed input like any other, not a 500.
+    except (UnicodeDecodeError, ValueError, RecursionError) as exc:
         raise ExportOptionsError("Export options must be JSON.", field="body") from exc
 
 
@@ -107,7 +119,9 @@ def _handled(exc: Exception) -> JsonResponse:
     if isinstance(exc, ExportRefused):
         return _error(exc.status, exc.code, str(exc))
     if isinstance(exc, ExportOptionsError):
-        return _error(400, exc.code, str(exc), field=exc.field)
+        # A refused date names its day, so the dialog can mark that input.
+        extra = {"day": exc.day} if exc.day else {}
+        return _error(400, exc.code, str(exc), field=exc.field, **extra)
     if isinstance(exc, ExportSlotBusy):
         return _error(
             503, "export_slot_busy", "Another export is being prepared. Try again in a moment."
@@ -124,13 +138,14 @@ def exam_student_export_preflight_view(request: HttpRequest, run_id: int) -> Jso
     try:
         payload = _json_body(request)
         run = ExamTimetableRun.objects.get(pk=run_id)
-        with _export_slot():
+        with _export_slot(wait=False):
             model = build_roster_model(run)
             options = parse_export_options(payload, model, require_scope=False)
             body = preflight_summary(
                 model,
                 options,
                 pickers=payload.get("pickers") if isinstance(payload, dict) else None,
+                known_choices=payload.get("known_choices") if isinstance(payload, dict) else None,
             )
     except (
         ExamTimetableRun.DoesNotExist,
@@ -152,7 +167,7 @@ def exam_student_export_view(request: HttpRequest, run_id: int):
     try:
         payload = _json_body(request)
         run = ExamTimetableRun.objects.get(pk=run_id)
-        with _export_slot():
+        with _export_slot(wait=True):
             model = build_roster_model(run)
             options = parse_export_options(payload, model)
             actor, role = audit_actor(request)
