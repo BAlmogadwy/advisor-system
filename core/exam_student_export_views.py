@@ -44,10 +44,11 @@ MAX_BODY_BYTES = 32 * 1024
 EXPORT_ACTION = "exam_timetable.export_students"
 EXPORT_FAILED_ACTION = "exam_timetable.export_students_failed"
 
-#: Measured 2026-09-25 on the local DB, whole timetable (20,372 rows), Full,
-#: Arabic, openpyxl write-only without lxml (as deployed): 0.37 s roster +
-#: 0.41 s rows + 3.8 s workbook = 4.6 s. Gunicorn's --timeout is 120 s, more
-#: than 6x that, so every export is synchronous (owner decision 7).
+#: Measured 2026-09-25 on the local DB, run 484, whole timetable (20,372 rows),
+#: Full, Arabic, openpyxl write-only without lxml (as deployed; lxml is not in
+#: requirements): 0.34 s roster + 0.40 s rows + 3.69 s workbook = 4.43 s median
+#: of 3 (max 4.50 s), 33 MB peak Python allocation. Gunicorn's --timeout is
+#: 120 s, more than 6x that, so every export is synchronous (owner decision 7).
 EXPORT_MODE = "sync"
 
 # One roster rebuild at a time per process: the four gthreads share 512 MB
