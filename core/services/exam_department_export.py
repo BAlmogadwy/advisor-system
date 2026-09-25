@@ -428,8 +428,22 @@ def _request_options(
         or len(set(genders)) != len(genders)
     ):
         raise ValueError("Select at least one available student group without duplicates.")
-    raw_dates = payload.get("dates", {})
-    if not isinstance(raw_dates, dict) or set(raw_dates) - set(options["days"]):
+    dates = parse_exam_dates(payload.get("dates", {}), options["days"])
+    return [profiles[key] for key in selected], set(genders), language, dates
+
+
+def day_weekday(day: str) -> int | None:
+    """Monday-based weekday a grid day label names ("W1-Sun" -> 6), if any."""
+    return _WEEKDAYS.get(re.sub(r"^w\d+[-\s]+", "", day.strip().casefold()))
+
+
+def parse_exam_dates(raw_dates: object, days: list[str]) -> dict[str, date]:
+    """Validate per-day exam dates entered for an export; they are never stored.
+
+    Dates must be ISO, Excel-representable, match the weekday a label names and
+    follow the timetable's day order. Shared by every exam export.
+    """
+    if not isinstance(raw_dates, dict) or set(raw_dates) - set(days):
         raise ValueError("Enter dates only for days in this timetable.")
     dates = {}
     for day, value in raw_dates.items():
@@ -441,14 +455,13 @@ def _request_options(
             raise ValueError("Enter a valid exam date.") from exc
         if dates[day].year < 1900:
             raise ValueError("Exam dates must be supported by Excel (1900 or later).")
-        day_name = re.sub(r"^w\d+[-\s]+", "", day.strip().casefold())
-        weekday = _WEEKDAYS.get(day_name)
+        weekday = day_weekday(day)
         if weekday is not None and dates[day].weekday() != weekday:
             raise ValueError(f"The date for {day} must match its weekday.")
-    ordered_dates = [dates[day] for day in options["days"] if day in dates]
+    ordered_dates = [dates[day] for day in days if day in dates]
     if any(right <= left for left, right in zip(ordered_dates, ordered_dates[1:], strict=False)):
         raise ValueError("Exam dates must be distinct and follow timetable day order.")
-    return [profiles[key] for key in selected], set(genders), language, dates
+    return dates
 
 
 def _room_distribution(entry: dict, sections: list[dict], language: str) -> dict:
