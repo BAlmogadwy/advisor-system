@@ -77,6 +77,19 @@ snapshot labels. Missing or incompatible review metadata is unavailable rather
 than a claim of zero shared students. Native review buttons remain separate from
 the existing Pin, Move and double-click interactions.
 
+The `exam-student-export.test.cjs` suite runs the same page with the Student
+data dialog (`static/js/exam-student-export.js`). It covers the button's
+Department-files rule and its stated reason, the in-place link from Department
+files, focus on open and back to the opener (the `browserFocus` model, which
+here also treats a closed `<dialog>` as unfocusable), pickers from the saved run
+and then from the preflight, "about" saved figures, debounced re-pricing that
+drops superseded answers, the Matches/Changed/Refused/unchecked check states,
+programme shortcuts, groups new since the save, exact request bodies, the blob
+download with the server's file name and reference, inline errors with Try
+again, and a board change under the open dialog. The real endpoints, a real
+workbook and Chromium focus and layout are covered by
+`tests/test_exam_student_export_browser.py`.
+
 Network behavior is tested with deterministic responses. These tests do not
 create real saved runs, delete database rows, execute the optimizer, or inspect
 downloaded workbooks; backend and export suites cover those contracts separately.

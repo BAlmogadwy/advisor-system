@@ -116,6 +116,39 @@ def test_posts_need_csrf_and_nothing_answers_get(run, django_user_model):
         assert strict.get(_url(run.pk, view)).status_code == 405
 
 
+# ── The page that offers it ────────────────────────────────────
+
+
+def test_the_dialog_is_arabic_only_when_arabic_is_asked_for(committee):
+    """The page renders English unless the request asks for Arabic.
+
+    An Arabic assertion against an unforced page would assert nothing, so the
+    same page is asked for both ways and each must hold its own words only.
+    """
+    english = committee.get(reverse("exam_timetable_page")).content.decode()
+    arabic = committee.get(
+        reverse("exam_timetable_page"), HTTP_ACCEPT_LANGUAGE="ar"
+    ).content.decode()
+    words = {
+        "title": ("Export student data to Excel", "تصدير بيانات الطلاب إلى Excel"),
+        "button": (">Student data</button>", ">بيانات الطلاب</button>"),
+        "link": ("Export student data…", "تصدير بيانات الطلاب…"),
+        "privacy": (
+            "Contains student names and IDs. Share only with exam staff.",
+            "يحتوي على أسماء الطلاب وأرقامهم الجامعية. شاركه مع منسوبي الاختبارات فقط.",
+        ),
+        "matches": ("Student lists match this timetable", "قوائم الطلاب مطابقة لهذا الجدول"),
+    }
+    for name, (en, ar) in words.items():
+        assert en in english and ar not in english, name
+        assert ar in arabic and en not in arabic, name
+    assert '<html lang="ar" dir="rtl"' in arabic
+    assert '<html lang="en" dir="ltr"' in english
+    for page in (english, arabic):
+        assert "js/exam-student-export.js?v=" in page
+        assert 'dir="auto"' not in page
+
+
 # ── Gates and validation ───────────────────────────────────────
 
 

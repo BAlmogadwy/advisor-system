@@ -1,6 +1,7 @@
 <dialog id="examDepartmentDialog" class="et-move-dialog et-department-dialog" aria-labelledby="examDepartmentTitle" aria-describedby="examDepartmentHelp">
   <h2 id="examDepartmentTitle">{% if LANGUAGE_CODE == 'ar' %}ملفات الأقسام{% else %}Department files{% endif %}</h2>
   <p id="examDepartmentHelp" class="et-dialog-help">{% if LANGUAGE_CODE == 'ar' %}ملف إكسل لكل قسم، يشمل جميع اختبارات طلابه حسب برامجهم الدراسية، بما فيها المقررات من أقسام أخرى. تُجمع برامج الذكاء الاصطناعي وعلوم البيانات في ملف واحد.{% else %}One Excel workbook per department, covering all exams taken by its students, including courses from other departments. Artificial Intelligence and Data Science programs share one file.{% endif %}</p>
+  <p class="et-export-link-line">{% if LANGUAGE_CODE == 'ar' %}تحتاج أسماء الطلاب وأرقامهم الجامعية؟{% else %}Need student names and IDs?{% endif %} <button id="examDepartmentStudentLink" type="button" class="et-link-button" aria-haspopup="dialog" aria-controls="examStudentExportDialog">{% if LANGUAGE_CODE == 'ar' %}تصدير بيانات الطلاب…{% else %}Export student data…{% endif %}</button></p>
   <p id="examDepartmentStatus" class="et-department-status" role="status" aria-live="polite" hidden></p>
   <p id="examDepartmentError" class="alert alert-danger" role="alert" hidden></p>
   <form id="examDepartmentForm" novalidate>

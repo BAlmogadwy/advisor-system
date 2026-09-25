@@ -1522,7 +1522,7 @@ function pageHiddenFromAssistiveTech() {
   // dlg.js un-hides <main> as it starts to close, and gives focus back only as
   // it removes its backdrop: until then the page is not back.
   return Boolean($('examMoveDialog')?.open) || Boolean($('examDepartmentDialog')?.open)
-    || Boolean(document.querySelector('.dlg-backdrop'));
+    || Boolean($('examStudentExportDialog')?.open) || Boolean(document.querySelector('.dlg-backdrop'));
 }
 
 // `stillTrue`: asked again before a deferred announcement is made - a lost
@@ -2663,6 +2663,23 @@ function updateExportState() {
   departmentButton.disabled = blocked || !_currentRunId;
   departmentButton.title = blocked ? button.title : '';
   if (_departmentContext && !departmentContextIsCurrent()) invalidateDepartmentExport();
+  // Student data stays in view and says why it waits, not only greyed out.
+  const studentButton = $('examStudentDataBtn');
+  const studentReason = studentExportBlockReason();
+  studentButton.setAttribute('aria-disabled', String(Boolean(studentReason)));
+  studentButton.title = studentReason;
+  $('examStudentDataReason').textContent = studentReason;
+}
+
+/* Student data follows the Department files rule, and names the reason. */
+function studentExportBlockReason() {
+  if (!_currentRunId) return $('examStudentDataBtn').dataset.noRunReason;
+  if (!departmentExportBlocked()) return '';
+  if (needsExamSourceRebuild() || _sourceCoursesRejected) {
+    return IS_AR ? 'راجع مصدر المقررات وأعد بناء الجدول قبل التصدير.' : 'Review the course source and rebuild before exporting.';
+  }
+  if (hasUnsavedEdits()) return T.saveBeforeExport;
+  return IS_AR ? 'تحقق من التغييرات قبل التصدير.' : 'Check changes before exporting.';
 }
 
 /* Department exports always use the saved run captured when the dialog opens. */
@@ -2671,11 +2688,15 @@ function departmentExportBlocked() {
     || hasUnsavedEdits() || _scheduleHasDraftMoves || ['loading', 'error', 'review'].includes(_checkState);
 }
 
+function exportContextIsCurrent(context) {
+  return Boolean(context) && !departmentExportBlocked()
+    && context.runId === _currentRunId
+    && context.signature === editorSignature()
+    && context.revision === _editorRevision;
+}
+
 function departmentContextIsCurrent() {
-  return _departmentContext && !departmentExportBlocked()
-    && _departmentContext.runId === _currentRunId
-    && _departmentContext.signature === editorSignature()
-    && _departmentContext.revision === _editorRevision;
+  return exportContextIsCurrent(_departmentContext);
 }
 
 function departmentExportError(message) {
@@ -2877,6 +2898,19 @@ async function downloadDepartmentFiles(event) {
     if (token === _departmentRequestToken && _departmentBusy) departmentExportBusy(false);
   }
 }
+
+/* The student data dialog (static/js/exam-student-export.js) exports the
+   saved run on the board, under the Department files rule, and reads the
+   page only through this hook. */
+window.examStudentExportHost = Object.freeze({
+  blockReason: studentExportBlockReason,
+  context: () => ({ runId: _currentRunId, signature: editorSignature(), revision: _editorRevision }),
+  isCurrent: exportContextIsCurrent,
+  savedRun: () => cloneData(_savedResultData),
+  readResponse: readExamResponse,
+  csrf: () => getCsrfToken() || CSRF,
+  closeDepartmentFiles: closeDepartmentExport,
+});
 
 $('departmentFilesBtn').addEventListener('click', openDepartmentExport);
 $('closeExamDepartment').addEventListener('click', closeDepartmentExport);
