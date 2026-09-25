@@ -57,6 +57,10 @@ from .db_admin_views import (
 )
 from .dev_student_advisor_lab_views import dev_student_advisor_v21_lab_view
 from .exam_department_views import exam_department_export_view, exam_department_options_view
+from .exam_student_export_views import (
+    exam_student_export_preflight_view,
+    exam_student_export_view,
+)
 from .exam_views import (
     exam_timetable_build_view,
     exam_timetable_copy_view,
@@ -777,6 +781,16 @@ urlpatterns = [
         "ops/exam-timetable/<int:run_id>/departments/export/",
         login_required(exam_department_export_view),
         name="exam_department_export",
+    ),
+    path(
+        "ops/exam-timetable/<int:run_id>/students/export/preflight/",
+        login_required(exam_student_export_preflight_view),
+        name="exam_student_export_preflight",
+    ),
+    path(
+        "ops/exam-timetable/<int:run_id>/students/export/",
+        login_required(exam_student_export_view),
+        name="exam_student_export",
     ),
     path(
         "ops/exam-timetable/<int:run_id>/copy/",

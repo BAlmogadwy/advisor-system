@@ -44,6 +44,8 @@ class ExamCommitteeAccessMiddleware:
             "exam_timetable_export",
             "exam_department_options",
             "exam_department_export",
+            "exam_student_export_preflight",
+            "exam_student_export",
         }
     )
 
