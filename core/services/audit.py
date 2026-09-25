@@ -9,7 +9,7 @@ from threading import Lock
 from typing import Any
 
 from django.conf import settings
-from django.db import transaction
+from django.db import OperationalError, transaction
 from django.http import HttpRequest
 
 from core.models import AuditLog
@@ -108,50 +108,16 @@ def _emit_security_alert(
     request: HttpRequest | None, *, rule: str, details: dict[str, Any]
 ) -> None:
     try:
-        ts_utc = datetime.now(UTC).isoformat()
-        actor_username = "system"
-        actor_role = "SYSTEM"
-        action = "security.alert"
-        endpoint = request.path if request is not None else ""
-        method = str(request.method) if request is not None else ""
-        status = "critical"
-        details_json = json.dumps({"rule": rule, **details}, ensure_ascii=False)
-        error_text = ""
-
-        with _AUDIT_WRITE_LOCK:
-            with transaction.atomic():
-                last = (
-                    AuditLog.objects.select_for_update()
-                    .order_by("-id")
-                    .values_list("entry_hash", flat=True)
-                    .first()
-                )
-                prev_hash = str(last) if last else "GENESIS"
-                entry_hash = _compute_entry_hash(
-                    ts_utc=ts_utc,
-                    actor_username=actor_username,
-                    actor_role=actor_role,
-                    action=action,
-                    endpoint=endpoint,
-                    method=method,
-                    status=status,
-                    details_json=details_json,
-                    error_text=error_text,
-                    prev_hash=prev_hash,
-                )
-                AuditLog.objects.create(
-                    ts_utc=ts_utc,
-                    actor_username=actor_username,
-                    actor_role=actor_role,
-                    action=action,
-                    endpoint=endpoint,
-                    method=method,
-                    status=status,
-                    details_json=details_json,
-                    error_text=error_text,
-                    prev_hash=prev_hash,
-                    entry_hash=entry_hash,
-                )
+        _append_audit_row(
+            actor_username="system",
+            actor_role="SYSTEM",
+            action="security.alert",
+            endpoint=request.path if request is not None else "",
+            method=str(request.method) if request is not None else "",
+            status="critical",
+            details_json=json.dumps({"rule": rule, **details}, ensure_ascii=False),
+            error_text="",
+        )
     except Exception:
         return
 
@@ -218,6 +184,121 @@ def models_Q_action_db_or_advisor() -> object:
     return Q(action__startswith="db.") | Q(action__startswith="advisor.")
 
 
+class AuditUnavailable(RuntimeError):
+    """The audit row could not be written, so the audited action must not happen."""
+
+
+def _append_audit_row(
+    *,
+    actor_username: str,
+    actor_role: str,
+    action: str,
+    endpoint: str,
+    method: str,
+    status: str,
+    details_json: str,
+    error_text: str,
+) -> str:
+    """Append one row to the HMAC chain and return its ``entry_hash``.
+
+    The process lock and ``select_for_update`` on the last row serialise every
+    writer, so two rows can never claim the same predecessor. Raises whatever
+    the database raises; callers decide whether that is fatal.
+    """
+    ts_utc = datetime.now(UTC).isoformat()
+    with _AUDIT_WRITE_LOCK:
+        with transaction.atomic():
+            last = (
+                AuditLog.objects.select_for_update()
+                .order_by("-id")
+                .values_list("entry_hash", flat=True)
+                .first()
+            )
+            prev_hash = str(last) if last else "GENESIS"
+            entry_hash = _compute_entry_hash(
+                ts_utc=ts_utc,
+                actor_username=actor_username,
+                actor_role=actor_role,
+                action=action,
+                endpoint=endpoint,
+                method=method,
+                status=status,
+                details_json=details_json,
+                error_text=error_text,
+                prev_hash=prev_hash,
+            )
+            AuditLog.objects.create(
+                ts_utc=ts_utc,
+                actor_username=actor_username,
+                actor_role=actor_role,
+                action=action,
+                endpoint=endpoint,
+                method=method,
+                status=status,
+                details_json=details_json,
+                error_text=error_text,
+                prev_hash=prev_hash,
+                entry_hash=entry_hash,
+            )
+    return entry_hash
+
+
+def audit_actor(request: HttpRequest) -> tuple[str, str]:
+    """The (username, role) an audit row records for this request's user."""
+    user = getattr(request, "user", None)
+    if not user or not user.is_authenticated:
+        return "", ""
+    groups = list(user.groups.values_list("name", flat=True))
+    return user.username, groups[0] if groups else ("SUPER_ADMIN" if user.is_superuser else "")
+
+
+def record_audit_event(
+    *,
+    actor_username: str,
+    actor_role: str,
+    action: str,
+    endpoint: str,
+    method: str,
+    status: str,
+    details: dict[str, Any] | None = None,
+    error_text: str = "",
+) -> str:
+    """Write an audit row or raise ``AuditUnavailable``: the fail-closed variant.
+
+    Use it where an action may only happen once it is on the record - a file of
+    student data, for example, is only rendered after its row exists, and its
+    reference derives from the returned ``entry_hash``. The actor is explicit so
+    a background thread can record the user who asked for the work. A locked
+    database is retried once; any other failure, or a second lock, raises.
+    """
+    try:
+        details_json = json.dumps(details or {}, ensure_ascii=False, sort_keys=True)
+    except (TypeError, ValueError) as exc:
+        raise AuditUnavailable("The audit details could not be recorded.") from exc
+    for attempt in (1, 2):
+        try:
+            return _append_audit_row(
+                actor_username=actor_username,
+                actor_role=actor_role,
+                action=action,
+                endpoint=endpoint,
+                method=method,
+                status=status,
+                details_json=details_json,
+                error_text=error_text[:500],
+            )
+        except OperationalError as exc:
+            if attempt == 1 and "locked" in str(exc).lower():
+                logger.warning("Audit write hit a locked database; retrying once")
+                continue
+            logger.error("Strict audit write failed", exc_info=True)
+            raise AuditUnavailable("The audit log is unavailable.") from exc
+        except Exception as exc:
+            logger.error("Strict audit write failed", exc_info=True)
+            raise AuditUnavailable("The audit log is unavailable.") from exc
+    raise AuditUnavailable("The audit log is unavailable.")  # pragma: no cover
+
+
 def log_audit_event(
     request: HttpRequest,
     *,
@@ -226,60 +307,19 @@ def log_audit_event(
     details: dict[str, Any] | None = None,
     error_text: str = "",
 ) -> None:
+    """Record an audit row; never raises (audit must not break business endpoints)."""
     try:
-        actor_username = (
-            request.user.username
-            if getattr(request, "user", None) and request.user.is_authenticated
-            else ""
+        actor_username, actor_role = audit_actor(request)
+        _append_audit_row(
+            actor_username=actor_username,
+            actor_role=actor_role,
+            action=action,
+            endpoint=request.path,
+            method=str(request.method),
+            status=status,
+            details_json=json.dumps(details or {}, ensure_ascii=False),
+            error_text=error_text[:500],
         )
-        actor_role = ""
-        if getattr(request, "user", None) and request.user.is_authenticated:
-            groups = list(request.user.groups.values_list("name", flat=True))
-            actor_role = (
-                groups[0] if groups else ("SUPER_ADMIN" if request.user.is_superuser else "")
-            )
-
-        ts_utc = datetime.now(UTC).isoformat()
-        endpoint = request.path
-        method = str(request.method)
-        details_json = json.dumps(details or {}, ensure_ascii=False)
-        error_trimmed = error_text[:500]
-
-        with _AUDIT_WRITE_LOCK:
-            with transaction.atomic():
-                last = (
-                    AuditLog.objects.select_for_update()
-                    .order_by("-id")
-                    .values_list("entry_hash", flat=True)
-                    .first()
-                )
-                prev_hash = str(last) if last else "GENESIS"
-                entry_hash = _compute_entry_hash(
-                    ts_utc=ts_utc,
-                    actor_username=actor_username,
-                    actor_role=actor_role,
-                    action=action,
-                    endpoint=endpoint,
-                    method=method,
-                    status=status,
-                    details_json=details_json,
-                    error_text=error_trimmed,
-                    prev_hash=prev_hash,
-                )
-                AuditLog.objects.create(
-                    ts_utc=ts_utc,
-                    actor_username=actor_username,
-                    actor_role=actor_role,
-                    action=action,
-                    endpoint=endpoint,
-                    method=method,
-                    status=status,
-                    details_json=details_json,
-                    error_text=error_trimmed,
-                    prev_hash=prev_hash,
-                    entry_hash=entry_hash,
-                )
-
         _check_critical_alerts(
             request,
             actor_username=actor_username,
