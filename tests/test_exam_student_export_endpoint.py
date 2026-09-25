@@ -193,6 +193,8 @@ def test_no_imported_lists_is_409_lists_unavailable(run, committee):
     [
         ({"scope": {"kind": "moon"}}, "invalid_options", "scope.kind"),
         ({**PAYLOAD, "student_ids": [4401001]}, "invalid_options", "student_ids"),
+        # Sent as the JSON escape \ud800, it decodes to a lone surrogate.
+        ({**PAYLOAD, "prepared_for": "Dean \ud800 office"}, "invalid_options", "prepared_for"),
         (
             {**PAYLOAD, "scope": {"kind": "course", "exam": "CS101"}, "programs": ["AI"]},
             "empty_scope",

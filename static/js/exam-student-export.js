@@ -543,7 +543,11 @@
       detail.replaceChildren(copy('changed-detail', { changed: count(check.changed.length), total: count(check.sections_total) }));
       changes.append(...changeItems(check));
       if (check.no_seat > 0) note.append(copy(check.no_seat === 1 ? 'no-seat-one' : 'no-seat', { n: count(check.no_seat) }), ' ');
-      note.append(copy('resize'));
+      // A programme change alone moves no student and unseats no one: there is
+      // nothing to resize, only the saved programme counts to bring up to date.
+      const mixOnly = check.changed.length > 0 && !check.exams_missing?.length && !(check.no_seat > 0)
+        && check.changed.every(change => change.membership === 'matches');
+      note.append(copy(mixOnly ? 'refresh-programs' : 'resize'));
     } else {
       $('examStudentExportCheckTitle').replaceChildren(copy(`${state}-title`));
       detail.replaceChildren(copy('checking-detail'));

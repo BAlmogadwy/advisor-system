@@ -1169,7 +1169,6 @@ class PreparedFile:
     exams: int
     sections: int
     data_sha256: str
-    no_changes: bool
 
     def name(self, reference: str) -> str:
         return f"{self.stem}_{reference_token(reference)}.xlsx"
@@ -1442,8 +1441,7 @@ def _prepare_file(
     day_headers, program_rows = _program_day_rows(context, sittings)
     tables["ProgramDays"] = program_rows
     tables["ExportChecks"] = _check_rows(context, sittings, file_groups)
-    change_rows = _change_rows(context, file_groups_list)
-    tables["ChangeLog"] = change_rows
+    tables["ChangeLog"] = _change_rows(context, file_groups_list)
     digest_table = "StudentExams" if options.contents == "full" else "ExamSections"
     return PreparedFile(
         gender=gender,
@@ -1459,7 +1457,6 @@ def _prepare_file(
         exams=len({s.exam.code for s in sittings}),
         sections=len(file_groups_list),
         data_sha256=_data_sha256(tables[digest_table]),
-        no_changes=not change_rows,
     )
 
 
@@ -2894,10 +2891,15 @@ def _no_changes_text(render: _Render) -> str:
             f"لا تغييرات: كل الشعب مطابقة للجدول المحفوظ رقم {_iso(run_id, lang)}",
         )
     elsewhere = len(model.differing_groups)
+    differ = (
+        "section elsewhere in the timetable differs"
+        if elsewhere == 1
+        else "sections elsewhere in the timetable differ"
+    )
     return _pick(
         lang,
-        f"No changes in this file's sections; {elsewhere:,} sections elsewhere in the timetable "
-        f"differ from saved timetable #{run_id}.",
+        f"No changes in this file's sections; {elsewhere:,} {differ} from saved timetable #{run_id}.",
+        # Label first, count last: no Arabic plural agreement to get wrong.
         f"لا تغييرات في شعب هذا الملف. الشعب المختلفة في بقية الجدول عن الجدول المحفوظ رقم "
         f"{_iso(run_id, lang)}: {elsewhere:,}.",
     )

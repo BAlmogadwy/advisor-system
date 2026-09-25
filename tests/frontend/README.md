@@ -88,7 +88,8 @@ at a time (options changed meanwhile follow its answer; a failure for replaced
 options asks again), the choices digest, waiting while another export holds
 the server, counts shown only while priced with the current options (dimmed
 while re-priced, cleared when they cannot be), the Matches/Changed/Refused/
-unchecked check states announced once, programme shortcuts, groups new since
+unchecked check states announced once, a programme-only change advised to
+update the saved program counts rather than resize rooms, programme shortcuts, groups new since
 the save, exact request bodies, the blob download with the server's file name
 and reference, inline errors with Try again (focus stays in the dialog), a
 refused date named and marked on its input, Enter in a field, and a board

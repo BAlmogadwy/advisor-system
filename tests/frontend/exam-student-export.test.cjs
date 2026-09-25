@@ -536,6 +536,42 @@ test('a changed check lists what changed, who has no seat, and marks the downloa
     'حُسبت القاعات على الأعداد المحفوظة. الطلاب بلا مقعد: 1. لإعادة توزيع القاعات: افحص التغييرات ثم احفظها.'));
 });
 
+test('a programme change alone says to update the saved program counts, and anything more to resize rooms', async t => {
+  const server = exportServer();
+  const mix = { exam: 'PHYS103 (2)', section: 'M5', mapping_status: 'mapped', gender: 'M', saved: 5, now: 5, membership: 'matches', program_mix: 'changed' };
+  const moved = { exam: 'MATH101', section: 'M1', mapping_status: 'mapped', gender: 'M', saved: 30, now: 30, membership: 'changed', program_mix: 'matches' };
+  const changed = check => json(matches({ check: { ...matches().check, status: 'changed', sections_matching: 5, program_mix_changed: 1, ...check } }));
+  const refresh = say('To update the saved program counts: Check changes, then Save Changes.', 'لتحديث أعداد البرامج المحفوظة: افحص التغييرات ثم احفظها.');
+  const resize = say('To resize rooms: Check changes, then Save Changes.', 'لإعادة توزيع القاعات: افحص التغييرات ثم احفظها.');
+  server.queue('preflight', changed({ changed: [mix] }));
+  const ui = await opened(t, { server });
+  assert.equal(ui.$('examStudentExportCheck').dataset.state, 'changed');
+  assert.deepEqual(Array.from(ui.$('examStudentExportChanges').children, li => li.textContent),
+    [say('PHYS103 (2) M5: program mix changed', 'PHYS103 (2) M5: تغيّر توزيع البرامج')]);
+  assert.equal(ui.text('examStudentExportCheckNote'), refresh);
+
+  // Students moved, an exam left the lists, a student lost a seat, or a
+  // change the check cannot list: each is more than the programme counts.
+  const answers = [
+    [{ changed: [mix, moved] }, resize],
+    [{ changed: [mix], exams_missing: ['CS9'] }, resize],
+    [{ changed: [mix], no_seat: 1 }, `${say('Rooms were sized for the saved counts; 1 student will have No seat.', 'حُسبت القاعات على الأعداد المحفوظة. الطلاب بلا مقعد: 1.')} ${resize}`],
+    [{ changed: [] }, resize],
+  ];
+  const moves = [
+    () => ui.tick(ui.$('examStudentOneFile'), false),
+    () => ui.radio('examStudentRows', 'flagged').click(),
+    () => ui.radio('examStudentLanguage', 'en').click(),
+    () => ui.radio('examStudentRows', 'all').click(),
+  ];
+  for (const [index, [check, note]] of answers.entries()) {
+    server.queue('preflight', changed(check));
+    moves[index]();
+    await idle();
+    assert.equal(ui.text('examStudentExportCheckNote'), note, JSON.stringify(check));
+  }
+});
+
 test('a check with no students for these options says so and offers nothing to download', async t => {
   const server = exportServer();
   server.queue('preflight', json(matches({ counts: { rows: 0, students: 0, scope_rows: { all: 0 }, groups: { M: 0, F: 0, U: 0 } }, files: [], download_name: '' })));

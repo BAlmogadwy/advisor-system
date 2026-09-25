@@ -11,6 +11,7 @@ from __future__ import annotations
 import ast
 import dataclasses
 import hashlib
+import json
 import os
 import re
 import subprocess
@@ -28,7 +29,7 @@ from openpyxl.worksheet import _writer as openpyxl_writer
 
 from core.models import Course, ProgrammeRequirement, Student, StudentTermSection
 from core.services import exam_student_export as export
-from core.services.exam_rosters import CHANGED, build_roster_model
+from core.services.exam_rosters import CHANGED, RebuildRequired, build_roster_model
 from core.services.exam_student_export import (
     EmptyScope,
     ExportOptionsError,
@@ -909,6 +910,45 @@ def test_a_file_whose_sections_did_not_change_never_says_every_section_matches(r
     ]
 
 
+@pytest.mark.parametrize(
+    "student, program, elsewhere, differ_en",
+    [
+        (MALE_AI[0], "CS", 1, "1 section elsewhere in the timetable differs"),
+        (MALE_CS[5], "CS2", 2, "2 sections elsewhere in the timetable differ"),
+    ],
+)
+def test_a_programme_change_only_outside_the_file_is_no_change_here_and_never_a_match(
+    run, student, program, elsewhere, differ_en
+):
+    # The same students everywhere, so the lists codes agree (lists_match);
+    # the programme counts of sections outside PHYS103 (1) do not (unchanged
+    # is False). Only the second may decide "every section matches".
+    Student.objects.filter(student_id=student).update(program=program)
+    model = build_roster_model(run)
+    assert model.lists_match and not model.unchanged
+    assert len(model.differing_groups) == elsewhere
+    assert all(g.exam != "PHYS103 (1)" for g in model.differing_groups)
+    scope = {"kind": "course", "exam": "PHYS103 (1)"}
+    content, *_ = _export(run, language="en", scope=scope)
+    assert _first_cells(_book(content), "Checks and changes", "ChangeLog") == [
+        f"No changes in this file's sections; {differ_en} from saved timetable #{run.pk}."
+    ]
+    content, *_ = _export(run, language="ar", scope=scope)
+    assert _first_cells(_book(content), SHEETS["ar"][8], "ChangeLog") == [
+        "لا تغييرات في شعب هذا الملف. الشعب المختلفة في بقية الجدول عن الجدول المحفوظ رقم "
+        f"\u200e{run.pk}\u200f: {elsewhere}."
+    ]
+    # The whole timetable holds the changed sections: no part of it says they match.
+    said_to_match = {
+        "en": ("every section matches", "Student lists match"),
+        "ar": ("كل الشعب مطابقة", "قوائم الطلاب مطابقة"),
+    }
+    for language, phrases in said_to_match.items():
+        content, *_ = _export(run, language=language)
+        for name, text in _parts(content).items():
+            assert not [phrase for phrase in phrases if phrase in text], (language, name)
+
+
 def test_a_changed_section_belongs_to_a_programme_file_by_its_saved_or_live_students(run):
     model = build_roster_model(run)
     m1 = next(g for g in model.groups if (g.exam, g.section) == ("MATH101", "M1"))
@@ -1154,6 +1194,35 @@ def test_characters_xml_cannot_hold_never_reach_a_cell(run):
     assert [c.name for c in book["Programs by day"].tables["ProgramDays"].tableColumns] == header
 
 
+def test_a_lone_surrogate_in_the_saved_run_is_stripped_and_the_workbook_opens(run):
+    # A JSON text may carry an unpaired \uXXXX escape: the database holds the
+    # ASCII escape, and loading it gives a character UTF-8 cannot encode and
+    # XML cannot hold. A course name carrying one is refused before any cell;
+    # the saved status reaches File info as it is, so only the cell cleaning
+    # stands between it and a workbook that cannot be written or opened.
+    data = saved_payload(run)
+    status = data["primary_status"]
+    assert status
+    entry = next(e for e in data["schedule"] if e["course_code"] == "CS101")
+    entry["course_name"] = "PROGRAMMING\ud800 I"
+    run.result_json = json.dumps(data)
+    run.save(update_fields=["result_json"])
+    with pytest.raises(RebuildRequired):
+        build_roster_model(run)
+    entry["course_name"] = "PROGRAMMING I"
+    data["primary_status"] = f"{status[:2]}\ud800{status[2:]}\udfff"
+    run.result_json = json.dumps(data)
+    run.save(update_fields=["result_json"])
+    for language in ("en", "ar"):
+        content, *_ = _export(run, language=language)
+        for text in _parts(content).values():
+            assert not re.search("[\ud800-\udfff]", text)
+        info_sheet = "File info" if language == "en" else SHEETS["ar"][9]
+        _header, rows = _rows(_book(content), info_sheet, "FileInfo")
+        info = {row[0]: row[1] for row in rows}
+        assert info["run_status"] == status, language
+
+
 def test_without_lxml_as_deployed_only_cleaned_text_saves_a_readable_workbook():
     """Production has no lxml: openpyxl's stdlib writer escapes nothing it cannot hold."""
     script = """
@@ -1315,6 +1384,9 @@ def test_reference_appears_in_about_file_info_and_properties(run):
         ({"scope": {"kind": "all"}, "prepared_for": "x" * 81}, "prepared_for"),
         ({"scope": {"kind": "all"}, "prepared_for": "Dean \uffff office"}, "prepared_for"),
         ({"scope": {"kind": "all"}, "prepared_for": "Dean \ufffe office"}, "prepared_for"),
+        # Lone surrogates: a JSON body may escape one, and no XML part can hold it.
+        ({"scope": {"kind": "all"}, "prepared_for": "Dean \ud800 office"}, "prepared_for"),
+        ({"scope": {"kind": "all"}, "prepared_for": "Dean \udfff office"}, "prepared_for"),
         ({"scope": {"kind": "all"}, "student_ids": [1]}, "student_ids"),
         ({"scope": {"kind": "all"}, "dates": {"Sun": "2026-12-14"}}, "dates"),
     ],
