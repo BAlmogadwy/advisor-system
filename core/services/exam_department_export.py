@@ -428,27 +428,56 @@ def _request_options(
         or len(set(genders)) != len(genders)
     ):
         raise ValueError("Select at least one available student group without duplicates.")
-    raw_dates = payload.get("dates", {})
-    if not isinstance(raw_dates, dict) or set(raw_dates) - set(options["days"]):
-        raise ValueError("Enter dates only for days in this timetable.")
+    dates = parse_exam_dates(payload.get("dates", {}), options["days"])
+    return [profiles[key] for key in selected], set(genders), language, dates
+
+
+def day_weekday(day: str) -> int | None:
+    """Monday-based weekday a grid day label names ("W1-Sun" -> 6), if any."""
+    return _WEEKDAYS.get(re.sub(r"^w\d+[-\s]+", "", day.strip().casefold()))
+
+
+class ExamDateError(ValueError):
+    """An entered exam date is refused; ``day`` names the day it was entered for.
+
+    ``day`` is empty when no single day is at fault (a day not in the
+    timetable, or a payload that is not a mapping), so a form can mark the
+    one input to fix whenever there is one.
+    """
+
+    def __init__(self, message: str, *, day: str = "") -> None:
+        self.day = day
+        super().__init__(message)
+
+
+def parse_exam_dates(raw_dates: object, days: list[str]) -> dict[str, date]:
+    """Validate per-day exam dates entered for an export; they are never stored.
+
+    Dates must be ISO, Excel-representable, match the weekday a label names and
+    follow the timetable's day order. Shared by every exam export.
+    """
+    if not isinstance(raw_dates, dict) or set(raw_dates) - set(days):
+        raise ExamDateError("Enter dates only for days in this timetable.")
     dates = {}
     for day, value in raw_dates.items():
         if not isinstance(value, str) or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", value):
-            raise ValueError("Exam dates must use YYYY-MM-DD.")
+            raise ExamDateError("Exam dates must use YYYY-MM-DD.", day=day)
         try:
             dates[day] = date.fromisoformat(value)
         except ValueError as exc:
-            raise ValueError("Enter a valid exam date.") from exc
+            raise ExamDateError("Enter a valid exam date.", day=day) from exc
         if dates[day].year < 1900:
-            raise ValueError("Exam dates must be supported by Excel (1900 or later).")
-        day_name = re.sub(r"^w\d+[-\s]+", "", day.strip().casefold())
-        weekday = _WEEKDAYS.get(day_name)
+            raise ExamDateError("Exam dates must be supported by Excel (1900 or later).", day=day)
+        weekday = day_weekday(day)
         if weekday is not None and dates[day].weekday() != weekday:
-            raise ValueError(f"The date for {day} must match its weekday.")
-    ordered_dates = [dates[day] for day in options["days"] if day in dates]
-    if any(right <= left for left, right in zip(ordered_dates, ordered_dates[1:], strict=False)):
-        raise ValueError("Exam dates must be distinct and follow timetable day order.")
-    return [profiles[key] for key in selected], set(genders), language, dates
+            raise ExamDateError(f"The date for {day} must match its weekday.", day=day)
+    ordered = [day for day in days if day in dates]
+    for left, right in zip(ordered, ordered[1:], strict=False):
+        if dates[right] <= dates[left]:
+            raise ExamDateError(
+                "Exam dates must be distinct and follow timetable day order.", day=right
+            )
+    return dates
 
 
 def _room_distribution(entry: dict, sections: list[dict], language: str) -> dict:

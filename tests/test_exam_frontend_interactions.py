@@ -17,7 +17,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 @pytest.mark.parametrize("language", ["en", "ar"])
-@pytest.mark.parametrize("suite", ["exam-timetable", "exam-review"])
+@pytest.mark.parametrize("suite", ["exam-timetable", "exam-review", "exam-student-export"])
 def test_exam_page_frontend_interactions(tmp_path: Path, language: str, suite: str) -> None:
     node = shutil.which("node")
     if not node or not (ROOT / "node_modules/jsdom/package.json").is_file():

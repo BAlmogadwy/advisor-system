@@ -54,6 +54,7 @@ def resolve_exam_section_enrollment(
     section_by_student: dict[int, str] | None = None,
     program_by_student: dict[int, str] | None = None,
     operations_sections: dict[str, list[dict]] | None = None,
+    members_out: dict[str, dict[tuple[str, str], frozenset[int]]] | None = None,
 ) -> dict[str, list[dict]]:
     """Match registrar links by student and source code inside each identity.
 
@@ -61,11 +62,19 @@ def resolve_exam_section_enrollment(
     canonical course population already disambiguates shared course codes.
     Forecast, working/scenario and other-campus links cannot supply evidence of
     a registered section. Multiple real links are reported, never guessed away.
+
+    ``members_out``, when given, receives the member set behind every returned
+    group, keyed ``{course: {(section_key, gender): frozenset(ids)}}``. They are
+    the very sets each ``membership_fingerprint`` is computed from, so a reader
+    that needs the students can never disagree with the fingerprint. Nothing is
+    added to the returned groups: saved runs keep holding no student IDs.
     """
     all_students = {int(sid) for sids in enrolled_sets.values() for sid in sids}
     if not all_students:
         if operations_sections is not None:
             operations_sections.update({code: [] for code in enrolled_sets})
+        if members_out is not None:
+            members_out.update({code: {} for code in enrolled_sets})
         return {code: [] for code in enrolled_sets}
     course_meta = course_meta or {}
     if section_by_student is None:
@@ -86,9 +95,10 @@ def resolve_exam_section_enrollment(
     source_links, year, term = exam_timetable_links()
     candidates: dict[tuple[int, str], dict[int, dict]] = defaultdict(dict)
     if year and term:
-        links = source_links.filter(
-            student_id__in=all_students,
-        ).values(
+        # Read the term's links and keep this population's, rather than send
+        # ``student_id IN (...)`` with thousands of IDs: SQLite answers that
+        # ~20x slower than it reads every link of the term.
+        links = source_links.values(
             "student_id",
             "term_section_id",
             "term_section__course_key",
@@ -98,6 +108,9 @@ def resolve_exam_section_enrollment(
         )
         wanted = set(source_codes.values())
         for row in links:
+            sid = int(row["student_id"])
+            if sid not in all_students:
+                continue
             code = _section_course_key(
                 SimpleNamespace(
                     **{
@@ -114,7 +127,6 @@ def resolve_exam_section_enrollment(
                 or allowed_gender == OTHER_BRANCH_SECTION_COHORT
             ):
                 continue
-            sid = int(row["student_id"])
             cohort = str(section_by_student.get(sid, "") or "").strip().upper()
             if cohort not in {"M", "F"} or (allowed_gender and allowed_gender != cohort):
                 continue
@@ -183,6 +195,8 @@ def resolve_exam_section_enrollment(
                 ),
             )
         ]
+        if members_out is not None:
+            members_out[display] = {key: frozenset(members[key]) for key in groups}
         if operations_sections is not None:
             captured = []
             for group in result[display]:

@@ -5835,7 +5835,7 @@ test('a refusal notice goes when the courses are loaded afresh', async t => {
   await until(() => ui.$('examEditorNotice').hidden);
 });
 
-test('an ending while the department files dialog is open is said once it closes', async t => {
+for (const [dialog, name] of [['examDepartmentDialog', 'department files'], ['examStudentExportDialog', 'student data']]) test(`an ending while the ${name} dialog is open is said once it closes`, async t => {
   const frames = [
     theirs('build', 'running', { enrolments: 'done', conflicts: 'running' }, 'conflicts'),
     theirs('build', 'failed', { enrolments: 'done', conflicts: 'stopped' }, 'conflicts', { error_code: 'server_error', finished_at: '2026-09-23T10:00:30+00:00' }),
@@ -5847,12 +5847,12 @@ test('an ending while the department files dialog is open is said once it closes
   });
   await until(() => !ui.$('examJobPanel').hidden);
   const before = ui.$('examJobLive').textContent;
-  ui.$('examDepartmentDialog').setAttribute('open', '');
+  ui.$(dialog).setAttribute('open', '');
   index = 1;
   await until(() => ui.$('examJobPanel').classList.contains('is-failed'));
   await pause(20);
   assert.equal(ui.$('examJobLive').textContent, before, 'The rest of the page is inert while it is open');
-  ui.$('examDepartmentDialog').removeAttribute('open');
+  ui.$(dialog).removeAttribute('open');
   await until(() => /^Build failed|^تعذّر بناء الجدول/.test(ui.$('examJobLive').textContent));
 });
 

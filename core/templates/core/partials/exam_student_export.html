@@ -1,0 +1,221 @@
+{% comment %}
+  Student data export (static/js/exam-student-export.js). It exports the saved
+  timetable on the board; the preflight counts, it never lists a student.
+  Every sentence the script shows is rendered here in the page language:
+  #examStudentExportCopy holds the ones with counts or codes, where {name}
+  marks a slot the script fills (codes, times, counts and file names go in
+  <bdi dir="ltr">). Arabic counts are label-first so plural agreement holds.
+{% endcomment %}
+<div id="examStudentExportCopy" hidden
+  data-locale="{% if LANGUAGE_CODE == 'ar' %}ar-u-nu-latn{% else %}en-GB{% endif %}"
+  data-source="{% if LANGUAGE_CODE == 'ar' %}الجدول رقم {id} «{label}» · حُفظ {saved}{% else %}Timetable #{id} “{label}” · saved {saved}{% endif %}"
+  data-source-term="{% if LANGUAGE_CODE == 'ar' %} · الفصل {term} من عام {year}{% else %} · {year} term {term}{% endif %}"
+  data-checking-title="{% if LANGUAGE_CODE == 'ar' %}جارٍ مطابقة قوائم الطلاب…{% else %}Checking student lists…{% endif %}"
+  data-unchecked-title="{% if LANGUAGE_CODE == 'ar' %}لم تُطابَق قوائم الطلاب بعد{% else %}Student lists not checked yet{% endif %}"
+  data-checking-detail="{% if LANGUAGE_CODE == 'ar' %}تظهر الأعداد المحفوظة مؤقتاً حتى تنتهي المطابقة.{% else %}Counts show the saved figures until the check finishes.{% endif %}"
+  data-matches-title="{% if LANGUAGE_CODE == 'ar' %}قوائم الطلاب مطابقة لهذا الجدول{% else %}Student lists match this timetable{% endif %}"
+  data-matches-detail="{% if LANGUAGE_CODE == 'ar' %}الشعب المطابقة: {matching} من {total} · رمز القوائم {code}{% else %}{matching} of {total} sections identical · Lists {code}{% endif %}"
+  data-changed-title="{% if LANGUAGE_CODE == 'ar' %}تغيّرت قوائم الطلاب بعد حفظ هذا الجدول{% else %}Student lists changed since this timetable was saved{% endif %}"
+  data-changed-detail="{% if LANGUAGE_CODE == 'ar' %}الشعب المختلفة: {changed} من {total}. كل سطر متأثر مُعلَّم في الملف.{% else %}{changed} of {total} sections differ. Every affected row is marked in the file.{% endif %}"
+  data-change-item="{% if LANGUAGE_CODE == 'ar' %}{exam} {section}: {counts}{% else %}{exam} {section}: {counts}{% endif %}"
+  data-change-new="{% if LANGUAGE_CODE == 'ar' %}{exam} {section}: جديدة بعد الحفظ ({counts}){% else %}{exam} {section}: new since save ({counts}){% endif %}"
+  data-change-gone="{% if LANGUAGE_CODE == 'ar' %}{exam} {section}: غير موجودة الآن ({counts}){% else %}{exam} {section}: gone since save ({counts}){% endif %}"
+  data-change-mix="{% if LANGUAGE_CODE == 'ar' %}{exam} {section}: تغيّر توزيع البرامج{% else %}{exam} {section}: program mix changed{% endif %}"
+  data-change-more="{% if LANGUAGE_CODE == 'ar' %}شعب أخرى: {n}{% else %}and {n} more{% endif %}"
+  data-exams-missing="{% if LANGUAGE_CODE == 'ar' %}اختبارات لم تعد في القوائم: {exams}{% else %}No longer in the lists: {exams}{% endif %}"
+  data-no-seat="{% if LANGUAGE_CODE == 'ar' %}حُسبت القاعات على الأعداد المحفوظة. الطلاب بلا مقعد: {n}.{% else %}Rooms were sized for the saved counts; {n} students will have No seat.{% endif %}"
+  data-no-seat-one="{% if LANGUAGE_CODE == 'ar' %}حُسبت القاعات على الأعداد المحفوظة. الطلاب بلا مقعد: {n}.{% else %}Rooms were sized for the saved counts; {n} student will have No seat.{% endif %}"
+  data-resize="{% if LANGUAGE_CODE == 'ar' %}لإعادة توزيع القاعات: افحص التغييرات ثم احفظها.{% else %}To resize rooms: Check changes, then Save Changes.{% endif %}"
+  data-refresh-programs="{% if LANGUAGE_CODE == 'ar' %}لتحديث أعداد البرامج المحفوظة: افحص التغييرات ثم احفظها.{% else %}To update the saved program counts: Check changes, then Save Changes.{% endif %}"
+  data-refused-rebuild_required="{% if LANGUAGE_CODE == 'ar' %}أعد بناء هذا الجدول واحفظه لتصدير بيانات الطلاب.{% else %}Rebuild and save this timetable to export student data.{% endif %}"
+  data-refused-lists_unavailable="{% if LANGUAGE_CODE == 'ar' %}لم تُستورد الجداول الدراسية للطلاب لهذا الفصل.{% else %}No student timetables have been imported for this term.{% endif %}"
+  data-refused-lists_term_mismatch="{% if LANGUAGE_CODE == 'ar' %}لا يمكن تصدير قوائم الطلاب لهذا الجدول: الجداول الدراسية المستوردة تخص {live}، وجدول الاختبارات هذا يخص {saved}.{% else %}Student lists can't be exported for this timetable: the imported student timetables are for {live} and this exam timetable is for {saved}.{% endif %}"
+  data-refused-not_found="{% if LANGUAGE_CODE == 'ar' %}حُذف هذا الجدول المحفوظ.{% else %}This saved timetable was deleted.{% endif %}"
+  data-refused="{% if LANGUAGE_CODE == 'ar' %}لا يمكن تصدير بيانات الطلاب لهذا الجدول.{% else %}This timetable can't be exported.{% endif %}"
+  data-term="{% if LANGUAGE_CODE == 'ar' %}الفصل {term} من عام {year}{% else %}{year} term {term}{% endif %}"
+  data-refused-title="{% if LANGUAGE_CODE == 'ar' %}لا يمكن تصدير بيانات الطلاب{% else %}Student data can't be exported{% endif %}"
+  data-rows="{% if LANGUAGE_CODE == 'ar' %}الأسطر: {n}{% else %}{n} rows{% endif %}"
+  data-rows-one="{% if LANGUAGE_CODE == 'ar' %}الأسطر: {n}{% else %}{n} row{% endif %}"
+  data-about-rows="{% if LANGUAGE_CODE == 'ar' %}الأسطر: نحو {n}{% else %}about {n} rows{% endif %}"
+  data-files-1="{% if LANGUAGE_CODE == 'ar' %}ملف واحد{% else %}1 file{% endif %}"
+  data-files-2="{% if LANGUAGE_CODE == 'ar' %}ملفان في ملف مضغوط واحد{% else %}2 files in one .zip{% endif %}"
+  data-files-3="{% if LANGUAGE_CODE == 'ar' %}3 ملفات في ملف مضغوط واحد{% else %}3 files in one .zip{% endif %}"
+  data-summary="{% if LANGUAGE_CODE == 'ar' %}{files} · {rows} · يُنزَّل الآن{% else %}{files} · {rows} · downloads now{% endif %}"
+  data-privacy-full="{% if LANGUAGE_CODE == 'ar' %}يحتوي على أسماء الطلاب وأرقامهم الجامعية. شاركه مع منسوبي الاختبارات فقط. يُسجَّل هذا التصدير باسمك.{% else %}Contains student names and IDs. Share only with exam staff. This export is recorded under your name.{% endif %}"
+  data-privacy-summary="{% if LANGUAGE_CODE == 'ar' %}ملخصات فقط، دون أسماء الطلاب أو أرقامهم الجامعية. يُسجَّل هذا التصدير باسمك.{% else %}Summaries only, with no student names or IDs. This export is recorded under your name.{% endif %}"
+  data-download="{% if LANGUAGE_CODE == 'ar' %}تنزيل{% else %}Download{% endif %}"
+  data-download-changed="{% if LANGUAGE_CODE == 'ar' %}تنزيل مع إبراز التغييرات{% else %}Download with changes marked{% endif %}"
+  data-preparing="{% if LANGUAGE_CODE == 'ar' %}جارٍ التجهيز…{% else %}Preparing…{% endif %}"
+  data-downloaded="{% if LANGUAGE_CODE == 'ar' %}تم تنزيل {file} · المرجع {reference}{% else %}Downloaded {file} · Ref {reference}{% endif %}"
+  data-downloaded-title="{% if LANGUAGE_CODE == 'ar' %}تم تنزيل {file}{% else %}Downloaded {file}{% endif %}"
+  data-reference="{% if LANGUAGE_CODE == 'ar' %}المرجع {reference}{% else %}Ref {reference}{% endif %}"
+  data-reason-checking="{% if LANGUAGE_CODE == 'ar' %}انتظر حتى تنتهي مطابقة قوائم الطلاب.{% else %}Wait until the student lists are checked.{% endif %}"
+  data-reason-updating="{% if LANGUAGE_CODE == 'ar' %}جارٍ تحديث الأعداد لهذه الاختيارات…{% else %}Updating the counts for these choices…{% endif %}"
+  data-reason-preparing="{% if LANGUAGE_CODE == 'ar' %}جارٍ تجهيز الملف…{% else %}The file is being prepared…{% endif %}"
+  data-reason-groups="{% if LANGUAGE_CODE == 'ar' %}اختر فئة واحدة على الأقل.{% else %}Tick at least one group.{% endif %}"
+  data-reason-programs="{% if LANGUAGE_CODE == 'ar' %}اختر برنامجاً واحداً على الأقل.{% else %}Choose at least one program.{% endif %}"
+  data-reason-scope="{% if LANGUAGE_CODE == 'ar' %}أكمل اختيار الاختبارات.{% else %}Complete the choice of exams.{% endif %}"
+  data-reason-dates="{% if LANGUAGE_CODE == 'ar' %}أدخل تاريخاً صحيحاً أو اترك الحقل فارغاً.{% else %}Enter a valid date or leave the field blank.{% endif %}"
+  data-reason-busy="{% if LANGUAGE_CODE == 'ar' %}يجري تجهيز تصدير آخر؛ ستُحدَّث الأعداد عند انتهائه.{% else %}Another export is being prepared; the counts will update when it finishes.{% endif %}"
+  data-reason-empty="{% if LANGUAGE_CODE == 'ar' %}لا يوجد طلاب مطابقون لهذه الاختيارات.{% else %}No students match these choices.{% endif %}"
+  data-reason-failed="{% if LANGUAGE_CODE == 'ar' %}تعذّر تحديث الأعداد. أعد المحاولة.{% else %}The counts could not be updated. Try again.{% endif %}"
+  data-reason-stale="{% if LANGUAGE_CODE == 'ar' %}تغيّر الجدول أو بدأت عملية أخرى. أغلق هذه النافذة، ثم افحص التغييرات واحفظها قبل تصدير بيانات الطلاب.{% else %}The timetable changed or another operation started. Close this dialog, then check and save changes before exporting student data.{% endif %}"
+  data-error-export_slot_busy="{% if LANGUAGE_CODE == 'ar' %}يجري تجهيز تصدير آخر. أعد المحاولة بعد قليل.{% else %}Another export is being prepared. Try again in a moment.{% endif %}"
+  data-error-audit_unavailable="{% if LANGUAGE_CODE == 'ar' %}تعذّر تسجيل هذا التصدير، لذا لم يُنشأ أي ملف. أعد المحاولة.{% else %}Couldn't record this export, so no file was made. Try again.{% endif %}"
+  data-error-export_failed="{% if LANGUAGE_CODE == 'ar' %}تعذّر إنشاء الملف ولم يُنزَّل شيء. المرجع {reference}.{% else %}The file could not be made. Nothing was downloaded. Reference {reference}.{% endif %}"
+  data-error-empty_scope="{% if LANGUAGE_CODE == 'ar' %}لا يوجد طلاب مطابقون لهذه الاختيارات.{% else %}No students match these choices.{% endif %}"
+  data-error-dates="{% if LANGUAGE_CODE == 'ar' %}راجع تواريخ الاختبارات: يجب أن يوافق كل تاريخ يوم الأسبوع في تسميته، وأن تتبع التواريخ ترتيب الأيام.{% else %}Check the exam dates: each date must fall on its day's weekday, and dates must follow the order of the days.{% endif %}"
+  data-error-date-day="{% if LANGUAGE_CODE == 'ar' %}راجع تاريخ {day}: يجب أن يوافق يوم الأسبوع في تسميته، وأن يتبع ترتيب الأيام.{% else %}Check the date for {day}: it must fall on that day's weekday and follow the order of the days.{% endif %}"
+  data-error-options="{% if LANGUAGE_CODE == 'ar' %}تغيّرت الاختيارات المتاحة في هذا الجدول. أغلق النافذة ثم افتحها مجدداً.{% else %}The choices available for this timetable changed. Close this dialog and open it again.{% endif %}"
+  data-error-network="{% if LANGUAGE_CODE == 'ar' %}تعذّر الوصول إلى الخادم. تحقق من الاتصال ثم أعد المحاولة.{% else %}Couldn't reach the server. Check your connection, then try again.{% endif %}"
+  data-error-download="{% if LANGUAGE_CODE == 'ar' %}تعذّر تنزيل الملف. أعد المحاولة.{% else %}The file could not be downloaded. Try again.{% endif %}"
+  data-not-scheduled="{% if LANGUAGE_CODE == 'ar' %}غير مجدول{% else %}Not scheduled{% endif %}"
+  data-section-missing="{% if LANGUAGE_CODE == 'ar' %}الشعبة غير مسجلة{% else %}Section not recorded{% endif %}"
+  data-section-ambiguous="{% if LANGUAGE_CODE == 'ar' %}الشعبة غير محددة{% else %}Section unclear{% endif %}"
+  data-section-new="{% if LANGUAGE_CODE == 'ar' %}جديدة بعد الحفظ{% else %}new since save{% endif %}"
+  data-section-gone="{% if LANGUAGE_CODE == 'ar' %}غير موجودة الآن{% else %}gone since save{% endif %}"
+  data-group-m="{% if LANGUAGE_CODE == 'ar' %}طلاب{% else %}Male{% endif %}"
+  data-group-f="{% if LANGUAGE_CODE == 'ar' %}طالبات{% else %}Female{% endif %}"
+  data-group-u="{% if LANGUAGE_CODE == 'ar' %}غير مسجل{% else %}Not recorded{% endif %}"
+  data-no-choice="{% if LANGUAGE_CODE == 'ar' %}لا يوجد{% else %}None{% endif %}"></div>
+
+<dialog id="examStudentExportDialog" class="et-move-dialog et-export-dialog" aria-labelledby="examStudentExportTitle" aria-describedby="examStudentExportSource">
+  <form id="examStudentExportForm" class="et-export-form" novalidate>
+    <header class="et-export-head">
+      <div class="et-export-title-row">
+        <h2 id="examStudentExportTitle" tabindex="-1">{% if LANGUAGE_CODE == 'ar' %}تصدير بيانات الطلاب إلى Excel{% else %}Export student data to Excel{% endif %}</h2>
+        <button id="examStudentExportClose" type="button" class="et-export-close" aria-label="{% if LANGUAGE_CODE == 'ar' %}إغلاق{% else %}Close{% endif %}"><svg aria-hidden="true" focusable="false" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+      </div>
+      <p id="examStudentExportSource" class="et-export-source"></p>
+    </header>
+
+    <div class="et-export-body">
+      <section id="examStudentExportCheck" class="et-export-check" data-state="checking" aria-labelledby="examStudentExportCheckTitle">
+        <span id="examStudentExportCheckMark" class="et-export-check-mark" aria-hidden="true"></span>
+        <div class="et-export-check-text" aria-live="polite">
+          <p id="examStudentExportCheckTitle" class="et-export-check-title"></p>
+          <p id="examStudentExportCheckDetail" class="et-export-check-detail"></p>
+          <ul id="examStudentExportChanges" class="et-export-changes" hidden></ul>
+          <p id="examStudentExportCheckNote" class="et-export-check-note" hidden></p>
+          <span class="et-export-skeleton" aria-hidden="true"></span>
+        </div>
+      </section>
+
+      <fieldset id="examStudentExportScope" class="et-export-step">
+        <legend><span class="et-step" aria-hidden="true">1</span>{% if LANGUAGE_CODE == 'ar' %}أي الاختبارات؟{% else %}Which exams?{% endif %}</legend>
+        <div class="et-export-scope">
+          <label class="et-export-choice"><input type="radio" name="examStudentScope" value="section" aria-labelledby="examStudentScopeNameSection examStudentScopeCountSection"><span id="examStudentScopeNameSection">{% if LANGUAGE_CODE == 'ar' %}هذه الشعبة{% else %}This section{% endif %}</span></label>
+          <div class="et-export-pickers">
+            <select id="examStudentSectionExam" class="form-select" data-picker="exam" dir="ltr" aria-label="{% if LANGUAGE_CODE == 'ar' %}مقرر الشعبة{% else %}Course of the section{% endif %}"></select>
+            <select id="examStudentSection" class="form-select" data-picker="section" aria-label="{% if LANGUAGE_CODE == 'ar' %}الشعبة{% else %}Section{% endif %}"></select>
+          </div>
+          <span id="examStudentScopeCountSection" class="et-export-count" data-scope-count="section"></span>
+        </div>
+        <div class="et-export-scope">
+          <label class="et-export-choice"><input type="radio" name="examStudentScope" value="course" aria-labelledby="examStudentScopeNameCourse examStudentScopeCountCourse"><span id="examStudentScopeNameCourse">{% if LANGUAGE_CODE == 'ar' %}مقرر واحد{% else %}One course{% endif %}</span></label>
+          <div class="et-export-pickers">
+            <select id="examStudentCourse" class="form-select" data-picker="exam" dir="ltr" aria-label="{% if LANGUAGE_CODE == 'ar' %}المقرر{% else %}Course{% endif %}"></select>
+          </div>
+          <span id="examStudentScopeCountCourse" class="et-export-count" data-scope-count="course"></span>
+        </div>
+        <div class="et-export-scope">
+          <label class="et-export-choice"><input type="radio" name="examStudentScope" value="room" aria-labelledby="examStudentScopeNameRoom examStudentScopeCountRoom"><span id="examStudentScopeNameRoom">{% if LANGUAGE_CODE == 'ar' %}قاعة واحدة{% else %}One room{% endif %}</span></label>
+          <div class="et-export-pickers">
+            <select id="examStudentRoomPeriod" class="form-select" data-picker="slot" aria-label="{% if LANGUAGE_CODE == 'ar' %}فترة القاعة{% else %}Period of the room{% endif %}"></select>
+            <select id="examStudentRoom" class="form-select" data-picker="room" aria-label="{% if LANGUAGE_CODE == 'ar' %}القاعة{% else %}Room{% endif %}"></select>
+          </div>
+          <span id="examStudentScopeCountRoom" class="et-export-count" data-scope-count="room"></span>
+        </div>
+        <div class="et-export-scope">
+          <label class="et-export-choice"><input type="radio" name="examStudentScope" value="period" aria-labelledby="examStudentScopeNamePeriod examStudentScopeCountPeriod"><span id="examStudentScopeNamePeriod">{% if LANGUAGE_CODE == 'ar' %}فترة واحدة{% else %}One period{% endif %}</span></label>
+          <div class="et-export-pickers">
+            <select id="examStudentPeriod" class="form-select" data-picker="slot" aria-label="{% if LANGUAGE_CODE == 'ar' %}الفترة{% else %}Period{% endif %}"></select>
+          </div>
+          <span id="examStudentScopeCountPeriod" class="et-export-count" data-scope-count="period"></span>
+        </div>
+        <div class="et-export-scope">
+          <label class="et-export-choice"><input type="radio" name="examStudentScope" value="day" aria-labelledby="examStudentScopeNameDay examStudentScopeCountDay"><span id="examStudentScopeNameDay">{% if LANGUAGE_CODE == 'ar' %}يوم واحد{% else %}One day{% endif %}</span></label>
+          <div class="et-export-pickers">
+            <select id="examStudentDay" class="form-select" data-picker="day" aria-label="{% if LANGUAGE_CODE == 'ar' %}اليوم{% else %}Day{% endif %}"></select>
+          </div>
+          <span id="examStudentScopeCountDay" class="et-export-count" data-scope-count="day"></span>
+        </div>
+        <div class="et-export-scope">
+          <label class="et-export-choice"><input type="radio" name="examStudentScope" value="all" aria-labelledby="examStudentScopeNameAll examStudentScopeCountAll"><span id="examStudentScopeNameAll">{% if LANGUAGE_CODE == 'ar' %}الجدول كاملاً{% else %}Whole timetable{% endif %}</span></label>
+          <div class="et-export-pickers"></div>
+          <span id="examStudentScopeCountAll" class="et-export-count" data-scope-count="all"></span>
+        </div>
+      </fieldset>
+
+      <fieldset class="et-export-step">
+        <legend><span class="et-step" aria-hidden="true">2</span>{% if LANGUAGE_CODE == 'ar' %}أي الطلاب؟{% else %}Which students?{% endif %}</legend>
+        <fieldset id="examStudentPrograms" class="et-export-group">
+          <legend>{% if LANGUAGE_CODE == 'ar' %}البرامج{% else %}Programs{% endif %}</legend>
+          <label class="et-export-check-option"><input id="examStudentAllPrograms" type="checkbox" checked>{% if LANGUAGE_CODE == 'ar' %}جميع البرامج{% else %}All programs{% endif %}</label>
+          <div id="examStudentDepartments" class="et-export-shortcuts" role="group" aria-label="{% if LANGUAGE_CODE == 'ar' %}برامج قسم واحد{% else %}One department's programs{% endif %}"></div>
+          <div id="examStudentProgramList" class="et-export-programs"></div>
+        </fieldset>
+        <fieldset id="examStudentGroups" class="et-export-group">
+          <legend>{% if LANGUAGE_CODE == 'ar' %}الفئات{% else %}Groups{% endif %}</legend>
+          <div class="et-export-inline">
+            <label class="et-export-check-option" data-group="M"><input type="checkbox" name="examStudentGroup" value="M" checked><span>{% if LANGUAGE_CODE == 'ar' %}طلاب{% else %}Male{% endif %}</span><span class="et-export-count" data-group-count="M"></span></label>
+            <label class="et-export-check-option" data-group="F"><input type="checkbox" name="examStudentGroup" value="F" checked><span>{% if LANGUAGE_CODE == 'ar' %}طالبات{% else %}Female{% endif %}</span><span class="et-export-count" data-group-count="F"></span></label>
+            <label class="et-export-check-option" data-group="U" hidden><input type="checkbox" name="examStudentGroup" value="U"><span>{% if LANGUAGE_CODE == 'ar' %}غير مسجل{% else %}Not recorded{% endif %}</span><span class="et-export-count" data-group-count="U"></span></label>
+          </div>
+          <label class="et-export-check-option"><input id="examStudentOneFile" type="checkbox" checked>{% if LANGUAGE_CODE == 'ar' %}ملف مستقل لكل فئة{% else %}One file per group{% endif %}</label>
+        </fieldset>
+        <fieldset class="et-export-group">
+          <legend>{% if LANGUAGE_CODE == 'ar' %}الأسطر{% else %}Rows{% endif %}</legend>
+          <div class="et-export-inline">
+            <label class="et-export-check-option"><input type="radio" name="examStudentRows" value="all" checked>{% if LANGUAGE_CODE == 'ar' %}جميع الطلاب{% else %}Every student{% endif %}</label>
+            <label class="et-export-check-option"><input type="radio" name="examStudentRows" value="flagged">{% if LANGUAGE_CODE == 'ar' %}الطلاب الذين لديهم تعارض أو اختبار آخر في اليوم نفسه فقط{% else %}Only students with a clash or same-day exam{% endif %}</label>
+          </div>
+        </fieldset>
+      </fieldset>
+
+      <fieldset class="et-export-step">
+        <legend><span class="et-step" aria-hidden="true">3</span>{% if LANGUAGE_CODE == 'ar' %}الملف{% else %}File{% endif %}</legend>
+        <fieldset class="et-export-group et-export-segment-row">
+          <legend>{% if LANGUAGE_CODE == 'ar' %}المحتوى{% else %}Contents{% endif %}</legend>
+          <div class="et-segmented">
+            <label><input type="radio" name="examStudentContents" value="full" checked><span>{% if LANGUAGE_CODE == 'ar' %}كامل{% else %}Full{% endif %}</span></label>
+            <label><input type="radio" name="examStudentContents" value="summary"><span>{% if LANGUAGE_CODE == 'ar' %}ملخصات فقط — دون أسماء أو أرقام جامعية{% else %}Summaries only — no names or IDs{% endif %}</span></label>
+          </div>
+        </fieldset>
+        <fieldset class="et-export-group et-export-segment-row">
+          <legend>{% if LANGUAGE_CODE == 'ar' %}لغة الملف{% else %}File language{% endif %}</legend>
+          <div class="et-segmented">
+            <label><input type="radio" name="examStudentLanguage" value="ar" checked><span lang="ar" dir="rtl">العربية</span></label>
+            <label><input type="radio" name="examStudentLanguage" value="en"><span lang="en" dir="ltr">English</span></label>
+          </div>
+        </fieldset>
+        <details id="examStudentDatesDetails" class="et-department-dates et-export-dates">
+          <summary>{% if LANGUAGE_CODE == 'ar' %}تواريخ الاختبارات (اختياري){% else %}Exam dates (optional){% endif %}</summary>
+          <p>{% if LANGUAGE_CODE == 'ar' %}أضف التاريخ الفعلي لكل يوم إن توفر. تُترك التواريخ غير المحددة فارغة في الملف، ولا تُحفظ.{% else %}Add the actual date for each day if available. Dates left empty stay blank in the file, and none are stored.{% endif %}</p>
+          <div id="examStudentDates" class="et-department-date-grid"></div>
+        </details>
+        <div class="et-export-prepared">
+          <label for="examStudentPreparedFor" class="form-label">{% if LANGUAGE_CODE == 'ar' %}أُعدّ لـ (اختياري){% else %}Prepared for (optional){% endif %}</label>
+          <input id="examStudentPreparedFor" type="text" class="form-control" maxlength="80" autocomplete="off" aria-describedby="examStudentPreparedHelp">
+          <p id="examStudentPreparedHelp" class="et-field-help">{% if LANGUAGE_CODE == 'ar' %}يظهر في صفحة «حول الملف» فقط، بحد أقصى 80 حرفاً.{% else %}Shown on the file's About sheet only; 80 characters at most.{% endif %}</p>
+        </div>
+      </fieldset>
+    </div>
+
+    <footer class="et-export-foot">
+      <p id="examStudentExportSummary" class="et-export-summary"></p>
+      <ul id="examStudentExportFiles" class="et-export-files" hidden></ul>
+      <p id="examStudentExportPrivacy" class="et-export-privacy"><svg aria-hidden="true" focusable="false" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg><span id="examStudentExportPrivacyText"></span></p>
+      <div id="examStudentExportError" class="alert alert-danger et-export-error" role="alert" hidden>
+        <span id="examStudentExportErrorText"></span>
+        <button id="examStudentExportRetry" type="button" class="btn btn-sm btn-outline-secondary" hidden>{% if LANGUAGE_CODE == 'ar' %}إعادة المحاولة{% else %}Try again{% endif %}</button>
+      </div>
+      <p id="examStudentExportStatus" class="et-export-status" role="status"></p>
+      <p id="examStudentExportReason" class="et-export-reason"></p>
+      <div class="et-move-actions">
+        <button id="examStudentExportCancel" type="button" class="btn btn-outline-secondary">{% if LANGUAGE_CODE == 'ar' %}إلغاء{% else %}Cancel{% endif %}</button>
+        <button id="examStudentExportDownload" type="submit" class="btn btn-primary" aria-describedby="examStudentExportReason">{% if LANGUAGE_CODE == 'ar' %}تنزيل{% else %}Download{% endif %}</button>
+      </div>
+    </footer>
+  </form>
+</dialog>

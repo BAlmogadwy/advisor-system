@@ -785,6 +785,124 @@ main.exam-builder-page .et-department-date-grid label { display: grid; gap: 5px;
 main.exam-builder-page .et-department-status { color: var(--et-muted); font-size: .8125rem; }
 main.exam-builder-page .et-department-dialog input[type="checkbox"] { accent-color: var(--et-accent); }
 main.exam-builder-page .et-department-dialog :is(input, select, button, summary):focus-visible { outline: 2px solid var(--et-focus); outline-offset: 3px; }
+main.exam-builder-page .et-export-link-line { margin: -10px 0 18px; color: var(--et-muted); font-size: .8125rem; }
+main.exam-builder-page .et-link-button { display: inline-flex; align-items: center; min-height: 24px; padding: 0 2px; border: 0; background: none; color: var(--et-accent); font: inherit; font-weight: 600; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
+main.exam-builder-page .et-link-button:hover { color: var(--et-accent-hover); }
+main.exam-builder-page .et-link-button:focus-visible { outline: 2px solid var(--et-focus); outline-offset: 2px; border-radius: 3px; }
+/* aria-disabled keeps the control focusable, so its reason can be read. */
+main.exam-builder-page :is(#examStudentDataBtn, .et-export-foot .btn)[aria-disabled="true"] { background: var(--et-subtle) !important; border-color: var(--et-border) !important; color: var(--et-muted) !important; cursor: not-allowed; }
+
+/* Student data export: the flat .et-move-dialog look, with the header and
+   footer fixed while the options scroll. Only an open dialog gets a display:
+   a class that sets one on a closed dialog would show it. */
+main.exam-builder-page .et-export-dialog { width: min(720px, calc(100vw - 32px)); max-height: calc(100dvh - 48px); padding: 0; overflow: hidden; }
+main.exam-builder-page .et-export-dialog[open] { display: flex; flex-direction: column; }
+main.exam-builder-page .et-export-form { display: flex; flex: 1 1 auto; flex-direction: column; min-height: 0; }
+main.exam-builder-page .et-export-head { flex: 0 0 auto; padding: 18px 24px 12px; border-bottom: 1px solid var(--et-border); }
+main.exam-builder-page .et-export-title-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+main.exam-builder-page .et-export-dialog h2 { margin: 0; font-size: 1.0625rem; font-weight: 650; line-height: 1.5; }
+main.exam-builder-page .et-export-dialog h2:focus { outline: none; }
+main.exam-builder-page .et-export-dialog h2:focus-visible { outline: 2px solid var(--et-focus); outline-offset: 2px; }
+main.exam-builder-page .et-export-close { display: inline-flex; flex: 0 0 auto; align-items: center; justify-content: center; width: 32px; height: 32px; margin-block: -4px 0; margin-inline: 0 -8px; padding: 0; border: 1px solid transparent; border-radius: 6px; background: transparent; color: var(--et-icon); cursor: pointer; }
+main.exam-builder-page .et-export-close:hover { border-color: var(--et-border); background: var(--et-subtle); color: var(--et-text); }
+main.exam-builder-page .et-export-source { margin: 2px 0 0; color: var(--et-muted); font-size: .8125rem; overflow-wrap: anywhere; }
+main.exam-builder-page .et-export-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 16px 24px 8px; }
+main.exam-builder-page .et-export-dialog :is(bdi, .et-export-count) { font-variant-numeric: tabular-nums; }
+/* A code, count or time never breaks across lines; a long file name ends in an ellipsis instead. */
+main.exam-builder-page .et-export-dialog bdi[dir="ltr"] { white-space: nowrap; }
+/* Exam pickers lead with a code, so they read left to right; the arrow follows them. */
+html[dir="rtl"] main.exam-builder-page .et-export-pickers .form-select[dir="ltr"] { background-position: right .75rem center; }
+
+main.exam-builder-page .et-export-check { display: grid; grid-template-columns: 20px minmax(0, 1fr); gap: 4px 10px; padding: 10px 12px; border: 1px solid var(--et-border); border-radius: 6px; background: var(--et-subtle); color: var(--et-text); font-size: .8125rem; }
+main.exam-builder-page .et-export-check-mark { font-size: 1rem; font-weight: 700; line-height: 1.3; text-align: center; }
+main.exam-builder-page .et-export-check-text { min-width: 0; }
+main.exam-builder-page .et-export-check-text p { margin: 0; overflow-wrap: anywhere; }
+main.exam-builder-page .et-export-check-title { font-weight: 650; }
+main.exam-builder-page .et-export-check-text p + p { margin-top: 2px; }
+main.exam-builder-page .et-export-changes { margin: 6px 0 0; padding-inline-start: 1.1rem; }
+main.exam-builder-page .et-export-changes li + li { margin-top: 2px; }
+main.exam-builder-page .et-export-skeleton { display: none; width: 60%; height: 8px; margin-top: 8px; border: 1px solid var(--et-border); border-radius: 3px; background: var(--et-surface); }
+main.exam-builder-page .et-export-check[data-state="checking"] .et-export-skeleton { display: block; }
+main.exam-builder-page .et-export-check[data-state="matches"] { border-color: var(--et-selected-border); background: var(--et-accent-soft); }
+main.exam-builder-page .et-export-check[data-state="matches"] .et-export-check-mark { color: var(--et-accent); }
+main.exam-builder-page .et-export-check[data-state="changed"] { border-color: var(--et-warning); background: var(--et-warning-soft); color: var(--et-warning); }
+main.exam-builder-page .et-export-check[data-state="refused"] { border-color: var(--et-danger); background: var(--et-danger-soft); color: var(--et-danger); }
+
+main.exam-builder-page .et-export-dialog fieldset { min-inline-size: 0; margin: 0; padding: 0; border: 0; }
+main.exam-builder-page .et-export-dialog fieldset:disabled { opacity: .7; }
+main.exam-builder-page .et-export-dialog .et-export-step { margin-top: 20px; }
+main.exam-builder-page .et-export-step > legend { display: flex; align-items: center; gap: 10px; float: none; width: auto; margin-bottom: 10px; font-size: .9375rem; font-weight: 650; }
+main.exam-builder-page .et-export-step > legend .et-step { flex-basis: 24px; width: 24px; height: 24px; margin: 0; border-radius: 50%; font-size: .75rem; }
+main.exam-builder-page .et-export-scope { display: grid; grid-template-columns: minmax(130px, 170px) minmax(0, 1fr) minmax(88px, auto); align-items: center; gap: 6px 12px; padding: 6px 0; border-top: 1px solid var(--et-border); }
+main.exam-builder-page .et-export-scope:first-of-type { border-top: 0; }
+main.exam-builder-page .et-export-scope:has(input:checked) { background: var(--et-accent-soft); box-shadow: inset 3px 0 var(--et-accent); }
+html[dir="rtl"] main.exam-builder-page .et-export-scope:has(input:checked) { box-shadow: inset -3px 0 var(--et-accent); }
+main.exam-builder-page .et-export-scope > .et-export-choice { padding-inline-start: 10px; }
+main.exam-builder-page .et-export-pickers { display: flex; gap: 8px; min-width: 0; }
+main.exam-builder-page .et-export-pickers .form-select { flex: 1 1 0; min-width: 0; min-height: 34px; padding-block: .3rem !important; font-size: .8125rem !important; }
+main.exam-builder-page .et-export-pickers .form-select + .form-select { flex: 0 1 40%; }
+main.exam-builder-page .et-export-count { color: var(--et-muted); font-size: .75rem; white-space: nowrap; }
+main.exam-builder-page .et-export-scope > .et-export-count { padding-inline-end: 10px; text-align: end; }
+main.exam-builder-page .et-export-dialog .is-waiting { opacity: .55; }
+main.exam-builder-page :is(.et-export-choice, .et-export-check-option) { display: inline-flex; align-items: center; gap: 8px; min-height: 24px; margin: 0; font-size: .8125rem; cursor: pointer; }
+main.exam-builder-page :is(.et-export-choice, .et-export-check-option) input { flex: 0 0 auto; width: 16px; height: 16px; margin: 0; accent-color: var(--et-accent); }
+main.exam-builder-page .et-export-dialog .et-export-group { margin-top: 12px; }
+main.exam-builder-page .et-export-group > legend { float: none; width: auto; margin-bottom: 6px; color: var(--et-muted); font-size: .75rem; font-weight: 600; }
+main.exam-builder-page .et-export-inline { display: flex; flex-wrap: wrap; gap: 6px 20px; }
+main.exam-builder-page .et-export-shortcuts { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
+main.exam-builder-page .et-export-shortcuts:empty { display: none; }
+main.exam-builder-page .et-export-shortcut { min-height: 28px; padding: 2px 10px; border: 1px solid var(--et-field-border); border-radius: 4px; background: var(--et-surface); color: var(--et-text); font: inherit; font-size: .75rem; font-weight: 600; cursor: pointer; }
+main.exam-builder-page .et-export-shortcut:hover { border-color: var(--et-muted); background: var(--et-subtle); }
+main.exam-builder-page .et-export-shortcut[aria-pressed="true"] { border-color: var(--et-selected-border); background: var(--et-accent-soft); color: var(--et-accent); }
+main.exam-builder-page .et-export-programs { display: grid; grid-template-columns: repeat(auto-fill, minmax(76px, 1fr)); gap: 4px 12px; }
+main.exam-builder-page .et-segmented { display: inline-flex; flex-wrap: wrap; max-width: 100%; border: 1px solid var(--et-field-border); border-radius: 6px; overflow: hidden; }
+main.exam-builder-page .et-segmented label { position: relative; display: inline-flex; align-items: center; min-height: 34px; margin: 0; padding: 4px 12px; font-size: .8125rem; cursor: pointer; }
+main.exam-builder-page .et-segmented label + label { border-inline-start: 1px solid var(--et-field-border); }
+main.exam-builder-page .et-segmented input { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer; }
+main.exam-builder-page .et-segmented label:has(input:checked) { background: var(--et-accent-soft); color: var(--et-accent); font-weight: 650; }
+main.exam-builder-page .et-segmented label:has(input:focus-visible) { outline: 2px solid var(--et-focus); outline-offset: -2px; }
+main.exam-builder-page .et-export-segment-row > legend { float: none; }
+main.exam-builder-page .et-export-dates { margin-top: 14px; }
+main.exam-builder-page .et-export-prepared { margin-top: 14px; }
+main.exam-builder-page .et-export-dialog :is(input, select, button, summary):focus-visible { outline: 2px solid var(--et-focus); outline-offset: 2px; }
+
+main.exam-builder-page .et-export-foot { flex: 0 0 auto; padding: 12px 24px 16px; border-top: 1px solid var(--et-border); background: var(--et-surface); font-size: .8125rem; }
+main.exam-builder-page .et-export-foot p { margin: 0; }
+main.exam-builder-page .et-export-summary { font-weight: 600; }
+main.exam-builder-page .et-export-files { display: grid; gap: 2px; max-height: 76px; margin: 4px 0 0; padding: 0; overflow-y: auto; list-style: none; }
+main.exam-builder-page .et-export-files li { display: flex; justify-content: space-between; gap: 12px; min-width: 0; }
+main.exam-builder-page .et-export-file-name { min-width: 0; overflow: hidden; font-family: var(--font-mono, ui-monospace, monospace); font-size: .75rem; text-overflow: ellipsis; white-space: nowrap; }
+main.exam-builder-page .et-export-file-rows { flex: 0 0 auto; color: var(--et-muted); font-size: .75rem; }
+main.exam-builder-page .et-export-foot .et-export-privacy { display: flex; align-items: flex-start; gap: 6px; margin-top: 8px; color: var(--et-muted); font-size: .75rem; }
+main.exam-builder-page .et-export-privacy svg { flex: 0 0 auto; margin-top: 2px; }
+main.exam-builder-page .et-export-foot .et-export-error { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 12px; margin: 8px 0 0; padding: 8px 12px; }
+main.exam-builder-page .et-export-foot :is(.et-export-summary, .et-export-status, .et-export-reason):empty { display: none; }
+main.exam-builder-page .et-export-foot .et-export-status { margin-top: 6px; color: var(--et-accent); }
+main.exam-builder-page .et-export-foot .et-export-reason { margin-top: 6px; color: var(--et-muted); }
+main.exam-builder-page .et-export-foot .et-move-actions { margin-top: 10px; padding-top: 0; border-top: 0; }
+main.exam-builder-page .et-export-foot .btn[aria-busy="true"] { cursor: progress; }
+
+@media (max-width: 600px) {
+  /* .et-move-dialog's own phone rule comes later in this file; the doubled
+     class keeps this full-screen sheet unpadded and full height over it. */
+  main.exam-builder-page .et-move-dialog.et-export-dialog { width: 100vw; max-width: 100vw; height: 100dvh; max-height: 100dvh; margin: 0; padding: 0; border: 0; border-radius: 0; }
+  main.exam-builder-page :is(.et-export-head, .et-export-body, .et-export-foot) { padding-inline: 16px; }
+  main.exam-builder-page .et-export-scope { grid-template-columns: minmax(0, 1fr) auto; }
+  main.exam-builder-page .et-export-scope > .et-export-pickers { grid-column: 1 / -1; grid-row: 2; flex-wrap: wrap; padding-inline: 10px; }
+  main.exam-builder-page .et-export-scope > .et-export-pickers:empty { display: none; }
+  main.exam-builder-page .et-export-pickers .form-select,
+  main.exam-builder-page .et-export-pickers .form-select + .form-select { flex: 1 1 100%; }
+}
+@media (pointer: coarse) {
+  main.exam-builder-page :is(.et-export-choice, .et-export-check-option, .et-export-shortcut, .et-link-button, .et-segmented label) { min-height: 44px; }
+  main.exam-builder-page .et-export-close { width: 44px; height: 44px; }
+  main.exam-builder-page .et-export-pickers .form-select,
+  main.exam-builder-page .et-export-foot .btn { min-height: 44px; }
+}
+@media (forced-colors: active) {
+  main.exam-builder-page .et-export-check { border: 1px solid CanvasText; }
+  main.exam-builder-page :is(.et-export-scope:has(input:checked), .et-export-shortcut[aria-pressed="true"], .et-segmented label:has(input:checked)) { outline: 2px solid Highlight; outline-offset: -2px; }
+}
 main.exam-builder-page #historyList .et-history-item + .et-history-item { border-top: 1px solid var(--et-border); }
 main.exam-builder-page #historyList .et-run-info { display: flex; align-items: center; flex-wrap: wrap; gap: 3px 16px; min-height: 36px; padding-block: 3px; }
 main.exam-builder-page #historyList .et-run-info strong { flex: 1 1 200px; font-size: .8125rem; font-weight: 600; line-height: 1.4; }
