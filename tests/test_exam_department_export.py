@@ -24,6 +24,7 @@ from core.services.exam_run_schema import (
     normalise_exam_run_payload,
     stamp_schema_version,
 )
+from core.services.xlsx_bidi import LRM, RLM
 
 XLSX_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
@@ -1084,3 +1085,144 @@ def test_oversized_explicit_week_prefix_stays_full_only_until_a_valid_anchor(lan
     )
     assert "Foundations" in _text(book[_full_sheet_name(language, "F")])
     assert "Programming I" in _text(book[_full_sheet_name(language, "M")])
+
+
+# ── Direction marks, never isolates ────────────────────────────
+
+_ISOLATES = tuple(chr(code) for code in range(0x2066, 0x206A))
+_MARKS = LRM + RLM
+_DATED = {"Sun": "2026-09-20", "Mon": "2026-09-21", "Tue": "2026-09-22"}
+_ARABIC_DAYS = {"Sun": "W1-الأحد", "Mon": "W1-الاثنين", "Tue": "W1-الثلاثاء"}
+
+
+def _arabic_day_fixture():
+    data = make_department_data()
+    for slot in data["slots"]:
+        slot["day"] = _ARABIC_DAYS[slot["day"]]
+    for entry in data["schedule"]:
+        entry["day"] = _ARABIC_DAYS.get(entry["day"], entry["day"])
+    return data
+
+
+def _long_session_fixture():
+    # One Monday session long enough to spill over pages, so its band is
+    # repeated at the top of each continuation page.
+    data = make_department_data()
+    sections = [_section(100 + index, f"M{index:03}", "M", {"AI2": 1}) for index in range(40)]
+    entry = data["schedule"][1]
+    entry["enrolled_count"] = 40
+    entry["programs"] = ["AI2"]
+    entry["rooms"] = [_room(f"M-{200 + index}", section) for index, section in enumerate(sections)]
+    course = data["operations_snapshot"]["courses"]["CS111 (2)"]
+    course["sections"] = deepcopy(sections)
+    course["program_counts"] = [{"program": "AI2", "gender": "M", "student_count": 40}]
+    data["section_enrollment"]["CS111 (2)"] = deepcopy(sections)
+    return data
+
+
+# Every shape a print band takes: dated and undated, weekly sheets, Arabic day
+# labels (a date after an Arabic day printed reversed before the marks), and a
+# session repeated on continuation pages.
+_BAND_CASES = {
+    "dated": (make_department_data, _DATED),
+    "undated": (make_department_data, None),
+    "weekly": (_weekly_fixture, None),
+    "arabic-days-dated": (
+        _arabic_day_fixture,
+        {_ARABIC_DAYS[day]: value for day, value in _DATED.items()},
+    ),
+    "long-session": (_long_session_fixture, None),
+}
+
+
+def _all_profile_workbooks(data, language, dates):
+    profiles = [profile["id"] for profile in department_export_options(data)["departments"]]
+    payload = {"departments": profiles, "genders": ["M", "F", "U"], "language": language}
+    if dates:
+        payload["dates"] = dates
+    content, filename, _ = _export(data, **payload)
+    if filename.endswith(".zip"):
+        with ZipFile(BytesIO(content)) as outer:
+            workbooks = [outer.read(name) for name in outer.namelist()]
+    else:
+        workbooks = [content]
+    assert len(workbooks) == len(profiles) >= 2
+    return workbooks
+
+
+@pytest.mark.parametrize("case", sorted(_BAND_CASES))
+def test_arabic_department_files_carry_no_unicode_isolates(case):
+    # Excel prints U+2066..U+2069 as visible LRI/PDI boxes and still reverses
+    # the run. No part and no cell of any profile, cohort or sheet holds one.
+    make, dates = _BAND_CASES[case]
+    for raw in _all_profile_workbooks(make(), "ar", dates):
+        with ZipFile(BytesIO(raw)) as archive:
+            for part in archive.namelist():
+                text = archive.read(part).decode("utf-8", errors="replace")
+                assert not any(mark in text for mark in _ISOLATES), part
+        book = load_workbook(BytesIO(raw), rich_text=True)
+        for sheet in book:
+            for row in sheet.iter_rows():
+                for cell in row:
+                    value = "" if cell.value is None else str(cell.value)
+                    assert not any(mark in value for mark in _ISOLATES), (
+                        sheet.title,
+                        cell.coordinate,
+                    )
+
+
+def _bands(sheet):
+    return [
+        cell.value
+        for row in sheet
+        for cell in row
+        if isinstance(cell.value, str) and "  |  " in cell.value
+    ]
+
+
+@pytest.mark.parametrize("language", ["en", "ar"])
+@pytest.mark.parametrize("case", sorted(_BAND_CASES))
+def test_every_print_band_marks_each_left_to_right_field(case, language):
+    # Checked band by band on every print sheet after Details (full and
+    # weekly, including bands repeated on continuation pages) of every profile
+    # and cohort. Arabic: the day, an entered date and the period each read
+    # LRM + run + RLM; empty runs and "date not entered" stay bare. English:
+    # no marks, except one LRM closing an Arabic day label so the date and
+    # time after it keep European digits.
+    make, dates = _BAND_CASES[case]
+    data = make()
+    days = {slot["day"] for slot in data["slots"]} | {"OVERFLOW"}
+    entered = set((dates or {}).values())
+    arabic = language == "ar"
+    undated = "التاريخ غير محدد" if arabic else "Date not entered"
+    # Spelled out, not built with the helpers under test.
+    wrap = (lambda run: LRM + run + RLM) if arabic else str
+    arabic_days = set(_ARABIC_DAYS.values())
+    weekly_sheets = dated_bands = repeated_bands = closed_arabic_days = 0
+    for raw in _all_profile_workbooks(data, language, dates):
+        book = load_workbook(BytesIO(raw))
+        for sheet in book.worksheets[1:]:
+            bands = _bands(sheet)
+            assert bands, sheet.title
+            weekly_sheets += sheet.title.startswith(("الأسبوع", "Week"))
+            repeated_bands += len(bands) - len(set(bands))
+            for band in bands:
+                day, date_label, period = band.split("  |  ")
+                core_day = day.strip(_MARKS)
+                assert core_day in days, band
+                closed = core_day + LRM if core_day in arabic_days else core_day
+                assert day == (wrap(core_day) if arabic else closed), band
+                closed_arabic_days += (not arabic) and day != core_day
+                if date_label != undated:
+                    dated_bands += 1
+                    assert date_label.strip(_MARKS) in entered, band
+                    assert date_label == wrap(date_label.strip(_MARKS)), band
+                core = period.strip(_MARKS)
+                assert core in {"08:00-10:00", ""}, band
+                assert period == (wrap(core) if core else ""), band
+                if not arabic:
+                    assert RLM not in band and LRM not in date_label + period, band
+    assert weekly_sheets > 0
+    assert dated_bands > 0 if entered else dated_bands == 0
+    assert repeated_bands > 0 if case == "long-session" else True
+    assert closed_arabic_days > 0 if (case == "arabic-days-dated" and not arabic) else True

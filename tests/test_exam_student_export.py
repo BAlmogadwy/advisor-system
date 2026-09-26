@@ -677,7 +677,20 @@ def test_arabic_files_are_right_to_left_with_no_forced_reading_order(run):
     about = book[SHEETS["ar"][0]]
     reference_row = next(row for row in about.iter_rows(values_only=True) if row[0] == "المرجع")
     assert "\u200e" + REFERENCE + "\u200f" in reference_row[1]
-    assert "\u2066" not in "".join(_parts(content).values())
+    everything = "".join(_parts(content).values())
+    assert not any(chr(code) in everything for code in range(0x2066, 0x206A))
+
+
+@pytest.mark.parametrize("programs", [None, ["AI"]])
+def test_english_files_carry_no_direction_marks(run, programs):
+    # Marks exist only to hold left-to-right runs inside Arabic sentences. A
+    # programme filter reaches the one wrapped run shared by both languages.
+    extra = {"programs": programs} if programs else {}
+    content, *_ = _export(run, language="en", **extra)
+    if programs:
+        assert "Programs AI" in "".join(_parts(content).values())
+    everything = "".join(_parts(content).values())
+    assert not any(chr(code) in everything for code in (0x200E, 0x200F, *range(0x2066, 0x206A)))
 
 
 def test_internal_links_use_locations_never_external_targets(run):

@@ -26,6 +26,7 @@ from openpyxl.worksheet.table import Table, TableStyleInfo
 from core.services.exam_operations_snapshot import EXAM_OPERATIONS_SNAPSHOT_VERSION
 from core.services.exam_run_schema import load_normalised_run
 from core.services.exam_sections import EXAM_ENROLLMENT_SOURCE
+from core.services.xlsx_bidi import end_rtl_run, ltr_run
 
 XLSX_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
@@ -948,15 +949,25 @@ def _write_print_sheet(
             printed.row_breaks.append(Break(id=row_number - 1))
             page_height, new_group = 103, True
         if new_group:
-            date_label = (
-                record["date"].isoformat()
-                if record["date"]
-                else ("التاريخ غير محدد" if ar else "Date not entered")
-            )
-            # Isolate the time range: otherwise an Arabic date label can make
-            # a right-to-left print engine display the end time before start.
-            period_label = f"\u2066{record['period']}\u2069" if ar else record["period"]
-            label = "  |  ".join((record["day"], date_label, period_label))
+            day_label = record["day"]
+            date_label = record["date"].isoformat() if record["date"] else ""
+            period_label = record["period"]
+            if ar:
+                # In a right-to-left band every day, date and time run gets
+                # its own left-to-right marks. Otherwise adjacent Latin runs
+                # merge: dated and undated bands print in mirrored field
+                # order, and a date after an Arabic day label prints reversed.
+                # Marks, not isolates: Excel prints isolates as boxes.
+                day_label, date_label, period_label = (
+                    ltr_run(value) if value else value
+                    for value in (day_label, date_label, period_label)
+                )
+            else:
+                # An Arabic day label in an English band would turn the date
+                # and time after it into Arabic numbers, printed reversed.
+                day_label = end_rtl_run(day_label)
+            date_label = date_label or ("التاريخ غير محدد" if ar else "Date not entered")
+            label = "  |  ".join((day_label, date_label, period_label))
             _banner(printed, row_number, label, 8, ar=ar, size=11, fill="DDECEF", bold=True)
             printed.row_dimensions[row_number].height = 25
             row_number += 1
