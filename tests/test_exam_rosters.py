@@ -7,7 +7,9 @@ roster reads are exactly the production ones.
 
 from __future__ import annotations
 
+from collections import Counter
 from datetime import time
+from itertools import combinations
 
 import pytest
 from django.db import connection
@@ -199,6 +201,32 @@ def test_flags_match_build_qa_on_the_live_population(saved_run):
     assert expected == {
         (sid, s) for sid in model.flags.days for s in _clash_slots(model.flags, sid)
     }
+
+
+def test_same_day_pairs_match_the_roster_flags_on_the_live_population(saved_run):
+    """The card's pairs, recounted from the roster's own per-student days."""
+    model = build_roster_model(saved_run)
+    members = {code: set() for code in model.exams}
+    for group in model.groups:
+        members[group.exam].update(group.members)
+    qa = _build_qa(members, saved_payload(saved_run)["schedule"], max_per_day=2)
+    expected: Counter = Counter()
+    for days in model.flags.days.values():
+        for day, exams in days.items():
+            for (slot_a, exam_a, _), (slot_b, exam_b, _) in combinations(exams, 2):
+                expected[(day, frozenset((exam_a, exam_b)), slot_a == slot_b)] += 1
+    reported = {
+        (row["day"], frozenset(exam["code"] for exam in row["courses"]), row["clash"]): row[
+            "student_count"
+        ]
+        for row in qa["same_day_exam_pairs"]
+    }
+    assert reported == dict(expected)
+    assert any(clash for _day, _pair, clash in reported)
+    assert any(not clash for _day, _pair, clash in reported)
+    assert qa["multi_exam_day_students"] == sum(
+        1 for days in model.flags.days.values() if any(len(e) >= 2 for e in days.values())
+    )
 
 
 def test_split_section_seats_by_ascending_id_and_unrecorded_cohort_is_unroomed(saved_run):
