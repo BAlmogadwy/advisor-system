@@ -12,7 +12,8 @@
  *   _coursesLoaded   – whether the course preview is populated
  *   _pinnedCourses   – course identity → fixed exam time and course metadata
  *   _currentRunId    – ID of the currently viewed run (for export link)
- *   _drillData       – {overload: [], heavy: []} detail records for KPI drilldown
+ *   _drillData       – {overload: [], heavy: [], ...} detail records for KPI drilldown;
+ *                      null for a detail the loaded run never recorded
  *   _programCourses  – {programName: Set(course_codes)} for programme-based filtering
  */
 const IS_AR = LANGUAGE_CODE === 'ar';
@@ -3076,11 +3077,15 @@ function cloneData(data) {
   return JSON.parse(JSON.stringify(data || {}));
 }
 
+// A count a saved run never measured is null, shown as "—": never a zero.
+const recordedCount = value => (Number.isFinite(value) ? value : null);
+
 const EXAM_METRICS = [
   { id: 'kCourses', value: data => data.courses_count ?? data.qa?.total_courses ?? 0 },
   { id: 'kStudents', value: data => data.students_count ?? data.qa?.total_students ?? 0 },
   { id: 'kSlots', value: data => data.qa?.slots_used ?? 0 },
   { id: 'kMaxDay', value: data => data.qa?.max_exams_per_day_per_student ?? 0, lower: true },
+  { id: 'kMultiExamDay', value: data => recordedCount(data.qa?.multi_exam_day_students), lower: true },
   { id: 'kOver2', value: data => data.qa?.students_over_limit_per_day ?? data.qa?.students_over_2_per_day ?? 0, lower: true,
     quick: IS_AR ? 'تجاوز الحد اليومي' : 'Over daily limit', drill: 'overload' },
   { id: 'kConflicts', value: data => data.qa?.conflict_count ?? 0, lower: true,
@@ -3109,10 +3114,21 @@ function metricComparison(metric, fresh) {
   const current = _currentResultData?.input_fingerprint;
   if (!baseline || !current) return { text: IS_AR ? 'تحقق واحفظ لبدء المقارنات' : 'Check and save to start comparisons', modifier: 'is-neutral' };
   if (baseline !== current) return { text: IS_AR ? 'المقارنة متوقفة: تغيّرت بيانات الجدول' : 'Comparison paused: timetable data changed', modifier: 'is-neutral' };
-  const before = Number(metric.value(_savedResultData));
-  const after = Number(metric.value(_currentResultData));
-  const difference = after - before;
   const suffix = metric.suffix || '';
+  const saved = metric.value(_savedResultData);
+  const checked = metric.value(_currentResultData);
+  if (saved == null || checked == null) {
+    // One side never measured this metric (a run saved before it existed).
+    const shown = value => (value == null ? '—' : `${value}${suffix}`);
+    return {
+      text: IS_AR ? `المحفوظ ${shown(saved)} ← المتحقق ${shown(checked)}` : `Saved ${shown(saved)} → Checked ${shown(checked)}`,
+      modifier: saved == null && checked == null ? 'is-neutral is-unchanged' : 'is-neutral',
+      compact: `${shown(saved)} → ${shown(checked)}`,
+    };
+  }
+  const before = Number(saved);
+  const after = Number(checked);
+  const difference = after - before;
   const change = difference ? `${difference > 0 ? '+' : '−'}${Math.abs(difference)}${metric.suffix ? (IS_AR ? ' نقطة' : ' pp') : ''}` : (IS_AR ? 'دون تغيير' : 'unchanged');
   return {
     text: IS_AR ? `المحفوظ ${before}${suffix} ← المتحقق ${after}${suffix} (${change})` : `Saved ${before}${suffix} → Checked ${after}${suffix} (${change})`,
@@ -3891,6 +3907,23 @@ const _drillRenderers = {
       colspan: 5,
     };
   },
+  // Exam pairs and how many students sit both on that day. Never students.
+  'same-day-pairs'(rows) {
+    const examCell = exam => `${drillCourseMarkup(exam?.code || '')}<small class="et-pair-period"><bdi dir="ltr">${escapeAttr(exam?.period || '')}</bdi></small>`;
+    const clash = `<span class="badge bg-danger" title="${escapeAttr(IS_AR ? 'في الفترة نفسها، ومحسوب أيضاً ضمن التعارضات' : 'Same period, also counted under Conflicts')}">${IS_AR ? 'تعارض' : 'Clash'}<span class="visually-hidden">${IS_AR ? ': في الفترة نفسها' : ': same period'}</span></span>`;
+    return {
+      title: IS_AR ? 'أزواج الاختبارات في اليوم نفسه' : 'Exam pairs on the same day',
+      head: `<tr><th>${IS_AR ? 'اليوم' : 'Day'}</th><th>${IS_AR ? 'الاختبار الأول' : 'First exam'}</th><th>${IS_AR ? 'الاختبار الثاني' : 'Second exam'}</th><th>${IS_AR ? 'طلاب يؤدون الاختبارين' : 'Students sitting both'}</th></tr>`,
+      body: rows.map(row => {
+        const [first, second] = row.courses || [];
+        return `<tr><td class="et-pair-day"><bdi dir="ltr">${escapeAttr(row.day || '')}</bdi></td><td>${examCell(first)}</td><td>${examCell(second)}</td><td><strong class="et-pair-count">${escapeAttr(row.student_count ?? 0)}</strong>${row.clash ? ` ${clash}` : ''}</td></tr>`;
+      }).join(''),
+      colspan: 4,
+      empty: Array.isArray(_drillData['same-day-pairs'])
+        ? (IS_AR ? 'لا يوجد طالب لديه أكثر من اختبار في يوم واحد.' : 'No student has more than one exam on a day.')
+        : (IS_AR ? 'لم يُحسب هذا المؤشر لهذا الجدول المحفوظ. افحص التغييرات لحسابه.' : 'Not calculated for this saved timetable. Check changes to calculate it.'),
+    };
+  },
   'thin-courses'(rows) {
     return {
       title: IS_AR ? 'مقررات صغيرة (مخففة)' : 'Thin Courses Relaxed',
@@ -3992,7 +4025,7 @@ function openDrill(type, { navigate = false } = {}) {
   $('kpiDrillHead').innerHTML = r.head;
   $('kpiDrillBody').innerHTML = rows.length
     ? r.body
-    : `<tr><td colspan="${r.colspan}" class="text-center text-secondary py-3">${IS_AR ? 'لا توجد بيانات' : 'No records'}</td></tr>`;
+    : `<tr><td colspan="${r.colspan}" class="text-center text-secondary py-3">${r.empty || (IS_AR ? 'لا توجد بيانات' : 'No records')}</td></tr>`;
   panel.classList.remove('d-none');
   updateDrillActionAvailability();
   examReview?.refresh();
@@ -4105,6 +4138,7 @@ function renderResults(data, { evaluation = false, preserveViewport = true } = {
   $('kStudents').textContent = data.students_count ?? data.qa?.total_students ?? 0;
   $('kSlots').textContent    = data.qa?.slots_used ?? 0;
   $('kMaxDay').textContent   = data.qa?.max_exams_per_day_per_student ?? 0;
+  $('kMultiExamDay').textContent = recordedCount(data.qa?.multi_exam_day_students) ?? '—';
 
   const mpd = data.qa?.max_per_day ?? 2;
   $('kOverLabel').textContent = IS_AR
@@ -4264,6 +4298,7 @@ function renderResults(data, { evaluation = false, preserveViewport = true } = {
     ],
     overload:        data.qa?.overload_details ?? [],
     heavy:           data.qa?.heavy_day_details ?? [],
+    'same-day-pairs': Array.isArray(data.qa?.same_day_exam_pairs) ? data.qa.same_day_exam_pairs : null,
     'thin-courses':  data.qa?.thin_courses ?? [],
     'thin-clash':    data.qa?.thin_clash_risk ?? [],
     'multi-sitting': data.qa?.multi_sitting_details ?? [],

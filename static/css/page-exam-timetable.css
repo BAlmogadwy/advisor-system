@@ -551,6 +551,9 @@ main.exam-builder-page .et-drill-action-note { flex-basis: 100%; color: var(--et
 main.exam-builder-page .et-drill-action-note:empty { display: none; }
 main.exam-builder-page .et-drill-course-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); align-items: start; gap: 8px; min-width: 190px; white-space: normal; }
 main.exam-builder-page .et-drill-course.et-course-card { width: 210px; max-width: 100%; }
+main.exam-builder-page .et-pair-period { display: block; margin-top: 4px; color: var(--et-muted); font-size: .75rem; font-variant-numeric: tabular-nums; }
+main.exam-builder-page .et-pair-day { white-space: nowrap; }
+main.exam-builder-page .et-pair-count { font-variant-numeric: tabular-nums; }
 main.exam-builder-page .et-drill-course-list > .et-course-card { width: 100%; max-width: 220px; }
 main.exam-builder-page .et-course-card > .et-drill-action-note { grid-column: 1 / -1; min-width: 0; margin: 2px 0 0; font-weight: 400; white-space: normal; overflow-wrap: anywhere; }
 main.exam-builder-page .et-section-mapping-notice { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px 16px; margin-block: 0 12px; padding: 12px 14px; border: 1px solid var(--et-warning); border-radius: 6px; background: var(--et-warning-soft); color: var(--et-warning); }

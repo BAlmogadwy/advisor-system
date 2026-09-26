@@ -50,7 +50,7 @@ The complete control audit also covers:
 | Policy | Shuffle payload, tiny-course toggle, exact 1–10 threshold validation on Build/Check/Save/Optimize |
 | Fixed times and editing | Searchable identity selection, pin/edit/remove/both Unpin all controls, drag, Move confirm/cancel/Escape, Undo/Redo |
 | Calculations and persistence | Live preference/coalescing, manual Check, source changes, exact Save, explicit Optimize, export guards |
-| Summary details | Conflict, overload, heavy, room, thin-course/clash and multi-sitting controls; exact Find/Move and unavailable-state guards |
+| Summary details | Conflict, overload, heavy, same-day pairs, room, thin-course/clash and multi-sitting controls; exact Find/Move and unavailable-state guards; "—" (never 0) and a stated reason for a run saved before a metric existed |
 | Conflict matrix | Show/hide, mouse/keyboard exact-alias actions, literal labels, incomplete edges, zoom limits, repeated Fit, fullscreen Escape/focus/background restoration, scroll/focus retention |
 | History | Load/discard guards, delete cancellation/confirmation, accessible page controls, out-of-order responses, failure/retry |
 | Session recovery | Every exam endpoint handles login HTML without navigation or draft loss; visible sign-in recovery, rotated CSRF retry, Save pre-check error propagation, and network/server errors |

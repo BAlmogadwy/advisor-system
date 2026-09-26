@@ -363,6 +363,71 @@ def test_saved_literals_are_never_interpreted_as_excel_formulas(saved_data, tmp_
     assert list(Path(tmp_path).glob("*.xlsx")) == [path]
 
 
+def _qa_rows(book):
+    rows = []
+    for row in book["QA Summary"].iter_rows(values_only=True):
+        values = list(row)
+        while values and values[-1] is None:
+            values.pop()
+        rows.append(values)
+    return rows
+
+
+def test_qa_summary_mirrors_the_same_day_card_and_its_pairs_without_students(
+    saved_data, tmp_path, monkeypatch
+):
+    early = {"slot_index": 0, "period": "08:00-10:00"}
+    saved_data["qa"]["multi_exam_day_students"] = 7
+    saved_data["qa"]["same_day_exam_pairs"] = [
+        {
+            "day": "Sun",
+            "courses": [{"code": "CS111 (2)", **early}, {"code": "CS111 (1)", **early}],
+            "student_count": 5,
+            "clash": True,
+        },
+        {
+            "day": "Mon",
+            "courses": [
+                {"code": "CS111 (1)", "slot_index": 1, "period": "08:00-10:00"},
+                {"code": "GS101", "slot_index": 2, "period": "13:00-15:00"},
+            ],
+            "student_count": 2,
+            "clash": False,
+        },
+    ]
+    book, _ = _export(saved_data, tmp_path, monkeypatch)
+    rows = _qa_rows(book)
+    assert ["Students With 2+ Exams in a Day", 7] in rows
+    start = rows.index(["Same-Day Exam Pairs"])
+    assert rows[start + 1] == ["Day", "First Exam", "Second Exam", "Students Sitting Both", "Clash"]
+    # Saved order is kept: the build sorts by students, then day, then codes.
+    assert rows[start + 2 : start + 4] == [
+        [
+            "Sun",
+            "CS111 (2) — Programming I (08:00-10:00)",
+            "CS111 (1) — Fundamentals of Programming (08:00-10:00)",
+            5,
+            "Same period",
+        ],
+        [
+            "Mon",
+            "CS111 (1) — Fundamentals of Programming (08:00-10:00)",
+            "GS101 — General Studies (13:00-15:00)",
+            2,
+        ],
+    ]
+    assert rows[start + 4] == [], "The table ends with its saved pairs"
+
+
+def test_qa_summary_never_shows_a_zero_for_a_run_saved_before_the_same_day_metric(
+    saved_data, tmp_path, monkeypatch
+):
+    book, _ = _export(saved_data, tmp_path, monkeypatch)
+    rows = _qa_rows(book)
+    assert ["Students With 2+ Exams in a Day", "Not recorded in saved data"] in rows
+    assert ["Same-Day Exam Pairs"] not in rows
+
+
 def test_export_does_not_modify_persisted_run(saved_data, tmp_path, monkeypatch):
     _, path = _export(saved_data, tmp_path, monkeypatch)
     run = ExamTimetableRun.objects.get()

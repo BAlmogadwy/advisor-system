@@ -2573,6 +2573,119 @@ for (const type of ['overload', 'heavy', 'room-unassigned', 'room-double']) {
   });
 }
 
+// Students with 2+ exams in a day: the card counts students; its detail
+// lists exam pairs with how many students sit both, and never a student.
+function sameDayRun({ count = 5, pairs } = {}) {
+  const run = workspaceRun();
+  run.qa.multi_exam_day_students = count;
+  run.qa.same_day_exam_pairs = pairs ?? [
+    // A stray identifier on a row must still never reach the page.
+    { day: 'Sun', courses: [{ code: courses[0].course_code, slot_index: 0, period: '08:00-10:00' }, { code: courses[1].course_code, slot_index: 1, period: '10:30-12:30' }], student_count: 4, clash: false, student_id: 'S-4410001' },
+    { day: 'Mon', courses: [{ code: courses[1].course_code, slot_index: 3, period: '08:00-10:00' }, { code: courses[0].course_code, slot_index: 3, period: '08:00-10:00' }], student_count: 1, clash: true },
+  ];
+  return run;
+}
+const sameDayCard = ui => ui.$('kMultiExamDay').closest('.kpi-click');
+const pairExam = cell => ({
+  code: cell.querySelector('.et-course-code').textContent.trim(),
+  period: cell.querySelector('.et-pair-period bdi').textContent,
+  find: cell.querySelector('[data-find-exam]').dataset.findExam,
+});
+const noSameDayPairs = () => (language === 'ar' ? 'لا يوجد طالب لديه أكثر من اختبار في يوم واحد.' : 'No student has more than one exam on a day.');
+
+test('the same-day card counts students and its detail lists exam pairs with their student counts, never students', async t => {
+  const ui = await loadedEditor(t, { run: sameDayRun() });
+  assert.equal(ui.$('kMultiExamDay').textContent, '5');
+  const card = sameDayCard(ui);
+  assert.equal(card.getAttribute('role'), 'button');
+  assert.equal(card.getAttribute('tabindex'), '0');
+  assert.equal(card.getAttribute('aria-controls'), 'kpiDrill');
+  assert.equal(card.querySelector('.k').textContent, language === 'ar' ? 'طلاب بأكثر من اختبار في اليوم' : 'Students with 2+ exams in a day');
+  ui.$('examSummaryDetails').open = true;
+  card.dispatchEvent(new ui.window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+  assert.equal(ui.$('kpiDrill').dataset.type, 'same-day-pairs');
+  assert.equal(card.getAttribute('aria-expanded'), 'true');
+  assert.equal(ui.window.document.activeElement, ui.$('kpiDrillTitle'));
+  assert.equal(ui.$('kpiDrillTitle').textContent, language === 'ar' ? 'أزواج الاختبارات في اليوم نفسه' : 'Exam pairs on the same day');
+  assert.deepEqual(Array.from(ui.$('kpiDrillHead').querySelectorAll('th'), th => th.textContent),
+    language === 'ar' ? ['اليوم', 'الاختبار الأول', 'الاختبار الثاني', 'طلاب يؤدون الاختبارين'] : ['Day', 'First exam', 'Second exam', 'Students sitting both']);
+  const rows = Array.from(ui.$('kpiDrillBody').rows);
+  assert.equal(rows.length, 2, 'One row per pair, in the saved order: most-shared first');
+  assert.deepEqual(rows.map(row => row.cells[0].textContent), ['Sun', 'Mon']);
+  assert.deepEqual([pairExam(rows[0].cells[1]), pairExam(rows[0].cells[2])], [
+    { code: courses[0].course_code, period: '08:00-10:00', find: courses[0].course_identity },
+    { code: courses[1].course_code, period: '10:30-12:30', find: courses[1].course_identity },
+  ]);
+  assert.deepEqual([pairExam(rows[1].cells[1]), pairExam(rows[1].cells[2])], [
+    { code: courses[1].course_code, period: '08:00-10:00', find: courses[1].course_identity },
+    { code: courses[0].course_code, period: '08:00-10:00', find: courses[0].course_identity },
+  ]);
+  assert.ok(rows[0].cells[1].querySelector('.et-course-card').title.includes(courses[0].course_name), 'Each exam carries its name');
+  assert.deepEqual(rows.map(row => row.cells[3].querySelector('.et-pair-count').textContent), ['4', '1']);
+  assert.equal(rows[0].querySelector('.badge'), null, 'Different periods are not a clash');
+  assert.match(rows[1].cells[3].querySelector('.badge').textContent, language === 'ar' ? /^تعارض/ : /^Clash/);
+  for (const bdi of ui.$('kpiDrillBody').querySelectorAll('bdi')) assert.equal(bdi.getAttribute('dir'), 'ltr');
+  assert.equal(ui.$('kpiDrill').querySelector('[dir="auto"]'), null);
+  assert.doesNotMatch(ui.$('kpiDrill').innerHTML, /4410001|student_id/);
+  drillAction(ui, 'find').click();
+  assert.equal(ui.window.document.activeElement, examChip(ui));
+  assert.equal(examChip(ui).classList.contains('et-found-exam'), true);
+});
+
+test('the same-day metric compares a checked result with the saved one, lower is better', async t => {
+  const run = sameDayRun();
+  const ui = await loadedEditor(t, {
+    run,
+    onRequest: async (url, options) => url === '/ops/exam-timetable/draft-impact/'
+      ? response({ ...evaluatedRun(JSON.parse(options.body), run), qa: { ...run.qa, multi_exam_day_students: 3, same_day_exam_pairs: [] } }) : undefined,
+  });
+  ui.$('examSummaryDetails').open = true;
+  sameDayCard(ui).click();
+  dropExam(ui, 'Mon');
+  ui.$('checkDraftBtn').click();
+  await settle();
+  assert.equal(ui.$('kMultiExamDay').textContent, '3');
+  assert.match(deltaText(ui, 'kMultiExamDay'), /5.*3.*−2/);
+  assert.equal(ui.$('kMultiExamDay').parentElement.querySelector('.et-kpi-delta').classList.contains('is-better'), true);
+  assert.equal(ui.$('kpiDrill').dataset.type, 'same-day-pairs', 'The open detail refreshes with the check');
+  assert.equal(ui.$('kpiDrillBody').rows.length, 1);
+  assert.equal(ui.$('kpiDrillBody').textContent, noSameDayPairs());
+});
+
+test('a run saved before the same-day metric shows "—" and says so, never a zero, until Check measures it', async t => {
+  const run = workspaceRun();
+  assert.equal('multi_exam_day_students' in run.qa, false);
+  const ui = await loadedEditor(t, {
+    run,
+    onRequest: async (url, options) => url === '/ops/exam-timetable/draft-impact/'
+      ? response({ ...evaluatedRun(JSON.parse(options.body), run), qa: { ...run.qa, multi_exam_day_students: 2, same_day_exam_pairs: sameDayRun().qa.same_day_exam_pairs } }) : undefined,
+  });
+  assert.equal(ui.$('kMultiExamDay').textContent, '—');
+  assert.doesNotMatch(deltaText(ui, 'kMultiExamDay'), /NaN|0/);
+  ui.$('examSummaryDetails').open = true;
+  sameDayCard(ui).click();
+  assert.equal(ui.$('kpiDrillBody').rows.length, 1);
+  assert.equal(ui.$('kpiDrillBody').textContent, language === 'ar'
+    ? 'لم يُحسب هذا المؤشر لهذا الجدول المحفوظ. افحص التغييرات لحسابه.'
+    : 'Not calculated for this saved timetable. Check changes to calculate it.');
+  ui.$('checkDraftBtn').click();
+  await settle();
+  assert.equal(ui.$('kMultiExamDay').textContent, '2');
+  const delta = deltaText(ui, 'kMultiExamDay');
+  assert.match(delta, /—.*2/);
+  assert.doesNotMatch(delta, /NaN|−|\+/, 'An unmeasured baseline is no change to report');
+  assert.equal(ui.$('kMultiExamDay').parentElement.querySelector('.et-kpi-delta').classList.contains('is-neutral'), true);
+  assert.equal(ui.$('kpiDrillBody').rows.length, 2);
+});
+
+test('a measured zero reads 0 and its detail says no student has two exams on a day', async t => {
+  const ui = await loadedEditor(t, { run: sameDayRun({ count: 0, pairs: [] }) });
+  assert.equal(ui.$('kMultiExamDay').textContent, '0');
+  ui.$('examSummaryDetails').open = true;
+  sameDayCard(ui).click();
+  assert.equal(ui.$('kpiDrillBody').textContent, noSameDayPairs());
+});
+
 test('stale drill details keep their checked slot labels and Find uses the current placement', async t => {
   const ui = await loadedEditor(t, { run: workspaceRun() });
   ui.$('kConflicts').closest('.kpi-click').click();
