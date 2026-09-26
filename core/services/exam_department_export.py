@@ -949,16 +949,21 @@ def _write_print_sheet(
             printed.row_breaks.append(Break(id=row_number - 1))
             page_height, new_group = 103, True
         if new_group:
-            date_label = (
-                record["date"].isoformat()
-                if record["date"]
-                else ("التاريخ غير محدد" if ar else "Date not entered")
-            )
-            # Mark the time range left-to-right: otherwise an Arabic date label
-            # can make a right-to-left print engine display the end time before
-            # start. Marks, not isolates: Excel prints isolates as boxes.
-            period_label = ltr_run(record["period"]) if ar else record["period"]
-            label = "  |  ".join((record["day"], date_label, period_label))
+            day_label = record["day"]
+            date_label = record["date"].isoformat() if record["date"] else ""
+            period_label = record["period"]
+            if ar:
+                # In a right-to-left band every day, date and time run gets
+                # its own left-to-right marks. Otherwise adjacent Latin runs
+                # merge: dated and undated bands print in mirrored field
+                # order, and a date after an Arabic day label prints reversed.
+                # Marks, not isolates: Excel prints isolates as boxes.
+                day_label, date_label, period_label = (
+                    ltr_run(value) if value else value
+                    for value in (day_label, date_label, period_label)
+                )
+            date_label = date_label or ("التاريخ غير محدد" if ar else "Date not entered")
+            label = "  |  ".join((day_label, date_label, period_label))
             _banner(printed, row_number, label, 8, ar=ar, size=11, fill="DDECEF", bold=True)
             printed.row_dimensions[row_number].height = 25
             row_number += 1
