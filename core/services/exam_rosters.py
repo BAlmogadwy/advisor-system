@@ -31,9 +31,10 @@ Rules that keep the rebuild honest
   identity numbering ("PHYS103 (1)"/"(2)") depends on the population, so a
   filtered rebuild could renumber and mis-join exams.
 * The live term must equal the saved one, read from ``section_enrollment``
-  only. ``schedule[].term`` is not the academic term (it is shadowed by a
-  programme term in the build), and ``TermSection`` IDs are reused across
-  terms, so a mismatch refuses instead of joining another term's lists.
+  only: those groups are what the lists are joined to. ``schedule[].term`` is
+  course metadata, never an authority (runs saved before input policy 5 hold
+  a study-plan term there), and ``TermSection`` IDs are reused across terms, so
+  a mismatch refuses instead of joining another term's lists.
 * A run that lacks what this needs is refused once and plainly: rebuild and
   save it. Every saved run so far is test data; there is no legacy path.
 * Student fields come from exactly one query of ``student_id, name, program,

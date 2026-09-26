@@ -307,7 +307,7 @@ def test_rebuild_uses_the_saved_scope_so_later_out_of_scope_students_do_not_coun
 # ── Term guard (section_enrollment only) and gates ─────────────
 
 
-def test_term_comes_from_section_enrollment_not_the_shadowed_schedule_term(saved_run):
+def test_term_comes_from_section_enrollment_never_from_schedule_entries(saved_run):
     data = saved_payload(saved_run)
     for entry in data["schedule"]:
         entry["term"] = 5

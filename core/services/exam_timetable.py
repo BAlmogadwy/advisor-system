@@ -280,12 +280,16 @@ def build_enrolled_sets_with_meta(
         if program:
             identity_programs[(source_code, identity)].add(str(program))
 
+    # A course's study-plan term only orders its same-code identities, so the
+    # plan with the earliest term gets "(1)". It is never the academic term
+    # ``meta["term"]`` below: a course sits in a different study term in each
+    # plan, and ``build_plan_term_buckets`` is where plan terms are reported.
     identity_term_rank: dict[tuple[str, str], int] = {}
-    for _program, source, name, term in pr_rows:
+    for _program, source, name, plan_term in pr_rows:
         source_code = str(source)
         identity = planner_course_key(source_code, name)
         key = (source_code, identity)
-        rank = int(term or 999)
+        rank = int(plan_term or 999)
         identity_term_rank[key] = min(identity_term_rank.get(key, rank), rank)
         identity_name.setdefault(key, str(name or "").strip())
 

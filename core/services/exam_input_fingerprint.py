@@ -7,7 +7,9 @@ import json
 
 from core.services.exam_room_allocation import ROOM_ALLOCATION_POLICY_VERSION
 
-EXAM_INPUT_POLICY_VERSION = 4
+# 5: ``course_meta[...]["term"]`` is the academic term. Up to 4 it held the
+# study-plan term of an arbitrary programme requirement row.
+EXAM_INPUT_POLICY_VERSION = 5
 
 
 def _canonical_records(rows: list[dict]) -> list[dict]:
