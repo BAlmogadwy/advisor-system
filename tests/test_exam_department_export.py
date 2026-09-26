@@ -24,7 +24,7 @@ from core.services.exam_run_schema import (
     normalise_exam_run_payload,
     stamp_schema_version,
 )
-from core.services.xlsx_bidi import LRM, RLM, ltr_run
+from core.services.xlsx_bidi import LRM, RLM
 
 XLSX_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
@@ -1104,8 +1104,25 @@ def _arabic_day_fixture():
     return data
 
 
-# Every shape a print band takes: dated and undated, weekly sheets, and Arabic
-# day labels (a date after an Arabic day printed reversed before the marks).
+def _long_session_fixture():
+    # One Monday session long enough to spill over pages, so its band is
+    # repeated at the top of each continuation page.
+    data = make_department_data()
+    sections = [_section(100 + index, f"M{index:03}", "M", {"AI2": 1}) for index in range(40)]
+    entry = data["schedule"][1]
+    entry["enrolled_count"] = 40
+    entry["programs"] = ["AI2"]
+    entry["rooms"] = [_room(f"M-{200 + index}", section) for index, section in enumerate(sections)]
+    course = data["operations_snapshot"]["courses"]["CS111 (2)"]
+    course["sections"] = deepcopy(sections)
+    course["program_counts"] = [{"program": "AI2", "gender": "M", "student_count": 40}]
+    data["section_enrollment"]["CS111 (2)"] = deepcopy(sections)
+    return data
+
+
+# Every shape a print band takes: dated and undated, weekly sheets, Arabic day
+# labels (a date after an Arabic day printed reversed before the marks), and a
+# session repeated on continuation pages.
 _BAND_CASES = {
     "dated": (make_department_data, _DATED),
     "undated": (make_department_data, None),
@@ -1114,6 +1131,7 @@ _BAND_CASES = {
         _arabic_day_fixture,
         {_ARABIC_DAYS[day]: value for day, value in _DATED.items()},
     ),
+    "long-session": (_long_session_fixture, None),
 }
 
 
@@ -1164,27 +1182,37 @@ def _bands(sheet):
 
 @pytest.mark.parametrize("language", ["en", "ar"])
 @pytest.mark.parametrize("case", sorted(_BAND_CASES))
-def test_every_print_band_marks_each_left_to_right_field_in_arabic_only(case, language):
+def test_every_print_band_marks_each_left_to_right_field(case, language):
     # Checked band by band on every print sheet after Details (full and
-    # weekly) of every profile and cohort: in Arabic the day, an entered date
-    # and the period each read LRM + run + RLM; empty runs and the Arabic
-    # "date not entered" stay bare; English bands carry no marks at all.
+    # weekly, including bands repeated on continuation pages) of every profile
+    # and cohort. Arabic: the day, an entered date and the period each read
+    # LRM + run + RLM; empty runs and "date not entered" stay bare. English:
+    # no marks, except one LRM closing an Arabic day label so the date and
+    # time after it keep European digits.
     make, dates = _BAND_CASES[case]
     data = make()
     days = {slot["day"] for slot in data["slots"]} | {"OVERFLOW"}
     entered = set((dates or {}).values())
-    undated = "التاريخ غير محدد" if language == "ar" else "Date not entered"
-    wrap = ltr_run if language == "ar" else str
-    weekly_sheets = dated_bands = 0
+    arabic = language == "ar"
+    undated = "التاريخ غير محدد" if arabic else "Date not entered"
+    # Spelled out, not built with the helpers under test.
+    wrap = (lambda run: LRM + run + RLM) if arabic else str
+    arabic_days = set(_ARABIC_DAYS.values())
+    weekly_sheets = dated_bands = repeated_bands = closed_arabic_days = 0
     for raw in _all_profile_workbooks(data, language, dates):
         book = load_workbook(BytesIO(raw))
         for sheet in book.worksheets[1:]:
             bands = _bands(sheet)
             assert bands, sheet.title
             weekly_sheets += sheet.title.startswith(("الأسبوع", "Week"))
+            repeated_bands += len(bands) - len(set(bands))
             for band in bands:
                 day, date_label, period = band.split("  |  ")
-                assert day.strip(_MARKS) in days and day == wrap(day.strip(_MARKS)), band
+                core_day = day.strip(_MARKS)
+                assert core_day in days, band
+                closed = core_day + LRM if core_day in arabic_days else core_day
+                assert day == (wrap(core_day) if arabic else closed), band
+                closed_arabic_days += (not arabic) and day != core_day
                 if date_label != undated:
                     dated_bands += 1
                     assert date_label.strip(_MARKS) in entered, band
@@ -1192,7 +1220,9 @@ def test_every_print_band_marks_each_left_to_right_field_in_arabic_only(case, la
                 core = period.strip(_MARKS)
                 assert core in {"08:00-10:00", ""}, band
                 assert period == (wrap(core) if core else ""), band
-                if language == "en":
-                    assert not any(mark in band for mark in _MARKS), band
+                if not arabic:
+                    assert RLM not in band and LRM not in date_label + period, band
     assert weekly_sheets > 0
     assert dated_bands > 0 if entered else dated_bands == 0
+    assert repeated_bands > 0 if case == "long-session" else True
+    assert closed_arabic_days > 0 if (case == "arabic-days-dated" and not arabic) else True
