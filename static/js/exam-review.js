@@ -245,7 +245,8 @@
             fragments.push(warning);
           }
         }
-        badges.replaceChildren(...fragments);
+        // The card's "N students" link (exam-roster-drawer.js) stays first.
+        badges.replaceChildren(...[...badges.children].filter(child => child.classList.contains('et-roster-link')), ...fragments);
       }
       // QA details describe the checked report. Share size and term styling, but
       // never hide actionable rows or overlay current-placement relationships.

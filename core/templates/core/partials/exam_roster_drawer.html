@@ -1,0 +1,52 @@
+{% comment %}
+  The course drawer (static/js/exam-roster-drawer.js): one exam's students in
+  the SAVED run behind the board, opened from a card's "N students" link. A
+  native modal on the inline end, inside the workspace so it keeps the page's
+  tokens; it is a top-layer dialog, so the busy builder never makes it inert.
+  Students arrive only from the audited POST endpoint; the URLs below carry
+  the run id alone (0 is replaced by the script).
+{% endcomment %}
+<dialog id="examRosterDrawer" class="et-roster-drawer" aria-labelledby="examRosterDrawerTitle" aria-describedby="examRosterDrawerSource"
+  data-roster-url="{% url 'exam_roster_detail' 0 %}" data-rosters-page="{% url 'exam_rosters_page' %}">
+  <header class="et-roster-drawer-head">
+    <button id="examRosterDrawerBack" type="button" class="et-back-link" hidden><span class="et-back-glyph" aria-hidden="true">‹</span><span id="examRosterDrawerBackText"></span></button>
+    <div class="et-roster-drawer-title-row">
+      <h2 id="examRosterDrawerTitle" tabindex="-1"></h2>
+      <button id="examRosterDrawerClose" type="button" class="et-icon-button" aria-label="{% if LANGUAGE_CODE == 'ar' %}إغلاق{% else %}Close{% endif %}"><svg aria-hidden="true" focusable="false" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+    </div>
+    <p id="examRosterDrawerMeta" class="et-roster-meta"></p>
+    <p id="examRosterDrawerSource" class="et-provenance-line"></p>
+    <div id="examRosterDrawerNotice" class="et-roster-notice" hidden>
+      <p id="examRosterDrawerUnsaved"></p>
+      <p id="examRosterDrawerDraft" hidden></p>
+    </div>
+  </header>
+  <div id="examRosterDrawerBody" class="et-roster-drawer-body"></div>
+  <footer class="et-roster-drawer-foot">
+    <p class="et-audit-note"><svg aria-hidden="true" focusable="false" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg><span>{% if LANGUAGE_CODE == 'ar' %}يُسجَّل عرض قوائم الطلاب وتنزيلها باسمك.{% else %}Views and downloads of student lists are recorded under your name.{% endif %}</span></p>
+    <div class="et-roster-actions">
+      <a id="examRosterDrawerOpenPage" class="btn btn-outline-secondary" href="{% url 'exam_rosters_page' %}" target="_blank" rel="noopener">{% if LANGUAGE_CODE == 'ar' %}فتح في قوائم الطلاب{% else %}Open in Student lists{% endif %} <span aria-hidden="true">↗</span><span class="visually-hidden"> {% if LANGUAGE_CODE == 'ar' %}(يفتح في تبويب جديد){% else %}(opens in a new tab){% endif %}</span></a>
+      <div class="et-download">
+        <button id="examRosterDrawerDownload" type="button" class="btn btn-outline-primary" aria-haspopup="menu" aria-expanded="false" aria-controls="examRosterDrawerMenu">{% if LANGUAGE_CODE == 'ar' %}تنزيل{% else %}Download{% endif %} <span aria-hidden="true">▾</span></button>
+        <div id="examRosterDrawerMenu" class="et-menu" role="menu" aria-labelledby="examRosterDrawerDownload" hidden>
+          <button type="button" role="menuitem" data-download="section" tabindex="-1"><span><span class="et-menu-label"></span><span id="examRosterDrawerSectionHint" class="et-menu-hint" hidden>{% if LANGUAGE_CODE == 'ar' %}اختر تبويب شعبة أولاً.{% else %}Choose a section tab first.{% endif %}</span></span></button>
+          <button type="button" role="menuitem" data-download="course" tabindex="-1">{% if LANGUAGE_CODE == 'ar' %}جميع الشعب · إكسل{% else %}All sections · Excel{% endif %}</button>
+          <button type="button" role="menuitem" data-download="more" tabindex="-1" aria-haspopup="dialog">{% if LANGUAGE_CODE == 'ar' %}خيارات أخرى…{% else %}More options…{% endif %}</button>
+          <div role="separator"></div>
+          <div role="group" aria-labelledby="examRosterDrawerLanguageLabel">
+            <div id="examRosterDrawerLanguageLabel" class="et-menu-group-label">{% if LANGUAGE_CODE == 'ar' %}لغة الملف{% else %}File language{% endif %}</div>
+            <button type="button" role="menuitemradio" data-language="ar" aria-checked="true" tabindex="-1"><span lang="ar" dir="rtl">العربية</span></button>
+            <button type="button" role="menuitemradio" data-language="en" aria-checked="false" tabindex="-1"><span lang="en" dir="ltr">English</span></button>
+          </div>
+        </div>
+      </div>
+    </div>
+    <p id="examRosterDrawerReason" class="et-roster-reason"></p>
+    <p id="examRosterDrawerStatus" class="et-roster-status-line"></p>
+    <div id="examRosterDrawerError" class="alert alert-danger et-roster-download-error" role="alert" hidden>
+      <span id="examRosterDrawerErrorText"></span>
+      <button id="examRosterDrawerRetry" type="button" class="btn btn-sm btn-outline-secondary">{% if LANGUAGE_CODE == 'ar' %}إعادة المحاولة{% else %}Try again{% endif %}</button>
+    </div>
+  </footer>
+  <p id="examRosterDrawerLive" class="visually-hidden" role="status" aria-live="polite"></p>
+</dialog>
