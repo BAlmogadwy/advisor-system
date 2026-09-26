@@ -57,6 +57,12 @@ from .db_admin_views import (
 )
 from .dev_student_advisor_lab_views import dev_student_advisor_v21_lab_view
 from .exam_department_views import exam_department_export_view, exam_department_options_view
+from .exam_roster_views import (
+    exam_roster_detail_view,
+    exam_roster_index_view,
+    exam_roster_lookup_view,
+    exam_rosters_page,
+)
 from .exam_student_export_views import (
     exam_student_export_preflight_view,
     exam_student_export_view,
@@ -717,6 +723,12 @@ urlpatterns = [
         "ops/profile/change-password/", profile_change_password_view, name="profile_change_password"
     ),
     path("exam-timetable/", login_required(exam_timetable_page), name="exam_timetable_page"),
+    # Student lists: routes carry the saved run id only - never a student.
+    path(
+        "exam-timetable/rosters/",
+        login_required(exam_rosters_page),
+        name="exam_rosters_page",
+    ),
     path(
         "ops/exam-timetable/filters/",
         login_required(exam_timetable_filters_view),
@@ -791,6 +803,21 @@ urlpatterns = [
         "ops/exam-timetable/<int:run_id>/students/export/",
         login_required(exam_student_export_view),
         name="exam_student_export",
+    ),
+    path(
+        "ops/exam-timetable/<int:run_id>/rosters/index/",
+        login_required(exam_roster_index_view),
+        name="exam_roster_index",
+    ),
+    path(
+        "ops/exam-timetable/<int:run_id>/rosters/",
+        login_required(exam_roster_detail_view),
+        name="exam_roster_detail",
+    ),
+    path(
+        "ops/exam-timetable/<int:run_id>/rosters/lookup/",
+        login_required(exam_roster_lookup_view),
+        name="exam_roster_lookup",
     ),
     path(
         "ops/exam-timetable/<int:run_id>/copy/",

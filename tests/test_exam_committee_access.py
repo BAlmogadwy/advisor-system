@@ -119,6 +119,7 @@ def test_django_superuser_retains_superadmin_override(django_user_model):
     "route",
     [
         "exam_timetable_page",
+        "exam_rosters_page",
         "exam_timetable_filters",
         "exam_timetable_list",
         "profile_page",
