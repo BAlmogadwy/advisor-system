@@ -22,6 +22,13 @@
  *   X-Export-Reference.
  * - Every sentence is rendered by the template (#examStudentExportCopy) in the
  *   page language; codes, times, counts and file names sit in <bdi dir="ltr">.
+ *
+ * Two pages lend it a host: the Timetable page (the whole saved run) and the
+ * Student lists page, whose run is `partial` - its exams, periods, rooms and
+ * days, but not every section's saved count - so it shows no "about" figures
+ * and waits for the preflight's counts. Either page, and the course drawer,
+ * opens it through window.examStudentExport.open(opener, { scope }), preset
+ * to the scope on screen; the drawer's one-click downloads use .download().
  */
 (() => {
   'use strict';
@@ -159,7 +166,9 @@
       rooms: [...rooms.values()].sort((a, b) => a.slot_index - b.slot_index || natural.compare(a.room_code, b.room_code)),
       programs: null,
       departments: [],
-      genders: GENDERS.filter(gender => exams.some(exam => exam.sections.some(section => section.gender === gender))),
+      // A partial run names the groups that sit exams; its sections are few.
+      genders: GENDERS.filter(gender => (Array.isArray(run.genders) && run.genders.includes(gender))
+        || exams.some(exam => exam.sections.some(section => section.gender === gender))),
     };
   }
 
@@ -469,11 +478,11 @@
 
   // ── Rendering ───────────────────────────────────────────────
 
-  function refusalContent() {
-    const { code } = refusal;
-    if (code === 'lists_term_mismatch' && Array.isArray(refusal.live) && Array.isArray(refusal.saved)) {
+  function refusalContent(refused = refusal) {
+    const { code } = refused;
+    if (code === 'lists_term_mismatch' && Array.isArray(refused.live) && Array.isArray(refused.saved)) {
       const term = ([year, number]) => copy('term', { year: ltr(year), term: ltr(number) });
-      return copy('refused-lists_term_mismatch', { live: term(refusal.live), saved: term(refusal.saved) });
+      return copy('refused-lists_term_mismatch', { live: term(refused.live), saved: term(refused.saved) });
     }
     return copy(['rebuild_required', 'lists_unavailable', 'not_found'].includes(code) ? `refused-${code}` : 'refused');
   }
@@ -725,12 +734,18 @@
       };
       return;
     }
-    let content;
-    if (['export_slot_busy', 'audit_unavailable', 'empty_scope'].includes(code)) content = () => copy(`error-${code}`);
-    else if (code === 'export_failed') content = () => copy('error-export_failed', { reference: ltr(data.reference || '') });
-    else if (code === 'invalid_options') content = () => copy('error-options');
-    else content = () => data.error || copy('error-download');
-    failure = { content, retry, blocks };
+    failure = { content: problemContent(status, data), retry, blocks };
+  }
+
+  // What a refused or failed request says, in the page's words.
+  function problemContent(status, data) {
+    const code = data.code || data.error_code || '';
+    if (status === 404 || code === 'not_found' || code === 'run_not_found') return () => refusalContent({ code: 'not_found' });
+    if (status === 409) return () => refusalContent({ code, live: data.live_term, saved: data.saved_term });
+    if (['export_slot_busy', 'audit_unavailable', 'empty_scope'].includes(code)) return () => copy(`error-${code}`);
+    if (code === 'export_failed') return () => copy('error-export_failed', { reference: ltr(data.reference || '') });
+    if (code === 'invalid_options') return () => copy('error-options');
+    return () => data.error || copy('error-download');
   }
 
   const thrown = error => (error instanceof TypeError ? () => copy('error-network') : () => error.message);
@@ -900,17 +915,34 @@
     const label = document.createElement('bdi');
     label.textContent = run.label || '';
     source.replaceChildren(copy('source', { id: ltr(context.runId), label, saved: ltr(savedAt(run.created_at)) }));
-    const term = Object.values(run.section_enrollment || {}).flat().find(row => row?.academic_year && row?.term);
+    const term = Object.values(run.section_enrollment || {}).flat().find(row => row?.academic_year && row?.term)
+      || (run.academic_year && run.term ? run : null);
     if (term) source.append(copy('source-term', { year: ltr(term.academic_year), term: ltr(term.term) }));
   }
 
-  function open(from) {
+  // A scope the caller has on screen: its radio and pickers, if the run has it.
+  function applyPreset(preset) {
+    const value = preset?.scope;
+    if (!value || !SCOPES.includes(value.kind)) return;
+    setRadio('examStudentScope', value.kind, value.kind);
+    if (typeof value.exam === 'string') {
+      ['examStudentCourse', 'examStudentSectionExam'].forEach(id => { $(id).value = value.exam; });
+      fillSections(value.kind === 'section' ? sectionValue(value.exam, value.section_key, value.gender) : '');
+    }
+    if (Number.isInteger(value.slot_index)) {
+      ['examStudentPeriod', 'examStudentRoomPeriod'].forEach(id => { $(id).value = String(value.slot_index); });
+      fillRooms(typeof value.room_code === 'string' ? value.room_code : '');
+    }
+    if (typeof value.day === 'string') $('examStudentDay').value = value.day;
+  }
+
+  function open(from, preset = null) {
     if (dialog.open || host.blockReason()) return;
     const run = host.savedRun();
     context = host.context();
     opener = from;
     facts = factsFromRun(run);
-    saved = savedCounts(run);
+    saved = run.partial ? null : savedCounts(run);
     answer = null;
     answeredFor = null;
     choicesDigest = '';
@@ -937,6 +969,7 @@
     });
     renderPickers();
     renderDates();
+    applyPreset(preset);
     $('examStudentOneFile').checked = groupBoxes().length > 1;
     renderSource(run);
     pending = true;
@@ -958,9 +991,61 @@
     target?.focus({ preventScroll: true });
   }
 
+  // A one-click download of a scope (the course drawer's Download menu): the
+  // export endpoint and its audit, without the dialog. Resolves to the file's
+  // name and reference; rejects with `content`, the reason in the page's words.
+  async function quickDownload(runId, options, { signal } = {}) {
+    const fail = content => Object.assign(new Error('export'), { content });
+    let response;
+    try {
+      response = await fetch(`/ops/exam-timetable/${encodeURIComponent(runId)}/students/export/`, {
+        method: 'POST', headers: headers(), body: JSON.stringify(options), signal,
+      });
+    } catch (error) {
+      if (error?.name === 'AbortError') throw error;
+      throw fail(thrown(error));
+    }
+    const type = response.headers?.get('content-type') || '';
+    if (!response.ok || !FILE_TYPES.test(type)) {
+      let data;
+      try {
+        data = await host.readResponse(response);
+      } catch (error) {
+        throw fail(thrown(error));
+      }
+      throw fail(problemContent(response.status, data));
+    }
+    const blob = await response.blob();
+    const name = filename(response.headers.get('content-disposition') || '') || 'exam_students.xlsx';
+    const reference = response.headers.get('x-export-reference') || '';
+    const objectUrl = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = objectUrl;
+    link.download = name;
+    document.body.append(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(objectUrl), TIMING.revoke);
+    return { name, reference };
+  }
+
+  window.examStudentExport = Object.freeze({
+    open: (from, preset = null) => open(from, preset),
+    download: quickDownload,
+    // The file language the dialog remembers, shared by the quick downloads.
+    language: () => (preferences().language === 'en' ? 'en' : 'ar'),
+    rememberLanguage(language) {
+      try {
+        window.localStorage.setItem(STORE_KEY, JSON.stringify({ ...preferences(), language: language === 'en' ? 'en' : 'ar' }));
+      } catch (_) {
+        // Blocked storage: the default serves next time.
+      }
+    },
+  });
+
   // ── Events ──────────────────────────────────────────────────
 
-  $('examStudentDataBtn').addEventListener('click', event => open(event.currentTarget));
+  $('examStudentDataBtn')?.addEventListener('click', event => open(event.currentTarget));
   $('examDepartmentStudentLink')?.addEventListener('click', () => {
     host.closeDepartmentFiles();
     open($('departmentFilesBtn'));

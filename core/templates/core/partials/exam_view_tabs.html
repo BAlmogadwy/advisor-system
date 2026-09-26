@@ -1,0 +1,12 @@
+{% comment %}
+  The two exam timetable views: real links (navigation), not ARIA tabs. The
+  current one carries aria-current="page". Student lists opens the saved run
+  on the board, else the newest saved (the page script keeps the link's run
+  and says why it waits when nothing is saved yet). Include with
+  current="timetable" or current="rosters", and run (a saved run or None).
+{% endcomment %}
+<nav class="et-view-tabs" aria-label="{% if LANGUAGE_CODE == 'ar' %}عروض جدول الاختبارات{% else %}Exam timetable views{% endif %}">
+  <a id="examTimetableTab" href="{% url 'exam_timetable_page' %}{% if current == 'rosters' and run %}?run={{ run.id }}{% endif %}"{% if current == 'timetable' %} aria-current="page"{% endif %}>{% if LANGUAGE_CODE == 'ar' %}الجدول{% else %}Timetable{% endif %}</a>
+  <a id="examRosterTab" href="{% url 'exam_rosters_page' %}{% if run %}?run={{ run.id }}{% endif %}" data-base="{% url 'exam_rosters_page' %}"{% if current == 'rosters' %} aria-current="page"{% endif %}>{% if LANGUAGE_CODE == 'ar' %}قوائم الطلاب{% else %}Student lists{% endif %}</a>
+  {% if current == 'timetable' %}<span id="examRosterTabReason" class="et-view-tab-reason" hidden>{% if LANGUAGE_CODE == 'ar' %}احفظ جدولاً أو حمّل جدولاً محفوظاً أولاً.{% else %}Save or load a timetable first.{% endif %}</span>{% endif %}
+</nav>

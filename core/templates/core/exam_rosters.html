@@ -2,17 +2,18 @@
 {% load i18n static %}
 {% get_current_language as LANGUAGE_CODE %}
 {% comment %}
-  Student lists (phase 2). This is the page shell: it names the saved run and
-  hands the endpoints to the page script, and reads no student. Student data
-  only ever arrives from the POST endpoints (audited, fail-closed); the run id
-  is the only thing a link or the address bar carries.
+  Student lists (phase 2): who sits each exam, and where, from a saved run.
+  The page names the saved run and hands the endpoints to its script
+  (static/js/page-exam-rosters.js); it reads no student itself. Student data
+  only ever arrives from the POST endpoints (audited, fail-closed); the
+  address carries the run and a room or course, never a student or a search.
 {% endcomment %}
 
 {% block title %}{% if LANGUAGE_CODE == 'ar' %}قوائم الطلاب{% else %}Student lists{% endif %}{% endblock %}
 
 {% block main_attrs %}data-exam-rosters="true" data-roster-state="{{ roster_state }}"{% if roster_run %} data-run-id="{{ roster_run.id }}" data-index-url="{% url 'exam_roster_index' roster_run.id %}" data-roster-url="{% url 'exam_roster_detail' roster_run.id %}" data-lookup-url="{% url 'exam_roster_lookup' roster_run.id %}" data-export-url="{% url 'exam_student_export' roster_run.id %}" data-export-preflight-url="{% url 'exam_student_export_preflight' roster_run.id %}"{% endif %} data-timetable-url="{% url 'exam_timetable_page' %}"{% endblock %}
 {% block main_padding %}p-4 exam-builder-page exam-rosters-page{% endblock %}
-{% block extra_css %}<link href="{% static 'css/page-exam-timetable.css' %}?v=22" rel="stylesheet">{% endblock %}
+{% block extra_css %}<link href="{% static 'css/page-exam-timetable.css' %}?v=22" rel="stylesheet"><link href="{% static 'css/page-exam-rosters.css' %}?v=1" rel="stylesheet">{% endblock %}
 
 {% block page_heading %}{% if LANGUAGE_CODE == 'ar' %}جدول الاختبارات{% else %}Exam Timetable{% endif %}{% endblock %}
 
@@ -26,10 +27,7 @@
 {% endblock %}
 
 {% block content %}
-  <nav class="et-view-tabs" aria-label="{% if LANGUAGE_CODE == 'ar' %}عروض جدول الاختبارات{% else %}Exam timetable views{% endif %}">
-    <a href="{% url 'exam_timetable_page' %}">{% if LANGUAGE_CODE == 'ar' %}الجدول{% else %}Timetable{% endif %}</a>
-    <a href="{% url 'exam_rosters_page' %}{% if roster_run %}?run={{ roster_run.id }}{% endif %}" aria-current="page">{% if LANGUAGE_CODE == 'ar' %}قوائم الطلاب{% else %}Student lists{% endif %}</a>
-  </nav>
+  {% include "core/partials/exam_view_tabs.html" with current="rosters" run=roster_run %}
   {% if roster_state == 'no_saved_run' %}
     <section class="et-panel empty-state" id="examRostersEmpty">
       <p>{% if LANGUAGE_CODE == 'ar' %}لا يوجد جدول محفوظ بعد. تُستخرج قوائم الطلاب من جدول محفوظ.{% else %}No saved timetable yet. Student lists come from a saved timetable.{% endif %}</p>
@@ -42,9 +40,87 @@
     </section>
   {% else %}
     <section class="et-panel et-roster-head" id="examRostersApp" aria-labelledby="examRostersRun">
-      <p id="examRostersRun">{% if LANGUAGE_CODE == 'ar' %}الجدول: <bdi>{{ roster_run.label }}</bdi> · رقم <bdi dir="ltr">{{ roster_run.id }}</bdi>{% else %}Timetable: <bdi>{{ roster_run.label }}</bdi> · #<bdi dir="ltr">{{ roster_run.id }}</bdi>{% endif %}</p>
-      <p class="text-secondary">{% if LANGUAGE_CODE == 'ar' %}يُسجَّل عرض قوائم الطلاب وتنزيلها باسمك.{% else %}Views and downloads of student lists are recorded under your name.{% endif %}</p>
+      <dl class="et-provenance">
+        <dt>{% if LANGUAGE_CODE == 'ar' %}الجدول{% else %}Timetable{% endif %}</dt>
+        <dd id="examRostersRun">{% if LANGUAGE_CODE == 'ar' %}<bdi>{{ roster_run.label }}</bdi> · رقم <bdi dir="ltr">{{ roster_run.id }}</bdi> · حُفظ في <bdi dir="ltr">{{ roster_run.created_at|date:"Y-m-d H:i" }}</bdi>{% else %}<bdi>{{ roster_run.label }}</bdi> · #<bdi dir="ltr">{{ roster_run.id }}</bdi> · saved <bdi dir="ltr">{{ roster_run.created_at|date:"Y-m-d H:i" }}</bdi>{% endif %}</dd>
+        <dt>{% if LANGUAGE_CODE == 'ar' %}قوائم الطلاب{% else %}Student lists{% endif %}</dt>
+        <dd><span id="examRostersLists">{% if LANGUAGE_CODE == 'ar' %}الجداول الدراسية المستوردة للطلاب{% else %}Imported student timetables{% endif %}</span><span id="examRostersCheck"></span></dd>
+        <dt>{% if LANGUAGE_CODE == 'ar' %}المطابقة{% else %}Checked{% endif %}</dt>
+        <dd><span id="examRostersChecked">{% if LANGUAGE_CODE == 'ar' %}جارٍ التحميل…{% else %}Loading…{% endif %}</span><button id="examRostersRefresh" type="button" class="btn btn-sm btn-outline-secondary et-refresh">{% if LANGUAGE_CODE == 'ar' %}تحديث{% else %}Refresh{% endif %}</button></dd>
+      </dl>
+      <div class="et-roster-head-actions">
+        <div class="et-find" id="examRostersFindBox">
+          <label for="examRostersFind" class="visually-hidden">{% if LANGUAGE_CODE == 'ar' %}ابحث عن مقرر أو قاعة أو رقم جامعي{% else %}Find a course, room or student ID{% endif %}</label>
+          <div class="et-find-field">
+            <input id="examRostersFind" type="text" class="form-control" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="examRostersFindList" aria-describedby="examRostersFindHint" autocomplete="off" spellcheck="false" maxlength="64" placeholder="{% if LANGUAGE_CODE == 'ar' %}ابحث عن مقرر أو قاعة أو رقم جامعي{% else %}Find a course, room or student ID{% endif %}">
+            <kbd id="examRostersFindKey" class="et-find-key" aria-hidden="true">/</kbd>
+          </div>
+          <div id="examRostersFindList" class="et-find-list" role="listbox" aria-label="{% if LANGUAGE_CODE == 'ar' %}نتائج البحث{% else %}Find results{% endif %}" hidden></div>
+          <p id="examRostersFindHint" class="visually-hidden">{% if LANGUAGE_CODE == 'ar' %}اكتب 4 أرقام على الأقل من الرقم الجامعي أو 3 أحرف من الاسم.{% else %}Type at least 4 digits of a student ID or 3 letters of a name.{% endif %}</p>
+          <details class="et-find-help">
+            <summary>{% if LANGUAGE_CODE == 'ar' %}مساعدة البحث{% else %}Find help{% endif %}</summary>
+            <label><input id="examRostersShortcut" type="checkbox" role="switch" checked> {% if LANGUAGE_CODE == 'ar' %}اختصار لوحة المفاتيح: / للبحث{% else %}Keyboard shortcut: / to find{% endif %}</label>
+          </details>
+        </div>
+        <button id="examRostersExport" type="button" class="btn btn-primary" aria-haspopup="dialog" aria-controls="examStudentExportDialog" aria-disabled="true" aria-describedby="examRostersExportReason">{% if LANGUAGE_CODE == 'ar' %}تصدير إلى Excel{% else %}Export to Excel{% endif %}</button>
+      </div>
+      <p id="examRostersExportReason" class="et-roster-reason"></p>
+      <p class="et-audit-note"><svg aria-hidden="true" focusable="false" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg><span>{% if LANGUAGE_CODE == 'ar' %}يُسجَّل عرض قوائم الطلاب وتنزيلها باسمك.{% else %}Views and downloads of student lists are recorded under your name.{% endif %}</span></p>
     </section>
+
+    <div id="examRostersLayout" class="et-roster-layout" data-screen="nav">
+      <section id="examRostersNav" class="et-panel et-roster-nav" aria-labelledby="examRostersNavHeading">
+        <h3 id="examRostersNavHeading" class="visually-hidden">{% if LANGUAGE_CODE == 'ar' %}القاعات والمقررات{% else %}Rooms and courses{% endif %}</h3>
+        <div id="examRostersViews" class="et-view-switch" role="radiogroup" aria-label="{% if LANGUAGE_CODE == 'ar' %}طريقة العرض{% else %}View{% endif %}">
+          <button type="button" role="radio" aria-checked="true" tabindex="0" data-view="room">{% if LANGUAGE_CODE == 'ar' %}حسب القاعة{% else %}By room{% endif %}</button>
+          <button type="button" role="radio" aria-checked="false" tabindex="-1" data-view="course">{% if LANGUAGE_CODE == 'ar' %}حسب المقرر{% else %}By course{% endif %}</button>
+        </div>
+        <div id="examRostersByRoom">
+          <span id="examRostersDaysLabel" class="et-nav-label">{% if LANGUAGE_CODE == 'ar' %}أيام الاختبارات{% else %}Exam days{% endif %}</span>
+          <div id="examRostersDays" class="et-day-grid" role="tablist" aria-labelledby="examRostersDaysLabel"></div>
+          <div id="examRostersDayPanel" role="tabpanel">
+            <span id="examRostersPeriodsLabel" class="et-nav-label">{% if LANGUAGE_CODE == 'ar' %}الفترات{% else %}Periods{% endif %}</span>
+            <div id="examRostersPeriods" class="et-period-chips" role="radiogroup" aria-labelledby="examRostersPeriodsLabel"></div>
+            <span id="examRostersGroupsLabel" class="et-nav-label">{% if LANGUAGE_CODE == 'ar' %}الفئة{% else %}Group{% endif %}</span>
+            <div id="examRostersGroups" class="et-group-chips" role="radiogroup" aria-labelledby="examRostersGroupsLabel"></div>
+            <div class="et-nav-toggles"><button id="examRostersRoomReview" type="button" class="et-nav-toggle" aria-pressed="false"></button></div>
+            <div id="examRostersRooms"></div>
+          </div>
+        </div>
+        <div id="examRostersByCourse" hidden>
+          <div class="et-nav-fields">
+            <div><label for="examRostersProgram">{% if LANGUAGE_CODE == 'ar' %}البرنامج{% else %}Program{% endif %}</label><select id="examRostersProgram" class="form-select"></select></div>
+            <div><label for="examRostersSort">{% if LANGUAGE_CODE == 'ar' %}الترتيب{% else %}Sort{% endif %}</label><select id="examRostersSort" class="form-select">
+              <option value="time">{% if LANGUAGE_CODE == 'ar' %}وقت الاختبار{% else %}Exam time{% endif %}</option>
+              <option value="code">{% if LANGUAGE_CODE == 'ar' %}رمز المقرر{% else %}Course code{% endif %}</option>
+              <option value="students">{% if LANGUAGE_CODE == 'ar' %}الأكثر طلاباً{% else %}Most students{% endif %}</option>
+              <option value="flags">{% if LANGUAGE_CODE == 'ar' %}الأكثر تنبيهات{% else %}Most flags{% endif %}</option>
+            </select></div>
+          </div>
+          <div class="et-nav-toggles">
+            <button id="examRostersHasClash" type="button" class="et-nav-toggle" aria-pressed="false"></button>
+            <button id="examRostersCourseReview" type="button" class="et-nav-toggle" aria-pressed="false"></button>
+          </div>
+          <div id="examRostersCourses"></div>
+        </div>
+        <div id="examRostersNavState" class="et-nav-state"></div>
+      </section>
+
+      <section id="examRostersPane" class="et-panel et-roster-pane" aria-labelledby="examRostersPaneEmpty">
+        <button id="examRostersScreenBack" type="button" class="et-back-link et-screen-back"><span class="et-back-glyph" aria-hidden="true">‹</span><span id="examRostersScreenBackText">{% if LANGUAGE_CODE == 'ar' %}القاعات{% else %}Rooms{% endif %}</span></button>
+        <button id="examRostersLookupBack" type="button" class="et-back-link" hidden><span class="et-back-glyph" aria-hidden="true">‹</span><span id="examRostersLookupBackText"></span></button>
+        <div id="examRostersPaneHead" class="et-pane-head" hidden>
+          <div><h3 id="examRostersPaneTitle" tabindex="-1"></h3><p id="examRostersPaneMeta" class="et-roster-meta"></p></div>
+          <div class="et-pane-actions"><a id="examRostersShowInTimetable" class="btn btn-outline-secondary" href="{% url 'exam_timetable_page' %}" hidden>{% if LANGUAGE_CODE == 'ar' %}عرض في الجدول{% else %}Show in timetable{% endif %}</a></div>
+        </div>
+        <p id="examRostersPaneEmpty" class="et-pane-empty">{% if LANGUAGE_CODE == 'ar' %}اختر قاعة أو مقرراً لعرض طلابه.{% else %}Choose a room or a course to see its students.{% endif %}</p>
+        <div id="examRostersRoster"></div>
+        <div id="examRostersLookup" hidden></div>
+      </section>
+    </div>
+    <p id="examRostersLive" class="visually-hidden" role="status" aria-live="polite"></p>
+    {% include "core/partials/exam_student_export.html" %}
+    {% include "core/partials/exam_roster_copy.html" %}
   {% endif %}
 {% endblock %}
 
@@ -53,4 +129,9 @@
   const LANGUAGE_CODE = "{{ LANGUAGE_CODE|default:'en' }}";
   const djCsrfToken = "{{ csrf_token }}";
 </script>
+{% if roster_state == 'ready' %}
+<script src="{% static 'js/exam-roster.js' %}?v=1"></script>
+<script src="{% static 'js/page-exam-rosters.js' %}?v=1"></script>
+<script src="{% static 'js/exam-student-export.js' %}?v=2"></script>
+{% endif %}
 {% endblock %}
