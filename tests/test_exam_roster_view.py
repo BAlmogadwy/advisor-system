@@ -7,11 +7,13 @@ so every saved key the screen reads is exactly what production saves.
 
 from __future__ import annotations
 
+import io
 import json
 import re
 from dataclasses import dataclass
 
 import pytest
+from django.core.management import call_command
 
 from core.models import Student, StudentTermSection
 from core.services import exam_roster_view as rv
@@ -460,6 +462,31 @@ def test_every_navigator_count_is_the_count_of_the_list_it_opens(run):
         assert sum(exam["programs"].values()) == len(rows)
     assert sum(slot["sittings"] for slot in nav["slots"]) == nav["totals"]["sittings"]
     assert sum(day["sittings"] for day in nav["days"]) == nav["totals"]["sittings"]
+    # A room's list never holds a student without a seat; each No seat item
+    # counts exactly the No seat rows of the section list it opens, and
+    # together they hold every such student of the run once.
+    for room in nav["rooms"]:
+        scope = {"kind": "room", "slot_index": room["slot_index"], "room_code": room["room_code"]}
+        assert _scope_rows(view, scope)["counts"]["no_seat"] == 0
+    assert nav["no_seat"], "the late changes leave students without a seat"
+    for item in nav["no_seat"]:
+        scope = {key: item[key] for key in ("exam", "section_key", "gender")}
+        payload = _scope_rows(view, {"kind": "section", **scope})
+        assert item["no_seat"] == payload["counts"]["no_seat"] > 0
+        assert item["now"] == len(payload["rows"])
+        assert item["slot_index"] == payload["exams"][item["exam"]]["slot_index"]
+    assert sum(item["no_seat"] for item in nav["no_seat"]) == nav["check"]["no_seat"]
+    # A period's students are distinct, as a day's: a clash sits twice, counts once.
+    for slot in nav["slots"]:
+        ids = {
+            row["student_id"]
+            for code in slot["exams"]
+            for row in _scope_rows(view, {"kind": "course", "exam": code})["rows"]
+        }
+        assert slot["students"] == len(ids)
+    sunday_morning = nav["slots"][0]
+    assert sunday_morning["exams"] == ["IS201", "MATH101"]
+    assert sunday_morning["students"] < sunday_morning["sittings"]
 
 
 def test_navigator_rooms_seats_and_review_markers(run):
@@ -472,19 +499,20 @@ def test_navigator_rooms_seats_and_review_markers(run):
         room = rooms[(0, part.room_code)]
         assert room["seated_at_save"] == part.student_count == room["seated_now"]
         [section] = room["sections"]
-        assert (section["part"], section["parts"], section["no_seat"]) == (position, 2, 2)
+        assert (section["part"], section["parts"], section["gender"]) == (position, 2, "M")
         assert tuple(section) == (
             "exam",
             "section",
             "section_status",
+            "gender",
             "membership",
             "part",
             "parts",
             "saved",
             "now",
-            "no_seat",
         )
-        assert room["review"] == ["changed", "no_seat"]
+        # The section changed; its students without a seat are in no room.
+        assert room["review"] == ["changed"]
     is201 = rooms[(0, "M-A")]
     assert is201["flags"] == {"clash": 11, "same_day": 1} and is201["review"] == ["changed"]
     exams = {e["code"]: e for e in nav["exams"]}
@@ -507,6 +535,35 @@ def test_navigator_rooms_seats_and_review_markers(run):
         }
     ]
     assert nav["check"]["status"] == "changed" and nav["check"]["no_seat"] == 3
+    # Where they are instead: under their period, the NEW section's too.
+    m9 = _group(model, "CS101", "M9", "M")
+    assert nav["no_seat"] == [
+        {
+            "slot_index": 0,
+            "exam": "MATH101",
+            "section_key": m1.section_key,
+            "gender": "M",
+            "section": "M1",
+            "section_status": "mapped",
+            "membership": "changed",
+            "saved": 30,
+            "now": 32,
+            "no_seat": 2,
+        },
+        {
+            "slot_index": 1,
+            "exam": "CS101",
+            "section_key": m9.section_key,
+            "gender": "M",
+            "section": "M9",
+            "section_status": "mapped",
+            "membership": "new",
+            "saved": 0,
+            "now": 1,
+            "no_seat": 1,
+        },
+    ]
+    assert not m9.parts, "a NEW section has no saved part, so no room ever lists it"
 
 
 def test_a_programme_change_alone_marks_the_exam_not_its_rooms(run):
@@ -548,6 +605,9 @@ def test_a_roomed_section_the_lists_do_not_name_needs_review():
     )
     rooms = {(r["slot_index"], r["room_code"]): r for r in view.navigator["rooms"]}
     assert "not_recorded" in rooms[(0, part.room_code)]["review"]
+    # The room names the section by its cohort, as the row (``group``) does.
+    [named] = [s for s in rooms[(0, part.room_code)]["sections"] if s["section_status"] != "mapped"]
+    assert (named["section"], named["section_status"], named["gender"]) == (None, "missing", "M")
     scope = {"kind": "room", "slot_index": 0, "room_code": part.room_code}
     payload = _scope_rows(view, scope)
     assert [_screen_as_file(r, payload) for r in payload["rows"]] == [
@@ -676,6 +736,16 @@ def test_a_student_id_is_read_in_either_digit_set(raw, expected):
         ({"query": "440"}, "query"),
         ({"query": "ab"}, "query"),
         ({"query": " a  b "}, "query"),
+        # Letters are counted, not characters, and every word needs two.
+        ({"query": "e e e"}, "query"),
+        ({"query": "s t e"}, "query"),
+        ({"query": "---"}, "query"),
+        ({"query": "a-b"}, "query"),
+        ({"query": "ahmad m"}, "query"),
+        # Digits beside letters are a course or room code, never a name.
+        ({"query": "MATH101"}, "query"),
+        ({"query": "testname 4401"}, "query"),
+        ({"query": "M-B12"}, "query"),
         ({"query": "x" * 65}, "query"),
         ({"query": "abc\x00def"}, "query"),
         ({"query": "abc\ud800"}, "query"),
@@ -712,13 +782,16 @@ def test_digits_search_ids_by_prefix_and_is_capped(run):
 def test_names_are_searched_word_by_word_with_prefix_matches_first(run):
     Student.objects.filter(student_id=MALE_IS[0]).update(name="TESTNAME FIRST")
     view = _view(run)
-    request = rv.parse_lookup({"query": "  TestName   4401 "})
-    assert request.query == "testname 4401"
+    request = rv.parse_lookup({"query": "  TestName   Student "})
+    assert request.query == "testname student"
     matched, total = rv.search_students(view, request.query)
-    assert total == 29, "every male ID but the renamed one, whose name has no digits"
-    assert matched[0] != MALE_IS[0]
+    assert total == len(ALL_IDS) - 1, "every name but the renamed one, which has no 'student'"
+    assert MALE_IS[0] not in matched
     first, total = rv.search_students(view, "testname")
     assert first[0] == MALE_IS[0] and total == len(ALL_IDS)
+    # Hyphens and apostrophes belong to names; a word needs two letters.
+    assert rv.parse_lookup({"query": "Al-Harbi O'Neil"}).query == "al-harbi o'neil"
+    assert rv.parse_lookup({"query": "al ab"}).query == "al ab"
 
 
 def test_arabic_names_match_across_hamza_tashkeel_tatweel_and_final_forms(run):
@@ -749,21 +822,58 @@ def test_search_only_finds_students_of_this_run(run):
     assert rv.lookup_sittings(view, 4401999) == []
 
 
-def test_lookup_audit_details_name_the_query_and_who_was_shown(run):
+def test_lookup_audit_details_name_no_student_and_no_search_text(run):
     view = _view(run)
+    shown = [*FEMALE_CS2, *FEMALE_IS][: rv.SEARCH_LIMIT]
     request = rv.parse_lookup({"query": "4402"})
     matched, total = rv.search_students(view, request.query)
     details = rv.lookup_audit_details(view, request, matched, total, cached=True)
     assert details == {
         "run_id": run.pk,
         "mode": "search",
-        "query": "4402",
-        "matched_ids": [*FEMALE_CS2, *FEMALE_IS][: rv.SEARCH_LIMIT],
+        "asked": "id_prefix",
+        "asked_length": 4,
+        "subject_ref": None,
+        "shown_refs": [rv.audit_subject_ref(sid) for sid in shown],
         "matches": 12,
         "lists_code_now": view.model.lists_code_now,
         "lists_checked_at": view.checked_at.isoformat(),
         "cached": True,
     }
+    name = rv.parse_lookup({"query": "  Student   TestName "})
+    found = rv.search_students(view, name.query)
+    details_name = rv.lookup_audit_details(view, name, *found, cached=False)
+    assert (details_name["asked"], details_name["asked_length"]) == ("name", 15)
+    assert details_name["matches"] == len(ALL_IDS)
+    student = rv.parse_lookup({"student_id": str(OVERLOADED)})
+    details_id = rv.lookup_audit_details(view, student, [OVERLOADED], 1, cached=False)
+    assert (details_id["asked"], details_id["asked_length"]) == ("student_id", 7)
+    assert details_id["subject_ref"] == rv.audit_subject_ref(OVERLOADED)
+    assert details_id["shown_refs"] == [details_id["subject_ref"]]
+    missing = rv.lookup_audit_details(view, rv.LookupRequest("student", 4499999), [], 0, False)
+    assert missing["subject_ref"] == rv.audit_subject_ref(4499999) and missing["shown_refs"] == []
+    text = json.dumps([details, details_name, details_id, missing]).lower()
+    for sid in (*ALL_IDS, 4499999):
+        assert str(sid) not in text
+    assert "testname" not in text and "4402" not in text
+
+
+def test_an_audit_reference_is_keyed_to_the_site_and_stable(settings):
+    ref = rv.audit_subject_ref(OVERLOADED)
+    assert re.fullmatch(r"sr-[0-9a-f]{24}", ref)
+    assert rv.audit_subject_ref(str(OVERLOADED)) == ref, "one student, one reference"
+    assert rv.audit_subject_ref(OVERLOADED + 1) != ref
+    settings.SECRET_KEY = "another-site-secret-for-this-test-only"
+    assert rv.audit_subject_ref(OVERLOADED) != ref, "keyed: no one without the secret can make it"
+
+
+def test_the_audit_reference_command_prints_each_ids_reference():
+    out = io.StringIO()
+    call_command("exam_roster_audit_ref", str(OVERLOADED), str(FEMALE_IS[0]), stdout=out)
+    assert out.getvalue().splitlines() == [
+        f"{OVERLOADED} {rv.audit_subject_ref(OVERLOADED)}",
+        f"{FEMALE_IS[0]} {rv.audit_subject_ref(FEMALE_IS[0])}",
+    ]
 
 
 def test_scope_audit_details_hold_the_scope_and_counts_never_a_student(run):

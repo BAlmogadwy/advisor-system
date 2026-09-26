@@ -40,6 +40,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
+from django.utils.crypto import salted_hmac
+
 from core.models import ExamTimetableRun
 from core.services.exam_department_export import day_weekday
 from core.services.exam_rosters import (
@@ -87,8 +89,15 @@ VIEW_SCOPE_KINDS = ("room", "course", "section")
 SEARCH_LIMIT = 8
 SEARCH_MIN_DIGITS = 4
 SEARCH_MIN_LETTERS = 3
+SEARCH_MIN_WORD_LETTERS = 2
 SEARCH_MAX_LENGTH = 64
 STUDENT_ID_MAX_DIGITS = 12
+
+#: Audit rows never hold a student ID, a name or search text (phase-2 rule):
+#: a lookup names the student asked for, and those shown, by this keyed
+#: reference instead (``audit_subject_ref``).
+AUDIT_SUBJECT_SALT = "core.exam_roster_view.audit_subject"
+AUDIT_SUBJECT_PREFIX = "sr-"
 
 SEATED = frozenset({BASIS_WHOLE, BASIS_SPLIT})
 CHANGE_MARKERS = {CHANGED: "changed", NEW: "new"}
@@ -477,7 +486,11 @@ def navigator_facts(view: RosterView) -> dict[str, Any]:
     """Days, periods, rooms and exams with seat and flag counts. No student.
 
     Every figure is a count over the same sittings the rows come from, so a
-    navigator item and the list it opens always agree.
+    navigator item and the list it opens always agree: a room's figures are
+    its own list's (a room's list never holds a student without a seat), and
+    a period's students without a seat - more students in a section than the
+    saved rooms hold, or a section new since the save - are items of their
+    own, each counting the No seat rows of the section list it opens.
     """
     model = view.model
     saved = model.saved
@@ -510,25 +523,23 @@ def navigator_facts(view: RosterView) -> dict[str, Any]:
         for group, position in parts_in_room.get(room_key, []):
             label, status = section_display(group)
             part = group.parts[position - 1]
-            no_seat = group_no_seat[_group_key(group)]
             sections.append(
                 {
                     "exam": group.exam,
                     "section": label,
                     "section_status": status,
+                    # The sitting's cohort, as a row's ``group`` and a tab's
+                    # ``gender``: an unrecorded section is named by it.
+                    "gender": group.gender,
                     "membership": group.membership,
                     "part": position,
                     "parts": len(group.parts),
                     "saved": part.student_count,
                     "now": part_now[(_group_key(group), position)],
-                    # The section's students with no seat anywhere (not in this room).
-                    "no_seat": no_seat,
                 }
             )
             if group.membership != MATCHES:
                 review.add("changed")
-            if no_seat:
-                review.add("no_seat")
             if status != "mapped":
                 review.add("not_recorded")
         exam = model.exams[facts["exams"][0]] if facts["exams"] else None
@@ -584,6 +595,30 @@ def navigator_facts(view: RosterView) -> dict[str, Any]:
                 }
             )
 
+    # Students with no seat: in no room's list, so each section that has them
+    # is an item of its period, NEW sections (no saved part at all) included.
+    # It opens the section's list, whose No seat rows it counts.
+    no_seat = []
+    for group in model.groups:
+        count = group_no_seat[_group_key(group)]
+        if not count:
+            continue
+        label, status = section_display(group)
+        no_seat.append(
+            {
+                "slot_index": model.exams[group.exam].slot_index,
+                "exam": group.exam,
+                "section_key": group.section_key,
+                "gender": group.gender,
+                "section": label,
+                "section_status": status,
+                "membership": group.membership,
+                "saved": group.saved_count,
+                "now": len(group.members),
+                "no_seat": count,
+            }
+        )
+
     # Exams: one item per exam with counts. Its sections, parts and ID ranges
     # come with its roster (POST), so the navigator stays small.
     groups_by_exam: dict[str, list[SectionGroup]] = defaultdict(list)
@@ -634,10 +669,12 @@ def navigator_facts(view: RosterView) -> dict[str, Any]:
 
     day_rows: dict[str, list[Sitting]] = defaultdict(list)
     slot_rows: Counter = Counter()
+    slot_students: dict[int, set[int]] = defaultdict(set)
     for sitting in view.sittings:
         if sitting.exam.scheduled:
             day_rows[sitting.exam.day].append(sitting)
             slot_rows[sitting.exam.slot_index] += 1
+            slot_students[sitting.exam.slot_index].add(sitting.student_id)
     slot_rooms = Counter(slot for slot, _code in saved.rooms)
     day_no = {day: number for number, day in enumerate(saved.days, 1)}
     slots = [
@@ -649,6 +686,8 @@ def navigator_facts(view: RosterView) -> dict[str, Any]:
             "start": start.strftime("%H:%M") if (start := start_time(period)) else None,
             "exams": sorted(by_slot.get(index, []), key=natural_key),
             "sittings": slot_rows[index],
+            # Distinct, as a day's: a student with a clash sits twice, counts once.
+            "students": len(slot_students.get(index, ())),
             "rooms": slot_rooms[index],
         }
         for index, day, period in saved.slots
@@ -671,6 +710,7 @@ def navigator_facts(view: RosterView) -> dict[str, Any]:
         "not_scheduled": [e["code"] for e in exams if not e["scheduled"]],
         "rooms": [room for _key, room in rooms],
         "not_assigned": not_assigned,
+        "no_seat": no_seat,
         "exams": exams,
         "programs": [
             {
@@ -908,9 +948,20 @@ def parse_lookup(payload: object) -> LookupRequest:
                 f"Type at least {SEARCH_MIN_DIGITS} digits of a student ID.", field="query"
             )
         return LookupRequest(mode="search", query=compact)
-    if len(compact) < SEARCH_MIN_LETTERS:
+    # A name is letters: digits beside letters are a course or room code (the
+    # page matches those itself), never a student to look up and audit.
+    if any(char.isdigit() for char in compact):
         raise RosterRequestError(
-            f"Type at least {SEARCH_MIN_LETTERS} letters of a name.", field="query"
+            "Search a student ID with digits only, or a name with letters only.", field="query"
+        )
+    # Letters are counted, not characters: "s t e" or "---" is no name.
+    if sum(char.isalpha() for char in compact) < SEARCH_MIN_LETTERS or any(
+        sum(char.isalpha() for char in word) < SEARCH_MIN_WORD_LETTERS for word in query.split()
+    ):
+        raise RosterRequestError(
+            f"Type at least {SEARCH_MIN_LETTERS} letters of a name, "
+            f"{SEARCH_MIN_WORD_LETTERS} or more in each word.",
+            field="query",
         )
     return LookupRequest(mode="search", query=query)
 
@@ -959,16 +1010,43 @@ def search_match(view: RosterView, student_id: int) -> dict[str, Any]:
     }
 
 
+def audit_subject_ref(student_id: int) -> str:
+    """The keyed reference an audit row names a student by, never the ID itself.
+
+    HMAC-SHA-256 under the site's secret (the key of the audit hash chain):
+    the row names no one to whoever reads or exports the log, yet an auditor
+    can still answer "who looked up student X" by computing X's reference
+    (``manage.py exam_roster_audit_ref X``) and searching for it.
+    """
+    digest = salted_hmac(AUDIT_SUBJECT_SALT, str(int(student_id)), algorithm="sha256")
+    return f"{AUDIT_SUBJECT_PREFIX}{digest.hexdigest()[:24]}"
+
+
 def lookup_audit_details(
     view: RosterView, request: LookupRequest, matched: Sequence[int], total: int, cached: bool
 ) -> dict[str, Any]:
-    """A settled lookup is recorded with what was asked and who was shown."""
+    """A settled lookup: the kind of ask, its length, who was asked for and shown.
+
+    Never a student ID, a name or the search text (phase-2 rule; phase 1's
+    audit rows hold "options and counts, never a student"): the student asked
+    for and each student shown are keyed references (``audit_subject_ref``).
+    """
     model = view.model
+    if request.mode == "student":
+        asked, length = "student_id", len(str(request.student_id))
+        subject: str | None = audit_subject_ref(request.student_id)
+    else:
+        compact = request.query.replace(" ", "")
+        asked = "id_prefix" if _DIGITS.fullmatch(compact) else "name"
+        length = len(compact)
+        subject = None
     return {
         "run_id": model.saved.run_id,
         "mode": request.mode,
-        "query": str(request.student_id) if request.mode == "student" else request.query,
-        "matched_ids": list(matched),
+        "asked": asked,
+        "asked_length": length,
+        "subject_ref": subject,
+        "shown_refs": [audit_subject_ref(sid) for sid in matched],
         "matches": total,
         "lists_code_now": model.lists_code_now,
         "lists_checked_at": view.checked_at.isoformat(),
@@ -1001,10 +1079,20 @@ def search_payload(view: RosterView, matched: Sequence[int], total: int) -> dict
     }
 
 
+#: The whole run's check as every student-data answer carries it: enough to
+#: say "Lists match" or how many sections changed, from the answer's own build.
+CHECK_KEYS = (
+    "status",
+    "sections_changed",
+    "sections_new",
+    "sections_gone",
+    "program_mix_changed",
+    "lists_code_saved",
+    "lists_code_now",
+)
+
+
 def compact_check(view: RosterView) -> dict[str, Any]:
-    model = view.model
-    return {
-        "status": "matches" if model.unchanged else "changed",
-        "lists_code_saved": model.lists_code_saved,
-        "lists_code_now": model.lists_code_now,
-    }
+    """The navigator's check of this build, cut to ``CHECK_KEYS`` (no student)."""
+    check = view.navigator["check"]
+    return {key: check[key] for key in CHECK_KEYS}

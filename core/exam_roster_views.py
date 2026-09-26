@@ -26,7 +26,9 @@ import re
 from functools import partial
 
 from django.http import HttpRequest, HttpResponse, JsonResponse
+from django.http.request import RawPostDataException
 from django.shortcuts import render
+from django.views.decorators.cache import never_cache
 from django.views.decorators.http import require_GET, require_POST
 
 from core.exam_student_export_views import _error, _handled, _private
@@ -62,15 +64,27 @@ _RUN_PARAM = re.compile(r"[0-9]{1,18}")
 
 
 def _json_body(request: HttpRequest) -> dict:
-    """The request's JSON object, refused before reading when it is too large."""
+    """The request's JSON object: JSON only, refused before reading when too large.
+
+    A form body is refused by its type before it is touched: the CSRF check
+    has already parsed it (a multipart stream cannot be read twice).
+    """
+    if request.content_type != "application/json":
+        raise RosterRequestError("Send the request as JSON.", field="body")
     try:
         declared = int(request.META.get("CONTENT_LENGTH") or 0)
     except ValueError:
         declared = 0
-    if declared > MAX_BODY_BYTES or len(request.body) > MAX_BODY_BYTES:
+    if declared > MAX_BODY_BYTES:
         raise RosterRequestError("The request is too large.", field="body")
     try:
-        payload = json.loads(request.body.decode("utf-8") or "{}")
+        body = request.body
+    except RawPostDataException as exc:
+        raise RosterRequestError("Send the request as JSON.", field="body") from exc
+    if len(body) > MAX_BODY_BYTES:
+        raise RosterRequestError("The request is too large.", field="body")
+    try:
+        payload = json.loads(body.decode("utf-8") or "{}")
     except (UnicodeDecodeError, ValueError, RecursionError) as exc:
         raise RosterRequestError("The request must be JSON.", field="body") from exc
     if not isinstance(payload, dict):
@@ -127,12 +141,15 @@ def _audit(request: HttpRequest, action: str, details: dict) -> None:
 # ── The page ───────────────────────────────────────────────────
 
 
+@never_cache
 @require_GET
 def exam_rosters_page(request: HttpRequest) -> HttpResponse:
     """The Student lists page shell for one saved run (``?run=<id>``, else the newest).
 
     It reads no student and runs no gate: the page asks the navigator
-    endpoint, which answers the gates in the page's own words.
+    endpoint, which answers the gates in the page's own words. Never cached
+    (``no-store``): the rows the page shows must not come back from the
+    browser's back/forward cache after a sign-out on a shared desk.
     """
     deny = _require_exam_access(request)
     if deny:

@@ -9,7 +9,7 @@ from io import BytesIO
 
 import pytest
 from django.contrib.auth.models import Group
-from django.test import Client
+from django.test import Client, RequestFactory
 from django.urls import URLPattern, URLResolver, get_resolver, resolve, reverse
 from openpyxl import load_workbook
 
@@ -227,6 +227,16 @@ def test_answers_with_student_data_are_never_redirects_or_cacheable(run, committ
         assert response["X-Content-Type-Options"] == "nosniff"
 
 
+@pytest.mark.parametrize("page", [PAGE, "exam_timetable_page"])
+def test_pages_that_show_student_rows_are_never_stored_for_back(run, committee, page):
+    # Rows the page or the drawer showed must not come back from the browser's
+    # back/forward cache after a sign-out on a shared exam-desk machine.
+    response = committee.get(reverse(page), {"run": run.pk} if page == PAGE else {})
+    assert response.status_code == 200
+    directives = {part.strip() for part in response["Cache-Control"].split(",")}
+    assert {"no-store", "private"} <= directives
+
+
 # ── Gates and validation ───────────────────────────────────────
 
 
@@ -276,6 +286,9 @@ def test_no_imported_lists_is_409_lists_unavailable(run, committee):
         (DETAIL, [1, 2], "body"),
         (LOOKUP, {"student_id": "abc"}, "student_id"),
         (LOOKUP, {"query": "ab"}, "query"),
+        (LOOKUP, {"query": "e e e"}, "query"),
+        (LOOKUP, {"query": "---"}, "query"),
+        (LOOKUP, {"query": "MATH101"}, "query"),
         (LOOKUP, {"student_id": OVERLOADED, "query": "4401"}, "body"),
     ],
 )
@@ -286,6 +299,48 @@ def test_bad_requests_are_400_named_against_their_field_and_not_audited(
     assert response.status_code == 400
     assert response.json()["field"] == field
     assert not AuditLog.objects.exists()
+
+
+@pytest.mark.parametrize(
+    "view", [DETAIL, LOOKUP, "exam_student_export_preflight", "exam_student_export"]
+)
+def test_a_form_body_is_refused_by_its_type_never_a_500(run, django_user_model, view):
+    # The CSRF check parses a form body before the view runs; a multipart
+    # stream cannot then be read again. Refused as not JSON, never a crash.
+    strict = Client(enforce_csrf_checks=True)
+    strict.force_login(_user(django_user_model, "form-committee", ROLE_EXAM_COMMITTEE))
+    strict.get(reverse(PAGE), {"run": run.pk})
+    token = strict.cookies["csrftoken"].value
+    url = reverse(view, args=[run.pk])
+    multipart = strict.post(url, {"student_id": str(OVERLOADED)}, HTTP_X_CSRFTOKEN=token)
+    encoded = strict.post(
+        url,
+        f"student_id={OVERLOADED}",
+        content_type="application/x-www-form-urlencoded",
+        HTTP_X_CSRFTOKEN=token,
+    )
+    # JSON only: even a valid JSON object is refused under another type.
+    body = COURSE if view == DETAIL else {"student_id": str(OVERLOADED)} if view == LOOKUP else {}
+    plain = strict.post(url, json.dumps(body), content_type="text/plain", HTTP_X_CSRFTOKEN=token)
+    for response in (multipart, encoded, plain):
+        assert response.status_code == 400
+        assert response.json()["field"] == "body"
+    assert not AuditLog.objects.exists()
+
+
+@pytest.mark.parametrize(
+    "reader, refusal",
+    [
+        (views._json_body, rv.RosterRequestError),
+        (export_views._json_body, export.ExportOptionsError),
+    ],
+)
+def test_a_body_another_reader_took_is_refused_not_a_500(reader, refusal):
+    request = RequestFactory().post("/x/", json.dumps(COURSE), content_type="application/json")
+    request.read()  # the stream is gone: Django refuses ``request.body`` now
+    with pytest.raises(refusal) as caught:
+        reader(request)
+    assert caught.value.field == "body"
 
 
 def test_bodies_over_the_cap_are_refused_before_they_are_read(run, committee):
@@ -369,9 +424,7 @@ def test_a_failed_audit_is_503_and_no_student_data_is_made(run, committee, monke
         assert not _names_a_student(response.content.decode())
 
 
-def test_each_settled_lookup_writes_one_row_with_the_query_and_who_was_shown(
-    run, committee, monkeypatch
-):
+def test_each_settled_lookup_writes_one_row_naming_no_student(run, committee, monkeypatch):
     order: list[str] = []
     real_record, real_row = views.record_audit_event, rv.roster_row
     monkeypatch.setattr(
@@ -386,14 +439,28 @@ def test_each_settled_lookup_writes_one_row_with_the_query_and_who_was_shown(
     search = _post(committee, run.pk, {"query": "4402"}, LOOKUP).json()
     assert search["mode"] == "search" and search["total"] == 12 and search["more"] is True
     assert len(search["matches"]) == rv.SEARCH_LIMIT
+    named = _post(committee, run.pk, {"query": "TestName"}, LOOKUP).json()
+    assert named["total"] == len(ALL_IDS)
     entries = _audit_rows("exam_timetable.roster_lookup")
-    assert len(entries) == 3 and len(_audit_rows()) == 3
+    assert len(entries) == 4 and len(_audit_rows()) == 4
     details = [json.loads(e.details_json) for e in entries]
-    assert [(d["mode"], d["query"], d["matched_ids"], d["matches"]) for d in details] == [
-        ("student", str(OVERLOADED), [OVERLOADED], 1),
-        ("student", "4499999", [], 0),
-        ("search", "4402", [m["student_id"] for m in search["matches"]], 12),
+    ref = rv.audit_subject_ref
+    assert [
+        (d["mode"], d["asked"], d["asked_length"], d["subject_ref"], d["shown_refs"], d["matches"])
+        for d in details
+    ] == [
+        ("student", "student_id", 7, ref(OVERLOADED), [ref(OVERLOADED)], 1),
+        ("student", "student_id", 7, ref(4499999), [], 0),
+        ("search", "id_prefix", 4, None, [ref(m["student_id"]) for m in search["matches"]], 12),
+        ("search", "name", 8, None, [ref(m["student_id"]) for m in named["matches"]], 43),
     ]
+    # No student ID, name or search text in the log (phase-2 rule), nor in
+    # what the Audit Explorer shows and exports of it.
+    for entry in entries:
+        assert not _names_a_student(entry.details_json)
+        assert "4499999" not in entry.details_json and "4402" not in entry.details_json
+        assert "testname" not in entry.details_json.lower()
+    assert validate_hash_chain()["ok"]
 
 
 def test_lookup_answers_carry_the_student_and_facts_only(run, committee):
@@ -437,7 +504,21 @@ def test_scope_answers_have_their_documented_shape(run, committee):
         "departments",
         "rows",
     }
-    assert set(body["check"]) == {"status", "lists_code_saved", "lists_code_now"}
+    assert (
+        tuple(body["check"])
+        == rv.CHECK_KEYS
+        == (
+            "status",
+            "sections_changed",
+            "sections_new",
+            "sections_gone",
+            "program_mix_changed",
+            "lists_code_saved",
+            "lists_code_now",
+        )
+    )
+    index = _index(committee, run.pk).json()
+    assert body["check"] == {key: index["check"][key] for key in rv.CHECK_KEYS}, "one build"
     assert body["run"]["id"] == run.pk and body["scope"]["exam"] == "MATH101"
     room = _post(
         committee, run.pk, {"scope": {"kind": "room", "slot_index": 0, "room_code": "M-A"}}
