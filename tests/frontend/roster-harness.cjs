@@ -28,7 +28,10 @@ const idle = async (rounds = 8) => { for (let i = 0; i < rounds; i++) { await pa
 const clone = value => JSON.parse(JSON.stringify(value));
 const sorted = value => Object.keys(value).sort().reduce((out, key) => ({ ...out, [key]: value[key] }), {});
 const scopeKey = scope => JSON.stringify(sorted(scope));
-const ROSTERS = new Map(Object.entries(fixture.rosters).map(([key, answer]) => [scopeKey(JSON.parse(key)), answer]));
+const byScope = answers => new Map(Object.entries(answers || {}).map(([key, answer]) => [scopeKey(JSON.parse(key)), answer]));
+const ROSTERS = byScope(fixture.rosters);
+// The same lists once they changed after the save (a later build).
+const CHANGED_ROSTERS = byScope(fixture.changed?.rosters);
 
 const json = (data, status = 200) => ({
   ok: status < 400, status, redirected: false, url: '',
@@ -64,8 +67,7 @@ function rosterServer({ changed = false } = {}) {
     if (kind === 'index') return json(changed ? fixture.changed.index : fixture.index);
     if (kind === 'roster') {
       const scope = call.body?.scope;
-      if (changed && scope?.kind === 'course' && scope.exam === 'MATH101') return json(fixture.changed.course);
-      const answer = scope && ROSTERS.get(scopeKey(scope));
+      const answer = scope && ((changed && CHANGED_ROSTERS.get(scopeKey(scope))) || ROSTERS.get(scopeKey(scope)));
       if (!answer) throw new Error(`No recorded roster for ${JSON.stringify(scope)}`);
       return json(answer);
     }
@@ -185,6 +187,9 @@ async function loadPage(t, { page, url, scripts, server, extraRoute = null, brow
   return { window, document: window.document, $, text, key, type, follow, run, server, requests, history, downloads, toasts, errors };
 }
 
+// The recorded answer for a scope, before or after the lists changed.
+const rosterOf = (scope, { changed = false } = {}) => (changed ? CHANGED_ROSTERS : ROSTERS).get(scopeKey(scope));
+
 module.exports = {
-  fixture, AR, say, RUN, read, idle, pause, settle, clone, json, file, hold, rosterServer, loadPage, scopeKey, ENDPOINTS,
+  fixture, AR, say, RUN, read, idle, pause, settle, clone, json, file, hold, rosterServer, loadPage, scopeKey, rosterOf, ENDPOINTS,
 };

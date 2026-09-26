@@ -23,19 +23,28 @@ import pytest
 from django.contrib.auth.models import Group
 from django.urls import reverse
 
-from core.models import Student
+from core.models import Course, Student
 from core.services import exam_roster_view as rv
 from core.services.rbac import ROLE_EXAM_COMMITTEE, ensure_role_groups
 from tests.exam_source_factory import scraped_exam_registration
-from tests.exam_student_export_fixture import ALL_IDS, build_population, build_saved_run
+from tests.exam_student_export_fixture import ALL_IDS, MALE_AI, build_population, build_saved_run
 
 pytestmark = pytest.mark.django_db
 
 ROOT = Path(__file__).resolve().parents[1]
-#: A student enrolled after the save: MATH101 M1 then differs from the run.
-LATE_STUDENT = 4401099
+#: A student enrolled after the save, with a LOWER ID than every member of
+#: MATH101 M1: seats go in student ID order, so the student left without a
+#: seat is an original member (the highest ID), not the late one.
+LATE_STUDENT = 4401000
+#: A section new since the save: no room was ever sized for its students.
+NEW_SECTION = "M9"
+NEW_STUDENTS = (4401201, 4401202)
+#: A male student whose only MATH101 section is labelled F1: the lists name no
+#: usable section for him, and the build rooms his group ("Section not
+#: recorded", Male) - in a second saved run, so the first one's answers stay.
+UNMAPPED_MALE = 4401031
 #: Searches the suites type; each answer is the real endpoint's.
-SEARCHES = ["4401", "44010", "4402", "math", "testname", "student 440200", "zzzz"]
+SEARCHES = ["4401", "44010", "4402", "4402003", "math", "testname", "zzzz"]
 
 
 @pytest.fixture(autouse=True)
@@ -89,22 +98,80 @@ def _answers(client, run) -> dict:
 
 
 def _changed_answers(client, run) -> dict:
-    """The navigator and MATH101 once a student has joined M1 after the save."""
-    from core.models import Course
+    """Every answer once the lists changed after the save (a new build).
 
+    A low-ID student joined MATH101 M1 (31 now, rooms for 30) and a section
+    new since the save, M9, has two students: three MATH101 students have no
+    seat. Every other exam's sections still match, but the run's check is
+    "changed" for all of them.
+    """
+    math = Course.objects.get(course_code="MATH101")
     Student.objects.create(student_id=LATE_STUDENT, name="LATE JOINER", program="CS", section="M")
-    scraped_exam_registration(
-        LATE_STUDENT, Course.objects.get(course_code="MATH101"), section_label="M1"
-    )
+    scraped_exam_registration(LATE_STUDENT, math, section_label="M1")
+    for sid in NEW_STUDENTS:
+        Student.objects.create(student_id=sid, name=f"NEW SECTION {sid}", program="AI", section="M")
+        scraped_exam_registration(sid, math, section_label=NEW_SECTION)
     rv.ROSTER_VIEW_CACHE.clear()
     index = client.get(reverse("exam_roster_index", args=[run.pk])).json()
-    course = _post(
-        client,
-        reverse("exam_roster_detail", args=[run.pk]),
-        {"scope": {"kind": "course", "exam": "MATH101"}},
+    scopes = [{"kind": "course", "exam": exam["code"]} for exam in index["exams"]]
+    scopes += [
+        {"kind": "room", "slot_index": room["slot_index"], "room_code": room["room_code"]}
+        for room in index["rooms"]
+        if room["slot_index"] == 0
+    ]
+    scopes += [
+        {key: item[key] for key in ("exam", "section_key", "gender")} | {"kind": "section"}
+        for item in index["no_seat"] + index["not_assigned"]
+    ]
+    detail = reverse("exam_roster_detail", args=[run.pk])
+    rosters = {}
+    for scope in scopes:
+        answer = _post(client, detail, {"scope": scope}).json()
+        assert answer["ok"], answer
+        rosters[json.dumps(scope, sort_keys=True)] = answer
+    course = rosters[json.dumps({"kind": "course", "exam": "MATH101"}, sort_keys=True)]
+    assert course["counts"]["no_seat"] == 3 and course["counts"]["changed"] == 33
+    no_seat = [row["student_id"] for row in course["rows"] if row["room_basis"] == "no_seat"]
+    assert no_seat == [MALE_AI[-1], *NEW_STUDENTS], "an original member, then the new section"
+    assert [(item["section"], item["no_seat"]) for item in index["no_seat"]] == [
+        ("M1", 1),
+        (NEW_SECTION, 2),
+    ]
+    return {"index": index, "rosters": rosters}
+
+
+def _unmapped_answers(client) -> dict:
+    """A second saved run whose MATH101 has a roomed "Section not recorded" Male group."""
+    Student.objects.create(
+        student_id=UNMAPPED_MALE, name="UNRECORDED SECTION", program="CS", section="M"
+    )
+    scraped_exam_registration(
+        UNMAPPED_MALE, Course.objects.get(course_code="MATH101"), section_label="F1"
+    )
+    second = build_saved_run(label="Unrecorded section fixture")
+    index = client.get(reverse("exam_roster_index", args=[second.pk])).json()
+    detail = reverse("exam_roster_detail", args=[second.pk])
+    course = _post(client, detail, {"scope": {"kind": "course", "exam": "MATH101"}}).json()
+    lookup = _post(
+        client, reverse("exam_roster_lookup", args=[second.pk]), {"student_id": UNMAPPED_MALE}
     ).json()
-    assert course["counts"]["no_seat"] == 1 and course["counts"]["changed"] == 31
-    return {"index": index, "course": course}
+    row = next(row for row in lookup["rows"] if row["exam"] == "MATH101")
+    assert (row["group"], row["section_status"], row["room_basis"]) == ("M", "missing", "whole")
+    search = _post(
+        client, reverse("exam_roster_lookup", args=[second.pk]), {"query": str(UNMAPPED_MALE)}
+    ).json()
+    room = _post(
+        client, detail, {"scope": {"kind": "room", "slot_index": 0, "room_code": row["room"]}}
+    ).json()
+    return {
+        "student": UNMAPPED_MALE,
+        "room": row["room"],
+        "index": index,
+        "course": course,
+        "search": search,
+        "lookup": lookup,
+        "roomList": room,
+    }
 
 
 def _committee(client, django_user_model):
@@ -149,6 +216,8 @@ def test_student_lists_frontend(tmp_path, client, django_user_model, settings, l
         **_answers(committee, run),
     }
     fixture["changed"] = _changed_answers(committee, run)
+    if suite == "exam-rosters":
+        fixture["unmapped"] = _unmapped_answers(committee)
     for name, response in pages.items():
         Path(fixture["pages"][name]).write_text(response.content.decode(), encoding="utf-8")
     data = tmp_path / "answers.json"

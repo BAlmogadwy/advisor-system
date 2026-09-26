@@ -109,11 +109,12 @@
   const groupWord = gender => copy().raw(`group-${String(gender || 'u').toLowerCase()}`);
 
   // The section as the export words it: the label of a mapped section, else
-  // what is missing and for which group.
+  // what is missing and for which group. A tab or a navigator item carries
+  // the cohort as `gender`, a row as `group`: either names it.
   function sectionName(item) {
     if (item?.section_status === 'mapped' && item.section) return String(item.section);
     const base = copy().raw(item?.section_status === 'ambiguous' ? 'section-ambiguous' : 'section-missing');
-    return copy().text('section-with-group', { section: base, group: groupWord(item?.gender) });
+    return copy().text('section-with-group', { section: base, group: groupWord(item?.gender ?? item?.group) });
   }
 
   // "Sun 08:00-10:00", each code isolated.
@@ -450,10 +451,14 @@
 
     // ── Chips and programs ──
 
+    // A room's list never holds a student without a seat: its "No seat 0"
+    // would only ever be false good news, so a room has no such chip.
+    const flagsOf = next => FLAGS.filter(flag => flag !== 'no_seat' || next?.scope?.kind !== 'room');
+
     function renderChips() {
       const rows = base();
       const counts = Object.fromEntries(FLAGS.map(flag => [flag, rows.filter(row => hasFlag(row, flag)).length]));
-      const shown = FLAGS.filter(flag => flag !== 'not_recorded' || counts[flag] || state.flag === flag);
+      const shown = flagsOf(answer).filter(flag => flag !== 'not_recorded' || counts[flag] || state.flag === flag);
       chips.replaceChildren(...shown.map(flag => {
         const checked = state.flag === flag;
         return el('button', {
@@ -582,8 +587,13 @@
         else if (section.membership === 'new') notes.push(words.fragment('new-note', { section: label }));
         if (section.program_mix && section.program_mix !== 'matches' && section.membership === 'matches') notes.push(words.fragment('mix-note', { section: label }));
       }
-      if (row.room_basis === 'no_seat') notes.push(words.fragment('no-seat-note'));
-      if (row.section_status !== 'mapped' && first) notes.push(words.fragment('unrecorded-note'));
+      // Why there is no seat, as the file says it: a section-level fact, never
+      // a claim about when a student enrolled (seats go in student ID order).
+      // A section new since the save has said so already.
+      if (row.room_basis === 'no_seat' && section?.membership !== 'new') notes.push(words.fragment('no-seat-note'));
+      // An unrecorded section the timetable roomed has its room: only one
+      // it could not room is "no room yet".
+      if (row.section_status !== 'mapped' && first) notes.push(words.fragment(SEATED.has(row.room_basis) ? 'unrecorded-note' : 'unrecorded-unroomed-note'));
       else if (row.room_basis === 'unassigned' && first) notes.push(words.fragment('unassigned-note'));
       const th = el('th', { scope: 'rowgroup', role: 'rowheader', colspan: String(COLUMNS.length), class: 'et-roster-group-head' },
         el('span', { class: 'et-group-facts' }, join(facts)),
@@ -800,21 +810,41 @@
       renderToken++;
     }
 
+    // Nothing of a list stays in the page once it is closed or its next load
+    // failed: no row, tab, count or caption naming a student is left behind,
+    // hidden or not.
+    function wipe() {
+      clearTimers();
+      answer = null;
+      sections = new Map();
+      body.hidden = true;
+      body.classList.remove('is-stale');
+      table.querySelectorAll('tbody').forEach(node => node.remove());
+      [tabs, more, chips, countLine, empty].forEach(node => node.replaceChildren());
+      program?.replaceChildren();
+      caption.textContent = '';
+      filter.value = '';
+      state = { ...state, text: '' };
+    }
+
     return {
       // Show a scope answer. The section and flag come from the address or
-      // the drawer's own history; sort and the text filter start fresh.
-      show(next, { scope = () => '', section = 'all', flag = 'all', keepText = false } = {}) {
+      // the drawer's own history; sort and the text filter start fresh -
+      // unless `keep`: the same list again (Refresh), shown as it was left.
+      show(next, { scope = () => '', section = 'all', flag = 'all', keepText = false, keep = false } = {}) {
         clearTimers();
+        const before = state;
         answer = next;
         scopeLabel = typeof scope === 'function' ? scope : () => scope;
         sections = new Map((next?.sections || []).map(item => [groupKey(item), item]));
         swapped = null;
+        const wanted = keep ? before : { section, flag, program: '', text: keepText ? before.text : '', sort: null };
         state = {
-          section: section !== 'all' && sections.has(section) ? section : 'all',
-          flag: FLAGS.includes(flag) ? flag : 'all',
-          program: '', text: keepText ? state.text : '', sort: null,
+          section: wanted.section !== 'all' && sections.has(wanted.section) ? wanted.section : 'all',
+          flag: flagsOf(next).includes(wanted.flag) ? wanted.flag : 'all',
+          program: wanted.program, text: wanted.text, sort: wanted.sort,
         };
-        if (!keepText) filter.value = '';
+        if (!keep && !keepText) filter.value = '';
         const hiddenTab = [...sections.keys()].indexOf(state.section) >= VISIBLE_TABS - 1;
         if (hiddenTab) swapped = state.section;
         status.replaceChildren();
@@ -839,10 +869,7 @@
         }, TIMING.loadingNotice);
       },
       failed({ content, retry = null }) {
-        clearTimers();
-        answer = null;
-        body.hidden = true;
-        body.classList.remove('is-stale');
+        wipe();
         const alert = el('div', { class: 'alert alert-danger et-roster-error', role: 'alert' }, el('span', {}, content()));
         if (retry) {
           const button = el('button', { type: 'button', class: 'btn btn-sm btn-outline-secondary' }, words.raw('try-again'));
@@ -852,9 +879,7 @@
         status.replaceChildren(alert);
       },
       clear() {
-        clearTimers();
-        answer = null;
-        body.hidden = true;
+        wipe();
         status.replaceChildren();
       },
       selection() {

@@ -99,8 +99,10 @@ focus and layout are covered by `tests/test_exam_student_export_browser.py`.
 The Student lists suites run through `tests/test_exam_rosters_frontend.py`,
 which renders both pages with their real views (English, and Arabic when it
 is asked for) and records every JSON answer from the real endpoints on the
-export fixture's saved run, before and after a student joins a section after
-the save; `roster-harness.cjs` serves those answers and fails a test on any
+export fixture's saved run, before and after the lists change under it (a
+low-ID student joins a section and a new section appears, so an original
+member loses a seat), plus a second saved run whose roomed section the lists
+do not name; `roster-harness.cjs` serves those answers and fails a test on any
 other request. `exam-rosters.test.cjs` covers the Student lists page: the
 navigator by room (day tabs, period and group radios, Needs review, the
 unroomed section and online rooms last, roving focus) and by course (period
@@ -109,21 +111,29 @@ with focus kept in the navigator and Back returning to the previous room, the
 address holding only the run, view, period and room or exam, section tabs
 (eight, then More), flag chips as a radiogroup with good news when empty,
 sorting, the ID or name filter, part groups naming rooms and ID ranges,
-changed sections and No seat, batched long lists, Find (courses and rooms at
-once, students by one POST after typing settles) and the student lookup that
-never touches the address or history, Esc and Back, the `/` shortcut and its
-switch, Refresh, refusals, failed audits and lost sessions in place, the
-master-detail screen below 800px, and Export opening the phase-1 dialog
-preset to the room, course, section or period on screen.
+changed sections and No seat (worded as the file words it, and listed by
+period apart from every room), batched long lists, Find (courses and rooms at
+once, students by one POST after typing settles, never for a course or room
+code, and an Enter pressed before the match arrives) and the student lookup
+that never touches the address or history, Esc and Back with focus returned to
+the navigator, the `/` shortcut and its switch, Refresh (one build in the
+header; the list, chips, filter and lookup kept), refusals, failed audits and
+lost sessions in place, the back/forward cache, the master-detail screen below
+800px, and Export opening the phase-1 dialog preset to the room, course,
+section or period on screen.
 `exam-roster-drawer.test.cjs` covers the Timetable page: the view tabs, each
 card's "N students" link (the saved count, first badge whatever the review
 view paints, never dragged or pinned), the drawer's focus on open and back to
 the link (found again after a re-render), the saved-run notice with unsaved
 moves and where the draft has the exam, flag links opening the other exam
 with Back, the Download menu's keys and its two one-click exports in the
-remembered file language, More options preset, failed audits, and
-`?run=&focus=` from Student lists. Chromium layout, the real endpoints and a
-real download are covered by `tests/test_exam_rosters_browser.py`.
+remembered file language, More options preset, failed audits, the whole
+run's check beside the exam's own changes, a text selection dragged onto the
+backdrop, and `?run=&focus=` from Student lists. Chromium layout (lists and
+lookups inside the pane at 1600, 1280, 1024 and 700px in both languages, the
+day grid of a five- or six-day week, headings and dates), focus after Back,
+the real endpoints and a real download are covered by
+`tests/test_exam_rosters_browser.py`.
 
 Network behavior is tested with deterministic responses. These tests do not
 create real saved runs, delete database rows, execute the optimizer, or inspect

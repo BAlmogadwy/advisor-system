@@ -128,8 +128,12 @@
     const source = $('examRosterDrawerSource');
     source.replaceChildren(R.sourceLine({ id: context.runId, label: context.run.label, saved_at: context.run.created_at }));
     if (answer) {
-      const changed = answer.sections.filter(section => section.membership !== 'matches' || section.program_mix !== 'matches').length;
-      source.append(' · ', words.fragment('lists-checked', { time: ltr(R.clock(answer.checked_at)) }), ' · ', R.checkLine(null, changed));
+      // The whole run's check, from this answer's own build: a row's flags
+      // follow every exam's lists, so "Lists match" is never this exam's alone.
+      // This exam's own changed sections are said beside it.
+      source.append(' · ', words.fragment('lists-checked', { time: ltr(R.clock(answer.checked_at)) }), ' · ', R.checkLine(answer.check));
+      const own = answer.sections.filter(section => section.membership !== 'matches' || section.program_mix !== 'matches').length;
+      if (own) source.append(' · ', el('span', { class: 'et-check-own' }, words.fragment('check-exam', { n: count(own) })));
     }
 
     // The saved run, never the draft: say so, and where the draft has it.
@@ -384,9 +388,17 @@
     if (!menu.hidden) closeMenu();
     else close();
   });
-  // A click on the backdrop (outside the panel) closes, as Esc does.
+  // A click on the backdrop (outside the panel) closes, as Esc does - when
+  // the press began there too. A name or ID selected by a drag that ends
+  // over the backdrop clicks the dialog itself, and must not close it.
+  let pressedOnBackdrop = false;
+  drawer.addEventListener('pointerdown', event => {
+    pressedOnBackdrop = event.target === drawer;
+  });
   drawer.addEventListener('click', event => {
-    if (event.target === drawer) close();
+    const backdrop = pressedOnBackdrop && event.target === drawer;
+    pressedOnBackdrop = false;
+    if (backdrop) close();
   });
   downloadButton.addEventListener('click', () => (menu.hidden ? openMenu() : closeMenu()));
   downloadButton.addEventListener('keydown', event => {

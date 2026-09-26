@@ -70,7 +70,15 @@ test('the page opens on the first period with its rooms, names its run and check
   const periods = [...ui.$('examRostersPeriods').querySelectorAll('[role="radio"]')];
   assert.deepEqual(periods.map(chip => ui.text(chip.querySelector('bdi'))), ['08:00-10:00', '13:00-15:00']);
   assert.deepEqual(periods.map(chip => chip.getAttribute('aria-checked')), ['true', 'false']);
-  assert.equal(periods[0].getAttribute('aria-label'), say('08:00-10:00, 60 students', '08:00-10:00، عدد الطلاب: 60'));
+  // Distinct students, as the day tab and the file's Period summary count
+  // them: every IS201 student also sits MATH101 in this period (60 sittings).
+  assert.deepEqual([fixture.index.slots[0].sittings, fixture.index.slots[0].students], [60, 43]);
+  assert.equal(periods[0].getAttribute('aria-label'), say('08:00-10:00, 43 students', '08:00-10:00، عدد الطلاب: 43'));
+  assert.equal(ui.text(periods[0].querySelector('small')), '43');
+  assert.equal(ui.text(days[0].querySelector('small')), '43', 'every Sunday student sits the morning period');
+  // One exam week: no week column is drawn or reserved.
+  assert.ok(ui.$('examRostersDays').classList.contains('is-one-week'));
+  assert.equal(ui.$('examRostersDays').querySelectorAll('.et-week-label').length, 0);
   const expectedRooms = fixture.index.rooms.filter(item => item.slot_index === 0 && !item.online).map(item => item.room_code);
   assert.deepEqual(ui.rooms().filter(item => item.dataset.room).map(item => item.dataset.room), expectedRooms);
   // The timetable could not room MATH101's student with no cohort: that
@@ -117,11 +125,15 @@ test('choosing a room loads its list once, audited by POST, with focus kept on t
 
   await chooseRoom(ui, 'M-B');
   assert.equal(ui.text('examRostersPaneTitle'), say('Room M-B', 'القاعة M-B'));
+  assert.equal(ui.document.activeElement, room(ui, 'M-B'));
   ui.window.history.back();
   await idle();
   assert.equal(ui.address().searchParams.get('room'), 'F-A');
   assert.equal(ui.text('examRostersPaneTitle'), say('Room F-A', 'القاعة F-A'));
   assert.equal(room(ui, 'F-A').getAttribute('aria-current'), 'true');
+  // The navigator was drawn again: focus is on the room Back chose, not lost.
+  assert.equal(ui.document.activeElement, room(ui, 'F-A'));
+  assert.equal(room(ui, 'F-A').tabIndex, 0);
   assert.equal(room(ui, 'M-B').hasAttribute('aria-current'), false);
   assert.deepEqual(ui.server.bodies('roster').map(body => body.scope.room_code), ['F-A', 'M-B', 'F-A']);
   assertNoStudentInAddress(ui);
@@ -391,38 +403,119 @@ test('the ID or name filter matches ID prefixes and every word of a name; Esc cl
   assert.equal(ui.rows().length, 43);
 });
 
-test('a section changed since the save is marked in its tab, its part group and its rows; the extra student has No seat', async t => {
+const NO_SEAT_NOTE = say(
+  'No seat: this section has more students now than when the timetable was saved. Rooms were sized for the saved count, and seats go in student ID order.',
+  'بلا مقعد: عدد طلاب الشعبة الآن أكبر مما كان عند حفظ الجدول. حُددت القاعات للعدد المحفوظ، وتُوزَّع المقاعد بترتيب الأرقام الجامعية.');
+const NO_SEAT_FULL = say(
+  ' — No seat: this section has more students now than when the timetable was saved, and seats go in student ID order.',
+  ' — بلا مقعد: عدد طلاب الشعبة الآن أكبر مما كان عند حفظ الجدول، وتُوزَّع المقاعد بترتيب الأرقام الجامعية.');
+const CHANGED_NOTE = say('Enrolment in M1 changed since saving: 30 then, 31 now. Rooms were sized for 30.',
+  'تغيّر عدد المسجلين في M1 بعد الحفظ: 30 عند الحفظ و31 الآن. حُسبت القاعات على 30.');
+const NEW_NOTE = say('M9 is new since saving; no seats were sized for its students.', 'M9 جديدة بعد الحفظ، ولم يُحسب لطلابها مكان في القاعات.');
+const CHANGED_MATH = () => H.rosterOf({ kind: 'course', exam: 'MATH101' }, { changed: true });
+
+test('a section changed since the save is marked in its tab, part group and rows; its No seat student is the highest ID, and nothing claims when anyone enrolled', async t => {
   const ui = await rosters(t, { server: rosterServer({ changed: true }) });
-  assert.equal(ui.text(ui.$('examRostersCheck')), say('· ≠ Sections changed since saving: 1', '· ≠ الشعب المتغيرة بعد الحفظ: 1'));
+  assert.equal(ui.text(ui.$('examRostersCheck')), say('· ≠ Sections changed since saving: 2', '· ≠ الشعب المتغيرة بعد الحفظ: 2'));
   assert.equal(ui.$('examRostersCheck').querySelector('[data-check]').dataset.check, 'changed');
   await chooseCourse(ui, 'MATH101');
-  const changedTab = ui.tabs()[1];
-  assert.ok(changedTab.classList.contains('is-changed'));
-  assert.ok(changedTab.querySelector('.et-tab-dot'));
-  assert.equal(changedTab.querySelector('.visually-hidden').textContent, say(' changed', ' متغيرة'));
-  assert.equal(ui.text(ui.chip('no_seat')), say('No seat 1', 'بلا مقعد: 1'));
+  const tab = label => ui.tabs().find(item => item.querySelector('.et-tab-label').textContent === label);
+  assert.ok(tab('M1').classList.contains('is-changed'));
+  assert.ok(tab('M1').querySelector('.et-tab-dot'));
+  assert.equal(tab('M1').querySelector('.visually-hidden').textContent, say(' changed', ' متغيرة'));
+  assert.equal(tab('M9').querySelector('.visually-hidden').textContent, say(' new', ' جديدة'));
+  assert.equal(ui.text(ui.chip('no_seat')), say('No seat 3', 'بلا مقعد: 3'));
+  tab('M1').click();
+  await idle();
   ui.chip('no_seat').click();
   await idle();
+  // A LOWER ID than every member joined after the save; seats go in ID order,
+  // so the one left without a seat is an original member, the highest ID -
+  // and the late joiner has a seat.
+  const math = CHANGED_MATH();
+  const m1 = math.rows.filter(item => item.section === 'M1');
+  const late = m1.find(item => item.name === 'LATE JOINER');
+  assert.ok(['whole', 'split'].includes(late.room_basis));
+  assert.ok(late.student_id < Math.min(...m1.filter(item => item !== late).map(item => item.student_id)));
   const [row] = ui.rows();
-  assert.equal(row.querySelector('.et-col-id').textContent, '4401099');
+  assert.equal(ui.rows().length, 1);
+  assert.equal(Number(row.querySelector('.et-col-id').textContent), Math.max(...m1.map(item => item.student_id)));
   assert.equal(ui.text(row.querySelector('.et-col-room')), say('No seat', 'بلا مقعد'));
   assert.ok(row.querySelector('.et-col-room .et-room-noseat'));
   assert.ok(ui.text(row.querySelector('.et-col-section')).endsWith(say('changed', 'متغيرة')));
-  assert.ok(ui.text(row.querySelector('.et-col-flags')).includes(say('No seat', 'بلا مقعد')));
-  const changedNote = say('Enrolment in M1 changed since saving: 30 then, 31 now. Rooms were sized for 30.',
-    'تغيّر عدد المسجلين في M1 بعد الحفظ: 30 عند الحفظ و31 الآن. حُسبت القاعات على 30.');
-  const noSeatNote = say('No seat: enrolled after the timetable was saved; the rooms were sized without these students.',
-    'بلا مقعد: سُجّلوا بعد حفظ الجدول، ولم يُحسب لهم مقعد في القاعات.');
-  // The only M1 group shown says why its student has no seat.
-  assert.deepEqual(ui.groupRows(), [`M1 · ${say('No seat · Students: 1', 'بلا مقعد · عدد الطلاب: 1')} ${changedNote} ${noSeatNote}`]);
+  // Why, as the file says it: a fact of the section, never of the student.
+  assert.equal(row.querySelector('.et-flag--noseat .visually-hidden').textContent, NO_SEAT_FULL);
+  assert.deepEqual(ui.groupRows(), [`M1 · ${say('No seat · Students: 1', 'بلا مقعد · عدد الطلاب: 1')} ${CHANGED_NOTE} ${NO_SEAT_NOTE}`]);
+  // The new section: both its students have no seat, and it says it is new.
+  tab('M9').click();
+  await idle();
+  assert.equal(ui.rows().length, 2);
+  assert.deepEqual(ui.groupRows(), [`M9 · ${say('No seat · Students: 2', 'بلا مقعد · عدد الطلاب: 2')} ${NEW_NOTE}`]);
+  // In the whole list the section's change is said once, on its first part.
+  tab(say('All', 'الكل')).click();
+  await idle();
   ui.chip('all').click();
   await idle();
-  // In the whole list the section's change is said once, on its first part.
   const groups = ui.groupRows();
-  assert.ok(groups[0].includes(changedNote));
-  assert.equal(groups.filter(text => text.includes(changedNote)).length, 1);
-  assert.ok(groups.find(text => text.includes(noSeatNote)).startsWith(`M1 · ${say('No seat', 'بلا مقعد')}`));
+  assert.ok(groups[0].includes(CHANGED_NOTE));
+  assert.equal(groups.filter(text => text.includes(CHANGED_NOTE)).length, 1);
+  assert.ok(groups.find(text => text.includes(NO_SEAT_NOTE)).startsWith(`M1 · ${say('No seat', 'بلا مقعد')}`));
   assert.ok(ui.$('examRostersRoster').querySelector('.et-roster-group-head').classList.contains('is-changed'));
+  assert.equal(/enrolled|سُجّل/.test(ui.text('examRostersRoster')), false, 'no claim about when anyone enrolled');
+});
+
+test('By room lists students with no seat under their period, never in a room; each opens its section at its No seat rows, as a history entry', async t => {
+  const ui = await rosters(t, { server: rosterServer({ changed: true }) });
+  const index = fixture.changed.index;
+  const slotRooms = index.rooms.filter(item => item.slot_index === 0);
+  // A room item counts only its own list, which never holds a student without a seat.
+  for (const item of ui.rooms().filter(node => node.dataset.room)) {
+    assert.equal(/No seat|بلا مقعد/.test(ui.text(item)), false, item.dataset.room);
+  }
+  const headings = [...ui.$('examRostersRooms').querySelectorAll('.et-nav-heading')].map(node => ui.text(node));
+  assert.deepEqual(headings, [say('Not assigned (1)', 'لم تُحدَّد لها قاعة: 1'), say('No seat (3)', 'بلا مقعد: 3')]);
+  const noSeat = ui.rooms().filter(item => item.dataset.from === 'no_seat');
+  assert.deepEqual(noSeat.map(item => [ui.text(item.querySelector('.et-nav-code')), ui.text(item.querySelector('.et-nav-figure')), ui.text(item.querySelector('.et-nav-detail'))]), [
+    ['MATH101 M1', '1', say('No seat 1 · changed', 'بلا مقعد: 1 · متغيرة')],
+    ['MATH101 M9', '2', say('No seat 2 · new', 'بلا مقعد: 2 · جديدة')],
+  ]);
+  const review = slotRooms.filter(item => item.review.length).length + index.not_assigned.length + index.no_seat.length;
+  assert.equal(ui.text('examRostersRoomReview'), say(`Needs review (${review})`, `تحتاج مراجعة: ${review}`));
+  ui.$('examRostersRoomReview').click();
+  await idle();
+  assert.ok(ui.rooms().some(item => item.dataset.from === 'no_seat'), 'they need review');
+  ui.$('examRostersRoomReview').click();
+  await idle();
+  // The new section: its list opens on its No seat rows, and is a history entry.
+  const before = ui.window.history.length;
+  const m9 = ui.rooms().find(item => item.dataset.from === 'no_seat' && ui.text(item).includes('M9'));
+  const m9Item = index.no_seat.find(item => item.section === 'M9');
+  m9.click();
+  await idle();
+  assert.deepEqual(ui.server.bodies('roster').at(-1), { scope: { kind: 'section', exam: 'MATH101', section_key: m9Item.section_key, gender: 'M' } });
+  assert.equal(ui.window.history.length, before + 1);
+  assert.equal(ui.text('examRostersPaneTitle'), 'MATH101 · CALCULUS I · M9');
+  assert.equal(ui.chip('no_seat').getAttribute('aria-checked'), 'true');
+  assert.equal(ui.rows().length, m9Item.no_seat);
+  assert.equal(ui.rooms().find(item => item.dataset.from === 'no_seat' && ui.text(item).includes('M9')).getAttribute('aria-current'), 'true');
+  assert.equal(ui.address().searchParams.has('section'), false, 'the address keeps run, view and period only');
+  // The changed section: its one No seat row, the section's words for why.
+  const m1 = ui.rooms().find(item => item.dataset.from === 'no_seat' && ui.text(item).includes('M1'));
+  m1.click();
+  await idle();
+  assert.equal(ui.rows().length, 1);
+  assert.ok(ui.groupRows()[0].endsWith(NO_SEAT_NOTE));
+  // Back returns to the new section's list, as it was shown.
+  ui.window.history.back();
+  await idle();
+  assert.equal(ui.text('examRostersPaneTitle'), 'MATH101 · CALCULUS I · M9');
+  assert.equal(ui.chip('no_seat').getAttribute('aria-checked'), 'true');
+  assert.equal(ui.document.activeElement, ui.rooms().find(item => item.getAttribute('aria-current') === 'true'));
+  // A room of the same period, same build: no chip that could promise a seat to all.
+  await chooseRoom(ui, 'M-B');
+  assert.equal(ui.chip('no_seat'), undefined);
+  assert.equal(H.rosterOf({ kind: 'room', slot_index: 0, room_code: 'M-B' }, { changed: true }).counts.no_seat, 0);
+  assertNoStudentInAddress(ui);
 });
 
 // ── By course ───────────────────────────────────────────────
@@ -436,6 +529,9 @@ test('By course lists exams under their periods and filters them by program, cla
   assert.deepEqual([...ui.address().searchParams.entries()], [['run', String(RUN)], ['view', 'course']]);
   const headings = () => [...ui.$('examRostersCourses').querySelectorAll('.et-nav-heading')].map(node => ui.text(node));
   assert.deepEqual(headings(), ['Sun 08:00-10:00 · 2', 'Sun 13:00-15:00 · 1', 'Mon 08:00-10:00 · 1', 'Mon 13:00-15:00 · 1']);
+  for (const node of ui.$('examRostersCourses').querySelectorAll('.et-nav-heading')) {
+    assert.deepEqual([...node.childNodes].map(child => child.nodeName), ['SPAN'], 'the words are one inline run');
+  }
   assert.deepEqual(ui.courses().map(item => item.dataset.course), ['IS201', 'MATH101', 'CS101', 'PHYS103 (1)', 'PHYS103 (2)']);
   const math = ui.courses().find(item => item.dataset.course === 'MATH101');
   assert.equal(ui.text(math.querySelector('.et-nav-figure')), '43');
@@ -574,13 +670,20 @@ test('a lookup lists the student\'s every exam with room and flags; Open goes to
     `الاختبارات في الجدول رقم ${RUN}: ${answer.rows.length} · تعارض: ${answer.counts.clash} · اليوم نفسه: ${answer.counts.same_day}`));
   const first = answer.rows[0];
   const exam = answer.exams[first.exam];
-  assert.deepEqual([...lookupRows[0].children].slice(0, 5).map(cell => ui.text(cell)), [
-    exam.day, exam.period, `${first.exam} ${exam.name}`, first.section, first.room,
-  ]);
+  const cells = [...lookupRows[0].children];
+  assert.deepEqual([0, 1, 3, 4].map(i => ui.text(cells[i])), [exam.day, exam.period, first.section, first.room]);
+  assert.deepEqual([ui.text(cells[2].querySelector(':scope > bdi')), ui.text(cells[2].querySelector('.et-lookup-name'))], [first.exam, exam.name]);
+  // A narrow pane shows each exam as a card: when, section and room under the course.
+  assert.equal(ui.text(cells[2].querySelector('.et-lookup-sub')), `${exam.day} ${exam.period} · ${first.section} · ${first.room}`);
+  assert.deepEqual(cells.map(cell => cell.className), ['et-col-day', 'et-col-period', 'et-col-name', 'et-col-section', 'et-col-room', 'et-col-flags', 'et-col-open']);
+  assert.ok(lookupRows.every(row => row.classList.contains('et-lookup-row') && !row.classList.contains('et-roster-row')));
+  // One way back at a time: the pane's ‹ Rooms hides while the lookup's Back leads.
+  assert.equal(ui.$('examRostersScreenBack').hidden, true);
   assert.equal(ui.text('examRostersLookupBackText'), say('Back to Room F-A', 'العودة إلى القاعة F-A'));
   // Esc returns to the room list, which never left.
   ui.key(ui.document.body, 'Escape');
   await idle();
+  assert.equal(ui.$('examRostersScreenBack').hidden, false);
   assert.equal(ui.$('examRostersRoster').hidden, false);
   assert.equal(ui.$('examRostersLookup').hidden, true);
   assert.equal(ui.text('examRostersPaneTitle'), say('Room F-A', 'القاعة F-A'));
@@ -639,7 +742,8 @@ test('Esc in Find clears the field and closes the list; an ID the run lacks says
   ui.type(find, '44');
   await idle();
   assert.ok(ui.text(ui.$('examRostersFindList')).endsWith(say(
-    'Type at least 4 digits of a student ID or 3 letters of a name.', 'اكتب 4 أرقام على الأقل من الرقم الجامعي أو 3 أحرف من الاسم.')));
+    'Type at least 4 digits of a student ID, or 3 letters of a name (2 or more in each word).',
+    'اكتب 4 أرقام على الأقل من الرقم الجامعي، أو 3 أحرف من الاسم (حرفان على الأقل في كل كلمة).')));
   assert.equal(ui.server.requests('lookup').length, 1, 'only the settled four-letter search went out');
 });
 
@@ -762,6 +866,21 @@ test('a failed audit shows no student, says why, and Try again asks again', asyn
   assert.equal(ui.$('examRostersRoster').querySelector('.et-roster-error'), null);
 });
 
+test('a list that fails after another was shown leaves none of the rows it had behind', async t => {
+  const server = rosterServer();
+  const ui = await rosters(t, { server });
+  await chooseRoom(ui, 'F-A');
+  assert.equal(ui.rows().length, 12);
+  server.queue('roster', json({ ok: false, code: 'audit_unavailable', error: 'x' }, 503));
+  await chooseRoom(ui, 'M-B');
+  assert.ok(ui.$('examRostersRoster').querySelector('.et-roster-error'));
+  assert.equal(ui.$('examRostersRoster').querySelectorAll('tr.et-roster-row, tr.et-roster-group-row').length, 0, 'not even hidden');
+  const text = ui.$('examRostersRoster').textContent;
+  for (const row of fixture.rosters['{"kind": "room", "room_code": "F-A", "slot_index": 0}'].rows) {
+    assert.equal(text.includes(row.name), false, row.name);
+  }
+});
+
 test('a busy check, an ended session and a lost connection each say so in place, never navigating away', async t => {
   const server = rosterServer();
   server.queue('roster',
@@ -842,22 +961,24 @@ test('a slow answer for a room left behind never replaces the room chosen since'
 });
 
 test('a long list renders in batches and says so until every row is in', async t => {
+  // The batches wait for the test, not for a clock: a busy machine never
+  // runs two before the first is looked at.
+  const batches = [];
   const ui = await rosters(t, {
     before: window => {
       window.djCsrfToken = 'test-csrf';
-      window.__examRosterTiming = { batch: 10, loadingNotice: 0, filterDelay: 0, announceDelay: 0, schedule: callback => window.setTimeout(callback, 5) };
+      window.__examRosterTiming = { batch: 10, loadingNotice: 0, filterDelay: 0, announceDelay: 0, schedule: callback => batches.push(callback) };
     },
   });
   ui.$('examRostersViews').querySelector('[data-view="course"]').click();
   await idle();
   ui.courses().find(item => item.dataset.course === 'MATH101').click();
-  await H.pause(1);
-  await H.settle();
-  await H.settle();
+  await idle();
   const count = () => ui.text(ui.$('examRostersRosterListCount'));
   assert.equal(ui.rows().length, 10);
   assert.equal(count(), say('Showing 10 of 43…', 'المعروض: 10 من 43…'));
-  await idle(30);
+  assert.equal(batches.length, 1, 'the next batch waits for idle time');
+  while (batches.length) batches.shift()();
   assert.equal(ui.rows().length, 43);
   assert.equal(count(), say('Showing 43 of 43', 'المعروض: 43 من 43'));
 });
@@ -878,19 +999,24 @@ test('Refresh checks the lists again (refresh=1) and reloads the list on screen 
 test('below 800px the navigator comes first; a room pushes the pane with focus on it, and ‹ Rooms goes back', async t => {
   const ui = await rosters(t, { narrow: true });
   const revealed = [];
-  ui.window.HTMLElement.prototype.scrollIntoView = function () { revealed.push(this.id); };
+  ui.window.HTMLElement.prototype.scrollIntoView = function () { revealed.push(this); };
   const layout = ui.$('examRostersLayout');
   assert.equal(layout.dataset.screen, 'nav');
   await chooseRoom(ui, 'F-A');
   assert.equal(layout.dataset.screen, 'pane');
-  assert.deepEqual(revealed, ['examRostersPane', 'examRostersPane'], 'the pane is brought into view, and again once its list is in');
+  assert.deepEqual(revealed.map(node => node.id), ['examRostersPane', 'examRostersPane'], 'the pane is brought into view, and again once its list is in');
   assert.equal(ui.document.activeElement, ui.$('examRostersPaneTitle'));
   assert.equal(ui.text('examRostersScreenBackText'), say('Rooms', 'القاعات'));
   const written = ui.history.length;
+  ui.$('examRostersScreenBack').focus();
   ui.$('examRostersScreenBack').click();
   await idle();
   assert.equal(ui.history.length, written, 'the room was a history entry: going back pops it, rewriting nothing');
   assert.equal(layout.dataset.screen, 'nav');
+  // Focus returns to the room that opened the pane, brought into view.
+  assert.equal(ui.document.activeElement, room(ui, 'F-A'));
+  assert.equal(room(ui, 'F-A').tabIndex, 0);
+  assert.equal(revealed.at(-1), room(ui, 'F-A'), 'scrolled into view');
   assert.equal(ui.address().searchParams.has('room'), false);
   assert.equal(ui.$('examRostersPaneHead').hidden, true);
 });
@@ -1034,7 +1160,11 @@ test('a list with one section shows no section tabs, and no Section not recorded
   assert.equal(strip.hidden, true);
   const panel = ui.$('examRostersRosterListPanel');
   assert.equal(panel.hasAttribute('role'), false, 'no tablist, so no tabpanel');
-  assert.deepEqual(ui.chips().map(chip => chip.dataset.flag), ['all', 'clash', 'same_day', 'no_seat']);
+  // A room's list never holds a student without a seat: no "No seat 0" chip
+  // to promise every student there has one.
+  assert.deepEqual(ui.chips().map(chip => chip.dataset.flag), ['all', 'clash', 'same_day']);
+  await chooseCourse(ui, 'MATH101');
+  assert.ok(ui.chip('no_seat'), 'a course list keeps it');
 });
 
 test('the ID filter matches the start of an ID, never its middle; the program filter narrows the rows and the chips', async t => {
@@ -1159,4 +1289,255 @@ test('a student gone from the lists since the search says so; Esc with nothing c
   assert.equal(ui.$('examRostersLookup').hidden, true);
   assert.equal(ui.$('examRostersPaneHead').hidden, true);
   assert.equal(ui.document.activeElement, find, 'with no list behind the lookup, focus goes back to Find');
+});
+
+// ── Review round: one build, focus, history, Find ──────────
+
+test('a list from a newer build than the navigator names that one build in the header and brings the navigator up to it', async t => {
+  const server = rosterServer();
+  const changed = CHANGED_MATH();
+  const ui = await rosters(t, { server });
+  assert.equal(ui.$('examRostersCheck').querySelector('[data-check]').dataset.check, 'matches');
+  // The navigator's 60 s entry expired; the next list was built after a student joined.
+  const synced = hold();
+  server.queue('roster', json(changed));
+  server.queue('index', synced.answer);
+  await chooseCourse(ui, 'MATH101');
+  const clock = ui.window.ExamRoster.clock;
+  assert.notEqual(changed.checked_at, fixture.index.checked_at);
+  // The header names one build: that list's check and time, together - at
+  // once, not only once the navigator has caught up.
+  assert.deepEqual(ui.server.requests('index').map(call => call.query), ['', ''], 'the navigator is asked again (a plain GET)');
+  assert.equal(ui.text(ui.$('examRostersCheck')), say('· ≠ Sections changed since saving: 2', '· ≠ الشعب المتغيرة بعد الحفظ: 2'));
+  assert.equal(ui.text('examRostersChecked'), say(`Lists checked ${clock(changed.checked_at)}`, `وقت مطابقة القوائم: ${clock(changed.checked_at)}`));
+  // The same cached build answers, and the navigator now agrees with the list.
+  synced.release(json(fixture.changed.index));
+  await idle();
+  assert.equal(ui.text(ui.$('examRostersCheck')), say('· ≠ Sections changed since saving: 2', '· ≠ الشعب المتغيرة بعد الحفظ: 2'));
+  const item = ui.courses().find(node => node.dataset.course === 'MATH101');
+  assert.equal(ui.text(item.querySelector('.et-nav-figure')), String(changed.counts.students));
+  assert.equal(ui.text('examRostersPaneMeta').split(' · ')[1], say(`Students: ${changed.counts.students}`, `عدد الطلاب: ${changed.counts.students}`));
+  assert.equal(ui.document.activeElement, item, 'redrawing the navigator keeps the keyboard where it was');
+  // An answer from the older build never takes the header back.
+  server.queue('roster', json(MATH()));
+  ui.courses().find(node => node.dataset.course === 'MATH101').click();
+  await idle();
+  assert.equal(ui.text('examRostersChecked'), say(`Lists checked ${clock(changed.checked_at)}`, `وقت مطابقة القوائم: ${clock(changed.checked_at)}`));
+  assert.equal(ui.$('examRostersCheck').querySelector('[data-check]').dataset.check, 'changed');
+  assert.equal(ui.server.requests('index').length, 2, 'an older answer asks nothing');
+});
+
+test('Refresh keeps the list as it was left: section tab, flag chip, filter and sort', async t => {
+  const ui = await rosters(t);
+  await chooseCourse(ui, 'MATH101');
+  ui.tabs()[1].click();
+  await idle();
+  ui.chip('same_day').click();
+  await idle();
+  const filter = ui.$('examRostersRoster').querySelector('.et-roster-filter');
+  ui.type(filter, '44010');
+  await idle();
+  ui.$('examRostersRoster').querySelector('button[data-sort="id"]').click();
+  await idle();
+  ui.$('examRostersRoster').querySelector('button[data-sort="id"]').click();
+  await idle();
+  const ids = () => ui.rows().map(row => row.querySelector('.et-col-id').textContent);
+  const before = ids();
+  assert.ok(before.length > 1 && before.length < 30);
+  ui.$('examRostersRefresh').click();
+  await idle();
+  assert.equal(ui.server.requests('roster').length, 2, 'the list was asked for again');
+  assert.equal(ui.tabs()[1].getAttribute('aria-selected'), 'true');
+  assert.equal(ui.chip('same_day').getAttribute('aria-checked'), 'true');
+  assert.equal(filter.value, '44010');
+  assert.equal(ui.$('examRostersRoster').querySelector('button[data-sort="id"]').closest('th').getAttribute('aria-sort'), 'descending');
+  assert.deepEqual(ids(), before);
+});
+
+test('Refresh re-checks an open lookup, keeps its way back, and re-asks for the list behind it once it closes', async t => {
+  const ui = await rosters(t);
+  await chooseRoom(ui, 'M-B');
+  const find = ui.$('examRostersFind');
+  find.focus();
+  ui.type(find, '4402');
+  await idle();
+  ui.$('examRostersFindList').querySelector('[role="option"]').click();
+  await idle();
+  const id = fixture.searches['4402'].matches[0].student_id;
+  const asked = ui.server.requests('lookup').length;
+  ui.$('examRostersRefresh').focus();
+  ui.$('examRostersRefresh').click();
+  await idle();
+  assert.deepEqual(ui.server.requests('index').map(call => call.query), ['', '?refresh=1']);
+  assert.equal(ui.server.requests('lookup').length, asked + 1);
+  assert.deepEqual(ui.server.bodies('lookup').at(-1), { student_id: String(id) });
+  assert.equal(ui.$('examRostersLookup').hidden, false);
+  assert.equal(ui.text('examRostersPaneTitle'), say(`Student ${id}`, `الطالب ${id}`));
+  assert.equal(ui.text('examRostersLookupBackText'), say('Back to Room M-B', 'العودة إلى القاعة M-B'));
+  assert.equal(ui.server.requests('roster').length, 1, 'the list behind waits until it is shown');
+  assert.equal(ui.document.activeElement, ui.$('examRostersRefresh'), 'the keyboard stays on Refresh');
+  ui.$('examRostersLookupBack').click();
+  await idle();
+  assert.equal(ui.server.requests('roster').length, 2);
+  assert.deepEqual(ui.server.bodies('roster').at(-1), { scope: { kind: 'room', slot_index: 0, room_code: 'M-B' } });
+  assert.equal(ui.text('examRostersPaneTitle'), say('Room M-B', 'القاعة M-B'));
+  assert.equal(ui.rows().length, 20);
+});
+
+test('a second lookup keeps the way back to the list the first was opened from', async t => {
+  const ui = await rosters(t);
+  await chooseRoom(ui, 'M-B');
+  const find = ui.$('examRostersFind');
+  const lookUp = async query => {
+    find.focus();
+    ui.type(find, query);
+    await idle();
+    ui.$('examRostersFindList').querySelector('[role="option"]').click();
+    await idle();
+  };
+  await lookUp('4402');
+  assert.equal(ui.text('examRostersLookupBackText'), say('Back to Room M-B', 'العودة إلى القاعة M-B'));
+  await lookUp('44010');
+  assert.equal(ui.text('examRostersPaneTitle'), say(`Student ${fixture.searches['44010'].matches[0].student_id}`, `الطالب ${fixture.searches['44010'].matches[0].student_id}`));
+  assert.equal(ui.text('examRostersLookupBackText'), say('Back to Room M-B', 'العودة إلى القاعة M-B'), 'never "Back to Student …"');
+  ui.$('examRostersLookupBack').click();
+  await idle();
+  assert.equal(ui.text('examRostersPaneTitle'), say('Room M-B', 'القاعة M-B'));
+});
+
+test('on a phone the unroomed section is a history entry: Back returns to the navigator, with focus on it', async t => {
+  const ui = await rosters(t, { narrow: true });
+  const layout = ui.$('examRostersLayout');
+  const unroomed = () => ui.rooms().find(node => node.dataset.from === 'not_assigned');
+  const before = ui.window.history.length;
+  unroomed().click();
+  await idle();
+  assert.equal(ui.window.history.length, before + 1);
+  assert.equal(layout.dataset.screen, 'pane');
+  assert.equal(ui.document.activeElement, ui.$('examRostersPaneTitle'));
+  ui.window.history.back();
+  await idle();
+  assert.equal(layout.dataset.screen, 'nav', 'Back stays on Student lists');
+  assert.equal(ui.window.location.pathname, '/exam-timetable/rosters/');
+  assert.equal(ui.$('examRostersPaneHead').hidden, true);
+  assert.equal(ui.document.activeElement, unroomed());
+  // Forward opens it again from the entry's state (never from the address).
+  ui.window.history.forward();
+  await idle();
+  assert.equal(layout.dataset.screen, 'pane');
+  assert.equal(ui.server.bodies('roster').at(-1).scope.kind, 'section');
+  assert.equal(ui.address().search.includes('section'), false);
+});
+
+test('Enter straight after typing a student ID is kept: the student opens once the match arrives', async t => {
+  const server = rosterServer();
+  const held = hold();
+  server.queue('lookup', held.answer);
+  const ui = await rosters(t, { server });
+  const find = ui.$('examRostersFind');
+  find.focus();
+  ui.type(find, '4402003');
+  assert.equal(ui.key(find, 'Enter'), false, 'the Enter is taken, not dropped');
+  await idle();
+  assert.deepEqual(ui.server.bodies('lookup'), [{ query: '4402003' }], 'one search, asked at once');
+  held.release(json(fixture.searches['4402003']));
+  await idle();
+  assert.deepEqual(ui.server.bodies('lookup').at(-1), { student_id: '4402003' });
+  assert.equal(ui.text('examRostersPaneTitle'), say('Student 4402003', 'الطالب 4402003'));
+  assert.equal(find.value, '');
+  // Typing on after Enter drops it: the query it was for is gone, even when
+  // it is typed again - the matches then wait to be chosen.
+  const again = hold();
+  server.queue('lookup', again.answer);
+  find.focus();
+  ui.type(find, '4402');
+  ui.key(find, 'Enter');
+  ui.type(find, '44010');
+  await idle();
+  ui.type(find, '4402');
+  await idle();
+  again.release(json(fixture.searches['4402']));
+  await idle();
+  assert.equal(ui.server.bodies('lookup').filter(body => 'student_id' in body).length, 1);
+  assert.equal(ui.$('examRostersFindList').hidden, false);
+  assert.ok(ui.$('examRostersFindList').querySelectorAll('[role="option"]').length > 0);
+});
+
+test('Find never searches (or audits) a student for a course or room code, or for letters that are no name', async t => {
+  const ui = await rosters(t);
+  const find = ui.$('examRostersFind');
+  find.focus();
+  for (const typed of ['MATH101', 'math 101', 'e e e', 's t e', '---', 'M-B1']) {
+    ui.type(find, typed);
+    await idle();
+  }
+  assert.equal(ui.server.requests('lookup').length, 0);
+  ui.type(find, 'MATH101');
+  await idle();
+  assert.deepEqual([...ui.$('examRostersFindList').querySelectorAll('[role="option"]')].map(node => ui.text(node)), ['MATH101 · CALCULUS I · Sun 08:00-10:00']);
+  assert.equal(ui.$('examRostersFindList').querySelector('.et-find-note'), null, 'no student search is under way');
+  ui.type(find, 'testname');
+  await idle();
+  assert.deepEqual(ui.server.bodies('lookup'), [{ query: 'testname' }], 'a name is searched');
+});
+
+test('restored from the back/forward cache, the page drops every list and lookup and asks for the lists again', async t => {
+  const ui = await rosters(t);
+  await chooseRoom(ui, 'M-B');
+  const find = ui.$('examRostersFind');
+  find.focus();
+  ui.type(find, '4402');
+  await idle();
+  ui.$('examRostersFindList').querySelector('[role="option"]').click();
+  await idle();
+  // An ordinary show (a first load) changes nothing.
+  ui.window.dispatchEvent(new ui.window.PageTransitionEvent('pageshow', { persisted: false }));
+  await idle();
+  assert.equal(ui.$('examRostersLookup').hidden, false);
+  ui.window.dispatchEvent(new ui.window.PageTransitionEvent('pageshow', { persisted: true }));
+  await idle();
+  assert.equal(ui.$('examRostersLookup').hidden, true);
+  assert.equal(ui.$('examRostersLookup').children.length, 0);
+  assert.equal(ui.$('examRostersPaneHead').hidden, true);
+  assert.equal(ui.$('examRostersRoster').querySelectorAll('tr').length, 1, 'the column header only');
+  assert.equal(ui.address().searchParams.has('room'), false);
+  assert.equal(ui.server.requests('index').length, 2);
+  const text = ui.document.body.textContent;
+  for (const name of NAMES) assert.equal(text.includes(name), false, name);
+});
+
+test('a roomed section the lists do not name reads "Section not recorded · Male" everywhere, with its room, never "no room yet"', async t => {
+  const data = fixture.unmapped;
+  const server = rosterServer();
+  server.queue('index', json(data.index));
+  const ui = await rosters(t, { server });
+  const unrecorded = say('Section not recorded · Male', 'الشعبة غير مسجلة · طلاب');
+  const item = room(ui, data.room);
+  assert.ok(ui.text(item.querySelector('.et-nav-detail')).includes(`MATH101 ${unrecorded}`), ui.text(item));
+  server.queue('roster', json(data.roomList));
+  item.click();
+  await idle();
+  assert.ok(ui.text('examRostersPaneMeta').includes(`MATH101 ${unrecorded} (1)`), ui.text('examRostersPaneMeta'));
+  // The course list: its tab, its part group with the room, and why there is no section.
+  server.queue('roster', json(data.course));
+  await chooseCourse(ui, 'MATH101');
+  assert.ok(ui.tabs().map(tab => ui.text(tab)).includes(`${unrecorded} 1`));
+  const heading = ui.groupRows().find(text => text.startsWith(`${unrecorded} · ${data.room}`));
+  assert.ok(heading, ui.groupRows().join(' | '));
+  assert.ok(heading.endsWith(say("The imported timetables don't name a section for these students.", 'لا تحدد الجداول المستوردة شعبة لهؤلاء الطلاب.')), heading);
+  // The student with no cohort is not roomed: for them it is still "no room yet".
+  const unroomed = ui.groupRows().find(text => text.startsWith(say('Section not recorded · Not recorded', 'الشعبة غير مسجلة · غير مسجل')));
+  assert.ok(unroomed.endsWith(say("The imported timetables don't name a section for these students, so they have no room yet.",
+    'لا تحدد الجداول المستوردة شعبة لهؤلاء الطلاب، لذا لم تُحدَّد لهم قاعة بعد.')), unroomed);
+  // The lookup names the same group, with its room.
+  server.queue('lookup', json(data.search), json(data.lookup));
+  const find = ui.$('examRostersFind');
+  find.focus();
+  ui.type(find, String(data.student));
+  await idle();
+  ui.key(find, 'Enter');
+  await idle();
+  const row = [...ui.$('examRostersLookup').querySelectorAll('tbody tr')].find(node => node.querySelector('.et-col-name > bdi').textContent === 'MATH101');
+  assert.equal(ui.text(row.querySelector('.et-col-section')), unrecorded);
+  assert.equal(ui.text(row.querySelector('.et-col-room')), data.room);
 });

@@ -13,7 +13,7 @@
 
 {% block main_attrs %}data-exam-rosters="true" data-roster-state="{{ roster_state }}"{% if roster_run %} data-run-id="{{ roster_run.id }}" data-index-url="{% url 'exam_roster_index' roster_run.id %}" data-roster-url="{% url 'exam_roster_detail' roster_run.id %}" data-lookup-url="{% url 'exam_roster_lookup' roster_run.id %}" data-export-url="{% url 'exam_student_export' roster_run.id %}" data-export-preflight-url="{% url 'exam_student_export_preflight' roster_run.id %}"{% endif %} data-timetable-url="{% url 'exam_timetable_page' %}"{% endblock %}
 {% block main_padding %}p-4 exam-builder-page exam-rosters-page{% endblock %}
-{% block extra_css %}<link href="{% static 'css/page-exam-timetable.css' %}?v=22" rel="stylesheet"><link href="{% static 'css/page-exam-rosters.css' %}?v=1" rel="stylesheet">{% endblock %}
+{% block extra_css %}<link href="{% static 'css/page-exam-timetable.css' %}?v=22" rel="stylesheet"><link href="{% static 'css/page-exam-rosters.css' %}?v=2" rel="stylesheet">{% endblock %}
 
 {% block page_heading %}{% if LANGUAGE_CODE == 'ar' %}جدول الاختبارات{% else %}Exam Timetable{% endif %}{% endblock %}
 
@@ -56,7 +56,7 @@
             <kbd id="examRostersFindKey" class="et-find-key" aria-hidden="true">/</kbd>
           </div>
           <div id="examRostersFindList" class="et-find-list" role="listbox" aria-label="{% if LANGUAGE_CODE == 'ar' %}نتائج البحث{% else %}Find results{% endif %}" hidden></div>
-          <p id="examRostersFindHint" class="visually-hidden">{% if LANGUAGE_CODE == 'ar' %}اكتب 4 أرقام على الأقل من الرقم الجامعي أو 3 أحرف من الاسم.{% else %}Type at least 4 digits of a student ID or 3 letters of a name.{% endif %}</p>
+          <p id="examRostersFindHint" class="visually-hidden">{% if LANGUAGE_CODE == 'ar' %}اكتب 4 أرقام على الأقل من الرقم الجامعي، أو 3 أحرف من الاسم (حرفان على الأقل في كل كلمة).{% else %}Type at least 4 digits of a student ID, or 3 letters of a name (2 or more in each word).{% endif %}</p>
           <details class="et-find-help">
             <summary>{% if LANGUAGE_CODE == 'ar' %}مساعدة البحث{% else %}Find help{% endif %}</summary>
             <label><input id="examRostersShortcut" type="checkbox" role="switch" checked> {% if LANGUAGE_CODE == 'ar' %}اختصار لوحة المفاتيح: / للبحث{% else %}Keyboard shortcut: / to find{% endif %}</label>
@@ -130,8 +130,8 @@
   const djCsrfToken = "{{ csrf_token }}";
 </script>
 {% if roster_state == 'ready' %}
-<script src="{% static 'js/exam-roster.js' %}?v=1"></script>
-<script src="{% static 'js/page-exam-rosters.js' %}?v=1"></script>
+<script src="{% static 'js/exam-roster.js' %}?v=2"></script>
+<script src="{% static 'js/page-exam-rosters.js' %}?v=2"></script>
 <script src="{% static 'js/exam-student-export.js' %}?v=2"></script>
 {% endif %}
 {% endblock %}

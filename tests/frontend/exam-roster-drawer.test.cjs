@@ -188,6 +188,10 @@ test('the link opens the drawer on its heading with the saved run named, then it
   ui.drawer.dispatchEvent(cancel);
   assert.equal(ui.drawer.open, false);
   assert.equal(ui.document.activeElement, ui.link('MATH101'));
+  // Nothing of the list stays in the page once the drawer is closed.
+  assert.equal(ui.rows().length, 0);
+  const left = ui.drawer.textContent;
+  assert.ok(MATH_ROWS().every(row => !left.includes(row.name) && !left.includes(String(row.student_id))));
 });
 
 test('closing finds the card\'s link again when the grid re-rendered meanwhile', async t => {
@@ -426,4 +430,41 @@ test('an address that is not a run id loads nothing', async t => {
   await idle();
   assert.equal(ui.requests.some(request => /^\/ops\/exam-timetable\/\d+\/$/.test(request.url)), false);
   assert.equal(ui.card('CS101'), undefined);
+});
+
+// ── Review round ────────────────────────────────────────────
+
+test('the drawer says the whole run\'s check from its own build, and this exam\'s changed sections beside it', async t => {
+  const ui = await timetable(t, { server: rosterServer({ changed: true }) });
+  const source = () => ui.text('examRosterDrawerSource');
+  // CS101's own sections are as saved, but the run's lists are not: a row's
+  // flags follow every exam's lists, so the drawer never says they match.
+  const cs101 = H.rosterOf({ kind: 'course', exam: 'CS101' }, { changed: true });
+  assert.ok(cs101.sections.every(section => section.membership === 'matches' && section.program_mix === 'matches'));
+  assert.equal(cs101.check.status, 'changed');
+  await openDrawer(ui, 'CS101');
+  assert.ok(source().endsWith(say('· ≠ Sections changed since saving: 2', '· ≠ الشعب المتغيرة بعد الحفظ: 2')), source());
+  assert.equal(ui.$('examRosterDrawerSource').querySelector('[data-check]').dataset.check, 'changed');
+  assert.equal(ui.$('examRosterDrawerSource').querySelector('.et-check-own'), null, 'nothing of CS101 itself changed');
+  assert.ok(source().includes(ui.window.ExamRoster.clock(cs101.checked_at)), 'the check and its time are one build');
+  ui.$('examRosterDrawerClose').click();
+  await openDrawer(ui, 'MATH101');
+  assert.ok(source().endsWith(say('· ≠ Sections changed since saving: 2 · Changed in this exam: 2', '· ≠ الشعب المتغيرة بعد الحفظ: 2 · المتغيرة في هذا الاختبار: 2')), source());
+});
+
+test('a drag that selects a name and ends over the backdrop keeps the drawer open; a press and a click on the backdrop close it', async t => {
+  const ui = await timetable(t);
+  await openDrawer(ui);
+  const name = ui.rows()[0].querySelector('.et-col-name');
+  // A selection dragged out of the panel: the press is on a name, the click lands on the dialog.
+  name.dispatchEvent(new ui.window.PointerEvent('pointerdown', { bubbles: true }));
+  ui.drawer.dispatchEvent(new ui.window.MouseEvent('click', { bubbles: true }));
+  assert.equal(ui.drawer.open, true);
+  // A click with no press (a synthetic one) is no backdrop press either.
+  ui.drawer.dispatchEvent(new ui.window.MouseEvent('click', { bubbles: true }));
+  assert.equal(ui.drawer.open, true);
+  ui.drawer.dispatchEvent(new ui.window.PointerEvent('pointerdown', { bubbles: true }));
+  ui.drawer.dispatchEvent(new ui.window.MouseEvent('click', { bubbles: true }));
+  assert.equal(ui.drawer.open, false);
+  assert.equal(ui.document.activeElement, ui.link('MATH101'));
 });

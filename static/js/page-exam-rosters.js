@@ -36,6 +36,9 @@
   const FIND_LIMIT = 8;
   const NARROW = '(max-width: 799px)';
   const WEEK_ORDER = [6, 0, 1, 2, 3, 4, 5]; // Sunday first (Python weekday numbers)
+  // The navigator's section lists, each item opening its section's list:
+  // parts the timetable could not room, and students with no seat.
+  const SECTION_LISTS = ['not_assigned', 'no_seat'];
   const collator = new Intl.Collator(words.locale === 'ar' ? 'ar' : 'en', { numeric: true, sensitivity: 'base' });
 
   const csrf = () => {
@@ -50,12 +53,15 @@
 
   let nav = null;          // the navigator answer
   let navRefused = null;   // a gate refused this run
+  let shown = null;        // the build the header names: { check, checked_at }
+  let syncing = false;     // the navigator is being brought up to a newer build
   const state = {
     view: 'room', day: null, slot: null, group: 'all', roomReview: false, room: null,
     course: null, program: '', hasClash: false, courseReview: false, sort: 'time',
+    section: null,         // a section opened from the navigator: { key, from }
   };
-  let current = null;      // the pane's scope: { scope, answer }
-  let lookup = null;       // an open student lookup: { answer, from }
+  let current = null;      // the pane's scope: { scope, answer, from, stale }
+  let lookup = null;       // an open student lookup: { studentId, answer, from }
   let scopeToken = 0;
   let scopeController = null;
   let lookupToken = 0;
@@ -82,15 +88,19 @@
   }
 
   // ── The address: run, view, period, room or exam. Nothing else. ─
+  // A section opened from the navigator is a history entry too; its key (a
+  // timetable fact, never a student) rides in the entry's state, not the URL.
 
   function readAddress() {
     const params = new URLSearchParams(window.location.search);
     const slot = params.get('slot');
+    const section = window.history.state?.section;
     return {
       view: params.get('view') === 'course' ? 'course' : params.get('view') === 'room' ? 'room' : null,
       slot: slot !== null && /^[0-9]{1,4}$/.test(slot) ? Number(slot) : null,
       room: params.get('room'),
       course: params.get('course'),
+      section: section && typeof section.key === 'string' && SECTION_LISTS.includes(section.from) ? { key: section.key, from: section.from } : null,
     };
   }
 
@@ -103,7 +113,10 @@
       params.set('course', state.course);
     }
     const url = `${window.location.pathname}?${params}`;
-    const entry = { rosters: true, pushed: push || Boolean(window.history.state?.pushed) };
+    const entry = {
+      rosters: true, pushed: push || Boolean(window.history.state?.pushed),
+      section: state.view === 'room' && state.section ? { ...state.section } : null,
+    };
     try {
       if (push) window.history.pushState(entry, '', url);
       else window.history.replaceState(entry, '', url);
@@ -117,6 +130,8 @@
   const slotOf = index => nav?.slots.find(item => item.slot_index === index) || null;
   const examOf = code => nav?.exams.find(item => item.code === code) || null;
   const roomOf = (slot, code) => nav?.rooms.find(item => item.slot_index === slot && item.room_code === code) || null;
+  const sectionItems = from => (SECTION_LISTS.includes(from) && nav?.[from]) || [];
+  const sectionItemOf = pick => (pick ? sectionItems(pick.from).find(item => R.groupKey(item) === pick.key) || null : null);
 
   function dayParts(code) {
     const match = /^W(\d+)-(.+)$/.exec(String(code));
@@ -137,14 +152,51 @@
   }
 
   // ── Provenance ──────────────────────────────────────────────
+  // The header names ONE build: its check and its time together, from the
+  // newest answer seen (the navigator, a list, a lookup or a search). An
+  // answer from a newer build than the navigator's brings the navigator up to
+  // it - a GET the same cached build answers - so its counts agree too.
+
+  const buildTime = iso => {
+    const time = Date.parse(iso || '');
+    return Number.isNaN(time) ? 0 : time;
+  };
+
+  function paintProvenance() {
+    if (!shown) return;
+    $('examRostersCheck').replaceChildren(' · ', R.checkLine(shown.check));
+    $('examRostersChecked').replaceChildren(words.fragment('lists-checked', { time: ltr(R.clock(shown.checked_at)) }));
+  }
 
   function renderProvenance(answer) {
     if (nav?.run) {
       const term = words.fragment('term', { year: ltr(nav.run.academic_year), term: ltr(nav.run.term) });
       $('examRostersLists').replaceChildren(words.fragment('lists-source', { term }));
     }
-    if (nav?.check) $('examRostersCheck').replaceChildren(' · ', R.checkLine(nav.check));
-    if (answer?.checked_at) $('examRostersChecked').replaceChildren(words.fragment('lists-checked', { time: ltr(R.clock(answer.checked_at)) }));
+    if (answer?.checked_at && answer.check && (!shown || buildTime(answer.checked_at) >= buildTime(shown.checked_at))) {
+      shown = { check: answer.check, checked_at: answer.checked_at };
+    }
+    paintProvenance();
+    if (answer && nav && answer !== nav && answer.checked_at && answer.checked_at !== nav.checked_at
+      && buildTime(answer.checked_at) >= buildTime(nav.checked_at)) syncNav();
+  }
+
+  async function syncNav() {
+    if (syncing) return;
+    syncing = true;
+    let result = null;
+    try {
+      result = await R.send(URLS.index);
+    } catch (_) {
+      result = null;
+    }
+    syncing = false;
+    if (!result?.data?.ok || !nav || buildTime(result.data.checked_at) < buildTime(nav.checked_at)) return;
+    nav = result.data;
+    renderProvenance(nav);
+    renderExportState();
+    renderNavKeepingFocus();
+    if (current && !lookup) renderPaneHead();
   }
 
   function renderExportState() {
@@ -183,7 +235,8 @@
         const retry = el('button', { type: 'button', class: 'btn btn-sm btn-outline-secondary' }, words.raw('try-again'));
         retry.addEventListener('click', () => loadNav({ refresh }));
         $('examRostersNavState').replaceChildren(el('div', { class: 'alert alert-danger et-roster-error', role: 'alert' }, el('span', {}, found.content()), retry));
-        if (nav) renderProvenance(nav);
+        // The build the header named is still the one on screen.
+        paintProvenance();
       }
       renderExportState();
       return false;
@@ -195,11 +248,44 @@
     renderProvenance(nav);
     renderExportState();
     if (first) applyAddress({ initial: true });
-    else renderNav();
+    else renderNavKeepingFocus();
     return true;
   }
 
   // ── Navigator: rendering ────────────────────────────────────
+
+  // Which navigator item a key names: a room of a period, an exam, or a
+  // section of one of the section lists.
+  function navItemKey(item) {
+    if (!item) return null;
+    return { room: item.dataset.room, slot: item.dataset.slot, course: item.dataset.course, section: item.dataset.sectionGroup, from: item.dataset.from };
+  }
+
+  function findNavItem(key) {
+    if (!key) return null;
+    return [...$('examRostersNav').querySelectorAll('.et-nav-item')].find(item => (key.room ? item.dataset.room === key.room && item.dataset.slot === String(key.slot)
+      : key.course ? item.dataset.course === key.course
+        : Boolean(key.section) && item.dataset.sectionGroup === key.section && item.dataset.from === key.from)) || null;
+  }
+
+  // Focus a navigator item (and scroll it into view) as its list's one tab stop.
+  function focusNavItem(item) {
+    if (!item) return false;
+    const list = item.closest('#examRostersRooms, #examRostersCourses');
+    list?.querySelectorAll('.et-nav-item').forEach(node => { node.tabIndex = node === item ? 0 : -1; });
+    item.focus({ preventScroll: true });
+    item.scrollIntoView?.({ block: 'nearest' });
+    return document.activeElement === item;
+  }
+
+  // Draw the navigator again without dropping a keyboard user's place: the
+  // item that had focus is a new element afterwards.
+  function renderNavKeepingFocus() {
+    const active = document.activeElement?.closest?.('.et-nav-item');
+    const key = active && $('examRostersNav').contains(active) ? navItemKey(active) : null;
+    renderNav();
+    if (key) focusNavItem(findNavItem(key));
+  }
 
   function renderNav() {
     if (!nav) return;
@@ -228,10 +314,11 @@
     });
     const weeks = [...new Set(nav.days.map(day => dayParts(day.day).week))].sort((a, b) => a - b);
     grid.style.setProperty('--et-day-columns', String(columns.length));
+    // One week needs no week column: its days take the whole width.
     grid.classList.toggle('is-one-week', weeks.length <= 1);
     const cells = [];
     weeks.forEach(week => {
-      cells.push(el('span', { class: 'et-week-label', 'aria-hidden': 'true' }, weeks.length > 1 ? `W${week}` : ''));
+      if (weeks.length > 1) cells.push(el('span', { class: 'et-week-label', 'aria-hidden': 'true' }, `W${week}`));
       columns.forEach(column => {
         const day = nav.days.find(item => dayParts(item.day).week === week
           && (Number.isInteger(item.weekday) ? item.weekday : `x-${dayParts(item.day).label}`) === column);
@@ -263,8 +350,10 @@
       return el('button', {
         type: 'button', role: 'radio', class: `et-nav-chip${empty ? ' is-empty' : ''}`, 'data-slot': String(item.slot_index),
         'aria-checked': String(on), tabindex: on ? '0' : '-1',
-        'aria-label': empty ? words.text('period-empty', { period: item.period }) : words.text('period-chip', { period: item.period, n: R.NUMBER.format(item.sittings) }),
-      }, bdi(item.period), empty ? null : el('small', { 'aria-hidden': 'true' }, R.NUMBER.format(item.sittings)));
+        // Distinct students, as a day tab and the file's Period summary count
+        // them: a student with a clash sits twice in a period, but is one student.
+        'aria-label': empty ? words.text('period-empty', { period: item.period }) : words.text('period-chip', { period: item.period, n: R.NUMBER.format(item.students) }),
+      }, bdi(item.period), empty ? null : el('small', { 'aria-hidden': 'true' }, R.NUMBER.format(item.students)));
     }));
   }
 
@@ -290,11 +379,12 @@
     const figure = el('span', { class: `et-nav-figure${over ? ' is-over' : full ? ' is-full' : ''}` },
       bdi(`${R.NUMBER.format(room.seated_now)}/${R.NUMBER.format(room.capacity || 0)}`));
     if (over) figure.append(' ', words.raw('over-capacity'));
+    // What the room's own list holds: a student without a seat is in no
+    // room's list, so a room never counts one (the period's No seat does).
     const details = room.sections.map(section => {
       const bits = [bdi(section.exam), ' ', sectionLabel(section)];
       if (section.parts > 1) bits.push(' · ', words.fragment('item-part', { part: ltr(section.part), parts: ltr(section.parts) }));
       if (section.membership !== 'matches') bits.push(' · ', el('span', { class: 'is-warning' }, words.raw('item-changed')));
-      if (section.no_seat) bits.push(' · ', el('span', { class: 'is-clash' }, words.fragment('item-no_seat', { n: count(section.no_seat) })));
       const out = document.createDocumentFragment();
       out.append(...bits);
       return out;
@@ -309,14 +399,22 @@
     figure, el('span', { class: 'et-nav-detail' }, R.join(details))));
   }
 
-  function unassignedItem(item) {
+  function sectionItem(item, from) {
     const key = R.groupKey(item);
-    const chosen = sectionScopeKey() === key && !lookup;
+    const chosen = state.section?.key === key && state.section.from === from && !lookup;
+    const figure = from === 'no_seat' ? item.no_seat : item.now;
+    const detail = from === 'no_seat'
+      ? R.join([
+        el('span', { class: 'is-clash' }, words.fragment('item-no_seat', { n: count(item.no_seat) })),
+        item.membership === 'new' ? el('span', { class: 'is-warning' }, words.raw('marker-new'))
+          : item.membership !== 'matches' ? el('span', { class: 'is-warning' }, words.raw('item-changed')) : null,
+      ])
+      : words.raw('item-not_assigned');
     return el('li', {}, el('button', {
-      type: 'button', class: 'et-nav-item', 'data-section-group': key, 'aria-current': chosen ? 'true' : null, tabindex: '-1',
+      type: 'button', class: 'et-nav-item', 'data-section-group': key, 'data-from': from, 'aria-current': chosen ? 'true' : null, tabindex: '-1',
     }, el('span', { class: 'et-nav-code' }, bdi(item.exam), ' ', sectionLabel(item)),
-    el('span', { class: 'et-nav-figure' }, bdi(R.NUMBER.format(item.now))),
-    el('span', { class: 'et-nav-detail' }, words.raw('item-not_assigned'))));
+    el('span', { class: 'et-nav-figure' }, bdi(R.NUMBER.format(figure))),
+    el('span', { class: 'et-nav-detail' }, detail)));
   }
 
   function sectionScopeKey() {
@@ -324,9 +422,11 @@
     return scope?.kind === 'section' ? `${scope.exam}|${scope.section_key}|${scope.gender}` : null;
   }
 
+  // A heading's words are one inline run: a flex heading would drop the
+  // spaces between its codes, counts and separators.
   function navGroup(heading, items, { danger = false } = {}) {
     const nodes = [];
-    if (heading) nodes.push(el('div', { class: `et-nav-heading${danger ? ' is-danger' : ''}`, role: 'heading', 'aria-level': '4' }, heading));
+    if (heading) nodes.push(el('div', { class: `et-nav-heading${danger ? ' is-danger' : ''}`, role: 'heading', 'aria-level': '4' }, el('span', {}, heading)));
     nodes.push(el('ul', { class: 'et-nav-list' }, items));
     return nodes;
   }
@@ -339,7 +439,8 @@
     const inGroup = item => state.group === 'all' || item.gender === state.group;
     const rooms = nav.rooms.filter(room => room.slot_index === state.slot && inGroup(room));
     const unassigned = nav.not_assigned.filter(item => item.slot_index === state.slot && inGroup(item));
-    const review = rooms.filter(roomNeedsReview).length + unassigned.length;
+    const noSeat = (nav.no_seat || []).filter(item => item.slot_index === state.slot && inGroup(item));
+    const review = rooms.filter(roomNeedsReview).length + unassigned.length + noSeat.length;
     const toggle = $('examRostersRoomReview');
     toggle.replaceChildren(el('span', {}, words.fragment('needs-review', { n: count(review) })));
     toggle.setAttribute('aria-pressed', String(state.roomReview));
@@ -350,11 +451,17 @@
     const nodes = [];
     if (!slot || !slot.exams.length) {
       nodes.push(el('p', { class: 'et-nav-empty' }, words.fragment('empty-period', { slot: slot ? R.slot(slot.day, slot.period) : '' })));
-    } else if (!regular.length && !online.length && !unassigned.length) {
+    } else if (!regular.length && !online.length && !unassigned.length && !noSeat.length) {
       nodes.push(el('p', { class: 'et-nav-empty' }, words.fragment('empty-rooms')));
     } else {
       if (regular.length) nodes.push(...navGroup(null, regular.map(roomItem)));
-      if (unassigned.length) nodes.push(...navGroup(words.fragment('not-assigned-group', { n: count(unassigned.length) }), unassigned.map(unassignedItem), { danger: true }));
+      if (unassigned.length) nodes.push(...navGroup(words.fragment('not-assigned-group', { n: count(unassigned.length) }), unassigned.map(item => sectionItem(item, 'not_assigned')), { danger: true }));
+      // Students with no seat are in no room's list: here, by section, each
+      // opening its section's list at its No seat rows.
+      if (noSeat.length) {
+        const students = noSeat.reduce((sum, item) => sum + item.no_seat, 0);
+        nodes.push(...navGroup(words.fragment('no-seat-group', { n: count(students) }), noSeat.map(item => sectionItem(item, 'no_seat')), { danger: true }));
+      }
       if (online.length) nodes.push(...navGroup(words.fragment('online-group', { n: count(online.length) }), online.map(roomItem)));
     }
     list.replaceChildren(...nodes);
@@ -514,17 +621,17 @@
       const head = courseHead(scope.exam, answer);
       setPaneHead(head.title, head.meta, { timetable: scope.exam });
     } else {
-      const section = nav.not_assigned.find(item => R.groupKey(item) === sectionScopeKey())
+      const section = sectionItemOf(current.from ? { key: sectionScopeKey(), from: current.from } : null)
         || answer?.sections?.find(item => item.section_key === scope.section_key && item.gender === scope.gender);
       const head = courseHead(scope.exam, answer, section);
       setPaneHead(head.title, head.meta, { timetable: scope.exam });
     }
   }
 
-  function expectedStudents(scope) {
+  function expectedStudents(scope, from) {
     if (scope.kind === 'room') return roomOf(scope.slot_index, scope.room_code)?.seated_now ?? null;
     if (scope.kind === 'course') return examOf(scope.exam)?.students ?? null;
-    return nav.not_assigned.find(item => item.exam === scope.exam && item.section_key === scope.section_key && item.gender === scope.gender)?.now ?? null;
+    return sectionItemOf({ key: `${scope.exam}|${scope.section_key}|${scope.gender}`, from })?.now ?? null;
   }
 
   function scopeName(scope) {
@@ -532,18 +639,21 @@
     return () => bdi(scope.exam);
   }
 
-  async function loadScope(scope, { focusPane = false } = {}) {
+  // `keep`: the same list again (Refresh), shown with the section, flag,
+  // filter and sort it was left at. `flag`: the chip to open on. `from`: the
+  // navigator's section list that opened a section.
+  async function loadScope(scope, { focusPane = false, keep = false, flag = 'all', from = null } = {}) {
     // A lookup gives way first: closing it may clear the pane.
-    closeLookup({ focus: false });
+    closeLookup({ focus: false, reload: false });
     const mine = ++scopeToken;
     scopeController?.abort();
     scopeController = new AbortController();
-    current = { scope, answer: null };
+    current = { scope, answer: null, from, stale: false };
     renderPaneHead();
     setScreen();
     revealPane();
     if (focusPane || narrow()) $('examRostersPaneTitle').focus({ preventScroll: narrow() });
-    roster.loading({ students: expectedStudents(scope) });
+    roster.loading({ students: expectedStudents(scope, from) });
     let result = null;
     let error = null;
     try {
@@ -555,13 +665,13 @@
     if (mine !== scopeToken) return;
     if (error || !result.data.ok) {
       const found = R.problem(result, error);
-      roster.failed({ content: found.content, retry: found.refused ? null : () => loadScope(scope) });
+      roster.failed({ content: found.content, retry: found.refused ? null : () => loadScope(scope, { flag, from }) });
       return;
     }
     current.answer = result.data;
     renderPaneHead();
     renderProvenance(result.data);
-    roster.show(result.data, { scope: scopeName(scope) });
+    roster.show(result.data, { scope: scopeName(scope), keep, flag });
     revealPane();
     const counts = result.data.counts;
     const title = $('examRostersPaneTitle').textContent;
@@ -580,6 +690,7 @@
     state.day = slotOf(slot)?.day ?? state.day;
     state.room = code;
     state.course = null;
+    state.section = null;
     writeAddress({ push });
     remember();
     renderNav();
@@ -591,19 +702,26 @@
     state.view = 'course';
     state.course = code;
     state.room = null;
+    state.section = null;
     writeAddress({ push });
     remember();
     renderNav();
     loadScope({ kind: 'course', exam: code }, { focusPane });
   }
 
-  function selectSection(key) {
-    const item = nav.not_assigned.find(entry => R.groupKey(entry) === key);
+  const sectionScope = item => ({ kind: 'section', exam: item.exam, section_key: item.section_key, gender: item.gender });
+
+  // A section from the navigator's Not assigned or No seat list: a history
+  // entry like a room, so a phone's Back returns to the navigator. From No
+  // seat it opens on its No seat rows.
+  function selectSection(key, from, { push = true, focusPane = false } = {}) {
+    const item = sectionItemOf({ key, from });
     if (!item) return;
     state.room = null;
-    writeAddress();
-    loadScope({ kind: 'section', exam: item.exam, section_key: item.section_key, gender: item.gender });
+    state.section = { key, from };
+    writeAddress({ push });
     renderNav();
+    loadScope(sectionScope(item), { focusPane, from, flag: from === 'no_seat' ? 'no_seat' : 'all' });
   }
 
   function chooseDay(day) {
@@ -612,6 +730,7 @@
     const slots = slotsOfDay(day);
     state.slot = (slots.find(item => item.exams.length) || slots[0])?.slot_index ?? null;
     state.room = null;
+    state.section = null;
     clearPane();
     writeAddress();
     remember();
@@ -622,6 +741,7 @@
     if (slot === state.slot) return;
     state.slot = slot;
     state.room = null;
+    state.section = null;
     clearPane();
     writeAddress();
     remember();
@@ -633,6 +753,7 @@
     state.view = view;
     state.room = null;
     state.course = null;
+    state.section = null;
     clearPane();
     writeAddress();
     remember();
@@ -652,16 +773,22 @@
     state.day = slot ? slot.day : nav.days[0]?.day ?? null;
     state.room = state.view === 'room' && address.room && roomOf(state.slot, address.room) ? address.room : null;
     state.course = state.view === 'course' && address.course && examOf(address.course) ? address.course : null;
+    const section = state.view === 'room' && !state.room ? sectionItemOf(address.section) : null;
+    state.section = section && section.slot_index === state.slot ? address.section : null;
     if (initial) writeAddress();
     renderNav();
     if (state.room) {
-      if (current?.scope?.kind !== 'room' || current.scope.room_code !== state.room || current.scope.slot_index !== state.slot) {
+      if (current?.stale || current?.scope?.kind !== 'room' || current.scope.room_code !== state.room || current.scope.slot_index !== state.slot) {
         loadScope({ kind: 'room', slot_index: state.slot, room_code: state.room });
       }
+    } else if (state.section) {
+      if (current?.stale || sectionScopeKey() !== state.section.key || current.from !== state.section.from) {
+        loadScope(sectionScope(section), { from: state.section.from, flag: state.section.from === 'no_seat' ? 'no_seat' : 'all' });
+      }
     } else if (state.course) {
-      if (current?.scope?.kind !== 'course' || current.scope.exam !== state.course) loadScope({ kind: 'course', exam: state.course });
+      if (current?.stale || current?.scope?.kind !== 'course' || current.scope.exam !== state.course) loadScope({ kind: 'course', exam: state.course });
     } else {
-      closeLookup({ focus: false });
+      closeLookup({ focus: false, reload: false });
       clearPane();
     }
     setScreen();
@@ -673,9 +800,30 @@
     if (narrow()) $('examRostersPane').scrollIntoView?.({ block: 'start' });
   }
 
-  // Master-detail below 800px: the pane only while something is chosen.
+  // Master-detail below 800px: the pane only while something is chosen. One
+  // way back at a time: while a lookup is open, its own Back leads.
   function setScreen() {
     $('examRostersLayout').dataset.screen = current || lookup ? 'pane' : 'nav';
+    $('examRostersScreenBack').hidden = Boolean(lookup);
+  }
+
+  // What the pane shows, as a navigator item's key (to find its item again).
+  function chosenKey() {
+    if (state.room) return { room: state.room, slot: state.slot };
+    if (state.section) return { section: state.section.key, from: state.section.from };
+    if (state.course) return { course: state.course };
+    return null;
+  }
+
+  // After Back, Forward or ‹ Rooms the navigator was drawn again: focus goes
+  // to the item now chosen, else to the one whose list was just left (the
+  // control that opened it), else the list's tab stop - scrolled into view,
+  // never left on the page body.
+  function restoreNavFocus(left) {
+    if (narrow() && $('examRostersLayout').dataset.screen === 'pane') return;
+    const list = state.view === 'room' ? $('examRostersRooms') : $('examRostersCourses');
+    const item = findNavItem(chosenKey()) || findNavItem(left) || list.querySelector('.et-nav-item[tabindex="0"]');
+    if (!focusNavItem(item)) $('examRostersNav').querySelector('[role="tab"][aria-selected="true"], [role="radio"][aria-checked="true"]')?.focus();
   }
 
   function screenBack() {
@@ -683,17 +831,19 @@
       closeLookup();
       if (current) return;
     }
-    if (window.history.state?.rosters && window.history.state.pushed && (state.room || state.course)) {
+    if (window.history.state?.rosters && window.history.state.pushed && (state.room || state.course || state.section)) {
       window.history.back();
       return;
     }
+    const left = chosenKey();
     state.room = null;
     state.course = null;
+    state.section = null;
     clearPane();
     writeAddress();
     renderNav();
     setScreen();
-    $('examRostersNav').querySelector('.et-nav-item[tabindex="0"], [role="tab"][aria-selected="true"]')?.focus();
+    restoreNavFocus(left);
   }
 
   // ── Student lookup: POST, no history entry ──────────────────
@@ -713,18 +863,22 @@
     (row.clash_with || []).forEach(code => flags.append(link('clash', code)));
     (row.same_day_with || []).forEach(code => flags.append(link('same_day', code)));
     if (row.room_basis === 'no_seat') flags.append(el('span', { class: 'et-flag et-flag--noseat' }, el('span', { class: 'et-flag-icon', 'aria-hidden': 'true' }), words.raw('no-seat')));
-    const room = el('td', { role: 'cell', class: 'et-col-room' });
-    if ((row.room_basis === 'whole' || row.room_basis === 'split') && row.room) room.append(bdi(row.room));
-    else room.append(el('span', { class: row.room_basis === 'no_seat' ? 'et-room-noseat' : 'et-room-none' },
-      words.raw(row.room_basis === 'no_seat' ? 'no-seat' : row.room_basis === 'not_scheduled' ? 'not-scheduled' : 'not-assigned')));
+    // The room, or why there is none: a fresh node for each place it is said.
+    const roomWords = () => ((row.room_basis === 'whole' || row.room_basis === 'split') && row.room ? bdi(row.room)
+      : el('span', { class: row.room_basis === 'no_seat' ? 'et-room-noseat' : 'et-room-none' },
+        words.raw(row.room_basis === 'no_seat' ? 'no-seat' : row.room_basis === 'not_scheduled' ? 'not-scheduled' : 'not-assigned')));
     const open = el('button', { type: 'button', class: 'btn btn-sm btn-outline-secondary', 'data-open-course': row.exam, 'aria-label': words.text('lookup-open-label', { code: row.exam }) },
       words.raw('lookup-open'), ' ', el('span', { class: 'et-chevron', 'aria-hidden': 'true' }, '›'));
-    return el('tr', { role: 'row', class: `et-roster-row${row.clash ? ' is-clash' : ''}` },
-      el('td', { role: 'cell' }, exam.day ? bdi(exam.day) : words.raw('not-scheduled')),
-      el('td', { role: 'cell' }, exam.period ? bdi(exam.period) : '—'),
-      el('td', { role: 'cell', class: 'et-col-name' }, bdi(row.exam), exam.name ? [' ', el('small', { class: 'et-lookup-name' }, R.nameNode(words.locale === 'ar' && exam.name_ar ? exam.name_ar : exam.name))] : null),
+    // In a narrow pane the row is a card: the course, then when, section and
+    // room on one line under it (shown only there), then the flags.
+    const when = exam.day ? R.slot(exam.day, exam.period) : words.raw('not-scheduled');
+    const sub = el('span', { class: 'et-lookup-sub' }, R.join([when, sectionLabel(row), roomWords()]));
+    return el('tr', { role: 'row', class: `et-lookup-row${row.clash ? ' is-clash' : ''}` },
+      el('td', { role: 'cell', class: 'et-col-day' }, exam.day ? bdi(exam.day) : words.raw('not-scheduled')),
+      el('td', { role: 'cell', class: 'et-col-period' }, exam.period ? bdi(exam.period) : '—'),
+      el('td', { role: 'cell', class: 'et-col-name' }, bdi(row.exam), exam.name ? [' ', el('small', { class: 'et-lookup-name' }, R.nameNode(words.locale === 'ar' && exam.name_ar ? exam.name_ar : exam.name))] : null, sub),
       el('td', { role: 'cell', class: 'et-col-section' }, sectionLabel(row)),
-      room, flags,
+      el('td', { role: 'cell', class: 'et-col-room' }, roomWords()), flags,
       el('td', { role: 'cell', class: 'et-col-open' }, open));
   }
 
@@ -748,7 +902,7 @@
       run: ltr(RUN_ID), n: count(rows.length), clash: count(answer.counts.clash), same_day: count(answer.counts.same_day),
     }));
     const head = el('tr', { role: 'row' }, ...['col-day', 'col-period', 'col-course', 'col-section', 'col-room', 'col-flags', 'col-open']
-      .map(key => el('th', { scope: 'col', role: 'columnheader', class: key === 'col-open' ? 'et-col-open' : null }, words.raw(key))));
+      .map(key => el('th', { scope: 'col', role: 'columnheader', class: ['col-day', 'col-period', 'col-open'].includes(key) ? `et-${key}` : null }, words.raw(key))));
     const table = el('table', { class: 'et-roster-table et-lookup-table', role: 'table' },
       el('caption', { class: 'visually-hidden' }, $('examRostersPaneTitle').textContent),
       el('thead', { role: 'rowgroup' }, head),
@@ -756,11 +910,15 @@
     box.replaceChildren(summary, table);
   }
 
-  async function lookupStudent(studentId) {
+  // `focus`: the heading takes focus once the student is in (not on Refresh,
+  // which keeps the keyboard on its button).
+  async function lookupStudent(studentId, { focus = true } = {}) {
     const mine = ++lookupToken;
     lookupController?.abort();
     lookupController = new AbortController();
-    const from = current ? $('examRostersPaneTitle').textContent : '';
+    // Back leads where the first lookup was opened from: a second lookup (or
+    // a refreshed one) keeps it, never "Back to Student …".
+    const from = lookup ? lookup.from : current ? $('examRostersPaneTitle').textContent : '';
     lookup = { studentId, from, answer: null };
     $('examRostersRoster').hidden = true;
     $('examRostersLookup').hidden = false;
@@ -794,10 +952,12 @@
     lookup.answer = result.data;
     renderProvenance(result.data);
     renderLookup(studentId, result.data);
-    $('examRostersPaneTitle').focus({ preventScroll: false });
+    if (focus) $('examRostersPaneTitle').focus({ preventScroll: false });
   }
 
-  function closeLookup({ focus = true } = {}) {
+  // `reload`: a list behind the lookup that Refresh left stale is asked for
+  // again as it is shown (off when the caller is about to load a list).
+  function closeLookup({ focus = true, reload = true } = {}) {
     if (!lookup) return;
     lookupToken++;
     lookupController?.abort();
@@ -814,6 +974,7 @@
       const target = current ? $('examRostersPaneTitle') : $('examRostersFind');
       target.focus({ preventScroll: false });
     }
+    if (reload && current?.stale) loadScope(current.scope, { keep: true, from: current.from });
   }
 
   // ── Find ────────────────────────────────────────────────────
@@ -827,12 +988,19 @@
   let activeOption = -1;
   let students = null;    // the settled student search for the current query
   let lastQuery = '';
+  let pendingEnter = null; // Enter pressed before this query's students arrived
 
+  // The server's rule (core/services/exam_roster_view.py parse_lookup), so
+  // Find never sends what it would refuse: 4+ digits of an ID, or a name of
+  // 3+ letters with 2+ in each word. Digits beside letters are a course or
+  // room code, matched here and never searched (or audited) as a student.
+  const letters = text => (String(text).match(/\p{L}/gu) || []).length;
   function studentQuery(text) {
     const folded = R.fold(text);
     const compact = folded.replace(/ /g, '');
     if (/^\d+$/.test(compact)) return compact.length >= 4 ? compact : null;
-    return compact.length >= 3 ? folded : null;
+    if (/\p{Nd}/u.test(compact)) return null;
+    return letters(compact) >= 3 && folded.split(' ').every(word => letters(word) >= 2) ? folded : null;
   }
 
   function localMatches(text) {
@@ -849,9 +1017,9 @@
     return { courses, rooms };
   }
 
-  function option(label, choose) {
+  function option(label, choose, kind) {
     const id = `examRostersFindOption${findOptions.length}`;
-    findOptions.push({ id, choose });
+    findOptions.push({ id, kind, choose });
     return el('div', { role: 'option', id, class: 'et-find-option', 'aria-selected': 'false' }, label);
   }
 
@@ -877,14 +1045,14 @@
         const label = document.createDocumentFragment();
         label.append(examTitle(exam));
         if (exam.scheduled) label.append(' · ', R.slot(exam.day, exam.period));
-        return option(label, () => selectCourse(exam.code, { push: true, focusPane: true }));
+        return option(label, () => selectCourse(exam.code, { push: true, focusPane: true }), 'course');
       })));
     }
     if (rooms.length) {
       nodes.push(group('rooms', rooms.map(room => {
         const slot = slotOf(room.slot_index);
         return option(words.fragment('find-room-item', { room: ltr(room.room_code), slot: slot ? R.slot(slot.day, slot.period) : '', n: count(room.seated_now) }),
-          () => selectRoom(room.slot_index, room.room_code, { push: true, focusPane: true }));
+          () => selectRoom(room.slot_index, room.room_code, { push: true, focusPane: true }), 'room');
       })));
     }
     const query = studentQuery(text);
@@ -894,7 +1062,7 @@
       } else if (students.matches.length) {
         nodes.push(group('students', students.matches.map(match => option(words.fragment('find-student-item', {
           id: ltr(match.student_id), name: R.nameNode(match.name), program: ltr(match.program), n: count(match.exams),
-        }), () => lookupStudent(match.student_id)))));
+        }), () => lookupStudent(match.student_id), 'student'))));
         if (students.more) nodes.push(el('div', { class: 'et-find-note', role: 'presentation' }, words.fragment('find-more', { n: count(students.total - students.matches.length) })));
       }
     } else if (query) {
@@ -951,7 +1119,15 @@
     if (studentQuery(find.value.trim()) === query) {
       renderFind();
       announce(words.text('find-results', { n: R.NUMBER.format(findOptions.length) }));
+      // Enter was pressed before the students arrived (an ID typed or pasted,
+      // then Enter at once): it chooses the first student now, as it would have.
+      if (pendingEnter === query) {
+        pendingEnter = null;
+        const first = findOptions.findIndex(item => item.kind === 'student');
+        if (first >= 0) chooseOption(first);
+      }
     }
+    if (pendingEnter === query) pendingEnter = null;
   }
 
   function setActive(index) {
@@ -973,10 +1149,12 @@
     find.value = '';
     students = null;
     lastQuery = '';
+    pendingEnter = null;
     chosen.choose();
   }
 
   find.addEventListener('input', () => {
+    if (pendingEnter && studentQuery(find.value.trim()) !== pendingEnter) pendingEnter = null;
     renderFind();
     scheduleStudents();
   });
@@ -988,12 +1166,25 @@
       const step = event.key === 'ArrowDown' ? 1 : -1;
       setActive((activeOption + step + findOptions.length) % findOptions.length);
     } else if (event.key === 'Enter') {
-      if (findList.hidden || !findOptions.length) return;
+      if (!findList.hidden && findOptions.length) {
+        event.preventDefault();
+        chooseOption(activeOption >= 0 ? activeOption : 0);
+        return;
+      }
+      // No option yet, but students are on their way (or wait for the pause
+      // after typing): remember the Enter, and ask now rather than after it.
+      const query = studentQuery(find.value.trim());
+      if (!query || students?.query === query) return;
       event.preventDefault();
-      chooseOption(activeOption >= 0 ? activeOption : 0);
+      pendingEnter = query;
+      if (lastQuery !== query) {
+        clearTimeout(findTimer);
+        searchStudents(query);
+      }
     } else if (event.key === 'Escape') {
       event.preventDefault();
       event.stopPropagation();
+      pendingEnter = null;
       // Esc clears the field, then closes the list.
       if (find.value) {
         find.value = '';
@@ -1112,14 +1303,11 @@
       const item = event.target.closest('.et-nav-item');
       if (!item) return;
       const focusPane = narrow();
+      const key = navItemKey(item);
       if (item.dataset.room) selectRoom(Number(item.dataset.slot), item.dataset.room, { push: true, focusPane });
       else if (item.dataset.course) selectCourse(item.dataset.course, { push: true, focusPane });
-      else if (item.dataset.sectionGroup) selectSection(item.dataset.sectionGroup);
-      if (!focusPane) {
-        const again = [...list.querySelectorAll('.et-nav-item')].find(node => node.dataset.room === item.dataset.room
-          && node.dataset.course === item.dataset.course && node.dataset.sectionGroup === item.dataset.sectionGroup);
-        again?.focus({ preventScroll: true });
-      }
+      else if (item.dataset.sectionGroup) selectSection(item.dataset.sectionGroup, item.dataset.from, { push: true, focusPane });
+      if (!focusPane) findNavItem(key)?.focus({ preventScroll: true });
     });
     list.addEventListener('keydown', event => {
       const items = [...list.querySelectorAll('.et-nav-item')];
@@ -1148,13 +1336,45 @@
     event.preventDefault();
     selectCourse(code, { push: true, focusPane: true });
   });
+  // Refresh checks the lists again and re-asks for what is on screen, as it
+  // was left: a lookup (the list behind it once it closes), or the list with
+  // its section tab, flag chip, filter and sort.
   $('examRostersRefresh').addEventListener('click', async () => {
-    if (await loadNav({ refresh: true }) && current) loadScope(current.scope);
+    if (!await loadNav({ refresh: true })) return;
+    if (lookup) {
+      if (current) current.stale = true;
+      lookupStudent(lookup.studentId, { focus: false });
+    } else if (current) {
+      loadScope(current.scope, { keep: true, from: current.from });
+    }
   });
   window.addEventListener('popstate', () => {
     if (!nav) return;
-    closeLookup({ focus: false });
+    const left = chosenKey();
+    const active = document.activeElement;
+    const lost = !active || active === document.body || $('examRostersNav').contains(active) || $('examRostersPane').contains(active);
+    closeLookup({ focus: false, reload: false });
     applyAddress();
+    if (lost) restoreNavFocus(left);
+  });
+  // Restored from the back/forward cache: no list or lookup a Back could
+  // bring back stays on the page, and the lists are asked for again (a
+  // session that ended says so in place).
+  window.addEventListener('pageshow', event => {
+    if (!event.persisted) return;
+    closeLookup({ focus: false, reload: false });
+    find.value = '';
+    students = null;
+    lastQuery = '';
+    closeFind();
+    state.room = null;
+    state.course = null;
+    state.section = null;
+    clearPane();
+    setScreen();
+    writeAddress();
+    if (nav) renderNav();
+    loadNav();
   });
 
   // ── Export to Excel: the phase-1 dialog, preset ─────────────
@@ -1191,7 +1411,7 @@
       created_at: nav.run.saved_at,
       academic_year: nav.run.academic_year,
       term: nav.run.term,
-      genders: [...new Set([...nav.rooms.map(room => room.gender), ...nav.not_assigned.map(item => item.gender)])],
+      genders: [...new Set([...nav.rooms, ...nav.not_assigned, ...(nav.no_seat || [])].map(item => item.gender))],
       slots: nav.slots.map(slot => ({ index: slot.slot_index, day: slot.day, period: slot.period })),
       schedule: nav.exams.map(exam => ({
         course_code: exam.code, course_name: exam.name, day: exam.scheduled ? exam.day : 'OVERFLOW', period: exam.period || '',
