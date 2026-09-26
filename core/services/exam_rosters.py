@@ -381,6 +381,9 @@ class SavedRun:
     rooms: dict[tuple[int, str], dict]
     qa: dict
     students_count: int
+    # The saved day x period grid as (slot_index, day, period), OVERFLOW
+    # excluded: every period the timetable offered, with or without exams.
+    slots: tuple[tuple[int, str, str], ...] = ()
 
 
 def _saved_run(run: ExamTimetableRun) -> SavedRun:
@@ -607,6 +610,15 @@ def _saved_run(run: ExamTimetableRun) -> SavedRun:
         rooms=rooms,
         qa=qa,
         students_count=data.get("students_count") if _count(data.get("students_count")) else 0,
+        slots=tuple(
+            sorted(
+                {
+                    (slot["index"], slot["day"], slot["period"])
+                    for slot in slots
+                    if slot["day"] != OVERFLOW_DAY
+                }
+            )
+        ),
     )
 
 
