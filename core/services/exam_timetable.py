@@ -3351,19 +3351,32 @@ def export_exam_timetable_xlsx(run_id: int) -> Path:
                 ]
             )
     # The card's drill: exam pairs and how many students sit both, never who.
+    # Each period has its own cell, as in Fixed Exam Times: a time range after
+    # an Arabic course name in one cell is painted end-first (UAX #9, W2).
     if qa.get("same_day_exam_pairs"):
         ws3.append([])
         ws3.append(["Same-Day Exam Pairs"])
         ws3.cell(ws3.max_row, 1).font = header_font
-        ws3.append(["Day", "First Exam", "Second Exam", "Students Sitting Both", "Clash"])
+        ws3.append(
+            [
+                "Day",
+                "First Exam",
+                "First Period",
+                "Second Exam",
+                "Second Period",
+                "Students Sitting Both",
+                "Clash",
+            ]
+        )
         for pair in qa["same_day_exam_pairs"]:
+            first, second = [*pair.get("courses", []), {}, {}][:2]
             ws3.append(
                 [
                     pair.get("day", ""),
-                    *(
-                        f"{_course_label(exam['code'])} ({exam.get('period', '')})"
-                        for exam in pair.get("courses", [])
-                    ),
+                    _course_label(first.get("code", "")),
+                    first.get("period", ""),
+                    _course_label(second.get("code", "")),
+                    second.get("period", ""),
                     pair.get("student_count", 0),
                     "Same period" if pair.get("clash") else "",
                 ]

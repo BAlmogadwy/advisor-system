@@ -2603,10 +2603,18 @@ function editorSignature() {
   });
 }
 
+// QA added after runs were already saved. Each is a pure function of the
+// placements (editorSignature, and the schedule below) and the enrolments
+// (input_fingerprint), so a Check measuring it for the first time on an old
+// run changes nothing the registrar decided: it must not read as unsaved.
+const QA_ADDED_AFTER_SAVED_RUNS = ['multi_exam_day_students', 'same_day_exam_pairs'];
+
 // Compare the saved report with a fresh evaluation, excluding timestamps.
 // Inputs can change while placements stay identical; that still needs a save.
-function reportSignature(data) {
+// ``unrecorded`` names QA keys the saved report never measured.
+function reportSignature(data, unrecorded = []) {
   const qa = { ...(data.qa || {}) };
+  for (const key of unrecorded) delete qa[key];
   // Building may omit empty room QA; fixed-placement evaluation authors it.
   // Normalize equivalent defaults without hiding real capacity/staffing changes.
   qa.rooms = {
@@ -3079,6 +3087,11 @@ function cloneData(data) {
 
 // A count a saved run never measured is null, shown as "—": never a zero.
 const recordedCount = value => (Number.isFinite(value) ? value : null);
+function showRecordedCount(element, value) {
+  const count = recordedCount(value);
+  if (count != null) { element.textContent = count; return; }
+  element.innerHTML = `<span aria-hidden="true">—</span><span class="visually-hidden">${IS_AR ? 'لم يُحسب' : 'Not calculated'}</span>`;
+}
 
 const EXAM_METRICS = [
   { id: 'kCourses', value: data => data.courses_count ?? data.qa?.total_courses ?? 0 },
@@ -3908,15 +3921,20 @@ const _drillRenderers = {
     };
   },
   // Exam pairs and how many students sit both on that day. Never students.
+  // The count comes second so a phone shows it without scrolling past cards.
   'same-day-pairs'(rows) {
     const examCell = exam => `${drillCourseMarkup(exam?.code || '')}<small class="et-pair-period"><bdi dir="ltr">${escapeAttr(exam?.period || '')}</bdi></small>`;
-    const clash = `<span class="badge bg-danger" title="${escapeAttr(IS_AR ? 'في الفترة نفسها، ومحسوب أيضاً ضمن التعارضات' : 'Same period, also counted under Conflicts')}">${IS_AR ? 'تعارض' : 'Clash'}<span class="visually-hidden">${IS_AR ? ': في الفترة نفسها' : ': same period'}</span></span>`;
+    const clash = `<span class="et-pair-clash" title="${escapeAttr(IS_AR ? 'في الفترة نفسها، ومحسوب أيضاً ضمن التعارضات' : 'Same period, also counted under Conflicts')}">${IS_AR ? 'تعارض' : 'Clash'}<span class="visually-hidden">${IS_AR ? ': في الفترة نفسها' : ': same period'}</span></span>`;
     return {
       title: IS_AR ? 'أزواج الاختبارات في اليوم نفسه' : 'Exam pairs on the same day',
-      head: `<tr><th>${IS_AR ? 'اليوم' : 'Day'}</th><th>${IS_AR ? 'الاختبار الأول' : 'First exam'}</th><th>${IS_AR ? 'الاختبار الثاني' : 'Second exam'}</th><th>${IS_AR ? 'طلاب يؤدون الاختبارين' : 'Students sitting both'}</th></tr>`,
+      // A student is in every pair they sit on a day, so pairs outnumber the card.
+      note: IS_AR
+        ? 'يُحسب الطالب في كل زوج يؤديه في اليوم نفسه (ثلاثة اختبارات تكوّن ثلاثة أزواج)، لذا قد يزيد مجموع الأعداد على رقم البطاقة.'
+        : 'A student is counted in every pair they sit on the same day (three exams make three pairs), so these counts can add up to more than the card.',
+      head: `<tr><th>${IS_AR ? 'اليوم' : 'Day'}</th><th>${IS_AR ? 'طلاب يؤدون الاختبارين' : 'Students sitting both'}</th><th>${IS_AR ? 'الاختبار الأول' : 'First exam'}</th><th>${IS_AR ? 'الاختبار الثاني' : 'Second exam'}</th></tr>`,
       body: rows.map(row => {
         const [first, second] = row.courses || [];
-        return `<tr><td class="et-pair-day"><bdi dir="ltr">${escapeAttr(row.day || '')}</bdi></td><td>${examCell(first)}</td><td>${examCell(second)}</td><td><strong class="et-pair-count">${escapeAttr(row.student_count ?? 0)}</strong>${row.clash ? ` ${clash}` : ''}</td></tr>`;
+        return `<tr><td class="et-pair-day"><bdi dir="ltr">${escapeAttr(row.day || '')}</bdi></td><td><strong class="et-pair-count">${escapeAttr(row.student_count ?? 0)}</strong>${row.clash ? ` ${clash}` : ''}</td><td>${examCell(first)}</td><td>${examCell(second)}</td></tr>`;
       }).join(''),
       colspan: 4,
       empty: Array.isArray(_drillData['same-day-pairs'])
@@ -4022,6 +4040,8 @@ function openDrill(type, { navigate = false } = {}) {
 
   const r = renderer(rows);
   $('kpiDrillTitle').textContent = r.title;
+  $('kpiDrillNote').textContent = rows.length ? (r.note || '') : '';
+  $('kpiDrillNote').hidden = !$('kpiDrillNote').textContent;
   $('kpiDrillHead').innerHTML = r.head;
   $('kpiDrillBody').innerHTML = rows.length
     ? r.body
@@ -4084,7 +4104,8 @@ function renderResults(data, { evaluation = false, preserveViewport = true } = {
   if (evaluation) {
     const inputChanged = Boolean(_savedResultData?.input_fingerprint && data.input_fingerprint
       && _savedResultData.input_fingerprint !== data.input_fingerprint);
-    _evaluatedReportDirty = inputChanged || reportSignature(data) !== reportSignature(_savedResultData || {});
+    const unrecorded = QA_ADDED_AFTER_SAVED_RUNS.filter(key => !Object.hasOwn(_savedResultData?.qa || {}, key));
+    _evaluatedReportDirty = inputChanged || reportSignature(data, unrecorded) !== reportSignature(_savedResultData || {}, unrecorded);
     _evaluatedInputsChanged = inputChanged || (editorSignature() === _savedEditorSignature && _evaluatedReportDirty);
     if (!_evaluatedReportDirty && data.input_fingerprint && _savedResultData && !_savedResultData.input_fingerprint) {
       _savedResultData.input_fingerprint = data.input_fingerprint;
@@ -4138,7 +4159,7 @@ function renderResults(data, { evaluation = false, preserveViewport = true } = {
   $('kStudents').textContent = data.students_count ?? data.qa?.total_students ?? 0;
   $('kSlots').textContent    = data.qa?.slots_used ?? 0;
   $('kMaxDay').textContent   = data.qa?.max_exams_per_day_per_student ?? 0;
-  $('kMultiExamDay').textContent = recordedCount(data.qa?.multi_exam_day_students) ?? '—';
+  showRecordedCount($('kMultiExamDay'), data.qa?.multi_exam_day_students);
 
   const mpd = data.qa?.max_per_day ?? 2;
   $('kOverLabel').textContent = IS_AR

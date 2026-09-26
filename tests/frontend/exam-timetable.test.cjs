@@ -2592,10 +2592,43 @@ const pairExam = cell => ({
   find: cell.querySelector('[data-find-exam]').dataset.findExam,
 });
 const noSameDayPairs = () => (language === 'ar' ? 'لا يوجد طالب لديه أكثر من اختبار في يوم واحد.' : 'No student has more than one exam on a day.');
+const pairsNote = () => (language === 'ar'
+  ? 'يُحسب الطالب في كل زوج يؤديه في اليوم نفسه (ثلاثة اختبارات تكوّن ثلاثة أزواج)، لذا قد يزيد مجموع الأعداد على رقم البطاقة.'
+  : 'A student is counted in every pair they sit on the same day (three exams make three pairs), so these counts can add up to more than the card.');
+const sameDayDelta = ui => ui.$('kMultiExamDay').parentElement.querySelector('.et-kpi-delta');
+const exportRefused = ui => ({
+  excel: ui.$('exportXlsx').getAttribute('aria-disabled'),
+  department: ui.$('departmentFilesBtn').disabled,
+  notice: ui.$('exportDraftNotice').classList.contains('d-none') ? '' : ui.$('exportDraftNotice').textContent,
+});
+const pageCss = fs.readFileSync(path.join(__dirname, '../../static/css/page-exam-timetable.css'), 'utf8');
+const cssRule = selector => {
+  const start = pageCss.indexOf(`main.exam-builder-page ${selector} {`);
+  return start < 0 ? '' : pageCss.slice(start, pageCss.indexOf('}', start));
+};
+
+test('the same-day card sits between the per-day counts and the workload cards fill whole rows', async t => {
+  const ui = await loadedEditor(t, { run: sameDayRun() });
+  const cell = ui.$('kMultiExamDay').closest('.et-summary-cell');
+  assert.ok(cell.previousElementSibling.querySelector('#kMaxDay'), 'Beside "Max exams/day/student"');
+  assert.ok(cell.nextElementSibling.querySelector('#kOver2'), 'Before "Students over limit/day"');
+  assert.equal(sameDayCard(ui).title, language === 'ar'
+    ? 'طلاب يؤدون اختبارين أو أكثر في اليوم نفسه، في يوم واحد على الأقل'
+    : 'Students who sit two or more exams on the same day, on at least one day');
+  // Four columns: auto-placement wraps a wide card that no longer fits a row.
+  const filled = [0];
+  for (const item of cell.parentElement.children) {
+    const width = item.classList.contains('et-summary-span-2') ? 2 : 1;
+    if (filled.at(-1) + width > 4) filled.push(0);
+    filled[filled.length - 1] += width;
+  }
+  assert.deepEqual(filled, [4, 4, 4], 'No card is left alone in a part-empty row');
+});
 
 test('the same-day card counts students and its detail lists exam pairs with their student counts, never students', async t => {
   const ui = await loadedEditor(t, { run: sameDayRun() });
   assert.equal(ui.$('kMultiExamDay').textContent, '5');
+  assert.equal(sameDayDelta(ui).classList.contains('is-unchanged'), true, 'Saved and loaded agree: no delta to show');
   const card = sameDayCard(ui);
   assert.equal(card.getAttribute('role'), 'button');
   assert.equal(card.getAttribute('tabindex'), '0');
@@ -2607,29 +2640,58 @@ test('the same-day card counts students and its detail lists exam pairs with the
   assert.equal(card.getAttribute('aria-expanded'), 'true');
   assert.equal(ui.window.document.activeElement, ui.$('kpiDrillTitle'));
   assert.equal(ui.$('kpiDrillTitle').textContent, language === 'ar' ? 'أزواج الاختبارات في اليوم نفسه' : 'Exam pairs on the same day');
+  assert.equal(ui.$('kpiDrillNote').hidden, false);
+  assert.equal(ui.$('kpiDrillNote').textContent, pairsNote(), 'Says why the pair counts can outnumber the card');
+  // The count is second: a phone shows it without scrolling past two cards.
   assert.deepEqual(Array.from(ui.$('kpiDrillHead').querySelectorAll('th'), th => th.textContent),
-    language === 'ar' ? ['اليوم', 'الاختبار الأول', 'الاختبار الثاني', 'طلاب يؤدون الاختبارين'] : ['Day', 'First exam', 'Second exam', 'Students sitting both']);
+    language === 'ar' ? ['اليوم', 'طلاب يؤدون الاختبارين', 'الاختبار الأول', 'الاختبار الثاني'] : ['Day', 'Students sitting both', 'First exam', 'Second exam']);
   const rows = Array.from(ui.$('kpiDrillBody').rows);
   assert.equal(rows.length, 2, 'One row per pair, in the saved order: most-shared first');
-  assert.deepEqual(rows.map(row => row.cells[0].textContent), ['Sun', 'Mon']);
-  assert.deepEqual([pairExam(rows[0].cells[1]), pairExam(rows[0].cells[2])], [
+  assert.deepEqual(rows.map(row => row.cells[0].querySelector('bdi[dir="ltr"]')?.textContent), ['Sun', 'Mon']);
+  assert.deepEqual(rows.map(row => row.cells[1].querySelector('.et-pair-count').textContent), ['4', '1']);
+  assert.deepEqual([pairExam(rows[0].cells[2]), pairExam(rows[0].cells[3])], [
     { code: courses[0].course_code, period: '08:00-10:00', find: courses[0].course_identity },
     { code: courses[1].course_code, period: '10:30-12:30', find: courses[1].course_identity },
   ]);
-  assert.deepEqual([pairExam(rows[1].cells[1]), pairExam(rows[1].cells[2])], [
+  assert.deepEqual([pairExam(rows[1].cells[2]), pairExam(rows[1].cells[3])], [
     { code: courses[1].course_code, period: '08:00-10:00', find: courses[1].course_identity },
     { code: courses[0].course_code, period: '08:00-10:00', find: courses[0].course_identity },
   ]);
-  assert.ok(rows[0].cells[1].querySelector('.et-course-card').title.includes(courses[0].course_name), 'Each exam carries its name');
-  assert.deepEqual(rows.map(row => row.cells[3].querySelector('.et-pair-count').textContent), ['4', '1']);
-  assert.equal(rows[0].querySelector('.badge'), null, 'Different periods are not a clash');
-  assert.match(rows[1].cells[3].querySelector('.badge').textContent, language === 'ar' ? /^تعارض/ : /^Clash/);
+  assert.ok(rows[0].cells[2].querySelector('.et-course-card').title.includes(courses[0].course_name), 'Each exam carries its name');
+  assert.equal(rows[0].querySelector('.et-pair-clash'), null, 'Different periods are not a clash');
+  const clash = rows[1].cells[1].querySelector('.et-pair-clash');
+  assert.equal(clash.textContent, language === 'ar' ? 'تعارض: في الفترة نفسها' : 'Clash: same period');
+  assert.equal(clash.querySelector('.visually-hidden').textContent, language === 'ar' ? ': في الفترة نفسها' : ': same period');
+  assert.equal(clash.title, language === 'ar' ? 'في الفترة نفسها، ومحسوب أيضاً ضمن التعارضات' : 'Same period, also counted under Conflicts');
+  // jsdom paints nothing: the mark's only class must be one this page styles.
+  assert.equal(clash.className, 'et-pair-clash');
+  assert.match(cssRule('.et-pair-clash'), /background: var\(--et-danger-soft\);.*color: var\(--et-danger\);/);
   for (const bdi of ui.$('kpiDrillBody').querySelectorAll('bdi')) assert.equal(bdi.getAttribute('dir'), 'ltr');
   assert.equal(ui.$('kpiDrill').querySelector('[dir="auto"]'), null);
   assert.doesNotMatch(ui.$('kpiDrill').innerHTML, /4410001|student_id/);
+  assert.ok(rows.includes(drillAction(ui, 'move')?.closest('tr')), 'Each exam in a pair can be moved from here');
   drillAction(ui, 'find').click();
   assert.equal(ui.window.document.activeElement, examChip(ui));
   assert.equal(examChip(ui).classList.contains('et-found-exam'), true);
+  ui.$('kConflicts').closest('.kpi-click').click();
+  assert.equal(ui.$('kpiDrill').dataset.type, 'conflicts');
+  assert.equal(ui.$('kpiDrillNote').hidden, true, 'The note belongs to the pairs, not to other details');
+  assert.equal(ui.$('kpiDrillNote').textContent, '');
+});
+
+test('the same-day detail prints a saved day, period and count as text, never as markup', async t => {
+  const hostile = sameDayRun({ pairs: [{ day: '<b>Sun</b>', courses: [
+    { code: courses[0].course_code, slot_index: 0, period: '<i>08:00</i>' },
+    { code: courses[1].course_code, slot_index: 1, period: '10:30-12:30' },
+  ], student_count: '<u>4</u>', clash: false }] });
+  const ui = await loadedEditor(t, { run: hostile });
+  ui.$('examSummaryDetails').open = true;
+  sameDayCard(ui).click();
+  assert.equal(ui.$('kpiDrillBody').querySelector('b, i, u'), null);
+  const [row] = ui.$('kpiDrillBody').rows;
+  assert.equal(row.cells[0].textContent, '<b>Sun</b>');
+  assert.equal(row.cells[1].textContent, '<u>4</u>');
+  assert.equal(row.cells[2].querySelector('.et-pair-period').textContent, '<i>08:00</i>');
 });
 
 test('the same-day metric compares a checked result with the saved one, lower is better', async t => {
@@ -2646,10 +2708,28 @@ test('the same-day metric compares a checked result with the saved one, lower is
   await settle();
   assert.equal(ui.$('kMultiExamDay').textContent, '3');
   assert.match(deltaText(ui, 'kMultiExamDay'), /5.*3.*−2/);
-  assert.equal(ui.$('kMultiExamDay').parentElement.querySelector('.et-kpi-delta').classList.contains('is-better'), true);
+  assert.equal(sameDayDelta(ui).classList.contains('is-better'), true);
   assert.equal(ui.$('kpiDrill').dataset.type, 'same-day-pairs', 'The open detail refreshes with the check');
   assert.equal(ui.$('kpiDrillBody').rows.length, 1);
   assert.equal(ui.$('kpiDrillBody').textContent, noSameDayPairs());
+  assert.equal(ui.$('kpiDrillNote').hidden, true, 'No pairs: nothing to add up');
+});
+
+test('a same-day figure the saved run recorded still asks for a Save when Check changes it', async t => {
+  const run = sameDayRun();
+  const ui = await loadedEditor(t, {
+    run,
+    onRequest: async (url, options) => url === '/ops/exam-timetable/draft-impact/'
+      ? response({ ...evaluatedRun(JSON.parse(options.body), run), qa: { ...run.qa, multi_exam_day_students: 3 } }) : undefined,
+  });
+  assert.deepEqual(exportRefused(ui), { excel: 'false', department: false, notice: '' });
+  ui.$('checkDraftBtn').click();
+  await settle();
+  assert.equal(ui.$('kMultiExamDay').textContent, '3');
+  assert.deepEqual(exportRefused(ui), {
+    excel: 'true', department: true,
+    notice: language === 'ar' ? 'توجد تغييرات غير محفوظة. احفظ التغييرات أو حسّن الجدول قبل التصدير.' : 'Unsaved changes. Save Changes or Optimize before exporting.',
+  });
 });
 
 test('a run saved before the same-day metric shows "—" and says so, never a zero, until Check measures it', async t => {
@@ -2660,7 +2740,11 @@ test('a run saved before the same-day metric shows "—" and says so, never a ze
     onRequest: async (url, options) => url === '/ops/exam-timetable/draft-impact/'
       ? response({ ...evaluatedRun(JSON.parse(options.body), run), qa: { ...run.qa, multi_exam_day_students: 2, same_day_exam_pairs: sameDayRun().qa.same_day_exam_pairs } }) : undefined,
   });
-  assert.equal(ui.$('kMultiExamDay').textContent, '—');
+  const value = ui.$('kMultiExamDay');
+  assert.equal(value.querySelector('[aria-hidden="true"]').textContent, '—');
+  assert.equal(value.querySelector('.visually-hidden').textContent, language === 'ar' ? 'لم يُحسب' : 'Not calculated', 'A screen reader hears why');
+  assert.doesNotMatch(value.textContent, /\d/);
+  assert.equal(sameDayDelta(ui).classList.contains('is-unchanged'), true, 'Nothing measured on either side: no delta shown');
   assert.doesNotMatch(deltaText(ui, 'kMultiExamDay'), /NaN|0/);
   ui.$('examSummaryDetails').open = true;
   sameDayCard(ui).click();
@@ -2668,14 +2752,20 @@ test('a run saved before the same-day metric shows "—" and says so, never a ze
   assert.equal(ui.$('kpiDrillBody').textContent, language === 'ar'
     ? 'لم يُحسب هذا المؤشر لهذا الجدول المحفوظ. افحص التغييرات لحسابه.'
     : 'Not calculated for this saved timetable. Check changes to calculate it.');
+  assert.equal(ui.$('kpiDrillNote').hidden, true);
   ui.$('checkDraftBtn').click();
   await settle();
-  assert.equal(ui.$('kMultiExamDay').textContent, '2');
-  const delta = deltaText(ui, 'kMultiExamDay');
-  assert.match(delta, /—.*2/);
-  assert.doesNotMatch(delta, /NaN|−|\+/, 'An unmeasured baseline is no change to report');
-  assert.equal(ui.$('kMultiExamDay').parentElement.querySelector('.et-kpi-delta').classList.contains('is-neutral'), true);
+  assert.equal(value.textContent, '2');
+  assert.equal(value.querySelector('.visually-hidden'), null, 'A measured figure is not "Not calculated"');
+  const delta = sameDayDelta(ui);
+  assert.equal(delta.textContent, language === 'ar' ? 'المحفوظ — ← المتحقق 2' : 'Saved — → Checked 2');
+  assert.equal(delta.className, 'et-kpi-delta is-neutral', 'Shown, and neither better nor worse');
   assert.equal(ui.$('kpiDrillBody').rows.length, 2);
+  assert.equal(ui.$('kpiDrillNote').textContent, pairsNote());
+  // Measuring a figure the saved report predates moved nothing: the saved
+  // run still exports, and nothing claims unsaved changes.
+  assert.deepEqual(exportRefused(ui), { excel: 'false', department: false, notice: '' });
+  assert.equal(ui.$('exportXlsx').getAttribute('href'), '/ops/exam-timetable/17/export.xlsx');
 });
 
 test('a measured zero reads 0 and its detail says no student has two exams on a day', async t => {
@@ -2684,6 +2774,7 @@ test('a measured zero reads 0 and its detail says no student has two exams on a 
   ui.$('examSummaryDetails').open = true;
   sameDayCard(ui).click();
   assert.equal(ui.$('kpiDrillBody').textContent, noSameDayPairs());
+  assert.equal(ui.$('kpiDrillNote').hidden, true);
 });
 
 test('stale drill details keep their checked slot labels and Find uses the current placement', async t => {
