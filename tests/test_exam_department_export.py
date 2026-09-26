@@ -1084,3 +1084,72 @@ def test_oversized_explicit_week_prefix_stays_full_only_until_a_valid_anchor(lan
     )
     assert "Foundations" in _text(book[_full_sheet_name(language, "F")])
     assert "Programming I" in _text(book[_full_sheet_name(language, "M")])
+
+
+# ── Direction marks, never isolates ────────────────────────────
+
+_ISOLATES = ("\u2066", "\u2067", "\u2068", "\u2069")
+_DATED = {"Sun": "2026-09-20", "Mon": "2026-09-21", "Tue": "2026-09-22"}
+
+
+def _workbook_bytes_of(content, filename):
+    if not filename.endswith(".zip"):
+        return [content]
+    with ZipFile(BytesIO(content)) as outer:
+        return [outer.read(name) for name in outer.namelist()]
+
+
+@pytest.mark.parametrize(
+    "fixture, dates", [("department", _DATED), ("department", None), ("weekly", None)]
+)
+def test_arabic_department_files_carry_no_unicode_isolates(fixture, dates):
+    # Excel prints U+2066..U+2069 as visible LRI/PDI boxes and still reverses
+    # the time range. Every profile (all departments, every cohort, dated or
+    # not, full and weekly sheets) must use direction marks instead.
+    data = make_department_data() if fixture == "department" else _weekly_fixture()
+    profiles = [profile["id"] for profile in department_export_options(data)["departments"]]
+    payload = {"departments": profiles, "genders": ["M", "F", "U"], "language": "ar"}
+    if dates:
+        payload["dates"] = dates
+    content, filename, _ = _export(data, **payload)
+    workbooks = _workbook_bytes_of(content, filename)
+    assert len(workbooks) == len(profiles) >= 2
+    marked_bands = 0
+    for raw in workbooks:
+        with ZipFile(BytesIO(raw)) as archive:
+            for part in archive.namelist():
+                text = archive.read(part).decode("utf-8", errors="replace")
+                assert not any(mark in text for mark in _ISOLATES), part
+        book = load_workbook(BytesIO(raw), rich_text=True)
+        for sheet in book:
+            for row in sheet.iter_rows():
+                for cell in row:
+                    value = str(cell.value) if cell.value is not None else ""
+                    assert not any(mark in value for mark in _ISOLATES), (
+                        sheet.title,
+                        cell.coordinate,
+                    )
+                    marked_bands += "\u200e08:00-10:00\u200f" in value
+    # The scan reached the print bands this rule is about.
+    assert marked_bands > 0
+
+
+@pytest.mark.parametrize("language", ["en", "ar"])
+def test_print_band_marks_the_period_left_to_right_in_arabic_only(department_data, language):
+    book = _book(department_data, language=language, dates=_DATED)
+    bands = [
+        cell.value
+        for sheet in _full_print_sheets(book)
+        for row in sheet
+        for cell in row
+        if isinstance(cell.value, str) and "  |  " in cell.value and "08:00-10:00" in cell.value
+    ]
+    assert bands
+    for band in bands:
+        _day, date_label, period = band.split("  |  ")
+        assert date_label in _DATED.values()
+        if language == "ar":
+            assert period == "\u200e08:00-10:00\u200f"
+        else:
+            assert period == "08:00-10:00"
+            assert "\u200e" not in band and "\u200f" not in band

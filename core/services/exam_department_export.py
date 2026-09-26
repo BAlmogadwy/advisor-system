@@ -26,6 +26,7 @@ from openpyxl.worksheet.table import Table, TableStyleInfo
 from core.services.exam_operations_snapshot import EXAM_OPERATIONS_SNAPSHOT_VERSION
 from core.services.exam_run_schema import load_normalised_run
 from core.services.exam_sections import EXAM_ENROLLMENT_SOURCE
+from core.services.xlsx_bidi import ltr_run
 
 XLSX_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
@@ -953,9 +954,10 @@ def _write_print_sheet(
                 if record["date"]
                 else ("التاريخ غير محدد" if ar else "Date not entered")
             )
-            # Isolate the time range: otherwise an Arabic date label can make
-            # a right-to-left print engine display the end time before start.
-            period_label = f"\u2066{record['period']}\u2069" if ar else record["period"]
+            # Mark the time range left-to-right: otherwise an Arabic date label
+            # can make a right-to-left print engine display the end time before
+            # start. Marks, not isolates: Excel prints isolates as boxes.
+            period_label = ltr_run(record["period"]) if ar else record["period"]
             label = "  |  ".join((record["day"], date_label, period_label))
             _banner(printed, row_number, label, 8, ar=ar, size=11, fill="DDECEF", bold=True)
             printed.row_dimensions[row_number].height = 25

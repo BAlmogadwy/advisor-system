@@ -91,6 +91,7 @@ from core.services.exam_rosters import (
     natural_key,
 )
 from core.services.student_sections import arabic_term_section_course_names
+from core.services.xlsx_bidi import ltr_run
 
 XLSX_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 ZIP_TYPE = "application/zip"
@@ -130,12 +131,6 @@ OK_TEXT = "087F72"
 OK_SOFT = "EDF7F5"
 BODY = "20334D"
 
-# Excel does not implement the Unicode 6.3 isolates (U+2066..U+2069): it paints
-# them as visible LRI/PDI boxes and still reverses the digits (measured through
-# Excel's own PDF export). A left-to-right mark before a code, time or ID run
-# and a right-to-left mark after it keep 2026-09-24 00:10 and 08:00-10:00 in
-# reading order inside Arabic text, with nothing visible.
-_LRM, _RLM = "\u200e", "\u200f"
 _JOIN = " · "
 
 
@@ -215,7 +210,7 @@ def _pick(lang: str, en: str, ar: str) -> str:
 
 def _iso(text: object, lang: str) -> str:
     """Keep a code, time or ID run in reading order inside an Arabic sentence."""
-    return f"{_LRM}{text}{_RLM}" if lang == "ar" else str(text)
+    return ltr_run(text) if lang == "ar" else str(text)
 
 
 def _department(program: str) -> tuple[str, str, str]:
