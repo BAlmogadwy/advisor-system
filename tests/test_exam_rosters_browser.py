@@ -40,6 +40,34 @@ sync_playwright = playwright_api.sync_playwright
 LOOKUP_ID = 4402003
 # The drawer has finished sliding in (its 180 ms transition).
 SETTLED = "() => document.getElementById('examRosterDrawer').getAnimations().length === 0"
+# Every box under the pane that pokes out of its content box (into its
+# padding or beyond), and how far the page and its main column scroll
+# sideways. Hidden-for-screen-readers boxes (1px) and empty ones are not layout.
+OUTSIDE_THE_PANE = """() => {
+  const element = document.getElementById('examRostersPane');
+  const pane = element.getBoundingClientRect();
+  const style = getComputedStyle(element);
+  const left = pane.left + parseFloat(style.borderLeftWidth) + parseFloat(style.paddingLeft);
+  const right = pane.right - parseFloat(style.borderRightWidth) - parseFloat(style.paddingRight);
+  const main = document.getElementById('main-content');
+  const outside = [...element.querySelectorAll('*')]
+    .filter(node => { const r = node.getBoundingClientRect(); return r.width > 1 && r.height > 1; })
+    .filter(node => { const r = node.getBoundingClientRect(); return r.left < left - 1 || r.right > right + 1; })
+    .map(node => node.id || node.className || node.tagName);
+  return {
+    outside,
+    main: main.scrollWidth - main.clientWidth,
+    page: document.documentElement.scrollWidth - window.innerWidth,
+    paneRight: pane.right,
+    viewport: window.innerWidth,
+  };
+}"""
+# A focused element that is on screen, top to bottom.
+FOCUSED_IN_VIEW = """() => {
+  const node = document.activeElement;
+  const r = node.getBoundingClientRect();
+  return { tag: node.tagName, room: node.dataset.room || null, top: r.top, bottom: r.bottom, height: window.innerHeight };
+}"""
 
 
 class ExamRostersBrowserTests(StaticLiveServerTestCase):
@@ -62,7 +90,9 @@ class ExamRostersBrowserTests(StaticLiveServerTestCase):
         self.run = build_saved_run()
         self.sittings = all_sittings(build_roster_model(self.run))
 
-    def _page(self, language: str, path: str, viewport: dict[str, int] | None = None):
+    def _page(
+        self, language: str, path: str, viewport: dict[str, int] | None = None, touch: bool = False
+    ):
         ensure_role_groups()
         user = get_user_model().objects.create_user(
             username=f"lists-browser-{language}-{get_user_model().objects.count()}",
@@ -76,6 +106,7 @@ class ExamRostersBrowserTests(StaticLiveServerTestCase):
             extra_http_headers={"Accept-Language": language},
             viewport=viewport or {"width": 1280, "height": 900},
             accept_downloads=True,
+            has_touch=touch,
         )
         context.add_cookies(
             [
@@ -99,8 +130,8 @@ class ExamRostersBrowserTests(StaticLiveServerTestCase):
         page.goto(f"{self.live_server_url}{path}")
         return page
 
-    def _rosters(self, language: str = "en", viewport=None):
-        page = self._page(language, f"/exam-timetable/rosters/?run={self.run.pk}", viewport)
+    def _rosters(self, language: str = "en", viewport=None, touch: bool = False):
+        page = self._page(language, f"/exam-timetable/rosters/?run={self.run.pk}", viewport, touch)
         expect(page.locator("#examRostersRooms .et-nav-item").first).to_be_visible()
         return page
 
@@ -203,7 +234,8 @@ class ExamRostersBrowserTests(StaticLiveServerTestCase):
 
     def test_arabic_page_and_drawer_fit_a_phone(self) -> None:
         phone = {"width": 375, "height": 812}
-        page = self._rosters("ar", viewport=phone)
+        page = self._rosters("ar", viewport=phone, touch=True)
+        self.assertTrue(page.evaluate("matchMedia('(pointer: coarse)').matches"))
         self.assertEqual(page.evaluate("document.documentElement.dir"), "rtl")
         self.assertEqual(
             page.evaluate("document.documentElement.scrollWidth <= window.innerWidth"), True
@@ -218,6 +250,14 @@ class ExamRostersBrowserTests(StaticLiveServerTestCase):
             "document.querySelector('#examRostersRoster thead').getBoundingClientRect().height"
         )
         self.assertLessEqual(header, 1)
+        # On a touch screen a list row's cells are as tall as their words, not
+        # a table cell's 44px touch height.
+        tallest = page.evaluate(
+            """() => Math.max(...[...document.querySelectorAll('#examRostersRoster tr.et-roster-row td.et-col-id')]
+                .filter(cell => cell.getBoundingClientRect().height > 0)
+                .map(cell => cell.getBoundingClientRect().height))"""
+        )
+        self.assertLess(tallest, 44)
         overflow = page.evaluate(
             """() => [...document.querySelectorAll('main *')]
                 .filter(node => node.getBoundingClientRect().width > 0)
@@ -239,3 +279,176 @@ class ExamRostersBrowserTests(StaticLiveServerTestCase):
         timetable.wait_for_function(SETTLED)
         box = drawer.bounding_box()
         self.assertEqual((round(box["x"]), round(box["width"])), (0, 375))
+        # The saved date and time, and the check time, never break mid-token.
+        expect(timetable.locator("#examRosterDrawerBody tr.et-roster-row").first).to_be_visible()
+        lines = timetable.evaluate(
+            """() => [...document.querySelectorAll('#examRosterDrawerSource bdi[dir=ltr]')]
+                .map(node => node.getClientRects().length)"""
+        )
+        self.assertTrue(lines and all(count == 1 for count in lines), lines)
+
+    # ── Layout at laptop and tablet widths, both languages ─────
+
+    def _find_student(self, page) -> None:
+        find = page.locator("#examRostersFind")
+        find.click()
+        find.fill(str(LOOKUP_ID))
+        expect(page.locator("#examRostersFindList [role=option]").first).to_contain_text(
+            str(LOOKUP_ID)
+        )
+        find.press("Enter")
+        expect(page.locator("#examRostersLookup tbody tr").first).to_be_visible()
+
+    def _assert_inside_the_pane(self, page, what: str) -> None:
+        box = page.evaluate(OUTSIDE_THE_PANE)
+        self.assertEqual(box["outside"], [], what)
+        self.assertLessEqual(box["main"], 1, what)
+        self.assertLessEqual(box["page"], 0, what)
+        self.assertLessEqual(box["paneRight"], box["viewport"] + 1, what)
+        # A flag naming a long course code (the timetable's "PHYS103 (1)")
+        # still fits: its words wrap, its code stays whole.
+        page.evaluate(
+            """() => document.querySelectorAll('#examRostersPane .et-flag bdi[dir=ltr]')
+                .forEach(node => { node.textContent = 'PHYS103 (1)'; })"""
+        )
+        box = page.evaluate(OUTSIDE_THE_PANE)
+        self.assertEqual(box["outside"], [], f"{what}, long codes")
+        self.assertLessEqual(box["main"], 1, f"{what}, long codes")
+
+    def test_lists_and_a_lookup_stay_inside_the_pane_at_laptop_and_tablet_widths(self) -> None:
+        base = f"{self.live_server_url}/exam-timetable/rosters/?run={self.run.pk}"
+        math = sum(1 for s in self.sittings if s.exam.code == "MATH101")
+        for language in ("en", "ar"):
+            page = self._page(language, f"/exam-timetable/rosters/?run={self.run.pk}")
+            for width, height in ((1600, 900), (1280, 900), (1024, 768), (700, 900)):
+                what = f"{language} {width}px"
+                page.set_viewport_size({"width": width, "height": height})
+                page.goto(f"{base}&view=room&slot=0&room=M-B")
+                expect(page.locator("#examRostersRoster tr.et-roster-row")).to_have_count(
+                    len(self._room_rows("M-B"))
+                )
+                self._assert_inside_the_pane(page, f"{what} room")
+                page.goto(f"{base}&view=course&course=MATH101")
+                expect(page.locator("#examRostersRoster tr.et-roster-row")).to_have_count(math)
+                self._assert_inside_the_pane(page, f"{what} course")
+                if width == 1280:
+                    # The pane is under 860px: the compact list, Program under the name.
+                    cells = page.evaluate(
+                        """() => ({
+                          program: getComputedStyle(document.querySelector('#examRostersRoster td.et-col-program')).display,
+                          sub: getComputedStyle(document.querySelector('#examRostersRoster .et-roster-sub')).display,
+                          head: document.querySelector('#examRostersRoster thead').getBoundingClientRect().height > 1,
+                        })"""
+                    )
+                    self.assertEqual(cells, {"program": "none", "sub": "block", "head": True}, what)
+                self._find_student(page)
+                # A table while the pane has room for one; else a card per exam
+                # whose line under the course says when, section and room once.
+                shown = page.evaluate(
+                    """() => {
+                      const row = document.querySelector('#examRostersLookup tbody tr');
+                      const shown = selector => getComputedStyle(row.querySelector(selector)).display !== 'none';
+                      return [['.et-col-day', '.et-col-period', '.et-col-section', '.et-col-room'].map(shown), shown('.et-lookup-sub')];
+                    }"""
+                )
+                table = width == 1600
+                self.assertEqual(shown, [[table] * 4, not table], what)
+                self._assert_inside_the_pane(page, f"{what} lookup")
+                self.assertGreater(page.locator("#examRostersLookup [data-open-course]").count(), 0)
+                # One way back while the lookup is open; no line starts with a stray "·".
+                expect(page.locator("#examRostersScreenBack")).to_be_hidden()
+                lines = page.evaluate(
+                    """() => [...document.querySelectorAll('#examRostersLookup tbody tr')]
+                        .flatMap(row => row.innerText.split(/\\n/).map(line => line.trim()).filter(Boolean))"""
+                )
+                self.assertTrue(lines, what)
+                self.assertFalse([line for line in lines if line.startswith("·")], what)
+
+    def test_the_day_grid_fits_the_navigator_for_a_five_or_six_day_week(self) -> None:
+        weeks = [
+            build_saved_run(label="Five-day week", days=["Sun", "Mon", "Tue", "Wed", "Thu"]),
+            build_saved_run(label="Six-day week", days=["Sun", "Mon", "Tue", "Wed", "Thu", "Sat"]),
+        ]
+        for (language, week), days in zip(
+            [(language, week) for week in weeks for language in ("en", "ar")],
+            (5, 5, 6, 6),
+            strict=True,
+        ):
+            page = self._page(language, f"/exam-timetable/rosters/?run={week.pk}")
+            for width in (1280, 1024, 820):
+                page.set_viewport_size({"width": width, "height": 900})
+                expect(page.locator("#examRostersDays [role=tab]")).to_have_count(days)
+                fit = page.evaluate(
+                    """() => {
+                      const nav = document.getElementById('examRostersNav');
+                      const grid = document.getElementById('examRostersDays');
+                      const box = grid.getBoundingClientRect();
+                      const tabs = [...grid.querySelectorAll('[role=tab]')].map(tab => tab.getBoundingClientRect());
+                      return {
+                        nav: nav.scrollWidth - nav.clientWidth,
+                        grid: grid.scrollWidth - grid.clientWidth,
+                        inside: tabs.every(r => r.left >= box.left - 1 && r.right <= box.right + 1),
+                        widest: Math.max(...tabs.map(r => r.width)),
+                        narrowest: Math.min(...tabs.map(r => r.width)),
+                      };
+                    }"""
+                )
+                what = f"{language} {days} days {width}px"
+                self.assertLessEqual(fit["nav"], 0, what)
+                self.assertLessEqual(fit["grid"], 0, what)
+                self.assertTrue(fit["inside"], what)
+                # One week: no week column; the five days share the width.
+                self.assertLessEqual(fit["widest"] - fit["narrowest"], 1, what)
+
+    def test_back_and_rooms_return_focus_to_the_room_in_view(self) -> None:
+        page = self._rosters("en", viewport={"width": 375, "height": 600})
+        last = page.locator("#examRostersRooms .et-nav-item[data-room]").last
+        code = last.get_attribute("data-room")
+        for leave in ("rooms", "history"):
+            page.locator(f'#examRostersRooms .et-nav-item[data-room="{code}"]').click()
+            expect(page.locator("#examRostersPaneTitle")).to_have_text(f"Room {code}")
+            # Read from the top: going back must bring the room into view itself.
+            page.evaluate(
+                "document.getElementById('main-content').scrollTop = 0; window.scrollTo(0, 0)"
+            )
+            if leave == "rooms":
+                page.locator("#examRostersScreenBack").click()
+            else:
+                page.go_back()
+            expect(page.locator("#examRostersNav")).to_be_visible()
+            item = page.locator(f'#examRostersRooms .et-nav-item[data-room="{code}"]')
+            expect(item).to_be_focused()
+            where = page.evaluate(FOCUSED_IN_VIEW)
+            self.assertEqual(where["room"], code, leave)
+            self.assertGreaterEqual(where["top"], 0, leave)
+            self.assertLessEqual(where["bottom"], where["height"], leave)
+        # On a desktop, Back keeps the keyboard on the room it returns to.
+        page.set_viewport_size({"width": 1280, "height": 900})
+        page.locator('#examRostersRooms .et-nav-item[data-room="F-A"]').click()
+        page.locator('#examRostersRooms .et-nav-item[data-room="M-B"]').click()
+        expect(page.locator("#examRostersPaneTitle")).to_have_text("Room M-B")
+        page.go_back()
+        expect(page.locator("#examRostersPaneTitle")).to_have_text("Room F-A")
+        expect(page.locator('#examRostersRooms .et-nav-item[data-room="F-A"]')).to_be_focused()
+
+    def test_navigator_headings_and_dates_read_as_written(self) -> None:
+        for language, slot in (("en", "Sun 08:00-10:00 · 2"), ("ar", "Sun 08:00-10:00 · 2")):
+            page = self._rosters(language)
+            page.locator('#examRostersViews [data-view="course"]').click()
+            heading = page.locator("#examRostersCourses .et-nav-heading").first
+            # Spaces and separators survive: the words are one inline run.
+            self.assertEqual(heading.inner_text().strip(), slot)
+            flush = page.evaluate(
+                """() => {
+                  const heading = document.querySelector('#examRostersCourses .et-nav-heading').getBoundingClientRect();
+                  const list = document.querySelector('#examRostersCourses .et-nav-list').getBoundingClientRect();
+                  return [Math.round(heading.left - list.left), Math.round(heading.right - list.right), Math.round(list.top - heading.bottom)];
+                }"""
+            )
+            self.assertEqual(flush, [0, 0, 0], language)
+            # A saved date and time never break inside themselves.
+            broken = page.evaluate(
+                """() => [...document.querySelectorAll('.et-provenance bdi[dir=ltr]')]
+                    .filter(node => getComputedStyle(node).whiteSpace !== 'nowrap').length"""
+            )
+            self.assertEqual(broken, 0, language)

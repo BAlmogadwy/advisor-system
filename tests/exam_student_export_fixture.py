@@ -147,11 +147,14 @@ def build_population() -> None:
 
 
 def build_saved_run(
-    label: str = "Student export fixture", programs: list[str] | None = None
+    label: str = "Student export fixture",
+    programs: list[str] | None = None,
+    days: list[str] | None = None,
 ) -> ExamTimetableRun:
+    """The fixture run; ``days`` widens the grid (the pinned exams stay put)."""
     result = build_exam_timetable(
         label=label,
-        days=DAYS,
+        days=days or DAYS,
         periods=PERIODS,
         programs=programs,
         pinned=PINS,
