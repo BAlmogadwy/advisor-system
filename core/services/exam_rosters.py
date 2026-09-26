@@ -32,8 +32,8 @@ Rules that keep the rebuild honest
   filtered rebuild could renumber and mis-join exams.
 * The live term must equal the saved one, read from ``section_enrollment``
   only: those groups are what the lists are joined to. ``schedule[].term`` is
-  course metadata, never an authority (runs built before 2026-09-26 hold a
-  study-plan term there), and ``TermSection`` IDs are reused across terms, so
+  course metadata, never an authority (runs saved before input policy 5 hold
+  a study-plan term there), and ``TermSection`` IDs are reused across terms, so
   a mismatch refuses instead of joining another term's lists.
 * A run that lacks what this needs is refused once and plainly: rebuild and
   save it. Every saved run so far is test data; there is no legacy path.
