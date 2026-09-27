@@ -73,6 +73,7 @@ from core.services.exam_sections import (
     resolve_exam_section_enrollment,
     summarize_exam_section_mapping,
 )
+from core.services.linked_exams import NO_LINKS, LinkedExams
 from core.services.student_sections import (
     OTHER_BRANCH_SECTION_COHORT,
     _section_course_key,
@@ -521,6 +522,26 @@ def check_bucket_feasibility(
     return violations
 
 
+def check_linked_bucket_feasibility(
+    buckets: dict[tuple[str, int], set[str]],
+    num_days: int,
+    pinned: list[dict[str, str]] | None = None,
+    links: LinkedExams = NO_LINKS,
+) -> list[dict]:
+    """``check_bucket_feasibility`` over units: a link needs one day, not one per member.
+
+    ``bucket_size`` counts the exams that each need a day of their own; the
+    ``courses`` listed are still the real courses, members of a link included.
+    """
+    if not links:
+        return check_bucket_feasibility(buckets, num_days, pinned=pinned)
+    unit_buckets, _ = links.buckets(buckets, None)
+    return [
+        {**row, "courses": links.expand_codes(row["courses"])}
+        for row in check_bucket_feasibility(unit_buckets, num_days, pinned=links.pins(pinned))
+    ]
+
+
 def validate_exam_pins(
     pinned: list[dict] | None,
     courses: list[str],
@@ -595,6 +616,7 @@ def schedule(
     preferred_slots: dict[str, int] | None = None,
     seed: int | None = None,
     on_placed: Counter | None = None,
+    student_credits: dict[str, dict[int, int]] | None = None,
 ) -> list[dict]:
     """
     Greedy graph-coloring with day-spread soft constraint.
@@ -633,6 +655,9 @@ def schedule(
         pinned             – list of {course_code, day, period} to fix before scheduling
         credit_map         – {course_code: credit_hours} for credit-pair penalty
         seed               – RNG seed for tie-breaking; None = deterministic order
+        student_credits    – {course_code: {student_id: credit_hours}} where a
+                             student sits a different credit than credit_map
+                             says: a linked unit whose members' credits differ
 
     Returns:
         list of {course_code, slot_index, day, period}
@@ -658,6 +683,14 @@ def schedule(
     _cb = course_buckets or {}  # course_code → [(program, term), …]
     _cm = credit_map or {}  # course_code → credit_hours
     _pref = preferred_slots or {}  # course_code → preferred slot_index
+    _sc = student_credits or {}  # course_code → {student_id: credit_hours}
+
+    def _sits(course: str, sid: int) -> int:
+        """The credit ``sid`` sits in ``course``: members of one link may differ."""
+        own = _sc.get(course)
+        if own is not None and sid in own:
+            return own[sid]
+        return _cm.get(course, _CREDIT_DEFAULT)
 
     def _constraint_degree(c: str) -> int:
         """Heuristic: courses with more conflicts + more bucket-mates are harder
@@ -700,7 +733,8 @@ def schedule(
     #
     # assignment:          final result — which slot each course lands in
     # student_day_count:   how many exams each student has per day (Level 1 scoring)
-    # student_day_courses: which courses each student has per day (Level 1.5 credit scoring)
+    # student_day_credits: the credit of each exam a student has per day (Level 1.5
+    #                      credit scoring), recorded as it is placed
     # slot_load:           how many courses are in each slot (Level 3 load-balancing)
     # bucket_day_courses:  which courses are assigned to each day per bucket (hard constraint B)
     # course_assigned_day: which day each course is on (spacing calculation)
@@ -709,7 +743,7 @@ def schedule(
 
     student_day_count: dict[int, dict[str, int]] = defaultdict(lambda: defaultdict(int))
 
-    student_day_courses: dict[int, dict[str, list[str]]] = defaultdict(lambda: defaultdict(list))
+    student_day_credits: dict[int, dict[str, list[int]]] = defaultdict(lambda: defaultdict(list))
 
     slot_load: dict[int, int] = defaultdict(int)
 
@@ -739,7 +773,7 @@ def schedule(
             if enrolled_sets and cc in enrolled_sets:
                 for sid in enrolled_sets[cc]:
                     student_day_count[sid][p_day] += 1
-                    student_day_courses[sid][p_day].append(cc)
+                    student_day_credits[sid][p_day].append(_sits(cc, sid))
             for bk in _cb.get(cc, []):
                 bucket_day_courses[bk][p_day].add(cc)
 
@@ -799,7 +833,7 @@ def schedule(
             if enrolled_sets and course in enrolled_sets:
                 for sid in enrolled_sets[course]:
                     student_day_count[sid]["OVERFLOW"] += 1
-                    student_day_courses[sid]["OVERFLOW"].append(course)
+                    student_day_credits[sid]["OVERFLOW"].append(_sits(course, sid))
             # Maintain bucket-day tracking (use my_buckets, already computed above)
             for bk in my_buckets:
                 bucket_day_courses[bk]["OVERFLOW"].add(course)
@@ -841,13 +875,12 @@ def schedule(
                 credit_penalty = 0
                 if _cm:
                     this_cr = _cm.get(course, _CREDIT_DEFAULT)
+                    own = _sc.get(course)
                     for sid in course_students:
-                        existing = student_day_courses[sid][day]
+                        existing = student_day_credits[sid][day]
                         if existing:
-                            day_credits = [_cm.get(ec, _CREDIT_DEFAULT) for ec in existing] + [
-                                this_cr
-                            ]
-                            credit_penalty += _credit_pair_penalty(day_credits)
+                            sits = own.get(sid, this_cr) if own else this_cr
+                            credit_penalty += _credit_pair_penalty([*existing, sits])
 
                 # Level 2 — Spacing within programme-plan buckets:
                 # penalise placing bucket-mates on adjacent days so students
@@ -906,7 +939,7 @@ def schedule(
         if enrolled_sets and course in enrolled_sets:
             for sid in enrolled_sets[course]:
                 student_day_count[sid][chosen_day] += 1
-                student_day_courses[sid][chosen_day].append(course)
+                student_day_credits[sid][chosen_day].append(_sits(course, sid))
 
         # Update bucket-day tracking
         for bk in my_buckets:
@@ -928,6 +961,77 @@ def schedule(
         )
 
     return sorted(result, key=lambda r: (r["slot_index"], r["course_code"]))
+
+
+def schedule_linked(
+    courses: list[str],
+    adj: dict[str, dict[str, int]],
+    slots: list[dict],
+    *,
+    links: LinkedExams = NO_LINKS,
+    enrolled_sets: dict[str, set[int]] | None = None,
+    max_per_day: int = 2,
+    plan_term_buckets: dict[tuple[str, int], set[str]] | None = None,
+    course_buckets: dict[str, list[tuple[str, int]]] | None = None,
+    pinned: list[dict] | None = None,
+    credit_map: dict[str, int] | None = None,
+    preferred_slots: dict[str, int] | None = None,
+    seed: int | None = None,
+    on_placed: Counter | None = None,
+) -> list[dict]:
+    """``schedule`` with every link placed as one exam.
+
+    The scheduler itself is unchanged: it is handed units in place of linked
+    courses, and each unit's slot is copied to all its members - one real day
+    and period, or, for a unit nothing could seat, one shared ``Extra-n``.
+    With no links this is ``schedule``, called with the very same arguments.
+
+    ``on_placed`` still counts real courses. The scheduler counts units, so the
+    count is scaled: exact at the start and at the end, proportional between.
+    """
+    if not links:
+        return schedule(
+            courses,
+            adj,
+            slots,
+            enrolled_sets=enrolled_sets,
+            max_per_day=max_per_day,
+            plan_term_buckets=plan_term_buckets,
+            course_buckets=course_buckets,
+            pinned=pinned,
+            credit_map=credit_map,
+            preferred_slots=preferred_slots,
+            seed=seed,
+            on_placed=on_placed,
+        )
+    pinned = validate_exam_pins(pinned, courses, slots)
+    outside = sorted(set(links.unit_of) - set(courses))
+    if outside:
+        raise ValueError(f"Linked course {outside[0]} is not selected for this timetable.")
+    unit_buckets, unit_course_buckets = links.buckets(plan_term_buckets, course_buckets)
+    counted: Counter | None = None
+    if on_placed is not None:
+        total = len(courses)
+
+        def counted(done: int, units: int) -> None:
+            on_placed(done * total // units if units else total, total)
+
+    placed = schedule(
+        links.units(courses),
+        links.adjacency(adj),
+        slots,
+        enrolled_sets=links.enrolled(enrolled_sets) if enrolled_sets else enrolled_sets,
+        max_per_day=max_per_day,
+        plan_term_buckets=unit_buckets,
+        course_buckets=unit_course_buckets,
+        pinned=links.pins(pinned),
+        credit_map=links.credits(credit_map, default=_CREDIT_DEFAULT),
+        preferred_slots=links.preferred(preferred_slots, enrolled_sets or {}),
+        seed=seed,
+        on_placed=counted,
+        student_credits=links.student_credits(credit_map, enrolled_sets, default=_CREDIT_DEFAULT),
+    )
+    return links.expand_entries(placed)
 
 
 # ── 5. QA report ────────────────────────────────────────────────
@@ -1014,12 +1118,18 @@ def attach_exam_relaxation_qa(
     schedule_entries: list[dict],
     threshold: int,
     thin_courses_report: list[dict],
+    links: LinkedExams = NO_LINKS,
 ) -> None:
     """Keep actual clashes visible while classifying only unrelaxed pairs as hard.
 
     Removing a thin course's graph edges approves pairs involving that course;
     it never approves a pair of two ordinary courses or a bucket-day violation.
     A mixed student collision can therefore have both approved and hard pairs.
+
+    A hard clash whose ordinary courses all belong to one link is a student
+    registered in two linked courses: two papers at one time, a real clash.
+    It is kept, counted, and marked ``linked_same_slot``, because no repair
+    can separate linked courses - only unlinking them, or the registration.
     """
     thin_courses = {row["course_code"] for row in thin_courses_report}
     qa["thin_threshold"] = threshold
@@ -1043,9 +1153,15 @@ def attach_exam_relaxation_qa(
             approved_only += 1
     qa["approved_thin_conflict_count"] = approved_only
     qa["hard_conflict_count"] = len(hard_clashes)
-    details = [{"kind": "same_slot", **row} for row in hard_clashes] + [
-        {"kind": "bucket_day", **row} for row in qa["bucket_day_violations"]
-    ]
+    details = [
+        {
+            "kind": "linked_same_slot"
+            if links and len({links.unit(course) for course in row["courses"]}) == 1
+            else "same_slot",
+            **row,
+        }
+        for row in hard_clashes
+    ] + [{"kind": "bucket_day", **row} for row in qa["bucket_day_violations"]]
     qa["manual_override_details"] = details
     qa["manual_override_count"] = len(details)
     qa["schedule_violation_details"] = details
@@ -1059,6 +1175,7 @@ def _build_qa(
     max_per_day: int = 2,
     plan_term_buckets: dict[tuple[str, int], set[str]] | None = None,
     credit_map: dict[str, int] | None = None,
+    links: LinkedExams = NO_LINKS,
 ) -> dict:
     """Validate the schedule and produce a QA report.
 
@@ -1067,7 +1184,8 @@ def _build_qa(
 
     Hard constraints:
       - Same-slot conflicts:    two courses sharing students in the same slot
-      - Bucket day violations:  two bucket-mates placed on the same day
+      - Bucket day violations:  two bucket-mates placed on the same day (linked
+                                courses are one sitting, so they count once)
 
     Soft-constraint metrics:
       - Day-overload count:     students exceeding max_per_day
@@ -1243,13 +1361,16 @@ def _build_qa(
     if plan_term_buckets:
         bucket_count = len(plan_term_buckets)
         for (program, term), bucket_courses in sorted(plan_term_buckets.items()):
-            # Group this bucket's courses by their assigned day
-            day_groups_b: dict[str, dict[str, str]] = defaultdict(dict)
+            # Group this bucket's exams by their assigned day: one per identity,
+            # and one per link, whose members all sit at once.
+            day_groups_b: dict[str, dict[object, list[str]]] = defaultdict(dict)
             for cc in sorted(bucket_courses):
                 day = course_day.get(cc)
                 if day is not None and day != "OVERFLOW":
-                    identity = course_identity.get(cc, cc)
-                    day_groups_b[day].setdefault(identity, cc)
+                    if cc in links.unit_of:
+                        day_groups_b[day].setdefault(("link", links.unit_of[cc]), []).append(cc)
+                    else:
+                        day_groups_b[day].setdefault(course_identity.get(cc, cc), [cc])
             # Any day with ≥2 bucket-mates is a violation
             for day, ccs in sorted(day_groups_b.items(), key=lambda item: day_order[item[0]]):
                 if len(ccs) >= 2:
@@ -1258,7 +1379,7 @@ def _build_qa(
                             "program": program,
                             "programme_term": term,
                             "day": day,
-                            "courses": sorted(ccs.values()),
+                            "courses": sorted(code for codes in ccs.values() for code in codes),
                         }
                     )
 
@@ -1663,6 +1784,14 @@ def derive_trial_budget(budget_seconds: float | None) -> int:
     return max(MIN_TRIAL_BUDGET, min(MAX_TRIAL_BUDGET, scaled))
 
 
+def _move_back(entries: list[dict], places: list[tuple[int, str, str]]) -> None:
+    """Put every entry of one tentative move back where it was."""
+    for entry, (slot_index, day, period) in zip(entries, places, strict=True):
+        entry["slot_index"] = slot_index
+        entry["day"] = day
+        entry["period"] = period
+
+
 def _rebalance_invigilators_pass(
     schedule_entries: list[dict],
     section_enrollment: dict[str, list[dict]],
@@ -1702,9 +1831,14 @@ def _rebalance_invigilators_pass(
     max_per_day: int = 2,
     caller: str = "unknown",
     on_trial: Counter | None = None,
+    links: LinkedExams = NO_LINKS,
 ) -> int:
     """Final post-pass that moves courses between days to flatten the
     per-day invigilator demand.
+
+    A link moves as one exam: every member goes, or none does, and a link is
+    pinned if any member is. Clashes and bucket days are judged between units;
+    rooms, seats and the student-load guard stay per real course.
 
     ``enrolled_sets`` arms the student-load guard and every production caller
     supplies it. Without it the pass can only see rooms and staff, and a move
@@ -1736,6 +1870,13 @@ def _rebalance_invigilators_pass(
     course_buckets = course_buckets or {}
     plan_term_buckets = plan_term_buckets or {}
     pinned_courses = pinned_courses or set()
+    # Units, not courses: with no links each of these is its input unchanged.
+    # A unit is moved by the members found on the hot day, so the board must
+    # arrive with every link whole; both callers check it before they call.
+    links.require_together(schedule_entries)
+    unit_adj = links.adjacency(adj)
+    unit_plan_term_buckets, unit_course_buckets = links.buckets(plan_term_buckets, course_buckets)
+    pinned_units = links.units_of(pinned_courses)
     allocation_context = allocation_context or RoomAllocationContext.for_periods(
         period_cohort_count(schedule_entries, section_enrollment)
     )
@@ -1845,15 +1986,15 @@ def _rebalance_invigilators_pass(
         for other, si in current_slot_of.items():
             if other == course or si != target_slot_idx:
                 continue
-            if other in adj.get(course, {}) or course in adj.get(other, {}):
+            if other in unit_adj.get(course, {}) or course in unit_adj.get(other, {}):
                 return True
         return False
 
     def _causes_bucket_violation(
         course: str, target_day: str, current_day_of: dict[str, str]
     ) -> bool:
-        for bk in course_buckets.get(course, []):
-            for mate in plan_term_buckets.get(bk, set()):
+        for bk in unit_course_buckets.get(course, []):
+            for mate in unit_plan_term_buckets.get(bk, set()):
                 if mate != course and current_day_of.get(mate) == target_day:
                     return True
         return False
@@ -1928,29 +2069,29 @@ def _rebalance_invigilators_pass(
         _, hottest_day, coldest_day = pair
 
         improved = False
-        # Snapshot current slot/day lookups
-        current_slot_of = {e["course_code"]: e["slot_index"] for e in schedule_entries}
-        current_day_of = {e["course_code"]: e["day"] for e in schedule_entries}
+        # Snapshot current slot/day lookups, by unit: a link's members share one.
+        current_slot_of = {links.unit(e["course_code"]): e["slot_index"] for e in schedule_entries}
+        current_day_of = {links.unit(e["course_code"]): e["day"] for e in schedule_entries}
 
         # Fixed external exams participate in load totals but may never move.
-        hot_entries = [
-            e
-            for e in schedule_entries
-            if e.get("day") == hottest_day and e["course_code"] not in pinned_courses
-        ]
+        hot_units: dict[str, list[dict]] = {}
+        for e in schedule_entries:
+            unit = links.unit(e["course_code"])
+            if e.get("day") == hottest_day and unit not in pinned_units:
+                hot_units.setdefault(unit, []).append(e)
         # Process larger courses first — they shift more invigilator weight
-        hot_entries.sort(
-            key=lambda e: -sum(
+        hot_entries = sorted(
+            hot_units.items(),
+            key=lambda item: -sum(
                 int(s.get("student_count", 0) or 0)
+                for e in item[1]
                 for s in section_enrollment.get(e["course_code"], [])
-            )
+            ),
         )
 
-        for entry in hot_entries:
-            cc = entry["course_code"]
-            old_slot_idx = entry["slot_index"]
-            old_day = entry["day"]
-            old_period = entry["period"]
+        for cc, moving in hot_entries:
+            old_slot_idx = moving[0]["slot_index"]
+            old_places = [(e["slot_index"], e["day"], e["period"]) for e in moving]
 
             for target_slot in slots_by_day.get(coldest_day, []):
                 tsi = target_slot["index"]
@@ -1967,9 +2108,10 @@ def _rebalance_invigilators_pass(
                     # A ceiling, not an estimate: the search may converge first.
                     on_trial(trials_spent, max_trials)
                 previous_rooms = [deepcopy(item.get("rooms", [])) for item in schedule_entries]
-                entry["slot_index"] = tsi
-                entry["day"] = target_slot["day"]
-                entry["period"] = target_slot["period"]
+                for e in moving:
+                    e["slot_index"] = tsi
+                    e["day"] = target_slot["day"]
+                    e["period"] = target_slot["period"]
                 try:
                     _repack_all()
                 except RoomAllocationTimeout:
@@ -1989,9 +2131,7 @@ def _rebalance_invigilators_pass(
                         allocation_context.searches,
                         allocation_context.limited_searches,
                     )
-                    entry["slot_index"] = old_slot_idx
-                    entry["day"] = old_day
-                    entry["period"] = old_period
+                    _move_back(moving, old_places)
                     for item, rooms_snapshot in zip(schedule_entries, previous_rooms, strict=True):
                         item["rooms"] = rooms_snapshot
                     return moves_accepted
@@ -2029,9 +2169,7 @@ def _rebalance_invigilators_pass(
 
                 # Revert the exact validated room snapshot as well as time.
                 # This does not spend the repair budget again on unchanged data.
-                entry["slot_index"] = old_slot_idx
-                entry["day"] = old_day
-                entry["period"] = old_period
+                _move_back(moving, old_places)
                 for item, rooms_snapshot in zip(schedule_entries, previous_rooms, strict=True):
                     item["rooms"] = rooms_snapshot
 
