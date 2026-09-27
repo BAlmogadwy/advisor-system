@@ -188,6 +188,13 @@ def _extract_metrics(payload: dict[str, Any]) -> CandidateMetrics:
     """
     qa = payload.get("qa") or {}
     schedule = payload.get("schedule") or []
+    # Rooming metrics live in the room QA block a build writes under
+    # ``qa["rooms"]``, never at the top level of ``qa``. Reading them from the
+    # top level scored every candidate 0 unseated sections and 0% utilisation,
+    # so no role - best_room_feasibility included - was ever ranked by rooms.
+    room_qa = qa.get("rooms")
+    room_qa = room_qa if isinstance(room_qa, dict) else {}
+    unassigned_rows = room_qa.get("unassigned_room_sections")
 
     # Overflow = courses placed on the OVERFLOW virtual day.
     overflow_count = sum(1 for e in schedule if e.get("day") == "OVERFLOW")
@@ -204,9 +211,10 @@ def _extract_metrics(payload: dict[str, Any]) -> CandidateMetrics:
         heavy_day_students=int(qa.get("heavy_day_students", 0)),
         same_slot_conflicts=int(qa.get("conflict_count", 0)),
         bucket_day_violations=int(qa.get("bucket_day_violations_count", 0)),
-        unassigned_room_sections=int(qa.get("unassigned_room_sections", 0)),
+        # One row per unseated original section (and cohort).
+        unassigned_room_sections=len(unassigned_rows) if isinstance(unassigned_rows, list) else 0,
         multi_sitting_sections=multi_sitting,
-        avg_utilisation=float(qa.get("avg_utilization", 0.0)),
+        avg_utilisation=float(room_qa.get("avg_utilization", 0.0) or 0.0),
         max_credit_load_per_day=int(qa.get("max_credit_load_per_day", 0)),
         max_exams_per_day=int(qa.get("max_exams_per_day_per_student", 0)),
     )

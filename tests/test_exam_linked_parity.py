@@ -21,9 +21,9 @@ from types import SimpleNamespace
 import pytest
 
 from core import exam_views, models
-from core.services import exam_min_change, exam_timetable
+from core.services import exam_min_change, exam_multistart, exam_timetable
 from core.services.exam_evaluation import evaluate_exam_schedule
-from core.services.exam_multistart import report_to_dict, run_multistart
+from core.services.exam_multistart import CandidateMetrics, report_to_dict, run_multistart
 from core.services.exam_room_allocation import RoomAllocationContext
 from core.services.linked_exams import NO_LINKS
 from tests import exam_linked_parity_corpus as corpus
@@ -124,13 +124,43 @@ GOLDEN = {
         1e16c0a734bcc094 90e45ff0c6f36940
     """.split(),
 }
-POPULATION = {
+MASTER_POPULATION = {
     "build": "6ba1d5514dd96ff6491fd6b47ef34220791b8a42cb93feca6ec4865615881bdd",
     "check": "5ef7c6e5c6176fbf63966241e4b1024cbcc9d8c2f7b35fa0213b270c0c843933",
     "optimise": "406aeca50c9b22bb4712370d48621127f24ee51d35d9bfe18135839014a46f83",
     "fix": "1ff7dfff7d0d3dc160789efee2e2849cb25fd930eecab0754d6c34c0995011e1",
     "multistart": "ded1b50dcf782a4cf2b3767e046255e4f9b3466bda1a7154e7f8d4d90cf79902",
 }
+#: The one deliberate change: multistart now ranks candidates on the room QA a
+#: build actually writes (``qa["rooms"]``), where master read two keys from the
+#: top level of ``qa`` that no build writes and scored every candidate 0
+#: unseated and 0% utilisation. On this population it moves two roles
+#: (lowest_overload, best_room_feasibility) from seed 3 (utilisation 0.713) to
+#: seed 5 (0.7409). ``test_multistart_differs_from_master_only_by_its_room_metrics``
+#: proves nothing else moved: with master's reader put back, every digest -
+#: multistart included - is master's again.
+POPULATION = {
+    **MASTER_POPULATION,
+    "multistart": "c582c74d413b8998bd1f1bab825763605fd6d6fb5ae328346c9c1c35024e7573",
+}
+
+
+def _master_extract_metrics(payload):
+    """``exam_multistart._extract_metrics`` exactly as master had it."""
+    qa = payload.get("qa") or {}
+    schedule = payload.get("schedule") or []
+    return CandidateMetrics(
+        overflow_count=sum(1 for e in schedule if e.get("day") == "OVERFLOW"),
+        students_over_limit_count=int(qa.get("students_over_limit_per_day", 0)),
+        heavy_day_students=int(qa.get("heavy_day_students", 0)),
+        same_slot_conflicts=int(qa.get("conflict_count", 0)),
+        bucket_day_violations=int(qa.get("bucket_day_violations_count", 0)),
+        unassigned_room_sections=int(qa.get("unassigned_room_sections", 0)),
+        multi_sitting_sections=int(qa.get("multi_sitting_sections", 0)),
+        avg_utilisation=float(qa.get("avg_utilization", 0.0)),
+        max_credit_load_per_day=int(qa.get("max_credit_load_per_day", 0)),
+        max_exams_per_day=int(qa.get("max_exams_per_day_per_student", 0)),
+    )
 
 
 def _assert_master(kind: str, digests: list[str]) -> None:
@@ -247,3 +277,18 @@ def test_build_check_optimise_fix_and_multistart_match_master_without_links(extr
         report_to_dict=report_to_dict,
     )
     assert corpus.run_population(api, extra) == POPULATION
+
+
+@pytest.mark.django_db
+def test_multistart_differs_from_master_only_by_its_room_metrics(monkeypatch):
+    """Put master's metric reader back and the whole population is master's."""
+    corpus.create_population(models)
+    monkeypatch.setattr(exam_multistart, "_extract_metrics", _master_extract_metrics)
+    api = SimpleNamespace(
+        build_exam_timetable=exam_timetable.build_exam_timetable,
+        evaluate_exam_schedule=evaluate_exam_schedule,
+        views=exam_views,
+        run_multistart=run_multistart,
+        report_to_dict=report_to_dict,
+    )
+    assert corpus.run_population(api) == MASTER_POPULATION
