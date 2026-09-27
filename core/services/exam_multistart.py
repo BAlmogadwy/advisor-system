@@ -410,6 +410,7 @@ def run_multistart(
     selected_courses: list[str] | None = None,
     selected_course_entries: list[dict] | None = None,
     pinned: list[dict] | None = None,
+    linked_exams: list[dict] | None = None,
     seeds: Iterable[int] | None = None,
     n_runs: int = 20,
     time_budget_s: float = 12.0,
@@ -483,6 +484,7 @@ def run_multistart(
             rebalance_invigilators=rebalance_invigilators,
             thin_conflict_threshold=thin_conflict_threshold,
             persist=False,
+            linked_exams=linked_exams,
         )
 
         completed_seeds.append(seed)

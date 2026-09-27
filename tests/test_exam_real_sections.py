@@ -428,7 +428,7 @@ def test_build_check_save_use_same_sections_and_reject_equal_count_section_drift
     def forbidden(*args, **kwargs):
         pytest.fail("Check and Save cannot reschedule or rebalance exams")
 
-    monkeypatch.setattr(exam_views, "schedule", forbidden)
+    monkeypatch.setattr(exam_views, "schedule_linked", forbidden)
     monkeypatch.setattr(exam_timetable, "schedule", forbidden)
     monkeypatch.setattr(exam_timetable, "_rebalance_invigilators_pass", forbidden)
     # The evaluator holds its own reference to the pass; patch that binding too.

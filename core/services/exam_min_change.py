@@ -14,12 +14,17 @@ proven optimality in milliseconds.
 The registrar's own edits are protected as firmly as pins. Without that,
 putting a dragged course back where it came from is a legal one-move repair,
 and the button would look as though it had undone their work.
+
+A linked exam reaches this module already collapsed to one exam (see
+``core.services.linked_exams``): the caller passes each link's number of
+courses as its ``weight``, so unseating, moving or displacing a link costs what
+it costs the registrar - one course each. Members never share a literal.
 """
 
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 
 from ortools.sat.python import cp_model
@@ -39,6 +44,12 @@ _REPAIR_WORK_BUDGET = 8.0
 
 ConflictGraph = dict[str, dict[str, int]]
 Buckets = dict[tuple[str, int], set[str]]
+Weights = Mapping[str, int]
+
+
+def _weighted(weight: int, term):
+    """``term`` counted ``weight`` times; left exactly as it was for a single course."""
+    return term if weight == 1 else weight * term
 
 
 @dataclass
@@ -443,6 +454,7 @@ def _move_lower_bound(
     adj: ConflictGraph,
     plan_term_buckets: Buckets | None,
     periods_per_day: int,
+    weights: Weights | None = None,
 ) -> int:
     """A floor no legal repair can go below: the proof behind "fewest possible".
 
@@ -455,7 +467,12 @@ def _move_lower_bound(
     One drag onto a frozen exam gives breaches with disjoint free members, so
     the floor is exact. Breaches crowded around one free exam share it, the
     floor drops, and a scope that moved more is correctly left unproven.
+
+    With ``weights`` a move costs the exam's weight: a clashing pair needs its
+    lighter free member moved, a crowded day all its free weight but the
+    heaviest member's (or all of it, when a frozen exam holds the day).
     """
+    weight = (weights or {}).get
     demands: list[tuple[frozenset[str], int]] = []
     for course in sorted(adj):
         if course not in placements:
@@ -464,7 +481,7 @@ def _move_lower_bound(
             if mate > course and mate in placements and placements[mate] == placements[course]:
                 free = frozenset(c for c in (course, mate) if c not in protected)
                 if free:
-                    demands.append((free, 1))
+                    demands.append((free, min(weight(c, 1) for c in free)))
     for members in (plan_term_buckets or {}).values():
         by_day: dict[int, list[str]] = {}
         for course in sorted(members):
@@ -477,7 +494,10 @@ def _move_lower_bound(
             if not free:
                 continue
             held = len(free) < len(same_day)
-            demands.append((free, len(free) if held else len(same_day) - 1))
+            free_weight = sum(weight(c, 1) for c in free)
+            demands.append(
+                (free, free_weight if held else free_weight - max(weight(c, 1) for c in free))
+            )
     used: set[str] = set()
     floor = 0
     for free, need in sorted(demands, key=lambda item: (len(item[0]), sorted(item[0]))):
@@ -507,6 +527,7 @@ def repair_minimum_change(
     periods_per_day: int,
     plan_term_buckets: Buckets | None = None,
     protected: set[str] | None = None,
+    weights: Weights | None = None,
 ) -> MinChangeResult:
     """Move the fewest exams that makes ``placements`` legal.
 
@@ -514,10 +535,14 @@ def repair_minimum_change(
     made. The search starts from the exams actually in a clash. If they cannot
     all be seated, it widens by a ring of their neighbours - exams that could
     step aside - before it will send anything to OVERFLOW.
+
+    ``weights`` counts an exam as that many courses (a linked exam), on every
+    level: unseated, moved and distance. An exam it does not name weighs one.
     """
     if slot_count <= 0 or periods_per_day <= 0:
         raise ValueError("A repair needs at least one slot and one period per day.")
     protected = set(protected or ())
+    weight = (weights or {}).get
     damaged, breaches = find_violations(placements, adj, plan_term_buckets, periods_per_day)
     movable = damaged - protected
     result = MinChangeResult(
@@ -544,16 +569,25 @@ def repair_minimum_change(
         # pins its position, because on a damage-scoped repair nothing can.
         # An exam whose own slot is now ruled out has no literal there: it
         # moves in every repair, and counts as a move in every repair.
+        #
+        # A linked exam weighs as many courses as it has, on every level: were
+        # the first left out, unseating a four-course link would cost no more
+        # than unseating a single exam.
         moved = sum(
-            1 - built.y[course, placements[course]]
+            _weighted(weight(course, 1), 1 - built.y[course, placements[course]])
             if (course, placements[course]) in built.y
-            else 1
+            else weight(course, 1)
             for course in scope
         )
         distance = sum(
-            abs(slot - placements[course]) * var for (course, slot), var in built.y.items()
+            _weighted(weight(course, 1), abs(slot - placements[course])) * var
+            for (course, slot), var in built.y.items()
         )
-        seats = [sum(built.unseated.values())] if built.unseated else []
+        seats = (
+            [sum(_weighted(weight(course, 1), var) for course, var in built.unseated.items())]
+            if built.unseated
+            else []
+        )
         return [*seats, moved, distance]
 
     budget = _Budget(_REPAIR_WORK_BUDGET)
@@ -627,9 +661,9 @@ def repair_minimum_change(
     # own OPTIMAL is not enough: it is optimal within the exams it was allowed
     # to move, and a board that was already illegal can be repaired more
     # cheaply by moving an exam outside that scope.
-    result.proven_minimal = not result.unseated and len(result.moved) == _move_lower_bound(
-        protected, placements, adj, plan_term_buckets, periods_per_day
-    )
+    result.proven_minimal = not result.unseated and sum(
+        weight(course, 1) for course in result.moved
+    ) == _move_lower_bound(protected, placements, adj, plan_term_buckets, periods_per_day, weights)
     result.status = "OPTIMAL" if result.proven_minimal else "FEASIBLE"
     result.widened = rings > 0
     _, result.violations_after = find_violations(repaired, adj, plan_term_buckets, periods_per_day)

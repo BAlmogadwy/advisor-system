@@ -64,7 +64,7 @@ from core.services.exam_timetable import (
     build_exam_timetable,
     build_plan_term_buckets,
     export_exam_timetable_xlsx,
-    schedule,
+    schedule_linked,
     validate_exam_pins,
 )
 from core.services.job_runtime import (
@@ -76,6 +76,13 @@ from core.services.job_runtime import (
     SolverBusy,
     solver_holder,
     solver_slot,
+)
+from core.services.linked_exams import (
+    LinkedExams,
+    LinkedExamsError,
+    linked_exams_qa,
+    require_link_list,
+    resolve_linked_exams,
 )
 from core.services.rbac import ROLE_EXAM_COMMITTEE, ROLE_SUPER_ADMIN, get_user_role
 from core.sidebar_context import get_sidebar_context
@@ -353,6 +360,9 @@ def _validation_error(exc: ValueError) -> tuple[int, dict]:
     body = {"ok": False, "error": str(exc)}
     if isinstance(exc, ExamCoursesUnavailable):
         body.update(code="courses_unavailable", unavailable_courses=exc.unavailable_courses)
+    elif isinstance(exc, LinkedExamsError):
+        # Which link, and which of its members, the page should point at.
+        body.update(code=exc.code, field=exc.field)
     return 400, body
 
 
@@ -379,6 +389,13 @@ def execute_exam_action(payload: dict, *, save: RunSaver = _save_run) -> tuple[i
             "ok": False,
             "error": "Pinned exams must be a list of course, day and period entries.",
         }
+    # Validated with the courses they name, where the build resolves them. Only
+    # the shape is checked here: a JSON null is refused, never read as no links.
+    linked_exams = payload.get("linked_exams", [])
+    try:
+        require_link_list(linked_exams)
+    except LinkedExamsError as exc:
+        return _validation_error(exc)
     randomize = payload.get("randomize", False)
     assign_rooms = bool(payload.get("assign_rooms", True))
     thin_threshold_raw = payload.get("thin_conflict_threshold", 0)
@@ -507,6 +524,7 @@ def execute_exam_action(payload: dict, *, save: RunSaver = _save_run) -> tuple[i
                 selected_courses=selected_courses,
                 selected_course_entries=selected_entries,
                 pinned=pinned,
+                linked_exams=linked_exams,
                 n_runs=n_runs,
                 time_budget_s=time_budget_s,
                 assign_rooms=assign_rooms,
@@ -537,6 +555,7 @@ def execute_exam_action(payload: dict, *, save: RunSaver = _save_run) -> tuple[i
             assign_rooms=assign_rooms,
             thin_conflict_threshold=thin_conflict_threshold,
             persist=False,
+            linked_exams=linked_exams,
         )
         # Check for feasibility error (bucket too large for available days)
         if result.get("feasibility_error"):
@@ -676,6 +695,12 @@ def _loaded_request_context(payload: dict, schedule_raw: list) -> dict:
         "seed": source.get("seed"),
         "thin_conflict_threshold": threshold,
         "pinned": payload.get("pinned", source.get("pinned", [])),
+        # Like the pins: what the page sends, else what the loaded run saved. A
+        # sent null is refused, not taken as "no links": that would erase the
+        # saved links and let Optimise split them with a 200.
+        "linked_exams": require_link_list(payload["linked_exams"])
+        if "linked_exams" in payload
+        else source.get("linked_exams", []),
         "source_input_fingerprint": source.get("input_fingerprint"),
         # Where each exam sat in the SAVED run, by (day, period). Slot numbers
         # would be wrong: adding a period renumbers every later slot, which
@@ -800,6 +825,23 @@ def _loaded_solver_inputs(
     )
 
 
+def _loaded_links(
+    linked_exams: list[dict] | None,
+    inputs: _LoadedSolverInputs,
+    pinned: list[dict[str, str]],
+    base_entries: list[dict],
+) -> LinkedExams:
+    """The links of a loaded board, resolved once, the same way for Optimise and Fix.
+
+    Both start from the board the registrar submitted, so a link whose members
+    sit apart there is refused - moving an exam is the registrar's decision,
+    not a side effect of pressing a solver button.
+    """
+    return resolve_linked_exams(
+        linked_exams, inputs.meta_by_course, pinned=pinned, schedule_entries=base_entries
+    )
+
+
 def _optimise_loaded_schedule(
     *,
     label: str,
@@ -814,6 +856,7 @@ def _optimise_loaded_schedule(
     thin_conflict_threshold: int,
     programs: list[str] | None = None,
     sections: list[str] | None = None,
+    linked_exams: list[dict] | None = None,
     save: RunSaver = _save_run,
 ) -> dict:
     base_entries = _normalise_loaded_schedule_entries(
@@ -825,15 +868,22 @@ def _optimise_loaded_schedule(
     inputs = _loaded_solver_inputs(
         base_entries, days, periods, programs, sections, thin_conflict_threshold
     )
+    links = _loaded_links(
+        linked_exams,
+        inputs,
+        validate_exam_pins(pinned, inputs.course_list, inputs.slots),
+        base_entries,
+    )
     preferred_slots = {
         entry["course_code"]: int(entry.get("slot_index", 0) or 0) for entry in base_entries
     }
     progress = current_progress()
     progress.stage("place_exams")
-    optimised = schedule(
+    optimised = schedule_linked(
         inputs.course_list,
         inputs.adj,
         inputs.slots,
+        links=links,
         enrolled_sets=inputs.enrolled_sets,
         max_per_day=max_per_day,
         plan_term_buckets=inputs.plan_term_buckets,
@@ -873,6 +923,7 @@ def _optimise_loaded_schedule(
         thin_conflict_threshold=thin_conflict_threshold,
         rebuild_mode="optimized_from_loaded",
         pinned=pinned,
+        linked_exams=links.saved(),
         save=save,
     )
 
@@ -893,6 +944,7 @@ def _minimum_change_schedule(
     carried_protection: list[str] | None = None,
     programs: list[str] | None = None,
     sections: list[str] | None = None,
+    linked_exams: list[dict] | None = None,
     save: RunSaver = _save_run,
 ) -> dict:
     """Repair the registrar's board by moving as few exams as possible.
@@ -902,6 +954,10 @@ def _minimum_change_schedule(
     since the board was last saved, and every exam an earlier repair in this run
     of repairs protected are all frozen, so the registrar's own work is never the
     thing that gets moved.
+
+    A link is repaired as one exam that weighs as many courses as it has: it is
+    frozen if any member is, moves whole, and goes to OVERFLOW whole, into one
+    shared ``Extra-n``. The report still names every real course that moved.
     """
     base_entries = _normalise_loaded_schedule_entries(
         schedule_raw,
@@ -917,6 +973,7 @@ def _minimum_change_schedule(
     pinned = validate_exam_pins(
         pinned, inputs.course_list, inputs.slots, schedule_entries=base_entries
     )
+    links = _loaded_links(linked_exams, inputs, pinned, base_entries)
     current = {
         entry["course_code"]: int(entry["slot_index"])
         for entry in base_entries
@@ -935,14 +992,22 @@ def _minimum_change_schedule(
     hand_placed = edited | carried
     protected = hand_placed | {pin["course_code"] for pin in pinned}
     current_progress().stage("fewest_moves")
+    # The repair sees each link as one exam; with no links these are the
+    # board's own placements, graph, buckets and protection.
+    unit_buckets, _ = links.buckets(inputs.plan_term_buckets, None)
     repair = repair_minimum_change(
-        placements=current,
-        adj=inputs.adj,
+        placements=links.placements(current),
+        adj=links.adjacency(inputs.adj),
         slot_count=len(inputs.slots),
         periods_per_day=len(periods),
-        plan_term_buckets=inputs.plan_term_buckets,
-        protected=protected,
+        plan_term_buckets=unit_buckets,
+        protected=links.units_of(protected),
+        weights=links.weights or None,
     )
+    placed = {
+        code: slot for unit, slot in repair.placements.items() for code in links.members_of(unit)
+    }
+    moved = links.expand_codes(repair.moved)
 
     slot_by_index = {slot["index"]: slot for slot in inputs.slots}
     overflow_index = max(
@@ -953,24 +1018,29 @@ def _minimum_change_schedule(
             if entry.get("day") == "OVERFLOW" and isinstance(entry.get("slot_index"), int)
         ]
     )
-    unseated = set(repair.unseated)
+    unseated = set(links.expand_codes(repair.unseated))
+    # One Extra-n per unseated unit: a link leaves the board as one exam.
+    shared_overflow: dict[str, int] = {}
     repaired_entries: list[dict] = []
     for entry in base_entries:
         code = entry["course_code"]
         if code in unseated:
             # No legal slot exists without moving a protected exam. Park it in
             # OVERFLOW rather than leave it on the slot that broke the rules.
-            overflow_index += 1
+            unit = links.unit(code)
+            if unit not in shared_overflow:
+                overflow_index += 1
+                shared_overflow[unit] = overflow_index
             repaired_entries.append(
                 {
                     **entry,
                     "day": "OVERFLOW",
-                    "period": f"Extra-{overflow_index}",
-                    "slot_index": overflow_index,
+                    "period": f"Extra-{shared_overflow[unit]}",
+                    "slot_index": shared_overflow[unit],
                 }
             )
-        elif code in repair.placements:
-            slot = slot_by_index[repair.placements[code]]
+        elif code in placed:
+            slot = slot_by_index[placed[code]]
             repaired_entries.append(
                 {**entry, "slot_index": slot["index"], "day": slot["day"], "period": slot["period"]}
             )
@@ -993,9 +1063,9 @@ def _minimum_change_schedule(
                 "course_code": code,
                 "course_name": inputs.meta_by_course.get(code, {}).get("course_name", ""),
                 "from": where(current[code]),
-                "to": where(repair.placements[code]),
+                "to": where(placed[code]),
             }
-            for code in repair.moved
+            for code in moved
         ],
         "unseated": sorted(unseated),
         "already_overflow": already_overflow,
@@ -1008,6 +1078,13 @@ def _minimum_change_schedule(
         "proven_minimal": repair.proven_minimal,
         "status": repair.status,
     }
+    if links:
+        # A student registered in two linked courses sits both papers at one
+        # time. That clash is real, but no repair may separate linked courses,
+        # so the report says how many there are rather than leaving it unfixed.
+        report["linked_clash_students"] = linked_exams_qa(
+            links, inputs.enrolled_sets, inputs.credit_map, inputs.meta_by_course
+        )["students_in_two_linked_courses"]
     if not repair.moved and not unseated:
         # Nothing to fix, nothing the rules let it fix, or no board found in
         # time: the board is exactly the one submitted. Evaluating it again and
@@ -1032,6 +1109,7 @@ def _minimum_change_schedule(
         thin_conflict_threshold=thin_conflict_threshold,
         rebuild_mode="minimum_change_from_loaded",
         pinned=pinned,
+        linked_exams=links.saved(),
         save=save,
         extra={
             "minimum_change": report,

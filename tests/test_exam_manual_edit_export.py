@@ -261,7 +261,7 @@ def test_check_save_export_agree_without_pinning_manual_moves(
         pytest.fail("Check and Save must evaluate the submitted placements without scheduling")
 
     with monkeypatch.context() as patch:
-        patch.setattr(exam_views, "schedule", scheduling_is_forbidden)
+        patch.setattr(exam_views, "schedule_linked", scheduling_is_forbidden)
         patch.setattr(exam_timetable, "schedule", scheduling_is_forbidden)
         patch.setattr(exam_timetable, "_rebalance_invigilators_pass", scheduling_is_forbidden)
         # The evaluator holds its own reference to the pass; patch that too.

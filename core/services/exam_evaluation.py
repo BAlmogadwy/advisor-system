@@ -47,6 +47,7 @@ from core.services.exam_timetable import (
     select_exam_course_enrollments,
     validate_exam_pins,
 )
+from core.services.linked_exams import linked_exams_qa, resolve_linked_exams
 
 
 def _course_identity_for_entry(entry: dict) -> str:
@@ -187,11 +188,15 @@ def evaluate_exam_schedule(
     sections: list[str] | None = None,
     pinned: list[dict] | None = None,
     rebalance_invigilators: bool = False,
+    linked_exams: list[dict] | None = None,
 ) -> dict:
     """Evaluate exact exam placements without scheduling or persisting a run.
 
     Canonical enrollment, credit, section and room inputs are captured once.
     Room assignment may change, but the submitted exam slots never do.
+
+    ``linked_exams`` are the timetable's links. A board that splits one is
+    refused rather than repaired: moving an exam is the registrar's decision.
 
     Deliberately not one transaction. It only reads, and on PostgreSQL's READ
     COMMITTED a transaction gives the reads no common snapshot anyway; on
@@ -214,6 +219,12 @@ def evaluate_exam_schedule(
         for index, (day, period) in enumerate((day, period) for day in days for period in periods)
     ]
     pinned = validate_exam_pins(pinned, course_list, slots, schedule_entries=schedule_entries)
+    links = resolve_linked_exams(
+        linked_exams,
+        {entry["course_code"]: entry for entry in schedule_entries},
+        pinned=pinned,
+        schedule_entries=schedule_entries,
+    )
     enrolled_sets, course_meta = _build_loaded_course_enrollments(
         schedule_entries, programs, sections
     )
@@ -296,9 +307,12 @@ def evaluate_exam_schedule(
                 max_per_day=max_per_day,
                 caller="optimise",
                 on_trial=progress.counter("balance_invigilators"),
+                links=links,
             )
-            # The post-pass moves exams between days; a pin may not be one of them.
+            # The post-pass moves exams between days; a pin may not be one of
+            # them, and a link may only have moved whole.
             validate_exam_pins(pinned, course_list, slots, schedule_entries=schedule_entries)
+            links.require_together(schedule_entries)
         _attach_room_metadata(schedule_entries, rooms_list)
 
     # QA is computed over the FINAL board. When the post-pass ran, the placements
@@ -309,6 +323,7 @@ def evaluate_exam_schedule(
         max_per_day=max_per_day,
         plan_term_buckets=plan_term_buckets,
         credit_map=credit_map,
+        links=links,
     )
     attach_exam_relaxation_qa(
         qa,
@@ -316,7 +331,10 @@ def evaluate_exam_schedule(
         schedule_entries,
         thin_conflict_threshold,
         thin_courses,
+        links=links,
     )
+    if links:
+        qa["linked_exams"] = linked_exams_qa(links, enrolled_sets, credit_map, course_meta)
     qa["rooms"] = _build_room_qa(schedule_entries, rooms_list if assign_rooms else [])
     qa["room_feasibility_violations"] = room_feasibility
     qa["rebalance_moves"] = rebalance_moves
@@ -350,6 +368,7 @@ def evaluate_exam_schedule(
         "enrollment_source": EXAM_ENROLLMENT_SOURCE,
         "enrollment_scope": {"programs": programs or [], "sections": sections or []},
         "pinned": pinned,
+        "linked_exams": links.saved(),
         "students_count": len(all_students),
         "courses": course_list,
         "courses_count": len(course_list),

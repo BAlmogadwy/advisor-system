@@ -97,7 +97,7 @@ def test_check_and_save_never_schedule_and_calculate_all_changed_cards(editor, m
     def forbidden(*args, **kwargs):
         raise AssertionError("A manual evaluation attempted optimization")
 
-    monkeypatch.setattr("core.exam_views.schedule", forbidden)
+    monkeypatch.setattr("core.exam_views.schedule_linked", forbidden)
     monkeypatch.setattr("core.services.exam_timetable.schedule", forbidden)
     monkeypatch.setattr("core.services.exam_timetable._rebalance_invigilators_pass", forbidden)
     # The evaluator imports the pass into its own namespace, so patching only
