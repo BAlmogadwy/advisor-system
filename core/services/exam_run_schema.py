@@ -70,7 +70,7 @@ from typing import Any, Literal, TypedDict, cast
 # Version constant
 # ---------------------------------------------------------------------------
 
-EXAM_RUN_SCHEMA_VERSION: int = 5
+EXAM_RUN_SCHEMA_VERSION: int = 6
 """Current schema version for ``ExamTimetableRun.result_json`` payloads.
 
 Bump this whenever you add a key the UI or XLSX exporter will read but
@@ -107,6 +107,10 @@ Version history
 - v5: ``operations_snapshot`` captures programme/gender counts and recorded
   instructors per canonical exam and teaching section. Older runs have no
   recoverable saved attribution and default to ``None`` without live queries.
+- v6: ``linked_exams`` lists the courses the committee examines as one exam,
+  each member by ``course_identity`` and display ``course_code``. A run saved
+  before links existed had none, so ``[]`` is the truth for it, not a guess.
+  ``qa.linked_exams`` (counts only) appears only on a run that has links.
 """
 
 
@@ -353,6 +357,7 @@ class ExamRunDisplayPayload(TypedDict, total=False):
     schedule: list[dict[str, Any]]
     enrollment_scope: dict[str, list[str]]
     pinned: list[dict[str, str]]
+    linked_exams: list[dict[str, Any]]
     qa: dict[str, Any]
     buckets_summary: list[dict[str, Any]]
     bucket_count: int
@@ -443,6 +448,12 @@ def _migrate_v4_to_v5(payload: dict[str, Any]) -> dict[str, Any]:
     return payload
 
 
+def _migrate_v5_to_v6(payload: dict[str, Any]) -> dict[str, Any]:
+    """v5 -> v6: a run saved before linked exams existed has no links."""
+    payload.setdefault("linked_exams", [])
+    return payload
+
+
 def _empty_enrolment_snapshot() -> dict[str, Any]:
     return {
         "snapshot_timestamp": "",
@@ -526,6 +537,7 @@ _MIGRATORS: list[Migrator] = [
     _migrate_v2_to_v3,
     _migrate_v3_to_v4,
     _migrate_v4_to_v5,
+    _migrate_v5_to_v6,
 ]
 
 
@@ -1129,6 +1141,7 @@ def _fill_ok_defaults(payload: dict[str, Any]) -> None:
     payload.setdefault("conflicts_count", 0)
     payload.setdefault("exam_review", None)
     payload.setdefault("operations_snapshot", None)
+    payload.setdefault("linked_exams", [])
     payload.setdefault("slots", [])
     payload.setdefault("schedule", [])
     payload.setdefault("qa", {})

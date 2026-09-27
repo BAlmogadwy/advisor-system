@@ -277,6 +277,6 @@ def test_legacy_snapshot_is_unavailable_without_reconstruction(django_assert_num
                 "section_enrollment": {},
             }
         )
-    assert result["schema_version"] == 5
+    assert result["schema_version"] == 6
     assert result["operations_snapshot"] is None
     assert normalise_exam_run_payload(result) == result
