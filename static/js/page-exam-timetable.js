@@ -11,6 +11,7 @@
  * Global state:
  *   _coursesLoaded   – whether the course preview is populated
  *   _pinnedCourses   – course identity → fixed exam time and course metadata
+ *   _linkedExams     – courses examined as one exam, each member by identity
  *   _currentRunId    – ID of the currently viewed run (for export link)
  *   _drillData       – {overload: [], heavy: [], ...} detail records for KPI drilldown;
  *                      null for a detail the loaded run never recorded
@@ -180,6 +181,7 @@ function examResponseError(data) {
     return gone;
   }
   if (typeof code === 'string' && code.startsWith('job_')) return new Error(JOB_TEXT.noResult);
+  if (typeof code === 'string' && code.startsWith('linked_exams')) return linkedExamsRefusal(code, data.field);
   if (code !== 'courses_unavailable') return new Error(data.error || T.reqFailed);
   const unavailable = Array.isArray(data.unavailable_courses) ? data.unavailable_courses.map(String).join(', ') : '';
   const error = new Error((IS_AR
@@ -206,6 +208,8 @@ function showExamRequestError(error, source) {
   const message = error instanceof TypeError
     ? (IS_AR ? 'تعذر الاتصال بالخادم. تحقق من الاتصال ثم أعد المحاولة. تغييراتك باقية في هذا التبويب.' : 'Could not reach the server. Check your connection and retry. Your changes remain in this tab.')
     : error?.message || T.reqFailed;
+  // Shown again beside the link it names, in the builder.
+  if (error?.examRequestKind === 'linked-exams') recordLinkError(error);
   if (['courses-unavailable', 'enrollment-source-changed'].includes(error.examRequestKind) && _currentResultData) {
     _sourceCoursesRejected = true;
     if (error.examRequestKind === 'enrollment-source-changed') _sourceRebuildRequired = true;
@@ -238,6 +242,13 @@ function showExamRequestError(error, source) {
       button.className = 'btn btn-outline-secondary et-source-review-action';
       button.textContent = IS_AR ? 'مراجعة مصدر المقررات' : 'Review course source';
       button.addEventListener('click', reviewExamCourseSource);
+      banner.append(' ', button);
+    } else if (error.examRequestKind === 'linked-exams') {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'btn btn-outline-secondary et-source-review-action';
+      button.textContent = IS_AR ? 'مراجعة الاختبارات المرتبطة' : 'Review linked exams';
+      button.addEventListener('click', reviewLinkedExams);
       banner.append(' ', button);
     }
   }
@@ -284,7 +295,8 @@ function positiveInteger(value, maximum) {
 function inputError(message, field) {
   $('etStatus').textContent = message;
   $('etStatus').className = 'alert alert-warning mt-2 py-2 mb-0';
-  const target = field?.id === 'examPinCourse' ? $('examPinCourseSearch') : field;
+  const target = field?.id === 'examPinCourse' ? $('examPinCourseSearch')
+    : field?.id === 'examLinkCourse' ? $('examLinkCourseSearch') : field;
   let parent = target?.parentElement;
   while (parent) {
     if (parent.tagName === 'DETAILS') parent.open = true;
@@ -605,6 +617,7 @@ function clearCoursePreview() {
 function renderCourseList(courses) {
   _courseMetadata = Object.fromEntries(courses.map(course => [course.course_code, course]));
   reconcilePinsWithCourses();
+  reconcileLinksWithCourses();
   $('courseEmptyState').hidden = true;
   $('courseSearch').value = '';
   $('courseVisibility').value = 'all';
@@ -885,6 +898,8 @@ $('buildBtn').addEventListener('click', async () => {
   const { programs, sections } = scope;
   const pinned = validatedPinPayload(header);
   if (!pinned) return;
+  const linkedExams = validatedLinkPayload();
+  if (!linkedExams) return;
   const randomize = $('etRandomize').checked;
   const thinThreshold = readThinThresholdForPost();
   if (thinThreshold === null) return;
@@ -922,6 +937,7 @@ $('buildBtn').addEventListener('click', async () => {
       selected_courses: selectedCourses,
       selected_course_entries: selectedCourseEntries,
       pinned,
+      linked_exams: linkedExams,
       randomize,
       thin_conflict_threshold: thinThreshold,
       previous_run_id: _currentResultData?.run_id,
@@ -1007,6 +1023,8 @@ function collectLoadedRunPayload(mode) {
   ))) return inputError(T.pinSettingsChanged, $('loadCoursesBtn'));
   const pinned = validatedPinPayload(header);
   if (!pinned) return null;
+  const linkedExams = validatedLinkPayload();
+  if (!linkedExams) return null;
   const thinThreshold = readThinThresholdForPost();
   if (thinThreshold === null) return null;
   const baseSchedule = loadedBaseSchedule(selectedCourses);
@@ -1025,6 +1043,8 @@ function collectLoadedRunPayload(mode) {
     selected_courses: selectedCourses,
     selected_course_entries: getCheckedCourseEntries(),
     pinned,
+    // Always sent: the page holds the links, and [] means "none".
+    linked_exams: linkedExams,
     randomize: $('etRandomize').checked,
     thin_conflict_threshold: thinThreshold,
     previous_run_id: _currentResultData?.run_id,
@@ -2536,6 +2556,16 @@ let _programCourses = {};   // { programName: Set([course_code, ...]) }
 let _pinnedCourses = {};    // course_identity → { course_code, course_identity, course_name, day, period }
 let _courseMetadata = {};
 
+/* ── Linked exams: courses examined as one exam, keyed by identity. ── */
+// Each link is { members: [{ course_identity, course_code, course_name }] },
+// in the order the registrar made them: that order is the request's, so a
+// refusal naming linked_exams[i] names the row the registrar sees.
+let _linkedExams = [];
+let _pendingLinkMembers = [];  // identities chosen in the picker, not linked yet
+let _linkError = null;         // the server's refusal, while the links it judged stand
+let _linkNotice = null;        // { text, error } said once after a link action
+let _linkDialog = null;        // { identities, options } while the time is chosen
+
 /* ── Current run ID (for export) ── */
 let _currentRunId = null;
 
@@ -2591,6 +2621,8 @@ function editorSignature() {
     .map(row => [row.querySelector('.et-period-start').value.trim(), row.querySelector('.et-period-end').value.trim()]);
   const courses = getCheckedCourseEntries().map(course => [course.course_code, course.course_identity]).sort();
   const pins = Object.values(_pinnedCourses).map(pin => [pin.course_identity, pin.day, pin.period]).sort();
+  // A link edit is a timetable edit: it needs a Check before Save.
+  const links = linkSignature();
   const placements = (_currentResultData?.schedule || []).map(entry =>
     [entry.course_identity || entry.course_code, entry.day, entry.period]).sort();
   return JSON.stringify({
@@ -2600,7 +2632,7 @@ function editorSignature() {
     programs: getCheckedValues('progList').sort(), sections: getCheckedValues('secList').sort(),
     relaxThin: $('etRelaxThin').checked,
     thinThreshold: $('etRelaxThin').checked ? $('etThinThreshold').value.trim() : '',
-    randomize: $('etRandomize').checked, courses, pins, placements,
+    randomize: $('etRandomize').checked, courses, pins, links, placements,
   });
 }
 
@@ -2964,7 +2996,7 @@ $('examDepartmentAll').addEventListener('change', event => {
 // Delegation also covers newly added period rows. Course bulk links call
 // updateCourseCount, while pins and drag/drop use updatePinBar.
 ['input', 'change'].forEach(eventName => $('examSettingsControls').addEventListener(eventName, event => {
-  if (event.target.matches('input, select') && !event.target.closest('#examPinEditor')) updateLoadedRunActions();
+  if (event.target.matches('input, select') && !event.target.closest('#examPinEditor, #examLinkEditor')) updateLoadedRunActions();
 }));
 
 function setBuilderBusy(busy) {
@@ -2972,7 +3004,7 @@ function setBuilderBusy(busy) {
   updateBuildSummary();
   // Keep the status live region readable while preventing edits to a request
   // already in flight. Inert also covers course-selection links and dragging.
-  for (const id of ['examSettingsControls', 'schedGrid', 'pinBar', 'historyList', 'historyPages', 'examEditToolbar', 'examReviewPanel', 'examMoveDialog']) {
+  for (const id of ['examSettingsControls', 'schedGrid', 'pinBar', 'historyList', 'historyPages', 'examEditToolbar', 'examReviewPanel', 'examMoveDialog', 'examLinkDialog']) {
     const element = $(id);
     if (!element) continue;
     element.inert = busy;
@@ -2993,10 +3025,12 @@ function updateBuildSummary() {
   const days = generateDayLabels().length;
   const periods = readExamPeriods().periods.length;
   const pins = Object.values(_pinnedCourses).length;
+  const links = _linkedExams.length;
   $('examBuildSummary').textContent = !_coursesLoaded
     ? (IS_AR ? 'حمّل المقررات للمتابعة.' : 'Load courses to continue.')
     : (IS_AR ? `${selected} مقرر · ${days} أيام · ${periods} فترات يومياً · ${pins} مثبت`
-      : `${selected} courses · ${days} days · ${periods} periods/day · ${pins} fixed`);
+      : `${selected} courses · ${days} days · ${periods} periods/day · ${pins} fixed`)
+      + (links ? (IS_AR ? ` · ${links} مرتبط` : ` · ${links} linked`) : '');
 }
 
 function updateLoadedRunActions() {
@@ -3265,6 +3299,9 @@ const REPAIR_TEXT = {
     ? `تعذّر إكمال الإصلاح، فلم يُنقل أي اختبار${count ? `، و${REPAIR_TEXT.remainingCount(count)}` : ''}. أعد المحاولة أو استخدم «تحسين الجدول الحالي».`
     : `The repair could not finish, so no exam was moved.${count ? ` ${REPAIR_TEXT.remainingCount(count)}.` : ''} Try again, or use Optimize current timetable.`,
   saved: () => IS_AR ? 'حُفظت النتيجة جدولاً جديداً في «الجداول المحفوظة».' : 'Saved as a new timetable in Saved timetables.',
+  linkedClash: count => IS_AR
+    ? `${arabicCount(count, AR_LINK_STUDENTS)} في مقررين مرتبطين، فيؤدون ورقتين في وقت واحد. لا يفصل الإصلاح المقررات المرتبطة أبداً؛ ألغِ الربط أو راجع التسجيل.`
+    : `${count} student${count === 1 ? ' is' : 's are'} registered in two linked courses: each sits two papers at one time. The repair never separates linked courses; unlink them or review the registration.`,
 };
 
 function repairMoveItem(move) {
@@ -3287,6 +3324,8 @@ function describeMinimumChange(report, { saved = true } = {}) {
   // Exams already parked in Overflow are not clashes this repair can see, but
   // the board is not finished while they are there.
   const alreadyOverflow = Number(report?.already_overflow) || 0;
+  // Students in two linked courses: a clash no repair may separate.
+  const linkedClash = Number(report?.linked_clash_students) || 0;
   const solved = ['OPTIMAL', 'FEASIBLE'].includes(report?.status);
 
   if (!solved) {
@@ -3294,7 +3333,8 @@ function describeMinimumChange(report, { saved = true } = {}) {
     return { html: `<p>${escapeAttr(REPAIR_TEXT.failed(remaining))}</p>`, clean: false };
   }
   const parts = [];
-  if (!moves.length && !unseated.length && !remaining) {
+  // "No exams clash" would be untrue while students sit two linked papers at once.
+  if (!moves.length && !unseated.length && !remaining && (alreadyOverflow || !linkedClash)) {
     parts.push(`<p>${escapeAttr(alreadyOverflow ? REPAIR_TEXT.stillOverflow(alreadyOverflow) : REPAIR_TEXT.nothing())}</p>`);
   }
   if (moves.length) {
@@ -3311,8 +3351,9 @@ function describeMinimumChange(report, { saved = true } = {}) {
     parts.push(`<p>${escapeAttr(REPAIR_TEXT.unseated(unseated.length))} ${codes}.</p>`);
   }
   if (remaining) parts.push(`<p>${escapeAttr(REPAIR_TEXT.remaining(remaining))}</p>`);
+  if (linkedClash) parts.push(`<p class="et-repair-linked">${escapeAttr(REPAIR_TEXT.linkedClash(linkedClash))}</p>`);
   if (saved) parts.push(`<p>${escapeAttr(REPAIR_TEXT.saved())}</p>`);
-  return { html: parts.join(''), clean: !remaining && !unseated.length && !alreadyOverflow };
+  return { html: parts.join(''), clean: !remaining && !unseated.length && !alreadyOverflow && !linkedClash };
 }
 
 function showRepairReport(report, options) {
@@ -3376,17 +3417,30 @@ function updateChangeReview() {
     const after = _pinnedCourses[identity];
     return (!before !== !after) || (before && after && (before.day !== after.day || before.period !== after.period));
   });
-  $('examChangeCount').textContent = IS_AR ? `${moved.length} منقول · ${pinChanges.length} تغيير تثبيت` : `${moved.length} moved · ${pinChanges.length} pin changes`;
-  $('examChangesSummary').textContent = IS_AR ? `مراجعة التغييرات (${moved.length + pinChanges.length})` : `Review changes (${moved.length + pinChanges.length})`;
+  const linkChanges = linkChangesSinceSave();
+  $('examChangeCount').textContent = (IS_AR ? `${moved.length} منقول · ${pinChanges.length} تغيير تثبيت` : `${moved.length} moved · ${pinChanges.length} pin changes`)
+    + (linkChanges.length ? (IS_AR ? ` · ${linkChanges.length} تغيير ربط` : ` · ${linkChanges.length} link changes`) : '');
+  $('examChangesSummary').textContent = IS_AR ? `مراجعة التغييرات (${moved.length + pinChanges.length + linkChanges.length})` : `Review changes (${moved.length + pinChanges.length + linkChanges.length})`;
   const row = (entry, before, after, kind) => `<li class="et-change-item" data-change-identity="${escapeAttr(entry.course_identity || entry.course_code)}" data-change-kind="${kind}"><span class="et-change-course"><strong>${escapeAttr(entry.course_code)}</strong><small class="et-course-name">${escapeAttr(entry.course_name || '')}</small></span><span class="et-change-times"><span>${IS_AR ? 'المحفوظ: ' : 'Saved: '}<bdi dir="ltr">${escapeAttr(examLocation(before))}</bdi></span><span aria-hidden="true"> ${IS_AR ? '←' : '→'} </span><span>${IS_AR ? 'الحالي: ' : 'Current: '}<bdi dir="ltr">${escapeAttr(examLocation(after))}</bdi></span></span>${examActionMarkup(entry, { allowStaleMove: true })}</li>`;
   const movedRows = moved.map(entry => row(entry, baseline.get(entry.course_identity || entry.course_code), entry, 'placement')).join('');
   const pinRows = pinChanges.map(identity => {
     const entry = currentExamByIdentity(identity) || baseline.get(identity) || _pinnedCourses[identity] || savedPins.get(identity);
     return row(entry, savedPins.get(identity), _pinnedCourses[identity], 'pin');
   }).join('');
+  const linkRows = linkChanges.map(change => {
+    const codes = change.members.map(member => `<bdi dir="ltr">${escapeAttr(member.course_code)}</bdi>`).join(' + ');
+    const names = change.members.map(member => member.course_name).filter(Boolean).join(IS_AR ? '، ' : ', ');
+    const state = linked => linked ? (IS_AR ? 'مرتبطة' : 'Linked') : (IS_AR ? 'غير مرتبطة' : 'Not linked');
+    const first = currentExamByIdentity(change.members[0].course_identity) || change.members[0];
+    return `<li class="et-change-item" data-change-identity="${escapeAttr(change.members[0].course_identity)}" data-change-kind="link" data-change-link="${escapeAttr(change.key)}"><span class="et-change-course"><strong>${codes}</strong><small class="et-course-name">${escapeAttr(names)}</small></span><span class="et-change-times"><span>${IS_AR ? 'المحفوظ: ' : 'Saved: '}${state(change.saved)}</span><span aria-hidden="true"> ${IS_AR ? '←' : '→'} </span><span>${IS_AR ? 'الحالي: ' : 'Current: '}${state(!change.saved)}</span></span>${examActionMarkup(first, { allowStaleMove: true, courseLabel: change.members.map(member => member.course_code).join(' + ') })}</li>`;
+  }).join('');
+  const anyLinks = _linkedExams.length || (_savedResultData.linked_exams || []).length;
   $('examChangesContent').innerHTML = (movedRows ? `<section class="et-change-group"><h4>${IS_AR ? 'مواعيد الاختبارات' : 'Exam placements'}</h4><ul class="et-change-list">${movedRows}</ul></section>` : '')
     + (pinRows ? `<section class="et-change-group"><h4>${IS_AR ? 'تغييرات التثبيت' : 'Pin changes'}</h4><ul class="et-change-list">${pinRows}</ul></section>` : '')
-    + (!movedRows && !pinRows ? `<p class="et-change-empty">${IS_AR ? 'لم تتغير مواعيد الاختبارات أو تثبيتاتها عن الجدول المحفوظ.' : 'Exam placements and pins match the saved timetable.'}</p>` : '');
+    + (linkRows ? `<section class="et-change-group" data-change-group="links"><h4>${IS_AR ? 'الاختبارات المرتبطة' : 'Linked exams'}</h4><ul class="et-change-list">${linkRows}</ul></section>` : '')
+    + (!movedRows && !pinRows && !linkRows ? `<p class="et-change-empty">${anyLinks
+      ? (IS_AR ? 'لم تتغير مواعيد الاختبارات أو تثبيتاتها أو روابطها عن الجدول المحفوظ.' : 'Exam placements, pins and linked exams match the saved timetable.')
+      : (IS_AR ? 'لم تتغير مواعيد الاختبارات أو تثبيتاتها عن الجدول المحفوظ.' : 'Exam placements and pins match the saved timetable.')}</p>` : '');
   if (focusedAction) [...$('examChangesContent').querySelectorAll(`[${focusedAction}]`)].find(button => button.getAttribute(focusedAction) === focusedIdentity && button.closest('[data-change-kind]')?.dataset.changeKind === focusedKind)?.focus({ preventScroll: true });
 }
 
@@ -3452,6 +3506,8 @@ function updateEditingStatus() {
     visibleCodes: _coursesLoaded ? getCheckedValues('courseList') : null,
   });
   window.ExamRosterDrawer?.paintLinks();
+  renderLinkWarnings();
+  updateLinkBar();
 }
 
 function cancelDraftChecks() {
@@ -3617,6 +3673,7 @@ function uniqueByOrder(items) {
 
 function hydrateHeaderFromRun(data) {
   restorePinsFromRun(data);
+  restoreLinksFromRun(data);
   $('etLabel').value = data.label ?? '';
   for (const [key, containerId, countId] of [
     ['programs', 'progList', 'progCount'],
@@ -3790,7 +3847,7 @@ function updateDrillActionAvailability() {
     if (_builderBusy) reason = IS_AR ? 'انتظر اكتمال العملية الحالية.' : 'Wait for the current request to finish.';
     else if (!selectable) reason = IS_AR ? 'المقرر غير متاح ضمن التحديد الحالي.' : 'Course is unavailable in the current selection.';
     else if (button.hasAttribute('data-move-exam')) {
-      if (pinForCourse(entry.course_code)) reason = IS_AR ? 'ألغِ التثبيت للنقل.' : 'Unpin to move.';
+      if (groupPin(entry.course_code)) reason = IS_AR ? 'ألغِ التثبيت للنقل.' : 'Unpin to move.';
       else if (needsExamSourceRebuild() && !button.hasAttribute('data-allow-unchecked')) reason = IS_AR ? 'راجع مصدر المقررات وأعد البناء قبل النقل من هذه التفاصيل السابقة.' : 'Review the course source and rebuild before moving from these previous details.';
       else if (!fresh && !button.hasAttribute('data-allow-unchecked')) reason = IS_AR ? 'تحقق من التغييرات قبل النقل من هذه التفاصيل السابقة.' : 'Check changes before moving from these previous details.';
     }
@@ -3895,11 +3952,18 @@ const _drillRenderers = {
         <th>${IS_AR ? 'الفترة / اليوم' : 'Slot / Day'}</th>
         <th>${IS_AR ? 'المقررات' : 'Courses'}</th>
       </tr>`,
+      // A student in two linked courses sits both papers at one time: a real
+      // clash that no tool may separate, so it says what it is.
+      note: rows.some(r => r.kind === 'linked-same-slot') ? (IS_AR
+        ? 'تعارض الاختبار المرتبط: طالب مسجل في مقررين مرتبطين يؤدي ورقتين في وقت واحد. لا يفصل «إصلاح بأقل تغيير» المقررات المرتبطة؛ ألغِ الربط أو راجع التسجيل.'
+        : 'A linked-exam clash is a student registered in two linked courses: two papers at one time. Fix with fewest moves never separates linked courses; unlink them or review the registration.') : '',
       body: rows.map(r => {
         const isBucket = r.kind === 'bucket-day';
         const typeBadge = isBucket
           ? `<span class="badge bg-warning text-dark">${IS_AR ? 'مجموعة' : 'Bucket'}</span>`
-          : `<span class="badge bg-danger">${IS_AR ? 'طالب' : 'Student'}</span>`;
+          : r.kind === 'linked-same-slot'
+            ? `<span class="badge bg-danger et-linked-clash">${IS_AR ? 'تعارض اختبار مرتبط' : 'Linked-exam clash'}</span>`
+            : `<span class="badge bg-danger">${IS_AR ? 'طالب' : 'Student'}</span>`;
         const who = isBucket
           ? `${r.program || ''}/Term${r.programme_term ?? ''}`
           : `<strong>${r.student_id}</strong>`;
@@ -4156,11 +4220,15 @@ function renderResults(data, { evaluation = false, preserveViewport = true } = {
     });
     _currentResultData = { ..._currentResultData, ...cloneData(data), schedule: placements,
       run_id: _currentRunId, rebuild_mode: _currentResultData.rebuild_mode,
-      pinned: Object.values(_pinnedCourses).map(pin => ({ ...pin })) };
+      pinned: Object.values(_pinnedCourses).map(pin => ({ ...pin })),
+      linked_exams: linkPayload() };
     data = _currentResultData;
   } else {
     cancelDraftChecks();
     restorePinsFromRun(data);
+    // Before the saved signature is taken below: restored later, the page
+    // would send no links, and the first Check would say the inputs changed.
+    restoreLinksFromRun(data);
     _currentResultData = cloneData(data);
     _undoCommands = [];
     _redoCommands = [];
@@ -4170,6 +4238,7 @@ function renderResults(data, { evaluation = false, preserveViewport = true } = {
   hideLegacyQaWarnings();
   _checkState = 'checked';
   _checkError = '';
+  _linkError = null;
   buildProgramCoursesMap(data.buckets_summary);
   $('etResults').classList.remove('d-none');
 
@@ -4350,9 +4419,12 @@ function renderResults(data, { evaluation = false, preserveViewport = true } = {
     _drillCourseMetadata.set(entry.course_identity || entry.course_code, { ...entry });
   }
   // Store drilldown data + close any open panel
+  // The server says which clashes are inside a link (linked_same_slot).
+  const linkedClashes = new Set((data.qa?.manual_override_details ?? [])
+    .filter(row => row?.kind === 'linked_same_slot').map(row => `${row.student_id}|${row.slot_index}`));
   _drillData = {
     conflicts:       [
-      ...(data.qa?.same_slot_conflicts ?? []).map(r => ({ ...r, kind: 'same-slot' })),
+      ...(data.qa?.same_slot_conflicts ?? []).map(r => ({ ...r, kind: linkedClashes.has(`${r.student_id}|${r.slot_index}`) ? 'linked-same-slot' : 'same-slot' })),
       ...(data.qa?.bucket_day_violations ?? []).map(r => ({ ...r, kind: 'bucket-day' })),
     ],
     overload:        data.qa?.overload_details ?? [],
@@ -4425,6 +4497,7 @@ function examCourseIcon(name) {
     lock: '<rect x="5" y="10" width="14" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/>',
     online: '<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a17 17 0 0 1 0 18 17 17 0 0 1 0-18"/>',
     find: '<circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="2"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/>',
+    link: '<path d="M10 14a4 4 0 0 0 5.66 0l3-3a4 4 0 0 0-5.66-5.66l-1 1"/><path d="M14 10a4 4 0 0 0-5.66 0l-3 3a4 4 0 0 0 5.66 5.66l1-1"/>',
   };
   return `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">${paths[name] || ''}</svg>`;
 }
@@ -4451,21 +4524,39 @@ function renderScheduleGrid(schedule, slots) {
   const focusedAction = active?.matches?.('[data-exam-pin]') ? 'data-exam-pin' : active?.matches?.('[data-exam-move]') ? 'data-exam-move' : active?.matches?.('[data-exam-related]') ? 'data-exam-related' : null;
   const scrollLeft = container.scrollLeft;
   const coursesByCode = new Map(schedule.map(entry => [entry.course_code, entry]));
+  const linkByCode = linkedCodeIndex();
   const courseChip = code => {
-    const pinned = Boolean(pinForCourse(code));
+    const pinned = Boolean(groupPin(code));
     const course = coursesByCode.get(code);
     const fullName = String(course?.course_name || '').trim();
     const label = `${code} — ${fullName || code}`;
-    const pinLabel = pinned ? T.pinRemove : (IS_AR ? 'تثبيت' : 'Pin');
-    const moveLabel = IS_AR ? 'نقل' : 'Move';
+    const link = linkByCode.get(code);
+    // A linked card's Pin and Move act on the whole link, and say so.
+    const pinLabel = link
+      ? (pinned ? (IS_AR ? 'إلغاء تثبيت الاختبارات المرتبطة' : 'Unpin linked exams') : (IS_AR ? 'تثبيت الاختبارات المرتبطة' : 'Pin linked exams'))
+      : pinned ? T.pinRemove : (IS_AR ? 'تثبيت' : 'Pin');
+    const moveLabel = link ? (IS_AR ? 'نقل الاختبارات المرتبطة' : 'Move linked exams') : (IS_AR ? 'نقل' : 'Move');
     const lockHint = IS_AR ? 'ألغِ التثبيت للنقل' : 'Unpin to move';
     const relatedLabel = IS_AR ? 'عرض الطلاب المشتركين' : 'Show shared students';
     return examCourseCardMarkup(course, {
       classes: `et-course${pinned ? ' et-pinned' : ''}`, pinned,
       attributes: `data-course="${escapeAttr(code)}" draggable="${!pinned}"`,
       actions: `<span class="et-schedule-course-actions et-course-card-actions"><button type="button" data-exam-pin="${escapeAttr(code)}" aria-pressed="${pinned}" aria-label="${escapeAttr(`${pinLabel}: ${label}`)}" title="${escapeAttr(`${pinLabel}: ${label}`)}" ${course?.day === 'OVERFLOW' ? 'disabled' : ''}>${examCourseIcon('pin')}</button><button type="button" data-exam-move="${escapeAttr(code)}" aria-label="${escapeAttr(`${moveLabel}: ${label}`)}" title="${escapeAttr(`${pinned ? lockHint : moveLabel}: ${label}`)}" ${pinned ? 'disabled' : ''}>${examCourseIcon('move')}</button></span>`,
-      extra: `<button type="button" class="et-related-action" data-exam-related="${escapeAttr(course?.course_identity || code)}" aria-label="${escapeAttr(`${relatedLabel}: ${label}`)}" title="${escapeAttr(`${relatedLabel}: ${label}`)}">${examCourseIcon('related')}</button>`,
+      extra: `<button type="button" class="et-related-action" data-exam-related="${escapeAttr(course?.course_identity || code)}" aria-label="${escapeAttr(`${relatedLabel}: ${label}`)}" title="${escapeAttr(`${relatedLabel}: ${label}`)}">${examCourseIcon('related')}</button>`
+        + (link ? linkLabelMarkup(link.filter(other => other !== code)) : ''),
     });
+  };
+  // Members sharing a cell are drawn together, in one labelled group.
+  const cellChips = codes => {
+    const drawn = new Set();
+    return codes.map(code => {
+      if (drawn.has(code)) return '';
+      const link = linkByCode.get(code);
+      const together = link ? codes.filter(other => link.includes(other)) : [code];
+      together.forEach(other => drawn.add(other));
+      if (together.length < 2) return courseChip(code);
+      return `<div class="et-link-group" role="group" aria-label="${escapeAttr(linkGroupLabel(together))}" data-link-group="${escapeAttr(together.join('+'))}">${together.map(courseChip).join(' ')}</div>`;
+    }).filter(Boolean).join(' ');
   };
   if (!schedule.length) {
     container.style.setProperty('--exam-period-count', '1');
@@ -4530,8 +4621,7 @@ function renderScheduleGrid(schedule, slots) {
       if (courses.length === 0) {
         html += `<td class="et-empty" data-day="${escapeAttr(day)}" data-period="${escapeAttr(period)}">—</td>`;
       } else {
-        const chips = courses.map(code => courseChip(code)).join(' ');
-        html += `<td data-day="${escapeAttr(day)}" data-period="${escapeAttr(period)}"><div class="et-slot-courses">${chips}</div></td>`;
+        html += `<td data-day="${escapeAttr(day)}" data-period="${escapeAttr(period)}"><div class="et-slot-courses">${cellChips(courses)}</div></td>`;
       }
     }
     html += '</tr>';
@@ -4541,8 +4631,7 @@ function renderScheduleGrid(schedule, slots) {
   if (overflowCourses.length > 0) {
     html += `<tr class="et-overflow-row">`;
     html += `<th scope="row" class="et-overflow-label"><span class="et-grid-day-label">${T.overflow}</span></th>`;
-    const chips = overflowCourses.map(code => courseChip(code)).join(' ');
-    html += `<td colspan="${periodOrder.length}"><div class="et-slot-courses">${chips}</div></td>`;
+    html += `<td colspan="${periodOrder.length}"><div class="et-slot-courses">${cellChips(overflowCourses)}</div></td>`;
     html += '</tr>';
   }
 
@@ -4701,10 +4790,13 @@ function selectPinnedDay(pin) {
 
 // The native select remains the canonical value/identity authority. The visible
 // combobox only searches its options and commits through the existing change path.
-function createPinCoursePicker() {
-  const select = $('examPinCourse'), input = $('examPinCourseSearch');
-  const root = $('examPinCoursePicker'), toggle = $('examPinCourseToggle');
-  const popup = $('examPinCoursePopup'), list = $('examPinCourseResults');
+// The Fixed exam times and Linked exams pickers share it; `prefix` names their
+// elements (examPinCourse, examPinCourseSearch, ...), `onSearch` re-renders
+// their editor while the registrar types.
+function createCoursePicker(prefix, onSearch) {
+  const select = $(`${prefix}Course`), input = $(`${prefix}CourseSearch`);
+  const root = $(`${prefix}CoursePicker`), toggle = $(`${prefix}CourseToggle`);
+  const popup = $(`${prefix}CoursePopup`), list = $(`${prefix}CourseResults`);
   let searching = false, previousIdentity = '', active = -1, matches = [];
   const compactCode = value => String(value).replace(/[\s\-–—]/g, '').toLocaleLowerCase();
   const options = () => [...select.options].filter(option => option.value);
@@ -4759,10 +4851,10 @@ function createPinCoursePicker() {
     list.innerHTML = matches.map((option, index) => {
       const course = _courseMetadata[option.value];
       const plans = course?.programs?.join(' · ') || '';
-      return `<div id="examPinCourseOption-${index}" role="option" data-value="${escapeAttr(option.value)}" aria-selected="false" class="et-course-picker-option"><strong dir="ltr">${escapeAttr(option.value)}</strong><span>${escapeAttr(course?.course_name || option.textContent)}</span>${plans ? `<small>${escapeAttr(plans)}</small>` : ''}</div>`;
+      return `<div id="${prefix}CourseOption-${index}" role="option" data-value="${escapeAttr(option.value)}" aria-selected="false" class="et-course-picker-option"><strong dir="ltr">${escapeAttr(option.value)}</strong><span>${escapeAttr(course?.course_name || option.textContent)}</span>${plans ? `<small>${escapeAttr(plans)}</small>` : ''}</div>`;
     }).join('');
-    $('examPinCourseEmpty').hidden = matches.length > 0;
-    $('examPinCourseSearchStatus').textContent = IS_AR ? `${matches.length} مقرر مطابق` : `${matches.length} matching courses`;
+    $(`${prefix}CourseEmpty`).hidden = matches.length > 0;
+    $(`${prefix}CourseSearchStatus`).textContent = IS_AR ? `${matches.length} مقرر مطابق` : `${matches.length} matching courses`;
     const selectedIndex = matches.findIndex(option => option.value === select.value);
     highlight(selectedIndex < 0 ? 0 : selectedIndex);
     positionPopup();
@@ -4803,7 +4895,7 @@ function createPinCoursePicker() {
     if (!searching) previousIdentity = select.selectedOptions[0]?.dataset.identity || '';
     searching = true;
     select.value = '';
-    renderPinEditor();
+    onSearch();
     open();
   });
   input.addEventListener('keydown', event => {
@@ -4854,9 +4946,11 @@ function createPinCoursePicker() {
       if (!popup.hidden) render();
     },
     selected() { searching = false; previousIdentity = ''; },
+    close,
   };
 }
-const pinCoursePicker = createPinCoursePicker();
+const pinCoursePicker = createCoursePicker('examPin', () => renderPinEditor());
+const linkCoursePicker = createCoursePicker('examLink', () => renderLinkEditor());
 
 function renderPinEditor() {
   const pins = Object.entries(_pinnedCourses);
@@ -4868,7 +4962,7 @@ function renderPinEditor() {
   renderPinDayOptions(context.days);
   pinOptions('examPinPeriod', context.periods.map(period => [period, period]), T.choosePinPeriod);
   $('applyExamPin').disabled = !_coursesLoaded || Boolean(context.error) || !$('examPinCourse').value || !$('examPinDay').value || !$('examPinPeriod').value;
-  $('applyExamPin').textContent = pinForCourse($('examPinCourse').value) ? T.updatePin : T.pinCourse;
+  $('applyExamPin').textContent = groupPin($('examPinCourse').value) ? T.updatePin : T.pinCourse;
   $('examPinCount').textContent = pins.length ? `(${pins.length})` : '';
   $('clearExamPins').classList.toggle('d-none', !pins.length);
   $('examPinTable').classList.toggle('d-none', !pins.length);
@@ -4889,6 +4983,8 @@ function renderPinEditor() {
     ? (!selectedCourse ? T.choosePinCourse : !selectedDay ? T.choosePinDay : !selectedPeriod ? T.choosePinPeriod : '') : '';
   $('examPinNotice').textContent = context.error || (invalid ? T.pinNeedsReview : selectionHint || (pins.length ? T.pinsReady : T.pinsEmpty));
   $('examPinNotice').className = `small mt-2 mb-0 ${invalid || context.error ? 'text-danger' : 'text-secondary'}`;
+  // Pins, days, periods and the selection all shape the linked exams too.
+  renderLinkEditor();
 }
 
 function validatedPinPayload(header) {
@@ -4901,7 +4997,7 @@ function validatedPinPayload(header) {
 }
 
 function manualSnapshot() {
-  return { pins: cloneData(_pinnedCourses), placements: (_currentResultData?.schedule || []).map(entry => ({
+  return { pins: cloneData(_pinnedCourses), links: cloneData(_linkedExams), placements: (_currentResultData?.schedule || []).map(entry => ({
     identity: entry.course_identity || entry.course_code, day: entry.day, period: entry.period, slot_index: entry.slot_index,
   })) };
 }
@@ -4931,6 +5027,7 @@ function runManualCommand(mutate) {
 function restoreManualSnapshot(snapshot) {
   const workspaceAnchor = captureExamWorkspaceAnchor();
   _pinnedCourses = cloneData(snapshot.pins);
+  _linkedExams = cloneData(snapshot.links || []);
   const placements = new Map(snapshot.placements.map(entry => [entry.identity, entry]));
   for (const entry of _currentResultData?.schedule || []) {
     const placement = placements.get(entry.course_identity || entry.course_code);
@@ -4957,33 +5054,40 @@ function redoManualEdit() {
 function setCoursePin(code, day, period) {
   const course = _courseMetadata[code];
   if (!course) return false;
+  // A linked course is pinned with its link: every member, at one time.
+  const codes = linkedCodes(code).filter(member => _courseMetadata[member]);
   return runManualCommand(() => {
-    _pinnedCourses[pinIdentity(course)] = { course_code: code, course_identity: pinIdentity(course), course_name: course.course_name || '', day, day_identity: examDayIdentity(day), period };
-    if (_currentResultData) updateCurrentScheduleMove(code, day, period);
+    for (const member of codes) {
+      const meta = _courseMetadata[member];
+      _pinnedCourses[pinIdentity(meta)] = { course_code: member, course_identity: pinIdentity(meta), course_name: meta.course_name || '', day, day_identity: examDayIdentity(day), period };
+      if (_currentResultData) updateCurrentScheduleMove(member, day, period);
+    }
   });
 }
 
 function removeCoursePin(identity) {
-  return runManualCommand(() => { delete _pinnedCourses[identity]; });
+  return runManualCommand(() => { for (const member of linkIdentities(identity)) delete _pinnedCourses[member]; });
 }
 
 function clearCoursePins() {
   return runManualCommand(() => { _pinnedCourses = {}; });
 }
 
+// A linked exam moves as one: every member, in one Undo step.
 function moveExamCourse(code, day, period) {
   if (_builderBusy) return false;
   const entry = _currentResultData?.schedule?.find(item => item.course_code === code);
-  if (!entry || (entry.day === day && entry.period === period)) return false;
-  if (pinForCourse(code)) return inputError(IS_AR ? 'ألغِ تثبيت الاختبار قبل نقله، أو عدّل موعده في المواعيد المثبتة.' : 'Unpin to move, or deliberately change its time in Fixed exam times.');
+  const members = linkedCodes(code).map(member => _currentResultData?.schedule?.find(item => item.course_code === member)).filter(Boolean);
+  if (!entry || members.every(item => item.day === day && item.period === period)) return false;
+  if (groupPin(code)) return inputError(IS_AR ? 'ألغِ تثبيت الاختبار قبل نقله، أو عدّل موعده في المواعيد المثبتة.' : 'Unpin to move, or deliberately change its time in Fixed exam times.');
   if (!_currentResultData.slots.some(slot => slot.day === day && slot.period === period)) return false;
-  return runManualCommand(() => updateCurrentScheduleMove(code, day, period));
+  return runManualCommand(() => members.forEach(item => updateCurrentScheduleMove(item.course_code, day, period)));
 }
 
 function toggleExamPin(code) {
   const entry = _currentResultData?.schedule?.find(item => item.course_code === code);
   if (!entry || entry.day === 'OVERFLOW' || _builderBusy) return;
-  const pin = pinForCourse(code);
+  const pin = groupPin(code);
   if (pin) removeCoursePin(pin.course_identity);
   else setCoursePin(code, entry.day, entry.period);
 }
@@ -5002,7 +5106,7 @@ document.addEventListener('keydown', event => {
 
 $('examPinCourse').addEventListener('change', () => {
   pinCoursePicker.selected();
-  const pin = pinForCourse($('examPinCourse').value);
+  const pin = groupPin($('examPinCourse').value);
   if (pin) {
     selectPinnedDay(pin);
     $('examPinPeriod').value = pin.period;
@@ -5072,11 +5176,12 @@ function updatePinBar() {
     : (IS_AR ? 'بناء الجدول' : 'Build Timetable');
   updateLoadedRunActions();
   renderPinEditor();
+  updateLinkBar();
 }
 
 $('schedGrid').addEventListener('dragstart', event => {
   const chip = event.target.closest('.et-course');
-  if (!chip || event.target.closest('button') || _builderBusy || pinForCourse(chip.dataset.course)) {
+  if (!chip || event.target.closest('button') || _builderBusy || groupPin(chip.dataset.course)) {
     event.preventDefault();
     return;
   }
@@ -5111,14 +5216,23 @@ $('schedGrid').addEventListener('click', event => {
   const pin = event.target.closest('[data-exam-pin]');
   if (pin) { toggleExamPin(pin.dataset.examPin); return; }
   const move = event.target.closest('[data-exam-move]');
-  if (!move || _builderBusy || pinForCourse(move.dataset.examMove)) return;
+  if (!move || _builderBusy || groupPin(move.dataset.examMove)) return;
   openExamMoveDialog(move.dataset.examMove);
 });
 function openExamMoveDialog(code) {
   const entry = _currentResultData?.schedule?.find(item => item.course_code === code);
-  if (!entry || _builderBusy || pinForCourse(code) || !currentExamIsSelected(entry)) return;
+  if (!entry || _builderBusy || groupPin(code) || !currentExamIsSelected(entry)) return;
   _moveCourseCode = entry.course_code;
-  $('examMoveTitle').textContent = (IS_AR ? 'نقل الاختبار: ' : 'Move exam: ') + `${entry.course_code} — ${entry.course_name || entry.course_code}`;
+  const members = linkedCodes(code);
+  const help = $('examMoveHelp');
+  help.dataset.defaultText ??= help.textContent;
+  if (members.length > 1) {
+    $('examMoveTitle').textContent = (IS_AR ? 'نقل الاختبارات المرتبطة: ' : 'Move linked exams: ') + members.join(IS_AR ? '، ' : ', ');
+    help.textContent = IS_AR ? 'تُنقل المقررات المرتبطة معاً إلى اليوم والفترة المختارين.' : 'Linked courses move together to the day and period you choose.';
+  } else {
+    $('examMoveTitle').textContent = (IS_AR ? 'نقل الاختبار: ' : 'Move exam: ') + `${entry.course_code} — ${entry.course_name || entry.course_code}`;
+    help.textContent = help.dataset.defaultText;
+  }
   pinOptions('examMoveDay', uniqueByOrder(_currentResultData.slots.map(slot => slot.day)).map(day => [day, day]), T.choosePinDay);
   pinOptions('examMovePeriod', uniqueByOrder(_currentResultData.slots.map(slot => slot.period)).map(period => [period, period]), T.choosePinPeriod);
   $('examMoveDay').value = entry.day === 'OVERFLOW' ? '' : entry.day;
@@ -5155,6 +5269,523 @@ $('clearPins').addEventListener('click', (e) => {
   e.preventDefault();
   clearCoursePins();
 });
+
+/* ── Linked exams: the builder section, the alignment dialog and the board ── */
+// A link is courses the committee examines as one exam: always the same day
+// and period, moved, pinned and sent to the Overflow slot together. Each
+// course keeps its own card, sections and student lists; the board draws the
+// members of a link as one group. The server refuses any request that would
+// split a link, so every edit here keeps the members together.
+const AR_LINK_COURSES = { one: 'ربط مقرر واحد', two: 'ربط مقررين', few: 'ربط {n} مقررات', many: 'ربط {n} مقرراً', other: 'ربط {n} مقرر' };
+const AR_LINKED_EXAMS = { one: 'اختبار مرتبط واحد', two: 'اختباران مرتبطان', few: '{n} اختبارات مرتبطة', many: '{n} اختباراً مرتبطاً', other: '{n} اختبار مرتبط' };
+const AR_LINK_STUDENTS = { one: 'طالب واحد مسجل', two: 'طالبان مسجلان', few: '{n} طلاب مسجلون', many: '{n} طالباً مسجلون', other: '{n} طالب مسجلون' };
+const AR_MIXED_LINKS = { one: 'ربط واحد يجمع', two: 'ربطان يجمعان', few: '{n} روابط تجمع', many: '{n} ربطاً تجمع', other: '{n} ربط تجمع' };
+const AR_ONLINE_LINKED = { one: 'مقرر مرتبط واحد يُدرَّس', two: 'مقرران مرتبطان يُدرَّسان', few: '{n} مقررات مرتبطة تُدرَّس', many: '{n} مقرراً مرتبطاً يُدرَّس', other: '{n} مقرر مرتبط يُدرَّس' };
+const LINK_TEXT = {
+  chooseCourse: IS_AR ? 'اختر مقرراً لإضافته' : 'Choose a course to add',
+  link: IS_AR ? 'ربط المقررات' : 'Link courses',
+  linkN: n => (IS_AR ? arabicCount(n, AR_LINK_COURSES) : `Link ${n} courses`),
+  unlink: IS_AR ? 'إلغاء الربط' : 'Unlink',
+  removePending: IS_AR ? 'إزالة من الربط الجديد' : 'Remove from the new link',
+  empty: IS_AR ? 'لا توجد اختبارات مرتبطة. يُجدول كل مقرر محدد بمفرده.' : 'No linked exams. Each selected course is scheduled on its own.',
+  ready: IS_AR ? 'تُعقد المقررات المرتبطة دائماً في اليوم والفترة نفسيهما، وتُنقل وتُثبَّت معاً.' : 'Linked courses always sit at the same day and period, and move and pin together.',
+  addAnother: IS_AR ? 'أضف مقرراً آخر على الأقل للربط.' : 'Add at least one more course to link.',
+  readyToLink: IS_AR ? 'انقر «ربط المقررات» لتُختبر هذه المقررات اختباراً واحداً.' : 'Select Link to examine these courses as one exam.',
+  needsReview: IS_AR ? 'راجع الاختبارات المرتبطة المعلّمة قبل المتابعة.' : 'Resolve the highlighted linked exams before continuing.',
+  needsCourses: IS_AR ? 'حمّل المقررات للتحقق من الاختبارات المرتبطة.' : 'Load courses to check the linked exams.',
+  tooFew: IS_AR ? 'يحتاج الاختبار المرتبط إلى مقررين على الأقل.' : 'A linked exam needs at least two courses.',
+  unavailable: IS_AR ? 'مقرر مرتبط غير موجود ضمن الفلاتر الحالية. أعد تحميله أو ألغِ الربط.' : 'A linked course is unavailable in the current filters. Reload it or unlink.',
+  notSelected: IS_AR ? 'أعد تحديد المقررات المرتبطة أو ألغِ ربطها.' : 'Reselect the linked courses or unlink them.',
+  pinsDisagree: IS_AR ? 'المقررات المرتبطة مثبتة في مواعيد مختلفة. ثبّتها في موعد واحد أو ألغِ تثبيتها.' : 'The linked courses are pinned to different times. Pin them to one time, or unpin them.',
+  split: IS_AR ? 'تُعقد المقررات المرتبطة في مواعيد مختلفة. انقلها معاً أو ألغِ ربطها.' : 'The linked courses sit at different times. Move them together, or unlink them.',
+  pinnedApart: codes => (IS_AR
+    ? `المقررات ${codes.join('، ')} مثبتة في مواعيد مختلفة. ألغِ تثبيت أحدها أو ثبّتها في موعد واحد قبل ربطها.`
+    : `${codes.join(', ')} are pinned to different times. Unpin one, or pin them to one time, before linking them.`),
+  linked: codes => (IS_AR ? `تم ربط ${codes.join('، ')}.` : `Linked ${codes.join(', ')}.`),
+  unlinked: codes => (IS_AR ? `أُلغي ربط ${codes.join('، ')}.` : `Unlinked ${codes.join(', ')}.`),
+  fixed: IS_AR ? 'موعد ثابت' : 'Fixed time',
+  atBuild: IS_AR ? 'يُحدد عند البناء' : 'Chosen when you build',
+  lastChecked: IS_AR ? 'آخر تحقق: ' : 'Last checked: ',
+};
+// The server's refusals, by code: [English, Arabic].
+const LINK_REFUSALS = {
+  linked_exams_invalid: ['This link could not be read. Unlink it and link the courses again.', 'تعذرت قراءة هذا الربط. ألغِ الربط ثم اربط المقررات من جديد.'],
+  linked_exams_too_few_members: ['A linked exam needs at least two courses.', 'يحتاج الاختبار المرتبط إلى مقررين على الأقل.'],
+  linked_exams_course_repeated: ['A course can be in only one linked exam.', 'لا يمكن أن يكون المقرر في أكثر من اختبار مرتبط واحد.'],
+  linked_exams_course_not_selected: ['A linked course is not selected for this timetable. Reselect it or unlink it.', 'مقرر مرتبط غير محدد لهذا الجدول. أعد تحديده أو ألغِ الربط.'],
+  linked_exams_pins_disagree: ['Linked courses are pinned to different times. Pin them to one time, or unpin them.', 'المقررات المرتبطة مثبتة في مواعيد مختلفة. ثبّتها في موعد واحد أو ألغِ تثبيتها.'],
+  linked_exams_split: ['Linked courses must sit at the same day and period. Move them together, then check again.', 'يجب أن تُعقد المقررات المرتبطة في اليوم والفترة نفسيهما. انقلها معاً ثم تحقق مجدداً.'],
+};
+
+// Order-free: the server saves links in code order, the page in the order made.
+function linkSignatureOf(links) {
+  return JSON.stringify((Array.isArray(links) ? links : [])
+    .map(link => JSON.stringify((link?.members || []).map(member => String(member?.course_identity || '')).sort()))
+    .sort());
+}
+function linkSignature() {
+  return linkSignatureOf(_linkedExams);
+}
+
+// Links made or undone since the save, each once: `saved` says it was the
+// saved run's (and is undone now), else it is new.
+function linkChangesSinceSave() {
+  if (!_savedResultData) return [];
+  const savedEntries = new Map((_savedResultData.schedule || []).map(entry => [entry.course_identity || entry.course_code, entry]));
+  const saved = new Map();
+  for (const link of Array.isArray(_savedResultData.linked_exams) ? _savedResultData.linked_exams : []) {
+    const members = (Array.isArray(link?.members) ? link.members : []).map(member => {
+      const identity = String(member?.course_identity || '');
+      const entry = currentExamByIdentity(identity) || savedEntries.get(identity);
+      return { course_identity: identity, course_code: entry?.course_code || String(member?.course_code || identity), course_name: entry?.course_name || '' };
+    }).filter(member => member.course_identity);
+    if (members.length) saved.set(linkSignatureOf([{ members }]), members);
+  }
+  const current = new Map(_linkedExams.map(link => [linkSignatureOf([link]), link.members]));
+  return [
+    ...[...current].filter(([key]) => !saved.has(key)).map(([key, members]) => ({ key, members, saved: false })),
+    ...[...saved].filter(([key]) => !current.has(key)).map(([key, members]) => ({ key, members, saved: true })),
+  ];
+}
+
+// What a request carries: identity is the authority, the code a courtesy.
+function linkPayload() {
+  return _linkedExams.map(link => ({
+    members: link.members.map(({ course_identity, course_code }) => ({ course_identity, course_code })),
+  }));
+}
+
+function scheduleEntryFor(code) {
+  return _currentResultData?.schedule?.find(entry => entry.course_code === code) || null;
+}
+
+function courseForIdentity(identity) {
+  return Object.values(_courseMetadata).find(course => pinIdentity(course) === identity)
+    || _currentResultData?.schedule?.find(entry => (entry.course_identity || entry.course_code) === identity) || null;
+}
+
+function identityOfCode(code) {
+  const course = _courseMetadata[code] || scheduleEntryFor(code);
+  return course ? pinIdentity(course) : code;
+}
+
+function linkForIdentity(identity) {
+  return _linkedExams.find(link => link.members.some(member => member.course_identity === identity)) || null;
+}
+
+// The identities pinned, unpinned or moved together with `identity`.
+function linkIdentities(identity) {
+  const link = linkForIdentity(identity);
+  return link ? link.members.map(member => member.course_identity) : [identity];
+}
+
+// The codes that move and pin as one with `code`: its link's, or itself.
+function linkedCodes(code) {
+  const link = linkForIdentity(identityOfCode(code));
+  return link ? link.members.map(member => member.course_code) : [code];
+}
+
+// A link is pinned when any member is: it cannot move without all of them.
+function groupPin(code) {
+  for (const member of linkedCodes(code)) {
+    const pin = pinForCourse(member);
+    if (pin) return pin;
+  }
+  return null;
+}
+
+// Each linked code to its link's codes, for one render of the board.
+function linkedCodeIndex() {
+  const index = new Map();
+  for (const link of _linkedExams) {
+    const codes = link.members.map(member => member.course_code);
+    for (const code of codes) index.set(code, codes);
+  }
+  return index;
+}
+
+function linkLabelMarkup(partners) {
+  if (!partners.length) return '';
+  const codes = partners.map(code => `<bdi dir="ltr">${escapeAttr(code)}</bdi>`).join(IS_AR ? '، ' : ', ');
+  return `<span class="et-link-label"><span class="et-link-icon" aria-hidden="true">${examCourseIcon('link')}</span><span>${IS_AR ? 'مع' : 'with'} ${codes}</span></span>`;
+}
+
+function linkGroupLabel(codes) {
+  return (IS_AR ? 'اختبار مرتبط: ' : 'Linked exam: ') + codes.join(IS_AR ? '، ' : ', ');
+}
+
+function restoreLinksFromRun(data) {
+  const entries = new Map((data.schedule || []).map(entry => [entry.course_identity || entry.course_code, entry]));
+  _linkedExams = (Array.isArray(data.linked_exams) ? data.linked_exams : []).map(link => ({
+    members: (Array.isArray(link?.members) ? link.members : []).map(member => {
+      const identity = String(member?.course_identity || '');
+      const entry = entries.get(identity);
+      return { course_identity: identity, course_code: entry?.course_code || String(member?.course_code || identity), course_name: entry?.course_name || '' };
+    }).filter(member => member.course_identity),
+  })).filter(link => link.members.length);
+  _pendingLinkMembers = [];
+  _linkError = null;
+  _linkNotice = null;
+}
+
+// Display codes are renumbered with the population; identities are not.
+function reconcileLinksWithCourses() {
+  const byIdentity = new Map(Object.values(_courseMetadata).map(course => [pinIdentity(course), course]));
+  for (const link of _linkedExams) {
+    for (const member of link.members) {
+      const course = byIdentity.get(member.course_identity);
+      if (course) {
+        member.course_code = course.course_code;
+        member.course_name = course.course_name || '';
+      }
+    }
+  }
+  _pendingLinkMembers = _pendingLinkMembers.filter(identity => byIdentity.has(identity));
+}
+
+const linkPlaceKey = entry => (!entry ? '' : entry.day === 'OVERFLOW' ? 'OVERFLOW' : JSON.stringify([entry.day, entry.period]));
+
+// Why a link cannot go to the server as it stands, or ''.
+function linkProblem(link, context) {
+  if (!_coursesLoaded) return LINK_TEXT.needsCourses;
+  if (link.members.length < 2) return LINK_TEXT.tooFew;
+  for (const member of link.members) {
+    const course = _courseMetadata[member.course_code];
+    if (!course || pinIdentity(course) !== member.course_identity) return LINK_TEXT.unavailable;
+    if (!context.selected.has(member.course_code)) return LINK_TEXT.notSelected;
+  }
+  const pinTimes = new Set(link.members.map(member => pinForCourse(member.course_code)).filter(Boolean)
+    .map(pin => JSON.stringify([pin.day, pin.period])));
+  if (pinTimes.size > 1) return LINK_TEXT.pinsDisagree;
+  if (_currentResultData?.schedule?.length
+    && new Set(link.members.map(member => linkPlaceKey(scheduleEntryFor(member.course_code)))).size > 1) return LINK_TEXT.split;
+  return '';
+}
+
+function validatedLinkPayload() {
+  const context = pinContext();
+  if (_linkedExams.some(link => linkProblem(link, context))) {
+    renderLinkEditor();
+    return inputError(LINK_TEXT.needsReview, $('examLinkRows').querySelector('.et-link-invalid [data-link-remove]') || $('examLinkCourse'));
+  }
+  return linkPayload();
+}
+
+// A refusal from the server, worded for the registrar and kept for its row.
+function linkedExamsRefusal(code, field) {
+  const match = /^linked_exams\[(\d+)\](?:\.members\[(\d+)\])?/.exec(String(field || ''));
+  const link = match ? _linkedExams[Number(match[1])] : null;
+  const message = (LINK_REFUSALS[code] || LINK_REFUSALS.linked_exams_invalid)[IS_AR ? 1 : 0];
+  const codes = link ? link.members.map(member => member.course_code).join(' + ') : '';
+  const error = new Error(codes ? (IS_AR ? `الاختبار المرتبط ${codes}: ${message}` : `Linked exam ${codes}: ${message}`) : message);
+  error.examRequestKind = 'linked-exams';
+  error.examLinkIndex = link ? Number(match[1]) : null;
+  error.examLinkMember = link && match[2] !== undefined ? Number(match[2]) : null;
+  error.examLinkMessage = message;
+  return error;
+}
+
+function recordLinkError(error) {
+  _linkError = { signature: linkSignature(), index: error.examLinkIndex, member: error.examLinkMember, message: error.examLinkMessage };
+  _linkNotice = null;
+  renderLinkEditor();
+}
+
+function reviewLinkedExams() {
+  if (_builderBusy) return;
+  if ($('examSetupDetails')) $('examSetupDetails').open = true;
+  renderLinkEditor();
+  const target = $('examLinkRows').querySelector('.et-link-invalid [data-link-remove]');
+  if (target) target.focus({ preventScroll: true });
+  else {
+    $('examLinkHeading').setAttribute('tabindex', '-1');
+    $('examLinkHeading').focus({ preventScroll: true });
+  }
+  $('examLinkEditor').scrollIntoView({ block: 'center', behavior: 'smooth' });
+}
+
+function linkWarnings(counts) {
+  const items = [];
+  const students = Number(counts?.students_in_two_linked_courses) || 0;
+  const mixed = Number(counts?.mixed_credit_links) || 0;
+  const online = Number(counts?.online_courses) || 0;
+  if (students) {
+    items.push(IS_AR
+      ? `${arabicCount(students, AR_LINK_STUDENTS)} في مقررين مرتبطين: يؤدي كلٌّ منهم ورقتين في وقت واحد (تعارض اختبار مرتبط).`
+      : `${students} student${students === 1 ? ' is' : 's are'} registered in two linked courses: each sits two papers at one time (a linked-exam clash).`);
+  }
+  if (mixed) {
+    items.push(IS_AR
+      ? `${arabicCount(mixed, AR_MIXED_LINKS)} مقررات بساعات معتمدة مختلفة.`
+      : `${mixed} link${mixed === 1 ? ' joins' : 's join'} courses with different credit hours.`);
+  }
+  if (online) {
+    items.push(IS_AR
+      ? `${arabicCount(online, AR_ONLINE_LINKED)} عن بُعد.`
+      : `${online} linked course${online === 1 ? ' is' : 's are'} taught online.`);
+  }
+  return items;
+}
+
+// What the last check or build counted about the links: never a reason to
+// refuse a save, and labelled as the last check's while edits are unchecked.
+function currentLinkWarnings() {
+  const counts = _currentResultData?.qa?.linked_exams;
+  if (!_linkedExams.length || !counts) return [];
+  const previous = hasCurrentEvaluation() ? '' : LINK_TEXT.lastChecked;
+  return linkWarnings(counts).map(text => previous + text);
+}
+
+function renderLinkWarnings() {
+  const warnings = currentLinkWarnings();
+  const html = warnings.map(text => `<li>${escapeAttr(text)}</li>`).join('');
+  if ($('examLinkWarningList').innerHTML !== html) $('examLinkWarningList').innerHTML = html;
+  $('examLinkWarnings').hidden = !warnings.length;
+}
+
+function updateLinkBar() {
+  const bar = $('linkBar');
+  if (!bar) return;
+  const count = _linkedExams.length;
+  bar.classList.toggle('d-none', !count || !_currentResultData);
+  $('linkCount').textContent = IS_AR ? arabicCount(count, AR_LINKED_EXAMS) : `${count} linked exam${count === 1 ? '' : 's'}`;
+  const warnings = currentLinkWarnings().join(' ');
+  if ($('linkBarWarnings').textContent !== warnings) $('linkBarWarnings').textContent = warnings;
+}
+
+function linkPlaceMarkup(entry) {
+  if (!entry) return '—';
+  return entry.day === 'OVERFLOW' ? escapeAttr(T.overflow) : `<bdi dir="ltr">${escapeAttr(`${entry.day} · ${entry.period}`)}</bdi>`;
+}
+
+function linkTimeMarkup(link) {
+  const pin = link.members.map(member => pinForCourse(member.course_code)).find(Boolean);
+  if (pin) return `${linkPlaceMarkup(pin)}<small>${LINK_TEXT.fixed}</small>`;
+  const entry = link.members.map(member => scheduleEntryFor(member.course_code)).find(Boolean);
+  return entry ? linkPlaceMarkup(entry) : `<small>${LINK_TEXT.atBuild}</small>`;
+}
+
+let _linkRowsMarkup = '';
+let _linkPendingMarkup = '';
+function renderLinkEditor() {
+  const editor = $('examLinkEditor');
+  if (!editor) return;
+  editor.classList.toggle('d-none', !_coursesLoaded && !_linkedExams.length);
+  if (_linkError && _linkError.signature !== linkSignature()) _linkError = null;
+  const context = pinContext();
+  const linked = new Set(_linkedExams.flatMap(link => link.members.map(member => member.course_identity)));
+  const selectedCourses = Object.values(_courseMetadata).filter(course => context.selected.has(course.course_code));
+  const selectedIdentities = new Set(selectedCourses.map(pinIdentity));
+  _pendingLinkMembers = _pendingLinkMembers.filter(identity => !linked.has(identity) && selectedIdentities.has(identity));
+  const choices = selectedCourses
+    .filter(course => !linked.has(pinIdentity(course)) && !_pendingLinkMembers.includes(pinIdentity(course)))
+    .sort((a, b) => a.course_code.localeCompare(b.course_code, 'en', { numeric: true }))
+    .map(course => [course.course_code, `${course.course_code} — ${course.course_name || course.course_code}`, pinIdentity(course)]);
+  pinOptions('examLinkCourse', choices, LINK_TEXT.chooseCourse);
+  // Kept usable when every course is linked or chosen: it then says so, and
+  // the search a registrar is typing in never goes disabled under them.
+  $('examLinkCourse').disabled = !_coursesLoaded;
+  linkCoursePicker.sync();
+
+  const pendingHtml = _pendingLinkMembers.map(identity => {
+    const course = courseForIdentity(identity);
+    const code = course?.course_code || identity;
+    const label = `${LINK_TEXT.removePending}: ${code} — ${course?.course_name || code}`;
+    return `<li class="et-link-chip" data-link-pending="${escapeAttr(identity)}"><bdi dir="ltr" class="et-link-code">${escapeAttr(code)}</bdi><span class="et-link-chip-name">${escapeAttr(course?.course_name || '')}</span><button type="button" class="et-link-chip-remove" data-link-pending-remove="${escapeAttr(identity)}" aria-label="${escapeAttr(label)}" title="${escapeAttr(label)}">&times;</button></li>`;
+  }).join('');
+  if (pendingHtml !== _linkPendingMarkup) {
+    $('examLinkPending').innerHTML = pendingHtml;
+    _linkPendingMarkup = pendingHtml;
+  }
+  $('examLinkPending').hidden = !_pendingLinkMembers.length;
+  const apply = $('applyExamLink');
+  apply.disabled = !_coursesLoaded || _pendingLinkMembers.length < 2;
+  apply.textContent = _pendingLinkMembers.length >= 2 ? LINK_TEXT.linkN(_pendingLinkMembers.length) : LINK_TEXT.link;
+
+  $('examLinkCount').textContent = _linkedExams.length ? `(${_linkedExams.length})` : '';
+  $('examLinkTable').classList.toggle('d-none', !_linkedExams.length);
+  let invalid = false;
+  const rowsHtml = _linkedExams.map((link, index) => {
+    const refused = _linkError?.index === index ? _linkError : null;
+    const problem = refused?.message || linkProblem(link, context);
+    invalid ||= Boolean(problem);
+    const codes = link.members.map(member => member.course_code).join(IS_AR ? '، ' : ', ');
+    const members = link.members.map((member, position) => `<span class="et-link-member${refused?.member === position ? ' is-invalid' : ''}"><bdi dir="ltr" class="et-link-code">${escapeAttr(member.course_code)}</bdi><small class="et-course-name">${escapeAttr(member.course_name || '')}</small></span>`).join('');
+    return `<tr class="${problem ? 'et-link-invalid' : ''}" data-link-index="${index}"><td><div class="et-link-members">${members}</div>${problem ? `<small class="et-link-problem">${escapeAttr(problem)}</small>` : ''}</td><td class="et-link-time">${linkTimeMarkup(link)}</td><td><button type="button" class="btn btn-sm btn-outline-secondary" data-link-remove="${index}" aria-label="${escapeAttr(`${LINK_TEXT.unlink}: ${codes}`)}">${LINK_TEXT.unlink}</button></td></tr>`;
+  }).join('');
+  if (rowsHtml !== _linkRowsMarkup) {
+    // Rebuilt only when it changed, so a focused Unlink is not dropped.
+    const focused = document.activeElement?.closest?.('[data-link-remove]')?.dataset.linkRemove;
+    $('examLinkRows').innerHTML = rowsHtml;
+    _linkRowsMarkup = rowsHtml;
+    if (focused !== undefined) $('examLinkRows').querySelector(`[data-link-remove="${focused}"]`)?.focus({ preventScroll: true });
+  }
+  renderLinkWarnings();
+
+  let text = '', error = false;
+  if (_linkNotice) ({ text, error } = _linkNotice);
+  else if (invalid) { text = LINK_TEXT.needsReview; error = true; }
+  else if (_linkError) { text = _linkError.message; error = true; }
+  else if (_pendingLinkMembers.length === 1) text = LINK_TEXT.addAnother;
+  else if (_pendingLinkMembers.length > 1) text = LINK_TEXT.readyToLink;
+  else text = _linkedExams.length ? LINK_TEXT.ready : LINK_TEXT.empty;
+  if ($('examLinkNotice').textContent !== text) $('examLinkNotice').textContent = text;
+  $('examLinkNotice').className = `small mt-2 mb-0 ${error ? 'text-danger' : 'text-secondary'}`;
+}
+
+// How the chosen courses come to share one time. On a board they may sit
+// apart: the registrar then chooses among their current times, unless one is
+// pinned - its time is the only one. Courses pinned to two times cannot link.
+function linkAlignment(identities) {
+  const codes = identities.map(identity => courseForIdentity(identity)?.course_code || identity);
+  const pins = codes.map(code => [code, pinForCourse(code)]).filter(([, pin]) => pin);
+  const pinTimes = [...new Map(pins.map(([, pin]) => [JSON.stringify([pin.day, pin.period]), pin])).values()];
+  if (pinTimes.length > 1) return { error: LINK_TEXT.pinnedApart(pins.map(([code]) => code)) };
+  const pin = pinTimes[0] || null;
+  if (!_currentResultData?.schedule?.length) return { place: pin ? { day: pin.day, period: pin.period } : null };
+  const entries = codes.map(scheduleEntryFor);
+  if (pin) {
+    const at = entry => entry && entry.day === pin.day && entry.period === pin.period;
+    if (entries.every(at)) return { place: null };
+    return { options: [{ day: pin.day, period: pin.period, codes: codes.filter((code, index) => at(entries[index])) }], preferred: 0, pinned: pins.map(([code]) => code) };
+  }
+  const placed = codes.map((code, index) => ({ code, entry: entries[index] })).filter(({ entry }) => entry && entry.day !== 'OVERFLOW');
+  if (!placed.length) return { place: null };
+  const options = [];
+  for (const { code, entry } of [...placed].sort((a, b) => a.entry.slot_index - b.entry.slot_index)) {
+    const option = options.find(item => item.day === entry.day && item.period === entry.period);
+    if (option) option.codes.push(code);
+    else options.push({ day: entry.day, period: entry.period, codes: [code] });
+  }
+  if (options.length === 1 && placed.length === entries.length) return { place: null };
+  // The largest course's time first, as the server prefers it; lowest code on a tie.
+  const size = code => Number(_courseMetadata[code]?.enrolled_count ?? scheduleEntryFor(code)?.enrolled_count) || 0;
+  const leader = [...placed].sort((a, b) => (size(b.code) - size(a.code)) || a.code.localeCompare(b.code, 'en', { numeric: true }))[0];
+  return { options, preferred: options.findIndex(option => option.codes.includes(leader.code)) };
+}
+
+// One Undo step: the link, its members moved to `place`, and - when one of
+// them is pinned - every member pinned at that time, as the link is.
+function linkCourses(identities, place) {
+  const members = identities.map(identity => {
+    const course = courseForIdentity(identity);
+    return { course_identity: identity, course_code: course?.course_code || identity, course_name: course?.course_name || '' };
+  });
+  const pin = members.map(member => pinForCourse(member.course_code)).find(Boolean);
+  return runManualCommand(() => {
+    _linkedExams.push({ members });
+    for (const member of members) {
+      if (pin && _courseMetadata[member.course_code]) {
+        _pinnedCourses[member.course_identity] = { course_code: member.course_code, course_identity: member.course_identity, course_name: member.course_name, day: pin.day, day_identity: pin.day_identity, period: pin.period };
+      }
+      if (place && _currentResultData) updateCurrentScheduleMove(member.course_code, place.day, place.period);
+    }
+  });
+}
+
+function finishLink(identities, place) {
+  const codes = identities.map(identity => courseForIdentity(identity)?.course_code || identity);
+  if (!linkCourses(identities, place)) return false;
+  _pendingLinkMembers = [];
+  _linkNotice = { text: LINK_TEXT.linked(codes), error: false };
+  renderLinkEditor();
+  $('examLinkCourseSearch').focus({ preventScroll: true });
+  linkCoursePicker.close();
+  return true;
+}
+
+function openLinkDialog(identities, plan) {
+  _linkDialog = { identities, options: plan.options };
+  const codes = identities.map(identity => courseForIdentity(identity)?.course_code || identity);
+  const list = items => items.map(code => `<bdi dir="ltr">${escapeAttr(code)}</bdi>`).join(IS_AR ? '، ' : ', ');
+  $('examLinkDialogHelp').innerHTML = plan.pinned
+    ? (IS_AR
+      ? `${list(plan.pinned)} مثبّت، لذا تأخذ الاختبارات المرتبطة موعده وتُنقل البقية إليه.`
+      : `${list(plan.pinned)} ${plan.pinned.length === 1 ? 'is' : 'are'} pinned, so the linked exams take that time and the others move to it.`)
+    : (IS_AR
+      ? 'تُعقد هذه المقررات الآن في مواعيد مختلفة. اختر الموعد الذي ستشترك فيه، فتُنقل البقية إليه. يمكنك التراجع عن ذلك.'
+      : 'These courses sit at different times now. Choose the time they will share; the others move to it. Undo reverses it.');
+  $('examLinkDialogMembers').innerHTML = codes.map(code => `<li><bdi dir="ltr" class="et-link-code">${escapeAttr(code)}</bdi><span>${linkPlaceMarkup(scheduleEntryFor(code))}</span></li>`).join('');
+  $('examLinkOptions').innerHTML = plan.options.map((option, index) => {
+    const where = option.codes.length
+      ? (IS_AR ? `الموعد الحالي لـ${list(option.codes)}` : `where ${list(option.codes)} ${option.codes.length === 1 ? 'sits' : 'sit'} now`)
+      : '';
+    return `<label class="et-link-option"><input type="radio" name="examLinkOption" value="${index}"${index === plan.preferred ? ' checked' : ''}><span><bdi dir="ltr">${escapeAttr(`${option.day} · ${option.period}`)}</bdi>${where ? `<small>${where}</small>` : ''}</span></label>`;
+  }).join('');
+  const dialog = $('examLinkDialog');
+  if (dialog.showModal) dialog.showModal();
+  else dialog.setAttribute('open', '');
+  ($('examLinkOptions').querySelector('input:checked') || $('examLinkOptions').querySelector('input'))?.focus();
+}
+
+function closeLinkDialog({ restoreFocus = false } = {}) {
+  const dialog = $('examLinkDialog');
+  if (dialog?.close) dialog.close();
+  else dialog?.removeAttribute('open');
+  _linkDialog = null;
+  if (restoreFocus) ($('applyExamLink').disabled ? $('examLinkCourseSearch') : $('applyExamLink')).focus({ preventScroll: true });
+}
+
+$('examLinkCourse').addEventListener('change', () => {
+  linkCoursePicker.selected();
+  const course = _courseMetadata[$('examLinkCourse').value];
+  if (course && !_pendingLinkMembers.includes(pinIdentity(course))) {
+    _pendingLinkMembers.push(pinIdentity(course));
+    _linkNotice = null;
+  }
+  $('examLinkCourse').value = '';
+  renderLinkEditor();
+});
+$('examLinkPending').addEventListener('click', event => {
+  const remove = event.target.closest('[data-link-pending-remove]');
+  if (!remove || _builderBusy) return;
+  const index = _pendingLinkMembers.indexOf(remove.dataset.linkPendingRemove);
+  _pendingLinkMembers = _pendingLinkMembers.filter(identity => identity !== remove.dataset.linkPendingRemove);
+  _linkNotice = null;
+  renderLinkEditor();
+  const buttons = [...$('examLinkPending').querySelectorAll('[data-link-pending-remove]')];
+  (buttons[Math.min(index, buttons.length - 1)] || $('examLinkCourseSearch')).focus({ preventScroll: true });
+});
+$('applyExamLink').addEventListener('click', () => {
+  if (_builderBusy) return;
+  const identities = [..._pendingLinkMembers];
+  if (!_coursesLoaded || identities.length < 2) return inputError(LINK_TEXT.addAnother, $('examLinkCourse'));
+  const plan = linkAlignment(identities);
+  if (plan.error) {
+    _linkNotice = { text: plan.error, error: true };
+    renderLinkEditor();
+    return inputError(plan.error, $('examLinkCourse'));
+  }
+  if (plan.options?.length) return openLinkDialog(identities, plan);
+  return finishLink(identities, plan.place);
+});
+$('examLinkRows').addEventListener('click', event => {
+  const remove = event.target.closest('[data-link-remove]');
+  if (!remove || _builderBusy) return;
+  const index = Number(remove.dataset.linkRemove);
+  const link = _linkedExams[index];
+  if (!link) return;
+  const codes = link.members.map(member => member.course_code);
+  if (!runManualCommand(() => { _linkedExams.splice(index, 1); })) return;
+  _linkNotice = { text: LINK_TEXT.unlinked(codes), error: false };
+  renderLinkEditor();
+  const buttons = [...$('examLinkRows').querySelectorAll('[data-link-remove]')];
+  (buttons[Math.min(index, buttons.length - 1)] || $('examLinkCourseSearch')).focus({ preventScroll: true });
+});
+$('confirmExamLink')?.addEventListener('click', () => {
+  if (!_linkDialog || _builderBusy) return;
+  const chosen = $('examLinkOptions').querySelector('input:checked');
+  if (!chosen) {
+    $('examLinkOptions').querySelector('input')?.focus();
+    return;
+  }
+  const option = _linkDialog.options[Number(chosen.value)];
+  const identities = _linkDialog.identities;
+  closeLinkDialog();
+  finishLink(identities, { day: option.day, period: option.period });
+});
+$('cancelExamLink')?.addEventListener('click', () => closeLinkDialog({ restoreFocus: true }));
+$('examLinkDialog')?.addEventListener('cancel', event => { event.preventDefault(); closeLinkDialog({ restoreFocus: true }); });
 
 /* ── Conflict Matrix ── */
 // Renders an N×N heatmap of shared students between every course pair.

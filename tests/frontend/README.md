@@ -77,6 +77,30 @@ snapshot labels. Missing or incompatible review metadata is unavailable rather
 than a claim of zero shared students. Native review buttons remain separate from
 the existing Pin, Move and double-click interactions.
 
+The `exam-linked.test.cjs` suite covers linked exams (courses examined as one
+exam) on the same page, in English and in Arabic: the builder section's
+picker (selected courses only, never a course twice, chosen courses taken
+back), the links in every Build, Check, Save, Optimize and Fix request by
+identity (`[]` when there are none), links restored from a loaded run before
+its saved signature (an unedited Check leaves Save off), and kept by identity
+through Load Courses when display codes are renumbered. On the board, linked
+cards sit in one labelled group, each naming its partners in a left-to-right
+isolate; drag, the Move dialog, the pin toggle and the pin editor act on the
+whole link, and one Undo step reverses it - a link pinned through one member
+is pinned whole. Linking courses that sit apart opens the alignment dialog
+(their current times in timetable order, the larger course's preselected; a
+pinned course's time the only choice; courses pinned apart refused). A link
+edit needs a Check before Save and has its own Review changes group. Server
+refusals (`linked_exams_*`, with the field naming the link and member) are
+worded by the page and shown beside the link, with a way there from the
+banner; a split link from a saved run blocks Check until a move mends it.
+The warnings from `qa.linked_exams` never block saving and say when they are
+the last check's; the conflict detail names `linked_same_slot` clashes, Fix
+says it cannot separate linked courses, and the review controller's
+`relationship` knows a `linked` state. Chromium layout at 1366px and 375px, in
+both languages and in a wide font, is covered by
+`tests/test_exam_linked_browser.py`.
+
 The `exam-student-export.test.cjs` suite runs the same page with the Student
 data dialog (`static/js/exam-student-export.js`). It covers the button's
 Department-files rule and its stated reason, the in-place link from Department

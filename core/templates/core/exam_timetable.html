@@ -6,7 +6,7 @@
 
 {% block main_attrs %}data-exam-builder="true" data-can-delete-exam-timetable="{{ can_delete_exam_timetable|yesno:'true,false' }}"{% endblock %}
 {% block main_padding %}p-4 exam-builder-page{% endblock %}
-{% block extra_css %}<link href="{% static 'css/page-exam-timetable.css' %}?v=25" rel="stylesheet"><link href="{% static 'css/page-exam-rosters.css' %}?v=2" rel="stylesheet">{% endblock %}
+{% block extra_css %}<link href="{% static 'css/page-exam-timetable.css' %}?v=26" rel="stylesheet"><link href="{% static 'css/page-exam-rosters.css' %}?v=2" rel="stylesheet">{% endblock %}
 
 {% block page_heading %}{% if LANGUAGE_CODE == 'ar' %}جدول الاختبارات{% else %}Exam Timetable{% endif %}{% endblock %}
 
@@ -226,6 +226,11 @@
         <a href="#" id="clearPins">{% if LANGUAGE_CODE == 'ar' %}مسح التثبيت{% else %}Clear all pins{% endif %}</a>
         <small class="text-secondary">{% if LANGUAGE_CODE == 'ar' %}انقر مرتين أو استخدم زر التثبيت. ألغِ التثبيت قبل السحب.{% else %}Double-click or use Pin. Unpin an exam before dragging it.{% endif %}</small>
       </div>
+      {# Linked exams on the board: how many, and what the last check warns about them. Never blocks Save. #}
+      <div id="linkBar" class="et-pin-bar et-link-bar d-none">
+        <span id="linkCount"></span>
+        <small id="linkBarWarnings" class="et-link-bar-warnings"></small>
+      </div>
     </section>
 
     <!-- Conflict Matrix (collapsed by default) -->
@@ -270,6 +275,15 @@
     <div class="et-move-actions"><button id="cancelExamMove" type="button" class="btn btn-outline-secondary">{% if LANGUAGE_CODE == 'ar' %}إلغاء{% else %}Cancel{% endif %}</button><button id="confirmExamMove" type="button" class="btn btn-primary">{% if LANGUAGE_CODE == 'ar' %}نقل الاختبار{% else %}Move exam{% endif %}</button></div>
   </dialog>
 
+  {# Linking courses that sit at different times: choose the one time they will share. #}
+  <dialog id="examLinkDialog" class="et-move-dialog et-link-dialog" aria-labelledby="examLinkDialogTitle" aria-describedby="examLinkDialogHelp">
+    <h2 id="examLinkDialogTitle">{% if LANGUAGE_CODE == 'ar' %}ربط الاختبارات في موعد واحد{% else %}Link exams at one time{% endif %}</h2>
+    <p id="examLinkDialogHelp" class="et-dialog-help"></p>
+    <ul id="examLinkDialogMembers" class="et-link-dialog-members"></ul>
+    <fieldset class="et-link-options"><legend>{% if LANGUAGE_CODE == 'ar' %}الموعد المشترك{% else %}Shared time{% endif %}</legend><div id="examLinkOptions"></div></fieldset>
+    <div class="et-move-actions"><button id="cancelExamLink" type="button" class="btn btn-outline-secondary">{% if LANGUAGE_CODE == 'ar' %}إلغاء{% else %}Cancel{% endif %}</button><button id="confirmExamLink" type="button" class="btn btn-primary">{% if LANGUAGE_CODE == 'ar' %}ربط ونقل{% else %}Link and move{% endif %}</button></div>
+  </dialog>
+
   {% include "core/partials/exam_department_export.html" %}
   {% include "core/partials/exam_student_export.html" %}
   {% include "core/partials/exam_roster_drawer.html" %}
@@ -291,8 +305,8 @@
   const LANGUAGE_CODE = "{{ LANGUAGE_CODE|default:'en' }}";
   const djCsrfToken = "{{ csrf_token }}";
 </script>
-<script src="{% static 'js/exam-review.js' %}?v=6"></script>
-<script src="{% static 'js/page-exam-timetable.js' %}?v=31"></script>
+<script src="{% static 'js/exam-review.js' %}?v=7"></script>
+<script src="{% static 'js/page-exam-timetable.js' %}?v=32"></script>
 <script src="{% static 'js/exam-student-export.js' %}?v=3"></script>
 <script src="{% static 'js/exam-roster.js' %}?v=2"></script>
 <script src="{% static 'js/exam-roster-drawer.js' %}?v=2"></script>
