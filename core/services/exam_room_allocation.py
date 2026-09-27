@@ -8,10 +8,12 @@ incumbent. A search limit is not a proof that a split is unavoidable.
 
 A room belongs to one OWNER in a period: a course, or - for the courses of a
 linked exam - their link, so same-gender sections of linked courses may share
-a room. A period with linked courses is allocated both ways, and the sharing
-answer is kept only when it seats more students, or seats as many with no
-more invigilators and keeps more sections whole or uses fewer rooms or fewer
-room seats. Genders never mix and no room is ever filled beyond its capacity.
+a room. A period with linked courses is allocated both ways - the second
+way exactly as it would be without its links - and the sharing answer is
+kept only when it seats more students, or seats as many, splits no more
+sections, uses fewer rooms or fewer room seats and needs no more
+invigilators. Genders never mix and no room is ever filled beyond its
+capacity.
 """
 
 from __future__ import annotations
@@ -174,6 +176,11 @@ def _owner(demand: dict) -> str:
     if not link:
         return demand["course_code"]
     return f"{link}@{demand.get('gender', '')}"
+
+
+def _without_owner(demand: dict) -> dict:
+    """The demand as a period without links would see it."""
+    return {key: value for key, value in demand.items() if key != "room_owner"}
 
 
 def _may_share(demands: list[dict]) -> bool:
@@ -515,22 +522,26 @@ def _sharing_wins(
 ) -> bool:
     """Whether linked courses sharing rooms beats each course in rooms of its own.
 
-    Sharing must buy something: more students seated, or - seating as many -
-    more sections kept whole, fewer fragments, fewer rooms or fewer room seats,
-    and never at the price of an invigilator. A shared room holds one
-    head-count, and past the staffing threshold it can need a member of staff
-    that two smaller rooms did not; a room is not worth a person. A preferred
-    room alone never justifies a share, and a tie keeps the rooms separate.
+    Sharing must buy something (decision 3): more students seated, or - seating
+    as many - fewer rooms or fewer room seats, with no section split more and
+    never at the price of an invigilator. Keeping a section whole or using
+    fewer pieces is not a reason on its own: it saves no room and no seat. A
+    shared room holds one head-count, and past the staffing threshold it can
+    need a member of staff that two smaller rooms did not; a room is not worth
+    a person. A preferred room alone never justifies a share, and a tie keeps
+    the rooms separate.
     """
     shared_cost = _score(shared, demands, rooms)[:5]
     separate_cost = _score(separate, demands, rooms)[:5]
     if shared_cost[0] != separate_cost[0]:
         return shared_cost[0] < separate_cost[0]
-    if room_staff is not None and _staff(shared, demands, room_staff) > _staff(
-        separate, demands, room_staff
-    ):
+    # (unseated, split sections, fragments, rooms, room seats): no worse on the
+    # whole ranking, and better on rooms or room seats themselves.
+    if not (shared_cost < separate_cost and shared_cost[3:] < separate_cost[3:]):
         return False
-    return shared_cost < separate_cost
+    return room_staff is None or _staff(shared, demands, room_staff) <= _staff(
+        separate, demands, room_staff
+    )
 
 
 def allocate_period(
@@ -549,18 +560,22 @@ def allocate_period(
     may independently reuse the same room.
 
     Where linked courses could share (their demands carry one ``room_owner``),
-    the period is also allocated with every course in rooms of its own, and
+    the period is also allocated exactly as it would be without its links, and
     that answer wins unless sharing seats more students, or seats as many and
-    keeps more sections whole or uses fewer rooms or fewer room seats without
-    needing more invigilators (``room_staff``, when the caller counts staff).
-    A link never leaves a period worse than it would be without the link.
+    uses fewer rooms or fewer room seats, splitting no more sections and
+    needing no more invigilators (``room_staff``, when the caller counts
+    staff). A link never leaves a period worse than it would be without it.
     """
     demands = sorted(
         (d for d in demands if int(d.get("student_count", 0) or 0) > 0),
+        # The order a period without links is allocated in, whatever the room
+        # owners: the heuristics and the search break ties by position, so the
+        # rooms-of-their-own answer below is that period's answer only if its
+        # demands come in that order. Without links the last key never decides.
         key=lambda d: (
-            _owner(d),
             d["course_code"],
             str(d.get("section_key", d["section"])),
+            _json(_without_owner(d)),
             _json(d),
         ),
     )
@@ -578,9 +593,7 @@ def allocate_period(
     context.periods_solved += 1
     allocation = _allocate(demands, rooms, context)
     if shares:
-        separate = _allocate(
-            [{k: v for k, v in d.items() if k != "room_owner"} for d in demands], rooms, context
-        )
+        separate = _allocate([_without_owner(d) for d in demands], rooms, context)
         if not _sharing_wins(allocation, separate, demands, rooms, room_staff):
             allocation = separate
     if not _valid(allocation, demands, rooms):

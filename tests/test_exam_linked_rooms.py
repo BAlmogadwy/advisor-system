@@ -4,9 +4,11 @@ Decision 3: same-gender sections of linked courses may share a room, and the
 allocator shares only when it saves rooms or seats; there is no per-link
 option. A shared room never takes a student over its capacity, never mixes
 the male and female cohorts, never costs an invigilator the separate rooms
-did not need, and never holds a course that is not in the link. Rows stay
-per real course, each with its own section parts, and a shared room's rows
-name the other courses in it and the room's whole head-count.
+did not need, and never holds a course that is not in the link - nor an
+online exam beside one sat in person. A link never leaves a period worse
+than the same period allocated without it. Rows stay per real course, each
+with its own section parts, and a shared room's rows name the other courses
+in it and the room's whole head-count.
 """
 
 import random
@@ -16,7 +18,11 @@ import pytest
 
 from core.services import exam_room_allocation
 from core.services.exam_room_allocation import RoomAllocationContext, allocate_period
-from core.services.exam_timetable import _room_invigilators_needed, assign_rooms_to_schedule
+from core.services.exam_timetable import (
+    _build_room_qa,
+    _room_invigilators_needed,
+    assign_rooms_to_schedule,
+)
 from core.services.linked_exams import NO_LINKS, resolve_linked_exams
 
 
@@ -239,34 +245,51 @@ def _cost(rows):
     )
 
 
-@pytest.mark.parametrize("seed", range(40))
+def _unlinked(demands):
+    return [{k: v for k, v in d.items() if k != "room_owner"} for d in demands]
+
+
+_POOL = ("AI212", "BIO100", "CS150", "DS222", "IS210", "MATH101", "PHYS103", "STAT201")
+_SIZES = (5, 8, 10, 12, 15, 20, 25, 29, 30, 31, 35, 40, 45, 55)
+_CAPACITIES = (8, 10, 12, 15, 20, 25, 28, 30, 32, 35, 40, 50, 60, 80)
+
+
+@pytest.mark.parametrize("seed", range(30))
 def test_a_link_never_leaves_a_period_worse_and_never_overfills_a_room(seed):
-    """Random tight periods: two links and an unlinked course, one cohort."""
-    rng = random.Random(6100 + seed)
-    owners = {"A1": "LA", "A2": "LA", "B1": "LB", "B2": "LB", "B3": "LB", "C1": None}
-    demands = [
-        _demand(code, f"M{number}", rng.randint(1, 30), owner=owner)
-        for code, owner in owners.items()
-        for number in range(rng.randint(1, 2))
-    ]
-    rooms = [
-        _room(f"R{size}-{copy}", size)
-        for size in rng.sample([10, 15, 20, 30, 40, 60], rng.randint(1, 4))
-        for copy in range(rng.randint(1, 3))
-    ]
+    """Random tight periods: two links and unlinked courses, one cohort.
+
+    Link ids are their members' codes joined, as in a build, so an unlinked
+    course often sorts between a link's members; sizes repeat, so ties are
+    common; some sections ask for a room. Each board is compared with the
+    same period allocated with no link at all.
+    """
+    rng = random.Random(9100 + seed)
+    codes = rng.sample(_POOL, 6)
+    owners = dict.fromkeys(codes)
+    for group in (codes[0:2], codes[2 : 2 + rng.choice([2, 3])]):
+        owners.update(dict.fromkeys(group, "+".join(sorted(group))))
+    rooms = exam_room_allocation.normalized_rooms(
+        [_room(f"R{n:02d}", rng.choice(_CAPACITIES)) for n in range(rng.randint(2, 7))]
+    )
+    demands = []
+    for code in codes:
+        for number in range(rng.randint(1, 3)):
+            demand = _demand(code, f"M{number + 1}", rng.choice(_SIZES), owner=owners[code])
+            if rng.random() < 0.15:
+                demand["preferred_room"] = rng.choice(rooms)["room_code"]
+            demands.append(demand)
     capacity = {room["room_code"]: room["capacity"] for room in rooms}
     linked = _allocate(demands, rooms, room_staff=_room_invigilators_needed)
-    alone = _allocate(
-        [{k: v for k, v in d.items() if k != "room_owner"} for d in demands],
-        rooms,
-        room_staff=_room_invigilators_needed,
-    )
+    alone = _allocate(_unlinked(demands), rooms, room_staff=_room_invigilators_needed)
     for room, courses in _occupants(linked).items():
         assert sum(courses.values()) <= capacity[room]
         assert len({owners[code] or code for code in courses}) == 1, (room, courses)
     assert _cost(linked) <= _cost(alone)
     if _cost(linked)[0] == _cost(alone)[0]:
         assert _staff(linked) <= _staff(alone)
+    if any(len(courses) > 1 for courses in _occupants(linked).values()):
+        # A share seats more students, or saves a room or room seats (decision 3).
+        assert _cost(linked)[0] < _cost(alone)[0] or _cost(linked)[3:] < _cost(alone)[3:]
     # Rows stay per real section: every student of every section is accounted for.
     for demand in demands:
         assert (
@@ -277,6 +300,110 @@ def test_a_link_never_leaves_a_period_worse_and_never_overfills_a_room(seed):
             )
             == demand["student_count"]
         )
+
+
+def test_a_link_that_shares_no_room_leaves_the_period_as_it_was():
+    """Sorted by link, STAT201's sections would come ahead of COE111's and
+    GS150's - an order a period without links never uses. Nothing is worth
+    sharing here, so the period must be exactly the one it is without links:
+    four rooms and 220 seats, never five rooms and 240 seats."""
+    rooms = exam_room_allocation.normalized_rooms(
+        [
+            _room(code, size)
+            for code, size in (
+                ("R00", 32),
+                ("R01", 8),
+                ("R02", 15),
+                ("R03", 20),
+                ("R04", 80),
+                ("R05", 80),
+                ("R06", 28),
+            )
+        ]
+    )
+    first, second = "AI300+STAT201", "COE111+GS150"
+    demands = [
+        _demand("STAT201", "S0", 15, owner=first),
+        _demand("STAT201", "S1", 25, owner=first),
+        _demand("STAT201", "S2", 5, owner=first),
+        _demand("AI300", "S0", 8, owner=first),
+        {**_demand("AI300", "S1", 15, owner=first), "preferred_room": "R04"},
+        _demand("COE111", "S0", 25, owner=second),
+        _demand("GS150", "S0", 29, owner=second),
+    ]
+    linked = _allocate(demands, rooms, room_staff=_room_invigilators_needed)
+    alone = _allocate(_unlinked(demands), rooms, room_staff=_room_invigilators_needed)
+    assert _cost(alone) == (0, 0, 0, 4, 220)
+    assert _unlinked(linked) == alone
+
+
+def test_an_unlinked_course_keeps_the_seats_it_has_without_the_link():
+    """A three-course link in a period too small for everyone. Sharing seats
+    no more students and saves no room or seat, so the period stays as it is
+    without the link: PHYS103 keeps its 32 seats and nobody needs an
+    invigilator the unlinked period did not."""
+    rooms = exam_room_allocation.normalized_rooms(
+        [_room("R00", 80), _room("R01", 80), _room("R02", 32)]
+    )
+    link = "CS101+CS102+STAT201"
+    demands = [
+        {**_demand("CS102", "S0", 10, owner=link), "preferred_room": "R01"},
+        _demand("CS102", "S1", 40, owner=link),
+        _demand("CS102", "S2", 8, owner=link),
+        {**_demand("STAT201", "S0", 12, owner=link), "preferred_room": "R00"},
+        _demand("STAT201", "S1", 29, owner=link),
+        _demand("STAT201", "S2", 55, owner=link),
+        _demand("CS101", "S0", 30, owner=link),
+        _demand("CS101", "S1", 20, owner=link),
+        _demand("CS101", "S2", 30, owner=link),
+        _demand("PHYS103", "S0", 35),
+    ]
+    linked = _allocate(demands, rooms, room_staff=_room_invigilators_needed)
+    alone = _allocate(_unlinked(demands), rooms, room_staff=_room_invigilators_needed)
+    assert _unlinked(linked) == alone
+    assert _occupants(linked)["R02"] == {"PHYS103": 32}
+    assert _staff(linked) == _staff(alone) == 4
+
+
+def _whole_section_board():
+    demands = [
+        _demand("AI212", "M1", 13, owner="L"),
+        _demand("AI212", "M2", 9, owner="L"),
+        _demand("AI225", "M1", 28, owner="L"),
+        _demand("AI225", "M2", 9, owner="L"),
+    ]
+    return demands, [_room("R0", 20), _room("R1", 20), _room("R2", 30)]
+
+
+def test_a_share_that_only_keeps_a_section_whole_is_refused():
+    """Decision 3: a share must save rooms or seats. Sharing R1 would keep
+    AI225's 28 whole, in the same three rooms and 70 seats - no room and no
+    seat saved - so each course keeps rooms of its own, as without the link."""
+    demands, rooms = _whole_section_board()
+    # What is at stake: the sharing answer keeps every section whole.
+    sharing = exam_room_allocation._allocate(demands, rooms, RoomAllocationContext())
+    assert exam_room_allocation._score(sharing, demands, rooms)[:5] == (0, 0, 0, 3, 70)
+    linked = _allocate(demands, rooms, room_staff=_room_invigilators_needed)
+    alone = _allocate(_unlinked(demands), rooms, room_staff=_room_invigilators_needed)
+    assert _cost(alone) == (0, 1, 1, 3, 70)
+    assert _unlinked(linked) == alone
+    assert all(len(courses) == 1 for courses in _occupants(linked).values())
+
+
+def test_a_share_must_save_a_room_or_a_room_seat_and_split_no_more_sections():
+    wins = exam_room_allocation._sharing_wins
+    demands, rooms = _whole_section_board()
+    # R0 20, R1 20, R2 30. Without the link: AI212 in R2, AI225's 28 over R0 and R1.
+    separate = [{2: 13}, {2: 9}, {0: 17, 1: 11}, {1: 9}]
+    # Sharing R1 keeps every section whole in the same rooms and seats: nothing saved.
+    assert not wins([{0: 13}, {1: 9}, {2: 28}, {1: 9}], separate, demands, rooms, None)
+    pair = [_demand("AI212", "M1", 10, owner="L"), _demand("AI225", "M2", 6, owner="L")]
+    small = [_room("R-16", 16), _room("R-12", 12), _room("R-4", 4)]
+    apart = [{0: 10}, {1: 6}]  # two rooms, 28 seats
+    # Sharing R-12 with the 4-seat room saves 12 seats but splits AI225.
+    assert not wins([{1: 10}, {1: 2, 2: 4}], apart, pair, small, None)
+    # One room for both saves a room and splits nothing.
+    assert wins([{0: 10}, {0: 6}], apart, pair, small, None)
 
 
 # ── rooms on a board ─────────────────────────────────────────────────────────
@@ -422,3 +549,86 @@ def test_linked_courses_in_different_periods_never_share():
         entries, sections, [_room("M-20-0", 20)], links=_links(("AI212", "AI225"))
     )
     assert not any("room_shared_with" in row for entry in entries for row in entry["rooms"])
+
+
+@pytest.mark.parametrize(
+    ("sections", "rooms"),
+    [
+        # No room is worth sharing: MATH101 stays whole in a 60 and BIO100 in
+        # the 20, never split over a 20 and a 40 with BIO100 in a spare 60.
+        (
+            {"AI212": [40], "BIO100": [15], "CS150": [35], "MATH101": [35, 15]},
+            [20, 40, 40, 60, 60],
+        ),
+        # A share would seat nobody more, in the same rooms and seats, for
+        # two more invigilators.
+        (
+            {"AI212": [35, 30], "BIO100": [40], "CS150": [15, 35], "MATH101": [25, 10]},
+            [30, 40, 60],
+        ),
+    ],
+)
+def test_a_link_never_costs_a_board_rooms_seats_or_staff(sections, rooms):
+    """The link's id sorts its members apart from BIO100 and CS150 between them."""
+    enrolment = {
+        code: [_section(code, f"M{n + 1}", size, "M") for n, size in enumerate(sizes)]
+        for code, sizes in sections.items()
+    }
+    inventory = [_room(f"M-{size}-{n}", size) for n, size in enumerate(rooms)]
+    boards, qas = [], []
+    for links in (NO_LINKS, _links(("AI212", "MATH101"))):
+        with exam_room_allocation._CACHE_LOCK:
+            exam_room_allocation._CACHE.clear()
+        entries = [_entry(code) for code in sections]
+        assign_rooms_to_schedule(entries, enrolment, inventory, links=links)
+        boards.append(entries)
+        qa = _build_room_qa(entries, inventory, links=links)
+        qas.append(
+            (
+                sum(row["student_count"] for row in qa["unassigned_room_sections"]),
+                qa["rooms_used"],
+                qa["total_capacity_used"],
+                qa["invigilators_total"],
+            )
+        )
+    assert boards[0] == boards[1]
+    assert qas[0] == qas[1]
+
+
+def _online(entry):
+    return {**entry, "is_online": True}
+
+
+def test_an_online_member_of_a_link_never_shares_a_room_with_an_in_person_one():
+    """GS150 is sat online, AI212 in person: one room would do, but a room is
+    online or not, so each keeps a room of its own - as with no link at all."""
+    sections = {
+        "AI212": [_section("AI212", "M1", 4, "M")],
+        "GS150": [_section("GS150", "M2", 10, "M")],
+    }
+    rooms = [_room("M-20-0", 20), _room("M-20-1", 20)]
+    boards = []
+    for links in (NO_LINKS, _links(("AI212", "GS150"))):
+        entries = [_entry("AI212"), _online(_entry("GS150"))]
+        assign_rooms_to_schedule(entries, sections, rooms, links=links)
+        boards.append(entries)
+    assert boards[0] == boards[1]
+    assert len({row["room_code"] for entry in boards[1] for row in entry["rooms"]}) == 2
+
+
+def test_the_online_members_of_a_link_share_a_room_with_each_other():
+    """GS150 and GS160 are both sat online: one online room holds both, and
+    AI212, in person, keeps its own."""
+    sections = {
+        "AI212": [_section("AI212", "M1", 4, "M")],
+        "GS150": [_section("GS150", "M2", 10, "M")],
+        "GS160": [_section("GS160", "M3", 5, "M")],
+    }
+    rooms = [_room(f"M-20-{n}", 20) for n in range(3)]
+    entries = [_entry("AI212"), _online(_entry("GS150")), _online(_entry("GS160"))]
+    assign_rooms_to_schedule(entries, sections, rooms, links=_links(("AI212", "GS150", "GS160")))
+    by_code = {entry["course_code"]: entry["rooms"] for entry in entries}
+    [gs150], [gs160], [ai212] = by_code["GS150"], by_code["GS160"], by_code["AI212"]
+    assert gs150["room_code"] == gs160["room_code"] != ai212["room_code"]
+    assert (gs150["room_shared_with"], gs150["room_student_total"]) == (["GS160"], 15)
+    assert "room_shared_with" not in ai212

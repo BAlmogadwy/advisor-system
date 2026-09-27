@@ -174,6 +174,18 @@ def test_one_link_in_one_room_code_across_two_cohorts_is_still_a_double_booking(
     assert qa["invigilators_per_day"]["Sun"] == {"M": 2, "F": 1, "total": 3}
 
 
+def test_an_online_and_an_in_person_course_in_one_room_are_a_double_booking():
+    """The allocator never seats an online and an in-person member of a link
+    together (a room is online or not), so room QA does not accept it either;
+    two online members of one link may share."""
+    board = _shared_board()
+    online = {**board[5], "is_online": True}  # GS151, beside IS113 in person
+    qa = _build_room_qa([*board[:5], online, board[6]], [], links=_links(*LINKS))
+    assert [item["courses"] for item in qa["room_double_bookings"]] == [["GS151", "IS113"]]
+    both = [*board[:5], online, {**board[6], "is_online": True}]
+    assert _build_room_qa(both, [], links=_links(*LINKS))["room_double_bookings"] == []
+
+
 def test_the_building_footprint_counts_a_shared_room_once():
     board = [
         _entry("AI212", 0, "Sun", [_row("R-40", 10, 40), _row("R-41", 3, 40)]),
@@ -428,6 +440,78 @@ def test_the_master_excel_staffs_a_mixed_shared_room_by_the_department_rule(link
     [row] = [row for row in rows if row[2] == "ENV212 + IS225" and row[7] == room]
     assert (row[3], row[5], row[6]) == ("Department (shared room)", cohort, total)
     assert row[8] == _invigilators_needed("IS225", total) != _invigilators_needed("ENV212", total)
+
+
+def _per_course(cell, codes):
+    """{course: its part} of a shared room's "A: ...; B: ..." cell, in order."""
+    text, parts = str(cell), {}
+    for code, following in zip(codes, [*codes[1:], None], strict=True):
+        assert text.startswith(f"{code}: "), (cell, code)
+        text = text[len(code) + 2 :]
+        if following is None:
+            parts[code], text = text, ""
+            continue
+        parts[code], separator, text = text.partition(f"; {following}: ")
+        assert separator, (cell, following)
+        text = f"{following}: {text}"
+    return parts
+
+
+def test_the_master_excel_names_the_course_of_every_part_of_a_shared_room(linked_run):
+    """Each course's sections with their head-counts, its room group and its
+    mapping on a shared room's staffing row say whose they are."""
+    result, run = linked_run
+    room, cohort, _courses = _shared_pair(result, "AI212", "AI225")
+    data = json.loads(run.result_json)
+    for entry in data["schedule"]:
+        for row in entry["rooms"]:
+            if entry["course_code"] == "AI212" and row["room_code"] == room:
+                row["room_group"] = "1/2"
+    run.result_json = json.dumps(data, ensure_ascii=False)
+    run.save(update_fields=["result_json"])
+    path = export_exam_timetable_xlsx(run.pk)
+    try:
+        rows = _sheet_rows(load_workbook(path)["Invigilators"])
+    finally:
+        path.unlink(missing_ok=True)
+    checked = 0
+    for (slot, code, gender), courses in _shared(result).items():
+        entry = next(e for e in result["schedule"] if e["slot_index"] == slot)
+        [row] = [
+            row
+            for row in rows
+            if (row[0], row[1], row[5], row[7]) == (entry["day"], entry["period"], gender, code)
+        ]
+        codes = row[2].split(" + ")
+        assert sorted(codes) == sorted(courses)
+        for course, part in _per_course(row[4], codes).items():
+            # Every section of the course, each with its head-count.
+            counts = [int(piece.rsplit("(", 1)[1].rstrip(")")) for piece in part.split("; ")]
+            assert sum(counts) == courses[course], (row[4], course)
+        assert set(_per_course(row[12], codes)) == set(courses)
+        if (code, gender) == (room, cohort):
+            assert row[11] == "AI212: 1/2"
+        checked += 1
+    assert checked == len(_shared(result)) >= 3
+
+
+def test_an_online_exam_never_shares_a_room_with_one_sat_in_person(linked_run):
+    """CYB152 is sat online and linked to IS102, sat in person: they never
+    share, so no in-person student is listed under the online rooms."""
+    result, run = linked_run
+    online = {entry["course_code"]: entry.get("is_online") is True for entry in result["schedule"]}
+    assert online["CYB152"] and not online["IS102"]
+    for courses in _physical(result).values():
+        assert len({online[code] for code in courses}) == 1, courses
+    view = build_roster_view(run, built=0.0)
+    in_person = [
+        (slot, room)
+        for (slot, room, _cohort), courses in _physical(result).items()
+        if "IS102" in courses
+    ]
+    assert in_person
+    for key in in_person:
+        assert room_facts(view.model, key, 0)["online"] is False
 
 
 def _department(run, department, language):

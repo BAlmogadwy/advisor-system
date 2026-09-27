@@ -142,6 +142,19 @@ def _room_invigilators_needed(course_codes: Iterable[str], students_in_room: int
     return _invigilators_needed(_room_ruling_course(course_codes), students_in_room)
 
 
+def _room_owner(links: LinkedExams, entry: dict) -> str:
+    """Who holds the rooms an exam sits in: its course, or its linked exam.
+
+    Linked courses may share a room, but an online exam never shares one with
+    an exam sat in person: the Student lists and the student-data export call
+    a room online when an exam in it is, so a shared room holding both would
+    list in-person students under the remote rooms. The online members of a
+    link hold their rooms together, apart from its in-person members.
+    """
+    unit = links.unit(entry["course_code"])
+    return f"{unit} (online)" if entry.get("is_online") is True else unit
+
+
 def _physical_exam_rooms(placed: Iterable[tuple[dict, dict]]) -> dict[tuple, dict]:
     """Each seated (period, room) once, in first-seen order, with everyone in it.
 
@@ -1765,7 +1778,8 @@ def assign_rooms_to_schedule(
 
     Same-gender sections of linked courses may share a room: their demands
     carry the link as ``room_owner``, and the allocator shares only where that
-    saves rooms or seats. Rows stay per real course, each with its own
+    saves rooms or seats. An online member never shares with an in-person one
+    (``_room_owner``). Rows stay per real course, each with its own
     ``section_parts``; a shared room's row also names the other courses in it
     (``room_shared_with``) and the room's whole head-count
     (``room_student_total``). Unshared rows carry neither.
@@ -1798,15 +1812,17 @@ def assign_rooms_to_schedule(
                     }
                 )
         for gender, demands in sorted(demands_by_gender.items()):
-            # A link owns its rooms only in a pack holding two of its courses:
-            # anywhere else each course is allocated exactly as if unlinked.
+            # A link owns its rooms only in a pack holding two of its courses
+            # of one kind, online or in person: anywhere else each course is
+            # allocated exactly as if unlinked.
             present: dict[str, set[str]] = defaultdict(set)
             for demand in demands:
-                present[links.unit(demand["course_code"])].add(demand["course_code"])
+                owner = _room_owner(links, by_course[demand["course_code"]])
+                present[owner].add(demand["course_code"])
             for demand in demands:
-                unit = links.unit(demand["course_code"])
-                if len(present[unit]) > 1:
-                    demand["room_owner"] = unit
+                owner = _room_owner(links, by_course[demand["course_code"]])
+                if len(present[owner]) > 1:
+                    demand["room_owner"] = owner
             packs.append((by_course, gender, demands))
     for done, (by_course, gender, demands) in enumerate(packs):
         if on_period is not None:
@@ -2348,7 +2364,8 @@ def _build_room_qa(
     Everything is counted per physical room in a period: its seats once and
     its invigilators once, on the head-count of every course in it. A room
     holding two courses is a double booking unless both belong to one linked
-    exam (``links``) and one student cohort.
+    exam (``links``), one student cohort and one kind - online or in person -
+    exactly the rooms the allocator lets them share (``_room_owner``).
     """
     rooms_used_keys: set[tuple[int, str]] = set()
     total_demand = 0
@@ -2415,7 +2432,7 @@ def _build_room_qa(
             stu = int(a.get("student_count", 0) or 0)
             total_demand += stu
             placed.append((e, a))
-            owner = links.unit(e["course_code"])
+            owner = _room_owner(links, e)
             cohort = str(a.get("gender", ""))
             prev = slot_room_course.get((si, code))
             if prev is not None and (prev[0] != owner or prev[2] != cohort):
@@ -2994,6 +3011,12 @@ def export_exam_timetable_xlsx(run_id: int) -> Path:
         if len(parts) == 1:
             return _section_label(parts[0])
         return "; ".join(f"{_section_label(part)} ({part['student_count']})" for part in parts)
+
+    def _counted_section_label(room: dict) -> str:
+        """A room's sections, each with its head-count, even when it is one."""
+        if len(_room_section_parts(room)) > 1:
+            return _room_section_label(room)
+        return f"{_room_section_label(room)} ({int(room.get('student_count', 0) or 0)})"
 
     def _room_mapping_label(room: dict) -> str:
         parts = _room_section_parts(room)
@@ -4087,6 +4110,9 @@ def export_exam_timetable_xlsx(run_id: int) -> Path:
                 if len(sharing) > 1 and sharing[0][0] is not e:
                     continue  # this shared room's row is its first course's
                 if len(sharing) > 1:
+                    # Each course's part of the room says whose it is: every
+                    # section, head-count, room group and mapping is prefixed
+                    # with its course, as the room holds two courses' sections.
                     codes = [entry["course_code"] for entry, _room in sharing]
                     stu = sum(int(room.get("student_count", 0) or 0) for _e, room in sharing)
                     invigs = _room_invigilators_needed(codes, stu)
@@ -4097,7 +4123,7 @@ def export_exam_timetable_xlsx(run_id: int) -> Path:
                         " + ".join(codes),
                         f"{_course_type(ruling)} (shared room)",
                         "; ".join(
-                            f"{entry['course_code']}: {_room_section_label(room)}"
+                            f"{entry['course_code']}: {_counted_section_label(room)}"
                             for entry, room in sharing
                         ),
                         a.get("gender", ""),
@@ -4109,11 +4135,14 @@ def export_exam_timetable_xlsx(run_id: int) -> Path:
                         if any(entry["course_code"] in pinned_codes for entry, _r in sharing)
                         else "No",
                         "; ".join(
-                            str(room.get("room_group", ""))
-                            for _e, room in sharing
+                            f"{entry['course_code']}: {room['room_group']}"
+                            for entry, room in sharing
                             if room.get("room_group")
                         ),
-                        "; ".join(_room_mapping_label(room) for _e, room in sharing),
+                        "; ".join(
+                            f"{entry['course_code']}: {_room_mapping_label(room)}"
+                            for entry, room in sharing
+                        ),
                     ]
                 else:
                     stu = int(a.get("student_count", 0) or 0)
