@@ -551,6 +551,10 @@ main.exam-builder-page .et-drill-action-note { flex-basis: 100%; color: var(--et
 main.exam-builder-page .et-drill-action-note:empty { display: none; }
 main.exam-builder-page .et-drill-course-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); align-items: start; gap: 8px; min-width: 190px; white-space: normal; }
 main.exam-builder-page .et-drill-course.et-course-card { width: 210px; max-width: 100%; }
+main.exam-builder-page .et-pair-period { display: block; margin-top: 4px; color: var(--et-muted); font-size: .75rem; font-variant-numeric: tabular-nums; }
+main.exam-builder-page .et-pair-day { white-space: nowrap; }
+main.exam-builder-page .et-pair-count { font-variant-numeric: tabular-nums; }
+main.exam-builder-page .et-pair-clash { display: inline-block; margin-inline-start: 6px; padding: 1px 6px; border: 1px solid var(--et-danger); border-radius: 4px; background: var(--et-danger-soft); color: var(--et-danger); font-size: .75rem; font-weight: 600; line-height: 1.4; white-space: nowrap; }
 main.exam-builder-page .et-drill-course-list > .et-course-card { width: 100%; max-width: 220px; }
 main.exam-builder-page .et-course-card > .et-drill-action-note { grid-column: 1 / -1; min-width: 0; margin: 2px 0 0; font-weight: 400; white-space: normal; overflow-wrap: anywhere; }
 main.exam-builder-page .et-section-mapping-notice { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px 16px; margin-block: 0 12px; padding: 12px 14px; border: 1px solid var(--et-warning); border-radius: 6px; background: var(--et-warning-soft); color: var(--et-warning); }
@@ -565,6 +569,7 @@ main.exam-builder-page .et-room-group { display: block; color: var(--et-muted); 
 main.exam-builder-page .et-section-detail .et-section-gap { color: var(--et-warning); }
 /* Timetable and report cards share neutral surfaces and plan-specific stripes. */
 main.exam-builder-page .et-course-card { background: var(--et-subtle) !important; color: var(--et-text); }
+main.exam-builder-page .et-drill-note { margin: -4px 0 12px; color: var(--et-muted); font-size: .8125rem; line-height: 1.5; }
 main.exam-builder-page .et-drill-notice { margin-block: 12px; padding: 8px 12px; border: 1px solid var(--et-warning); border-radius: 5px; background: var(--et-warning-soft); color: var(--et-warning); font-size: .8125rem; }
 main.exam-builder-page #kpiDrillClose { min-width: 36px; min-height: 36px; }
 main.exam-builder-page :is(#kpiDrill, .et-workspace-details, #examScheduleWorkspace, #schedFilter) { scroll-margin-block: 16px; }
@@ -950,6 +955,8 @@ html[data-theme="dark"] #matrixPanel .et-matrix .cm-1 { color: #f5cf85; }
 @media (max-width: 800px) {
   main.exam-builder-page .et-summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   main.exam-builder-page .et-summary-grid > .et-summary-span-2 { grid-column: auto; }
+  /* An odd card count would leave the last card alone in a half row. */
+  main.exam-builder-page .et-summary-grid > .et-summary-cell:last-child:nth-child(odd) { grid-column: 1 / -1; }
   main.exam-builder-page .et-section,
   main.exam-builder-page .et-panel { padding: 20px; }
   main.exam-builder-page .et-section-heading { margin-bottom: 18px; }

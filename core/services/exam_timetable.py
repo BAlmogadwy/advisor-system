@@ -1072,8 +1072,13 @@ def _build_qa(
     Soft-constraint metrics:
       - Day-overload count:     students exceeding max_per_day
       - Credit load metrics:    max credit-load per day, heavy-day student count
+      - Same-day exams:         students with 2+ exams on at least one day, and
+                                how many students sit each pair of exams that
+                                share a day
 
-    Also collects per-student detail records for KPI drilldown in the UI.
+    Also collects per-student detail records for KPI drilldown in the UI. The
+    same-day pairs are aggregates only: a row names two exams and a day, and
+    counts students; it never carries a student identifier.
     """
     # ── Preparation ──
     all_students: set[int] = set()
@@ -1083,6 +1088,9 @@ def _build_qa(
     # Lookup maps: course → its assigned slot index / day
     course_slot: dict[str, int] = {e["course_code"]: e["slot_index"] for e in schedule_entries}
     course_day: dict[str, str] = {e["course_code"]: e["day"] for e in schedule_entries}
+    course_period: dict[str, str] = {
+        e["course_code"]: str(e.get("period") or "") for e in schedule_entries
+    }
     day_order: dict[str, int] = {}
     for entry in schedule_entries:
         day_order[entry["day"]] = min(
@@ -1112,6 +1120,9 @@ def _build_qa(
     students_over_limit_per_day: int = 0  # students exceeding soft cap
     max_credit_load_per_day: int = 0  # worst-case credit sum on a day
     heavy_day_students: int = 0  # students with heavy credit pair
+    multi_exam_day_students: int = 0  # students with 2+ exams on some day
+    # (day, first exam, second exam) -> students sitting both that day
+    same_day_pair_counts: dict[tuple[str, str, str], int] = defaultdict(int)
 
     # Detail records for KPI drilldown panel in the UI
     overload_details: list[dict] = []  # per-student, per-day overload records
@@ -1144,12 +1155,21 @@ def _build_qa(
         # ── Soft-constraint metrics per day ──
         has_overload = False  # does this student exceed the per-day cap?
         has_heavy_day = False  # does this student have a heavy credit pairing?
+        has_multi_exam_day = False  # does this student sit 2+ exams on a day?
         for _day, ccs in sorted(day_groups.items(), key=lambda item: day_order[item[0]]):
             if _day == "OVERFLOW":
                 continue  # OVERFLOW is a virtual day — skip for metrics
 
             day_count = len(ccs)
             max_exams_per_day = max(max_exams_per_day, day_count)
+
+            # Every pair of this day's exams, earlier period first. Three exams
+            # make three pairs; a same-period pair is a clash, kept and marked.
+            if day_count >= 2:
+                has_multi_exam_day = True
+                in_time_order = sorted(ccs, key=lambda code: (course_slot[code], code))
+                for first, second in itertools.combinations(in_time_order, 2):
+                    same_day_pair_counts[(_day, first, second)] += 1
 
             # Day-overload check: student exceeds the soft cap
             if day_count > max_per_day:
@@ -1194,6 +1214,25 @@ def _build_qa(
             students_over_limit_per_day += 1
         if has_heavy_day:
             heavy_day_students += 1
+        if has_multi_exam_day:
+            multi_exam_day_students += 1
+
+    # Most-shared pairs first, then the timetable's day order, then codes.
+    same_day_exam_pairs = [
+        {
+            "day": day,
+            "courses": [
+                {"code": code, "slot_index": course_slot[code], "period": course_period[code]}
+                for code in (first, second)
+            ],
+            "student_count": count,
+            "clash": course_slot[first] == course_slot[second],
+        }
+        for (day, first, second), count in sorted(
+            same_day_pair_counts.items(),
+            key=lambda item: (-item[1], day_order[item[0][0]], item[0][1], item[0][2]),
+        )
+    ]
 
     # ── Bucket (programme-plan term) day-rule verification ──
     # Hard constraint B says no two courses from the same (program, term)
@@ -1245,6 +1284,8 @@ def _build_qa(
         "manual_override_details": manual_override_details,
         "max_credit_load_per_day": max_credit_load_per_day,
         "heavy_day_students": heavy_day_students,
+        "multi_exam_day_students": multi_exam_day_students,
+        "same_day_exam_pairs": same_day_exam_pairs,
         "overload_details": overload_details,
         "heavy_day_details": heavy_day_details,
     }
@@ -1556,10 +1597,15 @@ def assign_rooms_to_schedule(
     return schedule_entries
 
 
-#: Every student-facing soft metric _build_qa reports. Balancing staff may not
-#: make any of them worse, so the guard compares the whole tuple, not a total:
-#: a dimension left out of this list is a dimension nothing protects.
+#: Every student-facing soft metric _build_qa reports that the scheduler itself
+#: trades on. Balancing staff may not make any of them worse, so the guard
+#: compares the whole tuple, not a total: a dimension left out of this list is
+#: a dimension nothing protects.
 #: These are AGGREGATES, not per-student guarantees - see student_load_signature.
+#: ``multi_exam_day_students`` is deliberately NOT here: two exams on a day are
+#: within the default cap, the scheduler does not minimise them, and vetoing
+#: every move that adds one would cost the staff balancing its purpose. It is
+#: reported for review, as a card, and never guarded.
 STUDENT_LOAD_METRICS = (
     "students_over_limit_per_day",
     "max_exams_per_day_per_student",
@@ -3170,6 +3216,11 @@ def export_exam_timetable_xlsx(run_id: int) -> Path:
         ("Slots Used", qa.get("slots_used", 0)),
         ("Max Exams/Day/Student", qa.get("max_exams_per_day_per_student", 0)),
         ("Max Per Day Cap", qa.get("max_per_day", 2)),
+        # Runs saved before this metric existed never measured it: not a zero.
+        (
+            "Students With 2+ Exams in a Day",
+            qa.get("multi_exam_day_students", "Not recorded in saved data"),
+        ),
         ("Students Over Limit", qa.get("students_over_limit_per_day", 0)),
         ("Max Credit Load/Day", qa.get("max_credit_load_per_day", 0)),
         ("Heavy Day Students", qa.get("heavy_day_students", 0)),
@@ -3297,6 +3348,37 @@ def export_exam_timetable_xlsx(run_id: int) -> Path:
                     detail.get("student_id", ""),
                     detail.get("day", ""),
                     ", ".join(_course_label(c["code"]) for c in detail.get("courses", [])),
+                ]
+            )
+    # The card's drill: exam pairs and how many students sit both, never who.
+    # Each period has its own cell, as in Fixed Exam Times: a time range after
+    # an Arabic course name in one cell is painted end-first (UAX #9, W2).
+    if qa.get("same_day_exam_pairs"):
+        ws3.append([])
+        ws3.append(["Same-Day Exam Pairs"])
+        ws3.cell(ws3.max_row, 1).font = header_font
+        ws3.append(
+            [
+                "Day",
+                "First Exam",
+                "First Period",
+                "Second Exam",
+                "Second Period",
+                "Students Sitting Both",
+                "Clash",
+            ]
+        )
+        for pair in qa["same_day_exam_pairs"]:
+            first, second = [*pair.get("courses", []), {}, {}][:2]
+            ws3.append(
+                [
+                    pair.get("day", ""),
+                    _course_label(first.get("code", "")),
+                    first.get("period", ""),
+                    _course_label(second.get("code", "")),
+                    second.get("period", ""),
+                    pair.get("student_count", 0),
+                    "Same period" if pair.get("clash") else "",
                 ]
             )
     if qa.get("multi_sitting_details"):

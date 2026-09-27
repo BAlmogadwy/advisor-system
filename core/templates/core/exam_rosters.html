@@ -13,7 +13,7 @@
 
 {% block main_attrs %}data-exam-rosters="true" data-roster-state="{{ roster_state }}"{% if roster_run %} data-run-id="{{ roster_run.id }}" data-index-url="{% url 'exam_roster_index' roster_run.id %}" data-roster-url="{% url 'exam_roster_detail' roster_run.id %}" data-lookup-url="{% url 'exam_roster_lookup' roster_run.id %}" data-export-url="{% url 'exam_student_export' roster_run.id %}" data-export-preflight-url="{% url 'exam_student_export_preflight' roster_run.id %}"{% endif %} data-timetable-url="{% url 'exam_timetable_page' %}"{% endblock %}
 {% block main_padding %}p-4 exam-builder-page exam-rosters-page{% endblock %}
-{% block extra_css %}<link href="{% static 'css/page-exam-timetable.css' %}?v=22" rel="stylesheet"><link href="{% static 'css/page-exam-rosters.css' %}?v=2" rel="stylesheet">{% endblock %}
+{% block extra_css %}<link href="{% static 'css/page-exam-timetable.css' %}?v=25" rel="stylesheet"><link href="{% static 'css/page-exam-rosters.css' %}?v=2" rel="stylesheet">{% endblock %}
 
 {% block page_heading %}{% if LANGUAGE_CODE == 'ar' %}جدول الاختبارات{% else %}Exam Timetable{% endif %}{% endblock %}
 
@@ -132,6 +132,6 @@
 {% if roster_state == 'ready' %}
 <script src="{% static 'js/exam-roster.js' %}?v=2"></script>
 <script src="{% static 'js/page-exam-rosters.js' %}?v=2"></script>
-<script src="{% static 'js/exam-student-export.js' %}?v=2"></script>
+<script src="{% static 'js/exam-student-export.js' %}?v=3"></script>
 {% endif %}
 {% endblock %}

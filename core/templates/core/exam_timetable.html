@@ -6,7 +6,7 @@
 
 {% block main_attrs %}data-exam-builder="true" data-can-delete-exam-timetable="{{ can_delete_exam_timetable|yesno:'true,false' }}"{% endblock %}
 {% block main_padding %}p-4 exam-builder-page{% endblock %}
-{% block extra_css %}<link href="{% static 'css/page-exam-timetable.css' %}?v=22" rel="stylesheet"><link href="{% static 'css/page-exam-rosters.css' %}?v=2" rel="stylesheet">{% endblock %}
+{% block extra_css %}<link href="{% static 'css/page-exam-timetable.css' %}?v=25" rel="stylesheet"><link href="{% static 'css/page-exam-rosters.css' %}?v=2" rel="stylesheet">{% endblock %}
 
 {% block page_heading %}{% if LANGUAGE_CODE == 'ar' %}جدول الاختبارات{% else %}Exam Timetable{% endif %}{% endblock %}
 
@@ -104,9 +104,10 @@
         <div class="et-summary-cell"><div class="kpi"><div class="k">{% if LANGUAGE_CODE == 'ar' %}الفترات المستخدمة{% else %}Slots used{% endif %}</div><div class="v" id="kSlots">0</div></div></div>
         <div class="et-summary-cell"><div class="kpi kpi-click" role="button" tabindex="0" aria-controls="kpiDrill" aria-expanded="false" data-drill="conflicts"><div class="k">{% if LANGUAGE_CODE == 'ar' %}التعارضات{% else %}Conflicts{% endif %}</div><div class="v" id="kConflicts">0</div></div></div>
         <div class="et-summary-cell"><div class="kpi"><div class="k">{% if LANGUAGE_CODE == 'ar' %}أقصى اختبارات/يوم/طالب{% else %}Max exams/day/student{% endif %}</div><div class="v" id="kMaxDay">0</div></div></div>
+        <div class="et-summary-cell et-summary-span-2"><div class="kpi kpi-click" role="button" tabindex="0" aria-controls="kpiDrill" aria-expanded="false" data-drill="same-day-pairs" title="{% if LANGUAGE_CODE == 'ar' %}طلاب يؤدون اختبارين أو أكثر في اليوم نفسه، في يوم واحد على الأقل{% else %}Students who sit two or more exams on the same day, on at least one day{% endif %}"><div class="k">{% if LANGUAGE_CODE == 'ar' %}طلاب بأكثر من اختبار في اليوم{% else %}Students with 2+ exams in a day{% endif %}</div><div class="v" id="kMultiExamDay"><span aria-hidden="true">—</span><span class="visually-hidden">{% if LANGUAGE_CODE == 'ar' %}لم يُحسب{% else %}Not calculated{% endif %}</span></div></div></div>
         <div class="et-summary-cell"><div class="kpi kpi-click" role="button" tabindex="0" aria-controls="kpiDrill" aria-expanded="false" data-drill="overload"><div class="k" id="kOverLabel">{% if LANGUAGE_CODE == 'ar' %}طلاب تجاوزوا الحد{% else %}Students over limit/day{% endif %}</div><div class="v" id="kOver2">0</div></div></div>
-        <div class="et-summary-cell"><div class="kpi"><div class="k">{% if LANGUAGE_CODE == 'ar' %}أقصى ساعات معتمدة/يوم{% else %}Max credit load/day{% endif %}</div><div class="v" id="kMaxCredit">0</div></div></div>
-        <div class="et-summary-cell"><div class="kpi kpi-click" role="button" tabindex="0" aria-controls="kpiDrill" aria-expanded="false" data-drill="heavy"><div class="k">{% if LANGUAGE_CODE == 'ar' %}طلاب بيوم ثقيل{% else %}Heavy day students{% endif %}</div><div class="v" id="kHeavyDay">0</div></div></div>
+        <div class="et-summary-cell et-summary-span-2"><div class="kpi"><div class="k">{% if LANGUAGE_CODE == 'ar' %}أقصى ساعات معتمدة/يوم{% else %}Max credit load/day{% endif %}</div><div class="v" id="kMaxCredit">0</div></div></div>
+        <div class="et-summary-cell et-summary-span-2"><div class="kpi kpi-click" role="button" tabindex="0" aria-controls="kpiDrill" aria-expanded="false" data-drill="heavy"><div class="k">{% if LANGUAGE_CODE == 'ar' %}طلاب بيوم ثقيل{% else %}Heavy day students{% endif %}</div><div class="v" id="kHeavyDay">0</div></div></div>
       </div>
       <div id="kThinRow" class="et-summary-grid d-none">
         <div class="et-summary-cell et-summary-span-2"><div class="kpi kpi-click" role="button" tabindex="0" aria-controls="kpiDrill" aria-expanded="false" data-drill="thin-courses" title="{% if LANGUAGE_CODE == 'ar' %}مقررات صغيرة جدول دون مراعاة تعارضاتها{% else %}Thin courses scheduled without honouring their conflicts{% endif %}"><div class="k">{% if LANGUAGE_CODE == 'ar' %}مقررات صغيرة (مخففة){% else %}Thin courses relaxed{% endif %}</div><div class="v" id="kThinCount">0</div></div></div>
@@ -131,6 +132,7 @@
           <h3 id="kpiDrillTitle"></h3>
           <button id="kpiDrillClose" type="button" class="btn btn-sm btn-outline-secondary py-0 px-2" aria-label="{% if LANGUAGE_CODE == 'ar' %}إغلاق التفاصيل{% else %}Close details{% endif %}">&times;</button>
         </div>
+        <p id="kpiDrillNote" class="et-drill-note" hidden></p>
         <p id="examDrillNotice" class="et-drill-notice" role="status" hidden></p>
         <div id="examDrillViewport" class="et-drill-viewport" role="region" tabindex="0" aria-labelledby="kpiDrillTitle">
           <table class="table table-sm table-hover mb-0 et-drill-table">
@@ -289,9 +291,9 @@
   const LANGUAGE_CODE = "{{ LANGUAGE_CODE|default:'en' }}";
   const djCsrfToken = "{{ csrf_token }}";
 </script>
-<script src="{% static 'js/exam-review.js' %}?v=5"></script>
-<script src="{% static 'js/page-exam-timetable.js' %}?v=29"></script>
-<script src="{% static 'js/exam-student-export.js' %}?v=2"></script>
+<script src="{% static 'js/exam-review.js' %}?v=6"></script>
+<script src="{% static 'js/page-exam-timetable.js' %}?v=31"></script>
+<script src="{% static 'js/exam-student-export.js' %}?v=3"></script>
 <script src="{% static 'js/exam-roster.js' %}?v=2"></script>
 <script src="{% static 'js/exam-roster-drawer.js' %}?v=2"></script>
 {% endblock %}
