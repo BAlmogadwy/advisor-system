@@ -294,9 +294,14 @@ test('linked cards are drawn as one group, each naming its partner as an isolate
 
 test('drag and the Move dialog move a link as one, and one Undo puts it back', async t => {
   const ui = await loaded(t);
+  ui.$('examSetupDetails').open = true;
+  const unlink = linkRows(ui)[0].querySelector('[data-link-remove]');
+  unlink.focus();
   drop(ui, 'AI225', 'Mon', '10:30-12:30');
   assert.deepEqual(placement(ui, 'AI212'), ['Mon', '10:30-12:30']);
   assert.deepEqual(placement(ui, 'AI225'), ['Mon', '10:30-12:30']);
+  assert.notEqual(linkRows(ui)[0].querySelector('[data-link-remove]'), unlink, 'The row was redrawn with its new time');
+  assert.equal(ui.window.document.activeElement, linkRows(ui)[0].querySelector('[data-link-remove]'), 'A focused Unlink keeps focus through the redraw');
   ui.$('undoExamBtn').click();
   assert.deepEqual(placement(ui, 'AI212'), ['Sun', '08:00-10:00']);
   assert.deepEqual(placement(ui, 'AI225'), ['Sun', '08:00-10:00']);
@@ -360,7 +365,7 @@ test('the pin toggle and the pin editor pin and unpin the whole link', async t =
 });
 
 test('a link pinned through one member is pinned whole: neither card drags, and one click frees it', async t => {
-  const run = savedRun();
+  const run = savedRun({ qa: { conflict_count: 1, same_slot_conflicts: [{ student_id: 4401001, slot_index: 0, courses: ['AI212', 'AI225'] }] } });
   run.pinned = [{ course_code: 'AI225', day: 'Sun', period: '08:00-10:00' }];
   const ui = await loaded(t, { run });
   for (const code of ['AI212', 'AI225']) {
@@ -369,6 +374,14 @@ test('a link pinned through one member is pinned whole: neither card drags, and 
     assert.equal(card(ui, code).querySelector('[data-exam-pin]').getAttribute('aria-pressed'), 'true', code);
     assert.equal(card(ui, code).querySelector('[data-exam-move]').disabled, true, code);
   }
+  const dragstart = new ui.window.Event('dragstart', { bubbles: true, cancelable: true });
+  card(ui, 'AI212').dispatchEvent(dragstart);
+  assert.equal(dragstart.defaultPrevented, true, 'AI212 is pinned through its partner, so it does not drag');
+  // The conflict detail's Move is held back the same way, and says why.
+  ui.window.document.querySelector('[data-open-drill="conflicts"]').click();
+  const move = Array.from(ui.$('kpiDrillBody').querySelectorAll('[data-move-exam]')).find(button => button.dataset.moveExam === 'ai212-ml');
+  assert.equal(move.disabled, true);
+  assert.equal(move.title, AR ? 'ألغِ التثبيت للنقل.' : 'Unpin to move.');
   assert.match(linkRows(ui)[0].querySelector('.et-link-time').textContent, AR ? /موعد ثابت/ : /Fixed time/);
   drop(ui, 'AI212', 'Mon', '08:00-10:00');
   assert.deepEqual(placement(ui, 'AI212'), ['Sun', '08:00-10:00']);
@@ -401,6 +414,12 @@ test('linking courses that sit apart asks for the one time they share; Undo take
   assert.equal(ui.window.document.activeElement, ui.$('applyExamLink'));
   assert.deepEqual(placement(ui, 'CS111 (1)'), ['Thu', '13:00-15:00']);
   assert.equal(ui.$('undoExamBtn').disabled, true, 'A cancelled link leaves no Undo step');
+  // Escape cancels the same way, back on Link.
+  ui.$('applyExamLink').click();
+  assert.equal(ui.window.document.activeElement, ui.$('examLinkOptions').querySelector('input:checked'));
+  dialog.dispatchEvent(new ui.window.Event('cancel', { cancelable: true }));
+  assert.ok(!(dialog.open || dialog.hasAttribute('open')));
+  assert.equal(ui.window.document.activeElement, ui.$('applyExamLink'));
 
   ui.$('applyExamLink').click();
   ui.$('examLinkOptions').querySelectorAll('input')[0].click();
@@ -434,12 +453,31 @@ test('a pinned course\'s time is the only choice, and courses pinned apart are n
   assert.deepEqual(pinnedIdentities(ui), ['cs111-programming']);
 
   card(ui, 'CS111 (1)').querySelector('[data-exam-pin]').click();
+  // With another link in need of review, the refusal of this click still wins.
+  const box = Array.from(ui.$('courseList').querySelectorAll('input')).find(item => item.value === 'AI225');
+  box.checked = false;
+  ui.emit(box, 'change');
   link(ui, 'CS111 (1)', 'CS111 (2)');
+  assert.ok(linkRows(ui)[0].classList.contains('et-link-invalid'));
+  assert.match(ui.$('examLinkNotice').textContent, AR ? /مثبتة في مواعيد مختلفة/ : /are pinned to different times/);
+  box.checked = true;
+  ui.emit(box, 'change');
   const dialog = ui.$('examLinkDialog');
   assert.ok(!(dialog.open || dialog.hasAttribute('open')));
   assert.equal(linkRows(ui).length, 1);
   assert.match(ui.$('examLinkNotice').textContent, AR ? /مثبتة في مواعيد مختلفة/ : /are pinned to different times/);
   assert.ok(ui.$('examLinkNotice').classList.contains('text-danger'));
+  // Said beside Link, which keeps focus: no course list drops open over it.
+  assert.equal(ui.window.document.activeElement, ui.$('applyExamLink'));
+  assert.equal(ui.$('examLinkCoursePopup').hidden, true);
+  assert.doesNotMatch(ui.$('etStatus').textContent, AR ? /مثبتة في مواعيد مختلفة/ : /pinned to different times/, 'Nowhere else to go stale');
+  // Unpinned, the reason goes and the courses link.
+  card(ui, 'CS111 (1)').querySelector('[data-exam-pin]').click();
+  assert.equal(ui.$('examLinkNotice').textContent, AR ? 'انقر «ربط مقررين» لتُختبر هذه المقررات اختباراً واحداً.' : 'Select Link 2 courses to examine these courses as one exam.');
+  assert.ok(!ui.$('examLinkNotice').classList.contains('text-danger'));
+  ui.$('applyExamLink').click();
+  ui.$('confirmExamLink').click();
+  assert.equal(linkRows(ui).length, 2);
 });
 
 test('a split link from a saved run is flagged and blocks Check until a move of either member mends it', async t => {
@@ -474,6 +512,9 @@ test('a link edit needs a Check before Save, and Review changes lists it in its 
   assert.match(group.querySelector('h4').textContent, AR ? /الاختبارات المرتبطة/ : /Linked exams/);
   assert.deepEqual(Array.from(group.querySelectorAll('.et-change-course bdi'), node => node.textContent), ['AI212', 'AI225']);
   assert.match(group.querySelector('.et-change-times').textContent, AR ? /المحفوظ: مرتبطة.*الحالي: غير مرتبطة/ : /Saved: Linked.*Current: Not linked/);
+  // Unlinked, Find and Move act on AI212 alone, and are named for it.
+  assert.equal(group.querySelector('[data-move-exam]').getAttribute('aria-label'), AR ? 'نقل: AI212 — Machine Learning' : 'Move: AI212 — Machine Learning');
+  assert.equal(group.querySelector('[data-find-exam]').getAttribute('aria-label'), AR ? 'إظهار في الجدول: AI212 — Machine Learning' : 'Find in timetable: AI212 — Machine Learning');
   // No card on the board is grouped once unlinked.
   assert.equal(ui.$('schedGrid').querySelector('.et-link-group'), null);
 
@@ -641,4 +682,134 @@ test('Load Courses keeps the links by identity, whatever the display codes becom
   assert.deepEqual(bodies(ui, '/ops/exam-timetable/build/').at(-1).linked_exams, [{ members: [
     { course_identity: 'cs111-fundamentals', course_code: 'CS111 (2)' }, member('AI212'),
   ] }]);
+});
+
+test('the section notice describes the links as they stand: Undo, Redo and a deselected course replace an old one', async t => {
+  const ui = await loaded(t, { run: savedRun({ placements: { AI212: 0, AI225: 0, 'CS111 (1)': 3, 'CS111 (2)': 3 } }) });
+  const notice = ui.$('examLinkNotice');
+  const ready = AR ? 'تُعقد المقررات المرتبطة دائماً في اليوم والفترة نفسيهما، وتُنقل وتُثبَّت معاً.' : 'Linked courses always sit at the same day and period, and move and pin together.';
+  ui.$('examSetupDetails').open = true;
+  addToLink(ui, 'CS111 (1)');
+  addToLink(ui, 'CS111 (2)');
+  assert.equal(notice.textContent, AR ? 'انقر «ربط مقررين» لتُختبر هذه المقررات اختباراً واحداً.' : 'Select Link 2 courses to examine these courses as one exam.', 'The hint names the button as it reads');
+  ui.$('applyExamLink').click();
+  assert.equal(notice.textContent, AR ? 'تم ربط CS111 (1)، CS111 (2).' : 'Linked CS111 (1), CS111 (2).');
+  // A link made since the save: its Move moves the whole link, and says so.
+  const change = ui.$('examChangesContent').querySelector('[data-change-kind="link"]');
+  assert.equal(change.querySelector('[data-move-exam]').getAttribute('aria-label'), AR ? 'نقل: CS111 (1) + CS111 (2)' : 'Move: CS111 (1) + CS111 (2)');
+  ui.$('undoExamBtn').click();
+  assert.equal(linkRows(ui).length, 1);
+  assert.equal(notice.textContent, ready, 'Undone, the link is not announced as made');
+  ui.$('redoExamBtn').click();
+  assert.equal(linkRows(ui).length, 2);
+  assert.equal(notice.textContent, ready);
+  linkRows(ui)[0].querySelector('[data-link-remove]').click();
+  assert.equal(notice.textContent, AR ? 'أُلغي ربط AI212، AI225.' : 'Unlinked AI212, AI225.');
+  ui.$('undoExamBtn').click();
+  assert.deepEqual(rowCodes(linkRows(ui)[0]), ['AI212', 'AI225']);
+  assert.equal(notice.textContent, ready, 'Undone, the unlink is not announced');
+  // A problem with the links as they stand outranks the last action's message.
+  linkRows(ui)[0].querySelector('[data-link-remove]').click();
+  assert.equal(notice.textContent, AR ? 'أُلغي ربط AI212، AI225.' : 'Unlinked AI212, AI225.');
+  const box = Array.from(ui.$('courseList').querySelectorAll('input')).find(item => item.value === 'CS111 (2)');
+  box.checked = false;
+  ui.emit(box, 'change');
+  assert.ok(linkRows(ui)[0].classList.contains('et-link-invalid'));
+  assert.equal(notice.textContent, AR ? 'راجع الاختبارات المرتبطة المعلّمة قبل المتابعة.' : 'Resolve the highlighted linked exams before continuing.');
+  assert.ok(notice.classList.contains('text-danger'));
+});
+
+test('Shared students follows the links on the board, with no Check between', async t => {
+  const run = savedRun({ placements: { AI212: 0, AI225: 0, 'CS111 (1)': 3, 'CS111 (2)': 3 } });
+  run.exam_review = { version: 1, enrollment_source: 'scraper_timetable', student_overlaps: [{ course_a: 'AI212', course_b: 'AI225', shared_students: 3 }] };
+  const ui = await loaded(t, { run });
+  // Linked and sharing students: they sit both papers at once, a clash.
+  card(ui, 'AI212').querySelector('[data-exam-related]').click();
+  let partner = card(ui, 'AI225');
+  assert.ok(partner.classList.contains('et-related-conflict'));
+  assert.equal(partner.querySelector('.et-related-count').textContent, AR ? '3 مشترك · اختبار مرتبط، في الموعد نفسه' : '3 shared · linked exam, same time');
+  assert.match(partner.querySelector('.et-review-warning').getAttribute('aria-label'), AR ? /AI212 \(3، مرتبط\)/ : /AI212 \(3, linked\)/);
+  // Unlinked: still a clash of shared students, no longer a linked exam.
+  ui.$('examSetupDetails').open = true;
+  linkRows(ui)[0].querySelector('[data-link-remove]').click();
+  partner = card(ui, 'AI225');
+  assert.equal(partner.querySelector('.et-related-count').textContent, AR ? '3 مشترك · الفترة نفسها' : '3 shared · same period');
+  assert.doesNotMatch(partner.querySelector('.et-review-warning').getAttribute('aria-label'), AR ? /مرتبط/ : /linked/);
+  // Linked now, CS111 (2) sits with CS111 (1) though they share no students.
+  link(ui, 'CS111 (1)', 'CS111 (2)');
+  card(ui, 'CS111 (1)').querySelector('[data-exam-related]').click();
+  partner = card(ui, 'CS111 (2)');
+  assert.ok(partner.classList.contains('et-related-match'));
+  assert.ok(!partner.classList.contains('et-review-muted'));
+  assert.equal(partner.querySelector('.et-related-count').textContent, AR ? 'اختبار مرتبط، في الموعد نفسه' : 'linked exam, same time');
+  // A partner outside the selection is not one of the focused exam's.
+  const model = ui.window.ExamReview.createModel(run, ['AI212', 'CS111 (1)', 'CS111 (2)']);
+  assert.deepEqual([...model.links.get('ai212-ml')], []);
+});
+
+test('a request in flight makes the alignment dialog inert with the rest of the builder', async t => {
+  let release = null;
+  const ui = await page(t, { onRequest: async url => (url === '/ops/exam-timetable/build/'
+    ? new Promise(resolve => { release = () => resolve(reply({ ok: false, error: 'Fixture ends at request validation' })); })
+    : undefined) });
+  link(ui, 'AI212', 'AI225');
+  ui.$('buildBtn').click();
+  await settled();
+  assert.ok(release, 'The build is in flight');
+  assert.equal(ui.$('examLinkDialog').inert, true);
+  assert.equal(ui.$('examLinkDialog').getAttribute('aria-busy'), 'true');
+  release();
+  await settled();
+  assert.equal(ui.$('examLinkDialog').inert, false);
+});
+
+test('a course in the Overflow slot links at its partner\'s time, never at Overflow', async t => {
+  const run = savedRun();
+  Object.assign(run.schedule.find(entry => entry.course_code === 'CS111 (2)'), { day: 'OVERFLOW', period: '', slot_index: run.slots.length });
+  const ui = await loaded(t, { run });
+  assert.deepEqual(placement(ui, 'CS111 (2)'), ['OVERFLOW', '']);
+  ui.$('examSetupDetails').open = true;
+  link(ui, 'CS111 (1)', 'CS111 (2)');
+  const radios = Array.from(ui.$('examLinkOptions').querySelectorAll('input[type="radio"]'));
+  assert.deepEqual(radios.map(radio => radio.closest('label').querySelector('bdi').textContent), ['Mon · 08:00-10:00']);
+  ui.$('confirmExamLink').click();
+  assert.deepEqual(placement(ui, 'CS111 (2)'), ['Mon', '08:00-10:00']);
+});
+
+test('students in two linked courses are counted in words that agree, in every plural form', async t => {
+  const warnings = AR ? {
+    1: 'طالب واحد مسجل في مقررين مرتبطين: يؤدي ورقتين في وقت واحد (تعارض اختبار مرتبط).',
+    2: 'طالبان مسجلان في مقررين مرتبطين: يؤدي كلٌّ منهما ورقتين في وقت واحد (تعارض اختبار مرتبط).',
+    11: '11 طالباً مسجلاً في مقررين مرتبطين: يؤدي كلٌّ منهم ورقتين في وقت واحد (تعارض اختبار مرتبط).',
+    101: '101 طالب مسجل في مقررين مرتبطين: يؤدي كلٌّ منهم ورقتين في وقت واحد (تعارض اختبار مرتبط).',
+  } : {
+    1: '1 student is registered in two linked courses: each sits two papers at one time (a linked-exam clash).',
+    2: '2 students are registered in two linked courses: each sits two papers at one time (a linked-exam clash).',
+    11: '11 students are registered in two linked courses: each sits two papers at one time (a linked-exam clash).',
+    101: '101 students are registered in two linked courses: each sits two papers at one time (a linked-exam clash).',
+  };
+  for (const [count, text] of Object.entries(warnings)) {
+    const run = savedRun({ qa: { linked_exams: { links: 1, courses: 2, students_in_two_linked_courses: Number(count), mixed_credit_links: 0, online_courses: 0 } } });
+    const ui = await loaded(t, { run });
+    assert.equal(ui.$('examLinkWarningList').querySelector('li').textContent, text);
+  }
+  const repairs = AR ? {
+    1: /^طالب واحد مسجل في مقررين مرتبطين، فيؤدي ورقتين في وقت واحد\. لا يفصل/,
+    2: /^طالبان مسجلان في مقررين مرتبطين، فيؤديان ورقتين في وقت واحد\. لا يفصل/,
+    11: /^11 طالباً مسجلاً في مقررين مرتبطين، فيؤدون ورقتين في وقت واحد\. لا يفصل/,
+  } : {
+    1: /^1 student is registered in two linked courses: each sits two papers/,
+    2: /^2 students are registered in two linked courses: each sits two papers/,
+    11: /^11 students are registered in two linked courses: each sits two papers/,
+  };
+  const counts = Object.keys(repairs).map(Number);
+  let fixes = 0;
+  const ui = await loaded(t, { onRequest: async (url, options) => (url === '/ops/exam-timetable/build/' && JSON.parse(options.body).mode === 'minimum_change_repair'
+    ? reply({ ok: true, saved: false, minimum_change: { status: 'OPTIMAL', moves: [], unseated: [], violations_before: 0, violations_after: 0, linked_clash_students: counts[fixes++] } })
+    : undefined) });
+  for (const count of counts) {
+    ui.$('minChangeBtn').click();
+    await settled(8);
+    assert.match(ui.$('examRepairReport').querySelector('.et-repair-linked').textContent, repairs[count]);
+  }
 });

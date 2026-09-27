@@ -2563,7 +2563,7 @@ let _courseMetadata = {};
 let _linkedExams = [];
 let _pendingLinkMembers = [];  // identities chosen in the picker, not linked yet
 let _linkError = null;         // the server's refusal, while the links it judged stand
-let _linkNotice = null;        // { text, error } said once after a link action
+let _linkNotice = null;        // { text, error, key } said after a link action, while `key` holds
 let _linkDialog = null;        // { identities, options } while the time is chosen
 
 /* ── Current run ID (for export) ── */
@@ -3300,7 +3300,7 @@ const REPAIR_TEXT = {
     : `The repair could not finish, so no exam was moved.${count ? ` ${REPAIR_TEXT.remainingCount(count)}.` : ''} Try again, or use Optimize current timetable.`,
   saved: () => IS_AR ? 'حُفظت النتيجة جدولاً جديداً في «الجداول المحفوظة».' : 'Saved as a new timetable in Saved timetables.',
   linkedClash: count => IS_AR
-    ? `${arabicCount(count, AR_LINK_STUDENTS)} في مقررين مرتبطين، فيؤدون ورقتين في وقت واحد. لا يفصل الإصلاح المقررات المرتبطة أبداً؛ ألغِ الربط أو راجع التسجيل.`
+    ? `${arabicCount(count, AR_LINK_CLASH_REPAIR)} لا يفصل الإصلاح المقررات المرتبطة أبداً؛ ألغِ الربط أو راجع التسجيل.`
     : `${count} student${count === 1 ? ' is' : 's are'} registered in two linked courses: each sits two papers at one time. The repair never separates linked courses; unlink them or review the registration.`,
 };
 
@@ -3432,7 +3432,9 @@ function updateChangeReview() {
     const names = change.members.map(member => member.course_name).filter(Boolean).join(IS_AR ? '، ' : ', ');
     const state = linked => linked ? (IS_AR ? 'مرتبطة' : 'Linked') : (IS_AR ? 'غير مرتبطة' : 'Not linked');
     const first = currentExamByIdentity(change.members[0].course_identity) || change.members[0];
-    return `<li class="et-change-item" data-change-identity="${escapeAttr(change.members[0].course_identity)}" data-change-kind="link" data-change-link="${escapeAttr(change.key)}"><span class="et-change-course"><strong>${codes}</strong><small class="et-course-name">${escapeAttr(names)}</small></span><span class="et-change-times"><span>${IS_AR ? 'المحفوظ: ' : 'Saved: '}${state(change.saved)}</span><span aria-hidden="true"> ${IS_AR ? '←' : '→'} </span><span>${IS_AR ? 'الحالي: ' : 'Current: '}${state(!change.saved)}</span></span>${examActionMarkup(first, { allowStaleMove: true, courseLabel: change.members.map(member => member.course_code).join(' + ') })}</li>`;
+    // Find and Move act on the first course: on the whole link only while it is one.
+    const actions = examActionMarkup(first, { allowStaleMove: true, courseLabel: change.saved ? '' : change.members.map(member => member.course_code).join(' + ') });
+    return `<li class="et-change-item" data-change-identity="${escapeAttr(change.members[0].course_identity)}" data-change-kind="link" data-change-link="${escapeAttr(change.key)}"><span class="et-change-course"><strong>${codes}</strong><small class="et-course-name">${escapeAttr(names)}</small></span><span class="et-change-times"><span>${IS_AR ? 'المحفوظ: ' : 'Saved: '}${state(change.saved)}</span><span aria-hidden="true"> ${IS_AR ? '←' : '→'} </span><span>${IS_AR ? 'الحالي: ' : 'Current: '}${state(!change.saved)}</span></span>${actions}</li>`;
   }).join('');
   const anyLinks = _linkedExams.length || (_savedResultData.linked_exams || []).length;
   $('examChangesContent').innerHTML = (movedRows ? `<section class="et-change-group"><h4>${IS_AR ? 'مواعيد الاختبارات' : 'Exam placements'}</h4><ul class="et-change-list">${movedRows}</ul></section>` : '')
@@ -3501,7 +3503,9 @@ function updateEditingStatus() {
   updateSectionMappingNotice();
   updateDrillActionAvailability();
   updateExportState();
-  examReview?.update(_currentResultData, {
+  // The links are the editor's, as the board draws them: a Link or Unlink is
+  // shown in Shared students before any Check.
+  examReview?.update(_currentResultData && { ..._currentResultData, linked_exams: linkPayload() }, {
     stale: !fresh, blocked: sourceRebuild || _sourceCoursesRejected,
     visibleCodes: _coursesLoaded ? getCheckedValues('courseList') : null,
   });
@@ -5278,7 +5282,21 @@ $('clearPins').addEventListener('click', (e) => {
 // split a link, so every edit here keeps the members together.
 const AR_LINK_COURSES = { one: 'ربط مقرر واحد', two: 'ربط مقررين', few: 'ربط {n} مقررات', many: 'ربط {n} مقرراً', other: 'ربط {n} مقرر' };
 const AR_LINKED_EXAMS = { one: 'اختبار مرتبط واحد', two: 'اختباران مرتبطان', few: '{n} اختبارات مرتبطة', many: '{n} اختباراً مرتبطاً', other: '{n} اختبار مرتبط' };
-const AR_LINK_STUDENTS = { one: 'طالب واحد مسجل', two: 'طالبان مسجلان', few: '{n} طلاب مسجلون', many: '{n} طالباً مسجلون', other: '{n} طالب مسجلون' };
+// Whole sentences per plural form, so the adjective and the verb agree with the count.
+const AR_LINK_CLASH_WARNING = {
+  one: 'طالب واحد مسجل في مقررين مرتبطين: يؤدي ورقتين في وقت واحد (تعارض اختبار مرتبط).',
+  two: 'طالبان مسجلان في مقررين مرتبطين: يؤدي كلٌّ منهما ورقتين في وقت واحد (تعارض اختبار مرتبط).',
+  few: '{n} طلاب مسجلون في مقررين مرتبطين: يؤدي كلٌّ منهم ورقتين في وقت واحد (تعارض اختبار مرتبط).',
+  many: '{n} طالباً مسجلاً في مقررين مرتبطين: يؤدي كلٌّ منهم ورقتين في وقت واحد (تعارض اختبار مرتبط).',
+  other: '{n} طالب مسجل في مقررين مرتبطين: يؤدي كلٌّ منهم ورقتين في وقت واحد (تعارض اختبار مرتبط).',
+};
+const AR_LINK_CLASH_REPAIR = {
+  one: 'طالب واحد مسجل في مقررين مرتبطين، فيؤدي ورقتين في وقت واحد.',
+  two: 'طالبان مسجلان في مقررين مرتبطين، فيؤديان ورقتين في وقت واحد.',
+  few: '{n} طلاب مسجلون في مقررين مرتبطين، فيؤدون ورقتين في وقت واحد.',
+  many: '{n} طالباً مسجلاً في مقررين مرتبطين، فيؤدون ورقتين في وقت واحد.',
+  other: '{n} طالب مسجل في مقررين مرتبطين، فيؤدون ورقتين في وقت واحد.',
+};
 const AR_MIXED_LINKS = { one: 'ربط واحد يجمع', two: 'ربطان يجمعان', few: '{n} روابط تجمع', many: '{n} ربطاً تجمع', other: '{n} ربط تجمع' };
 const AR_ONLINE_LINKED = { one: 'مقرر مرتبط واحد يُدرَّس', two: 'مقرران مرتبطان يُدرَّسان', few: '{n} مقررات مرتبطة تُدرَّس', many: '{n} مقرراً مرتبطاً يُدرَّس', other: '{n} مقرر مرتبط يُدرَّس' };
 const LINK_TEXT = {
@@ -5290,7 +5308,8 @@ const LINK_TEXT = {
   empty: IS_AR ? 'لا توجد اختبارات مرتبطة. يُجدول كل مقرر محدد بمفرده.' : 'No linked exams. Each selected course is scheduled on its own.',
   ready: IS_AR ? 'تُعقد المقررات المرتبطة دائماً في اليوم والفترة نفسيهما، وتُنقل وتُثبَّت معاً.' : 'Linked courses always sit at the same day and period, and move and pin together.',
   addAnother: IS_AR ? 'أضف مقرراً آخر على الأقل للربط.' : 'Add at least one more course to link.',
-  readyToLink: IS_AR ? 'انقر «ربط المقررات» لتُختبر هذه المقررات اختباراً واحداً.' : 'Select Link to examine these courses as one exam.',
+  // Names the button as it reads with `n` courses chosen.
+  readyToLink: n => (IS_AR ? `انقر «${LINK_TEXT.linkN(n)}» لتُختبر هذه المقررات اختباراً واحداً.` : `Select ${LINK_TEXT.linkN(n)} to examine these courses as one exam.`),
   needsReview: IS_AR ? 'راجع الاختبارات المرتبطة المعلّمة قبل المتابعة.' : 'Resolve the highlighted linked exams before continuing.',
   needsCourses: IS_AR ? 'حمّل المقررات للتحقق من الاختبارات المرتبطة.' : 'Load courses to check the linked exams.',
   tooFew: IS_AR ? 'يحتاج الاختبار المرتبط إلى مقررين على الأقل.' : 'A linked exam needs at least two courses.',
@@ -5325,6 +5344,16 @@ function linkSignatureOf(links) {
 }
 function linkSignature() {
   return linkSignatureOf(_linkedExams);
+}
+
+// What a notice in the section was said of: the links, the courses chosen and
+// the pins. Once any of them changes, it no longer describes the page.
+function linkNoticeKey() {
+  const pins = Object.entries(_pinnedCourses).map(([identity, pin]) => [identity, pin.day, pin.period]).sort();
+  return JSON.stringify([linkSignature(), _pendingLinkMembers, pins]);
+}
+function sayLinkNotice(text, error = false) {
+  _linkNotice = { text, error, key: linkNoticeKey() };
 }
 
 // Links made or undone since the save, each once: `saved` says it was the
@@ -5511,7 +5540,7 @@ function linkWarnings(counts) {
   const online = Number(counts?.online_courses) || 0;
   if (students) {
     items.push(IS_AR
-      ? `${arabicCount(students, AR_LINK_STUDENTS)} في مقررين مرتبطين: يؤدي كلٌّ منهم ورقتين في وقت واحد (تعارض اختبار مرتبط).`
+      ? arabicCount(students, AR_LINK_CLASH_WARNING)
       : `${students} student${students === 1 ? ' is' : 's are'} registered in two linked courses: each sits two papers at one time (a linked-exam clash).`);
   }
   if (mixed) {
@@ -5577,6 +5606,7 @@ function renderLinkEditor() {
   const selectedCourses = Object.values(_courseMetadata).filter(course => context.selected.has(course.course_code));
   const selectedIdentities = new Set(selectedCourses.map(pinIdentity));
   _pendingLinkMembers = _pendingLinkMembers.filter(identity => !linked.has(identity) && selectedIdentities.has(identity));
+  if (_linkNotice && _linkNotice.key !== linkNoticeKey()) _linkNotice = null;
   const choices = selectedCourses
     .filter(course => !linked.has(pinIdentity(course)) && !_pendingLinkMembers.includes(pinIdentity(course)))
     .sort((a, b) => a.course_code.localeCompare(b.course_code, 'en', { numeric: true }))
@@ -5623,11 +5653,14 @@ function renderLinkEditor() {
   renderLinkWarnings();
 
   let text = '', error = false;
-  if (_linkNotice) ({ text, error } = _linkNotice);
+  // The refusal of the click just made, then any problem with the links as
+  // they stand: a success message never covers either.
+  if (_linkNotice?.error) ({ text, error } = _linkNotice);
   else if (invalid) { text = LINK_TEXT.needsReview; error = true; }
   else if (_linkError) { text = _linkError.message; error = true; }
+  else if (_linkNotice) text = _linkNotice.text;
   else if (_pendingLinkMembers.length === 1) text = LINK_TEXT.addAnother;
-  else if (_pendingLinkMembers.length > 1) text = LINK_TEXT.readyToLink;
+  else if (_pendingLinkMembers.length > 1) text = LINK_TEXT.readyToLink(_pendingLinkMembers.length);
   else text = _linkedExams.length ? LINK_TEXT.ready : LINK_TEXT.empty;
   if ($('examLinkNotice').textContent !== text) $('examLinkNotice').textContent = text;
   $('examLinkNotice').className = `small mt-2 mb-0 ${error ? 'text-danger' : 'text-secondary'}`;
@@ -5687,7 +5720,7 @@ function finishLink(identities, place) {
   const codes = identities.map(identity => courseForIdentity(identity)?.course_code || identity);
   if (!linkCourses(identities, place)) return false;
   _pendingLinkMembers = [];
-  _linkNotice = { text: LINK_TEXT.linked(codes), error: false };
+  sayLinkNotice(LINK_TEXT.linked(codes));
   renderLinkEditor();
   $('examLinkCourseSearch').focus({ preventScroll: true });
   linkCoursePicker.close();
@@ -5752,9 +5785,12 @@ $('applyExamLink').addEventListener('click', () => {
   if (!_coursesLoaded || identities.length < 2) return inputError(LINK_TEXT.addAnother, $('examLinkCourse'));
   const plan = linkAlignment(identities);
   if (plan.error) {
-    _linkNotice = { text: plan.error, error: true };
+    // Said beside the button, which keeps focus: focusing the course search
+    // would open its list over the reason.
+    sayLinkNotice(plan.error, true);
     renderLinkEditor();
-    return inputError(plan.error, $('examLinkCourse'));
+    $('applyExamLink').focus({ preventScroll: true });
+    return null;
   }
   if (plan.options?.length) return openLinkDialog(identities, plan);
   return finishLink(identities, plan.place);
@@ -5767,7 +5803,7 @@ $('examLinkRows').addEventListener('click', event => {
   if (!link) return;
   const codes = link.members.map(member => member.course_code);
   if (!runManualCommand(() => { _linkedExams.splice(index, 1); })) return;
-  _linkNotice = { text: LINK_TEXT.unlinked(codes), error: false };
+  sayLinkNotice(LINK_TEXT.unlinked(codes));
   renderLinkEditor();
   const buttons = [...$('examLinkRows').querySelectorAll('[data-link-remove]')];
   (buttons[Math.min(index, buttons.length - 1)] || $('examLinkCourseSearch')).focus({ preventScroll: true });

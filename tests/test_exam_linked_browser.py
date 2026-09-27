@@ -8,12 +8,15 @@ cards on the board and the alignment dialog - at 1366px and at phone width
 (375px), in English and in Arabic, in the design's font and in a wide one
 (Verdana, DejaVu Sans), so a layout that only fits the fonts of the machine
 running it fails anywhere. Linking two courses that sit apart goes through the
-dialog to the real Check. Nothing leaves the machine (tests/browser_isolation.py).
+dialog to the real Check. The cards' "with X" labels are measured against
+every card colouring, light and dark, for WCAG AA contrast. Nothing leaves the
+machine (tests/browser_isolation.py).
 """
 
 from __future__ import annotations
 
 import os
+import re
 
 # Playwright's synchronous API runs through a greenlet; fixture creation is
 # synchronous ORM work while Django serves the page on its own thread.
@@ -82,6 +85,26 @@ GROUPS = """() => {
       const range = document.createRange(); range.selectNodeContents(node); return range.getClientRects().length > 1;
     }).map(node => node.textContent),
   }));
+}"""
+# Each "with X" label on a card in view against the card it sits on, as the
+# WCAG contrast ratio; None where the backdrop is translucent (not measured).
+CONTRAST = """() => {
+  const rgb = value => (value.match(/[\\d.]+/g) || []).map(Number);
+  const channel = c => { c /= 255; return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4; };
+  const luminance = ([r, g, b]) => 0.2126 * channel(r) + 0.7152 * channel(g) + 0.0722 * channel(b);
+  const backdrop = node => {
+    for (let at = node; at; at = at.parentElement) {
+      const c = rgb(getComputedStyle(at).backgroundColor);
+      if (c.length === 3 || c[3] === 1) return c;
+      if (c[3] > 0) return null;
+    }
+    return [255, 255, 255];
+  };
+  return [...document.querySelectorAll('#schedGrid .et-course:not(.et-review-muted) .et-link-label')].map(label => {
+    const back = backdrop(label);
+    const a = luminance(rgb(getComputedStyle(label).color)), b = back && luminance(back);
+    return [label.closest('.et-course').dataset.course, back ? (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05) : null];
+  });
 }"""
 
 
@@ -218,6 +241,12 @@ class ExamLinkedBrowserTests(StaticLiveServerTestCase):
         # The chosen courses, as chips, before they are linked.
         expect(page.locator("#examLinkPending .et-link-chip")).to_have_count(2)
         self._assert_fits(page, "examLinkEditor", f"{where}, two courses chosen")
+        # The page's chip shape, never a pill of its own.
+        radii = page.evaluate(
+            """() => ['#examLinkPending .et-link-chip', '#progList .et-chip']
+              .map(selector => getComputedStyle(document.querySelector(selector)).borderTopLeftRadius)"""
+        )
+        self.assertEqual(radii[0], radii[1], where)
         page.locator("#applyExamLink").click()
         dialog = page.locator("#examLinkDialog")
         expect(dialog).to_be_visible()
@@ -251,6 +280,32 @@ class ExamLinkedBrowserTests(StaticLiveServerTestCase):
     def test_linked_exams_fit_a_phone_in_english_and_arabic(self) -> None:
         for language in ("en", "ar"):
             self._assert_layout(language, 375, wide_font=False)
+
+    def test_linked_labels_are_legible_on_every_card_colouring(self) -> None:
+        # Small text (11px) needs 4.5:1, in each review colouring and theme.
+        page = self._page("en", {"width": 1366, "height": 900})
+        page.emulate_media(reduced_motion="reduce")
+        measured = 0
+        for theme in ("light", "dark"):
+            page.evaluate("theme => { document.documentElement.dataset.theme = theme; }", theme)
+            for mode in ("size", "neutral", "students"):
+                page.select_option("#examReviewMode", mode)
+                if mode == "students":
+                    page.locator(
+                        '#schedGrid .et-course[data-course="MATH101"] [data-exam-related]'
+                    ).click()
+                    expect(
+                        page.locator('#schedGrid .et-course[data-course="IS201"]')
+                    ).to_have_class(re.compile(r"\bet-related-conflict\b"))
+                ratios = page.evaluate(CONTRAST)
+                self.assertEqual(
+                    sorted(code for code, _ in ratios), ["IS201", "MATH101"], (theme, mode)
+                )
+                for code, ratio in ratios:
+                    self.assertIsNotNone(ratio, (theme, mode, code))
+                    self.assertGreaterEqual(ratio, 4.5, (theme, mode, code))
+                    measured += 1
+        self.assertEqual(measured, 12)
 
     def test_linked_exams_fit_in_a_wide_font(self) -> None:
         for language in ("en", "ar"):

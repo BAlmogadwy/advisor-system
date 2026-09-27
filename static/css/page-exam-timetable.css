@@ -16,6 +16,8 @@ main.exam-builder-page,
   --et-field-border: #8796a8;
   --et-accent: #087f72;
   --et-accent-hover: #06685e;
+  /* Accent as small text: 4.5:1 on every card fill the review colours use. */
+  --et-accent-text: #06685e;
   --et-accent-soft: #edf7f5;
   --et-selected-border: #81b9ae;
   --et-danger: #b42332;
@@ -47,6 +49,7 @@ html[data-theme="dark"] #matrixPanel {
   --et-field-border: #6c8197;
   --et-accent: #63d1bf;
   --et-accent-hover: #8ee5d6;
+  --et-accent-text: #63d1bf;
   --et-accent-soft: #18372f;
   --et-selected-border: #477f72;
   --et-danger: #ffabb5;
@@ -403,7 +406,7 @@ main.exam-builder-page .et-link-fields { display: grid; grid-template-columns: m
 main.exam-builder-page .et-link-fields > div { min-width: 0; }
 main.exam-builder-page #examLinkCourseSearch { padding-inline-end: 42px !important; }
 main.exam-builder-page .et-link-pending { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0 0; padding: 0; list-style: none; }
-main.exam-builder-page .et-link-chip { display: inline-flex; align-items: center; gap: 6px; min-width: 0; max-width: 100%; padding-block: 2px; padding-inline: 10px 2px; border: 1px solid var(--et-accent); border-radius: 999px; background: var(--et-accent-soft); color: var(--et-text); font-size: .8125rem; }
+main.exam-builder-page .et-link-chip { display: inline-flex; align-items: center; gap: 6px; min-width: 0; max-width: 100%; padding-block: 2px; padding-inline: 10px 2px; border: 1px solid var(--et-accent); border-radius: 6px; background: var(--et-accent-soft); color: var(--et-text); font-size: .8125rem; }
 main.exam-builder-page .et-link-chip-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--et-muted); font-size: .75rem; }
 main.exam-builder-page .et-link-chip-remove { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 30px; width: 30px; height: 30px; padding: 0; border: 0; border-radius: 50%; background: transparent; color: var(--et-muted); font-size: 1.1rem; line-height: 1; cursor: pointer; }
 main.exam-builder-page .et-link-chip-remove:hover { color: var(--et-danger); background: var(--et-danger-soft); }
@@ -666,7 +669,7 @@ main.exam-builder-page .et-course-card :is(.et-pin-lock, .et-course-online) svg 
 main.exam-builder-page .et-course-card .et-course-online { color: var(--et-accent); }
 /* A link's cards sit in one outlined group across the cell, each naming its partners. */
 main.exam-builder-page .et-link-group { display: grid; grid-column: 1 / -1; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); align-items: start; gap: 4px; min-width: 0; padding: 3px; border: 1px dashed var(--et-accent); border-radius: 7px; background: var(--et-accent-soft); }
-main.exam-builder-page .et-course-card .et-link-label { display: flex; align-items: center; gap: 4px; grid-column: 1 / -1; min-width: 0; color: var(--et-accent); font-size: .6875rem; font-weight: 600; line-height: 1.35; overflow-wrap: anywhere; }
+main.exam-builder-page .et-course-card .et-link-label { display: flex; align-items: center; gap: 4px; grid-column: 1 / -1; min-width: 0; color: var(--et-accent-text); font-size: .6875rem; font-weight: 600; line-height: 1.35; overflow-wrap: anywhere; }
 main.exam-builder-page .et-link-icon { display: inline-flex; flex: 0 0 auto; }
 main.exam-builder-page .et-link-icon svg { width: 12px; height: 12px; }
 /* Full names are available in native titles and accessible labels. A popup
