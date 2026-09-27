@@ -336,7 +336,7 @@ def evaluate_exam_schedule(
     )
     if links:
         qa["linked_exams"] = linked_exams_qa(links, enrolled_sets, credit_map, course_meta)
-    qa["rooms"] = _build_room_qa(schedule_entries, rooms_list if assign_rooms else [])
+    qa["rooms"] = _build_room_qa(schedule_entries, rooms_list if assign_rooms else [], links=links)
     qa["room_feasibility_violations"] = room_feasibility
     qa["rebalance_moves"] = rebalance_moves
 
