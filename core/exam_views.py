@@ -30,6 +30,7 @@ from django.conf import settings
 from django.db import transaction
 from django.http import FileResponse, HttpRequest, HttpResponse, HttpResponseBase, JsonResponse
 from django.shortcuts import render
+from django.views.decorators.cache import never_cache
 from django.views.decorators.http import require_GET, require_POST
 
 from core.authz import throttle
@@ -117,6 +118,7 @@ def _exam_validation_error(exc: ValueError) -> JsonResponse:
     return JsonResponse(body, status=status)
 
 
+@never_cache
 @require_GET
 def exam_timetable_page(request: HttpRequest) -> HttpResponse:
     """Render the exam timetable builder page (all logic is client-side JS)."""

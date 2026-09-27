@@ -2576,6 +2576,7 @@ let _drillCourseMetadata = new Map();
 let _departmentContext = null;
 let _departmentRequestToken = 0;
 let _departmentBusy = false;
+let _savedRunsTotal = null;  // saved runs anywhere, once history answers
 const LIVE_UPDATE_KEY = 'exam-timetable-live-update';
 const LIVE_UPDATE_DELAY = 450;
 const examReview = window.ExamReview?.createController({ document, isArabic: IS_AR });
@@ -2678,7 +2679,24 @@ function updateExportState() {
   studentButton.setAttribute('aria-disabled', String(Boolean(studentReason)));
   studentButton.title = studentReason;
   $('examStudentDataReason').textContent = studentReason;
+  updateRosterTab();
 }
+
+/* The Student lists view tab opens the saved run on the board, else the
+   newest saved; with none saved anywhere it waits and says why. */
+function updateRosterTab() {
+  const link = $('examRosterTab');
+  if (!link) return;
+  const none = !_currentRunId && _savedRunsTotal === 0;
+  link.href = link.dataset.base + (_currentRunId ? `?run=${encodeURIComponent(_currentRunId)}` : '');
+  link.setAttribute('aria-disabled', String(none));
+  if (none) link.setAttribute('aria-describedby', 'examRosterTabReason');
+  else link.removeAttribute('aria-describedby');
+  $('examRosterTabReason').hidden = !none;
+}
+$('examRosterTab')?.addEventListener('click', event => {
+  if (event.currentTarget.getAttribute('aria-disabled') === 'true') event.preventDefault();
+});
 
 /* Student data follows the Department files rule, and names the reason. */
 function studentExportBlockReason() {
@@ -2919,6 +2937,18 @@ window.examStudentExportHost = Object.freeze({
   readResponse: readExamResponse,
   csrf: () => getCsrfToken() || CSRF,
   closeDepartmentFiles: closeDepartmentExport,
+});
+
+/* The course drawer (static/js/exam-roster-drawer.js) shows the saved run
+   behind the board and says what the draft has moved; read-only. */
+window.examRosterHost = Object.freeze({
+  runId: () => _currentRunId,
+  savedRun: () => _savedResultData,
+  currentSchedule: () => _currentResultData?.schedule || [],
+  unsavedMoves: movedSinceSave,
+  hasUnsavedChanges: () => hasUnsavedEdits() || _scheduleHasDraftMoves,
+  blockReason: studentExportBlockReason,
+  csrf: () => getCsrfToken() || CSRF,
 });
 
 $('departmentFilesBtn').addEventListener('click', openDepartmentExport);
@@ -3318,18 +3348,25 @@ function examActionMarkup(entry, { allowStaleMove = false, allowMove = true, com
   return `<span class="et-drill-actions${compact ? ' et-course-card-actions' : ''}"><button type="button" class="btn btn-outline-secondary" data-find-exam="${escapeAttr(identity)}" aria-label="${description(findLabel)}" title="${description(findLabel)}">${compact ? examCourseIcon('find') : findLabel}</button>${allowMove ? `<button type="button" class="btn btn-outline-secondary" data-move-exam="${escapeAttr(identity)}"${allowStaleMove ? ' data-allow-unchecked="true"' : ''} aria-label="${description(moveLabel)}" title="${description(moveLabel)}">${compact ? examCourseIcon('move') : moveLabel}</button>` : ''}${compact ? '' : note}</span>${compact ? note : ''}`;
 }
 
+// Exams the draft has placed elsewhere than the saved run (selected courses).
+function movedSinceSave() {
+  if (!_currentResultData || !_savedResultData) return [];
+  const selected = new Set(getCheckedValues('courseList'));
+  const baseline = new Map((_savedResultData.schedule || []).map(entry => [entry.course_identity || entry.course_code, entry]));
+  return (_currentResultData.schedule || []).filter(entry => {
+    const before = baseline.get(entry.course_identity || entry.course_code);
+    return selected.has(entry.course_code) && before && (before.day !== entry.day || before.period !== entry.period);
+  });
+}
+
 function updateChangeReview() {
   if (!$('examChangesContent') || !_currentResultData || !_savedResultData) return;
   const focused = document.activeElement;
   const focusedAction = focused?.closest?.('#examChangesContent') && (focused.hasAttribute('data-find-exam') ? 'data-find-exam' : focused.hasAttribute('data-move-exam') ? 'data-move-exam' : null);
   const focusedIdentity = focusedAction ? focused.getAttribute(focusedAction) : null;
   const focusedKind = focused?.closest?.('[data-change-kind]')?.dataset.changeKind;
-  const selected = new Set(getCheckedValues('courseList'));
   const baseline = new Map((_savedResultData.schedule || []).map(entry => [entry.course_identity || entry.course_code, entry]));
-  const moved = _currentResultData.schedule.filter(entry => {
-    const before = baseline.get(entry.course_identity || entry.course_code);
-    return selected.has(entry.course_code) && before && (before.day !== entry.day || before.period !== entry.period);
-  });
+  const moved = movedSinceSave();
   const savedPins = new Map((_savedResultData.pinned || []).map(pin => {
     const course = (_savedResultData.schedule || []).find(entry => entry.course_code === pin.course_code);
     return [pin.course_identity || course?.course_identity || pin.course_code, pin];
@@ -3414,6 +3451,7 @@ function updateEditingStatus() {
     stale: !fresh, blocked: sourceRebuild || _sourceCoursesRejected,
     visibleCodes: _coursesLoaded ? getCheckedValues('courseList') : null,
   });
+  window.ExamRosterDrawer?.paintLinks();
 }
 
 function cancelDraftChecks() {
@@ -5299,6 +5337,8 @@ async function loadHistory(page) {
     const totalPages = data.total_pages ?? 1;
     const total = data.total ?? 0;
     _historyPage = data.page ?? 1;
+    _savedRunsTotal = data.total ?? runs.length;
+    updateRosterTab();
     const kept = captureHistoryFocus();
 
     if (!runs.length) {
@@ -5611,9 +5651,24 @@ async function loadRun(runId) {
   return outcome;
 }
 
+// Show in timetable (Student lists): ?run=<id>[&focus=<course>] loads that
+// saved run and finds the exam. The address is then cleaned, so a reload
+// starts fresh; it never carries more than a run and a course.
+async function openRunFromAddress() {
+  const params = new URLSearchParams(window.location.search);
+  const run = params.get('run');
+  if (!run || !/^[0-9]{1,18}$/.test(run)) return;
+  const focus = params.get('focus');
+  try { window.history.replaceState(window.history.state, '', window.location.pathname); } catch (_) { /* a sandboxed frame */ }
+  if (await loadRun(run) !== 'loaded' || !focus) return;
+  const entry = _currentResultData?.schedule?.find(item => item.course_code === focus);
+  if (entry) findExamInTimetable(entry.course_identity || entry.course_code);
+}
+
 // Load history on page load
 loadHistory();
 resumeExamJob();
+openRunFromAddress();
 
 /* ── Export Excel click feedback ── */
 $('exportXlsx')?.addEventListener('click', function(event) {

@@ -18,6 +18,7 @@ from contextlib import contextmanager
 from io import BytesIO
 
 from django.http import FileResponse, HttpRequest, JsonResponse
+from django.http.request import RawPostDataException
 from django.views.decorators.http import require_POST
 
 from core.exam_views import _require_exam_access
@@ -94,10 +95,18 @@ def _error(status: int, code: str, message: str, **extra) -> JsonResponse:
 
 
 def _json_body(request: HttpRequest) -> object:
-    if len(request.body) > MAX_BODY_BYTES:
+    # A form body is refused by its type before it is touched: the CSRF check
+    # has already parsed it (a multipart stream cannot be read twice).
+    if request.content_type != "application/json":
+        raise ExportOptionsError("Export options must be JSON.", field="body")
+    try:
+        body = request.body
+    except RawPostDataException as exc:
+        raise ExportOptionsError("Export options must be JSON.", field="body") from exc
+    if len(body) > MAX_BODY_BYTES:
         raise ExportOptionsError("Export options are too large.", field="body")
     try:
-        return json.loads(request.body.decode("utf-8") or "{}")
+        return json.loads(body.decode("utf-8") or "{}")
     # RecursionError: a small body of deeply nested brackets exhausts the
     # decoder's stack; it is malformed input like any other, not a 500.
     except (UnicodeDecodeError, ValueError, RecursionError) as exc:

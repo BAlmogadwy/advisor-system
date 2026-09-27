@@ -46,6 +46,10 @@ class ExamCommitteeAccessMiddleware:
             "exam_department_export",
             "exam_student_export_preflight",
             "exam_student_export",
+            "exam_rosters_page",
+            "exam_roster_index",
+            "exam_roster_detail",
+            "exam_roster_lookup",
         }
     )
 
