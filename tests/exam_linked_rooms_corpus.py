@@ -248,10 +248,17 @@ def save_fixed_run(models, result: dict):
 
 
 def workbook_parts(content: bytes) -> dict[str, str]:
-    """A workbook's parts, less the save timestamps openpyxl writes into core.xml."""
+    """A workbook's parts, less the save timestamps openpyxl writes into core.xml.
+
+    Without lxml, openpyxl streams each worksheet through a temporary file
+    opened in text mode, so Windows writes every newline inside a cell as
+    CRLF while Linux (CI, production) writes LF. That is the only thing
+    turned back here: an XML reader already sees CRLF as LF (XML 1.0, 2.11),
+    so the workbook Excel opens is the same either way.
+    """
     with zipfile.ZipFile(io.BytesIO(content)) as archive:
         return {
-            name: archive.read(name).decode("utf-8")
+            name: archive.read(name).decode("utf-8").replace("\r\n", "\n")
             for name in sorted(archive.namelist())
             if name != "docProps/core.xml"
         }

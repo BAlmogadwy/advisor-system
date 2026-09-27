@@ -16,9 +16,12 @@ so the database test pins the fingerprint's copy of the version to master's.
 """
 
 import functools
+import io
+import zipfile
 from types import SimpleNamespace
 
 import pytest
+from openpyxl import Workbook
 from openpyxl import xml as openpyxl_xml
 
 from core import models
@@ -86,11 +89,13 @@ GOLDEN = {
 #: its own writer otherwise, and the two write different bytes for the same
 #: workbook. CI has no lxml, a developer machine may: master was recorded both
 #: ways, and each run is held to the bytes master wrote in the same setting.
+#: Either way a part is read with its line endings as XML reads them (see
+#: ``workbook_parts``), so Windows and Linux are held to the same digests.
 MASTER_EXPORTS_WITHOUT_LXML = {
     "build": "d23570e7c5a3f04f570a8a091bc873fb632c1053b701f35b1fc338df4fa53220",
-    "department_ar": "92a5a8d853a8f86400cf04a77f69038c57fc4b7b3eb02a26a3404af585f270a9",
-    "department_en": "96c133c19bc9c17dc74f7503c4fe332206a17180c0994f91c7bfe35bee8b15e2",
-    "master_excel": "e7f821527a20314f842e1735da54b50b4845cf35ee9cc42d5adcd682b3e22633",
+    "department_ar": "d3cf4a76a11532b00a53b31e48506f5f0b7d1528c68b9b281c84e18581d4a418",
+    "department_en": "ad525f75c33a7441f880a1dabca46897e1eb3cbfba35f62c75369d0d5856c22c",
+    "master_excel": "ab807040449964f53e7a5ad87e8050cdd27628e8104dd7ddc9829460c624b223",
     "rosters": "bf51b1612515ee352b647ac851d05dd5b57f5f2e5cbcf04012e8a453e0b83535",
     "student_ar": "4f7cfaff55e9fa83ced0810bcbd1dccc0738ae41b8c4fbbd8bfc574464efbe51",
     "student_en": "e2948a19a7bd094d2c96f3480e6cd8e1c978869230b503480f69bac6e2858e01",
@@ -205,3 +210,43 @@ def test_every_export_matches_master_without_links(extra, monkeypatch):
     digests = corpus.export_digests(run, api)
     digests["build"] = base.digest(base.comparable(result))
     assert digests == MASTER_EXPORTS
+
+
+def _rezip(parts: dict[str, bytes]) -> bytes:
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        for name, data in parts.items():
+            archive.writestr(name, data)
+    return buffer.getvalue()
+
+
+def test_windows_and_linux_bytes_of_one_workbook_have_one_digest():
+    """Without lxml a cell's newline reaches the file as CRLF on Windows and
+    LF on Linux (CI): one workbook to Excel, so one digest here. Everything
+    else a part holds - its text and where its newlines fall - still counts."""
+    workbook = Workbook()
+    workbook.active["A1"] = "MATH106 4cr\nCALCULUS"
+    saved = io.BytesIO()
+    workbook.save(saved)
+    with zipfile.ZipFile(io.BytesIO(saved.getvalue())) as archive:
+        # Whichever platform saved it, start from the bytes Linux writes.
+        linux = {name: archive.read(name).replace(b"\r\n", b"\n") for name in archive.namelist()}
+    sheet = "xl/worksheets/sheet1.xml"
+    assert b"4cr\nCALCULUS" in linux[sheet]
+    windows = {**linux, sheet: linux[sheet].replace(b"\n", b"\r\n")}
+
+    def digest(parts: dict[str, bytes]) -> str:
+        return base.digest(corpus.workbook_parts(_rezip(parts)))
+
+    assert digest(windows) == digest(linux)
+    for changed in (
+        linux[sheet].replace(b"CALCULUS", b"CALCULUX"),
+        linux[sheet].replace(b"4cr\nCALCULUS", b"4crCALCULUS"),
+        linux[sheet].replace(b"4cr\nCALCULUS", b"4cr\n\nCALCULUS"),
+        linux[sheet].replace(b"4cr\nCALCULUS", b"4cr \nCALCULUS"),
+    ):
+        assert digest({**linux, sheet: changed}) != digest(linux)
+    # Only a CRLF pair is a line ending a platform wrote; a lone CR is kept.
+    lone_cr = linux[sheet].replace(b"4cr\nCALCULUS", b"4cr\rCALCULUS")
+    joined = linux[sheet].replace(b"4cr\nCALCULUS", b"4crCALCULUS")
+    assert digest({**linux, sheet: lone_cr}) != digest({**linux, sheet: joined})
