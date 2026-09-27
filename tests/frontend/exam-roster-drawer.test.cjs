@@ -468,3 +468,56 @@ test('a drag that selects a name and ends over the backdrop keeps the drawer ope
   assert.equal(ui.drawer.open, false);
   assert.equal(ui.document.activeElement, ui.link('MATH101'));
 });
+
+// ── Beside the same-day card (master's #120, on the same page) ──
+
+test('the same-day card and its pair detail work beside the card links: Find lands on a card that keeps its link, and the drawer leaves the detail open', async t => {
+  const ui = await timetable(t);
+  const { qa } = fixture.timetable.detail;
+  const pairs = qa.same_day_exam_pairs;
+  // The real build measured both, so neither side can pass on a stub.
+  assert.ok(Number.isInteger(qa.multi_exam_day_students) && qa.multi_exam_day_students > 0, 'the build counted students');
+  assert.ok(Array.isArray(pairs) && pairs.length > 1, 'and recorded their exam pairs');
+  assert.equal(ui.text('kMultiExamDay'), String(qa.multi_exam_day_students));
+  const card = ui.$('kMultiExamDay').closest('.kpi-click');
+  card.focus();
+  card.click();
+  await idle();
+  assert.equal(ui.$('kpiDrill').classList.contains('d-none'), false);
+  assert.equal(ui.$('kpiDrill').dataset.type, 'same-day-pairs');
+  assert.equal(card.getAttribute('aria-expanded'), 'true');
+  assert.equal(ui.text('kpiDrillTitle'), say('Exam pairs on the same day', 'أزواج الاختبارات في اليوم نفسه'));
+  assert.equal(ui.$('kpiDrillNote').hidden, false, 'the note says why pairs outnumber the card');
+  const rows = [...ui.$('kpiDrillBody').querySelectorAll('tr')];
+  assert.equal(rows.length, pairs.length);
+  assert.deepEqual(rows.map(row => ui.text(row.querySelector('.et-pair-count'))), pairs.map(pair => String(pair.student_count)));
+  assert.deepEqual(rows.map(row => [...row.querySelectorAll('[data-course-identity]')].map(item => item.querySelector('.et-course-code')?.textContent.trim())),
+    pairs.map(pair => pair.courses.map(exam => exam.code)));
+  // The drill's exam cards are not the grid's: they never grow a student link.
+  assert.equal(ui.$('kpiDrillBody').querySelector('.et-roster-link'), null);
+
+  // Find from the detail lands on the grid card, which still leads with its link.
+  const code = pairs[0].courses[0].code;
+  const saved = fixture.timetable.detail.section_enrollment[code].reduce((sum, group) => sum + group.student_count, 0);
+  rows[0].querySelector('[data-find-exam]').click();
+  await idle();
+  assert.equal(ui.document.activeElement, ui.card(code));
+  assert.ok(ui.card(code).classList.contains('et-found-exam'));
+  const link = ui.link(code);
+  assert.ok(link, 'the found card keeps its link');
+  assert.equal(link.parentElement.firstElementChild, link);
+  assert.equal(ui.text(link), say(`${saved} students`, `الطلاب: ${saved}`));
+
+  // The link opens that exam's drawer; closing it leaves the detail as it was.
+  await openDrawer(ui, code);
+  assert.equal(ui.drawer.open, true);
+  assert.equal(ui.text('examRosterDrawerTitle').split(' · ')[0], code);
+  assert.equal(ui.rows().length, H.rosterOf({ kind: 'course', exam: code }).rows.length);
+  ui.drawer.dispatchEvent(new ui.window.Event('cancel', { cancelable: true }));
+  assert.equal(ui.drawer.open, false);
+  assert.equal(ui.document.activeElement, ui.link(code));
+  assert.equal(ui.$('kpiDrill').dataset.type, 'same-day-pairs');
+  assert.equal(ui.$('kpiDrill').classList.contains('d-none'), false);
+  assert.equal(ui.$('kpiDrillBody').querySelectorAll('tr').length, pairs.length);
+  assert.equal(ui.text('kMultiExamDay'), String(qa.multi_exam_day_students));
+});

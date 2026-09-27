@@ -132,7 +132,10 @@ moves and where the draft has the exam, flag links opening the other exam
 with Back, the Download menu's keys and its two one-click exports in the
 remembered file language, More options preset, failed audits, the whole
 run's check beside the exam's own changes, a text selection dragged onto the
-backdrop, and `?run=&focus=` from Student lists. Chromium layout (lists and
+backdrop, `?run=&focus=` from Student lists, and the same-day card on the
+same page (its count and exam-pair detail from the real build, Find from a
+pair landing on a grid card that keeps its link, the drawer leaving the
+detail open; in Chromium too). Chromium layout (lists and
 lookups inside the pane at 1600, 1280, 1024 and 700px in both languages, the
 day grid of a five- or six-day week, headings and dates), focus after Back,
 the real endpoints and a real download are covered by

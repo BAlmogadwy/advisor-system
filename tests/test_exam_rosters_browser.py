@@ -4,7 +4,8 @@ The jsdom suites (tests/frontend/exam-rosters.test.cjs and
 exam-roster-drawer.test.cjs) cover every state with recorded answers. This
 runs the whole path in Chromium on a run made by the real build: a room's
 list, a student found by ID and never put in the address, the course drawer
-from a card with focus kept as a browser keeps it, the Export dialog preset
+from a card with focus kept as a browser keeps it, the same-day card and its
+exam-pair detail beside those card links, the Export dialog preset
 to the room on screen and the file it downloads, and the Arabic page and
 drawer at phone width. Nothing leaves the machine (tests/browser_isolation.py).
 """
@@ -31,7 +32,7 @@ from core.services import exam_roster_view as rv
 from core.services.exam_rosters import build_roster_model
 from core.services.exam_student_export import all_sittings
 from core.services.rbac import ROLE_EXAM_COMMITTEE, ensure_role_groups
-from tests.exam_student_export_fixture import build_population, build_saved_run
+from tests.exam_student_export_fixture import build_population, build_saved_run, saved_payload
 
 playwright_api = pytest.importorskip("playwright.sync_api")
 expect = playwright_api.expect
@@ -231,6 +232,61 @@ class ExamRostersBrowserTests(StaticLiveServerTestCase):
         page.keyboard.press("Escape")
         expect(drawer).to_be_hidden()
         expect(link).to_be_focused()
+
+    def test_the_same_day_card_and_its_pairs_work_beside_the_card_links(self) -> None:
+        """The exam page carries both: the same-day card and each card's link."""
+        qa = saved_payload(self.run)["qa"]
+        pairs = qa["same_day_exam_pairs"]
+        # The real build measured both, so neither side can pass on a stub.
+        self.assertGreater(qa["multi_exam_day_students"], 0)
+        self.assertGreater(len(pairs), 1)
+        page = self._page("en", "/exam-timetable/")
+        page.locator("#examHistorySummary").click()
+        page.locator("#historyList .et-run-info").first.click()
+        math = sum(1 for s in self.sittings if s.exam.code == "MATH101")
+        expect(
+            page.locator('#schedGrid .et-course[data-course="MATH101"] .et-roster-link')
+        ).to_have_text(f"{math} students")
+        expect(page.locator("#kMultiExamDay")).to_have_text(str(qa["multi_exam_day_students"]))
+
+        # The card sits in the Full summary, folded until asked for.
+        page.locator("#examSummaryDetails > summary").click()
+        card = page.locator('.kpi-click[data-drill="same-day-pairs"]')
+        card.click()
+        drill = page.locator("#kpiDrill")
+        expect(drill).to_be_visible()
+        expect(card).to_have_attribute("aria-expanded", "true")
+        expect(page.locator("#kpiDrillTitle")).to_have_text("Exam pairs on the same day")
+        expect(page.locator("#kpiDrillNote")).to_be_visible()
+        rows = page.locator("#kpiDrillBody tr")
+        expect(rows).to_have_count(len(pairs))
+        self.assertEqual(
+            rows.locator(".et-pair-count").all_inner_texts(),
+            [str(pair["student_count"]) for pair in pairs],
+        )
+        # The detail's exam cards never grow a student link; the grid's do.
+        expect(page.locator("#kpiDrillBody .et-roster-link")).to_have_count(0)
+
+        # Find from the detail lands on the grid card, which still has its link.
+        code = pairs[0]["courses"][0]["code"]
+        students = sum(1 for s in self.sittings if s.exam.code == code)
+        rows.first.locator("[data-find-exam]").first.click()
+        grid_card = page.locator(f'#schedGrid .et-course[data-course="{code}"]')
+        expect(grid_card).to_be_focused()
+        link = grid_card.locator(".et-review-badges > .et-roster-link")
+        expect(link).to_have_text(f"{students} students")
+        link.click()
+        drawer = page.locator("#examRosterDrawer")
+        expect(drawer).to_be_visible()
+        expect(page.locator("#examRosterDrawerTitle")).to_be_focused()
+        expect(page.locator("#examRosterDrawerBody tr.et-roster-row")).to_have_count(students)
+        page.keyboard.press("Escape")
+        expect(drawer).to_be_hidden()
+        expect(link).to_be_focused()
+        # The detail is as the drawer found it.
+        expect(drill).to_be_visible()
+        expect(rows).to_have_count(len(pairs))
+        expect(page.locator("#kMultiExamDay")).to_have_text(str(qa["multi_exam_day_students"]))
 
     def test_arabic_page_and_drawer_fit_a_phone(self) -> None:
         phone = {"width": 375, "height": 812}
