@@ -73,7 +73,12 @@ from core.services.exam_sections import (
     resolve_exam_section_enrollment,
     summarize_exam_section_mapping,
 )
-from core.services.linked_exams import NO_LINKS, LinkedExams
+from core.services.linked_exams import (
+    NO_LINKS,
+    LinkedExams,
+    linked_exams_qa,
+    resolve_linked_exams,
+)
 from core.services.student_sections import (
     OTHER_BRANCH_SECTION_COHORT,
     _section_course_key,
@@ -2357,6 +2362,7 @@ def build_exam_timetable(
     thin_conflict_threshold: int = 0,
     persist: bool = True,
     selected_course_entries: list[dict] | None = None,
+    linked_exams: list[dict] | None = None,
 ) -> dict:
     """
     End-to-end pipeline: build enrolled sets → conflict graph →
@@ -2397,6 +2403,10 @@ def build_exam_timetable(
                            dict unstamped — used by the multi-start
                            runner to evaluate candidates before
                            persisting only the selected ones.
+        linked_exams     – links the committee made: each is
+                           ``{"members": [{"course_identity": ...}, ...]}``
+                           and sits as one exam (see
+                           ``core.services.linked_exams``). Saved with the run.
     """
     progress = current_progress()
     progress.stage("enrolments")
@@ -2435,6 +2445,7 @@ def build_exam_timetable(
         for index, (day, period) in enumerate((day, period) for day in days for period in periods)
     ]
     pinned = validate_exam_pins(pinned, course_list, slots)
+    links = resolve_linked_exams(linked_exams, course_meta, pinned=pinned)
 
     # 1c. Build credit map for credit-weighted scoring
     credit_map = build_credit_map(course_list)
@@ -2455,8 +2466,8 @@ def build_exam_timetable(
     # 3. Programme-plan term buckets
     ptb, cb = build_plan_term_buckets(set(course_list), course_meta=course_meta, programs=programs)
 
-    # 4. Feasibility pre-check
-    violations = check_bucket_feasibility(ptb, len(days), pinned=pinned)
+    # 4. Feasibility pre-check (a link needs one day, not one per member)
+    violations = check_linked_bucket_feasibility(ptb, len(days), pinned=pinned, links=links)
     if violations:
         return stamp_schema_version(
             {
@@ -2476,10 +2487,11 @@ def build_exam_timetable(
 
     # 6. Schedule (with day-spread + bucket + credit-pair constraints)
     progress.stage("place_exams")
-    schedule_entries = schedule(
+    schedule_entries = schedule_linked(
         course_list,
         adj,
         slots,
+        links=links,
         enrolled_sets=enrolled_sets,
         max_per_day=max_per_day,
         plan_term_buckets=ptb,
@@ -2505,6 +2517,7 @@ def build_exam_timetable(
         max_per_day=max_per_day,
         plan_term_buckets=ptb,
         credit_map=credit_map,
+        links=links,
     )
 
     # 7b. Room assignment (Phase 2) — attach rooms to each schedule entry.
@@ -2575,6 +2588,7 @@ def build_exam_timetable(
                 max_per_day=max_per_day,
                 caller="build",
                 on_trial=progress.counter("balance_invigilators"),
+                links=links,
             )
 
         room_qa = _build_room_qa(schedule_entries, rooms_list)
@@ -2586,20 +2600,26 @@ def build_exam_timetable(
             max_per_day=max_per_day,
             plan_term_buckets=ptb,
             credit_map=credit_map,
+            links=links,
         )
         # Merge room QA into main QA dict for a single source of truth
         qa["rooms"] = room_qa
         qa["room_feasibility_violations"] = room_feasibility
         qa["rebalance_moves"] = rebalance_moves
-    # Defend the fixed-placement contract after all scheduling post-passes.
+    # Defend the fixed-placement contract after all scheduling post-passes,
+    # and the linked-exam one beside it: no pass may have split a link.
     validate_exam_pins(pinned, course_list, slots, schedule_entries=schedule_entries)
+    links.require_together(schedule_entries)
     attach_exam_relaxation_qa(
         qa,
         enrolled_sets,
         schedule_entries,
         thin_conflict_threshold,
         thin_courses_report,
+        links=links,
     )
+    if links:
+        qa["linked_exams"] = linked_exams_qa(links, enrolled_sets, credit_map, course_meta)
 
     # Bucket summary for the result (frontend renders bucket info cards)
     buckets_summary: list[dict] = []
@@ -2666,6 +2686,8 @@ def build_exam_timetable(
         "enrollment_source": EXAM_ENROLLMENT_SOURCE,
         "enrollment_scope": {"programs": programs or [], "sections": sections or []},
         "pinned": pinned,
+        # Editor state like the pins, so not an input the fingerprint hashes.
+        "linked_exams": links.saved(),
         "students_count": len(all_students),
         "courses": course_list,
         "courses_count": len(course_list),

@@ -291,7 +291,7 @@ def test_copy_does_not_schedule_check_or_query_live_membership(
         "evaluate_exam_schedule",
         "_loaded_request_context",
         "build_enrolled_sets_with_meta",
-        "schedule",
+        "schedule_linked",
         "run_multistart",
         "build_conflict_graph",
     ):

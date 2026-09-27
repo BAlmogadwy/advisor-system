@@ -296,7 +296,7 @@ def test_manual_move_reallocates_both_periods_without_moving_other_exams_and_sav
     # Resolve the view module before replacing the service function. Its
     # imported scheduler alias must be patched and restored by monkeypatch,
     # not permanently captured from this test during the first URL import.
-    monkeypatch.setattr("core.exam_views.schedule", forbidden)
+    monkeypatch.setattr("core.exam_views.schedule_linked", forbidden)
     monkeypatch.setattr("core.services.exam_timetable.schedule", forbidden)
     monkeypatch.setattr("core.services.exam_timetable._rebalance_invigilators_pass", forbidden)
     # The evaluator holds its own reference to the pass; patch that binding too.

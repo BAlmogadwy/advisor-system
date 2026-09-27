@@ -11,6 +11,7 @@ import random
 
 import pytest
 
+from core import exam_views
 from core.services.exam_min_change import _move_lower_bound, find_violations, repair_minimum_change
 
 PERIODS = 2
@@ -160,3 +161,248 @@ def test_the_weighted_repair_and_its_floor_match_brute_force():
             assert sum(weights[code] for code in result.moved) == fewest, case
         compared += 1
     assert claimed >= 20, "Too few boards exercised the claim"
+
+
+# ── the view: collapse, repair, expand ──────────────────────────────────────
+
+DAYS = ["Sun", "Mon"]
+PERIOD_NAMES = ["08:00-10:00", "13:00-15:00"]
+
+
+def _entry(code, slot):
+    if slot is None:
+        return {
+            "course_code": code,
+            "course_identity": code,
+            "course_name": f"{code} name",
+            "day": "OVERFLOW",
+            "period": "Extra-4",
+            "slot_index": 4,
+        }
+    return {
+        "course_code": code,
+        "course_identity": code,
+        "course_name": f"{code} name",
+        "day": DAYS[slot // 2],
+        "period": PERIOD_NAMES[slot % 2],
+        "slot_index": slot,
+    }
+
+
+def _where(slot):
+    return (DAYS[slot // 2], PERIOD_NAMES[slot % 2])
+
+
+def _link(*codes):
+    return {"members": [{"course_identity": code} for code in codes]}
+
+
+def _fix(monkeypatch, board, adj, *, links, source=None, pinned=None, carried=None, enrolled=None):
+    """Drive the view's Fix path with a controlled graph, as test_exam_min_change does."""
+    captured = {}
+
+    def inputs(base_entries, days, periods, *_args, **_kwargs):
+        return exam_views._LoadedSolverInputs(
+            meta_by_course={entry["course_code"]: entry for entry in base_entries},
+            course_list=sorted(entry["course_code"] for entry in base_entries),
+            enrolled_sets=enrolled or {},
+            adj=adj,
+            plan_term_buckets={},
+            course_buckets={},
+            credit_map={},
+            slots=[
+                {"index": index, "day": day, "period": period}
+                for index, (day, period) in enumerate(itertools.product(days, periods))
+            ],
+        )
+
+    def rebuild(**kwargs):
+        captured.update(kwargs)
+        return {"schedule": kwargs["schedule_raw"], **(kwargs.get("extra") or {})}
+
+    monkeypatch.setattr(exam_views, "_loaded_solver_inputs", inputs)
+    monkeypatch.setattr(exam_views, "_rebuild_loaded_schedule", rebuild)
+    source = source or {entry["course_code"]: (entry["day"], entry["period"]) for entry in board}
+    result = exam_views._minimum_change_schedule(
+        label="Fix",
+        days=DAYS,
+        periods=PERIOD_NAMES,
+        max_per_day=2,
+        schedule_raw=board,
+        selected_courses=[entry["course_code"] for entry in board],
+        pinned=pinned or [],
+        assign_rooms=False,
+        seed=None,
+        thin_conflict_threshold=0,
+        source_placements=source,
+        carried_protection=carried,
+        linked_exams=links,
+    )
+    return result, captured
+
+
+def _placements(entries):
+    return {entry["course_code"]: (entry["day"], entry["period"]) for entry in entries}
+
+
+def test_a_link_moves_whole_and_every_member_is_reported(monkeypatch):
+    """X was dragged onto the link's slot, so X is the registrar's; the link
+    steps aside, and the report names both of its courses."""
+    board = [_entry("A", 0), _entry("B", 0), _entry("X", 0)]
+    result, captured = _fix(
+        monkeypatch,
+        board,
+        _clash(("B", "X")),
+        links=[_link("A", "B")],
+        source={"A": _where(0), "B": _where(0), "X": _where(3)},
+    )
+    after = _placements(captured["schedule_raw"])
+    assert after["A"] == after["B"] != after["X"] == _where(0)
+    moves = result["minimum_change"]["moves"]
+    assert [move["course_code"] for move in moves] == ["A", "B"]
+    assert {(move["from"]["day"], move["to"]["day"]) for move in moves} == {("Sun", "Sun")}
+    assert captured["linked_exams"] == [
+        {
+            "members": [
+                {"course_identity": "A", "course_code": "A"},
+                {"course_identity": "B", "course_code": "B"},
+            ]
+        }
+    ]
+
+
+def test_a_link_is_the_registrars_if_any_member_is(monkeypatch):
+    """B was moved by hand with its partner: the link is protected, X moves."""
+    board = [_entry("A", 1), _entry("B", 1), _entry("X", 1)]
+    result, captured = _fix(
+        monkeypatch,
+        board,
+        _clash(("A", "X")),
+        links=[_link("A", "B")],
+        source={"A": _where(1), "B": _where(2), "X": _where(1)},
+    )
+    after = _placements(captured["schedule_raw"])
+    assert after["A"] == after["B"] == _where(1)
+    assert [move["course_code"] for move in result["minimum_change"]["moves"]] == ["X"]
+    assert captured["extra"]["minimum_change_protected"] == ["B"], "Real courses, as before"
+
+
+def test_a_pinned_member_freezes_its_link(monkeypatch):
+    board = [_entry("A", 1), _entry("B", 1), _entry("X", 1)]
+    _result, captured = _fix(
+        monkeypatch,
+        board,
+        _clash(("A", "X")),
+        links=[_link("A", "B")],
+        pinned=[{"course_code": "B", "day": "Sun", "period": PERIOD_NAMES[1]}],
+    )
+    after = _placements(captured["schedule_raw"])
+    assert after["A"] == after["B"] == _where(1) != after["X"]
+
+
+def test_an_unseated_link_leaves_the_board_under_one_extra(monkeypatch):
+    """Every slot is held by a frozen exam the link clashes with."""
+    frozen = ["F0", "F1", "F2", "F3"]
+    board = [_entry(code, slot) for slot, code in enumerate(frozen)]
+    board += [_entry("A", 0), _entry("B", 0), _entry("K", None)]
+    adj = _clash(*[(member, code) for member in ("A", "B") for code in frozen])
+    result, captured = _fix(monkeypatch, board, adj, links=[_link("A", "B")], carried=frozen)
+    overflow = {
+        entry["course_code"]: (entry["period"], entry["slot_index"])
+        for entry in captured["schedule_raw"]
+        if entry["day"] == "OVERFLOW"
+    }
+    assert overflow == {"A": ("Extra-5", 5), "B": ("Extra-5", 5), "K": ("Extra-4", 4)}
+    assert result["minimum_change"]["unseated"] == ["A", "B"]
+
+
+def test_students_in_two_linked_courses_are_reported_not_repaired(monkeypatch):
+    """Their clash is real, but separating linked courses is not a repair."""
+    board = [_entry("A", 0), _entry("B", 0)]
+    result, captured = _fix(
+        monkeypatch,
+        board,
+        _clash(("A", "B")),
+        links=[_link("A", "B")],
+        enrolled={"A": {1, 2}, "B": {2, 3}},
+    )
+    assert result == {
+        "saved": False,
+        "minimum_change": {
+            "moves": [],
+            "unseated": [],
+            "already_overflow": 0,
+            "violations_before": 0,
+            "violations_after": 0,
+            "protected_count": 0,
+            "widened": False,
+            "proven_minimal": True,
+            "status": "OPTIMAL",
+            "linked_clash_students": 1,
+        },
+    }
+    assert captured == {}, "Nothing to save"
+
+
+def test_a_split_link_is_refused_before_anything_moves(monkeypatch):
+    board = [_entry("A", 0), _entry("B", 1)]
+    with pytest.raises(ValueError, match="same day and period"):
+        _fix(monkeypatch, board, {}, links=[_link("A", "B")])
+
+
+@pytest.mark.parametrize("seed", range(40))
+def test_no_fix_splits_a_link(monkeypatch, seed):
+    """Random edited boards with links, pins, frozen exams and crowded slots."""
+    rng = random.Random(6100 + seed)
+    names = [f"N{index}" for index in range(rng.randint(5, 9))]
+    shuffled = rng.sample(names, len(names))
+    groups = [tuple(shuffled[0:2]), tuple(shuffled[2 : 2 + rng.randint(2, 3)])]
+    adj = _clash(*[pair for pair in itertools.combinations(names, 2) if rng.random() < 0.5])
+    board, source = [], {}
+    for group in groups:
+        slot = None if rng.random() < 0.1 else rng.randrange(4)
+        for code in group:
+            board.append(_entry(code, slot))
+    for code in names:
+        if not any(code in group for group in groups):
+            board.append(_entry(code, None if rng.random() < 0.1 else rng.randrange(4)))
+    for entry in board:
+        moved_by_hand = rng.random() < 0.2
+        source[entry["course_code"]] = (
+            _where(rng.randrange(4)) if moved_by_hand else (entry["day"], entry["period"])
+        )
+    placed = [entry for entry in board if entry["day"] != "OVERFLOW"]
+    pinned = []
+    if placed and rng.random() < 0.4:
+        anchor = rng.choice(placed)
+        pinned = [
+            {"course_code": entry["course_code"], "day": entry["day"], "period": entry["period"]}
+            for entry in placed
+            if entry["course_code"] == anchor["course_code"]
+        ]
+    result, captured = _fix(
+        monkeypatch,
+        board,
+        adj,
+        links=[_link(*group) for group in groups],
+        source=source,
+        pinned=pinned,
+        carried=rng.sample(names, rng.randint(0, 2)),
+    )
+    after = captured.get("schedule_raw", board)
+    for group in groups:
+        where = {
+            ("OVERFLOW",) if e["day"] == "OVERFLOW" else (e["day"], e["period"])
+            for e in after
+            if e["course_code"] in group
+        }
+        assert len(where) == 1, (seed, group, after)
+        slots = {e["slot_index"] for e in after if e["course_code"] in group}
+        assert len(slots) == 1, "One shared Extra-n, or one real slot"
+    frozen = {pin["course_code"] for pin in pinned}
+    for entry in after:
+        if entry["course_code"] in frozen:
+            assert (entry["day"], entry["period"]) == (pinned[0]["day"], pinned[0]["period"])
+    reported = {move["course_code"] for move in result["minimum_change"]["moves"]}
+    for group in groups:
+        assert not set(group) & reported or set(group) <= reported, "A link is reported whole"
