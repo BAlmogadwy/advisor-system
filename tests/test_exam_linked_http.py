@@ -15,7 +15,7 @@ import pytest
 from django.core.cache import cache
 from django.urls import reverse
 
-from core import models
+from core import exam_views, models
 from core.models import (
     Course,
     ExamTimetableRun,
@@ -23,8 +23,14 @@ from core.models import (
     Room,
     Student,
 )
+from core.services.exam_evaluation import evaluate_exam_schedule
 from core.services.exam_multistart import run_multistart
-from core.services.exam_run_schema import load_normalised_run, normalise_exam_run_payload
+from core.services.exam_run_schema import (
+    _MIGRATORS,
+    _migrate_v5_to_v6,
+    load_normalised_run,
+    normalise_exam_run_payload,
+)
 from core.services.exam_timetable import build_enrolled_sets_with_meta, build_exam_timetable
 from core.services.linked_exams import resolve_linked_exams
 from tests import exam_linked_parity_corpus as corpus
@@ -314,6 +320,69 @@ def test_one_pinned_member_takes_its_link_with_it(client_, population):
     assert _where(built)["AI212"] == _where(built)["AI225"] == ("Tue", PERIODS[1])
 
 
+def test_a_link_needs_one_day_of_its_study_plan_term(client_):
+    """Three courses of one plan term and two days: infeasible, until two of
+    them are linked - then they are one exam, and there are two exams."""
+    for code in ("X1", "X2", "X3"):
+        Course.objects.create(course_code=code, description=code, credit_hours=3)
+        ProgrammeRequirement.objects.create(
+            program="AI", course_code=code, course_name=code, programme_term=1
+        )
+    for number in range(3):
+        student = Student.objects.create(student_id=900 + number, program="AI", section="F")
+        for code in ("X1", "X2", "X3"):
+            scraped_exam_registration(student, Course.objects.get(course_code=code))
+    payload = {
+        "label": "Two days",
+        "days": ["Sun", "Mon"],
+        "periods": PERIODS[:1],
+        "max_per_day": 2,
+        "programs": ["AI"],
+        "sections": ["F"],
+        "assign_rooms": False,
+        "pinned": [],
+    }
+    refused = _post(client_, payload, status=400)
+    assert refused["feasibility_error"] is True
+    link = {"members": [{"course_identity": "X1"}, {"course_identity": "X2"}]}
+    built = _post(client_, {**payload, "linked_exams": [link]})
+    assert _where(built)["X1"] == _where(built)["X2"] != _where(built)["X3"]
+
+
+def _splitting_pass(entries, *_args, **_kwargs):
+    """A post-pass gone wrong: it moves one member of a link on its own."""
+    moving = next(entry for entry in entries if entry["course_code"] == "AI225")
+    free = next(
+        (day, period)
+        for day, period in itertools.product(DAYS, PERIODS)
+        if (day, period) not in {(e["day"], e["period"]) for e in entries}
+    )
+    moving.update(
+        day=free[0], period=free[1], slot_index=DAYS.index(free[0]) * 2 + PERIODS.index(free[1])
+    )
+    return 1
+
+
+def test_a_build_whose_post_pass_splits_a_link_is_refused(client_, population, monkeypatch):
+    """together() is re-checked beside the pin defence, after every pass."""
+    monkeypatch.setattr(
+        "core.services.exam_timetable._rebalance_invigilators_pass", _splitting_pass
+    )
+    body = _build(client_, status=400)
+    assert body["code"] == "linked_exams_split"
+    assert not ExamTimetableRun.objects.exists()
+
+
+def test_an_optimise_whose_post_pass_splits_a_link_is_refused(client_, population, monkeypatch):
+    built = _build(client_)
+    monkeypatch.setattr(
+        "core.services.exam_evaluation._rebalance_invigilators_pass", _splitting_pass
+    )
+    body = _loaded(client_, built, built["schedule"], mode="optimize_loaded", status=400)
+    assert body["code"] == "linked_exams_split"
+    assert ExamTimetableRun.objects.count() == 1
+
+
 # ── multistart ───────────────────────────────────────────────────────────────
 
 
@@ -359,6 +428,65 @@ def test_a_board_that_splits_a_saved_link_is_refused(client_, population, mode):
     runs = ExamTimetableRun.objects.count()
     body = _loaded(client_, built, split, mode=mode, status=400)
     assert (body["code"], body["field"]) == ("linked_exams_split", "linked_exams[0]")
+    assert ExamTimetableRun.objects.count() == runs
+
+
+@pytest.mark.parametrize(
+    "mode", [None, "save_loaded_changes", "optimize_loaded", "minimum_change_repair"]
+)
+@pytest.mark.parametrize(
+    ("links", "code", "field"),
+    [
+        ("AI212", "linked_exams_invalid", "linked_exams"),
+        (lambda: [_link("AI212")], "linked_exams_too_few_members", "linked_exams[0].members"),
+        (
+            lambda: [
+                {
+                    "members": [
+                        _link("AI212")["members"][0],
+                        {"course_identity": "EE999::nothing", "course_code": "EE999"},
+                    ]
+                }
+            ],
+            "linked_exams_course_not_selected",
+            "linked_exams[0].members[1].course_identity",
+        ),
+    ],
+    ids=["not-a-list", "one-member", "unknown"],
+)
+def test_a_loaded_action_refuses_bad_links_by_field_and_saves_nothing(
+    client_, population, mode, links, code, field
+):
+    """Check, Save, Optimise and Fix take the page's own list when it sends one,
+    and refuse it exactly as a build does."""
+    built = _build(client_)
+    runs = ExamTimetableRun.objects.count()
+    sent = links() if callable(links) else links
+    body = _loaded(client_, built, built["schedule"], mode=mode, status=400, linked_exams=sent)
+    assert (body["code"], body["field"]) == (code, field)
+    assert ExamTimetableRun.objects.count() == runs
+
+
+@pytest.mark.parametrize(
+    "mode", [None, "save_loaded_changes", "optimize_loaded", "minimum_change_repair"]
+)
+def test_a_loaded_action_refuses_linked_exams_pinned_apart(client_, population, mode):
+    """Each pin matches the board, but the board holds the link apart and pins
+    both halves there: the pins are refused before the split is."""
+    built = _build(client_)
+    day, period = _free_slot(built)
+    split = _move(built["schedule"], "AI225", day, period)
+    pins = [
+        {
+            "course_code": "AI212",
+            "day": _where(built)["AI212"][0],
+            "period": _where(built)["AI212"][1],
+        },
+        {"course_code": "AI225", "day": day, "period": period},
+    ]
+    runs = ExamTimetableRun.objects.count()
+    body = _loaded(client_, built, split, mode=mode, status=400, pinned=pins)
+    assert (body["code"], body["field"]) == ("linked_exams_pins_disagree", "linked_exams[0]")
     assert ExamTimetableRun.objects.count() == runs
 
 
@@ -412,6 +540,50 @@ def test_a_link_wholly_in_overflow_is_together_at_any_index(client_, population,
     assert saved["linked_exams"] == built["linked_exams"]
 
 
+def _slot_numbers(days, periods) -> dict[tuple[str, str], int]:
+    return {slot: number for number, slot in enumerate(itertools.product(days, periods))}
+
+
+def _renumbered_like_apply_exam_pin(board, days=DAYS, periods=PERIODS):
+    """What the page's applyExamPin does before the next action: every OVERFLOW
+    entry, in board order, takes the next fresh index; its Extra-n label stays."""
+    index = _slot_numbers(days, periods)
+    fresh = itertools.count(len(index))
+    for entry in board:
+        entry["slot_index"] = (
+            next(fresh) if entry["day"] == "OVERFLOW" else index[(entry["day"], entry["period"])]
+        )
+    return board
+
+
+@pytest.mark.parametrize(
+    "mode", [None, "save_loaded_changes", "optimize_loaded", "minimum_change_repair"]
+)
+def test_every_action_accepts_a_link_in_overflow_the_page_renumbered(client_, population, mode):
+    """The link waits in OVERFLOW under one shared Extra-6, beside MATH106 in
+    Extra-7. Pinning an unrelated exam then renumbers both in board order, so
+    the link's two members arrive at two different indices - still together."""
+    built = _build(client_)
+    slot_count = len(DAYS) * len(PERIODS)
+    board = deepcopy(built["schedule"])
+    for entry in board:
+        if entry["course_code"] in ("AI212", "AI225"):
+            entry.update(day="OVERFLOW", period=f"Extra-{slot_count}")
+        elif entry["course_code"] == "MATH106":
+            entry.update(day="OVERFLOW", period=f"Extra-{slot_count + 1}")
+    board = _renumbered_like_apply_exam_pin(board)
+    sent = {e["course_code"]: e["slot_index"] for e in board if e["day"] == "OVERFLOW"}
+    assert sent["AI212"] != sent["AI225"], "The board really is renumbered"
+    result = _loaded(client_, built, board, mode=mode)
+    after = result.get("schedule", board)
+    assert _together({"schedule": after}, *_groups())
+    assert result.get("linked_exams", built["linked_exams"]) == built["linked_exams"]
+    if mode in (None, "save_loaded_changes"):
+        assert {_where({"schedule": after})[code] for code in ("AI212", "AI225")} == {
+            ("OVERFLOW", f"Extra-{slot_count}")
+        }, "Check and Save keep the submitted placements"
+
+
 def test_optimise_keeps_links_together_and_saves_them(client_, population):
     built = _build(client_)
     optimised = _loaded(client_, built, built["schedule"], mode="optimize_loaded")
@@ -453,15 +625,24 @@ def test_copy_carries_the_links_and_its_actions_use_them(client_, population):
 # ── students in two linked courses ───────────────────────────────────────────
 
 
-def test_a_student_in_two_linked_courses_is_a_linked_exam_clash(client_):
+@pytest.mark.parametrize("assign_rooms", [True, False], ids=["rooms", "no-rooms"])
+def test_a_student_in_two_linked_courses_is_a_linked_exam_clash(client_, assign_rooms):
+    """Without rooms the build reports its first QA; with rooms, the QA it
+    recomputes after the invigilator pass. Both must know the link."""
     _populate(shared_student=True)
-    built = _build(client_, linked_exams=[_link("AI212", "AI225")])
+    built = _build(client_, linked_exams=[_link("AI212", "AI225")], assign_rooms=assign_rooms)
     rows = [
         row for row in built["qa"]["manual_override_details"] if row["kind"] == "linked_same_slot"
     ]
     assert [(row["student_id"], row["courses"]) for row in rows] == [(500, ["AI212", "AI225"])]
     assert built["qa"]["linked_exams"]["students_in_two_linked_courses"] == 1
     assert "manual_override" in built["status_flags"]
+    # AI212 and AI225 now share the AI plan's term 3, and sit as one exam:
+    # one exam that day, not a bucket-day violation - at Build and at Check.
+    assert built["qa"]["bucket_day_violations"] == []
+    checked = _loaded(client_, built, built["schedule"])
+    assert checked["qa"]["bucket_day_violations"] == []
+    assert [row["kind"] for row in checked["qa"]["manual_override_details"]] == ["linked_same_slot"]
     repaired = _loaded(client_, built, built["schedule"], mode="minimum_change_repair")
     assert repaired["saved"] is False, "Separating linked courses is not a repair"
     assert repaired["minimum_change"]["linked_clash_students"] == 1
@@ -481,6 +662,11 @@ def test_a_run_saved_before_links_existed_has_none():
         {"schema_version": 6, "status": "ok", "linked_exams": [{"members": []}]}
     )
     assert kept["linked_exams"] == [{"members": []}], "A current run's links are its own"
+    # A current run written without the key (the CSV import) reads as no links.
+    assert normalise_exam_run_payload({"schema_version": 6, "status": "ok"})["linked_exams"] == []
+    # The v5 -> v6 step says so itself, whatever the read-side defaults do later.
+    assert _migrate_v5_to_v6({"pinned": []}) == {"pinned": [], "linked_exams": []}
+    assert _MIGRATORS[5] is _migrate_v5_to_v6 and len(_MIGRATORS) == 6
 
 
 # ── randomised: real builds never split a link ───────────────────────────────
@@ -517,8 +703,6 @@ def test_no_real_build_optimise_fix_or_multistart_splits_a_link(seed):
     )
     assert links.together(built["schedule"]), (groups, _where(built))
     assert _where(built)[pins[0]["course_code"]] == (day, period)
-
-    from core import exam_views
 
     loaded = {
         **{
@@ -567,3 +751,147 @@ def test_no_real_build_optimise_fix_or_multistart_splits_a_link(seed):
     report = run_multistart(label="Random multistart", seeds=[1, 2], **common)
     for candidate in report.candidates_by_role.values():
         assert links.together(candidate.payload["schedule"]), groups
+
+
+def _tight_build(seed: int, *, populate: bool = True):
+    """The parity population on three slots, with two random links and a pin:
+    eleven exams cannot all sit, so links wait in OVERFLOW too."""
+    if populate:
+        corpus.create_population(models)
+    rng = random.Random(5500 + seed)
+    _enrolled, meta = build_enrolled_sets_with_meta(programs=["AI", "CS"])
+    picked = rng.sample(sorted(meta), 6)
+    groups = [tuple(sorted(picked[:2])), tuple(sorted(picked[2:5]))]
+    raw = [
+        {"members": [{"course_identity": meta[code]["course_identity"]} for code in group]}
+        for group in groups
+    ]
+    days, periods = corpus.POPULATION_DAYS[:3], corpus.POPULATION_PERIODS[:1]
+    pins = [{"course_code": picked[5], "day": rng.choice(days), "period": periods[0]}]
+    common = {
+        "days": days,
+        "periods": periods,
+        "max_per_day": 2,
+        "programs": ["AI", "CS"],
+        "pinned": pins,
+        "linked_exams": raw,
+        "thin_conflict_threshold": 0,
+    }
+    built = build_exam_timetable(
+        "Tight links", seed=rng.randint(0, 99), assign_rooms=True, persist=False, **common
+    )
+    return rng, groups, resolve_linked_exams(raw, meta), common, built
+
+
+def _one_place(schedule, group) -> bool:
+    """Together, and a waiting link under ONE Extra-n: one (day, period, index)."""
+    return (
+        len(
+            {
+                (entry["day"], entry["period"], entry["slot_index"])
+                for entry in schedule
+                if entry["course_code"] in group
+            }
+        )
+        == 1
+    )
+
+
+TIGHT_SEEDS = range(8)
+
+
+@pytest.mark.parametrize("seed", TIGHT_SEEDS)
+def test_no_overflowing_build_check_optimise_fix_or_multistart_splits_a_link(seed):
+    rng, groups, links, common, built = _tight_build(seed)
+    assert not built.get("feasibility_error"), built.get("feasibility_violations")
+    assert links.together(built["schedule"]) and all(
+        _one_place(built["schedule"], group) for group in groups
+    ), groups
+    pin = common["pinned"][0]
+    assert _where(built)[pin["course_code"]] == (pin["day"], pin["period"])
+
+    loaded = {
+        **{key: common[key] for key in ("days", "periods", "max_per_day", "pinned")},
+        "linked_exams": built["linked_exams"],
+        "selected_courses": [entry["course_code"] for entry in built["schedule"]],
+        "assign_rooms": True,
+        "seed": rng.randint(0, 99),
+        "thin_conflict_threshold": 0,
+        "programs": ["AI", "CS"],
+        "sections": [],
+    }
+    # The page renumbers OVERFLOW when an unrelated exam is pinned.
+    renumbered = _renumbered_like_apply_exam_pin(
+        deepcopy(built["schedule"]), common["days"], common["periods"]
+    )
+    checked = evaluate_exam_schedule(schedule_raw=renumbered, **loaded)
+    assert links.together(checked["schedule"]), groups
+    optimised = exam_views._optimise_loaded_schedule(
+        label="Tight optimise",
+        schedule_raw=deepcopy(renumbered),
+        save=lambda _label, _result: 1,
+        **loaded,
+    )
+    assert links.together(optimised["schedule"]) and all(
+        _one_place(optimised["schedule"], group) for group in groups
+    ), groups
+
+    # The registrar drags a whole link - from OVERFLOW if one waits there - onto
+    # an exam it shares students with. It is theirs now; Fix must make room.
+    placed = _where(built)
+    group = next((g for g in groups if placed[g[0]][0] == "OVERFLOW"), groups[0])
+    neighbours = sorted(
+        {
+            row["course_a"] if row["course_b"] in group else row["course_b"]
+            for row in built["conflicts"]
+            if {row["course_a"], row["course_b"]} & set(group)
+        }
+        - set(group)
+    )
+    targets = [
+        placed[code]
+        for code in neighbours
+        if placed[code][0] != "OVERFLOW"
+        and placed[code] != placed[group[0]]
+        and placed[code] != (pin["day"], pin["period"])
+    ]
+    assert targets, "Every seed must drag onto a clash"
+    day, period = rng.choice(targets)
+    dragged = deepcopy(built["schedule"])
+    for code in group:
+        dragged = _move(dragged, code, day, period)
+    for entry in dragged:
+        if entry["course_code"] in group:
+            entry["slot_index"] = _slot_numbers(common["days"], common["periods"])[(day, period)]
+    fixed = exam_views._minimum_change_schedule(
+        label="Tight fix",
+        source_placements=placed,
+        carried_protection=[],
+        save=lambda _label, _result: 1,
+        **{**loaded, "schedule_raw": dragged},
+    )
+    assert "schedule" in fixed, "The drag was meant to need a repair"
+    after = fixed["schedule"]
+    assert links.together(after) and all(_one_place(after, g) for g in groups), groups
+    assert {_where({"schedule": after})[code] for code in group} == {(day, period)}, (
+        "The dragged link is the registrar's"
+    )
+    report = run_multistart(label="Tight multistart", seeds=[1, 2], **common)
+    assert report.candidates_by_role
+    for candidate in report.candidates_by_role.values():
+        schedule = candidate.payload["schedule"]
+        assert links.together(schedule) and all(_one_place(schedule, g) for g in groups), groups
+
+
+def test_the_overflowing_builds_really_do_hold_the_hard_cases():
+    """Without this the test above could pass on boards where no link waited
+    in OVERFLOW (so none was dragged out of it) and no student sat two linked
+    courses."""
+    corpus.create_population(models)
+    waiting = shared = 0
+    for seed in TIGHT_SEEDS:
+        _rng, groups, _links, _common, built = _tight_build(seed, populate=False)
+        placed = _where(built)
+        waiting += any(placed[group[0]][0] == "OVERFLOW" for group in groups)
+        shared += built["qa"]["linked_exams"]["students_in_two_linked_courses"] > 0
+    assert waiting >= 3 and shared >= 3, (waiting, shared)

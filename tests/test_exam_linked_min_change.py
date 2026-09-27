@@ -57,6 +57,17 @@ def test_a_single_exam_leaves_the_board_rather_than_a_link():
     assert _repair(placements, adj, slots=1, periods=1, weights={"U": 2}).unseated == ["S"]
 
 
+def test_unseating_a_link_costs_every_course_it_takes_off_the_board():
+    """One slot. Either the link A (two courses) leaves the board, or both
+    singles S1 and S2 do: two courses either way. Counted in exams, sending
+    A away looks like half the loss; counted in courses it is a tie, and the
+    tie keeps A - first in code order - on the board."""
+    placements, adj = {"A": 0, "S1": 0, "S2": 0}, _clash(("A", "S1"), ("A", "S2"))
+    assert _repair(placements, adj, slots=1, periods=1).unseated == ["A"]
+    result = _repair(placements, adj, slots=1, periods=1, weights={"A": 2})
+    assert result.unseated == ["S1", "S2"]
+
+
 def test_distance_is_weighed_too():
     """U (two courses) clashes with S1 and S2 at slot 3. Moving U costs two
     courses a move, and so does moving S1 and S2 - a tie. Distance decides:
@@ -197,7 +208,18 @@ def _link(*codes):
     return {"members": [{"course_identity": code} for code in codes]}
 
 
-def _fix(monkeypatch, board, adj, *, links, source=None, pinned=None, carried=None, enrolled=None):
+def _fix(
+    monkeypatch,
+    board,
+    adj,
+    *,
+    links,
+    source=None,
+    pinned=None,
+    carried=None,
+    enrolled=None,
+    buckets=None,
+):
     """Drive the view's Fix path with a controlled graph, as test_exam_min_change does."""
     captured = {}
 
@@ -207,8 +229,12 @@ def _fix(monkeypatch, board, adj, *, links, source=None, pinned=None, carried=No
             course_list=sorted(entry["course_code"] for entry in base_entries),
             enrolled_sets=enrolled or {},
             adj=adj,
-            plan_term_buckets={},
-            course_buckets={},
+            plan_term_buckets=buckets or {},
+            course_buckets={
+                code: [key for key, codes in sorted((buckets or {}).items()) if code in codes]
+                for codes in (buckets or {}).values()
+                for code in codes
+            },
             credit_map={},
             slots=[
                 {"index": index, "day": day, "period": period}
@@ -271,33 +297,80 @@ def test_a_link_moves_whole_and_every_member_is_reported(monkeypatch):
     ]
 
 
+def _tied_board():
+    """A+B, X and Y all at slot 1: X clashes with A, Y with B, X and Y do not.
+
+    Moving the link costs two courses one period; so does moving X and Y. On a
+    tie the repair keeps the exams earliest in code order where they can go
+    earliest - and "A+B" comes first, so an unprotected link is what moves.
+    """
+    board = [_entry("A", 1), _entry("B", 1), _entry("X", 1), _entry("Y", 1)]
+    return board, _clash(("A", "X"), ("B", "Y"))
+
+
 def test_a_link_is_the_registrars_if_any_member_is(monkeypatch):
-    """B was moved by hand with its partner: the link is protected, X moves."""
-    board = [_entry("A", 1), _entry("B", 1), _entry("X", 1)]
+    """B was moved here by hand with its partner: the link is protected."""
+    board, adj = _tied_board()
     result, captured = _fix(
         monkeypatch,
         board,
-        _clash(("A", "X")),
+        adj,
         links=[_link("A", "B")],
-        source={"A": _where(1), "B": _where(2), "X": _where(1)},
+        source={"A": _where(1), "B": _where(2), "X": _where(1), "Y": _where(1)},
     )
     after = _placements(captured["schedule_raw"])
     assert after["A"] == after["B"] == _where(1)
-    assert [move["course_code"] for move in result["minimum_change"]["moves"]] == ["X"]
+    assert [move["course_code"] for move in result["minimum_change"]["moves"]] == ["X", "Y"]
     assert captured["extra"]["minimum_change_protected"] == ["B"], "Real courses, as before"
 
 
 def test_a_pinned_member_freezes_its_link(monkeypatch):
-    board = [_entry("A", 1), _entry("B", 1), _entry("X", 1)]
-    _result, captured = _fix(
+    board, adj = _tied_board()
+    result, captured = _fix(
         monkeypatch,
         board,
-        _clash(("A", "X")),
+        adj,
         links=[_link("A", "B")],
         pinned=[{"course_code": "B", "day": "Sun", "period": PERIOD_NAMES[1]}],
     )
     after = _placements(captured["schedule_raw"])
-    assert after["A"] == after["B"] == _where(1) != after["X"]
+    assert after["A"] == after["B"] == _where(1)
+    assert [move["course_code"] for move in result["minimum_change"]["moves"]] == ["X", "Y"]
+
+
+def test_without_protection_the_tie_moves_the_link(monkeypatch):
+    """The two tests above hold only because the link is protected."""
+    board, adj = _tied_board()
+    result, _captured = _fix(monkeypatch, board, adj, links=[_link("A", "B")])
+    assert [move["course_code"] for move in result["minimum_change"]["moves"]] == ["A", "B"]
+
+
+def test_the_view_weighs_a_link_by_its_courses(monkeypatch):
+    """A clashes with Y of the link Y+Z. Unweighted, A (earliest in code
+    order) would keep its slot and the link would move two courses."""
+    board = [_entry("A", 0), _entry("Y", 0), _entry("Z", 0)]
+    result, captured = _fix(monkeypatch, board, _clash(("A", "Y")), links=[_link("Y", "Z")])
+    assert [move["course_code"] for move in result["minimum_change"]["moves"]] == ["A"]
+    assert result["minimum_change"]["proven_minimal"] is True
+
+
+def test_a_link_leaves_the_day_a_dragged_bucket_mate_now_holds(monkeypatch):
+    """C shares B's study-plan term and was dragged onto Sunday, beside the
+    link A+B: two exams of one term on one day. C is the registrar's, so the
+    link - both courses - leaves Sunday."""
+    board = [_entry("A", 0), _entry("B", 0), _entry("C", 1)]
+    result, captured = _fix(
+        monkeypatch,
+        board,
+        {},
+        links=[_link("A", "B")],
+        source={"A": _where(0), "B": _where(0), "C": _where(2)},
+        buckets={("AI", 1): {"B", "C"}},
+    )
+    after = _placements(captured["schedule_raw"])
+    assert after["C"] == _where(1)
+    assert after["A"] == after["B"] and after["A"][0] == "Mon"
+    assert [move["course_code"] for move in result["minimum_change"]["moves"]] == ["A", "B"]
 
 
 def test_an_unseated_link_leaves_the_board_under_one_extra(monkeypatch):
@@ -406,3 +479,97 @@ def test_no_fix_splits_a_link(monkeypatch, seed):
     reported = {move["course_code"] for move in result["minimum_change"]["moves"]}
     for group in groups:
         assert not set(group) & reported or set(group) <= reported, "A link is reported whole"
+
+
+def _legal_in_courses(slot_of, adj, groups, buckets):
+    """The rules on real courses, written without the module that collapses them.
+
+    Two courses that share a student may not share a slot - unless one link
+    holds both (no repair can separate them). A study-plan term sits at most
+    one exam a day, and a link, whose members sit at once, is one exam.
+    """
+    link_of = {code: number for number, group in enumerate(groups) for code in group}
+    for code, neighbours in adj.items():
+        for mate in neighbours:
+            same_link = code in link_of and link_of.get(mate) == link_of[code]
+            if not same_link and slot_of[code] == slot_of[mate]:
+                return False
+    for members in (buckets or {}).values():
+        sittings: dict[int, set] = {}
+        for code in members:
+            sittings.setdefault(slot_of[code] // PERIODS, set()).add(link_of.get(code, code))
+        if any(len(exams) > 1 for exams in sittings.values()):
+            return False
+    return True
+
+
+def test_the_fix_view_moves_the_fewest_courses_brute_force_finds(monkeypatch):
+    """Small boards of real courses with links, drags and a study-plan term.
+
+    Brute force tries every placement that keeps each link on one slot and
+    leaves the registrar's exams where they are, and counts COURSES moved. A
+    view that seats everything may never move fewer than that; when it claims
+    the fewest possible it moved exactly that many, unseated nothing, and left
+    a legal board.
+    """
+    rng = random.Random(27092026)
+    names = ["A", "B", "C", "D", "E", "F"]
+    compared = claimed = linked_moves = 0
+    while compared < 60:
+        shuffled = rng.sample(names, len(names))
+        groups = [tuple(sorted(shuffled[:2]))]
+        if rng.random() < 0.5:
+            groups.append(tuple(sorted(shuffled[2 : 2 + rng.randint(2, 3)])))
+        linked = {code for group in groups for code in group}
+        units = [*groups, *[(code,) for code in names if code not in linked]]
+        adj = _clash(*[pair for pair in itertools.combinations(names, 2) if rng.random() < 0.3])
+        buckets = {("AI", 1): set(rng.sample(names, 3))} if rng.random() < 0.5 else None
+        start: dict[str, int] = {}
+        for unit in units:
+            start.update(dict.fromkeys(unit, rng.randrange(4)))
+        if _legal_in_courses(start, adj, groups, buckets):
+            continue
+        # Drag a unit here by hand: the saved run had it one slot along.
+        dragged = [unit for unit in units if rng.random() < 0.25]
+        source = {
+            code: _where((start[code] + 1) % 4 if unit in dragged else start[code])
+            for unit in units
+            for code in unit
+        }
+        fewest = None
+        free = [unit for unit in units if unit not in dragged]
+        for slots in itertools.product(range(4), repeat=len(free)):
+            board = dict(start)
+            for unit, slot in zip(free, slots, strict=True):
+                board.update(dict.fromkeys(unit, slot))
+            if _legal_in_courses(board, adj, groups, buckets):
+                moved = sum(len(unit) for unit in free if board[unit[0]] != start[unit[0]])
+                fewest = moved if fewest is None else min(fewest, moved)
+        if fewest is None:
+            continue
+        result, captured = _fix(
+            monkeypatch,
+            [_entry(code, start[code]) for code in names],
+            adj,
+            links=[_link(*group) for group in groups],
+            source=source,
+            buckets=buckets,
+        )
+        report = result["minimum_change"]
+        moves = [move["course_code"] for move in report["moves"]]
+        case = (groups, sorted(adj.items()), buckets, start, dragged)
+        if not report["unseated"]:
+            assert len(moves) >= fewest, case
+        after = {
+            entry["course_code"]: DAYS.index(entry["day"]) * PERIODS
+            + PERIOD_NAMES.index(entry["period"])
+            for entry in captured["schedule_raw"]
+            if entry["day"] != "OVERFLOW"
+        }
+        if report["proven_minimal"]:
+            claimed += 1
+            assert len(moves) == fewest and report["unseated"] == [], case
+            assert _legal_in_courses(after, adj, groups, buckets), case
+        linked_moves += bool(set(moves) & linked)
+        compared += 1
+    assert claimed >= 40 and linked_moves >= 20, (claimed, linked_moves)

@@ -135,6 +135,127 @@ def test_a_mixed_credit_link_is_scored_on_what_each_student_sits():
     assert placed(entries)["A"] == placed(entries)["B"] == ("Sun", "P2")
 
 
+def test_a_placed_mixed_credit_link_leaves_each_student_the_credit_they_sit():
+    """The link A (3 credits, students 1-3) + B (4) is pinned first, to Sunday.
+
+    X (4 credits, students 1-3) then weighs Sunday, where each of its students
+    already sits a 3-credit paper - three (4, 3) pairs = 90 - against Monday,
+    where Y (4) gives student 1 a (4, 4) pair = 100. Recorded as the link's
+    heaviest member, Sunday would cost 300 and X would go to Monday.
+    """
+    enrolled = {"A": {1, 2, 3}, "B": {4}, "X": {1, 2, 3}, "Y": {1}}
+    _, adj = build_conflict_graph(enrolled)
+    pins = [
+        {"course_code": "A", "day": "Sun", "period": "P1"},
+        {"course_code": "Y", "day": "Mon", "period": "P1"},
+    ]
+    entries = schedule_linked(
+        ["A", "B", "X", "Y"],
+        adj,
+        SLOTS,
+        links=links_of(("A", "B")),
+        enrolled_sets=enrolled,
+        pinned=pins,
+        credit_map={"A": 3, "B": 4, "X": 4, "Y": 4},
+    )
+    assert placed(entries)["X"] == ("Sun", "P2")
+
+
+def test_a_link_counts_every_members_students_on_their_day():
+    """Student 1 (in A) already sits X on Sunday, and one exam a day is the limit.
+
+    The link must see A's students: Monday, though busier, keeps student 1 to
+    one exam a day. Blind to them it would take quiet Sunday P2.
+    """
+    enrolled = {"A": {1}, "B": {2}, "X": {1}, "Y": {3}, "Z": {4}}
+    _, adj = build_conflict_graph(enrolled)
+    pins = [
+        {"course_code": "X", "day": "Sun", "period": "P1"},
+        {"course_code": "Y", "day": "Mon", "period": "P1"},
+        {"course_code": "Z", "day": "Mon", "period": "P2"},
+    ]
+    entries = schedule_linked(
+        ["A", "B", "X", "Y", "Z"],
+        adj,
+        SLOTS,
+        links=links_of(("A", "B")),
+        enrolled_sets=enrolled,
+        max_per_day=1,
+        pinned=pins,
+    )
+    assert placed(entries)["A"][0] == placed(entries)["B"][0] == "Mon"
+
+
+def test_a_uniform_link_is_scored_at_its_members_credit():
+    """A and B are both 4-credit exams. Beside X (2 credits) on Sunday a
+    student's pair scores (4, 2) = 0; beside Y (3) on Monday, (4, 3) = 30.
+
+    Scored at the 3-credit default instead, both days tie at 5 and the
+    lighter Monday would win.
+    """
+    enrolled = {"A": {1}, "B": {2}, "X": {1}, "Y": {2}, "W": {9}}
+    _, adj = build_conflict_graph(enrolled)
+    pins = [
+        {"course_code": "X", "day": "Sun", "period": "P1"},
+        {"course_code": "W", "day": "Sun", "period": "P2"},
+        {"course_code": "Y", "day": "Mon", "period": "P1"},
+    ]
+    entries = schedule_linked(
+        ["A", "B", "W", "X", "Y"],
+        adj,
+        SLOTS,
+        links=links_of(("A", "B")),
+        enrolled_sets=enrolled,
+        pinned=pins,
+        credit_map={"A": 4, "B": 4, "X": 2, "Y": 3, "W": 3},
+    )
+    assert placed(entries)["A"] == placed(entries)["B"] == ("Sun", "P2")
+
+
+def test_a_link_keeps_off_the_day_of_a_bucket_mate():
+    """C shares B's study-plan term and sits on Sunday. The link may not join
+    it there, though Monday is busier. Without B's bucket the link would take
+    quiet Sunday P2 - two exams of one term on one day."""
+    buckets = {("AI", 1): {"B", "C"}}
+    course_buckets = {"B": [("AI", 1)], "C": [("AI", 1)]}
+    enrolled = {"A": {1}, "B": {2}, "C": {3}, "Y": {4}, "Z": {5}}
+    pins = [
+        {"course_code": "C", "day": "Sun", "period": "P1"},
+        {"course_code": "Y", "day": "Mon", "period": "P1"},
+        {"course_code": "Z", "day": "Mon", "period": "P2"},
+    ]
+    entries = schedule_linked(
+        ["A", "B", "C", "Y", "Z"],
+        {},
+        SLOTS,
+        links=links_of(("A", "B")),
+        enrolled_sets=enrolled,
+        plan_term_buckets=buckets,
+        course_buckets=course_buckets,
+        pinned=pins,
+    )
+    assert placed(entries)["A"][0] == placed(entries)["B"][0] == "Mon"
+
+
+def test_a_link_keeps_the_slot_its_largest_member_prefers():
+    """Optimise hands the scheduler each exam's current slot as its preference.
+
+    B, the larger member, prefers Monday P2 and A Sunday P2: the link keeps
+    B's slot. Nothing else pulls it anywhere - left without a preference, the
+    unit would take the first free slot.
+    """
+    enrolled = {"A": {1}, "B": {2, 3}}
+    entries = schedule_linked(
+        ["A", "B"],
+        {},
+        SLOTS,
+        links=links_of(("A", "B")),
+        enrolled_sets=enrolled,
+        preferred_slots={"A": 1, "B": 3},
+    )
+    assert placed(entries)["A"] == placed(entries)["B"] == ("Mon", "P2")
+
+
 def test_a_linked_course_outside_the_selection_is_refused():
     with pytest.raises(ValueError, match="not selected"):
         schedule_linked(["A", "C"], {}, SLOTS, links=links_of(("A", "B"), codes="C"))
@@ -160,6 +281,19 @@ def test_pins_on_a_link_reserve_one_day_for_it():
     buckets = {("AI", 1): {"A", "B", "C"}}
     pins = [{"course_code": "A", "day": "Sun", "period": "P1"}]
     assert check_linked_bucket_feasibility(buckets, 2, pins, links_of(("A", "B"))) == []
+
+
+def test_a_pinned_link_shares_its_pinned_day_like_any_pinned_exam():
+    """The registrar pinned the link (through A) and C to one day: a deliberate
+    override, so that day serves both, and D needs the other - two days do.
+    Read as pins on real courses, the link's pin would count for nothing."""
+    buckets = {("AI", 1): {"A", "B", "C", "D"}}
+    pins = [
+        {"course_code": "A", "day": "Sun", "period": "P1"},
+        {"course_code": "C", "day": "Sun", "period": "P2"},
+    ]
+    assert check_linked_bucket_feasibility(buckets, 2, pins, links_of(("A", "B"))) == []
+    assert check_linked_bucket_feasibility(buckets, 1, pins, links_of(("A", "B"))) != []
 
 
 # ── the invigilator pass ─────────────────────────────────────────────────────
@@ -228,6 +362,75 @@ def test_a_link_may_not_move_onto_a_day_a_member_shares_with_a_bucket_mate():
     )
     assert moved > 0, "Something else moves instead"
     assert placed(entries)["A"] == placed(entries)["B"] == ("Sun", "P1"), "Monday holds D"
+
+
+def _pass_board(placement, sizes):
+    """Exams at the given slots, one female section each, and rooms to spare."""
+    entries = [
+        {
+            "course_code": code,
+            "day": SLOTS[slot]["day"],
+            "period": SLOTS[slot]["period"],
+            "slot_index": slot,
+        }
+        for code, slot in placement
+    ]
+    sections = {
+        code: [{"section": "F", "gender": "F", "student_count": sizes[code], "preferred_room": ""}]
+        for code, _slot in placement
+    }
+    rooms = [{"room_code": f"F-{index}", "capacity": 60, "section": "F"} for index in range(8)]
+    return entries, sections, rooms
+
+
+def test_a_link_is_as_large_as_all_its_members():
+    """The pass tries the largest exam on the hot day first.
+
+    Sunday: the link A+B (30 + 30 students, four invigilators) and C and E (50
+    each, two apiece); Monday: D. Moving the link or C flattens the days alike,
+    so what moves is what is tried first: the link, sixty students - though
+    each of its members is smaller than C.
+    """
+    entries, sections, rooms = _pass_board(
+        [("A", 0), ("B", 0), ("C", 0), ("E", 0), ("D", 2)],
+        {"A": 30, "B": 30, "C": 50, "E": 50, "D": 50},
+    )
+    links = links_of(("A", "B"), codes="CDE")
+    assert _rebalance_invigilators_pass(entries, sections, rooms, SLOTS, {}, {}, {}, links=links)
+    assert placed(entries)["A"][0] == placed(entries)["B"][0] == "Mon"
+    assert placed(entries)["C"] == placed(entries)["E"] == ("Sun", "P1")
+
+
+def _cold_link():
+    """Four 50-student exams on Sunday; the link A+B alone on Monday P1."""
+    return _pass_board(
+        [("C", 0), ("E", 0), ("F", 0), ("G", 0), ("A", 2), ("B", 2)],
+        {"A": 30, "B": 30, "C": 50, "E": 50, "F": 50, "G": 50},
+    )
+
+
+def test_an_exam_may_not_move_onto_a_link_one_member_clashes_with():
+    """C shares a student with B, so Monday P1 - the link's - is closed to it."""
+    entries, sections, rooms = _cold_link()
+    adj = {"B": {"C": 1}, "C": {"B": 1}}
+    links = links_of(("A", "B"), codes="CEFG")
+    _rebalance_invigilators_pass(entries, sections, rooms, SLOTS, adj, {}, {}, links=links)
+    assert placed(entries)["C"] == ("Mon", "P2")
+    assert placed(entries)["A"] == placed(entries)["B"] == ("Mon", "P1")
+
+
+def test_an_exam_may_not_move_onto_the_day_of_a_linked_bucket_mate():
+    """C shares B's study-plan term, so Monday is closed to it; E goes instead."""
+    entries, sections, rooms = _cold_link()
+    buckets = {("AI", 1): {"B", "C"}}
+    course_buckets = {"B": [("AI", 1)], "C": [("AI", 1)]}
+    links = links_of(("A", "B"), codes="CEFG")
+    moved = _rebalance_invigilators_pass(
+        entries, sections, rooms, SLOTS, {}, buckets, course_buckets, links=links
+    )
+    assert moved > 0
+    assert placed(entries)["C"] == ("Sun", "P1")
+    assert placed(entries)["E"][0] == "Mon"
 
 
 def test_the_invigilator_pass_refuses_a_board_that_arrives_split():
@@ -399,6 +602,16 @@ def test_no_schedule_splits_a_link(seed):
             if {unit, mate} & pinned_units or slot_of[unit]["day"] == "OVERFLOW":
                 continue
             assert slot_of[unit]["slot_index"] != slot_of[mate]["slot_index"]
+    # Nor does a study-plan term sit twice in a day - a link counting once -
+    # unless every exam that day was pinned there.
+    unit_buckets, _ = board["links"].buckets(board["buckets"], None)
+    for mates in unit_buckets.values():
+        by_day: dict = {}
+        for unit in mates:
+            if slot_of[unit]["day"] != "OVERFLOW":
+                by_day.setdefault(slot_of[unit]["day"], set()).add(unit)
+        for day, units in by_day.items():
+            assert len(units) < 2 or units <= pinned_units, (day, units)
 
 
 def _lopsided_pass(seed: int):
@@ -406,9 +619,12 @@ def _lopsided_pass(seed: int):
 
     Sparse registrations and plenty of rooms leave the pass free to move almost
     anything, so it really does move links - which the balanced boards the
-    scheduler makes seldom ask of it.
+    scheduler makes seldom ask of it. Some units wait in OVERFLOW, a link under
+    one shared Extra-n, as the scheduler and Fix leave them.
     """
     rng = random.Random(9000 + seed)
+    # Its own stream, so the units on the board are drawn exactly as before.
+    spill = random.Random(7700 + seed)
     board = _random_board(seed)
     enrolled = {code: set(rng.sample(range(1, 400), rng.randint(2, 6))) for code in board["codes"]}
     _, adj = build_conflict_graph(enrolled)
@@ -421,10 +637,14 @@ def _lopsided_pass(seed: int):
     links = board["links"]
     entries = []
     pinned_units = set()
+    extra = itertools.count(len(slots))
     for unit in links.units(board["codes"]):
         slot = rng.choice(slots[:2]) if rng.random() < 0.75 else rng.choice(slots)
         if rng.random() < 0.15:
             pinned_units.add(unit)
+        if spill.random() < 0.15:
+            index = next(extra)
+            slot = {"index": index, "day": "OVERFLOW", "period": f"Extra-{index}"}
         for code in links.members_of(unit):
             entries.append({"course_code": code, "slot_index": slot["index"], **slot})
             del entries[-1]["index"]
@@ -483,17 +703,25 @@ def test_no_invigilator_pass_splits_a_link(seed):
     for code, where in after.items():
         if links.unit(code) in frozen:
             assert where == before[code], f"{code} belongs to a pinned link and moved"
+        if before[code][0] == "OVERFLOW":
+            # The pass balances days; it never seats a waiting exam, and a
+            # waiting link keeps its one Extra-n.
+            assert where == before[code], f"{code} left OVERFLOW"
 
 
 def test_the_invigilator_pass_boards_really_move_links():
     """Without this the pass test could pass on boards where no link ever moved."""
-    moved_links = moved_singles = 0
+    moved_links = moved_singles = waiting_links = 0
     for seed in range(40):
         _board, links, _pinned, before, after, _moves = _lopsided_pass(seed)
         changed = {code for code in after if after[code] != before[code]}
         moved_links += any(links.unit(code) != code for code in changed)
         moved_singles += any(links.unit(code) == code for code in changed)
+        waiting_links += any(
+            links.unit(code) != code and where[0] == "OVERFLOW" for code, where in before.items()
+        )
     assert moved_links >= 8 and moved_singles >= 8, (moved_links, moved_singles)
+    assert waiting_links >= 5, waiting_links
 
 
 def test_the_randomised_boards_really_do_hold_the_hard_cases():

@@ -78,6 +78,8 @@ def test_the_identity_is_the_authority_and_the_code_is_rewritten():
         ]
     )
     assert [m["course_code"] for m in links.saved()[0]["members"]] == ["CS101", "PHYS103 (1)"]
+    padded = resolve([{"members": [{"course_identity": " CS101 "}, member("AI212")]}])
+    assert padded.unit("CS101") == "AI212+CS101", "Surrounding spaces are not part of an identity"
 
 
 @pytest.mark.parametrize("raw", [None, []])
@@ -154,6 +156,15 @@ def test_every_refusal_names_the_field_it_is_about(raw, code, field):
         resolve(raw)
     assert (refused.value.code, refused.value.field) == (code, field)
     assert isinstance(refused.value, ValueError), "Every caller already turns these into a 400"
+
+
+def test_a_link_whose_key_is_already_a_course_is_refused():
+    """A unit is keyed by its members' codes joined with "+". Were a real course
+    ever named that, the unit and the course would be one exam to every solver."""
+    meta = {**META, "AI212+AI225": {"course_identity": "AI212+AI225"}}
+    with pytest.raises(LinkedExamsError) as refused:
+        resolve_linked_exams([link("AI225", "AI212")], meta)
+    assert (refused.value.code, refused.value.field) == (INVALID, "linked_exams")
 
 
 def test_a_missing_course_is_named_by_the_code_the_page_sent():
@@ -305,18 +316,32 @@ def test_buckets_count_a_link_once():
 
 
 def test_a_units_credit_is_its_heaviest_member_and_each_student_sits_their_own():
-    links = resolve([link("AI212", "AI225"), link("CS101", "MATH106")])
-    credits = {"AI212": 3, "AI225": 4, "CS101": 3, "MATH106": 3, "PHYS103 (1)": 4}
-    enrolled = {"AI212": {1, 2}, "AI225": {2, 3}, "CS101": {4}, "MATH106": {5}}
+    links = resolve(
+        [link("AI212", "AI225"), link("CS101", "MATH106"), link("PHYS103 (1)", "PHYS103 (2)")]
+    )
+    credits = {"AI212": 3, "AI225": 4, "CS101": 4, "MATH106": 3, "PHYS103 (1)": 4, "PHYS103 (2)": 4}
+    enrolled = {
+        "AI212": {1, 2},
+        "AI225": {2, 3},
+        "CS101": {4, 6},
+        "MATH106": {5, 6},
+        "PHYS103 (1)": {7},
+        "PHYS103 (2)": {8},
+    }
     assert links.credits(credits, default=3) == {
-        "PHYS103 (1)": 4,
         "AI212+AI225": 4,
-        "CS101+MATH106": 3,
+        "CS101+MATH106": 4,
+        "PHYS103 (1)+PHYS103 (2)": 4,
     }
-    # Only a mixed-credit link needs per-student credits; student 2 is in both.
+    # Only a mixed-credit link needs per-student credits. Students 2 and 6 sit
+    # both members, and are scored on the heavier, whichever member it is.
     assert links.student_credits(credits, enrolled, default=3) == {
-        "AI212+AI225": {1: 3, 2: 4, 3: 4}
+        "AI212+AI225": {1: 3, 2: 4, 3: 4},
+        "CS101+MATH106": {4: 4, 5: 3, 6: 4},
     }
+    assert links.credits({"AI212": 3, "CS101": 2}, default=3)["CS101+MATH106"] == 3, (
+        "A member missing from the map counts at the default"
+    )
 
 
 def test_a_unit_prefers_its_largest_members_slot():
@@ -353,8 +378,8 @@ def test_collapsed_pins_that_disagree_are_refused_even_unvalidated():
 def test_a_unit_expands_to_every_member_at_its_one_slot():
     links = resolve([link("AI212", "AI225")])
     placed = [
-        {"course_code": "CS101", "slot_index": 0, "day": "Sun", "period": "P1"},
         {"course_code": "AI212+AI225", "slot_index": 9, "day": "OVERFLOW", "period": "Extra-9"},
+        {"course_code": "CS101", "slot_index": 0, "day": "Sun", "period": "P1"},
     ]
     assert links.expand_entries(placed) == [
         {"course_code": "CS101", "slot_index": 0, "day": "Sun", "period": "P1"},
@@ -370,6 +395,8 @@ def test_a_unit_expands_to_every_member_at_its_one_slot():
 
 
 def test_a_saved_run_is_read_by_identity_not_by_its_stored_code():
+    """The link was saved when "physics i" was PHYS103 (1); in this run the
+    same identity is PHYS103 (2), and PHYS103 (1) is another course."""
     result = {
         "schedule": [
             {"course_code": "PHYS103 (2)", "course_identity": "PHYS103::physics i"},
@@ -379,14 +406,17 @@ def test_a_saved_run_is_read_by_identity_not_by_its_stored_code():
         "linked_exams": [
             {
                 "members": [
+                    {"course_identity": "CS101", "course_code": "CS101"},
                     {"course_identity": "PHYS103::physics i", "course_code": "PHYS103 (1)"},
-                    {"course_identity": "PHYS103::general physics", "course_code": "PHYS103 (2)"},
                 ]
             }
         ],
     }
-    assert link_index(result) == {"PHYS103 (1)": ("PHYS103 (2)",), "PHYS103 (2)": ("PHYS103 (1)",)}
+    assert link_index(result) == {"CS101": ("PHYS103 (2)",), "PHYS103 (2)": ("CS101",)}
     assert link_index({"schedule": [], "linked_exams": []}) == {}
+    # A member this run does not hold leaves its partner linked to nothing.
+    result["schedule"] = result["schedule"][1:]
+    assert link_index(result) == {}
 
 
 def test_the_committee_is_warned_in_counts_never_in_student_ids():
