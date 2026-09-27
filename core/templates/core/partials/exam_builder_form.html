@@ -79,6 +79,32 @@
     <div id="examPinTable" class="table-responsive d-none"><table class="table table-sm align-middle"><thead><tr><th>{% if LANGUAGE_CODE == 'ar' %}المقرر{% else %}Course{% endif %}</th><th>{% if LANGUAGE_CODE == 'ar' %}اليوم{% else %}Day{% endif %}</th><th>{% if LANGUAGE_CODE == 'ar' %}الفترة{% else %}Period{% endif %}</th><th><span class="visually-hidden">{% if LANGUAGE_CODE == 'ar' %}الإجراءات{% else %}Actions{% endif %}</span></th></tr></thead><tbody id="examPinRows"></tbody></table></div>
   </section>
 
+  {# Courses the committee examines as one exam: the same day and period, always moved and pinned together. Keyed by course identity in the saved run. #}
+  <section id="examLinkEditor" class="et-linked-exams et-section d-none" aria-labelledby="examLinkHeading">
+    <div class="et-section-heading"><span class="et-step" aria-hidden="true">05</span><div><h2 id="examLinkHeading">{% if LANGUAGE_CODE == 'ar' %}اختبارات مرتبطة{% else %}Linked exams{% endif %} <span id="examLinkCount"></span></h2><p>{% if LANGUAGE_CODE == 'ar' %}اختياري — مقررات تُختبر اختباراً واحداً: في اليوم والفترة نفسيهما دائماً، وتُنقل وتُثبَّت معاً. يبقى لكل مقرر شعبه وقوائم طلابه.{% else %}Optional — courses examined as one exam: always the same day and period, moved and pinned together. Each course keeps its own sections and student lists.{% endif %}</p></div></div>
+    <div class="et-link-fields">
+      <div class="et-link-course-field">
+        <label for="examLinkCourseSearch" class="form-label">{% if LANGUAGE_CODE == 'ar' %}المقررات المراد ربطها{% else %}Courses to link{% endif %}</label>
+        <div id="examLinkCoursePicker" class="et-course-picker">
+          <input id="examLinkCourseSearch" class="form-control" type="text" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-haspopup="listbox" aria-controls="examLinkCourseResults" aria-describedby="examLinkCourseHelp" autocomplete="off" spellcheck="false" placeholder="{% if LANGUAGE_CODE == 'ar' %}ابحث برمز المقرر أو اسمه{% else %}Search course code or name{% endif %}">
+          <button id="examLinkCourseToggle" type="button" class="et-course-picker-toggle" tabindex="-1" aria-label="{% if LANGUAGE_CODE == 'ar' %}عرض المقررات{% else %}Show courses{% endif %}" aria-expanded="false" aria-controls="examLinkCourseResults"><svg viewBox="0 0 20 20" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="m5 7.5 5 5 5-5"/></svg></button>
+          <div id="examLinkCoursePopup" class="et-course-picker-popup" hidden>
+            <div id="examLinkCourseResults" role="listbox" aria-label="{% if LANGUAGE_CODE == 'ar' %}المقررات المطابقة{% else %}Matching courses{% endif %}"></div>
+            <p id="examLinkCourseEmpty" class="et-course-picker-empty" hidden>{% if LANGUAGE_CODE == 'ar' %}لا توجد مقررات مطابقة ضمن المقررات المحددة غير المرتبطة.{% else %}No matches among the selected courses that are not linked yet.{% endif %}</p>
+          </div>
+        </div>
+        <select id="examLinkCourse" hidden tabindex="-1" aria-hidden="true"></select>
+        <span id="examLinkCourseHelp" class="visually-hidden">{% if LANGUAGE_CODE == 'ar' %}اكتب رمز المقرر، ثم استخدم الأسهم وEnter لإضافته إلى الربط. Escape يلغي البحث.{% else %}Type a course code, then use the arrow keys and Enter to add it to the link. Escape cancels the search.{% endif %}</span>
+        <span id="examLinkCourseSearchStatus" class="visually-hidden" role="status" aria-live="polite"></span>
+      </div>
+      <div><button id="applyExamLink" type="button" class="btn btn-outline-primary" disabled>{% if LANGUAGE_CODE == 'ar' %}ربط المقررات{% else %}Link courses{% endif %}</button></div>
+    </div>
+    <ul id="examLinkPending" class="et-link-pending" aria-label="{% if LANGUAGE_CODE == 'ar' %}المقررات المختارة للربط{% else %}Courses chosen to link{% endif %}" hidden></ul>
+    <p id="examLinkNotice" role="status" aria-live="polite"></p>
+    <div id="examLinkWarnings" class="et-link-warnings" hidden><h3 id="examLinkWarningsHeading">{% if LANGUAGE_CODE == 'ar' %}تنبيهات — لا تمنع الحفظ{% else %}Warnings — these never block saving{% endif %}</h3><ul id="examLinkWarningList" aria-labelledby="examLinkWarningsHeading"></ul></div>
+    <div id="examLinkTable" class="d-none"><table class="table table-sm align-middle et-link-table"><thead><tr><th>{% if LANGUAGE_CODE == 'ar' %}المقررات المرتبطة{% else %}Linked courses{% endif %}</th><th>{% if LANGUAGE_CODE == 'ar' %}الموعد{% else %}Time{% endif %}</th><th><span class="visually-hidden">{% if LANGUAGE_CODE == 'ar' %}الإجراءات{% else %}Actions{% endif %}</span></th></tr></thead><tbody id="examLinkRows"></tbody></table></div>
+  </section>
+
   <details class="et-options"><summary>{% if LANGUAGE_CODE == 'ar' %}خيارات الجدولة المتقدمة{% else %}Advanced scheduling options{% endif %}</summary><div class="et-options-fields">
     <label><input id="etRandomize" type="checkbox" checked><span><strong>{% if LANGUAGE_CODE == 'ar' %}تنويع الجدول{% else %}Shuffle{% endif %}</strong><small>{% if LANGUAGE_CODE == 'ar' %}إنشاء توزيع مختلف في كل عملية بناء.{% else %}Generate a different arrangement with each build.{% endif %}</small></span></label>
     <label><input id="etRelaxThin" type="checkbox"><span><strong>{% if LANGUAGE_CODE == 'ar' %}السماح بتعارضات المقررات الصغيرة{% else %}Allow tiny-course clashes{% endif %}</strong><small>{% if LANGUAGE_CODE == 'ar' %}يسمح باختبارات متزامنة للمقررات ضمن العتبة، ويُظهر التعارضات في التقرير.{% else %}Allow simultaneous exams below the enrollment threshold; report the conflicts.{% endif %}</small></span></label>

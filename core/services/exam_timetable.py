@@ -76,6 +76,7 @@ from core.services.exam_sections import (
 from core.services.linked_exams import (
     NO_LINKS,
     LinkedExams,
+    link_index,
     linked_exams_qa,
     resolve_linked_exams,
 )
@@ -2786,6 +2787,13 @@ def export_exam_timetable_xlsx(run_id: int) -> Path:
         Students (F)    – per-course female section counts + student totals
         QA Summary      – key metrics + any conflict / bucket-day warnings
 
+    Linked exams are shown where the page shows a course's own facts: a
+    "Linked With" column on Courses (beside Fixed Time and Online, as each
+    card on the board says "with X"), and a count, the students registered in
+    two linked courses, and the links themselves on QA Summary. The Schedule
+    grids are left as they are: linked courses already share one cell there,
+    and the grids are what invigilators work from.
+
     Returns the Path to the written file (in the runtime/ directory).
     """
     import math
@@ -2839,6 +2847,11 @@ def export_exam_timetable_xlsx(run_id: int) -> Path:
     qa = data["qa"]  # QA metrics dict from _build_qa()
     course_entries = {entry["course_code"]: entry for entry in schedule}
     pinned_codes = {pin["course_code"] for pin in data.get("pinned", [])}
+    # Matched to this run's own schedule by identity, never by a stale code.
+    linked_with = link_index(data)
+    linked_groups = sorted(
+        {tuple(sorted((code, *partners))) for code, partners in linked_with.items()}
+    )
     section_enrollment = data.get("section_enrollment", {})
 
     def _course_label(code: str) -> str:
@@ -3207,10 +3220,11 @@ def export_exam_timetable_xlsx(run_id: int) -> Path:
             "Enrolled Students",
             "Online",
             "Fixed Time",
+            "Linked With",
             "Source Course Code",
         ]
     )
-    style_header_row(ws2, 11)
+    style_header_row(ws2, 12)
 
     sorted_schedule = sorted(schedule, key=lambda e: (e.get("slot_index", 999), e["course_code"]))
     for e in sorted_schedule:
@@ -3227,13 +3241,14 @@ def export_exam_timetable_xlsx(run_id: int) -> Path:
                 e.get("enrolled_count", ""),
                 "Yes" if e.get("is_online") else "No",
                 "Yes" if e["course_code"] in pinned_codes else "No",
+                ", ".join(linked_with.get(e["course_code"], ())),
                 e.get("source_course_code", e["course_code"]),
             ]
         )
 
     for r in range(2, ws2.max_row + 1):
         code_val = ws2.cell(row=r, column=1).value
-        for c in range(1, 12):
+        for c in range(1, 13):
             cell = ws2.cell(row=r, column=c)
             cell.border = thin_border
             cell.alignment = center
@@ -3247,8 +3262,9 @@ def export_exam_timetable_xlsx(run_id: int) -> Path:
     ws2.column_dimensions["E"].width = 12
     ws2.column_dimensions["F"].width = 42
     ws2.column_dimensions["G"].width = 24
-    for column_letter in ("H", "I", "J", "K"):
+    for column_letter in ("H", "I", "J", "K", "L"):
         ws2.column_dimensions[column_letter].width = 18
+    ws2.column_dimensions["K"].width = 24
     ws2.freeze_panes = "B2"
     ws2.auto_filter.ref = ws2.dimensions
 
@@ -3390,6 +3406,8 @@ def export_exam_timetable_xlsx(run_id: int) -> Path:
         ("Total Courses", qa.get("total_courses", data.get("courses_count", 0))),
         ("Unique Students", qa.get("total_students", data.get("students_count", 0))),
         ("Fixed Exams", len(pinned_codes)),
+        # Links whose members are on this run's schedule (a saved link always is).
+        ("Linked Exams", len(linked_groups)),
         ("Online Courses", sum(bool(e.get("is_online")) for e in schedule)),
         ("Unscheduled Courses", sum(e.get("day") == "OVERFLOW" for e in schedule)),
         ("Room Assignment Requested", "Yes" if data.get("assign_rooms") else "No"),
@@ -3419,6 +3437,15 @@ def export_exam_timetable_xlsx(run_id: int) -> Path:
         ("Approved-Only Student Clashes", qa.get("approved_thin_conflict_count", 0)),
         ("Hard Student Clashes", qa.get("hard_conflict_count", qa.get("conflict_count", 0))),
     ]
+    linked_qa = qa.get("linked_exams") if isinstance(qa.get("linked_exams"), dict) else None
+    if linked_qa:
+        # Each one a real clash: two registrations, two papers at one time.
+        metrics.append(
+            (
+                "Students In Two Linked Courses",
+                linked_qa.get("students_in_two_linked_courses", 0),
+            )
+        )
     section_mapping = qa.get("section_mapping") or {}
     if section_mapping:
         metrics.extend(
@@ -3464,6 +3491,7 @@ def export_exam_timetable_xlsx(run_id: int) -> Path:
             "Heavy Day Students",
             "Missing Section Enrolments",
             "Ambiguous Section Enrolments",
+            "Students In Two Linked Courses",
         ):
             if metric_val and int(metric_val) > 0:
                 ws3.cell(row=r, column=1).fill = warn_fill
@@ -3583,6 +3611,22 @@ def export_exam_timetable_xlsx(run_id: int) -> Path:
         ws3.append(["Course", "Day", "Period"])
         for pin in data["pinned"]:
             ws3.append([_course_label(pin["course_code"]), pin["day"], pin["period"]])
+    if linked_groups:
+        # One row per link; its courses in one cell, and the day and period
+        # each in their own, as Fixed Exam Times prints them.
+        ws3.append([])
+        ws3.append(["Linked Exams"])
+        ws3.cell(ws3.max_row, 1).font = header_font
+        ws3.append(["Courses", "Day", "Period"])
+        for codes in linked_groups:
+            entry = course_entries.get(codes[0], {})
+            ws3.append(
+                [
+                    ", ".join(_course_label(code) for code in codes),
+                    entry.get("day", ""),
+                    entry.get("period", ""),
+                ]
+            )
     for title, headers, details, row_builder in (
         (
             "Thin Clash Risk Details",

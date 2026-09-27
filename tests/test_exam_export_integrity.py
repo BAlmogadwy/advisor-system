@@ -160,6 +160,85 @@ def test_identity_and_fixed_online_markers_survive_every_export_view(
     assert "CS111" not in _text(book["Schedule (M)"])
 
 
+def _metrics(sheet):
+    """QA Summary's metric rows (the first row of each name; sections come later)."""
+    metrics = {}
+    for row in sheet.values:
+        if row[0]:
+            metrics.setdefault(row[0], row[1])
+    return metrics
+
+
+def _linked_rows(sheet):
+    """The Linked Exams section of QA Summary: its rows under the header."""
+    rows = [tuple(row) for row in sheet.values]
+    start = next(
+        (
+            index
+            for index, row in enumerate(rows)
+            if row[0] == "Linked Exams"
+            and index + 1 < len(rows)
+            and rows[index + 1][:3] == ("Courses", "Day", "Period")
+        ),
+        None,
+    )
+    if start is None:
+        return None
+    body = []
+    for row in rows[start + 2 :]:
+        if not any(row):
+            break
+        body.append(row[:3])
+    return body
+
+
+def test_linked_exams_show_beside_each_course_and_in_the_qa_summary(
+    saved_data, tmp_path, monkeypatch
+):
+    # CS111 (2) and GS101 examined as one exam, at CS111 (2)'s time.
+    data = deepcopy(saved_data)
+    gs101 = data["schedule"][2]
+    gs101.update(day="Mon", period="08:00-10:00", slot_index=1)
+    data["linked_exams"] = [
+        {
+            "members": [
+                # A stale display code: the export matches members by identity.
+                {"course_identity": "CS111|programming i", "course_code": "CS111 (9)"},
+                {"course_identity": "GS101|general studies", "course_code": "GS101"},
+            ]
+        }
+    ]
+    data["qa"]["linked_exams"] = {
+        "links": 1,
+        "courses": 2,
+        "students_in_two_linked_courses": 2,
+        "mixed_credit_links": 1,
+        "online_courses": 1,
+    }
+    book, _ = _export(data, tmp_path, monkeypatch)
+    courses = {r["Course Code"]: r for r in _records(book["Courses"])}
+    assert courses["CS111 (2)"]["Linked With"] == "GS101"
+    assert courses["GS101"]["Linked With"] == "CS111 (2)"
+    assert courses["CS111 (1)"]["Linked With"] in (None, "")
+    header = [cell.value for cell in book["Courses"][1]]
+    assert header.index("Linked With") == header.index("Fixed Time") + 1
+    metrics = _metrics(book["QA Summary"])
+    assert metrics["Linked Exams"] == 1
+    assert metrics["Students In Two Linked Courses"] == 2
+    assert _linked_rows(book["QA Summary"]) == [
+        ("CS111 (2) — Programming I, GS101 — General Studies", "Mon", "08:00-10:00")
+    ]
+
+
+def test_a_run_without_links_says_so_and_lists_none(saved_data, tmp_path, monkeypatch):
+    book, _ = _export(saved_data, tmp_path, monkeypatch)
+    assert all(r["Linked With"] in (None, "") for r in _records(book["Courses"]))
+    metrics = _metrics(book["QA Summary"])
+    assert metrics["Linked Exams"] == 0
+    assert "Students In Two Linked Courses" not in metrics
+    assert _linked_rows(book["QA Summary"]) is None
+
+
 def test_gender_counts_use_enrolment_sections_and_include_overflow(
     saved_data, tmp_path, monkeypatch
 ):

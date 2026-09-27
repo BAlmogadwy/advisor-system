@@ -67,11 +67,20 @@
       }
     }
     if (!overlapsAvailable) overlaps.forEach(neighbors => neighbors.clear());
-    return { byCode, byIdentity, plans, overlaps, overlapsAvailable,
+    // Linked exams sit as one: each visible course to the partners it sits with.
+    const links = new Map();
+    for (const link of Array.isArray(data?.linked_exams) ? data.linked_exams : []) {
+      const members = (Array.isArray(link?.members) ? link.members : [])
+        .map(member => member?.course_identity).filter(identity => byIdentity.has(identity));
+      for (const identity of members) links.set(identity, new Set(members.filter(other => other !== identity)));
+    }
+    return { byCode, byIdentity, plans, overlaps, overlapsAvailable, links,
       enrollmentCountsAvailable: data?.enrollment_source === 'scraper_timetable', slots: data?.slots || [] };
   }
 
-  function relationship(source, target, slots) {
+  // `linked` wins over every placement: linked exams always sit together.
+  function relationship(source, target, slots, linked = false) {
+    if (linked) return 'linked';
     if (!source?.day || !target?.day || source.day === 'OVERFLOW' || target.day === 'OVERFLOW') return 'unscheduled';
     if (source.day === target.day) return source.period === target.period ? 'same-period' : 'same-day';
     const days = [...new Set((slots || []).map(slot => slot.day).filter(day => day !== 'OVERFLOW'))];
@@ -96,6 +105,7 @@
     };
     const termLabel = term => text(`Term ${term}`, `الفصل ${term}`);
     const relationLabel = value => ({
+      'linked': text('linked exam, same time', 'اختبار مرتبط، في الموعد نفسه'),
       'same-period': text('same period', 'الفترة نفسها'),
       'same-day': text('same day', 'اليوم نفسه'),
       'adjacent-day': text('adjacent exam day', 'يوم اختبارات مجاور'),
@@ -180,6 +190,7 @@
       const usable = model.overlapsAvailable && !blocked;
       const source = usable ? model.byIdentity.get(state.focus) : null;
       const neighbors = source ? model.overlaps.get(source.identity) : new Map();
+      const partners = source ? (model.links.get(source.identity) || new Set()) : new Set();
       grid.classList.toggle('et-review-students', state.mode === 'students');
       const help = state.mode === 'size'
         ? text('Colours group exams by student count for the selected groups. Hover for the exact count from the last check.', 'تصنّف الألوان الاختبارات حسب عدد الطلاب ضمن المجموعات المحددة. مرّر المؤشر لعرض العدد الدقيق من آخر تحقق.')
@@ -223,15 +234,23 @@
         if (term) fragments.push(term);
         if (state.mode === 'students' && source) {
           const count = neighbors.get(course.identity);
+          // A linked partner sits with the focused exam, shared students or not.
+          const linked = partners.has(course.identity);
           card.classList.toggle('et-related-focus', course.identity === source.identity);
-          card.classList.toggle('et-related-match', Boolean(count));
-          card.classList.toggle('et-review-muted', course.identity !== source.identity && !count);
-          if (count) {
-            const placement = relationship(source, course, model.slots), relation = relationLabel(placement);
-            const badge = make('span', 'et-related-count', text(`${count} shared`, `${count} مشترك`) + (relation ? ` · ${relation}` : ''));
-            badge.title = text(`${count} students take both ${source.course_code} and ${course.course_code}.`, `${count} طلاب مسجلون في ${source.course_code} و${course.course_code}.`);
+          card.classList.toggle('et-related-match', Boolean(count) || linked);
+          card.classList.toggle('et-review-muted', course.identity !== source.identity && !count && !linked);
+          if (count || linked) {
+            const placement = relationship(source, course, model.slots, linked), relation = relationLabel(placement);
+            const badge = make('span', 'et-related-count', count
+              ? text(`${count} shared`, `${count} مشترك`) + (relation ? ` · ${relation}` : '')
+              : relation);
+            badge.title = count
+              ? text(`${count} students take both ${source.course_code} and ${course.course_code}.`, `${count} طلاب مسجلون في ${source.course_code} و${course.course_code}.`)
+              : text(`${course.course_code} is linked with ${source.course_code}: one exam, one time.`, `${course.course_code} مرتبط بـ${source.course_code}: اختبار واحد في موعد واحد.`);
             fragments.push(badge);
-            card.classList.toggle('et-related-conflict', placement === 'same-period');
+            // Students in two linked courses sit both papers at once: a clash.
+            const together = relationship(source, course, model.slots) === 'same-period';
+            card.classList.toggle('et-related-conflict', Boolean(count) && together);
           }
         }
         // Categorical colours never encode safety. Use a separate, labelled
@@ -240,7 +259,8 @@
           const clashes = [...(model.overlaps.get(course.identity) || [])].filter(([identity]) => relationship(course, model.byIdentity.get(identity), model.slots) === 'same-period');
           if (clashes.length) {
             const warning = make('span', 'et-review-warning' + (stale ? ' is-stale' : ''), '⚠');
-            const label = text('Shared students in the same period', 'طلاب مشتركون في الفترة نفسها') + ': ' + clashes.map(([identity, count]) => `${model.byIdentity.get(identity).course_code} (${count})`).join(', ') + (stale ? text(' · last checked enrollments', ' · التسجيلات في آخر تحقق') : '');
+            const linkedTo = model.links.get(course.identity) || new Set();
+            const label = text('Shared students in the same period', 'طلاب مشتركون في الفترة نفسها') + ': ' + clashes.map(([identity, count]) => `${model.byIdentity.get(identity).course_code} (${count}${linkedTo.has(identity) ? text(', linked', '، مرتبط') : ''})`).join(', ') + (stale ? text(' · last checked enrollments', ' · التسجيلات في آخر تحقق') : '');
             warning.setAttribute('role', 'img'); warning.setAttribute('aria-label', label); warning.title = label;
             fragments.push(warning);
           }
