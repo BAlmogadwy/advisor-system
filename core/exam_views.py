@@ -80,6 +80,7 @@ from core.services.linked_exams import (
     LinkedExams,
     LinkedExamsError,
     linked_exams_qa,
+    require_link_list,
     resolve_linked_exams,
 )
 from core.services.rbac import ROLE_EXAM_COMMITTEE, ROLE_SUPER_ADMIN, get_user_role
@@ -386,8 +387,13 @@ def execute_exam_action(payload: dict, *, save: RunSaver = _save_run) -> tuple[i
             "ok": False,
             "error": "Pinned exams must be a list of course, day and period entries.",
         }
-    # Validated with the courses they name, where the build resolves them.
+    # Validated with the courses they name, where the build resolves them. Only
+    # the shape is checked here: a JSON null is refused, never read as no links.
     linked_exams = payload.get("linked_exams", [])
+    try:
+        require_link_list(linked_exams)
+    except LinkedExamsError as exc:
+        return _validation_error(exc)
     randomize = payload.get("randomize", False)
     assign_rooms = bool(payload.get("assign_rooms", True))
     thin_threshold_raw = payload.get("thin_conflict_threshold", 0)
@@ -687,8 +693,12 @@ def _loaded_request_context(payload: dict, schedule_raw: list) -> dict:
         "seed": source.get("seed"),
         "thin_conflict_threshold": threshold,
         "pinned": payload.get("pinned", source.get("pinned", [])),
-        # Like the pins: what the page sends, else what the loaded run saved.
-        "linked_exams": payload.get("linked_exams", source.get("linked_exams", [])),
+        # Like the pins: what the page sends, else what the loaded run saved. A
+        # sent null is refused, not taken as "no links": that would erase the
+        # saved links and let Optimise split them with a 200.
+        "linked_exams": require_link_list(payload["linked_exams"])
+        if "linked_exams" in payload
+        else source.get("linked_exams", []),
         "source_input_fingerprint": source.get("input_fingerprint"),
         # Where each exam sat in the SAVED run, by (day, period). Slot numbers
         # would be wrong: adding a period renumbers every later slot, which

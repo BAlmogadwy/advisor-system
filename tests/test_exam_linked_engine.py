@@ -488,6 +488,55 @@ def test_without_links_the_same_clash_is_an_ordinary_one():
     assert [row["kind"] for row in qa["manual_override_details"]] == ["same_slot"]
 
 
+def _qa_of(enrolled, entries, links):
+    qa = _build_qa(enrolled, entries, links=links)
+    attach_exam_relaxation_qa(qa, enrolled, entries, 0, [], links=links)
+    return qa
+
+
+def test_a_linked_clash_in_overflow_reads_the_same_at_any_extra_n():
+    """The scheduler gives a link it cannot seat one shared Extra-n; pinning any
+    exam on the page then gives each OVERFLOW entry a fresh one. The placements
+    are the same, so the QA is too: student 1, in both members, is one linked
+    clash, and the link takes one OVERFLOW slot, whatever the numbers."""
+    enrolled = {"A": {1, 5}, "B": {1, 6}, "X": {5, 6}, "Y": {5, 6}}
+    _, adj = build_conflict_graph(enrolled)
+    pins = [
+        {"course_code": "X", "day": "Sun", "period": "P1"},
+        {"course_code": "Y", "day": "Sun", "period": "P2"},
+    ]
+    links = links_of(("A", "B"), codes="XY")
+    built = schedule_linked(
+        ["A", "B", "X", "Y"], adj, SLOTS[:2], links=links, enrolled_sets=enrolled, pinned=pins
+    )
+    renumbered = [dict(entry) for entry in built]
+    fresh = itertools.count(2)
+    for entry in renumbered:
+        if entry["day"] == "OVERFLOW":
+            index = next(fresh)
+            entry.update(slot_index=index, period=f"Extra-{index}")
+    overflow = {e["course_code"]: e["slot_index"] for e in built if e["day"] == "OVERFLOW"}
+    assert overflow == {"A": 2, "B": 2}
+    assert {e["slot_index"] for e in renumbered if e["day"] == "OVERFLOW"} == {2, 3}
+    as_built = _qa_of(enrolled, built, links)
+    rows = [(row["kind"], row["courses"]) for row in as_built["manual_override_details"]]
+    assert rows == [("linked_same_slot", ["A", "B"])]
+    assert as_built["slots_used"] == 3
+    assert _qa_of(enrolled, renumbered, links) == as_built
+    # Unlinked courses keep the rule they always had, links on the board or
+    # not: an Extra-n shared is a clash, two different ones are not.
+    assert _qa_of(enrolled, built, NO_LINKS)["hard_conflict_count"] == 1
+    assert _qa_of(enrolled, renumbered, NO_LINKS)["hard_conflict_count"] == 0
+    unseated = [
+        {"course_code": code, "day": "OVERFLOW", "period": f"Extra-{index}", "slot_index": index}
+        for code, index in (("A", 4), ("B", 5), ("X", 6), ("Y", 7))
+    ]
+    details = _qa_of(enrolled, unseated, links)["manual_override_details"]
+    assert [(row["kind"], row["courses"]) for row in details] == [
+        ("linked_same_slot", ["A", "B"])
+    ], "X and Y share students, but no Extra-n"
+
+
 def test_linked_bucket_mates_count_once_on_their_day():
     buckets = {("AI", 1): {"A", "B", "C"}}
     links = links_of(("A", "B"), codes="C")

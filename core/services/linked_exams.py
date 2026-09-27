@@ -67,13 +67,17 @@ class LinkedExams:
     ``unit_of`` and ``weights`` hold linked courses and units only: a course
     that is in no link is its own unit, of weight one, and appears nowhere.
     ``canonical`` is the saved form: links and members in code order, each
-    member named by identity and by its current display code.
+    member named by identity and by its current display code. ``positions``
+    is each unit's place in the list the request sent - what an error's
+    ``linked_exams[i]`` counts, as the member-level refusals do. When the links
+    come from the saved run, the request order is the saved order.
     """
 
     unit_of: Mapping[str, str] = field(default_factory=dict)
     members: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
     weights: Mapping[str, int] = field(default_factory=dict)
     canonical: tuple[dict[str, Any], ...] = ()
+    positions: Mapping[str, int] = field(default_factory=dict)
 
     def __bool__(self) -> bool:
         return bool(self.members)
@@ -299,18 +303,12 @@ class LinkedExams:
     def require_together(self, entries: Iterable[Mapping[str, Any]]) -> None:
         split = self.split_units(entries)
         if split:
-            raise self._split_error(split[0])
+            # The first split link in the order the request sent them.
+            raise self._split_error(min(split, key=lambda unit: self.positions.get(unit, 0)))
 
     def _split_error(self, unit: str) -> LinkedExamsError:
         members = self.members_of(unit)
-        index = next(
-            (
-                number
-                for number, link in enumerate(self.canonical)
-                if tuple(member["course_code"] for member in link["members"]) == members
-            ),
-            None,
-        )
+        index = self.positions.get(unit)
         return LinkedExamsError(
             f"Linked courses {', '.join(members)} must sit at the same day and period. "
             "Move them together, then check again.",
@@ -330,6 +328,20 @@ NO_LINKS = LinkedExams()
 
 def _identity_of(code: str, meta: Mapping[str, Any]) -> str:
     return str(meta.get("course_identity") or meta.get("source_course_code") or code)
+
+
+def require_link_list(raw: Any) -> list:
+    """What a request sent as ``linked_exams``: a list, or the refusal naming the field.
+
+    For the HTTP boundary, where a missing key and an explicit ``null`` differ:
+    a missing key means "the loaded run's links", ``[]`` means "no links", and
+    anything else - ``null`` included - is refused rather than read as either.
+    """
+    if not isinstance(raw, list):
+        raise LinkedExamsError(
+            "Linked exams must be a list of links.", code=INVALID, field="linked_exams"
+        )
+    return raw
 
 
 def resolve_linked_exams(
@@ -352,12 +364,8 @@ def resolve_linked_exams(
     Every refusal is a ``LinkedExamsError`` naming the offending field. Nothing
     is ever dropped silently.
     """
-    if raw is None:
-        raw = []
-    if not isinstance(raw, list):
-        raise LinkedExamsError(
-            "Linked exams must be a list of links.", code=INVALID, field="linked_exams"
-        )
+    # None is the Python default only; a request's ``null`` never reaches here.
+    raw = require_link_list([] if raw is None else raw)
     if not raw:
         return NO_LINKS
     code_by_identity: dict[str, str] = {}
@@ -415,19 +423,26 @@ def resolve_linked_exams(
 
     unit_of: dict[str, str] = {}
     members_by_unit: dict[str, tuple[str, ...]] = {}
-    for group in sorted(groups):
+    positions: dict[str, int] = {}
+    for number, group in enumerate(groups):
         unit = UNIT_JOINER.join(group)
         if unit in course_meta:
             # Only possible if a course code itself contains the joiner.
             raise LinkedExamsError(
-                f"Courses {', '.join(group)} cannot be linked.", code=INVALID, field="linked_exams"
+                f"Courses {', '.join(group)} cannot be linked.",
+                code=INVALID,
+                field=f"linked_exams[{number}]",
             )
+        positions[unit] = number
+    for group in sorted(groups):
+        unit = UNIT_JOINER.join(group)
         members_by_unit[unit] = group
         unit_of.update(dict.fromkeys(group, unit))
     links = LinkedExams(
         unit_of=unit_of,
         members=members_by_unit,
         weights={unit: len(group) for unit, group in members_by_unit.items()},
+        positions=positions,
         canonical=tuple(
             {
                 "members": [
@@ -438,8 +453,8 @@ def resolve_linked_exams(
             for group in sorted(groups)
         ),
     )
-    for number, link in enumerate(links.canonical):
-        codes = [member["course_code"] for member in link["members"]]
+    for number, group in enumerate(groups):
+        codes = list(group)
         times = {(pin["day"], pin["period"]) for pin in pinned or [] if pin["course_code"] in codes}
         if len(times) > 1:
             raise LinkedExamsError(

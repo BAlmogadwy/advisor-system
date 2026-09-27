@@ -1174,6 +1174,31 @@ def attach_exam_relaxation_qa(
     qa["violation_source"] = "current_placements"
 
 
+def _linked_overflow_sittings(
+    schedule_entries: list[dict], course_slot: dict[str, int], links: LinkedExams
+) -> dict[str, int]:
+    """``course_slot`` with each link in OVERFLOW at ONE index: its members' lowest.
+
+    An exam in OVERFLOW has no sitting yet, so its ``Extra-n`` carries no
+    meaning for a link: the scheduler and Fix give an overflowing link one
+    shared index, and pinning any exam on the page gives every OVERFLOW entry a
+    fresh one. Both boards hold the same placements, so QA must read them the
+    same - a student in two of its members is one linked clash either way, and
+    the link takes one OVERFLOW slot. Real slots are never touched.
+    """
+    lowest: dict[str, int] = {}
+    for entry in schedule_entries:
+        unit = links.unit_of.get(entry["course_code"])
+        if unit is not None and entry["day"] == "OVERFLOW":
+            lowest[unit] = min(lowest.get(unit, entry["slot_index"]), entry["slot_index"])
+    sittings = dict(course_slot)
+    for entry in schedule_entries:
+        unit = links.unit_of.get(entry["course_code"])
+        if unit is not None and entry["day"] == "OVERFLOW":
+            sittings[entry["course_code"]] = lowest[unit]
+    return sittings
+
+
 def _build_qa(
     enrolled_sets: dict[str, set[int]],
     schedule_entries: list[dict],
@@ -1227,6 +1252,10 @@ def _build_qa(
     }
 
     slots_used = len({e["slot_index"] for e in schedule_entries})
+    if links:
+        # With no links both lines above stand exactly as they always have.
+        course_slot = _linked_overflow_sittings(schedule_entries, course_slot, links)
+        slots_used = len({course_slot[e["course_code"]] for e in schedule_entries})
 
     # Invert enrolled_sets: student_id → [course_codes] so we can iterate
     # per-student and check their personal schedule for violations.

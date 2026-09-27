@@ -163,8 +163,8 @@ def test_a_link_whose_key_is_already_a_course_is_refused():
     ever named that, the unit and the course would be one exam to every solver."""
     meta = {**META, "AI212+AI225": {"course_identity": "AI212+AI225"}}
     with pytest.raises(LinkedExamsError) as refused:
-        resolve_linked_exams([link("AI225", "AI212")], meta)
-    assert (refused.value.code, refused.value.field) == (INVALID, "linked_exams")
+        resolve_linked_exams([link("CS101", "MATH106"), link("AI225", "AI212")], meta)
+    assert (refused.value.code, refused.value.field) == (INVALID, "linked_exams[1]")
 
 
 def test_a_missing_course_is_named_by_the_code_the_page_sent():
@@ -179,7 +179,8 @@ def test_members_pinned_to_different_times_are_refused():
     ]
     with pytest.raises(LinkedExamsError) as refused:
         resolve([link("CS101", "MATH106"), link("AI212", "AI225")], pinned=pins)
-    assert (refused.value.code, refused.value.field) == (PINS_DISAGREE, "linked_exams[0]")
+    # The second link sent, though the first in code order.
+    assert (refused.value.code, refused.value.field) == (PINS_DISAGREE, "linked_exams[1]")
 
 
 def test_one_pinned_member_or_members_pinned_alike_are_accepted():
@@ -196,9 +197,35 @@ def test_a_board_that_splits_a_link_is_refused_never_moved():
         resolve([link("CS101", "MATH106"), link("AI212", "AI225")], schedule_entries=board)
     assert refused.value.code == SPLIT
     # Both links are split - MATH106 is not on the board at all - and the
-    # first in code order is the one named.
+    # first the request sent is the one named, not the first in code order.
     assert refused.value.field == "linked_exams[0]"
-    assert "AI212, AI225" in str(refused.value)
+    assert "CS101, MATH106" in str(refused.value)
+
+
+@pytest.mark.parametrize("faulty", [0, 1], ids=["first-sent", "second-sent"])
+@pytest.mark.parametrize("fault", ["pins", "board", "placements"])
+def test_a_links_field_counts_the_links_as_the_request_sent_them(fault, faulty):
+    """Sent against code order - PHYS103 first, AI212 and AI225 second - a
+    refusal about one link names it by where the request put it, as every
+    member-level refusal does, never by its place in the saved code order."""
+    sent = [link("PHYS103 (1)", "PHYS103 (2)"), link("AI225", "AI212")]
+    first, second = (member["course_code"] for member in sent[faulty]["members"])
+    other = [member["course_code"] for member in sent[1 - faulty]["members"]]
+    with pytest.raises(LinkedExamsError) as refused:
+        if fault == "pins":
+            pins = [
+                {"course_code": first, "day": "Sun", "period": "P1"},
+                {"course_code": second, "day": "Mon", "period": "P1"},
+            ]
+            resolve(sent, pinned=pins)
+        elif fault == "board":
+            board = [entry(first, "Sun", "P1"), entry(second, "Mon", "P1")]
+            board += [entry(code, "Tue", "P1") for code in other]
+            resolve(sent, schedule_entries=board)
+        else:
+            resolve(sent).placements({first: 0, second: 1, **dict.fromkeys(other, 2)})
+    code = PINS_DISAGREE if fault == "pins" else SPLIT
+    assert (refused.value.code, refused.value.field) == (code, f"linked_exams[{faulty}]")
 
 
 # ── together ─────────────────────────────────────────────────────────────────

@@ -264,6 +264,7 @@ def test_links_leave_every_other_fact_per_real_course(client_, population):
     ("links", "code", "field"),
     [
         ("AI212", "linked_exams_invalid", "linked_exams"),
+        (None, "linked_exams_invalid", "linked_exams"),
         ([{"members": "AI212"}], "linked_exams_invalid", "linked_exams[0].members"),
         (lambda: [_link("AI212")], "linked_exams_too_few_members", "linked_exams[0].members"),
         (
@@ -284,7 +285,14 @@ def test_links_leave_every_other_fact_per_real_course(client_, population):
             "linked_exams[0].members[1].course_identity",
         ),
     ],
-    ids=["not-a-list", "members-not-a-list", "one-member", "course-in-two-links", "unknown"],
+    ids=[
+        "not-a-list",
+        "null",
+        "members-not-a-list",
+        "one-member",
+        "course-in-two-links",
+        "unknown",
+    ],
 )
 def test_a_build_refuses_bad_links_by_field_and_saves_nothing(
     client_, population, links, code, field
@@ -438,6 +446,9 @@ def test_a_board_that_splits_a_saved_link_is_refused(client_, population, mode):
     ("links", "code", "field"),
     [
         ("AI212", "linked_exams_invalid", "linked_exams"),
+        # A sent null is not "no links": taken so, it erased the saved links, and
+        # Save stored - and Optimise made - a board that split them, with a 200.
+        (None, "linked_exams_invalid", "linked_exams"),
         (lambda: [_link("AI212")], "linked_exams_too_few_members", "linked_exams[0].members"),
         (
             lambda: [
@@ -452,7 +463,7 @@ def test_a_board_that_splits_a_saved_link_is_refused(client_, population, mode):
             "linked_exams[0].members[1].course_identity",
         ),
     ],
-    ids=["not-a-list", "one-member", "unknown"],
+    ids=["not-a-list", "null", "one-member", "unknown"],
 )
 def test_a_loaded_action_refuses_bad_links_by_field_and_saves_nothing(
     client_, population, mode, links, code, field
@@ -488,6 +499,18 @@ def test_a_loaded_action_refuses_linked_exams_pinned_apart(client_, population, 
     body = _loaded(client_, built, split, mode=mode, status=400, pinned=pins)
     assert (body["code"], body["field"]) == ("linked_exams_pins_disagree", "linked_exams[0]")
     assert ExamTimetableRun.objects.count() == runs
+
+
+def test_a_split_is_named_by_the_links_place_in_the_request(client_, population):
+    """Sent PHYS103 first: the split AI link is the second sent, though the
+    first in code order - the field counts what the page sent, as every
+    member-level refusal does."""
+    built = _build(client_)
+    day, period = _free_slot(built)
+    split = _move(built["schedule"], "AI225", day, period)
+    sent = [_link(*_physics()), _link("AI212", "AI225")]
+    body = _loaded(client_, built, split, status=400, linked_exams=sent)
+    assert (body["code"], body["field"]) == ("linked_exams_split", "linked_exams[1]")
 
 
 def test_links_sent_with_the_request_replace_the_saved_ones(client_, population):
@@ -646,6 +669,35 @@ def test_a_student_in_two_linked_courses_is_a_linked_exam_clash(client_, assign_
     repaired = _loaded(client_, built, built["schedule"], mode="minimum_change_repair")
     assert repaired["saved"] is False, "Separating linked courses is not a repair"
     assert repaired["minimum_change"]["linked_clash_students"] == 1
+
+
+def test_a_linked_clash_in_overflow_checks_the_same_at_any_extra_n(client_):
+    """Build and Fix give a link in OVERFLOW one shared Extra-n; pinning any exam
+    on the page gives each OVERFLOW entry a fresh one. Same placements, so the
+    same Check: one linked clash, one OVERFLOW slot, the same status flags."""
+    _populate(shared_student=True)
+    built = _build(client_, linked_exams=[_link("AI212", "AI225")])
+    slot_count = len(DAYS) * len(PERIODS)
+    shared = deepcopy(built["schedule"])
+    for entry in shared:
+        if entry["course_code"] in ("AI212", "AI225"):
+            entry.update(day="OVERFLOW", period=f"Extra-{slot_count}", slot_index=slot_count)
+    renumbered = _renumbered_like_apply_exam_pin(deepcopy(shared))
+    assert {e["slot_index"] for e in renumbered if e["day"] == "OVERFLOW"} == {
+        slot_count,
+        slot_count + 1,
+    }, "The board really is renumbered"
+    as_built = _loaded(client_, built, shared)
+    as_paged = _loaded(client_, built, renumbered)
+    rows = [(row["kind"], row["courses"]) for row in as_built["qa"]["manual_override_details"]]
+    assert rows == [("linked_same_slot", ["AI212", "AI225"])]
+    assert "manual_override" in as_built["status_flags"]
+
+    def qa(result):  # Everything but the moment the enrolment was read.
+        return {key: value for key, value in result["qa"].items() if key != "enrolment_snapshot"}
+
+    assert qa(as_paged) == qa(as_built)
+    assert as_paged["status_flags"] == as_built["status_flags"]
 
 
 # ── the saved shape ──────────────────────────────────────────────────────────
