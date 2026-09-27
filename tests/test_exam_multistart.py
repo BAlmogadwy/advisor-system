@@ -208,11 +208,14 @@ def test_extract_metrics_from_full_payload() -> None:
             "heavy_day_students": 2,
             "conflict_count": 0,
             "bucket_day_violations_count": 0,
-            "unassigned_room_sections": 1,
             "multi_sitting_sections": 0,
-            "avg_utilization": 0.78,
             "max_credit_load_per_day": 10,
             "max_exams_per_day_per_student": 3,
+            # Where a build writes them: the room QA block.
+            "rooms": {
+                "unassigned_room_sections": [{"course_code": "CS101", "section": "M1"}],
+                "avg_utilization": 0.78,
+            },
         },
         "schedule": [
             {"day": "SUN", "course_code": "CS101", "slot_index": 0},
@@ -226,6 +229,73 @@ def test_extract_metrics_from_full_payload() -> None:
     assert m.heavy_day_students == 2
     assert m.unassigned_room_sections == 1
     assert m.avg_utilisation == 0.78
+
+
+def test_extract_metrics_ignores_room_metrics_outside_the_room_block() -> None:
+    """A build never writes them at the top level of ``qa``; reading them there
+    scored every candidate 0 unseated and 0% utilisation."""
+    payload = {
+        "qa": {
+            "unassigned_room_sections": 7,
+            "avg_utilization": 0.9,
+            "rooms": {"unassigned_room_sections": [], "avg_utilization": 0.25},
+        },
+        "schedule": [],
+    }
+    m = _extract_metrics(payload)
+    assert m.unassigned_room_sections == 0
+    assert m.avg_utilisation == 0.25
+
+
+@pytest.mark.django_db
+def test_extract_metrics_reads_a_real_builds_room_qa() -> None:
+    """The metrics a candidate is ranked on are the ones a real build reports.
+
+    One ten-seat room per cohort leaves sections unseated, so both room
+    metrics are non-zero and neither can match by accident.
+    """
+    from core import models
+    from core.services.exam_timetable import build_exam_timetable
+    from tests import exam_linked_parity_corpus as corpus
+
+    corpus.create_population(models)
+    models.Room.objects.exclude(room_code__in=["RM10-0", "RF10-0"]).delete()
+    result = build_exam_timetable(
+        "Room metrics",
+        days=corpus.POPULATION_DAYS,
+        periods=corpus.POPULATION_PERIODS,
+        programs=["AI", "CS"],
+        seed=11,
+        assign_rooms=True,
+        rebalance_invigilators=False,
+        persist=False,
+    )
+    room_qa = result["qa"]["rooms"]
+    m = _extract_metrics(result)
+    assert m.unassigned_room_sections == len(room_qa["unassigned_room_sections"]) > 0
+    assert m.avg_utilisation == room_qa["avg_utilization"] > 0
+
+
+def test_best_room_feasibility_ranks_real_room_qa() -> None:
+    """Two payloads that differ only in rooming: the fuller one wins the role."""
+
+    def payload(unseated: int, util: float) -> dict[str, Any]:
+        return {
+            "qa": {
+                "rooms": {
+                    "unassigned_room_sections": [{"section": "M1"}] * unseated,
+                    "avg_utilization": util,
+                }
+            },
+            "schedule": [],
+        }
+
+    pool = [
+        MultistartCandidate(seed=1, metrics=_extract_metrics(payload(2, 0.9)), payload={}),
+        MultistartCandidate(seed=2, metrics=_extract_metrics(payload(0, 0.4)), payload={}),
+        MultistartCandidate(seed=3, metrics=_extract_metrics(payload(0, 0.8)), payload={}),
+    ]
+    assert select_pareto_candidates(pool)["best_room_feasibility"].seed == 3
 
 
 def test_extract_metrics_defensive_on_missing_keys() -> None:
@@ -412,11 +482,17 @@ def _fake_build_factory(metrics_per_seed: dict[int, dict]):
                 "heavy_day_students": spec.get("heavy", 0),
                 "conflict_count": spec.get("conflicts", 0),
                 "bucket_day_violations_count": spec.get("bucket_day", 0),
-                "unassigned_room_sections": spec.get("unassigned", 0),
                 "multi_sitting_sections": spec.get("multi_sitting", 0),
-                "avg_utilization": spec.get("util", 0.5),
                 "max_credit_load_per_day": spec.get("max_credit", 0),
                 "max_exams_per_day_per_student": spec.get("max_exams", 0),
+                # The room QA block, shaped as a build writes it.
+                "rooms": {
+                    "unassigned_room_sections": [
+                        {"course_code": "CS101", "section": f"M{number}"}
+                        for number in range(spec.get("unassigned", 0))
+                    ],
+                    "avg_utilization": spec.get("util", 0.5),
+                },
             },
             "students_count": 100,
             "courses": ["CS101"],

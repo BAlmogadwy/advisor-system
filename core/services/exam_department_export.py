@@ -481,8 +481,77 @@ def parse_exam_dates(raw_dates: object, days: list[str]) -> dict[str, date]:
     return dates
 
 
-def _room_distribution(entry: dict, sections: list[dict], language: str) -> dict:
-    """Use only saved section fragments; never apportion shared-room students."""
+def _room_occupancy(schedule: list[dict]) -> dict[tuple, dict[str, int]]:
+    """Who the saved timetable seats in each physical room of each period.
+
+    A room is its code within one student group, as the rooms of a course are
+    (a catalogue may reuse a code for the other group).
+
+    Linked courses may share a room. Every room row of every course counts,
+    so a shared room's total and its other courses come from the saved
+    schedule itself, and the shared-room facts a row carries are checked
+    against them rather than trusted.
+    """
+    occupancy: dict[tuple[int, str], dict[str, int]] = {}
+    for entry in schedule:
+        rooms = entry.get("rooms") if entry.get("day") != "OVERFLOW" else None
+        if not isinstance(rooms, list):
+            continue
+        for room in rooms:
+            # A malformed row counts for nobody; its own course's export refuses it.
+            if (
+                not isinstance(room, dict)
+                or not isinstance(room.get("room_code"), str)
+                or not isinstance(room.get("gender"), str)
+                or room["room_code"] == "UNASSIGNED"
+            ):
+                continue
+            count = room.get("student_count")
+            seated = occupancy.setdefault(
+                (entry.get("slot_index"), room.get("gender"), room["room_code"]), {}
+            )
+            seated[entry["course_code"]] = seated.get(entry["course_code"], 0) + (
+                count if isinstance(count, int) and not isinstance(count, bool) else 0
+            )
+    return occupancy
+
+
+def _shared_room(entry: dict, room: dict, occupancy: dict) -> tuple[list[str], int] | None:
+    """The other courses in a saved room and its whole head-count, or None.
+
+    A room another course also sits in must say so, with exactly those
+    courses and that total, and a room of its own must not claim a partner.
+    """
+    seated = occupancy.get((entry.get("slot_index"), room["gender"], room["room_code"]), {})
+    others = sorted(code for code in seated if code != entry["course_code"])
+    declared = room.get("room_shared_with")
+    total = room.get("room_student_total")
+    if not others:
+        if declared is not None or total is not None:
+            raise DepartmentExportUnavailable(
+                "Saved shared-room details do not match the timetable. Check changes and save again."
+            )
+        return None
+    if (
+        not isinstance(declared, list)
+        or declared != others
+        or type(total) is not int
+        or total != sum(seated.values())
+    ):
+        raise DepartmentExportUnavailable(
+            "Saved shared-room details do not match the timetable. Check changes and save again."
+        )
+    return others, total
+
+
+def _room_distribution(
+    entry: dict, sections: list[dict], language: str, occupancy: dict | None = None
+) -> dict:
+    """Use only saved section fragments; never apportion shared-room students.
+
+    A room linked courses share shows the room's whole head-count as its
+    total, and each fragment in it names the other courses.
+    """
     ar = language == "ar"
     rows = {(section["section_key"], section["gender"]): [] for section in sections}
     rooms = entry.get("rooms")
@@ -545,6 +614,12 @@ def _room_distribution(entry: dict, sections: list[dict], language: str) -> dict
         total = _positive_count(room.get("student_count"))
         if sum(fragments.values()) != total:
             raise DepartmentExportUnavailable("Saved room totals do not match section fragments.")
+        shared = (
+            _shared_room(entry, room, occupancy)
+            if occupancy is not None and room_code != "UNASSIGNED"
+            else None
+        )
+        room_total = shared[1] if shared else total
         for key, count in fragments.items():
             label = (
                 ("قاعة غير مخصصة" if ar else "UNASSIGNED")
@@ -559,17 +634,19 @@ def _room_distribution(entry: dict, sections: list[dict], language: str) -> dict
                 raise DepartmentExportUnavailable("Saved room building details are invalid.")
             building = (building or "").strip()
             text = f"{label}: {count}"
-            if total != count:
-                text += f" ({'إجمالي القاعة' if ar else 'room total'}: {total})"
-            rows[key].append(
-                {
-                    "text": text,
-                    "count": count,
-                    "assigned": room_code != "UNASSIGNED",
-                    "room_label": label,
-                    "building": building if room_code != "UNASSIGNED" else "",
-                }
-            )
+            if room_total != count:
+                text += f" ({'إجمالي القاعة' if ar else 'room total'}: {room_total})"
+            fragment = {
+                "text": text,
+                "count": count,
+                "assigned": room_code != "UNASSIGNED",
+                "room_label": label,
+                "building": building if room_code != "UNASSIGNED" else "",
+            }
+            if shared:
+                fragment["shared_with"] = shared[0]
+                fragment["room_total"] = room_total
+            rows[key].append(fragment)
     for section in sections:
         allocation = rows[(section["section_key"], section["gender"])]
         if allocation and sum(part["count"] for part in allocation) != section["student_count"]:
@@ -577,6 +654,25 @@ def _room_distribution(entry: dict, sections: list[dict], language: str) -> dict
                 "Saved room distribution does not cover the whole teaching section."
             )
     return rows
+
+
+def _shared_room_note(part: dict, ar: bool) -> str:
+    """Say a linked courses' room is one room with one set of invigilators.
+
+    Its courses can sit in different departments' files, and each file lists
+    the same physical room; this note keeps both from staffing it. In Arabic
+    each room code and course code is its own left-to-right run.
+    """
+    if ar:
+        partners = "، ".join(ltr_run(code) for code in part["shared_with"])
+        return (
+            f"القاعة {ltr_run(part['room_label'])} مشتركة مع {partners}، "
+            f"إجمالي القاعة {part['room_total']} — طاقم مراقبة واحد لهذه القاعة"
+        )
+    return (
+        f"Room {part['room_label']} shared with {', '.join(part['shared_with'])}, "
+        f"room total {part['room_total']} — one set of invigilators for this room"
+    )
 
 
 def _building_display(allocations: list[dict], language: str) -> str:
@@ -605,14 +701,16 @@ def _department_rows(
     ar = language == "ar"
     records = []
     programs = set(profile["programs"])
-    for entry, course in _validated_courses(data):
+    validated = _validated_courses(data)
+    occupancy = _room_occupancy(data["schedule"])
+    for entry, course in validated:
         sections = course["sections"]
         if not any(
             section["gender"] in genders and programs.intersection(section["program_counts"])
             for section in sections
         ):
             continue
-        distributions = _room_distribution(entry, sections, language)
+        distributions = _room_distribution(entry, sections, language, occupancy)
         for section in sections:
             count = sum(
                 value for program, value in section["program_counts"].items() if program in programs
@@ -634,6 +732,9 @@ def _department_rows(
                 )
             if len(allocated) > 1:
                 notes.append("الشعبة موزعة على عدة قاعات" if ar else "Section split across rooms")
+            for part in allocated:
+                if part.get("shared_with"):
+                    notes.append(_shared_room_note(part, ar))
             if section["mapping_status"] != "mapped":
                 notes.append(
                     ("الشعبة غير مسجلة" if ar else "Section not recorded")

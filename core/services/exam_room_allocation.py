@@ -5,6 +5,15 @@ course get first choice of the smallest fitting room. Consolidation then frees
 rooms without displacing other courses. Difficult periods receive a bounded
 joint search before any section is divided; every search retains a validated
 incumbent. A search limit is not a proof that a split is unavoidable.
+
+A room belongs to one OWNER in a period: a course, or - for the courses of a
+linked exam - their link, so same-gender sections of linked courses may share
+a room. A period with linked courses is allocated both ways - the second
+way exactly as it would be without its links - and the sharing answer is
+kept only when it seats more students, or seats as many, splits no more
+sections, uses fewer rooms or fewer room seats and needs no more
+invigilators. Genders never mix and no room is ever filled beyond its
+capacity.
 """
 
 from __future__ import annotations
@@ -14,6 +23,7 @@ import json
 import logging
 import time
 from collections import OrderedDict, defaultdict
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from threading import RLock
 
@@ -21,7 +31,11 @@ from ortools.sat.python import cp_model
 
 logger = logging.getLogger(__name__)
 
-ROOM_ALLOCATION_POLICY_VERSION = 1
+# 2: linked courses may share a room (the ``room_owner`` of a demand), only
+# where sharing saves rooms or seats. Without links every allocation is the
+# one version 1 made; the bump still re-keys the cache and the input
+# fingerprint, so a run saved before it reports its inputs changed once.
+ROOM_ALLOCATION_POLICY_VERSION = 2
 # Sized for several concurrent requests, not one. A single exam Optimise that
 # runs the invigilator post-pass leaves ~260 entries (2.41 MB pickled), so at
 # 512 two concurrent registrars evicted each other's periods mid-flight and
@@ -150,18 +164,53 @@ def normalized_rooms(rooms: list[dict]) -> list[dict]:
     return sorted(by_code.values(), key=lambda r: (r["capacity"], r["room_code"]))
 
 
+def _owner(demand: dict) -> str:
+    """Who holds a room this demand sits in: its linked exam, or its own course.
+
+    A room has one owner per period. Only the demands of linked courses carry
+    ``room_owner`` (their link), so only they can share a room, and only
+    within one student cohort: the owner is the link AND the cohort. Every
+    other course owns its rooms alone, exactly as before links existed.
+    """
+    link = demand.get("room_owner")
+    if not link:
+        return demand["course_code"]
+    return f"{link}@{demand.get('gender', '')}"
+
+
+def _without_owner(demand: dict) -> dict:
+    """The demand as a period without links would see it."""
+    return {key: value for key, value in demand.items() if key != "room_owner"}
+
+
+def _may_share(demands: list[dict]) -> bool:
+    """Whether any owner here holds more than one course, so a room can be shared."""
+    courses: dict[str, set[str]] = defaultdict(set)
+    for demand in demands:
+        courses[_owner(demand)].add(demand["course_code"])
+    return any(len(names) > 1 for names in courses.values())
+
+
 def _score(allocation: list[dict[int, int]], demands: list[dict], rooms: list[dict]) -> tuple:
     missing = [
         d["student_count"] - sum(a.values()) for d, a in zip(demands, allocation, strict=True)
     ]
     fragments = [len(a) + bool(m) for a, m in zip(allocation, missing, strict=True)]
     used = {r for a in allocation for r in a}
+    courses: dict[int, set[str]] = defaultdict(set)
+    for demand, assignments in zip(demands, allocation, strict=True):
+        for r in assignments:
+            courses[r].add(demand["course_code"])
     return (
         sum(missing),
         sum(n > 1 for n in fragments),
         sum(max(0, n - 1) for n in fragments),
         len(used),
         sum(rooms[r]["capacity"] for r in used),
+        # Courses sharing a room beyond the first: always 0 without links. It
+        # ranks below every seat and room criterion, so a shared room has to
+        # buy one of them, and above the preferred room, which never can.
+        sum(len(names) - 1 for names in courses.values()),
         sum(
             n
             for d, a in zip(demands, allocation, strict=True)
@@ -182,7 +231,7 @@ def _valid(allocation: list[dict[int, int]], demands: list[dict], rooms: list[di
         for room, count in assignments.items():
             if room < 0 or room >= len(rooms) or count <= 0:
                 return False
-            occupants[room].add(demand["course_code"])
+            occupants[room].add(_owner(demand))
             totals[room] += count
     return all(
         len(occupants[r]) == 1 and count <= rooms[r]["capacity"] for r, count in totals.items()
@@ -213,14 +262,14 @@ def _whole_first(demands: list[dict], rooms: list[dict]) -> list[dict[int, int]]
 def _consolidate(
     allocation: list[dict[int, int]], demands: list[dict], rooms: list[dict]
 ) -> list[dict[int, int]]:
-    """Whole-section local merges; never take a room occupied by another course."""
+    """Whole-section local merges; never take a room occupied by another owner."""
     best = copy.deepcopy(allocation)
     by_course: dict[str, list[int]] = defaultdict(list)
     for i, demand in enumerate(demands):
-        by_course[demand["course_code"]].append(i)
+        by_course[_owner(demand)].append(i)
     while True:
         changed = False
-        owner = {r: demands[i]["course_code"] for i, a in enumerate(best) for r in a}
+        owner = {r: _owner(demands[i]) for i, a in enumerate(best) for r in a}
         for course, indices in sorted(by_course.items()):
             for target, room in enumerate(rooms):
                 if target in owner and owner[target] != course:
@@ -273,7 +322,7 @@ def _split_remaining(
 ) -> list[dict[int, int]]:
     """Valid fallback after whole-section repair; use actual remaining capacities."""
     result = copy.deepcopy(allocation)
-    owner = {r: demands[i]["course_code"] for i, a in enumerate(result) for r in a}
+    owner = {r: _owner(demands[i]) for i, a in enumerate(result) for r in a}
     spare = {r: room["capacity"] - sum(a.get(r, 0) for a in result) for r, room in enumerate(rooms)}
     for i in sorted(range(len(demands)), key=lambda i: (-demands[i]["student_count"], i)):
         left = demands[i]["student_count"] - sum(result[i].values())
@@ -281,8 +330,7 @@ def _split_remaining(
             candidates = [
                 r
                 for r in spare
-                if spare[r] > 0
-                and owner.get(r, demands[i]["course_code"]) == demands[i]["course_code"]
+                if spare[r] > 0 and owner.get(r, _owner(demands[i])) == _owner(demands[i])
             ]
             if not candidates:
                 break
@@ -294,7 +342,7 @@ def _split_remaining(
             )
             count = min(left, spare[r])
             result[i][r] = result[i].get(r, 0) + count
-            owner[r] = demands[i]["course_code"]
+            owner[r] = _owner(demands[i])
             spare[r] -= count
             left -= count
     return result
@@ -314,7 +362,7 @@ def _repair(
     context.remaining()
     model = cp_model.CpModel()
     amounts, present, missing, owners = {}, {}, [], {}
-    courses = sorted({d["course_code"] for d in demands})
+    courses = sorted({_owner(d) for d in demands})
     for course in courses:
         context.remaining()
         for r in range(len(rooms)):
@@ -330,7 +378,7 @@ def _repair(
                 continue
             p = model.new_bool_var(f"part_{i}_{r}")
             present[i, r] = p
-            model.add(p <= owners[demand["course_code"], r])
+            model.add(p <= owners[_owner(demand), r])
             if split:
                 x = model.new_int_var(0, min(count, room["capacity"]), f"students_{i}_{r}")
                 model.add(x >= p)
@@ -359,9 +407,7 @@ def _repair(
             model.add(
                 owners[course, r]
                 <= sum(
-                    p
-                    for (i, k), p in present.items()
-                    if k == r and demands[i]["course_code"] == course
+                    p for (i, k), p in present.items() if k == r and _owner(demands[i]) == course
                 )
             )
     used = sum(owners.values())
@@ -372,6 +418,17 @@ def _repair(
     if split:
         objectives.append(sum(split_flags) * (len(demands) * len(rooms) + 1) + sum(fragment_counts))
     objectives.append(used * (sum(r["capacity"] for r in rooms) + 1) + used_capacity)
+    if _may_share(demands):
+        # Last, and only where linked courses may share: among allocations
+        # equal on everything above, the fewest (course, room) pairs - a room
+        # is shared only where that bought a seat, a whole section or a room.
+        holds: dict[tuple[str, int], cp_model.IntVar] = {}
+        for (i, r), p in present.items():
+            key = (demands[i]["course_code"], r)
+            if key not in holds:
+                holds[key] = model.new_bool_var(f"holds_{len(holds)}")
+            model.add(p <= holds[key])
+        objectives.append(sum(holds.values()))
     best = incumbent
     for (i, r), p in present.items():
         model.add_hint(p, int(r in incumbent[i]))
@@ -428,33 +485,117 @@ def _repair(
     return best
 
 
-def allocate_period(
+def _allocate(
     demands: list[dict], rooms: list[dict], context: RoomAllocationContext
-) -> list[dict]:
-    """Allocate one period/cohort. Cache only authoritative content, never client rooms.
-
-    Course keys are canonical scheduling identities. Section membership hashes,
-    metadata, inventory and policy all participate in the key. Moving an exam
-    changes exactly its source/destination demand sets; unaffected periods reuse
-    deep-copied results. Different periods may independently reuse the same room.
-    """
-    demands = sorted(
-        (d for d in demands if int(d.get("student_count", 0) or 0) > 0),
-        key=lambda d: (d["course_code"], str(d.get("section_key", d["section"])), _json(d)),
-    )
-    key = _json([ROOM_ALLOCATION_POLICY_VERSION, demands, rooms])
-    with _CACHE_LOCK:
-        if key in _CACHE:
-            _CACHE.move_to_end(key)
-            context.cache_hits += 1
-            return copy.deepcopy(_CACHE[key])
-    context.periods_solved += 1
+) -> list[dict[int, int]]:
+    """Whole sections first, merged, then the bounded searches only if needed."""
     allocation = _consolidate(_whole_first(demands, rooms), demands, rooms)
     if _score(allocation, demands, rooms)[0]:
         allocation = _repair(allocation, demands, rooms, split=False, context=context)
     if _score(allocation, demands, rooms)[0]:
         allocation = _split_remaining(allocation, demands, rooms)
         allocation = _repair(allocation, demands, rooms, split=True, context=context)
+    return allocation
+
+
+#: Staff one physical room needs: (the courses in it, its head-count) -> people.
+RoomStaff = Callable[[list[str], int], int]
+
+
+def _staff(allocation: list[dict[int, int]], demands: list[dict], room_staff: RoomStaff) -> int:
+    """Invigilators an allocation needs, once per room on its whole head-count."""
+    courses: dict[int, list[str]] = defaultdict(list)
+    students: dict[int, int] = defaultdict(int)
+    for demand, assignments in zip(demands, allocation, strict=True):
+        for r, count in assignments.items():
+            courses[r].append(demand["course_code"])
+            students[r] += count
+    return sum(room_staff(courses[r], students[r]) for r in courses)
+
+
+def _sharing_wins(
+    shared: list[dict[int, int]],
+    separate: list[dict[int, int]],
+    demands: list[dict],
+    rooms: list[dict],
+    room_staff: RoomStaff | None,
+) -> bool:
+    """Whether linked courses sharing rooms beats each course in rooms of its own.
+
+    Sharing must buy something (decision 3): more students seated, or - seating
+    as many - fewer rooms or fewer room seats, with no section split more and
+    never at the price of an invigilator. Keeping a section whole or using
+    fewer pieces is not a reason on its own: it saves no room and no seat. A
+    shared room holds one head-count, and past the staffing threshold it can
+    need a member of staff that two smaller rooms did not; a room is not worth
+    a person. A preferred room alone never justifies a share, and a tie keeps
+    the rooms separate.
+    """
+    shared_cost = _score(shared, demands, rooms)[:5]
+    separate_cost = _score(separate, demands, rooms)[:5]
+    if shared_cost[0] != separate_cost[0]:
+        return shared_cost[0] < separate_cost[0]
+    # (unseated, split sections, fragments, rooms, room seats): no worse on the
+    # whole ranking, and better on rooms or room seats themselves.
+    if not (shared_cost < separate_cost and shared_cost[3:] < separate_cost[3:]):
+        return False
+    return room_staff is None or _staff(shared, demands, room_staff) <= _staff(
+        separate, demands, room_staff
+    )
+
+
+def allocate_period(
+    demands: list[dict],
+    rooms: list[dict],
+    context: RoomAllocationContext,
+    *,
+    room_staff: RoomStaff | None = None,
+) -> list[dict]:
+    """Allocate one period/cohort. Cache only authoritative content, never client rooms.
+
+    Course keys are canonical scheduling identities. Section membership hashes,
+    metadata, inventory and policy all participate in the key - a demand's
+    ``room_owner`` too. Moving an exam changes exactly its source/destination
+    demand sets; unaffected periods reuse deep-copied results. Different periods
+    may independently reuse the same room.
+
+    Where linked courses could share (their demands carry one ``room_owner``),
+    the period is also allocated exactly as it would be without its links, and
+    that answer wins unless sharing seats more students, or seats as many and
+    uses fewer rooms or fewer room seats, splitting no more sections and
+    needing no more invigilators (``room_staff``, when the caller counts
+    staff). A link never leaves a period worse than it would be without it.
+    """
+    demands = sorted(
+        (d for d in demands if int(d.get("student_count", 0) or 0) > 0),
+        # The order a period without links is allocated in, whatever the room
+        # owners: the heuristics and the search break ties by position, so the
+        # rooms-of-their-own answer below is that period's answer only if its
+        # demands come in that order. Without links the last key never decides.
+        key=lambda d: (
+            d["course_code"],
+            str(d.get("section_key", d["section"])),
+            _json(_without_owner(d)),
+            _json(d),
+        ),
+    )
+    shares = _may_share(demands)
+    key = _json(
+        [ROOM_ALLOCATION_POLICY_VERSION, demands, rooms]
+        # Whether staff decide a share is part of the answer, so of its key.
+        + ([getattr(room_staff, "__qualname__", repr(room_staff))] if shares else [])
+    )
+    with _CACHE_LOCK:
+        if key in _CACHE:
+            _CACHE.move_to_end(key)
+            context.cache_hits += 1
+            return copy.deepcopy(_CACHE[key])
+    context.periods_solved += 1
+    allocation = _allocate(demands, rooms, context)
+    if shares:
+        separate = _allocate([_without_owner(d) for d in demands], rooms, context)
+        if not _sharing_wins(allocation, separate, demands, rooms, room_staff):
+            allocation = separate
     if not _valid(allocation, demands, rooms):
         raise RuntimeError("Exam room allocation failed its capacity and identity validation.")
     rows = []

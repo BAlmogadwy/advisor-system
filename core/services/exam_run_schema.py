@@ -773,6 +773,10 @@ def derive_building_footprint(
     first run of digits ("CS101" -> "CS"). Override for institutions
     with a different prefix convention.
 
+    Rooms are physical: linked courses sharing a room in a slot list it
+    once each, and it is counted once. Each course's department still
+    uses the room's building.
+
     Returns the dict shape declared by ``BuildingFootprintTelemetry``.
     """
     by_slot = _normalise_room_input(schedule_or_assign_rooms)
@@ -797,6 +801,9 @@ def derive_building_footprint(
         slot_str = str(slot_key)
         # dept -> set of buildings used by that dept in this slot
         dept_buildings_this_slot: dict[str, set[str]] = defaultdict(set)
+        # Rooms already counted in this slot, by (cohort, code): a room linked
+        # courses share is one room, and a code the other cohort reuses is not.
+        counted_rooms: set[tuple[str, str]] = set()
 
         for entry in slot_entries:
             if not isinstance(entry, dict):
@@ -823,8 +830,11 @@ def derive_building_footprint(
 
                 buildings_per_slot[slot_str].add(building)
                 buildings_per_gender_per_slot[slot_str][gender].add(building)
-                rooms_per_building_per_slot[slot_str][building] += 1
-                rooms_per_slot[slot_str] += 1
+                room = (gender, str(r.get("room_code") or ""))
+                if not room[1] or room not in counted_rooms:
+                    counted_rooms.add(room)
+                    rooms_per_building_per_slot[slot_str][building] += 1
+                    rooms_per_slot[slot_str] += 1
                 if dept:
                     dept_buildings_this_slot[dept].add(building)
 

@@ -33,6 +33,7 @@ import random
 # (the providing college supplies its own staff).
 import re as _re
 from collections import defaultdict
+from collections.abc import Iterable
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -114,6 +115,85 @@ def _invigilators_needed(course_code: str, students_in_room: int) -> int:
         return 1 if students_in_room > _EXT_LARGE_THRESHOLD else 0
     # Department or unknown
     return 2 if students_in_room >= _DEPT_LARGE_THRESHOLD else 1
+
+
+def _room_ruling_course(course_codes: Iterable[str]) -> str:
+    """The course whose invigilation rule one physical room follows.
+
+    Linked courses may share a room. It follows the department rule when ANY
+    course in it is a department course (an unknown prefix counts as one, as
+    in ``_invigilators_needed``), and the external rule only when every course
+    in it is external. The codes are sorted, so the order a reader meets the
+    room's rows in never changes the answer.
+    """
+    codes = sorted(set(course_codes))
+    return next(
+        (code for code in codes if _course_prefix(code) not in _EXTERNAL_PREFIXES),
+        codes[0] if codes else "",
+    )
+
+
+def _room_invigilators_needed(course_codes: Iterable[str], students_in_room: int) -> int:
+    """Staff for one physical room in one period, on its whole head-count.
+
+    A room linked courses share still gets one set of invigilators, for all
+    its students, under the rule of ``_room_ruling_course``.
+    """
+    return _invigilators_needed(_room_ruling_course(course_codes), students_in_room)
+
+
+def _room_owner(links: LinkedExams, entry: dict) -> str:
+    """Who holds the rooms an exam sits in: its course, or its linked exam.
+
+    Linked courses may share a room, but an online exam never shares one with
+    an exam sat in person: the Student lists and the student-data export call
+    a room online when an exam in it is, so a shared room holding both would
+    list in-person students under the remote rooms. The online members of a
+    link hold their rooms together, apart from its in-person members.
+    """
+    unit = links.unit(entry["course_code"])
+    return f"{unit} (online)" if entry.get("is_online") is True else unit
+
+
+def _physical_exam_rooms(placed: Iterable[tuple[dict, dict]]) -> dict[tuple, dict]:
+    """Each seated (period, room) once, in first-seen order, with everyone in it.
+
+    ``placed`` is (schedule entry, room row) pairs in the caller's order. The
+    rows of courses sharing a room fold into one: their head-counts add up,
+    and the room's seats count once. OVERFLOW and UNASSIGNED hold no room.
+    """
+    rooms: dict[tuple, dict] = {}
+    for number, (entry, room) in enumerate(placed):
+        if entry.get("day") == "OVERFLOW" or room.get("room_code") == "UNASSIGNED":
+            continue
+        slot = int(entry.get("slot_index", -1))
+        code = room.get("room_code")
+        gender = room.get("gender", "M")
+        # One cohort's room: rows of two cohorts are never folded together, and
+        # a row with no room code is never folded into another one.
+        key = (slot, code, gender) if code else (slot, None, number)
+        seat = rooms.get(key)
+        if seat is None:
+            seat = rooms[key] = {
+                "day": entry["day"],
+                "gender": gender,
+                "capacity": int(room.get("room_capacity", 0) or 0),
+                "students": 0,
+                "courses": [],
+            }
+        seat["students"] += int(room.get("student_count", 0) or 0)
+        seat["courses"].append(entry["course_code"])
+    return rooms
+
+
+def _invigilators_per_day(rooms: dict[tuple, dict]) -> dict[str, dict[str, int]]:
+    """``{day: {'M', 'F', 'total'}}`` staff, counted once per physical room."""
+    per_day: dict[str, dict[str, int]] = defaultdict(lambda: {"M": 0, "F": 0, "total": 0})
+    for seat in rooms.values():
+        invigs = _room_invigilators_needed(seat["courses"], seat["students"])
+        per_day[seat["day"]][seat["gender"]] += invigs
+        per_day[seat["day"]]["total"] += invigs
+    return {day: dict(counts) for day, counts in per_day.items()}
 
 
 # ── 0. Credit helpers ───────────────────────────────────────────
@@ -1658,20 +1738,26 @@ def _merge_same_course_sections(
 
 
 def period_cohort_count(
-    schedule_entries: list[dict], section_enrollment: dict[str, list[dict]]
+    schedule_entries: list[dict],
+    section_enrollment: dict[str, list[dict]],
+    links: LinkedExams = NO_LINKS,
 ) -> int:
-    """Upper bound on the ``allocate_period`` calls one full pack performs.
+    """Upper bound on the allocations one full pack performs.
 
     Rooming solves a separate allocation per scheduled slot per student cohort,
     so this — not the course count — is what a wall budget has to be sized by.
+    A slot holding a linked exam is allocated twice - its linked courses in
+    rooms of their own, and sharing - so it counts twice.
     """
-    slots = {entry["slot_index"] for entry in schedule_entries if entry.get("day") != "OVERFLOW"}
+    placed = [entry for entry in schedule_entries if entry.get("day") != "OVERFLOW"]
+    slots = {entry["slot_index"] for entry in placed}
+    linked = {entry["slot_index"] for entry in placed if entry["course_code"] in links.unit_of}
     genders = {
         str(section.get("gender", "U") or "U").upper()
         for sections in section_enrollment.values()
         for section in sections
     }
-    return len(slots) * max(1, len(genders))
+    return (len(slots) + len(linked)) * max(1, len(genders))
 
 
 def assign_rooms_to_schedule(
@@ -1682,12 +1768,21 @@ def assign_rooms_to_schedule(
     *,
     allocation_context: RoomAllocationContext | None = None,
     on_period: Counter | None = None,
+    links: LinkedExams = NO_LINKS,
 ) -> list[dict]:
     """Room original sections across each period without changing exam times.
 
     Scheduling may use ``seed``; room assignment deliberately does not. Build,
     fixed-time Check, Save and export must agree for identical authoritative
     inputs. Existing room rows are replaced, making repeated calls idempotent.
+
+    Same-gender sections of linked courses may share a room: their demands
+    carry the link as ``room_owner``, and the allocator shares only where that
+    saves rooms or seats. An online member never shares with an in-person one
+    (``_room_owner``). Rows stay per real course, each with its own
+    ``section_parts``; a shared room's row also names the other courses in it
+    (``room_shared_with``) and the room's whole head-count
+    (``room_student_total``). Unshared rows carry neither.
 
     ``on_period(done, total)`` counts the (period, gender) packs, the unit the
     solver works in, for a job that reports its progress.
@@ -1699,7 +1794,7 @@ def assign_rooms_to_schedule(
         if entry.get("day") != "OVERFLOW":
             entries_by_slot[entry["slot_index"]].append(entry)
     context = allocation_context or RoomAllocationContext.for_periods(
-        period_cohort_count(schedule_entries, section_enrollment)
+        period_cohort_count(schedule_entries, section_enrollment, links)
     )
     packs: list[tuple[dict[str, dict], str, list[dict]]] = []
     for _, entries in sorted(entries_by_slot.items()):
@@ -1716,14 +1811,32 @@ def assign_rooms_to_schedule(
                         "gender": gender,
                     }
                 )
-        packs.extend(
-            (by_course, gender, demands) for gender, demands in sorted(demands_by_gender.items())
-        )
+        for gender, demands in sorted(demands_by_gender.items()):
+            # A link owns its rooms only in a pack holding two of its courses
+            # of one kind, online or in person: anywhere else each course is
+            # allocated exactly as if unlinked.
+            present: dict[str, set[str]] = defaultdict(set)
+            for demand in demands:
+                owner = _room_owner(links, by_course[demand["course_code"]])
+                present[owner].add(demand["course_code"])
+            for demand in demands:
+                owner = _room_owner(links, by_course[demand["course_code"]])
+                if len(present[owner]) > 1:
+                    demand["room_owner"] = owner
+            packs.append((by_course, gender, demands))
     for done, (by_course, gender, demands) in enumerate(packs):
         if on_period is not None:
             on_period(done, len(packs))
         period_rooms = [room for room in inventory if room["section"] == gender]
-        rows = allocate_period(demands, period_rooms, context)
+        rows = allocate_period(demands, period_rooms, context, room_staff=_room_invigilators_needed)
+        # Who sits in each room of this period, for the rows of a shared one.
+        occupants: dict[str, dict[str, int]] = defaultdict(dict)
+        for row in rows:
+            if row["room_code"] != "UNASSIGNED":
+                seated = occupants[row["room_code"]]
+                seated[row["course_code"]] = (
+                    seated.get(row["course_code"], 0) + row["student_count"]
+                )
         groups: dict[tuple, list[dict]] = defaultdict(list)
         for row in rows:
             # Unseated original sections remain individually reviewable.
@@ -1736,17 +1849,20 @@ def assign_rooms_to_schedule(
             )
             groups[key].append(row)
         for (code, room_code, _), parts in sorted(groups.items()):
-            by_course[code]["rooms"].append(
-                {
-                    "section": " + ".join(dict.fromkeys(p["section"] for p in parts)),
-                    "room_code": room_code,
-                    "student_count": sum(p["student_count"] for p in parts),
-                    "room_capacity": parts[0]["room_capacity"],
-                    "gender": gender,
-                    "merged_from": list(dict.fromkeys(p["section"] for p in parts)),
-                    "section_parts": [exam_section_part(p) for p in parts],
-                }
-            )
+            room = {
+                "section": " + ".join(dict.fromkeys(p["section"] for p in parts)),
+                "room_code": room_code,
+                "student_count": sum(p["student_count"] for p in parts),
+                "room_capacity": parts[0]["room_capacity"],
+                "gender": gender,
+                "merged_from": list(dict.fromkeys(p["section"] for p in parts)),
+                "section_parts": [exam_section_part(p) for p in parts],
+            }
+            sharing = occupants.get(room_code, {}) if room_code != "UNASSIGNED" else {}
+            if len(sharing) > 1:
+                room["room_shared_with"] = sorted(other for other in sharing if other != code)
+                room["room_student_total"] = sum(sharing.values())
+            by_course[code]["rooms"].append(room)
     if on_period is not None:
         on_period(len(packs), len(packs))
     annotate_exam_room_groups(schedule_entries)
@@ -1913,7 +2029,7 @@ def _rebalance_invigilators_pass(
     unit_plan_term_buckets, unit_course_buckets = links.buckets(plan_term_buckets, course_buckets)
     pinned_units = links.units_of(pinned_courses)
     allocation_context = allocation_context or RoomAllocationContext.for_periods(
-        period_cohort_count(schedule_entries, section_enrollment)
+        period_cohort_count(schedule_entries, section_enrollment, links)
     )
 
     # Slot lookup helpers
@@ -1931,6 +2047,7 @@ def _rebalance_invigilators_pass(
             rooms_list,
             seed=None,
             allocation_context=allocation_context,
+            links=links,
         )
 
     def _per_day_invigilators() -> dict[str, dict[str, int]]:
@@ -1938,20 +2055,15 @@ def _rebalance_invigilators_pass(
         rebalance metric can score per-gender stddev rather than only
         the combined total — a move that flattens the total but
         worsens the M-only or F-only spread should not be accepted.
+
+        Staff are counted once per physical room, on its whole head-count,
+        so a room linked courses share is staffed once.
         """
-        per_day: dict[str, dict[str, int]] = defaultdict(lambda: {"M": 0, "F": 0, "total": 0})
-        for e in schedule_entries:
-            if e.get("day") == "OVERFLOW":
-                continue
-            for a in e.get("rooms", []) or []:
-                if a.get("room_code") == "UNASSIGNED":
-                    continue
-                stu = int(a.get("student_count", 0) or 0)
-                invigs = _invigilators_needed(e["course_code"], stu)
-                gender = a.get("gender", "M")
-                per_day[e["day"]][gender] += invigs
-                per_day[e["day"]]["total"] += invigs
-        return {k: dict(v) for k, v in per_day.items()}
+        return _invigilators_per_day(
+            _physical_exam_rooms(
+                (entry, room) for entry in schedule_entries for room in entry.get("rooms", []) or []
+            )
+        )
 
     def _room_safety() -> tuple[int, int, int]:
         """Preserve seating coverage and whole sections before balancing staff.
@@ -2243,25 +2355,28 @@ def _rebalance_invigilators_pass(
 def _build_room_qa(
     schedule_entries: list[dict],
     rooms: list[dict],
+    *,
+    links: LinkedExams = NO_LINKS,
 ) -> dict:
     """QA metrics for room assignment — rooms used, utilisation, unassigned,
     and double-booking defensive check (should never trigger).
+
+    Everything is counted per physical room in a period: its seats once and
+    its invigilators once, on the head-count of every course in it. A room
+    holding two courses is a double booking unless both belong to one linked
+    exam (``links``), one student cohort and one kind - online or in person -
+    exactly the rooms the allocator lets them share (``_room_owner``).
     """
     rooms_used_keys: set[tuple[int, str]] = set()
     total_demand = 0
-    total_capacity_used = 0
     unassigned: list[dict] = []
+    placed: list[tuple[dict, dict]] = []
 
-    # Double-booking defensive check — (slot_index, room_code) should map
-    # to a single course.  Track (slot, room) → course mappings.
-    slot_room_course: dict[tuple[int, str], str] = {}
+    # Double-booking defensive check — (slot_index, room_code) should map to a
+    # single owner: a course, or the link of linked courses. Track
+    # (slot, room) → (owner, course, cohort).
+    slot_room_course: dict[tuple[int, str], tuple[str, str, str]] = {}
     double_bookings: list[dict] = []
-
-    # Per-day invigilator totals, split by gender.
-    # invigilators_per_day[day]['M'/'F'/'total'] = int
-    invigilators_per_day: dict[str, dict[str, int]] = defaultdict(
-        lambda: {"M": 0, "F": 0, "total": 0}
-    )
 
     for e in sorted(
         schedule_entries,
@@ -2316,28 +2431,27 @@ def _build_room_qa(
             rooms_used_keys.add((si, code))
             stu = int(a.get("student_count", 0) or 0)
             total_demand += stu
-            total_capacity_used += int(a.get("room_capacity", 0) or 0)
-            # Invigilator tally for this room
-            invigs = _invigilators_needed(e["course_code"], stu)
-            gender = a.get("gender", "M")
-            day_label = e["day"]
-            invigilators_per_day[day_label][gender] += invigs
-            invigilators_per_day[day_label]["total"] += invigs
+            placed.append((e, a))
+            owner = _room_owner(links, e)
+            cohort = str(a.get("gender", ""))
             prev = slot_room_course.get((si, code))
-            if prev is not None and prev != e["course_code"]:
+            if prev is not None and (prev[0] != owner or prev[2] != cohort):
                 double_bookings.append(
                     {
                         "slot_index": si,
                         "room_code": code,
-                        "courses": sorted([prev, e["course_code"]]),
+                        "courses": sorted([prev[1], e["course_code"]]),
                     }
                 )
             else:
-                slot_room_course[(si, code)] = e["course_code"]
+                slot_room_course[(si, code)] = (owner, e["course_code"], cohort)
 
+    # Seats and staff once per physical room: a room linked courses share is
+    # one room with one head-count, never two rooms.
+    physical = _physical_exam_rooms(placed)
+    total_capacity_used = sum(seat["capacity"] for seat in physical.values())
     avg_util = (total_demand / total_capacity_used) if total_capacity_used else 0.0
-    # Convert invigilator dict to a stable JSON-serialisable shape
-    invig_summary = {day: dict(counts) for day, counts in invigilators_per_day.items()}
+    invig_summary = _invigilators_per_day(physical)
     invig_grand_total = sum(c["total"] for c in invig_summary.values())
     invig_grand_M = sum(c["M"] for c in invig_summary.values())
     invig_grand_F = sum(c["F"] for c in invig_summary.values())
@@ -2583,7 +2697,7 @@ def build_exam_timetable(
         # scan are not solver work, and on a networked database they were
         # spending a budget meant for the search.
         allocation_context = RoomAllocationContext.for_periods(
-            period_cohort_count(schedule_entries, section_enrollment)
+            period_cohort_count(schedule_entries, section_enrollment, links)
         )
         progress.stage("assign_rooms")
         assign_rooms_to_schedule(
@@ -2593,6 +2707,7 @@ def build_exam_timetable(
             seed=seed,
             allocation_context=allocation_context,
             on_period=progress.counter("assign_rooms"),
+            links=links,
         )
 
         # 7c. Final optimisation — flatten per-day invigilator load by
@@ -2621,7 +2736,7 @@ def build_exam_timetable(
                 links=links,
             )
 
-        room_qa = _build_room_qa(schedule_entries, rooms_list)
+        room_qa = _build_room_qa(schedule_entries, rooms_list, links=links)
         # Re-run main QA after rebalance so credit/conflict metrics
         # reflect any moved courses (cheap — no DB hits).
         qa = _build_qa(
@@ -2896,6 +3011,12 @@ def export_exam_timetable_xlsx(run_id: int) -> Path:
         if len(parts) == 1:
             return _section_label(parts[0])
         return "; ".join(f"{_section_label(part)} ({part['student_count']})" for part in parts)
+
+    def _counted_section_label(room: dict) -> str:
+        """A room's sections, each with its head-count, even when it is one."""
+        if len(_room_section_parts(room)) > 1:
+            return _room_section_label(room)
+        return f"{_room_section_label(room)} ({int(room.get('student_count', 0) or 0)})"
 
     def _room_mapping_label(room: dict) -> str:
         parts = _room_section_parts(room)
@@ -3750,7 +3871,23 @@ def export_exam_timetable_xlsx(run_id: int) -> Path:
             for a in e.get("rooms", []) or []:
                 cap = int(a.get("room_capacity", 0) or 0)
                 cnt = int(a.get("student_count", 0) or 0)
-                util = cnt / cap if cap else None
+                room_group = a.get("room_group", "")
+                shared_with = a.get("room_shared_with") or []
+                if shared_with:
+                    # A shared room's use is its whole head-count, not this
+                    # course's share of it.
+                    in_room = int(a.get("room_student_total", 0) or 0) or cnt
+                    util = in_room / cap if cap else None
+                    room_group = "; ".join(
+                        part
+                        for part in (
+                            room_group,
+                            f"Shared with {', '.join(shared_with)} · room total {in_room}",
+                        )
+                        if part
+                    )
+                else:
+                    util = cnt / cap if cap else None
                 ws4.append(
                     [
                         e["day"],
@@ -3766,7 +3903,7 @@ def export_exam_timetable_xlsx(run_id: int) -> Path:
                         "Yes" if e["course_code"] in pinned_codes else "No",
                         a.get("building", ""),
                         a.get("floor", ""),
-                        a.get("room_group", ""),
+                        room_group,
                         _room_mapping_label(a),
                     ]
                 )
@@ -3876,24 +4013,12 @@ def export_exam_timetable_xlsx(run_id: int) -> Path:
         invig_per_day_data = (
             (room_qa or {}).get("invigilators_per_day", {}) if isinstance(room_qa, dict) else {}
         )
-        # Re-derive on the fly from the schedule too in case room_qa wasn't computed
+        # Re-derive on the fly from the schedule too in case room_qa wasn't
+        # computed: once per physical room, as the room QA counts them.
         if not invig_per_day_data:
-            tally: dict[str, dict[str, int]] = {}
-            for e in schedule:
-                if e.get("day") == "OVERFLOW":
-                    continue
-                day = e["day"]
-                day_t = tally.setdefault(day, {"M": 0, "F": 0, "total": 0})
-                for a in e.get("rooms", []) or []:
-                    if a.get("room_code") == "UNASSIGNED":
-                        continue
-                    invigs = _invigilators_needed(
-                        e["course_code"], int(a.get("student_count", 0) or 0)
-                    )
-                    g = a.get("gender", "M")
-                    day_t[g] = day_t.get(g, 0) + invigs
-                    day_t["total"] += invigs
-            invig_per_day_data = tally
+            invig_per_day_data = _invigilators_per_day(
+                _physical_exam_rooms((e, a) for e in schedule for a in e.get("rooms", []) or [])
+            )
 
         running_M = 0
         running_F = 0
@@ -3953,23 +4078,76 @@ def export_exam_timetable_xlsx(run_id: int) -> Path:
             (e for e in schedule if e.get("day") != "OVERFLOW"),
             key=lambda e: (e.get("slot_index", 999), e["course_code"]),
         )
-        for e in sorted_for_invig:
-            cc = e["course_code"]
-            prefix = _course_prefix(cc)
-            ctype = (
+
+        def _course_type(code: str) -> str:
+            prefix = _course_prefix(code)
+            return (
                 "External"
                 if prefix in _EXTERNAL_PREFIXES
                 else "Department"
                 if prefix in _DEPARTMENT_PREFIXES
                 else "Other (department rule)"
             )
+
+        # One row per physical room: linked courses sharing a room are staffed
+        # once, on the room's whole head-count, so this column adds up to the
+        # daily totals above. The row sits where the room's first course is.
+        def _physical(e: dict, a: dict) -> tuple:
+            return (e.get("slot_index", 999), a.get("room_code", ""), a.get("gender", ""))
+
+        in_room: dict[tuple, list[tuple[dict, dict]]] = defaultdict(list)
+        for e in sorted_for_invig:
+            for a in e.get("rooms", []) or []:
+                if a.get("room_code") != "UNASSIGNED":
+                    in_room[_physical(e, a)].append((e, a))
+        for e in sorted_for_invig:
+            cc = e["course_code"]
+            ctype = _course_type(cc)
             for a in e.get("rooms", []) or []:
                 if a.get("room_code") == "UNASSIGNED":
                     continue
-                stu = int(a.get("student_count", 0) or 0)
-                invigs = _invigilators_needed(cc, stu)
-                ws5.append(
-                    [
+                sharing = in_room[_physical(e, a)]
+                if len(sharing) > 1 and sharing[0][0] is not e:
+                    continue  # this shared room's row is its first course's
+                if len(sharing) > 1:
+                    # Each course's part of the room says whose it is: every
+                    # section, head-count, room group and mapping is prefixed
+                    # with its course, as the room holds two courses' sections.
+                    codes = [entry["course_code"] for entry, _room in sharing]
+                    stu = sum(int(room.get("student_count", 0) or 0) for _e, room in sharing)
+                    invigs = _room_invigilators_needed(codes, stu)
+                    ruling = _room_ruling_course(codes)
+                    row = [
+                        e["day"],
+                        e["period"],
+                        " + ".join(codes),
+                        f"{_course_type(ruling)} (shared room)",
+                        "; ".join(
+                            f"{entry['course_code']}: {_counted_section_label(room)}"
+                            for entry, room in sharing
+                        ),
+                        a.get("gender", ""),
+                        stu,
+                        a.get("room_code", ""),
+                        invigs,
+                        " + ".join(str(entry.get("course_name", "")) for entry, _r in sharing),
+                        "Yes"
+                        if any(entry["course_code"] in pinned_codes for entry, _r in sharing)
+                        else "No",
+                        "; ".join(
+                            f"{entry['course_code']}: {room['room_group']}"
+                            for entry, room in sharing
+                            if room.get("room_group")
+                        ),
+                        "; ".join(
+                            f"{entry['course_code']}: {_room_mapping_label(room)}"
+                            for entry, room in sharing
+                        ),
+                    ]
+                else:
+                    stu = int(a.get("student_count", 0) or 0)
+                    invigs = _invigilators_needed(cc, stu)
+                    row = [
                         e["day"],
                         e["period"],
                         cc,
@@ -3984,7 +4162,7 @@ def export_exam_timetable_xlsx(run_id: int) -> Path:
                         a.get("room_group", ""),
                         _room_mapping_label(a),
                     ]
-                )
+                ws5.append(row)
                 rr = ws5.max_row
                 for col in range(1, 14):
                     ws5.cell(row=rr, column=col).border = thin_border
