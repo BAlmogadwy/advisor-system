@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import re
+from html.parser import HTMLParser
 from io import BytesIO
 
 import pytest
@@ -424,7 +425,7 @@ def test_a_failed_audit_is_503_and_no_student_data_is_made(run, committee, monke
         assert not _names_a_student(response.content.decode())
 
 
-def test_each_settled_lookup_writes_one_row_naming_no_student(run, committee, monkeypatch):
+def test_each_settled_lookup_writes_one_row_naming_its_students_by_id(run, committee, monkeypatch):
     order: list[str] = []
     real_record, real_row = views.record_audit_event, rv.roster_row
     monkeypatch.setattr(
@@ -444,21 +445,47 @@ def test_each_settled_lookup_writes_one_row_naming_no_student(run, committee, mo
     entries = _audit_rows("exam_timetable.roster_lookup")
     assert len(entries) == 4 and len(_audit_rows()) == 4
     details = [json.loads(e.details_json) for e in entries]
-    ref = rv.audit_subject_ref
+    assert all(
+        set(d)
+        == {
+            "run_id",
+            "mode",
+            "search_kind",
+            "search_length",
+            "student_id",
+            "shown_student_ids",
+            "matches",
+            "lists_code_now",
+            "lists_checked_at",
+            "cached",
+        }
+        for d in details
+    )
+    shown = [[m["student_id"] for m in answer["matches"]] for answer in (search, named)]
+    # "Who viewed which student": the student asked for and each one shown, by
+    # plain ID; of the search, only its kind, its length and how many matched.
     assert [
-        (d["mode"], d["asked"], d["asked_length"], d["subject_ref"], d["shown_refs"], d["matches"])
+        (
+            d["mode"],
+            d["search_kind"],
+            d["search_length"],
+            d["student_id"],
+            d["shown_student_ids"],
+            d["matches"],
+        )
         for d in details
     ] == [
-        ("student", "student_id", 7, ref(OVERLOADED), [ref(OVERLOADED)], 1),
-        ("student", "student_id", 7, ref(4499999), [], 0),
-        ("search", "id_prefix", 4, None, [ref(m["student_id"]) for m in search["matches"]], 12),
-        ("search", "name", 8, None, [ref(m["student_id"]) for m in named["matches"]], 43),
+        ("student", "id", 7, OVERLOADED, [OVERLOADED], 1),
+        ("student", "id", 7, 4499999, [], 0),
+        ("search", "id_prefix", 4, None, shown[0], 12),
+        ("search", "name", 8, None, shown[1], 43),
     ]
-    # No student ID, name or search text in the log (phase-2 rule), nor in
-    # what the Audit Explorer shows and exports of it.
-    for entry in entries:
-        assert not _names_a_student(entry.details_json)
-        assert "4499999" not in entry.details_json and "4402" not in entry.details_json
+    # As the Audit Explorer shows and exports the row: plain IDs, readable
+    # without a tool; never the text typed or a name.
+    for entry, ids in zip(entries, ([OVERLOADED], [4499999], shown[0], shown[1]), strict=True):
+        assert {str(sid) for sid in ids} <= _tokens(entry.details_json)
+        assert not any(student_name(sid) in entry.details_json for sid in ALL_IDS)
+        assert "4402" not in _tokens(entry.details_json)
         assert "testname" not in entry.details_json.lower()
     assert validate_hash_chain()["ok"]
 
@@ -715,6 +742,52 @@ def test_the_page_is_arabic_only_when_arabic_is_asked_for(run, committee):
     for page in (english, arabic):
         assert 'dir="auto"' not in page
         assert 'aria-current="page"' in page
+
+
+class _PageCopy(HTMLParser):
+    """The words the page hands its script (``#examRosterCopy``), as it reads them."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.words: dict[str, str] = {}
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if dict(attrs).get("id") == "examRosterCopy":
+            self.words = {name[5:]: value or "" for name, value in attrs if name[:5] == "data-"}
+
+
+#: The navigator's Needs review headings By room, one then many: each names
+#: what it counts - sections with no room, students with no seat, online
+#: rooms. Arabic is label-first ("عدد الطلاب: 3"), so one form fits any count.
+REVIEW_HEADINGS = {
+    "en": {
+        "not-assigned-group": ("Not assigned · {n} section", "Not assigned · {n} sections"),
+        "no-seat-group": ("No seat · {n} student", "No seat · {n} students"),
+        "online-group": ("Online · {n} room", "Online · {n} rooms"),
+    },
+    "ar": {
+        "not-assigned-group": ("لم تُحدَّد لها قاعة · عدد الشعب: {n}",) * 2,
+        "no-seat-group": ("بلا مقعد · عدد الطلاب: {n}",) * 2,
+        "online-group": ("عن بُعد · عدد القاعات: {n}",) * 2,
+    },
+}
+
+
+@pytest.mark.parametrize("language", ["en", "ar"])
+def test_needs_review_headings_name_their_unit_in_the_language_asked_for(run, committee, language):
+    page = committee.get(
+        reverse(PAGE), {"run": run.pk}, HTTP_ACCEPT_LANGUAGE=language
+    ).content.decode()
+    # Forced, not the site's default: the page and its words are in this language.
+    assert f'<html lang="{language}"' in page
+    reader = _PageCopy()
+    reader.feed(page)
+    assert reader.words["locale"] == language
+    for key, (one, many) in REVIEW_HEADINGS[language].items():
+        assert (reader.words[f"{key}-one"], reader.words[key]) == (one, many), key
+    # Every other language's heading is absent: no English unit in Arabic.
+    other = REVIEW_HEADINGS["ar" if language == "en" else "en"]
+    assert not {form for pair in other.values() for form in pair} & set(reader.words.values())
 
 
 def test_the_committee_page_keeps_the_export_endpoints_it_reuses(run, committee, monkeypatch):

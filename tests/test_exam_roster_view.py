@@ -7,13 +7,11 @@ so every saved key the screen reads is exactly what production saves.
 
 from __future__ import annotations
 
-import io
 import json
 import re
 from dataclasses import dataclass
 
 import pytest
-from django.core.management import call_command
 
 from core.models import Student, StudentTermSection
 from core.services import exam_roster_view as rv
@@ -822,7 +820,23 @@ def test_search_only_finds_students_of_this_run(run):
     assert rv.lookup_sittings(view, 4401999) == []
 
 
-def test_lookup_audit_details_name_no_student_and_no_search_text(run):
+#: Every key a lookup's audit row holds, written out: adding one (the search
+#: text, a name) or dropping one must fail here.
+LOOKUP_AUDIT_KEYS = {
+    "run_id",
+    "mode",
+    "search_kind",
+    "search_length",
+    "student_id",
+    "shown_student_ids",
+    "matches",
+    "lists_code_now",
+    "lists_checked_at",
+    "cached",
+}
+
+
+def test_lookup_audit_details_name_students_by_plain_id_and_never_keep_the_search(run):
     view = _view(run)
     shown = [*FEMALE_CS2, *FEMALE_IS][: rv.SEARCH_LIMIT]
     request = rv.parse_lookup({"query": "4402"})
@@ -831,49 +845,51 @@ def test_lookup_audit_details_name_no_student_and_no_search_text(run):
     assert details == {
         "run_id": run.pk,
         "mode": "search",
-        "asked": "id_prefix",
-        "asked_length": 4,
-        "subject_ref": None,
-        "shown_refs": [rv.audit_subject_ref(sid) for sid in shown],
+        "search_kind": "id_prefix",
+        "search_length": 4,
+        "student_id": None,
+        "shown_student_ids": shown,
         "matches": 12,
         "lists_code_now": view.model.lists_code_now,
         "lists_checked_at": view.checked_at.isoformat(),
         "cached": True,
     }
+    # A name search: the students shown by ID, the words typed nowhere.
     name = rv.parse_lookup({"query": "  Student   TestName "})
     found = rv.search_students(view, name.query)
     details_name = rv.lookup_audit_details(view, name, *found, cached=False)
-    assert (details_name["asked"], details_name["asked_length"]) == ("name", 15)
+    assert set(details_name) == LOOKUP_AUDIT_KEYS
+    assert (details_name["mode"], details_name["search_kind"]) == ("search", "name")
+    assert (details_name["search_length"], details_name["student_id"]) == (15, None)
+    assert details_name["shown_student_ids"] == found[0] and len(found[0]) == rv.SEARCH_LIMIT
     assert details_name["matches"] == len(ALL_IDS)
+    # An exact lookup: the student asked for, and shown.
     student = rv.parse_lookup({"student_id": str(OVERLOADED)})
     details_id = rv.lookup_audit_details(view, student, [OVERLOADED], 1, cached=False)
-    assert (details_id["asked"], details_id["asked_length"]) == ("student_id", 7)
-    assert details_id["subject_ref"] == rv.audit_subject_ref(OVERLOADED)
-    assert details_id["shown_refs"] == [details_id["subject_ref"]]
+    assert set(details_id) == LOOKUP_AUDIT_KEYS
+    assert (details_id["mode"], details_id["search_kind"], details_id["search_length"]) == (
+        "student",
+        "id",
+        7,
+    )
+    assert (details_id["student_id"], details_id["shown_student_ids"]) == (OVERLOADED, [OVERLOADED])
+    assert details_id["matches"] == 1
+    # Asked for and not found: who was looked up is still on record; no one was shown.
     missing = rv.lookup_audit_details(view, rv.LookupRequest("student", 4499999), [], 0, False)
-    assert missing["subject_ref"] == rv.audit_subject_ref(4499999) and missing["shown_refs"] == []
-    text = json.dumps([details, details_name, details_id, missing]).lower()
-    for sid in (*ALL_IDS, 4499999):
-        assert str(sid) not in text
-    assert "testname" not in text and "4402" not in text
-
-
-def test_an_audit_reference_is_keyed_to_the_site_and_stable(settings):
-    ref = rv.audit_subject_ref(OVERLOADED)
-    assert re.fullmatch(r"sr-[0-9a-f]{24}", ref)
-    assert rv.audit_subject_ref(str(OVERLOADED)) == ref, "one student, one reference"
-    assert rv.audit_subject_ref(OVERLOADED + 1) != ref
-    settings.SECRET_KEY = "another-site-secret-for-this-test-only"
-    assert rv.audit_subject_ref(OVERLOADED) != ref, "keyed: no one without the secret can make it"
-
-
-def test_the_audit_reference_command_prints_each_ids_reference():
-    out = io.StringIO()
-    call_command("exam_roster_audit_ref", str(OVERLOADED), str(FEMALE_IS[0]), stdout=out)
-    assert out.getvalue().splitlines() == [
-        f"{OVERLOADED} {rv.audit_subject_ref(OVERLOADED)}",
-        f"{FEMALE_IS[0]} {rv.audit_subject_ref(FEMALE_IS[0])}",
-    ]
+    assert (missing["student_id"], missing["shown_student_ids"], missing["matches"]) == (
+        4499999,
+        [],
+        0,
+    )
+    # Plain JSON numbers a person (or the Audit Explorer) reads as they are.
+    text = json.dumps([details, details_name, details_id, missing])
+    tokens = _tokens(text)
+    assert {str(sid) for sid in [*shown, *found[0], OVERLOADED, 4499999]} <= tokens
+    # No search text: not the digits typed (only whole IDs), not a word of the name.
+    assert "4402" not in tokens
+    assert "testname" not in text.lower() and name.query not in text.lower()
+    # No name.
+    assert not any(student_name(sid) in text for sid in ALL_IDS)
 
 
 def test_scope_audit_details_hold_the_scope_and_counts_never_a_student(run):

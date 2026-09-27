@@ -105,7 +105,8 @@ member loses a seat), plus a second saved run whose roomed section the lists
 do not name; `roster-harness.cjs` serves those answers and fails a test on any
 other request. `exam-rosters.test.cjs` covers the Student lists page: the
 navigator by room (day tabs, period and group radios, Needs review, the
-unroomed section and online rooms last, roving focus) and by course (period
+unroomed section and online rooms last under headings that name their unit -
+sections, students, rooms - roving focus) and by course (period
 groups, program, clashes, review, sorts), the audited POST per room or course
 with focus kept in the navigator and Back returning to the previous room, the
 address holding only the run, view, period and room or exam, section tabs
@@ -117,9 +118,11 @@ once, students by one POST after typing settles, never for a course or room
 code, and an Enter pressed before the match arrives) and the student lookup
 that never touches the address or history, Esc and Back with focus returned to
 the navigator, the `/` shortcut and its switch, Refresh (one build in the
-header; the list, chips, filter and lookup kept), refusals, failed audits and
+header, a newer build's navigator redrawing the open room's header; the list,
+chips, filter and lookup kept), refusals, failed audits and
 lost sessions in place, the back/forward cache, the master-detail screen below
-800px, and Export opening the phase-1 dialog preset to the room, course,
+800px (a room opened by its address goes back to the navigator in place, focus
+on that room), and Export opening the phase-1 dialog preset to the room, course,
 section or period on screen.
 `exam-roster-drawer.test.cjs` covers the Timetable page: the view tabs, each
 card's "N students" link (the saved count, first badge whatever the review

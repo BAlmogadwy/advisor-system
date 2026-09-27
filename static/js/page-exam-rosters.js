@@ -422,6 +422,10 @@
     return scope?.kind === 'section' ? `${scope.exam}|${scope.section_key}|${scope.gender}` : null;
   }
 
+  // A group heading names what it counts - sections, students or rooms - so
+  // "Not assigned" and "No seat" beside each other never read as one unit.
+  const countedHeading = (key, n) => words.fragment(n === 1 ? `${key}-one` : key, { n: count(n) });
+
   // A heading's words are one inline run: a flex heading would drop the
   // spaces between its codes, counts and separators.
   function navGroup(heading, items, { danger = false } = {}) {
@@ -455,14 +459,14 @@
       nodes.push(el('p', { class: 'et-nav-empty' }, words.fragment('empty-rooms')));
     } else {
       if (regular.length) nodes.push(...navGroup(null, regular.map(roomItem)));
-      if (unassigned.length) nodes.push(...navGroup(words.fragment('not-assigned-group', { n: count(unassigned.length) }), unassigned.map(item => sectionItem(item, 'not_assigned')), { danger: true }));
+      if (unassigned.length) nodes.push(...navGroup(countedHeading('not-assigned-group', unassigned.length), unassigned.map(item => sectionItem(item, 'not_assigned')), { danger: true }));
       // Students with no seat are in no room's list: here, by section, each
       // opening its section's list at its No seat rows.
       if (noSeat.length) {
         const students = noSeat.reduce((sum, item) => sum + item.no_seat, 0);
-        nodes.push(...navGroup(words.fragment('no-seat-group', { n: count(students) }), noSeat.map(item => sectionItem(item, 'no_seat')), { danger: true }));
+        nodes.push(...navGroup(countedHeading('no-seat-group', students), noSeat.map(item => sectionItem(item, 'no_seat')), { danger: true }));
       }
-      if (online.length) nodes.push(...navGroup(words.fragment('online-group', { n: count(online.length) }), online.map(roomItem)));
+      if (online.length) nodes.push(...navGroup(countedHeading('online-group', online.length), online.map(roomItem)));
     }
     list.replaceChildren(...nodes);
     rovingItems(list);

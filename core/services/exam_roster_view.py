@@ -40,8 +40,6 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
-from django.utils.crypto import salted_hmac
-
 from core.models import ExamTimetableRun
 from core.services.exam_department_export import day_weekday
 from core.services.exam_rosters import (
@@ -92,12 +90,6 @@ SEARCH_MIN_LETTERS = 3
 SEARCH_MIN_WORD_LETTERS = 2
 SEARCH_MAX_LENGTH = 64
 STUDENT_ID_MAX_DIGITS = 12
-
-#: Audit rows never hold a student ID, a name or search text (phase-2 rule):
-#: a lookup names the student asked for, and those shown, by this keyed
-#: reference instead (``audit_subject_ref``).
-AUDIT_SUBJECT_SALT = "core.exam_roster_view.audit_subject"
-AUDIT_SUBJECT_PREFIX = "sr-"
 
 SEATED = frozenset({BASIS_WHOLE, BASIS_SPLIT})
 CHANGE_MARKERS = {CHANGED: "changed", NEW: "new"}
@@ -1010,43 +1002,35 @@ def search_match(view: RosterView, student_id: int) -> dict[str, Any]:
     }
 
 
-def audit_subject_ref(student_id: int) -> str:
-    """The keyed reference an audit row names a student by, never the ID itself.
-
-    HMAC-SHA-256 under the site's secret (the key of the audit hash chain):
-    the row names no one to whoever reads or exports the log, yet an auditor
-    can still answer "who looked up student X" by computing X's reference
-    (``manage.py exam_roster_audit_ref X``) and searching for it.
-    """
-    digest = salted_hmac(AUDIT_SUBJECT_SALT, str(int(student_id)), algorithm="sha256")
-    return f"{AUDIT_SUBJECT_PREFIX}{digest.hexdigest()[:24]}"
-
-
 def lookup_audit_details(
     view: RosterView, request: LookupRequest, matched: Sequence[int], total: int, cached: bool
 ) -> dict[str, Any]:
-    """A settled lookup: the kind of ask, its length, who was asked for and shown.
+    """A settled lookup: which students were asked for and shown, never the search text.
 
-    Never a student ID, a name or the search text (phase-2 rule; phase 1's
-    audit rows hold "options and counts, never a student"): the student asked
-    for and each student shown are keyed references (``audit_subject_ref``).
+    The access audit answers "who viewed which student", so it names them by
+    student ID, plainly (owner decision, 2026-09-27): the student an exact
+    lookup asked for (found or not) and every student the answer shows. A
+    plain ID reads without a tool and survives a change of the site's secret,
+    which a keyed reference would not. What was typed is never kept, only its
+    kind (an exact ``id``, an ``id_prefix`` or a ``name``), its length and how
+    many students matched. No name is recorded.
     """
     model = view.model
     if request.mode == "student":
-        asked, length = "student_id", len(str(request.student_id))
-        subject: str | None = audit_subject_ref(request.student_id)
+        kind, length = "id", len(str(request.student_id))
+        asked_for: int | None = request.student_id
     else:
         compact = request.query.replace(" ", "")
-        asked = "id_prefix" if _DIGITS.fullmatch(compact) else "name"
+        kind = "id_prefix" if _DIGITS.fullmatch(compact) else "name"
         length = len(compact)
-        subject = None
+        asked_for = None
     return {
         "run_id": model.saved.run_id,
         "mode": request.mode,
-        "asked": asked,
-        "asked_length": length,
-        "subject_ref": subject,
-        "shown_refs": [audit_subject_ref(sid) for sid in matched],
+        "search_kind": kind,
+        "search_length": length,
+        "student_id": asked_for,
+        "shown_student_ids": [int(sid) for sid in matched],
         "matches": total,
         "lists_code_now": model.lists_code_now,
         "lists_checked_at": view.checked_at.isoformat(),

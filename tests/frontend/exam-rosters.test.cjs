@@ -84,7 +84,7 @@ test('the page opens on the first period with its rooms, names its run and check
   // The timetable could not room MATH101's student with no cohort: that
   // section waits under its own danger heading, last.
   const headings = [...ui.$('examRostersRooms').querySelectorAll('.et-nav-heading')];
-  assert.deepEqual(headings.map(node => ui.text(node)), [say('Not assigned (1)', 'لم تُحدَّد لها قاعة: 1')]);
+  assert.deepEqual(headings.map(node => ui.text(node)), [say('Not assigned · 1 section', 'لم تُحدَّد لها قاعة · عدد الشعب: 1')]);
   assert.ok(headings[0].classList.contains('is-danger'));
   assert.equal(ui.text(ui.$('examRostersCheck')), say('· ✓ Lists match the saved timetable', '· ✓ القوائم مطابقة للجدول المحفوظ'));
   assert.match(ui.text('examRostersChecked'), say(/^Lists checked \d\d:\d\d:\d\d$/, /^وقت مطابقة القوائم: \d\d:\d\d:\d\d$/));
@@ -473,7 +473,8 @@ test('By room lists students with no seat under their period, never in a room; e
     assert.equal(/No seat|بلا مقعد/.test(ui.text(item)), false, item.dataset.room);
   }
   const headings = [...ui.$('examRostersRooms').querySelectorAll('.et-nav-heading')].map(node => ui.text(node));
-  assert.deepEqual(headings, [say('Not assigned (1)', 'لم تُحدَّد لها قاعة: 1'), say('No seat (3)', 'بلا مقعد: 3')]);
+  // Each heading names its unit: one section is not roomed; three students have no seat.
+  assert.deepEqual(headings, [say('Not assigned · 1 section', 'لم تُحدَّد لها قاعة · عدد الشعب: 1'), say('No seat · 3 students', 'بلا مقعد · عدد الطلاب: 3')]);
   const noSeat = ui.rooms().filter(item => item.dataset.from === 'no_seat');
   assert.deepEqual(noSeat.map(item => [ui.text(item.querySelector('.et-nav-code')), ui.text(item.querySelector('.et-nav-figure')), ui.text(item.querySelector('.et-nav-detail'))]), [
     ['MATH101 M1', '1', say('No seat 1 · changed', 'بلا مقعد: 1 · متغيرة')],
@@ -1021,6 +1022,29 @@ test('below 800px the navigator comes first; a room pushes the pane with focus o
   assert.equal(ui.$('examRostersPaneHead').hidden, true);
 });
 
+test('a phone opened on a room by its address: ‹ Rooms stays on the page and puts focus on that room', async t => {
+  const ui = await rosters(t, { narrow: true, url: `${PAGE_URL}&view=room&slot=0&room=M-B` });
+  const layout = ui.$('examRostersLayout');
+  assert.equal(layout.dataset.screen, 'pane');
+  assert.equal(ui.text('examRostersPaneTitle'), say('Room M-B', 'القاعة M-B'));
+  // Nothing of this page to go back to: Back would leave it.
+  assert.equal(ui.window.history.state.pushed, false);
+  const length = ui.window.history.length;
+  const back = ui.$('examRostersScreenBack');
+  back.focus();
+  assert.equal(ui.document.activeElement, back);
+  back.click();
+  await idle();
+  assert.equal(ui.window.history.length, length, 'no Back, no new entry');
+  assert.equal(ui.window.location.pathname, '/exam-timetable/rosters/', 'still on Student lists');
+  assert.equal(layout.dataset.screen, 'nav');
+  assert.equal(ui.address().searchParams.has('room'), false);
+  assert.equal(ui.$('examRostersPaneHead').hidden, true);
+  // Focus goes to the room whose list was just left, never stays on a gone control.
+  assert.equal(ui.document.activeElement, room(ui, 'M-B'));
+  assert.equal(room(ui, 'M-B').tabIndex, 0);
+});
+
 test('the Arabic page is right to left with codes isolated left to right, and never guesses a direction', { skip: !AR }, async t => {
   const ui = await rosters(t);
   assert.equal(ui.document.documentElement.dir, 'rtl');
@@ -1068,7 +1092,7 @@ test('the unroomed section opens as its own list; an online room waits last unde
   server.queue('index', json(index));
   const ui = await rosters(t, { server });
   const headings = [...ui.$('examRostersRooms').querySelectorAll('.et-nav-heading')].map(node => ui.text(node));
-  assert.deepEqual(headings, [say('Not assigned (1)', 'لم تُحدَّد لها قاعة: 1'), say('Online (1)', 'عن بُعد: 1')]);
+  assert.deepEqual(headings, [say('Not assigned · 1 section', 'لم تُحدَّد لها قاعة · عدد الشعب: 1'), say('Online · 1 room', 'عن بُعد · عدد القاعات: 1')]);
   const items = ui.rooms();
   assert.equal(items.at(-1).dataset.room, 'M-A');
   assert.equal(items.filter(item => item.dataset.room === 'M-A').length, 1, 'an online room is listed once, under Online');
@@ -1081,6 +1105,36 @@ test('the unroomed section opens as its own list; an online room waits last unde
   assert.equal(ui.text('examRostersPaneTitle'), say('MATH101 · CALCULUS I · Section not recorded · Not recorded', 'MATH101 · CALCULUS I · الشعبة غير مسجلة · غير مسجل'));
   assert.equal(ui.rows().length, 1);
   assert.equal(ui.rooms().find(item => item.dataset.sectionGroup).getAttribute('aria-current'), 'true');
+});
+
+test('each Needs review heading names what it counts: sections not roomed, students without a seat, online rooms', async t => {
+  // The changed lists, reshaped as the contract allows: three sections the
+  // timetable could not room, one student without a seat, two online rooms.
+  // Every count differs, so no heading can pass with another one's count.
+  const index = H.clone(fixture.changed.index);
+  const unroomed = index.not_assigned.find(item => item.slot_index === 0);
+  index.not_assigned.push(
+    { ...H.clone(unroomed), section_key: 'unmapped:U:ambiguous', section_status: 'ambiguous' },
+    { ...H.clone(unroomed), exam: 'IS201' },
+  );
+  index.no_seat = index.no_seat.filter(item => item.section === 'M1');
+  assert.deepEqual(index.no_seat.map(item => item.no_seat), [1]);
+  index.rooms.filter(item => item.slot_index === 0 && ['M-A', 'M-B'].includes(item.room_code)).forEach(item => { item.online = true; });
+  const server = rosterServer({ changed: true });
+  server.queue('index', json(index));
+  const ui = await rosters(t, { server });
+  // The page was asked for in this language, never left to the default.
+  assert.equal(ui.document.documentElement.lang, say('en', 'ar'));
+  const headings = [...ui.$('examRostersRooms').querySelectorAll('.et-nav-heading')].map(node => ui.text(node));
+  assert.deepEqual(headings, [
+    say('Not assigned · 3 sections', 'لم تُحدَّد لها قاعة · عدد الشعب: 3'),
+    say('No seat · 1 student', 'بلا مقعد · عدد الطلاب: 1'),
+    say('Online · 2 rooms', 'عن بُعد · عدد القاعات: 2'),
+  ]);
+  // Each count is of the unit it names, under its own heading.
+  assert.equal(ui.rooms().filter(item => item.dataset.from === 'not_assigned').length, 3);
+  assert.equal(ui.rooms().filter(item => item.dataset.from === 'no_seat').length, 1);
+  assert.deepEqual(ui.rooms().slice(-2).map(item => item.dataset.room), ['M-A', 'M-B']);
 });
 
 test('a section gone since the save still says so, with its saved count', async t => {
@@ -1325,6 +1379,37 @@ test('a list from a newer build than the navigator names that one build in the h
   assert.equal(ui.text('examRostersChecked'), say(`Lists checked ${clock(changed.checked_at)}`, `وقت مطابقة القوائم: ${clock(changed.checked_at)}`));
   assert.equal(ui.$('examRostersCheck').querySelector('[data-check]').dataset.check, 'changed');
   assert.equal(ui.server.requests('index').length, 2, 'an older answer asks nothing');
+});
+
+test('a room from a newer build takes its header facts from the navigator of that build once it arrives', async t => {
+  const server = rosterServer();
+  const scope = { kind: 'room', slot_index: 0, room_code: 'M-B' };
+  const list = H.rosterOf(scope, { changed: true });
+  assert.ok(Date.parse(list.checked_at) > Date.parse(fixture.index.checked_at), 'the list is from a later build');
+  // The navigator of that same build: M-B holds a different count of its first section now.
+  const later = H.clone(fixture.changed.index);
+  assert.equal(later.checked_at, list.checked_at);
+  const facts = later.rooms.find(item => item.slot_index === 0 && item.room_code === 'M-B');
+  const [first] = facts.sections;
+  const before = first.now;
+  first.now = before + 1;
+  const ui = await rosters(t, { server });
+  const synced = hold();
+  server.queue('roster', json(list));
+  server.queue('index', synced.answer);
+  await chooseRoom(ui, 'M-B');
+  const inRoom = n => say(`In this room: ${first.exam} ${first.section} (${n})`, `في هذه القاعة: ${first.exam} ${first.section} (${n})`);
+  const meta = () => ui.text('examRostersPaneMeta').split(' · ').at(-1);
+  // Until the navigator catches up, the header says what the page knows.
+  assert.deepEqual(ui.server.requests('index').map(call => call.query), ['', ''], 'the navigator is asked again');
+  assert.equal(meta(), inRoom(before));
+  synced.release(json(later));
+  await idle();
+  // The room's header now agrees with the navigator it came with.
+  assert.equal(meta(), inRoom(before + 1));
+  assert.equal(ui.text('examRostersPaneTitle'), say('Room M-B', 'القاعة M-B'));
+  assert.equal(ui.server.requests('roster').length, 1, 'the list is not asked for again');
+  assert.equal(ui.rows().length, list.rows.length);
 });
 
 test('Refresh keeps the list as it was left: section tab, flag chip, filter and sort', async t => {
