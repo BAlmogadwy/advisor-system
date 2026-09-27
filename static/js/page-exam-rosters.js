@@ -905,8 +905,9 @@
     const summary = el('p', { class: 'et-roster-count' }, words.fragment('lookup-summary', {
       run: ltr(RUN_ID), n: count(rows.length), clash: count(answer.counts.clash), same_day: count(answer.counts.same_day),
     }));
-    const head = el('tr', { role: 'row' }, ...['col-day', 'col-period', 'col-course', 'col-section', 'col-room', 'col-flags', 'col-open']
-      .map(key => el('th', { scope: 'col', role: 'columnheader', class: ['col-day', 'col-period', 'col-open'].includes(key) ? `et-${key}` : null }, words.raw(key))));
+    // Each header carries its column's cell class: the table's fixed widths are set on them.
+    const head = el('tr', { role: 'row' }, ...[['col-day', 'day'], ['col-period', 'period'], ['col-course', 'name'], ['col-section', 'section'], ['col-room', 'room'], ['col-flags', 'flags'], ['col-open', 'open']]
+      .map(([key, column]) => el('th', { scope: 'col', role: 'columnheader', class: `et-col-${column}` }, words.raw(key))));
     const table = el('table', { class: 'et-roster-table et-lookup-table', role: 'table' },
       el('caption', { class: 'visually-hidden' }, $('examRostersPaneTitle').textContent),
       el('thead', { role: 'rowgroup' }, head),

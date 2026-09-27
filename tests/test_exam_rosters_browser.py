@@ -7,7 +7,10 @@ list, a student found by ID and never put in the address, the course drawer
 from a card with focus kept as a browser keeps it, the same-day card and its
 exam-pair detail beside those card links, the Export dialog preset
 to the room on screen and the file it downloads, and the Arabic page and
-drawer at phone width. Nothing leaves the machine (tests/browser_isolation.py).
+drawer at phone width. The lists, the lookup and the drawer are laid out at
+every width in the design's font and in a wide one (Verdana, DejaVu Sans), so
+a layout that only fits the fonts of the machine running it fails anywhere.
+Nothing leaves the machine (tests/browser_isolation.py).
 """
 
 from __future__ import annotations
@@ -41,27 +44,111 @@ sync_playwright = playwright_api.sync_playwright
 LOOKUP_ID = 4402003
 # The drawer has finished sliding in (its 180 ms transition).
 SETTLED = "() => document.getElementById('examRosterDrawer').getAnimations().length === 0"
-# Every box under the pane that pokes out of its content box (into its
-# padding or beyond), and how far the page and its main column scroll
-# sideways. Hidden-for-screen-readers boxes (1px) and empty ones are not layout.
-OUTSIDE_THE_PANE = """() => {
-  const element = document.getElementById('examRostersPane');
-  const pane = element.getBoundingClientRect();
+# A wide font over the whole page, as a browser without the design's fonts
+# falls back to one: Verdana here, DejaVu Sans on a Linux runner (where CI
+# first found a table poking out of the pane). `:not(#_)` outranks the design's
+# own `!important` font on buttons. Added before any script runs, on every page
+# the context opens.
+WIDE_FONT = """(() => {
+  const add = () => {
+    const style = document.createElement('style');
+    style.textContent = ":root, :root *:not(#_) { font-family: Verdana, 'DejaVu Sans', sans-serif !important; }";
+    document.head.append(style);
+  };
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', add, { once: true });
+  else add();
+})()"""
+# How wide ten digits are at 100px in the list's font: 636 in Verdana and
+# DejaVu Sans, 556-572 in Arial, Segoe UI, Liberation Sans or Noto Sans.
+DIGITS_WIDTH = """() => {
+  const probe = document.createElement('span');
+  probe.style.cssText = 'position:absolute;visibility:hidden;font-size:100px;font-weight:400;white-space:nowrap';
+  probe.textContent = '0123456789';
+  document.getElementById('main-content').append(probe);
+  const width = probe.getBoundingClientRect().width;
+  probe.remove();
+  return width;
+}"""
+# The list or lookup inside a container (the Student lists pane or the
+# drawer's body): every box under it that pokes out of its content box (into
+# its padding or beyond); every box in its table that spills out of its own
+# cell (over a neighbour, where nothing leaves the pane); every code, ID or
+# time in its table broken over two lines; the form the table takes (full,
+# compact, table or rows), and the name column's share of it; and how far the
+# container, the page and its main column scroll sideways.
+# Hidden-for-screen-readers boxes (1px) and empty ones are not layout.
+LAYOUT = """(id) => {
+  const element = document.getElementById(id);
+  const box = element.getBoundingClientRect();
   const style = getComputedStyle(element);
-  const left = pane.left + parseFloat(style.borderLeftWidth) + parseFloat(style.paddingLeft);
-  const right = pane.right - parseFloat(style.borderRightWidth) - parseFloat(style.paddingRight);
+  const left = box.left + parseFloat(style.borderLeftWidth) + parseFloat(style.paddingLeft);
+  const right = box.right - parseFloat(style.borderRightWidth) - parseFloat(style.paddingRight);
   const main = document.getElementById('main-content');
-  const outside = [...element.querySelectorAll('*')]
-    .filter(node => { const r = node.getBoundingClientRect(); return r.width > 1 && r.height > 1; })
+  const shown = node => { const r = node.getBoundingClientRect(); return r.width > 1 && r.height > 1; };
+  const outside = [...element.querySelectorAll('*')].filter(shown)
     .filter(node => { const r = node.getBoundingClientRect(); return r.left < left - 1 || r.right > right + 1; })
     .map(node => node.id || node.className || node.tagName);
+  // Boxes and runs of text alike: a word too long for a box that keeps its
+  // width runs out of the box, not the box out of its cell.
+  const inCell = node => {
+    const cell = node.parentElement.closest('th, td');
+    const head = cell && cell.closest('thead');
+    return cell && shown(cell) && !(head && !shown(head)) && shown(node.parentElement) ? cell : null;
+  };
+  const spills = (rects, cell) => {
+    const c = cell.getBoundingClientRect();
+    return [...rects].some(r => r.width > 0 && (r.left < c.left - 1 || r.right > c.right + 1));
+  };
+  const texts = [];
+  element.querySelectorAll('table').forEach(table => {
+    const walker = document.createTreeWalker(table, NodeFilter.SHOW_TEXT);
+    while (walker.nextNode()) if (walker.currentNode.textContent.trim()) texts.push(walker.currentNode);
+  });
+  const spill = [
+    ...[...element.querySelectorAll('table :is(th, td) *')].filter(shown)
+      .filter(node => inCell(node) && spills([node.getBoundingClientRect()], inCell(node))),
+    ...texts.filter(text => {
+      const cell = inCell(text);
+      if (!cell) return false;
+      const range = document.createRange();
+      range.selectNodeContents(text);
+      return spills(range.getClientRects(), cell);
+    }),
+  ].map(node => `${inCell(node).className}: ${node.className || node.nodeName} ${node.textContent.trim().slice(0, 24)}`);
+  const broken = [...element.querySelectorAll('table bdi[dir=ltr]')]
+    .filter(node => node.textContent.trim() && shown(node))
+    .filter(node => { const range = document.createRange(); range.selectNodeContents(node); return range.getClientRects().length > 1; })
+    .map(node => node.textContent);
+  const table = [...element.querySelectorAll('table')].find(shown);
+  const name = table && table.querySelector('thead th.et-col-name');
+  const program = table && table.querySelector('thead th.et-col-program');
+  // List rows keep their header row for screen readers, 1px and clipped.
+  const headed = Boolean(table && shown(table.querySelector('thead')));
   return {
     outside,
-    main: main.scrollWidth - main.clientWidth,
+    spill,
+    broken,
+    form: !table ? null : !headed ? 'rows' : !program ? 'table' : shown(program) ? 'full' : 'compact',
+    name: headed ? name.getBoundingClientRect().width / table.getBoundingClientRect().width : null,
+    scroll: element.scrollWidth - element.clientWidth,
+    main: main ? main.scrollWidth - main.clientWidth : 0,
     page: document.documentElement.scrollWidth - window.innerWidth,
-    paneRight: pane.right,
+    right: box.right,
     viewport: window.innerWidth,
   };
+}"""
+# Every flag names the timetable's longest kind of code, "PHYS103 (1)".
+LONG_CODES = """(id) => document.getElementById(id).querySelectorAll('.et-flag bdi[dir=ltr]')
+  .forEach(node => { node.textContent = 'PHYS103 (1)'; })"""
+# Letters spread far wider than any real font's, in the container's tables
+# only; `false` takes the spread away again.
+SPREAD_LETTERS = """([id, on]) => {
+  document.getElementById('spreadLetters')?.remove();
+  if (!on) return;
+  const style = document.createElement('style');
+  style.id = 'spreadLetters';
+  style.textContent = `#${id} table, #${id} table * { letter-spacing: .5em !important; }`;
+  document.head.append(style);
 }"""
 # A focused element that is on screen, top to bottom.
 FOCUSED_IN_VIEW = """() => {
@@ -92,7 +179,12 @@ class ExamRostersBrowserTests(StaticLiveServerTestCase):
         self.sittings = all_sittings(build_roster_model(self.run))
 
     def _page(
-        self, language: str, path: str, viewport: dict[str, int] | None = None, touch: bool = False
+        self,
+        language: str,
+        path: str,
+        viewport: dict[str, int] | None = None,
+        touch: bool = False,
+        wide_font: bool = False,
     ):
         ensure_role_groups()
         user = get_user_model().objects.create_user(
@@ -124,6 +216,8 @@ class ExamRostersBrowserTests(StaticLiveServerTestCase):
             ]
         )
         self.addCleanup(context.close)
+        if wide_font:
+            context.add_init_script(WIDE_FONT)
         page = context.new_page()
         errors: list[str] = []
         page.on("pageerror", lambda error: errors.append(str(error)))
@@ -343,7 +437,7 @@ class ExamRostersBrowserTests(StaticLiveServerTestCase):
         )
         self.assertTrue(lines and all(count == 1 for count in lines), lines)
 
-    # ── Layout at laptop and tablet widths, both languages ─────
+    # ── Layout at every width, both languages, any font ────────
 
     def _find_student(self, page) -> None:
         find = page.locator("#examRostersFind")
@@ -355,51 +449,91 @@ class ExamRostersBrowserTests(StaticLiveServerTestCase):
         find.press("Enter")
         expect(page.locator("#examRostersLookup tbody tr").first).to_be_visible()
 
-    def _assert_inside_the_pane(self, page, what: str) -> None:
-        box = page.evaluate(OUTSIDE_THE_PANE)
-        self.assertEqual(box["outside"], [], what)
-        self.assertLessEqual(box["main"], 1, what)
-        self.assertLessEqual(box["page"], 0, what)
-        self.assertLessEqual(box["paneRight"], box["viewport"] + 1, what)
-        # A flag naming a long course code (the timetable's "PHYS103 (1)")
-        # still fits: its words wrap, its code stays whole.
-        page.evaluate(
-            """() => document.querySelectorAll('#examRostersPane .et-flag bdi[dir=ltr]')
-                .forEach(node => { node.textContent = 'PHYS103 (1)'; })"""
-        )
-        box = page.evaluate(OUTSIDE_THE_PANE)
-        self.assertEqual(box["outside"], [], f"{what}, long codes")
-        self.assertLessEqual(box["main"], 1, f"{what}, long codes")
+    def _assert_fits(self, page, container: str, form: str, what: str, pane: bool = True) -> None:
+        """The list (or lookup) in `container` takes `form` and never leaves it.
 
-    def test_lists_and_a_lookup_stay_inside_the_pane_at_laptop_and_tablet_widths(self) -> None:
+        Nothing pokes out of the container's content box; no code, ID or time
+        breaks over two lines; nothing spills out of its cell over a
+        neighbour's; the name keeps a fifth of a table at least; the
+        container never scrolls sideways (nor the page or its main column on
+        the Student lists page). Then again with every flag naming a long code
+        (the timetable's "PHYS103 (1)"): its words wrap, its code stays whole.
+        Last, with letters spread far wider than any font's: codes may break
+        now, but nothing leaves the container still.
+        """
+        for step in (what, f"{what}, long codes"):
+            if step != what:
+                page.evaluate(LONG_CODES, container)
+            box = page.evaluate(LAYOUT, container)
+            self.assertEqual(box["form"], form, step)
+            self.assertEqual(box["outside"], [], step)
+            self.assertEqual(box["spill"], [], step)
+            self.assertEqual(box["broken"], [], step)
+            if box["name"] is not None:
+                self.assertGreaterEqual(box["name"], 0.2, step)
+            self.assertLessEqual(box["scroll"], 1, step)
+            self.assertLessEqual(box["right"], box["viewport"] + 1, step)
+            if pane:
+                self.assertLessEqual(box["main"], 1, step)
+                self.assertLessEqual(box["page"], 0, step)
+        step = f"{what}, letters spread"
+        page.evaluate(SPREAD_LETTERS, [container, True])
+        box = page.evaluate(LAYOUT, container)
+        page.evaluate(SPREAD_LETTERS, [container, False])
+        self.assertEqual(box["form"], form, step)
+        self.assertEqual(box["outside"], [], step)
+        self.assertEqual(box["spill"], [], step)
+        self.assertLessEqual(box["scroll"], 1, step)
+        if pane:
+            self.assertLessEqual(box["main"], 1, step)
+            self.assertLessEqual(box["page"], 0, step)
+
+    def _assert_font(self, page, wide_font: bool, what: str) -> None:
+        """A wide-font run really lays out in a wide font, not a narrow fallback."""
+        if wide_font:
+            self.assertGreaterEqual(page.evaluate(DIGITS_WIDTH), 620, what)
+
+    def _lists_and_a_lookup_stay_inside_the_pane(self, wide_font: bool) -> None:
         base = f"{self.live_server_url}/exam-timetable/rosters/?run={self.run.pk}"
         math = sum(1 for s in self.sittings if s.exam.code == "MATH101")
+        font = "wide font" if wide_font else "design font"
+        # The pane's width at each: 933px (full), 873px (compact: the full form
+        # starts at 900px), 614px (compact), 441px (rows), and 621px once the
+        # navigator and the pane take turns (compact).
+        forms = {1600: "full", 1540: "compact", 1280: "compact", 1024: "rows", 700: "compact"}
         for language in ("en", "ar"):
-            page = self._page(language, f"/exam-timetable/rosters/?run={self.run.pk}")
-            for width, height in ((1600, 900), (1280, 900), (1024, 768), (700, 900)):
-                what = f"{language} {width}px"
+            page = self._page(
+                language, f"/exam-timetable/rosters/?run={self.run.pk}", wide_font=wide_font
+            )
+            self._assert_font(page, wide_font, f"{language} {font}")
+            for width, height in ((1600, 900), (1540, 900), (1280, 900), (1024, 768), (700, 900)):
+                what = f"{language} {font} {width}px"
                 page.set_viewport_size({"width": width, "height": height})
                 page.goto(f"{base}&view=room&slot=0&room=M-B")
                 expect(page.locator("#examRostersRoster tr.et-roster-row")).to_have_count(
                     len(self._room_rows("M-B"))
                 )
-                self._assert_inside_the_pane(page, f"{what} room")
+                self._assert_fits(page, "examRostersPane", forms[width], f"{what} room")
                 page.goto(f"{base}&view=course&course=MATH101")
                 expect(page.locator("#examRostersRoster tr.et-roster-row")).to_have_count(math)
-                self._assert_inside_the_pane(page, f"{what} course")
-                if width == 1280:
-                    # The pane is under 860px: the compact list, Program under the name.
+                self._assert_fits(page, "examRostersPane", forms[width], f"{what} course")
+                if forms[width] == "compact":
+                    # Program moves under the name: its column is empty, 0px
+                    # wide and hidden (from screen readers too).
                     cells = page.evaluate(
-                        """() => ({
-                          program: getComputedStyle(document.querySelector('#examRostersRoster td.et-col-program')).display,
-                          sub: getComputedStyle(document.querySelector('#examRostersRoster .et-roster-sub')).display,
-                          head: document.querySelector('#examRostersRoster thead').getBoundingClientRect().height > 1,
-                        })"""
+                        """() => {
+                          const program = document.querySelector('#examRostersRoster td.et-col-program');
+                          return {
+                            program: [program.getBoundingClientRect().width, getComputedStyle(program).visibility],
+                            sub: getComputedStyle(document.querySelector('#examRostersRoster .et-roster-sub')).display,
+                          };
+                        }"""
                     )
-                    self.assertEqual(cells, {"program": "none", "sub": "block", "head": True}, what)
+                    self.assertEqual(cells, {"program": [0, "hidden"], "sub": "block"}, what)
                 self._find_student(page)
                 # A table while the pane has room for one; else a card per exam
                 # whose line under the course says when, section and room once.
+                table = width == 1600
                 shown = page.evaluate(
                     """() => {
                       const row = document.querySelector('#examRostersLookup tbody tr');
@@ -407,9 +541,10 @@ class ExamRostersBrowserTests(StaticLiveServerTestCase):
                       return [['.et-col-day', '.et-col-period', '.et-col-section', '.et-col-room'].map(shown), shown('.et-lookup-sub')];
                     }"""
                 )
-                table = width == 1600
                 self.assertEqual(shown, [[table] * 4, not table], what)
-                self._assert_inside_the_pane(page, f"{what} lookup")
+                self._assert_fits(
+                    page, "examRostersPane", "table" if table else "rows", f"{what} lookup"
+                )
                 self.assertGreater(page.locator("#examRostersLookup [data-open-course]").count(), 0)
                 # One way back while the lookup is open; no line starts with a stray "·".
                 expect(page.locator("#examRostersScreenBack")).to_be_hidden()
@@ -419,6 +554,42 @@ class ExamRostersBrowserTests(StaticLiveServerTestCase):
                 )
                 self.assertTrue(lines, what)
                 self.assertFalse([line for line in lines if line.startswith("·")], what)
+
+    def test_lists_and_a_lookup_stay_inside_the_pane_at_laptop_and_tablet_widths(self) -> None:
+        self._lists_and_a_lookup_stay_inside_the_pane(wide_font=False)
+
+    def test_lists_and_a_lookup_stay_inside_the_pane_in_a_wide_font(self) -> None:
+        """What a browser without the design's fonts shows (CI's Linux runner did)."""
+        self._lists_and_a_lookup_stay_inside_the_pane(wide_font=True)
+
+    def test_the_drawer_list_stays_inside_the_drawer_in_either_font(self) -> None:
+        math = sum(1 for s in self.sittings if s.exam.code == "MATH101")
+        # The drawer's body at each: 752px and 652px (compact), 343px (rows).
+        forms = {1280: "compact", 700: "compact", 375: "rows"}
+        for language in ("en", "ar"):
+            for wide_font in (False, True):
+                font = "wide font" if wide_font else "design font"
+                page = self._page(
+                    language,
+                    "/exam-timetable/",
+                    viewport={"width": 1280, "height": 900},
+                    wide_font=wide_font,
+                )
+                self._assert_font(page, wide_font, f"{language} {font}")
+                page.locator("#examHistorySummary").click()
+                page.locator("#historyList .et-run-info").first.click()
+                link = page.locator('#schedGrid .et-course[data-course="MATH101"] .et-roster-link')
+                link.click()
+                expect(page.locator("#examRosterDrawerBody tr.et-roster-row")).to_have_count(math)
+                page.wait_for_function(SETTLED)
+                for width, form in forms.items():
+                    page.set_viewport_size({"width": width, "height": 900})
+                    what = f"drawer {language} {font} {width}px"
+                    self._assert_fits(page, "examRosterDrawerBody", form, what, pane=False)
+                    # The drawer itself stays on screen.
+                    box = page.locator("#examRosterDrawer").bounding_box()
+                    self.assertGreaterEqual(round(box["x"]), 0, what)
+                    self.assertLessEqual(round(box["x"] + box["width"]), width, what)
 
     def test_the_day_grid_fits_the_navigator_for_a_five_or_six_day_week(self) -> None:
         weeks = [

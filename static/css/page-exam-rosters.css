@@ -101,43 +101,55 @@ main.exam-builder-page .et-roster-filters .form-select { width: auto; min-height
 main.exam-builder-page .et-roster-count { margin: 0 0 6px; color: var(--et-muted); font-size: .75rem; font-variant-numeric: tabular-nums; }
 main.exam-builder-page :is(.et-section-tab, .et-flag-chip, .et-sort):focus-visible { outline: 2px solid var(--et-focus); outline-offset: 2px; }
 
-main.exam-builder-page .et-roster-table { width: 100%; margin: 0; border-collapse: separate; border-spacing: 0; font-size: .8125rem; }
-main.exam-builder-page .et-roster-table thead th { position: sticky; top: 0; z-index: 2; padding: 6px 10px; border-bottom: 1px solid var(--et-field-border); background: var(--et-subtle); color: var(--et-muted); font-size: .75rem; font-weight: 600; text-align: start; white-space: nowrap; }
+/* Fixed columns that always add up to the pane: no font, however wide, can
+   push the table past its edge. Each form below starts where its columns
+   hold their words and codes in a wide font (Verdana, DejaVu Sans) too; a
+   wider one wraps inside its cells, never out of the pane. */
+main.exam-builder-page .et-roster-table { width: 100%; margin: 0; table-layout: fixed; border-collapse: separate; border-spacing: 0; font-size: .8125rem; }
+main.exam-builder-page .et-roster-table :is(th, td) { overflow-wrap: anywhere; }
+main.exam-builder-page .et-roster-table thead th { position: sticky; top: 0; z-index: 2; padding: 6px 10px; border-bottom: 1px solid var(--et-field-border); background: var(--et-subtle); color: var(--et-muted); font-size: .75rem; font-weight: 600; text-align: start; }
 main.exam-builder-page .et-roster-table td { padding: 6px 10px; border-bottom: 1px solid var(--et-border); vertical-align: top; text-align: start; }
+/* A code, an ID or a time stays whole while its column can hold it, and
+   breaks only in a column narrower than the code itself. */
+main.exam-builder-page .et-roster-table :is(th, td) bdi[dir="ltr"] { display: inline-block; max-width: 100%; white-space: normal; }
 main.exam-builder-page :is(.et-roster-row, .et-lookup-row) td { height: 36px; }
 main.exam-builder-page :is(.et-roster-row, .et-lookup-row):focus-within { outline: 2px solid var(--et-focus); outline-offset: -2px; }
 main.exam-builder-page :is(.et-roster-row, .et-lookup-row).is-clash td:first-child { box-shadow: inset 3px 0 0 var(--et-danger); }
 html[dir="rtl"] main.exam-builder-page :is(.et-roster-row, .et-lookup-row).is-clash td:first-child { box-shadow: inset -3px 0 0 var(--et-danger); }
 main.exam-builder-page .et-roster-table :is(.et-col-number, .et-col-id, .et-col-program) { font-variant-numeric: tabular-nums; }
-main.exam-builder-page .et-roster-table th.et-col-number { width: 44px; }
-main.exam-builder-page .et-roster-table th.et-col-id { width: 104px; }
-main.exam-builder-page .et-roster-table th.et-col-program { width: 80px; }
-main.exam-builder-page .et-roster-table th.et-col-section { width: 76px; }
-main.exam-builder-page .et-roster-table th.et-col-room { width: 120px; }
-main.exam-builder-page .et-roster-table th.et-col-flags { width: 210px; }
+/* The full form: every column but the name is fixed, the name takes the rest
+   (at least 228px from the 900px the form needs). */
+main.exam-builder-page .et-roster-table:not(.et-lookup-table) th.et-col-number { width: 52px; }
+main.exam-builder-page .et-roster-table:not(.et-lookup-table) th.et-col-id { width: 112px; }
+main.exam-builder-page .et-roster-table:not(.et-lookup-table) th.et-col-program { width: 92px; }
+main.exam-builder-page .et-roster-table:not(.et-lookup-table) th.et-col-section { width: 96px; }
+main.exam-builder-page .et-roster-table:not(.et-lookup-table) th.et-col-room { width: 120px; }
+main.exam-builder-page .et-roster-table:not(.et-lookup-table) th.et-col-flags { width: 200px; }
+main.exam-builder-page .et-roster-table .et-col-number { padding-inline: 8px; }
 main.exam-builder-page .et-roster-table td.et-col-number { color: var(--et-muted); }
-main.exam-builder-page .et-col-name { min-width: 180px; overflow-wrap: anywhere; }
 main.exam-builder-page .et-roster-sub { display: none; }
 main.exam-builder-page .et-roster-group-row th { padding: 6px 10px; border-bottom: 1px solid var(--et-border); background: var(--et-subtle); color: var(--et-muted); font-size: .75rem; font-weight: 600; text-align: start; }
 main.exam-builder-page .et-roster-group-head { min-height: 32px; }
 main.exam-builder-page .et-group-facts { display: block; color: var(--et-text); }
 main.exam-builder-page .et-group-note { display: block; margin-top: 2px; font-weight: 500; }
 main.exam-builder-page .et-roster-group-head.is-changed .et-group-note { color: var(--et-warning); }
-main.exam-builder-page .et-sort { display: inline-flex; align-items: center; gap: 4px; min-height: 24px; margin: 0; padding: 0; border: 0; background: transparent; color: inherit; font: inherit; font-weight: 600; cursor: pointer; }
+/* The mark moves under its words before a word would break. */
+main.exam-builder-page .et-sort { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 0 4px; max-width: 100%; min-height: 24px; margin: 0; padding: 0; border: 0; background: transparent; color: inherit; font: inherit; font-weight: 600; text-align: start; overflow-wrap: anywhere; cursor: pointer; }
 main.exam-builder-page .et-sort:hover { color: var(--et-text); }
 main.exam-builder-page .et-sort-mark::after { content: '↕'; opacity: .45; }
 main.exam-builder-page th[aria-sort="ascending"] .et-sort-mark::after { content: '▲'; opacity: 1; }
 main.exam-builder-page th[aria-sort="descending"] .et-sort-mark::after { content: '▼'; opacity: 1; }
-main.exam-builder-page .et-room-part { display: block; color: var(--et-muted); font-size: .75rem; white-space: nowrap; }
+main.exam-builder-page .et-room-part { display: block; color: var(--et-muted); font-size: .75rem; }
 main.exam-builder-page .et-room-noseat { color: var(--et-danger); font-weight: 600; }
 main.exam-builder-page .et-room-none { color: var(--et-muted); }
 main.exam-builder-page .et-muted-dash { color: var(--et-muted); }
-main.exam-builder-page .et-change-marker { display: inline-flex; align-items: center; gap: 3px; color: var(--et-warning); font-size: .6875rem; font-weight: 600; }
+main.exam-builder-page .et-change-marker { display: inline-flex; align-items: center; gap: 3px; max-width: 100%; color: var(--et-warning); font-size: .6875rem; font-weight: 600; }
 main.exam-builder-page :is(.et-roster, .et-lookup-table, .et-roster-meta, .et-nav-list, .et-find-list, .et-provenance-line, .et-provenance) bdi[dir="ltr"] { white-space: nowrap; }
 
-/* Flags: a word and an icon, never colour alone. */
+/* Flags: a word and an icon, never colour alone. A flag too long for its
+   column puts its code on a line of its own, still whole. */
 main.exam-builder-page .et-col-flags { white-space: normal; }
-main.exam-builder-page .et-flag { display: inline-flex; align-items: center; gap: 4px; min-height: 20px; margin: 1px; margin-inline-start: 0; padding: 0 6px; border: 1px solid; border-radius: 3px; font-size: .6875rem; font-weight: 600; line-height: 1.3; text-decoration: none; white-space: nowrap; }
+main.exam-builder-page .et-flag { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 0 4px; max-width: 100%; min-height: 20px; margin: 1px; margin-inline-start: 0; padding: 0 6px; border: 1px solid; border-radius: 3px; font-size: .6875rem; font-weight: 600; line-height: 1.3; text-decoration: none; }
 main.exam-builder-page a.et-flag:hover { text-decoration: underline; }
 main.exam-builder-page a.et-flag:focus-visible { outline: 2px solid var(--et-focus); outline-offset: 1px; }
 main.exam-builder-page .et-flag--clash { border-color: var(--et-danger); background: var(--et-danger-soft); color: var(--et-danger); }
@@ -162,27 +174,35 @@ main.exam-builder-page .et-skeleton-bar.is-item { height: 56px; }
 main.exam-builder-page .et-roster-loading { margin: 0 0 8px; color: var(--et-muted); font-size: .8125rem; }
 main.exam-builder-page .et-roster-error { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 12px; }
 
-/* One component, sized by its container: full, compact and list rows. */
-@container roster (max-width: 859px) {
-  main.exam-builder-page .et-roster-table .et-col-program { display: none; }
+/* One component, sized by its container: full, compact and list rows.
+   The compact form (600-899px): Program moves under the name; the name keeps
+   at least 136px. */
+@container roster (max-width: 899px) {
   main.exam-builder-page .et-roster-sub { display: block; color: var(--et-muted); font-size: .75rem; }
-  main.exam-builder-page .et-roster-table th.et-col-number { width: 36px; }
-  main.exam-builder-page .et-roster-table th.et-col-id { width: 96px; }
-  main.exam-builder-page .et-roster-table th.et-col-section { width: 64px; }
-  main.exam-builder-page .et-roster-table th.et-col-room { width: 100px; }
-  main.exam-builder-page .et-roster-table th.et-col-flags { width: 150px; }
-  /* Never wider than the pane, in either language: headers and flag words
-     wrap, a code stays whole. */
-  main.exam-builder-page .et-roster-table thead th { white-space: normal; }
-  main.exam-builder-page .et-roster-table .et-flag { white-space: normal; }
+  main.exam-builder-page .et-roster-table :is(thead th, td) { padding-inline: 8px; }
+  main.exam-builder-page .et-roster-table .et-col-number { padding-inline: 4px; }
+  main.exam-builder-page .et-roster-table:not(.et-lookup-table) th.et-col-number { width: 44px; }
+  main.exam-builder-page .et-roster-table:not(.et-lookup-table) th.et-col-id { width: 92px; }
+  main.exam-builder-page .et-roster-table:not(.et-lookup-table) th.et-col-section { width: 88px; }
+  main.exam-builder-page .et-roster-table:not(.et-lookup-table) th.et-col-room { width: 96px; }
+  main.exam-builder-page .et-roster-table:not(.et-lookup-table) th.et-col-flags { width: 144px; }
 }
+/* Program's column stays in the compact form, 0px wide and hidden: a group
+   heading spans all seven columns, and a column missing from the header row
+   would come back unsized and take half the name's width. */
+@container roster (min-width: 600px) and (max-width: 899px) {
+  main.exam-builder-page .et-roster-table:not(.et-lookup-table) th.et-col-program { width: 0; }
+  main.exam-builder-page .et-roster-table .et-col-program { padding: 0; border-bottom-width: 0; visibility: hidden; }
+  main.exam-builder-page .et-roster-table .et-col-program > * { display: none; }
+}
+/* List rows (under 600px): one student per row, no header row. */
 @container roster (max-width: 599px) {
   main.exam-builder-page .et-roster-table,
   main.exam-builder-page .et-roster-table :is(tbody, tr, td, th) { display: block; }
   main.exam-builder-page .et-roster-table thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
   main.exam-builder-page .et-roster-row { display: flex !important; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; min-height: 64px; padding: 8px 10px; border-bottom: 1px solid var(--et-border); }
   /* As tall as its words on a touch screen too (the coarse-pointer 44px is a table cell's). */
-  main.exam-builder-page .et-roster-table .et-roster-row td { height: auto; padding: 0; border: 0; }
+  main.exam-builder-page .et-roster-table .et-roster-row td { min-width: 0; height: auto; padding: 0; border: 0; }
   main.exam-builder-page .et-roster-row td.et-col-number { display: none; }
   main.exam-builder-page .et-roster-row td.et-col-id { flex: 1 1 auto; order: 1; font-weight: 600; }
   main.exam-builder-page .et-roster-row td.et-col-flags { flex: 0 1 auto; order: 2; text-align: end; }
@@ -273,19 +293,26 @@ main.exam-rosters-page .et-pane-head h3:focus-visible { outline: 2px solid var(-
 main.exam-rosters-page .et-pane-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 main.exam-rosters-page .et-pane-empty { padding: 32px 12px; color: var(--et-muted); text-align: center; }
 main.exam-rosters-page .et-online-badge { display: inline-flex; align-items: center; gap: 4px; margin-inline-start: 6px; padding: 0 6px; border: 1px solid var(--et-accent); border-radius: 3px; color: var(--et-accent); font-size: .6875rem; font-weight: 600; }
-main.exam-rosters-page .et-lookup-table .et-col-open { width: 72px; }
+/* The lookup's table form (900px and wider): the course takes the rest, at
+   least 244px. Under 900px each exam is a card. */
+main.exam-rosters-page .et-lookup-table th.et-col-day { width: 80px; }
+main.exam-rosters-page .et-lookup-table th.et-col-period { width: 112px; }
+main.exam-rosters-page .et-lookup-table th.et-col-section { width: 84px; }
+main.exam-rosters-page .et-lookup-table th.et-col-room { width: 100px; }
+main.exam-rosters-page .et-lookup-table th.et-col-flags { width: 184px; }
+main.exam-rosters-page .et-lookup-table th.et-col-open { width: 96px; }
 main.exam-rosters-page .et-lookup-name { display: block; color: var(--et-muted); font-size: .75rem; }
 main.exam-rosters-page .et-lookup-sub { display: none; }
-main.exam-rosters-page .et-lookup-table td.et-col-open .btn { min-height: 32px; padding: 3px 10px !important; white-space: nowrap; }
+main.exam-rosters-page .et-lookup-table td.et-col-open .btn { max-width: 100%; min-height: 32px; padding: 3px 10px !important; text-align: start; }
 main.exam-rosters-page .et-screen-back { display: none; }
 main.exam-rosters-page .et-refused { margin: 0; }
 
-@container roster (max-width: 759px) {
+@container roster (max-width: 899px) {
   main.exam-rosters-page .et-lookup-table,
   main.exam-rosters-page .et-lookup-table :is(tbody, tr, td, th) { display: block; }
   main.exam-rosters-page .et-lookup-table thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
   main.exam-rosters-page .et-lookup-row { display: flex !important; flex-wrap: wrap; align-items: flex-start; gap: 6px 12px; padding: 10px; border-bottom: 1px solid var(--et-border); }
-  main.exam-rosters-page .et-lookup-table .et-lookup-row td { height: auto; padding: 0; border: 0; }
+  main.exam-rosters-page .et-lookup-table .et-lookup-row td { min-width: 0; height: auto; padding: 0; border: 0; }
   main.exam-rosters-page .et-lookup-row td:is(.et-col-day, .et-col-period, .et-col-section, .et-col-room) { display: none; }
   main.exam-rosters-page .et-lookup-row td.et-col-name { flex: 1 1 0; order: 1; min-width: 0; }
   main.exam-rosters-page .et-lookup-row td.et-col-open { flex: 0 0 auto; order: 2; width: auto; }
