@@ -13,11 +13,34 @@ would defeat the test.
 
 The policy bump itself reaches a result only through its input fingerprint,
 so the database test pins the fingerprint's copy of the version to master's.
+
+CP-SAT is replayed, not run (``exam_cpsat_replay``). Rooming calls CP-SAT, and
+OR-Tools' Windows and Linux builds return different solutions where optima tie
+or a search stops at its deterministic work limit: on CI (Linux) 25 of the 60
+period boards came back different from the Windows goldens, while on Windows
+the branch and master put byte-identical questions to the solver. So every
+solve these tests make is answered with master's own answer to that question,
+looked up by the digest of its model and parameters, and everything our code
+does with the answers is still held to master's digests byte for byte. A
+question master never asked fails at once, as does a workload that asks
+master's questions in another order, or fewer or more of them.
+
+To re-record the answers (only ever from master, and only with the goldens
+above, which the recorder checks):
+
+1. ``git worktree add <dir> 84704ad`` and copy into ``<dir>/tests/`` this
+   module, ``exam_cpsat_replay.py``, ``exam_linked_parity_corpus.py``,
+   ``exam_linked_rooms_corpus.py`` and ``record_exam_linked_rooms_cpsat.py``.
+2. In ``<dir>``: ``EXAM_CPSAT_RECORD=<file> python -m pytest -p no:cacheprovider
+   tests/record_exam_linked_rooms_cpsat.py`` - it fails unless master's outputs
+   are the goldens.
+3. Copy ``<file>`` to ``tests/fixtures/exam_linked_rooms_cpsat.json`` here.
 """
 
 import functools
 import io
 import zipfile
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -45,6 +68,7 @@ from core.services.exam_roster_view import (
 from core.services.exam_rosters import build_roster_model
 from core.services.exam_student_export import parse_export_options, prepare_export, render_export
 from core.services.linked_exams import NO_LINKS
+from tests import exam_cpsat_replay
 from tests import exam_linked_parity_corpus as base
 from tests import exam_linked_rooms_corpus as corpus
 
@@ -115,6 +139,18 @@ MASTER_EXPORTS = MASTER_EXPORTS_WITH_LXML if openpyxl_xml.LXML else MASTER_EXPOR
 MASTER_ROOM_POLICY = 1
 
 
+#: Master's CP-SAT answers to every question these boards ask (module docstring).
+MASTER_CPSAT = Path(__file__).parent / "fixtures" / "exam_linked_rooms_cpsat.json"
+
+
+@pytest.fixture
+def master_cpsat(monkeypatch):
+    """CP-SAT as master's solver answered, for every solve in the test."""
+    replay = exam_cpsat_replay.Replay(MASTER_CPSAT)
+    replay.install(monkeypatch)
+    return replay
+
+
 @pytest.fixture(autouse=True)
 def _fresh_room_cache():
     """A period another test allocated must not answer for these boards."""
@@ -136,43 +172,47 @@ def _assert_master(kind: str, digests: list[str]) -> None:
     assert not changed, f"{kind}: boards {changed} no longer return what master returned"
 
 
-def test_one_period_is_allocated_as_master_allocated_it():
+def test_one_period_is_allocated_as_master_allocated_it(master_cpsat):
     """Tight inventories: consolidation, both searches, split and unseated sections."""
-    _assert_master(
-        "periods",
-        [
+    with master_cpsat.workload("periods"):
+        digests = [
             corpus.run_period(
                 board,
                 exam_room_allocation.allocate_period,
                 exam_room_allocation.RoomAllocationContext,
             )
             for board in corpus.period_boards()
-        ],
-    )
+        ]
+    _assert_master("periods", digests)
 
 
 @pytest.mark.parametrize("explicit", [False, True], ids=["default", "no-links"])
-def test_rooms_invigilators_room_qa_and_footprint_match_master_without_links(explicit):
+def test_rooms_invigilators_room_qa_and_footprint_match_master_without_links(
+    explicit, master_cpsat
+):
     """Rooms, the invigilator pass, room QA (seats, staff, double bookings) and
     the building footprint, on boards with rooms to spare and on tight ones."""
     extra = {"links": NO_LINKS} if explicit else {}
     digests = []
-    for board, rooms in corpus.room_boards():
-        _conflicts, adj, _thin = base.graph(
-            board, exam_timetable.build_conflict_graph, exam_timetable.apply_thin_conflict_policy
-        )
-        digests.append(
-            corpus.run_room_reports(
+    with master_cpsat.workload("room_reports"):
+        for board, rooms in corpus.room_boards():
+            _conflicts, adj, _thin = base.graph(
                 board,
-                rooms,
-                functools.partial(exam_timetable.assign_rooms_to_schedule, **extra),
-                functools.partial(exam_timetable._rebalance_invigilators_pass, **extra),
-                exam_room_allocation.RoomAllocationContext.for_periods,
-                functools.partial(exam_timetable._build_room_qa, **extra),
-                exam_run_schema.derive_building_footprint,
-                adj,
+                exam_timetable.build_conflict_graph,
+                exam_timetable.apply_thin_conflict_policy,
             )
-        )
+            digests.append(
+                corpus.run_room_reports(
+                    board,
+                    rooms,
+                    functools.partial(exam_timetable.assign_rooms_to_schedule, **extra),
+                    functools.partial(exam_timetable._rebalance_invigilators_pass, **extra),
+                    exam_room_allocation.RoomAllocationContext.for_periods,
+                    functools.partial(exam_timetable._build_room_qa, **extra),
+                    exam_run_schema.derive_building_footprint,
+                    adj,
+                )
+            )
     _assert_master("room_reports", digests)
 
 
@@ -197,7 +237,7 @@ def _api():
 
 @pytest.mark.django_db
 @pytest.mark.parametrize("extra", [None, {"linked_exams": []}], ids=["default", "no-links"])
-def test_every_export_matches_master_without_links(extra, monkeypatch):
+def test_every_export_matches_master_without_links(extra, monkeypatch, master_cpsat):
     """A saved build with rooms and the invigilator pass: its result, the master
     Excel, the Department files and the student-data export in English and
     Arabic, and the Student lists of every room."""
@@ -206,8 +246,9 @@ def test_every_export_matches_master_without_links(extra, monkeypatch):
     )
     corpus.create_rooms_population(models)
     api = _api()
-    result, run = corpus.build_population_run(api, models, extra)
-    digests = corpus.export_digests(run, api)
+    with master_cpsat.workload("exports"):
+        result, run = corpus.build_population_run(api, models, extra)
+        digests = corpus.export_digests(run, api)
     digests["build"] = base.digest(base.comparable(result))
     assert digests == MASTER_EXPORTS
 
