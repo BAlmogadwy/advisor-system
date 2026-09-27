@@ -33,6 +33,7 @@ import random
 # (the providing college supplies its own staff).
 import re as _re
 from collections import defaultdict
+from collections.abc import Iterable
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -114,6 +115,31 @@ def _invigilators_needed(course_code: str, students_in_room: int) -> int:
         return 1 if students_in_room > _EXT_LARGE_THRESHOLD else 0
     # Department or unknown
     return 2 if students_in_room >= _DEPT_LARGE_THRESHOLD else 1
+
+
+def _room_ruling_course(course_codes: Iterable[str]) -> str:
+    """The course whose invigilation rule one physical room follows.
+
+    Linked courses may share a room. It follows the department rule when ANY
+    course in it is a department course (an unknown prefix counts as one, as
+    in ``_invigilators_needed``), and the external rule only when every course
+    in it is external. The codes are sorted, so the order a reader meets the
+    room's rows in never changes the answer.
+    """
+    codes = sorted(set(course_codes))
+    return next(
+        (code for code in codes if _course_prefix(code) not in _EXTERNAL_PREFIXES),
+        codes[0] if codes else "",
+    )
+
+
+def _room_invigilators_needed(course_codes: Iterable[str], students_in_room: int) -> int:
+    """Staff for one physical room in one period, on its whole head-count.
+
+    A room linked courses share still gets one set of invigilators, for all
+    its students, under the rule of ``_room_ruling_course``.
+    """
+    return _invigilators_needed(_room_ruling_course(course_codes), students_in_room)
 
 
 # ── 0. Credit helpers ───────────────────────────────────────────
@@ -1658,20 +1684,26 @@ def _merge_same_course_sections(
 
 
 def period_cohort_count(
-    schedule_entries: list[dict], section_enrollment: dict[str, list[dict]]
+    schedule_entries: list[dict],
+    section_enrollment: dict[str, list[dict]],
+    links: LinkedExams = NO_LINKS,
 ) -> int:
-    """Upper bound on the ``allocate_period`` calls one full pack performs.
+    """Upper bound on the allocations one full pack performs.
 
     Rooming solves a separate allocation per scheduled slot per student cohort,
     so this — not the course count — is what a wall budget has to be sized by.
+    A slot holding a linked exam is allocated twice - its linked courses in
+    rooms of their own, and sharing - so it counts twice.
     """
-    slots = {entry["slot_index"] for entry in schedule_entries if entry.get("day") != "OVERFLOW"}
+    placed = [entry for entry in schedule_entries if entry.get("day") != "OVERFLOW"]
+    slots = {entry["slot_index"] for entry in placed}
+    linked = {entry["slot_index"] for entry in placed if entry["course_code"] in links.unit_of}
     genders = {
         str(section.get("gender", "U") or "U").upper()
         for sections in section_enrollment.values()
         for section in sections
     }
-    return len(slots) * max(1, len(genders))
+    return (len(slots) + len(linked)) * max(1, len(genders))
 
 
 def assign_rooms_to_schedule(
@@ -1682,12 +1714,20 @@ def assign_rooms_to_schedule(
     *,
     allocation_context: RoomAllocationContext | None = None,
     on_period: Counter | None = None,
+    links: LinkedExams = NO_LINKS,
 ) -> list[dict]:
     """Room original sections across each period without changing exam times.
 
     Scheduling may use ``seed``; room assignment deliberately does not. Build,
     fixed-time Check, Save and export must agree for identical authoritative
     inputs. Existing room rows are replaced, making repeated calls idempotent.
+
+    Same-gender sections of linked courses may share a room: their demands
+    carry the link as ``room_owner``, and the allocator shares only where that
+    saves rooms or seats. Rows stay per real course, each with its own
+    ``section_parts``; a shared room's row also names the other courses in it
+    (``room_shared_with``) and the room's whole head-count
+    (``room_student_total``). Unshared rows carry neither.
 
     ``on_period(done, total)`` counts the (period, gender) packs, the unit the
     solver works in, for a job that reports its progress.
@@ -1699,7 +1739,7 @@ def assign_rooms_to_schedule(
         if entry.get("day") != "OVERFLOW":
             entries_by_slot[entry["slot_index"]].append(entry)
     context = allocation_context or RoomAllocationContext.for_periods(
-        period_cohort_count(schedule_entries, section_enrollment)
+        period_cohort_count(schedule_entries, section_enrollment, links)
     )
     packs: list[tuple[dict[str, dict], str, list[dict]]] = []
     for _, entries in sorted(entries_by_slot.items()):
@@ -1716,14 +1756,30 @@ def assign_rooms_to_schedule(
                         "gender": gender,
                     }
                 )
-        packs.extend(
-            (by_course, gender, demands) for gender, demands in sorted(demands_by_gender.items())
-        )
+        for gender, demands in sorted(demands_by_gender.items()):
+            # A link owns its rooms only in a pack holding two of its courses:
+            # anywhere else each course is allocated exactly as if unlinked.
+            present: dict[str, set[str]] = defaultdict(set)
+            for demand in demands:
+                present[links.unit(demand["course_code"])].add(demand["course_code"])
+            for demand in demands:
+                unit = links.unit(demand["course_code"])
+                if len(present[unit]) > 1:
+                    demand["room_owner"] = unit
+            packs.append((by_course, gender, demands))
     for done, (by_course, gender, demands) in enumerate(packs):
         if on_period is not None:
             on_period(done, len(packs))
         period_rooms = [room for room in inventory if room["section"] == gender]
-        rows = allocate_period(demands, period_rooms, context)
+        rows = allocate_period(demands, period_rooms, context, room_staff=_room_invigilators_needed)
+        # Who sits in each room of this period, for the rows of a shared one.
+        occupants: dict[str, dict[str, int]] = defaultdict(dict)
+        for row in rows:
+            if row["room_code"] != "UNASSIGNED":
+                seated = occupants[row["room_code"]]
+                seated[row["course_code"]] = (
+                    seated.get(row["course_code"], 0) + row["student_count"]
+                )
         groups: dict[tuple, list[dict]] = defaultdict(list)
         for row in rows:
             # Unseated original sections remain individually reviewable.
@@ -1736,17 +1792,20 @@ def assign_rooms_to_schedule(
             )
             groups[key].append(row)
         for (code, room_code, _), parts in sorted(groups.items()):
-            by_course[code]["rooms"].append(
-                {
-                    "section": " + ".join(dict.fromkeys(p["section"] for p in parts)),
-                    "room_code": room_code,
-                    "student_count": sum(p["student_count"] for p in parts),
-                    "room_capacity": parts[0]["room_capacity"],
-                    "gender": gender,
-                    "merged_from": list(dict.fromkeys(p["section"] for p in parts)),
-                    "section_parts": [exam_section_part(p) for p in parts],
-                }
-            )
+            room = {
+                "section": " + ".join(dict.fromkeys(p["section"] for p in parts)),
+                "room_code": room_code,
+                "student_count": sum(p["student_count"] for p in parts),
+                "room_capacity": parts[0]["room_capacity"],
+                "gender": gender,
+                "merged_from": list(dict.fromkeys(p["section"] for p in parts)),
+                "section_parts": [exam_section_part(p) for p in parts],
+            }
+            sharing = occupants.get(room_code, {}) if room_code != "UNASSIGNED" else {}
+            if len(sharing) > 1:
+                room["room_shared_with"] = sorted(other for other in sharing if other != code)
+                room["room_student_total"] = sum(sharing.values())
+            by_course[code]["rooms"].append(room)
     if on_period is not None:
         on_period(len(packs), len(packs))
     annotate_exam_room_groups(schedule_entries)
@@ -1913,7 +1972,7 @@ def _rebalance_invigilators_pass(
     unit_plan_term_buckets, unit_course_buckets = links.buckets(plan_term_buckets, course_buckets)
     pinned_units = links.units_of(pinned_courses)
     allocation_context = allocation_context or RoomAllocationContext.for_periods(
-        period_cohort_count(schedule_entries, section_enrollment)
+        period_cohort_count(schedule_entries, section_enrollment, links)
     )
 
     # Slot lookup helpers
@@ -1931,6 +1990,7 @@ def _rebalance_invigilators_pass(
             rooms_list,
             seed=None,
             allocation_context=allocation_context,
+            links=links,
         )
 
     def _per_day_invigilators() -> dict[str, dict[str, int]]:
@@ -2583,7 +2643,7 @@ def build_exam_timetable(
         # scan are not solver work, and on a networked database they were
         # spending a budget meant for the search.
         allocation_context = RoomAllocationContext.for_periods(
-            period_cohort_count(schedule_entries, section_enrollment)
+            period_cohort_count(schedule_entries, section_enrollment, links)
         )
         progress.stage("assign_rooms")
         assign_rooms_to_schedule(
@@ -2593,6 +2653,7 @@ def build_exam_timetable(
             seed=seed,
             allocation_context=allocation_context,
             on_period=progress.counter("assign_rooms"),
+            links=links,
         )
 
         # 7c. Final optimisation — flatten per-day invigilator load by

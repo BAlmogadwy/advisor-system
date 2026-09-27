@@ -21,7 +21,7 @@ from types import SimpleNamespace
 import pytest
 
 from core import exam_views, models
-from core.services import exam_min_change, exam_multistart, exam_timetable
+from core.services import exam_input_fingerprint, exam_min_change, exam_multistart, exam_timetable
 from core.services.exam_evaluation import evaluate_exam_schedule
 from core.services.exam_multistart import CandidateMetrics, report_to_dict, run_multistart
 from core.services.exam_room_allocation import RoomAllocationContext
@@ -145,6 +145,20 @@ POPULATION = {
 }
 
 
+#: Master's room-allocation policy version. Version 2 lets linked courses share
+#: a room; without links it allocates exactly as version 1 did, and the bump
+#: reaches a result only through its input fingerprint. The database tests pin
+#: the fingerprint's copy to master's value, so every other byte is compared.
+MASTER_ROOM_POLICY = 1
+
+
+@pytest.fixture
+def masters_room_policy(monkeypatch):
+    monkeypatch.setattr(
+        exam_input_fingerprint, "ROOM_ALLOCATION_POLICY_VERSION", MASTER_ROOM_POLICY
+    )
+
+
 def _master_extract_metrics(payload):
     """``exam_multistart._extract_metrics`` exactly as master had it."""
     qa = payload.get("qa") or {}
@@ -265,7 +279,9 @@ def test_the_fix_view_matches_master_without_links(monkeypatch, extra):
 
 @pytest.mark.django_db
 @pytest.mark.parametrize("extra", [None, {"linked_exams": []}], ids=["default", "no-links"])
-def test_build_check_optimise_fix_and_multistart_match_master_without_links(extra):
+def test_build_check_optimise_fix_and_multistart_match_master_without_links(
+    extra, masters_room_policy
+):
     """A real build with rooms, a pin, a two-identity code and the invigilator
     pass; its Check; Optimise from it; a drag repaired by Fix; and multistart."""
     corpus.create_population(models)
@@ -280,7 +296,7 @@ def test_build_check_optimise_fix_and_multistart_match_master_without_links(extr
 
 
 @pytest.mark.django_db
-def test_multistart_differs_from_master_only_by_its_room_metrics(monkeypatch):
+def test_multistart_differs_from_master_only_by_its_room_metrics(monkeypatch, masters_room_policy):
     """Put master's metric reader back and the whole population is master's."""
     corpus.create_population(models)
     monkeypatch.setattr(exam_multistart, "_extract_metrics", _master_extract_metrics)

@@ -279,7 +279,7 @@ def evaluate_exam_schedule(
         # One shared, size-sized deadline across the pack and every trial repack
         # the post-pass performs, exactly as build_exam_timetable arms it.
         allocation_context = RoomAllocationContext.for_periods(
-            period_cohort_count(schedule_entries, section_enrollment)
+            period_cohort_count(schedule_entries, section_enrollment, links)
         )
         progress.stage("assign_rooms")
         assign_rooms_to_schedule(
@@ -289,6 +289,7 @@ def evaluate_exam_schedule(
             seed=seed,
             allocation_context=allocation_context,
             on_period=progress.counter("assign_rooms"),
+            links=links,
         )
         if rebalance_invigilators and rooms_list and len(days) > 1:
             progress.stage("balance_invigilators")
