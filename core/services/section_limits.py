@@ -1,6 +1,9 @@
 """
 core/services/section_limits.py
-The one write path for per-course seat limits (``ProgrammeRequirement.max_capacity``).
+Section Planning's write path for per-course seat limits
+(``ProgrammeRequirement.max_capacity``). DB Admin's "Course capacities" panel
+(``db_admin_views.db_update_programme_capacities_view``) is a second, older
+path for the same column that does not go through this module.
 
 A seat limit belongs to a PROGRAMME. Saving from Section Planning writes it only
 for the programmes on screen; one course may be widened, explicitly, to every
@@ -11,7 +14,9 @@ in between, the commit is refused rather than writing something nobody saw.
 
 Every changed row is recorded with ``record_audit_event`` inside the same
 transaction as the write, so a failed audit write rolls the save back: the
-change and its record exist together or not at all.
+change and its record exist together or not at all. That transaction is an
+``audited_transaction``: it commits while holding the process audit lock, so
+another request's audit row can neither deadlock with it nor fork the chain.
 """
 
 from __future__ import annotations
@@ -22,9 +27,8 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from typing import Any
 
-from django.db import transaction
-
 from core.models import ProgrammeRequirement
+from core.services.audit import audited_transaction
 from core.services.student_helpers import normalize_code
 
 LIMIT_MIN = 1
@@ -256,10 +260,11 @@ def apply_limit_writes(
     Each update is conditional on the row still holding the previewed value, so
     a concurrent change raises ``LimitConflict`` instead of being overwritten.
     ``audit`` runs inside the same transaction after each row; whatever it
-    raises rolls every row of this save back.
+    raises rolls every row of this save back. The transaction holds the
+    process audit lock until it has committed (``audited_transaction``).
     """
     total = len(writes)
-    with transaction.atomic():
+    with audited_transaction():
         for position, write in enumerate(writes, 1):
             rows = ProgrammeRequirement.objects.filter(pk=write.requirement_id)
             if write.old is None:
