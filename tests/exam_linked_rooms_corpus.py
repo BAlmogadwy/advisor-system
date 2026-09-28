@@ -22,7 +22,14 @@ import random
 import zipfile
 from collections.abc import Callable, Iterator
 
-from tests.exam_linked_parity_corpus import _plain, _sections, board_entries, digest, pure_boards
+from tests.exam_linked_parity_corpus import (
+    _plain,
+    _sections,
+    board_entries,
+    digest,
+    pure_boards,
+    room_seats,
+)
 
 # ── one period at a time: rooms too few and too small ───────────────────────
 
@@ -164,12 +171,15 @@ FIXED_RUN_ID = 777001
 FIXED_AT = dt.datetime(2026, 9, 27, 9, 30, tzinfo=dt.UTC)
 
 
-def create_rooms_population(models, seed: int = 20260928) -> None:
+def create_rooms_population(
+    models, seed: int = 20260928, teaching: Callable[[int], int] | None = None
+) -> None:
     """Department and external courses, a code two plans name differently
     (PHYS103 (1) and (2)), both cohorts, and rooms in two buildings.
 
     Every id that reaches a result or an export is explicit, so a digest never
-    depends on which tests ran first.
+    depends on which tests ran first. ``teaching`` sets each room's teaching
+    capacity apart from its exam seats (``room_seats``).
     """
     rng = random.Random(seed)
     for code, name, credits, _programs in POPULATION_COURSES:
@@ -228,7 +238,7 @@ def create_rooms_population(models, seed: int = 20260928) -> None:
             for copy in range(copies):
                 models.Room.objects.create(
                     room_code=f"{gender}{size}-{copy}",
-                    capacity=size,
+                    **room_seats(models, size, teaching),
                     section=gender,
                     building="North" if copy % 2 else "South",
                     floor=copy + 1,

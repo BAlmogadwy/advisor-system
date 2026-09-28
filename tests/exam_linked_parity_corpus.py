@@ -513,11 +513,37 @@ POPULATION_PERIODS = ["08:00-10:00", "13:00-15:00"]
 POPULATION_COURSES = [f"LX{number}" for number in range(101, 110)]
 
 
-def create_population(models, seed: int = 20260927) -> None:
+#: Teaching capacities set apart from a room's exam seats: none at all, and far
+#: more. An exam path that read ``Room.capacity`` would seat differently under
+#: either one.
+TEACHING_APART: dict[str, Callable[[int], int]] = {
+    "teaching-none": lambda seats: 0,
+    "teaching-more": lambda seats: 3 * seats + 7,
+}
+
+
+def room_seats(models, seats: int, teaching: Callable[[int], int] | None = None) -> dict:
+    """The seat columns of a Room an exam seats ``seats`` students in.
+
+    Exams seat by ``exam_capacity``; ``teaching`` gives the room's own
+    ``capacity`` (lecture timetabling's), the same number unless it is passed.
+    Master before rooms had exam seats (the recordings) takes the one capacity
+    its model has, so the corpus still runs there.
+    """
+    if not any(field.name == "exam_capacity" for field in models.Room._meta.get_fields()):
+        return {"capacity": seats}
+    return {"capacity": seats if teaching is None else teaching(seats), "exam_capacity": seats}
+
+
+def create_population(
+    models, seed: int = 20260927, teaching: Callable[[int], int] | None = None
+) -> None:
     """Students, scraped registrations, plans and rooms for a small real build.
 
     Section rows get explicit primary keys: their ids appear in the result, and
     an id handed out by the database would depend on which tests ran first.
+    ``teaching`` sets each room's teaching capacity apart from its exam seats
+    (``room_seats``).
     """
     rng = random.Random(seed)
     for code in POPULATION_COURSES:
@@ -574,7 +600,7 @@ def create_population(models, seed: int = 20260927) -> None:
             for copy in range(4):
                 models.Room.objects.create(
                     room_code=f"R{gender}{size}-{copy}",
-                    capacity=size,
+                    **room_seats(models, size, teaching),
                     section=gender,
                     building="B1" if copy % 2 else "B2",
                     floor=1,

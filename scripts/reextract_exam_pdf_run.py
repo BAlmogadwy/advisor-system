@@ -23,10 +23,10 @@ django.setup()
 from core.models import (  # noqa: E402
     ExamTimetableRun,
     ProgrammeRequirement,
-    Room,
     StudentCourse,
 )
 from core.services.course_identity import planner_course_key  # noqa: E402
+from core.services.exam_room_inventory import exam_room_inventory  # noqa: E402
 from core.services.exam_run_schema import (  # noqa: E402
     STATUS_DERIVATION_VERSION,
     compute_enrolment_snapshot,
@@ -486,17 +486,8 @@ def main() -> None:
     schedule_entries = [dict(e) for e in extracted]
     section_enrollment = build_gender_section_enrollment(extracted, source_sets)
 
-    rooms_list = list(
-        Room.objects.all().values(
-            "room_code",
-            "capacity",
-            "section",
-            "department",
-            "building",
-            "floor",
-            "room_type",
-        )
-    )
+    # Exam seats: ``capacity`` is each room's exam_capacity.
+    rooms_list = exam_room_inventory(extra_fields=("room_type",))
     room_feasibility = check_room_feasibility(section_enrollment, rooms_list)
     assign_rooms_to_schedule(schedule_entries, section_enrollment, rooms_list, seed=None)
 

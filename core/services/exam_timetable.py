@@ -42,7 +42,6 @@ from core.models import (
     Course,
     ExamTimetableRun,
     ProgrammeRequirement,
-    Room,
     Student,
 )
 from core.services.course_identity import display_course_label, planner_course_key
@@ -57,6 +56,7 @@ from core.services.exam_room_allocation import (
     allocate_period,
     normalized_rooms,
 )
+from core.services.exam_room_inventory import exam_room_inventory
 from core.services.exam_run_schema import (
     STATUS_DERIVATION_VERSION,
     compute_enrolment_snapshot,
@@ -1543,7 +1543,7 @@ def _build_qa(
 #   • Each room hosts at most one course per slot (no cross-course share)
 #   • Same-course same-gender sections MAY share a room (after merging)
 #   • M sections → M rooms only; F sections → F rooms only
-#   • Room.capacity is respected
+#   • Room.exam_capacity is respected (read as ``capacity``: exam_room_inventory)
 #   • Room.department is IGNORED during exams (all departments share)
 
 _SYNTHETIC_SECTION_LABEL = "ALL"
@@ -2687,11 +2687,9 @@ def build_exam_timetable(
     room_feasibility: list[dict] = []
     room_qa: dict = {}
     if assign_rooms:
-        rooms_list = list(
-            Room.objects.all().values(
-                "room_code", "capacity", "section", "department", "building", "floor"
-            )
-        )
+        # Exam seats, under the key rooming reads: ``capacity`` is the room's
+        # exam_capacity here, never its teaching capacity.
+        rooms_list = exam_room_inventory()
         room_feasibility = check_room_feasibility(section_enrollment, rooms_list)
         # Arm the shared deadline only now: the room query and the feasibility
         # scan are not solver work, and on a networked database they were
