@@ -14,6 +14,11 @@
  *   inputPlaceholder / inputHint / inputType – input configuration
  *   defaultValue / maxLength / required – optional free-form input constraints
  *   waitForClose    – resolve after removal and focus restoration (default false)
+ *   initialFocus    – 'cancel' starts focus on the cancel button (for a review
+ *                     whose confirm writes something); default: confirm/input
+ *
+ * Enter confirms from the dialog or its input, never from a button: Enter on
+ * a button is that button's own click, so Enter on Cancel cancels.
  */
 const dlg = (() => {
   const ICONS = {
@@ -56,6 +61,7 @@ const dlg = (() => {
       maxLength:        Number.isInteger(opts.maxLength) && opts.maxLength > 0 ? opts.maxLength : null,
       required:         opts.required === true,
       waitForClose:     opts.waitForClose === true,
+      initialFocus:     opts.initialFocus === 'cancel' ? 'cancel' : 'confirm',
     };
   }
 
@@ -96,7 +102,10 @@ const dlg = (() => {
     const btnClass = o.kind || 'primary';
 
     const titleId = 'dlg-title-text';
+    const bodyId = 'dlg-body-text';
     bd.setAttribute('aria-labelledby', titleId);
+    /* The body (what confirming will do) is read with the title. */
+    if (o.body) bd.setAttribute('aria-describedby', bodyId);
 
     bd.innerHTML =
       `<div class="dlg-box">` +
@@ -106,7 +115,7 @@ const dlg = (() => {
             `<div id="${titleId}" class="dlg-title">${esc(o.title)}</div>` +
           `</div>` +
         `</div>` +
-        (o.body ? `<div class="dlg-body">${o.body}</div>` : '') +  /* body is intentional HTML — callers must pre-escape */
+        (o.body ? `<div id="${bodyId}" class="dlg-body">${o.body}</div>` : '') +  /* body is intentional HTML — callers must pre-escape */
         inputHtml +
         `<div class="dlg-footer">` +
           `<button class="btn-cancel">${esc(o.cancelLabel)}</button>` +
@@ -158,8 +167,14 @@ const dlg = (() => {
       btnOk.addEventListener('click', () => { if (inputIsValid()) close(input ? input.value || true : true); });
       bd.addEventListener('click', e => { if (e.target === bd) close(false); });
       bd.addEventListener('keydown', e => {
-        if (e.key === 'Escape') close(false);
-        if (e.key === 'Enter' && !btnOk.disabled && inputIsValid()) close(input ? input.value || true : true);
+        if (e.key === 'Escape') { close(false); return; }
+        if (e.key !== 'Enter') return;
+        /* A focused button or link acts on its own Enter (Cancel cancels). */
+        if (e.target && e.target.closest && e.target.closest('button, a[href]')) return;
+        if (!btnOk.disabled && inputIsValid()) {
+          e.preventDefault();
+          close(input ? input.value || true : true);
+        }
       });
 
       if (input) {
@@ -171,6 +186,7 @@ const dlg = (() => {
       setTimeout(() => {
         if (closing) return;
         if (input) { input.focus(); if (o.defaultValue) input.select(); }
+        else if (o.initialFocus === 'cancel') btnNo.focus();
         else btnOk.focus();
       }, 50);
     });

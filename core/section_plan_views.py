@@ -83,25 +83,27 @@ def _parse_payload(request: HttpRequest) -> tuple[dict | None, JsonResponse | No
     try:
         body = json.loads(request.body.decode("utf-8")) if request.body else {}
     except (json.JSONDecodeError, UnicodeDecodeError):
-        return None, JsonResponse({"ok": False, "error": "Invalid JSON"}, status=400)
+        return None, JsonResponse(
+            {"ok": False, "code": "invalid_json", "error": "Invalid JSON"}, status=400
+        )
 
     try:
         year = int(body.get("year", 0))
         semester = int(body.get("semester", 0))
     except (ValueError, TypeError):
         return None, JsonResponse(
-            {"ok": False, "error": "year and semester must be integers"},
+            {"ok": False, "code": "invalid_term", "error": "year and semester must be integers"},
             status=400,
         )
 
     if not (1400 <= year <= 1600):
         return None, JsonResponse(
-            {"ok": False, "error": "year must be between 1400 and 1600"},
+            {"ok": False, "code": "invalid_term", "error": "year must be between 1400 and 1600"},
             status=400,
         )
     if semester not in (1, 2, 3):
         return None, JsonResponse(
-            {"ok": False, "error": "semester must be 1, 2, or 3"},
+            {"ok": False, "code": "invalid_term", "error": "semester must be 1, 2, or 3"},
             status=400,
         )
 
@@ -122,7 +124,7 @@ def _parse_payload(request: HttpRequest) -> tuple[dict | None, JsonResponse | No
         max_external = int(body.get("max_external", DEFAULT_MAX_EXTERNAL))
     except (ValueError, TypeError):
         return None, JsonResponse(
-            {"ok": False, "error": "Capacity limits must be integers"},
+            {"ok": False, "code": "invalid_capacity", "error": "Capacity limits must be integers"},
             status=400,
         )
 
@@ -279,7 +281,7 @@ def section_plan_courses_view(request: HttpRequest) -> JsonResponse:
     return JsonResponse({"ok": True, "courses": courses})
 
 
-# ── Save per-course seat limits (the only write path) ─────────
+# ── Save per-course seat limits (Section Planning's write path) ─
 
 
 @role_required(ROLE_GENERAL_ADVISOR)

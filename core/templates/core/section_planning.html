@@ -79,7 +79,7 @@
              placeholder="{% if LANGUAGE_CODE == 'ar' %}بحث عن مقرر...{% else %}Search courses...{% endif %}">
       <span id="spAdvDrafts" class="sp-adv-drafts" role="status">{% if LANGUAGE_CODE == 'ar' %}لا توجد تعديلات غير محفوظة{% else %}No unsaved changes{% endif %}</span>
       <button id="spAdvReset" type="button" class="sp-adv-reset" disabled>{% if LANGUAGE_CODE == 'ar' %}تجاهل التعديلات{% else %}Discard changes{% endif %}</button>
-      <button id="spAdvSaveDb" type="button" class="btn btn-sm fs-sm u-cursor-pointer" style="padding:2px 10px; background:var(--teal); color:#fff; border:none; border-radius:4px" disabled>{% if LANGUAGE_CODE == 'ar' %}حفظ الحدود…{% else %}Save limits…{% endif %}</button>
+      <button id="spAdvSaveDb" type="button" class="btn btn-sm fs-sm u-cursor-pointer" style="padding:2px 10px; background:var(--teal); color:#fff; border:none; border-radius:4px" aria-disabled="true" aria-describedby="spAdvDrafts">{% if LANGUAGE_CODE == 'ar' %}حفظ الحدود…{% else %}Save limits…{% endif %}</button>
       <span id="spAdvCount" class="sp-adv-count"></span>
     </div>
     <div class="sp-adv-note fs-sm text-t3">{% if LANGUAGE_CODE == 'ar' %}التعديلات مسودات تُستخدم في الحساب فقط، ولا تُحفظ إلا بعد الضغط على «حفظ الحدود» ومراجعتها. يُحفظ الحد للبرامج المعروضة، إلا إذا اخترت «كل البرامج» لمقرر بعينه.{% else %}Edits are drafts: Generate uses them, nothing is saved until you press Save limits and confirm. A limit is saved for the programmes on screen, unless you tick All programmes for that course.{% endif %}
@@ -200,5 +200,5 @@
   const LANGUAGE_CODE = "{{ LANGUAGE_CODE|default:'en' }}";
   const djCsrfToken = "{{ csrf_token }}";
 </script>
-<script src="{% static 'js/page-section-planning.js' %}?v=9"></script>
+<script src="{% static 'js/page-section-planning.js' %}?v=10"></script>
 {% endblock %}

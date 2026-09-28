@@ -68,27 +68,43 @@ $('spToggleCaps').onclick = () => {
  * what-if on Generate, marked "Modified", and never written until the user
  * presses Save, reviews the exact rows (course · programme · old → new) and
  * confirms. Discard drops drafts only; removing a saved limit is its own
- * confirmed action. Nothing here writes on input, change or blur. */
+ * confirmed action. Nothing here writes on input, change or blur.
+ *
+ * Drafts live in `_drafts`, by course, apart from the rows: a programme change
+ * that hides a course keeps its draft, and the course gets it back when shown.
+ * The rows on screen belong to `_advProgram`, which changes only once the new
+ * programme's rows are rendered; while a list is loading, or after it failed,
+ * nothing can be saved, so a save always names the programmes whose rows are
+ * on screen. */
 const LIMIT_MIN = 1, LIMIT_MAX = 500;
 const LIMITS_URL = '/ops/section-planning/limits/';
 let _advCourses = [];     // cached course list from server
-let _advLoaded = false;   // loaded at least once?
-
-let _advProgram = '';  // program(s) when panel was last loaded
+let _advLoaded = false;   // rendered at least once?
+let _advProgram = '';     // the programme(s) whose rows are on screen
+let _advSeq = 0;          // the newest course-list request; older answers are dropped
+let _advState = 'idle';   // 'idle' | 'loading' | 'ready' | 'failed'
+let _limitBusy = false;   // a review or save in flight: one at a time
+const _drafts = new Map(); // course code -> { raw, all }
 
 const TL = {
   modified:     IS_AR ? 'معدَّل' : 'Modified',
   invalid:      IS_AR ? `رقم صحيح من ${LIMIT_MIN} إلى ${LIMIT_MAX}` : `Whole number ${LIMIT_MIN}–${LIMIT_MAX}`,
   mixed:        IS_AR ? 'مختلف' : 'mixed',
+  lowest:       IS_AR ? 'أدنى حد معلن' : 'lowest declared',
   allProgs:     IS_AR ? 'كل البرامج' : 'All programmes',
   allAria:      code => IS_AR ? `تطبيق حد ${code} على كل البرامج التي تدرّسه` : `Apply the ${code} limit to every programme that teaches it`,
   limitAria:    code => IS_AR ? `الحد الأقصى لشعبة ${code}` : `Seat limit for ${code}`,
   remove:       IS_AR ? 'إزالة' : 'Remove',
   removeAria:   code => IS_AR ? `إزالة الحد المحفوظ لـ ${code}` : `Remove the saved limit for ${code}`,
   drafts:       n => IS_AR ? `${n} تعديل غير محفوظ` : `${n} unsaved change${n === 1 ? '' : 's'}`,
+  whatIfs:      n => IS_AR ? `${n} تعديل للحساب فقط — اختر برنامجاً لحفظه` : `${n} what-if change${n === 1 ? '' : 's'} for Generate — choose a programme to save`,
+  toFix:        n => IS_AR ? `${n} قيمة تحتاج تصحيحاً قبل الحفظ` : `${n} value${n === 1 ? '' : 's'} to fix before saving`,
+  hidden:       n => IS_AR ? `${n} تعديل غير محفوظ لمقررات غير معروضة` : `${n} unsaved change${n === 1 ? '' : 's'} for courses not on screen`,
   noDrafts:     IS_AR ? 'لا توجد تعديلات غير محفوظة' : 'No unsaved changes',
   needProgram:  IS_AR ? 'اختر برنامجاً أولاً: الحدود تُحفظ لكل برنامج.' : 'Choose a programme first: limits are saved per programme.',
   fixInvalid:   IS_AR ? 'صحّح القيم غير الصالحة قبل الحفظ.' : 'Fix the invalid values before saving.',
+  listLoading:  IS_AR ? 'جارٍ تحميل قائمة المقررات…' : 'The course list is loading…',
+  listFailed:   IS_AR ? 'لم تُحمَّل قائمة المقررات، فلا يمكن الحفظ. غيّر البرنامج أو حاول مرة أخرى.' : "The course list didn't load, so nothing can be saved. Change the programme or try again.",
   nothing:      IS_AR ? 'لا شيء يتغيّر: الحدود المحفوظة مطابقة.' : 'Nothing to change: the saved limits already match.',
   saveTitle:    n => IS_AR ? `حفظ ${n} من حدود الشعب؟` : `Save ${n} seat limit${n === 1 ? '' : 's'}?`,
   removeTitle:  code => IS_AR ? `إزالة الحد المحفوظ لـ ${code}؟` : `Remove the saved limit for ${code}?`,
@@ -107,6 +123,7 @@ const TL = {
   confirmSave:  n => IS_AR ? `حفظ ${n} تغيير` : `Save ${n} change${n === 1 ? '' : 's'}`,
   confirmRemove: IS_AR ? 'إزالة الحد' : 'Remove limit',
   keepEditing:  IS_AR ? 'متابعة التعديل' : 'Keep editing',
+  checking:     IS_AR ? 'جارٍ التحقق…' : 'Checking…',
   saving:       IS_AR ? 'جارٍ الحفظ...' : 'Saving...',
   saveBtn:      IS_AR ? 'حفظ الحدود…' : 'Save limits…',
   saved:        n => IS_AR ? `حُفظ ${n} حد وسُجّل في سجل التدقيق.` : `Saved ${n} seat limit${n === 1 ? '' : 's'}; each change is in the audit log.`,
@@ -114,6 +131,7 @@ const TL = {
 };
 
 /* Server refusals carry a stable code; the words are the page's. */
+const TOO_MANY = () => IS_AR ? 'طلبات كثيرة. انتظر قليلاً ثم حاول.' : 'Too many requests. Wait a moment and try again.';
 const LIMIT_ERRORS = {
   invalid_json:             () => IS_AR ? 'تعذّر قراءة الطلب.' : 'The request could not be read.',
   programs_required:        () => TL.needProgram,
@@ -129,11 +147,29 @@ const LIMIT_ERRORS = {
   limit_changed:            () => IS_AR ? 'تغيّر حد أثناء الحفظ فلم يُحفظ شيء. اضغط حفظ مرة أخرى.' : 'A limit changed while saving, so nothing was saved. Press Save again.',
   audit_unavailable:        () => IS_AR ? 'تعذّر تسجيل التغيير في سجل التدقيق، لذلك لم يُحفظ شيء. حاول مرة أخرى.' : "Couldn't record the change in the audit log, so nothing was saved. Try again.",
 };
+/* The saved limits moved under the page: reload them before the next review. */
+const STALE_LIMIT_CODES = new Set(['preview_stale', 'limit_changed']);
 function limitError(data, status) {
   const make = data && LIMIT_ERRORS[data.code];
   if (make) return make(data);
-  if (status === 429) return IS_AR ? 'طلبات كثيرة. انتظر قليلاً ثم حاول.' : 'Too many requests. Wait a moment and try again.';
+  if (status === 429) return TOO_MANY();
   if (status === 401 || status === 403) return IS_AR ? 'لا تملك صلاحية حفظ الحدود.' : 'You are not allowed to save limits.';
+  return T.reqFailed;
+}
+
+/* Generate and Export refusals, in the page's words too. */
+const REQUEST_ERRORS = {
+  generate_failed:  () => IS_AR ? 'تعذّر حساب الخطة.' : 'The plan could not be computed.',
+  export_failed:    () => IS_AR ? 'تعذّر إنشاء الملف.' : 'The file could not be made.',
+  invalid_json:     () => LIMIT_ERRORS.invalid_json(),
+  invalid_term:     () => IS_AR ? 'السنة أو الفصل غير صالح.' : 'The year or semester is not valid.',
+  invalid_capacity: () => IS_AR ? 'حدود الشعب يجب أن تكون أرقاماً صحيحة.' : 'Section limits must be whole numbers.',
+};
+function requestError(data, status) {
+  const make = data && REQUEST_ERRORS[data.code];
+  if (make) return make(data);
+  if (status === 429) return TOO_MANY();
+  if (status === 401 || status === 403) return IS_AR ? 'لا تملك صلاحية هذا الإجراء.' : 'You are not allowed to do this.';
   return T.reqFailed;
 }
 
@@ -144,7 +180,7 @@ $('spToggleAdv').onclick = () => {
   $('spToggleAdv').setAttribute('aria-expanded', isHidden ? 'true' : 'false');
   if (isHidden) {
     const prog = $('spProgram').value.trim().toUpperCase();
-    if (!_advLoaded || prog !== _advProgram) loadAdvancedCourses();
+    if (!_advLoaded || prog !== _advProgram || _advState === 'failed') loadAdvancedCourses();
   }
 };
 
@@ -158,43 +194,58 @@ function latinDigits(text) {
                      .replace(/[۰-۹]/g, d => String(d.charCodeAt(0) - 0x06F0));
 }
 
-/* The saved limit a row starts from: one value when every programme on screen
- * that teaches the course agrees, "mixed" otherwise. */
+/* The limit a row starts from. With programmes on screen: their saved limit
+ * when every programme that teaches the course agrees, "mixed" otherwise.
+ * With none: the lowest limit any programme declares, which is what Generate
+ * applies to every student (nothing can be saved or removed from there). */
 function savedLimitOf(course) {
+  if (course.limit_scope === 'lowest_declared') {
+    const value = Number.isInteger(course.programme_max) ? course.programme_max : null;
+    return { value, mixed: false, any: false, lowest: value != null };
+  }
   const limits = course.programme_limits || {};
   const values = Object.values(limits).filter(v => Number.isInteger(v));
   const taught = course.programmes || [];
-  if (!values.length) return { value: null, mixed: false, any: false };
+  if (!values.length) return { value: null, mixed: false, any: false, lowest: false };
   const uniq = [...new Set(values)];
-  if (uniq.length === 1 && values.length === taught.length) return { value: uniq[0], mixed: false, any: true };
-  return { value: null, mixed: true, any: true };
+  if (uniq.length === 1 && values.length === taught.length) return { value: uniq[0], mixed: false, any: true, lowest: false };
+  return { value: null, mixed: true, any: true, lowest: false };
 }
 
-async function loadAdvancedCourses(keep = null) {
-  const kept = keep || currentDraftInputs();
+async function loadAdvancedCourses() {
+  const seq = ++_advSeq;
   const local4  = parseInt($('spCapLocal4').value, 10) || 25;
   const localO  = parseInt($('spCapLocalOther').value, 10) || 40;
   const ext     = parseInt($('spCapExternal').value, 10) || 50;
   const prog    = $('spProgram').value.trim().toUpperCase();
-  _advProgram   = prog;
   let url = `/ops/section-planning/courses/?max_local_4cr=${local4}&max_local_other=${localO}&max_external=${ext}`;
   if (prog) url += `&program=${encodeURIComponent(prog)}`;
   const year = parseInt($('spYear').value, 10), term = parseInt($('spSemester').value, 10);
   if (year && term) url += `&year=${year}&semester=${term}`;
+  _advState = 'loading';
+  updateAdvState();
+  const failed = () => {
+    _advState = 'failed';
+    showStatus(TL.listFailed, 'err');
+    updateAdvState();
+  };
   try {
     const res = await fetch(url, { headers: { 'X-CSRFToken': CSRF } });
-    const data = await res.json();
-    if (!data.ok) { showStatus(data.error || T.reqFailed, 'err'); return; }
+    const data = await res.json().catch(() => ({}));
+    if (seq !== _advSeq) return;   // a newer request owns the panel
+    if (!res.ok || !data.ok) { failed(); return; }
     _advCourses = data.courses || [];
+    _advProgram = prog;
     _advLoaded = true;
-    renderAdvancedTable(_advCourses, kept);
+    _advState = 'ready';
+    renderAdvancedTable(_advCourses);
     $('spAdvCount').textContent = _advCourses.length + (IS_AR ? ' مقرر' : ' courses');
   } catch (err) {
-    showStatus(T.reqFailed + ': ' + err.message, 'err');
+    if (seq === _advSeq) failed();
   }
 }
 
-function renderAdvancedTable(courses, kept = new Map()) {
+function renderAdvancedTable(courses) {
   const tbody = $('spAdvBody');
   if (!courses.length) {
     tbody.innerHTML = `<tr><td colspan="8" class="empty-note text-center" style="padding:20px">${
@@ -207,6 +258,7 @@ function renderAdvancedTable(courses, kept = new Map()) {
     const code = esc(c.course_code);
     const dispVal = saved.value != null ? saved.value : '';
     const placeholder = saved.mixed ? TL.mixed : c.default_max;
+    const lowestNote = saved.lowest ? `<span class="sp-cell-sub sp-adv-src">${esc(TL.lowest)}</span>` : '';
     return `<tr data-code="${code}" data-saved="${saved.value ?? ''}" data-mixed="${saved.mixed ? '1' : ''}">
     <td><span class="cr-id">${code}</span></td>
     <td>${esc(c.department)}</td>
@@ -218,7 +270,7 @@ function renderAdvancedTable(courses, kept = new Map()) {
         value="${esc(dispVal)}"
         placeholder="${esc(placeholder)}"
         aria-label="${esc(TL.limitAria(c.course_code))}"
-        data-code="${code}" data-default="${esc(c.default_max)}">
+        data-code="${code}" data-default="${esc(c.default_max)}">${lowestNote}
       <span class="sp-adv-state" aria-live="polite"></span></td>
     <td class="text-center"><label class="sp-adv-all"><input type="checkbox" class="adv-all"
         aria-label="${esc(TL.allAria(c.course_code))}"><span aria-hidden="true">${esc(TL.allProgs)}</span></label></td>
@@ -231,17 +283,18 @@ function renderAdvancedTable(courses, kept = new Map()) {
   tbody.querySelectorAll('tr[data-code]').forEach(tr => {
     const inp = tr.querySelector('.adv-input');
     const all = tr.querySelector('.adv-all');
-    const prior = kept.get(tr.dataset.code);
+    const prior = _drafts.get(tr.dataset.code);
     if (prior) { inp.value = prior.raw; all.checked = prior.all; }
-    inp.addEventListener('input', () => { refreshAdvRow(tr); updateAdvState(); });
+    inp.addEventListener('input', () => { refreshAdvRow(tr); rememberDraft(tr); updateAdvState(); });
     inp.addEventListener('blur', () => {
       /* An emptied saved limit is not a removal: that has its own button. */
       if (!inp.value.trim() && tr.dataset.saved !== '') inp.value = tr.dataset.saved;
-      refreshAdvRow(tr); updateAdvState();
+      refreshAdvRow(tr); rememberDraft(tr); updateAdvState();
     });
-    all.addEventListener('change', () => { refreshAdvRow(tr); updateAdvState(); });
+    all.addEventListener('change', () => { refreshAdvRow(tr); rememberDraft(tr); updateAdvState(); });
     tr.querySelector('.adv-remove')?.addEventListener('click', () => removeSavedLimit(tr));
     refreshAdvRow(tr);
+    rememberDraft(tr);
   });
   updateAdvState();
 }
@@ -259,7 +312,7 @@ function slotElectiveRows(course) {
   }).join('');
 }
 
-/* What one row asks for, read from the DOM (the only draft state there is). */
+/* What one row asks for, read from its fields. */
 function draftOf(tr) {
   const inp = tr.querySelector('.adv-input');
   const all = Boolean(tr.querySelector('.adv-all')?.checked);
@@ -274,13 +327,20 @@ function draftOf(tr) {
   return { ...base, value, changed, draft: changed || all };
 }
 
+/* Keep a row's draft (or forget it once it matches the saved limit again). */
+function rememberDraft(tr) {
+  const d = draftOf(tr);
+  if (d.draft || d.invalid) _drafts.set(d.code, { raw: d.raw, all: d.all });
+  else _drafts.delete(d.code);
+}
+
 function advRows() { return [...$('spAdvBody').querySelectorAll('tr[data-code]')]; }
+function advRow(code) { return advRows().find(tr => tr.dataset.code === code) || null; }
 function currentDrafts() { return advRows().map(draftOf).filter(d => d.draft && !d.invalid); }
 function invalidDrafts() { return advRows().map(draftOf).filter(d => d.invalid); }
-function currentDraftInputs() {
-  const kept = new Map();
-  advRows().map(draftOf).filter(d => d.draft || d.invalid).forEach(d => kept.set(d.code, { raw: d.raw, all: d.all }));
-  return kept;
+function hiddenDraftCount() {
+  const shown = new Set(advRows().map(tr => tr.dataset.code));
+  return [..._drafts.keys()].filter(code => !shown.has(code)).length;
 }
 
 function refreshAdvRow(tr) {
@@ -292,22 +352,41 @@ function refreshAdvRow(tr) {
   state.textContent = d.invalid ? TL.invalid : (d.draft ? TL.modified : '');
 }
 
+/* Why Save cannot run now ('' when it can, given drafts). */
+function saveBlockReason(invalid) {
+  if (_advState === 'loading') return TL.listLoading;
+  if (_advState === 'failed') return TL.listFailed;
+  if (!advPrograms().length) return TL.needProgram;
+  if (invalid.length) return TL.fixInvalid;
+  return '';
+}
+
+/* The panel's status line says what is pending and, when Save is off, why:
+ * Save stays focusable (aria-disabled), and describes itself with this line. */
 function updateAdvState() {
   const drafts = currentDrafts();
   const invalid = invalidDrafts();
+  const hidden = hiddenDraftCount();
+  const scoped = advPrograms().length > 0;
   const badge = $('spAdvBadge');
-  if (drafts.length > 0) {
-    badge.textContent = drafts.length;
+  const pending = drafts.length + hidden;
+  if (pending > 0) {
+    badge.textContent = pending;
     badge.classList.remove('d-none');
   } else {
     badge.classList.add('d-none');
   }
-  $('spAdvDrafts').textContent = drafts.length ? TL.drafts(drafts.length) : TL.noDrafts;
+  const reason = saveBlockReason(invalid);
+  const parts = [];
+  if (drafts.length) parts.push(scoped || _advState !== 'ready' ? TL.drafts(drafts.length) : TL.whatIfs(drafts.length));
+  if (invalid.length) parts.push(TL.toFix(invalid.length));
+  if (hidden) parts.push(TL.hidden(hidden));
+  if (drafts.length && (reason === TL.listLoading || reason === TL.listFailed)) parts.push(reason);
+  $('spAdvDrafts').textContent = parts.length ? parts.join(' · ') : TL.noDrafts;
   const btn = $('spAdvSaveDb');
-  const reason = !advPrograms().length ? TL.needProgram : (invalid.length ? TL.fixInvalid : '');
-  btn.disabled = Boolean(reason) || !drafts.length;
+  btn.setAttribute('aria-disabled', _limitBusy || reason || !drafts.length ? 'true' : 'false');
   btn.title = reason;
-  $('spAdvReset').disabled = !drafts.length && !invalid.length;
+  $('spAdvReset').disabled = _limitBusy || (!drafts.length && !invalid.length && !hidden);
 }
 
 /* What-if for Generate: only values the user CHANGED, never pre-filled saved ones. */
@@ -326,8 +405,9 @@ $('spAdvSearch').addEventListener('input', function() {
   });
 });
 
-/* Discard drafts: back to the saved values. Never a request. */
+/* Discard drafts, on screen or not: back to the saved values. Never a request. */
 function discardDrafts() {
+  _drafts.clear();
   advRows().forEach(tr => {
     tr.querySelector('.adv-input').value = tr.dataset.saved;
     tr.querySelector('.adv-all').checked = false;
@@ -335,7 +415,11 @@ function discardDrafts() {
   });
   updateAdvState();
 }
-$('spAdvReset').onclick = discardDrafts;
+$('spAdvReset').onclick = () => {
+  discardDrafts();
+  /* The button is now off: keep the keyboard in the panel. */
+  $('spAdvSearch').focus();
+};
 
 async function postLimits(body) {
   const res = await fetch(LIMITS_URL, {
@@ -350,7 +434,7 @@ async function postLimits(body) {
 function limitTableHtml(changes) {
   const val = (v, isNew) => v == null ? (isNew ? TL.removed : TL.none) : String(v);
   const rows = changes.map(c => `<tr>
-      <td><bdi class="cr-id">${esc(c.course_code)}</bdi></td>
+      <td><bdi class="cr-id">${esc(c.course_code)}</bdi>${c.course_name ? `<div class="sp-cell-sub"><bdi>${esc(c.course_name)}</bdi></div>` : ''}</td>
       <td><bdi>${esc(c.program)}</bdi></td>
       <td class="text-center">${esc(val(c.old, false))}</td>
       <td class="text-center"><strong>${esc(val(c.new, true))}</strong></td>
@@ -361,14 +445,20 @@ function limitTableHtml(changes) {
       <tbody>${rows}</tbody></table>`;
 }
 
-/* Preview, confirm, commit. Returns the server's answer to the commit, or null. */
-async function reviewAndSave(changes, { title, intro, confirmText }) {
+/* Preview, confirm, commit. Says what happened:
+ *   saved  – the server's answer to the commit
+ *   noop   – the preview changed nothing (the saved limits already match)
+ *   reload – the saved limits on screen may be out of date: reload them */
+async function reviewAndSave(changes, { title, intro, confirmText, onCommit }) {
   const programs = advPrograms();
-  if (!programs.length) { showStatus(TL.needProgram, 'warn'); return null; }
+  if (!programs.length) { showStatus(TL.needProgram, 'warn'); return {}; }
   const preview = await postLimits({ programs, changes, dry_run: true });
-  if (!preview.res.ok || !preview.data.ok) { showStatus(limitError(preview.data, preview.res.status), 'err'); return null; }
+  if (!preview.res.ok || !preview.data.ok) {
+    showStatus(limitError(preview.data, preview.res.status), 'err');
+    return { reload: STALE_LIMIT_CODES.has(preview.data.code) };
+  }
   const planned = preview.data.changes || [];
-  if (!planned.length) { showStatus(TL.nothing, 'warn'); return null; }
+  if (!planned.length) { showStatus(TL.nothing, 'warn'); return { noop: true, reload: true }; }
   const unchangedNote = preview.data.unchanged ? `<p class="fs-sm text-t3">${esc(TL.unchanged(preview.data.unchanged))}</p>` : '';
   const ok = await dlg.confirm({
     title: title(planned.length),
@@ -376,60 +466,97 @@ async function reviewAndSave(changes, { title, intro, confirmText }) {
     kind: 'warning',
     confirmText: confirmText(planned.length),
     cancelText: TL.keepEditing,
+    /* A review: the keyboard starts on "Keep editing", never on the write. */
+    initialFocus: 'cancel',
+    waitForClose: true,
   });
-  if (!ok) return null;
+  if (!ok) return {};
+  if (onCommit) onCommit();
   const commit = await postLimits({ programs, changes, dry_run: false, preview_token: preview.data.preview_token });
-  if (!commit.res.ok || !commit.data.ok) { showStatus(limitError(commit.data, commit.res.status), 'err'); return null; }
-  return commit.data;
+  if (!commit.res.ok || !commit.data.ok) {
+    showStatus(limitError(commit.data, commit.res.status), 'err');
+    return { reload: STALE_LIMIT_CODES.has(commit.data.code) };
+  }
+  return { saved: commit.data, reload: true };
+}
+
+/* After the panel is reloaded its rows are new: put the keyboard back. */
+function focusAfterLimits(code = null) {
+  const field = code && advRow(code)?.querySelector('.adv-input');
+  if (field) { field.focus(); return; }
+  const btn = $('spAdvSaveDb');
+  (btn.getAttribute('aria-disabled') === 'true' ? $('spAdvSearch') : btn).focus();
 }
 
 /* Save drafts (the confirmed, audited write). */
 $('spAdvSaveDb').onclick = async () => {
-  if (invalidDrafts().length) { showStatus(TL.fixInvalid, 'err'); return; }
+  if (_limitBusy) return;
+  const invalid = invalidDrafts();
+  const reason = saveBlockReason(invalid);
+  if (reason) { showStatus(reason, invalid.length ? 'err' : 'warn'); return; }
   const drafts = currentDrafts();
   if (!drafts.length) { showStatus(TL.nothing, 'warn'); return; }
   const btn = $('spAdvSaveDb');
-  btn.disabled = true;
-  btn.textContent = TL.saving;
+  /* Not `disabled`: the focused button would drop the keyboard to the page. */
+  _limitBusy = true;
+  btn.setAttribute('aria-busy', 'true');
+  btn.textContent = TL.checking;
+  updateAdvState();
+  let outcome = {};
   try {
     const changes = drafts.map(d => ({ course_code: d.code, max_capacity: d.value, all_programmes: d.all }));
-    const saved = await reviewAndSave(changes, { title: TL.saveTitle, intro: TL.saveIntro, confirmText: TL.confirmSave });
-    if (saved) {
-      showStatus(TL.saved(saved.changed_count), 'ok');
-      const keep = currentDraftInputs();
-      changes.forEach(c => keep.delete(c.course_code));
-      await loadAdvancedCourses(keep);
-    }
+    outcome = await reviewAndSave(changes, {
+      title: TL.saveTitle, intro: TL.saveIntro, confirmText: TL.confirmSave,
+      onCommit: () => { btn.textContent = TL.saving; },
+    });
+    if (outcome.saved) showStatus(TL.saved(outcome.saved.changed_count), 'ok');
+    /* Saved, or nothing to save: those drafts are done with. */
+    if (outcome.saved || outcome.noop) changes.forEach(c => _drafts.delete(c.course_code));
+    if (outcome.reload) await loadAdvancedCourses();
   } catch (e) {
     showStatus(T.reqFailed + ': ' + e.message, 'err');
   } finally {
+    _limitBusy = false;
+    btn.removeAttribute('aria-busy');
     btn.textContent = TL.saveBtn;
     updateAdvState();
+    if (outcome.reload) focusAfterLimits();
   }
 };
 
 /* Remove one saved limit: explicit, confirmed, audited. Other drafts are kept. */
 async function removeSavedLimit(tr) {
+  if (_limitBusy) return;
+  const reason = saveBlockReason([]);
+  if (reason) { showStatus(reason, 'warn'); return; }
   const code = tr.dataset.code;
   const all = Boolean(tr.querySelector('.adv-all')?.checked);
+  _limitBusy = true;
+  updateAdvState();
+  let outcome = {};
   try {
-    const removed = await reviewAndSave(
+    outcome = await reviewAndSave(
       [{ course_code: code, max_capacity: null, all_programmes: all }],
       { title: () => TL.removeTitle(code), intro: TL.removeIntro, confirmText: () => TL.confirmRemove },
     );
-    if (removed) {
-      showStatus(TL.saved(removed.changed_count), 'ok');
-      const keep = currentDraftInputs();
-      keep.delete(code);
-      await loadAdvancedCourses(keep);
+    if (outcome.saved) {
+      showStatus(TL.saved(outcome.saved.changed_count), 'ok');
+      _drafts.delete(code);
     }
+    if (outcome.reload) await loadAdvancedCourses();
   } catch (e) {
     showStatus(T.reqFailed + ': ' + e.message, 'err');
+  } finally {
+    _limitBusy = false;
+    updateAdvState();
+    if (outcome.reload) focusAfterLimits(code);
   }
 }
 
 window.addEventListener('beforeunload', e => {
-  if (!currentDrafts().length) return;
+  /* What-ifs with no programme on screen cannot be saved: nothing to lose. */
+  const unsaved = (advPrograms().length ? currentDrafts().length : 0) + hiddenDraftCount();
+  if (!unsaved) return;
   e.preventDefault();
   e.returnValue = TL.leave;
 });
@@ -437,13 +564,13 @@ window.addEventListener('beforeunload', e => {
 /* Reload defaults when global capacity settings change (drafts are kept) */
 ['spCapLocal4', 'spCapLocalOther', 'spCapExternal'].forEach(id => {
   $(id).addEventListener('change', () => {
-    if (_advLoaded) loadAdvancedCourses();
+    if (_advState !== 'idle') loadAdvancedCourses();
   });
 });
 
 /* Reload when program input changes (courses are program-specific; drafts are kept) */
 $('spProgram').addEventListener('change', () => {
-  if (_advLoaded) loadAdvancedCourses();
+  if (_advState !== 'idle') loadAdvancedCourses();
 });
 
 /* ── Collect payload ── */
@@ -790,10 +917,10 @@ $('spGenerate').onclick = async () => {
       body: JSON.stringify(payload),
     });
 
-    const data = await res.json();
+    const data = await res.json().catch(() => ({}));
 
     if (!res.ok || !data.ok) {
-      showStatus(data.error || T.reqFailed, 'err');
+      showStatus(requestError(data, res.status), 'err');
       return;
     }
 
@@ -832,7 +959,7 @@ $('spExport').onclick = async () => {
 
     if (!res.ok) {
       const errData = await res.json().catch(() => ({}));
-      showStatus(errData.error || T.reqFailed, 'err');
+      showStatus(requestError(errData, res.status), 'err');
       return;
     }
 
@@ -878,7 +1005,7 @@ $('spReset').onclick = () => {
 
   /* Drop drafts (never saved limits), and show the panel for the cleared scope. */
   discardDrafts();
-  if (_advLoaded) loadAdvancedCourses(new Map());
+  if (_advState !== 'idle') loadAdvancedCourses();
 };
 
 /* ── Department filter on results table ── */

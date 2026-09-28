@@ -8520,6 +8520,8 @@ html[data-theme="dark"] .btn-export {
     .sp-adv-drafts { font-size: .75rem; color: var(--t3); }
     .sp-adv-note { margin: 0 0 8px; }
     .sp-adv-reset:disabled { opacity: .5; cursor: default; }
+    /* Save stays focusable when it cannot run (aria-disabled): the status line says why. */
+    #spAdvSaveDb[aria-disabled="true"] { opacity: .5; cursor: default; }
     .sp-adv-table tr.sp-adv-draft td { background: color-mix(in srgb, var(--warning) 8%, transparent); }
     .sp-adv-table tr.sp-adv-draft .adv-input { border-color: var(--warning); }
     .sp-adv-table tr.sp-adv-invalid .adv-input { border-color: var(--danger); }
