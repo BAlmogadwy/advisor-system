@@ -93,6 +93,10 @@ $('spToggleCaps').onclick = () => {
   $('spToggleCaps').setAttribute('aria-expanded', hidden ? 'false' : 'true');
 };
 
+/* A course code in plain text (a status line) of an Arabic sentence: a
+ * left-to-right island (FSI ... PDI), so a list of codes keeps its order. */
+const ltrIsland = code => String.fromCharCode(0x2068) + code + String.fromCharCode(0x2069);
+
 /* ── Per-course seat limits ──
  * A limit belongs to a programme. Editing a row makes a DRAFT: it is used as a
  * what-if on Generate, marked "Modified", and never written until the user
@@ -114,7 +118,8 @@ let _advProgram = '';     // the programme(s) whose rows are on screen
 let _advSeq = 0;          // the newest course-list request; older answers are dropped
 let _advState = 'idle';   // 'idle' | 'loading' | 'ready' | 'failed'
 let _limitBusy = false;   // a review or save in flight: one at a time
-const _drafts = new Map(); // course code -> { raw, all, typed }
+const _drafts = new Map(); // course code -> { raw, all, typed, value }
+let _scopeCleared = [];    // rows whose "All programmes" a reload cleared: the limit shown changed
 
 const TL = {
   modified:     IS_AR ? 'معدَّل' : 'Modified',
@@ -130,6 +135,9 @@ const TL = {
   whatIfs:      n => IS_AR ? `${n} تعديل للحساب فقط — اختر برنامجاً لحفظه` : `${n} what-if change${n === 1 ? '' : 's'} for Generate — choose a programme to save`,
   toFix:        n => IS_AR ? `${n} قيمة تحتاج تصحيحاً قبل الحفظ` : `${n} value${n === 1 ? '' : 's'} to fix before saving`,
   hidden:       n => IS_AR ? `${n} تعديل غير محفوظ لمقررات غير معروضة` : `${n} unsaved change${n === 1 ? '' : 's'} for courses not on screen`,
+  scopeCleared: codes => IS_AR
+    ? `${codes.map(ltrIsland).join('، ')}: ${codes.length === 1 ? 'تغيّر الحد المعروض' : 'تغيّرت الحدود المعروضة'} فأُلغي تحديد «كل البرامج»؛ حدّده مرة أخرى لتطبيق الحد المعروض الآن`
+    : `${codes.join(', ')}: the limit${codes.length === 1 ? '' : 's'} shown changed, so All programmes was cleared; tick it again to apply the limit shown now`,
   noDrafts:     IS_AR ? 'لا توجد تعديلات غير محفوظة' : 'No unsaved changes',
   needProgram:  IS_AR ? 'اختر برنامجاً أولاً: الحدود تُحفظ لكل برنامج.' : 'Choose a programme first: limits are saved per programme.',
   fixInvalid:   IS_AR ? 'صحّح القيم غير الصالحة قبل الحفظ.' : 'Fix the invalid values before saving.',
@@ -281,6 +289,7 @@ async function loadAdvancedCourses() {
 
 function renderAdvancedTable(courses) {
   const tbody = $('spAdvBody');
+  _scopeCleared = [];
   if (!courses.length) {
     tbody.innerHTML = `<tr><td colspan="8" class="empty-note text-center" style="padding:20px">${
       IS_AR ? 'لا توجد مقررات — أدخل البرنامج أولاً.' : 'No courses found — enter a Program first.'}</td></tr>`;
@@ -315,24 +324,35 @@ function renderAdvancedTable(courses) {
   }).join('');
   /* Drafts only: inputs mark the row, nothing is sent until Save. A reload
    * (after a refused save, or another programme) gives a draft back its
-   * value only if the user typed it: a row changed only in scope ("All
-   * programmes") keeps the limit saved NOW, so a limit someone else saved
-   * in the meantime is never turned back to the one pre-filled before. */
+   * value only if the user typed it. A row changed only in scope ("All
+   * programmes" ticked on the limit it showed) is kept only while the row
+   * still shows that limit: a limit someone else saved in the meantime is
+   * never turned back, and a ticked box always means a pending change. When
+   * the limit shown changed (or is gone, or mixed), the box is cleared and the
+   * panel says so, for the user to tick it again on the value now shown. */
   tbody.querySelectorAll('tr[data-code]').forEach(tr => {
     const inp = tr.querySelector('.adv-input');
     const all = tr.querySelector('.adv-all');
     const prior = _drafts.get(tr.dataset.code);
-    if (prior) {
-      if (prior.typed) inp.value = prior.raw;
+    if (prior?.typed) {
+      inp.value = prior.raw;
       all.checked = prior.all;
+    } else if (prior?.all) {
+      if (draftOf(tr).value === prior.value) all.checked = true;
+      else _scopeCleared.push(tr.dataset.code);
     }
-    inp.addEventListener('input', () => { refreshAdvRow(tr); rememberDraft(tr); updateAdvState(); });
+    /* The user acts on the row again: the note about it has been read. */
+    const edited = () => {
+      _scopeCleared = _scopeCleared.filter(code => code !== tr.dataset.code);
+      refreshAdvRow(tr); rememberDraft(tr); updateAdvState();
+    };
+    inp.addEventListener('input', edited);
     inp.addEventListener('blur', () => {
       /* An emptied saved limit is not a removal: that has its own button. */
       if (!inp.value.trim() && tr.dataset.saved !== '') inp.value = tr.dataset.saved;
       refreshAdvRow(tr); rememberDraft(tr); updateAdvState();
     });
-    all.addEventListener('change', () => { refreshAdvRow(tr); rememberDraft(tr); updateAdvState(); });
+    all.addEventListener('change', edited);
     tr.querySelector('.adv-remove')?.addEventListener('click', () => removeSavedLimit(tr));
     refreshAdvRow(tr);
     rememberDraft(tr);
@@ -370,10 +390,11 @@ function draftOf(tr) {
 
 /* Keep a row's draft (or forget it once it matches the saved limit again).
  * `typed`: the value is the user's own (a change, or one still to fix), not
- * the saved limit the row was pre-filled with. */
+ * the saved limit the row was pre-filled with. `value`: the limit the row
+ * showed, which an untyped ("All programmes" only) draft applies. */
 function rememberDraft(tr) {
   const d = draftOf(tr);
-  if (d.draft || d.invalid) _drafts.set(d.code, { raw: d.raw, all: d.all, typed: d.changed || d.invalid });
+  if (d.draft || d.invalid) _drafts.set(d.code, { raw: d.raw, all: d.all, typed: d.changed || d.invalid, value: d.value });
   else _drafts.delete(d.code);
 }
 
@@ -424,6 +445,7 @@ function updateAdvState() {
   if (drafts.length) parts.push(scoped || _advState !== 'ready' ? TL.drafts(drafts.length) : TL.whatIfs(drafts.length));
   if (invalid.length) parts.push(TL.toFix(invalid.length));
   if (hidden) parts.push(TL.hidden(hidden));
+  if (_scopeCleared.length) parts.push(TL.scopeCleared(_scopeCleared));
   if (drafts.length && (reason === TL.listLoading || reason === TL.listFailed)) parts.push(reason);
   $('spAdvDrafts').textContent = parts.length ? parts.join(' · ') : TL.noDrafts;
   const btn = $('spAdvSaveDb');
@@ -451,6 +473,7 @@ $('spAdvSearch').addEventListener('input', function() {
 /* Discard drafts, on screen or not: back to the saved values. Never a request. */
 function discardDrafts() {
   _drafts.clear();
+  _scopeCleared = [];
   advRows().forEach(tr => {
     tr.querySelector('.adv-input').value = tr.dataset.saved;
     tr.querySelector('.adv-all').checked = false;

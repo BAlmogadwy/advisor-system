@@ -25,6 +25,7 @@ import json
 import math
 import re
 from collections import Counter
+from decimal import ROUND_HALF_UP, Decimal
 from pathlib import Path
 
 import pytest
@@ -45,9 +46,10 @@ from core.services.rbac import (
     ensure_scope_schema,
     set_user_scope,
 )
-from core.services.reporting import clear_aggregate_cache
+from core.services.reporting import clear_aggregate_cache, get_student_ids
 from core.services.section_planning import (
     LOCAL_DEPARTMENTS,
+    compute_plan_summary,
     compute_section_plan,
     lowest_declared_capacities,
 )
@@ -343,7 +345,9 @@ def test_a_student_of_the_other_section_never_changes_the_plan(
 @pytest.fixture
 def two_programmes(monkeypatch: pytest.MonkeyPatch) -> None:
     """AI and DS share CS211 (AI declares 30 a section, DS 35) and MATH203
-    (external: 50); AI331 is AI's own, DS201 DS's. The sections differ in size."""
+    (external: 50); AI331 is AI's own, DS201 DS's. The sections differ in size.
+    AI's men are recorded "m" and DS's women " f ": the builder reads a
+    section as the page does, trimmed and in either case."""
     Course.objects.create(
         course_code="CS211", department="CS", credit_hours=3, description="DATA STRUCTURES"
     )
@@ -365,10 +369,10 @@ def two_programmes(monkeypatch: pytest.MonkeyPatch) -> None:
         _requirement(program, "MATH203", None, name="CALCULUS I")
     _requirement("AI", "AI331", None, credits=4, name="MACHINE LEARNING")
     _requirement("DS", "DS201", None, name="DATA SCIENCE")
-    _students("AI", 521000001, 34, section="M")
+    _students("AI", 521000001, 34, section="m")
     _students("AI", 522000001, 57, section="F")
     _students("DS", 523000001, 23, section="M")
-    _students("DS", 524000001, 41, section="F")
+    _students("DS", 524000001, 41, section=" f ")
     _students("AI", 525000001, 4, section="")  # in neither plan
     _recommend(
         monkeypatch,
@@ -412,6 +416,22 @@ def test_the_page_plans_a_section_as_the_builder_sizes_it(
         builder = built(program)
         assert _sized(entry["plan"]) == builder, program
         assert _sized(_generate(planner, section, program=program)["plan"]) == builder, program
+
+
+def test_the_builders_students_of_a_section_are_the_ones_the_page_counts() -> None:
+    """get_student_ids (the timetable builder's) reads a section as the page
+    does: trimmed of every blank, in either case; no section is neither."""
+    recorded = {"M": 601, "m": 602, " F ": 603, "f": 604, "\tF\n": 605, "": 606, "X": 607}
+    Student.objects.bulk_create(
+        [
+            Student(student_id=sid, registration_no=str(sid), program="AI", section=section)
+            for section, sid in recorded.items()
+        ]
+    )
+
+    assert sorted(get_student_ids(program="AI", section="M")) == [601, 602]
+    assert sorted(get_student_ids(program="AI", section="F")) == [603, 604, 605]
+    assert sorted(get_student_ids(program="AI")) == sorted(recorded.values())
 
 
 # ── declared limits in every view ─────────────────────────────────
@@ -670,6 +690,65 @@ def test_the_export_is_the_chosen_sections_plan(
     )
     other = LABELS["F" if section == "M" else "M"]
     assert other not in words and "gender" not in words.lower()
+
+
+def _excel_fill(row: dict, index: int) -> str:
+    """A Sections-sheet row's Fill % as Excel computes its formulas.
+
+    The formulas are checked as written, then evaluated: I = CEILING(G/H),
+    J = CEILING(G/I), fill = ROUND(J/H*100, 0), and Excel's ROUND sends a half
+    away from zero (62.5 -> 63), unlike Python's round (62).
+    """
+    r = index
+    assert row["Sections"] == f"=IF(G{r}>0,CEILING(G{r}/H{r},1),0)"
+    assert row["Avg/Section"] == f"=IF(I{r}>0,CEILING(G{r}/I{r},1),0)"
+    assert row["Fill %"] == f'=IF(AND(H{r}>0,I{r}>0),ROUND(J{r}/H{r}*100,0)&"%","")'
+    students, most = row["Students"], row["Max/Section"]
+    sections = math.ceil(students / most) if students > 0 else 0
+    avg = math.ceil(students / sections) if sections > 0 else 0
+    if not (most > 0 and sections > 0):
+        return ""
+    fill = (Decimal(avg) / Decimal(most) * 100).quantize(Decimal(1), rounding=ROUND_HALF_UP)
+    return f"{fill}%"
+
+
+@pytest.fixture
+def half_fills(monkeypatch: pytest.MonkeyPatch) -> None:
+    """25 women need AI301 and one of them AI302 too (local 3 credits: 40 a
+    section): 25/40 is 62.5 %, 1/40 is 2.5 %, both exactly a half."""
+    for code in ("AI301", "AI302"):
+        Course.objects.create(course_code=code, department="AI", credit_hours=3)
+        _requirement("AI", code, None)
+    women = _students("AI", 531000001, 25, section="F")
+    wants = {sid: ["AI301"] for sid in women}
+    wants[women[0]] = ["AI301", "AI302"]
+    _recommend_each(monkeypatch, wants)
+
+
+def test_the_exported_fill_is_the_pages_even_on_a_half(planner: Client, half_fills) -> None:
+    data = _generate(planner, "F", program="AI")
+    page = {row["course_code"]: row["fill_percent"] for row in data["plan"]}
+    assert page == {"AI301": 63, "AI302": 3}
+
+    rows = _export_rows(planner, "F", program="AI")
+    assert {row["Course"]: _excel_fill(row, i) for i, row in enumerate(rows, start=3)} == {
+        code: f"{fill}%" for code, fill in page.items()
+    }
+
+
+def test_the_mean_fill_rounds_a_half_up_as_every_fill_does() -> None:
+    rows = [
+        {
+            "num_sections": 1,
+            "total_students": 1,
+            "fill_percent": f,
+            "department": "AI",
+            "credit_hours": 3,
+        }
+        for f in (63, 2)
+    ]
+
+    assert compute_plan_summary(rows)["avg_fill_percent"] == 33  # 32.5
 
 
 @pytest.fixture
@@ -972,3 +1051,29 @@ def test_the_all_programmes_panel_starts_from_the_limit_generate_applies(
     for section in ("M", "F"):
         plan_row = _row(_generate(planner, section)["plan"], "AI491")
         assert plan_row["max_per_section"] == courses["AI491"]["programme_max"], section
+
+
+def test_the_all_programmes_plan_of_a_section_takes_a_limit_the_other_sections_programme_declares(
+    planner: Client, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The rule today: a limit is the programme's, and with no programme chosen
+    a course takes the lowest limit any programme WITH STUDENTS declares, even
+    one with none of this section (COE has men only), as the panel shows it.
+    Whether such a programme should bind the other section is the owner's call;
+    if it changes, the plan and the panel change together."""
+    Course.objects.create(
+        course_code="CS211", department="CS", credit_hours=3, description="DATA STRUCTURES"
+    )
+    _requirement("CS", "CS211", None, name="DATA STRUCTURES")
+    _requirement("COE", "CS211", 10, name="DATA STRUCTURES")
+    _students("CS", 541000001, 23, section="F")
+    _students("COE", 542000001, 5, section="M")
+    _recommend(monkeypatch, {"CS": ["CS211"], "COE": ["CS211"]})
+
+    row = _row(_generate(planner, "F")["plan"], "CS211")
+    panel = {
+        c["course_code"]: c for c in planner.get("/ops/section-planning/courses/").json()["courses"]
+    }
+
+    assert (row["total_students"], row["max_per_section"], row["num_sections"]) == (23, 10, 3)
+    assert panel["CS211"]["programme_max"] == row["max_per_section"]

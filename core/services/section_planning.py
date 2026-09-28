@@ -28,6 +28,17 @@ DEFAULT_MAX_LOCAL_OTHER = 40
 DEFAULT_MAX_EXTERNAL = 50
 
 
+def percent_half_up(part: int, whole: int) -> int:
+    """``part / whole`` as a whole percent, a half rounded UP, as Excel's ROUND does.
+
+    Python's ``round`` sends a half to the even number (62.5 -> 62), Excel's
+    ``ROUND`` away from zero (63): the exported Fill % formula must show the
+    page's number, so the page rounds as Excel does. Integers only, no float
+    edge. Non-negative ``part``, positive ``whole``.
+    """
+    return (200 * part + whole) // (2 * whole)
+
+
 def _extract_department(course_code: str) -> str:
     """Extract the alphabetic department prefix from a course code (e.g. 'CS101' → 'CS')."""
     m = re.match(r"([A-Z]+)", normalize_code(course_code))
@@ -542,7 +553,7 @@ def compute_section_plan(
 
         num_sections = max(1, math.ceil(total_students / max_per_section))
         avg_per_section = math.ceil(total_students / num_sections)
-        fill_pct = round((avg_per_section / max_per_section) * 100)
+        fill_pct = percent_half_up(avg_per_section, max_per_section)
 
         if avg_per_section >= max_per_section:
             status = "full"
@@ -583,7 +594,9 @@ def compute_plan_summary(plan: list[dict[str, Any]]) -> dict[str, Any]:
     total_courses = len(plan)
     total_sections = sum(r["num_sections"] for r in plan)
     total_students = sum(r["total_students"] for r in plan)
-    avg_fill = round(sum(r["fill_percent"] for r in plan) / total_courses) if total_courses else 0
+    # The mean fill, a half rounded up as every percent on the page is.
+    fill_sum = sum(r["fill_percent"] for r in plan)
+    avg_fill = (2 * fill_sum + total_courses) // (2 * total_courses) if total_courses else 0
 
     # Per-department breakdown
     dept_map: dict[str, dict[str, int]] = {}

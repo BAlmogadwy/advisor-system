@@ -39,8 +39,8 @@
     {# One section per plan, M or F: native radios (one Tab stop; the arrows move the choice), none chosen until the user chooses. #}
     <div id="spSectionGroup" class="sp-seg-group" role="radiogroup" aria-labelledby="spSectionLbl" aria-required="true" aria-describedby="spSectionMsg">
       <span id="spSectionLbl" class="fb-lbl">{% if LANGUAGE_CODE == 'ar' %}الشطر{% else %}Section{% endif %}</span>
-      <label class="sp-seg" for="spSectionM"><input id="spSectionM" type="radio" name="spSection" value="M" required><span class="sp-seg-dot" aria-hidden="true"></span><span>{% if LANGUAGE_CODE == 'ar' %}طلاب{% else %}Male{% endif %} <bdi>(M)</bdi></span></label>
-      <label class="sp-seg" for="spSectionF"><input id="spSectionF" type="radio" name="spSection" value="F" required><span class="sp-seg-dot" aria-hidden="true"></span><span>{% if LANGUAGE_CODE == 'ar' %}طالبات{% else %}Female{% endif %} <bdi>(F)</bdi></span></label>
+      <label class="sp-seg" for="spSectionM"><input id="spSectionM" type="radio" name="spSection" value="M"><span class="sp-seg-dot" aria-hidden="true"></span><span>{% if LANGUAGE_CODE == 'ar' %}طلاب{% else %}Male{% endif %} <bdi>(M)</bdi></span></label>
+      <label class="sp-seg" for="spSectionF"><input id="spSectionF" type="radio" name="spSection" value="F"><span class="sp-seg-dot" aria-hidden="true"></span><span>{% if LANGUAGE_CODE == 'ar' %}طالبات{% else %}Female{% endif %} <bdi>(F)</bdi></span></label>
     </div>
     {# Generate and Reset wrap together, at the end of the bar. #}
     <div class="sp-fb-actions">

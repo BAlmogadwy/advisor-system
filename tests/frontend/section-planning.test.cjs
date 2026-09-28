@@ -26,6 +26,8 @@ assert.ok(process.env.SP_TEST_HTML, 'Run through pytest tests/test_section_plann
 const template = fs.readFileSync(process.env.SP_TEST_HTML, 'utf8');
 const AR = process.env.SP_TEST_LANGUAGE === 'ar';
 const say = (en, ar) => (AR ? ar : en);
+/* A code as the page isolates it inside Arabic plain text (FSI ... PDI). */
+const isle = code => String.fromCharCode(0x2068) + code + String.fromCharCode(0x2069);
 const read = name => fs.readFileSync(path.join(__dirname, '../../static/js', name), 'utf8');
 const SHARED = read('shared-utils.js');
 const UX = read('shared-ux.js');   // wireSortableTable, as base.html loads it
@@ -899,15 +901,78 @@ test('a reload after a refused save keeps what the user typed, never turns back 
   assert.equal(ui.input('AI491').value, '8', 'a row nobody here edited shows the new saved limit');
   assert.ok(!ui.row('AI491').classList.contains('sp-adv-draft'));
   assert.equal(ui.input('CS211').value, '25', 'the scope-only draft shows the limit saved now, not the old 30');
-  assert.equal(ui.row('CS211').querySelector('.adv-all').checked, true, 'its scope is kept');
+  /* It was ticked on 30: applying 25 everywhere is not what the user chose. */
+  assert.equal(ui.row('CS211').querySelector('.adv-all').checked, false, 'its All programmes is cleared');
+  assert.ok(!ui.row('CS211').classList.contains('sp-adv-draft'));
   assert.equal(ui.input('MATH203').value, '45', 'a typed value is kept');
+  assert.equal(ui.text('spAdvDrafts'), say(
+    '1 unsaved change · CS211: the limit shown changed, so All programmes was cleared; tick it again to apply the limit shown now',
+    `1 تعديل غير محفوظ · ${isle('CS211')}: تغيّر الحد المعروض فأُلغي تحديد «كل البرامج»؛ حدّده مرة أخرى لتطبيق الحد المعروض الآن`,
+  ));
 
   ui.$('spAdvSaveDb').click();
   await settle();
   assert.deepEqual(ui.writes()[2].body.changes, [
-    { course_code: 'CS211', max_capacity: 25, all_programmes: true },
     { course_code: 'MATH203', max_capacity: 45, all_programmes: false },
-  ], 'the next save never writes 30 over the other user\'s 25');
+  ], 'the next save never writes 30 over the other user\'s 25, nor 25 everywhere unasked');
+});
+
+/* A row changed only in scope ("All programmes" ticked on the limit it showed). */
+const tickAll = async (ui, code) => { ui.row(code).querySelector('.adv-all').click(); await settle(); };
+
+test('a scope-only draft survives a reload that still shows the limit it was ticked on', async t => {
+  const ui = await page(t, { limits: limitsServer({ commit: () => answer({ ok: false, code: 'preview_stale', error: 'x' }, 409) }) });
+  await tickAll(ui, 'CS211');
+  ui.$('spAdvSaveDb').click();
+  await settle();
+  assert.equal(ui.requests.filter(r => r.method === 'GET').length, 2, 'reloaded after the 409');
+
+  assert.equal(ui.input('CS211').value, '30');
+  assert.equal(ui.row('CS211').querySelector('.adv-all').checked, true, 'still 30: the choice stands');
+  assert.ok(ui.row('CS211').classList.contains('sp-adv-draft'));
+  assert.equal(ui.text('spAdvDrafts'), say('1 unsaved change', '1 تعديل غير محفوظ'));
+});
+
+for (const [name, moved] of [
+  ['becomes mixed', { programmes: ['AI', 'DS'], programme_limits: { AI: 30, DS: 35 } }],
+  ['loses its limit', { programme_max: null, programme_limits: {} }],
+]) {
+  test(`a scope-only draft whose row ${name} on a reload is cleared, and the panel says so`, async t => {
+    let movedOn = false;
+    const ui = await page(t, {
+      courses: prog => answer({ ok: true, courses: coursesFor(prog).map(c => (movedOn && c.course_code === 'CS211' ? { ...c, ...moved } : c)) }),
+      limits: limitsServer({ commit: () => { movedOn = true; return answer({ ok: false, code: 'limit_changed', error: 'x' }, 409); } }),
+    });
+    await tickAll(ui, 'CS211');
+    ui.$('spAdvSaveDb').click();
+    await settle();
+
+    assert.equal(ui.input('CS211').value, '');
+    assert.equal(ui.row('CS211').querySelector('.adv-all').checked, false, 'a ticked box would claim a change nobody can save');
+    assert.ok(ui.$('spAdvBadge').classList.contains('d-none'));
+    assert.match(ui.text('spAdvDrafts'), AR ? /فأُلغي تحديد «كل البرامج»/ : /^CS211: the limit shown changed, so All programmes was cleared/);
+    ui.$('spAdvSaveDb').click();
+    await settle();
+    assert.equal(ui.writes().length, 2, 'nothing more is sent: only the refused preview and commit');
+  });
+}
+
+test('a programme change keeps a scope-only draft only while its row shows the same limit', async t => {
+  const ui = await page(t);
+  await tickAll(ui, 'CS211');
+  assert.equal(ui.text('spAdvDrafts'), say('1 unsaved change', '1 تعديل غير محفوظ'));
+
+  await ui.setProgram('AI,DS');   // AI saved 30, DS nothing: mixed
+  assert.equal(ui.input('CS211').placeholder, say('mixed', 'مختلف'));
+  assert.equal(ui.row('CS211').querySelector('.adv-all').checked, false);
+  assert.match(ui.text('spAdvDrafts'), AR ? /تغيّر الحد المعروض/ : /^CS211: the limit shown changed/);
+  ui.$('spAdvSaveDb').click();
+  await settle();
+  assert.deepEqual(ui.writes(), [], 'no limit the user never saw is saved');
+
+  /* Acting on the row again: the note has been read. */
+  await ui.type('CS211', '28');
+  assert.equal(ui.text('spAdvDrafts'), say('1 unsaved change', '1 تعديل غير محفوظ'));
 });
 
 /* ── the rows on screen are the programme a save names ── */

@@ -77,7 +77,11 @@ def test_the_section_is_a_required_choice_of_one_with_nothing_chosen(
         ("radio", "spSection", "F"),
     ]
     assert not any(r.has_attr("checked") for r in radios), "nothing chosen on a first visit"
-    assert all(r.has_attr("required") for r in radios)
+    # The group says it is required (aria-required). A native `required` on
+    # the radios would make a browser report both as invalid on a first visit,
+    # before any Generate: the error is the page's, and only after a try.
+    assert not any(r.has_attr("required") or r.has_attr("aria-invalid") for r in radios)
+    assert not group.has_attr("aria-invalid")
     labels = [soup.find("label", attrs={"for": r["id"]}).get_text(" ", strip=True) for r in radios]
     assert labels == (
         ["طلاب (M)", "طالبات (F)"] if language == "ar" else ["Male (M)", "Female (F)"]

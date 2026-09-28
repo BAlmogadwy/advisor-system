@@ -142,6 +142,12 @@ def get_student_ids(
     program: str | list[str] | None = None,
     section: str | None = None,
 ) -> list[int]:
+    """The students of a programme (or several), of one section when one is given.
+
+    A student's section is read as ``cohort_of_student_section`` reads it,
+    trimmed and in either case (" f " is F), so the timetable builder plans a
+    section from exactly the students Section Planning counts in it.
+    """
     qs = Student.objects.all()
     if program:
         if isinstance(program, list):
@@ -149,7 +155,13 @@ def get_student_ids(
         else:
             qs = qs.filter(program=program)
     if section:
-        qs = qs.filter(section=section)
+        # Read in Python: SQL TRIM strips spaces only, str.strip() every blank.
+        wanted = str(section).strip().upper()
+        return [
+            sid
+            for sid, recorded in qs.values_list("student_id", "section")
+            if str(recorded or "").strip().upper() == wanted
+        ]
     return list(qs.values_list("student_id", flat=True))
 
 

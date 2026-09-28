@@ -205,8 +205,11 @@ class SectionPlanningBrowserTests(StaticLiveServerTestCase):
         theme: str = "light",
         plan: dict | None = None,
         section: str | None = "F",
+        forced_colors: str = "none",
     ):
-        """The page, with ``section`` chosen as a user chooses it (None: nothing chosen)."""
+        """The page, with ``section`` chosen as a user chooses it (None: nothing chosen).
+
+        ``forced_colors="active"``: as Windows High Contrast shows it."""
         ensure_role_groups()
         user = get_user_model().objects.create_user(
             username=f"sp-{language}-{get_user_model().objects.count()}", password="unused"
@@ -219,6 +222,7 @@ class SectionPlanningBrowserTests(StaticLiveServerTestCase):
             extra_http_headers={"Accept-Language": language},
             viewport={"width": width, "height": 900},
             color_scheme=theme,
+            forced_colors=forced_colors,
         )
         context.add_cookies(
             [
@@ -342,10 +346,25 @@ class SectionPlanningBrowserTests(StaticLiveServerTestCase):
       probe.remove();
       const chip = document.activeElement.closest('.sp-seg');
       const s = chip ? getComputedStyle(chip) : null;
+      /* Where the ring reaches: the chip's box grown by the outline's outer edge. */
+      let ring = null;
+      if (s && s.outlineStyle !== 'none') {
+        const out = Math.max(0, parseFloat(s.outlineWidth) + parseFloat(s.outlineOffset));
+        const c = chip.getBoundingClientRect();
+        const g = document.getElementById('spSectionGroup').getBoundingClientRect();
+        const label = document.getElementById('spSectionLbl').getBoundingClientRect();
+        const r = { l: c.left - out, r: c.right + out, t: c.top - out, b: c.bottom + out };
+        ring = { inGroup: r.l >= g.left - 0.5 && r.r <= g.right + 0.5 && r.t >= g.top - 0.5 && r.b <= g.bottom + 0.5,
+                 labelGap: Math.max(r.l - label.right, label.left - r.r) };
+      }
       return { active: document.activeElement.id, style: s && s.outlineStyle, width: s && parseFloat(s.outlineWidth),
-               colour: s && rgba(s.outlineColor), teal, page: rgba(getComputedStyle(document.body).backgroundColor),
+               colour: s && rgba(s.outlineColor), teal, page: rgba(getComputedStyle(document.body).backgroundColor), ring,
                checked: [...document.querySelectorAll('input[name="spSection"]')].filter(r => r.checked).map(r => r.value) };
     }"""
+    # Before any Generate: is a radio, or the group, reported as invalid?
+    SECTION_INVALID = """() => ({
+      radios: [...document.querySelectorAll('input[name="spSection"]')].filter(r => r.matches(':invalid')).map(r => r.value),
+      group: document.getElementById('spSectionGroup').getAttribute('aria-invalid') })"""
 
     def test_the_section_control_fits_and_a_keyboard_runs_it(self) -> None:
         """At 390, 1024 and 1440px, English and Arabic, light and dark, in a
@@ -366,6 +385,10 @@ class SectionPlanningBrowserTests(StaticLiveServerTestCase):
                     self.assertFalse(fit["overlaps"], f"{where}: {fit}")
                     self.assertEqual(fit["clipped"], [], f"{where}: {fit}")
                     self.assertLessEqual(fit["page"], 0, f"{where}: the page scrolls sideways")
+                    # Nothing is wrong before a try: a screen reader hears no "invalid".
+                    self.assertEqual(
+                        page.evaluate(self.SECTION_INVALID), {"radios": [], "group": None}, where
+                    )
 
                     page.locator("#spSemester").press("Enter")
                     expect(page.locator("#spSectionMsg")).to_have_text(CHOOSE[language])
@@ -375,6 +398,10 @@ class SectionPlanningBrowserTests(StaticLiveServerTestCase):
                         (ring["style"], ring["colour"]), ("solid", ring["teal"]), where
                     )
                     self.assertGreaterEqual(ring["width"], 2, where)
+                    # The ring stays inside the capsule and clear of the label
+                    # (whose Arabic tail overhangs its box).
+                    self.assertTrue(ring["ring"]["inGroup"], f"{where}: {ring['ring']}")
+                    self.assertGreaterEqual(ring["ring"]["labelGap"], 3, f"{where}: {ring['ring']}")
                     ratio = self._contrast(ring["colour"], ring["page"])
                     self.assertGreaterEqual(ratio, 3, f"{where}: ring {ratio:.2f} against the page")
                     self.assertEqual([r for r in page.requests if "/generate/" in r], [], where)
@@ -387,6 +414,7 @@ class SectionPlanningBrowserTests(StaticLiveServerTestCase):
                     self.assertEqual(
                         (ring["active"], ring["checked"]), ("spSectionF", ["F"]), where
                     )
+                    self.assertTrue(ring["ring"]["inGroup"], f"{where}: {ring['ring']}")
                     page.keyboard.press("Tab")
                     self.assertEqual(
                         page.evaluate("document.activeElement.id"), "spGenerate", where
@@ -401,6 +429,43 @@ class SectionPlanningBrowserTests(StaticLiveServerTestCase):
                     self.assertEqual(json.loads(sent.value.post_data)["section"], "F", where)
                     expect(page.locator("#spResultsScope")).to_contain_text("(F)")
                     page.context.close()
+
+    # Each chip in forced colours: its dot's fill and the edge drawn around it,
+    # and the capsule's outline; the page's Canvas behind them.
+    FORCED = """() => ({
+      forced: matchMedia('(forced-colors: active)').matches,
+      canvas: getComputedStyle(document.body).backgroundColor,
+      group: getComputedStyle(document.getElementById('spSectionGroup')).outlineStyle,
+      chips: [...document.querySelectorAll('.sp-seg')].map(chip => {
+        const s = getComputedStyle(chip), dot = getComputedStyle(chip.querySelector('.sp-seg-dot'));
+        return { value: chip.querySelector('input').value, checked: chip.querySelector('input').checked,
+                 dot: dot.backgroundColor, edge: s.outlineStyle === 'none' ? null : s.outlineColor };
+      }) })"""
+
+    def test_the_chosen_section_shows_in_windows_high_contrast(self) -> None:
+        """Forced colours drop backgrounds and shadows, and the radio itself is
+        transparent: the chosen chip still has a filled dot the other lacks and
+        an edge, and Generate with nothing chosen outlines the group."""
+        for theme in ("light", "dark"):
+            page = self._page("en", theme=theme, section=None, forced_colors="active")
+            page.locator("#spGenerate").click()
+            expect(page.locator("#spSectionMsg")).to_have_text(CHOOSE["en"])
+            state = page.evaluate(self.FORCED)
+            self.assertTrue(state["forced"], theme)
+            self.assertNotEqual(state["group"], "none", f"{theme}: the error is outlined")
+
+            page.locator("#spSectionF").check()
+            page.evaluate("document.activeElement.blur()")
+            state = page.evaluate(self.FORCED)
+            chosen, other = (
+                next(c for c in state["chips"] if c["value"] == value) for value in ("F", "M")
+            )
+            self.assertTrue(chosen["checked"] and not other["checked"], theme)
+            self.assertNotEqual(chosen["dot"], other["dot"], f"{theme}: {state}")
+            self.assertNotEqual(chosen["dot"], state["canvas"], f"{theme}: {state}")
+            self.assertIsNotNone(chosen["edge"], f"{theme}: {state}")
+            self.assertIsNone(other["edge"], f"{theme}: {state}")
+            page.context.close()
 
     # ── 2. A phone shows every course's numbers; the page never scrolls sideways ──
 
