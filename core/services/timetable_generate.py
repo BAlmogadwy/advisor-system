@@ -54,7 +54,7 @@ from core.services.section_planning import (
     DEFAULT_MAX_LOCAL_OTHER,
     compute_plan_summary,
     compute_section_plan,
-    load_programme_capacities,
+    lowest_declared_capacities,
 )
 from core.services.student_helpers import normalize_code
 from core.services.timetable_demand import sync_scenario_student_course_requests
@@ -563,21 +563,11 @@ def generate_workspace_scenario(
 
     # Load programme-specific capacity overrides.  When a course appears
     # in multiple programs with different capacities, take the minimum
-    # to respect the most restrictive constraint.
-    programme_capacities: dict[str, int] = {}
-    if aggregate:
-        capacity_codes = [
-            str(meta.get("course_code") or key) for key, meta in course_metadata.items()
-        ]
-        for prog in programs:
-            caps = load_programme_capacities(prog, capacity_codes)
-            for key, meta in course_metadata.items():
-                code = normalize_code(meta.get("course_code"))
-                cap = caps.get(code)
-                if cap is None:
-                    continue
-                if key not in programme_capacities or cap < programme_capacities[key]:
-                    programme_capacities[key] = cap
+    # to respect the most restrictive constraint.  The rule lives in
+    # section_planning so Section Planning sizes pooled programmes the same way.
+    programme_capacities: dict[str, int] = (
+        lowest_declared_capacities(programs, course_metadata) if aggregate else {}
+    )
 
     # Normalize any user-supplied course overrides so they match the
     # canonical upper-case-no-spaces format used everywhere else.

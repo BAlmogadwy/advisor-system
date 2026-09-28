@@ -22,7 +22,7 @@ from django.shortcuts import render
 from django.views.decorators.http import require_GET, require_POST
 
 from core.authz import role_required, throttle
-from core.models import ProgrammeRequirement
+from core.models import ProgrammeRequirement, Student
 from core.services.audit import AuditUnavailable, audit_actor, record_audit_event
 from core.services.course_identity import planner_course_key
 from core.services.rbac import ROLE_GENERAL_ADVISOR, get_user_role
@@ -45,6 +45,7 @@ from core.services.section_planning import (
     compute_section_plan,
     get_all_courses_with_defaults,
     load_programme_capacities,
+    lowest_declared_capacities,
 )
 from core.services.student_helpers import normalize_code
 from core.settings_views import load_defaults
@@ -140,6 +141,14 @@ def _merge_section_plan_rows_by_course_identity(
         )
     )
     return result
+
+
+def _programmes_in_scope(section: str | None) -> list[str]:
+    """The programmes of the students the all-programmes view plans for."""
+    students = Student.objects.exclude(program__isnull=True).exclude(program="")
+    if section:
+        students = students.filter(section=section)
+    return sorted({str(p) for p in students.values_list("program", flat=True).distinct()})
 
 
 def _format_export_course_name(row: dict, course_names: dict[str, str]) -> str:
@@ -400,9 +409,14 @@ def section_plan_generate_view(request: HttpRequest) -> JsonResponse:
                 section=params["section"],
                 resolve_electives=True,
             )
+            # Declared limits hold here too: the lowest any programme in scope
+            # declares, exactly as the timetable builder sizes pooled programmes.
             plan = compute_section_plan(
                 aggregate,
                 **capacity_kwargs,
+                programme_capacities=lowest_declared_capacities(
+                    _programmes_in_scope(params["section"]), course_metadata
+                ),
                 course_metadata=course_metadata,
             )
             summary = compute_plan_summary(plan)
@@ -679,6 +693,9 @@ def section_plan_export_view(request: HttpRequest) -> HttpResponseBase:
                 compute_section_plan(
                     aggregate,
                     **capacity_kwargs,
+                    programme_capacities=lowest_declared_capacities(
+                        _programmes_in_scope(params["section"]), course_metadata
+                    ),
                     course_metadata=course_metadata,
                 )
             )

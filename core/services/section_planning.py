@@ -11,6 +11,7 @@ from __future__ import annotations
 import math
 import re
 from collections import Counter
+from collections.abc import Iterable, Mapping
 from typing import Any
 
 from core.models import Course, ElectiveCourse, ProgrammeRequirement
@@ -139,6 +140,42 @@ def _load_programme_capacities(
 
 # Public alias for use by views
 load_programme_capacities = _load_programme_capacities
+
+
+def _course_code_of(key: str, meta: Mapping[str, object]) -> str:
+    return normalize_code(meta.get("course_code")) or normalize_code(str(key).split("::", 1)[0])
+
+
+def lowest_declared_capacities(
+    programs: Iterable[str],
+    course_metadata: Mapping[str, Mapping[str, object]],
+) -> dict[str, int]:
+    """The lowest seat limit any of ``programs`` declares for each planned course.
+
+    ``course_metadata`` maps a planner course key to its metadata; the limit is
+    looked up by that key's course code in every programme. A course several
+    programmes share is sized for the most restrictive declaration among them.
+
+    THE rule for a plan that pools programmes: the timetable builder applies it
+    to a scenario, and Section Planning's all-programmes and multi-programme
+    views apply it to the same demand, through this one function, so the two
+    cannot drift apart.
+    """
+    programs = [str(p) for p in programs if str(p or "").strip()]
+    capacities: dict[str, int] = {}
+    if not programs or not course_metadata:
+        return capacities
+    codes_by_key = {key: _course_code_of(key, meta) for key, meta in course_metadata.items()}
+    lookup_codes = sorted(set(codes_by_key.values()))
+    for prog in programs:
+        caps = _load_programme_capacities(prog, lookup_codes)
+        for key, code in codes_by_key.items():
+            cap = caps.get(code)
+            if cap is None:
+                continue
+            if key not in capacities or cap < capacities[key]:
+                capacities[key] = cap
+    return capacities
 
 
 def _get_max_section_size(
