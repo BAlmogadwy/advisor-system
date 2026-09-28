@@ -46,6 +46,7 @@ from django.db import IntegrityError, close_old_connections, connection, transac
 from django.utils import timezone
 
 from core.models import ExamTimetableJob, ExamTimetableRun
+from core.services.exam_locks import settle_job_payload
 from core.services.exam_progress import ExamProgress, JobCancelled, reporting
 from core.services.job_runtime import HOLDER_EXAM_JOB, SolverBusy, solver_holder, solver_slot
 from core.services.job_runtime import shutting_down as _shutting_down
@@ -353,6 +354,11 @@ def submit(payload: dict, *, user, is_superadmin: bool = False) -> tuple[int, di
     sweep_stale()
     _purge_finished()
     payload = dict(payload)
+    if kind == Job.KIND_BUILD:
+        # Locks a Build inherits from its saved run are written down now: a
+        # run deleted while the job waits must refuse the Build, never let it
+        # drop the locks silently. A Build without locks is stored unchanged.
+        payload = settle_job_payload(payload)
     if payload.get("randomize"):
         payload["_seed"] = resolve_seed({})
     editor_revision = payload.get("editor_revision", 0)

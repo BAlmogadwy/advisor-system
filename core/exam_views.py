@@ -25,6 +25,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import time
 from io import BytesIO
+from typing import Any
 
 from django.conf import settings
 from django.db import transaction
@@ -42,8 +43,15 @@ from core.services.exam_evaluation import (
     _course_identity_for_entry,
     _normalise_loaded_schedule_entries,
     evaluate_exam_schedule,
+    resolve_links_and_locks,
 )
-from core.services.exam_min_change import repair_minimum_change
+from core.services.exam_locks import (
+    ExamLocks,
+    ExamLocksError,
+    require_lock_list,
+    settle_build_request,
+)
+from core.services.exam_min_change import find_violations, repair_minimum_change
 from core.services.exam_multistart import (
     is_multistart_enabled,
     report_to_dict,
@@ -82,7 +90,6 @@ from core.services.linked_exams import (
     LinkedExamsError,
     linked_exams_qa,
     require_link_list,
-    resolve_linked_exams,
 )
 from core.services.rbac import ROLE_EXAM_COMMITTEE, ROLE_SUPER_ADMIN, get_user_role
 from core.sidebar_context import get_sidebar_context
@@ -363,6 +370,13 @@ def _validation_error(exc: ValueError) -> tuple[int, dict]:
     elif isinstance(exc, LinkedExamsError):
         # Which link, and which of its members, the page should point at.
         body.update(code=exc.code, field=exc.field)
+    elif isinstance(exc, ExamLocksError):
+        # Which lock, and the courses and cell it is about.
+        body.update(code=exc.code, field=exc.field)
+        if exc.courses is not None:
+            body["courses"] = exc.courses
+        if exc.cell is not None:
+            body["cell"] = exc.cell
     return 400, body
 
 
@@ -486,8 +500,14 @@ def execute_exam_action(payload: dict, *, save: RunSaver = _save_run) -> tuple[i
 
     try:
         programs, sections = _selected_enrollment_scope(payload)
+        # The locks a Build keeps, and the saved run they come from. Without
+        # locks this reads nothing and changes nothing: master's Build.
+        exam_locks, linked_exams, lock_source = settle_build_request(payload)
     except ValueError as exc:
         return _validation_error(exc)
+    lock_args: dict[str, Any] = (
+        {"exam_locks": exam_locks, "lock_source": lock_source} if exam_locks else {}
+    )
 
     # Multi-start is feature-flagged. When TIMETABLE_EXAM_MULTISTART_ENABLED
     # is set and the request opts in (``multistart=True``), the runner
@@ -530,6 +550,7 @@ def execute_exam_action(payload: dict, *, save: RunSaver = _save_run) -> tuple[i
                 assign_rooms=assign_rooms,
                 thin_conflict_threshold=thin_conflict_threshold,
                 previous_run_id=previous_run_id,
+                **lock_args,
             )
         except ValueError as exc:
             return _validation_error(exc)
@@ -556,6 +577,7 @@ def execute_exam_action(payload: dict, *, save: RunSaver = _save_run) -> tuple[i
             thin_conflict_threshold=thin_conflict_threshold,
             persist=False,
             linked_exams=linked_exams,
+            **lock_args,
         )
         # Check for feasibility error (bucket too large for available days)
         if result.get("feasibility_error"):
@@ -610,6 +632,8 @@ _PROVENANCE_KEYS = (
     "source_placements",
     "source_repair_protected",
 )
+# ``exam_locks`` and ``lock_source`` are NOT provenance: every evaluator takes
+# them, so a lock is checked by Check, Save, Optimise and Fix alike.
 
 
 def _split_provenance(context: dict) -> dict:
@@ -701,6 +725,14 @@ def _loaded_request_context(payload: dict, schedule_raw: list) -> dict:
         "linked_exams": require_link_list(payload["linked_exams"])
         if "linked_exams" in payload
         else source.get("linked_exams", []),
+        # The same for the locks: what the page sends, else the loaded run's.
+        # A lock ends only by an explicit unlock (``[]`` or a shorter list),
+        # never by a client that did not send it; a sent null is refused.
+        "exam_locks": require_lock_list(payload["exam_locks"])
+        if "exam_locks" in payload
+        else list(source.get("exam_locks") or []),
+        # What a locked cell holds, with its rooms, is what this run saved.
+        "lock_source": source,
         "source_input_fingerprint": source.get("input_fingerprint"),
         # Where each exam sat in the SAVED run, by (day, period). Slot numbers
         # would be wrong: adding a period renumbers every later slot, which
@@ -825,21 +857,43 @@ def _loaded_solver_inputs(
     )
 
 
-def _loaded_links(
+def _loaded_links_and_locks(
     linked_exams: list[dict] | None,
+    exam_locks: list[dict] | None,
+    lock_source: dict | None,
     inputs: _LoadedSolverInputs,
     pinned: list[dict[str, str]],
     base_entries: list[dict],
-) -> LinkedExams:
-    """The links of a loaded board, resolved once, the same way for Optimise and Fix.
+    assign_rooms: bool,
+) -> tuple[LinkedExams, ExamLocks]:
+    """The links and locks of a loaded board, resolved once, the same way for Optimise and Fix.
 
     Both start from the board the registrar submitted, so a link whose members
-    sit apart there is refused - moving an exam is the registrar's decision,
-    not a side effect of pressing a solver button.
+    sit apart there is refused, and so is an exam moved into or out of a locked
+    cell - moving an exam is the registrar's decision, not a side effect of
+    pressing a solver button. A refused board never reaches a solver.
     """
-    return resolve_linked_exams(
-        linked_exams, inputs.meta_by_course, pinned=pinned, schedule_entries=base_entries
+    days = list(dict.fromkeys(slot["day"] for slot in inputs.slots))
+    periods = list(dict.fromkeys(slot["period"] for slot in inputs.slots))
+    return resolve_links_and_locks(
+        linked_exams,
+        exam_locks,
+        lock_source,
+        inputs.meta_by_course,
+        pinned=pinned,
+        board=base_entries,
+        days=days,
+        periods=periods,
+        assign_rooms=assign_rooms,
     )
+
+
+def _lock_kwargs(locks: ExamLocks, lock_source: dict | None) -> dict[str, Any]:
+    """What a solver hands the evaluation that saves its board: the locks it kept.
+
+    Nothing without locks, so the evaluation is called exactly as before.
+    """
+    return {"exam_locks": locks.saved(), "lock_source": lock_source} if locks else {}
 
 
 def _optimise_loaded_schedule(
@@ -857,6 +911,8 @@ def _optimise_loaded_schedule(
     programs: list[str] | None = None,
     sections: list[str] | None = None,
     linked_exams: list[dict] | None = None,
+    exam_locks: list[dict] | None = None,
+    lock_source: dict | None = None,
     save: RunSaver = _save_run,
 ) -> dict:
     base_entries = _normalise_loaded_schedule_entries(
@@ -868,17 +924,18 @@ def _optimise_loaded_schedule(
     inputs = _loaded_solver_inputs(
         base_entries, days, periods, programs, sections, thin_conflict_threshold
     )
-    links = _loaded_links(
-        linked_exams,
-        inputs,
-        validate_exam_pins(pinned, inputs.course_list, inputs.slots),
-        base_entries,
+    valid_pins = validate_exam_pins(pinned, inputs.course_list, inputs.slots)
+    links, locks = _loaded_links_and_locks(
+        linked_exams, exam_locks, lock_source, inputs, valid_pins, base_entries, assign_rooms
     )
     preferred_slots = {
         entry["course_code"]: int(entry.get("slot_index", 0) or 0) for entry in base_entries
     }
     progress = current_progress()
     progress.stage("place_exams")
+    lock_args: dict[str, Any] = (
+        {"locked": locks.pins(), "closed_slots": locks.closed_slots(inputs.slots)} if locks else {}
+    )
     optimised = schedule_linked(
         inputs.course_list,
         inputs.adj,
@@ -888,11 +945,15 @@ def _optimise_loaded_schedule(
         max_per_day=max_per_day,
         plan_term_buckets=inputs.plan_term_buckets,
         course_buckets=inputs.course_buckets,
-        pinned=pinned,
+        # A locked exam is placed by its lock; a pin of it at its own cell adds nothing.
+        pinned=[pin for pin in valid_pins if pin["course_code"] not in locks.placements]
+        if locks
+        else pinned,
         credit_map=inputs.credit_map,
         preferred_slots=preferred_slots,
         seed=seed,
         on_placed=progress.counter("place_exams"),
+        **lock_args,
     )
     optimised_entries: list[dict] = []
     for entry in optimised:
@@ -925,6 +986,7 @@ def _optimise_loaded_schedule(
         pinned=pinned,
         linked_exams=links.saved(),
         save=save,
+        **_lock_kwargs(locks, lock_source),
     )
 
 
@@ -945,6 +1007,8 @@ def _minimum_change_schedule(
     programs: list[str] | None = None,
     sections: list[str] | None = None,
     linked_exams: list[dict] | None = None,
+    exam_locks: list[dict] | None = None,
+    lock_source: dict | None = None,
     save: RunSaver = _save_run,
 ) -> dict:
     """Repair the registrar's board by moving as few exams as possible.
@@ -958,6 +1022,10 @@ def _minimum_change_schedule(
     A link is repaired as one exam that weighs as many courses as it has: it is
     frozen if any member is, moves whole, and goes to OVERFLOW whole, into one
     shared ``Extra-n``. The report still names every real course that moved.
+
+    A locked exam is frozen too, and no exam moves into a locked cell. A clash
+    among locked exams alone is left where it is and counted in the report
+    (``locked_violations``): no repair may touch it.
     """
     base_entries = _normalise_loaded_schedule_entries(
         schedule_raw,
@@ -973,7 +1041,9 @@ def _minimum_change_schedule(
     pinned = validate_exam_pins(
         pinned, inputs.course_list, inputs.slots, schedule_entries=base_entries
     )
-    links = _loaded_links(linked_exams, inputs, pinned, base_entries)
+    links, locks = _loaded_links_and_locks(
+        linked_exams, exam_locks, lock_source, inputs, pinned, base_entries, assign_rooms
+    )
     current = {
         entry["course_code"]: int(entry["slot_index"])
         for entry in base_entries
@@ -992,6 +1062,7 @@ def _minimum_change_schedule(
     hand_placed = edited | carried
     protected = hand_placed | {pin["course_code"] for pin in pinned}
     current_progress().stage("fewest_moves")
+    closed: dict[str, Any] = {"closed_slots": locks.closed_slots(inputs.slots)} if locks else {}
     # The repair sees each link as one exam; with no links these are the
     # board's own placements, graph, buckets and protection.
     unit_buckets, _ = links.buckets(inputs.plan_term_buckets, None)
@@ -1001,8 +1072,10 @@ def _minimum_change_schedule(
         slot_count=len(inputs.slots),
         periods_per_day=len(periods),
         plan_term_buckets=unit_buckets,
-        protected=links.units_of(protected),
+        # A locked exam is frozen as firmly as a pin, and its cell is closed.
+        protected=links.units_of(protected | set(locks.placements) if locks else protected),
         weights=links.weights or None,
+        **closed,
     )
     placed = {
         code: slot for unit, slot in repair.placements.items() for code in links.members_of(unit)
@@ -1085,6 +1158,17 @@ def _minimum_change_schedule(
         report["linked_clash_students"] = linked_exams_qa(
             links, inputs.enrolled_sets, inputs.credit_map, inputs.meta_by_course
         )["students_in_two_linked_courses"]
+    if locks:
+        # Breaches among locked exams alone: reported, never repaired.
+        locked_units = set(links.units_of(set(locks.placements)))
+        unit_placements = links.placements(current)
+        report["locked_count"] = len(locks.placements)
+        report["locked_violations"] = find_violations(
+            {unit: slot for unit, slot in unit_placements.items() if unit in locked_units},
+            links.adjacency(inputs.adj),
+            {key: members & locked_units for key, members in unit_buckets.items()},
+            len(periods),
+        )[1]
     if not repair.moved and not unseated:
         # Nothing to fix, nothing the rules let it fix, or no board found in
         # time: the board is exactly the one submitted. Evaluating it again and
@@ -1111,6 +1195,7 @@ def _minimum_change_schedule(
         pinned=pinned,
         linked_exams=links.saved(),
         save=save,
+        **_lock_kwargs(locks, lock_source),
         extra={
             "minimum_change": report,
             # Carried into the next repair, so drag, Fix, drag, Fix keeps the
