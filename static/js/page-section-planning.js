@@ -12,8 +12,6 @@ const T = {
   underfilled: IS_AR ? 'ناقص' : 'Underfilled',
   courses:     IS_AR ? 'مقررات' : 'courses',
   sections:    IS_AR ? 'شعب' : 'sections',
-  students:    IS_AR ? 'طلاب' : 'students',
-  credits:     IS_AR ? 'ساعة' : 'cr',
   lastUpdate:  IS_AR ? 'آخر تحديث' : 'Last update',
   deptSummary: IS_AR ? 'ملخص الأقسام' : 'Department Summary',
   noRecs:      IS_AR ? 'لا توجد توصيات.' : 'No recommendations found.',
@@ -725,16 +723,57 @@ function buildPlanRows(plan) {
   }).join('');
 }
 
-/* ── Build department summary HTML ── */
-function buildDeptSummaryHtml(departments) {
-  const depts = (departments || []).filter(d => LOCAL_DEPTS.has(d.department));
+/* ── Department summary: every department in the result, in two groups by
+ * the server's list of our departments (ours; then the service departments,
+ * whose sections are requested from them), each with M, F and Total
+ * sections. The total row adds the departments up; the server's summary is
+ * the same plan, so it equals the result's KPIs. ── */
+const TS = {
+  dept:       IS_AR ? 'القسم' : 'Department',
+  courses:    IS_AR ? 'المقررات' : 'Courses',
+  seats:      IS_AR ? 'المقاعد المطلوبة' : 'Seat demand',
+  male:       IS_AR ? 'شعب الذكور' : 'M sections',
+  female:     IS_AR ? 'شعب الإناث' : 'F sections',
+  sections:   IS_AR ? 'مجموع الشعب' : 'Total sections',
+  hours:      IS_AR ? 'ساعات التدريس' : 'Teaching hours',
+  hoursTitle: IS_AR ? 'ساعات المقرر × عدد الشعب' : 'Credit hours × sections',
+  ours:       IS_AR ? 'أقسامنا' : 'Our departments',
+  service:    IS_AR ? 'الأقسام الخدمية (شعب تُطلب منها)' : 'Service departments (sections to request)',
+  subtotal:   IS_AR ? 'المجموع الفرعي' : 'Subtotal',
+  total:      IS_AR ? 'المجموع' : 'Total',
+};
+/* Sections first: on a phone they show before the table scrolls sideways. */
+const SUM_COLS = ['male_sections', 'female_sections', 'sections', 'courses', 'students', 'total_credits'];
+
+function sumDepartments(depts) {
+  const total = Object.fromEntries(SUM_COLS.map(key => [key, 0]));
+  depts.forEach(d => SUM_COLS.forEach(key => { total[key] += Number(d[key]) || 0; }));
+  return total;
+}
+
+function sumCells(d) {
+  return SUM_COLS.map(key => `<td data-col="${key}"><bdi>${Number(d[key]) || 0}</bdi></td>`).join('');
+}
+
+function buildDeptSummaryHtml(summary) {
+  const depts = (summary && summary.departments) || [];
   if (!depts.length) return '';
-  return depts.map(d => `
-    <div class="sp-dept-card">
-      <div class="dept-name">${esc(d.department)}</div>
-      <div class="dept-stat"><b>${esc(d.courses)}</b> ${T.courses} · <b>${esc(d.sections)}</b> ${T.sections} (${esc(splitText(d.male_sections, d.female_sections))}) · <b>${esc(d.students)}</b> ${T.students} · <b>${esc(d.total_credits)}</b> ${T.credits}</div>
-    </div>
-  `).join('');
+  const groups = [
+    ['ours', TS.ours, depts.filter(d => LOCAL_DEPTS.has(d.department))],
+    ['service', TS.service, depts.filter(d => !LOCAL_DEPTS.has(d.department))],
+  ].filter(([, , rows]) => rows.length);
+  const body = groups.map(([key, label, rows]) => `<tbody data-group="${key}">
+      <tr class="sp-sum-group"><th scope="rowgroup" colspan="${SUM_COLS.length + 1}">${esc(label)}</th></tr>
+      ${rows.map(d => `<tr data-dept="${esc(d.department)}"><th scope="row"><bdi>${esc(d.department)}</bdi></th>${sumCells(d)}</tr>`).join('')}
+      ${groups.length > 1 ? `<tr class="sp-sum-sub" data-subtotal="${key}"><th scope="row">${esc(TS.subtotal)}</th>${sumCells(sumDepartments(rows))}</tr>` : ''}
+    </tbody>`).join('');
+  const head = [TS.dept, TS.male, TS.female, TS.sections, TS.courses, TS.seats]
+    .map(text => `<th scope="col">${esc(text)}</th>`).join('')
+    + `<th scope="col" title="${esc(TS.hoursTitle)}">${esc(TS.hours)}</th>`;
+  return `<table class="sp-sum-table">
+      <thead><tr>${head}</tr></thead>${body}
+      <tfoot><tr data-sum-total><th scope="row">${esc(TS.total)}</th>${sumCells(sumDepartments(depts))}</tr></tfoot>
+    </table>`;
 }
 
 /* ── KPIs: Sections = M + F; no-gender students stated, never pooled ── */
@@ -783,8 +822,6 @@ function renderSingleProgramResults(data) {
   $('spMultiPrograms').classList.add('d-none');
   $('spMultiPrograms').innerHTML = '';
 
-  /* Show the single-mode dept summary panel */
-  $('spDeptGrid').parentElement.style.display = '';
 
   /* KPIs */
   renderKpis(data.student_count, data.cohorts, data.summary, data.electives);
@@ -798,7 +835,7 @@ function renderSingleProgramResults(data) {
 
   if (!plan.length) {
     tbody.innerHTML = `<tr><td colspan="13" class="empty-note">${T.noRecs}</td></tr>`;
-    $('spDeptGrid').innerHTML = '';
+    $('spDeptSummary').innerHTML = '';
     return;
   }
 
@@ -807,7 +844,7 @@ function renderSingleProgramResults(data) {
   if (typeof paginateTable === 'function') paginateTable('spTable', 'spPager', 30);
 
   /* Department summary */
-  $('spDeptGrid').innerHTML = buildDeptSummaryHtml(data.summary.departments);
+  $('spDeptSummary').innerHTML = buildDeptSummaryHtml(data.summary);
 }
 
 /* ── Multi-program mode ── */
@@ -819,7 +856,6 @@ function renderMultiProgramResults(data) {
   /* Show combined union in the main table, show multi container for per-program */
   $('spTable').style.display = '';
   $('spPager').style.display = '';
-  $('spDeptGrid').parentElement.style.display = '';
   const container = $('spMultiPrograms');
   container.classList.remove('d-none');
   container.innerHTML = '';
@@ -836,12 +872,12 @@ function renderMultiProgramResults(data) {
   const tbody = $('spTable').querySelector('tbody');
   if (!combinedPlan.length) {
     tbody.innerHTML = `<tr><td colspan="13" class="empty-note">${T.noRecs}</td></tr>`;
-    $('spDeptGrid').innerHTML = '';
+    $('spDeptSummary').innerHTML = '';
   } else {
     tbody.innerHTML = buildPlanRows(combinedPlan);
     keepSort($('spTable'));
     if (typeof paginateTable === 'function') paginateTable('spTable', 'spPager', 30);
-    $('spDeptGrid').innerHTML = buildDeptSummaryHtml(cs.departments);
+    $('spDeptSummary').innerHTML = buildDeptSummaryHtml(cs);
   }
 
   /* ── Collapsible per-program blocks ── */
@@ -885,14 +921,15 @@ function renderMultiProgramResults(data) {
     scroller.appendChild(table);
     body.appendChild(scroller);
 
-    /* Department summary for this program */
-    const deptHtml = buildDeptSummaryHtml(summary.departments);
+    /* Department summary for this program: its total is the heading's */
+    const deptHtml = buildDeptSummaryHtml(summary);
     if (deptHtml) {
-      const deptPanel = document.createElement('div');
-      deptPanel.className = 'sp-panel';
+      const deptPanel = document.createElement('section');
+      deptPanel.className = 'sp-panel sp-sum-panel';
       deptPanel.style.marginTop = '8px';
-      deptPanel.innerHTML = `<h6 class="mb-2" style="font-size:.82rem">${T.deptSummary}</h6>
-        <div class="sp-dept-grid">${deptHtml}</div>`;
+      deptPanel.setAttribute('aria-labelledby', `${bodyId}_sum`);
+      deptPanel.innerHTML = `<h6 class="mb-2" style="font-size:.82rem" id="${bodyId}_sum">${T.deptSummary} · <bdi>${esc(prog.program)}</bdi></h6>
+        <div class="sp-sum-scroll">${deptHtml}</div>`;
       body.appendChild(deptPanel);
     }
 
@@ -1015,8 +1052,7 @@ $('spReset').onclick = () => {
   $('spPager').style.display = '';
   $('spTable').querySelector('tbody').innerHTML =
     `<tr><td colspan="13" class="empty-note">${IS_AR ? 'حدد السنة والفصل ثم انقر حساب.' : 'Set Year & Semester, then click Generate.'}</td></tr>`;
-  $('spDeptGrid').innerHTML = '';
-  $('spDeptGrid').parentElement.style.display = '';
+  $('spDeptSummary').innerHTML = '';
 
   /* Clear multi-program container */
   $('spMultiPrograms').innerHTML = '';

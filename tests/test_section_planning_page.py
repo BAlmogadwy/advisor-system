@@ -92,3 +92,17 @@ def test_toggles_fields_and_status_carry_their_names_states_and_roles(
     status = soup.find(id="spStatus")
     assert status.get("role") == "status"
     assert status.get("aria-live") == "polite"
+
+
+@pytest.mark.parametrize("language", ["en", "ar"])
+def test_the_department_summary_is_a_labelled_region_the_script_fills(
+    client: Client, language: str
+) -> None:
+    soup = _page(client, language)
+    summary = soup.find(id="spDeptSummary")
+    region = summary.find_parent("section")
+    title = soup.find(id=region["aria-labelledby"])
+    assert title.get_text(strip=True) == (
+        "ملخص الأقسام" if language == "ar" else "Department Summary"
+    )
+    assert soup.find(id="spDeptGrid") is None, "the old per-department cards are gone"

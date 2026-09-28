@@ -382,15 +382,20 @@ function summaryPlan() {
   return data;
 }
 
-test('the Department Summary lists the departments the server calls ours, COE included', async t => {
+/* The summary's groups in order, each with its departments. */
+const summaryGroups = (ui, root = ui.$('spDeptSummary')) => [...root.querySelectorAll('tbody[data-group]')]
+  .map(group => [group.dataset.group, [...group.querySelectorAll('tr[data-dept]')].map(tr => tr.dataset.dept)]);
+
+test('the Department Summary lists every department: ours (the server\'s list, COE included), then the service departments', async t => {
   const ui = await page(t, { generate: () => answer(summaryPlan()) });
   assert.deepEqual(JSON.parse(ui.$('spLocalDepartments').textContent), ['AI', 'COE', 'CS', 'CYB', 'DS', 'IS']);
 
   ui.$('spGenerate').click();
   await settle();
 
-  const shown = [...ui.window.document.querySelectorAll('#spDeptGrid .dept-name')].map(el => el.textContent);
-  assert.deepEqual(shown, ['AI', 'COE']);
+  assert.deepEqual(summaryGroups(ui), [['ours', ['AI', 'COE']], ['service', ['MATH']]]);
+  assert.deepEqual([...ui.window.document.querySelectorAll('#spDeptSummary .sp-sum-group th')].map(th => th.textContent),
+    say(['Our departments', 'Service departments (sections to request)'], ['أقسامنا', 'الأقسام الخدمية (شعب تُطلب منها)']));
 });
 
 test('the page keeps no department list of its own', async t => {
@@ -399,8 +404,7 @@ test('the page keeps no department list of its own', async t => {
   ui.$('spGenerate').click();
   await settle();
 
-  const shown = [...ui.window.document.querySelectorAll('#spDeptGrid .dept-name')].map(el => el.textContent);
-  assert.deepEqual(shown, ['MATH']);
+  assert.deepEqual(summaryGroups(ui), [['ours', ['MATH']], ['service', ['AI', 'COE']]]);
 });
 
 /* ── Male and female are never planned together ── */
@@ -450,7 +454,8 @@ test('results show M, F and Total sections, and the KPIs split them', async t =>
   assert.equal(ui.text('spKpiSections'), '3');
   assert.equal(ui.text('spKpiSectionsSplit'), say('M 1 · F 2', 'ذكور 1 · إناث 2'));
   assert.equal(ui.text('spKpiStudentsSplit'), say('M 12 · F 30', 'ذكور 12 · إناث 30'));
-  assert.match(ui.window.document.querySelector('#spDeptGrid .dept-stat').textContent, AR ? /ذكور 1 · إناث 2/ : /M 1 · F 2/);
+  const ai = ui.window.document.querySelector('#spDeptSummary tr[data-dept="AI"]');
+  assert.deepEqual(['male_sections', 'female_sections', 'sections'].map(col => ai.querySelector(`[data-col="${col}"]`).textContent), ['1', '2', '3']);
   assert.ok(ui.$('spGenderNote').classList.contains('d-none'), 'nothing to report');
 });
 
@@ -832,26 +837,28 @@ test('a second submit while Generate runs sends nothing more', async t => {
 
 /* ── A phone shows every course's numbers ── */
 
+/* A plan's summary as the server builds it (core.services.section_plan_pipeline.summarise). */
+function summaryOf(rows) {
+  const departments = {};
+  rows.forEach(row => {
+    const d = departments[row.department] ||= { department: row.department, courses: 0, sections: 0, male_sections: 0, female_sections: 0, students: 0, total_credits: 0 };
+    d.courses += 1; d.sections += row.num_sections; d.male_sections += row.male_sections; d.female_sections += row.female_sections;
+    d.students += row.total_students; d.total_credits += 3 * row.num_sections;
+  });
+  return {
+    total_courses: rows.length, total_sections: rows.reduce((n, r) => n + r.num_sections, 0),
+    male_sections: rows.reduce((n, r) => n + r.male_sections, 0), female_sections: rows.reduce((n, r) => n + r.female_sections, 0),
+    total_students: 0, avg_fill_percent: 50, departments: Object.values(departments).sort((a, b) => a.department.localeCompare(b.department)),
+    no_gender: { students: 0, seat_demand: 0, courses: 0 },
+  };
+}
+
 function multiPlan() {
   const ai = [planRow('AI491', { male_sections: 3, female_sections: 4, num_sections: 7 }), planRow('MATH203', { male_sections: 1, female_sections: 0, num_sections: 1 })];
   const ds = [planRow('DS201', { male_sections: 1, female_sections: 1, num_sections: 2 }), planRow('MATH203', { male_sections: 0, female_sections: 1, num_sections: 1 })];
   const combined = [planRow('AI491', { male_sections: 3, female_sections: 4, num_sections: 7, programs: ['AI'] }),
     planRow('DS201', { male_sections: 1, female_sections: 1, num_sections: 2, programs: ['DS'] }),
     planRow('MATH203', { male_sections: 1, female_sections: 1, num_sections: 2, programs: ['AI', 'DS'] })];
-  const summaryOf = rows => {
-    const departments = {};
-    rows.forEach(row => {
-      const d = departments[row.department] ||= { department: row.department, courses: 0, sections: 0, male_sections: 0, female_sections: 0, students: 0, total_credits: 0 };
-      d.courses += 1; d.sections += row.num_sections; d.male_sections += row.male_sections; d.female_sections += row.female_sections;
-      d.students += row.total_students; d.total_credits += 3 * row.num_sections;
-    });
-    return {
-      total_courses: rows.length, total_sections: rows.reduce((n, r) => n + r.num_sections, 0),
-      male_sections: rows.reduce((n, r) => n + r.male_sections, 0), female_sections: rows.reduce((n, r) => n + r.female_sections, 0),
-      total_students: 0, avg_fill_percent: 50, departments: Object.values(departments).sort((a, b) => a.department.localeCompare(b.department)),
-      no_gender: { students: 0, seat_demand: 0, courses: 0 },
-    };
-  };
   return {
     ok: true, mode: 'multi', year: 1448, semester: 1, student_count: 60, cohorts: { M: 25, F: 35, no_gender: 0 },
     combined_plan: combined, combined_summary: summaryOf(combined),
@@ -893,7 +900,7 @@ test('each programme\'s table has the server\'s header and the same phone cards'
   ui.$('spGenerate').click();
   await settle();
 
-  const tables = [...ui.window.document.querySelectorAll('#spMultiPrograms table')];
+  const tables = [...ui.window.document.querySelectorAll('#spMultiPrograms table.sp-plan-table')];
   assert.equal(tables.length, 2);
   for (const table of tables) {
     assert.deepEqual(heads(ui, table), heads(ui, ui.$('spTable')));
@@ -1040,10 +1047,87 @@ test('a programme table sorts once per press after being opened and closed', asy
   await settle();
   const toggle = ui.window.document.querySelector('#spMultiPrograms .sp-prog-toggle');
   for (let i = 0; i < 3; i++) toggle.click();   // open, close, open
-  const table = ui.$(toggle.getAttribute('aria-controls')).querySelector('table');
+  const table = ui.$(toggle.getAttribute('aria-controls')).querySelector('table.sp-plan-table');
   const students = table.querySelector('thead th:nth-child(6)');
 
   assert.equal(sortsPerPress(ui.window, students), 1);
   assert.equal(students.getAttribute('aria-sort'), 'ascending');
   assert.deepEqual(codes(table), ['CS211', 'MATH203', 'AI491']);
+});
+
+/* ── The Department Summary adds up to the KPIs ── */
+
+const cellsOf = tr => Object.fromEntries([...tr.querySelectorAll('[data-col]')].map(td => [td.dataset.col, Number(td.textContent)]));
+
+test('the summary\'s total row equals the KPIs, M and F included, with a subtotal per group', async t => {
+  const plan = [
+    planRow('AI331', { male_sections: 1, female_sections: 2, num_sections: 3 }),
+    planRow('CS211', { male_sections: 2, female_sections: 0, num_sections: 2 }),
+    planRow('MATH203', { male_sections: 1, female_sections: 1, num_sections: 2 }),
+  ];
+  const data = generated(plan);
+  data.summary = summaryOf(plan);
+  const ui = await page(t, { generate: () => answer(data) });
+  ui.$('spGenerate').click();
+  await settle();
+
+  const doc = ui.window.document;
+  assert.deepEqual(summaryGroups(ui), [['ours', ['AI', 'CS']], ['service', ['MATH']]]);
+  const total = cellsOf(doc.querySelector('#spDeptSummary tfoot tr[data-sum-total]'));
+  assert.equal(String(total.sections), ui.text('spKpiSections'));
+  assert.equal(String(total.courses), ui.text('spKpiCourses'));
+  assert.equal(splitText(total.male_sections, total.female_sections), ui.text('spKpiSectionsSplit'));
+  assert.deepEqual([total.male_sections, total.female_sections, total.sections], [4, 3, 7]);
+  assert.equal(cellsOf(doc.querySelector('#spDeptSummary [data-subtotal="ours"]')).sections, 5);
+  assert.equal(cellsOf(doc.querySelector('#spDeptSummary [data-subtotal="service"]')).sections, 2);
+  const heads = [...doc.querySelectorAll('#spDeptSummary thead th')].map(th => th.textContent);
+  assert.deepEqual(heads, say(
+    ['Department', 'M sections', 'F sections', 'Total sections', 'Courses', 'Seat demand', 'Teaching hours'],
+    ['القسم', 'شعب الذكور', 'شعب الإناث', 'مجموع الشعب', 'المقررات', 'المقاعد المطلوبة', 'ساعات التدريس'],
+  ));
+  // Each number sits under its own header, in every row.
+  for (const tr of doc.querySelectorAll('#spDeptSummary tr[data-dept], #spDeptSummary tfoot tr')) {
+    assert.deepEqual([...tr.children].slice(1).map(td => td.dataset.col),
+      ['male_sections', 'female_sections', 'sections', 'courses', 'students', 'total_credits']);
+  }
+
+  function splitText(m, f) { return say(`M ${m} · F ${f}`, `ذكور ${m} · إناث ${f}`); }
+});
+
+test('one group needs no subtotal', async t => {
+  const plan = [planRow('AI331', { male_sections: 1, female_sections: 1, num_sections: 2 })];
+  const data = generated(plan);
+  data.summary = summaryOf(plan);
+  const ui = await page(t, { generate: () => answer(data) });
+  ui.$('spGenerate').click();
+  await settle();
+  assert.deepEqual(summaryGroups(ui), [['ours', ['AI']]]);
+  assert.equal(ui.window.document.querySelectorAll('#spDeptSummary .sp-sum-sub').length, 0);
+  assert.equal(cellsOf(ui.window.document.querySelector('#spDeptSummary [data-sum-total]')).sections, 2);
+});
+
+test('several programmes: the summary totals the pooled KPIs, and each programme\'s totals its heading', async t => {
+  const data = multiPlan();
+  const ui = await page(t, { program: 'AI,DS', generate: () => answer(data) });
+  ui.$('spGenerate').click();
+  await settle();
+
+  const doc = ui.window.document;
+  const pooled = cellsOf(doc.querySelector('#spDeptSummary [data-sum-total]'));
+  assert.equal(String(pooled.sections), ui.text('spKpiSections'));
+  assert.equal(String(pooled.courses), ui.text('spKpiCourses'));
+  assert.deepEqual(summaryGroups(ui), [['ours', ['AI', 'DS']], ['service', ['MATH']]]);
+
+  const blocks = [...doc.querySelectorAll('#spMultiPrograms .sp-prog-block')];
+  assert.equal(blocks.length, 2);
+  blocks.forEach((block, i) => {
+    const prog = data.programs[i];
+    const total = cellsOf(block.querySelector('[data-sum-total]'));
+    assert.deepEqual([total.courses, total.male_sections, total.female_sections, total.sections],
+      [prog.summary.total_courses, prog.summary.male_sections, prog.summary.female_sections, prog.summary.total_sections]);
+    const heading = block.querySelector('.sp-prog-toggle').textContent.replace(/\s+/g, ' ');
+    assert.ok(heading.includes(`${prog.summary.total_sections} `), heading);
+    assert.ok(block.querySelector('.sp-sum-panel h6').textContent.includes(prog.program));
+  });
+  assert.deepEqual(summaryGroups(ui, blocks[1]), [['ours', ['DS']], ['service', ['MATH']]]);
 });

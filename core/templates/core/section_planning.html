@@ -189,11 +189,11 @@
   <!-- Multi-program results (hidden until multi mode) -->
   <div id="spMultiPrograms" class="d-none"></div>
 
-  <!-- Department Summary -->
-  <div class="sp-panel" style="margin-top:14px">
-    <h6 class="mb-2" style="font-size:.82rem">{% if LANGUAGE_CODE == 'ar' %}ملخص الأقسام{% else %}Department Summary{% endif %}</h6>
-    <div class="sp-dept-grid" id="spDeptGrid"></div>
-  </div>
+  <!-- Department Summary: every department in the result, ours and the service departments -->
+  <section class="sp-panel sp-sum-panel" style="margin-top:14px" aria-labelledby="spDeptSummaryTitle">
+    <h6 id="spDeptSummaryTitle" class="mb-2" style="font-size:.82rem">{% if LANGUAGE_CODE == 'ar' %}ملخص الأقسام{% else %}Department Summary{% endif %}</h6>
+    <div class="sp-sum-scroll" id="spDeptSummary"></div>
+  </section>
 
 </div>
 </div>{# /.sp-page #}

@@ -705,3 +705,37 @@ def test_the_all_programmes_panel_starts_from_the_limit_generate_applies(
     assert courses["DS321"]["programme_max"] is None
     plan_row = _row(_generate(planner)["plan"], "AI491")
     assert plan_row["max_per_section"] == courses["AI491"]["programme_max"]
+
+
+@pytest.mark.parametrize("program", ["AI", None, "AI,DS"])
+def test_the_summary_lists_every_department_and_adds_up_to_its_totals(
+    planner: Client, monkeypatch: pytest.MonkeyPatch, program
+) -> None:
+    """The page's Department Summary shows every department, ours and the service
+    departments; its total row equals the KPIs because these add up."""
+    _requirement("AI", "AI331", None, credits=4)
+    _requirement("AI", "MATH203", None)
+    _requirement("DS", "DS201", None)
+    _requirement("DS", "MATH203", None)
+    _students("AI", 491000001, 30, section="M")
+    _students("AI", 492000001, 45, section="F")
+    _students("DS", 493000001, 10, section="F")
+    _recommend(monkeypatch, {"AI": ["AI331", "MATH203"], "DS": ["DS201", "MATH203"]})
+
+    data = _generate(planner, **({"program": program} if program else {}))
+
+    if data["mode"] == "multi":
+        summaries = [data["combined_summary"], *(p["summary"] for p in data["programs"])]
+    else:
+        summaries = [data["summary"]]
+    for summary in summaries:
+        depts = summary["departments"]
+        assert sum(d["sections"] for d in depts) == summary["total_sections"] > 0
+        assert sum(d["male_sections"] for d in depts) == summary["male_sections"]
+        assert sum(d["female_sections"] for d in depts) == summary["female_sections"]
+        assert sum(d["courses"] for d in depts) == summary["total_courses"]
+        for d in depts:
+            assert d["male_sections"] + d["female_sections"] == d["sections"], d
+    shown = {d["department"] for d in summaries[0]["departments"]}
+    assert {"AI", "MATH"} <= shown
+    assert "MATH" not in LOCAL_DEPARTMENTS, "a service department, listed too"

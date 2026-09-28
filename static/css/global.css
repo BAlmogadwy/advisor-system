@@ -8502,11 +8502,20 @@ html[data-theme="dark"] .btn-export {
     .sp-fill-lo { background: var(--danger); }
 
     /* Department summary */
-    .sp-dept-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 8px; }
-    .sp-dept-card { border: var(--border-subtle); border-radius: var(--radius); padding: .55rem .75rem; background: var(--glass-bg); }
-    .sp-dept-card .dept-name { font-weight: 700; font-size: .82rem; color: var(--navy); margin-bottom: 4px; }
-    .sp-dept-card .dept-stat { font-size: .72rem; color: var(--t3); }
-    .sp-dept-card .dept-stat b { color: var(--t1); }
+    /* Department summary: one table, our departments then the service
+       departments, a subtotal each, and a total row equal to the KPIs.
+       Numbers end-aligned in tabular figures; it scrolls in its own box
+       if a phone is narrower than its seven columns. */
+    .sp-sum-scroll { overflow-x: auto; }
+    .sp-sum-table { width: 100%; border-collapse: collapse; font-size: .8rem; font-variant-numeric: tabular-nums; }
+    .sp-sum-table th, .sp-sum-table td { padding: 5px 8px; border-bottom: 1px solid var(--t5); text-align: end; }
+    .sp-sum-table thead th { font-size: .75rem; font-weight: 700; color: var(--t3); vertical-align: bottom; }
+    .sp-sum-table thead th:first-child, .sp-sum-table th[scope="row"] { text-align: start; }
+    .sp-sum-table tbody th[scope="row"] { font-weight: 700; color: var(--navy); }
+    .sp-sum-table .sp-sum-group th { text-align: start; font-size: .75rem; font-weight: 700; color: var(--t2); padding-top: 10px; background: color-mix(in srgb, var(--teal) 6%, transparent); }
+    .sp-sum-table .sp-sum-sub th, .sp-sum-table .sp-sum-sub td { color: var(--t2); font-weight: 600; border-bottom-style: dashed; }
+    .sp-sum-table [data-col="sections"] { font-weight: 700; }
+    .sp-sum-table tfoot th, .sp-sum-table tfoot td { font-weight: 700; color: var(--t1); border-top: 2px solid var(--teal); border-bottom: 0; }
 
     /* Export bar */
     .sp-export-bar { display: flex; align-items: center; gap: 10px; margin-top: 10px; padding: 8px 0; }
@@ -8562,7 +8571,6 @@ html[data-theme="dark"] .btn-export {
     .sp-collapse-arrow { font-size: .7rem; color: var(--t3); transition: transform .15s; min-width: 12px; }
     .sp-prog-block { margin-bottom: 20px; }
     .sp-prog-block .tbl-card { margin-bottom: 8px; }
-    .sp-prog-block .sp-dept-grid { margin-top: 8px; }
 
     /* A results table is 13 columns: wider than the pane at 1024px, so it
        scrolls inside its own box, never the page. */
@@ -8593,6 +8601,8 @@ html[data-theme="dark"] .btn-export {
       .sp-page .sp-plan-table .sp-sec-total { order: 6; }
       .sp-page .sp-plan-table .sp-c-status { order: 7; grid-column: 1 / -1; align-items: flex-start; }
       .sp-page .sp-plan-table.mobile-cards tbody td.sp-c-status:empty { display: none; }
+      .sp-sum-table { font-size: .75rem; }
+      .sp-sum-table th, .sp-sum-table td { padding: 4px 5px; }
     }
 
     /* ═══════════════════════════════════════════════════════════
@@ -8603,10 +8613,6 @@ html[data-theme="dark"] .btn-export {
     html[data-theme="dark"] .sp-caps {
       background: rgba(10,142,110,0.06);
       border-color: rgba(10,142,110,0.15);
-    }
-    html[data-theme="dark"] .sp-dept-card {
-      background: rgba(255,255,255,0.04);
-      border-color: rgba(255,255,255,0.06);
     }
 
     /* Status pills */
