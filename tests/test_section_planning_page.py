@@ -72,3 +72,23 @@ def test_scope_and_filter_fields_are_not_capped_at_the_compact_width(
         assert soup.find("label", attrs={"for": field_id}) is not None, field_id
     assert soup.find(id="spScopeForm").find_parent(class_="sp-page") is not None
     assert soup.find(id="spResults").find_parent(class_="sp-page") is not None
+
+
+@pytest.mark.parametrize("language", ["en", "ar"])
+def test_toggles_fields_and_status_carry_their_names_states_and_roles(
+    client: Client, language: str
+) -> None:
+    soup = _page(client, language)
+    for toggle_id, panel_id in (("spToggleCaps", "spCapsWrap"), ("spToggleAdv", "spAdvPanel")):
+        toggle = soup.find(id=toggle_id)
+        assert toggle.name == "button" and toggle.get("type") == "button", toggle_id
+        assert toggle.get("aria-expanded") == "false", toggle_id
+        assert toggle.get("aria-controls") == panel_id, toggle_id
+        assert soup.find(id=panel_id) is not None, panel_id
+    for field_id in ("spCapLocal4", "spCapLocalOther", "spCapExternal"):
+        label = soup.find("label", attrs={"for": field_id})
+        assert label is not None and label.get_text(strip=True), field_id
+    assert soup.find(id="spAdvSearch").get("aria-label")
+    status = soup.find(id="spStatus")
+    assert status.get("role") == "status"
+    assert status.get("aria-live") == "polite"

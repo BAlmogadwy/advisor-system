@@ -181,6 +181,24 @@ SINGLE = {
     "electives": {"dropped": [], "dropped_total": 0},
 }
 
+_AI = [row for row in PLAN if row["department"] == "AI"]
+_DS = [row for row in PLAN if row["department"] != "AI"]
+MULTI = {
+    "ok": True,
+    "mode": "multi",
+    "year": 1448,
+    "semester": 1,
+    "student_count": 324,
+    "cohorts": {"M": 116, "F": 208, "no_gender": 0},
+    "combined_plan": [dict(row, programs=["AI", "DS"]) for row in PLAN],
+    "combined_summary": _summary(PLAN),
+    "electives": {"dropped": [], "dropped_total": 0},
+    "programs": [
+        {"program": "AI", "student_count": 1, "plan": _AI, "summary": _summary(_AI)},
+        {"program": "DS", "student_count": 2, "plan": _DS, "summary": _summary(_DS)},
+    ],
+}
+
 
 class SectionPlanningBrowserTests(StaticLiveServerTestCase):
     @classmethod
@@ -345,3 +363,44 @@ class SectionPlanningBrowserTests(StaticLiveServerTestCase):
     def test_every_row_shows_its_numbers_in_a_wide_font(self) -> None:
         for language in ("en", "ar"):
             self._assert_phone(language, wide_font=True)
+
+    # ── 6. A keyboard user sees where they are ──────────────────────
+
+    FOCUS_RING = """() => { const s = getComputedStyle(document.activeElement);
+      return { id: document.activeElement.id || document.activeElement.className,
+               style: s.outlineStyle, width: parseFloat(s.outlineWidth) }; }"""
+
+    def _tab_to(self, page, selector: str) -> dict:
+        target = page.locator(selector)
+        target.focus()
+        page.keyboard.press("Shift+Tab")
+        page.keyboard.press("Tab")
+        ring = page.evaluate(self.FOCUS_RING)
+        ring["reached"] = target.evaluate("element => element === document.activeElement")
+        return ring
+
+    def test_keyboard_focus_is_visible_on_toggles_and_sortable_headers(self) -> None:
+        for language in ("en", "ar"):
+            page = self._page(language, plan=MULTI)
+            page.locator("#spProgram").fill("AI,DS")
+            page.locator("#spGenerate").click()
+            expect(page.locator("#spMultiPrograms .sp-prog-toggle")).to_have_count(2)
+            for selector in (
+                "#spToggleCaps",
+                "#spToggleAdv",
+                "#spMultiPrograms .sp-prog-toggle >> nth=0",
+                "#spTable thead th >> nth=5",
+            ):
+                ring = self._tab_to(page, selector)
+                self.assertTrue(
+                    ring["reached"], f"{language} {selector}: Tab never reaches it: {ring}"
+                )
+                self.assertEqual(ring["style"], "solid", f"{language} {selector}: {ring}")
+                self.assertGreaterEqual(ring["width"], 2, f"{language} {selector}: {ring}")
+            # Enter on a programme heading opens it.
+            toggle = page.locator("#spMultiPrograms .sp-prog-toggle").first
+            toggle.focus()
+            page.keyboard.press("Enter")
+            expect(toggle).to_have_attribute("aria-expanded", "true")
+            page.keyboard.press("Space")
+            expect(toggle).to_have_attribute("aria-expanded", "false")

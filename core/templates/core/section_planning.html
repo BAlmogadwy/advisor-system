@@ -45,21 +45,21 @@
 
   <!-- Capacity toggle -->
   <div class="mt-2">
-    <button id="spToggleCaps" class="sp-toggle-caps">{% if LANGUAGE_CODE == 'ar' %}⚙ إعدادات الطاقة{% else %}⚙ Capacity settings{% endif %}</button>
+    <button id="spToggleCaps" type="button" class="sp-toggle-caps" aria-expanded="false" aria-controls="spCapsWrap">{% if LANGUAGE_CODE == 'ar' %}⚙ إعدادات الطاقة{% else %}⚙ Capacity settings{% endif %}</button>
   </div>
 
   <!-- Collapsible capacity settings -->
   <div id="spCapsWrap" class="sp-caps d-none mt-2">
     <div class="sp-cap-grp">
-      <div class="sp-caps-lbl">{% if LANGUAGE_CODE == 'ar' %}محلي 4+ ساعات{% else %}Local 4+ cr{% endif %}</div>
+      <label class="sp-caps-lbl" for="spCapLocal4">{% if LANGUAGE_CODE == 'ar' %}محلي 4+ ساعات{% else %}Local 4+ cr{% endif %}</label>
       <input id="spCapLocal4" type="text" inputmode="numeric" pattern="[0-9]*" class="form-control form-control-compact" value="25">
     </div>
     <div class="sp-cap-grp">
-      <div class="sp-caps-lbl">{% if LANGUAGE_CODE == 'ar' %}محلي أخرى{% else %}Local other{% endif %}</div>
+      <label class="sp-caps-lbl" for="spCapLocalOther">{% if LANGUAGE_CODE == 'ar' %}محلي أخرى{% else %}Local other{% endif %}</label>
       <input id="spCapLocalOther" type="text" inputmode="numeric" pattern="[0-9]*" class="form-control form-control-compact" value="40">
     </div>
     <div class="sp-cap-grp">
-      <div class="sp-caps-lbl">{% if LANGUAGE_CODE == 'ar' %}خارجي{% else %}External{% endif %}</div>
+      <label class="sp-caps-lbl" for="spCapExternal">{% if LANGUAGE_CODE == 'ar' %}خارجي{% else %}External{% endif %}</label>
       <input id="spCapExternal" type="text" inputmode="numeric" pattern="[0-9]*" class="form-control form-control-compact" value="50">
     </div>
     <div class="sp-caps-info">{% if LANGUAGE_CODE == 'ar' %}الحد الأقصى للطلاب في كل شعبة{% else %}Max students per section by type{% endif %}</div>

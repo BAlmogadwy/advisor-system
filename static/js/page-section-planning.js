@@ -60,7 +60,8 @@ const $ = id => document.getElementById(id);
 
 /* ── Toggle capacity settings ── */
 $('spToggleCaps').onclick = () => {
-  $('spCapsWrap').classList.toggle('d-none');
+  const hidden = $('spCapsWrap').classList.toggle('d-none');
+  $('spToggleCaps').setAttribute('aria-expanded', hidden ? 'false' : 'true');
 };
 
 /* ── Per-course seat limits ──
@@ -618,7 +619,9 @@ function showStatus(msg, type) {
   const el = $('spStatus');
   el.className = type === 'ok' ? 'sp-alert sp-alert-ok'
                : type === 'warn' ? 'sp-alert sp-alert-warn' : 'sp-alert sp-alert-err';
+  /* An error interrupts (an alert); anything else waits its turn. */
   el.setAttribute('role', type === 'err' ? 'alert' : 'status');
+  el.setAttribute('aria-live', type === 'err' ? 'assertive' : 'polite');
   el.textContent = msg;
   el.classList.remove('d-none');
 }
@@ -632,6 +635,20 @@ let _lastPayload = null;
 const LOCAL_DEPTS = new Set((() => {
   try { return JSON.parse($('spLocalDepartments')?.textContent || '[]'); } catch (_) { return []; }
 })());
+
+/* Sorting is wired once per table (the shared sorter adds listeners on each
+ * call, so wiring on every render sorted a column once per render). A new
+ * result keeps the column the user sorted by: the sorter keeps each header's
+ * next direction, so sorting that header twice lands on the one it shows. */
+function wireSortOnce(table) {
+  if (!table || table.dataset.sortWired || typeof wireSortableTable !== 'function') return;
+  table.dataset.sortWired = '1';
+  wireSortableTable(table.id);
+}
+function keepSort(table) {
+  const th = table.querySelector('thead th[data-dir]');
+  if (th) { th.click(); th.click(); }
+}
 
 function renderResults(data) {
   if (data.mode === 'multi') {
@@ -651,6 +668,7 @@ const PLAN_LABELS = [...$('spTable').tHead.querySelectorAll('th')].map(th => th.
  * card: demand, max, fill, then M | F | Total sections, then the status. */
 const CARD_ROLE = ['mc-hide', 'mc-hide', 'mc-primary', 'mc-primary', 'mc-hide', 'sp-c-demand',
   'sp-sec-m', 'sp-sec-f', 'sp-sec-total', 'sp-c-max', 'mc-hide', 'sp-c-fill', 'sp-c-status'];
+wireSortOnce($('spTable'));   // after the header is read: the copies start unsorted
 
 /* ── Build table rows HTML from a plan array ── */
 function buildPlanRows(plan) {
@@ -785,9 +803,7 @@ function renderSingleProgramResults(data) {
   }
 
   tbody.innerHTML = buildPlanRows(plan);
-
-  /* Wire sorting + pagination */
-  if (typeof wireSortableTable === 'function') wireSortableTable('spTable');
+  keepSort($('spTable'));
   if (typeof paginateTable === 'function') paginateTable('spTable', 'spPager', 30);
 
   /* Department summary */
@@ -823,7 +839,7 @@ function renderMultiProgramResults(data) {
     $('spDeptGrid').innerHTML = '';
   } else {
     tbody.innerHTML = buildPlanRows(combinedPlan);
-    if (typeof wireSortableTable === 'function') wireSortableTable('spTable');
+    keepSort($('spTable'));
     if (typeof paginateTable === 'function') paginateTable('spTable', 'spPager', 30);
     $('spDeptGrid').innerHTML = buildDeptSummaryHtml(cs.departments);
   }
@@ -840,17 +856,18 @@ function renderMultiProgramResults(data) {
     block.className = 'sp-prog-block';
     block.style.marginTop = '14px';
 
-    /* Collapsible heading — starts collapsed */
+    /* Collapsible heading — starts collapsed. A button inside the heading,
+     * so it opens and closes by keyboard and says whether it is open. */
     const heading = document.createElement('h5');
-    heading.className = 'sp-prog-heading sp-collapsible';
-    heading.style.cursor = 'pointer';
-    heading.style.userSelect = 'none';
-    heading.innerHTML = `<span class="sp-collapse-arrow">▶</span>
+    heading.className = 'sp-prog-heading';
+    heading.innerHTML = `<button type="button" class="sp-prog-toggle" aria-expanded="false" aria-controls="${bodyId}">
+      <span class="sp-collapse-arrow" aria-hidden="true">▶</span>
       <span>${esc(prog.program)}</span>
       <span class="sp-prog-count">(${prog.student_count ?? 0} ${T.progLabel}
         · ${summary.total_courses || 0} ${T.courses}
-        · ${summary.total_sections || 0} ${T.sections}: ${esc(splitText(summary.male_sections, summary.female_sections))})</span>`;
+        · ${summary.total_sections || 0} ${T.sections}: ${esc(splitText(summary.male_sections, summary.female_sections))})</span></button>`;
     block.appendChild(heading);
+    const toggle = heading.querySelector('button');
 
     /* Collapsible body — hidden by default */
     const body = document.createElement('div');
@@ -881,14 +898,12 @@ function renderMultiProgramResults(data) {
 
     block.appendChild(body);
     container.appendChild(block);
+    if (plan.length) wireSortOnce(table);
 
-    /* Toggle collapse on click */
-    heading.addEventListener('click', () => {
+    toggle.addEventListener('click', () => {
       const hidden = body.classList.toggle('d-none');
-      heading.querySelector('.sp-collapse-arrow').textContent = hidden ? '▶' : '▼';
-      if (!hidden && plan.length && typeof wireSortableTable === 'function') {
-        wireSortableTable(tableId);
-      }
+      toggle.setAttribute('aria-expanded', hidden ? 'false' : 'true');
+      toggle.querySelector('.sp-collapse-arrow').textContent = hidden ? '▶' : '▼';
     });
   });
 }

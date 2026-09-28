@@ -8557,7 +8557,8 @@ html[data-theme="dark"] .btn-export {
     .sp-prog-heading { font-size: .95rem; font-weight: 700; color: var(--navy); padding: 10px 0 6px; margin-top: 18px; border-bottom: 2px solid var(--teal); display: flex; align-items: baseline; gap: 8px; }
     .sp-prog-heading:first-child { margin-top: 0; }
     .sp-prog-heading .sp-prog-count { font-size: .75rem; font-weight: 600; color: var(--t3); font-family: var(--font-mono); }
-    .sp-prog-heading.sp-collapsible:hover { opacity: .85; }
+    .sp-prog-toggle { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 8px; width: 100%; padding: 0; border: 0; background: none; font: inherit; color: inherit; text-align: start; cursor: pointer; user-select: none; }
+    .sp-prog-toggle:hover { opacity: .85; }
     .sp-collapse-arrow { font-size: .7rem; color: var(--t3); transition: transform .15s; min-width: 12px; }
     .sp-prog-block { margin-bottom: 20px; }
     .sp-prog-block .tbl-card { margin-bottom: 8px; }

@@ -24,6 +24,7 @@ const AR = process.env.SP_TEST_LANGUAGE === 'ar';
 const say = (en, ar) => (AR ? ar : en);
 const read = name => fs.readFileSync(path.join(__dirname, '../../static/js', name), 'utf8');
 const SHARED = read('shared-utils.js');
+const UX = read('shared-ux.js');   // wireSortableTable, as base.html loads it
 const DIALOG = read('dialog.js');
 const PAGE = read('page-section-planning.js');
 
@@ -118,6 +119,7 @@ async function page(t, { program = 'AI', limits = limitsServer(), confirm = asyn
   if (localDepartments) window.document.getElementById('spLocalDepartments').textContent = JSON.stringify(localDepartments);
   const context = dom.getInternalVMContext();
   vm.runInContext(SHARED, context, { filename: 'shared-utils.js' });
+  vm.runInContext(UX, context, { filename: 'shared-ux.js' });
   if (realDialogs) {
     window.requestAnimationFrame = callback => window.setTimeout(callback, 0);
     vm.runInContext(DIALOG, context, { filename: 'dialog.js' });
@@ -900,4 +902,148 @@ test('each programme\'s table has the server\'s header and the same phone cards'
     const row = table.querySelector('tbody tr[data-code]');
     assert.deepEqual([...row.children].map(td => td.dataset.label), heads(ui, table));
   }
+});
+
+/* ── Names, states and roles a screen reader and a keyboard rely on ── */
+
+test('the disclosure toggles say what they open and whether it is open', async t => {
+  const ui = await page(t);
+  const caps = ui.$('spToggleCaps');
+  assert.equal(caps.tagName, 'BUTTON');
+  assert.equal(caps.type, 'button');
+  assert.equal(caps.getAttribute('aria-controls'), 'spCapsWrap');
+  assert.equal(caps.getAttribute('aria-expanded'), 'false');
+  caps.click();
+  assert.equal(caps.getAttribute('aria-expanded'), 'true');
+  assert.ok(!ui.$('spCapsWrap').classList.contains('d-none'));
+  caps.click();
+  assert.equal(caps.getAttribute('aria-expanded'), 'false');
+  assert.ok(ui.$('spCapsWrap').classList.contains('d-none'));
+
+  const adv = ui.$('spToggleAdv');
+  assert.equal(adv.getAttribute('aria-controls'), 'spAdvPanel');
+  assert.equal(adv.getAttribute('aria-expanded'), 'true', 'the harness opened it');
+});
+
+test('every field has an accessible name in the page\'s language', async t => {
+  const ui = await page(t);
+  const label = id => ui.$(id).labels[0]?.textContent.trim();
+  assert.deepEqual(['spYear', 'spSemester', 'spProgram', 'spDeptFilter'].map(label),
+    say(['Year', 'Semester', 'Program', 'Filter Dept'], ['السنة', 'الفصل', 'البرنامج', 'تصفية القسم']));
+  assert.deepEqual(['spCapLocal4', 'spCapLocalOther', 'spCapExternal'].map(label),
+    say(['Local 4+ cr', 'Local other', 'External'], ['محلي 4+ ساعات', 'محلي أخرى', 'خارجي']));
+  assert.equal(ui.$('spAdvSearch').getAttribute('aria-label'), say('Search courses', 'بحث عن مقرر'));
+  for (const tr of ui.window.document.querySelectorAll('#spAdvBody tr[data-code]')) {
+    const code = tr.dataset.code;
+    assert.equal(tr.querySelector('.adv-input').getAttribute('aria-label'), say(`Seat limit for ${code}`, `الحد الأقصى لشعبة ${code}`));
+    assert.match(tr.querySelector('.adv-all').getAttribute('aria-label'), new RegExp(code));
+  }
+});
+
+test('the status line is polite, an error is an alert, and a warning is amber, never the error style', async t => {
+  let refuse = false;
+  const ui = await page(t, { generate: () => (refuse ? answer({ ok: false, code: 'invalid_term' }, 400) : answer(generated())) });
+  const status = ui.$('spStatus');
+  assert.equal(status.getAttribute('role'), 'status');
+  assert.equal(status.getAttribute('aria-live'), 'polite');
+
+  ui.$('spAdvSaveDb').click();   // nothing to save: a warning
+  await settle();
+  assert.equal(ui.text('spStatus'), say('Nothing to change: the saved limits already match.', 'لا شيء يتغيّر: الحدود المحفوظة مطابقة.'));
+  assert.ok(status.classList.contains('sp-alert-warn'));
+  assert.ok(!status.classList.contains('sp-alert-err'));
+  assert.equal(status.getAttribute('role'), 'status');
+  assert.equal(status.getAttribute('aria-live'), 'polite');
+
+  refuse = true;
+  ui.$('spGenerate').click();
+  await settle();
+  assert.ok(status.classList.contains('sp-alert-err'));
+  assert.equal(status.getAttribute('role'), 'alert');
+  assert.equal(status.getAttribute('aria-live'), 'assertive');
+
+  refuse = false;
+  ui.$('spGenerate').click();
+  await settle();
+  assert.ok(status.classList.contains('sp-alert-ok'));
+  assert.equal(status.getAttribute('role'), 'status');
+  assert.equal(status.getAttribute('aria-live'), 'polite');
+});
+
+test('a programme block opens and closes from the keyboard', async t => {
+  const ui = await page(t, { program: 'AI,DS', generate: () => answer(multiPlan()) });
+  ui.$('spGenerate').click();
+  await settle();
+
+  const toggles = [...ui.window.document.querySelectorAll('#spMultiPrograms .sp-prog-toggle')];
+  assert.equal(toggles.length, 2);
+  const [toggle] = toggles;
+  assert.equal(toggle.tagName, 'BUTTON');
+  assert.equal(toggle.type, 'button');
+  assert.equal(toggle.parentElement.tagName, 'H5', 'still a heading');
+  const body = ui.$(toggle.getAttribute('aria-controls'));
+  assert.ok(body && body.contains(body.querySelector('table')));
+  assert.equal(toggle.getAttribute('aria-expanded'), 'false');
+  assert.ok(body.classList.contains('d-none'));
+
+  toggle.focus();
+  ui.key(toggle, 'Enter');
+  assert.equal(toggle.getAttribute('aria-expanded'), 'true');
+  assert.ok(!body.classList.contains('d-none'));
+  assert.equal(ui.window.document.activeElement, toggle);
+  ui.key(toggle, 'Enter');
+  assert.equal(toggle.getAttribute('aria-expanded'), 'false');
+  assert.ok(body.classList.contains('d-none'));
+});
+
+function sortPlan() {
+  return generated([planRow('AI491', { total_students: 30 }), planRow('CS211', { total_students: 10 }), planRow('MATH203', { total_students: 20 })]);
+}
+const codes = table => [...table.querySelectorAll('tbody tr[data-code]')].map(tr => tr.dataset.code);
+/* How many times one press sorted: the shared sorter sets the pressed
+ * header's aria-sort twice per sort (reset, then the direction). */
+function sortsPerPress(window, th) {
+  const seen = new window.MutationObserver(() => {});
+  seen.observe(th, { attributes: true, attributeFilter: ['aria-sort'] });
+  th.click();
+  const records = seen.takeRecords().length;
+  seen.disconnect();
+  return records / 2;
+}
+
+test('a column sorts once per press however many results came before, and a new result keeps the sort', async t => {
+  const ui = await page(t, { generate: () => answer(sortPlan()) });
+  for (let i = 0; i < 3; i++) { ui.$('spGenerate').click(); await settle(); }
+  const table = ui.$('spTable');
+  const students = table.querySelector('thead th:nth-child(6)');
+
+  assert.equal(sortsPerPress(ui.window, students), 1);
+  assert.equal(students.getAttribute('aria-sort'), 'ascending');
+  assert.deepEqual(codes(table), ['CS211', 'MATH203', 'AI491']);
+  assert.equal(sortsPerPress(ui.window, students), 1);
+  assert.equal(students.getAttribute('aria-sort'), 'descending');
+  assert.deepEqual(codes(table), ['AI491', 'MATH203', 'CS211']);
+
+  ui.$('spGenerate').click();
+  await settle();
+  assert.equal(students.getAttribute('aria-sort'), 'descending', 'the header still tells the truth');
+  assert.deepEqual(codes(table), ['AI491', 'MATH203', 'CS211']);
+  students.click();
+  assert.deepEqual(codes(table), ['CS211', 'MATH203', 'AI491']);
+});
+
+test('a programme table sorts once per press after being opened and closed', async t => {
+  const data = multiPlan();
+  data.programs[0].plan = sortPlan().plan;
+  const ui = await page(t, { program: 'AI,DS', generate: () => answer(data) });
+  ui.$('spGenerate').click();
+  await settle();
+  const toggle = ui.window.document.querySelector('#spMultiPrograms .sp-prog-toggle');
+  for (let i = 0; i < 3; i++) toggle.click();   // open, close, open
+  const table = ui.$(toggle.getAttribute('aria-controls')).querySelector('table');
+  const students = table.querySelector('thead th:nth-child(6)');
+
+  assert.equal(sortsPerPress(ui.window, students), 1);
+  assert.equal(students.getAttribute('aria-sort'), 'ascending');
+  assert.deepEqual(codes(table), ['CS211', 'MATH203', 'AI491']);
 });
