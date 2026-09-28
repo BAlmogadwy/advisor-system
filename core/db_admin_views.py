@@ -6,9 +6,9 @@ from django.http import HttpRequest, HttpResponse, JsonResponse
 from django.shortcuts import render
 from django.views.decorators.http import require_GET, require_POST
 
-from core.authz import role_required
+from core.authz import role_required, throttle
 from core.models import ProgrammeRequirement, TermSectionProgram
-from core.services.audit import log_audit_event
+from core.services.audit import audit_actor, log_audit_event
 from core.services.db_admin_ops import (
     SectionSnapshotClearError,
     clear_section_snapshot,
@@ -30,6 +30,12 @@ from core.services.db_admin_ops import (
 )
 from core.services.elective_validation import ElectiveMappingError, programme_variants
 from core.services.rbac import ROLE_ADVISOR, ROLE_SUPER_ADMIN
+from core.services.section_limits import (
+    SOURCE_DB_ADMIN,
+    LimitSaveContext,
+    known_programmes,
+    save_limits,
+)
 from core.services.section_programmes import normalize_section_program
 from core.services.student_helpers import is_elective_slot, normalize_code
 from core.services.term_sections import (
@@ -733,54 +739,57 @@ def db_delete_external_courses_view(request: HttpRequest) -> JsonResponse:
 @role_required(ROLE_SUPER_ADMIN)
 @require_GET
 def db_programme_capacities_view(request: HttpRequest) -> JsonResponse:
-    """List ProgrammeRequirement rows for a given program with max_capacity."""
-    program = (request.GET.get("program") or "").strip()
-    if not program:
+    """A programme's requirement rows and their saved seat limits (read-only).
+
+    ``program`` is matched as ``section_limits`` matches it (case and spaces
+    aside) and answered in its stored spelling: the panel saves for exactly the
+    programme it loaded. Each row carries its course name, so two courses that
+    share a code read as two courses.
+    """
+    raw = (request.GET.get("program") or "").strip()
+    if not raw:
         return JsonResponse({"error": "program is required"}, status=400)
+    program = known_programmes().get(normalize_code(raw), "")
     rows = list(
         ProgrammeRequirement.objects.filter(program=program)
-        .values("course_code", "credit_hours", "max_capacity")
+        .values("course_code", "course_name", "credit_hours", "max_capacity")
         .order_by("course_code")
+        if program
+        else []
     )
-    return JsonResponse({"ok": True, "rows": rows})
+    return JsonResponse({"ok": True, "program": program or normalize_code(raw), "rows": rows})
 
 
 @role_required(ROLE_SUPER_ADMIN)
 @require_POST
-def db_update_programme_capacities_view(request: HttpRequest) -> JsonResponse:
-    """Bulk-update max_capacity for ProgrammeRequirement rows of a program."""
+@throttle(max_calls=20, window_seconds=120)
+def db_save_programme_limits_view(request: HttpRequest) -> JsonResponse:
+    """Preview, then save, seat limits for the ONE programme the panel loaded.
+
+    Section Planning's write path (``section_limits.save_limits``) with DB
+    Admin's shape: one programme, no widening, super admins only. The body,
+    answers and audit rows are the same as Section Planning's; each audit row
+    says ``"source": "db_admin"``.
+    """
     try:
-        body = json.loads(request.body.decode("utf-8"))
+        body = json.loads(request.body.decode("utf-8")) if request.body else {}
     except (json.JSONDecodeError, UnicodeDecodeError):
-        return JsonResponse({"ok": False, "error": "Invalid JSON"}, status=400)
-
-    program = str(body.get("program", "")).strip()
-    capacities = body.get("capacities", {})  # {"CS101": 30, "AI201": null}
-
-    if not program:
-        return JsonResponse({"ok": False, "error": "program required"}, status=400)
-
-    updated = 0
-    for code, cap in capacities.items():
-        val = int(cap) if cap is not None and str(cap).strip() != "" else None
-        if val is not None and val < 1:
-            continue
-        count = ProgrammeRequirement.objects.filter(program=program, course_code=code).update(
-            max_capacity=val
+        return JsonResponse(
+            {"ok": False, "code": "invalid_json", "error": "Invalid JSON"}, status=400
         )
-        updated += count
-
-    log_audit_event(
-        request,
-        action="db.update_programme_capacities",
-        status="success",
-        details={
-            "program": program,
-            "updated": updated,
-            "entries": len(capacities),
-        },
+    actor, actor_role = audit_actor(request)
+    result = save_limits(
+        body,
+        LimitSaveContext(
+            actor_username=actor,
+            actor_role=actor_role,
+            endpoint=request.path,
+            method=str(request.method),
+            source=SOURCE_DB_ADMIN,
+        ),
+        one_programme=True,
     )
-    return JsonResponse({"ok": True, "updated": updated})
+    return JsonResponse(result.body, status=result.status)
 
 
 # ── Elective Catalogue & Mapping ────────────────────────────────────

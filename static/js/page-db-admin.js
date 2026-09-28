@@ -1056,86 +1056,325 @@ q('extDeleteSel').onclick = () => {
   });
 };
 
-/* ── Section: Programme Capacities ── */
+/* ── Section: Programme Capacities ──
+ * The seat limits (max_capacity) of ONE programme, saved through Section
+ * Planning's write path (section_limits), never written on input or blur.
+ * An edit is a draft, marked "Modified"; an emptied saved limit is a removal.
+ * Save sends only the edited rows, for the programme the rows were LOADED for:
+ * typing another programme in the box blocks Save until that programme is
+ * loaded. The server previews the exact rows (course · name · old → new), the
+ * user confirms them, and the commit carries the preview's token. */
+const CAP_MIN = 1, CAP_MAX = 500;
+const CAP_LIMITS_URL = '/ops/db/programme-capacities/limits/';
 let capRows = [];
+let capProgram = '';   // the programme whose rows are on screen
+let capBusy = false;   // a review or save in flight: one at a time
 
-function capRender() {
-  const body = q('capBody');
-  body.innerHTML = '';
-  for (const row of capRows) {
-    const tr = document.createElement('tr');
-    const curCap = row.max_capacity != null ? row.max_capacity : '';
-    const displayCap = row.max_capacity != null ? row.max_capacity : '--';
-    tr.innerHTML =
-      `<td><strong>${esc(row.course_code)}</strong></td>` +
-      `<td>${row.credit_hours != null ? row.credit_hours : '--'}</td>` +
-      `<td>${esc(String(displayCap))}</td>` +
-      `<td><input class="form-control form-control-sm cap-input" type="number" min="1" data-code="${esc(row.course_code)}" value="${esc(String(curCap))}" placeholder="--"></td>`;
-    body.appendChild(tr);
-  }
-  q('capTableWrap').classList.toggle('d-none', capRows.length === 0);
-  q('capSave').classList.toggle('d-none', capRows.length === 0);
-  q('capCount').textContent = IS_AR
-    ? `${capRows.length} مقرر`
-    : `${capRows.length} course(s)`;
+const TC = {
+  modified:     IS_AR ? 'معدَّل' : 'Modified',
+  removing:     IS_AR ? 'معدَّل: يُزال الحد' : 'Modified: limit removed',
+  invalid:      IS_AR ? `رقم صحيح من ${CAP_MIN} إلى ${CAP_MAX}` : `Whole number ${CAP_MIN}–${CAP_MAX}`,
+  limitAria:    (code, name) => (IS_AR ? `الحد الجديد لـ ${code} ${name}` : `New seat limit for ${code} ${name}`).trim(),
+  saveBtn:      n => IS_AR ? (n ? `حفظ التغييرات (${n})` : 'حفظ التغييرات') : (n ? `Save changes (${n})` : 'Save changes'),
+  drafts:       n => IS_AR ? `${n} تعديل غير محفوظ` : `${n} unsaved change${n === 1 ? '' : 's'}`,
+  toFix:        n => IS_AR ? `${n} قيمة تحتاج تصحيحاً قبل الحفظ` : `${n} value${n === 1 ? '' : 's'} to fix before saving`,
+  noDrafts:     IS_AR ? 'لا توجد تعديلات غير محفوظة' : 'No unsaved changes',
+  fixInvalid:   IS_AR ? 'صحّح القيم غير الصالحة قبل الحفظ.' : 'Fix the invalid values before saving.',
+  otherProgram: (loaded, typed) => IS_AR
+    ? `الصفوف المعروضة لبرنامج ${loaded}، والمكتوب في الحقل ${typed || '—'}. حمّل ذلك البرنامج أو أعد كتابة ${loaded} لتتمكن من الحفظ.`
+    : `The rows on screen are for ${loaded}, but the box says ${typed || '—'}. Load that programme, or type ${loaded} again, to save.`,
+  needProgram:  IS_AR ? 'رمز البرنامج مطلوب.' : 'Program code is required.',
+  nothing:      IS_AR ? 'لا شيء يتغيّر: الحدود المحفوظة مطابقة.' : 'Nothing to change: the saved limits already match.',
+  saveTitle:    (n, p) => IS_AR ? `حفظ ${n} من حدود الشعب لبرنامج ${p}؟` : `Save ${n} seat limit${n === 1 ? '' : 's'} for ${p}?`,
+  saveIntro:    p => IS_AR ? `تتغيّر هذه الصفوف فقط، لبرنامج ${p} وحده، ويُسجَّل كل تغيير في سجل التدقيق.` : `Only these rows change, for ${p} only. Each change is recorded in the audit log.`,
+  unchanged:    n => IS_AR ? `${n} صف مطابق أصلاً ولن يتغيّر.` : `${n} row${n === 1 ? ' already matches' : 's already match'} and will not change.`,
+  thCourse:     IS_AR ? 'المقرر' : 'Course',
+  thName:       IS_AR ? 'الاسم' : 'Name',
+  thOld:        IS_AR ? 'المحفوظ الآن' : 'Saved now',
+  thNew:        IS_AR ? 'الجديد' : 'New',
+  none:         IS_AR ? '— (القاعدة)' : '— (rule)',
+  remove:       IS_AR ? 'إزالة (تُطبَّق القاعدة)' : 'remove (the rule applies)',
+  confirmSave:  n => IS_AR ? `حفظ ${n} تغيير` : `Save ${n} change${n === 1 ? '' : 's'}`,
+  keepEditing:  IS_AR ? 'متابعة التعديل' : 'Keep editing',
+  checking:     IS_AR ? 'جارٍ التحقق…' : 'Checking…',
+  saving:       IS_AR ? 'جارٍ الحفظ...' : 'Saving...',
+  saved:        (n, p) => IS_AR ? `حُفظ ${n} حد لبرنامج ${p} وسُجّل كل تغيير في سجل التدقيق.` : `Saved ${n} seat limit${n === 1 ? '' : 's'} for ${p}; each change is in the audit log.`,
+  discardTitle: n => IS_AR ? `تجاهل ${n} تعديل غير محفوظ؟` : `Discard ${n} unsaved change${n === 1 ? '' : 's'}?`,
+  discardBody:  (loaded, next) => IS_AR ? `تحميل ${next} يستبدل صفوف ${loaded} وتعديلاتها غير المحفوظة.` : `Loading ${next} replaces ${loaded}'s rows and their unsaved changes.`,
+  discard:      IS_AR ? 'تجاهل وتحميل' : 'Discard and load',
+  loaded:       (n, p) => IS_AR ? `تم تحميل ${n} مقرر للبرنامج "${p}".` : `Loaded ${n} course(s) for program "${p}".`,
+  noRows:       p => IS_AR ? `لا توجد مقررات للبرنامج "${p}".` : `No courses found for program "${p}".`,
+  count:        (n, p) => IS_AR ? `${n} مقرر · ${p}` : `${n} course(s) · ${p}`,
+  leave:        IS_AR ? 'لديك حدود غير محفوظة.' : 'You have unsaved seat limits.',
+};
+
+/* Server refusals carry a stable code; the words are the page's. */
+const CAP_ERRORS = {
+  invalid_json:             () => IS_AR ? 'تعذّر قراءة الطلب.' : 'The request could not be read.',
+  programs_required:        () => IS_AR ? 'حمّل برنامجاً واحداً أولاً: الحدود تُحفظ لكل برنامج.' : 'Load one programme first: limits are saved per programme.',
+  unknown_program:          d => IS_AR ? `برنامج غير معروف: ${d.program || ''}` : `Unknown programme: ${d.program || ''}`,
+  changes_required:         () => TC.nothing,
+  too_many_changes:         d => IS_AR ? `احفظ ${d.max || ''} مقرراً كحد أقصى في المرة الواحدة.` : `Save at most ${d.max || ''} courses at a time.`,
+  invalid_course:           () => IS_AR ? 'تغيير بلا رمز مقرر.' : 'A change is missing its course code.',
+  duplicate_course:         d => IS_AR ? `${d.course_code || ''} مكرر في الحفظ نفسه.` : `${d.course_code || ''} appears twice in one save.`,
+  invalid_limit:            d => IS_AR ? `حد ${d.course_code || ''} يجب أن يكون رقماً صحيحاً من ${CAP_MIN} إلى ${CAP_MAX}.` : `The limit for ${d.course_code || ''} must be a whole number from ${CAP_MIN} to ${CAP_MAX}.`,
+  invalid_scope:            d => IS_AR ? `${d.course_code || ''} يُحفظ للبرنامج المحمَّل فقط.` : `${d.course_code || ''} can only be saved for the programme that was loaded.`,
+  course_not_in_programmes: d => IS_AR ? `${d.course_code || ''} لا يُدرَّس في ${capProgram}.` : `${d.course_code || ''} is not taught by ${capProgram}.`,
+  preview_stale:            () => IS_AR ? 'تغيّرت الحدود المحفوظة منذ المراجعة، فأُعيد تحميلها. اضغط حفظ التغييرات مرة أخرى لمراجعة القائمة الجديدة.' : 'The saved limits changed since you reviewed them, so they were reloaded. Press Save changes again to review the new list.',
+  limit_changed:            () => IS_AR ? 'تغيّر حد أثناء الحفظ فلم يُحفظ شيء، وأُعيد تحميل الحدود. اضغط حفظ التغييرات مرة أخرى.' : 'A limit changed while saving, so nothing was saved and the limits were reloaded. Press Save changes again.',
+  audit_unavailable:        () => IS_AR ? 'تعذّر تسجيل التغيير في سجل التدقيق، لذلك لم يُحفظ شيء. حاول مرة أخرى.' : "Couldn't record the change in the audit log, so nothing was saved. Try again.",
+};
+/* The saved limits moved under the panel: reload them, keeping the drafts. */
+const CAP_STALE_CODES = new Set(['preview_stale', 'limit_changed']);
+function capError(data, status) {
+  const make = data && CAP_ERRORS[data.code];
+  if (make) return make(data);
+  if (status === 429) return IS_AR ? 'طلبات كثيرة. انتظر قليلاً ثم حاول.' : 'Too many requests. Wait a moment and try again.';
+  if (status === 401 || status === 403) return IS_AR ? 'لا تملك صلاحية حفظ الحدود.' : 'You are not allowed to save limits.';
+  return T.requestFailed;
 }
 
-q('capLoad').onclick = async () => {
-  const program = (q('capProgram').value || '').trim().toUpperCase();
-  if (!program) {
-    writeOut('capOut', { error: IS_AR ? 'رمز البرنامج مطلوب.' : 'Program code is required.' });
-    return;
-  }
+/* A programme code as the server reads it: case and spaces aside. */
+function capProgramOf(value) {
+  return String(value || '').replace(/\s+/g, '').toUpperCase();
+}
+
+/* Latin digits whatever the keyboard: Arabic-Indic and Persian 30 are 30. */
+function capLatinDigits(text) {
+  return String(text).replace(/[٠-٩]/g, d => String(d.charCodeAt(0) - 0x0660))
+                     .replace(/[۰-۹]/g, d => String(d.charCodeAt(0) - 0x06F0));
+}
+
+/* The panel's outcome, in words (not JSON): 'err', 'ok' or neutral. */
+function capSay(text, kind = '') {
+  const out = q('capOut');
+  out.textContent = text;
+  out.classList.toggle('has-error', kind === 'err');
+  out.classList.toggle('has-success', kind === 'ok');
+}
+
+function capRowEls() { return [...q('capBody').querySelectorAll('tr[data-code]')]; }
+
+/* What one row asks for, read from its field. */
+function capDraftOf(tr) {
+  const raw = capLatinDigits(tr.querySelector('.cap-input').value.trim());
+  const saved = tr.dataset.saved === '' ? null : Number(tr.dataset.saved);
+  const base = { code: tr.dataset.code, value: null, draft: false, invalid: false };
+  if (!raw) return { ...base, draft: saved !== null };   // an emptied saved limit: remove it
+  const value = /^\d+$/.test(raw) ? Number(raw) : NaN;
+  if (!Number.isInteger(value) || value < CAP_MIN || value > CAP_MAX) return { ...base, invalid: true };
+  return { ...base, value, draft: value !== saved };
+}
+function capDrafts() { return capRowEls().map(capDraftOf).filter(d => d.draft && !d.invalid); }
+function capInvalid() { return capRowEls().map(capDraftOf).filter(d => d.invalid); }
+
+/* Why Save cannot run now ('' when it can, given drafts). */
+function capBlockReason() {
+  if (!capProgram) return TC.needProgram;
+  const typed = capProgramOf(q('capProgram').value);
+  if (typed !== capProgram) return TC.otherProgram(capProgram, typed);
+  if (capInvalid().length) return TC.fixInvalid;
+  return '';
+}
+
+function capRefreshRow(tr) {
+  const d = capDraftOf(tr);
+  tr.classList.toggle('cap-draft', d.draft && !d.invalid);
+  tr.classList.toggle('cap-invalid', d.invalid);
+  tr.querySelector('.cap-input').setAttribute('aria-invalid', d.invalid ? 'true' : 'false');
+  tr.querySelector('.cap-state').textContent = d.invalid ? TC.invalid
+    : (d.draft ? (d.value === null ? TC.removing : TC.modified) : '');
+}
+
+/* Save is on only with edits it can send; when it is off, the status line
+ * (its description) says why. It stays focusable (aria-disabled). */
+function capUpdate() {
+  const drafts = capDrafts();
+  const invalid = capInvalid();
+  const reason = capRows.length ? capBlockReason() : '';
+  const parts = [];
+  if (drafts.length) parts.push(TC.drafts(drafts.length));
+  if (invalid.length) parts.push(TC.toFix(invalid.length));
+  if (reason && reason !== TC.fixInvalid) parts.push(reason);
+  q('capStatus').textContent = capRows.length ? (parts.join(' · ') || TC.noDrafts) : '';
+  const btn = q('capSave');
+  btn.classList.toggle('d-none', capRows.length === 0);
+  btn.setAttribute('aria-disabled', capBusy || reason || !drafts.length ? 'true' : 'false');
+  if (!capBusy) btn.textContent = TC.saveBtn(drafts.length);
+}
+
+/* `keep`: course code -> the raw text of a field, put back after a reload. */
+function capRender(keep = new Map()) {
+  const body = q('capBody');
+  body.innerHTML = '';
+  capRows.forEach((row, i) => {
+    const tr = document.createElement('tr');
+    const saved = row.max_capacity != null ? String(row.max_capacity) : '';
+    const name = String(row.course_name || '').trim();
+    tr.dataset.code = row.course_code;
+    tr.dataset.saved = saved;
+    tr.innerHTML =
+      `<td><strong><bdi>${esc(row.course_code)}</bdi></strong></td>` +
+      `<td><bdi>${esc(name || '—')}</bdi></td>` +
+      `<td>${row.credit_hours != null ? esc(String(row.credit_hours)) : '--'}</td>` +
+      `<td>${esc(saved || '--')}</td>` +
+      `<td><input class="form-control form-control-sm cap-input" type="text" inputmode="numeric" autocomplete="off"` +
+      ` value="${esc(saved)}" placeholder="--" aria-describedby="capState${i}"` +
+      ` aria-label="${esc(TC.limitAria(row.course_code, name))}">` +
+      `<span class="cap-state" id="capState${i}"></span></td>`;
+    const inp = tr.querySelector('.cap-input');
+    if (keep.has(row.course_code)) inp.value = keep.get(row.course_code);
+    inp.addEventListener('input', () => { capRefreshRow(tr); capUpdate(); });
+    body.appendChild(tr);
+    capRefreshRow(tr);
+  });
+  q('capTableWrap').classList.toggle('d-none', capRows.length === 0);
+  q('capCount').textContent = capRows.length ? TC.count(capRows.length, capProgram) : '';
+  capUpdate();
+}
+
+/* Load a programme's rows; they become the programme Save writes to.
+ * A failed load says why and leaves the rows (and their programme) as they were. */
+async function capLoadRows(program, keep = new Map()) {
   const data = await callJson(
     `/ops/db/programme-capacities/?program=${encodeURIComponent(program)}`,
-    {}, 'capOut', q('capLoad')
+    {}, null, q('capLoad')
   );
-  if (data && !data.error && Array.isArray(data.rows)) {
-    capRows = data.rows;
-    capRender();
-    if (capRows.length === 0) {
-      writeOut('capOut', {
-        error: IS_AR
-          ? `لا توجد مقررات للبرنامج "${program}".`
-          : `No courses found for program "${program}".`
-      });
-    } else {
-      writeOut('capOut', {
-        message: IS_AR
-          ? `تم تحميل ${capRows.length} مقرر للبرنامج "${program}".`
-          : `Loaded ${capRows.length} course(s) for program "${program}".`
-      });
-    }
+  if (!data || data.error || !Array.isArray(data.rows)) {
+    capSay((data && data.error) || T.requestFailed, 'err');
+    return false;
+  }
+  capRows = data.rows;
+  capProgram = capProgramOf(data.program || program);
+  capRender(keep);
+  return true;
+}
+
+q('capProgram').addEventListener('input', capUpdate);
+
+q('capLoad').onclick = async () => {
+  if (capBusy) return;
+  const program = capProgramOf(q('capProgram').value);
+  if (!program) {
+    capSay(TC.needProgram, 'err');
+    return;
+  }
+  const pending = capDrafts().length + capInvalid().length;
+  if (pending) {
+    const ok = await dlg.confirm({
+      title: TC.discardTitle(pending),
+      body: `<p>${esc(TC.discardBody(capProgram, program))}</p>`,
+      kind: 'warning',
+      confirmText: TC.discard,
+      cancelText: TC.keepEditing,
+      initialFocus: 'cancel',
+      waitForClose: true,
+    });
+    if (!ok) return;
+  }
+  if (await capLoadRows(program)) {
+    if (capRows.length) capSay(TC.loaded(capRows.length, capProgram), 'ok');
+    else capSay(TC.noRows(capProgram), 'err');
   }
 };
 
-q('capSave').onclick = async () => {
-  const program = (q('capProgram').value || '').trim().toUpperCase();
-  if (!program) {
-    writeOut('capOut', { error: IS_AR ? 'رمز البرنامج مطلوب.' : 'Program code is required.' });
-    return;
-  }
-  const capacities = {};
-  q('capBody').querySelectorAll('.cap-input').forEach(inp => {
-    const code = inp.dataset.code;
-    const val = inp.value.trim();
-    capacities[code] = val === '' ? null : parseInt(val, 10);
-  });
-  const data = await callJson('/ops/db/update-programme-capacities/', {
+async function postCapLimits(body) {
+  const res = await fetch(CAP_LIMITS_URL, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ program: program, capacities: capacities })
-  }, 'capOut', q('capSave'));
-  if (data && data.ok) {
-    writeOut('capOut', {
-      message: IS_AR
-        ? `تم تحديث ${data.updated} صف بنجاح.`
-        : `Successfully updated ${data.updated} row(s).`
-    });
-    /* Reload to reflect saved values */
-    q('capLoad').click();
+    headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCsrfToken() },
+    body: JSON.stringify(body),
+  });
+  const data = await res.json().catch(() => ({}));
+  return { ok: res.ok && data.ok === true, status: res.status, data };
+}
+
+function capReviewHtml(changes) {
+  const val = (v, isNew) => v == null ? (isNew ? TC.remove : TC.none) : String(v);
+  const rows = changes.map(c => `<tr>
+      <td><bdi class="cr-id">${esc(c.course_code)}</bdi></td>
+      <td><bdi>${esc(c.course_name || '—')}</bdi></td>
+      <td class="text-center">${esc(val(c.old, false))}</td>
+      <td class="text-center"><strong>${esc(val(c.new, true))}</strong></td>
+    </tr>`).join('');
+  return `<table class="sp-adv-table sp-limit-review">
+      <thead><tr><th>${esc(TC.thCourse)}</th><th>${esc(TC.thName)}</th><th>${esc(TC.thOld)}</th><th>${esc(TC.thNew)}</th></tr></thead>
+      <tbody>${rows}</tbody></table>`;
+}
+
+/* Preview, confirm, commit. Says what to reload afterwards:
+ *   'clean' – saved, or nothing to save: the saved limits, drafts dropped
+ *   'keep'  – the saved limits moved under the panel: reload, drafts kept
+ *   null    – nothing to reload (kept editing, or a refusal to fix) */
+async function capReviewAndSave(program, changes, btn) {
+  const preview = await postCapLimits({ programs: [program], changes, dry_run: true });
+  if (!preview.ok) {
+    capSay(capError(preview.data, preview.status), 'err');
+    return CAP_STALE_CODES.has(preview.data.code) ? 'keep' : null;
   }
+  const planned = preview.data.changes || [];
+  if (!planned.length) { capSay(TC.nothing); return 'clean'; }
+  const unchangedNote = preview.data.unchanged
+    ? `<p class="fs-sm text-t3">${esc(TC.unchanged(preview.data.unchanged))}</p>` : '';
+  const ok = await dlg.confirm({
+    title: TC.saveTitle(planned.length, program),
+    body: `<p>${esc(TC.saveIntro(program))}</p>${capReviewHtml(planned)}${unchangedNote}`,
+    kind: 'warning',
+    confirmText: TC.confirmSave(planned.length),
+    cancelText: TC.keepEditing,
+    /* A review: the keyboard starts on "Keep editing", never on the write. */
+    initialFocus: 'cancel',
+    waitForClose: true,
+  });
+  if (!ok) return null;
+  btn.textContent = TC.saving;
+  const commit = await postCapLimits({
+    programs: [program], changes, dry_run: false, preview_token: preview.data.preview_token,
+  });
+  if (!commit.ok) {
+    capSay(capError(commit.data, commit.status), 'err');
+    return CAP_STALE_CODES.has(commit.data.code) ? 'keep' : null;
+  }
+  capSay(TC.saved(commit.data.changed_count, program), 'ok');
+  return 'clean';
+}
+
+/* Save: only the edited rows, for the programme the rows were loaded for. */
+q('capSave').onclick = async () => {
+  if (capBusy) return;
+  const reason = capBlockReason();
+  if (reason) { capSay(reason, 'err'); return; }
+  const drafts = capDrafts();
+  if (!drafts.length) { capSay(TC.nothing); return; }
+  const program = capProgram;
+  const changes = drafts.map(d => ({ course_code: d.code, max_capacity: d.value }));
+  const btn = q('capSave');
+  /* Not `disabled`: the focused button would drop the keyboard to the page. */
+  capBusy = true;
+  btn.setAttribute('aria-busy', 'true');
+  btn.textContent = TC.checking;
+  capUpdate();
+  capSay('');   // an earlier message is not about this save
+  let reload = null;
+  try {
+    reload = await capReviewAndSave(program, changes, btn);
+  } catch (e) {
+    capSay(`${T.requestFailed}: ${e && e.message ? e.message : e}`, 'err');
+  } finally {
+    capBusy = false;
+    btn.removeAttribute('aria-busy');
+    capUpdate();
+  }
+  if (!reload) return;
+  const keep = new Map();
+  if (reload === 'keep') capRowEls().forEach(tr => keep.set(tr.dataset.code, tr.querySelector('.cap-input').value));
+  await capLoadRows(program, keep);
 };
+
+window.addEventListener('beforeunload', e => {
+  if (!capDrafts().length && !capInvalid().length) return;
+  e.preventDefault();
+  e.returnValue = TC.leave;
+});
 
 /* ── Elective Catalogue ─────────────────────────────────────── */
 const elecImport = q('elecImportBtn');

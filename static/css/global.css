@@ -7574,6 +7574,17 @@ html[data-theme="dark"] .trace-btn-copy { color: var(--t3) !important; }
 
     .danger-panel .dba-section-title::before { background: var(--danger); }
 
+    /* Programme Capacities: an edited limit is a draft until it is saved
+       (tokens only, so dark mode follows). Save stays focusable when it
+       cannot run (aria-disabled); the status line under it says why. */
+    #capBody .cap-input { max-width: 110px; }
+    #capBody tr.cap-draft td { background: color-mix(in srgb, var(--warning) 8%, transparent); }
+    #capBody tr.cap-draft .cap-input { border-color: var(--warning); }
+    #capBody tr.cap-invalid .cap-input { border-color: var(--danger); }
+    .cap-state { display: block; font-size: .68rem; font-weight: 700; color: var(--warning); }
+    #capBody tr.cap-invalid .cap-state { color: var(--danger); }
+    #capSave[aria-disabled="true"] { opacity: .5; cursor: default; }
+
     /* Current section snapshot: preview-first destructive workflow */
     .dba-snapshot-status {
       margin-bottom: 0.875rem;
