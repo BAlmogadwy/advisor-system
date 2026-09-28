@@ -35,14 +35,12 @@
       <label class="fb-lbl" for="spProgram">{% if LANGUAGE_CODE == 'ar' %}البرنامج{% else %}Program{% endif %}</label>
       <input id="spProgram" class="form-control form-control-compact text-caps" placeholder="{% if LANGUAGE_CODE == 'ar' %}مثلاً AI,DS{% else %}e.g. AI,DS{% endif %}">
     </div>
-    <div class="fb-search" style="min-width:120px;max-width:200px">
-      <label class="fb-lbl" for="spSection">{% if LANGUAGE_CODE == 'ar' %}الشعبة{% else %}Section{% endif %}</label>
-      <input id="spSection" class="form-control form-control-compact" placeholder="{% if LANGUAGE_CODE == 'ar' %}اختياري{% else %}Optional{% endif %}">
-    </div>
     <div class="fb-spacer"></div>
     <button id="spGenerate" class="btn btn-primary">{% if LANGUAGE_CODE == 'ar' %}حساب{% else %}Generate{% endif %}</button>
     <button id="spReset" type="button" class="fb-dd">{% if LANGUAGE_CODE == 'ar' %}إعادة{% else %}Reset{% endif %}</button>
   </div>
+
+  <p class="sp-scope-note fs-sm text-t3 mb-0 mt-2">{% if LANGUAGE_CODE == 'ar' %}يُخطَّط للذكور والإناث دائماً في شعب منفصلة: مجموع الشعب = شعب الذكور + شعب الإناث.{% else %}Male and female students are always planned in separate sections: Total sections = M + F.{% endif %}</p>
 
   <!-- Capacity toggle -->
   <div class="mt-2">
@@ -68,7 +66,7 @@
 
   <!-- Advanced per-course button -->
   <div class="mt-2">
-    <button id="spToggleAdv" class="sp-toggle-caps">
+    <button id="spToggleAdv" type="button" class="sp-toggle-caps" aria-expanded="false" aria-controls="spAdvPanel">
       {% if LANGUAGE_CODE == 'ar' %}📋 إعدادات متقدمة لكل مقرر{% else %}📋 Advanced: Per-course limits{% endif %}
       <span id="spAdvBadge" class="sp-adv-badge d-none">0</span>
     </button>
@@ -79,9 +77,12 @@
     <div class="sp-adv-header">
       <input id="spAdvSearch" type="text" class="form-control form-control-compact sp-adv-search"
              placeholder="{% if LANGUAGE_CODE == 'ar' %}بحث عن مقرر...{% else %}Search courses...{% endif %}">
-      <button id="spAdvReset" class="sp-adv-reset">{% if LANGUAGE_CODE == 'ar' %}إعادة الكل{% else %}Reset all{% endif %}</button>
-      <button id="spAdvSaveDb" class="btn btn-sm fs-sm u-cursor-pointer" style="padding:2px 10px; background:var(--teal); color:#fff; border:none; border-radius:4px">{% if LANGUAGE_CODE == 'ar' %}حفظ في قاعدة البيانات{% else %}Save to DB{% endif %}</button>
+      <span id="spAdvDrafts" class="sp-adv-drafts" role="status">{% if LANGUAGE_CODE == 'ar' %}لا توجد تعديلات غير محفوظة{% else %}No unsaved changes{% endif %}</span>
+      <button id="spAdvReset" type="button" class="sp-adv-reset" disabled>{% if LANGUAGE_CODE == 'ar' %}تجاهل التعديلات{% else %}Discard changes{% endif %}</button>
+      <button id="spAdvSaveDb" type="button" class="btn btn-sm fs-sm u-cursor-pointer" style="padding:2px 10px; background:var(--teal); color:#fff; border:none; border-radius:4px" aria-disabled="true" aria-describedby="spAdvDrafts">{% if LANGUAGE_CODE == 'ar' %}حفظ الحدود…{% else %}Save limits…{% endif %}</button>
       <span id="spAdvCount" class="sp-adv-count"></span>
+    </div>
+    <div class="sp-adv-note fs-sm text-t3">{% if LANGUAGE_CODE == 'ar' %}التعديلات مسودات تُستخدم في الحساب فقط، ولا تُحفظ إلا بعد الضغط على «حفظ الحدود» ومراجعتها. يُحفظ الحد للبرامج المعروضة، إلا إذا اخترت «كل البرامج» لمقرر بعينه.{% else %}Edits are drafts: Generate uses them, nothing is saved until you press Save limits and confirm. A limit is saved for the programmes on screen, unless you tick All programmes for that course.{% endif %}
     </div>
     <div class="sp-adv-wrap">
       <table class="sp-adv-table">
@@ -92,11 +93,13 @@
             <th>{% if LANGUAGE_CODE == 'ar' %}ساعات{% else %}Cr{% endif %}</th>
             <th>{% if LANGUAGE_CODE == 'ar' %}خارجي{% else %}Ext{% endif %}</th>
             <th>{% if LANGUAGE_CODE == 'ar' %}الافتراضي{% else %}Default{% endif %}</th>
-            <th>{% if LANGUAGE_CODE == 'ar' %}تخصيص{% else %}Override{% endif %}</th>
+            <th>{% if LANGUAGE_CODE == 'ar' %}الحد{% else %}Limit{% endif %}</th>
+            <th>{% if LANGUAGE_CODE == 'ar' %}كل البرامج{% else %}All programmes{% endif %}</th>
+            <th><span class="sr-only">{% if LANGUAGE_CODE == 'ar' %}إجراءات{% else %}Actions{% endif %}</span></th>
           </tr>
         </thead>
         <tbody id="spAdvBody">
-          <tr><td colspan="6" class="empty-note text-center" style="padding:20px">
+          <tr><td colspan="8" class="empty-note text-center" style="padding:20px">
             {% if LANGUAGE_CODE == 'ar' %}جارٍ التحميل...{% else %}Loading courses...{% endif %}
           </td></tr>
         </tbody>
@@ -111,7 +114,7 @@
 </div>
 
 <!-- ─── Status alert ─── -->
-<div id="spStatus" class="d-none"></div>
+<div id="spStatus" class="d-none" role="status" aria-live="polite"></div>
 
 <!-- ─── Results (hidden until generated) ─── -->
 <div id="spResults" class="d-none">
@@ -121,6 +124,7 @@
     <div class="sp-mc mc-hero">
       <div class="k">{% if LANGUAGE_CODE == 'ar' %}الطلاب{% else %}Students Scanned{% endif %}</div>
       <div class="v" id="spKpiStudents">0</div>
+      <div class="sp-mc-sub" id="spKpiStudentsSplit"></div>
     </div>
     <div class="sp-mc">
       <div class="k">{% if LANGUAGE_CODE == 'ar' %}المقررات{% else %}Courses{% endif %}</div>
@@ -129,12 +133,16 @@
     <div class="sp-mc">
       <div class="k">{% if LANGUAGE_CODE == 'ar' %}الشعب المطلوبة{% else %}Sections Needed{% endif %}</div>
       <div class="v" id="spKpiSections">0</div>
+      <div class="sp-mc-sub" id="spKpiSectionsSplit"></div>
     </div>
     <div class="sp-mc mc-navy">
       <div class="k">{% if LANGUAGE_CODE == 'ar' %}متوسط الامتلاء{% else %}Avg Fill Rate{% endif %}</div>
       <div class="v" id="spKpiFill">0%</div>
     </div>
   </div>
+
+  <div id="spGenderNote" class="sp-alert sp-alert-warn d-none" role="status"></div>
+  <div id="spElectiveNote" class="sp-alert sp-alert-warn d-none" role="status"></div>
 
   <!-- Export + timestamp -->
   <div class="sp-export-bar">
@@ -159,7 +167,9 @@
         <th data-sort="text">{% if LANGUAGE_CODE == 'ar' %}اسم المقرر{% else %}Course Name{% endif %}</th>
         <th data-sort="num">{% if LANGUAGE_CODE == 'ar' %}ساعات{% else %}Cr{% endif %}</th>
         <th data-sort="num">{% if LANGUAGE_CODE == 'ar' %}الطلاب{% else %}Students{% endif %}</th>
-        <th data-sort="num">{% if LANGUAGE_CODE == 'ar' %}الشعب{% else %}Sections{% endif %}</th>
+        <th data-sort="num">{% if LANGUAGE_CODE == 'ar' %}شعب الذكور{% else %}M sections{% endif %}</th>
+        <th data-sort="num">{% if LANGUAGE_CODE == 'ar' %}شعب الإناث{% else %}F sections{% endif %}</th>
+        <th data-sort="num">{% if LANGUAGE_CODE == 'ar' %}مجموع الشعب{% else %}Total sections{% endif %}</th>
         <th data-sort="num">{% if LANGUAGE_CODE == 'ar' %}الحد الأقصى{% else %}Max{% endif %}</th>
         <th data-sort="num">{% if LANGUAGE_CODE == 'ar' %}المتوسط{% else %}Avg{% endif %}</th>
         <th>{% if LANGUAGE_CODE == 'ar' %}الامتلاء{% else %}Fill{% endif %}</th>
@@ -167,7 +177,7 @@
       </tr>
     </thead>
     <tbody>
-      <tr><td colspan="11" class="empty-note">{% if LANGUAGE_CODE == 'ar' %}حدد السنة والفصل ثم انقر حساب.{% else %}Set Year &amp; Semester, then click Generate.{% endif %}</td></tr>
+      <tr><td colspan="13" class="empty-note">{% if LANGUAGE_CODE == 'ar' %}حدد السنة والفصل ثم انقر حساب.{% else %}Set Year &amp; Semester, then click Generate.{% endif %}</td></tr>
     </tbody>
   </table>
   <nav class="tbl-pager" id="spPager"></nav>
@@ -185,9 +195,10 @@
 {% endblock %}
 
 {% block extra_js %}
+{{ local_departments|json_script:"spLocalDepartments" }}
 <script>
   const LANGUAGE_CODE = "{{ LANGUAGE_CODE|default:'en' }}";
   const djCsrfToken = "{{ csrf_token }}";
 </script>
-<script src="{% static 'js/page-section-planning.js' %}?v=5"></script>
+<script src="{% static 'js/page-section-planning.js' %}?v=10"></script>
 {% endblock %}

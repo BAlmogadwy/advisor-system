@@ -11,13 +11,18 @@ from __future__ import annotations
 import math
 import re
 from collections import Counter
+from collections.abc import Iterable, Mapping
 from typing import Any
 
 from core.models import Course, ElectiveCourse, ProgrammeRequirement
 from core.services.student_helpers import normalize_code
 
 # ── Default capacity rules (matching legacy generate_course_sections.py) ──
-LOCAL_DEPARTMENTS = frozenset({"AI", "DS", "CS", "IS", "CYB"})
+# "Our" departments: their courses take the local 25 (4+ credits) / 40 rules,
+# every other department's the external rule. COE is one of ours (owner,
+# 2026-09-28). The Section Planning page reads this set from the server; it
+# must never keep a copy of its own.
+LOCAL_DEPARTMENTS = frozenset({"AI", "DS", "CS", "IS", "CYB", "COE"})
 DEFAULT_MAX_LOCAL_4CR = 25
 DEFAULT_MAX_LOCAL_OTHER = 40
 DEFAULT_MAX_EXTERNAL = 50
@@ -141,6 +146,115 @@ def _load_programme_capacities(
 load_programme_capacities = _load_programme_capacities
 
 
+def _course_code_of(key: str, meta: Mapping[str, object]) -> str:
+    return normalize_code(meta.get("course_code")) or normalize_code(str(key).split("::", 1)[0])
+
+
+def lowest_declared_capacities(
+    programs: Iterable[str],
+    course_metadata: Mapping[str, Mapping[str, object]],
+) -> dict[str, int]:
+    """The lowest seat limit any of ``programs`` declares for each planned course.
+
+    ``course_metadata`` maps a planner course key to its metadata; the limit is
+    looked up by that key's course code in every programme. A course several
+    programmes share is sized for the most restrictive declaration among them.
+
+    THE rule for a plan that pools programmes: the timetable builder applies it
+    to a scenario, and Section Planning's all-programmes and multi-programme
+    views apply it to the same demand, through this one function, so the two
+    cannot drift apart.
+    """
+    programs = [str(p) for p in programs if str(p or "").strip()]
+    capacities: dict[str, int] = {}
+    if not programs or not course_metadata:
+        return capacities
+    codes_by_key = {key: _course_code_of(key, meta) for key, meta in course_metadata.items()}
+    lookup_codes = sorted(set(codes_by_key.values()))
+    for prog in programs:
+        caps = _load_programme_capacities(prog, lookup_codes)
+        for key, code in codes_by_key.items():
+            cap = caps.get(code)
+            if cap is None:
+                continue
+            if key not in capacities or cap < capacities[key]:
+                capacities[key] = cap
+    return capacities
+
+
+def slot_declared_limits(
+    picks: Iterable[tuple[str, str, str, int]], overrides: Mapping[str, int]
+) -> dict[str, dict[str, Any]]:
+    """Resolved elective code -> the slots it fills and the lowest limit among them.
+
+    ``picks`` are (programme, slot, real course, students). A resolved elective
+    is taught for its SLOT: AI463 filling AI's AI1 slot, which declares 30, is
+    planned at 30, not by the rule for AI463 itself (an external-flagged course
+    would get 50). The slot's limit is the programme's own (AI2's AI1 row for an
+    AI2 student); a what-if draft on the slot wins. A slot that declares nothing
+    leaves the course to its own limit or rule.
+
+    THE slot rule: Section Planning and the timetable builder both apply it,
+    through ``fold_slot_limits``, so the two cannot drift apart.
+    """
+    picks = list(picks)
+    keys = {(str(prog), normalize_code(slot)) for prog, slot, _course, _n in picks}
+    declared: dict[tuple[str, str], int] = {}
+    if keys:
+        for prog, code, cap in ProgrammeRequirement.objects.filter(
+            program__in=sorted({p for p, _ in keys}),
+            course_code__in=sorted({s for _, s in keys}),
+            max_capacity__isnull=False,
+        ).values_list("program", "course_code", "max_capacity"):
+            if cap is not None and cap >= 1:
+                declared[(str(prog), normalize_code(code))] = int(cap)
+    info: dict[str, dict[str, Any]] = {}
+    for prog, raw_slot, raw_course, _n in picks:
+        slot = normalize_code(raw_slot)
+        course = normalize_code(raw_course)
+        entry = info.setdefault(course, {"slots": set(), "limit": None, "source": None})
+        entry["slots"].add(slot)
+        if slot in overrides:
+            limit, source = int(overrides[slot]), "draft"
+        elif (str(prog), slot) in declared:
+            limit, source = declared[(str(prog), slot)], "slot"
+        else:
+            continue
+        if entry["limit"] is None or limit < entry["limit"]:
+            entry["limit"], entry["source"] = limit, source
+    return info
+
+
+def fold_slot_limits(
+    capacities: dict[str, int],
+    course_metadata: Mapping[str, Mapping[str, object]],
+    slots: Mapping[str, Mapping[str, Any]],
+    overrides: Mapping[str, int],
+) -> dict[str, str]:
+    """Lower each resolved elective's limit to its slot's, in place; returns each key's source.
+
+    ``capacities`` is ``lowest_declared_capacities`` for the same metadata. A
+    slot's limit replaces the course's own when it is lower (the lowest
+    declaration wins, as across programmes). The source is ``draft`` (a what-if
+    on the course), ``slot``/``draft`` (from the slot), ``programme`` or ``rule``.
+    """
+    sources: dict[str, str] = {}
+    for key, meta in course_metadata.items():
+        code = _course_code_of(key, meta)
+        slot = slots.get(code)
+        declared = capacities.get(key)
+        if code in overrides:
+            sources[key] = "draft"
+        elif slot and slot["limit"] is not None and (declared is None or slot["limit"] < declared):
+            capacities[key] = int(slot["limit"])
+            sources[key] = str(slot["source"])
+        elif declared is not None:
+            sources[key] = "programme"
+        else:
+            sources[key] = "rule"
+    return sources
+
+
 def _get_max_section_size(
     credit_hours: int,
     is_external: bool,
@@ -155,11 +269,46 @@ def _get_max_section_size(
     return max_local_4cr if credit_hours >= 4 else max_local_other
 
 
+def slot_electives(
+    programs: Iterable[str], codes: Iterable[str], year: int, semester: int
+) -> dict[str, list[dict[str, Any]]]:
+    """Slot code -> per programme, the real electives it resolves to this term.
+
+    Uses the resolver's own reading of the publication (``ElectiveSelection``),
+    so the panel names exactly the courses Generate will plan under the slot.
+    """
+    from core.services.elective_validation import ElectiveMappingError, ElectiveSelection
+
+    codes = sorted({normalize_code(c) for c in codes if normalize_code(c)})
+    found: dict[str, list[dict[str, Any]]] = {}
+    for program in programs:
+        try:
+            selection = ElectiveSelection(program, str(year), semester)
+        except ElectiveMappingError:
+            continue
+        for code in codes:
+            requirement, _ = selection.requirement(code)
+            if requirement is None:
+                continue  # not an elective slot in this programme
+            status, options, _ = selection.resolve(code)
+            found.setdefault(code, []).append(
+                {
+                    "program": program,
+                    "status": status.lower(),
+                    "courses": [str(o["course_code"]) for o in options],
+                }
+            )
+    return found
+
+
 def get_all_courses_with_defaults(
     max_local_4cr: int = DEFAULT_MAX_LOCAL_4CR,
     max_local_other: int = DEFAULT_MAX_LOCAL_OTHER,
     max_external: int = DEFAULT_MAX_EXTERNAL,
     program: str | list[str] | None = None,
+    *,
+    year: int | None = None,
+    semester: int | None = None,
 ) -> list[dict[str, Any]]:
     """Return distinct courses from ProgrammeRequirement with computed default capacity.
 
@@ -186,11 +335,21 @@ def get_all_courses_with_defaults(
     pr_qs = pr_qs.values_list(
         "course_code",
         "credit_hours",
-    ).order_by("course_code")
+        "program",
+        "max_capacity",
+    ).order_by("course_code", "program")
 
     seen: dict[str, dict[str, Any]] = {}
-    for code, credits in pr_qs:
+    # Per programme on screen: who teaches the course, and the limit each saved.
+    taught_by: dict[str, list[str]] = {}
+    saved_limits: dict[str, dict[str, int]] = {}
+    for code, credits, prog, cap in pr_qs:
         ncode = normalize_code(code)
+        if program_list is not None:
+            if prog not in taught_by.setdefault(ncode, []):
+                taught_by[ncode].append(prog)
+            if cap is not None and cap >= 1:
+                saved_limits.setdefault(ncode, {})[prog] = cap
         if ncode in seen:
             continue
         dept = _extract_department(ncode)
@@ -255,11 +414,46 @@ def get_all_courses_with_defaults(
                         pr_caps[code] = cap
         for entry in result:
             entry["programme_max"] = pr_caps.get(entry["course_code"])
-    else:
+            entry["programmes"] = taught_by.get(entry["course_code"], [])
+            entry["programme_limits"] = saved_limits.get(entry["course_code"], {})
+        # An elective slot lists the courses it resolves to this term: they are
+        # planned under the slot, with the slot's limit.
+        slots = (
+            slot_electives(program_list, [e["course_code"] for e in result], year, semester)
+            if year and semester
+            else {}
+        )
         for entry in result:
-            entry["programme_max"] = None
+            entry["slot_electives"] = slots.get(entry["course_code"], [])
+    else:
+        # No programme on screen: Generate sizes every student by the lowest
+        # limit any programme in scope declares (``lowest_declared_capacities``
+        # over the programmes students belong to). Show that same limit, so the
+        # panel's starting value is what the plan applies; nothing is saved here.
+        lowest = lowest_declared_capacities(
+            _programmes_with_students(), {code: {"course_code": code} for code in seen}
+        )
+        for entry in result:
+            entry["programme_max"] = lowest.get(entry["course_code"])
+            entry["limit_scope"] = "lowest_declared"
+            entry["programmes"] = []
+            entry["programme_limits"] = {}
+            entry["slot_electives"] = []
 
     return result
+
+
+def _programmes_with_students() -> list[str]:
+    """The programmes the all-programmes plan is sized for (as ``plan_all_programmes``)."""
+    from core.models import Student
+
+    return sorted(
+        {
+            str(p)
+            for p in Student.objects.values_list("program", flat=True).distinct()
+            if str(p or "").strip()
+        }
+    )
 
 
 def compute_section_plan(

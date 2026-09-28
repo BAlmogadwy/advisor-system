@@ -3,9 +3,11 @@ import hashlib
 import hmac
 import json
 import logging
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from io import StringIO
-from threading import Lock
+from threading import RLock
 from typing import Any
 
 from django.conf import settings
@@ -15,7 +17,9 @@ from django.http import HttpRequest
 from core.models import AuditLog
 
 logger = logging.getLogger(__name__)
-_AUDIT_WRITE_LOCK = Lock()
+# Re-entrant: ``audited_transaction`` holds it across a whole transaction, and
+# every audit row written inside that transaction takes it again.
+_AUDIT_WRITE_LOCK = RLock()
 
 
 def ensure_audit_schema() -> None:
@@ -241,6 +245,30 @@ def _append_audit_row(
                 entry_hash=entry_hash,
             )
     return entry_hash
+
+
+@contextmanager
+def audited_transaction() -> Iterator[None]:
+    """A transaction that writes audit rows and COMMITS while holding the audit lock.
+
+    ``_append_audit_row`` serialises writers with the process lock plus a row
+    lock on the chain's last row. Called inside an outer transaction, its row
+    lock lasts until the OUTER commit while the process lock is released after
+    each row. Another thread can then take the process lock and wait on that
+    row lock, while this thread needs the process lock for its next row: each
+    waits on the other (a hang on PostgreSQL, a stall and a lost row on
+    SQLite). Between the last row and the commit, the other thread can also
+    read the stale last row and fork the hash chain.
+
+    Holding the (re-entrant) lock from BEGIN to COMMIT closes both: inside the
+    process, no other audit writer runs until this transaction's rows are
+    committed, exactly as on the autocommit path. Use it for any transaction
+    that writes audit rows, as the OUTERMOST transaction; keep it short, since
+    every audit writer in the process waits for it.
+    """
+    with _AUDIT_WRITE_LOCK:
+        with transaction.atomic():
+            yield
 
 
 def audit_actor(request: HttpRequest) -> tuple[str, str]:

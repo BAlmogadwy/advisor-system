@@ -235,6 +235,16 @@ def section_gender(section_label: str) -> str:
     return s[0] if s[:1] in ("M", "F") else ""
 
 
+def cohort_of_student_section(value: object) -> str:
+    """A student's cohort ('M'/'F') from the value of ``Student.section``, else ''.
+
+    The one reading of a student's recorded gender, for a row already in hand;
+    ``student_gender`` applies it to a student id.
+    """
+    g = str(value or "").strip().upper()
+    return g if g in ("M", "F") else ""
+
+
 def student_gender(student_id: int | str) -> str:
     """Return the student's cohort gender ('M'/'F') from Student.section, else ''."""
     try:
@@ -242,8 +252,7 @@ def student_gender(student_id: int | str) -> str:
     except (TypeError, ValueError):
         return ""
     sec = Student.objects.filter(student_id=sid).values_list("section", flat=True).first()
-    g = (sec or "").strip().upper()
-    return g if g in ("M", "F") else ""
+    return cohort_of_student_section(sec)
 
 
 class UnknownStudentGender(Exception):

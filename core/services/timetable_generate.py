@@ -54,7 +54,9 @@ from core.services.section_planning import (
     DEFAULT_MAX_LOCAL_OTHER,
     compute_plan_summary,
     compute_section_plan,
-    load_programme_capacities,
+    fold_slot_limits,
+    lowest_declared_capacities,
+    slot_declared_limits,
 )
 from core.services.student_helpers import normalize_code
 from core.services.timetable_demand import sync_scenario_student_course_requests
@@ -165,6 +167,7 @@ def _is_excluded_course(code: str) -> bool:
 def _limit_electives_per_placeholder(
     all_recs: dict[int, list[str]],
     elective_map: dict[str, list],
+    picks: list[tuple[int, str, str]] | None = None,
 ) -> dict[int, list[str]]:
     """Limit elective expansion to 1 course per placeholder per student.
 
@@ -179,6 +182,10 @@ def _limit_electives_per_placeholder(
 
     Remove this function call in generate_workspace_scenario() to
     restore the original behaviour (all eligible electives recommended).
+
+    Pass ``picks`` to learn which slot each kept elective fills: one
+    (student id, placeholder, elective) per pick, so the elective can be
+    sized with its slot's declared limit (``slot_declared_limits``).
     """
     if not elective_map:
         return all_recs
@@ -235,6 +242,8 @@ def _limit_electives_per_placeholder(
             assigned_for_student.add(pick)
             placeholders_seen.add(placeholder_norm)
             elective_assignment_count[pick] += 1
+            if picks is not None:
+                picks.append((sid, placeholder_norm, pick))
 
         all_recs[sid] = regular + list(assigned_for_student)
 
@@ -438,7 +447,8 @@ def generate_workspace_scenario(
     # per student. Without this, a student eligible for 13 electives gets
     # all 13 recommended, creating an impossible scheduling load.
     # This is a separate post-processing step so it can be removed easily.
-    all_recs = _limit_electives_per_placeholder(all_recs, elective_map)
+    slot_picks: list[tuple[int, str, str]] = []
+    all_recs = _limit_electives_per_placeholder(all_recs, elective_map, picks=slot_picks)
 
     # Filter out non-schedulable courses (capstone, training, etc.) and
     # build three structures:
@@ -563,27 +573,27 @@ def generate_workspace_scenario(
 
     # Load programme-specific capacity overrides.  When a course appears
     # in multiple programs with different capacities, take the minimum
-    # to respect the most restrictive constraint.
-    programme_capacities: dict[str, int] = {}
-    if aggregate:
-        capacity_codes = [
-            str(meta.get("course_code") or key) for key, meta in course_metadata.items()
-        ]
-        for prog in programs:
-            caps = load_programme_capacities(prog, capacity_codes)
-            for key, meta in course_metadata.items():
-                code = normalize_code(meta.get("course_code"))
-                cap = caps.get(code)
-                if cap is None:
-                    continue
-                if key not in programme_capacities or cap < programme_capacities[key]:
-                    programme_capacities[key] = cap
+    # to respect the most restrictive constraint.  The rule lives in
+    # section_planning so Section Planning sizes pooled programmes the same way.
+    programme_capacities: dict[str, int] = (
+        lowest_declared_capacities(programs, course_metadata) if aggregate else {}
+    )
 
     # Normalize any user-supplied course overrides so they match the
     # canonical upper-case-no-spaces format used everywhere else.
     norm_overrides: dict[str, int] | None = None
     if course_overrides:
         norm_overrides = {normalize_code(k): v for k, v in course_overrides.items()}
+
+    # A resolved elective is taught for its slot: AI463 filling AI's AI1 slot
+    # (30 seats) is sized at 30, not by its own rule. Section Planning applies
+    # the same two functions, so its numbers are the sections built here.
+    if aggregate and slot_picks:
+        slot_limits = slot_declared_limits(
+            ((_student_program(int(sid)), slot, course, 1) for sid, slot, course in slot_picks),
+            norm_overrides or {},
+        )
+        fold_slot_limits(programme_capacities, course_metadata, slot_limits, norm_overrides or {})
 
     plan = compute_section_plan(
         aggregate,
