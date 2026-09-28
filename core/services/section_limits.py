@@ -1,12 +1,14 @@
 """
 core/services/section_limits.py
-Section Planning's write path for per-course seat limits
-(``ProgrammeRequirement.max_capacity``). DB Admin's "Course capacities" panel
-(``db_admin_views.db_update_programme_capacities_view``) is a second, older
-path for the same column that does not go through this module.
+The one write path for per-course seat limits (``ProgrammeRequirement.max_capacity``).
+Two screens use it, each through its own thin view: Section Planning
+(``section_plan_views.section_plan_save_limits_view``) and DB Admin's
+"Programme Capacities" panel (``db_admin_views.db_save_programme_limits_view``,
+super admins only, one loaded programme, never widened). Both call
+``save_limits``; nothing else writes the column from a page.
 
-A seat limit belongs to a PROGRAMME. Saving from Section Planning writes it only
-for the programmes on screen; one course may be widened, explicitly, to every
+A seat limit belongs to a PROGRAMME. A save writes it only for the programmes
+on screen; from Section Planning one course may be widened, explicitly, to every
 programme that teaches it. Nothing is written without a preview: the caller
 first asks for the exact rows that would change (course, programme, old -> new),
 shows them, and then commits with the token of that preview. If anything moved
@@ -14,23 +16,28 @@ in between, the commit is refused rather than writing something nobody saw.
 
 Every changed row is recorded with ``record_audit_event`` inside the same
 transaction as the write, so a failed audit write rolls the save back: the
-change and its record exist together or not at all. That transaction is an
-``audited_transaction``: it commits while holding the process audit lock, so
-another request's audit row can neither deadlock with it nor fork the chain.
+change and its record exist together or not at all. The rows of both screens
+are alike (same action, same details) apart from their ``source``. That
+transaction is an ``audited_transaction``: it commits while holding the process
+audit lock, so another request's audit row can neither deadlock with it nor
+fork the chain.
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
+import logging
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from typing import Any
 
 from core.models import ProgrammeRequirement
-from core.services.audit import audited_transaction
+from core.services.audit import AuditUnavailable, audited_transaction, record_audit_event
 from core.services.course_identity import normalize_course_name
 from core.services.student_helpers import normalize_code
+
+logger = logging.getLogger(__name__)
 
 LIMIT_MIN = 1
 LIMIT_MAX = 500
@@ -40,6 +47,10 @@ AUDIT_ACTION = "section_planning.limit_change"
 
 SCOPE_PROGRAMMES = "programmes"
 SCOPE_ALL = "all_programmes"
+
+#: Where a save came from, recorded on each of its audit rows.
+SOURCE_SECTION_PLANNING = "section_planning"
+SOURCE_DB_ADMIN = "db_admin"
 
 
 class LimitRequestError(ValueError):
@@ -120,8 +131,14 @@ def known_programmes() -> dict[str, str]:
     return stored
 
 
-def parse_limit_request(body: object) -> tuple[list[str], list[LimitChange]]:
-    """Validate a save request; returns (programmes on screen, requested changes)."""
+def parse_limit_request(
+    body: object, *, one_programme: bool = False
+) -> tuple[list[str], list[LimitChange]]:
+    """Validate a save request; returns (programmes on screen, requested changes).
+
+    ``one_programme`` is DB Admin's shape: exactly one programme (the one its
+    rows were loaded for) and no change widened to every programme.
+    """
     if not isinstance(body, dict):
         raise LimitRequestError("invalid_json", "The request body must be a JSON object.")
 
@@ -130,7 +147,7 @@ def parse_limit_request(body: object) -> tuple[list[str], list[LimitChange]]:
         raise LimitRequestError(
             "programs_required", "Choose a programme first: limits are saved per programme."
         )
-    if len(raw_programs) > MAX_PROGRAMS:
+    if len(raw_programs) > (1 if one_programme else MAX_PROGRAMS):
         raise LimitRequestError("programs_required", "Too many programmes in one save.")
     stored = known_programmes()
     programs: list[str] = []
@@ -176,6 +193,12 @@ def parse_limit_request(body: object) -> tuple[list[str], list[LimitChange]]:
             raise LimitRequestError(
                 "invalid_scope",
                 f"The scope for {code} must be true or false.",
+                course_code=code,
+            )
+        if all_programmes and one_programme:
+            raise LimitRequestError(
+                "invalid_scope",
+                f"{code} can only be saved for the programme that was loaded.",
                 course_code=code,
             )
         changes.append(
@@ -306,3 +329,136 @@ def apply_limit_writes(
                     f"{write.program} {write.course_code} changed after it was reviewed."
                 )
             audit(write, position, total)
+
+
+@dataclass(frozen=True)
+class LimitSaveContext:
+    """Who saves, and from where: every audit row of the save records it."""
+
+    actor_username: str
+    actor_role: str
+    endpoint: str
+    method: str
+    source: str
+
+
+@dataclass(frozen=True)
+class LimitSaveResult:
+    """The answer to one preview or commit: an HTTP status and its JSON body."""
+
+    status: int
+    body: dict[str, Any]
+
+
+def save_limits(
+    body: object, context: LimitSaveContext, *, one_programme: bool = False
+) -> LimitSaveResult:
+    """Preview, or commit, one save request. The whole write path of both screens.
+
+    Request body::
+
+        {
+          "programs": ["AI"],                       # the programmes on screen
+          "changes": [
+            {"course_code": "AI491", "max_capacity": 6},
+            {"course_code": "CS211", "max_capacity": 30, "all_programmes": true},
+            {"course_code": "CS323", "max_capacity": null}     # remove the saved limit
+          ],
+          "dry_run": true,                          # preview: nothing is written
+          "preview_token": "…"                      # commit: the token of that preview
+        }
+
+    A preview answers the exact rows that would change (course, programme,
+    old -> new, scope). A commit is refused (409 ``preview_stale``) unless its
+    token matches what the same request would change now, so the user always
+    confirmed exactly what is written. Every changed row is audited in the same
+    transaction; if the audit write fails nothing is saved (503).
+    """
+    try:
+        programs, changes = parse_limit_request(body, one_programme=one_programme)
+        writes, unchanged = plan_limit_writes(programs, changes)
+    except LimitRequestError as exc:
+        return LimitSaveResult(exc.status, exc.as_dict())
+    assert isinstance(body, dict)  # parse_limit_request refused anything else
+
+    token = preview_token(programs, writes)
+    preview = {
+        "programs": programs,
+        "changes": [write.as_dict() for write in writes],
+        "unchanged": unchanged,
+        "preview_token": token,
+    }
+    if body.get("dry_run") is True:
+        return LimitSaveResult(200, {"ok": True, "dry_run": True, **preview})
+
+    if body.get("preview_token") != token:
+        return LimitSaveResult(
+            409,
+            {
+                "ok": False,
+                "code": "preview_stale",
+                "error": "The saved limits changed since they were reviewed. Review them again.",
+                **preview,
+            },
+        )
+
+    def _audit(write: PlannedWrite, position: int, total: int) -> None:
+        record_audit_event(
+            actor_username=context.actor_username,
+            actor_role=context.actor_role,
+            action=AUDIT_ACTION,
+            endpoint=context.endpoint,
+            method=context.method,
+            status="success",
+            details={
+                **write.as_dict(),
+                "requirement_id": write.requirement_id,
+                "programs_on_screen": programs,
+                "batch": token[:16],
+                "position": position,
+                "of": total,
+                "source": context.source,
+            },
+        )
+
+    try:
+        apply_limit_writes(writes, audit=_audit)
+    except LimitConflict:
+        return LimitSaveResult(
+            409,
+            {
+                "ok": False,
+                "code": "limit_changed",
+                "error": "A limit changed while saving. Nothing was saved; review again.",
+            },
+        )
+    except AuditUnavailable:
+        return LimitSaveResult(
+            503,
+            {
+                "ok": False,
+                "code": "audit_unavailable",
+                "error": "Couldn't record the change in the audit log, so nothing was saved.",
+            },
+        )
+
+    logger.info(
+        "save_limits: source=%s user=%s programs=%s changed=%d unchanged=%d batch=%s",
+        context.source,
+        context.actor_username,
+        programs,
+        len(writes),
+        unchanged,
+        token[:16],
+    )
+    return LimitSaveResult(
+        200,
+        {
+            "ok": True,
+            "dry_run": False,
+            "programs": programs,
+            "changed": [write.as_dict() for write in writes],
+            "changed_count": len(writes),
+            "unchanged": unchanged,
+        },
+    )

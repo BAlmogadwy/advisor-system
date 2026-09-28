@@ -21,18 +21,9 @@ from django.shortcuts import render
 from django.views.decorators.http import require_GET, require_POST
 
 from core.authz import role_required, throttle
-from core.services.audit import AuditUnavailable, audit_actor, record_audit_event
+from core.services.audit import audit_actor
 from core.services.rbac import ROLE_GENERAL_ADVISOR, get_user_role
-from core.services.section_limits import AUDIT_ACTION as LIMIT_AUDIT_ACTION
-from core.services.section_limits import (
-    LimitConflict,
-    LimitRequestError,
-    PlannedWrite,
-    apply_limit_writes,
-    parse_limit_request,
-    plan_limit_writes,
-    preview_token,
-)
+from core.services.section_limits import SOURCE_SECTION_PLANNING, LimitSaveContext, save_limits
 from core.services.section_plan_pipeline import (
     SizingRules,
     plan_all_programmes,
@@ -290,24 +281,8 @@ def section_plan_courses_view(request: HttpRequest) -> JsonResponse:
 def section_plan_save_limits_view(request: HttpRequest) -> JsonResponse:
     """Preview, then save, per-course seat limits for the programmes on screen.
 
-    JSON body::
-
-        {
-          "programs": ["AI"],                       # the programmes on screen
-          "changes": [
-            {"course_code": "AI491", "max_capacity": 6},
-            {"course_code": "CS211", "max_capacity": 30, "all_programmes": true},
-            {"course_code": "CS323", "max_capacity": null}     # remove the saved limit
-          ],
-          "dry_run": true,                          # preview: nothing is written
-          "preview_token": "…"                      # commit: the token of that preview
-        }
-
-    A preview answers the exact rows that would change (course, programme,
-    old -> new, scope). A commit is refused (409 ``preview_stale``) unless its
-    token matches what the same request would change now, so the user always
-    confirmed exactly what is written. Every changed row is audited in the same
-    transaction; if the audit write fails nothing is saved (503).
+    The request, its answers and its audit rows are ``section_limits.save_limits``'s;
+    this view only reads the body and names the caller.
     """
     try:
         body = json.loads(request.body.decode("utf-8")) if request.body else {}
@@ -315,93 +290,18 @@ def section_plan_save_limits_view(request: HttpRequest) -> JsonResponse:
         return JsonResponse(
             {"ok": False, "code": "invalid_json", "error": "Invalid JSON"}, status=400
         )
-
-    try:
-        programs, changes = parse_limit_request(body)
-        writes, unchanged = plan_limit_writes(programs, changes)
-    except LimitRequestError as exc:
-        return JsonResponse(exc.as_dict(), status=exc.status)
-
-    token = preview_token(programs, writes)
-    preview = {
-        "programs": programs,
-        "changes": [write.as_dict() for write in writes],
-        "unchanged": unchanged,
-        "preview_token": token,
-    }
-    if body.get("dry_run") is True:
-        return JsonResponse({"ok": True, "dry_run": True, **preview})
-
-    if body.get("preview_token") != token:
-        return JsonResponse(
-            {
-                "ok": False,
-                "code": "preview_stale",
-                "error": "The saved limits changed since they were reviewed. Review them again.",
-                **preview,
-            },
-            status=409,
-        )
-
     actor, actor_role = audit_actor(request)
-
-    def _audit(write: PlannedWrite, position: int, total: int) -> None:
-        record_audit_event(
+    result = save_limits(
+        body,
+        LimitSaveContext(
             actor_username=actor,
             actor_role=actor_role,
-            action=LIMIT_AUDIT_ACTION,
             endpoint=request.path,
             method=str(request.method),
-            status="success",
-            details={
-                **write.as_dict(),
-                "requirement_id": write.requirement_id,
-                "programs_on_screen": programs,
-                "batch": token[:16],
-                "position": position,
-                "of": total,
-            },
-        )
-
-    try:
-        apply_limit_writes(writes, audit=_audit)
-    except LimitConflict:
-        return JsonResponse(
-            {
-                "ok": False,
-                "code": "limit_changed",
-                "error": "A limit changed while saving. Nothing was saved; review again.",
-            },
-            status=409,
-        )
-    except AuditUnavailable:
-        return JsonResponse(
-            {
-                "ok": False,
-                "code": "audit_unavailable",
-                "error": "Couldn't record the change in the audit log, so nothing was saved.",
-            },
-            status=503,
-        )
-
-    logger.info(
-        "section_plan_save_limits: user=%s programs=%s changed=%d unchanged=%d batch=%s",
-        request.user.username,
-        programs,
-        len(writes),
-        unchanged,
-        token[:16],
+            source=SOURCE_SECTION_PLANNING,
+        ),
     )
-    return JsonResponse(
-        {
-            "ok": True,
-            "dry_run": False,
-            "programs": programs,
-            "changed": [write.as_dict() for write in writes],
-            "changed_count": len(writes),
-            "unchanged": unchanged,
-        }
-    )
+    return JsonResponse(result.body, status=result.status)
 
 
 # ── Export XLSX API ────────────────────────────────────────────
