@@ -36,12 +36,20 @@
       <label class="fb-lbl" for="spProgram">{% if LANGUAGE_CODE == 'ar' %}البرنامج{% else %}Program{% endif %}</label>
       <input id="spProgram" autocomplete="off" spellcheck="false" class="sp-fb-input sp-fb-codes text-caps" placeholder="{% if LANGUAGE_CODE == 'ar' %}مثلاً AI,DS{% else %}e.g. AI,DS{% endif %}">
     </div>
-    <div class="fb-spacer"></div>
-    <button id="spGenerate" type="submit" class="btn btn-primary">{% if LANGUAGE_CODE == 'ar' %}حساب{% else %}Generate{% endif %}</button>
-    <button id="spReset" type="button" class="fb-dd">{% if LANGUAGE_CODE == 'ar' %}إعادة{% else %}Reset{% endif %}</button>
+    {# One section per plan, M or F: native radios (one Tab stop; the arrows move the choice), none chosen until the user chooses. #}
+    <div id="spSectionGroup" class="sp-seg-group" role="radiogroup" aria-labelledby="spSectionLbl" aria-required="true" aria-describedby="spSectionMsg">
+      <span id="spSectionLbl" class="fb-lbl">{% if LANGUAGE_CODE == 'ar' %}الشطر{% else %}Section{% endif %}</span>
+      <label class="sp-seg" for="spSectionM"><input id="spSectionM" type="radio" name="spSection" value="M" required><span class="sp-seg-dot" aria-hidden="true"></span><span>{% if LANGUAGE_CODE == 'ar' %}طلاب{% else %}Male{% endif %} <bdi>(M)</bdi></span></label>
+      <label class="sp-seg" for="spSectionF"><input id="spSectionF" type="radio" name="spSection" value="F" required><span class="sp-seg-dot" aria-hidden="true"></span><span>{% if LANGUAGE_CODE == 'ar' %}طالبات{% else %}Female{% endif %} <bdi>(F)</bdi></span></label>
+    </div>
+    {# Generate and Reset wrap together, at the end of the bar. #}
+    <div class="sp-fb-actions">
+      <button id="spGenerate" type="submit" class="btn btn-primary">{% if LANGUAGE_CODE == 'ar' %}حساب{% else %}Generate{% endif %}</button>
+      <button id="spReset" type="button" class="fb-dd">{% if LANGUAGE_CODE == 'ar' %}إعادة{% else %}Reset{% endif %}</button>
+    </div>
   </form>
-
-  <p class="sp-scope-note fs-sm text-t3 mb-0 mt-2">{% if LANGUAGE_CODE == 'ar' %}يُخطَّط للذكور والإناث دائماً في شعب منفصلة: مجموع الشعب = شعب الذكور + شعب الإناث.{% else %}Male and female students are always planned in separate sections: Total sections = M + F.{% endif %}</p>
+  {# Empty until Generate is pressed with no section chosen; an alert, so its words are read out. #}
+  <p id="spSectionMsg" class="sp-section-msg" role="alert"></p>
 
   <!-- Capacity toggle -->
   <div class="mt-2">
@@ -121,12 +129,14 @@
 <!-- ─── Results (hidden until generated) ─── -->
 <div id="spResults" class="d-none">
 
-  <!-- KPI Summary -->
+  <!-- What the result on screen is for: its programmes, term and section (the one it was generated for) -->
+  <h3 id="spResultsScope" class="sp-results-scope"></h3>
+
+  <!-- KPI Summary: the section's students, courses, sections and fill -->
   <div class="sp-kpi" id="spKpi">
     <div class="sp-mc mc-hero">
       <div class="k">{% if LANGUAGE_CODE == 'ar' %}الطلاب{% else %}Students Scanned{% endif %}</div>
       <div class="v" id="spKpiStudents">0</div>
-      <div class="sp-mc-sub" id="spKpiStudentsSplit"></div>
     </div>
     <div class="sp-mc">
       <div class="k">{% if LANGUAGE_CODE == 'ar' %}المقررات{% else %}Courses{% endif %}</div>
@@ -135,7 +145,6 @@
     <div class="sp-mc">
       <div class="k">{% if LANGUAGE_CODE == 'ar' %}الشعب المطلوبة{% else %}Sections Needed{% endif %}</div>
       <div class="v" id="spKpiSections">0</div>
-      <div class="sp-mc-sub" id="spKpiSectionsSplit"></div>
     </div>
     <div class="sp-mc mc-navy">
       <div class="k">{% if LANGUAGE_CODE == 'ar' %}متوسط الامتلاء{% else %}Avg Fill Rate{% endif %}</div>
@@ -143,7 +152,7 @@
     </div>
   </div>
 
-  <div id="spGenderNote" class="sp-alert sp-alert-warn d-none" role="status"></div>
+  <div id="spNoSectionNote" class="sp-alert sp-alert-warn d-none" role="status"></div>
   <div id="spElectiveNote" class="sp-alert sp-alert-warn d-none" role="status"></div>
 
   <!-- Export + timestamp -->
@@ -170,9 +179,7 @@
         <th data-sort="text">{% if LANGUAGE_CODE == 'ar' %}اسم المقرر{% else %}Course Name{% endif %}</th>
         <th data-sort="num">{% if LANGUAGE_CODE == 'ar' %}ساعات{% else %}Cr{% endif %}</th>
         <th data-sort="num">{% if LANGUAGE_CODE == 'ar' %}الطلاب{% else %}Students{% endif %}</th>
-        <th data-sort="num">{% if LANGUAGE_CODE == 'ar' %}شعب الذكور{% else %}M sections{% endif %}</th>
-        <th data-sort="num">{% if LANGUAGE_CODE == 'ar' %}شعب الإناث{% else %}F sections{% endif %}</th>
-        <th data-sort="num">{% if LANGUAGE_CODE == 'ar' %}مجموع الشعب{% else %}Total sections{% endif %}</th>
+        <th data-sort="num">{% if LANGUAGE_CODE == 'ar' %}الشعب{% else %}Sections{% endif %}</th>
         <th data-sort="num">{% if LANGUAGE_CODE == 'ar' %}الحد الأقصى{% else %}Max{% endif %}</th>
         <th data-sort="num">{% if LANGUAGE_CODE == 'ar' %}المتوسط{% else %}Avg{% endif %}</th>
         <th>{% if LANGUAGE_CODE == 'ar' %}الامتلاء{% else %}Fill{% endif %}</th>
@@ -180,7 +187,7 @@
       </tr>
     </thead>
     <tbody>
-      <tr><td colspan="13" class="empty-note">{% if LANGUAGE_CODE == 'ar' %}حدد السنة والفصل ثم انقر حساب.{% else %}Set Year &amp; Semester, then click Generate.{% endif %}</td></tr>
+      <tr><td colspan="11" class="empty-note">{% if LANGUAGE_CODE == 'ar' %}حدد السنة والفصل والشطر ثم انقر حساب.{% else %}Set Year, Semester &amp; Section, then click Generate.{% endif %}</td></tr>
     </tbody>
   </table>
   </div>
@@ -205,5 +212,5 @@
   const LANGUAGE_CODE = "{{ LANGUAGE_CODE|default:'en' }}";
   const djCsrfToken = "{{ csrf_token }}";
 </script>
-<script src="{% static 'js/page-section-planning.js' %}?v=12"></script>
+<script src="{% static 'js/page-section-planning.js' %}?v=13"></script>
 {% endblock %}

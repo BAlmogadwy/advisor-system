@@ -10,6 +10,10 @@
  * or blur), Generate sends only edited values, Discard and Reset never write,
  * and a save is previewed, confirmed row by row, then committed with the
  * preview's token for the programmes on screen.
+ *
+ * A plan is for ONE section, Male (M) or Female (F): Generate asks nothing
+ * of the server until one is chosen, the result says which it is for, and
+ * nothing on the page shows M, F or a Total of the two.
  */
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -34,6 +38,8 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 const LIMITS = '/ops/section-planning/limits/';
 const COURSES = '/ops/section-planning/courses/';
 const GENERATE = '/ops/section-planning/generate/';
+const EXPORT = '/ops/section-planning/export/';
+const SECTION_KEY = 'sectionPlanning.section';
 
 /* As the server answers: with programmes, each one's saved limit; with none,
  * the lowest limit any programme declares (what Generate applies), read-only. */
@@ -62,10 +68,10 @@ function planRow(code, extra = {}) {
   };
 }
 
-function generated(plan = [planRow('AI491')]) {
+function generated(plan = [planRow('AI491')], section = 'M') {
   const sections = plan.reduce((sum, row) => sum + row.num_sections, 0);
   return {
-    ok: true, mode: 'single', year: 1448, semester: 1, student_count: 324, plan,
+    ok: true, mode: 'single', year: 1448, semester: 1, section, student_count: 324, no_section: 0, plan,
     summary: { total_courses: plan.length, total_sections: sections, total_students: 30, avg_fill_percent: 75,
       departments: [{ department: 'AI', courses: plan.length, sections, students: 30, total_credits: 3 }] },
   };
@@ -73,6 +79,14 @@ function generated(plan = [planRow('AI491')]) {
 
 function answer(data, status = 200) {
   return { ok: status >= 200 && status < 300, status, json: async () => data };
+}
+
+/* An .xlsx download as the server sends it: the file name in Content-Disposition. */
+function fileAnswer(disposition) {
+  return {
+    ok: true, status: 200, json: async () => ({}), blob: async () => ({ size: 1 }),
+    headers: { get: name => (name.toLowerCase() === 'content-disposition' ? disposition : null) },
+  };
 }
 
 /* The server: scripted answers for the limits endpoint, recorded requests. */
@@ -91,7 +105,11 @@ function limitsServer({ preview, commit } = {}) {
   };
 }
 
-async function page(t, { program = 'AI', limits = limitsServer(), confirm = async () => true, generate = () => answer(generated()), localDepartments = null, courses = prog => answer({ ok: true, courses: coursesFor(prog) }), realDialogs = false } = {}) {
+/* `section`: the radio the user picks once the page is up (null: none).
+ * `stored`: what this browser remembered from an earlier visit.
+ * `storage`: 'throws' when reading localStorage itself throws (blocked site
+ * data), 'fails' when its reads and writes throw. */
+async function page(t, { program = 'AI', section = 'M', stored = null, storage = 'ok', limits = limitsServer(), confirm = async () => true, generate = body => answer(generated(undefined, body.section)), exportFile = () => fileAnswer(''), localDepartments = null, courses = prog => answer({ ok: true, courses: coursesFor(prog) }), realDialogs = false } = {}) {
   const errors = [];
   const virtualConsole = new VirtualConsole();
   virtualConsole.on('jsdomError', error => errors.push(error));
@@ -112,11 +130,18 @@ async function page(t, { program = 'AI', limits = limitsServer(), confirm = asyn
     }
     if (method === 'POST' && url === LIMITS) return limits(body);
     if (method === 'POST' && url === GENERATE) return generate(body);
+    if (method === 'POST' && url === EXPORT) return exportFile(body);
     const error = new Error(`Unexpected HTTP request: ${method} ${url}`);
     errors.push(error);
     throw error;
   };
+  /* A download: the object URL and the link's click, recorded (jsdom has neither). */
+  const downloads = [];
+  window.URL.createObjectURL = () => 'blob:section-plan';
+  window.URL.revokeObjectURL = () => {};
+  window.HTMLAnchorElement.prototype.click = function click() { downloads.push(this.download); };
   if (localDepartments) window.document.getElementById('spLocalDepartments').textContent = JSON.stringify(localDepartments);
+  if (stored) window.localStorage.setItem(SECTION_KEY, stored);
   const context = dom.getInternalVMContext();
   vm.runInContext(SHARED, context, { filename: 'shared-utils.js' });
   vm.runInContext(UX, context, { filename: 'shared-ux.js' });
@@ -124,9 +149,13 @@ async function page(t, { program = 'AI', limits = limitsServer(), confirm = asyn
     window.requestAnimationFrame = callback => window.setTimeout(callback, 0);
     vm.runInContext(DIALOG, context, { filename: 'dialog.js' });
   }
+  const refuse = () => { throw new window.DOMException('The operation is insecure.', 'SecurityError'); };
+  if (storage === 'throws') Object.defineProperty(window, 'localStorage', { configurable: true, get: refuse });
+  if (storage === 'fails') Object.assign(window.Storage.prototype, { getItem: refuse, setItem: refuse });
   vm.runInContext(PAGE, context, { filename: 'page-section-planning.js' });
   const $ = id => window.document.getElementById(id);
   const emit = (element, type) => element.dispatchEvent(new window.Event(type, { bubbles: true }));
+  if (section) $(`spSection${section}`).click();
   $('spProgram').value = program;
   emit($('spProgram'), 'change');
   $('spToggleAdv').click();
@@ -155,7 +184,8 @@ async function page(t, { program = 'AI', limits = limitsServer(), confirm = asyn
     return event;
   };
   const setProgram = async value => { $('spProgram').value = value; emit($('spProgram'), 'change'); await settle(); };
-  return { window, $, emit, row, input, type, requests, writes, dialogs, toasts, text, saveOff, key, setProgram };
+  const generates = () => requests.filter(request => request.url === GENERATE);
+  return { window, $, emit, row, input, type, requests, writes, dialogs, toasts, text, saveOff, key, setProgram, generates, downloads };
 }
 
 test('editing a limit and leaving the field writes nothing; the row is a draft', async t => {
@@ -407,73 +437,218 @@ test('the page keeps no department list of its own', async t => {
   assert.deepEqual(summaryGroups(ui), [['ours', ['MATH']], ['service', ['AI', 'COE']]]);
 });
 
-/* ── Male and female are never planned together ── */
+/* ── One section per plan: Male (M) or Female (F) ── */
 
-function cohortPlan({ noGender = 0 } = {}) {
-  const row = planRow('AI331', {
-    male_students: 12, female_students: 30, unknown_students: noGender,
-    male_sections: 1, female_sections: 2, total_students: 42, num_sections: 3, max_per_section: 25,
+const radios = ui => ['M', 'F'].map(code => ui.$(`spSection${code}`));
+const choose = say('Choose Male (M) or Female (F).', 'اختر شطر الطلاب (M) أو الطالبات (F).');
+
+test('the Section control is a required radio group, named in the page\'s language, inside the scope form', async t => {
+  const ui = await page(t, { section: null });
+  const group = ui.$('spSectionGroup');
+  assert.equal(group.getAttribute('role'), 'radiogroup');
+  assert.equal(group.getAttribute('aria-required'), 'true');
+  assert.equal(ui.$(group.getAttribute('aria-labelledby')).textContent.trim(), say('Section', 'الشطر'));
+  assert.equal(group.getAttribute('aria-describedby'), 'spSectionMsg');
+  assert.deepEqual(radios(ui).map(r => [r.type, r.name, r.value, r.form === ui.$('spScopeForm')]),
+    [['radio', 'spSection', 'M', true], ['radio', 'spSection', 'F', true]]);
+  assert.deepEqual(radios(ui).map(r => r.labels[0].textContent.replace(/\s+/g, ' ').trim()),
+    say(['Male (M)', 'Female (F)'], ['طلاب (M)', 'طالبات (F)']));
+});
+
+test('a first visit chooses nothing, and Generate then asks nothing of the server: an alert at the control takes the keyboard', async t => {
+  const ui = await page(t, { section: null });
+  assert.deepEqual(radios(ui).map(r => [r.checked, r.hasAttribute('checked')]), [[false, false], [false, false]]);
+
+  ui.$('spGenerate').click();
+  await settle();
+  ui.$('spScopeForm').requestSubmit();   // Enter in a field
+  await settle();
+
+  assert.deepEqual(ui.generates(), [], 'no request without a section');
+  assert.equal(ui.$('spSectionMsg').getAttribute('role'), 'alert');
+  assert.equal(ui.text('spSectionMsg'), choose);
+  assert.equal(ui.$('spSectionGroup').getAttribute('aria-invalid'), 'true');
+  assert.equal(ui.window.document.activeElement, ui.$('spSectionM'), 'focus moves to the group');
+  assert.equal(ui.text('spStatus'), '', 'one message, at the control');
+
+  ui.$('spSectionF').click();
+  assert.equal(ui.text('spSectionMsg'), '', 'choosing answers it');
+  assert.equal(ui.$('spSectionGroup').hasAttribute('aria-invalid'), false);
+  ui.$('spGenerate').click();
+  await settle();
+  assert.deepEqual(ui.generates().map(r => r.body.section), ['F']);
+});
+
+test('the choice is remembered in this browser, and a remembered choice is sent', async t => {
+  const first = await page(t, { section: 'F' });
+  assert.equal(first.window.localStorage.getItem(SECTION_KEY), 'F');
+
+  const again = await page(t, { section: null, stored: 'F' });
+  assert.deepEqual(radios(again).map(r => r.checked), [false, true]);
+  again.$('spGenerate').click();
+  await settle();
+  assert.equal(again.generates()[0].body.section, 'F');
+
+  const odd = await page(t, { section: null, stored: 'X' });
+  assert.deepEqual(radios(odd).map(r => r.checked), [false, false], 'only M or F is ever restored');
+});
+
+for (const storage of ['throws', 'fails']) {
+  test(`with browser storage that ${storage === 'throws' ? 'cannot be reached' : 'refuses reads and writes'}, the page still plans`, async t => {
+    const ui = await page(t, { section: null, stored: 'F', storage });
+    assert.deepEqual(radios(ui).map(r => r.checked), [false, false], 'nothing could be read');
+
+    ui.$('spSectionM').click();
+    ui.$('spGenerate').click();
+    await settle();
+
+    assert.deepEqual(ui.generates().map(r => r.body.section), ['M']);
+    assert.equal(ui.text('spStatus'), say('Section plan generated successfully.', 'تم حساب خطة الشعب بنجاح.'));
   });
-  const data = generated([row]);
-  data.cohorts = { M: 12, F: 30, no_gender: noGender };
-  data.student_count = 42 + noGender;
-  Object.assign(data.summary, {
-    total_sections: 3, male_sections: 1, female_sections: 2,
-    no_gender: { students: noGender, seat_demand: noGender, courses: noGender ? 1 : 0 },
+}
+
+test('Reset clears the scope and keeps the chosen section: a preference, not a draft', async t => {
+  const ui = await page(t, { section: 'F' });
+  ui.$('spGenerate').click();
+  await settle();
+
+  ui.$('spReset').click();
+  await settle();
+
+  assert.deepEqual(radios(ui).map(r => r.checked), [false, true]);
+  assert.equal(ui.window.localStorage.getItem(SECTION_KEY), 'F');
+  assert.ok(ui.$('spResults').classList.contains('d-none'));
+});
+
+for (const [code, words] of [
+  ['section_required', choose],
+  ['section_invalid', say('That section is not valid: choose Male (M) or Female (F).', 'الشطر غير صالح: اختر شطر الطلاب (M) أو الطالبات (F).')],
+]) {
+  test(`a Generate refused as ${code} is said at the Section control, in the page's words`, async t => {
+    const ui = await page(t, { section: 'F', generate: () => answer({ ok: false, code, error: 'server words' }, 400) });
+    ui.$('spGenerate').click();
+    await settle();
+
+    assert.equal(ui.text('spSectionMsg'), words);
+    assert.equal(ui.window.document.activeElement, ui.$('spSectionF'), 'the chosen radio takes the keyboard');
+    assert.equal(ui.text('spStatus'), '');
   });
-  data.summary.departments = [{ department: 'AI', courses: 1, sections: 3, male_sections: 1, female_sections: 2, students: 42, total_credits: 12 }];
+}
+
+/* A plan as the server answers it for one section (section_plan_pipeline). */
+function sectionPlan(section = 'F', { noSection = 0 } = {}) {
+  const plan = [
+    planRow('AI331', { total_students: 30, num_sections: 2, max_per_section: 25, credit_hours: 4 }),
+    planRow('MATH203', { total_students: 12, num_sections: 1, max_per_section: 50 }),
+  ];
+  const data = generated(plan, section);
+  data.student_count = 42;
+  data.no_section = noSection;
+  data.summary = summaryOf(plan);
   return data;
 }
 
-test('Generate asks for both cohorts: there is no Section filter to send', async t => {
-  const ui = await page(t);
-  assert.equal(ui.$('spSection'), null);
-
-  ui.$('spGenerate').click();
-  await settle();
-
-  const body = ui.requests.find(r => r.url === GENERATE).body;
-  assert.equal('section' in body, false);
+test('the result names what it is for: programme, term and section', async t => {
+  for (const [program, section, heading] of [
+    ['AI', 'F', say('AI · 1448 T1 · Female (F)', 'AI · 1448 ف1 · طالبات (F)')],
+    ['', 'M', say('All programmes · 1448 T1 · Male (M)', 'كل البرامج · 1448 ف1 · طلاب (M)')],
+    ['AI, DS', 'M', say('AI, DS · 1448 T1 · Male (M)', 'AI, DS · 1448 ف1 · طلاب (M)')],
+  ]) {
+    const ui = await page(t, { program, section, generate: body => answer(sectionPlan(body.section)) });
+    ui.$('spGenerate').click();
+    await settle();
+    assert.equal(ui.text('spResultsScope'), heading, program || 'all');
+    const codes = [...ui.$('spResultsScope').querySelectorAll('bdi')].map(b => b.textContent);
+    assert.ok(codes.includes(`(${section})`) && codes.includes('1448'), codes.join('|'));
+  }
 });
 
-test('results show M, F and Total sections, and the KPIs split them', async t => {
-  const ui = await page(t, { generate: () => answer(cohortPlan()) });
+test('Export sends the section the result on screen is for, even after the radio changed, and saves under the server\'s name', async t => {
+  let disposition = 'attachment; filename="section_plan_1448_1_AI_F.xlsx"';
+  const ui = await page(t, { section: 'F', generate: body => answer(sectionPlan(body.section)), exportFile: () => fileAnswer(disposition) });
   ui.$('spGenerate').click();
   await settle();
 
-  const tr = ui.window.document.querySelector('#spTable tbody tr[data-code="AI331"]');
-  assert.equal(tr.querySelector('.sp-sec-m').textContent.trim(), '1');
-  assert.equal(tr.querySelector('.sp-sec-f').textContent.trim(), '2');
-  assert.equal(tr.querySelector('.sp-sec-total').textContent.trim(), '3');
-  assert.equal(tr.querySelector('.sp-cell-sub').textContent.trim(), say('M 12 · F 30', 'ذكور 12 · إناث 30'));
-  const heads = [...ui.window.document.querySelectorAll('#spTable thead th')].map(th => th.textContent.trim());
-  assert.deepEqual(heads.slice(5, 9), say(
-    ['Students', 'M sections', 'F sections', 'Total sections'],
-    ['الطلاب', 'شعب الذكور', 'شعب الإناث', 'مجموع الشعب'],
+  ui.$('spSectionM').click();   // changed since: the result is still the women's
+  ui.$('spExport').click();
+  await settle();
+  disposition = '';             // no name from the server: one made the same way
+  ui.$('spExport').click();
+  await settle();
+
+  const sent = ui.requests.filter(r => r.url === EXPORT).map(r => r.body.section);
+  assert.deepEqual(sent, ['F', 'F']);
+  assert.deepEqual(ui.downloads, ['section_plan_1448_1_AI_F.xlsx', 'section_plan_1448_1_F.xlsx']);
+  assert.equal(ui.text('spResultsScope'), say('AI · 1448 T1 · Female (F)', 'AI · 1448 ف1 · طالبات (F)'));
+});
+
+test('a result that arrives after the radio changed is named, and exported, for the section it was generated for', async t => {
+  let release;
+  const gate = new Promise(resolve => { release = resolve; });
+  const ui = await page(t, {
+    section: 'F',
+    generate: async body => { await gate; return answer(sectionPlan(body.section)); },
+    exportFile: () => fileAnswer('attachment; filename="section_plan_1448_1_AI_F.xlsx"'),
+  });
+  ui.$('spGenerate').click();
+  await settle();
+  ui.$('spSectionM').click();   // while the women's plan is being computed
+  release();
+  await settle();
+
+  assert.equal(ui.text('spResultsScope'), say('AI · 1448 T1 · Female (F)', 'AI · 1448 ف1 · طالبات (F)'));
+  ui.$('spExport').click();
+  await settle();
+  assert.equal(ui.requests.find(r => r.url === EXPORT).body.section, 'F');
+});
+
+test('a result shows its one section: no M, F or Total in the table, the phone cards, the KPIs or the summary', async t => {
+  const ui = await page(t, { generate: body => answer(sectionPlan(body.section)) });
+  ui.$('spGenerate').click();
+  await settle();
+  const doc = ui.window.document;
+
+  assert.deepEqual([...doc.querySelectorAll('#spTable thead th')].map(th => th.textContent.trim()), say(
+    ['#', 'Dept', 'Course', 'Course Name', 'Cr', 'Students', 'Sections', 'Max', 'Avg', 'Fill', 'Status'],
+    ['#', 'القسم', 'المقرر', 'اسم المقرر', 'ساعات', 'الطلاب', 'الشعب', 'الحد الأقصى', 'المتوسط', 'الامتلاء', 'الحالة'],
   ));
+  const tr = doc.querySelector('#spTable tbody tr[data-code="AI331"]');
+  assert.equal(tr.querySelector('.sp-c-demand').textContent, '30');
+  assert.equal(tr.querySelector('.sp-c-sections').textContent, '2');
+  assert.equal(tr.querySelector('.sp-cell-sub'), null, 'no M · F line under the students');
+  assert.equal(doc.querySelectorAll('.sp-sec-m, .sp-sec-f, .sp-sec-total, #spKpiStudentsSplit, #spKpiSectionsSplit, #spGenderNote').length, 0);
+  assert.deepEqual([...doc.querySelectorAll('#spDeptSummary thead th')].map(th => th.textContent), say(
+    ['Department', 'Sections', 'Courses', 'Seat demand', 'Teaching hours'],
+    ['القسم', 'الشعب', 'المقررات', 'المقاعد المطلوبة', 'ساعات التدريس'],
+  ));
+  const text = doc.querySelector('.sp-page').textContent;
+  assert.doesNotMatch(text, /\bM \d|\bF \d|M \+ F|Total sections|ذكور|إناث|مجموع الشعب/);
+  assert.equal(ui.text('spKpiStudents'), '42');
   assert.equal(ui.text('spKpiSections'), '3');
-  assert.equal(ui.text('spKpiSectionsSplit'), say('M 1 · F 2', 'ذكور 1 · إناث 2'));
-  assert.equal(ui.text('spKpiStudentsSplit'), say('M 12 · F 30', 'ذكور 12 · إناث 30'));
-  const ai = ui.window.document.querySelector('#spDeptSummary tr[data-dept="AI"]');
-  assert.deepEqual(['male_sections', 'female_sections', 'sections'].map(col => ai.querySelector(`[data-col="${col}"]`).textContent), ['1', '2', '3']);
-  assert.ok(ui.$('spGenderNote').classList.contains('d-none'), 'nothing to report');
 });
 
-test('students with no recorded gender are stated, not pooled', async t => {
-  const ui = await page(t, { generate: () => answer(cohortPlan({ noGender: 2 })) });
+for (const [n, en, ar] of [
+  [1, '1 student has no recorded section and is not in this plan.', '1 طالب بلا شطر مسجَّل، فهو خارج هذه الخطة.'],
+  [2, '2 students have no recorded section and are not in this plan.', '2 طالبان بلا شطر مسجَّل، فهما خارج هذه الخطة.'],
+  [3, '3 students have no recorded section and are not in this plan.', '3 طلاب بلا شطر مسجَّل، فهم خارج هذه الخطة.'],
+]) {
+  test(`${n} student(s) with no recorded section are said to be in neither plan`, async t => {
+    const ui = await page(t, { generate: body => answer(sectionPlan(body.section, { noSection: n })) });
+    ui.$('spGenerate').click();
+    await settle();
+    assert.ok(!ui.$('spNoSectionNote').classList.contains('d-none'));
+    assert.equal(ui.text('spNoSectionNote'), say(en, ar));
+    assert.equal(ui.text('spKpiSections'), '3', 'and in no count');
+  });
+}
+
+test('with every student\'s section recorded there is no note', async t => {
+  const ui = await page(t, { generate: body => answer(sectionPlan(body.section)) });
   ui.$('spGenerate').click();
   await settle();
-
-  assert.ok(!ui.$('spGenderNote').classList.contains('d-none'));
-  assert.equal(ui.text('spGenderNote'), say(
-    '2 students have no recorded gender: 2 seats across 1 course, left out of every count. Record their gender, then generate again.',
-    '2 طالب بلا جنس مسجّل: يحتاجون 2 مقعداً في 1 مقرر، وهم خارج كل الأعداد. سجّل جنسهم ثم أعد الحساب.',
-  ));
-  const tr = ui.window.document.querySelector('#spTable tbody tr[data-code="AI331"]');
-  assert.equal(tr.querySelector('.sp-no-gender').textContent.trim(), say('+2 no gender', '+2 بلا جنس'));
-  assert.equal(ui.text('spKpiSections'), '3', 'Total stays M + F');
+  assert.ok(ui.$('spNoSectionNote').classList.contains('d-none'));
+  assert.equal(ui.text('spNoSectionNote'), '');
 });
-
 /* ── A resolved elective is planned under its slot ── */
 
 test('the panel shows the elective a slot resolves to, under the slot', async t => {
@@ -500,8 +675,7 @@ test('the panel shows the elective a slot resolves to, under the slot', async t 
 
 test('a resolved elective names its slot and where its limit comes from', async t => {
   const data = generated([planRow('AI463', {
-    male_students: 70, female_students: 52, male_sections: 3, female_sections: 2, num_sections: 5,
-    total_students: 122, max_per_section: 30, limit_source: 'slot', slots: ['AI1'], is_external: true,
+    num_sections: 3, total_students: 70, max_per_section: 30, limit_source: 'slot', slots: ['AI1'], is_external: true,
   })]);
   data.electives = { dropped_total: 8, dropped: [
     { program: 'AI', slot: 'AI2', reason: 'not_published', students: 5 },
@@ -837,7 +1011,7 @@ test('the scope form submits through Generate only; Save and the limit fields ar
   assert.equal(form.tagName, 'FORM');
   const submits = [...form.elements].filter(el => el.type === 'submit');
   assert.deepEqual(submits.map(el => el.id), ['spGenerate'], 'Enter clicks the first submit button: Generate');
-  for (const id of ['spYear', 'spSemester', 'spProgram']) assert.equal(ui.$(id).form, form, id);
+  for (const id of ['spYear', 'spSemester', 'spProgram', 'spSectionM', 'spSectionF']) assert.equal(ui.$(id).form, form, id);
   assert.equal(ui.$('spAdvSaveDb').form, null, 'Save is never a submit of the scope form');
   assert.equal(ui.input('AI491').form, null, 'Enter in a limit field submits nothing');
 
@@ -868,30 +1042,29 @@ test('a second submit while Generate runs sends nothing more', async t => {
 
 /* ── A phone shows every course's numbers ── */
 
-/* A plan's summary as the server builds it (core.services.section_plan_pipeline.summarise). */
+/* A plan's summary as the server builds it (section_planning.compute_plan_summary). */
 function summaryOf(rows) {
   const departments = {};
   rows.forEach(row => {
-    const d = departments[row.department] ||= { department: row.department, courses: 0, sections: 0, male_sections: 0, female_sections: 0, students: 0, total_credits: 0 };
-    d.courses += 1; d.sections += row.num_sections; d.male_sections += row.male_sections; d.female_sections += row.female_sections;
+    const d = departments[row.department] ||= { department: row.department, courses: 0, sections: 0, students: 0, total_credits: 0 };
+    d.courses += 1; d.sections += row.num_sections;
     d.students += row.total_students; d.total_credits += 3 * row.num_sections;
   });
   return {
     total_courses: rows.length, total_sections: rows.reduce((n, r) => n + r.num_sections, 0),
-    male_sections: rows.reduce((n, r) => n + r.male_sections, 0), female_sections: rows.reduce((n, r) => n + r.female_sections, 0),
-    total_students: 0, avg_fill_percent: 50, departments: Object.values(departments).sort((a, b) => a.department.localeCompare(b.department)),
-    no_gender: { students: 0, seat_demand: 0, courses: 0 },
+    total_students: rows.reduce((n, r) => n + r.total_students, 0), avg_fill_percent: 50,
+    departments: Object.values(departments).sort((a, b) => a.department.localeCompare(b.department)),
   };
 }
 
 function multiPlan() {
-  const ai = [planRow('AI491', { male_sections: 3, female_sections: 4, num_sections: 7 }), planRow('MATH203', { male_sections: 1, female_sections: 0, num_sections: 1 })];
-  const ds = [planRow('DS201', { male_sections: 1, female_sections: 1, num_sections: 2 }), planRow('MATH203', { male_sections: 0, female_sections: 1, num_sections: 1 })];
-  const combined = [planRow('AI491', { male_sections: 3, female_sections: 4, num_sections: 7, programs: ['AI'] }),
-    planRow('DS201', { male_sections: 1, female_sections: 1, num_sections: 2, programs: ['DS'] }),
-    planRow('MATH203', { male_sections: 1, female_sections: 1, num_sections: 2, programs: ['AI', 'DS'] })];
+  const ai = [planRow('AI491', { num_sections: 7 }), planRow('MATH203', { num_sections: 1 })];
+  const ds = [planRow('DS201', { num_sections: 2 }), planRow('MATH203', { num_sections: 1 })];
+  const combined = [planRow('AI491', { num_sections: 7, programs: ['AI'] }),
+    planRow('DS201', { num_sections: 2, programs: ['DS'] }),
+    planRow('MATH203', { num_sections: 2, programs: ['AI', 'DS'] })];
   return {
-    ok: true, mode: 'multi', year: 1448, semester: 1, student_count: 60, cohorts: { M: 25, F: 35, no_gender: 0 },
+    ok: true, mode: 'multi', year: 1448, semester: 1, section: 'M', student_count: 60, no_section: 0,
     combined_plan: combined, combined_summary: summaryOf(combined),
     programs: [
       { program: 'AI', student_count: 1, plan: ai, summary: summaryOf(ai) },
@@ -903,7 +1076,7 @@ function multiPlan() {
 const heads = (_ui, table) => [...table.querySelectorAll('thead th')].map(th => th.textContent.trim());
 
 test('every result cell carries its column header as its phone label, and a card keeps the numbers', async t => {
-  const ui = await page(t, { generate: () => answer(cohortPlan()) });
+  const ui = await page(t, { generate: body => answer(sectionPlan(body.section)) });
   ui.$('spGenerate').click();
   await settle();
 
@@ -916,10 +1089,8 @@ test('every result cell carries its column header as its phone label, and a card
   const hidden = cells.filter(td => td.classList.contains('mc-hide')).map(td => td.dataset.label);
   assert.deepEqual(hidden, say(['#', 'Dept', 'Cr', 'Avg'], ['#', 'القسم', 'ساعات', 'المتوسط']));
   const card = cls => cells.find(td => td.classList.contains(cls));
-  assert.equal(card('sp-c-demand').querySelector('strong').textContent, '42');
-  assert.equal(card('sp-sec-m').textContent, '1');
-  assert.equal(card('sp-sec-f').textContent, '2');
-  assert.equal(card('sp-sec-total').textContent, '3');
+  assert.equal(card('sp-c-demand').querySelector('strong').textContent, '30');
+  assert.equal(card('sp-c-sections').querySelector('strong').textContent, '2');
   assert.match(card('sp-c-max').textContent, /^25/);
   assert.ok(card('sp-c-fill').querySelector('.sp-fill'));
   assert.deepEqual(cells.filter(td => td.classList.contains('mc-primary')).map(td => td.dataset.label), labels.slice(2, 4));
@@ -1090,11 +1261,11 @@ test('a programme table sorts once per press after being opened and closed', asy
 
 const cellsOf = tr => Object.fromEntries([...tr.querySelectorAll('[data-col]')].map(td => [td.dataset.col, Number(td.textContent)]));
 
-test('the summary\'s total row equals the KPIs, M and F included, with a subtotal per group', async t => {
+test('the summary\'s total row equals the KPIs, with a subtotal per group', async t => {
   const plan = [
-    planRow('AI331', { male_sections: 1, female_sections: 2, num_sections: 3 }),
-    planRow('CS211', { male_sections: 2, female_sections: 0, num_sections: 2 }),
-    planRow('MATH203', { male_sections: 1, female_sections: 1, num_sections: 2 }),
+    planRow('AI331', { num_sections: 3 }),
+    planRow('CS211', { num_sections: 2 }),
+    planRow('MATH203', { num_sections: 2 }),
   ];
   const data = generated(plan);
   data.summary = summaryOf(plan);
@@ -1107,26 +1278,21 @@ test('the summary\'s total row equals the KPIs, M and F included, with a subtota
   const total = cellsOf(doc.querySelector('#spDeptSummary tfoot tr[data-sum-total]'));
   assert.equal(String(total.sections), ui.text('spKpiSections'));
   assert.equal(String(total.courses), ui.text('spKpiCourses'));
-  assert.equal(splitText(total.male_sections, total.female_sections), ui.text('spKpiSectionsSplit'));
-  assert.deepEqual([total.male_sections, total.female_sections, total.sections], [4, 3, 7]);
+  assert.deepEqual([total.sections, total.courses], [7, 3]);
   assert.equal(cellsOf(doc.querySelector('#spDeptSummary [data-subtotal="ours"]')).sections, 5);
   assert.equal(cellsOf(doc.querySelector('#spDeptSummary [data-subtotal="service"]')).sections, 2);
   const heads = [...doc.querySelectorAll('#spDeptSummary thead th')].map(th => th.textContent);
   assert.deepEqual(heads, say(
-    ['Department', 'M sections', 'F sections', 'Total sections', 'Courses', 'Seat demand', 'Teaching hours'],
-    ['القسم', 'شعب الذكور', 'شعب الإناث', 'مجموع الشعب', 'المقررات', 'المقاعد المطلوبة', 'ساعات التدريس'],
+    ['Department', 'Sections', 'Courses', 'Seat demand', 'Teaching hours'],
+    ['القسم', 'الشعب', 'المقررات', 'المقاعد المطلوبة', 'ساعات التدريس'],
   ));
   // Each number sits under its own header, in every row.
   for (const tr of doc.querySelectorAll('#spDeptSummary tr[data-dept], #spDeptSummary tfoot tr')) {
-    assert.deepEqual([...tr.children].slice(1).map(td => td.dataset.col),
-      ['male_sections', 'female_sections', 'sections', 'courses', 'students', 'total_credits']);
+    assert.deepEqual([...tr.children].slice(1).map(td => td.dataset.col), ['sections', 'courses', 'students', 'total_credits']);
   }
-
-  function splitText(m, f) { return say(`M ${m} · F ${f}`, `ذكور ${m} · إناث ${f}`); }
 });
-
 test('one group needs no subtotal', async t => {
-  const plan = [planRow('AI331', { male_sections: 1, female_sections: 1, num_sections: 2 })];
+  const plan = [planRow('AI331', { num_sections: 2 })];
   const data = generated(plan);
   data.summary = summaryOf(plan);
   const ui = await page(t, { generate: () => answer(data) });
@@ -1154,8 +1320,7 @@ test('several programmes: the summary totals the pooled KPIs, and each programme
   blocks.forEach((block, i) => {
     const prog = data.programs[i];
     const total = cellsOf(block.querySelector('[data-sum-total]'));
-    assert.deepEqual([total.courses, total.male_sections, total.female_sections, total.sections],
-      [prog.summary.total_courses, prog.summary.male_sections, prog.summary.female_sections, prog.summary.total_sections]);
+    assert.deepEqual([total.courses, total.sections], [prog.summary.total_courses, prog.summary.total_sections]);
     const heading = block.querySelector('.sp-prog-toggle').textContent.replace(/\s+/g, ' ');
     assert.ok(heading.includes(`${prog.summary.total_sections} `), heading);
     assert.ok(block.querySelector('.sp-sum-panel h6').textContent.includes(prog.program));
@@ -1172,8 +1337,8 @@ test('programme headings count in words that agree with the number, numbers and 
 
   const headings = [...ui.window.document.querySelectorAll('#spMultiPrograms .sp-prog-toggle')];
   assert.deepEqual(headings.map(h => h.textContent.replace(/\s+/g, ' ').trim()), say(
-    ['AI (1 student · 2 courses · 8 sections: M 4 · F 4)', 'DS (2 students · 2 courses · 3 sections: M 1 · F 2)'],
-    ['AI (1 طالب · 2 مقرران · 8 شعب: ذكور 4 · إناث 4)', 'DS (2 طالبان · 2 مقرران · 3 شعب: ذكور 1 · إناث 2)'],
+    ['AI (1 student · 2 courses · 8 sections)', 'DS (2 students · 2 courses · 3 sections)'],
+    ['AI (1 طالب · 2 مقرران · 8 شعب)', 'DS (2 طالبان · 2 مقرران · 3 شعب)'],
   ));
   const [ai] = headings;
   assert.equal(ai.querySelector('.sp-prog-code').tagName, 'BDI');

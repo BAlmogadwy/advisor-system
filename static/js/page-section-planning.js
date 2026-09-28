@@ -13,13 +13,14 @@ const T = {
   lastUpdate:  IS_AR ? 'آخر تحديث' : 'Last update',
   deptSummary: IS_AR ? 'ملخص الأقسام' : 'Department Summary',
   noRecs:      IS_AR ? 'لا توجد توصيات.' : 'No recommendations found.',
-  male:        IS_AR ? 'ذكور' : 'M',
-  female:      IS_AR ? 'إناث' : 'F',
-  noGender:    (n, seats, courses) => IS_AR
-    ? `${n} طالب بلا جنس مسجّل: يحتاجون ${seats} مقعداً في ${courses} مقرر، وهم خارج كل الأعداد. سجّل جنسهم ثم أعد الحساب.`
-    : `${n} student${n === 1 ? ' has' : 's have'} no recorded gender: ${seats} seat${seats === 1 ? '' : 's'} across ${courses} course${courses === 1 ? '' : 's'}, left out of every count. Record their gender, then generate again.`,
-  noGenderRow: n => IS_AR ? `+${n} بلا جنس` : `+${n} no gender`,
-  noGenderOnly: IS_AR ? 'بلا جنس مسجّل' : 'No gender recorded',
+  emptyScope:  IS_AR ? 'حدد السنة والفصل والشطر ثم انقر حساب.' : 'Set Year, Semester & Section, then click Generate.',
+  allProgs:    IS_AR ? 'كل البرامج' : 'All programmes',
+  /* "1448 T1": the year, then the term. */
+  term:        IS_AR ? 'ف' : 'T',
+  /* The section a plan is for: a Room's and a student's section are M or F. */
+  sections:    { M: IS_AR ? 'طلاب' : 'Male', F: IS_AR ? 'طالبات' : 'Female' },
+  chooseSection: IS_AR ? 'اختر شطر الطلاب (M) أو الطالبات (F).' : 'Choose Male (M) or Female (F).',
+  badSection:  IS_AR ? 'الشطر غير صالح: اختر شطر الطلاب (M) أو الطالبات (F).' : 'That section is not valid: choose Male (M) or Female (F).',
   /* A resolved elective fills a slot: "AI463 ← AI1". In a right-to-left line
    * the arrow is mirrored so it still points from the slot to the course. */
   fills:       IS_AR ? '→' : '←',
@@ -68,14 +69,18 @@ function countHtml(n, noun) {
   return `<bdi>${value}</bdi> ${esc(nounFor(value, noun))}`;
 }
 
+/* Students with no recorded section are in neither plan: said, never pooled.
+ * The verb (and in Arabic the pronoun) agrees with the number. */
+function noSectionText(n) {
+  const one = PLURAL.select(n) === 'one';
+  if (!IS_AR) return `${countText(n, 'student')} ${one ? 'has' : 'have'} no recorded section and ${one ? 'is' : 'are'} not in this plan.`;
+  const them = { one: 'فهو', two: 'فهما' }[PLURAL.select(n)] || 'فهم';
+  return `${countText(n, 'student')} بلا شطر مسجَّل، ${them} خارج هذه الخطة.`;
+}
+
 /* A disclosure chevron: CSS points it along the reading direction when
  * closed (right in English, left in Arabic) and down when open. */
 const CHEVRON = '<svg class="sp-chev" viewBox="0 0 16 16" width="12" height="12" aria-hidden="true" focusable="false"><path d="M6 3l5 5-5 5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
-
-/* M · F split for a KPI, a row or a summary card. */
-function splitText(male, female) {
-  return `${T.male} ${male ?? 0} · ${T.female} ${female ?? 0}`;
-}
 
 const CSRF = document.querySelector('[name=csrfmiddlewaretoken]')?.value
   || 'djCsrfToken';
@@ -189,7 +194,11 @@ const REQUEST_ERRORS = {
   invalid_json:     () => LIMIT_ERRORS.invalid_json(),
   invalid_term:     () => IS_AR ? 'السنة أو الفصل غير صالح.' : 'The year or semester is not valid.',
   invalid_capacity: () => IS_AR ? 'حدود الشعب يجب أن تكون أرقاماً صحيحة.' : 'Section limits must be whole numbers.',
+  section_required: () => T.chooseSection,
+  section_invalid:  () => T.badSection,
 };
+/* Refusals about the section are said at the Section control, not the status line. */
+const SECTION_ERRORS = new Set(['section_required', 'section_invalid']);
 function requestError(data, status) {
   const make = data && REQUEST_ERRORS[data.code];
   if (make) return make(data);
@@ -607,12 +616,46 @@ $('spProgram').addEventListener('change', () => {
   if (_advState !== 'idle') loadAdvancedCourses();
 });
 
+/* ── Section: one per plan, M or F ──
+ * Native radios in the scope form. Nothing is chosen on a first visit; the
+ * last choice is remembered in this browser (a preference: Reset keeps it).
+ * Storage is a convenience only: the page works when it is missing or throws. */
+const SECTION_KEY = 'sectionPlanning.section';
+const sectionRadios = () => [...document.querySelectorAll('#spSectionGroup input[name="spSection"]')];
+function chosenSection() {
+  return sectionRadios().find(radio => radio.checked)?.value || '';
+}
+function clearSectionMessage() {
+  $('spSectionMsg').textContent = '';
+  $('spSectionGroup').removeAttribute('aria-invalid');
+}
+/* Said at the control (an alert), and the keyboard is taken there. */
+function showSectionMessage(text) {
+  hideStatus();
+  $('spSectionGroup').setAttribute('aria-invalid', 'true');
+  $('spSectionMsg').textContent = text;
+  const radios = sectionRadios();
+  (radios.find(radio => radio.checked) || radios[0]).focus();
+}
+(function rememberSection() {
+  let stored = null;
+  try { stored = window.localStorage.getItem(SECTION_KEY); } catch (_) { stored = null; }
+  const radio = sectionRadios().find(r => r.value === stored);
+  if (radio) radio.checked = true;
+  sectionRadios().forEach(r => r.addEventListener('change', () => {
+    if (!r.checked) return;
+    clearSectionMessage();
+    try { window.localStorage.setItem(SECTION_KEY, r.value); } catch (_) { /* not remembered: still chosen */ }
+  }));
+})();
+
 /* ── Collect payload ── */
 function getPayload() {
   const overrides = collectOverrides();
   const payload = {
     year:            parseInt($('spYear').value, 10) || 0,
     semester:        parseInt($('spSemester').value, 10) || 0,
+    section:         chosenSection(),
     program:         $('spProgram').value.trim().toUpperCase(),
     max_local_4cr:   parseInt($('spCapLocal4').value, 10) || 25,
     max_local_other: parseInt($('spCapLocalOther').value, 10) || 40,
@@ -701,7 +744,19 @@ document.addEventListener('scroll', event => {
   }
 }, { capture: true, passive: true });
 
-function renderResults(data) {
+/* The result's scope as a heading: "AI · 1448 T1 · Female (F)". It names the
+ * section the result on screen was generated for (the server's answer), not
+ * the radio's state now: Export exports exactly this. Codes are LTR islands. */
+function resultScopeHtml(payload, data) {
+  const programs = [...new Set(String(payload.program || '').split(',').map(p => p.trim()).filter(Boolean))];
+  const scope = programs.length ? programs.map(p => `<bdi>${esc(p)}</bdi>`).join(', ') : esc(T.allProgs);
+  const section = data.section || payload.section;
+  const term = `<bdi>${esc(data.year ?? payload.year)}</bdi> ${T.term}<bdi>${esc(data.semester ?? payload.semester)}</bdi>`;
+  return `${scope} · ${term} · ${esc(T.sections[section] || '')} <bdi>(${esc(section)})</bdi>`;
+}
+
+function renderResults(data, payload) {
+  $('spResultsScope').innerHTML = resultScopeHtml(payload, data);
   if (data.mode === 'multi') {
     renderMultiProgramResults(data);
   } else {
@@ -716,15 +771,16 @@ const PLAN_HEAD_HTML = $('spTable').tHead.innerHTML;
 const PLAN_LABELS = [...$('spTable').tHead.querySelectorAll('th')].map(th => th.textContent.trim());
 /* Each column's part in a phone card (<=768px, .mobile-cards): hidden, the
  * title line (code, name), or a number; the number classes also order the
- * card: demand, max, fill, then M | F | Total sections, then the status. */
+ * card: demand, sections, max, then the fill bar, then the status. */
 const CARD_ROLE = ['mc-hide', 'mc-hide', 'mc-primary', 'mc-primary', 'mc-hide', 'sp-c-demand',
-  'sp-sec-m', 'sp-sec-f', 'sp-sec-total', 'sp-c-max', 'mc-hide', 'sp-c-fill', 'sp-c-status'];
+  'sp-c-sections', 'sp-c-max', 'mc-hide', 'sp-c-fill', 'sp-c-status'];
+const PLAN_COLUMNS = CARD_ROLE.length;
 wireSortOnce($('spTable'));   // after the header is read: the copies start unsorted
 
 /* ── Build table rows HTML from a plan array ── */
 function buildPlanRows(plan) {
   if (!plan.length) {
-    return `<tr><td colspan="13" class="empty-note">${T.noRecs}</td></tr>`;
+    return `<tr><td colspan="${PLAN_COLUMNS}" class="empty-note">${T.noRecs}</td></tr>`;
   }
   return plan.map((row, idx) => {
     const fillCls = row.fill_percent >= 80 ? 'sp-fill-hi'
@@ -735,15 +791,11 @@ function buildPlanRows(plan) {
       statusHtml = `<span class="sp-pill sp-pill-full">${T.full}</span>`;
     } else if (row.status === 'underfilled') {
       statusHtml = `<span class="sp-pill sp-pill-under">${T.underfilled}</span>`;
-    } else if (row.status === 'no_gender') {
-      statusHtml = `<span class="sp-pill sp-pill-under">${T.noGenderOnly}</span>`;
     }
     const slots = (row.slots || []).join(', ');
     const slotTag = slots
       ? ` <span class="sp-slot" title="${esc(T.fillsTitle(slots))}">${T.fills} <bdi>${esc(slots)}</bdi></span>` : '';
     const source = T.source[row.limit_source] ? T.source[row.limit_source](slots) : '';
-    const noGender = row.unknown_students
-      ? `<div class="sp-cell-sub sp-no-gender">${esc(T.noGenderRow(row.unknown_students))}</div>` : '';
     const extBadge = row.is_external ? ` <span class="sp-pill sp-pill-ext">EXT</span>` : '';
     const programs = Array.isArray(row.programs) ? row.programs.filter(Boolean) : [];
     const programTags = programs.length
@@ -756,10 +808,7 @@ function buildPlanRows(plan) {
       [`<span class="cr-id">${esc(row.course_code)}</span>${slotTag}${extBadge}`],
       [`${programTags}<span>${esc(courseName)}</span>`],
       [esc(row.credit_hours), 'text-center'],
-      [`<strong>${esc(row.total_students)}</strong>
-        <div class="sp-cell-sub">${esc(splitText(row.male_students, row.female_students))}</div>${noGender}`, 'text-center'],
-      [esc(row.male_sections ?? 0), 'text-center'],
-      [esc(row.female_sections ?? 0), 'text-center'],
+      [`<strong>${esc(row.total_students)}</strong>`, 'text-center'],
       [`<strong>${esc(row.num_sections)}</strong>`, 'text-center'],
       [`${esc(row.max_per_section)}${source ? `<div class="sp-cell-sub sp-limit-src">${esc(source)}</div>` : ''}`, 'text-center'],
       [esc(row.avg_per_section), 'text-center'],
@@ -778,16 +827,14 @@ function buildPlanRows(plan) {
 
 /* ── Department summary: every department in the result, in two groups by
  * the server's list of our departments (ours; then the service departments,
- * whose sections are requested from them), each with M, F and Total
- * sections. The total row adds the departments up; the server's summary is
- * the same plan, so it equals the result's KPIs. ── */
+ * whose sections are requested from them), with the section's sections.
+ * The total row adds the departments up; the server's summary is the same
+ * plan, so it equals the result's KPIs. ── */
 const TS = {
   dept:       IS_AR ? 'القسم' : 'Department',
   courses:    IS_AR ? 'المقررات' : 'Courses',
   seats:      IS_AR ? 'المقاعد المطلوبة' : 'Seat demand',
-  male:       IS_AR ? 'شعب الذكور' : 'M sections',
-  female:     IS_AR ? 'شعب الإناث' : 'F sections',
-  sections:   IS_AR ? 'مجموع الشعب' : 'Total sections',
+  sections:   IS_AR ? 'الشعب' : 'Sections',
   hours:      IS_AR ? 'ساعات التدريس' : 'Teaching hours',
   hoursTitle: IS_AR ? 'ساعات المقرر × عدد الشعب' : 'Credit hours × sections',
   ours:       IS_AR ? 'أقسامنا' : 'Our departments',
@@ -796,7 +843,7 @@ const TS = {
   total:      IS_AR ? 'المجموع' : 'Total',
 };
 /* Sections first: on a phone they show before the table scrolls sideways. */
-const SUM_COLS = ['male_sections', 'female_sections', 'sections', 'courses', 'students', 'total_credits'];
+const SUM_COLS = ['sections', 'courses', 'students', 'total_credits'];
 
 function sumDepartments(depts) {
   const total = Object.fromEntries(SUM_COLS.map(key => [key, 0]));
@@ -820,7 +867,7 @@ function buildDeptSummaryHtml(summary) {
       ${rows.map(d => `<tr data-dept="${esc(d.department)}"><th scope="row"><bdi>${esc(d.department)}</bdi></th>${sumCells(d)}</tr>`).join('')}
       ${groups.length > 1 ? `<tr class="sp-sum-sub" data-subtotal="${key}"><th scope="row">${esc(TS.subtotal)}</th>${sumCells(sumDepartments(rows))}</tr>` : ''}
     </tbody>`).join('');
-  const head = [TS.dept, TS.male, TS.female, TS.sections, TS.courses, TS.seats]
+  const head = [TS.dept, TS.sections, TS.courses, TS.seats]
     .map(text => `<th scope="col">${esc(text)}</th>`).join('')
     + `<th scope="col" title="${esc(TS.hoursTitle)}">${esc(TS.hours)}</th>`;
   return `<table class="sp-sum-table">
@@ -829,7 +876,8 @@ function buildDeptSummaryHtml(summary) {
     </table>`;
 }
 
-/* ── KPIs: Sections = M + F; no-gender students stated, never pooled ── */
+/* ── KPIs: the section's students, courses, sections and fill; students
+ * with no recorded section stated, never pooled ── */
 function renderDroppedSlots(electives) {
   const note = $('spElectiveNote');
   const e = electives || {};
@@ -844,25 +892,17 @@ function renderDroppedSlots(electives) {
   note.classList.remove('d-none');
 }
 
-function renderKpis(studentCount, cohorts, summary, electives) {
-  const c = cohorts || {};
+function renderKpis(data, summary) {
   const s = summary || {};
-  $('spKpiStudents').textContent = String(studentCount ?? 0);
-  $('spKpiStudentsSplit').textContent = splitText(c.M, c.F);
+  $('spKpiStudents').textContent = String(data.student_count ?? 0);
   $('spKpiCourses').textContent = String(s.total_courses || 0);
   $('spKpiSections').textContent = String(s.total_sections || 0);
-  $('spKpiSectionsSplit').textContent = splitText(s.male_sections, s.female_sections);
   $('spKpiFill').textContent = (s.avg_fill_percent || 0) + '%';
-  renderDroppedSlots(electives);
-  const ng = s.no_gender || {};
-  const note = $('spGenderNote');
-  if (ng.students) {
-    note.textContent = T.noGender(ng.students, ng.seat_demand || 0, ng.courses || 0);
-    note.classList.remove('d-none');
-  } else {
-    note.textContent = '';
-    note.classList.add('d-none');
-  }
+  renderDroppedSlots(data.electives);
+  const missing = Number(data.no_section) || 0;
+  const note = $('spNoSectionNote');
+  note.textContent = missing ? noSectionText(missing) : '';
+  note.classList.toggle('d-none', !missing);
 }
 
 /* ── Single-program mode (original behavior) ── */
@@ -877,7 +917,7 @@ function renderSingleProgramResults(data) {
 
 
   /* KPIs */
-  renderKpis(data.student_count, data.cohorts, data.summary, data.electives);
+  renderKpis(data, data.summary);
 
   /* Timestamp */
   $('spTimestamp').textContent = T.lastUpdate + ': ' + new Date().toLocaleTimeString();
@@ -887,7 +927,7 @@ function renderSingleProgramResults(data) {
   const plan = data.plan || [];
 
   if (!plan.length) {
-    tbody.innerHTML = `<tr><td colspan="13" class="empty-note">${T.noRecs}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="${PLAN_COLUMNS}" class="empty-note">${T.noRecs}</td></tr>`;
     $('spDeptSummary').innerHTML = '';
     return;
   }
@@ -915,7 +955,7 @@ function renderMultiProgramResults(data) {
 
   /* KPIs from the pooled plan (programmes share sections, as the builder pools them) */
   const cs = data.combined_summary || {};
-  renderKpis(data.student_count, data.cohorts, cs, data.electives);
+  renderKpis(data, cs);
 
   /* Timestamp */
   $('spTimestamp').textContent = T.lastUpdate + ': ' + new Date().toLocaleTimeString();
@@ -924,7 +964,7 @@ function renderMultiProgramResults(data) {
   const combinedPlan = data.combined_plan || [];
   const tbody = $('spTable').querySelector('tbody');
   if (!combinedPlan.length) {
-    tbody.innerHTML = `<tr><td colspan="13" class="empty-note">${T.noRecs}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="${PLAN_COLUMNS}" class="empty-note">${T.noRecs}</td></tr>`;
     $('spDeptSummary').innerHTML = '';
   } else {
     tbody.innerHTML = buildPlanRows(combinedPlan);
@@ -953,7 +993,7 @@ function renderMultiProgramResults(data) {
       ${CHEVRON}<bdi class="sp-prog-code">${esc(prog.program)}</bdi>
       <span class="sp-prog-count">(${countHtml(prog.student_count, 'student')}
         · ${countHtml(summary.total_courses, 'course')}
-        · ${countHtml(summary.total_sections, 'section')}: ${esc(splitText(summary.male_sections, summary.female_sections))})</span></button>`;
+        · ${countHtml(summary.total_sections, 'section')})</span></button>`;
     block.appendChild(heading);
     const toggle = heading.querySelector('button');
 
@@ -998,7 +1038,8 @@ function renderMultiProgramResults(data) {
 
 /* ── Generate: the scope form's submit, so Enter in Year, Semester or
  * Program runs it too. Generate is the form's only submit button; the seat
- * limits' Save lives outside the form, so Enter never saves. ── */
+ * limits' Save lives outside the form, so Enter never saves. A plan is for
+ * one section: with none chosen, nothing is asked of the server. ── */
 async function runGenerate() {
   const btn = $('spGenerate');
   if (btn.disabled) return;   // one Generate at a time
@@ -1007,6 +1048,11 @@ async function runGenerate() {
     showStatus(T.fillAll, 'err');
     return;
   }
+  if (!payload.section) {
+    showSectionMessage(T.chooseSection);
+    return;
+  }
+  clearSectionMessage();
 
   btn.disabled = true;
   btn.textContent = T.generating;
@@ -1023,12 +1069,12 @@ async function runGenerate() {
     const data = await res.json().catch(() => ({}));
 
     if (!res.ok || !data.ok) {
-      showStatus(requestError(data, res.status), 'err');
+      reportRefusal(data, res.status);
       return;
     }
 
     _lastPayload = payload;
-    renderResults(data);
+    renderResults(data, payload);
     showStatus(T.done, 'ok');   // the one success channel: the status line, not a toast as well
 
   } catch (err) {
@@ -1044,7 +1090,27 @@ $('spScopeForm').addEventListener('submit', event => {
   runGenerate();
 });
 
-/* ── Export click ── */
+/* A refusal in the page's words: about the section, at the Section control. */
+function reportRefusal(data, status) {
+  if (data && SECTION_ERRORS.has(data.code)) showSectionMessage(requestError(data, status));
+  else showStatus(requestError(data, status), 'err');
+}
+
+/* The file name the server gave the download (it names the section), else
+ * one made the same way. */
+function downloadName(res, payload) {
+  const header = (res.headers && typeof res.headers.get === 'function' && res.headers.get('Content-Disposition')) || '';
+  const encoded = /filename\*\s*=\s*UTF-8''([^;]+)/i.exec(header);
+  if (encoded) {
+    try { return decodeURIComponent(encoded[1].trim()); } catch (_) { /* the plain name, then */ }
+  }
+  const plain = /filename\s*=\s*(?:"([^"]+)"|([^;]+))/i.exec(header);
+  const name = plain ? (plain[1] || plain[2] || '').trim() : '';
+  return name || `section_plan_${payload.year}_${payload.semester}_${payload.section}.xlsx`;
+}
+
+/* ── Export: exactly the result on screen (its payload, its section), even
+ * if the scope fields or the Section radio changed since. ── */
 $('spExport').onclick = async () => {
   if (!_lastPayload) return;
 
@@ -1065,7 +1131,7 @@ $('spExport').onclick = async () => {
 
     if (!res.ok) {
       const errData = await res.json().catch(() => ({}));
-      showStatus(requestError(errData, res.status), 'err');
+      reportRefusal(errData, res.status);
       return;
     }
 
@@ -1074,7 +1140,7 @@ $('spExport').onclick = async () => {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `section_plan_${_lastPayload.year}_${_lastPayload.semester}.xlsx`;
+    a.download = downloadName(res, exportPayload);
     document.body.appendChild(a);
     a.click();
     a.remove();
@@ -1090,18 +1156,20 @@ $('spExport').onclick = async () => {
   }
 };
 
-/* ── Reset click ── */
+/* ── Reset click: clears the scope and the result; the chosen section is a
+ * preference, not a draft, so it stays chosen. ── */
 $('spReset').onclick = () => {
   $('spProgram').value = '';
   $('spResults').classList.add('d-none');
   hideStatus();
+  clearSectionMessage();
   _lastPayload = null;
 
   /* Restore single-mode table visibility */
   $('spTable').style.display = '';
   $('spPager').style.display = '';
   $('spTable').querySelector('tbody').innerHTML =
-    `<tr><td colspan="13" class="empty-note">${IS_AR ? 'حدد السنة والفصل ثم انقر حساب.' : 'Set Year & Semester, then click Generate.'}</td></tr>`;
+    `<tr><td colspan="${PLAN_COLUMNS}" class="empty-note">${esc(T.emptyScope)}</td></tr>`;
   $('spDeptSummary').innerHTML = '';
 
   /* Clear multi-program container */

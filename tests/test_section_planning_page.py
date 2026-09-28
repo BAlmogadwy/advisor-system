@@ -47,13 +47,44 @@ def test_scope_fields_are_a_form_whose_only_submit_is_generate(
     assert form is not None
     assert form.has_attr("novalidate"), "the page's own messages, not the browser's bubbles"
     fields = [field["id"] for field in form.find_all("input")]
-    assert fields == ["spYear", "spSemester", "spProgram"]
+    assert fields == ["spYear", "spSemester", "spProgram", "spSectionM", "spSectionF"]
     buttons = {button["id"]: button.get("type") for button in form.find_all("button")}
     assert buttons == {"spGenerate": "submit", "spReset": "button"}
     # Enter submits through the form's first submit button, which must be Generate;
     # the seat limits and their Save are never inside it.
     assert form.find(id="spAdvSaveDb") is None
     assert form.find(id="spAdvPanel") is None
+
+
+@pytest.mark.parametrize("language", ["en", "ar"])
+def test_the_section_is_a_required_choice_of_one_with_nothing_chosen(
+    client: Client, language: str
+) -> None:
+    """One section per plan: Male (M) or Female (F), native radios, none checked."""
+    soup = _page(client, language)
+    group = soup.find(id="spSectionGroup")
+    assert group.find_parent("form")["id"] == "spScopeForm"
+    assert group["role"] == "radiogroup"
+    assert group["aria-required"] == "true"
+    assert soup.find(id=group["aria-labelledby"]).get_text(strip=True) == (
+        "الشطر" if language == "ar" else "Section"
+    )
+    message = soup.find(id=group["aria-describedby"])
+    assert message.get("role") == "alert" and message.get_text(strip=True) == ""
+    radios = group.find_all("input")
+    assert [(r["type"], r["name"], r["value"]) for r in radios] == [
+        ("radio", "spSection", "M"),
+        ("radio", "spSection", "F"),
+    ]
+    assert not any(r.has_attr("checked") for r in radios), "nothing chosen on a first visit"
+    assert all(r.has_attr("required") for r in radios)
+    labels = [soup.find("label", attrs={"for": r["id"]}).get_text(" ", strip=True) for r in radios]
+    assert labels == (
+        ["طلاب (M)", "طالبات (F)"] if language == "ar" else ["Male (M)", "Female (F)"]
+    )
+    # The old promise that both are planned, and summed, is gone from the page.
+    text = soup.get_text(" ", strip=True)
+    assert "M + F" not in text and "Total sections" not in text and "مجموع الشعب" not in text
 
 
 @pytest.mark.parametrize("language", ["en", "ar"])
