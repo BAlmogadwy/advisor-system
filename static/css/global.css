@@ -2871,11 +2871,22 @@ html[dir="rtl"] .nav-lbl,
 html[dir="rtl"] .kpi .k,
 html[dir="rtl"] .ph-chip-context,
 html[dir="rtl"] .student-next-step-label,
-html[dir="rtl"] .sp-kpi-card span {
+html[dir="rtl"] .sp-kpi-card span,
+/* Section Planning (its page wrapper .sp-page; the save review dialog sits
+   outside it, under its own class): headers, KPI labels, rule labels,
+   programme counts and a phone card's labels. */
+html[dir="rtl"] .sp-page .tbl-card thead th,
+html[dir="rtl"] .sp-page .sp-mc .k,
+html[dir="rtl"] .sp-page .sp-caps-lbl,
+html[dir="rtl"] .sp-page .sp-adv-table th,
+html[dir="rtl"] .sp-page .sp-prog-count,
+html[dir="rtl"] .sp-page .mobile-cards tbody td::before,
+html[dir="rtl"] .sp-limit-review th {
   font-family: var(--font-body);
   letter-spacing: 0;
   text-transform: none;
 }
+html[dir="rtl"] .sp-page .text-caps::placeholder { letter-spacing: 0; }
 
 html[dir="rtl"] .page-intro,
 html[dir="rtl"] .page-intro p { line-height: 1.75; }
@@ -8459,6 +8470,25 @@ html[data-theme="dark"] .btn-export {
     .sp-caps-info { font-size: .72rem; color: var(--t3); align-self: center; margin-inline-start: auto; }
     .sp-toggle-caps { font-size: .78rem; color: var(--teal); cursor: pointer; background: none; border: none; font-weight: 600; padding: 2px 0; text-decoration: underline; text-underline-offset: 2px; }
 
+    /* Scope fields: each as wide as its value, never the 80px compact cap.
+       Widths are in ch, so a wider font (Arabic, a CI machine's fonts)
+       widens the field with it. Year holds 4 digits, Semester 1, Program a
+       few codes and grows into spare room. */
+    .sp-page .sp-fb-field { flex: 0 0 auto; max-width: none; }
+    .sp-page .sp-fb-field .fb-lbl { flex: none; white-space: nowrap; }
+    .sp-page .sp-fb-input { flex: 0 0 auto; min-width: 0; font-variant-numeric: tabular-nums; }
+    .sp-page .sp-fb-year { width: 6ch; }
+    .sp-page .sp-fb-term { width: 3ch; }
+    .sp-page .sp-fb-grow { flex: 1 1 auto; max-width: 26rem; }
+    .sp-page .sp-fb-codes { flex: 1 1 auto; width: 15ch; }
+    .sp-page .sp-dept-filter { gap: 8px; }
+    .sp-page .sp-dept-filter-input { width: calc(22ch + 2.5rem); }
+    /* The capsule is the field: a keyboard user sees a full-strength ring. */
+    .sp-page .fb-search:focus-within { box-shadow: var(--shadow-neu-inset), 0 0 0 2px var(--teal); }
+    /* Dark mode's shared field glow is a 20% ring set with !important; the
+       page's full-strength ring has to win there too (4.6:1 on Deep Navy). */
+    html[data-theme="dark"] .sp-page .fb-search:focus-within { box-shadow: inset 0 1px 3px rgba(0,0,0,0.2), 0 0 0 2px var(--teal) !important; }
+
     /* KPI cards */
     .sp-kpi { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; margin-bottom: 14px; }
     .sp-mc { padding: .65rem .85rem; }
@@ -8480,16 +8510,29 @@ html[data-theme="dark"] .btn-export {
     /* Fill bar */
     .sp-fill-wrap { width: 100%; height: 6px; border-radius: 3px; background: var(--t5); overflow: hidden; }
     .sp-fill { height: 100%; border-radius: 3px; transition: width 0.3s var(--ease); }
+    .sp-fill-cell { min-width: 80px; }
     .sp-fill-hi { background: var(--teal); }
     .sp-fill-md { background: var(--warning); }
     .sp-fill-lo { background: var(--danger); }
 
     /* Department summary */
-    .sp-dept-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 8px; }
-    .sp-dept-card { border: var(--border-subtle); border-radius: var(--radius); padding: .55rem .75rem; background: var(--glass-bg); }
-    .sp-dept-card .dept-name { font-weight: 700; font-size: .82rem; color: var(--navy); margin-bottom: 4px; }
-    .sp-dept-card .dept-stat { font-size: .72rem; color: var(--t3); }
-    .sp-dept-card .dept-stat b { color: var(--t1); }
+    /* Department summary: one table, our departments then the service
+       departments, a subtotal each, and a total row equal to the KPIs.
+       Numbers end-aligned in tabular figures; it scrolls in its own box
+       if a phone is narrower than its seven columns. Scoped to .sp-page so
+       they outrank the global dark table rules (html[data-theme] table td,
+       table th), which would otherwise fade the row lines, the teal total
+       rule and the "Total" label under every column but the first. */
+    .sp-sum-scroll { overflow-x: auto; }
+    .sp-page .sp-sum-table { width: 100%; border-collapse: collapse; font-size: .8rem; font-variant-numeric: tabular-nums; }
+    .sp-page .sp-sum-table th, .sp-page .sp-sum-table td { padding: 5px 8px; border-bottom: 1px solid var(--t5); text-align: end; }
+    .sp-page .sp-sum-table thead th { font-size: .75rem; font-weight: 700; color: var(--t3); vertical-align: bottom; }
+    .sp-page .sp-sum-table thead th:first-child, .sp-page .sp-sum-table th[scope="row"] { text-align: start; }
+    .sp-page .sp-sum-table tbody th[scope="row"] { font-weight: 700; color: var(--navy); }
+    .sp-page .sp-sum-table .sp-sum-group th { text-align: start; font-size: .75rem; font-weight: 700; color: var(--t2); padding-top: 10px; background: color-mix(in srgb, var(--teal) 6%, transparent); }
+    .sp-page .sp-sum-table .sp-sum-sub th, .sp-page .sp-sum-table .sp-sum-sub td { color: var(--t2); font-weight: 600; border-bottom-style: dashed; }
+    .sp-page .sp-sum-table [data-col="sections"] { font-weight: 700; }
+    .sp-page .sp-sum-table tfoot th, .sp-page .sp-sum-table tfoot td { font-weight: 700; color: var(--t1); border-top: 2px solid var(--teal); border-bottom: 0; }
 
     /* Export bar */
     .sp-export-bar { display: flex; align-items: center; gap: 10px; margin-top: 10px; padding: 8px 0; }
@@ -8502,7 +8545,7 @@ html[data-theme="dark"] .btn-export {
 
     /* Advanced per-course table */
     .sp-adv-header { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; flex-wrap: wrap; }
-    .sp-adv-search { width: 220px; }
+    .sp-adv-search { width: 24ch; min-width: 220px; }
     .sp-adv-count { font-size: .72rem; color: var(--t3); margin-inline-start: auto; }
     .sp-adv-table { width: 100%; border-collapse: collapse; font-size: .82rem; }
     .sp-adv-table th { font-size: .68rem; text-transform: uppercase; letter-spacing: .04em; color: var(--t3); font-weight: 700; font-family: var(--font-mono); padding: 5px 8px; border-bottom: 1.5px solid var(--t5); text-align: start; white-space: nowrap; }
@@ -8540,11 +8583,38 @@ html[data-theme="dark"] .btn-export {
     .sp-prog-heading { font-size: .95rem; font-weight: 700; color: var(--navy); padding: 10px 0 6px; margin-top: 18px; border-bottom: 2px solid var(--teal); display: flex; align-items: baseline; gap: 8px; }
     .sp-prog-heading:first-child { margin-top: 0; }
     .sp-prog-heading .sp-prog-count { font-size: .75rem; font-weight: 600; color: var(--t3); font-family: var(--font-mono); }
-    .sp-prog-heading.sp-collapsible:hover { opacity: .85; }
-    .sp-collapse-arrow { font-size: .7rem; color: var(--t3); transition: transform .15s; min-width: 12px; }
+    .sp-prog-toggle { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 8px; width: 100%; padding: 0; border: 0; background: none; font: inherit; color: inherit; text-align: start; cursor: pointer; user-select: none; }
+    .sp-prog-toggle:hover { opacity: .85; }
+    /* Disclosure chevron: along the reading direction when closed (right in
+       English, left in Arabic), down when open. */
+    .sp-page .sp-chev { flex: none; display: inline-block; vertical-align: -1px; margin-inline-end: 4px; color: var(--t3); transition: transform .15s var(--ease); }
+    html[dir="rtl"] .sp-page .sp-chev { transform: scaleX(-1); }
+    html[dir] .sp-page [aria-expanded="true"] > .sp-chev { transform: rotate(90deg); }
     .sp-prog-block { margin-bottom: 20px; }
     .sp-prog-block .tbl-card { margin-bottom: 8px; }
-    .sp-prog-block .sp-dept-grid { margin-top: 8px; }
+
+    /* A results table is 13 columns: wider than the pane at 1024px, so it
+       scrolls inside its own box, never the page. */
+    .sp-page .sp-table-scroll { overflow-x: auto; }
+    /* Its headers wrap between words with a narrower gutter: one-word
+       numbers under two-word headers ("Total sections", "مجموع الشعب") made
+       the table wider than the pane at 1440px in Arabic, in a wider font and
+       with every programme's tags. */
+    .sp-page .sp-plan-table thead th { white-space: normal; padding-inline: 8px; vertical-align: bottom; }
+    /* When it does scroll sideways (769px and up), the course code stays in
+       view. It is opaque only while the box is scrolled (the page script
+       sets .sp-scrolled), so at rest it looks like every other column. */
+    @media (min-width: 769px) {
+      .sp-page .sp-plan-table > thead > tr > th:nth-child(3),
+      .sp-page .sp-plan-table > tbody > tr > td:nth-child(3) { position: sticky; inset-inline-start: 0; z-index: 1; }
+      .sp-page .sp-table-scroll.sp-scrolled .sp-plan-table > thead > tr > th:nth-child(3),
+      .sp-page .sp-table-scroll.sp-scrolled .sp-plan-table > tbody > tr > td:nth-child(3) {
+        background: var(--surface) !important;
+        box-shadow: 1px 0 0 var(--t5);
+      }
+      html[dir="rtl"] .sp-page .sp-table-scroll.sp-scrolled .sp-plan-table > thead > tr > th:nth-child(3),
+      html[dir="rtl"] .sp-page .sp-table-scroll.sp-scrolled .sp-plan-table > tbody > tr > td:nth-child(3) { box-shadow: -1px 0 0 var(--t5); }
+    }
 
     /* Responsive */
     @media(max-width:768px) {
@@ -8552,6 +8622,27 @@ html[data-theme="dark"] .btn-export {
       .sp-caps { flex-direction: column; align-items: stretch; }
       .sp-cap-grp input { width: 100%; }
       .sp-adv-search { width: 100%; }
+
+      /* A phone shows each course as a card with its numbers (the global
+         rule that hides every column after the fourth is overridden for
+         these tables): code and name, then demand | max | fill, then
+         M | F | Total sections, then the status when there is one. */
+      .sp-page .sp-plan-table.mobile-cards tbody td:not(.mc-hide) { display: flex; }
+      .sp-page .sp-plan-table.mobile-cards tbody tr { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+      .sp-page .sp-plan-table.mobile-cards td.mc-primary { flex-direction: row; flex-wrap: wrap; align-items: baseline; gap: 2px 6px; }
+      .sp-page .sp-plan-table.mobile-cards td.mc-primary::before,
+      .sp-page .sp-plan-table.mobile-cards td:not([data-label])::before { content: none; }
+      .sp-page .sp-plan-table.mobile-cards td[colspan] { grid-column: 1 / -1; }
+      .sp-page .sp-plan-table .sp-c-demand { order: 1; }
+      .sp-page .sp-plan-table .sp-c-max { order: 2; }
+      .sp-page .sp-plan-table .sp-c-fill { order: 3; min-width: 0; }
+      .sp-page .sp-plan-table .sp-sec-m { order: 4; }
+      .sp-page .sp-plan-table .sp-sec-f { order: 5; }
+      .sp-page .sp-plan-table .sp-sec-total { order: 6; }
+      .sp-page .sp-plan-table .sp-c-status { order: 7; grid-column: 1 / -1; align-items: flex-start; }
+      .sp-page .sp-plan-table.mobile-cards tbody td.sp-c-status:empty { display: none; }
+      .sp-page .sp-sum-table { font-size: .75rem; }
+      .sp-page .sp-sum-table th, .sp-page .sp-sum-table td { padding: 4px 5px; }
     }
 
     /* ═══════════════════════════════════════════════════════════
@@ -8562,10 +8653,6 @@ html[data-theme="dark"] .btn-export {
     html[data-theme="dark"] .sp-caps {
       background: rgba(10,142,110,0.06);
       border-color: rgba(10,142,110,0.15);
-    }
-    html[data-theme="dark"] .sp-dept-card {
-      background: rgba(255,255,255,0.04);
-      border-color: rgba(255,255,255,0.06);
     }
 
     /* Status pills */
@@ -8582,13 +8669,9 @@ html[data-theme="dark"] .btn-export {
       color: #a0a4b8;
     }
 
-    /* Fill bars */
-    html[data-theme="dark"] .sp-fill-md {
-      background: rgba(240,173,78,0.15);
-    }
-    html[data-theme="dark"] .sp-fill-lo {
-      background: rgba(220,53,69,0.15);
-    }
+    /* Fill bars: no dark overrides. --teal, --warning and --danger are
+       already the Deep Navy theme's own, and an alpha tint on the dark track
+       made the amber and red bars all but invisible. */
     /* Progress bar track */
     /* Alerts */
     html[data-theme="dark"] .sp-alert-ok {

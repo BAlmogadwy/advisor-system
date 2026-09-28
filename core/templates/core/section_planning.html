@@ -10,7 +10,7 @@
 
 {% block page_chips %}
   <span class="ph-chip ph-chip-role">{{ role }}</span>
-  <span class="ph-chip ph-chip-gray">{% if LANGUAGE_CODE == 'ar' %}توصيات → حساب الشعب → تصدير{% else %}Recommendations → Section Calc → Export{% endif %}</span>
+  <span class="ph-chip ph-chip-gray">{% if LANGUAGE_CODE == 'ar' %}توصيات ← حساب الشعب ← تصدير{% else %}Recommendations → Section Calc → Export{% endif %}</span>
 {% endblock %}
 
 {% block page_intro %}
@@ -20,45 +20,46 @@
 
 {% block content %}
 
-<!-- ─── Filter Bar ─── -->
+<div class="sp-page">
+<!-- ─── Scope: a form, so Enter in any field runs Generate (its only submit button) ─── -->
 <div class="sp-panel">
-  <div class="filter-bar sticky-cta mb-0">
-    <div class="fb-search fb-w-120">
+  <form id="spScopeForm" class="filter-bar sticky-cta mb-0" novalidate>
+    <div class="fb-search sp-fb-field">
       <label class="fb-lbl" for="spYear">{% if LANGUAGE_CODE == 'ar' %}السنة{% else %}Year{% endif %}</label>
-      <input id="spYear" type="text" inputmode="numeric" pattern="[0-9]*" class="form-control form-control-compact" value="{{ default_year }}">
+      <input id="spYear" type="text" inputmode="numeric" pattern="[0-9]*" autocomplete="off" class="sp-fb-input sp-fb-year" value="{{ default_year }}">
     </div>
-    <div class="fb-search fb-w-110">
+    <div class="fb-search sp-fb-field">
       <label class="fb-lbl" for="spSemester">{% if LANGUAGE_CODE == 'ar' %}الفصل{% else %}Semester{% endif %}</label>
-      <input id="spSemester" type="text" inputmode="numeric" pattern="[0-9]*" class="form-control form-control-compact" value="{{ default_term }}">
+      <input id="spSemester" type="text" inputmode="numeric" pattern="[0-9]*" autocomplete="off" class="sp-fb-input sp-fb-term" value="{{ default_term }}">
     </div>
-    <div class="fb-search" style="min-width:160px;max-width:280px">
+    <div class="fb-search sp-fb-field sp-fb-grow">
       <label class="fb-lbl" for="spProgram">{% if LANGUAGE_CODE == 'ar' %}البرنامج{% else %}Program{% endif %}</label>
-      <input id="spProgram" class="form-control form-control-compact text-caps" placeholder="{% if LANGUAGE_CODE == 'ar' %}مثلاً AI,DS{% else %}e.g. AI,DS{% endif %}">
+      <input id="spProgram" autocomplete="off" spellcheck="false" class="sp-fb-input sp-fb-codes text-caps" placeholder="{% if LANGUAGE_CODE == 'ar' %}مثلاً AI,DS{% else %}e.g. AI,DS{% endif %}">
     </div>
     <div class="fb-spacer"></div>
-    <button id="spGenerate" class="btn btn-primary">{% if LANGUAGE_CODE == 'ar' %}حساب{% else %}Generate{% endif %}</button>
+    <button id="spGenerate" type="submit" class="btn btn-primary">{% if LANGUAGE_CODE == 'ar' %}حساب{% else %}Generate{% endif %}</button>
     <button id="spReset" type="button" class="fb-dd">{% if LANGUAGE_CODE == 'ar' %}إعادة{% else %}Reset{% endif %}</button>
-  </div>
+  </form>
 
   <p class="sp-scope-note fs-sm text-t3 mb-0 mt-2">{% if LANGUAGE_CODE == 'ar' %}يُخطَّط للذكور والإناث دائماً في شعب منفصلة: مجموع الشعب = شعب الذكور + شعب الإناث.{% else %}Male and female students are always planned in separate sections: Total sections = M + F.{% endif %}</p>
 
   <!-- Capacity toggle -->
   <div class="mt-2">
-    <button id="spToggleCaps" class="sp-toggle-caps">{% if LANGUAGE_CODE == 'ar' %}⚙ إعدادات الطاقة{% else %}⚙ Capacity settings{% endif %}</button>
+    <button id="spToggleCaps" type="button" class="sp-toggle-caps" aria-expanded="false" aria-controls="spCapsWrap"><svg class="sp-chev" viewBox="0 0 16 16" width="12" height="12" aria-hidden="true" focusable="false"><path d="M6 3l5 5-5 5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>{% if LANGUAGE_CODE == 'ar' %}⚙ إعدادات الطاقة{% else %}⚙ Capacity settings{% endif %}</button>
   </div>
 
   <!-- Collapsible capacity settings -->
   <div id="spCapsWrap" class="sp-caps d-none mt-2">
     <div class="sp-cap-grp">
-      <div class="sp-caps-lbl">{% if LANGUAGE_CODE == 'ar' %}محلي 4+ ساعات{% else %}Local 4+ cr{% endif %}</div>
+      <label class="sp-caps-lbl" for="spCapLocal4">{% if LANGUAGE_CODE == 'ar' %}محلي 4+ ساعات{% else %}Local 4+ cr{% endif %}</label>
       <input id="spCapLocal4" type="text" inputmode="numeric" pattern="[0-9]*" class="form-control form-control-compact" value="25">
     </div>
     <div class="sp-cap-grp">
-      <div class="sp-caps-lbl">{% if LANGUAGE_CODE == 'ar' %}محلي أخرى{% else %}Local other{% endif %}</div>
+      <label class="sp-caps-lbl" for="spCapLocalOther">{% if LANGUAGE_CODE == 'ar' %}محلي أخرى{% else %}Local other{% endif %}</label>
       <input id="spCapLocalOther" type="text" inputmode="numeric" pattern="[0-9]*" class="form-control form-control-compact" value="40">
     </div>
     <div class="sp-cap-grp">
-      <div class="sp-caps-lbl">{% if LANGUAGE_CODE == 'ar' %}خارجي{% else %}External{% endif %}</div>
+      <label class="sp-caps-lbl" for="spCapExternal">{% if LANGUAGE_CODE == 'ar' %}خارجي{% else %}External{% endif %}</label>
       <input id="spCapExternal" type="text" inputmode="numeric" pattern="[0-9]*" class="form-control form-control-compact" value="50">
     </div>
     <div class="sp-caps-info">{% if LANGUAGE_CODE == 'ar' %}الحد الأقصى للطلاب في كل شعبة{% else %}Max students per section by type{% endif %}</div>
@@ -67,7 +68,7 @@
   <!-- Advanced per-course button -->
   <div class="mt-2">
     <button id="spToggleAdv" type="button" class="sp-toggle-caps" aria-expanded="false" aria-controls="spAdvPanel">
-      {% if LANGUAGE_CODE == 'ar' %}📋 إعدادات متقدمة لكل مقرر{% else %}📋 Advanced: Per-course limits{% endif %}
+      <svg class="sp-chev" viewBox="0 0 16 16" width="12" height="12" aria-hidden="true" focusable="false"><path d="M6 3l5 5-5 5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>{% if LANGUAGE_CODE == 'ar' %}📋 إعدادات متقدمة لكل مقرر{% else %}📋 Advanced: Per-course limits{% endif %}
       <span id="spAdvBadge" class="sp-adv-badge d-none">0</span>
     </button>
   </div>
@@ -75,7 +76,8 @@
   <!-- Advanced per-course panel -->
   <div id="spAdvPanel" class="d-none mt-2">
     <div class="sp-adv-header">
-      <input id="spAdvSearch" type="text" class="form-control form-control-compact sp-adv-search"
+      <input id="spAdvSearch" type="text" autocomplete="off" class="form-control sp-adv-search"
+             aria-label="{% if LANGUAGE_CODE == 'ar' %}بحث عن مقرر{% else %}Search courses{% endif %}"
              placeholder="{% if LANGUAGE_CODE == 'ar' %}بحث عن مقرر...{% else %}Search courses...{% endif %}">
       <span id="spAdvDrafts" class="sp-adv-drafts" role="status">{% if LANGUAGE_CODE == 'ar' %}لا توجد تعديلات غير محفوظة{% else %}No unsaved changes{% endif %}</span>
       <button id="spAdvReset" type="button" class="sp-adv-reset" disabled>{% if LANGUAGE_CODE == 'ar' %}تجاهل التعديلات{% else %}Discard changes{% endif %}</button>
@@ -114,7 +116,7 @@
 </div>
 
 <!-- ─── Status alert ─── -->
-<div id="spStatus" class="d-none" role="status" aria-live="polite"></div>
+<div id="spStatus" role="status" aria-live="polite"></div>
 
 <!-- ─── Results (hidden until generated) ─── -->
 <div id="spResults" class="d-none">
@@ -151,14 +153,15 @@
   </div>
 
   <!-- Department filter -->
-  <div class="d-flex align-items-center mb-2" style="gap:8px">
-    <label class="fs-12 fw-semibold text-t3">{% if LANGUAGE_CODE == 'ar' %}تصفية القسم{% else %}Filter Dept{% endif %}</label>
-    <input id="spDeptFilter" class="form-control form-control-compact text-caps fs-md" placeholder="{% if LANGUAGE_CODE == 'ar' %}مثلاً CS,AI{% else %}e.g. CS, AI, CYB{% endif %}" style="width:180px">
+  <div class="sp-dept-filter d-flex align-items-center flex-wrap mb-2">
+    <label class="fs-12 fw-semibold text-t3" for="spDeptFilter">{% if LANGUAGE_CODE == 'ar' %}تصفية القسم{% else %}Filter Dept{% endif %}</label>
+    <input id="spDeptFilter" autocomplete="off" spellcheck="false" class="form-control sp-dept-filter-input text-caps fs-md" placeholder="{% if LANGUAGE_CODE == 'ar' %}مثلاً CS,AI{% else %}e.g. CS, AI, CYB{% endif %}">
     <button id="spDeptFilterClear" class="btn btn-neutral btn-sm fs-xs" type="button" style="padding:2px 8px">{% if LANGUAGE_CODE == 'ar' %}مسح{% else %}Clear{% endif %}</button>
   </div>
 
-  <!-- Results table -->
-  <table class="tbl-card" id="spTable">
+  <!-- Results table: scrolls in its own box when wider than the pane; a card per course on a phone -->
+  <div class="sp-table-scroll">
+  <table class="tbl-card mobile-cards sp-plan-table" id="spTable" role="table">
     <thead>
       <tr>
         <th data-sort="num">#</th>
@@ -180,18 +183,20 @@
       <tr><td colspan="13" class="empty-note">{% if LANGUAGE_CODE == 'ar' %}حدد السنة والفصل ثم انقر حساب.{% else %}Set Year &amp; Semester, then click Generate.{% endif %}</td></tr>
     </tbody>
   </table>
+  </div>
   <nav class="tbl-pager" id="spPager"></nav>
 
   <!-- Multi-program results (hidden until multi mode) -->
   <div id="spMultiPrograms" class="d-none"></div>
 
-  <!-- Department Summary -->
-  <div class="sp-panel" style="margin-top:14px">
-    <h6 class="mb-2" style="font-size:.82rem">{% if LANGUAGE_CODE == 'ar' %}ملخص الأقسام{% else %}Department Summary{% endif %}</h6>
-    <div class="sp-dept-grid" id="spDeptGrid"></div>
-  </div>
+  <!-- Department Summary: every department in the result, ours and the service departments -->
+  <section class="sp-panel sp-sum-panel" style="margin-top:14px" aria-labelledby="spDeptSummaryTitle">
+    <h6 id="spDeptSummaryTitle" class="mb-2" style="font-size:.82rem">{% if LANGUAGE_CODE == 'ar' %}ملخص الأقسام{% else %}Department Summary{% endif %}</h6>
+    <div class="sp-sum-scroll" id="spDeptSummary"></div>
+  </section>
 
 </div>
+</div>{# /.sp-page #}
 {% endblock %}
 
 {% block extra_js %}
@@ -200,5 +205,5 @@
   const LANGUAGE_CODE = "{{ LANGUAGE_CODE|default:'en' }}";
   const djCsrfToken = "{{ csrf_token }}";
 </script>
-<script src="{% static 'js/page-section-planning.js' %}?v=10"></script>
+<script src="{% static 'js/page-section-planning.js' %}?v=12"></script>
 {% endblock %}
