@@ -174,8 +174,7 @@ from .section_plan_views import (
     section_plan_export_view,
     section_plan_generate_view,
     section_plan_page,
-    section_plan_save_capacity_view,
-    section_plan_save_overrides_bulk_view,
+    section_plan_save_limits_view,
 )
 from .sections_import_views import (
     sections_import_insert_view,
@@ -628,14 +627,9 @@ urlpatterns = [
         name="section_plan_courses",
     ),
     path(
-        "ops/section-planning/save-capacity/",
-        section_plan_save_capacity_view,
-        name="section_plan_save_capacity",
-    ),
-    path(
-        "ops/section-planning/save-overrides-bulk/",
-        section_plan_save_overrides_bulk_view,
-        name="section_plan_save_overrides_bulk",
+        "ops/section-planning/limits/",
+        section_plan_save_limits_view,
+        name="section_plan_save_limits",
     ),
     path("audit-explorer/", audit_explorer_page, name="audit_explorer_page"),
     path("ops/audit/explorer/", audit_explorer_api, name="audit_explorer_api"),

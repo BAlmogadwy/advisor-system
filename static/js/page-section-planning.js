@@ -30,23 +30,115 @@ $('spToggleCaps').onclick = () => {
   $('spCapsWrap').classList.toggle('d-none');
 };
 
-/* ── Advanced per-course overrides ── */
+/* ── Per-course seat limits ──
+ * A limit belongs to a programme. Editing a row makes a DRAFT: it is used as a
+ * what-if on Generate, marked "Modified", and never written until the user
+ * presses Save, reviews the exact rows (course · programme · old → new) and
+ * confirms. Discard drops drafts only; removing a saved limit is its own
+ * confirmed action. Nothing here writes on input, change or blur. */
+const LIMIT_MIN = 1, LIMIT_MAX = 500;
+const LIMITS_URL = '/ops/section-planning/limits/';
 let _advCourses = [];     // cached course list from server
 let _advLoaded = false;   // loaded at least once?
 
 let _advProgram = '';  // program(s) when panel was last loaded
 
+const TL = {
+  modified:     IS_AR ? 'معدَّل' : 'Modified',
+  invalid:      IS_AR ? `رقم صحيح من ${LIMIT_MIN} إلى ${LIMIT_MAX}` : `Whole number ${LIMIT_MIN}–${LIMIT_MAX}`,
+  mixed:        IS_AR ? 'مختلف' : 'mixed',
+  allProgs:     IS_AR ? 'كل البرامج' : 'All programmes',
+  allAria:      code => IS_AR ? `تطبيق حد ${code} على كل البرامج التي تدرّسه` : `Apply the ${code} limit to every programme that teaches it`,
+  limitAria:    code => IS_AR ? `الحد الأقصى لشعبة ${code}` : `Seat limit for ${code}`,
+  remove:       IS_AR ? 'إزالة' : 'Remove',
+  removeAria:   code => IS_AR ? `إزالة الحد المحفوظ لـ ${code}` : `Remove the saved limit for ${code}`,
+  drafts:       n => IS_AR ? `${n} تعديل غير محفوظ` : `${n} unsaved change${n === 1 ? '' : 's'}`,
+  noDrafts:     IS_AR ? 'لا توجد تعديلات غير محفوظة' : 'No unsaved changes',
+  needProgram:  IS_AR ? 'اختر برنامجاً أولاً: الحدود تُحفظ لكل برنامج.' : 'Choose a programme first: limits are saved per programme.',
+  fixInvalid:   IS_AR ? 'صحّح القيم غير الصالحة قبل الحفظ.' : 'Fix the invalid values before saving.',
+  nothing:      IS_AR ? 'لا شيء يتغيّر: الحدود المحفوظة مطابقة.' : 'Nothing to change: the saved limits already match.',
+  saveTitle:    n => IS_AR ? `حفظ ${n} من حدود الشعب؟` : `Save ${n} seat limit${n === 1 ? '' : 's'}?`,
+  removeTitle:  code => IS_AR ? `إزالة الحد المحفوظ لـ ${code}؟` : `Remove the saved limit for ${code}?`,
+  saveIntro:    IS_AR ? 'ستُحفظ هذه الحدود للبرامج المذكورة فقط، ويُسجَّل كل تغيير في سجل التدقيق.' : 'Only the rows below change, for the programmes named. Each change is recorded in the audit log.',
+  removeIntro:  IS_AR ? 'بعد الإزالة تُطبَّق القاعدة العامة على هذا المقرر.' : 'After removal the general rule applies to this course.',
+  unchanged:    n => IS_AR ? `${n} صف مطابق أصلاً ولن يتغيّر.` : `${n} row${n === 1 ? ' already matches' : 's already match'} and will not change.`,
+  thCourse:     IS_AR ? 'المقرر' : 'Course',
+  thProgram:    IS_AR ? 'البرنامج' : 'Programme',
+  thOld:        IS_AR ? 'المحفوظ الآن' : 'Saved now',
+  thNew:        IS_AR ? 'الجديد' : 'New',
+  thScope:      IS_AR ? 'النطاق' : 'Scope',
+  scopeProgs:   IS_AR ? 'البرامج المعروضة' : 'Programmes on screen',
+  scopeAll:     IS_AR ? 'كل البرامج' : 'All programmes',
+  none:         IS_AR ? '— (القاعدة)' : '— (rule)',
+  removed:      IS_AR ? 'يُزال (القاعدة)' : 'removed (rule)',
+  confirmSave:  n => IS_AR ? `حفظ ${n} تغيير` : `Save ${n} change${n === 1 ? '' : 's'}`,
+  confirmRemove: IS_AR ? 'إزالة الحد' : 'Remove limit',
+  keepEditing:  IS_AR ? 'متابعة التعديل' : 'Keep editing',
+  saving:       IS_AR ? 'جارٍ الحفظ...' : 'Saving...',
+  saveBtn:      IS_AR ? 'حفظ الحدود…' : 'Save limits…',
+  saved:        n => IS_AR ? `حُفظ ${n} حد وسُجّل في سجل التدقيق.` : `Saved ${n} seat limit${n === 1 ? '' : 's'}; each change is in the audit log.`,
+  leave:        IS_AR ? 'لديك حدود غير محفوظة.' : 'You have unsaved seat limits.',
+};
+
+/* Server refusals carry a stable code; the words are the page's. */
+const LIMIT_ERRORS = {
+  invalid_json:             () => IS_AR ? 'تعذّر قراءة الطلب.' : 'The request could not be read.',
+  programs_required:        () => TL.needProgram,
+  unknown_program:          d => IS_AR ? `برنامج غير معروف: ${d.program || ''}` : `Unknown programme: ${d.program || ''}`,
+  changes_required:         () => TL.nothing,
+  too_many_changes:         d => IS_AR ? `احفظ ${d.max || ''} مقرراً كحد أقصى في المرة الواحدة.` : `Save at most ${d.max || ''} courses at a time.`,
+  invalid_course:           () => IS_AR ? 'تغيير بلا رمز مقرر.' : 'A change is missing its course code.',
+  duplicate_course:         d => IS_AR ? `${d.course_code || ''} مكرر في الحفظ نفسه.` : `${d.course_code || ''} appears twice in one save.`,
+  invalid_limit:            d => IS_AR ? `حد ${d.course_code || ''} يجب أن يكون رقماً صحيحاً من ${LIMIT_MIN} إلى ${LIMIT_MAX}.` : `The limit for ${d.course_code || ''} must be a whole number from ${LIMIT_MIN} to ${LIMIT_MAX}.`,
+  invalid_scope:            d => IS_AR ? `نطاق ${d.course_code || ''} غير صالح.` : `The scope for ${d.course_code || ''} is not valid.`,
+  course_not_in_programmes: d => IS_AR ? `${d.course_code || ''} لا يُدرَّس في البرامج المعروضة.` : `${d.course_code || ''} is not taught by the programmes on screen.`,
+  preview_stale:            () => IS_AR ? 'تغيّرت الحدود المحفوظة منذ المراجعة. اضغط حفظ مرة أخرى لمراجعة القائمة الجديدة.' : 'The saved limits changed since you reviewed them. Press Save again to review the new list.',
+  limit_changed:            () => IS_AR ? 'تغيّر حد أثناء الحفظ فلم يُحفظ شيء. اضغط حفظ مرة أخرى.' : 'A limit changed while saving, so nothing was saved. Press Save again.',
+  audit_unavailable:        () => IS_AR ? 'تعذّر تسجيل التغيير في سجل التدقيق، لذلك لم يُحفظ شيء. حاول مرة أخرى.' : "Couldn't record the change in the audit log, so nothing was saved. Try again.",
+};
+function limitError(data, status) {
+  const make = data && LIMIT_ERRORS[data.code];
+  if (make) return make(data);
+  if (status === 429) return IS_AR ? 'طلبات كثيرة. انتظر قليلاً ثم حاول.' : 'Too many requests. Wait a moment and try again.';
+  if (status === 401 || status === 403) return IS_AR ? 'لا تملك صلاحية حفظ الحدود.' : 'You are not allowed to save limits.';
+  return T.reqFailed;
+}
+
 $('spToggleAdv').onclick = () => {
   const panel = $('spAdvPanel');
   const isHidden = panel.classList.contains('d-none');
   panel.classList.toggle('d-none');
+  $('spToggleAdv').setAttribute('aria-expanded', isHidden ? 'true' : 'false');
   if (isHidden) {
     const prog = $('spProgram').value.trim().toUpperCase();
     if (!_advLoaded || prog !== _advProgram) loadAdvancedCourses();
   }
 };
 
-async function loadAdvancedCourses() {
+function advPrograms() {
+  return _advProgram ? _advProgram.split(',').map(p => p.trim()).filter(Boolean) : [];
+}
+
+/* Latin digits whatever the keyboard: Arabic-Indic and Persian 30 are 30. */
+function latinDigits(text) {
+  return String(text).replace(/[٠-٩]/g, d => String(d.charCodeAt(0) - 0x0660))
+                     .replace(/[۰-۹]/g, d => String(d.charCodeAt(0) - 0x06F0));
+}
+
+/* The saved limit a row starts from: one value when every programme on screen
+ * that teaches the course agrees, "mixed" otherwise. */
+function savedLimitOf(course) {
+  const limits = course.programme_limits || {};
+  const values = Object.values(limits).filter(v => Number.isInteger(v));
+  const taught = course.programmes || [];
+  if (!values.length) return { value: null, mixed: false, any: false };
+  const uniq = [...new Set(values)];
+  if (uniq.length === 1 && values.length === taught.length) return { value: uniq[0], mixed: false, any: true };
+  return { value: null, mixed: true, any: true };
+}
+
+async function loadAdvancedCourses(keep = null) {
+  const kept = keep || currentDraftInputs();
   const local4  = parseInt($('spCapLocal4').value, 10) || 25;
   const localO  = parseInt($('spCapLocalOther').value, 10) || 40;
   const ext     = parseInt($('spCapExternal').value, 10) || 50;
@@ -60,98 +152,120 @@ async function loadAdvancedCourses() {
     if (!data.ok) { showStatus(data.error || T.reqFailed, 'err'); return; }
     _advCourses = data.courses || [];
     _advLoaded = true;
-    renderAdvancedTable(_advCourses);
+    renderAdvancedTable(_advCourses, kept);
     $('spAdvCount').textContent = _advCourses.length + (IS_AR ? ' مقرر' : ' courses');
   } catch (err) {
     showStatus(T.reqFailed + ': ' + err.message, 'err');
   }
 }
 
-function renderAdvancedTable(courses) {
+function renderAdvancedTable(courses, kept = new Map()) {
   const tbody = $('spAdvBody');
   if (!courses.length) {
-    tbody.innerHTML = `<tr><td colspan="6" class="empty-note text-center" style="padding:20px">${
+    tbody.innerHTML = `<tr><td colspan="8" class="empty-note text-center" style="padding:20px">${
       IS_AR ? 'لا توجد مقررات — أدخل البرنامج أولاً.' : 'No courses found — enter a Program first.'}</td></tr>`;
+    updateAdvState();
     return;
   }
   tbody.innerHTML = courses.map(c => {
-    const saved = c.programme_max;
-    const dispVal = saved != null ? saved : '';
-    return `<tr data-code="${c.course_code}">
-    <td><span class="cr-id">${c.course_code}</span></td>
-    <td>${c.department}</td>
-    <td class="text-center">${c.credit_hours}</td>
+    const saved = savedLimitOf(c);
+    const code = esc(c.course_code);
+    const dispVal = saved.value != null ? saved.value : '';
+    const placeholder = saved.mixed ? TL.mixed : c.default_max;
+    return `<tr data-code="${code}" data-saved="${saved.value ?? ''}" data-mixed="${saved.mixed ? '1' : ''}">
+    <td><span class="cr-id">${code}</span></td>
+    <td>${esc(c.department)}</td>
+    <td class="text-center">${esc(c.credit_hours)}</td>
     <td class="text-center">${c.is_external ? '✓' : ''}</td>
-    <td class="adv-default text-center">${c.default_max}</td>
-    <td class="text-center"><input type="text" inputmode="numeric" pattern="[0-9]*"
+    <td class="adv-default text-center">${esc(c.default_max)}</td>
+    <td class="text-center"><input type="text" inputmode="numeric"
         class="form-control form-control-compact adv-input"
-        value="${dispVal}"
-        placeholder="${c.default_max}"
-        data-code="${c.course_code}" data-default="${c.default_max}"></td>
+        value="${esc(dispVal)}"
+        placeholder="${esc(placeholder)}"
+        aria-label="${esc(TL.limitAria(c.course_code))}"
+        data-code="${code}" data-default="${esc(c.default_max)}">
+      <span class="sp-adv-state" aria-live="polite"></span></td>
+    <td class="text-center"><label class="sp-adv-all"><input type="checkbox" class="adv-all"
+        aria-label="${esc(TL.allAria(c.course_code))}"><span aria-hidden="true">${esc(TL.allProgs)}</span></label></td>
+    <td class="text-center">${saved.any
+      ? `<button type="button" class="sp-adv-reset adv-remove" aria-label="${esc(TL.removeAria(c.course_code))}">${esc(TL.remove)}</button>`
+      : ''}</td>
   </tr>`;
   }).join('');
-  /* Wire input change → badge + auto-save to DB */
-  tbody.querySelectorAll('.adv-input').forEach(inp => {
-    inp.addEventListener('input', updateAdvBadge);
-    inp.addEventListener('change', () => saveCapacityToDB(inp));
-  });
-}
-
-/* Save a single course capacity to DB for all selected programs */
-async function saveCapacityToDB(inp) {
-  const prog = _advProgram;
-  if (!prog) return;  // no program → nothing to save
-  const programs = prog.includes(',')
-    ? prog.split(',').map(p => p.trim()).filter(Boolean)
-    : [prog];
-  const code = inp.dataset.code;
-  const raw = inp.value.trim();
-  const cap = raw ? parseInt(raw, 10) : null;
-  if (raw && (isNaN(cap) || cap < 1)) return;  // invalid → skip
-  try {
-    const res = await fetch('/ops/section-planning/save-capacity/', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF },
-      body: JSON.stringify({ programs, course_code: code, max_capacity: cap }),
+  /* Drafts only: inputs mark the row, nothing is sent until Save. */
+  tbody.querySelectorAll('tr[data-code]').forEach(tr => {
+    const inp = tr.querySelector('.adv-input');
+    const all = tr.querySelector('.adv-all');
+    const prior = kept.get(tr.dataset.code);
+    if (prior) { inp.value = prior.raw; all.checked = prior.all; }
+    inp.addEventListener('input', () => { refreshAdvRow(tr); updateAdvState(); });
+    inp.addEventListener('blur', () => {
+      /* An emptied saved limit is not a removal: that has its own button. */
+      if (!inp.value.trim() && tr.dataset.saved !== '') inp.value = tr.dataset.saved;
+      refreshAdvRow(tr); updateAdvState();
     });
-    const data = await res.json();
-    if (data.ok) {
-      /* Brief green flash to confirm save */
-      inp.style.borderColor = 'var(--teal)';
-      setTimeout(() => { inp.style.borderColor = ''; }, 800);
-    }
-  } catch (_) { /* silent — user will see no flash if save fails */ }
+    all.addEventListener('change', () => { refreshAdvRow(tr); updateAdvState(); });
+    tr.querySelector('.adv-remove')?.addEventListener('click', () => removeSavedLimit(tr));
+    refreshAdvRow(tr);
+  });
+  updateAdvState();
 }
 
-function updateAdvBadge() {
-  const count = getOverrideCount();
+/* What one row asks for, read from the DOM (the only draft state there is). */
+function draftOf(tr) {
+  const inp = tr.querySelector('.adv-input');
+  const all = Boolean(tr.querySelector('.adv-all')?.checked);
+  const raw = latinDigits(inp.value.trim());
+  const saved = tr.dataset.saved === '' ? null : Number(tr.dataset.saved);
+  const mixed = tr.dataset.mixed === '1';
+  const base = { code: tr.dataset.code, raw: inp.value, all, value: null, invalid: false, changed: false, draft: false };
+  if (!raw) return base;
+  const value = /^\d+$/.test(raw) ? Number(raw) : NaN;
+  if (!Number.isInteger(value) || value < LIMIT_MIN || value > LIMIT_MAX) return { ...base, invalid: true };
+  const changed = mixed || value !== saved;
+  return { ...base, value, changed, draft: changed || all };
+}
+
+function advRows() { return [...$('spAdvBody').querySelectorAll('tr[data-code]')]; }
+function currentDrafts() { return advRows().map(draftOf).filter(d => d.draft && !d.invalid); }
+function invalidDrafts() { return advRows().map(draftOf).filter(d => d.invalid); }
+function currentDraftInputs() {
+  const kept = new Map();
+  advRows().map(draftOf).filter(d => d.draft || d.invalid).forEach(d => kept.set(d.code, { raw: d.raw, all: d.all }));
+  return kept;
+}
+
+function refreshAdvRow(tr) {
+  const d = draftOf(tr);
+  const state = tr.querySelector('.sp-adv-state');
+  tr.classList.toggle('sp-adv-draft', d.draft && !d.invalid);
+  tr.classList.toggle('sp-adv-invalid', d.invalid);
+  tr.querySelector('.adv-input').setAttribute('aria-invalid', d.invalid ? 'true' : 'false');
+  state.textContent = d.invalid ? TL.invalid : (d.draft ? TL.modified : '');
+}
+
+function updateAdvState() {
+  const drafts = currentDrafts();
+  const invalid = invalidDrafts();
   const badge = $('spAdvBadge');
-  if (count > 0) {
-    badge.textContent = count;
+  if (drafts.length > 0) {
+    badge.textContent = drafts.length;
     badge.classList.remove('d-none');
   } else {
     badge.classList.add('d-none');
   }
+  $('spAdvDrafts').textContent = drafts.length ? TL.drafts(drafts.length) : TL.noDrafts;
+  const btn = $('spAdvSaveDb');
+  const reason = !advPrograms().length ? TL.needProgram : (invalid.length ? TL.fixInvalid : '');
+  btn.disabled = Boolean(reason) || !drafts.length;
+  btn.title = reason;
+  $('spAdvReset').disabled = !drafts.length && !invalid.length;
 }
 
-function getOverrideCount() {
-  let n = 0;
-  $('spAdvBody').querySelectorAll('.adv-input').forEach(inp => {
-    const val = inp.value.trim();
-    if (val && parseInt(val, 10) > 0) n++;
-  });
-  return n;
-}
-
+/* What-if for Generate: only values the user CHANGED, never pre-filled saved ones. */
 function collectOverrides() {
   const overrides = {};
-  $('spAdvBody').querySelectorAll('.adv-input').forEach(inp => {
-    const val = inp.value.trim();
-    const v = parseInt(val, 10);
-    if (val && v > 0) {
-      overrides[inp.dataset.code] = v;
-    }
-  });
+  currentDrafts().filter(d => d.changed).forEach(d => { overrides[d.code] = d.value; });
   return overrides;
 }
 
@@ -164,61 +278,122 @@ $('spAdvSearch').addEventListener('input', function() {
   });
 });
 
-/* Reset all overrides */
-$('spAdvReset').onclick = () => {
-  $('spAdvBody').querySelectorAll('.adv-input').forEach(inp => { inp.value = ''; });
-  updateAdvBadge();
-};
-
-/* Save overrides to DB */
-$('spAdvSaveDb').onclick = async () => {
-  const inputs = $('spAdvBody').querySelectorAll('.adv-input');
-  const overrides = {};
-  inputs.forEach(inp => {
-    const val = inp.value.trim();
-    if (val && parseInt(val) > 0) {
-      overrides[inp.dataset.code] = parseInt(val);
-    }
+/* Discard drafts: back to the saved values. Never a request. */
+function discardDrafts() {
+  advRows().forEach(tr => {
+    tr.querySelector('.adv-input').value = tr.dataset.saved;
+    tr.querySelector('.adv-all').checked = false;
+    refreshAdvRow(tr);
   });
+  updateAdvState();
+}
+$('spAdvReset').onclick = discardDrafts;
 
-  const count = Object.keys(overrides).length;
-  if (count === 0) {
-    showStatus(IS_AR ? 'لا يوجد تخصيصات للحفظ' : 'No overrides to save', 'warn');
-    return;
-  }
+async function postLimits(body) {
+  const res = await fetch(LIMITS_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF },
+    body: JSON.stringify(body),
+  });
+  const data = await res.json().catch(() => ({}));
+  return { res, data };
+}
 
+function limitTableHtml(changes) {
+  const val = (v, isNew) => v == null ? (isNew ? TL.removed : TL.none) : String(v);
+  const rows = changes.map(c => `<tr>
+      <td><bdi class="cr-id">${esc(c.course_code)}</bdi></td>
+      <td><bdi>${esc(c.program)}</bdi></td>
+      <td class="text-center">${esc(val(c.old, false))}</td>
+      <td class="text-center"><strong>${esc(val(c.new, true))}</strong></td>
+      <td>${esc(c.scope === 'all_programmes' ? TL.scopeAll : TL.scopeProgs)}</td>
+    </tr>`).join('');
+  return `<table class="sp-adv-table sp-limit-review">
+      <thead><tr><th>${esc(TL.thCourse)}</th><th>${esc(TL.thProgram)}</th><th>${esc(TL.thOld)}</th><th>${esc(TL.thNew)}</th><th>${esc(TL.thScope)}</th></tr></thead>
+      <tbody>${rows}</tbody></table>`;
+}
+
+/* Preview, confirm, commit. Returns the server's answer to the commit, or null. */
+async function reviewAndSave(changes, { title, intro, confirmText }) {
+  const programs = advPrograms();
+  if (!programs.length) { showStatus(TL.needProgram, 'warn'); return null; }
+  const preview = await postLimits({ programs, changes, dry_run: true });
+  if (!preview.res.ok || !preview.data.ok) { showStatus(limitError(preview.data, preview.res.status), 'err'); return null; }
+  const planned = preview.data.changes || [];
+  if (!planned.length) { showStatus(TL.nothing, 'warn'); return null; }
+  const unchangedNote = preview.data.unchanged ? `<p class="fs-sm text-t3">${esc(TL.unchanged(preview.data.unchanged))}</p>` : '';
+  const ok = await dlg.confirm({
+    title: title(planned.length),
+    body: `<p>${esc(intro)}</p>${limitTableHtml(planned)}${unchangedNote}`,
+    kind: 'warning',
+    confirmText: confirmText(planned.length),
+    cancelText: TL.keepEditing,
+  });
+  if (!ok) return null;
+  const commit = await postLimits({ programs, changes, dry_run: false, preview_token: preview.data.preview_token });
+  if (!commit.res.ok || !commit.data.ok) { showStatus(limitError(commit.data, commit.res.status), 'err'); return null; }
+  return commit.data;
+}
+
+/* Save drafts (the confirmed, audited write). */
+$('spAdvSaveDb').onclick = async () => {
+  if (invalidDrafts().length) { showStatus(TL.fixInvalid, 'err'); return; }
+  const drafts = currentDrafts();
+  if (!drafts.length) { showStatus(TL.nothing, 'warn'); return; }
   const btn = $('spAdvSaveDb');
   btn.disabled = true;
-  btn.textContent = IS_AR ? 'جارٍ الحفظ...' : 'Saving...';
-
+  btn.textContent = TL.saving;
   try {
-    const res = await fetch('/ops/section-planning/save-overrides-bulk/', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF },
-      body: JSON.stringify({ overrides }),
-    });
-    const data = await res.json();
-    if (data.ok) {
-      showStatus(IS_AR ? `تم حفظ ${data.courses} تخصيص في قاعدة البيانات` : `${data.courses} overrides saved to DB (${data.updated} rows updated)`, 'ok');
-    } else {
-      showStatus(data.error || 'Failed', 'err');
+    const changes = drafts.map(d => ({ course_code: d.code, max_capacity: d.value, all_programmes: d.all }));
+    const saved = await reviewAndSave(changes, { title: TL.saveTitle, intro: TL.saveIntro, confirmText: TL.confirmSave });
+    if (saved) {
+      showStatus(TL.saved(saved.changed_count), 'ok');
+      const keep = currentDraftInputs();
+      changes.forEach(c => keep.delete(c.course_code));
+      await loadAdvancedCourses(keep);
     }
   } catch (e) {
-    showStatus(e.message, 'err');
+    showStatus(T.reqFailed + ': ' + e.message, 'err');
+  } finally {
+    btn.textContent = TL.saveBtn;
+    updateAdvState();
   }
-
-  btn.disabled = false;
-  btn.textContent = IS_AR ? 'حفظ في قاعدة البيانات' : 'Save to DB';
 };
 
-/* Reload defaults when global capacity settings change */
+/* Remove one saved limit: explicit, confirmed, audited. Other drafts are kept. */
+async function removeSavedLimit(tr) {
+  const code = tr.dataset.code;
+  const all = Boolean(tr.querySelector('.adv-all')?.checked);
+  try {
+    const removed = await reviewAndSave(
+      [{ course_code: code, max_capacity: null, all_programmes: all }],
+      { title: () => TL.removeTitle(code), intro: TL.removeIntro, confirmText: () => TL.confirmRemove },
+    );
+    if (removed) {
+      showStatus(TL.saved(removed.changed_count), 'ok');
+      const keep = currentDraftInputs();
+      keep.delete(code);
+      await loadAdvancedCourses(keep);
+    }
+  } catch (e) {
+    showStatus(T.reqFailed + ': ' + e.message, 'err');
+  }
+}
+
+window.addEventListener('beforeunload', e => {
+  if (!currentDrafts().length) return;
+  e.preventDefault();
+  e.returnValue = TL.leave;
+});
+
+/* Reload defaults when global capacity settings change (drafts are kept) */
 ['spCapLocal4', 'spCapLocalOther', 'spCapExternal'].forEach(id => {
   $(id).addEventListener('change', () => {
     if (_advLoaded) loadAdvancedCourses();
   });
 });
 
-/* Reload when program input changes (courses are program-specific) */
+/* Reload when program input changes (courses are program-specific; drafts are kept) */
 $('spProgram').addEventListener('change', () => {
   if (_advLoaded) loadAdvancedCourses();
 });
@@ -267,7 +442,9 @@ function hideProgress() {
 /* ── Status messages ── */
 function showStatus(msg, type) {
   const el = $('spStatus');
-  el.className = type === 'ok' ? 'sp-alert sp-alert-ok' : 'sp-alert sp-alert-err';
+  el.className = type === 'ok' ? 'sp-alert sp-alert-ok'
+               : type === 'warn' ? 'sp-alert sp-alert-warn' : 'sp-alert sp-alert-err';
+  el.setAttribute('role', type === 'err' ? 'alert' : 'status');
   el.textContent = msg;
   el.classList.remove('d-none');
 }
@@ -607,9 +784,9 @@ $('spReset').onclick = () => {
   $('spMultiPrograms').innerHTML = '';
   $('spMultiPrograms').classList.add('d-none');
 
-  /* Reset advanced overrides */
-  $('spAdvBody').querySelectorAll('.adv-input').forEach(inp => { inp.value = ''; });
-  updateAdvBadge();
+  /* Drop drafts (never saved limits), and show the panel for the cleared scope. */
+  discardDrafts();
+  if (_advLoaded) loadAdvancedCourses(new Map());
 };
 
 /* ── Department filter on results table ── */

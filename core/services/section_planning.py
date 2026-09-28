@@ -186,11 +186,21 @@ def get_all_courses_with_defaults(
     pr_qs = pr_qs.values_list(
         "course_code",
         "credit_hours",
-    ).order_by("course_code")
+        "program",
+        "max_capacity",
+    ).order_by("course_code", "program")
 
     seen: dict[str, dict[str, Any]] = {}
-    for code, credits in pr_qs:
+    # Per programme on screen: who teaches the course, and the limit each saved.
+    taught_by: dict[str, list[str]] = {}
+    saved_limits: dict[str, dict[str, int]] = {}
+    for code, credits, prog, cap in pr_qs:
         ncode = normalize_code(code)
+        if program_list is not None:
+            if prog not in taught_by.setdefault(ncode, []):
+                taught_by[ncode].append(prog)
+            if cap is not None and cap >= 1:
+                saved_limits.setdefault(ncode, {})[prog] = cap
         if ncode in seen:
             continue
         dept = _extract_department(ncode)
@@ -255,9 +265,13 @@ def get_all_courses_with_defaults(
                         pr_caps[code] = cap
         for entry in result:
             entry["programme_max"] = pr_caps.get(entry["course_code"])
+            entry["programmes"] = taught_by.get(entry["course_code"], [])
+            entry["programme_limits"] = saved_limits.get(entry["course_code"], {})
     else:
         for entry in result:
             entry["programme_max"] = None
+            entry["programmes"] = []
+            entry["programme_limits"] = {}
 
     return result
 

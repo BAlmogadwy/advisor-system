@@ -8515,6 +8515,18 @@ html[data-theme="dark"] .btn-export {
     .sp-adv-reset { font-size: .75rem; color: var(--t3); cursor: pointer; background: none; border: 1px solid var(--t4); border-radius: 4px; padding: 2px 8px; }
     .sp-adv-reset:hover { color: var(--danger); border-color: var(--danger); }
     .sp-adv-badge { display: inline-block; padding: 0 6px; border-radius: 8px; font-size: .68rem; font-weight: 700; background: var(--teal); color: #fff; margin-inline-start: 4px; }
+    /* Drafts: a limit edit is marked until it is saved or discarded (tokens only, so dark mode follows). */
+    .sp-alert-warn { background: color-mix(in srgb, var(--warning) 10%, transparent); color: var(--warning); border: 1px solid color-mix(in srgb, var(--warning) 30%, transparent); }
+    .sp-adv-drafts { font-size: .75rem; color: var(--t3); }
+    .sp-adv-note { margin: 0 0 8px; }
+    .sp-adv-reset:disabled { opacity: .5; cursor: default; }
+    .sp-adv-table tr.sp-adv-draft td { background: color-mix(in srgb, var(--warning) 8%, transparent); }
+    .sp-adv-table tr.sp-adv-draft .adv-input { border-color: var(--warning); }
+    .sp-adv-table tr.sp-adv-invalid .adv-input { border-color: var(--danger); }
+    .sp-adv-state { display: block; font-size: .68rem; font-weight: 700; color: var(--warning); min-height: 0; }
+    .sp-adv-table tr.sp-adv-invalid .sp-adv-state { color: var(--danger); }
+    .sp-adv-all { display: inline-flex; align-items: center; gap: 4px; font-size: .72rem; color: var(--t3); cursor: pointer; white-space: nowrap; }
+    .sp-limit-review { margin-top: 8px; }
 
     /* Multi-program headings */
     .sp-prog-heading { font-size: .95rem; font-weight: 700; color: var(--navy); padding: 10px 0 6px; margin-top: 18px; border-bottom: 2px solid var(--teal); display: flex; align-items: baseline; gap: 8px; }

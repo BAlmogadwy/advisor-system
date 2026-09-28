@@ -23,9 +23,20 @@ from django.views.decorators.http import require_GET, require_POST
 
 from core.authz import role_required, throttle
 from core.models import ProgrammeRequirement
+from core.services.audit import AuditUnavailable, audit_actor, record_audit_event
 from core.services.course_identity import planner_course_key
 from core.services.rbac import ROLE_GENERAL_ADVISOR, get_user_role
 from core.services.reporting import build_aggregate_counts, build_course_identity_aggregate_counts
+from core.services.section_limits import AUDIT_ACTION as LIMIT_AUDIT_ACTION
+from core.services.section_limits import (
+    LimitConflict,
+    LimitRequestError,
+    PlannedWrite,
+    apply_limit_writes,
+    parse_limit_request,
+    plan_limit_writes,
+    preview_token,
+)
 from core.services.section_planning import (
     DEFAULT_MAX_EXTERNAL,
     DEFAULT_MAX_LOCAL_4CR,
@@ -444,138 +455,127 @@ def section_plan_courses_view(request: HttpRequest) -> JsonResponse:
     return JsonResponse({"ok": True, "courses": courses})
 
 
-# ── Save per-course capacity API ──────────────────────────────
+# ── Save per-course seat limits (the only write path) ─────────
 
 
 @role_required(ROLE_GENERAL_ADVISOR)
 @require_POST
-def section_plan_save_capacity_view(request: HttpRequest) -> JsonResponse:
-    """Persist a per-course max_capacity override to ProgrammeRequirement rows.
+@throttle(max_calls=20, window_seconds=120)
+def section_plan_save_limits_view(request: HttpRequest) -> JsonResponse:
+    """Preview, then save, per-course seat limits for the programmes on screen.
 
-    Accepts JSON body:
+    JSON body::
+
         {
-            "programs": ["AI", "DS"],
-            "course_code": "CS211",
-            "max_capacity": 30        // or null to clear
+          "programs": ["AI"],                       # the programmes on screen
+          "changes": [
+            {"course_code": "AI491", "max_capacity": 6},
+            {"course_code": "CS211", "max_capacity": 30, "all_programmes": true},
+            {"course_code": "CS323", "max_capacity": null}     # remove the saved limit
+          ],
+          "dry_run": true,                          # preview: nothing is written
+          "preview_token": "…"                      # commit: the token of that preview
         }
 
-    Updates ProgrammeRequirement.max_capacity for every row matching
-    (program IN programs) AND (course_code = course_code).
-    Returns {"ok": True, "updated": <count>}.
+    A preview answers the exact rows that would change (course, programme,
+    old -> new, scope). A commit is refused (409 ``preview_stale``) unless its
+    token matches what the same request would change now, so the user always
+    confirmed exactly what is written. Every changed row is audited in the same
+    transaction; if the audit write fails nothing is saved (503).
     """
     try:
         body = json.loads(request.body.decode("utf-8")) if request.body else {}
     except (json.JSONDecodeError, UnicodeDecodeError):
-        return JsonResponse({"ok": False, "error": "Invalid JSON"}, status=400)
-
-    # ── Validate programs ──
-    programs = body.get("programs")
-    if not programs or not isinstance(programs, list):
         return JsonResponse(
-            {"ok": False, "error": "'programs' must be a non-empty list of program codes"},
-            status=400,
-        )
-    programs = [str(p).strip() for p in programs if str(p).strip()]
-    if not programs:
-        return JsonResponse(
-            {"ok": False, "error": "'programs' must be a non-empty list of program codes"},
-            status=400,
+            {"ok": False, "code": "invalid_json", "error": "Invalid JSON"}, status=400
         )
 
-    # ── Validate course_code ──
-    course_code = str(body.get("course_code", "")).strip()
-    if not course_code:
+    try:
+        programs, changes = parse_limit_request(body)
+        writes, unchanged = plan_limit_writes(programs, changes)
+    except LimitRequestError as exc:
+        return JsonResponse(exc.as_dict(), status=exc.status)
+
+    token = preview_token(programs, writes)
+    preview = {
+        "programs": programs,
+        "changes": [write.as_dict() for write in writes],
+        "unchanged": unchanged,
+        "preview_token": token,
+    }
+    if body.get("dry_run") is True:
+        return JsonResponse({"ok": True, "dry_run": True, **preview})
+
+    if body.get("preview_token") != token:
         return JsonResponse(
-            {"ok": False, "error": "'course_code' is required"},
-            status=400,
+            {
+                "ok": False,
+                "code": "preview_stale",
+                "error": "The saved limits changed since they were reviewed. Review them again.",
+                **preview,
+            },
+            status=409,
         )
-    course_code = normalize_code(course_code)
 
-    # ── Validate max_capacity ──
-    raw_cap = body.get("max_capacity")
-    if raw_cap is None or raw_cap == "" or raw_cap == "null":
-        max_capacity = None
-    else:
-        try:
-            max_capacity = int(raw_cap)
-            if max_capacity < 1:
-                return JsonResponse(
-                    {"ok": False, "error": "'max_capacity' must be a positive integer or null"},
-                    status=400,
-                )
-            max_capacity = min(max_capacity, 500)  # reasonable upper bound
-        except (ValueError, TypeError):
-            return JsonResponse(
-                {"ok": False, "error": "'max_capacity' must be a positive integer or null"},
-                status=400,
-            )
+    actor, actor_role = audit_actor(request)
 
-    # ── Perform update ──
-    updated = ProgrammeRequirement.objects.filter(
-        program__in=programs,
-        course_code=course_code,
-    ).update(max_capacity=max_capacity)
+    def _audit(write: PlannedWrite, position: int, total: int) -> None:
+        record_audit_event(
+            actor_username=actor,
+            actor_role=actor_role,
+            action=LIMIT_AUDIT_ACTION,
+            endpoint=request.path,
+            method=str(request.method),
+            status="success",
+            details={
+                **write.as_dict(),
+                "requirement_id": write.requirement_id,
+                "programs_on_screen": programs,
+                "batch": token[:16],
+                "position": position,
+                "of": total,
+            },
+        )
+
+    try:
+        apply_limit_writes(writes, audit=_audit)
+    except LimitConflict:
+        return JsonResponse(
+            {
+                "ok": False,
+                "code": "limit_changed",
+                "error": "A limit changed while saving. Nothing was saved; review again.",
+            },
+            status=409,
+        )
+    except AuditUnavailable:
+        return JsonResponse(
+            {
+                "ok": False,
+                "code": "audit_unavailable",
+                "error": "Couldn't record the change in the audit log, so nothing was saved.",
+            },
+            status=503,
+        )
 
     logger.info(
-        "save_capacity: user=%s programs=%s course=%s max_capacity=%s updated=%d",
+        "section_plan_save_limits: user=%s programs=%s changed=%d unchanged=%d batch=%s",
         request.user.username,
         programs,
-        course_code,
-        max_capacity,
-        updated,
+        len(writes),
+        unchanged,
+        token[:16],
     )
-
-    return JsonResponse({"ok": True, "updated": updated})
-
-
-@login_required(login_url="login")
-@require_POST
-def section_plan_save_overrides_bulk_view(request: HttpRequest) -> JsonResponse:
-    """Persist all per-course overrides from the advanced panel to the DB.
-
-    Accepts JSON: ``{"overrides": {"CS211": 30, "AI492": 5, ...}}``
-    Updates ProgrammeRequirement.max_capacity for ALL programmes that have
-    each course code.  Returns count of updated rows.
-    """
-    deny = _require_general_advisor(request)
-    if deny:
-        return deny
-
-    try:
-        body = json.loads(request.body.decode("utf-8")) if request.body else {}
-    except (json.JSONDecodeError, UnicodeDecodeError):
-        return JsonResponse({"ok": False, "error": "Invalid JSON"}, status=400)
-
-    overrides = body.get("overrides", {})
-    if not isinstance(overrides, dict):
-        return JsonResponse({"ok": False, "error": "'overrides' must be a dict"}, status=400)
-
-    total_updated = 0
-    for code, cap in overrides.items():
-        code_n = normalize_code(str(code))
-        if not code_n:
-            continue
-        try:
-            cap_val = int(cap)
-            if cap_val < 1:
-                continue
-            cap_val = min(cap_val, 500)
-        except (ValueError, TypeError):
-            continue
-
-        updated = ProgrammeRequirement.objects.filter(
-            course_code=code_n,
-        ).update(max_capacity=cap_val)
-        total_updated += updated
-
-    logger.info(
-        "save_overrides_bulk: user=%s courses=%d updated=%d",
-        request.user.username,
-        len(overrides),
-        total_updated,
+    return JsonResponse(
+        {
+            "ok": True,
+            "dry_run": False,
+            "programs": programs,
+            "changed": [write.as_dict() for write in writes],
+            "changed_count": len(writes),
+            "unchanged": unchanged,
+        }
     )
-
-    return JsonResponse({"ok": True, "updated": total_updated, "courses": len(overrides)})
 
 
 # ── Export XLSX API ────────────────────────────────────────────
