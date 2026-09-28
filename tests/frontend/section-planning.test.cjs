@@ -81,7 +81,7 @@ function limitsServer({ preview, commit } = {}) {
   };
 }
 
-async function page(t, { program = 'AI', limits = limitsServer(), confirm = async () => true, generate = () => answer(generated()) } = {}) {
+async function page(t, { program = 'AI', limits = limitsServer(), confirm = async () => true, generate = () => answer(generated()), localDepartments = null } = {}) {
   const errors = [];
   const virtualConsole = new VirtualConsole();
   virtualConsole.on('jsdomError', error => errors.push(error));
@@ -107,6 +107,7 @@ async function page(t, { program = 'AI', limits = limitsServer(), confirm = asyn
     errors.push(error);
     throw error;
   };
+  if (localDepartments) window.document.getElementById('spLocalDepartments').textContent = JSON.stringify(localDepartments);
   const context = dom.getInternalVMContext();
   vm.runInContext(SHARED, context, { filename: 'shared-utils.js' });
   vm.runInContext(PAGE, context, { filename: 'page-section-planning.js' });
@@ -336,4 +337,34 @@ test('a refused save is explained in the page\'s words and keeps the drafts', as
   ));
   assert.equal(ui.$('spStatus').getAttribute('role'), 'alert');
   assert.ok(ui.row('AI491').classList.contains('sp-adv-draft'));
+});
+
+/* ── "Our" departments come from the server ── */
+
+function summaryPlan() {
+  const plan = [planRow('AI491'), planRow('COE211'), planRow('MATH203')];
+  const data = generated(plan);
+  data.summary.departments = ['AI', 'COE', 'MATH'].map(department => ({ department, courses: 1, sections: 1, students: 30, total_credits: 3 }));
+  return data;
+}
+
+test('the Department Summary lists the departments the server calls ours, COE included', async t => {
+  const ui = await page(t, { generate: () => answer(summaryPlan()) });
+  assert.deepEqual(JSON.parse(ui.$('spLocalDepartments').textContent), ['AI', 'COE', 'CS', 'CYB', 'DS', 'IS']);
+
+  ui.$('spGenerate').click();
+  await settle();
+
+  const shown = [...ui.window.document.querySelectorAll('#spDeptGrid .dept-name')].map(el => el.textContent);
+  assert.deepEqual(shown, ['AI', 'COE']);
+});
+
+test('the page keeps no department list of its own', async t => {
+  const ui = await page(t, { generate: () => answer(summaryPlan()), localDepartments: ['MATH'] });
+
+  ui.$('spGenerate').click();
+  await settle();
+
+  const shown = [...ui.window.document.querySelectorAll('#spDeptGrid .dept-name')].map(el => el.textContent);
+  assert.deepEqual(shown, ['MATH']);
 });

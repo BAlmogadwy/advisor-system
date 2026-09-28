@@ -41,6 +41,7 @@ from core.services.section_planning import (
     DEFAULT_MAX_EXTERNAL,
     DEFAULT_MAX_LOCAL_4CR,
     DEFAULT_MAX_LOCAL_OTHER,
+    LOCAL_DEPARTMENTS,
     compute_plan_summary,
     compute_section_plan,
     get_all_courses_with_defaults,
@@ -274,6 +275,7 @@ def section_plan_page(request: HttpRequest) -> HttpResponse:
         **get_sidebar_context(request),
         "default_year": defaults["academic_year"],
         "default_term": defaults["term"],
+        "local_departments": sorted(LOCAL_DEPARTMENTS),
     }
     return render(request, "core/section_planning.html", ctx)
 

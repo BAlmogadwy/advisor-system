@@ -18,7 +18,11 @@ from core.models import Course, ElectiveCourse, ProgrammeRequirement
 from core.services.student_helpers import normalize_code
 
 # ── Default capacity rules (matching legacy generate_course_sections.py) ──
-LOCAL_DEPARTMENTS = frozenset({"AI", "DS", "CS", "IS", "CYB"})
+# "Our" departments: their courses take the local 25 (4+ credits) / 40 rules,
+# every other department's the external rule. COE is one of ours (owner,
+# 2026-09-28). The Section Planning page reads this set from the server; it
+# must never keep a copy of its own.
+LOCAL_DEPARTMENTS = frozenset({"AI", "DS", "CS", "IS", "CYB", "COE"})
 DEFAULT_MAX_LOCAL_4CR = 25
 DEFAULT_MAX_LOCAL_OTHER = 40
 DEFAULT_MAX_EXTERNAL = 50

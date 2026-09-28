@@ -3,12 +3,16 @@
 - Declared limits hold in every view: the all-programmes view (the default)
   sizes a course by the lowest limit any programme in scope declares, through
   the same function the builder uses for a pooled scenario.
+- COE is one of our departments: its courses take the local 25/40 rules, and
+  the page reads that list from the server.
 """
 
 from __future__ import annotations
 
 import io
 import json
+from collections import Counter
+from pathlib import Path
 
 import pytest
 from django.contrib.auth.models import Group, User
@@ -23,7 +27,11 @@ from core.services.rbac import (
     set_user_scope,
 )
 from core.services.reporting import clear_aggregate_cache
-from core.services.section_planning import lowest_declared_capacities
+from core.services.section_planning import (
+    LOCAL_DEPARTMENTS,
+    compute_section_plan,
+    lowest_declared_capacities,
+)
 
 pytestmark = pytest.mark.django_db
 
@@ -211,3 +219,51 @@ def test_the_builder_and_section_planning_size_a_shared_course_alike(
     assert builder_row["max_per_section"] == 30
     assert planning_row["max_per_section"] == builder_row["max_per_section"]
     assert planning_row["num_sections"] == builder_row["num_sections"]
+
+
+# ── COE is one of our departments ────────────────────────────────
+
+
+def test_coe_courses_take_the_local_rules() -> None:
+    Course.objects.create(course_code="COE211", department="COE", credit_hours=4)
+    Course.objects.create(course_code="COE321", department="", credit_hours=3)
+    Course.objects.create(course_code="MATH203", department="MATH", credit_hours=4)
+
+    plan = {
+        row["course_code"]: row
+        for row in compute_section_plan(Counter({"COE211": 60, "COE321": 60, "MATH203": 60}))
+    }
+
+    assert "COE" in LOCAL_DEPARTMENTS
+    assert plan["COE211"]["max_per_section"] == 25  # local, 4 credits
+    assert plan["COE211"]["num_sections"] == 3
+    assert (
+        plan["COE321"]["max_per_section"] == 40
+    )  # local, other credits (department from the code)
+    assert plan["COE321"]["is_external"] is False
+    assert plan["MATH203"]["max_per_section"] == 50  # a service department stays external
+
+
+def test_a_coe_course_flagged_external_keeps_the_external_rule() -> None:
+    """COE joining our departments does not reinterpret the per-course flag."""
+    Course.objects.create(course_code="COE466", department="COE", credit_hours=3, is_external=True)
+
+    (row,) = compute_section_plan(Counter({"COE466": 60}))
+
+    assert row["max_per_section"] == 50
+
+
+def test_the_page_is_given_the_servers_department_list(planner: Client) -> None:
+    import re
+
+    html = planner.get("/section-planning/").content.decode("utf-8")
+    embedded = re.search(
+        r'<script id="spLocalDepartments" type="application/json">(.*?)</script>', html
+    )
+
+    assert embedded, "the page must be handed the server's list"
+    assert json.loads(embedded.group(1)) == sorted(LOCAL_DEPARTMENTS)
+    js = (Path(__file__).resolve().parents[1] / "static/js/page-section-planning.js").read_text(
+        encoding="utf-8"
+    )
+    assert "'CYB'" not in js and '"CYB"' not in js, "the page must not keep a list of its own"

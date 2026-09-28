@@ -454,7 +454,10 @@ function hideStatus() {
 
 /* ── Render results ── */
 let _lastPayload = null;
-const CS_DEPTS = new Set(['AI', 'DS', 'CS', 'IS', 'CYB', 'COE']);
+/* "Our" departments come from the server (section_planning.LOCAL_DEPARTMENTS). */
+const LOCAL_DEPTS = new Set((() => {
+  try { return JSON.parse($('spLocalDepartments')?.textContent || '[]'); } catch (_) { return []; }
+})());
 
 function renderResults(data) {
   if (data.mode === 'multi') {
@@ -508,7 +511,7 @@ function buildPlanRows(plan) {
 
 /* ── Build department summary HTML ── */
 function buildDeptSummaryHtml(departments) {
-  const depts = (departments || []).filter(d => CS_DEPTS.has(d.department));
+  const depts = (departments || []).filter(d => LOCAL_DEPTS.has(d.department));
   if (!depts.length) return '';
   return depts.map(d => `
     <div class="sp-dept-card">
