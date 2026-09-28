@@ -619,6 +619,70 @@ test('while a review is on its way the fields are read-only, Save is off, and Sa
   assert.equal(ui.text('capSave'), say('Save changes', 'حفظ التغييرات'));
 });
 
+test('while the commit and the reload after it run the fields stay read-only and Save is off; then they are editable again', async t => {
+  let commitDone, reloadDone;
+  let lists = 0;
+  const store = savedRows();
+  const rowsOf = asked => {
+    const program = asked.replace(/\s+/g, '').toUpperCase();
+    return answer({ ok: true, program, rows: JSON.parse(JSON.stringify(store[program] || [])) });
+  };
+  const ui = await page(t, {
+    store,
+    /* The first load answers at once; the reload after the save waits. */
+    list: asked => {
+      lists += 1;
+      return lists === 2 ? new Promise(resolve => { reloadDone = () => resolve(rowsOf(asked)); }) : rowsOf(asked);
+    },
+    limits: s => {
+      const real = limitsServer(s);
+      return body => (body.dry_run ? real(body) : new Promise(resolve => { commitDone = () => resolve(real(body)); }));
+    },
+  });
+  await ui.load('AI');
+  await ui.type('AI492', '8');
+  const readOnly = () => [...ui.$('capBody').querySelectorAll('.cap-input')].map(field => field.readOnly);
+  const busy = stage => {
+    assert.deepEqual(readOnly(), [true, true, true], `${stage}: no edit can be lost to the reload`);
+    assert.equal(ui.saveOff(), true, `${stage}: Save is off`);
+    assert.equal(ui.input('CS211').value, '30', `${stage}: another row keeps its value`);
+  };
+
+  ui.$('capSave').click();
+  await settle();
+  assert.ok(commitDone, 'the review was confirmed and the commit is on its way');
+  assert.equal(ui.text('capSave'), say('Saving...', 'جارٍ الحفظ...'));
+  busy('commit');
+  ui.setBox('AI');   // the panel redraws while the commit runs
+  busy('commit, after a redraw');
+  ui.$('capLoad').click();
+  await settle();
+  assert.equal(ui.reads().length, 1, 'Load waits for the commit');
+  assert.equal(ui.dialogs.length, 1, 'only the review');
+
+  commitDone();
+  await settle();
+  assert.ok(reloadDone, 'the reload is on its way');
+  assert.equal(ui.store.AI[0].max_capacity, 8);
+  assert.equal(ui.text(ui.row('AI492').querySelectorAll('td')[3]), '8', 'what the commit wrote reads as saved at once');
+  busy('reload');
+  ui.setBox('AI');   // and while the reload runs
+  busy('reload, after a redraw');
+
+  reloadDone();
+  await settle();
+  assert.deepEqual(readOnly(), [false, false, false], 'editable again');
+  assert.equal(ui.input('CS211').value, '30');
+  assert.equal(ui.text('capSave'), say('Save changes', 'حفظ التغييرات'));
+  assert.equal(ui.saveOff(), true, 'nothing left to save');
+  assert.equal(ui.text('capOut'), say(
+    'Saved 1 seat limit for AI; each change is in the audit log.',
+    'حُفظ 1 حد لبرنامج AI وسُجّل كل تغيير في سجل التدقيق.',
+  ));
+  await ui.type('CS211', '31');
+  assert.equal(ui.saveOff(), false, 'a new edit can be saved');
+});
+
 test('a list that fails to load is said in the page words and leaves the rows, their programme and the drafts as they were', async t => {
   for (const kind of ['html', 'json']) {
     await t.test(kind, async st => {
