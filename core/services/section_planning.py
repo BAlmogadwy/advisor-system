@@ -431,7 +431,7 @@ def get_all_courses_with_defaults(
         # over the programmes students belong to). Show that same limit, so the
         # panel's starting value is what the plan applies; nothing is saved here.
         lowest = lowest_declared_capacities(
-            _programmes_with_students(), {code: {"course_code": code} for code in seen}
+            programmes_with_students(), {code: {"course_code": code} for code in seen}
         )
         for entry in result:
             entry["programme_max"] = lowest.get(entry["course_code"])
@@ -443,8 +443,8 @@ def get_all_courses_with_defaults(
     return result
 
 
-def _programmes_with_students() -> list[str]:
-    """The programmes the all-programmes plan is sized for (as ``plan_all_programmes``)."""
+def programmes_with_students() -> list[str]:
+    """The programmes with students: those the all-programmes plan and its panel size by."""
     from core.models import Student
 
     return sorted(

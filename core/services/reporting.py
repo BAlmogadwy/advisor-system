@@ -16,15 +16,10 @@ _AGGREGATE_CACHE_TTL = 300  # 5 minutes
 
 @dataclass(frozen=True)
 class StudentDemand:
-    """One student's next-term courses, with the programme and cohort they are planned in.
-
-    ``cohort`` is ``"M"`` or ``"F"`` from ``Student.section``, or ``""`` when no
-    gender is recorded: such a student is never assumed to be either.
-    """
+    """One student's next-term courses, with the programme they are planned in."""
 
     student_id: int
     program: str
-    cohort: str
     courses: tuple[str, ...]
 
 
@@ -44,9 +39,16 @@ class ElectiveTrace:
 
 @dataclass(frozen=True)
 class PlanningDemand:
-    """Everything Section Planning sizes from, per student (electives resolved)."""
+    """Everything Section Planning sizes ONE section from, per student (electives resolved).
 
+    ``section`` is ``"M"`` or ``"F"``: every student in ``students`` is of it.
+    ``no_section`` counts the students in scope with no recorded section: they
+    are in neither section's plan, never assumed to be of one.
+    """
+
+    section: str
     students: tuple[StudentDemand, ...]
+    no_section: int = 0
     #: (programme, slot, course, students): a resolved elective and the slot it fills.
     elective_picks: tuple[tuple[str, str, str, int], ...] = ()
     #: (programme, slot, reason, students): slot demand that became no course.
@@ -62,16 +64,27 @@ def clear_aggregate_cache() -> None:
     _planning_cache.clear()
 
 
-def build_planning_demand(year: int, semester: int, program: str | None = None) -> PlanningDemand:
-    """Per-student demand for one programme, or for every student when ``program`` is None.
+#: The two sections (campuses) a plan is made for, as ``Student.section`` records them.
+PLANNING_SECTIONS = ("M", "F")
 
-    The recommender runs once for the scope and mapped elective placeholders are
-    resolved to real courses, exactly as ``build_aggregate_counts`` does; what
-    this adds is who each seat is for, so a plan can keep male and female
-    students apart and name the students with no recorded gender.
+
+def build_planning_demand(
+    year: int, semester: int, program: str | None = None, *, section: str
+) -> PlanningDemand:
+    """Per-student demand of ONE section, for one programme or for every programme.
+
+    The department plans the male section (``"M"``) and the female section
+    (``"F"``) apart, never together. Only the chosen section's students are
+    recommended and have their elective placeholders resolved (as
+    ``build_aggregate_counts`` does), so a student of the other section never
+    changes this demand, not even which elective a slot's students are spread
+    across; the timetable builder plans a section from its students alone too.
+    Students with no recorded section are only counted.
     """
+    if section not in PLANNING_SECTIONS:
+        raise ValueError(f"section must be one of {PLANNING_SECTIONS}, not {section!r}")
     program = str(program).strip() if program else None
-    cache_key = (int(year), int(semester), program or "")
+    cache_key = (int(year), int(semester), program or "", section)
     cached = _planning_cache.get(cache_key)
     if cached and (time.time() - cached[0]) < _AGGREGATE_CACHE_TTL:
         return cached[1]
@@ -79,8 +92,16 @@ def build_planning_demand(year: int, semester: int, program: str | None = None) 
     rows = Student.objects.all()
     if program:
         rows = rows.filter(program=program)
-    scope = list(rows.values_list("student_id", "program", "section").order_by("student_id"))
-    student_ids = [int(sid) for sid, _prog, _section in scope]
+    everyone = list(rows.values_list("student_id", "program", "section").order_by("student_id"))
+    scope = [
+        (sid, prog)
+        for sid, prog, recorded in everyone
+        if cohort_of_student_section(recorded) == section
+    ]
+    no_section = sum(
+        1 for _sid, _prog, recorded in everyone if not cohort_of_student_section(recorded)
+    )
+    student_ids = [int(sid) for sid, _prog in scope]
 
     if program:
         all_recs = batch_recommend(student_ids, program, year, semester)
@@ -92,20 +113,17 @@ def build_planning_demand(year: int, semester: int, program: str | None = None) 
     )
 
     students = []
-    for sid, prog, section in scope:
+    for sid, prog in scope:
         courses = tuple(
             code for code in (normalize_code(c) for c in all_recs.get(int(sid), [])) if code
         )
         students.append(
-            StudentDemand(
-                student_id=int(sid),
-                program=str(program or prog or ""),
-                cohort=cohort_of_student_section(section),
-                courses=courses,
-            )
+            StudentDemand(student_id=int(sid), program=str(program or prog or ""), courses=courses)
         )
     demand = PlanningDemand(
+        section=section,
         students=tuple(students),
+        no_section=no_section,
         elective_picks=tuple(
             (prog, slot, course, n) for (prog, slot, course), n in sorted(trace.picks.items())
         ),
