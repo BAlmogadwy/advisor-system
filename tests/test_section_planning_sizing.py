@@ -395,6 +395,12 @@ def test_several_programmes_are_pooled_by_cohort(
     assert (row["male_students"], row["female_students"]) == (40, 5)
     assert (row["male_sections"], row["female_sections"], row["num_sections"]) == (2, 1, 3)
     assert data["combined_summary"]["total_sections"] == 3
+    assert (
+        data["combined_summary"]["male_sections"],
+        data["combined_summary"]["female_sections"],
+    ) == (2, 1)
+    (cs,) = data["combined_summary"]["departments"]
+    assert (cs["male_sections"], cs["female_sections"]) == (2, 1)
     per_programme = {p["program"]: _row(p["plan"], "CS211") for p in data["programs"]}
     assert (per_programme["AI"]["male_sections"], per_programme["AI"]["female_sections"]) == (1, 1)
     assert (per_programme["DS"]["max_per_section"], per_programme["DS"]["num_sections"]) == (35, 1)
@@ -613,3 +619,30 @@ def test_the_export_names_the_slot_and_the_limits_source(planner: Client, electi
     note = workbook.worksheets[1].cell(row=6, column=1).value
     assert note.startswith("Elective-slot demand that became no course: 8")
     assert "AI AI2: not published for this term (5)" in note
+
+
+def test_an_elective_filling_slots_with_different_limits_takes_the_lowest(
+    planner: Client, electives, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """AI2 students reach AI463 through AI's publication, for AI2's own AI1 slot (25)."""
+    _slot("AI2", "AI1", 25)
+    ai2 = _students("AI2", 505000001, 10, section="M")
+    wants = {sid: ["AI1"] for sid in Student.objects.values_list("student_id", flat=True)}
+    wants.update({sid: ["AI2"] for sid in range(503000001, 503000006)})
+    wants.update({sid: ["AI3"] for sid in range(504000001, 504000004)})
+    monkeypatch.setattr(
+        "core.services.reporting.batch_recommend",
+        lambda student_ids, _program, _year, _term, **_kw: {
+            sid: list(wants[sid]) for sid in student_ids
+        },
+    )
+
+    data = _generate(planner, program="AI,AI2")
+
+    pooled = _row(data["combined_plan"], "AI463")
+    assert pooled["max_per_section"] == 25
+    assert pooled["male_students"] == 70 + len(ai2)
+    per_programme = {
+        p["program"]: _row(p["plan"], "AI463")["max_per_section"] for p in data["programs"]
+    }
+    assert per_programme == {"AI": 30, "AI2": 25}
