@@ -439,7 +439,8 @@ class SectionPlanningBrowserTests(StaticLiveServerTestCase):
       chips: [...document.querySelectorAll('.sp-seg')].map(chip => {
         const s = getComputedStyle(chip), dot = getComputedStyle(chip.querySelector('.sp-seg-dot'));
         return { value: chip.querySelector('input').value, checked: chip.querySelector('input').checked,
-                 dot: dot.backgroundColor, edge: s.outlineStyle === 'none' ? null : s.outlineColor };
+                 dot: dot.backgroundColor, edge: s.outlineStyle === 'none' ? null : s.outlineColor,
+                 ring: s.outlineStyle === 'none' ? null : `${s.outlineWidth} ${s.outlineColor}` };
       }) })"""
 
     def test_the_chosen_section_shows_in_windows_high_contrast(self) -> None:
@@ -465,6 +466,13 @@ class SectionPlanningBrowserTests(StaticLiveServerTestCase):
             self.assertNotEqual(chosen["dot"], state["canvas"], f"{theme}: {state}")
             self.assertIsNotNone(chosen["edge"], f"{theme}: {state}")
             self.assertIsNone(other["edge"], f"{theme}: {state}")
+
+            # Keyboard focus on the chosen chip must look different from the
+            # chosen edge alone: a thicker CanvasText ring, not the 1px Highlight.
+            page.locator("#spSectionF").focus()
+            focused = next(c for c in page.evaluate(self.FORCED)["chips"] if c["value"] == "F")
+            self.assertNotEqual(focused["ring"], chosen["ring"], f"{theme}: focus is invisible")
+            self.assertTrue(str(focused["ring"]).startswith("2px"), f"{theme}: {focused}")
             page.context.close()
 
     # ── 2. A phone shows every course's numbers; the page never scrolls sideways ──
