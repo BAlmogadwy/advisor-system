@@ -740,7 +740,7 @@
             <div class="dba-panel-icon icon-safe"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></span></div>
             <div>
               <div class="dba-panel-title">{% if LANGUAGE_CODE == 'ar' %}سعة البرامج{% else %}Programme Capacities{% endif %}</div>
-              <div class="dba-panel-subtitle">{% if LANGUAGE_CODE == 'ar' %}عرض وتعديل الحد الأقصى للسعة (<code>max_capacity</code>) لكل مقرر في <code>programme_requirements</code>.{% else %}View and edit the <code>max_capacity</code> value for each course in <code>programme_requirements</code>.{% endif %}</div>
+              <div class="dba-panel-subtitle">{% if LANGUAGE_CODE == 'ar' %}حد الشعبة (<code>max_capacity</code>) لكل مقرر في برنامج واحد. التعديلات مسودات حتى الحفظ، ويعرض الحفظ التغييرات بدقة قبل كتابتها، ويُسجَّل كل تغيير في سجل التدقيق.{% else %}The seat limit (<code>max_capacity</code>) of each course in one programme. Edits are drafts until you save; a save shows the exact changes before writing them, and each change is recorded in the audit log.{% endif %}</div>
             </div>
           </div>
 
@@ -752,23 +752,25 @@
                 <input id="capProgram" class="form-control" placeholder="{% if LANGUAGE_CODE == 'ar' %}مثال: AI{% else %}e.g. AI{% endif %}">
               </div>
               <div class="col-md-7 d-flex gap-2 align-items-end">
-                <button id="capLoad" class="btn btn-outline-primary">{% if LANGUAGE_CODE == 'ar' %}تحميل{% else %}Load{% endif %}</button>
-                <button id="capSave" class="btn btn-success d-none">{% if LANGUAGE_CODE == 'ar' %}حفظ الكل{% else %}Save All{% endif %}</button>
+                <button id="capLoad" type="button" class="btn btn-outline-primary">{% if LANGUAGE_CODE == 'ar' %}تحميل{% else %}Load{% endif %}</button>
+                <button id="capSave" type="button" class="btn btn-success d-none" aria-disabled="true" aria-describedby="capStatus">{% if LANGUAGE_CODE == 'ar' %}حفظ التغييرات{% else %}Save changes{% endif %}</button>
                 <span id="capCount" class="small text-secondary ms-2"></span>
               </div>
             </div>
+            <div id="capStatus" class="cap-status small text-secondary mt-2"></div>
           </div>
 
           <div id="capTableWrap" class="dba-section d-none">
-            <div class="dba-section-title">{% if LANGUAGE_CODE == 'ar' %}سعة المقررات{% else %}Course capacities{% endif %}</div>
+            <div class="dba-section-title">{% if LANGUAGE_CODE == 'ar' %}حدود الشعب{% else %}Course seat limits{% endif %}</div>
             <div class="table-wrap" style="max-height:60vh;overflow:auto;">
               <table class="table table-sm table-hover align-middle mb-0" style="font-size:0.82rem;">
                 <thead class="table-light">
                   <tr>
                     <th>{% if LANGUAGE_CODE == 'ar' %}رمز المقرر{% else %}Course Code{% endif %}</th>
+                    <th>{% if LANGUAGE_CODE == 'ar' %}اسم المقرر{% else %}Course Name{% endif %}</th>
                     <th>{% if LANGUAGE_CODE == 'ar' %}الساعات{% else %}Credit Hours{% endif %}</th>
-                    <th>{% if LANGUAGE_CODE == 'ar' %}السعة الحالية{% else %}Current Capacity{% endif %}</th>
-                    <th style="width:160px">{% if LANGUAGE_CODE == 'ar' %}السعة الجديدة{% else %}New Capacity{% endif %}</th>
+                    <th>{% if LANGUAGE_CODE == 'ar' %}الحد المحفوظ{% else %}Saved Limit{% endif %}</th>
+                    <th style="width:160px">{% if LANGUAGE_CODE == 'ar' %}الحد الجديد{% else %}New Limit{% endif %}</th>
                   </tr>
                 </thead>
                 <tbody id="capBody"></tbody>
@@ -787,5 +789,5 @@
 <script>
   const LANGUAGE_CODE = "{{ LANGUAGE_CODE|default:'en' }}";
 </script>
-<script src="{% static 'js/page-db-admin.js' %}?v=4"></script>
+<script src="{% static 'js/page-db-admin.js' %}?v=5"></script>
 {% endblock %}
