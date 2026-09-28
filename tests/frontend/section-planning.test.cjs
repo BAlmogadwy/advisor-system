@@ -827,3 +827,77 @@ test('a second submit while Generate runs sends nothing more', async t => {
   await settle();
   assert.equal(ui.requests.filter(r => r.url === GENERATE).length, 2, 'free again once the first answered');
 });
+
+/* ── A phone shows every course's numbers ── */
+
+function multiPlan() {
+  const ai = [planRow('AI491', { male_sections: 3, female_sections: 4, num_sections: 7 }), planRow('MATH203', { male_sections: 1, female_sections: 0, num_sections: 1 })];
+  const ds = [planRow('DS201', { male_sections: 1, female_sections: 1, num_sections: 2 }), planRow('MATH203', { male_sections: 0, female_sections: 1, num_sections: 1 })];
+  const combined = [planRow('AI491', { male_sections: 3, female_sections: 4, num_sections: 7, programs: ['AI'] }),
+    planRow('DS201', { male_sections: 1, female_sections: 1, num_sections: 2, programs: ['DS'] }),
+    planRow('MATH203', { male_sections: 1, female_sections: 1, num_sections: 2, programs: ['AI', 'DS'] })];
+  const summaryOf = rows => {
+    const departments = {};
+    rows.forEach(row => {
+      const d = departments[row.department] ||= { department: row.department, courses: 0, sections: 0, male_sections: 0, female_sections: 0, students: 0, total_credits: 0 };
+      d.courses += 1; d.sections += row.num_sections; d.male_sections += row.male_sections; d.female_sections += row.female_sections;
+      d.students += row.total_students; d.total_credits += 3 * row.num_sections;
+    });
+    return {
+      total_courses: rows.length, total_sections: rows.reduce((n, r) => n + r.num_sections, 0),
+      male_sections: rows.reduce((n, r) => n + r.male_sections, 0), female_sections: rows.reduce((n, r) => n + r.female_sections, 0),
+      total_students: 0, avg_fill_percent: 50, departments: Object.values(departments).sort((a, b) => a.department.localeCompare(b.department)),
+      no_gender: { students: 0, seat_demand: 0, courses: 0 },
+    };
+  };
+  return {
+    ok: true, mode: 'multi', year: 1448, semester: 1, student_count: 60, cohorts: { M: 25, F: 35, no_gender: 0 },
+    combined_plan: combined, combined_summary: summaryOf(combined),
+    programs: [
+      { program: 'AI', student_count: 1, plan: ai, summary: summaryOf(ai) },
+      { program: 'DS', student_count: 2, plan: ds, summary: summaryOf(ds) },
+    ],
+  };
+}
+
+const heads = (_ui, table) => [...table.querySelectorAll('thead th')].map(th => th.textContent.trim());
+
+test('every result cell carries its column header as its phone label, and a card keeps the numbers', async t => {
+  const ui = await page(t, { generate: () => answer(cohortPlan()) });
+  ui.$('spGenerate').click();
+  await settle();
+
+  const table = ui.$('spTable');
+  assert.ok(table.classList.contains('mobile-cards'));
+  assert.ok(table.parentElement.classList.contains('sp-table-scroll'), 'wider than the pane: it scrolls, not the page');
+  const labels = heads(ui, table);
+  const cells = [...table.querySelectorAll('tbody tr[data-code="AI331"] td')];
+  assert.deepEqual(cells.map(td => td.dataset.label), labels);
+  const hidden = cells.filter(td => td.classList.contains('mc-hide')).map(td => td.dataset.label);
+  assert.deepEqual(hidden, say(['#', 'Dept', 'Cr', 'Avg'], ['#', 'القسم', 'ساعات', 'المتوسط']));
+  const card = cls => cells.find(td => td.classList.contains(cls));
+  assert.equal(card('sp-c-demand').querySelector('strong').textContent, '42');
+  assert.equal(card('sp-sec-m').textContent, '1');
+  assert.equal(card('sp-sec-f').textContent, '2');
+  assert.equal(card('sp-sec-total').textContent, '3');
+  assert.match(card('sp-c-max').textContent, /^25/);
+  assert.ok(card('sp-c-fill').querySelector('.sp-fill'));
+  assert.deepEqual(cells.filter(td => td.classList.contains('mc-primary')).map(td => td.dataset.label), labels.slice(2, 4));
+  assert.equal(card('sp-c-status').innerHTML, '', 'no status: an empty cell a phone leaves out');
+});
+
+test('each programme\'s table has the server\'s header and the same phone cards', async t => {
+  const ui = await page(t, { program: 'AI,DS', generate: () => answer(multiPlan()) });
+  ui.$('spGenerate').click();
+  await settle();
+
+  const tables = [...ui.window.document.querySelectorAll('#spMultiPrograms table')];
+  assert.equal(tables.length, 2);
+  for (const table of tables) {
+    assert.deepEqual(heads(ui, table), heads(ui, ui.$('spTable')));
+    assert.ok(table.classList.contains('mobile-cards') && table.classList.contains('sp-plan-table'));
+    assert.ok(table.parentElement.classList.contains('sp-table-scroll'));
+    const row = table.querySelector('tbody tr[data-code]');
+    assert.deepEqual([...row.children].map(td => td.dataset.label), heads(ui, table));
+  }
+});

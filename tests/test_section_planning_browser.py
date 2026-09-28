@@ -301,3 +301,47 @@ class SectionPlanningBrowserTests(StaticLiveServerTestCase):
         expect(page.locator("#spTable tbody tr[data-code]")).to_have_count(len(PLAN))
         self.assertEqual([r for r in page.requests if "/limits/" in r], [])
         self.assertTrue(page.url.endswith("/section-planning/"), "no page load")
+
+    # ── 2. A phone shows every course's numbers; the page never scrolls sideways ──
+
+    # Per result row: the course and its numbers, each laid out (not display:
+    # none) and, on a phone, inside the viewport; and how far the document and
+    # the <main> scroller overflow sideways. Wider than a phone the 13-column
+    # table may scroll inside its own box, so there "shown" means laid out.
+    PHONE = """(phone) => {
+      const shown = el => { const r = el.getBoundingClientRect(), s = getComputedStyle(el);
+        const laidOut = s.display !== 'none' && s.visibility !== 'hidden' && r.width > 1 && r.height > 1;
+        return laidOut && (!phone || (r.left >= -0.5 && r.right <= innerWidth + 0.5)); };
+      const parts = { course: 2, demand: 5, m: 6, f: 7, total: 8, max: 9 };
+      const rows = [...document.querySelectorAll('.sp-plan-table tbody tr[data-code]')]
+        .filter(tr => tr.closest('.d-none') === null)
+        .map(tr => ({ code: tr.dataset.code,
+          hidden: Object.entries(parts).filter(([, i]) => !shown(tr.children[i])).map(([k]) => k) }));
+      const main = document.querySelector('main');
+      return { rows, page: document.documentElement.scrollWidth - innerWidth,
+               main: main.scrollWidth - main.clientWidth };
+    }"""
+
+    def _generate(self, page) -> None:
+        page.locator("#spGenerate").click()
+        expect(page.locator("#spTable tbody tr[data-code]")).to_have_count(len(PLAN))
+
+    def _assert_phone(self, language: str, wide_font: bool) -> None:
+        page = self._page(language, 390, wide_font=wide_font)
+        self._generate(page)
+        for width in WIDTHS:
+            page.set_viewport_size({"width": width, "height": 900})
+            where = f"{language} {width}px{' wide font' if wide_font else ''}"
+            facts = page.evaluate(self.PHONE, width <= 768)
+            self.assertEqual(len(facts["rows"]), len(PLAN), where)
+            self.assertEqual([r for r in facts["rows"] if r["hidden"]], [], where)
+            self.assertLessEqual(facts["page"], 0, f"{where}: the page scrolls sideways")
+            self.assertLessEqual(facts["main"], 1, f"{where}: the pane scrolls sideways")
+
+    def test_every_row_shows_its_numbers_at_every_width(self) -> None:
+        for language in ("en", "ar"):
+            self._assert_phone(language, wide_font=False)
+
+    def test_every_row_shows_its_numbers_in_a_wide_font(self) -> None:
+        for language in ("en", "ar"):
+            self._assert_phone(language, wide_font=True)

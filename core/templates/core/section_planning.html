@@ -159,8 +159,9 @@
     <button id="spDeptFilterClear" class="btn btn-neutral btn-sm fs-xs" type="button" style="padding:2px 8px">{% if LANGUAGE_CODE == 'ar' %}مسح{% else %}Clear{% endif %}</button>
   </div>
 
-  <!-- Results table -->
-  <table class="tbl-card" id="spTable">
+  <!-- Results table: scrolls in its own box when wider than the pane; a card per course on a phone -->
+  <div class="sp-table-scroll">
+  <table class="tbl-card mobile-cards sp-plan-table" id="spTable" role="table">
     <thead>
       <tr>
         <th data-sort="num">#</th>
@@ -182,6 +183,7 @@
       <tr><td colspan="13" class="empty-note">{% if LANGUAGE_CODE == 'ar' %}حدد السنة والفصل ثم انقر حساب.{% else %}Set Year &amp; Semester, then click Generate.{% endif %}</td></tr>
     </tbody>
   </table>
+  </div>
   <nav class="tbl-pager" id="spPager"></nav>
 
   <!-- Multi-program results (hidden until multi mode) -->

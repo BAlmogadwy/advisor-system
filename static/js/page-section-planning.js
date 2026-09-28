@@ -641,6 +641,17 @@ function renderResults(data) {
   }
 }
 
+/* The results tables' header is the server's (the template's #spTable), read
+ * before anything wires it: per-programme tables reuse it, and every cell
+ * carries its column's header as the label a phone card shows. */
+const PLAN_HEAD_HTML = $('spTable').tHead.innerHTML;
+const PLAN_LABELS = [...$('spTable').tHead.querySelectorAll('th')].map(th => th.textContent.trim());
+/* Each column's part in a phone card (<=768px, .mobile-cards): hidden, the
+ * title line (code, name), or a number; the number classes also order the
+ * card: demand, max, fill, then M | F | Total sections, then the status. */
+const CARD_ROLE = ['mc-hide', 'mc-hide', 'mc-primary', 'mc-primary', 'mc-hide', 'sp-c-demand',
+  'sp-sec-m', 'sp-sec-f', 'sp-sec-total', 'sp-c-max', 'mc-hide', 'sp-c-fill', 'sp-c-status'];
+
 /* ── Build table rows HTML from a plan array ── */
 function buildPlanRows(plan) {
   if (!plan.length) {
@@ -670,27 +681,29 @@ function buildPlanRows(plan) {
       ? `<span style="display:inline-flex;flex-wrap:wrap;gap:4px;margin-inline-end:6px;vertical-align:middle">${programs.map(p => `<span class="sp-pill sp-pill-ext">${esc(p)}</span>`).join('')}</span>`
       : '';
     const courseName = row.course_name || '';
-    return `<tr data-code="${esc(row.course_code)}">
-      <td>${idx + 1}</td>
-      <td><strong>${esc(row.department)}</strong></td>
-      <td><span class="cr-id">${esc(row.course_code)}</span>${slotTag}${extBadge}</td>
-      <td>${programTags}<span>${esc(courseName)}</span></td>
-      <td class="text-center">${esc(row.credit_hours)}</td>
-      <td class="text-center"><strong>${esc(row.total_students)}</strong>
-        <div class="sp-cell-sub">${esc(splitText(row.male_students, row.female_students))}</div>${noGender}</td>
-      <td class="text-center sp-sec-m">${esc(row.male_sections ?? 0)}</td>
-      <td class="text-center sp-sec-f">${esc(row.female_sections ?? 0)}</td>
-      <td class="text-center sp-sec-total"><strong>${esc(row.num_sections)}</strong></td>
-      <td class="text-center">${esc(row.max_per_section)}${source ? `<div class="sp-cell-sub sp-limit-src">${esc(source)}</div>` : ''}</td>
-      <td class="text-center">${row.avg_per_section}</td>
-      <td style="min-width:80px">
-        <div class="d-flex align-items-center gap-1">
+    const cells = [
+      [idx + 1],
+      [`<strong>${esc(row.department)}</strong>`],
+      [`<span class="cr-id">${esc(row.course_code)}</span>${slotTag}${extBadge}`],
+      [`${programTags}<span>${esc(courseName)}</span>`],
+      [esc(row.credit_hours), 'text-center'],
+      [`<strong>${esc(row.total_students)}</strong>
+        <div class="sp-cell-sub">${esc(splitText(row.male_students, row.female_students))}</div>${noGender}`, 'text-center'],
+      [esc(row.male_sections ?? 0), 'text-center'],
+      [esc(row.female_sections ?? 0), 'text-center'],
+      [`<strong>${esc(row.num_sections)}</strong>`, 'text-center'],
+      [`${esc(row.max_per_section)}${source ? `<div class="sp-cell-sub sp-limit-src">${esc(source)}</div>` : ''}`, 'text-center'],
+      [esc(row.avg_per_section), 'text-center'],
+      [`<div class="d-flex align-items-center gap-1">
           <div class="sp-fill-wrap"><div class="sp-fill ${fillCls}" style="width:${row.fill_percent}%"></div></div>
           <span class="fs-sm text-t3" style="min-width:30px">${row.fill_percent}%</span>
-        </div>
-      </td>
-      <td>${statusHtml}</td>
-    </tr>`;
+        </div>`, 'sp-fill-cell'],
+      [statusHtml],
+    ];
+    /* No whitespace inside a cell's tags: an empty status cell is :empty. */
+    const tds = cells.map(([html, cls], i) =>
+      `<td class="${CARD_ROLE[i]}${cls ? ` ${cls}` : ''}" data-label="${esc(PLAN_LABELS[i] || '')}">${html}</td>`);
+    return `<tr data-code="${esc(row.course_code)}">${tds.join('')}</tr>`;
   }).join('');
 }
 
@@ -704,25 +717,6 @@ function buildDeptSummaryHtml(departments) {
       <div class="dept-stat"><b>${esc(d.courses)}</b> ${T.courses} · <b>${esc(d.sections)}</b> ${T.sections} (${esc(splitText(d.male_sections, d.female_sections))}) · <b>${esc(d.students)}</b> ${T.students} · <b>${esc(d.total_credits)}</b> ${T.credits}</div>
     </div>
   `).join('');
-}
-
-/* ── Table header HTML (shared between single and multi) ── */
-function buildTableHeaderHtml() {
-  return `<tr>
-    <th data-sort="num">#</th>
-    <th data-sort="text">${IS_AR ? 'القسم' : 'Dept'}</th>
-    <th data-sort="text">${IS_AR ? 'المقرر' : 'Course'}</th>
-    <th data-sort="text">${IS_AR ? 'اسم المقرر' : 'Course Name'}</th>
-    <th data-sort="num">${IS_AR ? 'ساعات' : 'Cr'}</th>
-    <th data-sort="num">${IS_AR ? 'الطلاب' : 'Students'}</th>
-    <th data-sort="num">${IS_AR ? 'شعب الذكور' : 'M sections'}</th>
-    <th data-sort="num">${IS_AR ? 'شعب الإناث' : 'F sections'}</th>
-    <th data-sort="num">${IS_AR ? 'مجموع الشعب' : 'Total sections'}</th>
-    <th data-sort="num">${IS_AR ? 'الحد الأقصى' : 'Max'}</th>
-    <th data-sort="num">${IS_AR ? 'المتوسط' : 'Avg'}</th>
-    <th>${IS_AR ? 'الامتلاء' : 'Fill'}</th>
-    <th data-sort="text">${IS_AR ? 'الحالة' : 'Status'}</th>
-  </tr>`;
 }
 
 /* ── KPIs: Sections = M + F; no-gender students stated, never pooled ── */
@@ -863,13 +857,16 @@ function renderMultiProgramResults(data) {
     body.id = bodyId;
     body.className = 'd-none';
 
-    /* Table */
+    /* Table: the main table's header and phone cards, in its own scroller */
+    const scroller = document.createElement('div');
+    scroller.className = 'sp-table-scroll';
     const table = document.createElement('table');
-    table.className = 'tbl-card';
+    table.className = 'tbl-card mobile-cards sp-plan-table';
     table.id = tableId;
-    table.setAttribute('role', 'table');
-    table.innerHTML = `<thead>${buildTableHeaderHtml()}</thead><tbody>${buildPlanRows(plan)}</tbody>`;
-    body.appendChild(table);
+    table.setAttribute('role', 'table');   // a table still, when a phone lays it out as cards
+    table.innerHTML = `<thead>${PLAN_HEAD_HTML}</thead><tbody>${buildPlanRows(plan)}</tbody>`;
+    scroller.appendChild(table);
+    body.appendChild(scroller);
 
     /* Department summary for this program */
     const deptHtml = buildDeptSummaryHtml(summary.departments);
