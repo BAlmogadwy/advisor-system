@@ -159,6 +159,9 @@ class Room(models.Model):
     floor = models.IntegerField(null=True, blank=True)
     room_type = models.TextField(blank=True, default="lecture")
     capacity = models.IntegerField(default=0)
+    # Seats for an exam sitting. Filled from ``capacity`` when the column was
+    # added; not read by any scheduler yet.
+    exam_capacity = models.IntegerField(default=0)
     department = models.TextField(blank=True, default="")
     section = models.CharField(max_length=1, choices=SECTION_CHOICES, default=SECTION_MALE)
 
