@@ -196,11 +196,46 @@ def _get_max_section_size(
     return max_local_4cr if credit_hours >= 4 else max_local_other
 
 
+def slot_electives(
+    programs: Iterable[str], codes: Iterable[str], year: int, semester: int
+) -> dict[str, list[dict[str, Any]]]:
+    """Slot code -> per programme, the real electives it resolves to this term.
+
+    Uses the resolver's own reading of the publication (``ElectiveSelection``),
+    so the panel names exactly the courses Generate will plan under the slot.
+    """
+    from core.services.elective_validation import ElectiveMappingError, ElectiveSelection
+
+    codes = sorted({normalize_code(c) for c in codes if normalize_code(c)})
+    found: dict[str, list[dict[str, Any]]] = {}
+    for program in programs:
+        try:
+            selection = ElectiveSelection(program, str(year), semester)
+        except ElectiveMappingError:
+            continue
+        for code in codes:
+            requirement, _ = selection.requirement(code)
+            if requirement is None:
+                continue  # not an elective slot in this programme
+            status, options, _ = selection.resolve(code)
+            found.setdefault(code, []).append(
+                {
+                    "program": program,
+                    "status": status.lower(),
+                    "courses": [str(o["course_code"]) for o in options],
+                }
+            )
+    return found
+
+
 def get_all_courses_with_defaults(
     max_local_4cr: int = DEFAULT_MAX_LOCAL_4CR,
     max_local_other: int = DEFAULT_MAX_LOCAL_OTHER,
     max_external: int = DEFAULT_MAX_EXTERNAL,
     program: str | list[str] | None = None,
+    *,
+    year: int | None = None,
+    semester: int | None = None,
 ) -> list[dict[str, Any]]:
     """Return distinct courses from ProgrammeRequirement with computed default capacity.
 
@@ -308,11 +343,21 @@ def get_all_courses_with_defaults(
             entry["programme_max"] = pr_caps.get(entry["course_code"])
             entry["programmes"] = taught_by.get(entry["course_code"], [])
             entry["programme_limits"] = saved_limits.get(entry["course_code"], {})
+        # An elective slot lists the courses it resolves to this term: they are
+        # planned under the slot, with the slot's limit.
+        slots = (
+            slot_electives(program_list, [e["course_code"] for e in result], year, semester)
+            if year and semester
+            else {}
+        )
+        for entry in result:
+            entry["slot_electives"] = slots.get(entry["course_code"], [])
     else:
         for entry in result:
             entry["programme_max"] = None
             entry["programmes"] = []
             entry["programme_limits"] = {}
+            entry["slot_electives"] = []
 
     return result
 

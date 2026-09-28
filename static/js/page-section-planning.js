@@ -25,6 +25,27 @@ const T = {
     : `${n} student${n === 1 ? ' has' : 's have'} no recorded gender: ${seats} seat${seats === 1 ? '' : 's'} across ${courses} course${courses === 1 ? '' : 's'}, left out of every count. Record their gender, then generate again.`,
   noGenderRow: n => IS_AR ? `+${n} بلا جنس` : `+${n} no gender`,
   noGenderOnly: IS_AR ? 'بلا جنس مسجّل' : 'No gender recorded',
+  /* A resolved elective fills a slot: "AI463 ← AI1". In a right-to-left line
+   * the arrow is mirrored so it still points from the slot to the course. */
+  fills:       IS_AR ? '→' : '←',
+  fillsTitle:  slot => IS_AR ? `يملأ الخانة الاختيارية ${slot}` : `Fills elective slot ${slot}`,
+  source: {
+    rule:      () => IS_AR ? 'القاعدة' : 'rule',
+    programme: () => IS_AR ? 'محفوظ' : 'saved',
+    slot:      slots => IS_AR ? `حد ${slots}` : `${slots} limit`,
+    draft:     () => IS_AR ? 'مسودة' : 'draft',
+  },
+  dropReason: {
+    not_published:      IS_AR ? 'غير منشورة لهذا الفصل' : 'not published for this term',
+    invalid_mapping:    IS_AR ? 'ربطها غير صالح' : 'its mapping is invalid',
+    no_eligible_course: IS_AR ? 'لا مقرر مؤهَّل له الطالب' : 'no course the student is eligible for',
+    no_term_scope:      IS_AR ? 'بلا فصل لتحديدها' : 'no term to resolve it in',
+  },
+  dropped: (n, parts) => IS_AR
+    ? `${n} طلب لخانة اختيارية لم يصبح مقرراً وليس في الخطة: ${parts}.`
+    : `${n} elective-slot request${n === 1 ? '' : 's'} became no course and ${n === 1 ? 'is' : 'are'} not in the plan: ${parts}.`,
+  slotUses:    IS_AR ? 'بحد هذه الخانة' : "uses this slot's limit",
+  slotNone:    status => IS_AR ? `لا مقرر لهذا الفصل (${status})` : `no course this term (${status})`,
 };
 
 /* M · F split for a KPI, a row or a summary card. */
@@ -158,6 +179,8 @@ async function loadAdvancedCourses(keep = null) {
   _advProgram   = prog;
   let url = `/ops/section-planning/courses/?max_local_4cr=${local4}&max_local_other=${localO}&max_external=${ext}`;
   if (prog) url += `&program=${encodeURIComponent(prog)}`;
+  const year = parseInt($('spYear').value, 10), term = parseInt($('spSemester').value, 10);
+  if (year && term) url += `&year=${year}&semester=${term}`;
   try {
     const res = await fetch(url, { headers: { 'X-CSRFToken': CSRF } });
     const data = await res.json();
@@ -202,7 +225,7 @@ function renderAdvancedTable(courses, kept = new Map()) {
     <td class="text-center">${saved.any
       ? `<button type="button" class="sp-adv-reset adv-remove" aria-label="${esc(TL.removeAria(c.course_code))}">${esc(TL.remove)}</button>`
       : ''}</td>
-  </tr>`;
+  </tr>${slotElectiveRows(c)}`;
   }).join('');
   /* Drafts only: inputs mark the row, nothing is sent until Save. */
   tbody.querySelectorAll('tr[data-code]').forEach(tr => {
@@ -221,6 +244,19 @@ function renderAdvancedTable(courses, kept = new Map()) {
     refreshAdvRow(tr);
   });
   updateAdvState();
+}
+
+/* Under an elective slot, the courses it resolves to this term ("AI463 ← AI1"). */
+function slotElectiveRows(course) {
+  return (course.slot_electives || []).map(entry => {
+    const prog = (course.programmes || []).length > 1 ? ` <span class="sp-pill sp-pill-ext">${esc(entry.program)}</span>` : '';
+    const text = entry.status === 'ready' && entry.courses.length
+      ? entry.courses.map(code => `<bdi class="cr-id">${esc(code)}</bdi> ${T.fills} <bdi>${esc(course.course_code)}</bdi>`).join(' · ')
+        + ` <span class="text-t3">${esc(T.slotUses)}</span>`
+      : `<span class="text-t3">${esc(T.slotNone(entry.status))}</span>`;
+    return `<tr class="sp-adv-sub" data-slot-of="${esc(course.course_code)}" data-electives="${esc((entry.courses || []).join(' '))}">
+      <td colspan="8">${text}${prog}</td></tr>`;
+  }).join('');
 }
 
 /* What one row asks for, read from the DOM (the only draft state there is). */
@@ -284,8 +320,8 @@ function collectOverrides() {
 /* Search filter for advanced table */
 $('spAdvSearch').addEventListener('input', function() {
   const q = this.value.trim().toUpperCase();
-  $('spAdvBody').querySelectorAll('tr[data-code]').forEach(tr => {
-    const code = tr.dataset.code || '';
+  $('spAdvBody').querySelectorAll('tr[data-code], tr[data-slot-of]').forEach(tr => {
+    const code = [tr.dataset.code, tr.dataset.slotOf, tr.dataset.electives].filter(Boolean).join(' ');
     tr.style.display = (!q || code.toUpperCase().includes(q)) ? '' : 'none';
   });
 });
@@ -495,6 +531,10 @@ function buildPlanRows(plan) {
     } else if (row.status === 'no_gender') {
       statusHtml = `<span class="sp-pill sp-pill-under">${T.noGenderOnly}</span>`;
     }
+    const slots = (row.slots || []).join(', ');
+    const slotTag = slots
+      ? ` <span class="sp-slot" title="${esc(T.fillsTitle(slots))}">${T.fills} <bdi>${esc(slots)}</bdi></span>` : '';
+    const source = T.source[row.limit_source] ? T.source[row.limit_source](slots) : '';
     const noGender = row.unknown_students
       ? `<div class="sp-cell-sub sp-no-gender">${esc(T.noGenderRow(row.unknown_students))}</div>` : '';
     const extBadge = row.is_external ? ` <span class="sp-pill sp-pill-ext">EXT</span>` : '';
@@ -506,7 +546,7 @@ function buildPlanRows(plan) {
     return `<tr data-code="${esc(row.course_code)}">
       <td>${idx + 1}</td>
       <td><strong>${esc(row.department)}</strong></td>
-      <td><span class="cr-id">${esc(row.course_code)}</span>${extBadge}</td>
+      <td><span class="cr-id">${esc(row.course_code)}</span>${slotTag}${extBadge}</td>
       <td>${programTags}<span>${esc(courseName)}</span></td>
       <td class="text-center">${esc(row.credit_hours)}</td>
       <td class="text-center"><strong>${esc(row.total_students)}</strong>
@@ -514,7 +554,7 @@ function buildPlanRows(plan) {
       <td class="text-center sp-sec-m">${esc(row.male_sections ?? 0)}</td>
       <td class="text-center sp-sec-f">${esc(row.female_sections ?? 0)}</td>
       <td class="text-center sp-sec-total"><strong>${esc(row.num_sections)}</strong></td>
-      <td class="text-center">${esc(row.max_per_section)}</td>
+      <td class="text-center">${esc(row.max_per_section)}${source ? `<div class="sp-cell-sub sp-limit-src">${esc(source)}</div>` : ''}</td>
       <td class="text-center">${row.avg_per_section}</td>
       <td style="min-width:80px">
         <div class="d-flex align-items-center gap-1">
@@ -559,7 +599,21 @@ function buildTableHeaderHtml() {
 }
 
 /* ── KPIs: Sections = M + F; no-gender students stated, never pooled ── */
-function renderKpis(studentCount, cohorts, summary) {
+function renderDroppedSlots(electives) {
+  const note = $('spElectiveNote');
+  const e = electives || {};
+  if (!e.dropped_total) {
+    note.textContent = '';
+    note.classList.add('d-none');
+    return;
+  }
+  const parts = (e.dropped || []).map(d =>
+    `${d.program} ${d.slot} — ${T.dropReason[d.reason] || d.reason} (${d.students})`).join('; ');
+  note.textContent = T.dropped(e.dropped_total, parts);
+  note.classList.remove('d-none');
+}
+
+function renderKpis(studentCount, cohorts, summary, electives) {
   const c = cohorts || {};
   const s = summary || {};
   $('spKpiStudents').textContent = String(studentCount ?? 0);
@@ -568,6 +622,7 @@ function renderKpis(studentCount, cohorts, summary) {
   $('spKpiSections').textContent = String(s.total_sections || 0);
   $('spKpiSectionsSplit').textContent = splitText(s.male_sections, s.female_sections);
   $('spKpiFill').textContent = (s.avg_fill_percent || 0) + '%';
+  renderDroppedSlots(electives);
   const ng = s.no_gender || {};
   const note = $('spGenderNote');
   if (ng.students) {
@@ -593,7 +648,7 @@ function renderSingleProgramResults(data) {
   $('spDeptGrid').parentElement.style.display = '';
 
   /* KPIs */
-  renderKpis(data.student_count, data.cohorts, data.summary);
+  renderKpis(data.student_count, data.cohorts, data.summary, data.electives);
 
   /* Timestamp */
   $('spTimestamp').textContent = T.lastUpdate + ': ' + new Date().toLocaleTimeString();
@@ -634,7 +689,7 @@ function renderMultiProgramResults(data) {
 
   /* KPIs from the pooled plan (programmes share sections, as the builder pools them) */
   const cs = data.combined_summary || {};
-  renderKpis(data.student_count, data.cohorts, cs);
+  renderKpis(data.student_count, data.cohorts, cs, data.electives);
 
   /* Timestamp */
   $('spTimestamp').textContent = T.lastUpdate + ': ' + new Date().toLocaleTimeString();

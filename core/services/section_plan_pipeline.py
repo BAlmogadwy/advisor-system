@@ -197,17 +197,85 @@ def summarise(rows: list[dict[str, Any]], *, no_gender_students: int) -> dict[st
     return summary
 
 
+def _slot_limits(
+    picks: Iterable[tuple[str, str, str, int]], overrides: Mapping[str, int]
+) -> dict[str, dict[str, Any]]:
+    """Resolved elective code -> the slots it fills and the lowest limit among them.
+
+    A resolved elective is taught for its SLOT: AI463 filling AI's AI1 slot,
+    which declares 30, is planned at 30, not by the rule for AI463 itself (an
+    external-flagged course would get 50). The slot's limit is the programme's
+    own (AI2's AI1 row for an AI2 student); a what-if draft on the slot wins.
+    A slot that declares nothing leaves the course to its own limit or rule.
+    """
+    picks = list(picks)
+    keys = {(prog, slot) for prog, slot, _course, _n in picks}
+    declared: dict[tuple[str, str], int] = {}
+    if keys:
+        for prog, code, cap in ProgrammeRequirement.objects.filter(
+            program__in=sorted({p for p, _ in keys}),
+            course_code__in=sorted({s for _, s in keys}),
+            max_capacity__isnull=False,
+        ).values_list("program", "course_code", "max_capacity"):
+            if cap is not None and cap >= 1:
+                declared[(str(prog), normalize_code(code))] = int(cap)
+    info: dict[str, dict[str, Any]] = {}
+    for prog, slot, course, _n in picks:
+        entry = info.setdefault(course, {"slots": set(), "limit": None, "source": None})
+        entry["slots"].add(slot)
+        if slot in overrides:
+            limit, source = int(overrides[slot]), "draft"
+        elif (prog, slot) in declared:
+            limit, source = declared[(prog, slot)], "slot"
+        else:
+            continue
+        if entry["limit"] is None or limit < entry["limit"]:
+            entry["limit"], entry["source"] = limit, source
+    return info
+
+
+def _dropped_report(dropped: Iterable[tuple[str, str, str, int]]) -> dict[str, Any]:
+    """Slot demand that became no course: stated, never silently lost."""
+    merged: Counter[tuple[str, str, str]] = Counter()
+    for prog, slot, reason, n in dropped:
+        merged[(prog, slot, reason)] += int(n)
+    rows = [
+        {"program": prog, "slot": slot, "reason": reason, "students": n}
+        for (prog, slot, reason), n in sorted(merged.items())
+    ]
+    return {"dropped": rows, "dropped_total": sum(merged.values())}
+
+
 def size_demand(
-    students: Iterable[StudentDemand],
+    demands: Iterable[PlanningDemand],
     *,
     capacity_programs: Iterable[str],
     rules: SizingRules,
     with_programs: bool = False,
 ) -> dict[str, Any]:
     """Size one scope: per-cohort plans merged into M / F / Total rows."""
-    aggregates = _aggregate(students)
+    demands = list(demands)
+    aggregates = _aggregate(s for d in demands for s in d.students)
     capacities = lowest_declared_capacities(capacity_programs, aggregates.metadata)
     overrides = {normalize_code(k): int(v) for k, v in (rules.course_overrides or {}).items()}
+
+    # Where each course's limit comes from; a resolved elective's slot can
+    # lower it (the lowest declaration wins, as across programmes).
+    slots = _slot_limits((p for d in demands for p in d.elective_picks), overrides)
+    sources: dict[str, str] = {}
+    for key, meta in aggregates.metadata.items():
+        code = normalize_code(meta.get("course_code")) or key
+        slot = slots.get(code)
+        declared = capacities.get(key)
+        if code in overrides:
+            sources[key] = "draft"
+        elif slot and slot["limit"] is not None and (declared is None or slot["limit"] < declared):
+            capacities[key] = slot["limit"]
+            sources[key] = slot["source"]
+        elif declared is not None:
+            sources[key] = "programme"
+        else:
+            sources[key] = "rule"
 
     def plan(aggregate: Counter[str]) -> list[dict[str, Any]]:
         return compute_section_plan(
@@ -229,6 +297,10 @@ def size_demand(
         aggregates.by_cohort[NO_GENDER],
         aggregates.programs_of if with_programs else None,
     )
+    for row in rows:
+        row["limit_source"] = sources.get(row["course_key"], "rule")
+        slot = slots.get(row["course_code"])
+        row["slots"] = sorted(slot["slots"]) if slot else []
     headcount = aggregates.students
     return {
         "student_count": sum(headcount.values()),
@@ -239,6 +311,7 @@ def size_demand(
         },
         "plan": rows,
         "summary": summarise(rows, no_gender_students=int(headcount.get(NO_GENDER, 0))),
+        "electives": _dropped_report(r for d in demands for r in d.dropped_slots),
     }
 
 
@@ -249,7 +322,7 @@ def _programmes(demand: PlanningDemand) -> list[str]:
 def plan_programme(year: int, semester: int, program: str, rules: SizingRules) -> dict[str, Any]:
     """One programme, sized by its own declared limits."""
     demand = build_planning_demand(year, semester, program)
-    return size_demand(demand.students, capacity_programs=[program], rules=rules)
+    return size_demand([demand], capacity_programs=[program], rules=rules)
 
 
 def plan_programmes(
@@ -257,22 +330,23 @@ def plan_programmes(
 ) -> dict[str, Any]:
     """Several programmes: each on its own, and pooled as the builder pools them."""
     per_programme = []
-    pooled: list[StudentDemand] = []
+    demands: list[PlanningDemand] = []
     for program in programs:
         demand = build_planning_demand(year, semester, program)
-        pooled.extend(demand.students)
+        demands.append(demand)
         per_programme.append(
             {
                 "program": program,
-                **size_demand(demand.students, capacity_programs=[program], rules=rules),
+                **size_demand([demand], capacity_programs=[program], rules=rules),
             }
         )
-    combined = size_demand(pooled, capacity_programs=programs, rules=rules, with_programs=True)
+    combined = size_demand(demands, capacity_programs=programs, rules=rules, with_programs=True)
     return {
         "student_count": combined["student_count"],
         "cohorts": combined["cohorts"],
         "combined_plan": combined["plan"],
         "combined_summary": combined["summary"],
+        "electives": combined["electives"],
         "programs": per_programme,
     }
 
@@ -280,4 +354,4 @@ def plan_programmes(
 def plan_all_programmes(year: int, semester: int, rules: SizingRules) -> dict[str, Any]:
     """Every student, sized by the lowest limit any programme in scope declares."""
     demand = build_planning_demand(year, semester, None)
-    return size_demand(demand.students, capacity_programs=_programmes(demand), rules=rules)
+    return size_demand([demand], capacity_programs=_programmes(demand), rules=rules)

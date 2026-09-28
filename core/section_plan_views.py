@@ -261,8 +261,18 @@ def section_plan_courses_view(request: HttpRequest) -> JsonResponse:
         program: str | list[str] | None = [p.strip() for p in program_raw.split(",") if p.strip()]
     else:
         program = program_raw or None
+    try:
+        year: int | None = int(request.GET.get("year", ""))
+        semester: int | None = int(request.GET.get("semester", ""))
+    except (ValueError, TypeError):
+        year = semester = None
     courses = get_all_courses_with_defaults(
-        max_local_4cr, max_local_other, max_external, program=program
+        max_local_4cr,
+        max_local_other,
+        max_external,
+        program=program,
+        year=year,
+        semester=semester,
     )
     return JsonResponse({"ok": True, "courses": courses})
 
@@ -415,17 +425,21 @@ def section_plan_export_view(request: HttpRequest) -> HttpResponseBase:
             if any(normalize_code(entry["course_code"]).startswith(p) for p in dept_prefixes)
         ]
 
-    def _scoped(plan: list[dict], cohorts: dict) -> tuple[list[dict], dict]:
+    def _scoped(plan: list[dict], cohorts: dict, electives: dict) -> tuple[list[dict], dict]:
         rows = _filter_plan(plan)
-        return rows, summarise(rows, no_gender_students=int(cohorts.get("no_gender", 0)))
+        summary = summarise(rows, no_gender_students=int(cohorts.get("no_gender", 0)))
+        summary["electives"] = electives
+        return rows, summary
 
     try:
         result = _plan(params)
         if result["mode"] == "multi":
-            combined, combined_summary = _scoped(result["combined_plan"], result["cohorts"])
+            combined, combined_summary = _scoped(
+                result["combined_plan"], result["cohorts"], result["electives"]
+            )
             programs_data = []
             for entry in result["programs"]:
-                rows, summary = _scoped(entry["plan"], entry["cohorts"])
+                rows, summary = _scoped(entry["plan"], entry["cohorts"], entry["electives"])
                 programs_data.append(
                     {"program": entry["program"], "plan": rows, "summary": summary}
                 )
@@ -434,7 +448,7 @@ def section_plan_export_view(request: HttpRequest) -> HttpResponseBase:
             )
             filename = f"section_plan_{params['year']}_{params['semester']}_multi.xlsx"
         else:
-            rows, summary = _scoped(result["plan"], result["cohorts"])
+            rows, summary = _scoped(result["plan"], result["cohorts"], result["electives"])
             path = _export_section_plan_xlsx(rows, summary, params, mode=result["mode"])
             suffix = f"_{program}" if isinstance(program, str) else ""
             filename = f"section_plan_{params['year']}_{params['semester']}{suffix}.xlsx"
@@ -475,8 +489,31 @@ EXPORT_HEADERS = [
     "Fill %",
     "Status",
     "No gender recorded",
+    "Limit from",
+    "Fills slot",
 ]
 _STATUS_TEXT = {"full": "Full", "underfilled": "Underfilled", "no_gender": "No gender recorded"}
+
+
+def _limit_source_text(row: dict) -> str:
+    """Where a row's Max/Section came from, in words."""
+    source = row.get("limit_source") or "rule"
+    slots = ", ".join(row.get("slots") or [])
+    if source == "slot":
+        return f"Slot {slots} limit" if slots else "Slot limit"
+    if source == "draft":
+        return "Draft (what-if)"
+    if source == "programme":
+        return "Programme limit"
+    return "Rule"
+
+
+_DROP_REASON_TEXT = {
+    "not_published": "not published for this term",
+    "invalid_mapping": "mapping is invalid",
+    "no_eligible_course": "no course the student is eligible for",
+    "no_term_scope": "no term to resolve it in",
+}
 
 
 def _export_section_plan_xlsx(
@@ -557,7 +594,7 @@ def _export_section_plan_xlsx(
         _dept_colors[dept] = fill
         return fill
 
-    col_widths = [5, 12, 14, 30, 8, 9, 9, 9, 10, 11, 9, 9, 10, 11, 9, 14, 11]
+    col_widths = [5, 12, 14, 30, 8, 9, 9, 9, 10, 11, 9, 9, 10, 11, 9, 14, 11, 18, 10]
 
     def _cell(ws, r: int, c: int, value, *, font=None, align=center):
         cell = ws.cell(row=r, column=c, value=value)
@@ -642,6 +679,8 @@ def _export_section_plan_xlsx(
                 c.fill = under_fill
                 c.font = status_under_font
             _cell(ws, r, 17, int(row.get("unknown_students") or 0) or "", font=num_font)
+            _cell(ws, r, 18, _limit_source_text(row), align=left_center)
+            _cell(ws, r, 19, ", ".join(row.get("slots") or []), font=mono)
 
             # Row fill: external gets blue tint, alternating gets grey
             row_fill = ext_fill if is_ext else (alt_fill if is_alt else None)
@@ -712,6 +751,21 @@ def _export_section_plan_xlsx(
                 "Female. Students with no recorded gender are not in any count."
             ),
         ).font = Font(italic=True, size=9, color="566573")
+        electives = summary_data.get("electives") or {}
+        if electives.get("dropped_total"):
+            parts = [
+                f"{d['program']} {d['slot']}: {_DROP_REASON_TEXT.get(d['reason'], d['reason'])}"
+                f" ({d['students']})"
+                for d in electives.get("dropped", [])
+            ]
+            ws.cell(
+                row=6,
+                column=1,
+                value=(
+                    f"Elective-slot demand that became no course: {electives['dropped_total']}"
+                    f" — {'; '.join(parts)}"
+                ),
+            ).font = Font(italic=True, size=9, color="C0392B")
 
         # Department Summary table
         top = 7

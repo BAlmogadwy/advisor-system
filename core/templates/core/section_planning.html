@@ -142,6 +142,7 @@
   </div>
 
   <div id="spGenderNote" class="sp-alert sp-alert-warn d-none" role="status"></div>
+  <div id="spElectiveNote" class="sp-alert sp-alert-warn d-none" role="status"></div>
 
   <!-- Export + timestamp -->
   <div class="sp-export-bar">
@@ -199,5 +200,5 @@
   const LANGUAGE_CODE = "{{ LANGUAGE_CODE|default:'en' }}";
   const djCsrfToken = "{{ csrf_token }}";
 </script>
-<script src="{% static 'js/page-section-planning.js' %}?v=8"></script>
+<script src="{% static 'js/page-section-planning.js' %}?v=9"></script>
 {% endblock %}

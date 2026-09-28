@@ -8530,6 +8530,9 @@ html[data-theme="dark"] .btn-export {
     /* M / F split under a total (Sections = M + F) */
     .sp-mc-sub, .sp-cell-sub { font-size: .75rem; color: var(--t3); font-variant-numeric: tabular-nums; white-space: nowrap; }
     .sp-no-gender { color: var(--warning); font-weight: 700; }
+    /* A resolved elective names the slot it fills */
+    .sp-slot { font-size: .75rem; color: var(--t3); white-space: nowrap; }
+    .sp-adv-table tr.sp-adv-sub td { font-size: .75rem; padding-inline-start: 24px; color: var(--t2); border-bottom-style: dashed; }
 
     /* Multi-program headings */
     .sp-prog-heading { font-size: .95rem; font-weight: 700; color: var(--navy); padding: 10px 0 6px; margin-top: 18px; border-bottom: 2px solid var(--teal); display: flex; align-items: baseline; gap: 8px; }

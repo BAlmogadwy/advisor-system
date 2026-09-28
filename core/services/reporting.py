@@ -1,6 +1,6 @@
 import time
 from collections import Counter, defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from core.models import ProgrammeRequirement, Student, StudentCourse
 from core.services.course_identity import planner_course_key
@@ -28,11 +28,29 @@ class StudentDemand:
     courses: tuple[str, ...]
 
 
+@dataclass
+class ElectiveTrace:
+    """What elective resolution did with each placeholder slot it met.
+
+    ``picks[(programme, slot, course)]`` counts the students whose slot became
+    that real course; ``dropped[(programme, slot, reason)]`` counts the slot
+    demands that became no course at all, and why (``not_published``,
+    ``invalid_mapping``, ``no_eligible_course``, ``no_term_scope``).
+    """
+
+    picks: Counter[tuple[str, str, str]] = field(default_factory=Counter)
+    dropped: Counter[tuple[str, str, str]] = field(default_factory=Counter)
+
+
 @dataclass(frozen=True)
 class PlanningDemand:
     """Everything Section Planning sizes from, per student (electives resolved)."""
 
     students: tuple[StudentDemand, ...]
+    #: (programme, slot, course, students): a resolved elective and the slot it fills.
+    elective_picks: tuple[tuple[str, str, str, int], ...] = ()
+    #: (programme, slot, reason, students): slot demand that became no course.
+    dropped_slots: tuple[tuple[str, str, str, int], ...] = ()
 
 
 _planning_cache: dict[tuple, tuple[float, PlanningDemand]] = {}
@@ -68,8 +86,9 @@ def build_planning_demand(year: int, semester: int, program: str | None = None) 
         all_recs = batch_recommend(student_ids, program, year, semester)
     else:
         all_recs = batch_recommend_multi_program(student_ids, year, semester)
+    trace = ElectiveTrace()
     all_recs = resolve_elective_recommendations(
-        all_recs, year=year, semester=semester, program=program
+        all_recs, year=year, semester=semester, program=program, trace=trace
     )
 
     students = []
@@ -85,7 +104,15 @@ def build_planning_demand(year: int, semester: int, program: str | None = None) 
                 courses=courses,
             )
         )
-    demand = PlanningDemand(students=tuple(students))
+    demand = PlanningDemand(
+        students=tuple(students),
+        elective_picks=tuple(
+            (prog, slot, course, n) for (prog, slot, course), n in sorted(trace.picks.items())
+        ),
+        dropped_slots=tuple(
+            (prog, slot, reason, n) for (prog, slot, reason), n in sorted(trace.dropped.items())
+        ),
+    )
     _planning_cache[cache_key] = (time.time(), demand)
     if len(_planning_cache) > 20:
         oldest = min(_planning_cache, key=lambda k: _planning_cache[k][0])
@@ -280,12 +307,16 @@ def resolve_elective_recommendations(
     semester: int,
     program: str | list[str] | None,
     strict_passed_only: bool = False,
+    trace: ElectiveTrace | None = None,
 ) -> dict[int, list[str]]:
     """Replace mapped elective placeholders with eligible real electives.
 
     The batch recommender intentionally emits plan placeholders such as DS2.
     Section planning needs the deliverable course demand instead, so it uses
     the term mapping table to expand DS2 into courses such as DS485.
+
+    Pass ``trace`` to learn which slot each resolved elective fills and which
+    slot demands were dropped (see ``ElectiveTrace``); the result is the same.
     """
     if not all_recs:
         return all_recs
@@ -355,9 +386,14 @@ def resolve_elective_recommendations(
     for sid, recs in all_recs.items():
         student_programme = program if isinstance(program, str) else student_programs.get(int(sid))
         selection = selections.get(normalize_code(student_programme or ""))
+        programme_label = str(student_programme or "")
         if selection is None:
             ordinary = unscoped_ordinary.get(normalize_code(student_programme or ""), set())
             resolved[sid] = [code for code in recs if normalize_code(code) in ordinary]
+            if trace is not None:
+                for code in recs:
+                    if normalize_code(code) not in ordinary:
+                        trace.dropped[(programme_label, normalize_code(code), "no_term_scope")] += 1
             continue
 
         student_passed = passed.get(int(sid), set())
@@ -378,6 +414,8 @@ def resolve_elective_recommendations(
             # concrete recommendation, even if an old mapping still exists.
             status, electives, _ = selection.resolve(norm)
             if status != "READY":
+                if trace is not None:
+                    trace.dropped[(programme_label, norm, status.lower())] += 1
                 continue
 
             eligible = []
@@ -403,6 +441,10 @@ def resolve_elective_recommendations(
                 pick = min(eligible, key=lambda c: (assignment_count[c], c))
                 assignment_count[pick] += 1
                 student_resolved.append(pick)
+                if trace is not None:
+                    trace.picks[(programme_label, norm, normalize_code(pick))] += 1
+            elif trace is not None:
+                trace.dropped[(programme_label, norm, "no_eligible_course")] += 1
 
         resolved[sid] = student_resolved
 

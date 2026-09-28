@@ -8,6 +8,8 @@
 - Male and female students are never planned together: every course is sized
   for each cohort, Total = M + F in rows, KPIs, summary and export, and students
   with no recorded gender are reported apart, never pooled.
+- A resolved elective is planned for its slot, with the slot's declared limit,
+  and slot demand that becomes no course is reported.
 """
 
 from __future__ import annotations
@@ -22,7 +24,13 @@ from django.contrib.auth.models import Group, User
 from django.test import Client
 
 from core.authz import _rate_buckets
-from core.models import Course, ProgrammeRequirement, Student
+from core.models import (
+    Course,
+    ElectiveCourse,
+    ElectiveTermMapping,
+    ProgrammeRequirement,
+    Student,
+)
 from core.services.rbac import (
     ROLE_GENERAL_ADVISOR,
     ensure_role_groups,
@@ -472,3 +480,136 @@ def test_the_multi_programme_export_writes_the_pooled_plan_first(
         30,
     )
     assert pooled["Name"] == "AI, DS - DATA STRUCTURES"
+
+
+# ── a resolved elective takes its slot's declared limit ──────────
+
+
+def _slot(program: str, code: str, cap: int | None) -> None:
+    ProgrammeRequirement.objects.create(
+        program=program,
+        course_code=code,
+        course_name=f"DEPARTMENT ELECTIVE {code[-1]}",
+        credit_hours=3,
+        type="Program Elective",
+        programme_term=7,
+        max_capacity=cap,
+    )
+
+
+def _publish(program: str, slot: str, code: str, *, prerequisites: str = "") -> None:
+    elective = ElectiveCourse.objects.create(
+        programme=program,
+        course_code=code,
+        course_name=f"{code} ELECTIVE",
+        credit_hours=3,
+        prerequisites_csv=prerequisites,
+    )
+    ElectiveTermMapping.objects.create(
+        academic_year="1448", term=1, programme=program, placeholder_code=slot, elective=elective
+    )
+
+
+@pytest.fixture
+def electives(monkeypatch: pytest.MonkeyPatch):
+    """AI1 (30 seats) resolves to AI463, a course flagged external; AI2 is not
+    published this term; AI3 resolves only to a course nobody is eligible for."""
+    Course.objects.create(course_code="AI463", department="AI", credit_hours=3, is_external=True)
+    _slot("AI", "AI1", 30)
+    _slot("AI", "AI2", 30)
+    _slot("AI", "AI3", None)
+    _publish("AI", "AI1", "AI463")
+    _publish("AI", "AI3", "AI464", prerequisites="AI999")
+    men = _students("AI", 501000001, 70, section="M")
+    women = _students("AI", 502000001, 52, section="F")
+    unpublished = _students("AI", 503000001, 5, section="M")
+    blocked = _students("AI", 504000001, 3, section="F")
+    wants = {
+        **{sid: ["AI1"] for sid in men + women},
+        **{sid: ["AI2"] for sid in unpublished},
+        **{sid: ["AI3"] for sid in blocked},
+    }
+
+    def single(student_ids, _program, _year, _term, **_kw):
+        return {sid: list(wants[sid]) for sid in student_ids}
+
+    def multi(student_ids, _year, _term, **_kw):
+        return {sid: list(wants[sid]) for sid in student_ids}
+
+    monkeypatch.setattr("core.services.reporting.batch_recommend", single)
+    monkeypatch.setattr("core.services.reporting.batch_recommend_multi_program", multi)
+
+
+@pytest.mark.parametrize("program", ["AI", None])
+def test_a_resolved_elective_takes_its_slots_declared_limit(
+    planner: Client, electives, program
+) -> None:
+    data = _generate(planner, **({"program": program} if program else {}))
+    row = _row(data["plan"], "AI463")
+
+    assert row["is_external"] is True
+    assert row["max_per_section"] == 30, "the AI1 slot's limit, not the external 50"
+    assert (row["male_sections"], row["female_sections"]) == (3, 2)  # 70/30, 52/30
+    assert row["limit_source"] == "slot"
+    assert row["slots"] == ["AI1"]
+
+
+def test_a_slot_that_declares_nothing_leaves_the_course_to_its_own_rule(
+    planner: Client, electives
+) -> None:
+    ProgrammeRequirement.objects.filter(program="AI", course_code="AI1").update(max_capacity=None)
+
+    row = _row(_generate(planner, program="AI")["plan"], "AI463")
+
+    assert row["max_per_section"] == 50
+    assert row["limit_source"] == "rule"
+    assert row["slots"] == ["AI1"]
+
+
+def test_a_draft_on_the_slot_is_a_what_if_for_its_elective(planner: Client, electives) -> None:
+    row = _row(_generate(planner, program="AI", course_overrides={"AI1": 20})["plan"], "AI463")
+
+    assert row["max_per_section"] == 20
+    assert row["limit_source"] == "draft"
+    assert ProgrammeRequirement.objects.get(program="AI", course_code="AI1").max_capacity == 30
+
+
+def test_slot_demand_that_becomes_no_course_is_reported(planner: Client, electives) -> None:
+    data = _generate(planner, program="AI")
+
+    assert data["electives"] == {
+        "dropped": [
+            {"program": "AI", "slot": "AI2", "reason": "not_published", "students": 5},
+            {"program": "AI", "slot": "AI3", "reason": "no_eligible_course", "students": 3},
+        ],
+        "dropped_total": 8,
+    }
+    assert {row["course_code"] for row in data["plan"]} == {"AI463"}
+
+
+def test_the_panel_lists_the_elective_under_its_slot(planner: Client, electives) -> None:
+    response = planner.get(
+        "/ops/section-planning/courses/", {"program": "AI", "year": 1448, "semester": 1}
+    )
+    courses = {c["course_code"]: c for c in response.json()["courses"]}
+
+    assert courses["AI1"]["slot_electives"] == [
+        {"program": "AI", "status": "ready", "courses": ["AI463"]}
+    ]
+    assert courses["AI2"]["slot_electives"] == [
+        {"program": "AI", "status": "not_published", "courses": []}
+    ]
+    without_term = planner.get("/ops/section-planning/courses/", {"program": "AI"}).json()
+    assert {c["course_code"]: c["slot_electives"] for c in without_term["courses"]}["AI1"] == []
+
+
+def test_the_export_names_the_slot_and_the_limits_source(planner: Client, electives) -> None:
+    workbook = _export_workbook(planner, program="AI")
+    (row,) = [r for r in _sheet_rows(workbook.worksheets[0]) if r["Course"] == "AI463"]
+
+    assert row["Max/Section"] == 30
+    assert row["Limit from"] == "Slot AI1 limit"
+    assert row["Fills slot"] == "AI1"
+    note = workbook.worksheets[1].cell(row=6, column=1).value
+    assert note.startswith("Elective-slot demand that became no course: 8")
+    assert "AI AI2: not published for this term (5)" in note

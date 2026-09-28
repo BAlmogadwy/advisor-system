@@ -41,6 +41,9 @@ function coursesFor(program) {
       programme_max: program ? 30 : null, programmes, programme_limits: limits({ AI: 30 }) },
     { course_code: 'MATH203', department: 'MATH', credit_hours: 3, is_external: true, default_max: 50,
       programme_max: null, programmes, programme_limits: {} },
+    { course_code: 'AI1', department: 'AI', credit_hours: 3, is_external: false, default_max: 40,
+      programme_max: program ? 30 : null, programmes, programme_limits: limits({ AI: 30 }),
+      slot_electives: program ? [{ program: 'AI', status: 'ready', courses: ['AI463'] }] : [] },
   ];
 }
 
@@ -433,4 +436,52 @@ test('students with no recorded gender are stated, not pooled', async t => {
   const tr = ui.window.document.querySelector('#spTable tbody tr[data-code="AI331"]');
   assert.equal(tr.querySelector('.sp-no-gender').textContent.trim(), say('+2 no gender', '+2 بلا جنس'));
   assert.equal(ui.text('spKpiSections'), '3', 'Total stays M + F');
+});
+
+/* ── A resolved elective is planned under its slot ── */
+
+test('the panel shows the elective a slot resolves to, under the slot', async t => {
+  const ui = await page(t);
+  const get = ui.requests.find(r => r.method === 'GET');
+  const params = new URL(get.url, 'http://planning.test').searchParams;
+  assert.equal(params.get('year'), ui.$('spYear').value);
+  assert.equal(params.get('semester'), ui.$('spSemester').value);
+
+  const sub = ui.window.document.querySelector('#spAdvBody tr.sp-adv-sub[data-slot-of="AI1"]');
+  assert.ok(sub, 'a sub-row under AI1');
+  assert.equal(sub.previousElementSibling.dataset.code, 'AI1');
+  assert.equal(sub.textContent.replace(/\s+/g, ' ').trim(), say(
+    "AI463 ← AI1 uses this slot's limit",
+    'AI463 → AI1 بحد هذه الخانة',
+  ));
+  assert.equal(ui.window.document.querySelectorAll('#spAdvBody tr[data-code]').length, 4, 'the sub-row is no draft row');
+
+  ui.$('spAdvSearch').value = 'ai463';
+  ui.emit(ui.$('spAdvSearch'), 'input');
+  assert.equal(sub.style.display, '');
+  assert.equal(ui.row('AI491').style.display, 'none');
+});
+
+test('a resolved elective names its slot and where its limit comes from', async t => {
+  const data = generated([planRow('AI463', {
+    male_students: 70, female_students: 52, male_sections: 3, female_sections: 2, num_sections: 5,
+    total_students: 122, max_per_section: 30, limit_source: 'slot', slots: ['AI1'], is_external: true,
+  })]);
+  data.electives = { dropped_total: 8, dropped: [
+    { program: 'AI', slot: 'AI2', reason: 'not_published', students: 5 },
+    { program: 'AI', slot: 'AI3', reason: 'no_eligible_course', students: 3 },
+  ] };
+  const ui = await page(t, { generate: () => answer(data) });
+  ui.$('spGenerate').click();
+  await settle();
+
+  const tr = ui.window.document.querySelector('#spTable tbody tr[data-code="AI463"]');
+  const slot = tr.querySelector('.sp-slot');
+  assert.equal(slot.textContent.trim(), say('← AI1', '→ AI1'));
+  assert.equal(slot.title, say('Fills elective slot AI1', 'يملأ الخانة الاختيارية AI1'));
+  assert.equal(tr.querySelector('.sp-limit-src').textContent, say('AI1 limit', 'حد AI1'));
+  assert.equal(ui.text('spElectiveNote'), say(
+    '8 elective-slot requests became no course and are not in the plan: AI AI2 — not published for this term (5); AI AI3 — no course the student is eligible for (3).',
+    '8 طلب لخانة اختيارية لم يصبح مقرراً وليس في الخطة: AI AI2 — غير منشورة لهذا الفصل (5); AI AI3 — لا مقرر مؤهَّل له الطالب (3).',
+  ));
 });
