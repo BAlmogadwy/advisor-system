@@ -453,3 +453,57 @@ class SectionPlanningBrowserTests(StaticLiveServerTestCase):
             for chevron in page.evaluate(self.CHEVRONS):
                 expected = (0, 1) if chevron["open"] else (closed, 0)
                 self.assertEqual((chevron["a"], chevron["b"]), expected, f"{language}: {chevron}")
+
+    # ── 4. Fill bars stand out from the page in both themes ─────────
+
+    # Each fill band's bar colour, the page's background, the theme's
+    # --surface token and the bar's track laid over the page, as sRGB.
+    BARS = """() => {
+      const rgba = value => { const n = (value.match(/[\d.]+/g) || []).map(Number); return [n[0], n[1], n[2], n.length > 3 ? n[3] : 1]; };
+      const probe = document.createElement('div');
+      probe.style.background = getComputedStyle(document.documentElement).getPropertyValue('--surface');
+      document.body.append(probe);
+      const surface = rgba(getComputedStyle(probe).backgroundColor);
+      probe.remove();
+      const page = rgba(getComputedStyle(document.body).backgroundColor);
+      const track = rgba(getComputedStyle(document.querySelector('.sp-fill-wrap')).backgroundColor);
+      const over = (top, under) => top.slice(0, 3).map((c, i) => c * top[3] + under[i] * (1 - top[3]));
+      const bands = {};
+      for (const bar of document.querySelectorAll('#spTable .sp-fill')) {
+        const band = [...bar.classList].find(c => c.startsWith('sp-fill-'));
+        bands[band] = rgba(getComputedStyle(bar).backgroundColor);
+      }
+      return { bands, backdrops: { page: page.slice(0, 3), surface: surface.slice(0, 3), track: over(track, page) } };
+    }"""
+
+    @staticmethod
+    def _contrast(a, b) -> float:
+        def luminance(rgb) -> float:
+            def channel(c: float) -> float:
+                c /= 255
+                return c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4
+
+            r, g, b_ = (channel(c) for c in rgb[:3])
+            return 0.2126 * r + 0.7152 * g + 0.0722 * b_
+
+        la, lb = luminance(a), luminance(b)
+        return (max(la, lb) + 0.05) / (min(la, lb) + 0.05)
+
+    def test_fill_bars_stand_out_from_the_page_in_light_and_dark(self) -> None:
+        for theme in ("light", "dark"):
+            page = self._page("en", theme=theme)
+            self.assertEqual(page.evaluate("document.documentElement.dataset.theme"), theme)
+            self._generate(page)
+            facts = page.evaluate(self.BARS)
+            self.assertEqual(
+                sorted(facts["bands"]), ["sp-fill-hi", "sp-fill-lo", "sp-fill-md"], theme
+            )
+            for band, colour in facts["bands"].items():
+                self.assertEqual(colour[3], 1, f"{theme} {band} is see-through: {colour}")
+                for name, backdrop in facts["backdrops"].items():
+                    if name == "track" and theme == "light":
+                        continue  # the light track is --t5 grey, a light-theme question
+                    ratio = self._contrast(colour, backdrop)
+                    # WCAG 1.4.11: a graphic that carries meaning needs 3:1.
+                    self.assertGreaterEqual(ratio, 3, f"{theme} {band} on {name}: {ratio:.2f}")
+            self.assertEqual(len({tuple(c) for c in facts["bands"].values()}), 3, theme)

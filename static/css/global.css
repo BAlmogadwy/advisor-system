@@ -8644,13 +8644,9 @@ html[data-theme="dark"] .btn-export {
       color: #a0a4b8;
     }
 
-    /* Fill bars */
-    html[data-theme="dark"] .sp-fill-md {
-      background: rgba(240,173,78,0.15);
-    }
-    html[data-theme="dark"] .sp-fill-lo {
-      background: rgba(220,53,69,0.15);
-    }
+    /* Fill bars: no dark overrides. --teal, --warning and --danger are
+       already the Deep Navy theme's own, and an alpha tint on the dark track
+       made the amber and red bars all but invisible. */
     /* Progress bar track */
     /* Alerts */
     html[data-theme="dark"] .sp-alert-ok {
