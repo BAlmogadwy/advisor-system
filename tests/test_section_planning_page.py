@@ -106,3 +106,15 @@ def test_the_department_summary_is_a_labelled_region_the_script_fills(
         "ملخص الأقسام" if language == "ar" else "Department Summary"
     )
     assert soup.find(id="spDeptGrid") is None, "the old per-department cards are gone"
+
+
+@pytest.mark.parametrize("language", ["en", "ar"])
+def test_arrows_and_chevrons_follow_the_reading_direction(client: Client, language: str) -> None:
+    soup = _page(client, language)
+    flow = soup.find(class_="ph-chip-gray").get_text(strip=True)
+    forward, backward = ("←", "→") if language == "ar" else ("→", "←")
+    assert flow.count(forward) == 2 and backward not in flow, flow
+    for toggle_id in ("spToggleCaps", "spToggleAdv"):
+        chevron = soup.find(id=toggle_id).find("svg", recursive=False)
+        assert chevron is not None and "sp-chev" in chevron["class"], toggle_id
+        assert chevron.get("aria-hidden") == "true", toggle_id

@@ -1131,3 +1131,54 @@ test('several programmes: the summary totals the pooled KPIs, and each programme
   });
   assert.deepEqual(summaryGroups(ui, blocks[1]), [['ours', ['DS']], ['service', ['MATH']]]);
 });
+
+/* ── Arabic and English words agree with their numbers ── */
+
+test('programme headings count in words that agree with the number, numbers and codes as LTR islands', async t => {
+  const ui = await page(t, { program: 'AI,DS', generate: () => answer(multiPlan()) });
+  ui.$('spGenerate').click();
+  await settle();
+
+  const headings = [...ui.window.document.querySelectorAll('#spMultiPrograms .sp-prog-toggle')];
+  assert.deepEqual(headings.map(h => h.textContent.replace(/\s+/g, ' ').trim()), say(
+    ['AI (1 student · 2 courses · 8 sections: M 4 · F 4)', 'DS (2 students · 2 courses · 3 sections: M 1 · F 2)'],
+    ['AI (1 طالب · 2 مقرران · 8 شعب: ذكور 4 · إناث 4)', 'DS (2 طالبان · 2 مقرران · 3 شعب: ذكور 1 · إناث 2)'],
+  ));
+  const [ai] = headings;
+  assert.equal(ai.querySelector('.sp-prog-code').tagName, 'BDI');
+  assert.deepEqual([...ai.querySelectorAll('.sp-prog-count bdi')].map(b => b.textContent), ['1', '2', '8']);
+  const summaryNumbers = [...ui.window.document.querySelectorAll('#spDeptSummary td[data-col]')];
+  assert.ok(summaryNumbers.length && summaryNumbers.every(td => td.firstElementChild?.tagName === 'BDI'));
+  assert.ok([...ui.window.document.querySelectorAll('#spDeptSummary tr[data-dept] th')].every(th => th.firstElementChild?.tagName === 'BDI'));
+});
+
+for (const [n, en, ar] of [
+  [1, '1 course', '1 مقرر'], [2, '2 courses', '2 مقرران'], [3, '3 courses', '3 مقررات'],
+  [11, '11 courses', '11 مقرراً'], [100, '100 courses', '100 مقرر'],
+]) {
+  test(`the course list counts ${n} as "${say(en, ar)}"`, async t => {
+    const course = i => ({ course_code: `X${i}`, department: 'X', credit_hours: 3, is_external: false, default_max: 40,
+      programme_max: null, programmes: ['AI'], programme_limits: {} });
+    const ui = await page(t, { courses: () => answer({ ok: true, courses: Array.from({ length: n }, (_, i) => course(i)) }) });
+    assert.equal(ui.text('spAdvCount'), say(en, ar));
+  });
+}
+
+test('every disclosure control carries one chevron the stylesheet turns, and no arrow glyph', async t => {
+  const ui = await page(t, { program: 'AI,DS', generate: () => answer(multiPlan()) });
+  ui.$('spGenerate').click();
+  await settle();
+  const toggles = [ui.$('spToggleCaps'), ui.$('spToggleAdv'), ...ui.window.document.querySelectorAll('.sp-prog-toggle')];
+  assert.equal(toggles.length, 4);
+  for (const toggle of toggles) {
+    const chevrons = toggle.querySelectorAll(':scope > svg.sp-chev');
+    assert.equal(chevrons.length, 1, toggle.id || toggle.className);
+    assert.equal(chevrons[0].getAttribute('aria-hidden'), 'true');
+    assert.doesNotMatch(toggle.textContent, /[▶▼◀]/);
+    assert.ok(toggle.hasAttribute('aria-expanded'));
+  }
+  const [, , prog] = toggles;
+  prog.click();
+  assert.equal(prog.getAttribute('aria-expanded'), 'true');
+  assert.equal(prog.querySelectorAll('svg.sp-chev').length, 1, 'the same chevron, turned by CSS');
+});

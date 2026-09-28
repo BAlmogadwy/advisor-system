@@ -404,3 +404,52 @@ class SectionPlanningBrowserTests(StaticLiveServerTestCase):
             expect(toggle).to_have_attribute("aria-expanded", "true")
             page.keyboard.press("Space")
             expect(toggle).to_have_attribute("aria-expanded", "false")
+
+    # ── 3. Arabic labels are words, not spaced-out letters; chevrons mirror ──
+
+    # Every Arabic label the page draws in the Latin utility style (mono,
+    # uppercase, tracked): its computed letter spacing, transform and font.
+    LABELS = """() => {
+      const style = (el, pseudo) => { const s = getComputedStyle(el, pseudo);
+        return { spacing: s.letterSpacing, transform: s.textTransform, font: s.fontFamily }; };
+      const first = selector => document.querySelector(selector);
+      const out = {};
+      for (const selector of ['#spTable thead th:nth-child(6)', '.sp-mc .k', '.sp-caps-lbl',
+                              '.sp-adv-table th', '.sp-prog-count', '#spDeptSummary thead th']) {
+        out[selector] = style(first(selector));
+      }
+      out['card label'] = style(first('#spTable tbody td.sp-c-demand'), '::before');
+      return out;
+    }"""
+    CHEVRONS = """() => [...document.querySelectorAll('.sp-chev')].map(svg => {
+      const m = new DOMMatrix(getComputedStyle(svg).transform === 'none' ? undefined : getComputedStyle(svg).transform);
+      return { open: svg.parentElement.getAttribute('aria-expanded') === 'true',
+               a: Math.round(m.a), b: Math.round(m.b) };
+    })"""
+
+    def test_arabic_labels_have_no_letter_spacing(self) -> None:
+        for width in (390, 1440):
+            page = self._page("ar", width, plan=MULTI)
+            page.locator("#spProgram").fill("AI,DS")
+            page.locator("#spGenerate").click()
+            expect(page.locator("#spMultiPrograms .sp-prog-toggle")).to_have_count(2)
+            labels = page.evaluate(self.LABELS)
+            for selector, style in labels.items():
+                if selector == "card label" and width > 768:
+                    continue
+                where = f"ar {width}px {selector}: {style}"
+                self.assertIn(style["spacing"], ("normal", "0px"), where)
+                self.assertEqual(style["transform"], "none", where)
+                self.assertNotIn("mono", style["font"].lower(), where)
+
+    def test_chevrons_point_along_the_reading_direction_and_down_when_open(self) -> None:
+        for language, closed in (("en", 1), ("ar", -1)):
+            page = self._page(language, plan=MULTI)
+            page.locator("#spProgram").fill("AI,DS")
+            page.locator("#spGenerate").click()
+            toggle = page.locator("#spMultiPrograms .sp-prog-toggle").first
+            toggle.click()
+            page.wait_for_timeout(250)  # the chevron's .15s turn
+            for chevron in page.evaluate(self.CHEVRONS):
+                expected = (0, 1) if chevron["open"] else (closed, 0)
+                self.assertEqual((chevron["a"], chevron["b"]), expected, f"{language}: {chevron}")

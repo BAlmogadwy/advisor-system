@@ -2871,11 +2871,22 @@ html[dir="rtl"] .nav-lbl,
 html[dir="rtl"] .kpi .k,
 html[dir="rtl"] .ph-chip-context,
 html[dir="rtl"] .student-next-step-label,
-html[dir="rtl"] .sp-kpi-card span {
+html[dir="rtl"] .sp-kpi-card span,
+/* Section Planning (its page wrapper .sp-page; the save review dialog sits
+   outside it, under its own class): headers, KPI labels, rule labels,
+   programme counts and a phone card's labels. */
+html[dir="rtl"] .sp-page .tbl-card thead th,
+html[dir="rtl"] .sp-page .sp-mc .k,
+html[dir="rtl"] .sp-page .sp-caps-lbl,
+html[dir="rtl"] .sp-page .sp-adv-table th,
+html[dir="rtl"] .sp-page .sp-prog-count,
+html[dir="rtl"] .sp-page .mobile-cards tbody td::before,
+html[dir="rtl"] .sp-limit-review th {
   font-family: var(--font-body);
   letter-spacing: 0;
   text-transform: none;
 }
+html[dir="rtl"] .sp-page .text-caps::placeholder { letter-spacing: 0; }
 
 html[dir="rtl"] .page-intro,
 html[dir="rtl"] .page-intro p { line-height: 1.75; }
@@ -8568,7 +8579,11 @@ html[data-theme="dark"] .btn-export {
     .sp-prog-heading .sp-prog-count { font-size: .75rem; font-weight: 600; color: var(--t3); font-family: var(--font-mono); }
     .sp-prog-toggle { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 8px; width: 100%; padding: 0; border: 0; background: none; font: inherit; color: inherit; text-align: start; cursor: pointer; user-select: none; }
     .sp-prog-toggle:hover { opacity: .85; }
-    .sp-collapse-arrow { font-size: .7rem; color: var(--t3); transition: transform .15s; min-width: 12px; }
+    /* Disclosure chevron: along the reading direction when closed (right in
+       English, left in Arabic), down when open. */
+    .sp-page .sp-chev { flex: none; display: inline-block; vertical-align: -1px; margin-inline-end: 4px; color: var(--t3); transition: transform .15s var(--ease); }
+    html[dir="rtl"] .sp-page .sp-chev { transform: scaleX(-1); }
+    html[dir] .sp-page [aria-expanded="true"] > .sp-chev { transform: rotate(90deg); }
     .sp-prog-block { margin-bottom: 20px; }
     .sp-prog-block .tbl-card { margin-bottom: 8px; }
 

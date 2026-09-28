@@ -10,12 +10,9 @@ const T = {
   exported:    IS_AR ? 'تم تصدير الملف.' : 'File exported successfully.',
   full:        IS_AR ? 'ممتلئ' : 'Full',
   underfilled: IS_AR ? 'ناقص' : 'Underfilled',
-  courses:     IS_AR ? 'مقررات' : 'courses',
-  sections:    IS_AR ? 'شعب' : 'sections',
   lastUpdate:  IS_AR ? 'آخر تحديث' : 'Last update',
   deptSummary: IS_AR ? 'ملخص الأقسام' : 'Department Summary',
   noRecs:      IS_AR ? 'لا توجد توصيات.' : 'No recommendations found.',
-  progLabel:   IS_AR ? 'طالب' : 'students',
   male:        IS_AR ? 'ذكور' : 'M',
   female:      IS_AR ? 'إناث' : 'F',
   noGender:    (n, seats, courses) => IS_AR
@@ -45,6 +42,35 @@ const T = {
   slotUses:    IS_AR ? 'بحد هذه الخانة' : "uses this slot's limit",
   slotNone:    status => IS_AR ? `لا مقرر لهذا الفصل (${status})` : `no course this term (${status})`,
 };
+
+/* Counts in words: the noun agrees with its number, through the CLDR plural
+ * rules (English one/other; Arabic zero/one/two/few/many/other), never
+ * "1 courses". In Arabic text the number is a left-to-right island. */
+const PLURAL = new Intl.PluralRules(IS_AR ? 'ar' : 'en');
+const NOUNS = {
+  course:  IS_AR ? { zero: 'مقرر', one: 'مقرر', two: 'مقرران', few: 'مقررات', many: 'مقرراً', other: 'مقرر' }
+                 : { one: 'course', other: 'courses' },
+  section: IS_AR ? { zero: 'شعبة', one: 'شعبة', two: 'شعبتان', few: 'شعب', many: 'شعبة', other: 'شعبة' }
+                 : { one: 'section', other: 'sections' },
+  student: IS_AR ? { zero: 'طالب', one: 'طالب', two: 'طالبان', few: 'طلاب', many: 'طالباً', other: 'طالب' }
+                 : { one: 'student', other: 'students' },
+};
+function nounFor(n, noun) {
+  const forms = NOUNS[noun];
+  return forms[PLURAL.select(n)] || forms.other;
+}
+function countText(n, noun) {
+  const value = Number(n) || 0;
+  return `${value} ${nounFor(value, noun)}`;
+}
+function countHtml(n, noun) {
+  const value = Number(n) || 0;
+  return `<bdi>${value}</bdi> ${esc(nounFor(value, noun))}`;
+}
+
+/* A disclosure chevron: CSS points it along the reading direction when
+ * closed (right in English, left in Arabic) and down when open. */
+const CHEVRON = '<svg class="sp-chev" viewBox="0 0 16 16" width="12" height="12" aria-hidden="true" focusable="false"><path d="M6 3l5 5-5 5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 
 /* M · F split for a KPI, a row or a summary card. */
 function splitText(male, female) {
@@ -238,7 +264,7 @@ async function loadAdvancedCourses() {
     _advLoaded = true;
     _advState = 'ready';
     renderAdvancedTable(_advCourses);
-    $('spAdvCount').textContent = _advCourses.length + (IS_AR ? ' مقرر' : ' courses');
+    $('spAdvCount').textContent = countText(_advCourses.length, 'course');
   } catch (err) {
     if (seq === _advSeq) failed();
   }
@@ -897,11 +923,10 @@ function renderMultiProgramResults(data) {
     const heading = document.createElement('h5');
     heading.className = 'sp-prog-heading';
     heading.innerHTML = `<button type="button" class="sp-prog-toggle" aria-expanded="false" aria-controls="${bodyId}">
-      <span class="sp-collapse-arrow" aria-hidden="true">▶</span>
-      <span>${esc(prog.program)}</span>
-      <span class="sp-prog-count">(${prog.student_count ?? 0} ${T.progLabel}
-        · ${summary.total_courses || 0} ${T.courses}
-        · ${summary.total_sections || 0} ${T.sections}: ${esc(splitText(summary.male_sections, summary.female_sections))})</span></button>`;
+      ${CHEVRON}<bdi class="sp-prog-code">${esc(prog.program)}</bdi>
+      <span class="sp-prog-count">(${countHtml(prog.student_count, 'student')}
+        · ${countHtml(summary.total_courses, 'course')}
+        · ${countHtml(summary.total_sections, 'section')}: ${esc(splitText(summary.male_sections, summary.female_sections))})</span></button>`;
     block.appendChild(heading);
     const toggle = heading.querySelector('button');
 
@@ -940,7 +965,6 @@ function renderMultiProgramResults(data) {
     toggle.addEventListener('click', () => {
       const hidden = body.classList.toggle('d-none');
       toggle.setAttribute('aria-expanded', hidden ? 'false' : 'true');
-      toggle.querySelector('.sp-collapse-arrow').textContent = hidden ? '▶' : '▼';
     });
   });
 }
