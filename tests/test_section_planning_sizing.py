@@ -5,6 +5,9 @@
   the same function the builder uses for a pooled scenario.
 - COE is one of our departments: its courses take the local 25/40 rules, and
   the page reads that list from the server.
+- Male and female students are never planned together: every course is sized
+  for each cohort, Total = M + F in rows, KPIs, summary and export, and students
+  with no recorded gender are reported apart, never pooled.
 """
 
 from __future__ import annotations
@@ -114,7 +117,7 @@ def _row(plan: list[dict], code: str) -> dict:
     return rows[0]
 
 
-def _export_rows(client: Client, **body) -> list[dict]:
+def _export_workbook(client: Client, **body):
     from openpyxl import load_workbook
 
     response = client.post(
@@ -123,15 +126,20 @@ def _export_rows(client: Client, **body) -> list[dict]:
         content_type="application/json",
     )
     assert response.status_code == 200
-    sheet = load_workbook(
-        io.BytesIO(b"".join(response.streaming_content)), data_only=False
-    ).worksheets[0]
+    return load_workbook(io.BytesIO(b"".join(response.streaming_content)), data_only=False)
+
+
+def _sheet_rows(sheet) -> list[dict]:
     headers = [cell.value for cell in sheet[2]]
     return [
         dict(zip(headers, [cell.value for cell in row], strict=False))
         for row in sheet.iter_rows(min_row=3)
         if row[0].value is not None
     ]
+
+
+def _export_rows(client: Client, **body) -> list[dict]:
+    return _sheet_rows(_export_workbook(client, **body).worksheets[0])
 
 
 # ── declared limits in every view ─────────────────────────────────
@@ -267,3 +275,200 @@ def test_the_page_is_given_the_servers_department_list(planner: Client) -> None:
         encoding="utf-8"
     )
     assert "'CYB'" not in js and '"CYB"' not in js, "the page must not keep a list of its own"
+
+
+# ── male and female are never planned together ────────────────────
+
+
+@pytest.fixture
+def mixed_cohorts(monkeypatch: pytest.MonkeyPatch) -> None:
+    """AI: 12 men and 12 women need AI331 (4 cr, local: 25 a section); 3 students
+    have no recorded gender, and one of them alone needs AI352."""
+    Course.objects.create(
+        course_code="AI331", department="AI", credit_hours=4, description="MACHINE LEARNING"
+    )
+    Course.objects.create(
+        course_code="AI352", department="AI", credit_hours=3, description="AI352 NAME"
+    )
+    _requirement("AI", "AI331", None, credits=4, name="MACHINE LEARNING")
+    _requirement("AI", "AI352", None)
+    _students("AI", 461000001, 12, section="M")
+    _students("AI", 462000001, 12, section=" f ")  # recorded, only badly spelt
+    unknown = _students("AI", 463000001, 3, section="")
+    by_student = {sid: ["AI331"] for sid in Student.objects.values_list("student_id", flat=True)}
+    by_student[unknown[0]] = ["AI331", "AI352"]
+    by_student[unknown[1]] = []
+    by_student[unknown[2]] = ["AI352"]
+
+    def single(student_ids, _program, _year, _term, **_kw):
+        return {sid: list(by_student[sid]) for sid in student_ids}
+
+    def multi(student_ids, _year, _term, **_kw):
+        return {sid: list(by_student[sid]) for sid in student_ids}
+
+    monkeypatch.setattr("core.services.reporting.batch_recommend", single)
+    monkeypatch.setattr("core.services.reporting.batch_recommend_multi_program", multi)
+
+
+@pytest.mark.parametrize("program", ["AI", None])
+def test_male_and_female_are_sized_apart_and_total_is_m_plus_f(
+    planner: Client, mixed_cohorts, program
+) -> None:
+    data = _generate(planner, **({"program": program} if program else {}))
+    row = _row(data["plan"], "AI331")
+
+    # Pooled, 24 students fit one 25-seat section; apart, each cohort needs one.
+    assert (row["male_students"], row["female_students"]) == (12, 12)
+    assert (row["male_sections"], row["female_sections"]) == (1, 1)
+    assert row["num_sections"] == 2
+    assert row["total_students"] == 24
+    assert row["max_per_section"] == 25
+    assert data["cohorts"] == {"M": 12, "F": 12, "no_gender": 3}
+    assert data["student_count"] == 27
+    summary = data["summary"]
+    assert (summary["male_sections"], summary["female_sections"], summary["total_sections"]) == (
+        1,
+        1,
+        2,
+    )
+    (ai,) = summary["departments"]
+    assert (ai["male_sections"], ai["female_sections"], ai["sections"]) == (1, 1, 2)
+
+
+def test_students_with_no_recorded_gender_are_reported_never_pooled(
+    planner: Client, mixed_cohorts
+) -> None:
+    data = _generate(planner, program="AI")
+
+    ai331 = _row(data["plan"], "AI331")
+    assert ai331["unknown_students"] == 1
+    assert ai331["total_students"] == 24, "a no-gender student is in neither cohort"
+    # A course only no-gender students need is listed, but plans no section.
+    ai352 = _row(data["plan"], "AI352")
+    assert (ai352["unknown_students"], ai352["num_sections"], ai352["status"]) == (
+        2,
+        0,
+        "no_gender",
+    )
+    assert data["summary"]["total_courses"] == 1
+    assert data["summary"]["total_sections"] == 2
+    assert data["summary"]["no_gender"] == {"students": 3, "seat_demand": 3, "courses": 2}
+
+
+def test_a_section_field_in_the_request_changes_nothing(planner: Client, mixed_cohorts) -> None:
+    """The free-text Section filter is gone: both cohorts are always planned."""
+    data = _generate(planner, program="AI", section="M")
+
+    assert data["cohorts"] == {"M": 12, "F": 12, "no_gender": 3}
+    assert _row(data["plan"], "AI331")["female_sections"] == 1
+    html = planner.get("/section-planning/").content.decode("utf-8")
+    assert 'id="spSection"' not in html
+
+
+def test_several_programmes_are_pooled_by_cohort(
+    planner: Client, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """AI and DS share CS211 (limits 30 and 35): men and women each pool across programmes."""
+    Course.objects.create(
+        course_code="CS211", department="CS", credit_hours=3, description="DATA STRUCTURES"
+    )
+    _requirement("AI", "CS211", 30, name="DATA STRUCTURES")
+    _requirement("DS", "CS211", 35, name="DATA STRUCTURES")
+    _students("AI", 471000001, 20, section="M")
+    _students("DS", 472000001, 20, section="M")
+    _students("AI", 473000001, 5, section="F")
+    _recommend(monkeypatch, {"AI": ["CS211"], "DS": ["CS211"]})
+
+    data = _generate(planner, program="AI,DS")
+
+    row = _row(data["combined_plan"], "CS211")
+    assert row["programs"] == ["AI", "DS"]
+    assert row["max_per_section"] == 30
+    assert (row["male_students"], row["female_students"]) == (40, 5)
+    assert (row["male_sections"], row["female_sections"], row["num_sections"]) == (2, 1, 3)
+    assert data["combined_summary"]["total_sections"] == 3
+    per_programme = {p["program"]: _row(p["plan"], "CS211") for p in data["programs"]}
+    assert (per_programme["AI"]["male_sections"], per_programme["AI"]["female_sections"]) == (1, 1)
+    assert (per_programme["DS"]["max_per_section"], per_programme["DS"]["num_sections"]) == (35, 1)
+    # The Department Summary adds up to the KPI (it is the pooled plan's).
+    assert sum(d["sections"] for d in data["combined_summary"]["departments"]) == 3
+
+
+def test_same_code_different_plan_names_stay_two_courses(
+    planner: Client, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    Course.objects.create(
+        course_code="CS111", department="CS", credit_hours=4, description="GLOBAL NAME"
+    )
+    _requirement("AI", "CS111", 20, credits=4, name="PROGRAMMING I")
+    _requirement("AI2", "CS111", None, credits=4, name="FUNDAMENTALS OF PROGRAMMING")
+    _requirement("DS", "CS111", 30, credits=4, name="PROGRAMMING I")
+    _students("AI", 481000001, 10)
+    _students("AI2", 482000001, 4)
+    _students("DS", 483000001, 15)
+    _recommend(monkeypatch, {"AI": ["CS111"], "AI2": ["CS111"], "DS": ["CS111"]})
+
+    data = _generate(planner, program="AI,AI2,DS")
+
+    rows = {
+        row["course_name"]: row for row in data["combined_plan"] if row["course_code"] == "CS111"
+    }
+    assert set(rows) == {"PROGRAMMING I", "FUNDAMENTALS OF PROGRAMMING"}, "the plan's own names win"
+    assert rows["PROGRAMMING I"]["programs"] == ["AI", "DS"]
+    assert rows["PROGRAMMING I"]["total_students"] == 25
+    assert rows["PROGRAMMING I"]["max_per_section"] == 20
+    assert rows["PROGRAMMING I"]["num_sections"] == 2
+    assert rows["FUNDAMENTALS OF PROGRAMMING"]["programs"] == ["AI2"]
+    assert rows["FUNDAMENTALS OF PROGRAMMING"]["total_students"] == 4
+
+
+def test_the_export_carries_male_and_female(planner: Client, mixed_cohorts) -> None:
+    workbook = _export_workbook(planner, program="AI")
+    sections, summary = workbook.worksheets[0], workbook.worksheets[1]
+    rows = {row["Course"]: row for row in _sheet_rows(sections)}
+
+    ai331 = rows["AI331"]
+    assert (ai331["Male students"], ai331["Female students"]) == (12, 12)
+    assert ai331["No gender recorded"] == 1
+    assert ai331["Max/Section"] == 25
+    r = next(i for i, row in enumerate(sections.iter_rows(min_row=3), 3) if row[2].value == "AI331")
+    assert ai331["Students"] == f"=G{r}+H{r}"
+    assert ai331["Male sections"] == f"=IF(G{r}>0,CEILING(G{r}/J{r},1),0)"
+    assert ai331["Female sections"] == f"=IF(H{r}>0,CEILING(H{r}/J{r},1),0)"
+    assert ai331["Sections"] == f"=K{r}+L{r}"
+    assert rows["AI352"]["Status"] == "No gender recorded"
+
+    labels = {summary.cell(row=r, column=c).value: (r, c) for r in (3, 4) for c in (1, 3, 5)}
+    r, c = labels["Male Sections"]
+    assert summary.cell(row=r, column=c + 1).value == "=SUM(Sections!K3:K4)"
+    r, c = labels["Female Sections"]
+    assert summary.cell(row=r, column=c + 1).value == "=SUM(Sections!L3:L4)"
+    r, c = labels["Total Sections"]
+    assert summary.cell(row=r, column=c + 1).value == "=SUM(Sections!M3:M4)"
+    r, c = labels["No gender recorded"]
+    assert summary.cell(row=r, column=c + 1).value == 3
+
+
+def test_the_multi_programme_export_writes_the_pooled_plan_first(
+    planner: Client, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    Course.objects.create(
+        course_code="CS211", department="CS", credit_hours=3, description="DATA STRUCTURES"
+    )
+    _requirement("AI", "CS211", 30, name="DATA STRUCTURES")
+    _requirement("DS", "CS211", 35, name="DATA STRUCTURES")
+    _students("AI", 491000001, 20, section="M")
+    _students("DS", 492000001, 20, section="F")
+    _recommend(monkeypatch, {"AI": ["CS211"], "DS": ["CS211"]})
+
+    workbook = _export_workbook(planner, program="AI,DS")
+
+    assert workbook.sheetnames[:2] == ["Sections-All", "Summary-All"]
+    assert "Sections-AI" in workbook.sheetnames and "Sections-DS" in workbook.sheetnames
+    (pooled,) = _sheet_rows(workbook["Sections-All"])
+    assert (pooled["Male students"], pooled["Female students"], pooled["Max/Section"]) == (
+        20,
+        20,
+        30,
+    )
+    assert pooled["Name"] == "AI, DS - DATA STRUCTURES"

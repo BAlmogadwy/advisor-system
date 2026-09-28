@@ -1,5 +1,6 @@
 import time
 from collections import Counter, defaultdict
+from dataclasses import dataclass
 
 from core.models import ProgrammeRequirement, Student, StudentCourse
 from core.services.course_identity import planner_course_key
@@ -7,14 +8,89 @@ from core.services.elective_validation import ElectiveMappingError, ElectiveSele
 from core.services.eligibility import evaluate_prerequisites
 from core.services.recommender_batch import batch_recommend, batch_recommend_multi_program
 from core.services.student_helpers import is_elective_slot, normalize_code
+from core.services.student_sections import cohort_of_student_section
 
 _aggregate_cache: dict[tuple, tuple[float, tuple[int, "Counter[str]"]]] = {}
 _AGGREGATE_CACHE_TTL = 300  # 5 minutes
 
 
+@dataclass(frozen=True)
+class StudentDemand:
+    """One student's next-term courses, with the programme and cohort they are planned in.
+
+    ``cohort`` is ``"M"`` or ``"F"`` from ``Student.section``, or ``""`` when no
+    gender is recorded: such a student is never assumed to be either.
+    """
+
+    student_id: int
+    program: str
+    cohort: str
+    courses: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class PlanningDemand:
+    """Everything Section Planning sizes from, per student (electives resolved)."""
+
+    students: tuple[StudentDemand, ...]
+
+
+_planning_cache: dict[tuple, tuple[float, PlanningDemand]] = {}
+
+
 def clear_aggregate_cache() -> None:
     """Clear cached aggregate recommendation counts."""
     _aggregate_cache.clear()
+    _planning_cache.clear()
+
+
+def build_planning_demand(year: int, semester: int, program: str | None = None) -> PlanningDemand:
+    """Per-student demand for one programme, or for every student when ``program`` is None.
+
+    The recommender runs once for the scope and mapped elective placeholders are
+    resolved to real courses, exactly as ``build_aggregate_counts`` does; what
+    this adds is who each seat is for, so a plan can keep male and female
+    students apart and name the students with no recorded gender.
+    """
+    program = str(program).strip() if program else None
+    cache_key = (int(year), int(semester), program or "")
+    cached = _planning_cache.get(cache_key)
+    if cached and (time.time() - cached[0]) < _AGGREGATE_CACHE_TTL:
+        return cached[1]
+
+    rows = Student.objects.all()
+    if program:
+        rows = rows.filter(program=program)
+    scope = list(rows.values_list("student_id", "program", "section").order_by("student_id"))
+    student_ids = [int(sid) for sid, _prog, _section in scope]
+
+    if program:
+        all_recs = batch_recommend(student_ids, program, year, semester)
+    else:
+        all_recs = batch_recommend_multi_program(student_ids, year, semester)
+    all_recs = resolve_elective_recommendations(
+        all_recs, year=year, semester=semester, program=program
+    )
+
+    students = []
+    for sid, prog, section in scope:
+        courses = tuple(
+            code for code in (normalize_code(c) for c in all_recs.get(int(sid), [])) if code
+        )
+        students.append(
+            StudentDemand(
+                student_id=int(sid),
+                program=str(program or prog or ""),
+                cohort=cohort_of_student_section(section),
+                courses=courses,
+            )
+        )
+    demand = PlanningDemand(students=tuple(students))
+    _planning_cache[cache_key] = (time.time(), demand)
+    if len(_planning_cache) > 20:
+        oldest = min(_planning_cache, key=lambda k: _planning_cache[k][0])
+        del _planning_cache[oldest]
+    return demand
 
 
 def get_student_ids(

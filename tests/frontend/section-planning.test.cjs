@@ -368,3 +368,69 @@ test('the page keeps no department list of its own', async t => {
   const shown = [...ui.window.document.querySelectorAll('#spDeptGrid .dept-name')].map(el => el.textContent);
   assert.deepEqual(shown, ['MATH']);
 });
+
+/* ── Male and female are never planned together ── */
+
+function cohortPlan({ noGender = 0 } = {}) {
+  const row = planRow('AI331', {
+    male_students: 12, female_students: 30, unknown_students: noGender,
+    male_sections: 1, female_sections: 2, total_students: 42, num_sections: 3, max_per_section: 25,
+  });
+  const data = generated([row]);
+  data.cohorts = { M: 12, F: 30, no_gender: noGender };
+  data.student_count = 42 + noGender;
+  Object.assign(data.summary, {
+    total_sections: 3, male_sections: 1, female_sections: 2,
+    no_gender: { students: noGender, seat_demand: noGender, courses: noGender ? 1 : 0 },
+  });
+  data.summary.departments = [{ department: 'AI', courses: 1, sections: 3, male_sections: 1, female_sections: 2, students: 42, total_credits: 12 }];
+  return data;
+}
+
+test('Generate asks for both cohorts: there is no Section filter to send', async t => {
+  const ui = await page(t);
+  assert.equal(ui.$('spSection'), null);
+
+  ui.$('spGenerate').click();
+  await settle();
+
+  const body = ui.requests.find(r => r.url === GENERATE).body;
+  assert.equal('section' in body, false);
+});
+
+test('results show M, F and Total sections, and the KPIs split them', async t => {
+  const ui = await page(t, { generate: () => answer(cohortPlan()) });
+  ui.$('spGenerate').click();
+  await settle();
+
+  const tr = ui.window.document.querySelector('#spTable tbody tr[data-code="AI331"]');
+  assert.equal(tr.querySelector('.sp-sec-m').textContent.trim(), '1');
+  assert.equal(tr.querySelector('.sp-sec-f').textContent.trim(), '2');
+  assert.equal(tr.querySelector('.sp-sec-total').textContent.trim(), '3');
+  assert.equal(tr.querySelector('.sp-cell-sub').textContent.trim(), say('M 12 · F 30', 'ذكور 12 · إناث 30'));
+  const heads = [...ui.window.document.querySelectorAll('#spTable thead th')].map(th => th.textContent.trim());
+  assert.deepEqual(heads.slice(5, 9), say(
+    ['Students', 'M sections', 'F sections', 'Total sections'],
+    ['الطلاب', 'شعب الذكور', 'شعب الإناث', 'مجموع الشعب'],
+  ));
+  assert.equal(ui.text('spKpiSections'), '3');
+  assert.equal(ui.text('spKpiSectionsSplit'), say('M 1 · F 2', 'ذكور 1 · إناث 2'));
+  assert.equal(ui.text('spKpiStudentsSplit'), say('M 12 · F 30', 'ذكور 12 · إناث 30'));
+  assert.match(ui.window.document.querySelector('#spDeptGrid .dept-stat').textContent, AR ? /ذكور 1 · إناث 2/ : /M 1 · F 2/);
+  assert.ok(ui.$('spGenderNote').classList.contains('d-none'), 'nothing to report');
+});
+
+test('students with no recorded gender are stated, not pooled', async t => {
+  const ui = await page(t, { generate: () => answer(cohortPlan({ noGender: 2 })) });
+  ui.$('spGenerate').click();
+  await settle();
+
+  assert.ok(!ui.$('spGenderNote').classList.contains('d-none'));
+  assert.equal(ui.text('spGenderNote'), say(
+    '2 students have no recorded gender: 2 seats across 1 course, left out of every count. Record their gender, then generate again.',
+    '2 طالب بلا جنس مسجّل: يحتاجون 2 مقعداً في 1 مقرر، وهم خارج كل الأعداد. سجّل جنسهم ثم أعد الحساب.',
+  ));
+  const tr = ui.window.document.querySelector('#spTable tbody tr[data-code="AI331"]');
+  assert.equal(tr.querySelector('.sp-no-gender').textContent.trim(), say('+2 no gender', '+2 بلا جنس'));
+  assert.equal(ui.text('spKpiSections'), '3', 'Total stays M + F');
+});

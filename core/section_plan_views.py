@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import json
 import logging
-import math
 import tempfile
 from pathlib import Path
 
@@ -22,11 +21,8 @@ from django.shortcuts import render
 from django.views.decorators.http import require_GET, require_POST
 
 from core.authz import role_required, throttle
-from core.models import ProgrammeRequirement, Student
 from core.services.audit import AuditUnavailable, audit_actor, record_audit_event
-from core.services.course_identity import planner_course_key
 from core.services.rbac import ROLE_GENERAL_ADVISOR, get_user_role
-from core.services.reporting import build_aggregate_counts, build_course_identity_aggregate_counts
 from core.services.section_limits import AUDIT_ACTION as LIMIT_AUDIT_ACTION
 from core.services.section_limits import (
     LimitConflict,
@@ -37,119 +33,25 @@ from core.services.section_limits import (
     plan_limit_writes,
     preview_token,
 )
+from core.services.section_plan_pipeline import (
+    SizingRules,
+    plan_all_programmes,
+    plan_programme,
+    plan_programmes,
+    summarise,
+)
 from core.services.section_planning import (
     DEFAULT_MAX_EXTERNAL,
     DEFAULT_MAX_LOCAL_4CR,
     DEFAULT_MAX_LOCAL_OTHER,
     LOCAL_DEPARTMENTS,
-    compute_plan_summary,
-    compute_section_plan,
     get_all_courses_with_defaults,
-    load_programme_capacities,
-    lowest_declared_capacities,
 )
 from core.services.student_helpers import normalize_code
 from core.settings_views import load_defaults
 from core.sidebar_context import get_sidebar_context
 
 logger = logging.getLogger(__name__)
-
-
-def _apply_programme_course_names(plan: list[dict], program: str) -> list[dict]:
-    """Overlay ProgrammeRequirement.course_name for display-only plan rows."""
-    course_codes = [
-        normalize_code(str(row.get("course_code", ""))) for row in plan if row.get("course_code")
-    ]
-    if not course_codes:
-        return [dict(row) for row in plan]
-
-    names = {
-        normalize_code(code): course_name or ""
-        for code, course_name in ProgrammeRequirement.objects.filter(
-            program=program,
-            course_code__in=course_codes,
-        ).values_list("course_code", "course_name")
-    }
-
-    updated: list[dict] = []
-    for row in plan:
-        row_copy = dict(row)
-        code = normalize_code(str(row_copy.get("course_code", "")))
-        row_copy["course_name"] = names.get(code) or row_copy.get("course_name", "")
-        updated.append(row_copy)
-    return updated
-
-
-def _merge_section_plan_rows_by_course_identity(
-    program_plans: list[tuple[str, list[dict]]],
-) -> list[dict]:
-    """Merge multi-program rows by course code and plan-specific course name."""
-    merged: dict[str, dict] = {}
-
-    for program, plan in program_plans:
-        for row in plan:
-            code = normalize_code(str(row.get("course_code", "")))
-            name = str(row.get("course_name", "") or "")
-            key = planner_course_key(code, name)
-
-            if key not in merged:
-                row_copy = dict(row)
-                row_copy["course_key"] = key
-                row_copy["course_code"] = code
-                row_copy["course_name"] = name
-                row_copy["total_students"] = 0
-                row_copy["programs"] = []
-                merged[key] = row_copy
-
-            target = merged[key]
-            if program not in target["programs"]:
-                target["programs"].append(program)
-            target["total_students"] += int(row.get("total_students") or 0)
-            target["max_per_section"] = min(
-                int(target.get("max_per_section") or 1),
-                int(row.get("max_per_section") or 1),
-            )
-            target["is_external"] = bool(target.get("is_external")) or bool(row.get("is_external"))
-
-    result = []
-    for row in merged.values():
-        max_per_section = max(1, int(row.get("max_per_section") or 1))
-        total_students = int(row.get("total_students") or 0)
-        num_sections = max(1, math.ceil(total_students / max_per_section))
-        avg_per_section = math.ceil(total_students / num_sections)
-        fill_percent = round((avg_per_section / max_per_section) * 100)
-
-        if avg_per_section >= max_per_section:
-            status = "full"
-        elif avg_per_section < 10:
-            status = "underfilled"
-        else:
-            status = ""
-
-        row["total_students"] = total_students
-        row["num_sections"] = num_sections
-        row["avg_per_section"] = avg_per_section
-        row["fill_percent"] = fill_percent
-        row["status"] = status
-        row["programs"] = sorted(row.get("programs") or [])
-        result.append(row)
-
-    result.sort(
-        key=lambda r: (
-            r.get("department", ""),
-            r.get("course_code", ""),
-            r.get("course_name", ""),
-        )
-    )
-    return result
-
-
-def _programmes_in_scope(section: str | None) -> list[str]:
-    """The programmes of the students the all-programmes view plans for."""
-    students = Student.objects.exclude(program__isnull=True).exclude(program="")
-    if section:
-        students = students.filter(section=section)
-    return sorted({str(p) for p in students.values_list("program", flat=True).distinct()})
 
 
 def _format_export_course_name(row: dict, course_names: dict[str, str]) -> str:
@@ -212,8 +114,6 @@ def _parse_payload(request: HttpRequest) -> tuple[dict | None, JsonResponse | No
     else:
         program = program_raw or None
 
-    section = str(body.get("section", "")).strip() or None
-
     try:
         max_local_4cr = int(body.get("max_local_4cr", DEFAULT_MAX_LOCAL_4CR))
         max_local_other = int(body.get("max_local_other", DEFAULT_MAX_LOCAL_OTHER))
@@ -251,7 +151,6 @@ def _parse_payload(request: HttpRequest) -> tuple[dict | None, JsonResponse | No
         "year": year,
         "semester": semester,
         "program": program,
-        "section": section,
         "max_local_4cr": max_local_4cr,
         "max_local_other": max_local_other,
         "max_external": max_external,
@@ -287,157 +186,54 @@ def section_plan_page(request: HttpRequest) -> HttpResponse:
 @require_POST
 @throttle(max_calls=3, window_seconds=120)
 def section_plan_generate_view(request: HttpRequest) -> JsonResponse:
-    """Compute section demand from batch recommendations."""
+    """Compute section demand from batch recommendations.
+
+    Male and female students are always planned apart: every row carries M, F and
+    Total (= M + F) sections, and students with no recorded gender are reported
+    under ``summary.no_gender`` instead of being pooled into either cohort.
+    """
     params, err = _parse_payload(request)
     if err:
         return err
     assert params is not None
 
-    program = params["program"]
-    capacity_kwargs = {
-        "max_local_4cr": params["max_local_4cr"],
-        "max_local_other": params["max_local_other"],
-        "max_external": params["max_external"],
-        "course_overrides": params.get("course_overrides"),
-    }
-
     try:
-        if isinstance(program, list):
-            # ── Multi-program mode ──
-            result_programs: list[dict] = []
-            total_student_count = 0
-            for prog in program:
-                sc, agg = build_aggregate_counts(
-                    params["year"],
-                    params["semester"],
-                    program=prog,
-                    section=params["section"],
-                    resolve_electives=True,
-                )
-                pr_caps = load_programme_capacities(prog, list(agg.keys()))
-                plan = compute_section_plan(
-                    agg,
-                    **capacity_kwargs,
-                    programme_capacities=pr_caps,
-                )
-                plan = _apply_programme_course_names(plan, prog)
-                summary = compute_plan_summary(plan)
-                result_programs.append(
-                    {
-                        "program": prog,
-                        "student_count": sc,
-                        "plan": plan,
-                        "summary": summary,
-                    }
-                )
-                total_student_count += sc
-
-            # Build combined plan by the same identity shown in the table.
-            combined_plan = _merge_section_plan_rows_by_course_identity(
-                [(prog_data["program"], prog_data["plan"]) for prog_data in result_programs]
-            )
-            combined_summary = compute_plan_summary(combined_plan)
-
-            # Build additive department summary (sum per-program dept stats)
-            # This reflects actual teaching load across programs, not recomputed
-            additive_dept: dict[str, dict[str, int]] = {}
-            for prog_data in result_programs:
-                for dept in (prog_data.get("summary") or {}).get("departments", []):
-                    d = dept["department"]
-                    if d not in additive_dept:
-                        additive_dept[d] = {
-                            "courses": 0,
-                            "sections": 0,
-                            "students": 0,
-                            "total_credits": 0,
-                        }
-                    additive_dept[d]["courses"] += dept["courses"]
-                    additive_dept[d]["sections"] += dept["sections"]
-                    additive_dept[d]["students"] += dept["students"]
-                    additive_dept[d]["total_credits"] += dept["total_credits"]
-            combined_summary["departments"] = [
-                {"department": d, **v} for d, v in sorted(additive_dept.items())
-            ]
-
-            return JsonResponse(
-                {
-                    "ok": True,
-                    "mode": "multi",
-                    "year": params["year"],
-                    "semester": params["semester"],
-                    "student_count": total_student_count,
-                    "combined_plan": combined_plan,
-                    "combined_summary": combined_summary,
-                    "programs": result_programs,
-                }
-            )
-
-        elif isinstance(program, str):
-            # ── Single-program mode ──
-            student_count, aggregate = build_aggregate_counts(
-                params["year"],
-                params["semester"],
-                program=program,
-                section=params["section"],
-                resolve_electives=True,
-            )
-            pr_caps = load_programme_capacities(program, list(aggregate.keys()))
-            plan = compute_section_plan(
-                aggregate,
-                **capacity_kwargs,
-                programme_capacities=pr_caps,
-            )
-            plan = _apply_programme_course_names(plan, program)
-            summary = compute_plan_summary(plan)
-
-            return JsonResponse(
-                {
-                    "ok": True,
-                    "mode": "single",
-                    "year": params["year"],
-                    "semester": params["semester"],
-                    "student_count": student_count,
-                    "plan": plan,
-                    "summary": summary,
-                }
-            )
-
-        else:
-            # ── Combined mode (no program filter) ──
-            student_count, aggregate, course_metadata = build_course_identity_aggregate_counts(
-                params["year"],
-                params["semester"],
-                program=None,
-                section=params["section"],
-                resolve_electives=True,
-            )
-            # Declared limits hold here too: the lowest any programme in scope
-            # declares, exactly as the timetable builder sizes pooled programmes.
-            plan = compute_section_plan(
-                aggregate,
-                **capacity_kwargs,
-                programme_capacities=lowest_declared_capacities(
-                    _programmes_in_scope(params["section"]), course_metadata
-                ),
-                course_metadata=course_metadata,
-            )
-            summary = compute_plan_summary(plan)
-
-            return JsonResponse(
-                {
-                    "ok": True,
-                    "mode": "combined",
-                    "year": params["year"],
-                    "semester": params["semester"],
-                    "student_count": student_count,
-                    "plan": plan,
-                    "summary": summary,
-                }
-            )
-
-    except Exception as exc:
+        body = _plan(params)
+    except Exception:
         logger.exception("section_plan_generate error")
-        return JsonResponse({"ok": False, "error": str(exc)}, status=500)
+        return JsonResponse(
+            {"ok": False, "code": "generate_failed", "error": "The plan could not be computed."},
+            status=500,
+        )
+    return JsonResponse(
+        {"ok": True, "year": params["year"], "semester": params["semester"], **body}
+    )
+
+
+def _rules(params: dict) -> SizingRules:
+    return SizingRules(
+        max_local_4cr=params["max_local_4cr"],
+        max_local_other=params["max_local_other"],
+        max_external=params["max_external"],
+        course_overrides=params.get("course_overrides") or {},
+    )
+
+
+def _plan(params: dict) -> dict:
+    """The plan for the request's scope: one programme, several, or all of them."""
+    program = params["program"]
+    rules = _rules(params)
+    if isinstance(program, list):
+        return {
+            "mode": "multi",
+            **plan_programmes(params["year"], params["semester"], program, rules),
+        }
+    if isinstance(program, str):
+        return {
+            "mode": "single",
+            **plan_programme(params["year"], params["semester"], program, rules),
+        }
+    return {"mode": "combined", **plan_all_programmes(params["year"], params["semester"], rules)}
 
 
 # ── Courses list API (for advanced per-course settings) ───────
@@ -608,13 +404,6 @@ def section_plan_export_view(request: HttpRequest) -> HttpResponseBase:
     assert params is not None
 
     program = params["program"]
-    capacity_kwargs = {
-        "max_local_4cr": params["max_local_4cr"],
-        "max_local_other": params["max_local_other"],
-        "max_external": params["max_external"],
-        "course_overrides": params.get("course_overrides"),
-    }
-
     dept_prefixes = params.get("dept_filter", [])
 
     def _filter_plan(plan: list[dict]) -> list[dict]:
@@ -626,84 +415,29 @@ def section_plan_export_view(request: HttpRequest) -> HttpResponseBase:
             if any(normalize_code(entry["course_code"]).startswith(p) for p in dept_prefixes)
         ]
 
+    def _scoped(plan: list[dict], cohorts: dict) -> tuple[list[dict], dict]:
+        rows = _filter_plan(plan)
+        return rows, summarise(rows, no_gender_students=int(cohorts.get("no_gender", 0)))
+
     try:
-        if isinstance(program, list):
-            # ── Multi-program export ──
-            programs_data: list[dict] = []
-            for prog in program:
-                _sc, agg = build_aggregate_counts(
-                    params["year"],
-                    params["semester"],
-                    program=prog,
-                    section=params["section"],
-                    resolve_electives=True,
-                )
-                pr_caps = load_programme_capacities(prog, list(agg.keys()))
-                plan = compute_section_plan(
-                    agg,
-                    **capacity_kwargs,
-                    programme_capacities=pr_caps,
-                )
-                plan = _apply_programme_course_names(plan, prog)
-                plan = _filter_plan(plan)
-                summary = compute_plan_summary(plan)
+        result = _plan(params)
+        if result["mode"] == "multi":
+            combined, combined_summary = _scoped(result["combined_plan"], result["cohorts"])
+            programs_data = []
+            for entry in result["programs"]:
+                rows, summary = _scoped(entry["plan"], entry["cohorts"])
                 programs_data.append(
-                    {
-                        "program": prog,
-                        "plan": plan,
-                        "summary": summary,
-                    }
+                    {"program": entry["program"], "plan": rows, "summary": summary}
                 )
             path = _export_section_plan_xlsx(
-                params=params,
-                mode="multi",
-                programs_data=programs_data,
+                combined, combined_summary, params, mode="multi", programs_data=programs_data
             )
             filename = f"section_plan_{params['year']}_{params['semester']}_multi.xlsx"
-
-        elif isinstance(program, str):
-            # ── Single-program export ──
-            _sc, aggregate = build_aggregate_counts(
-                params["year"],
-                params["semester"],
-                program=program,
-                section=params["section"],
-                resolve_electives=True,
-            )
-            pr_caps = load_programme_capacities(program, list(aggregate.keys()))
-            plan = compute_section_plan(
-                aggregate,
-                **capacity_kwargs,
-                programme_capacities=pr_caps,
-            )
-            plan = _apply_programme_course_names(plan, program)
-            plan = _filter_plan(plan)
-            summary = compute_plan_summary(plan)
-            path = _export_section_plan_xlsx(plan, summary, params, mode="single")
-            filename = f"section_plan_{params['year']}_{params['semester']}_{program}.xlsx"
-
         else:
-            # ── Combined export (no program filter) ──
-            _sc, aggregate, course_metadata = build_course_identity_aggregate_counts(
-                params["year"],
-                params["semester"],
-                program=None,
-                section=params["section"],
-                resolve_electives=True,
-            )
-            plan = _filter_plan(
-                compute_section_plan(
-                    aggregate,
-                    **capacity_kwargs,
-                    programme_capacities=lowest_declared_capacities(
-                        _programmes_in_scope(params["section"]), course_metadata
-                    ),
-                    course_metadata=course_metadata,
-                )
-            )
-            summary = compute_plan_summary(plan)
-            path = _export_section_plan_xlsx(plan, summary, params, mode="combined")
-            filename = f"section_plan_{params['year']}_{params['semester']}.xlsx"
+            rows, summary = _scoped(result["plan"], result["cohorts"])
+            path = _export_section_plan_xlsx(rows, summary, params, mode=result["mode"])
+            suffix = f"_{program}" if isinstance(program, str) else ""
+            filename = f"section_plan_{params['year']}_{params['semester']}{suffix}.xlsx"
 
         return FileResponse(
             path.open("rb"),
@@ -711,9 +445,38 @@ def section_plan_export_view(request: HttpRequest) -> HttpResponseBase:
             filename=filename,
         )
 
-    except Exception as exc:
+    except Exception:
         logger.exception("section_plan_export error")
-        return JsonResponse({"ok": False, "error": str(exc)}, status=500)
+        return JsonResponse(
+            {"ok": False, "code": "export_failed", "error": "The file could not be made."},
+            status=500,
+        )
+
+
+#: The Sections sheet's columns, in order. Male and female students are sized
+#: apart with the same Max/Section; Sections = Male sections + Female sections.
+#: Students with no recorded gender are listed in their own column and are in
+#: no section count.
+EXPORT_HEADERS = [
+    "#",
+    "Department",
+    "Course",
+    "Name",
+    "Credits",
+    "External",
+    "Male students",
+    "Female students",
+    "Students",
+    "Max/Section",
+    "Male sections",
+    "Female sections",
+    "Sections",
+    "Avg/Section",
+    "Fill %",
+    "Status",
+    "No gender recorded",
+]
+_STATUS_TEXT = {"full": "Full", "underfilled": "Underfilled", "no_gender": "No gender recorded"}
 
 
 def _export_section_plan_xlsx(
@@ -726,8 +489,9 @@ def _export_section_plan_xlsx(
 ) -> Path:
     """Build a styled XLSX workbook with Sections + Summary sheets.
 
-    For mode="single" or "combined": uses plan/summary directly (one pair of sheets).
-    For mode="multi": iterates programs_data, creating per-program sheet pairs.
+    For mode="single" or "combined": one pair of sheets from plan/summary.
+    For mode="multi": plan/summary are the pooled plan ("-All" sheets), then one
+    pair per programme from programs_data.
     """
     from openpyxl import Workbook  # type: ignore[import-untyped]
     from openpyxl.styles import (  # type: ignore[import-untyped]
@@ -740,21 +504,7 @@ def _export_section_plan_xlsx(
     from openpyxl.utils import get_column_letter  # type: ignore[import-untyped]
 
     wb = Workbook()
-
-    headers = [
-        "#",
-        "Department",
-        "Course",
-        "Name",
-        "Credits",
-        "External",
-        "Students",
-        "Sections",
-        "Max/Section",
-        "Avg/Section",
-        "Fill %",
-        "Status",
-    ]
+    headers = EXPORT_HEADERS
 
     # Build course name lookup from Course + ProgrammeRequirement tables
     from core.models import Course as CourseModel
@@ -777,7 +527,7 @@ def _export_section_plan_xlsx(
     header_fill = PatternFill(start_color="0A8E6E", end_color="0A8E6E", fill_type="solid")
     title_fill = PatternFill(start_color="1B2631", end_color="1B2631", fill_type="solid")
     title_font = Font(name="Calibri", bold=True, color="FFFFFF", size=12)
-    center = Alignment(horizontal="center", vertical="center")
+    center = Alignment(horizontal="center", vertical="center", wrap_text=True)
     left_center = Alignment(horizontal="left", vertical="center")
     alt_fill = PatternFill(start_color="F8F9FA", end_color="F8F9FA", fill_type="solid")
     full_fill = PatternFill(start_color="D5F5E3", end_color="D5F5E3", fill_type="solid")
@@ -807,13 +557,25 @@ def _export_section_plan_xlsx(
         _dept_colors[dept] = fill
         return fill
 
-    col_widths = [5, 12, 14, 30, 8, 9, 10, 10, 12, 12, 9, 12]
+    col_widths = [5, 12, 14, 30, 8, 9, 9, 9, 10, 11, 9, 9, 10, 11, 9, 14, 11]
+
+    def _cell(ws, r: int, c: int, value, *, font=None, align=center):
+        cell = ws.cell(row=r, column=c, value=value)
+        cell.alignment = align
+        cell.border = cell_border
+        if font is not None:
+            cell.font = font
+        return cell
 
     def _write_sections_sheet(ws, plan_data: list[dict]) -> None:
         """Write the sections data rows with styled formatting."""
         # Title row
         ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=len(headers))
-        tc = ws.cell(row=1, column=1, value="Section Planning")
+        tc = ws.cell(
+            row=1,
+            column=1,
+            value="Section Planning — male and female sections planned separately",
+        )
         tc.font = title_font
         tc.fill = title_fill
         tc.alignment = Alignment(horizontal="center", vertical="center")
@@ -835,76 +597,33 @@ def _export_section_plan_xlsx(
             is_ext = row.get("is_external", False)
             dept = row.get("department", "")
 
-            # Row number
-            c = ws.cell(row=r, column=1, value=i)
-            c.alignment = center
-            c.font = num_font
-            c.border = cell_border
-
-            # Department — with colour band
-            c = ws.cell(row=r, column=2, value=dept)
-            c.font = dept_font
-            c.alignment = left_center
-            c.border = cell_border
+            _cell(ws, r, 1, i, font=num_font)
+            c = _cell(ws, r, 2, dept, font=dept_font, align=left_center)
             c.fill = _dept_fill(dept)
-
-            # Course code
-            c = ws.cell(row=r, column=3, value=row["course_code"])
-            c.font = mono
-            c.alignment = left_center
-            c.border = cell_border
-
-            # Course name
-            course_name = _format_export_course_name(row, _course_names)
-            c = ws.cell(row=r, column=4, value=course_name)
-            c.font = Font(size=9, color="566573")
-            c.alignment = left_center
-            c.border = cell_border
-
-            # Credits
-            c = ws.cell(row=r, column=5, value=row["credit_hours"])
-            c.alignment = center
-            c.font = num_font
-            c.border = cell_border
-
-            # External
-            c = ws.cell(row=r, column=6, value="Yes" if is_ext else "")
-            c.alignment = center
-            c.border = cell_border
+            _cell(ws, r, 3, row["course_code"], font=mono, align=left_center)
+            _cell(
+                ws,
+                r,
+                4,
+                _format_export_course_name(row, _course_names),
+                font=Font(size=9, color="566573"),
+                align=left_center,
+            )
+            _cell(ws, r, 5, row["credit_hours"], font=num_font)
+            c = _cell(ws, r, 6, "Yes" if is_ext else "")
             if is_ext:
                 c.font = Font(color="2980B9", bold=True)
-
-            # Students
-            c = ws.cell(row=r, column=7, value=row["total_students"])
-            c.alignment = center
-            c.font = Font(bold=True, size=10)
-            c.border = cell_border
-
-            # Sections = CEILING(Students / Max, 1)
-            c = ws.cell(row=r, column=8)
-            c.value = f"=CEILING(G{r}/I{r},1)"
-            c.alignment = center
-            c.font = num_font
-            c.border = cell_border
-
-            # Max/Section (editable — user can change this)
-            c = ws.cell(row=r, column=9, value=row["max_per_section"])
-            c.alignment = center
-            c.font = num_font
-            c.border = cell_border
-
-            # Avg/Section = ROUND(Students / Sections, 0)
-            c = ws.cell(row=r, column=10)
-            c.value = f"=IF(H{r}>0,ROUND(G{r}/H{r},0),0)"
-            c.alignment = center
-            c.font = num_font
-            c.border = cell_border
-
-            # Fill % = Avg / Max * 100
-            c = ws.cell(row=r, column=11)
-            c.value = f'=IF(I{r}>0,ROUND(G{r}/(H{r}*I{r})*100,0)&"%","")'
-            c.alignment = center
-            c.border = cell_border
+            _cell(ws, r, 7, int(row.get("male_students") or 0), font=num_font)
+            _cell(ws, r, 8, int(row.get("female_students") or 0), font=num_font)
+            # Students = Male + Female (no-gender students are in neither)
+            _cell(ws, r, 9, f"=G{r}+H{r}", font=Font(bold=True, size=10))
+            # Max/Section (editable — the section counts follow it)
+            _cell(ws, r, 10, row["max_per_section"], font=num_font)
+            _cell(ws, r, 11, f"=IF(G{r}>0,CEILING(G{r}/J{r},1),0)", font=num_font)
+            _cell(ws, r, 12, f"=IF(H{r}>0,CEILING(H{r}/J{r},1),0)", font=num_font)
+            _cell(ws, r, 13, f"=K{r}+L{r}", font=Font(bold=True, size=10))
+            _cell(ws, r, 14, f"=IF(M{r}>0,ROUND(I{r}/M{r},0),0)", font=num_font)
+            c = _cell(ws, r, 15, f'=IF(AND(J{r}>0,M{r}>0),ROUND(I{r}/(M{r}*J{r})*100,0)&"%","")')
             # Conditional formatting via static check (formulas recalculate in Excel)
             fill_pct = row.get("fill_percent", 0)
             if fill_pct >= 90:
@@ -914,29 +633,23 @@ def _export_section_plan_xlsx(
             else:
                 c.font = num_font
 
-            # Status
             status = row.get("status", "")
-            c = ws.cell(row=r, column=12, value=status.title() if status else "")
-            c.alignment = center
-            c.border = cell_border
+            c = _cell(ws, r, 16, _STATUS_TEXT.get(status, ""))
             if status == "full":
                 c.fill = full_fill
                 c.font = status_full_font
-            elif status == "underfilled":
+            elif status in ("underfilled", "no_gender"):
                 c.fill = under_fill
                 c.font = status_under_font
+            _cell(ws, r, 17, int(row.get("unknown_students") or 0) or "", font=num_font)
 
             # Row fill: external gets blue tint, alternating gets grey
             row_fill = ext_fill if is_ext else (alt_fill if is_alt else None)
             if row_fill:
                 for col in range(1, len(headers) + 1):
                     cell = ws.cell(row=r, column=col)
-                    # Don't override dept colour (col 2) or status colour (col 12)
-                    if (
-                        col not in (2, 12)
-                        and not cell.fill.fgColor
-                        or cell.fill.fgColor.rgb == "00000000"
-                    ):
+                    # Don't override dept colour (col 2) or status colour (col 16)
+                    if col not in (2, 16):
                         cell.fill = row_fill
 
         # Column widths
@@ -946,24 +659,20 @@ def _export_section_plan_xlsx(
         # Freeze panes below headers
         ws.freeze_panes = "A3"
 
-    from openpyxl.styles import Border, Side  # type: ignore[import-untyped]
-
     thin_border = Border(
         left=Side(style="thin", color="D5D8DC"),
         right=Side(style="thin", color="D5D8DC"),
         top=Side(style="thin", color="D5D8DC"),
         bottom=Side(style="thin", color="D5D8DC"),
     )
-    title_fill = PatternFill(start_color="1B2631", end_color="1B2631", fill_type="solid")
-    title_font = Font(bold=True, color="FFFFFF", size=12)
     alt_fill = PatternFill(start_color="F4F6F7", end_color="F4F6F7", fill_type="solid")
 
     def _write_summary_sheet(
         ws, summary_data: dict, p: dict, sec_sheet: str = "Sections", data_rows: int = 0
     ) -> None:
         """Write summary with formulas referencing the Sections sheet."""
-        # Title row
-        ws.merge_cells("A1:F1")
+        width = 7
+        ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=width)
         title_val = f"Section Plan Summary — {p.get('year', '')}/{p.get('semester', '')}"
         dept_filter = p.get("dept_filter", [])
         if dept_filter:
@@ -972,111 +681,109 @@ def _export_section_plan_xlsx(
         tc.font = title_font
         tc.fill = title_fill
         tc.alignment = Alignment(horizontal="center", vertical="center")
-        for c in range(2, 7):
+        for c in range(2, width + 1):
             ws.cell(row=1, column=c).fill = title_fill
 
         # Sections sheet reference (quote if has spaces/hyphens)
         sq = f"'{sec_sheet}'" if "-" in sec_sheet or " " in sec_sheet else sec_sheet
-        # Data range in sections sheet: row 3 to 2+data_rows
         last_row = 2 + max(data_rows, 1)
+        rng = lambda col: f"{sq}!{col}3:{col}{last_row}"  # noqa: E731
 
-        # KPI row — formulas referencing Sections sheet
+        kpi = Font(bold=True, size=11, color="0A8E6E")
+        # KPI rows — formulas referencing the Sections sheet
         ws.cell(row=3, column=1, value="Total Courses").font = bold
-        ws.cell(row=3, column=2).value = f"=COUNTA({sq}!C3:C{last_row})"
-        ws.cell(row=3, column=2).font = Font(bold=True, size=11, color="0A8E6E")
-
+        ws.cell(row=3, column=2, value=f'=COUNTIF({rng("M")},">0")').font = kpi
         ws.cell(row=3, column=3, value="Total Sections").font = bold
-        ws.cell(row=3, column=4).value = f"=SUM({sq}!H3:H{last_row})"
-        ws.cell(row=3, column=4).font = Font(bold=True, size=11, color="0A8E6E")
-
+        ws.cell(row=3, column=4, value=f"=SUM({rng('M')})").font = kpi
         ws.cell(row=3, column=5, value="Total Students").font = bold
-        ws.cell(row=3, column=6).value = f"=SUM({sq}!G3:G{last_row})"
-        ws.cell(row=3, column=6).font = Font(bold=True, size=11, color="0A8E6E")
+        ws.cell(row=3, column=6, value=f"=SUM({rng('I')})").font = kpi
+        ws.cell(row=4, column=1, value="Male Sections").font = bold
+        ws.cell(row=4, column=2, value=f"=SUM({rng('K')})").font = kpi
+        ws.cell(row=4, column=3, value="Female Sections").font = bold
+        ws.cell(row=4, column=4, value=f"=SUM({rng('L')})").font = kpi
+        no_gender = (summary_data.get("no_gender") or {}).get("students", 0)
+        ws.cell(row=4, column=5, value="No gender recorded").font = bold
+        ws.cell(row=4, column=6, value=int(no_gender or 0)).font = kpi
+        ws.cell(
+            row=5,
+            column=1,
+            value=(
+                "Male and female students are never planned together: Sections = Male + "
+                "Female. Students with no recorded gender are not in any count."
+            ),
+        ).font = Font(italic=True, size=9, color="566573")
 
         # Department Summary table
-        ws.cell(row=5, column=1, value="Department Summary").font = Font(bold=True, size=11)
-        dept_headers = ["Department", "Courses", "Sections", "Students", "Total Credits"]
+        top = 7
+        ws.cell(row=top, column=1, value="Department Summary").font = Font(bold=True, size=11)
+        dept_headers = [
+            "Department",
+            "Courses",
+            "Male sections",
+            "Female sections",
+            "Sections",
+            "Students",
+            "Total Credits",
+        ]
         for col_idx, h in enumerate(dept_headers, 1):
-            cell = ws.cell(row=6, column=col_idx, value=h)
+            cell = ws.cell(row=top + 1, column=col_idx, value=h)
             cell.font = header_font
             cell.fill = header_fill
             cell.alignment = center
             cell.border = thin_border
 
         depts = summary_data.get("departments", [])
+        first = top + 2
         for i, dept in enumerate(depts):
-            r = 7 + i
+            r = first + i
             dept_name = dept["department"]
-
-            # Department name with colour
+            is_dept = f'({rng("B")}="{dept_name}")'
             c = ws.cell(row=r, column=1, value=dept_name)
             c.font = bold
             c.border = thin_border
             c.fill = _dept_fill(dept_name)
-
-            # Courses = COUNTIF(Sections!B:B, dept_name)
-            c = ws.cell(row=r, column=2)
-            c.value = f'=COUNTIF({sq}!B3:B{last_row},"{dept_name}")'
-            c.alignment = center
-            c.border = thin_border
-
-            # Sections = SUMPRODUCT for matching dept
-            c = ws.cell(row=r, column=3)
-            c.value = f'=SUMPRODUCT(({sq}!B3:B{last_row}="{dept_name}")*{sq}!H3:H{last_row})'
-            c.alignment = center
-            c.border = thin_border
-
-            # Students = SUMPRODUCT for matching dept
-            c = ws.cell(row=r, column=4)
-            c.value = f'=SUMPRODUCT(({sq}!B3:B{last_row}="{dept_name}")*{sq}!G3:G{last_row})'
-            c.alignment = center
-            c.border = thin_border
-
-            # Total Credits = SUMPRODUCT(sections * credits) for matching dept
-            c = ws.cell(row=r, column=5)
-            c.value = f'=SUMPRODUCT(({sq}!B3:B{last_row}="{dept_name}")*{sq}!H3:H{last_row}*{sq}!E3:E{last_row})'
-            c.alignment = center
-            c.border = thin_border
-
-            if i % 2 == 1:
-                for col in range(2, 6):
-                    ws.cell(row=r, column=col).fill = alt_fill
+            formulas = [
+                f'=COUNTIFS({rng("B")},"{dept_name}",{rng("M")},">0")',
+                f"=SUMPRODUCT({is_dept}*{rng('K')})",
+                f"=SUMPRODUCT({is_dept}*{rng('L')})",
+                f"=SUMPRODUCT({is_dept}*{rng('M')})",
+                f"=SUMPRODUCT({is_dept}*{rng('I')})",
+                f"=SUMPRODUCT({is_dept}*{rng('M')}*{rng('E')})",
+            ]
+            for col, formula in enumerate(formulas, 2):
+                c = ws.cell(row=r, column=col, value=formula)
+                c.alignment = center
+                c.border = thin_border
+                if i % 2 == 1:
+                    c.fill = alt_fill
 
         # Totals row — SUM of the formula rows above
         if depts:
-            tr = 7 + len(depts)
+            tr = first + len(depts)
             ws.cell(row=tr, column=1, value="TOTAL").font = Font(bold=True, size=10)
             ws.cell(row=tr, column=1).border = thin_border
-            first_dept_row = 7
-            last_dept_row = 6 + len(depts)
-            for col in range(2, 6):
-                c = ws.cell(row=tr, column=col)
-                col_letter = chr(64 + col)
-                c.value = f"=SUM({col_letter}{first_dept_row}:{col_letter}{last_dept_row})"
+            for col in range(2, len(dept_headers) + 1):
+                letter = get_column_letter(col)
+                c = ws.cell(row=tr, column=col, value=f"=SUM({letter}{first}:{letter}{tr - 1})")
                 c.font = Font(bold=True, size=10)
                 c.alignment = center
                 c.border = thin_border
 
-        for col_idx in range(1, 7):
-            ws.column_dimensions[chr(64 + col_idx)].width = 18
+        for col_idx in range(1, width + 1):
+            ws.column_dimensions[get_column_letter(col_idx)].width = 18
 
     if mode == "multi" and programs_data:
-        # ── Combined sheet first (all programs merged) ──
-        combined_plan = _merge_section_plan_rows_by_course_identity(
-            [(prog_entry["program"], prog_entry["plan"]) for prog_entry in programs_data]
-        )
-        combined_summary = compute_plan_summary(combined_plan)
-
+        # ── Pooled sheets first (all programmes, as the builder pools them) ──
         default_sheet = wb.active
         default_sheet.title = "Sections-All"
-        _write_sections_sheet(default_sheet, combined_plan)
+        _write_sections_sheet(default_sheet, plan or [])
         sum_all_ws = wb.create_sheet("Summary-All")
         _write_summary_sheet(
             sum_all_ws,
-            combined_summary,
+            summary or {},
             params or {},
             sec_sheet="Sections-All",
-            data_rows=len(combined_plan),
+            data_rows=len(plan or []),
         )
 
         # ── Per-program sheet pairs ──
@@ -1094,7 +801,6 @@ def _export_section_plan_xlsx(
                 data_rows=len(prog_entry["plan"]),
             )
     else:
-        # Single or combined — keep existing behaviour exactly
         ws = wb.active
         ws.title = "Sections"
         _write_sections_sheet(ws, plan or [])

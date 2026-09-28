@@ -27,11 +27,7 @@ from core.models import (
     Student,
     StudentCourse,
 )
-from core.section_plan_views import (
-    _apply_programme_course_names,
-    _format_export_course_name,
-    _merge_section_plan_rows_by_course_identity,
-)
+from core.section_plan_views import _format_export_course_name
 from core.services.rbac import (
     ROLE_ADVISOR,
     ROLE_GENERAL_ADVISOR,
@@ -258,104 +254,6 @@ def test_compute_section_plan_empty_aggregate() -> None:
     """Empty aggregate returns empty plan."""
     plan = compute_section_plan(Counter())
     assert plan == []
-
-
-def test_apply_programme_course_names_prefers_programme_requirement() -> None:
-    """Section Planning display uses the plan row name when one exists."""
-    Course.objects.create(
-        course_code="CS111",
-        department="CS",
-        description="GLOBAL COURSE NAME",
-        credit_hours=3,
-    )
-    ProgrammeRequirement.objects.create(
-        program="AI",
-        course_code="CS111",
-        course_name="PROGRAMMING I",
-        credit_hours=3,
-        programme_term=1,
-    )
-    plan = [
-        {
-            "department": "CS",
-            "course_code": "CS111",
-            "course_name": "GLOBAL COURSE NAME",
-            "credit_hours": 3,
-            "is_external": False,
-            "total_students": 4,
-            "num_sections": 1,
-            "max_per_section": 40,
-            "avg_per_section": 4,
-            "fill_percent": 10,
-            "status": "underfilled",
-        }
-    ]
-
-    updated = _apply_programme_course_names(plan, "AI")
-
-    assert updated[0]["course_name"] == "PROGRAMMING I"
-
-
-def test_merge_section_plan_rows_keeps_same_code_different_names_separate() -> None:
-    """Same code is not merged when the plan-specific course name differs."""
-    ai_row = {
-        "department": "CS",
-        "course_code": "CS111",
-        "course_name": "PROGRAMMING I",
-        "credit_hours": 3,
-        "is_external": False,
-        "total_students": 4,
-        "num_sections": 1,
-        "max_per_section": 40,
-        "avg_per_section": 4,
-        "fill_percent": 10,
-        "status": "underfilled",
-    }
-    ai2_row = {
-        **ai_row,
-        "course_name": "FUNDAMENTALS OF PROGRAMMING",
-        "total_students": 4,
-    }
-
-    merged = _merge_section_plan_rows_by_course_identity([("AI", [ai_row]), ("AI2", [ai2_row])])
-
-    assert len(merged) == 2
-    assert {row["course_name"] for row in merged} == {
-        "PROGRAMMING I",
-        "FUNDAMENTALS OF PROGRAMMING",
-    }
-    assert {row["total_students"] for row in merged} == {4}
-    assert {tuple(row["programs"]) for row in merged} == {("AI",), ("AI2",)}
-
-
-def test_merge_section_plan_rows_merges_same_code_and_name() -> None:
-    """Same code and same plan-specific name still combine safely."""
-    row_a = {
-        "department": "AI",
-        "course_code": "AI201",
-        "course_name": "MACHINE LEARNING",
-        "credit_hours": 3,
-        "is_external": False,
-        "total_students": 25,
-        "num_sections": 1,
-        "max_per_section": 20,
-        "avg_per_section": 25,
-        "fill_percent": 125,
-        "status": "full",
-    }
-    row_b = {
-        **row_a,
-        "total_students": 10,
-        "max_per_section": 30,
-    }
-
-    merged = _merge_section_plan_rows_by_course_identity([("AI", [row_a]), ("AI2", [row_b])])
-
-    assert len(merged) == 1
-    assert merged[0]["total_students"] == 35
-    assert merged[0]["max_per_section"] == 20
-    assert merged[0]["num_sections"] == 2
-    assert merged[0]["programs"] == ["AI", "AI2"]
 
 
 def test_build_course_identity_aggregate_counts_splits_same_code_by_plan_name(

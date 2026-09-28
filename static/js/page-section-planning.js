@@ -18,7 +18,19 @@ const T = {
   deptSummary: IS_AR ? 'ملخص الأقسام' : 'Department Summary',
   noRecs:      IS_AR ? 'لا توجد توصيات.' : 'No recommendations found.',
   progLabel:   IS_AR ? 'طالب' : 'students',
+  male:        IS_AR ? 'ذكور' : 'M',
+  female:      IS_AR ? 'إناث' : 'F',
+  noGender:    (n, seats, courses) => IS_AR
+    ? `${n} طالب بلا جنس مسجّل: يحتاجون ${seats} مقعداً في ${courses} مقرر، وهم خارج كل الأعداد. سجّل جنسهم ثم أعد الحساب.`
+    : `${n} student${n === 1 ? ' has' : 's have'} no recorded gender: ${seats} seat${seats === 1 ? '' : 's'} across ${courses} course${courses === 1 ? '' : 's'}, left out of every count. Record their gender, then generate again.`,
+  noGenderRow: n => IS_AR ? `+${n} بلا جنس` : `+${n} no gender`,
+  noGenderOnly: IS_AR ? 'بلا جنس مسجّل' : 'No gender recorded',
 };
+
+/* M · F split for a KPI, a row or a summary card. */
+function splitText(male, female) {
+  return `${T.male} ${male ?? 0} · ${T.female} ${female ?? 0}`;
+}
 
 const CSRF = document.querySelector('[name=csrfmiddlewaretoken]')?.value
   || 'djCsrfToken';
@@ -405,7 +417,6 @@ function getPayload() {
     year:            parseInt($('spYear').value, 10) || 0,
     semester:        parseInt($('spSemester').value, 10) || 0,
     program:         $('spProgram').value.trim().toUpperCase(),
-    section:         $('spSection').value.trim(),
     max_local_4cr:   parseInt($('spCapLocal4').value, 10) || 25,
     max_local_other: parseInt($('spCapLocalOther').value, 10) || 40,
     max_external:    parseInt($('spCapExternal').value, 10) || 50,
@@ -470,7 +481,7 @@ function renderResults(data) {
 /* ── Build table rows HTML from a plan array ── */
 function buildPlanRows(plan) {
   if (!plan.length) {
-    return `<tr><td colspan="11" class="empty-note">${T.noRecs}</td></tr>`;
+    return `<tr><td colspan="13" class="empty-note">${T.noRecs}</td></tr>`;
   }
   return plan.map((row, idx) => {
     const fillCls = row.fill_percent >= 80 ? 'sp-fill-hi'
@@ -481,22 +492,29 @@ function buildPlanRows(plan) {
       statusHtml = `<span class="sp-pill sp-pill-full">${T.full}</span>`;
     } else if (row.status === 'underfilled') {
       statusHtml = `<span class="sp-pill sp-pill-under">${T.underfilled}</span>`;
+    } else if (row.status === 'no_gender') {
+      statusHtml = `<span class="sp-pill sp-pill-under">${T.noGenderOnly}</span>`;
     }
+    const noGender = row.unknown_students
+      ? `<div class="sp-cell-sub sp-no-gender">${esc(T.noGenderRow(row.unknown_students))}</div>` : '';
     const extBadge = row.is_external ? ` <span class="sp-pill sp-pill-ext">EXT</span>` : '';
     const programs = Array.isArray(row.programs) ? row.programs.filter(Boolean) : [];
     const programTags = programs.length
       ? `<span style="display:inline-flex;flex-wrap:wrap;gap:4px;margin-inline-end:6px;vertical-align:middle">${programs.map(p => `<span class="sp-pill sp-pill-ext">${esc(p)}</span>`).join('')}</span>`
       : '';
     const courseName = row.course_name || '';
-    return `<tr>
+    return `<tr data-code="${esc(row.course_code)}">
       <td>${idx + 1}</td>
-      <td><strong>${row.department}</strong></td>
-      <td><span class="cr-id">${row.course_code}</span>${extBadge}</td>
-      <td>${programTags}<span>${courseName}</span></td>
-      <td class="text-center">${row.credit_hours}</td>
-      <td class="text-center"><strong>${row.total_students}</strong></td>
-      <td class="text-center"><strong>${row.num_sections}</strong></td>
-      <td class="text-center">${row.max_per_section}</td>
+      <td><strong>${esc(row.department)}</strong></td>
+      <td><span class="cr-id">${esc(row.course_code)}</span>${extBadge}</td>
+      <td>${programTags}<span>${esc(courseName)}</span></td>
+      <td class="text-center">${esc(row.credit_hours)}</td>
+      <td class="text-center"><strong>${esc(row.total_students)}</strong>
+        <div class="sp-cell-sub">${esc(splitText(row.male_students, row.female_students))}</div>${noGender}</td>
+      <td class="text-center sp-sec-m">${esc(row.male_sections ?? 0)}</td>
+      <td class="text-center sp-sec-f">${esc(row.female_sections ?? 0)}</td>
+      <td class="text-center sp-sec-total"><strong>${esc(row.num_sections)}</strong></td>
+      <td class="text-center">${esc(row.max_per_section)}</td>
       <td class="text-center">${row.avg_per_section}</td>
       <td style="min-width:80px">
         <div class="d-flex align-items-center gap-1">
@@ -515,8 +533,8 @@ function buildDeptSummaryHtml(departments) {
   if (!depts.length) return '';
   return depts.map(d => `
     <div class="sp-dept-card">
-      <div class="dept-name">${d.department}</div>
-      <div class="dept-stat"><b>${d.courses}</b> ${T.courses} · <b>${d.sections}</b> ${T.sections} · <b>${d.students}</b> ${T.students} · <b>${d.total_credits}</b> ${T.credits}</div>
+      <div class="dept-name">${esc(d.department)}</div>
+      <div class="dept-stat"><b>${esc(d.courses)}</b> ${T.courses} · <b>${esc(d.sections)}</b> ${T.sections} (${esc(splitText(d.male_sections, d.female_sections))}) · <b>${esc(d.students)}</b> ${T.students} · <b>${esc(d.total_credits)}</b> ${T.credits}</div>
     </div>
   `).join('');
 }
@@ -530,12 +548,35 @@ function buildTableHeaderHtml() {
     <th data-sort="text">${IS_AR ? 'اسم المقرر' : 'Course Name'}</th>
     <th data-sort="num">${IS_AR ? 'ساعات' : 'Cr'}</th>
     <th data-sort="num">${IS_AR ? 'الطلاب' : 'Students'}</th>
-    <th data-sort="num">${IS_AR ? 'الشعب' : 'Sections'}</th>
+    <th data-sort="num">${IS_AR ? 'شعب الذكور' : 'M sections'}</th>
+    <th data-sort="num">${IS_AR ? 'شعب الإناث' : 'F sections'}</th>
+    <th data-sort="num">${IS_AR ? 'مجموع الشعب' : 'Total sections'}</th>
     <th data-sort="num">${IS_AR ? 'الحد الأقصى' : 'Max'}</th>
     <th data-sort="num">${IS_AR ? 'المتوسط' : 'Avg'}</th>
     <th>${IS_AR ? 'الامتلاء' : 'Fill'}</th>
     <th data-sort="text">${IS_AR ? 'الحالة' : 'Status'}</th>
   </tr>`;
+}
+
+/* ── KPIs: Sections = M + F; no-gender students stated, never pooled ── */
+function renderKpis(studentCount, cohorts, summary) {
+  const c = cohorts || {};
+  const s = summary || {};
+  $('spKpiStudents').textContent = String(studentCount ?? 0);
+  $('spKpiStudentsSplit').textContent = splitText(c.M, c.F);
+  $('spKpiCourses').textContent = String(s.total_courses || 0);
+  $('spKpiSections').textContent = String(s.total_sections || 0);
+  $('spKpiSectionsSplit').textContent = splitText(s.male_sections, s.female_sections);
+  $('spKpiFill').textContent = (s.avg_fill_percent || 0) + '%';
+  const ng = s.no_gender || {};
+  const note = $('spGenderNote');
+  if (ng.students) {
+    note.textContent = T.noGender(ng.students, ng.seat_demand || 0, ng.courses || 0);
+    note.classList.remove('d-none');
+  } else {
+    note.textContent = '';
+    note.classList.add('d-none');
+  }
 }
 
 /* ── Single-program mode (original behavior) ── */
@@ -552,10 +593,7 @@ function renderSingleProgramResults(data) {
   $('spDeptGrid').parentElement.style.display = '';
 
   /* KPIs */
-  $('spKpiStudents').textContent = String(data.student_count ?? 0);
-  $('spKpiCourses').textContent = String(data.summary.total_courses);
-  $('spKpiSections').textContent = String(data.summary.total_sections);
-  $('spKpiFill').textContent = data.summary.avg_fill_percent + '%';
+  renderKpis(data.student_count, data.cohorts, data.summary);
 
   /* Timestamp */
   $('spTimestamp').textContent = T.lastUpdate + ': ' + new Date().toLocaleTimeString();
@@ -565,7 +603,7 @@ function renderSingleProgramResults(data) {
   const plan = data.plan || [];
 
   if (!plan.length) {
-    tbody.innerHTML = `<tr><td colspan="11" class="empty-note">${T.noRecs}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="13" class="empty-note">${T.noRecs}</td></tr>`;
     $('spDeptGrid').innerHTML = '';
     return;
   }
@@ -594,12 +632,9 @@ function renderMultiProgramResults(data) {
   container.classList.remove('d-none');
   container.innerHTML = '';
 
-  /* KPIs from combined summary */
+  /* KPIs from the pooled plan (programmes share sections, as the builder pools them) */
   const cs = data.combined_summary || {};
-  $('spKpiStudents').textContent = String(data.student_count ?? 0);
-  $('spKpiCourses').textContent = String(cs.total_courses || 0);
-  $('spKpiSections').textContent = String(cs.total_sections || 0);
-  $('spKpiFill').textContent = (cs.avg_fill_percent || 0) + '%';
+  renderKpis(data.student_count, data.cohorts, cs);
 
   /* Timestamp */
   $('spTimestamp').textContent = T.lastUpdate + ': ' + new Date().toLocaleTimeString();
@@ -608,7 +643,7 @@ function renderMultiProgramResults(data) {
   const combinedPlan = data.combined_plan || [];
   const tbody = $('spTable').querySelector('tbody');
   if (!combinedPlan.length) {
-    tbody.innerHTML = `<tr><td colspan="11" class="empty-note">${T.noRecs}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="13" class="empty-note">${T.noRecs}</td></tr>`;
     $('spDeptGrid').innerHTML = '';
   } else {
     tbody.innerHTML = buildPlanRows(combinedPlan);
@@ -638,7 +673,7 @@ function renderMultiProgramResults(data) {
       <span>${esc(prog.program)}</span>
       <span class="sp-prog-count">(${prog.student_count ?? 0} ${T.progLabel}
         · ${summary.total_courses || 0} ${T.courses}
-        · ${summary.total_sections || 0} ${T.sections})</span>`;
+        · ${summary.total_sections || 0} ${T.sections}: ${esc(splitText(summary.male_sections, summary.female_sections))})</span>`;
     block.appendChild(heading);
 
     /* Collapsible body — hidden by default */
@@ -770,7 +805,6 @@ $('spExport').onclick = async () => {
 /* ── Reset click ── */
 $('spReset').onclick = () => {
   $('spProgram').value = '';
-  $('spSection').value = '';
   $('spResults').classList.add('d-none');
   hideStatus();
   _lastPayload = null;
@@ -779,7 +813,7 @@ $('spReset').onclick = () => {
   $('spTable').style.display = '';
   $('spPager').style.display = '';
   $('spTable').querySelector('tbody').innerHTML =
-    `<tr><td colspan="11" class="empty-note">${IS_AR ? 'حدد السنة والفصل ثم انقر حساب.' : 'Set Year & Semester, then click Generate.'}</td></tr>`;
+    `<tr><td colspan="13" class="empty-note">${IS_AR ? 'حدد السنة والفصل ثم انقر حساب.' : 'Set Year & Semester, then click Generate.'}</td></tr>`;
   $('spDeptGrid').innerHTML = '';
   $('spDeptGrid').parentElement.style.display = '';
 

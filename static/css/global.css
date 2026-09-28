@@ -8527,6 +8527,9 @@ html[data-theme="dark"] .btn-export {
     .sp-adv-table tr.sp-adv-invalid .sp-adv-state { color: var(--danger); }
     .sp-adv-all { display: inline-flex; align-items: center; gap: 4px; font-size: .72rem; color: var(--t3); cursor: pointer; white-space: nowrap; }
     .sp-limit-review { margin-top: 8px; }
+    /* M / F split under a total (Sections = M + F) */
+    .sp-mc-sub, .sp-cell-sub { font-size: .75rem; color: var(--t3); font-variant-numeric: tabular-nums; white-space: nowrap; }
+    .sp-no-gender { color: var(--warning); font-weight: 700; }
 
     /* Multi-program headings */
     .sp-prog-heading { font-size: .95rem; font-weight: 700; color: var(--navy); padding: 10px 0 6px; margin-top: 18px; border-bottom: 2px solid var(--teal); display: flex; align-items: baseline; gap: 8px; }
