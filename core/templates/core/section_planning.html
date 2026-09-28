@@ -20,25 +20,26 @@
 
 {% block content %}
 
-<!-- ─── Filter Bar ─── -->
+<div class="sp-page">
+<!-- ─── Scope: a form, so Enter in any field runs Generate (its only submit button) ─── -->
 <div class="sp-panel">
-  <div class="filter-bar sticky-cta mb-0">
-    <div class="fb-search fb-w-120">
+  <form id="spScopeForm" class="filter-bar sticky-cta mb-0" novalidate>
+    <div class="fb-search sp-fb-field">
       <label class="fb-lbl" for="spYear">{% if LANGUAGE_CODE == 'ar' %}السنة{% else %}Year{% endif %}</label>
-      <input id="spYear" type="text" inputmode="numeric" pattern="[0-9]*" class="form-control form-control-compact" value="{{ default_year }}">
+      <input id="spYear" type="text" inputmode="numeric" pattern="[0-9]*" autocomplete="off" class="sp-fb-input sp-fb-year" value="{{ default_year }}">
     </div>
-    <div class="fb-search fb-w-110">
+    <div class="fb-search sp-fb-field">
       <label class="fb-lbl" for="spSemester">{% if LANGUAGE_CODE == 'ar' %}الفصل{% else %}Semester{% endif %}</label>
-      <input id="spSemester" type="text" inputmode="numeric" pattern="[0-9]*" class="form-control form-control-compact" value="{{ default_term }}">
+      <input id="spSemester" type="text" inputmode="numeric" pattern="[0-9]*" autocomplete="off" class="sp-fb-input sp-fb-term" value="{{ default_term }}">
     </div>
-    <div class="fb-search" style="min-width:160px;max-width:280px">
+    <div class="fb-search sp-fb-field sp-fb-grow">
       <label class="fb-lbl" for="spProgram">{% if LANGUAGE_CODE == 'ar' %}البرنامج{% else %}Program{% endif %}</label>
-      <input id="spProgram" class="form-control form-control-compact text-caps" placeholder="{% if LANGUAGE_CODE == 'ar' %}مثلاً AI,DS{% else %}e.g. AI,DS{% endif %}">
+      <input id="spProgram" autocomplete="off" spellcheck="false" class="sp-fb-input sp-fb-codes text-caps" placeholder="{% if LANGUAGE_CODE == 'ar' %}مثلاً AI,DS{% else %}e.g. AI,DS{% endif %}">
     </div>
     <div class="fb-spacer"></div>
-    <button id="spGenerate" class="btn btn-primary">{% if LANGUAGE_CODE == 'ar' %}حساب{% else %}Generate{% endif %}</button>
+    <button id="spGenerate" type="submit" class="btn btn-primary">{% if LANGUAGE_CODE == 'ar' %}حساب{% else %}Generate{% endif %}</button>
     <button id="spReset" type="button" class="fb-dd">{% if LANGUAGE_CODE == 'ar' %}إعادة{% else %}Reset{% endif %}</button>
-  </div>
+  </form>
 
   <p class="sp-scope-note fs-sm text-t3 mb-0 mt-2">{% if LANGUAGE_CODE == 'ar' %}يُخطَّط للذكور والإناث دائماً في شعب منفصلة: مجموع الشعب = شعب الذكور + شعب الإناث.{% else %}Male and female students are always planned in separate sections: Total sections = M + F.{% endif %}</p>
 
@@ -75,7 +76,8 @@
   <!-- Advanced per-course panel -->
   <div id="spAdvPanel" class="d-none mt-2">
     <div class="sp-adv-header">
-      <input id="spAdvSearch" type="text" class="form-control form-control-compact sp-adv-search"
+      <input id="spAdvSearch" type="text" autocomplete="off" class="form-control sp-adv-search"
+             aria-label="{% if LANGUAGE_CODE == 'ar' %}بحث عن مقرر{% else %}Search courses{% endif %}"
              placeholder="{% if LANGUAGE_CODE == 'ar' %}بحث عن مقرر...{% else %}Search courses...{% endif %}">
       <span id="spAdvDrafts" class="sp-adv-drafts" role="status">{% if LANGUAGE_CODE == 'ar' %}لا توجد تعديلات غير محفوظة{% else %}No unsaved changes{% endif %}</span>
       <button id="spAdvReset" type="button" class="sp-adv-reset" disabled>{% if LANGUAGE_CODE == 'ar' %}تجاهل التعديلات{% else %}Discard changes{% endif %}</button>
@@ -151,9 +153,9 @@
   </div>
 
   <!-- Department filter -->
-  <div class="d-flex align-items-center mb-2" style="gap:8px">
-    <label class="fs-12 fw-semibold text-t3">{% if LANGUAGE_CODE == 'ar' %}تصفية القسم{% else %}Filter Dept{% endif %}</label>
-    <input id="spDeptFilter" class="form-control form-control-compact text-caps fs-md" placeholder="{% if LANGUAGE_CODE == 'ar' %}مثلاً CS,AI{% else %}e.g. CS, AI, CYB{% endif %}" style="width:180px">
+  <div class="sp-dept-filter d-flex align-items-center flex-wrap mb-2">
+    <label class="fs-12 fw-semibold text-t3" for="spDeptFilter">{% if LANGUAGE_CODE == 'ar' %}تصفية القسم{% else %}Filter Dept{% endif %}</label>
+    <input id="spDeptFilter" autocomplete="off" spellcheck="false" class="form-control sp-dept-filter-input text-caps fs-md" placeholder="{% if LANGUAGE_CODE == 'ar' %}مثلاً CS,AI{% else %}e.g. CS, AI, CYB{% endif %}">
     <button id="spDeptFilterClear" class="btn btn-neutral btn-sm fs-xs" type="button" style="padding:2px 8px">{% if LANGUAGE_CODE == 'ar' %}مسح{% else %}Clear{% endif %}</button>
   </div>
 
@@ -192,6 +194,7 @@
   </div>
 
 </div>
+</div>{# /.sp-page #}
 {% endblock %}
 
 {% block extra_js %}
@@ -200,5 +203,5 @@
   const LANGUAGE_CODE = "{{ LANGUAGE_CODE|default:'en' }}";
   const djCsrfToken = "{{ csrf_token }}";
 </script>
-<script src="{% static 'js/page-section-planning.js' %}?v=10"></script>
+<script src="{% static 'js/page-section-planning.js' %}?v=11"></script>
 {% endblock %}

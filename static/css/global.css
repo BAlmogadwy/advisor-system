@@ -8459,6 +8459,22 @@ html[data-theme="dark"] .btn-export {
     .sp-caps-info { font-size: .72rem; color: var(--t3); align-self: center; margin-inline-start: auto; }
     .sp-toggle-caps { font-size: .78rem; color: var(--teal); cursor: pointer; background: none; border: none; font-weight: 600; padding: 2px 0; text-decoration: underline; text-underline-offset: 2px; }
 
+    /* Scope fields: each as wide as its value, never the 80px compact cap.
+       Widths are in ch, so a wider font (Arabic, a CI machine's fonts)
+       widens the field with it. Year holds 4 digits, Semester 1, Program a
+       few codes and grows into spare room. */
+    .sp-page .sp-fb-field { flex: 0 0 auto; max-width: none; }
+    .sp-page .sp-fb-field .fb-lbl { flex: none; white-space: nowrap; }
+    .sp-page .sp-fb-input { flex: 0 0 auto; min-width: 0; font-variant-numeric: tabular-nums; }
+    .sp-page .sp-fb-year { width: 6ch; }
+    .sp-page .sp-fb-term { width: 3ch; }
+    .sp-page .sp-fb-grow { flex: 1 1 auto; max-width: 26rem; }
+    .sp-page .sp-fb-codes { flex: 1 1 auto; width: 15ch; }
+    .sp-page .sp-dept-filter { gap: 8px; }
+    .sp-page .sp-dept-filter-input { width: calc(22ch + 2.5rem); }
+    /* The capsule is the field: a keyboard user sees a full-strength ring. */
+    .sp-page .fb-search:focus-within { box-shadow: var(--shadow-neu-inset), 0 0 0 2px var(--teal); }
+
     /* KPI cards */
     .sp-kpi { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; margin-bottom: 14px; }
     .sp-mc { padding: .65rem .85rem; }
@@ -8502,7 +8518,7 @@ html[data-theme="dark"] .btn-export {
 
     /* Advanced per-course table */
     .sp-adv-header { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; flex-wrap: wrap; }
-    .sp-adv-search { width: 220px; }
+    .sp-adv-search { width: 24ch; min-width: 220px; }
     .sp-adv-count { font-size: .72rem; color: var(--t3); margin-inline-start: auto; }
     .sp-adv-table { width: 100%; border-collapse: collapse; font-size: .82rem; }
     .sp-adv-table th { font-size: .68rem; text-transform: uppercase; letter-spacing: .04em; color: var(--t3); font-weight: 700; font-family: var(--font-mono); padding: 5px 8px; border-bottom: 1.5px solid var(--t5); text-align: start; white-space: nowrap; }

@@ -790,3 +790,40 @@ for (const [status, data, words] of [
     assert.equal(ui.text('spStatus'), say(...words));
   });
 }
+
+/* ── The scope is a form: Enter in a field runs Generate, never Save ── */
+
+test('the scope form submits through Generate only; Save and the limit fields are outside it', async t => {
+  const ui = await page(t);
+  const form = ui.$('spScopeForm');
+  assert.equal(form.tagName, 'FORM');
+  const submits = [...form.elements].filter(el => el.type === 'submit');
+  assert.deepEqual(submits.map(el => el.id), ['spGenerate'], 'Enter clicks the first submit button: Generate');
+  for (const id of ['spYear', 'spSemester', 'spProgram']) assert.equal(ui.$(id).form, form, id);
+  assert.equal(ui.$('spAdvSaveDb').form, null, 'Save is never a submit of the scope form');
+  assert.equal(ui.input('AI491').form, null, 'Enter in a limit field submits nothing');
+
+  form.requestSubmit();   // what Enter in Year, Semester or Program does
+  await settle();
+
+  assert.equal(ui.requests.filter(r => r.url === GENERATE).length, 1);
+  assert.deepEqual(ui.writes().filter(r => r.url !== GENERATE), [], 'Generate never saves');
+  assert.equal(ui.window.location.pathname, '/section-planning/', 'no page load');
+});
+
+test('a second submit while Generate runs sends nothing more', async t => {
+  let release;
+  const gate = new Promise(resolve => { release = resolve; });
+  const ui = await page(t, { generate: async () => { await gate; return answer(generated()); } });
+
+  ui.$('spScopeForm').requestSubmit();
+  ui.$('spScopeForm').requestSubmit();
+  await settle();
+  assert.equal(ui.requests.filter(r => r.url === GENERATE).length, 1);
+
+  release();
+  await settle();
+  ui.$('spScopeForm').requestSubmit();
+  await settle();
+  assert.equal(ui.requests.filter(r => r.url === GENERATE).length, 2, 'free again once the first answered');
+});

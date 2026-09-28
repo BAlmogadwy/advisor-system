@@ -1,0 +1,74 @@
+"""The Section Planning page as its view renders it, in English and in Arabic.
+
+The markup the server writes (the scope form, labels, toggles, the status
+line) is read with an HTML parser; what the page script draws is covered by
+tests/frontend/section-planning.test.cjs, and the layout in Chromium by
+tests/test_section_planning_browser.py.
+"""
+
+from __future__ import annotations
+
+import pytest
+from bs4 import BeautifulSoup
+from django.contrib.auth.models import Group, User
+from django.test import Client
+
+from core.services.rbac import (
+    ROLE_GENERAL_ADVISOR,
+    ensure_role_groups,
+    ensure_scope_schema,
+    set_user_scope,
+)
+
+pytestmark = pytest.mark.django_db
+
+
+def _page(client: Client, language: str) -> BeautifulSoup:
+    ensure_role_groups()
+    ensure_scope_schema()
+    user, _ = User.objects.get_or_create(username="sp-page")
+    user.groups.clear()
+    user.groups.add(Group.objects.get(name=ROLE_GENERAL_ADVISOR))
+    set_user_scope(user.id, advisor_id="", departments="")
+    client.force_login(user)
+    response = client.get("/section-planning/", HTTP_ACCEPT_LANGUAGE=language)
+    assert response.status_code == 200
+    soup = BeautifulSoup(response.content.decode("utf-8"), "html.parser")
+    assert soup.html["lang"] == language
+    return soup
+
+
+@pytest.mark.parametrize("language", ["en", "ar"])
+def test_scope_fields_are_a_form_whose_only_submit_is_generate(
+    client: Client, language: str
+) -> None:
+    soup = _page(client, language)
+    form = soup.find("form", id="spScopeForm")
+    assert form is not None
+    assert form.has_attr("novalidate"), "the page's own messages, not the browser's bubbles"
+    fields = [field["id"] for field in form.find_all("input")]
+    assert fields == ["spYear", "spSemester", "spProgram"]
+    buttons = {button["id"]: button.get("type") for button in form.find_all("button")}
+    assert buttons == {"spGenerate": "submit", "spReset": "button"}
+    # Enter submits through the form's first submit button, which must be Generate;
+    # the seat limits and their Save are never inside it.
+    assert form.find(id="spAdvSaveDb") is None
+    assert form.find(id="spAdvPanel") is None
+
+
+@pytest.mark.parametrize("language", ["en", "ar"])
+def test_scope_and_filter_fields_are_not_capped_at_the_compact_width(
+    client: Client, language: str
+) -> None:
+    soup = _page(client, language)
+    for field_id in ("spYear", "spSemester", "spProgram", "spDeptFilter", "spAdvSearch"):
+        classes = soup.find(id=field_id).get("class", [])
+        assert "form-control-compact" not in classes, field_id
+    assert "sp-fb-year" in soup.find(id="spYear")["class"]
+    assert "sp-fb-term" in soup.find(id="spSemester")["class"]
+    assert "sp-fb-codes" in soup.find(id="spProgram")["class"]
+    # Each scope field has its own label, and the page's rules are scoped to it.
+    for field_id in ("spYear", "spSemester", "spProgram", "spDeptFilter"):
+        assert soup.find("label", attrs={"for": field_id}) is not None, field_id
+    assert soup.find(id="spScopeForm").find_parent(class_="sp-page") is not None
+    assert soup.find(id="spResults").find_parent(class_="sp-page") is not None

@@ -896,15 +896,18 @@ function renderMultiProgramResults(data) {
   });
 }
 
-/* ── Generate click ── */
-$('spGenerate').onclick = async () => {
+/* ── Generate: the scope form's submit, so Enter in Year, Semester or
+ * Program runs it too. Generate is the form's only submit button; the seat
+ * limits' Save lives outside the form, so Enter never saves. ── */
+async function runGenerate() {
+  const btn = $('spGenerate');
+  if (btn.disabled) return;   // one Generate at a time
   const payload = getPayload();
   if (!payload.year || !payload.semester) {
     showStatus(T.fillAll, 'err');
     return;
   }
 
-  const btn = $('spGenerate');
   btn.disabled = true;
   btn.textContent = T.generating;
   hideStatus();
@@ -936,7 +939,11 @@ $('spGenerate').onclick = async () => {
     btn.disabled = false;
     btn.textContent = IS_AR ? 'حساب' : 'Generate';
   }
-};
+}
+$('spScopeForm').addEventListener('submit', event => {
+  event.preventDefault();   // never a page load: the plan comes back as JSON
+  runGenerate();
+});
 
 /* ── Export click ── */
 $('spExport').onclick = async () => {
