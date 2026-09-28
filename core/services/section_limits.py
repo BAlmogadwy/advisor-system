@@ -5,7 +5,14 @@ Two screens use it, each through its own thin view: Section Planning
 (``section_plan_views.section_plan_save_limits_view``) and DB Admin's
 "Programme Capacities" panel (``db_admin_views.db_save_programme_limits_view``,
 super admins only, one loaded programme, never widened). Both call
-``save_limits``; nothing else writes the column from a page.
+``save_limits``.
+
+Two older writers still bypass this path, with none of its protections (no
+bounds, no preview, no per-row audit of old -> new): DB Admin's programme-plan
+CSV import (``db_admin_ops.import_program_plan``, through its optional
+``max_capacity`` column, where an empty cell removes a limit) and the Django
+admin's ``ProgrammeRequirement`` page. Neither is a seat-limit screen; closing
+them is separate work.
 
 A seat limit belongs to a PROGRAMME. A save writes it only for the programmes
 on screen; from Section Planning one course may be widened, explicitly, to every

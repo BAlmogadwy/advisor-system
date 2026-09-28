@@ -173,9 +173,15 @@ sending only the edited rows for the programme that was loaded (another
 programme typed in the box blocks Save until it is loaded), the review's
 course · name · old → new rows starting on Keep editing, the commit with the
 preview's token and the reload after it, stale reviews reloading the rows
-with the drafts kept, refusals worded by the page, Load asking before it
-discards drafts, and the real dialog's Enter on Keep editing. The endpoint,
-its audit rows and its roles are covered by `tests/test_db_admin_programme_limits.py`.
+with only the real drafts kept (a course someone else saved meanwhile takes
+the new value and is never sent back), a saved value outside 1–500 that
+nobody edited blocking nothing, read-only fields and one review per double
+click while a save runs, failed list loads and reloads that keep the rows and
+say so, refusals worded by the page, Load and leaving asking before they drop
+drafts or values still to fix, counts that agree with their number (Arabic
+one/two/few/many/other), and the real dialog's Enter on Keep editing. The
+endpoint, its audit rows and its roles are covered by
+`tests/test_db_admin_programme_limits.py`.
 
 Network behavior is tested with deterministic responses. These tests do not
 create real saved runs, delete database rows, execute the optimizer, or inspect

@@ -1063,21 +1063,56 @@ q('extDeleteSel').onclick = () => {
  * Save sends only the edited rows, for the programme the rows were LOADED for:
  * typing another programme in the box blocks Save until that programme is
  * loaded. The server previews the exact rows (course · name · old → new), the
- * user confirms them, and the commit carries the preview's token. */
+ * user confirms them, and the commit carries the preview's token.
+ * While a save runs (review, commit, reload) the fields are read-only, so
+ * nothing typed can be lost to the reload; a reload keeps only the real drafts,
+ * so a limit someone else saved meanwhile is never turned into an edit that
+ * would undo it. */
 const CAP_MIN = 1, CAP_MAX = 500;
 const CAP_LIMITS_URL = '/ops/db/programme-capacities/limits/';
 let capRows = [];
 let capProgram = '';   // the programme whose rows are on screen
-let capBusy = false;   // a review or save in flight: one at a time
+let capBusy = false;   // a review, commit or reload in flight: one at a time
+
+/* Counts in words: the noun agrees with its number through the CLDR plural
+ * rules (English one/other; Arabic zero/one/two/few/many/other), as Section
+ * Planning's counts do: 1 مقرر, 2 مقرران, 3 مقررات, 11 مقرراً, 100 مقرر.
+ * A form is the words after the number, in the case its sentence needs. */
+const CAP_PLURAL = new Intl.PluralRules(IS_AR ? 'ar' : 'en');
+function capCount(n, forms) {
+  return `${n} ${forms[CAP_PLURAL.select(n)] || forms.other}`;
+}
+const CAP_NOUNS = IS_AR ? {
+  unsaved:    { one: 'تعديل غير محفوظ', two: 'تعديلان غير محفوظين', few: 'تعديلات غير محفوظة', many: 'تعديلاً غير محفوظ', other: 'تعديل غير محفوظ' },
+  unsavedObj: { one: 'تعديل غير محفوظ', two: 'تعديلين غير محفوظين', few: 'تعديلات غير محفوظة', many: 'تعديلاً غير محفوظ', other: 'تعديل غير محفوظ' },
+  toFix:      { one: 'قيمة تحتاج تصحيحاً قبل الحفظ', two: 'قيمتان تحتاجان تصحيحاً قبل الحفظ', few: 'قيم تحتاج تصحيحاً قبل الحفظ', many: 'قيمةً تحتاج تصحيحاً قبل الحفظ', other: 'قيمة تحتاج تصحيحاً قبل الحفظ' },
+  change:     { one: 'تغيير', two: 'تغييرين', few: 'تغييرات', many: 'تغييراً', other: 'تغيير' },
+  limit:      { one: 'حد', two: 'حدّان', few: 'حدود', many: 'حداً', other: 'حد' },
+  course:     { one: 'مقرر', two: 'مقرران', few: 'مقررات', many: 'مقرراً', other: 'مقرر' },
+  courseObj:  { one: 'مقرر', two: 'مقررين', few: 'مقررات', many: 'مقرراً', other: 'مقرر' },
+  unchanged:  { one: 'صف مطابق أصلاً ولن يتغيّر.', two: 'صفان مطابقان أصلاً ولن يتغيّرا.', few: 'صفوف مطابقة أصلاً ولن تتغيّر.', many: 'صفاً مطابقاً أصلاً ولن تتغيّر.', other: 'صف مطابق أصلاً ولن تتغيّر.' },
+} : {
+  unsaved:    { one: 'unsaved change', other: 'unsaved changes' },
+  toFix:      { one: 'value to fix before saving', other: 'values to fix before saving' },
+  change:     { one: 'change', other: 'changes' },
+  limit:      { one: 'seat limit', other: 'seat limits' },
+  course:     { one: 'course', other: 'courses' },
+  unchanged:  { one: 'row already matches and will not change.', other: 'rows already match and will not change.' },
+};
+if (!IS_AR) {
+  CAP_NOUNS.unsavedObj = CAP_NOUNS.unsaved;
+  CAP_NOUNS.courseObj = CAP_NOUNS.course;
+}
 
 const TC = {
   modified:     IS_AR ? 'معدَّل' : 'Modified',
   removing:     IS_AR ? 'معدَّل: يُزال الحد' : 'Modified: limit removed',
   invalid:      IS_AR ? `رقم صحيح من ${CAP_MIN} إلى ${CAP_MAX}` : `Whole number ${CAP_MIN}–${CAP_MAX}`,
+  outOfRange:   IS_AR ? `القيمة المحفوظة خارج المدى من ${CAP_MIN} إلى ${CAP_MAX}` : `Saved value outside ${CAP_MIN}–${CAP_MAX}`,
   limitAria:    (code, name) => (IS_AR ? `الحد الجديد لـ ${code} ${name}` : `New seat limit for ${code} ${name}`).trim(),
   saveBtn:      n => IS_AR ? (n ? `حفظ التغييرات (${n})` : 'حفظ التغييرات') : (n ? `Save changes (${n})` : 'Save changes'),
-  drafts:       n => IS_AR ? `${n} تعديل غير محفوظ` : `${n} unsaved change${n === 1 ? '' : 's'}`,
-  toFix:        n => IS_AR ? `${n} قيمة تحتاج تصحيحاً قبل الحفظ` : `${n} value${n === 1 ? '' : 's'} to fix before saving`,
+  drafts:       n => capCount(n, CAP_NOUNS.unsaved),
+  toFix:        n => capCount(n, CAP_NOUNS.toFix),
   noDrafts:     IS_AR ? 'لا توجد تعديلات غير محفوظة' : 'No unsaved changes',
   fixInvalid:   IS_AR ? 'صحّح القيم غير الصالحة قبل الحفظ.' : 'Fix the invalid values before saving.',
   otherProgram: (loaded, typed) => IS_AR
@@ -1085,26 +1120,32 @@ const TC = {
     : `The rows on screen are for ${loaded}, but the box says ${typed || '—'}. Load that programme, or type ${loaded} again, to save.`,
   needProgram:  IS_AR ? 'رمز البرنامج مطلوب.' : 'Program code is required.',
   nothing:      IS_AR ? 'لا شيء يتغيّر: الحدود المحفوظة مطابقة.' : 'Nothing to change: the saved limits already match.',
-  saveTitle:    (n, p) => IS_AR ? `حفظ ${n} من حدود الشعب لبرنامج ${p}؟` : `Save ${n} seat limit${n === 1 ? '' : 's'} for ${p}?`,
+  saveTitle:    (n, p) => IS_AR ? `حفظ ${n} من حدود الشعب لبرنامج ${p}؟` : `Save ${capCount(n, CAP_NOUNS.limit)} for ${p}?`,
   saveIntro:    p => IS_AR ? `تتغيّر هذه الصفوف فقط، لبرنامج ${p} وحده، ويُسجَّل كل تغيير في سجل التدقيق.` : `Only these rows change, for ${p} only. Each change is recorded in the audit log.`,
-  unchanged:    n => IS_AR ? `${n} صف مطابق أصلاً ولن يتغيّر.` : `${n} row${n === 1 ? ' already matches' : 's already match'} and will not change.`,
+  unchanged:    n => capCount(n, CAP_NOUNS.unchanged),
   thCourse:     IS_AR ? 'المقرر' : 'Course',
   thName:       IS_AR ? 'الاسم' : 'Name',
   thOld:        IS_AR ? 'المحفوظ الآن' : 'Saved now',
   thNew:        IS_AR ? 'الجديد' : 'New',
   none:         IS_AR ? '— (القاعدة)' : '— (rule)',
   remove:       IS_AR ? 'إزالة (تُطبَّق القاعدة)' : 'remove (the rule applies)',
-  confirmSave:  n => IS_AR ? `حفظ ${n} تغيير` : `Save ${n} change${n === 1 ? '' : 's'}`,
+  confirmSave:  n => IS_AR ? `حفظ ${capCount(n, CAP_NOUNS.change)}` : `Save ${capCount(n, CAP_NOUNS.change)}`,
   keepEditing:  IS_AR ? 'متابعة التعديل' : 'Keep editing',
   checking:     IS_AR ? 'جارٍ التحقق…' : 'Checking…',
   saving:       IS_AR ? 'جارٍ الحفظ...' : 'Saving...',
-  saved:        (n, p) => IS_AR ? `حُفظ ${n} حد لبرنامج ${p} وسُجّل كل تغيير في سجل التدقيق.` : `Saved ${n} seat limit${n === 1 ? '' : 's'} for ${p}; each change is in the audit log.`,
-  discardTitle: n => IS_AR ? `تجاهل ${n} تعديل غير محفوظ؟` : `Discard ${n} unsaved change${n === 1 ? '' : 's'}?`,
+  saved:        (n, p) => IS_AR
+    ? `حُفظ ${capCount(n, CAP_NOUNS.limit)} لبرنامج ${p} وسُجّل كل تغيير في سجل التدقيق.`
+    : `Saved ${capCount(n, CAP_NOUNS.limit)} for ${p}; each change is in the audit log.`,
+  discardTitle: n => IS_AR ? `تجاهل ${capCount(n, CAP_NOUNS.unsavedObj)}؟` : `Discard ${capCount(n, CAP_NOUNS.unsavedObj)}?`,
   discardBody:  (loaded, next) => IS_AR ? `تحميل ${next} يستبدل صفوف ${loaded} وتعديلاتها غير المحفوظة.` : `Loading ${next} replaces ${loaded}'s rows and their unsaved changes.`,
   discard:      IS_AR ? 'تجاهل وتحميل' : 'Discard and load',
-  loaded:       (n, p) => IS_AR ? `تم تحميل ${n} مقرر للبرنامج "${p}".` : `Loaded ${n} course(s) for program "${p}".`,
+  loaded:       (n, p) => IS_AR ? `تم تحميل ${capCount(n, CAP_NOUNS.courseObj)} للبرنامج "${p}".` : `Loaded ${capCount(n, CAP_NOUNS.courseObj)} for program "${p}".`,
   noRows:       p => IS_AR ? `لا توجد مقررات للبرنامج "${p}".` : `No courses found for program "${p}".`,
-  count:        (n, p) => IS_AR ? `${n} مقرر · ${p}` : `${n} course(s) · ${p}`,
+  count:        (n, p) => `${capCount(n, CAP_NOUNS.course)} · ${p}`,
+  listFailed:   IS_AR ? 'تعذّر تحميل القائمة. حاول مرة أخرى.' : 'The list could not be loaded. Try again.',
+  refreshFailed: IS_AR
+    ? 'تعذّر تحديث القائمة المعروضة وقد لا تكون محدَّثة: اضغط "تحميل" لتحديثها.'
+    : 'The list on screen could not be refreshed and may be out of date: press Load to refresh it.',
   leave:        IS_AR ? 'لديك حدود غير محفوظة.' : 'You have unsaved seat limits.',
 };
 
@@ -1120,8 +1161,8 @@ const CAP_ERRORS = {
   invalid_limit:            d => IS_AR ? `حد ${d.course_code || ''} يجب أن يكون رقماً صحيحاً من ${CAP_MIN} إلى ${CAP_MAX}.` : `The limit for ${d.course_code || ''} must be a whole number from ${CAP_MIN} to ${CAP_MAX}.`,
   invalid_scope:            d => IS_AR ? `${d.course_code || ''} يُحفظ للبرنامج المحمَّل فقط.` : `${d.course_code || ''} can only be saved for the programme that was loaded.`,
   course_not_in_programmes: d => IS_AR ? `${d.course_code || ''} لا يُدرَّس في ${capProgram}.` : `${d.course_code || ''} is not taught by ${capProgram}.`,
-  preview_stale:            () => IS_AR ? 'تغيّرت الحدود المحفوظة منذ المراجعة، فأُعيد تحميلها. اضغط حفظ التغييرات مرة أخرى لمراجعة القائمة الجديدة.' : 'The saved limits changed since you reviewed them, so they were reloaded. Press Save changes again to review the new list.',
-  limit_changed:            () => IS_AR ? 'تغيّر حد أثناء الحفظ فلم يُحفظ شيء، وأُعيد تحميل الحدود. اضغط حفظ التغييرات مرة أخرى.' : 'A limit changed while saving, so nothing was saved and the limits were reloaded. Press Save changes again.',
+  preview_stale:            () => IS_AR ? 'تغيّرت الحدود المحفوظة منذ المراجعة. اضغط حفظ التغييرات مرة أخرى لمراجعة القائمة الجديدة.' : 'The saved limits changed since you reviewed them. Press Save changes again to review the new list.',
+  limit_changed:            () => IS_AR ? 'تغيّر حد أثناء الحفظ فلم يُحفظ شيء. اضغط حفظ التغييرات مرة أخرى.' : 'A limit changed while saving, so nothing was saved. Press Save changes again.',
   audit_unavailable:        () => IS_AR ? 'تعذّر تسجيل التغيير في سجل التدقيق، لذلك لم يُحفظ شيء. حاول مرة أخرى.' : "Couldn't record the change in the audit log, so nothing was saved. Try again.",
 };
 /* The saved limits moved under the panel: reload them, keeping the drafts. */
@@ -1155,11 +1196,16 @@ function capSay(text, kind = '') {
 
 function capRowEls() { return [...q('capBody').querySelectorAll('tr[data-code]')]; }
 
-/* What one row asks for, read from its field. */
+/* What one row asks for, read from its field. A field still holding its saved
+ * text is untouched: never a draft and never an error, even when the saved
+ * value is one this page would refuse (another writer's 0 or 9999). */
 function capDraftOf(tr) {
   const raw = capLatinDigits(tr.querySelector('.cap-input').value.trim());
   const saved = tr.dataset.saved === '' ? null : Number(tr.dataset.saved);
-  const base = { code: tr.dataset.code, value: null, draft: false, invalid: false };
+  const base = { code: tr.dataset.code, value: null, draft: false, invalid: false, outOfRange: false };
+  if (raw === tr.dataset.saved) {
+    return { ...base, value: saved, outOfRange: saved !== null && (saved < CAP_MIN || saved > CAP_MAX) };
+  }
   if (!raw) return { ...base, draft: saved !== null };   // an emptied saved limit: remove it
   const value = /^\d+$/.test(raw) ? Number(raw) : NaN;
   if (!Number.isInteger(value) || value < CAP_MIN || value > CAP_MAX) return { ...base, invalid: true };
@@ -1167,6 +1213,17 @@ function capDraftOf(tr) {
 }
 function capDrafts() { return capRowEls().map(capDraftOf).filter(d => d.draft && !d.invalid); }
 function capInvalid() { return capRowEls().map(capDraftOf).filter(d => d.invalid); }
+
+/* The fields a reload puts back as typed: the real drafts and the values still
+ * to fix. An untouched row is not among them: it takes the newly saved value. */
+function capKeptDrafts() {
+  const keep = new Map();
+  capRowEls().forEach(tr => {
+    const d = capDraftOf(tr);
+    if (d.draft || d.invalid) keep.set(d.code, tr.querySelector('.cap-input').value);
+  });
+  return keep;
+}
 
 /* Why Save cannot run now ('' when it can, given drafts). */
 function capBlockReason() {
@@ -1183,11 +1240,13 @@ function capRefreshRow(tr) {
   tr.classList.toggle('cap-invalid', d.invalid);
   tr.querySelector('.cap-input').setAttribute('aria-invalid', d.invalid ? 'true' : 'false');
   tr.querySelector('.cap-state').textContent = d.invalid ? TC.invalid
-    : (d.draft ? (d.value === null ? TC.removing : TC.modified) : '');
+    : d.draft ? (d.value === null ? TC.removing : TC.modified)
+    : d.outOfRange ? TC.outOfRange : '';
 }
 
 /* Save is on only with edits it can send; when it is off, the status line
- * (its description) says why. It stays focusable (aria-disabled). */
+ * (its description) says why. It stays focusable (aria-disabled). While a
+ * save runs, the fields are read-only. */
 function capUpdate() {
   const drafts = capDrafts();
   const invalid = capInvalid();
@@ -1197,6 +1256,7 @@ function capUpdate() {
   if (invalid.length) parts.push(TC.toFix(invalid.length));
   if (reason && reason !== TC.fixInvalid) parts.push(reason);
   q('capStatus').textContent = capRows.length ? (parts.join(' · ') || TC.noDrafts) : '';
+  capRowEls().forEach(tr => { tr.querySelector('.cap-input').readOnly = capBusy; });
   const btn = q('capSave');
   btn.classList.toggle('d-none', capRows.length === 0);
   btn.setAttribute('aria-disabled', capBusy || reason || !drafts.length ? 'true' : 'false');
@@ -1233,17 +1293,15 @@ function capRender(keep = new Map()) {
   capUpdate();
 }
 
-/* Load a programme's rows; they become the programme Save writes to.
- * A failed load says why and leaves the rows (and their programme) as they were. */
+/* Load a programme's rows; they become the programme Save writes to. A failed
+ * load returns false and leaves the rows (and their programme) as they were;
+ * the caller says so, in the page's words. */
 async function capLoadRows(program, keep = new Map()) {
   const data = await callJson(
     `/ops/db/programme-capacities/?program=${encodeURIComponent(program)}`,
     {}, null, q('capLoad')
   );
-  if (!data || data.error || !Array.isArray(data.rows)) {
-    capSay((data && data.error) || T.requestFailed, 'err');
-    return false;
-  }
+  if (!data || data.error || !Array.isArray(data.rows)) return false;
   capRows = data.rows;
   capProgram = capProgramOf(data.program || program);
   capRender(keep);
@@ -1272,10 +1330,9 @@ q('capLoad').onclick = async () => {
     });
     if (!ok) return;
   }
-  if (await capLoadRows(program)) {
-    if (capRows.length) capSay(TC.loaded(capRows.length, capProgram), 'ok');
-    else capSay(TC.noRows(capProgram), 'err');
-  }
+  if (!await capLoadRows(program)) capSay(TC.listFailed, 'err');
+  else if (capRows.length) capSay(TC.loaded(capRows.length, capProgram), 'ok');
+  else capSay(TC.noRows(capProgram), 'err');
 };
 
 async function postCapLimits(body) {
@@ -1301,18 +1358,24 @@ function capReviewHtml(changes) {
       <tbody>${rows}</tbody></table>`;
 }
 
-/* Preview, confirm, commit. Says what to reload afterwards:
- *   'clean' – saved, or nothing to save: the saved limits, drafts dropped
- *   'keep'  – the saved limits moved under the panel: reload, drafts kept
- *   null    – nothing to reload (kept editing, or a refusal to fix) */
+/* A refused preview or commit. When the saved limits moved, the rows are
+ * reloaded (drafts kept) and the refusal is said after; any other refusal is
+ * said now and nothing is reloaded over the drafts. */
+function capRefusal(res) {
+  const text = capError(res.data, res.status);
+  if (CAP_STALE_CODES.has(res.data.code)) return { text, kind: 'err' };
+  capSay(text, 'err');
+  return null;
+}
+
+/* Preview, confirm, commit. Returns what to say once the rows are reloaded
+ * ({ text, kind, committed }: `committed` is what the commit wrote), or null
+ * when nothing is reloaded (kept editing, or a refusal to fix). */
 async function capReviewAndSave(program, changes, btn) {
   const preview = await postCapLimits({ programs: [program], changes, dry_run: true });
-  if (!preview.ok) {
-    capSay(capError(preview.data, preview.status), 'err');
-    return CAP_STALE_CODES.has(preview.data.code) ? 'keep' : null;
-  }
+  if (!preview.ok) return capRefusal(preview);
   const planned = preview.data.changes || [];
-  if (!planned.length) { capSay(TC.nothing); return 'clean'; }
+  if (!planned.length) return { text: TC.nothing, kind: '' };
   const unchangedNote = preview.data.unchanged
     ? `<p class="fs-sm text-t3">${esc(TC.unchanged(preview.data.unchanged))}</p>` : '';
   const ok = await dlg.confirm({
@@ -1330,12 +1393,24 @@ async function capReviewAndSave(program, changes, btn) {
   const commit = await postCapLimits({
     programs: [program], changes, dry_run: false, preview_token: preview.data.preview_token,
   });
-  if (!commit.ok) {
-    capSay(capError(commit.data, commit.status), 'err');
-    return CAP_STALE_CODES.has(commit.data.code) ? 'keep' : null;
+  if (!commit.ok) return capRefusal(commit);
+  return { text: TC.saved(commit.data.changed_count, program), kind: 'ok', committed: commit.data.changed || [] };
+}
+
+/* After a save or a stale refusal: the rows the commit wrote read as saved at
+ * once, then the saved limits are reloaded, keeping only the real drafts. If
+ * the reload fails, the message says the list may be out of date. */
+async function capReload(program, { text, kind, committed = [] }) {
+  if (committed.length) {
+    const keep = capKeptDrafts();
+    committed.forEach(c => {
+      const row = capRows.find(r => r.course_code === c.course_code);
+      if (row) row.max_capacity = c.new;
+    });
+    capRender(keep);
   }
-  capSay(TC.saved(commit.data.changed_count, program), 'ok');
-  return 'clean';
+  if (await capLoadRows(program, capKeptDrafts())) capSay(text, kind);
+  else capSay(`${text} ${TC.refreshFailed}`, kind === 'ok' ? '' : kind);
 }
 
 /* Save: only the edited rows, for the programme the rows were loaded for. */
@@ -1354,9 +1429,9 @@ q('capSave').onclick = async () => {
   btn.textContent = TC.checking;
   capUpdate();
   capSay('');   // an earlier message is not about this save
-  let reload = null;
   try {
-    reload = await capReviewAndSave(program, changes, btn);
+    const outcome = await capReviewAndSave(program, changes, btn);
+    if (outcome) await capReload(program, outcome);
   } catch (e) {
     capSay(`${T.requestFailed}: ${e && e.message ? e.message : e}`, 'err');
   } finally {
@@ -1364,10 +1439,6 @@ q('capSave').onclick = async () => {
     btn.removeAttribute('aria-busy');
     capUpdate();
   }
-  if (!reload) return;
-  const keep = new Map();
-  if (reload === 'keep') capRowEls().forEach(tr => keep.set(tr.dataset.code, tr.querySelector('.cap-input').value));
-  await capLoadRows(program, keep);
 };
 
 window.addEventListener('beforeunload', e => {

@@ -141,7 +141,14 @@ async function page(t, { confirm = async () => true, realDialogs = false, store 
   const writes = () => requests.filter(request => request.method !== 'GET');
   const reads = () => requests.filter(request => request.method === 'GET');
   const saveOff = () => $('capSave').getAttribute('aria-disabled') === 'true';
-  return { window, $, emit, text, row, input, state, setBox, load, type, save, writes, reads, requests, dialogs, saveOff, store };
+  const leave = () => {
+    const event = new window.Event('beforeunload', { cancelable: true });
+    window.dispatchEvent(event);
+    return event.defaultPrevented;
+  };
+  /* The page script's own bindings (its word tables), read in its realm. */
+  const run = code => vm.runInContext(code, context);
+  return { window, $, emit, text, row, input, state, setBox, load, type, save, writes, reads, requests, dialogs, saveOff, leave, run, store };
 }
 
 /* The rows a review dialog lists, cell by cell. */
@@ -169,7 +176,7 @@ test('a loaded programme lists each course by code and name; nothing is a draft 
   assert.equal(ui.saveOff(), true);
   assert.equal(ui.text('capSave'), say('Save changes', 'حفظ التغييرات'));
   assert.equal(ui.text('capStatus'), say('No unsaved changes', 'لا توجد تعديلات غير محفوظة'));
-  assert.equal(ui.text('capCount'), say('3 course(s) · AI', '3 مقرر · AI'));
+  assert.equal(ui.text('capCount'), say('3 courses · AI', '3 مقررات · AI'));
   assert.deepEqual(ui.writes(), []);
 });
 
@@ -213,7 +220,7 @@ test('Save sends only the edited rows of the loaded programme, confirms, commits
   assert.equal(ui.saveOff(), true);
   assert.equal(ui.text('capOut'), say(
     'Saved 2 seat limits for AI; each change is in the audit log.',
-    'حُفظ 2 حد لبرنامج AI وسُجّل كل تغيير في سجل التدقيق.',
+    'حُفظ 2 حدّان لبرنامج AI وسُجّل كل تغيير في سجل التدقيق.',
   ));
 });
 
@@ -360,15 +367,15 @@ test('an invalid value blocks Save and says what to fix', async t => {
   assert.equal(ui.text('capOut'), say('Fix the invalid values before saving.', 'صحّح القيم غير الصالحة قبل الحفظ.'));
 });
 
-test('saved limits that moved under the review are said in the page words; the rows reload and the drafts stay', async t => {
+test('saved limits that moved under the review are said in the page words; the rows reload and only the drafts stay', async t => {
   const cases = [
     ['preview', answer({ ok: false, code: 'preview_stale', error: 'server words', changes: [] }, 409), say(
-      'The saved limits changed since you reviewed them, so they were reloaded. Press Save changes again to review the new list.',
-      'تغيّرت الحدود المحفوظة منذ المراجعة، فأُعيد تحميلها. اضغط حفظ التغييرات مرة أخرى لمراجعة القائمة الجديدة.',
+      'The saved limits changed since you reviewed them. Press Save changes again to review the new list.',
+      'تغيّرت الحدود المحفوظة منذ المراجعة. اضغط حفظ التغييرات مرة أخرى لمراجعة القائمة الجديدة.',
     )],
     ['commit', answer({ ok: false, code: 'limit_changed', error: 'server words' }, 409), say(
-      'A limit changed while saving, so nothing was saved and the limits were reloaded. Press Save changes again.',
-      'تغيّر حد أثناء الحفظ فلم يُحفظ شيء، وأُعيد تحميل الحدود. اضغط حفظ التغييرات مرة أخرى.',
+      'A limit changed while saving, so nothing was saved. Press Save changes again.',
+      'تغيّر حد أثناء الحفظ فلم يُحفظ شيء. اضغط حفظ التغييرات مرة أخرى.',
     )],
   ];
   for (const [stage, reply, words] of cases) {
@@ -376,8 +383,9 @@ test('saved limits that moved under the review are said in the page words; the r
       const ui = await page(st, {
         limits: store => limitsServer(store, {
           [stage]: () => {
-            /* Someone else saved AI492 = 6 meanwhile. */
+            /* Someone else saved AI492 = 6 and CS211 = 45 meanwhile; CS211 was never edited here. */
             store.AI[0].max_capacity = 6;
+            store.AI[1].max_capacity = 45;
             return reply;
           },
         }),
@@ -393,6 +401,16 @@ test('saved limits that moved under the review are said in the page words; the r
       assert.equal(ui.input('AI492').value, '8', 'the draft is kept');
       assert.ok(ui.row('AI492').classList.contains('cap-draft'));
       assert.equal(ui.dialogs.length, stage === 'commit' ? 1 : 0);
+
+      /* A course nobody edited here takes the other save's value: it is not a draft that would undo it. */
+      assert.equal(ui.text(ui.row('CS211').querySelectorAll('td')[3]), '45');
+      assert.equal(ui.input('CS211').value, '45');
+      assert.ok(!ui.row('CS211').classList.contains('cap-draft'), 'CS211 was never edited');
+      assert.equal(ui.text('capSave'), say('Save changes (1)', 'حفظ التغييرات (1)'));
+
+      await ui.save();
+      const again = ui.writes().filter(w => w.body.dry_run === true).at(-1);
+      assert.deepEqual(again.body.changes, [{ course_code: 'AI492', max_capacity: 8 }], 'only the edited course is sent again');
     });
   }
 });
@@ -495,4 +513,258 @@ test('leaving with unsaved changes asks the browser to confirm', async t => {
   assert.equal(leave(), false);
   await ui.type('AI492', '8');
   assert.equal(leave(), true);
+});
+
+/* A list answer that failed: a gateway page (not JSON), or a JSON refusal. */
+function failedList(kind) {
+  if (kind === 'html') {
+    return {
+      ok: false, status: 502, statusText: 'Bad Gateway',
+      headers: { get: () => 'text/html' },
+      text: async () => '<html><body>Bad gateway</body></html>',
+    };
+  }
+  return answer({ error: 'Insufficient role: requires SUPER_ADMIN' }, 403);
+}
+
+/* A list that answers `good` times from the store, then fails. */
+function listThatFails(store, good, kind = 'html') {
+  let calls = 0;
+  return asked => {
+    calls += 1;
+    if (calls > good) return failedList(kind);
+    const program = asked.replace(/\s+/g, '').toUpperCase();
+    return answer({ ok: true, program, rows: JSON.parse(JSON.stringify(store[program] || [])) });
+  };
+}
+
+const LIST_FAILED = say('The list could not be loaded. Try again.', 'تعذّر تحميل القائمة. حاول مرة أخرى.');
+const REFRESH_FAILED = say(
+  'The list on screen could not be refreshed and may be out of date: press Load to refresh it.',
+  'تعذّر تحديث القائمة المعروضة وقد لا تكون محدَّثة: اضغط "تحميل" لتحديثها.',
+);
+
+test('a saved limit outside 1–500 that nobody edits is neither invalid nor a draft, and the other rows still save', async t => {
+  const store = savedRows();
+  store.AI.push(
+    { course_code: 'BIOL101', course_name: 'BIOLOGY', credit_hours: 3, max_capacity: 0 },
+    { course_code: 'CHEM101', course_name: 'CHEMISTRY', credit_hours: 3, max_capacity: 9999 },
+  );
+  const ui = await page(t, { store });
+  await ui.load('AI');
+
+  for (const code of ['BIOL101', 'CHEM101']) {
+    assert.ok(!ui.row(code).classList.contains('cap-invalid'), `${code} was not edited`);
+    assert.ok(!ui.row(code).classList.contains('cap-draft'), code);
+    assert.equal(ui.input(code).getAttribute('aria-invalid'), 'false');
+    assert.equal(ui.state(code), say('Saved value outside 1–500', 'القيمة المحفوظة خارج المدى من 1 إلى 500'));
+  }
+  assert.equal(ui.text('capStatus'), say('No unsaved changes', 'لا توجد تعديلات غير محفوظة'));
+  assert.equal(ui.leave(), false, 'nothing was edited: leaving is not guarded');
+
+  await ui.type('CS211', '31');
+  assert.equal(ui.text('capStatus'), say('1 unsaved change', '1 تعديل غير محفوظ'));
+  assert.equal(ui.saveOff(), false);
+  await ui.save();
+  assert.deepEqual(ui.writes()[0].body.changes, [{ course_code: 'CS211', max_capacity: 31 }]);
+  assert.equal(ui.store.AI.find(r => r.course_code === 'CHEM101').max_capacity, 9999, 'untouched');
+
+  await ui.load('AI2');
+  assert.equal(ui.dialogs.length, 1, 'only the review: loading another programme asks nothing');
+
+  await ui.load('AI');
+  await ui.type('BIOL101', '600');
+  assert.ok(ui.row('BIOL101').classList.contains('cap-invalid'), 'an edited value is checked');
+  await ui.type('BIOL101', '');
+  assert.equal(ui.state('BIOL101'), say('Modified: limit removed', 'معدَّل: يُزال الحد'));
+});
+
+test('while a review is on its way the fields are read-only, Save is off, and Save and Load are ignored', async t => {
+  let release;
+  const ui = await page(t, {
+    limits: store => {
+      const real = limitsServer(store);
+      return body => (body.dry_run && !release ? new Promise(resolve => { release = () => resolve(real(body)); }) : real(body));
+    },
+  });
+  await ui.load('AI');
+  await ui.type('AI492', '8');
+  assert.equal(ui.input('CS211').readOnly, false);
+
+  ui.$('capSave').click();
+  ui.$('capSave').click();   // a double click
+  await settle();
+  ui.$('capSave').click();   // Enter again, still checking
+  await settle();
+
+  assert.equal(ui.text('capSave'), say('Checking…', 'جارٍ التحقق…'));
+  assert.equal(ui.saveOff(), true, 'Save is off while it runs');
+  assert.equal(ui.$('capBody').querySelectorAll('.cap-input').length, 3);
+  for (const field of ui.$('capBody').querySelectorAll('.cap-input')) assert.equal(field.readOnly, true, 'no edit can be lost to the reload');
+  ui.setBox('AI2');
+  ui.$('capLoad').click();
+  await settle();
+  assert.equal(ui.reads().length, 1, 'Load waits for the save');
+  assert.equal(ui.dialogs.length, 0, 'no discard question over a save in flight');
+  ui.setBox('AI');
+
+  release();
+  await settle();
+
+  assert.equal(ui.writes().filter(w => w.body.dry_run).length, 1, 'one review');
+  assert.equal(ui.dialogs.length, 1, 'one dialog');
+  assert.equal(ui.writes().length, 2);
+  assert.equal(ui.store.AI[0].max_capacity, 8);
+  for (const field of ui.$('capBody').querySelectorAll('.cap-input')) assert.equal(field.readOnly, false, 'editable again');
+  assert.equal(ui.text('capSave'), say('Save changes', 'حفظ التغييرات'));
+});
+
+test('a list that fails to load is said in the page words and leaves the rows, their programme and the drafts as they were', async t => {
+  for (const kind of ['html', 'json']) {
+    await t.test(kind, async st => {
+      const store = savedRows();
+      const ui = await page(st, { store, list: listThatFails(store, 1, kind) });
+      await ui.load('AI');
+      await ui.type('AI492', '8');
+
+      await ui.load('AI2');   // the discard question is answered yes
+
+      assert.equal(ui.dialogs.length, 1);
+      assert.equal(ui.text('capOut'), LIST_FAILED, 'never the raw answer');
+      assert.ok(ui.$('capOut').classList.contains('has-error'));
+      assert.equal(ui.text(ui.row('AI492').querySelectorAll('td')[1]), 'GRADUATION PROJECT II', 'AI\'s rows stay');
+      assert.equal(ui.input('AI492').value, '8');
+      assert.ok(ui.row('AI492').classList.contains('cap-draft'));
+      assert.equal(ui.text('capCount'), say('3 courses · AI', '3 مقررات · AI'));
+      ui.setBox('AI');
+      assert.equal(ui.saveOff(), false, 'still AI\'s rows: Save writes AI');
+    });
+  }
+});
+
+test('a reload that fails after a save keeps the saved message, says the list may be stale, and the saved rows are no longer drafts', async t => {
+  const store = savedRows();
+  const ui = await page(t, { store, list: listThatFails(store, 1) });
+  await ui.load('AI');
+  await ui.type('AI492', '8');
+
+  await ui.save();
+
+  assert.equal(ui.store.AI[0].max_capacity, 8);
+  assert.equal(ui.text('capOut'), `${say(
+    'Saved 1 seat limit for AI; each change is in the audit log.',
+    'حُفظ 1 حد لبرنامج AI وسُجّل كل تغيير في سجل التدقيق.',
+  )} ${REFRESH_FAILED}`);
+  assert.equal(ui.text(ui.row('AI492').querySelectorAll('td')[3]), '8', 'the row shows what was written');
+  assert.ok(!ui.row('AI492').classList.contains('cap-draft'), 'saved: not a draft');
+  assert.equal(ui.saveOff(), true);
+  assert.equal(ui.text('capSave'), say('Save changes', 'حفظ التغييرات'));
+  assert.equal(ui.leave(), false, 'nothing unsaved');
+  await ui.load('AI');
+  assert.equal(ui.dialogs.length, 1, 'Load does not ask to discard a saved limit');
+});
+
+test('a reload that fails after a stale answer keeps the rows and the drafts', async t => {
+  const store = savedRows();
+  const ui = await page(t, {
+    store,
+    list: listThatFails(store, 1),
+    limits: s => limitsServer(s, { preview: () => answer({ ok: false, code: 'preview_stale', error: 'x', changes: [] }, 409) }),
+  });
+  await ui.load('AI');
+  await ui.type('AI492', '8');
+
+  await ui.save();
+
+  assert.equal(ui.reads().length, 2, 'a reload was tried');
+  assert.equal(ui.text('capOut'), `${say(
+    'The saved limits changed since you reviewed them. Press Save changes again to review the new list.',
+    'تغيّرت الحدود المحفوظة منذ المراجعة. اضغط حفظ التغييرات مرة أخرى لمراجعة القائمة الجديدة.',
+  )} ${REFRESH_FAILED}`);
+  assert.equal(ui.input('AI492').value, '8');
+  assert.ok(ui.row('AI492').classList.contains('cap-draft'));
+  assert.equal(ui.$('capBody').querySelectorAll('tr').length, 3);
+  assert.equal(ui.saveOff(), false);
+});
+
+test('the review says how many requested rows already match', async t => {
+  for (const [unchanged, en, ar] of [
+    [1, '1 row already matches and will not change.', '1 صف مطابق أصلاً ولن يتغيّر.'],
+    [2, '2 rows already match and will not change.', '2 صفان مطابقان أصلاً ولن يتغيّرا.'],
+  ]) {
+    await t.test(String(unchanged), async st => {
+      const ui = await page(st, {
+        confirm: async () => false,
+        limits: store => limitsServer(store, {
+          preview: body => answer({
+            ok: true, dry_run: true, programs: body.programs, preview_token: 't', unchanged,
+            changes: [{ course_code: 'AI492', course_name: 'GRADUATION PROJECT II', program: 'AI', old: 5, new: 8, scope: 'programmes' }],
+          }),
+        }),
+      });
+      await ui.load('AI');
+      await ui.type('AI492', '8');
+      await ui.save();
+
+      const box = ui.window.document.createElement('div');
+      box.innerHTML = ui.dialogs[0].body;
+      assert.equal(ui.text(box.querySelector('p.fs-sm')), say(en, ar));
+    });
+  }
+});
+
+test('a value still to fix counts as unsaved: Load asks before dropping it and leaving is guarded', async t => {
+  const ui = await page(t, { confirm: async () => false });
+  await ui.load('AI');
+  await ui.type('AI492', 'abc');
+
+  assert.equal(ui.leave(), true);
+  await ui.load('AI2');
+  assert.equal(ui.dialogs.length, 1);
+  assert.equal(ui.dialogs[0].title, say('Discard 1 unsaved change?', 'تجاهل 1 تعديل غير محفوظ؟'));
+  assert.equal(ui.reads().length, 1, 'kept editing');
+  assert.equal(ui.input('AI492').value, 'abc');
+});
+
+test('counts agree with their number in both languages', async t => {
+  const ui = await page(t);
+  const forms = [1, 2, 3, 11, 100];
+  const table = expr => forms.map(n => ui.run(`(${expr})(${n})`));
+  assert.deepEqual(table('n => TC.drafts(n)'), say(
+    ['1 unsaved change', '2 unsaved changes', '3 unsaved changes', '11 unsaved changes', '100 unsaved changes'],
+    ['1 تعديل غير محفوظ', '2 تعديلان غير محفوظين', '3 تعديلات غير محفوظة', '11 تعديلاً غير محفوظ', '100 تعديل غير محفوظ'],
+  ));
+  assert.deepEqual(table('n => TC.discardTitle(n)'), say(
+    ['Discard 1 unsaved change?', 'Discard 2 unsaved changes?', 'Discard 3 unsaved changes?', 'Discard 11 unsaved changes?', 'Discard 100 unsaved changes?'],
+    ['تجاهل 1 تعديل غير محفوظ؟', 'تجاهل 2 تعديلين غير محفوظين؟', 'تجاهل 3 تعديلات غير محفوظة؟', 'تجاهل 11 تعديلاً غير محفوظ؟', 'تجاهل 100 تعديل غير محفوظ؟'],
+  ));
+  assert.deepEqual(table('n => TC.toFix(n)'), say(
+    ['1 value to fix before saving', '2 values to fix before saving', '3 values to fix before saving', '11 values to fix before saving', '100 values to fix before saving'],
+    ['1 قيمة تحتاج تصحيحاً قبل الحفظ', '2 قيمتان تحتاجان تصحيحاً قبل الحفظ', '3 قيم تحتاج تصحيحاً قبل الحفظ', '11 قيمةً تحتاج تصحيحاً قبل الحفظ', '100 قيمة تحتاج تصحيحاً قبل الحفظ'],
+  ));
+  assert.deepEqual(table('n => TC.confirmSave(n)'), say(
+    ['Save 1 change', 'Save 2 changes', 'Save 3 changes', 'Save 11 changes', 'Save 100 changes'],
+    ['حفظ 1 تغيير', 'حفظ 2 تغييرين', 'حفظ 3 تغييرات', 'حفظ 11 تغييراً', 'حفظ 100 تغيير'],
+  ));
+  assert.deepEqual(table('n => TC.saved(n, "AI")'), say(
+    forms.map(n => `Saved ${n} seat limit${n === 1 ? '' : 's'} for AI; each change is in the audit log.`),
+    ['1 حد', '2 حدّان', '3 حدود', '11 حداً', '100 حد'].map(c => `حُفظ ${c} لبرنامج AI وسُجّل كل تغيير في سجل التدقيق.`),
+  ));
+  assert.deepEqual(table('n => TC.count(n, "AI")'), say(
+    ['1 course · AI', '2 courses · AI', '3 courses · AI', '11 courses · AI', '100 courses · AI'],
+    ['1 مقرر · AI', '2 مقرران · AI', '3 مقررات · AI', '11 مقرراً · AI', '100 مقرر · AI'],
+  ));
+  assert.deepEqual(table('n => TC.loaded(n, "AI")'), say(
+    ['1 course', '2 courses', '3 courses', '11 courses', '100 courses'].map(c => `Loaded ${c} for program "AI".`),
+    ['1 مقرر', '2 مقررين', '3 مقررات', '11 مقرراً', '100 مقرر'].map(c => `تم تحميل ${c} للبرنامج "AI".`),
+  ));
+  assert.deepEqual(table('n => TC.unchanged(n)'), say(
+    ['1 row already matches', '2 rows already match', '3 rows already match', '11 rows already match', '100 rows already match'].map(c => `${c} and will not change.`),
+    ['1 صف مطابق أصلاً ولن يتغيّر.', '2 صفان مطابقان أصلاً ولن يتغيّرا.', '3 صفوف مطابقة أصلاً ولن تتغيّر.', '11 صفاً مطابقاً أصلاً ولن تتغيّر.', '100 صف مطابق أصلاً ولن تتغيّر.'],
+  ));
+
+  /* And on the page: a loaded programme's count. */
+  await ui.load('AI2');
+  assert.equal(ui.text('capCount'), say('1 course · AI2', '1 مقرر · AI2'));
+  assert.equal(ui.text('capOut'), say('Loaded 1 course for program "AI2".', 'تم تحميل 1 مقرر للبرنامج "AI2".'));
 });
