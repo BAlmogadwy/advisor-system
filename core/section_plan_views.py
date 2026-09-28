@@ -108,9 +108,11 @@ def _parse_payload(request: HttpRequest) -> tuple[dict | None, JsonResponse | No
     # Support comma-separated programs  e.g. "AI,DS" → ["AI", "DS"]
     program_raw = str(body.get("program", "")).strip()
     if program_raw and "," in program_raw:
-        program: str | list[str] | None = [p.strip() for p in program_raw.split(",") if p.strip()]
-        if not program:
-            program = None
+        # Each programme once: a repeated code would count its students twice.
+        listed = list(dict.fromkeys(p.strip() for p in program_raw.split(",") if p.strip()))
+        program: str | list[str] | None = (
+            listed if len(listed) > 1 else (listed[0] if listed else None)
+        )
     else:
         program = program_raw or None
 

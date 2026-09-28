@@ -646,3 +646,11 @@ def test_an_elective_filling_slots_with_different_limits_takes_the_lowest(
         p["program"]: _row(p["plan"], "AI463")["max_per_section"] for p in data["programs"]
     }
     assert per_programme == {"AI": 30, "AI2": 25}
+
+
+def test_a_programme_listed_twice_is_counted_once(planner: Client, mixed_cohorts) -> None:
+    data = _generate(planner, program="AI,AI")
+
+    assert data["mode"] == "single"
+    assert data["cohorts"] == {"M": 12, "F": 12, "no_gender": 3}
+    assert _row(data["plan"], "AI331")["total_students"] == 24
