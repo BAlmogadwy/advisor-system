@@ -274,11 +274,12 @@ class SectionPlanningBrowserTests(StaticLiveServerTestCase):
     # ── 1. The scope fields show their whole value ──────────────────
 
     # Whether each scope field shows its whole value (and its placeholder, and
-    # for Program a few codes) and sits inside its capsule, which clips. Year and
-    # Semester are measured strictly; Program grows into spare room, so its box
-    # is a fractional width that Chromium rounds up for scrollWidth and down for
-    # clientWidth: 1px there is rounding, not a hidden character.
-    FIELDS = """() => [['spYear', 0], ['spSemester', 0], ['spProgram', 1]].map(([id, slack]) => {
+    # for Program a few codes) and sits inside its capsule, which clips. Every
+    # width is in ch, so a box can be a fractional width that Chromium rounds up
+    # for scrollWidth and down for clientWidth: on CI's Linux fonts an EMPTY
+    # Semester measured 26 > 25. 1px is rounding, not a hidden character (a
+    # digit is 1ch wide); a field clipped by the old 80px cap misses by far more.
+    FIELDS = """() => [['spYear', 1], ['spSemester', 1], ['spProgram', 1]].map(([id, slack]) => {
       const field = document.getElementById(id);
       const capsule = field.closest('.fb-search').getBoundingClientRect();
       const box = field.getBoundingClientRect();
