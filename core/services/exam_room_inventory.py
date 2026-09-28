@@ -14,10 +14,19 @@ A saved timetable never reads this. Each room row it saved carries the seats
 (``room_capacity``), building and floor its room had when it was built, and
 viewing, exporting, copying or listing students from a saved run reads those,
 so changing a room's exam seats changes no saved timetable. Check on a saved
-run does read the inventory afresh: when a room it used has other exam seats
-now, the input fingerprint differs and the page says the inputs changed since
-the save. That is the truth - the room inventory changed - and nothing is
-written unless the user saves.
+run does read the inventory afresh, and its input fingerprint hashes the WHOLE
+exam room inventory - every room's exam seats, cohort (section), department,
+building and floor - so any change to it makes Check report that the inputs
+changed since the save: a room the run never used included, a new room, a
+deleted room. A teaching-capacity edit does not. That is the truth - the room
+inventory changed - and nothing is written unless the user saves.
+
+Rooms Available (the room QA's ``rooms_available``, and a result's
+``rooms_count``) counts every room this returns, a room with 0 exam seats
+included - exactly as rooms of capacity 0 were counted before exam seats
+existed. Such a room seats nobody; counting only rooms with seats would change
+that number from what the exam timetable reported before, so it is left as it
+was.
 """
 
 from __future__ import annotations

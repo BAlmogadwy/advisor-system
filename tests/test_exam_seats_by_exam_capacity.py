@@ -164,6 +164,26 @@ def test_teaching_capacity_is_not_an_exam_input_and_exam_seats_are():
     assert _check(build)["input_fingerprint"] != first
 
 
+def test_check_reports_a_change_to_any_room_even_one_the_run_never_used():
+    """Check hashes the whole exam room inventory, not only the rooms a run used
+    (the exam_room_inventory docstring): each edit below is to a room the build
+    never seated anyone in, and each one alone is an input change."""
+    _population()
+    build = _build()
+    used = {row["room_code"] for entry in build["schedule"] for row in entry["rooms"]}
+    assert "M-ZERO" not in used and "F-ZERO" not in used
+    fingerprints = [_check(build)["input_fingerprint"]]
+
+    Room.objects.filter(room_code="M-ZERO").update(building="South")
+    fingerprints.append(_check(build)["input_fingerprint"])
+    Room.objects.filter(room_code="F-ZERO").update(department="IS")
+    fingerprints.append(_check(build)["input_fingerprint"])
+    Room.objects.create(room_code="M-NEW", capacity=30, exam_capacity=0, section="M")
+    fingerprints.append(_check(build)["input_fingerprint"])
+
+    assert len(set(fingerprints)) == len(fingerprints), fingerprints
+
+
 def _csv_population(tmp_path, students: int = 12):
     course = Course.objects.create(course_code="SEAT101", credit_hours=3)
     section = TermSection.objects.create(

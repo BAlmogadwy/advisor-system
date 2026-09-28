@@ -105,9 +105,11 @@ def test_a_raw_load_keeps_the_exam_seats_it_carries():
     assert _seats() == {("S0", "F"): (40, 0), ("S1", "F"): (40, 44)}
 
 
-def test_seed_rooms_script_starts_every_room_it_creates_at_its_capacity(capsys):
-    # A men's room the script only updates: its exam seats are its own.
+def test_seed_rooms_script_starts_every_room_it_creates_at_its_capacity(capsys, monkeypatch):
+    # A men's room the script only updates: its exam seats are its own. The
+    # table is not empty, so the re-run has to be forced.
     Room.objects.create(room_code="172FA001", section="M", capacity=10, exam_capacity=30)
+    monkeypatch.setenv("SEED_ROOMS_OVERWRITE", "1")
     runpy.run_path(str(SEED_ROOMS))
     capsys.readouterr()
     seats = _seats()
@@ -119,3 +121,31 @@ def test_seed_rooms_script_starts_every_room_it_creates_at_its_capacity(capsys):
     assert seats[("239FC007", "F")] == (70, 70)
     assert seats[("LIB826", "F")] == (40, 40)
     assert seats[("172GB001", "M")] == (25, 25)
+
+
+def test_seed_rooms_seeds_an_empty_rooms_table_without_being_forced(capsys, monkeypatch):
+    monkeypatch.delenv("SEED_ROOMS_OVERWRITE", raising=False)
+    runpy.run_path(str(SEED_ROOMS))
+    capsys.readouterr()
+    seats = _seats()
+    assert len(seats) == 64
+    assert all(capacity == exam for capacity, exam in seats.values())
+
+
+@pytest.mark.parametrize("flag", [None, "0", "yes"])
+def test_seed_rooms_refuses_a_populated_rooms_table_and_changes_nothing(capsys, monkeypatch, flag):
+    """A re-run would delete rooms outside its lists and reset the listed ones."""
+    if flag is None:
+        monkeypatch.delenv("SEED_ROOMS_OVERWRITE", raising=False)
+    else:
+        monkeypatch.setenv("SEED_ROOMS_OVERWRITE", flag)
+    # A room the lists do not have (0073 added it), a listed women's room whose
+    # capacity and exam seats moved on, and a listed men's room.
+    Room.objects.create(room_code="204SC003", section="F", capacity=40, exam_capacity=42)
+    Room.objects.create(room_code="239FC005", section="F", capacity=54, exam_capacity=20)
+    Room.objects.create(room_code="172FA009", section="M", capacity=70, exam_capacity=70)
+    before = _seats()
+    with pytest.raises(SystemExit, match="Nothing was changed"):
+        runpy.run_path(str(SEED_ROOMS))
+    capsys.readouterr()
+    assert _seats() == before
