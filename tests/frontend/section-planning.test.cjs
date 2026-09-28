@@ -705,6 +705,37 @@ test('a save refused because the limits moved reloads them and keeps the drafts'
   assert.match(ui.text('spStatus'), AR ? /تغيّرت الحدود المحفوظة/ : /The saved limits changed since you reviewed them/);
 });
 
+test('a reload after a refused save keeps what the user typed, never turns back a limit someone else saved', async t => {
+  /* Meanwhile another user saved AI491 = 8 and CS211 = 25 for AI. */
+  let movedOn = false;
+  const moved = { AI491: 8, CS211: 25 };
+  const ui = await page(t, {
+    courses: prog => answer({ ok: true, courses: coursesFor(prog).map(c => (movedOn && moved[c.course_code]
+      ? { ...c, programme_max: moved[c.course_code], programme_limits: { AI: moved[c.course_code] } } : c)) }),
+    limits: limitsServer({ commit: () => { movedOn = true; return answer({ ok: false, code: 'preview_stale', error: 'x' }, 409); } }),
+  });
+  ui.row('CS211').querySelector('.adv-all').click();   // scope only: its value is the pre-filled 30
+  await ui.type('MATH203', '45');                      // a value the user typed
+  await settle();
+
+  ui.$('spAdvSaveDb').click();
+  await settle();
+  assert.equal(ui.requests.filter(r => r.method === 'GET').length, 2, 'reloaded after the 409');
+
+  assert.equal(ui.input('AI491').value, '8', 'a row nobody here edited shows the new saved limit');
+  assert.ok(!ui.row('AI491').classList.contains('sp-adv-draft'));
+  assert.equal(ui.input('CS211').value, '25', 'the scope-only draft shows the limit saved now, not the old 30');
+  assert.equal(ui.row('CS211').querySelector('.adv-all').checked, true, 'its scope is kept');
+  assert.equal(ui.input('MATH203').value, '45', 'a typed value is kept');
+
+  ui.$('spAdvSaveDb').click();
+  await settle();
+  assert.deepEqual(ui.writes()[2].body.changes, [
+    { course_code: 'CS211', max_capacity: 25, all_programmes: true },
+    { course_code: 'MATH203', max_capacity: 45, all_programmes: false },
+  ], 'the next save never writes 30 over the other user\'s 25');
+});
+
 /* ── the rows on screen are the programme a save names ── */
 
 test('while a new programme\'s list loads, or after it failed, Save sends nothing', async t => {

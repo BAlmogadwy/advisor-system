@@ -109,7 +109,7 @@ let _advProgram = '';     // the programme(s) whose rows are on screen
 let _advSeq = 0;          // the newest course-list request; older answers are dropped
 let _advState = 'idle';   // 'idle' | 'loading' | 'ready' | 'failed'
 let _limitBusy = false;   // a review or save in flight: one at a time
-const _drafts = new Map(); // course code -> { raw, all }
+const _drafts = new Map(); // course code -> { raw, all, typed }
 
 const TL = {
   modified:     IS_AR ? 'معدَّل' : 'Modified',
@@ -304,12 +304,19 @@ function renderAdvancedTable(courses) {
       : ''}</td>
   </tr>${slotElectiveRows(c)}`;
   }).join('');
-  /* Drafts only: inputs mark the row, nothing is sent until Save. */
+  /* Drafts only: inputs mark the row, nothing is sent until Save. A reload
+   * (after a refused save, or another programme) gives a draft back its
+   * value only if the user typed it: a row changed only in scope ("All
+   * programmes") keeps the limit saved NOW, so a limit someone else saved
+   * in the meantime is never turned back to the one pre-filled before. */
   tbody.querySelectorAll('tr[data-code]').forEach(tr => {
     const inp = tr.querySelector('.adv-input');
     const all = tr.querySelector('.adv-all');
     const prior = _drafts.get(tr.dataset.code);
-    if (prior) { inp.value = prior.raw; all.checked = prior.all; }
+    if (prior) {
+      if (prior.typed) inp.value = prior.raw;
+      all.checked = prior.all;
+    }
     inp.addEventListener('input', () => { refreshAdvRow(tr); rememberDraft(tr); updateAdvState(); });
     inp.addEventListener('blur', () => {
       /* An emptied saved limit is not a removal: that has its own button. */
@@ -352,10 +359,12 @@ function draftOf(tr) {
   return { ...base, value, changed, draft: changed || all };
 }
 
-/* Keep a row's draft (or forget it once it matches the saved limit again). */
+/* Keep a row's draft (or forget it once it matches the saved limit again).
+ * `typed`: the value is the user's own (a change, or one still to fix), not
+ * the saved limit the row was pre-filled with. */
 function rememberDraft(tr) {
   const d = draftOf(tr);
-  if (d.draft || d.invalid) _drafts.set(d.code, { raw: d.raw, all: d.all });
+  if (d.draft || d.invalid) _drafts.set(d.code, { raw: d.raw, all: d.all, typed: d.changed || d.invalid });
   else _drafts.delete(d.code);
 }
 
