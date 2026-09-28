@@ -1,3 +1,14 @@
+"""Re-extract the 1447 Term 2 final-exams PDF into a NEW saved exam timetable.
+
+It writes to whichever database the settings point at (``DATABASE_URL``, else
+the local SQLite): each run saves one new ``ExamTimetableRun`` and changes no
+saved one. It used to rewrite saved run #305 in place; a saved exam timetable
+is department work and is never overwritten. Never run it against production:
+the online saved exam timetables are the department's real work.
+
+Exam seats: the ``capacity`` of each room row is the room's exam_capacity.
+"""
+
 from __future__ import annotations
 
 import csv
@@ -23,10 +34,10 @@ django.setup()
 from core.models import (  # noqa: E402
     ExamTimetableRun,
     ProgrammeRequirement,
-    Room,
     StudentCourse,
 )
 from core.services.course_identity import planner_course_key  # noqa: E402
+from core.services.exam_room_inventory import exam_room_inventory  # noqa: E402
 from core.services.exam_run_schema import (  # noqa: E402
     STATUS_DERIVATION_VERSION,
     compute_enrolment_snapshot,
@@ -49,7 +60,6 @@ from core.services.exam_timetable import (  # noqa: E402
 
 RUNTIME_DIR = BASE_DIR / "runtime"
 LABEL = "Imported PDF - Final Exams 1447 Term 2"
-RUN_ID = 305
 MAX_PER_DAY = 2
 
 PERIODS = [
@@ -466,6 +476,14 @@ def write_csv(entries: list[dict[str, Any]]) -> None:
             writer.writerow({k: e.get(k, "") for k in writer.fieldnames})
 
 
+def save_as_new_run(payload: dict[str, Any]) -> ExamTimetableRun:
+    """Save the extracted timetable as a new run: a saved run is never rewritten."""
+    return ExamTimetableRun.objects.create(
+        label=LABEL,
+        result_json=json.dumps(payload, ensure_ascii=False),
+    )
+
+
 def main() -> None:
     RUNTIME_DIR.mkdir(exist_ok=True)
     pdf_path = find_pdf()
@@ -486,17 +504,8 @@ def main() -> None:
     schedule_entries = [dict(e) for e in extracted]
     section_enrollment = build_gender_section_enrollment(extracted, source_sets)
 
-    rooms_list = list(
-        Room.objects.all().values(
-            "room_code",
-            "capacity",
-            "section",
-            "department",
-            "building",
-            "floor",
-            "room_type",
-        )
-    )
+    # Exam seats: ``capacity`` is each room's exam_capacity.
+    rooms_list = exam_room_inventory(extra_fields=("room_type",))
     room_feasibility = check_room_feasibility(section_enrollment, rooms_list)
     assign_rooms_to_schedule(schedule_entries, section_enrollment, rooms_list, seed=None)
 
@@ -583,13 +592,7 @@ def main() -> None:
     enriched_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     write_csv(schedule_entries)
 
-    run, _created = ExamTimetableRun.objects.update_or_create(
-        id=RUN_ID,
-        defaults={
-            "label": LABEL,
-            "result_json": json.dumps(payload, ensure_ascii=False),
-        },
-    )
+    run = save_as_new_run(payload)
     loaded = load_normalised_run(run)
     xlsx = export_exam_timetable_xlsx(run.id)
 

@@ -143,6 +143,26 @@ class Prerequisite(models.Model):
         return f"Prereq({self.course_code}->{self.prerequisite_course_code})"
 
 
+class ExamCapacityField(models.IntegerField):
+    """A room's exam seats: a room written without them starts at its ``capacity``.
+
+    ``None`` stands for "not given" until the row is written. Every write the
+    ORM makes asks the field for its value through ``pre_save`` - ``save()``,
+    ``create()``, ``update_or_create()`` and ``bulk_create()`` alike - and
+    ``None`` becomes the room's capacity there, as migration 0072 started every
+    room that existed then. A given value is kept as given, 0 included: 0 is a
+    room no exam seats anyone in. Rows loaded raw (a fixture, the release seed)
+    keep the value they carry.
+    """
+
+    def pre_save(self, model_instance: models.Model, add: bool) -> Any:
+        value = getattr(model_instance, self.attname)
+        if value is None:
+            value = model_instance.capacity  # type: ignore[attr-defined]
+            setattr(model_instance, self.attname, value)
+        return value
+
+
 class Room(models.Model):
     """Department room inventory."""
 
@@ -158,10 +178,12 @@ class Room(models.Model):
     building = models.TextField(blank=True, default="")
     floor = models.IntegerField(null=True, blank=True)
     room_type = models.TextField(blank=True, default="lecture")
+    # Seats for teaching: lecture timetabling, the planner and section sizing.
     capacity = models.IntegerField(default=0)
-    # Seats for an exam sitting. Filled from ``capacity`` when the column was
-    # added; not read by any scheduler yet.
-    exam_capacity = models.IntegerField(default=0)
+    # Seats for an exam sitting: every exam path seats by this, never by
+    # ``capacity`` (``core.services.exam_room_inventory``). Not given, it
+    # starts at ``capacity`` (ExamCapacityField).
+    exam_capacity = ExamCapacityField(default=None, blank=True)
     department = models.TextField(blank=True, default="")
     section = models.CharField(max_length=1, choices=SECTION_CHOICES, default=SECTION_MALE)
 

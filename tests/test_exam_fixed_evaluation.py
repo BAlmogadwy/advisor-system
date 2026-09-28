@@ -153,7 +153,7 @@ def test_room_assignment_disabled_is_inherited_and_never_silently_enabled(editor
 
 @pytest.mark.parametrize(
     "mutation",
-    ["enrollment", "credits", "capacity", "building", "section", "program", "online", "bucket"],
+    ["enrollment", "credits", "exam_seats", "building", "section", "program", "online", "bucket"],
 )
 def test_save_rejects_changed_authoritative_inputs_until_rechecked(editor, mutation):
     client, _, payload = editor
@@ -167,8 +167,10 @@ def test_save_rejects_changed_authoritative_inputs_until_rechecked(editor, mutat
         scraped_exam_registration(3, Course.objects.get(course_code="CS101"))
     elif mutation == "credits":
         Course.objects.filter(course_code="CS101").update(credit_hours=2)
-    elif mutation == "capacity":
-        Room.objects.update(capacity=1)
+    elif mutation == "exam_seats":
+        # Exams seat by a room's exam seats; its teaching capacity is not an
+        # exam input (test_exam_seats_by_exam_capacity).
+        Room.objects.update(exam_capacity=1)
     elif mutation == "building":
         Room.objects.update(building="New building")
     elif mutation == "section":

@@ -13,13 +13,14 @@ it on: both exist to report on the exact board they were handed.
 
 from __future__ import annotations
 
-from core.models import Room, Student
+from core.models import Student
 from core.services.course_identity import planner_course_key
 from core.services.exam_input_fingerprint import fingerprint_exam_inputs
 from core.services.exam_operations_snapshot import build_exam_operations_snapshot
 from core.services.exam_progress import current as current_progress
 from core.services.exam_review import build_exam_review
 from core.services.exam_room_allocation import RoomAllocationContext
+from core.services.exam_room_inventory import exam_room_inventory
 from core.services.exam_run_schema import (
     STATUS_DERIVATION_VERSION,
     compute_enrolment_snapshot,
@@ -149,16 +150,8 @@ def _normalise_loaded_schedule_entries(
 
 
 def _rooms_with_metadata() -> list[dict]:
-    return list(
-        Room.objects.order_by("room_code").values(
-            "room_code",
-            "capacity",
-            "section",
-            "department",
-            "building",
-            "floor",
-        )
-    )
+    """The exam room inventory: each room's ``capacity`` is its exam seats."""
+    return exam_room_inventory(order_by=("room_code",))
 
 
 def _attach_room_metadata(schedule_entries: list[dict], rooms_list: list[dict]) -> None:

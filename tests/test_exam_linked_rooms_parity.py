@@ -253,6 +253,29 @@ def test_every_export_matches_master_without_links(extra, monkeypatch, master_cp
     assert digests == MASTER_EXPORTS
 
 
+@pytest.mark.django_db
+@pytest.mark.parametrize("teaching", base.TEACHING_APART.values(), ids=list(base.TEACHING_APART))
+def test_every_export_seats_by_exam_seats_whatever_the_teaching_capacity(
+    teaching, monkeypatch, master_cpsat
+):
+    """Exams seat by ``Room.exam_capacity``: with each room's exam seats at
+    master's capacities and its teaching capacity set apart (none, far more),
+    the build puts master's very questions to CP-SAT, and its result, the
+    master Excel, the Department files, the student-data export and the
+    Student lists are master's byte for byte."""
+    monkeypatch.setattr(
+        exam_input_fingerprint, "ROOM_ALLOCATION_POLICY_VERSION", MASTER_ROOM_POLICY
+    )
+    corpus.create_rooms_population(models, teaching=teaching)
+    assert {room.capacity for room in models.Room.objects.all()} != {12, 25, 35, 50}
+    api = _api()
+    with master_cpsat.workload("exports"):
+        result, run = corpus.build_population_run(api, models)
+        digests = corpus.export_digests(run, api)
+    digests["build"] = base.digest(base.comparable(result))
+    assert digests == MASTER_EXPORTS
+
+
 def _rezip(parts: dict[str, bytes]) -> bytes:
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w") as archive:

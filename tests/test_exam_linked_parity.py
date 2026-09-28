@@ -296,6 +296,28 @@ def test_build_check_optimise_fix_and_multistart_match_master_without_links(
 
 
 @pytest.mark.django_db
+@pytest.mark.parametrize(
+    "teaching", corpus.TEACHING_APART.values(), ids=list(corpus.TEACHING_APART)
+)
+def test_every_exam_path_seats_by_exam_seats_whatever_the_teaching_capacity(
+    teaching, masters_room_policy
+):
+    """Exams seat by ``Room.exam_capacity`` (owner, 2026-09-28). Each room's
+    exam seats are master's capacities and its teaching capacity is set apart -
+    to none, and to far more: Build, Check, Optimise, Fix and multistart still
+    return master's digests, input fingerprints included."""
+    corpus.create_population(models, teaching=teaching)
+    api = SimpleNamespace(
+        build_exam_timetable=exam_timetable.build_exam_timetable,
+        evaluate_exam_schedule=evaluate_exam_schedule,
+        views=exam_views,
+        run_multistart=run_multistart,
+        report_to_dict=report_to_dict,
+    )
+    assert corpus.run_population(api) == POPULATION
+
+
+@pytest.mark.django_db
 def test_multistart_differs_from_master_only_by_its_room_metrics(monkeypatch, masters_room_policy):
     """Put master's metric reader back and the whole population is master's."""
     corpus.create_population(models)

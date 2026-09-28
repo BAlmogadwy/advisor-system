@@ -1,23 +1,36 @@
-"""Rooms-table seed — authoritative 62-room set.
+"""Rooms-table seed for an EMPTY rooms table (a fresh development database).
 
-Syncs the ``Room`` table from two source PDFs plus supplemental labs:
+Its lists are the original 64-room set from two source PDFs plus
+supplemental labs:
   F: 33 rooms (hall_capacity_cleaned) — 7 labs + 26 lectures
   M: 29 lecture rooms (العدد الفعلي للقاعات والمعامل) + 2 AI/DS labs
-Total: 64 rooms.
+They are NOT the current room sheet: migrations (0073, the 1448 T2
+women's-campus sheet) and edits since have moved on from them.
 
-Local usage (Windows bash / SQLite):
+Usage, on an empty rooms table (Windows bash / SQLite):
 
     DJANGO_SECRET_KEY=dev python -c "import django, os; \\
         os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'config.settings'); \\
         django.setup(); exec(open('scripts/seed_rooms.py', encoding='utf-8').read())"
 
-Render prod usage (PostgreSQL):
+On a rooms table that already has rooms it refuses and changes nothing. A
+re-run REWRITES the table to its lists: it deletes every women's room and
+re-creates only the listed ones, deletes every men's room not in its lists,
+and resets each listed men's room's capacity, department, type, building and
+wing to the list's (stale) values. Against the local database of 2026-09-28
+that deletes 12 rooms (the three rooms migration 0073 added among them), resets
+13 rooms' capacities, gives every re-created women's room exam seats equal to
+its capacity (the 0073 exam seats are lost), and re-creates a room the table
+no longer has. An upserted men's room keeps the exam seats it had, so its exam
+and teaching seats may drift apart. Never run it against production or the
+authoritative local database; forcing a re-run on a populated table takes
+``SEED_ROOMS_OVERWRITE=1`` in the environment.
 
-    python manage.py shell < scripts/seed_rooms.py
-
-Idempotent — re-running wipes the F section and re-creates from the
-list; M rooms are upserted by ``room_code``.
+Exam seats: every room this creates starts ``exam_capacity`` at its
+``capacity`` (``core.models.ExamCapacityField``).
 """
+
+import os
 
 from core.models import Room
 
@@ -100,6 +113,13 @@ M_LABS = [
 print(
     f"Before: F={Room.objects.filter(section='F').count()}, M={Room.objects.filter(section='M').count()}, total={Room.objects.count()}"
 )
+
+if Room.objects.exists() and os.environ.get("SEED_ROOMS_OVERWRITE") != "1":
+    raise SystemExit(
+        "seed_rooms: the rooms table already has rooms, and this re-run would delete "
+        "and reset them to its stale lists (see the docstring). Nothing was changed. "
+        "Set SEED_ROOMS_OVERWRITE=1 only to rewrite a disposable database's rooms."
+    )
 
 # Wipe + seed F
 Room.objects.filter(section="F").delete()

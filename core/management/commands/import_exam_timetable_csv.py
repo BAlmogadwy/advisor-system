@@ -12,10 +12,11 @@ from typing import Any
 from django.core.management.base import BaseCommand, CommandError, CommandParser
 from django.db import transaction
 
-from core.models import ExamTimetableRun, Room
+from core.models import ExamTimetableRun
 from core.services.course_identity import planner_course_key
 from core.services.exam_operations_snapshot import build_exam_operations_snapshot
 from core.services.exam_review import build_exam_review
+from core.services.exam_room_inventory import exam_room_inventory
 from core.services.exam_run_schema import (
     STATUS_DERIVATION_VERSION,
     compute_enrolment_snapshot,
@@ -245,11 +246,7 @@ def _import_payload(
     rooms_list: list[dict[str, Any]] = []
     room_feasibility: list[dict[str, Any]] = []
     if assign_rooms:
-        rooms_list = list(
-            Room.objects.all().values(
-                "room_code", "capacity", "section", "department", "building", "floor"
-            )
-        )
+        rooms_list = exam_room_inventory()
         room_feasibility = check_room_feasibility(section_enrollment, rooms_list)
         assign_rooms_to_schedule(schedule_entries, section_enrollment, rooms_list)
 
