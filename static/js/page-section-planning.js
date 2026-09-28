@@ -10,14 +10,9 @@ const T = {
   exported:    IS_AR ? 'تم تصدير الملف.' : 'File exported successfully.',
   full:        IS_AR ? 'ممتلئ' : 'Full',
   underfilled: IS_AR ? 'ناقص' : 'Underfilled',
-  courses:     IS_AR ? 'مقررات' : 'courses',
-  sections:    IS_AR ? 'شعب' : 'sections',
-  students:    IS_AR ? 'طلاب' : 'students',
-  credits:     IS_AR ? 'ساعة' : 'cr',
   lastUpdate:  IS_AR ? 'آخر تحديث' : 'Last update',
   deptSummary: IS_AR ? 'ملخص الأقسام' : 'Department Summary',
   noRecs:      IS_AR ? 'لا توجد توصيات.' : 'No recommendations found.',
-  progLabel:   IS_AR ? 'طالب' : 'students',
   male:        IS_AR ? 'ذكور' : 'M',
   female:      IS_AR ? 'إناث' : 'F',
   noGender:    (n, seats, courses) => IS_AR
@@ -48,6 +43,35 @@ const T = {
   slotNone:    status => IS_AR ? `لا مقرر لهذا الفصل (${status})` : `no course this term (${status})`,
 };
 
+/* Counts in words: the noun agrees with its number, through the CLDR plural
+ * rules (English one/other; Arabic zero/one/two/few/many/other), never
+ * "1 courses". In Arabic text the number is a left-to-right island. */
+const PLURAL = new Intl.PluralRules(IS_AR ? 'ar' : 'en');
+const NOUNS = {
+  course:  IS_AR ? { zero: 'مقرر', one: 'مقرر', two: 'مقرران', few: 'مقررات', many: 'مقرراً', other: 'مقرر' }
+                 : { one: 'course', other: 'courses' },
+  section: IS_AR ? { zero: 'شعبة', one: 'شعبة', two: 'شعبتان', few: 'شعب', many: 'شعبة', other: 'شعبة' }
+                 : { one: 'section', other: 'sections' },
+  student: IS_AR ? { zero: 'طالب', one: 'طالب', two: 'طالبان', few: 'طلاب', many: 'طالباً', other: 'طالب' }
+                 : { one: 'student', other: 'students' },
+};
+function nounFor(n, noun) {
+  const forms = NOUNS[noun];
+  return forms[PLURAL.select(n)] || forms.other;
+}
+function countText(n, noun) {
+  const value = Number(n) || 0;
+  return `${value} ${nounFor(value, noun)}`;
+}
+function countHtml(n, noun) {
+  const value = Number(n) || 0;
+  return `<bdi>${value}</bdi> ${esc(nounFor(value, noun))}`;
+}
+
+/* A disclosure chevron: CSS points it along the reading direction when
+ * closed (right in English, left in Arabic) and down when open. */
+const CHEVRON = '<svg class="sp-chev" viewBox="0 0 16 16" width="12" height="12" aria-hidden="true" focusable="false"><path d="M6 3l5 5-5 5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+
 /* M · F split for a KPI, a row or a summary card. */
 function splitText(male, female) {
   return `${T.male} ${male ?? 0} · ${T.female} ${female ?? 0}`;
@@ -60,7 +84,8 @@ const $ = id => document.getElementById(id);
 
 /* ── Toggle capacity settings ── */
 $('spToggleCaps').onclick = () => {
-  $('spCapsWrap').classList.toggle('d-none');
+  const hidden = $('spCapsWrap').classList.toggle('d-none');
+  $('spToggleCaps').setAttribute('aria-expanded', hidden ? 'false' : 'true');
 };
 
 /* ── Per-course seat limits ──
@@ -239,7 +264,7 @@ async function loadAdvancedCourses() {
     _advLoaded = true;
     _advState = 'ready';
     renderAdvancedTable(_advCourses);
-    $('spAdvCount').textContent = _advCourses.length + (IS_AR ? ' مقرر' : ' courses');
+    $('spAdvCount').textContent = countText(_advCourses.length, 'course');
   } catch (err) {
     if (seq === _advSeq) failed();
   }
@@ -618,12 +643,21 @@ function showStatus(msg, type) {
   const el = $('spStatus');
   el.className = type === 'ok' ? 'sp-alert sp-alert-ok'
                : type === 'warn' ? 'sp-alert sp-alert-warn' : 'sp-alert sp-alert-err';
+  /* An error interrupts (an alert); anything else waits its turn. */
   el.setAttribute('role', type === 'err' ? 'alert' : 'status');
+  el.setAttribute('aria-live', type === 'err' ? 'assertive' : 'polite');
   el.textContent = msg;
   el.classList.remove('d-none');
 }
+/* Emptied, never display:none: a live region has to be in the page before its
+ * words change, or a screen reader may not read them. Empty and classless, it
+ * takes no room. */
 function hideStatus() {
-  $('spStatus').classList.add('d-none');
+  const el = $('spStatus');
+  el.textContent = '';
+  el.className = '';
+  el.setAttribute('role', 'status');
+  el.setAttribute('aria-live', 'polite');
 }
 
 /* ── Render results ── */
@@ -633,6 +667,31 @@ const LOCAL_DEPTS = new Set((() => {
   try { return JSON.parse($('spLocalDepartments')?.textContent || '[]'); } catch (_) { return []; }
 })());
 
+/* Sorting is wired once per table (the shared sorter adds listeners on each
+ * call, so wiring on every render sorted a column once per render). A new
+ * result keeps the column the user sorted by: the sorter keeps each header's
+ * next direction, so sorting that header twice lands on the one it shows. */
+function wireSortOnce(table) {
+  if (!table || table.dataset.sortWired || typeof wireSortableTable !== 'function') return;
+  table.dataset.sortWired = '1';
+  wireSortableTable(table.id);
+}
+function keepSort(table) {
+  const th = table.querySelector('thead th[data-dir]');
+  if (th) { th.click(); th.click(); }
+}
+
+/* A results table scrolled sideways keeps its course code in view (a sticky
+ * column, global.css), opaque only while scrolled. One listener for every
+ * results box, present or rendered later: scroll does not bubble, so it
+ * listens in the capture phase. scrollLeft is negative when Arabic scrolls. */
+document.addEventListener('scroll', event => {
+  const box = event.target;
+  if (box instanceof Element && box.classList.contains('sp-table-scroll')) {
+    box.classList.toggle('sp-scrolled', box.scrollLeft !== 0);
+  }
+}, { capture: true, passive: true });
+
 function renderResults(data) {
   if (data.mode === 'multi') {
     renderMultiProgramResults(data);
@@ -640,6 +699,18 @@ function renderResults(data) {
     renderSingleProgramResults(data);
   }
 }
+
+/* The results tables' header is the server's (the template's #spTable), read
+ * before anything wires it: per-programme tables reuse it, and every cell
+ * carries its column's header as the label a phone card shows. */
+const PLAN_HEAD_HTML = $('spTable').tHead.innerHTML;
+const PLAN_LABELS = [...$('spTable').tHead.querySelectorAll('th')].map(th => th.textContent.trim());
+/* Each column's part in a phone card (<=768px, .mobile-cards): hidden, the
+ * title line (code, name), or a number; the number classes also order the
+ * card: demand, max, fill, then M | F | Total sections, then the status. */
+const CARD_ROLE = ['mc-hide', 'mc-hide', 'mc-primary', 'mc-primary', 'mc-hide', 'sp-c-demand',
+  'sp-sec-m', 'sp-sec-f', 'sp-sec-total', 'sp-c-max', 'mc-hide', 'sp-c-fill', 'sp-c-status'];
+wireSortOnce($('spTable'));   // after the header is read: the copies start unsorted
 
 /* ── Build table rows HTML from a plan array ── */
 function buildPlanRows(plan) {
@@ -670,59 +741,83 @@ function buildPlanRows(plan) {
       ? `<span style="display:inline-flex;flex-wrap:wrap;gap:4px;margin-inline-end:6px;vertical-align:middle">${programs.map(p => `<span class="sp-pill sp-pill-ext">${esc(p)}</span>`).join('')}</span>`
       : '';
     const courseName = row.course_name || '';
-    return `<tr data-code="${esc(row.course_code)}">
-      <td>${idx + 1}</td>
-      <td><strong>${esc(row.department)}</strong></td>
-      <td><span class="cr-id">${esc(row.course_code)}</span>${slotTag}${extBadge}</td>
-      <td>${programTags}<span>${esc(courseName)}</span></td>
-      <td class="text-center">${esc(row.credit_hours)}</td>
-      <td class="text-center"><strong>${esc(row.total_students)}</strong>
-        <div class="sp-cell-sub">${esc(splitText(row.male_students, row.female_students))}</div>${noGender}</td>
-      <td class="text-center sp-sec-m">${esc(row.male_sections ?? 0)}</td>
-      <td class="text-center sp-sec-f">${esc(row.female_sections ?? 0)}</td>
-      <td class="text-center sp-sec-total"><strong>${esc(row.num_sections)}</strong></td>
-      <td class="text-center">${esc(row.max_per_section)}${source ? `<div class="sp-cell-sub sp-limit-src">${esc(source)}</div>` : ''}</td>
-      <td class="text-center">${row.avg_per_section}</td>
-      <td style="min-width:80px">
-        <div class="d-flex align-items-center gap-1">
+    const cells = [
+      [idx + 1],
+      [`<strong>${esc(row.department)}</strong>`],
+      [`<span class="cr-id">${esc(row.course_code)}</span>${slotTag}${extBadge}`],
+      [`${programTags}<span>${esc(courseName)}</span>`],
+      [esc(row.credit_hours), 'text-center'],
+      [`<strong>${esc(row.total_students)}</strong>
+        <div class="sp-cell-sub">${esc(splitText(row.male_students, row.female_students))}</div>${noGender}`, 'text-center'],
+      [esc(row.male_sections ?? 0), 'text-center'],
+      [esc(row.female_sections ?? 0), 'text-center'],
+      [`<strong>${esc(row.num_sections)}</strong>`, 'text-center'],
+      [`${esc(row.max_per_section)}${source ? `<div class="sp-cell-sub sp-limit-src">${esc(source)}</div>` : ''}`, 'text-center'],
+      [esc(row.avg_per_section), 'text-center'],
+      [`<div class="d-flex align-items-center gap-1">
           <div class="sp-fill-wrap"><div class="sp-fill ${fillCls}" style="width:${row.fill_percent}%"></div></div>
           <span class="fs-sm text-t3" style="min-width:30px">${row.fill_percent}%</span>
-        </div>
-      </td>
-      <td>${statusHtml}</td>
-    </tr>`;
+        </div>`, 'sp-fill-cell'],
+      [statusHtml],
+    ];
+    /* No whitespace inside a cell's tags: an empty status cell is :empty. */
+    const tds = cells.map(([html, cls], i) =>
+      `<td class="${CARD_ROLE[i]}${cls ? ` ${cls}` : ''}" data-label="${esc(PLAN_LABELS[i] || '')}">${html}</td>`);
+    return `<tr data-code="${esc(row.course_code)}">${tds.join('')}</tr>`;
   }).join('');
 }
 
-/* ── Build department summary HTML ── */
-function buildDeptSummaryHtml(departments) {
-  const depts = (departments || []).filter(d => LOCAL_DEPTS.has(d.department));
-  if (!depts.length) return '';
-  return depts.map(d => `
-    <div class="sp-dept-card">
-      <div class="dept-name">${esc(d.department)}</div>
-      <div class="dept-stat"><b>${esc(d.courses)}</b> ${T.courses} · <b>${esc(d.sections)}</b> ${T.sections} (${esc(splitText(d.male_sections, d.female_sections))}) · <b>${esc(d.students)}</b> ${T.students} · <b>${esc(d.total_credits)}</b> ${T.credits}</div>
-    </div>
-  `).join('');
+/* ── Department summary: every department in the result, in two groups by
+ * the server's list of our departments (ours; then the service departments,
+ * whose sections are requested from them), each with M, F and Total
+ * sections. The total row adds the departments up; the server's summary is
+ * the same plan, so it equals the result's KPIs. ── */
+const TS = {
+  dept:       IS_AR ? 'القسم' : 'Department',
+  courses:    IS_AR ? 'المقررات' : 'Courses',
+  seats:      IS_AR ? 'المقاعد المطلوبة' : 'Seat demand',
+  male:       IS_AR ? 'شعب الذكور' : 'M sections',
+  female:     IS_AR ? 'شعب الإناث' : 'F sections',
+  sections:   IS_AR ? 'مجموع الشعب' : 'Total sections',
+  hours:      IS_AR ? 'ساعات التدريس' : 'Teaching hours',
+  hoursTitle: IS_AR ? 'ساعات المقرر × عدد الشعب' : 'Credit hours × sections',
+  ours:       IS_AR ? 'أقسامنا' : 'Our departments',
+  service:    IS_AR ? 'الأقسام الخدمية (شعب تُطلب منها)' : 'Service departments (sections to request)',
+  subtotal:   IS_AR ? 'المجموع الفرعي' : 'Subtotal',
+  total:      IS_AR ? 'المجموع' : 'Total',
+};
+/* Sections first: on a phone they show before the table scrolls sideways. */
+const SUM_COLS = ['male_sections', 'female_sections', 'sections', 'courses', 'students', 'total_credits'];
+
+function sumDepartments(depts) {
+  const total = Object.fromEntries(SUM_COLS.map(key => [key, 0]));
+  depts.forEach(d => SUM_COLS.forEach(key => { total[key] += Number(d[key]) || 0; }));
+  return total;
 }
 
-/* ── Table header HTML (shared between single and multi) ── */
-function buildTableHeaderHtml() {
-  return `<tr>
-    <th data-sort="num">#</th>
-    <th data-sort="text">${IS_AR ? 'القسم' : 'Dept'}</th>
-    <th data-sort="text">${IS_AR ? 'المقرر' : 'Course'}</th>
-    <th data-sort="text">${IS_AR ? 'اسم المقرر' : 'Course Name'}</th>
-    <th data-sort="num">${IS_AR ? 'ساعات' : 'Cr'}</th>
-    <th data-sort="num">${IS_AR ? 'الطلاب' : 'Students'}</th>
-    <th data-sort="num">${IS_AR ? 'شعب الذكور' : 'M sections'}</th>
-    <th data-sort="num">${IS_AR ? 'شعب الإناث' : 'F sections'}</th>
-    <th data-sort="num">${IS_AR ? 'مجموع الشعب' : 'Total sections'}</th>
-    <th data-sort="num">${IS_AR ? 'الحد الأقصى' : 'Max'}</th>
-    <th data-sort="num">${IS_AR ? 'المتوسط' : 'Avg'}</th>
-    <th>${IS_AR ? 'الامتلاء' : 'Fill'}</th>
-    <th data-sort="text">${IS_AR ? 'الحالة' : 'Status'}</th>
-  </tr>`;
+function sumCells(d) {
+  return SUM_COLS.map(key => `<td data-col="${key}"><bdi>${Number(d[key]) || 0}</bdi></td>`).join('');
+}
+
+function buildDeptSummaryHtml(summary) {
+  const depts = (summary && summary.departments) || [];
+  if (!depts.length) return '';
+  const groups = [
+    ['ours', TS.ours, depts.filter(d => LOCAL_DEPTS.has(d.department))],
+    ['service', TS.service, depts.filter(d => !LOCAL_DEPTS.has(d.department))],
+  ].filter(([, , rows]) => rows.length);
+  const body = groups.map(([key, label, rows]) => `<tbody data-group="${key}">
+      <tr class="sp-sum-group"><th scope="rowgroup" colspan="${SUM_COLS.length + 1}">${esc(label)}</th></tr>
+      ${rows.map(d => `<tr data-dept="${esc(d.department)}"><th scope="row"><bdi>${esc(d.department)}</bdi></th>${sumCells(d)}</tr>`).join('')}
+      ${groups.length > 1 ? `<tr class="sp-sum-sub" data-subtotal="${key}"><th scope="row">${esc(TS.subtotal)}</th>${sumCells(sumDepartments(rows))}</tr>` : ''}
+    </tbody>`).join('');
+  const head = [TS.dept, TS.male, TS.female, TS.sections, TS.courses, TS.seats]
+    .map(text => `<th scope="col">${esc(text)}</th>`).join('')
+    + `<th scope="col" title="${esc(TS.hoursTitle)}">${esc(TS.hours)}</th>`;
+  return `<table class="sp-sum-table">
+      <thead><tr>${head}</tr></thead>${body}
+      <tfoot><tr data-sum-total><th scope="row">${esc(TS.total)}</th>${sumCells(sumDepartments(depts))}</tr></tfoot>
+    </table>`;
 }
 
 /* ── KPIs: Sections = M + F; no-gender students stated, never pooled ── */
@@ -771,8 +866,6 @@ function renderSingleProgramResults(data) {
   $('spMultiPrograms').classList.add('d-none');
   $('spMultiPrograms').innerHTML = '';
 
-  /* Show the single-mode dept summary panel */
-  $('spDeptGrid').parentElement.style.display = '';
 
   /* KPIs */
   renderKpis(data.student_count, data.cohorts, data.summary, data.electives);
@@ -786,18 +879,16 @@ function renderSingleProgramResults(data) {
 
   if (!plan.length) {
     tbody.innerHTML = `<tr><td colspan="13" class="empty-note">${T.noRecs}</td></tr>`;
-    $('spDeptGrid').innerHTML = '';
+    $('spDeptSummary').innerHTML = '';
     return;
   }
 
   tbody.innerHTML = buildPlanRows(plan);
-
-  /* Wire sorting + pagination */
-  if (typeof wireSortableTable === 'function') wireSortableTable('spTable');
+  keepSort($('spTable'));
   if (typeof paginateTable === 'function') paginateTable('spTable', 'spPager', 30);
 
   /* Department summary */
-  $('spDeptGrid').innerHTML = buildDeptSummaryHtml(data.summary.departments);
+  $('spDeptSummary').innerHTML = buildDeptSummaryHtml(data.summary);
 }
 
 /* ── Multi-program mode ── */
@@ -809,7 +900,6 @@ function renderMultiProgramResults(data) {
   /* Show combined union in the main table, show multi container for per-program */
   $('spTable').style.display = '';
   $('spPager').style.display = '';
-  $('spDeptGrid').parentElement.style.display = '';
   const container = $('spMultiPrograms');
   container.classList.remove('d-none');
   container.innerHTML = '';
@@ -826,12 +916,12 @@ function renderMultiProgramResults(data) {
   const tbody = $('spTable').querySelector('tbody');
   if (!combinedPlan.length) {
     tbody.innerHTML = `<tr><td colspan="13" class="empty-note">${T.noRecs}</td></tr>`;
-    $('spDeptGrid').innerHTML = '';
+    $('spDeptSummary').innerHTML = '';
   } else {
     tbody.innerHTML = buildPlanRows(combinedPlan);
-    if (typeof wireSortableTable === 'function') wireSortableTable('spTable');
+    keepSort($('spTable'));
     if (typeof paginateTable === 'function') paginateTable('spTable', 'spPager', 30);
-    $('spDeptGrid').innerHTML = buildDeptSummaryHtml(cs.departments);
+    $('spDeptSummary').innerHTML = buildDeptSummaryHtml(cs);
   }
 
   /* ── Collapsible per-program blocks ── */
@@ -846,65 +936,69 @@ function renderMultiProgramResults(data) {
     block.className = 'sp-prog-block';
     block.style.marginTop = '14px';
 
-    /* Collapsible heading — starts collapsed */
+    /* Collapsible heading — starts collapsed. A button inside the heading,
+     * so it opens and closes by keyboard and says whether it is open. */
     const heading = document.createElement('h5');
-    heading.className = 'sp-prog-heading sp-collapsible';
-    heading.style.cursor = 'pointer';
-    heading.style.userSelect = 'none';
-    heading.innerHTML = `<span class="sp-collapse-arrow">▶</span>
-      <span>${esc(prog.program)}</span>
-      <span class="sp-prog-count">(${prog.student_count ?? 0} ${T.progLabel}
-        · ${summary.total_courses || 0} ${T.courses}
-        · ${summary.total_sections || 0} ${T.sections}: ${esc(splitText(summary.male_sections, summary.female_sections))})</span>`;
+    heading.className = 'sp-prog-heading';
+    heading.innerHTML = `<button type="button" class="sp-prog-toggle" aria-expanded="false" aria-controls="${bodyId}">
+      ${CHEVRON}<bdi class="sp-prog-code">${esc(prog.program)}</bdi>
+      <span class="sp-prog-count">(${countHtml(prog.student_count, 'student')}
+        · ${countHtml(summary.total_courses, 'course')}
+        · ${countHtml(summary.total_sections, 'section')}: ${esc(splitText(summary.male_sections, summary.female_sections))})</span></button>`;
     block.appendChild(heading);
+    const toggle = heading.querySelector('button');
 
     /* Collapsible body — hidden by default */
     const body = document.createElement('div');
     body.id = bodyId;
     body.className = 'd-none';
 
-    /* Table */
+    /* Table: the main table's header and phone cards, in its own scroller */
+    const scroller = document.createElement('div');
+    scroller.className = 'sp-table-scroll';
     const table = document.createElement('table');
-    table.className = 'tbl-card';
+    table.className = 'tbl-card mobile-cards sp-plan-table';
     table.id = tableId;
-    table.setAttribute('role', 'table');
-    table.innerHTML = `<thead>${buildTableHeaderHtml()}</thead><tbody>${buildPlanRows(plan)}</tbody>`;
-    body.appendChild(table);
+    table.setAttribute('role', 'table');   // a table still, when a phone lays it out as cards
+    table.innerHTML = `<thead>${PLAN_HEAD_HTML}</thead><tbody>${buildPlanRows(plan)}</tbody>`;
+    scroller.appendChild(table);
+    body.appendChild(scroller);
 
-    /* Department summary for this program */
-    const deptHtml = buildDeptSummaryHtml(summary.departments);
+    /* Department summary for this program: its total is the heading's */
+    const deptHtml = buildDeptSummaryHtml(summary);
     if (deptHtml) {
-      const deptPanel = document.createElement('div');
-      deptPanel.className = 'sp-panel';
+      const deptPanel = document.createElement('section');
+      deptPanel.className = 'sp-panel sp-sum-panel';
       deptPanel.style.marginTop = '8px';
-      deptPanel.innerHTML = `<h6 class="mb-2" style="font-size:.82rem">${T.deptSummary}</h6>
-        <div class="sp-dept-grid">${deptHtml}</div>`;
+      deptPanel.setAttribute('aria-labelledby', `${bodyId}_sum`);
+      deptPanel.innerHTML = `<h6 class="mb-2" style="font-size:.82rem" id="${bodyId}_sum">${T.deptSummary} · <bdi>${esc(prog.program)}</bdi></h6>
+        <div class="sp-sum-scroll">${deptHtml}</div>`;
       body.appendChild(deptPanel);
     }
 
     block.appendChild(body);
     container.appendChild(block);
+    if (plan.length) wireSortOnce(table);
 
-    /* Toggle collapse on click */
-    heading.addEventListener('click', () => {
+    toggle.addEventListener('click', () => {
       const hidden = body.classList.toggle('d-none');
-      heading.querySelector('.sp-collapse-arrow').textContent = hidden ? '▶' : '▼';
-      if (!hidden && plan.length && typeof wireSortableTable === 'function') {
-        wireSortableTable(tableId);
-      }
+      toggle.setAttribute('aria-expanded', hidden ? 'false' : 'true');
     });
   });
 }
 
-/* ── Generate click ── */
-$('spGenerate').onclick = async () => {
+/* ── Generate: the scope form's submit, so Enter in Year, Semester or
+ * Program runs it too. Generate is the form's only submit button; the seat
+ * limits' Save lives outside the form, so Enter never saves. ── */
+async function runGenerate() {
+  const btn = $('spGenerate');
+  if (btn.disabled) return;   // one Generate at a time
   const payload = getPayload();
   if (!payload.year || !payload.semester) {
     showStatus(T.fillAll, 'err');
     return;
   }
 
-  const btn = $('spGenerate');
   btn.disabled = true;
   btn.textContent = T.generating;
   hideStatus();
@@ -926,8 +1020,7 @@ $('spGenerate').onclick = async () => {
 
     _lastPayload = payload;
     renderResults(data);
-    showStatus(T.done, 'ok');
-    if (typeof notify !== 'undefined') notify.success(T.done);
+    showStatus(T.done, 'ok');   // the one success channel: the status line, not a toast as well
 
   } catch (err) {
     showStatus(T.reqFailed + ': ' + err.message, 'err');
@@ -936,7 +1029,11 @@ $('spGenerate').onclick = async () => {
     btn.disabled = false;
     btn.textContent = IS_AR ? 'حساب' : 'Generate';
   }
-};
+}
+$('spScopeForm').addEventListener('submit', event => {
+  event.preventDefault();   // never a page load: the plan comes back as JSON
+  runGenerate();
+});
 
 /* ── Export click ── */
 $('spExport').onclick = async () => {
@@ -996,8 +1093,7 @@ $('spReset').onclick = () => {
   $('spPager').style.display = '';
   $('spTable').querySelector('tbody').innerHTML =
     `<tr><td colspan="13" class="empty-note">${IS_AR ? 'حدد السنة والفصل ثم انقر حساب.' : 'Set Year & Semester, then click Generate.'}</td></tr>`;
-  $('spDeptGrid').innerHTML = '';
-  $('spDeptGrid').parentElement.style.display = '';
+  $('spDeptSummary').innerHTML = '';
 
   /* Clear multi-program container */
   $('spMultiPrograms').innerHTML = '';

@@ -24,6 +24,7 @@ const AR = process.env.SP_TEST_LANGUAGE === 'ar';
 const say = (en, ar) => (AR ? ar : en);
 const read = name => fs.readFileSync(path.join(__dirname, '../../static/js', name), 'utf8');
 const SHARED = read('shared-utils.js');
+const UX = read('shared-ux.js');   // wireSortableTable, as base.html loads it
 const DIALOG = read('dialog.js');
 const PAGE = read('page-section-planning.js');
 
@@ -118,6 +119,7 @@ async function page(t, { program = 'AI', limits = limitsServer(), confirm = asyn
   if (localDepartments) window.document.getElementById('spLocalDepartments').textContent = JSON.stringify(localDepartments);
   const context = dom.getInternalVMContext();
   vm.runInContext(SHARED, context, { filename: 'shared-utils.js' });
+  vm.runInContext(UX, context, { filename: 'shared-ux.js' });
   if (realDialogs) {
     window.requestAnimationFrame = callback => window.setTimeout(callback, 0);
     vm.runInContext(DIALOG, context, { filename: 'dialog.js' });
@@ -380,15 +382,20 @@ function summaryPlan() {
   return data;
 }
 
-test('the Department Summary lists the departments the server calls ours, COE included', async t => {
+/* The summary's groups in order, each with its departments. */
+const summaryGroups = (ui, root = ui.$('spDeptSummary')) => [...root.querySelectorAll('tbody[data-group]')]
+  .map(group => [group.dataset.group, [...group.querySelectorAll('tr[data-dept]')].map(tr => tr.dataset.dept)]);
+
+test('the Department Summary lists every department: ours (the server\'s list, COE included), then the service departments', async t => {
   const ui = await page(t, { generate: () => answer(summaryPlan()) });
   assert.deepEqual(JSON.parse(ui.$('spLocalDepartments').textContent), ['AI', 'COE', 'CS', 'CYB', 'DS', 'IS']);
 
   ui.$('spGenerate').click();
   await settle();
 
-  const shown = [...ui.window.document.querySelectorAll('#spDeptGrid .dept-name')].map(el => el.textContent);
-  assert.deepEqual(shown, ['AI', 'COE']);
+  assert.deepEqual(summaryGroups(ui), [['ours', ['AI', 'COE']], ['service', ['MATH']]]);
+  assert.deepEqual([...ui.window.document.querySelectorAll('#spDeptSummary .sp-sum-group th')].map(th => th.textContent),
+    say(['Our departments', 'Service departments (sections to request)'], ['أقسامنا', 'الأقسام الخدمية (شعب تُطلب منها)']));
 });
 
 test('the page keeps no department list of its own', async t => {
@@ -397,8 +404,7 @@ test('the page keeps no department list of its own', async t => {
   ui.$('spGenerate').click();
   await settle();
 
-  const shown = [...ui.window.document.querySelectorAll('#spDeptGrid .dept-name')].map(el => el.textContent);
-  assert.deepEqual(shown, ['MATH']);
+  assert.deepEqual(summaryGroups(ui), [['ours', ['MATH']], ['service', ['AI', 'COE']]]);
 });
 
 /* ── Male and female are never planned together ── */
@@ -448,7 +454,8 @@ test('results show M, F and Total sections, and the KPIs split them', async t =>
   assert.equal(ui.text('spKpiSections'), '3');
   assert.equal(ui.text('spKpiSectionsSplit'), say('M 1 · F 2', 'ذكور 1 · إناث 2'));
   assert.equal(ui.text('spKpiStudentsSplit'), say('M 12 · F 30', 'ذكور 12 · إناث 30'));
-  assert.match(ui.window.document.querySelector('#spDeptGrid .dept-stat').textContent, AR ? /ذكور 1 · إناث 2/ : /M 1 · F 2/);
+  const ai = ui.window.document.querySelector('#spDeptSummary tr[data-dept="AI"]');
+  assert.deepEqual(['male_sections', 'female_sections', 'sections'].map(col => ai.querySelector(`[data-col="${col}"]`).textContent), ['1', '2', '3']);
   assert.ok(ui.$('spGenderNote').classList.contains('d-none'), 'nothing to report');
 });
 
@@ -790,3 +797,456 @@ for (const [status, data, words] of [
     assert.equal(ui.text('spStatus'), say(...words));
   });
 }
+
+/* ── The scope is a form: Enter in a field runs Generate, never Save ── */
+
+test('the scope form submits through Generate only; Save and the limit fields are outside it', async t => {
+  const ui = await page(t);
+  const form = ui.$('spScopeForm');
+  assert.equal(form.tagName, 'FORM');
+  const submits = [...form.elements].filter(el => el.type === 'submit');
+  assert.deepEqual(submits.map(el => el.id), ['spGenerate'], 'Enter clicks the first submit button: Generate');
+  for (const id of ['spYear', 'spSemester', 'spProgram']) assert.equal(ui.$(id).form, form, id);
+  assert.equal(ui.$('spAdvSaveDb').form, null, 'Save is never a submit of the scope form');
+  assert.equal(ui.input('AI491').form, null, 'Enter in a limit field submits nothing');
+
+  form.requestSubmit();   // what Enter in Year, Semester or Program does
+  await settle();
+
+  assert.equal(ui.requests.filter(r => r.url === GENERATE).length, 1);
+  assert.deepEqual(ui.writes().filter(r => r.url !== GENERATE), [], 'Generate never saves');
+  assert.equal(ui.window.location.pathname, '/section-planning/', 'no page load');
+});
+
+test('a second submit while Generate runs sends nothing more', async t => {
+  let release;
+  const gate = new Promise(resolve => { release = resolve; });
+  const ui = await page(t, { generate: async () => { await gate; return answer(generated()); } });
+
+  ui.$('spScopeForm').requestSubmit();
+  ui.$('spScopeForm').requestSubmit();
+  await settle();
+  assert.equal(ui.requests.filter(r => r.url === GENERATE).length, 1);
+
+  release();
+  await settle();
+  ui.$('spScopeForm').requestSubmit();
+  await settle();
+  assert.equal(ui.requests.filter(r => r.url === GENERATE).length, 2, 'free again once the first answered');
+});
+
+/* ── A phone shows every course's numbers ── */
+
+/* A plan's summary as the server builds it (core.services.section_plan_pipeline.summarise). */
+function summaryOf(rows) {
+  const departments = {};
+  rows.forEach(row => {
+    const d = departments[row.department] ||= { department: row.department, courses: 0, sections: 0, male_sections: 0, female_sections: 0, students: 0, total_credits: 0 };
+    d.courses += 1; d.sections += row.num_sections; d.male_sections += row.male_sections; d.female_sections += row.female_sections;
+    d.students += row.total_students; d.total_credits += 3 * row.num_sections;
+  });
+  return {
+    total_courses: rows.length, total_sections: rows.reduce((n, r) => n + r.num_sections, 0),
+    male_sections: rows.reduce((n, r) => n + r.male_sections, 0), female_sections: rows.reduce((n, r) => n + r.female_sections, 0),
+    total_students: 0, avg_fill_percent: 50, departments: Object.values(departments).sort((a, b) => a.department.localeCompare(b.department)),
+    no_gender: { students: 0, seat_demand: 0, courses: 0 },
+  };
+}
+
+function multiPlan() {
+  const ai = [planRow('AI491', { male_sections: 3, female_sections: 4, num_sections: 7 }), planRow('MATH203', { male_sections: 1, female_sections: 0, num_sections: 1 })];
+  const ds = [planRow('DS201', { male_sections: 1, female_sections: 1, num_sections: 2 }), planRow('MATH203', { male_sections: 0, female_sections: 1, num_sections: 1 })];
+  const combined = [planRow('AI491', { male_sections: 3, female_sections: 4, num_sections: 7, programs: ['AI'] }),
+    planRow('DS201', { male_sections: 1, female_sections: 1, num_sections: 2, programs: ['DS'] }),
+    planRow('MATH203', { male_sections: 1, female_sections: 1, num_sections: 2, programs: ['AI', 'DS'] })];
+  return {
+    ok: true, mode: 'multi', year: 1448, semester: 1, student_count: 60, cohorts: { M: 25, F: 35, no_gender: 0 },
+    combined_plan: combined, combined_summary: summaryOf(combined),
+    programs: [
+      { program: 'AI', student_count: 1, plan: ai, summary: summaryOf(ai) },
+      { program: 'DS', student_count: 2, plan: ds, summary: summaryOf(ds) },
+    ],
+  };
+}
+
+const heads = (_ui, table) => [...table.querySelectorAll('thead th')].map(th => th.textContent.trim());
+
+test('every result cell carries its column header as its phone label, and a card keeps the numbers', async t => {
+  const ui = await page(t, { generate: () => answer(cohortPlan()) });
+  ui.$('spGenerate').click();
+  await settle();
+
+  const table = ui.$('spTable');
+  assert.ok(table.classList.contains('mobile-cards'));
+  assert.ok(table.parentElement.classList.contains('sp-table-scroll'), 'wider than the pane: it scrolls, not the page');
+  const labels = heads(ui, table);
+  const cells = [...table.querySelectorAll('tbody tr[data-code="AI331"] td')];
+  assert.deepEqual(cells.map(td => td.dataset.label), labels);
+  const hidden = cells.filter(td => td.classList.contains('mc-hide')).map(td => td.dataset.label);
+  assert.deepEqual(hidden, say(['#', 'Dept', 'Cr', 'Avg'], ['#', 'القسم', 'ساعات', 'المتوسط']));
+  const card = cls => cells.find(td => td.classList.contains(cls));
+  assert.equal(card('sp-c-demand').querySelector('strong').textContent, '42');
+  assert.equal(card('sp-sec-m').textContent, '1');
+  assert.equal(card('sp-sec-f').textContent, '2');
+  assert.equal(card('sp-sec-total').textContent, '3');
+  assert.match(card('sp-c-max').textContent, /^25/);
+  assert.ok(card('sp-c-fill').querySelector('.sp-fill'));
+  assert.deepEqual(cells.filter(td => td.classList.contains('mc-primary')).map(td => td.dataset.label), labels.slice(2, 4));
+  assert.equal(card('sp-c-status').innerHTML, '', 'no status: an empty cell a phone leaves out');
+});
+
+test('each programme\'s table has the server\'s header and the same phone cards', async t => {
+  const ui = await page(t, { program: 'AI,DS', generate: () => answer(multiPlan()) });
+  ui.$('spGenerate').click();
+  await settle();
+
+  const tables = [...ui.window.document.querySelectorAll('#spMultiPrograms table.sp-plan-table')];
+  assert.equal(tables.length, 2);
+  for (const table of tables) {
+    assert.deepEqual(heads(ui, table), heads(ui, ui.$('spTable')));
+    assert.ok(table.classList.contains('mobile-cards') && table.classList.contains('sp-plan-table'));
+    assert.ok(table.parentElement.classList.contains('sp-table-scroll'));
+    const row = table.querySelector('tbody tr[data-code]');
+    assert.deepEqual([...row.children].map(td => td.dataset.label), heads(ui, table));
+  }
+});
+
+/* ── Names, states and roles a screen reader and a keyboard rely on ── */
+
+test('the disclosure toggles say what they open and whether it is open', async t => {
+  const ui = await page(t);
+  const caps = ui.$('spToggleCaps');
+  assert.equal(caps.tagName, 'BUTTON');
+  assert.equal(caps.type, 'button');
+  assert.equal(caps.getAttribute('aria-controls'), 'spCapsWrap');
+  assert.equal(caps.getAttribute('aria-expanded'), 'false');
+  caps.click();
+  assert.equal(caps.getAttribute('aria-expanded'), 'true');
+  assert.ok(!ui.$('spCapsWrap').classList.contains('d-none'));
+  caps.click();
+  assert.equal(caps.getAttribute('aria-expanded'), 'false');
+  assert.ok(ui.$('spCapsWrap').classList.contains('d-none'));
+
+  const adv = ui.$('spToggleAdv');
+  assert.equal(adv.getAttribute('aria-controls'), 'spAdvPanel');
+  assert.equal(adv.getAttribute('aria-expanded'), 'true', 'the harness opened it');
+});
+
+test('every field has an accessible name in the page\'s language', async t => {
+  const ui = await page(t);
+  const label = id => ui.$(id).labels[0]?.textContent.trim();
+  assert.deepEqual(['spYear', 'spSemester', 'spProgram', 'spDeptFilter'].map(label),
+    say(['Year', 'Semester', 'Program', 'Filter Dept'], ['السنة', 'الفصل', 'البرنامج', 'تصفية القسم']));
+  assert.deepEqual(['spCapLocal4', 'spCapLocalOther', 'spCapExternal'].map(label),
+    say(['Local 4+ cr', 'Local other', 'External'], ['محلي 4+ ساعات', 'محلي أخرى', 'خارجي']));
+  assert.equal(ui.$('spAdvSearch').getAttribute('aria-label'), say('Search courses', 'بحث عن مقرر'));
+  for (const tr of ui.window.document.querySelectorAll('#spAdvBody tr[data-code]')) {
+    const code = tr.dataset.code;
+    assert.equal(tr.querySelector('.adv-input').getAttribute('aria-label'), say(`Seat limit for ${code}`, `الحد الأقصى لشعبة ${code}`));
+    assert.match(tr.querySelector('.adv-all').getAttribute('aria-label'), new RegExp(code));
+  }
+});
+
+test('the status line is polite, an error is an alert, and a warning is amber, never the error style', async t => {
+  let refuse = false;
+  const ui = await page(t, { generate: () => (refuse ? answer({ ok: false, code: 'invalid_term' }, 400) : answer(generated())) });
+  const status = ui.$('spStatus');
+  assert.equal(status.getAttribute('role'), 'status');
+  assert.equal(status.getAttribute('aria-live'), 'polite');
+
+  ui.$('spAdvSaveDb').click();   // nothing to save: a warning
+  await settle();
+  assert.equal(ui.text('spStatus'), say('Nothing to change: the saved limits already match.', 'لا شيء يتغيّر: الحدود المحفوظة مطابقة.'));
+  assert.ok(status.classList.contains('sp-alert-warn'));
+  assert.ok(!status.classList.contains('sp-alert-err'));
+  assert.equal(status.getAttribute('role'), 'status');
+  assert.equal(status.getAttribute('aria-live'), 'polite');
+
+  refuse = true;
+  ui.$('spGenerate').click();
+  await settle();
+  assert.ok(status.classList.contains('sp-alert-err'));
+  assert.equal(status.getAttribute('role'), 'alert');
+  assert.equal(status.getAttribute('aria-live'), 'assertive');
+
+  refuse = false;
+  ui.$('spGenerate').click();
+  await settle();
+  assert.ok(status.classList.contains('sp-alert-ok'));
+  assert.equal(status.getAttribute('role'), 'status');
+  assert.equal(status.getAttribute('aria-live'), 'polite');
+});
+
+test('a programme block opens and closes from the keyboard', async t => {
+  const ui = await page(t, { program: 'AI,DS', generate: () => answer(multiPlan()) });
+  ui.$('spGenerate').click();
+  await settle();
+
+  const toggles = [...ui.window.document.querySelectorAll('#spMultiPrograms .sp-prog-toggle')];
+  assert.equal(toggles.length, 2);
+  const [toggle] = toggles;
+  assert.equal(toggle.tagName, 'BUTTON');
+  assert.equal(toggle.type, 'button');
+  assert.equal(toggle.parentElement.tagName, 'H5', 'still a heading');
+  const body = ui.$(toggle.getAttribute('aria-controls'));
+  assert.ok(body && body.contains(body.querySelector('table')));
+  assert.equal(toggle.getAttribute('aria-expanded'), 'false');
+  assert.ok(body.classList.contains('d-none'));
+
+  toggle.focus();
+  ui.key(toggle, 'Enter');
+  assert.equal(toggle.getAttribute('aria-expanded'), 'true');
+  assert.ok(!body.classList.contains('d-none'));
+  assert.equal(ui.window.document.activeElement, toggle);
+  ui.key(toggle, 'Enter');
+  assert.equal(toggle.getAttribute('aria-expanded'), 'false');
+  assert.ok(body.classList.contains('d-none'));
+});
+
+function sortPlan() {
+  return generated([planRow('AI491', { total_students: 30 }), planRow('CS211', { total_students: 10 }), planRow('MATH203', { total_students: 20 })]);
+}
+const codes = table => [...table.querySelectorAll('tbody tr[data-code]')].map(tr => tr.dataset.code);
+/* How many times one press sorted: the shared sorter sets the pressed
+ * header's aria-sort twice per sort (reset, then the direction). */
+function sortsPerPress(window, th) {
+  const seen = new window.MutationObserver(() => {});
+  seen.observe(th, { attributes: true, attributeFilter: ['aria-sort'] });
+  th.click();
+  const records = seen.takeRecords().length;
+  seen.disconnect();
+  return records / 2;
+}
+
+test('a column sorts once per press however many results came before, and a new result keeps the sort', async t => {
+  const ui = await page(t, { generate: () => answer(sortPlan()) });
+  for (let i = 0; i < 3; i++) { ui.$('spGenerate').click(); await settle(); }
+  const table = ui.$('spTable');
+  const students = table.querySelector('thead th:nth-child(6)');
+
+  assert.equal(sortsPerPress(ui.window, students), 1);
+  assert.equal(students.getAttribute('aria-sort'), 'ascending');
+  assert.deepEqual(codes(table), ['CS211', 'MATH203', 'AI491']);
+  assert.equal(sortsPerPress(ui.window, students), 1);
+  assert.equal(students.getAttribute('aria-sort'), 'descending');
+  assert.deepEqual(codes(table), ['AI491', 'MATH203', 'CS211']);
+
+  ui.$('spGenerate').click();
+  await settle();
+  assert.equal(students.getAttribute('aria-sort'), 'descending', 'the header still tells the truth');
+  assert.deepEqual(codes(table), ['AI491', 'MATH203', 'CS211']);
+  students.click();
+  assert.deepEqual(codes(table), ['CS211', 'MATH203', 'AI491']);
+});
+
+test('a programme table sorts once per press after being opened and closed', async t => {
+  const data = multiPlan();
+  data.programs[0].plan = sortPlan().plan;
+  const ui = await page(t, { program: 'AI,DS', generate: () => answer(data) });
+  ui.$('spGenerate').click();
+  await settle();
+  const toggle = ui.window.document.querySelector('#spMultiPrograms .sp-prog-toggle');
+  for (let i = 0; i < 3; i++) toggle.click();   // open, close, open
+  const table = ui.$(toggle.getAttribute('aria-controls')).querySelector('table.sp-plan-table');
+  const students = table.querySelector('thead th:nth-child(6)');
+
+  assert.equal(sortsPerPress(ui.window, students), 1);
+  assert.equal(students.getAttribute('aria-sort'), 'ascending');
+  assert.deepEqual(codes(table), ['CS211', 'MATH203', 'AI491']);
+});
+
+/* ── The Department Summary adds up to the KPIs ── */
+
+const cellsOf = tr => Object.fromEntries([...tr.querySelectorAll('[data-col]')].map(td => [td.dataset.col, Number(td.textContent)]));
+
+test('the summary\'s total row equals the KPIs, M and F included, with a subtotal per group', async t => {
+  const plan = [
+    planRow('AI331', { male_sections: 1, female_sections: 2, num_sections: 3 }),
+    planRow('CS211', { male_sections: 2, female_sections: 0, num_sections: 2 }),
+    planRow('MATH203', { male_sections: 1, female_sections: 1, num_sections: 2 }),
+  ];
+  const data = generated(plan);
+  data.summary = summaryOf(plan);
+  const ui = await page(t, { generate: () => answer(data) });
+  ui.$('spGenerate').click();
+  await settle();
+
+  const doc = ui.window.document;
+  assert.deepEqual(summaryGroups(ui), [['ours', ['AI', 'CS']], ['service', ['MATH']]]);
+  const total = cellsOf(doc.querySelector('#spDeptSummary tfoot tr[data-sum-total]'));
+  assert.equal(String(total.sections), ui.text('spKpiSections'));
+  assert.equal(String(total.courses), ui.text('spKpiCourses'));
+  assert.equal(splitText(total.male_sections, total.female_sections), ui.text('spKpiSectionsSplit'));
+  assert.deepEqual([total.male_sections, total.female_sections, total.sections], [4, 3, 7]);
+  assert.equal(cellsOf(doc.querySelector('#spDeptSummary [data-subtotal="ours"]')).sections, 5);
+  assert.equal(cellsOf(doc.querySelector('#spDeptSummary [data-subtotal="service"]')).sections, 2);
+  const heads = [...doc.querySelectorAll('#spDeptSummary thead th')].map(th => th.textContent);
+  assert.deepEqual(heads, say(
+    ['Department', 'M sections', 'F sections', 'Total sections', 'Courses', 'Seat demand', 'Teaching hours'],
+    ['القسم', 'شعب الذكور', 'شعب الإناث', 'مجموع الشعب', 'المقررات', 'المقاعد المطلوبة', 'ساعات التدريس'],
+  ));
+  // Each number sits under its own header, in every row.
+  for (const tr of doc.querySelectorAll('#spDeptSummary tr[data-dept], #spDeptSummary tfoot tr')) {
+    assert.deepEqual([...tr.children].slice(1).map(td => td.dataset.col),
+      ['male_sections', 'female_sections', 'sections', 'courses', 'students', 'total_credits']);
+  }
+
+  function splitText(m, f) { return say(`M ${m} · F ${f}`, `ذكور ${m} · إناث ${f}`); }
+});
+
+test('one group needs no subtotal', async t => {
+  const plan = [planRow('AI331', { male_sections: 1, female_sections: 1, num_sections: 2 })];
+  const data = generated(plan);
+  data.summary = summaryOf(plan);
+  const ui = await page(t, { generate: () => answer(data) });
+  ui.$('spGenerate').click();
+  await settle();
+  assert.deepEqual(summaryGroups(ui), [['ours', ['AI']]]);
+  assert.equal(ui.window.document.querySelectorAll('#spDeptSummary .sp-sum-sub').length, 0);
+  assert.equal(cellsOf(ui.window.document.querySelector('#spDeptSummary [data-sum-total]')).sections, 2);
+});
+
+test('several programmes: the summary totals the pooled KPIs, and each programme\'s totals its heading', async t => {
+  const data = multiPlan();
+  const ui = await page(t, { program: 'AI,DS', generate: () => answer(data) });
+  ui.$('spGenerate').click();
+  await settle();
+
+  const doc = ui.window.document;
+  const pooled = cellsOf(doc.querySelector('#spDeptSummary [data-sum-total]'));
+  assert.equal(String(pooled.sections), ui.text('spKpiSections'));
+  assert.equal(String(pooled.courses), ui.text('spKpiCourses'));
+  assert.deepEqual(summaryGroups(ui), [['ours', ['AI', 'DS']], ['service', ['MATH']]]);
+
+  const blocks = [...doc.querySelectorAll('#spMultiPrograms .sp-prog-block')];
+  assert.equal(blocks.length, 2);
+  blocks.forEach((block, i) => {
+    const prog = data.programs[i];
+    const total = cellsOf(block.querySelector('[data-sum-total]'));
+    assert.deepEqual([total.courses, total.male_sections, total.female_sections, total.sections],
+      [prog.summary.total_courses, prog.summary.male_sections, prog.summary.female_sections, prog.summary.total_sections]);
+    const heading = block.querySelector('.sp-prog-toggle').textContent.replace(/\s+/g, ' ');
+    assert.ok(heading.includes(`${prog.summary.total_sections} `), heading);
+    assert.ok(block.querySelector('.sp-sum-panel h6').textContent.includes(prog.program));
+  });
+  assert.deepEqual(summaryGroups(ui, blocks[1]), [['ours', ['DS']], ['service', ['MATH']]]);
+});
+
+/* ── Arabic and English words agree with their numbers ── */
+
+test('programme headings count in words that agree with the number, numbers and codes as LTR islands', async t => {
+  const ui = await page(t, { program: 'AI,DS', generate: () => answer(multiPlan()) });
+  ui.$('spGenerate').click();
+  await settle();
+
+  const headings = [...ui.window.document.querySelectorAll('#spMultiPrograms .sp-prog-toggle')];
+  assert.deepEqual(headings.map(h => h.textContent.replace(/\s+/g, ' ').trim()), say(
+    ['AI (1 student · 2 courses · 8 sections: M 4 · F 4)', 'DS (2 students · 2 courses · 3 sections: M 1 · F 2)'],
+    ['AI (1 طالب · 2 مقرران · 8 شعب: ذكور 4 · إناث 4)', 'DS (2 طالبان · 2 مقرران · 3 شعب: ذكور 1 · إناث 2)'],
+  ));
+  const [ai] = headings;
+  assert.equal(ai.querySelector('.sp-prog-code').tagName, 'BDI');
+  assert.deepEqual([...ai.querySelectorAll('.sp-prog-count bdi')].map(b => b.textContent), ['1', '2', '8']);
+  const summaryNumbers = [...ui.window.document.querySelectorAll('#spDeptSummary td[data-col]')];
+  assert.ok(summaryNumbers.length && summaryNumbers.every(td => td.firstElementChild?.tagName === 'BDI'));
+  assert.ok([...ui.window.document.querySelectorAll('#spDeptSummary tr[data-dept] th')].every(th => th.firstElementChild?.tagName === 'BDI'));
+});
+
+for (const [n, en, ar] of [
+  [1, '1 course', '1 مقرر'], [2, '2 courses', '2 مقرران'], [3, '3 courses', '3 مقررات'],
+  [11, '11 courses', '11 مقرراً'], [100, '100 courses', '100 مقرر'],
+]) {
+  test(`the course list counts ${n} as "${say(en, ar)}"`, async t => {
+    const course = i => ({ course_code: `X${i}`, department: 'X', credit_hours: 3, is_external: false, default_max: 40,
+      programme_max: null, programmes: ['AI'], programme_limits: {} });
+    const ui = await page(t, { courses: () => answer({ ok: true, courses: Array.from({ length: n }, (_, i) => course(i)) }) });
+    assert.equal(ui.text('spAdvCount'), say(en, ar));
+  });
+}
+
+test('every disclosure control carries one chevron the stylesheet turns, and no arrow glyph', async t => {
+  const ui = await page(t, { program: 'AI,DS', generate: () => answer(multiPlan()) });
+  ui.$('spGenerate').click();
+  await settle();
+  const toggles = [ui.$('spToggleCaps'), ui.$('spToggleAdv'), ...ui.window.document.querySelectorAll('.sp-prog-toggle')];
+  assert.equal(toggles.length, 4);
+  for (const toggle of toggles) {
+    const chevrons = toggle.querySelectorAll(':scope > svg.sp-chev');
+    assert.equal(chevrons.length, 1, toggle.id || toggle.className);
+    assert.equal(chevrons[0].getAttribute('aria-hidden'), 'true');
+    assert.doesNotMatch(toggle.textContent, /[▶▼◀]/);
+    assert.ok(toggle.hasAttribute('aria-expanded'));
+  }
+  const [, , prog] = toggles;
+  prog.click();
+  assert.equal(prog.getAttribute('aria-expanded'), 'true');
+  assert.equal(prog.querySelectorAll('svg.sp-chev').length, 1, 'the same chevron, turned by CSS');
+});
+
+/* ── One announcement per outcome, from a region that is always there ── */
+
+test('a successful Generate is announced once, by a status line that never leaves the page', async t => {
+  const ui = await page(t);
+  const status = ui.$('spStatus');
+  assert.ok(!status.classList.contains('d-none'), 'in the page before its first message');
+  const seen = new ui.window.MutationObserver(() => {});
+  seen.observe(status, { attributes: true, attributeFilter: ['class'], attributeOldValue: true });
+
+  ui.$('spGenerate').click();
+  await settle();
+  ui.$('spReset').click();   // clears the line
+  await settle();
+  assert.equal(ui.text('spStatus'), '');
+  ui.$('spGenerate').click();
+  await settle();
+
+  const classes = [...seen.takeRecords().map(record => record.oldValue || ''), status.className];
+  seen.disconnect();
+  assert.deepEqual(classes.filter(value => value.split(/\s+/).includes('d-none')), [], 'never display:none');
+  const done = say('Section plan generated successfully.', 'تم حساب خطة الشعب بنجاح.');
+  assert.equal(ui.text('spStatus'), done);
+  assert.equal(status.getAttribute('role'), 'status');
+  assert.deepEqual(ui.toasts, [], 'not a toast as well');
+  const saying = [...ui.window.document.querySelectorAll('[role="status"], [role="alert"], [aria-live]')]
+    .filter(region => region.textContent.includes(done));
+  assert.deepEqual(saying.map(region => region.id), ['spStatus']);
+});
+
+/* ── The summary's rows are named by their headers ── */
+
+test('each summary row is named by a row header, the total too, and each programme\'s summary by its own heading', async t => {
+  const data = multiPlan();
+  const ui = await page(t, { program: 'AI,DS', generate: () => answer(data) });
+  ui.$('spGenerate').click();
+  await settle();
+  const doc = ui.window.document;
+
+  function rowHeaders(root, summary) {
+    const rows = [...root.querySelectorAll('tbody tr[data-dept]')];
+    assert.deepEqual(rows.map(tr => tr.dataset.dept).sort(), summary.departments.map(d => d.department).sort());
+    for (const tr of rows) {
+      const head = tr.firstElementChild;
+      assert.equal(head.tagName, 'TH', tr.dataset.dept);
+      assert.equal(head.getAttribute('scope'), 'row', tr.dataset.dept);
+      assert.equal(head.textContent.trim(), tr.dataset.dept);
+    }
+    const total = root.querySelector('tfoot tr[data-sum-total]').firstElementChild;
+    assert.equal(total.tagName, 'TH');
+    assert.equal(total.getAttribute('scope'), 'row');
+    assert.equal(total.textContent.trim(), say('Total', 'المجموع'));
+  }
+
+  rowHeaders(ui.$('spDeptSummary'), data.combined_summary);
+  const blocks = [...doc.querySelectorAll('#spMultiPrograms .sp-prog-block')];
+  assert.equal(blocks.length, data.programs.length);
+  blocks.forEach((block, i) => {
+    const prog = data.programs[i];
+    const region = block.querySelector('.sp-sum-panel');
+    assert.equal(region.tagName, 'SECTION');
+    const title = doc.getElementById(region.getAttribute('aria-labelledby') || '');
+    assert.ok(title && region.contains(title), `${prog.program}: the region is named by its heading`);
+    assert.equal(title.tagName, 'H6');
+    assert.equal(title.textContent.replace(/\s+/g, ' ').trim(), `${say('Department Summary', 'ملخص الأقسام')} · ${prog.program}`);
+    rowHeaders(region, prog.summary);
+  });
+});
