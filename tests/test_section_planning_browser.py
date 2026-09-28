@@ -336,8 +336,10 @@ class SectionPlanningBrowserTests(StaticLiveServerTestCase):
         .map(tr => ({ code: tr.dataset.code,
           hidden: Object.entries(parts).filter(([, i]) => !shown(tr.children[i])).map(([k]) => k) }));
       const main = document.querySelector('main');
+      const boxes = [...document.querySelectorAll('.sp-table-scroll')]
+        .filter(box => box.closest('.d-none') === null).map(box => box.scrollWidth - box.clientWidth);
       return { rows, page: document.documentElement.scrollWidth - innerWidth,
-               main: main.scrollWidth - main.clientWidth };
+               main: main.scrollWidth - main.clientWidth, boxes };
     }"""
 
     def _generate(self, page) -> None:
@@ -355,6 +357,88 @@ class SectionPlanningBrowserTests(StaticLiveServerTestCase):
             self.assertEqual([r for r in facts["rows"] if r["hidden"]], [], where)
             self.assertLessEqual(facts["page"], 0, f"{where}: the page scrolls sideways")
             self.assertLessEqual(facts["main"], 1, f"{where}: the pane scrolls sideways")
+            if width == 1440:
+                # A desktop fits the whole table: no scrollbar under it.
+                self.assertTrue(facts["boxes"], where)
+                self.assertLessEqual(max(facts["boxes"]), 0, f"{where}: the table scrolls sideways")
+
+    def test_a_desktop_fits_the_table_with_every_programme_tag(self) -> None:
+        # Several programmes tag each course with its programmes, and the
+        # catalogue's longest unbreakable name (STAT305's) sets the narrowest
+        # a name column gets: the widest rows the table draws. Still no
+        # scrollbar under it at 1440px.
+        long_name = _row(
+            "STAT305",
+            "PROBABILITY&STATISTICS FOR ENGINEERS",
+            male=40,
+            female=41,
+            m_sec=1,
+            f_sec=2,
+            cap=50,
+            fill=54,
+            is_external=True,
+        )
+        rows = [*PLAN, long_name]
+        plan = dict(
+            MULTI,
+            combined_plan=[dict(row, programs=["AI", "DS"]) for row in rows],
+            combined_summary=_summary(rows),
+        )
+        for language in ("en", "ar"):
+            for wide_font in (False, True):
+                where = f"{language} 1440px{' wide font' if wide_font else ''}"
+                page = self._page(language, 1440, wide_font=wide_font, plan=plan)
+                page.locator("#spProgram").fill("AI,DS")
+                page.locator("#spGenerate").click()
+                expect(page.locator("#spTable tbody tr[data-code]")).to_have_count(len(rows))
+                for toggle in page.locator("#spMultiPrograms .sp-prog-toggle").all():
+                    toggle.click()  # each programme's own table too
+                facts = page.evaluate(self.PHONE, False)
+                self.assertEqual(len(facts["boxes"]), 3, where)
+                self.assertLessEqual(max(facts["boxes"]), 0, f"{where}: {facts['boxes']}")
+
+    # At 1024px (769px and up) the table may scroll sideways in its box: at
+    # rest the code column is see-through like the rest; scrolled to its far
+    # end, each row's code (sticky, now opaque) and Total are still in the box.
+    STICKY = r"""async () => {
+      const box = document.querySelector('#spTable').closest('.sp-table-scroll');
+      const alpha = el => { const n = (getComputedStyle(el).backgroundColor.match(/[\d.]+/g) || []).map(Number);
+        return n.length > 3 ? n[3] : 1; };
+      const rows = [...document.querySelectorAll('#spTable tbody tr[data-code]')];
+      const codes = () => [document.querySelector('#spTable thead th:nth-child(3)'), ...rows.map(tr => tr.children[2])];
+      const frame = () => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      const atRest = codes().map(alpha);
+      box.scrollLeft = document.documentElement.dir === 'rtl' ? -box.scrollWidth : box.scrollWidth;
+      await frame();
+      const edge = box.getBoundingClientRect();
+      const inside = el => { const r = el.getBoundingClientRect();
+        return r.width > 1 && r.left >= edge.left - 0.5 && r.right <= edge.right + 0.5; };
+      const facts = { overflow: box.scrollWidth - box.clientWidth, scrolledBy: Math.abs(box.scrollLeft),
+        atRest, scrolled: codes().map(alpha),
+        hidden: rows.filter(tr => !inside(tr.children[2]) || !inside(tr.children[8])).map(tr => tr.dataset.code),
+        headInside: inside(codes()[0]) };
+      box.scrollLeft = 0;
+      await frame();
+      facts.backAtRest = codes().map(alpha);
+      return facts;
+    }"""
+
+    def test_a_table_scrolled_sideways_keeps_each_course_code_in_view(self) -> None:
+        for language in ("en", "ar"):
+            for wide_font in (False, True):
+                where = f"{language} 1024px{' wide font' if wide_font else ''}"
+                page = self._page(language, 1024, wide_font=wide_font)
+                self._generate(page)
+                facts = page.evaluate(self.STICKY)
+                self.assertGreater(facts["overflow"], 0, f"{where}: nothing to scroll: {facts}")
+                self.assertGreater(facts["scrolledBy"], 0, f"{where}: {facts}")
+                self.assertEqual(set(facts["atRest"]), {0}, f"{where}: opaque at rest: {facts}")
+                self.assertEqual(facts["hidden"], [], f"{where}: {facts}")
+                self.assertTrue(facts["headInside"], f"{where}: {facts}")
+                self.assertEqual(
+                    set(facts["scrolled"]), {1}, f"{where}: see-through when stuck: {facts}"
+                )
+                self.assertEqual(set(facts["backAtRest"]), {0}, f"{where}: {facts}")
 
     def test_every_row_shows_its_numbers_at_every_width(self) -> None:
         for language in ("en", "ar"):
@@ -404,6 +488,83 @@ class SectionPlanningBrowserTests(StaticLiveServerTestCase):
             expect(toggle).to_have_attribute("aria-expanded", "true")
             page.keyboard.press("Space")
             expect(toggle).to_have_attribute("aria-expanded", "false")
+
+    # A scope field draws no outline of its own (the shared field style): its
+    # capsule's outer ring is the focus indicator. The ring's colour and
+    # spread, the theme's --teal and the page behind it, as computed.
+    CAPSULE_RING = r"""(id) => {
+      const rgba = value => { const n = (value.match(/[\d.]+/g) || []).map(Number); return [n[0], n[1], n[2], n.length > 3 ? n[3] : 1]; };
+      const probe = document.createElement('i');
+      probe.style.color = 'var(--teal)';
+      document.body.append(probe);
+      const teal = rgba(getComputedStyle(probe).color);
+      probe.remove();
+      const capsule = document.getElementById(id).closest('.fb-search');
+      const rings = getComputedStyle(capsule).boxShadow.split(/,(?![^(]*\))/)
+        .filter(shadow => !shadow.includes('inset'))
+        .map(shadow => { const colour = (shadow.match(/rgba?\([^)]*\)/) || [''])[0];
+          const lengths = shadow.replace(colour, '').trim().split(/\s+/).map(parseFloat);
+          return { colour: rgba(colour), spread: lengths[3] || 0 }; });
+      return { active: document.activeElement.id, rings, teal,
+               page: rgba(getComputedStyle(document.body).backgroundColor) };
+    }"""
+
+    def test_scope_fields_show_a_full_strength_focus_ring_in_light_and_dark(self) -> None:
+        for language in ("en", "ar"):
+            for theme in ("light", "dark"):
+                page = self._page(language, theme=theme)
+                self.assertEqual(page.evaluate("document.documentElement.dataset.theme"), theme)
+                page.add_style_tag(
+                    content="*, *::before, *::after { transition: none !important; }"
+                )
+                for field in ("spYear", "spSemester", "spProgram"):
+                    where = f"{language} {theme} #{field}"
+                    self.assertTrue(self._tab_to(page, f"#{field}")["reached"], where)
+                    ring = page.evaluate(self.CAPSULE_RING, field)
+                    self.assertEqual(ring["active"], field, where)
+                    outer = [r for r in ring["rings"] if r["spread"] >= 2]
+                    self.assertEqual(len(outer), 1, f"{where}: {ring}")
+                    self.assertEqual(
+                        outer[0]["colour"], ring["teal"], f"{where}: a faint ring: {ring}"
+                    )
+                    ratio = self._contrast(outer[0]["colour"], ring["page"])
+                    self.assertGreaterEqual(ratio, 3, f"{where}: {ratio:.2f} against the page")
+
+    # The summary's row lines and the teal rule over its total run under every
+    # column, and "Total" is inked like its numbers, in both themes.
+    SUMMARY_LINES = r"""() => {
+      const probe = document.createElement('i');
+      document.body.append(probe);
+      const token = name => { probe.style.color = `var(${name})`; return getComputedStyle(probe).color; };
+      const tokens = { teal: token('--teal'), t5: token('--t5'), t1: token('--t1') };
+      probe.remove();
+      const cs = (el, prop) => getComputedStyle(el)[prop];
+      return [...document.querySelectorAll('.sp-sum-table')].map(table => ({
+        tokens,
+        rowLines: [...table.querySelectorAll('tbody tr[data-dept] > *')].map(c => cs(c, 'borderBottomColor')),
+        totalRule: [...table.querySelectorAll('tfoot tr > *')].map(c => `${cs(c, 'borderTopColor')} ${cs(c, 'borderTopWidth')}`),
+        totalInk: [...table.querySelectorAll('tfoot tr > *')].map(c => cs(c, 'color')),
+      }));
+    }"""
+
+    def test_the_summary_rules_run_under_every_column_in_light_and_dark(self) -> None:
+        for language in ("en", "ar"):
+            for theme in ("light", "dark"):
+                where = f"{language} {theme}"
+                page = self._page(language, theme=theme, plan=MULTI)
+                page.locator("#spProgram").fill("AI,DS")
+                page.locator("#spGenerate").click()
+                expect(page.locator("#spMultiPrograms .sp-prog-toggle")).to_have_count(2)
+                tables = page.evaluate(self.SUMMARY_LINES)
+                self.assertEqual(len(tables), 3, where)  # all programmes, then AI and DS
+                for table in tables:
+                    tokens = table["tokens"]
+                    self.assertTrue(table["rowLines"], where)
+                    self.assertEqual(set(table["rowLines"]), {tokens["t5"]}, f"{where}: {table}")
+                    self.assertEqual(
+                        set(table["totalRule"]), {f"{tokens['teal']} 2px"}, f"{where}: {table}"
+                    )
+                    self.assertEqual(set(table["totalInk"]), {tokens["t1"]}, f"{where}: {table}")
 
     # ── 3. Arabic labels are words, not spaced-out letters; chevrons mirror ──
 
@@ -502,7 +663,10 @@ class SectionPlanningBrowserTests(StaticLiveServerTestCase):
                 self.assertEqual(colour[3], 1, f"{theme} {band} is see-through: {colour}")
                 for name, backdrop in facts["backdrops"].items():
                     if name == "track" and theme == "light":
-                        continue  # the light track is --t5 grey, a light-theme question
+                        # Pre-existing, an owner decision: against the light
+                        # --t5 track every bar is under 3:1 (teal 1.76, amber
+                        # 2.03, red 2.43). The dark track passes (4.5-8.4:1).
+                        continue
                     ratio = self._contrast(colour, backdrop)
                     # WCAG 1.4.11: a graphic that carries meaning needs 3:1.
                     self.assertGreaterEqual(ratio, 3, f"{theme} {band} on {name}: {ratio:.2f}")

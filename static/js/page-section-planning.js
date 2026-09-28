@@ -649,8 +649,15 @@ function showStatus(msg, type) {
   el.textContent = msg;
   el.classList.remove('d-none');
 }
+/* Emptied, never display:none: a live region has to be in the page before its
+ * words change, or a screen reader may not read them. Empty and classless, it
+ * takes no room. */
 function hideStatus() {
-  $('spStatus').classList.add('d-none');
+  const el = $('spStatus');
+  el.textContent = '';
+  el.className = '';
+  el.setAttribute('role', 'status');
+  el.setAttribute('aria-live', 'polite');
 }
 
 /* ── Render results ── */
@@ -673,6 +680,17 @@ function keepSort(table) {
   const th = table.querySelector('thead th[data-dir]');
   if (th) { th.click(); th.click(); }
 }
+
+/* A results table scrolled sideways keeps its course code in view (a sticky
+ * column, global.css), opaque only while scrolled. One listener for every
+ * results box, present or rendered later: scroll does not bubble, so it
+ * listens in the capture phase. scrollLeft is negative when Arabic scrolls. */
+document.addEventListener('scroll', event => {
+  const box = event.target;
+  if (box instanceof Element && box.classList.contains('sp-table-scroll')) {
+    box.classList.toggle('sp-scrolled', box.scrollLeft !== 0);
+  }
+}, { capture: true, passive: true });
 
 function renderResults(data) {
   if (data.mode === 'multi') {
@@ -1002,8 +1020,7 @@ async function runGenerate() {
 
     _lastPayload = payload;
     renderResults(data);
-    showStatus(T.done, 'ok');
-    if (typeof notify !== 'undefined') notify.success(T.done);
+    showStatus(T.done, 'ok');   // the one success channel: the status line, not a toast as well
 
   } catch (err) {
     showStatus(T.reqFailed + ': ' + err.message, 'err');

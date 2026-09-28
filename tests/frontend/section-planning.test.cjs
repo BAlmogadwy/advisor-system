@@ -1182,3 +1182,71 @@ test('every disclosure control carries one chevron the stylesheet turns, and no 
   assert.equal(prog.getAttribute('aria-expanded'), 'true');
   assert.equal(prog.querySelectorAll('svg.sp-chev').length, 1, 'the same chevron, turned by CSS');
 });
+
+/* ── One announcement per outcome, from a region that is always there ── */
+
+test('a successful Generate is announced once, by a status line that never leaves the page', async t => {
+  const ui = await page(t);
+  const status = ui.$('spStatus');
+  assert.ok(!status.classList.contains('d-none'), 'in the page before its first message');
+  const seen = new ui.window.MutationObserver(() => {});
+  seen.observe(status, { attributes: true, attributeFilter: ['class'], attributeOldValue: true });
+
+  ui.$('spGenerate').click();
+  await settle();
+  ui.$('spReset').click();   // clears the line
+  await settle();
+  assert.equal(ui.text('spStatus'), '');
+  ui.$('spGenerate').click();
+  await settle();
+
+  const classes = [...seen.takeRecords().map(record => record.oldValue || ''), status.className];
+  seen.disconnect();
+  assert.deepEqual(classes.filter(value => value.split(/\s+/).includes('d-none')), [], 'never display:none');
+  const done = say('Section plan generated successfully.', 'تم حساب خطة الشعب بنجاح.');
+  assert.equal(ui.text('spStatus'), done);
+  assert.equal(status.getAttribute('role'), 'status');
+  assert.deepEqual(ui.toasts, [], 'not a toast as well');
+  const saying = [...ui.window.document.querySelectorAll('[role="status"], [role="alert"], [aria-live]')]
+    .filter(region => region.textContent.includes(done));
+  assert.deepEqual(saying.map(region => region.id), ['spStatus']);
+});
+
+/* ── The summary's rows are named by their headers ── */
+
+test('each summary row is named by a row header, the total too, and each programme\'s summary by its own heading', async t => {
+  const data = multiPlan();
+  const ui = await page(t, { program: 'AI,DS', generate: () => answer(data) });
+  ui.$('spGenerate').click();
+  await settle();
+  const doc = ui.window.document;
+
+  function rowHeaders(root, summary) {
+    const rows = [...root.querySelectorAll('tbody tr[data-dept]')];
+    assert.deepEqual(rows.map(tr => tr.dataset.dept).sort(), summary.departments.map(d => d.department).sort());
+    for (const tr of rows) {
+      const head = tr.firstElementChild;
+      assert.equal(head.tagName, 'TH', tr.dataset.dept);
+      assert.equal(head.getAttribute('scope'), 'row', tr.dataset.dept);
+      assert.equal(head.textContent.trim(), tr.dataset.dept);
+    }
+    const total = root.querySelector('tfoot tr[data-sum-total]').firstElementChild;
+    assert.equal(total.tagName, 'TH');
+    assert.equal(total.getAttribute('scope'), 'row');
+    assert.equal(total.textContent.trim(), say('Total', 'المجموع'));
+  }
+
+  rowHeaders(ui.$('spDeptSummary'), data.combined_summary);
+  const blocks = [...doc.querySelectorAll('#spMultiPrograms .sp-prog-block')];
+  assert.equal(blocks.length, data.programs.length);
+  blocks.forEach((block, i) => {
+    const prog = data.programs[i];
+    const region = block.querySelector('.sp-sum-panel');
+    assert.equal(region.tagName, 'SECTION');
+    const title = doc.getElementById(region.getAttribute('aria-labelledby') || '');
+    assert.ok(title && region.contains(title), `${prog.program}: the region is named by its heading`);
+    assert.equal(title.tagName, 'H6');
+    assert.equal(title.textContent.replace(/\s+/g, ' ').trim(), `${say('Department Summary', 'ملخص الأقسام')} · ${prog.program}`);
+    rowHeaders(region, prog.summary);
+  });
+});

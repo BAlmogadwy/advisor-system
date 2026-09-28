@@ -8485,6 +8485,9 @@ html[data-theme="dark"] .btn-export {
     .sp-page .sp-dept-filter-input { width: calc(22ch + 2.5rem); }
     /* The capsule is the field: a keyboard user sees a full-strength ring. */
     .sp-page .fb-search:focus-within { box-shadow: var(--shadow-neu-inset), 0 0 0 2px var(--teal); }
+    /* Dark mode's shared field glow is a 20% ring set with !important; the
+       page's full-strength ring has to win there too (4.6:1 on Deep Navy). */
+    html[data-theme="dark"] .sp-page .fb-search:focus-within { box-shadow: inset 0 1px 3px rgba(0,0,0,0.2), 0 0 0 2px var(--teal) !important; }
 
     /* KPI cards */
     .sp-kpi { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; margin-bottom: 14px; }
@@ -8516,17 +8519,20 @@ html[data-theme="dark"] .btn-export {
     /* Department summary: one table, our departments then the service
        departments, a subtotal each, and a total row equal to the KPIs.
        Numbers end-aligned in tabular figures; it scrolls in its own box
-       if a phone is narrower than its seven columns. */
+       if a phone is narrower than its seven columns. Scoped to .sp-page so
+       they outrank the global dark table rules (html[data-theme] table td,
+       table th), which would otherwise fade the row lines, the teal total
+       rule and the "Total" label under every column but the first. */
     .sp-sum-scroll { overflow-x: auto; }
-    .sp-sum-table { width: 100%; border-collapse: collapse; font-size: .8rem; font-variant-numeric: tabular-nums; }
-    .sp-sum-table th, .sp-sum-table td { padding: 5px 8px; border-bottom: 1px solid var(--t5); text-align: end; }
-    .sp-sum-table thead th { font-size: .75rem; font-weight: 700; color: var(--t3); vertical-align: bottom; }
-    .sp-sum-table thead th:first-child, .sp-sum-table th[scope="row"] { text-align: start; }
-    .sp-sum-table tbody th[scope="row"] { font-weight: 700; color: var(--navy); }
-    .sp-sum-table .sp-sum-group th { text-align: start; font-size: .75rem; font-weight: 700; color: var(--t2); padding-top: 10px; background: color-mix(in srgb, var(--teal) 6%, transparent); }
-    .sp-sum-table .sp-sum-sub th, .sp-sum-table .sp-sum-sub td { color: var(--t2); font-weight: 600; border-bottom-style: dashed; }
-    .sp-sum-table [data-col="sections"] { font-weight: 700; }
-    .sp-sum-table tfoot th, .sp-sum-table tfoot td { font-weight: 700; color: var(--t1); border-top: 2px solid var(--teal); border-bottom: 0; }
+    .sp-page .sp-sum-table { width: 100%; border-collapse: collapse; font-size: .8rem; font-variant-numeric: tabular-nums; }
+    .sp-page .sp-sum-table th, .sp-page .sp-sum-table td { padding: 5px 8px; border-bottom: 1px solid var(--t5); text-align: end; }
+    .sp-page .sp-sum-table thead th { font-size: .75rem; font-weight: 700; color: var(--t3); vertical-align: bottom; }
+    .sp-page .sp-sum-table thead th:first-child, .sp-page .sp-sum-table th[scope="row"] { text-align: start; }
+    .sp-page .sp-sum-table tbody th[scope="row"] { font-weight: 700; color: var(--navy); }
+    .sp-page .sp-sum-table .sp-sum-group th { text-align: start; font-size: .75rem; font-weight: 700; color: var(--t2); padding-top: 10px; background: color-mix(in srgb, var(--teal) 6%, transparent); }
+    .sp-page .sp-sum-table .sp-sum-sub th, .sp-page .sp-sum-table .sp-sum-sub td { color: var(--t2); font-weight: 600; border-bottom-style: dashed; }
+    .sp-page .sp-sum-table [data-col="sections"] { font-weight: 700; }
+    .sp-page .sp-sum-table tfoot th, .sp-page .sp-sum-table tfoot td { font-weight: 700; color: var(--t1); border-top: 2px solid var(--teal); border-bottom: 0; }
 
     /* Export bar */
     .sp-export-bar { display: flex; align-items: center; gap: 10px; margin-top: 10px; padding: 8px 0; }
@@ -8590,6 +8596,25 @@ html[data-theme="dark"] .btn-export {
     /* A results table is 13 columns: wider than the pane at 1024px, so it
        scrolls inside its own box, never the page. */
     .sp-page .sp-table-scroll { overflow-x: auto; }
+    /* Its headers wrap between words with a narrower gutter: one-word
+       numbers under two-word headers ("Total sections", "مجموع الشعب") made
+       the table wider than the pane at 1440px in Arabic, in a wider font and
+       with every programme's tags. */
+    .sp-page .sp-plan-table thead th { white-space: normal; padding-inline: 8px; vertical-align: bottom; }
+    /* When it does scroll sideways (769px and up), the course code stays in
+       view. It is opaque only while the box is scrolled (the page script
+       sets .sp-scrolled), so at rest it looks like every other column. */
+    @media (min-width: 769px) {
+      .sp-page .sp-plan-table > thead > tr > th:nth-child(3),
+      .sp-page .sp-plan-table > tbody > tr > td:nth-child(3) { position: sticky; inset-inline-start: 0; z-index: 1; }
+      .sp-page .sp-table-scroll.sp-scrolled .sp-plan-table > thead > tr > th:nth-child(3),
+      .sp-page .sp-table-scroll.sp-scrolled .sp-plan-table > tbody > tr > td:nth-child(3) {
+        background: var(--surface) !important;
+        box-shadow: 1px 0 0 var(--t5);
+      }
+      html[dir="rtl"] .sp-page .sp-table-scroll.sp-scrolled .sp-plan-table > thead > tr > th:nth-child(3),
+      html[dir="rtl"] .sp-page .sp-table-scroll.sp-scrolled .sp-plan-table > tbody > tr > td:nth-child(3) { box-shadow: -1px 0 0 var(--t5); }
+    }
 
     /* Responsive */
     @media(max-width:768px) {
@@ -8616,8 +8641,8 @@ html[data-theme="dark"] .btn-export {
       .sp-page .sp-plan-table .sp-sec-total { order: 6; }
       .sp-page .sp-plan-table .sp-c-status { order: 7; grid-column: 1 / -1; align-items: flex-start; }
       .sp-page .sp-plan-table.mobile-cards tbody td.sp-c-status:empty { display: none; }
-      .sp-sum-table { font-size: .75rem; }
-      .sp-sum-table th, .sp-sum-table td { padding: 4px 5px; }
+      .sp-page .sp-sum-table { font-size: .75rem; }
+      .sp-page .sp-sum-table th, .sp-page .sp-sum-table td { padding: 4px 5px; }
     }
 
     /* ═══════════════════════════════════════════════════════════

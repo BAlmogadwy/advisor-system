@@ -116,7 +116,7 @@
 </div>
 
 <!-- ─── Status alert ─── -->
-<div id="spStatus" class="d-none" role="status" aria-live="polite"></div>
+<div id="spStatus" role="status" aria-live="polite"></div>
 
 <!-- ─── Results (hidden until generated) ─── -->
 <div id="spResults" class="d-none">
@@ -205,5 +205,5 @@
   const LANGUAGE_CODE = "{{ LANGUAGE_CODE|default:'en' }}";
   const djCsrfToken = "{{ csrf_token }}";
 </script>
-<script src="{% static 'js/page-section-planning.js' %}?v=11"></script>
+<script src="{% static 'js/page-section-planning.js' %}?v=12"></script>
 {% endblock %}

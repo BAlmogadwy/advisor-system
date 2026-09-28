@@ -92,6 +92,9 @@ def test_toggles_fields_and_status_carry_their_names_states_and_roles(
     status = soup.find(id="spStatus")
     assert status.get("role") == "status"
     assert status.get("aria-live") == "polite"
+    # In the page from the start (empty), so its first message is read out.
+    assert "d-none" not in status.get("class", [])
+    assert status.get_text(strip=True) == ""
 
 
 @pytest.mark.parametrize("language", ["en", "ar"])
