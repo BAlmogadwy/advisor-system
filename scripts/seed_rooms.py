@@ -17,6 +17,11 @@ Render prod usage (PostgreSQL):
 
 Idempotent — re-running wipes the F section and re-creates from the
 list; M rooms are upserted by ``room_code``.
+
+Exam seats: every room this creates starts ``exam_capacity`` at its
+``capacity`` (``core.models.ExamCapacityField``); an upserted M room keeps
+the exam seats it had. So re-running it replaces the women's-campus exam
+capacities migration 0073 applied with each room's capacity.
 """
 
 from core.models import Room
