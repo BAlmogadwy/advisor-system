@@ -305,6 +305,7 @@ def test_every_changed_row_is_audited(client: Client, shared_courses) -> None:
     assert {d["course_code"] for d in details} == {"CS211"}
     assert {d["scope"] for d in details} == {"all_programmes"}
     assert {d["programs_on_screen"][0] for d in details} == {"AI"}
+    assert {d["source"] for d in details} == {"section_planning"}
     assert [d["position"] for d in details] == [1, 2, 3]
     assert {row.actor_username for row in rows} == {"limit-auditor"}
     assert {row.endpoint for row in rows} == {URL}

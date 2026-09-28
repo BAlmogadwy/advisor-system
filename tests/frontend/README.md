@@ -165,6 +165,24 @@ day grid of a five- or six-day week, headings and dates), focus after Back,
 the real endpoints and a real download are covered by
 `tests/test_exam_rosters_browser.py`.
 
+`db-admin-capacities.test.cjs`, run through `tests/test_db_admin_frontend.py`,
+covers DB Admin's Programme Capacities panel in English and Arabic: rows by
+code and name, an edit as a draft (Modified, counted on Save, nothing sent),
+an emptied saved limit as a removal, invalid values that block Save, Save
+sending only the edited rows for the programme that was loaded (another
+programme typed in the box blocks Save until it is loaded), the review's
+course · name · old → new rows starting on Keep editing, the commit with the
+preview's token and the reload after it, stale reviews reloading the rows
+with only the real drafts kept (a course someone else saved meanwhile takes
+the new value and is never sent back), a saved value outside 1–500 that
+nobody edited blocking nothing, read-only fields and one review per double
+click while a save runs, failed list loads and reloads that keep the rows and
+say so, refusals worded by the page, Load and leaving asking before they drop
+drafts or values still to fix, counts that agree with their number (Arabic
+one/two/few/many/other), and the real dialog's Enter on Keep editing. The
+endpoint, its audit rows and its roles are covered by
+`tests/test_db_admin_programme_limits.py`.
+
 Network behavior is tested with deterministic responses. These tests do not
 create real saved runs, delete database rows, execute the optimizer, or inspect
 downloaded workbooks; backend and export suites cover those contracts separately.
