@@ -111,6 +111,12 @@ Version history
   each member by ``course_identity`` and display ``course_code``. A run saved
   before links existed had none, so ``[]`` is the truth for it, not a guess.
   ``qa.linked_exams`` (counts only) appears only on a run that has links.
+  ``exam_locks`` (added without a bump) lists the locked days
+  (``{"day": D}``) and cells (``{"day": D, "period": P}``). It is absent on a
+  run without locks - every run saved before locks existed - so readers use
+  ``payload.get("exam_locks") or []``; ``qa.exam_locks`` (the lock report)
+  appears only on a run that has locks. No migrator fills either key: a
+  deploy must leave every saved run byte for byte as it was.
 """
 
 
@@ -358,6 +364,7 @@ class ExamRunDisplayPayload(TypedDict, total=False):
     enrollment_scope: dict[str, list[str]]
     pinned: list[dict[str, str]]
     linked_exams: list[dict[str, Any]]
+    exam_locks: list[dict[str, str]]
     qa: dict[str, Any]
     buckets_summary: list[dict[str, Any]]
     bucket_count: int
@@ -959,6 +966,33 @@ def compute_enrolment_snapshot(
     }
 
 
+#: Lock-report issues that leave students without a saved seat.
+_LOCK_ROOM_ISSUES = frozenset({"room_unavailable", "room_over_capacity", "room_cohort_changed"})
+
+
+def _lock_room_action(qa: dict[str, Any]) -> bool:
+    """A lock report says a locked cell's saved rooms no longer seat its students.
+
+    False for any QA without ``exam_locks``: the rule reads nothing else, so
+    every run without locks derives exactly the status it always did.
+    """
+    report = qa.get("exam_locks")
+    if not isinstance(report, dict):
+        return False
+    for issue in report.get("issues") or []:
+        if not isinstance(issue, dict):
+            continue
+        if issue.get("kind") in _LOCK_ROOM_ISSUES:
+            return True
+        if issue.get("kind") == "registrations_changed":
+            try:
+                if int(issue.get("live_count") or 0) > int(issue.get("saved_count") or 0):
+                    return True
+            except (TypeError, ValueError):
+                continue
+    return False
+
+
 def derive_status_surface(
     payload: dict[str, Any],
     source_schema_version: int | None = None,
@@ -1055,10 +1089,16 @@ def derive_status_surface(
     if multi_sitting_count > 0:
         flags.append("multi_sitting_required")
 
+    # A locked cell keeps its saved rooms, so a room since removed, shrunk or
+    # given to the other cohort, and students registered since the save, have
+    # no seat until the cell is unlocked. Only a run with locks has a lock
+    # report: on every other run this is False.
+    lock_room_action = _lock_room_action(qa)
+
     # Multi-sitting alone is a legitimate plan; only promote it to
     # room_action_required when the multi-sitting itself is incomplete
     # OR when we have outright UNASSIGNED rooms.
-    if unassigned_rooms > 0 or incomplete_sittings > 0:
+    if unassigned_rooms > 0 or incomplete_sittings > 0 or lock_room_action:
         flags.append("room_action_required")
 
     # Manual override: prefer the explicit qa.manual_override_count
@@ -1109,7 +1149,7 @@ def derive_status_surface(
     # Severity order, worst first. The first applicable wins.
     if overflow_count > 0:
         primary: ExamRunPrimaryStatus = "contains_overflow"
-    elif unassigned_rooms > 0 or incomplete_sittings > 0:
+    elif unassigned_rooms > 0 or incomplete_sittings > 0 or lock_room_action:
         primary = "requires_room_action"
     elif manual_override_count > 0:
         primary = "contains_manual_override"

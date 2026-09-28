@@ -31,11 +31,17 @@ def fingerprint_exam_inputs(
     periods: list[str],
     max_per_day: int,
     thin_conflict_threshold: int,
+    exam_locks: dict | None = None,
 ) -> str:
     """Hash captured source values without querying again or hashing placements.
 
     Both a fresh build and fixed-placement evaluation use this exact contract.
     Position changes and report timestamps are intentionally not input drift.
+
+    ``exam_locks`` is the locked cells and their saved rooms
+    (``ExamLocks.fingerprint_block``). It is hashed only when there are
+    locks, so a board without them keeps the fingerprint it always had, and a
+    Save can never be accepted against a Check reviewed under other locks.
     """
     inputs = {
         "evaluation_version": EXAM_INPUT_POLICY_VERSION,
@@ -72,6 +78,8 @@ def fingerprint_exam_inputs(
         "assign_rooms": result["assign_rooms"],
         "seed": result["seed"],
     }
+    if exam_locks:
+        inputs["exam_locks"] = exam_locks
     return hashlib.sha256(
         json.dumps(inputs, sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode(
             "utf-8"
