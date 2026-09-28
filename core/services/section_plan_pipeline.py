@@ -11,8 +11,9 @@ into either cohort, and they are not in the section totals.
 
 Seat limits follow one order everywhere (``compute_section_plan``): a what-if
 draft, then the lowest limit a programme in scope declares
-(``lowest_declared_capacities``, shared with the timetable builder), then the
-25/40/50 rules.
+(``lowest_declared_capacities``) or, for a resolved elective, its slot's limit
+when lower (``slot_declared_limits`` + ``fold_slot_limits``), then the
+25/40/50 rules. The timetable builder sizes a scenario with the same functions.
 """
 
 from __future__ import annotations
@@ -29,7 +30,9 @@ from core.services.reporting import PlanningDemand, StudentDemand, build_plannin
 from core.services.section_planning import (
     compute_plan_summary,
     compute_section_plan,
+    fold_slot_limits,
     lowest_declared_capacities,
+    slot_declared_limits,
 )
 from core.services.student_helpers import normalize_code
 
@@ -197,43 +200,6 @@ def summarise(rows: list[dict[str, Any]], *, no_gender_students: int) -> dict[st
     return summary
 
 
-def _slot_limits(
-    picks: Iterable[tuple[str, str, str, int]], overrides: Mapping[str, int]
-) -> dict[str, dict[str, Any]]:
-    """Resolved elective code -> the slots it fills and the lowest limit among them.
-
-    A resolved elective is taught for its SLOT: AI463 filling AI's AI1 slot,
-    which declares 30, is planned at 30, not by the rule for AI463 itself (an
-    external-flagged course would get 50). The slot's limit is the programme's
-    own (AI2's AI1 row for an AI2 student); a what-if draft on the slot wins.
-    A slot that declares nothing leaves the course to its own limit or rule.
-    """
-    picks = list(picks)
-    keys = {(prog, slot) for prog, slot, _course, _n in picks}
-    declared: dict[tuple[str, str], int] = {}
-    if keys:
-        for prog, code, cap in ProgrammeRequirement.objects.filter(
-            program__in=sorted({p for p, _ in keys}),
-            course_code__in=sorted({s for _, s in keys}),
-            max_capacity__isnull=False,
-        ).values_list("program", "course_code", "max_capacity"):
-            if cap is not None and cap >= 1:
-                declared[(str(prog), normalize_code(code))] = int(cap)
-    info: dict[str, dict[str, Any]] = {}
-    for prog, slot, course, _n in picks:
-        entry = info.setdefault(course, {"slots": set(), "limit": None, "source": None})
-        entry["slots"].add(slot)
-        if slot in overrides:
-            limit, source = int(overrides[slot]), "draft"
-        elif (prog, slot) in declared:
-            limit, source = declared[(prog, slot)], "slot"
-        else:
-            continue
-        if entry["limit"] is None or limit < entry["limit"]:
-            entry["limit"], entry["source"] = limit, source
-    return info
-
-
 def _dropped_report(dropped: Iterable[tuple[str, str, str, int]]) -> dict[str, Any]:
     """Slot demand that became no course: stated, never silently lost."""
     merged: Counter[tuple[str, str, str]] = Counter()
@@ -260,22 +226,10 @@ def size_demand(
     overrides = {normalize_code(k): int(v) for k, v in (rules.course_overrides or {}).items()}
 
     # Where each course's limit comes from; a resolved elective's slot can
-    # lower it (the lowest declaration wins, as across programmes).
-    slots = _slot_limits((p for d in demands for p in d.elective_picks), overrides)
-    sources: dict[str, str] = {}
-    for key, meta in aggregates.metadata.items():
-        code = normalize_code(meta.get("course_code")) or key
-        slot = slots.get(code)
-        declared = capacities.get(key)
-        if code in overrides:
-            sources[key] = "draft"
-        elif slot and slot["limit"] is not None and (declared is None or slot["limit"] < declared):
-            capacities[key] = slot["limit"]
-            sources[key] = slot["source"]
-        elif declared is not None:
-            sources[key] = "programme"
-        else:
-            sources[key] = "rule"
+    # lower it (the lowest declaration wins, as across programmes). The same
+    # two functions size the timetable builder's scenario.
+    slots = slot_declared_limits((p for d in demands for p in d.elective_picks), overrides)
+    sources = fold_slot_limits(capacities, aggregates.metadata, slots, overrides)
 
     def plan(aggregate: Counter[str]) -> list[dict[str, Any]]:
         return compute_section_plan(

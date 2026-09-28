@@ -108,7 +108,14 @@ def test_save_writes_only_the_programmes_on_screen(client: Client, shared_course
         k: v for k, v in before.items() if k != ("AI", "CS211")
     }
     assert response.json()["changed"] == [
-        {"course_code": "CS211", "program": "AI", "old": 30, "new": 28, "scope": "programmes"}
+        {
+            "course_code": "CS211",
+            "course_name": "",
+            "program": "AI",
+            "old": 30,
+            "new": 28,
+            "scope": "programmes",
+        }
     ]
 
 
@@ -197,8 +204,22 @@ def test_preview_lists_course_programme_old_and_new_and_writes_nothing(
     assert data["dry_run"] is True
     # Rows that CHANGE, not rows matched: DS CS211 already holds 35, AI CS323 is empty.
     assert data["changes"] == [
-        {"course_code": "CS211", "program": "AI", "old": 30, "new": 35, "scope": "programmes"},
-        {"course_code": "CS323", "program": "DS", "old": 25, "new": None, "scope": "programmes"},
+        {
+            "course_code": "CS211",
+            "course_name": "",
+            "program": "AI",
+            "old": 30,
+            "new": 35,
+            "scope": "programmes",
+        },
+        {
+            "course_code": "CS323",
+            "course_name": "",
+            "program": "DS",
+            "old": 25,
+            "new": None,
+            "scope": "programmes",
+        },
     ]
     assert data["unchanged"] == 2
     assert len(data["preview_token"]) == 64
@@ -251,7 +272,14 @@ def test_removing_a_saved_limit_is_an_explicit_change(client: Client, shared_cou
     assert response.status_code == 200
     assert _limits()[("DS", "CS323")] is None
     assert response.json()["changed"] == [
-        {"course_code": "CS323", "program": "DS", "old": 25, "new": None, "scope": "programmes"}
+        {
+            "course_code": "CS323",
+            "course_name": "",
+            "program": "DS",
+            "old": 25,
+            "new": None,
+            "scope": "programmes",
+        }
     ]
 
 
@@ -428,3 +456,27 @@ def test_the_unscoped_write_endpoints_are_gone(client: Client) -> None:
         "/ops/section-planning/save-overrides-bulk/",
     ):
         assert client.post(url, "{}", content_type="application/json").status_code == 404
+
+
+def test_all_programmes_widens_only_rows_that_are_the_same_course(client: Client) -> None:
+    """AI492 is a graduation project in AI and co-op training in AI2: not one course."""
+    for program, name, cap in (
+        ("AI", "GRADUATION PROJECT II", 5),
+        ("AI2", "COOPERATIVE TRAINING (CONTINUING WITH SUMMER)", 5),
+        ("DS", "Graduation  project II", None),
+    ):
+        ProgrammeRequirement.objects.create(
+            program=program, course_code="AI492", course_name=name, credit_hours=3, max_capacity=cap
+        )
+    _login(client)
+
+    preview, response = _save(
+        client, ["AI"], [{"course_code": "AI492", "max_capacity": 8, "all_programmes": True}]
+    )
+
+    assert [
+        (c["program"], c["course_name"], c["old"], c["new"]) for c in preview.json()["changes"]
+    ] == [("AI", "GRADUATION PROJECT II", 5, 8), ("DS", "Graduation  project II", None, 8)]
+    assert response.status_code == 200
+    assert _limits()[("AI2", "AI492")] == 5
+    assert _limits()[("DS", "AI492")] == 8

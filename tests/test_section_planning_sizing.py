@@ -654,3 +654,54 @@ def test_a_programme_listed_twice_is_counted_once(planner: Client, mixed_cohorts
     assert data["mode"] == "single"
     assert data["cohorts"] == {"M": 12, "F": 12, "no_gender": 3}
     assert _row(data["plan"], "AI331")["total_students"] == 24
+
+
+def test_the_builder_sizes_a_resolved_elective_by_its_slot_as_section_planning_does(
+    planner: Client, electives, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """One slot rule: the sections the builder creates are the ones the page shows."""
+    from core.services.timetable_generate import generate_workspace_scenario
+
+    men = list(range(501000001, 501000071))
+    monkeypatch.setattr("core.services.timetable_generate.get_student_ids", lambda **_kw: men)
+    monkeypatch.setattr(
+        "core.services.recommender_batch.batch_recommend",
+        lambda student_ids, _program, _year, _term, **_kw: {sid: ["AI1"] for sid in student_ids},
+    )
+
+    built = generate_workspace_scenario(
+        1448, 1, "AI", section="M", scenario_name="slot rule", run_autoplace=False
+    )
+    planned = _row(_generate(planner, program="AI")["plan"], "AI463")
+
+    builder_row = _row(built["section_plan"], "AI463")
+    assert builder_row["max_per_section"] == 30, "the AI1 slot's limit, not the external 50"
+    assert builder_row["max_per_section"] == planned["max_per_section"]
+    assert builder_row["num_sections"] == planned["male_sections"] == 3
+
+    what_if = generate_workspace_scenario(
+        1448,
+        1,
+        "AI",
+        section="M",
+        scenario_name="slot what-if",
+        course_overrides={"AI1": 20},
+        run_autoplace=False,
+    )
+    assert _row(what_if["section_plan"], "AI463")["max_per_section"] == 20
+
+
+def test_the_all_programmes_panel_starts_from_the_limit_generate_applies(
+    planner: Client, graduation_project
+) -> None:
+    """No programme on screen: the panel shows the lowest declared limit, not the rule."""
+    courses = {
+        c["course_code"]: c for c in planner.get("/ops/section-planning/courses/").json()["courses"]
+    }
+
+    assert courses["AI491"]["default_max"] == 40
+    assert courses["AI491"]["programme_max"] == 5
+    assert courses["AI491"]["limit_scope"] == "lowest_declared"
+    assert courses["DS321"]["programme_max"] is None
+    plan_row = _row(_generate(planner)["plan"], "AI491")
+    assert plan_row["max_per_section"] == courses["AI491"]["programme_max"]

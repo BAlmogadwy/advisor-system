@@ -29,6 +29,7 @@ from typing import Any
 
 from core.models import ProgrammeRequirement
 from core.services.audit import audited_transaction
+from core.services.course_identity import normalize_course_name
 from core.services.student_helpers import normalize_code
 
 LIMIT_MIN = 1
@@ -77,10 +78,12 @@ class PlannedWrite:
     old: int | None
     new: int | None
     scope: str
+    course_name: str = ""
 
     def as_dict(self) -> dict[str, Any]:
         return {
             "course_code": self.course_code,
+            "course_name": self.course_name,
             "program": self.program,
             "old": self.old,
             "new": self.new,
@@ -191,15 +194,19 @@ def plan_limit_writes(
     """The rows that would change, and how many targeted rows already match.
 
     Scope is the programmes on screen. A change flagged ``all_programmes``
-    widens THAT course to every programme that teaches it, and only that one.
-    A course the programmes on screen do not teach is refused: the page only
-    offers courses it shows, so anything else is a stale or forged request.
+    widens THAT course to every programme that teaches it, and only that one:
+    a row elsewhere that shares the code but names a different course (AI492
+    is a graduation project in AI and co-op training in AI2) is not the same
+    course and is left alone. A course the programmes on screen do not teach
+    is refused: the page only offers courses it shows, so anything else is a
+    stale or forged request. Each planned row carries its own course name, so
+    the confirmation shows what every row is.
     """
     changes = list(changes)
     codes = sorted({change.course_code for change in changes})
     rows_by_code: dict[str, list[dict[str, Any]]] = {}
     for row in ProgrammeRequirement.objects.filter(course_code__in=codes).values(
-        "id", "program", "course_code", "max_capacity"
+        "id", "program", "course_code", "course_name", "max_capacity"
     ):
         rows_by_code.setdefault(normalize_code(row["course_code"]), []).append(row)
 
@@ -215,7 +222,8 @@ def plan_limit_writes(
                 course_code=change.course_code,
             )
         scope = SCOPE_ALL if change.all_programmes else SCOPE_PROGRAMMES
-        targets = rows if change.all_programmes else [r for r in rows if r["program"] in on_screen]
+        shown = [r for r in rows if r["program"] in on_screen]
+        targets = [r for r in rows if _same_course(r, shown)] if change.all_programmes else shown
         for row in sorted(targets, key=lambda r: (str(r["program"]), int(r["id"]))):
             old = row["max_capacity"]
             if old == change.max_capacity:
@@ -229,10 +237,32 @@ def plan_limit_writes(
                     old=old,
                     new=change.max_capacity,
                     scope=scope,
+                    course_name=str(row.get("course_name") or "").strip(),
                 )
             )
     writes.sort(key=lambda w: (w.course_code, w.program, w.requirement_id))
     return writes, unchanged
+
+
+def _same_course(row: dict[str, Any], shown: list[dict[str, Any]]) -> bool:
+    """Is ``row`` the course a programme on screen teaches under the same code?
+
+    Same code and same name (``planner_course_key``'s reading of a name). A row
+    with no name cannot be told apart, so it counts as the same course; the
+    confirmation still names every row.
+    """
+    name = _name_of(row)
+    for other in shown:
+        other_name = _name_of(other)
+        if not name or not other_name or name == other_name:
+            return True
+    return False
+
+
+def _name_of(row: dict[str, Any]) -> str:
+    """A row's course name as ``planner_course_key`` reads it ("" when it is only the code)."""
+    name = normalize_course_name(row.get("course_name"))
+    return "" if name == normalize_code(row.get("course_code")) else name
 
 
 def preview_token(programs: list[str], writes: Iterable[PlannedWrite]) -> str:
