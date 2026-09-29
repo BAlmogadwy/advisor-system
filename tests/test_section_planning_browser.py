@@ -2,12 +2,14 @@
 
 The jsdom suite (tests/frontend/section-planning.test.cjs) covers what the
 page script does; this covers what only a browser can: whether a value fits
-its field, what a phone shows, computed letter spacing and colours. The page
-is the real view; Generate is answered with a fixed plan (the planner itself
-is tested in tests/test_section_planning_sizing.py), so every run lays out the
-same rows. Each check runs at 390, 1024 and 1440px, and the fit checks in the
-design's font and in a wide one (Verdana, DejaVu Sans), as a CI machine
-without the design's fonts renders them. Nothing leaves the machine
+its field, what a phone shows, what a keyboard does with the Section radios,
+computed letter spacing and colours. The page is the real view; Generate is
+answered with a fixed plan for one section (the planner itself is tested in
+tests/test_section_planning_sizing.py), so every run lays out the same rows.
+Each check runs at 390, 1024 and 1440px (a table scrolled sideways at 800px,
+where its 11 columns no longer fit), and the fit checks in the design's font
+and in a wide one (Verdana, DejaVu Sans), as a CI machine without the
+design's fonts renders them. Nothing leaves the machine
 (tests/browser_isolation.py).
 """
 
@@ -42,10 +44,8 @@ def _row(
     code: str,
     name: str,
     *,
-    male: int,
-    female: int,
-    m_sec: int,
-    f_sec: int,
+    students: int,
+    sections: int,
     cap: int,
     fill: int,
     **extra,
@@ -57,15 +57,10 @@ def _row(
         "course_name": name,
         "credit_hours": 3,
         "is_external": False,
-        "total_students": male + female,
-        "male_students": male,
-        "female_students": female,
-        "unknown_students": 0,
-        "male_sections": m_sec,
-        "female_sections": f_sec,
-        "num_sections": m_sec + f_sec,
+        "total_students": students,
+        "num_sections": sections,
         "max_per_section": cap,
-        "avg_per_section": round((male + female) / max(1, m_sec + f_sec)),
+        "avg_per_section": round(students / max(1, sections)),
         "fill_percent": fill,
         "status": "full" if fill >= 90 else ("underfilled" if fill < 40 else ""),
         "limit_source": "rule",
@@ -74,27 +69,24 @@ def _row(
     }
 
 
-# Long names, an elective under its slot, an external course, and each fill band.
+# One section's plan (the women's): long names, an elective under its slot,
+# an external course, and each fill band.
 PLAN = [
     _row(
         "AI221",
         "ARTIFICIAL INTELLIGENCE PROGRAMMING",
-        male=4,
-        female=0,
-        m_sec=1,
-        f_sec=0,
+        students=4,
+        sections=1,
         cap=25,
         fill=16,
     ),
     _row(
         "AI463",
         "INFORMATION RETRIEVAL AND WEB SEARCH ENGINES",
-        male=58,
-        female=64,
-        m_sec=2,
-        f_sec=3,
+        students=64,
+        sections=3,
         cap=30,
-        fill=83,
+        fill=73,
         limit_source="slot",
         slots=["AI1"],
         is_external=True,
@@ -102,22 +94,18 @@ PLAN = [
     _row(
         "AI491",
         "GRADUATION PROJECT I",
-        male=15,
-        female=16,
-        m_sec=3,
-        f_sec=4,
+        students=16,
+        sections=4,
         cap=5,
         fill=100,
         limit_source="programme",
     ),
-    _row("CS323", "OPERATING SYSTEMS", male=24, female=6, m_sec=1, f_sec=1, cap=25, fill=60),
+    _row("CS323", "OPERATING SYSTEMS", students=24, sections=1, cap=25, fill=96),
     _row(
         "GS102",
         "ISLAMIC STUDIES: FEATURES OF THE PROPHET'S BIOGRAPHY",
-        male=4,
-        female=3,
-        m_sec=1,
-        f_sec=1,
+        students=4,
+        sections=1,
         cap=50,
         fill=8,
         is_external=True,
@@ -125,10 +113,8 @@ PLAN = [
     _row(
         "MATH203",
         "CALCULUS I",
-        male=1,
-        female=0,
-        m_sec=1,
-        f_sec=0,
+        students=1,
+        sections=1,
         cap=50,
         fill=2,
         is_external=True,
@@ -147,25 +133,18 @@ def _summary(rows: list[dict]) -> dict:
                 "sections": 0,
                 "students": 0,
                 "total_credits": 0,
-                "male_sections": 0,
-                "female_sections": 0,
             },
         )
         d["courses"] += 1
         d["sections"] += row["num_sections"]
         d["students"] += row["total_students"]
         d["total_credits"] += row["credit_hours"] * row["num_sections"]
-        d["male_sections"] += row["male_sections"]
-        d["female_sections"] += row["female_sections"]
     return {
         "total_courses": len(rows),
         "total_sections": sum(r["num_sections"] for r in rows),
         "total_students": sum(r["total_students"] for r in rows),
         "avg_fill_percent": 45,
-        "male_sections": sum(r["male_sections"] for r in rows),
-        "female_sections": sum(r["female_sections"] for r in rows),
         "departments": [departments[k] for k in sorted(departments)],
-        "no_gender": {"students": 0, "seat_demand": 0, "courses": 0},
     }
 
 
@@ -174,8 +153,9 @@ SINGLE = {
     "mode": "single",
     "year": 1448,
     "semester": 1,
-    "student_count": 324,
-    "cohorts": {"M": 116, "F": 208, "no_gender": 0},
+    "section": "F",
+    "student_count": 208,
+    "no_section": 0,
     "plan": PLAN,
     "summary": _summary(PLAN),
     "electives": {"dropped": [], "dropped_total": 0},
@@ -188,8 +168,9 @@ MULTI = {
     "mode": "multi",
     "year": 1448,
     "semester": 1,
-    "student_count": 324,
-    "cohorts": {"M": 116, "F": 208, "no_gender": 0},
+    "section": "F",
+    "student_count": 208,
+    "no_section": 0,
     "combined_plan": [dict(row, programs=["AI", "DS"]) for row in PLAN],
     "combined_summary": _summary(PLAN),
     "electives": {"dropped": [], "dropped_total": 0},
@@ -198,6 +179,8 @@ MULTI = {
         {"program": "DS", "student_count": 2, "plan": _DS, "summary": _summary(_DS)},
     ],
 }
+
+CHOOSE = {"en": "Choose Male (M) or Female (F).", "ar": "اختر شطر الطلاب (M) أو الطالبات (F)."}
 
 
 class SectionPlanningBrowserTests(StaticLiveServerTestCase):
@@ -221,7 +204,12 @@ class SectionPlanningBrowserTests(StaticLiveServerTestCase):
         wide_font: bool = False,
         theme: str = "light",
         plan: dict | None = None,
+        section: str | None = "F",
+        forced_colors: str = "none",
     ):
+        """The page, with ``section`` chosen as a user chooses it (None: nothing chosen).
+
+        ``forced_colors="active"``: as Windows High Contrast shows it."""
         ensure_role_groups()
         user = get_user_model().objects.create_user(
             username=f"sp-{language}-{get_user_model().objects.count()}", password="unused"
@@ -234,6 +222,7 @@ class SectionPlanningBrowserTests(StaticLiveServerTestCase):
             extra_http_headers={"Accept-Language": language},
             viewport={"width": width, "height": 900},
             color_scheme=theme,
+            forced_colors=forced_colors,
         )
         context.add_cookies(
             [
@@ -269,6 +258,8 @@ class SectionPlanningBrowserTests(StaticLiveServerTestCase):
         )
         page.goto(f"{self.live_server_url}/section-planning/")
         self.assertEqual(page.evaluate("document.documentElement.lang"), language)
+        if section:
+            page.locator(f"#spSection{section}").check()
         return page
 
     # ── 1. The scope fields show their whole value ──────────────────
@@ -321,17 +312,180 @@ class SectionPlanningBrowserTests(StaticLiveServerTestCase):
         self.assertEqual([r for r in page.requests if "/limits/" in r], [])
         self.assertTrue(page.url.endswith("/section-planning/"), "no page load")
 
+    # ── 1b. The Section control: fits, and a keyboard runs it ──────────
+
+    # The group, its label and its two chips: inside the scope bar and the
+    # viewport, on one line, not overlapping, each chip's words whole (1px is
+    # rounding), and how far the page overflows sideways.
+    SECTION_FIT = """() => {
+      const group = document.getElementById('spSectionGroup');
+      const bar = document.getElementById('spScopeForm').getBoundingClientRect();
+      const box = el => { const r = el.getBoundingClientRect(); return { l: r.left, r: r.right, t: r.top, b: r.bottom }; };
+      const g = box(group);
+      const parts = [document.getElementById('spSectionLbl'), ...group.querySelectorAll('.sp-seg')];
+      const boxes = parts.map(box);
+      const overlaps = boxes.some((a, i) => boxes.some((b, j) => i < j
+        && a.l < b.r - 0.5 && b.l < a.r - 0.5 && a.t < b.b - 0.5 && b.t < a.b - 0.5));
+      const middle = b => (b.t + b.b) / 2;
+      const clipped = [...group.querySelectorAll('.sp-seg')].filter(chip =>
+        chip.scrollWidth > chip.clientWidth + 1 || [...chip.children].some(c => c.scrollWidth > c.clientWidth + 1))
+        .map(chip => chip.textContent.trim());
+      return { inBar: g.l >= bar.left - 0.5 && g.r <= bar.right + 0.5,
+               inView: g.l >= -0.5 && g.r <= innerWidth + 0.5,
+               inGroup: boxes.every(b => b.l >= g.l - 0.5 && b.r <= g.r + 0.5),
+               oneLine: boxes.every(b => Math.abs(middle(b) - middle(boxes[0])) < 3),
+               overlaps, clipped, page: document.documentElement.scrollWidth - innerWidth };
+    }"""
+    # The focused chip's ring, the theme's --teal and the page behind it.
+    SECTION_RING = r"""() => {
+      const rgba = value => { const n = (value.match(/[\d.]+/g) || []).map(Number); return [n[0], n[1], n[2], n.length > 3 ? n[3] : 1]; };
+      const probe = document.createElement('i');
+      probe.style.color = 'var(--teal)';
+      document.body.append(probe);
+      const teal = rgba(getComputedStyle(probe).color);
+      probe.remove();
+      const chip = document.activeElement.closest('.sp-seg');
+      const s = chip ? getComputedStyle(chip) : null;
+      /* Where the ring reaches: the chip's box grown by the outline's outer edge. */
+      let ring = null;
+      if (s && s.outlineStyle !== 'none') {
+        const out = Math.max(0, parseFloat(s.outlineWidth) + parseFloat(s.outlineOffset));
+        const c = chip.getBoundingClientRect();
+        const g = document.getElementById('spSectionGroup').getBoundingClientRect();
+        const label = document.getElementById('spSectionLbl').getBoundingClientRect();
+        const r = { l: c.left - out, r: c.right + out, t: c.top - out, b: c.bottom + out };
+        ring = { inGroup: r.l >= g.left - 0.5 && r.r <= g.right + 0.5 && r.t >= g.top - 0.5 && r.b <= g.bottom + 0.5,
+                 labelGap: Math.max(r.l - label.right, label.left - r.r) };
+      }
+      return { active: document.activeElement.id, style: s && s.outlineStyle, width: s && parseFloat(s.outlineWidth),
+               colour: s && rgba(s.outlineColor), teal, page: rgba(getComputedStyle(document.body).backgroundColor), ring,
+               checked: [...document.querySelectorAll('input[name="spSection"]')].filter(r => r.checked).map(r => r.value) };
+    }"""
+    # Before any Generate: is a radio, or the group, reported as invalid?
+    SECTION_INVALID = """() => ({
+      radios: [...document.querySelectorAll('input[name="spSection"]')].filter(r => r.matches(':invalid')).map(r => r.value),
+      group: document.getElementById('spSectionGroup').getAttribute('aria-invalid') })"""
+
+    def test_the_section_control_fits_and_a_keyboard_runs_it(self) -> None:
+        """At 390, 1024 and 1440px, English and Arabic, light and dark, in a
+        wide font: nothing chosen at first; Enter asks the server nothing and
+        takes the keyboard to the group; Space chooses, an arrow moves the
+        choice, one Tab leaves the group, and Generate sends the choice."""
+        for language in ("en", "ar"):
+            for theme in ("light", "dark"):
+                for width in WIDTHS:
+                    where = f"{language} {theme} {width}px"
+                    page = self._page(language, width, wide_font=True, theme=theme, section=None)
+                    page.add_style_tag(
+                        content="*, *::before, *::after { transition: none !important; }"
+                    )
+                    fit = page.evaluate(self.SECTION_FIT)
+                    for key in ("inBar", "inView", "inGroup", "oneLine"):
+                        self.assertTrue(fit[key], f"{where}: {key}: {fit}")
+                    self.assertFalse(fit["overlaps"], f"{where}: {fit}")
+                    self.assertEqual(fit["clipped"], [], f"{where}: {fit}")
+                    self.assertLessEqual(fit["page"], 0, f"{where}: the page scrolls sideways")
+                    # Nothing is wrong before a try: a screen reader hears no "invalid".
+                    self.assertEqual(
+                        page.evaluate(self.SECTION_INVALID), {"radios": [], "group": None}, where
+                    )
+
+                    page.locator("#spSemester").press("Enter")
+                    expect(page.locator("#spSectionMsg")).to_have_text(CHOOSE[language])
+                    ring = page.evaluate(self.SECTION_RING)
+                    self.assertEqual((ring["active"], ring["checked"]), ("spSectionM", []), where)
+                    self.assertEqual(
+                        (ring["style"], ring["colour"]), ("solid", ring["teal"]), where
+                    )
+                    self.assertGreaterEqual(ring["width"], 2, where)
+                    # The ring stays inside the capsule and clear of the label
+                    # (whose Arabic tail overhangs its box).
+                    self.assertTrue(ring["ring"]["inGroup"], f"{where}: {ring['ring']}")
+                    self.assertGreaterEqual(ring["ring"]["labelGap"], 3, f"{where}: {ring['ring']}")
+                    ratio = self._contrast(ring["colour"], ring["page"])
+                    self.assertGreaterEqual(ratio, 3, f"{where}: ring {ratio:.2f} against the page")
+                    self.assertEqual([r for r in page.requests if "/generate/" in r], [], where)
+
+                    page.keyboard.press("Space")
+                    self.assertEqual(page.evaluate(self.SECTION_RING)["checked"], ["M"], where)
+                    expect(page.locator("#spSectionMsg")).to_have_text("")
+                    page.keyboard.press("ArrowDown")
+                    ring = page.evaluate(self.SECTION_RING)
+                    self.assertEqual(
+                        (ring["active"], ring["checked"]), ("spSectionF", ["F"]), where
+                    )
+                    self.assertTrue(ring["ring"]["inGroup"], f"{where}: {ring['ring']}")
+                    page.keyboard.press("Tab")
+                    self.assertEqual(
+                        page.evaluate("document.activeElement.id"), "spGenerate", where
+                    )
+                    page.keyboard.press("Shift+Tab")
+                    self.assertEqual(
+                        page.evaluate("document.activeElement.id"), "spSectionF", where
+                    )
+                    page.keyboard.press("Tab")
+                    with page.expect_request(lambda r: r.url.endswith("/generate/")) as sent:
+                        page.keyboard.press("Enter")
+                    self.assertEqual(json.loads(sent.value.post_data)["section"], "F", where)
+                    expect(page.locator("#spResultsScope")).to_contain_text("(F)")
+                    page.context.close()
+
+    # Each chip in forced colours: its dot's fill and the edge drawn around it,
+    # and the capsule's outline; the page's Canvas behind them.
+    FORCED = """() => ({
+      forced: matchMedia('(forced-colors: active)').matches,
+      canvas: getComputedStyle(document.body).backgroundColor,
+      group: getComputedStyle(document.getElementById('spSectionGroup')).outlineStyle,
+      chips: [...document.querySelectorAll('.sp-seg')].map(chip => {
+        const s = getComputedStyle(chip), dot = getComputedStyle(chip.querySelector('.sp-seg-dot'));
+        return { value: chip.querySelector('input').value, checked: chip.querySelector('input').checked,
+                 dot: dot.backgroundColor, edge: s.outlineStyle === 'none' ? null : s.outlineColor,
+                 ring: s.outlineStyle === 'none' ? null : `${s.outlineWidth} ${s.outlineColor}` };
+      }) })"""
+
+    def test_the_chosen_section_shows_in_windows_high_contrast(self) -> None:
+        """Forced colours drop backgrounds and shadows, and the radio itself is
+        transparent: the chosen chip still has a filled dot the other lacks and
+        an edge, and Generate with nothing chosen outlines the group."""
+        for theme in ("light", "dark"):
+            page = self._page("en", theme=theme, section=None, forced_colors="active")
+            page.locator("#spGenerate").click()
+            expect(page.locator("#spSectionMsg")).to_have_text(CHOOSE["en"])
+            state = page.evaluate(self.FORCED)
+            self.assertTrue(state["forced"], theme)
+            self.assertNotEqual(state["group"], "none", f"{theme}: the error is outlined")
+
+            page.locator("#spSectionF").check()
+            page.evaluate("document.activeElement.blur()")
+            state = page.evaluate(self.FORCED)
+            chosen, other = (
+                next(c for c in state["chips"] if c["value"] == value) for value in ("F", "M")
+            )
+            self.assertTrue(chosen["checked"] and not other["checked"], theme)
+            self.assertNotEqual(chosen["dot"], other["dot"], f"{theme}: {state}")
+            self.assertNotEqual(chosen["dot"], state["canvas"], f"{theme}: {state}")
+            self.assertIsNotNone(chosen["edge"], f"{theme}: {state}")
+            self.assertIsNone(other["edge"], f"{theme}: {state}")
+
+            # Keyboard focus on the chosen chip must look different from the
+            # chosen edge alone: a thicker CanvasText ring, not the 1px Highlight.
+            page.locator("#spSectionF").focus()
+            focused = next(c for c in page.evaluate(self.FORCED)["chips"] if c["value"] == "F")
+            self.assertNotEqual(focused["ring"], chosen["ring"], f"{theme}: focus is invisible")
+            self.assertTrue(str(focused["ring"]).startswith("2px"), f"{theme}: {focused}")
+            page.context.close()
+
     # ── 2. A phone shows every course's numbers; the page never scrolls sideways ──
 
     # Per result row: the course and its numbers, each laid out (not display:
     # none) and, on a phone, inside the viewport; and how far the document and
-    # the <main> scroller overflow sideways. Wider than a phone the 13-column
+    # the <main> scroller overflow sideways. Wider than a phone the 11-column
     # table may scroll inside its own box, so there "shown" means laid out.
     PHONE = """(phone) => {
       const shown = el => { const r = el.getBoundingClientRect(), s = getComputedStyle(el);
         const laidOut = s.display !== 'none' && s.visibility !== 'hidden' && r.width > 1 && r.height > 1;
         return laidOut && (!phone || (r.left >= -0.5 && r.right <= innerWidth + 0.5)); };
-      const parts = { course: 2, demand: 5, m: 6, f: 7, total: 8, max: 9 };
+      const parts = { course: 2, demand: 5, sections: 6, max: 7, fill: 9 };
       const rows = [...document.querySelectorAll('.sp-plan-table tbody tr[data-code]')]
         .filter(tr => tr.closest('.d-none') === null)
         .map(tr => ({ code: tr.dataset.code,
@@ -371,12 +525,10 @@ class SectionPlanningBrowserTests(StaticLiveServerTestCase):
         long_name = _row(
             "STAT305",
             "PROBABILITY&STATISTICS FOR ENGINEERS",
-            male=40,
-            female=41,
-            m_sec=1,
-            f_sec=2,
+            students=81,
+            sections=2,
             cap=50,
-            fill=54,
+            fill=82,
             is_external=True,
         )
         rows = [*PLAN, long_name]
@@ -398,9 +550,10 @@ class SectionPlanningBrowserTests(StaticLiveServerTestCase):
                 self.assertEqual(len(facts["boxes"]), 3, where)
                 self.assertLessEqual(max(facts["boxes"]), 0, f"{where}: {facts['boxes']}")
 
-    # At 1024px (769px and up) the table may scroll sideways in its box: at
-    # rest the code column is see-through like the rest; scrolled to its far
-    # end, each row's code (sticky, now opaque) and Total are still in the box.
+    # From 769px up the table may scroll sideways in its box (at 800px it does;
+    # at 1024px its 11 columns now fit): at rest the code column is see-through
+    # like the rest; scrolled to its far end, each row's code (sticky, now
+    # opaque) and its fill bar are still in the box.
     STICKY = r"""async () => {
       const box = document.querySelector('#spTable').closest('.sp-table-scroll');
       const alpha = el => { const n = (getComputedStyle(el).backgroundColor.match(/[\d.]+/g) || []).map(Number);
@@ -416,7 +569,7 @@ class SectionPlanningBrowserTests(StaticLiveServerTestCase):
         return r.width > 1 && r.left >= edge.left - 0.5 && r.right <= edge.right + 0.5; };
       const facts = { overflow: box.scrollWidth - box.clientWidth, scrolledBy: Math.abs(box.scrollLeft),
         atRest, scrolled: codes().map(alpha),
-        hidden: rows.filter(tr => !inside(tr.children[2]) || !inside(tr.children[8])).map(tr => tr.dataset.code),
+        hidden: rows.filter(tr => !inside(tr.children[2]) || !inside(tr.children[9])).map(tr => tr.dataset.code),
         headInside: inside(codes()[0]) };
       box.scrollLeft = 0;
       await frame();
@@ -427,8 +580,8 @@ class SectionPlanningBrowserTests(StaticLiveServerTestCase):
     def test_a_table_scrolled_sideways_keeps_each_course_code_in_view(self) -> None:
         for language in ("en", "ar"):
             for wide_font in (False, True):
-                where = f"{language} 1024px{' wide font' if wide_font else ''}"
-                page = self._page(language, 1024, wide_font=wide_font)
+                where = f"{language} 800px{' wide font' if wide_font else ''}"
+                page = self._page(language, 800, wide_font=wide_font)
                 self._generate(page)
                 facts = page.evaluate(self.STICKY)
                 self.assertGreater(facts["overflow"], 0, f"{where}: nothing to scroll: {facts}")
