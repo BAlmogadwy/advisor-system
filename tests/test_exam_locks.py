@@ -329,6 +329,23 @@ def test_a_renumbered_partner_of_a_shared_locked_room_is_named_by_its_new_code()
     assert (error.code, error.courses) == ("exam_locks_link_room_shared", ["A", "B (2)"])
 
 
+def test_only_a_renumbered_partner_list_is_rewritten_and_sorted_again():
+    rooms = [
+        {"room_code": "R1", "room_shared_with": ["B", "C"]},
+        {"room_code": "R2", "room_shared_with": ["C", "B"]},
+        {"room_code": "R3"},
+    ]
+    renumbered = exam_locks._renumbered_partners(rooms, {"B": "Z (1)", "C": "C"})
+    assert renumbered == [
+        {"room_code": "R1", "room_shared_with": ["C", "Z (1)"]},
+        {"room_code": "R2", "room_shared_with": ["C", "Z (1)"]},
+        {"room_code": "R3"},
+    ]
+    # Nothing renumbered: every row as saved, even a list saved out of order.
+    assert exam_locks._renumbered_partners(rooms, {"B": "B", "C": "C"}) == rooms
+    assert rooms[1]["room_shared_with"] == ["C", "B"], "the saved rows are never changed"
+
+
 def test_a_locked_exam_whose_identity_is_gone_is_refused():
     run = _run(exam_locks=[{"day": SUN}])
     courses = courses_of(run)
@@ -376,6 +393,9 @@ def test_a_locked_exam_needs_complete_saved_rooms_and_sections(change):
     error = refused([{"day": SUN}], _broken(change))
     assert (error.code, error.field) == ("exam_locks_source_incomplete", "exam_locks[0]")
     assert error.cell["day"] == SUN
+    # A fixed-time Check and Save repairs it; a Build would move every exam.
+    assert "Check and save" in str(error)
+    assert "uild" not in str(error)
 
 
 def test_an_exam_of_an_unlocked_cell_needs_nothing_complete():

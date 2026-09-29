@@ -611,6 +611,21 @@ test('a refused lock is worded by the page, with the period and the exam the ser
   assert.doesNotMatch(banner.textContent, /exam_locks/, 'The page words the refusal itself');
 });
 
+test('a lock refused for an incomplete saved timetable says Check and Save, never Build', async t => {
+  const ui = await loaded(t, { onRequest: async url => (url === '/ops/exam-timetable/draft-impact/'
+    ? reply({ ok: false, code: 'exam_locks_source_incomplete', field: 'exam_locks[0]', courses: ['CS111 (1)'], cell: { day: 'Wed', period: '08:00-10:00' }, error: 'Raw server text' }, 400)
+    : undefined) });
+  drop(ui, 'CS111 (1)', 'Thu', '08:00-10:00');
+  ui.$('checkDraftBtn').click();
+  await settled();
+  const text = ui.$('examEditorRequestError').textContent;
+  assert.ok(text.startsWith(AR
+    ? 'لا تتوفر في هذا الجدول المحفوظ قاعات كاملة للاختبارات المقفلة. افحص التغييرات ثم احفظها لإعادة توزيع قاعاته، ثم اقفله.'
+    : 'This saved timetable has no complete rooms for its locked exams. Check changes, then Save Changes, to assign its rooms again. Then lock it.'), text);
+  // A Build would place every exam of a saved timetable again.
+  assert.doesNotMatch(text, AR ? /بناء/ : /[Bb]uild/);
+});
+
 test('an unknown lock refusal still reads as a lock refusal', async t => {
   const ui = await loaded(t, { onRequest: async url => (url === '/ops/exam-timetable/draft-impact/'
     ? reply({ ok: false, code: 'exam_locks_something_new', field: 'exam_locks', error: 'Raw server text' }, 400)
