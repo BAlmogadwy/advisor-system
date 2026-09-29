@@ -6,11 +6,14 @@
         <div class="fb-search"><input id="dbgProgram" class="fb-w-9ch" placeholder="{% if LANGUAGE_CODE == 'ar' %}البرنامج{% else %}Program{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}البرنامج{% else %}Program{% endif %}"></div>
         <div class="fb-search"><input id="dbgJoin" class="fb-w-12ch" placeholder="{% if LANGUAGE_CODE == 'ar' %}سنوات الالتحاق{% else %}Join yrs{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}سنوات الالتحاق{% else %}Join years{% endif %}"></div>
         <div class="fb-search"><input id="dbgLimit" class="fb-w-6ch" type="text" inputmode="numeric" pattern="[0-9]*" value="80" placeholder="{% if LANGUAGE_CODE == 'ar' %}الحد{% else %}Limit{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}الحد{% else %}Limit{% endif %}"></div>
-        <div class="fb-search"><select id="dbgMode" aria-label="{% if LANGUAGE_CODE == 'ar' %}وضع المتطلبات السابقة{% else %}Prerequisite mode{% endif %}"><option value="relaxed" selected>{% if LANGUAGE_CODE == 'ar' %}مرن (مجتاز+يدرس){% else %}Relaxed (passed+studying){% endif %}</option><option value="strict">{% if LANGUAGE_CODE == 'ar' %}صارم (مجتاز فقط){% else %}Strict (passed only){% endif %}</option></select></div>
-        <div class="fb-actions">
-          <button id="dbgRun" class="btn btn-primary">
-            <span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 12h14M12 5l7 7-7 7"/></svg></span>Run
-          </button>
+        {# The last field and the button wrap as one, so the button never sits alone on a line. #}
+        <div class="fb-tail">
+          <div class="fb-search"><select id="dbgMode" aria-label="{% if LANGUAGE_CODE == 'ar' %}وضع المتطلبات السابقة{% else %}Prerequisite mode{% endif %}"><option value="relaxed" selected>{% if LANGUAGE_CODE == 'ar' %}مرن (مجتاز+يدرس){% else %}Relaxed (passed+studying){% endif %}</option><option value="strict">{% if LANGUAGE_CODE == 'ar' %}صارم (مجتاز فقط){% else %}Strict (passed only){% endif %}</option></select></div>
+          <div class="fb-actions">
+            <button id="dbgRun" class="btn btn-primary">
+              <span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 12h14M12 5l7 7-7 7"/></svg></span>Run
+            </button>
+          </div>
         </div>
       </div>
       <div class="filter-bar filter-bar-sm mb-14">

@@ -4,11 +4,14 @@
         <div class="fb-search"><input id="elSection" class="fb-w-9ch" placeholder="{% if LANGUAGE_CODE == 'ar' %}الشعبة{% else %}Section{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}الشعبة{% else %}Section{% endif %}"></div>
         <div class="fb-search"><input id="elProgram" class="fb-w-9ch" placeholder="{% if LANGUAGE_CODE == 'ar' %}البرنامج{% else %}Program{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}البرنامج{% else %}Program{% endif %}"></div>
         <div class="fb-search"><input id="elJoin" class="fb-w-12ch" placeholder="{% if LANGUAGE_CODE == 'ar' %}سنوات الالتحاق{% else %}Join yrs{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}سنوات الالتحاق{% else %}Join years{% endif %}"></div>
-        <div class="fb-search"><select id="elMode" aria-label="{% if LANGUAGE_CODE == 'ar' %}وضع التأهيل{% else %}Eligibility mode{% endif %}"><option value="strict" selected>{% if LANGUAGE_CODE == 'ar' %}صارم (مجتاز + مكتسب فقط){% else %}Strict (passed + earned only){% endif %}</option><option value="relaxed">{% if LANGUAGE_CODE == 'ar' %}مرن (+ يدرس + مسجل){% else %}Relaxed (+ studying + registered){% endif %}</option></select></div>
-        <div class="fb-actions">
-          <button id="elRun" class="btn btn-primary">
-            <span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></span>Check
-          </button>
+        {# The last field and the button wrap as one, so the button never sits alone on a line. #}
+        <div class="fb-tail">
+          <div class="fb-search"><select id="elMode" aria-label="{% if LANGUAGE_CODE == 'ar' %}وضع التأهيل{% else %}Eligibility mode{% endif %}"><option value="strict" selected>{% if LANGUAGE_CODE == 'ar' %}صارم (مجتاز + مكتسب فقط){% else %}Strict (passed + earned only){% endif %}</option><option value="relaxed">{% if LANGUAGE_CODE == 'ar' %}مرن (+ يدرس + مسجل){% else %}Relaxed (+ studying + registered){% endif %}</option></select></div>
+          <div class="fb-actions">
+            <button id="elRun" class="btn btn-primary">
+              <span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></span>Check
+            </button>
+          </div>
         </div>
       </div>
       <div class="filter-bar filter-bar-sm mb-14">

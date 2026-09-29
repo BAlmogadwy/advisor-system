@@ -2484,7 +2484,11 @@ html body .btn-neutral:focus-visible {
    - A <select> is as wide as its longest option.
    - .fb-grow on a capsule: it takes the bar's spare room (a search box).
    - .fb-actions: the bar's buttons (or its counts) as one unit at its
-     end; they wrap together, never one left alone on a line. */
+     end; they wrap together, never one left alone on a line.
+   - .fb-tail: the bar's last field and its .fb-actions, when that holds a
+     single button: they wrap as one unit (Section Planning's Section and
+     its actions), so the button never sits alone on a line. The field
+     stays right after its siblings; the button keeps the bar's end. */
 .fb-fit .fb-search { flex: 0 0 auto; min-width: 0; max-width: 100%; }
 .fb-fit .fb-search > .i { flex: none; }
 .fb-fit .fb-lbl { flex: none; white-space: nowrap; }
@@ -2501,6 +2505,21 @@ html body .btn-neutral:focus-visible {
 .fb-fit .fb-grow > input,
 .fb-fit .fb-search-full > input { flex: 1 1 auto; }
 .fb-fit .fb-actions { display: flex; align-items: center; gap: 10px; flex: none; margin-inline-start: auto; }
+/* Grows into the line's spare room, so its button's auto margin reaches the
+   bar's end. It wraps inside only when it alone is wider than the bar. */
+.fb-fit .fb-tail { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; flex: 1 1 auto; min-width: 0; }
+/* On a phone the tail's button takes the rest of its line, with the bar's
+   phone gap: beside its field it widens into the room left, and where the
+   field fills a line (a long select) it spans the bar, an action row rather
+   than a small button left alone. */
+@media (max-width: 480px) {
+  .fb-fit .fb-tail { gap: 6px; }
+  .fb-fit .fb-tail > .fb-actions { flex: 1 0 auto; }
+  .fb-fit .fb-tail > .fb-actions > .btn { flex: 1 1 auto; }
+}
+/* .sticky-cta's accent line is a 0-wide flex item in a bar: it never draws,
+   but it took a gap and started the bar's first line 10px in from the rest. */
+.fb-fit.sticky-cta::before { display: none; }
 /* The capsule is the field: a keyboard user sees a full-strength ring,
    in dark mode too (the shared dark glow is a 20% ring set !important). */
 .fb-fit .fb-search:focus-within { box-shadow: var(--shadow-neu-inset), 0 0 0 2px var(--teal); }

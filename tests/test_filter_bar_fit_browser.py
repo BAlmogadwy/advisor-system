@@ -14,12 +14,15 @@ field is only focused to see its ring) and checks the top bar only:
   clear of its field;
 - nothing in the bar reaches past the viewport, so the bar never makes the
   page scroll sideways;
-- the bar's buttons wrap as one group, never one left alone on a line;
+- the bar's buttons wrap as one group, never one left alone on a line, and
+  a filter bar's single button wraps with its last field, never alone;
+- the bar's first line starts at its padding, as its other lines do;
 - in Arabic the bar reads from the right and a select's arrow sits at its
   inline end (the left), where its padding is, not over its text;
 - a focused field has a ring of at least 3:1 against what is behind it, in
   light and in dark.
 
+All of it in light and in dark (dark has rules of its own on the capsules).
 At 390 and 1440px, English and Arabic, in a wide font (Verdana, DejaVu Sans)
 as a CI machine without the design's fonts renders them. 1px is rounding: a
 field sized in ch can measure a fraction over its box. Nothing leaves the
@@ -160,8 +163,32 @@ FIT = r"""(sel) => {
   for (const el of buttons) { const r = R(el), m = (r.top + r.bottom) / 2;
     const line = lines.find(l => Math.abs(l.m - m) < 8); if (line) line.n++; else lines.push({ m, n: 1 }); }
   if (lines.length > 1 && lines.some(l => l.n === 1)) bad.push('a button alone on its line');
+  // Nor does a filter bar's single button end up alone on a line once the
+  // bar wraps: a field, a label or another button shares its line, or it
+  // spans the line as an action row. (A labelled form row stacks on a phone,
+  // and a form's submit button has a line of its own there, as on master.)
+  if (bar.matches('.filter-bar')) {
+    const others = [...bar.querySelectorAll('input, select, button, a.fb-dd, a.btn, label, .fb-lbl')].filter(shown);
+    const overlap = (a, b) => Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top);
+    const bs = getComputedStyle(bar), room = bar.clientWidth - parseFloat(bs.paddingLeft) - parseFloat(bs.paddingRight);
+    for (const el of buttons) { const r = R(el);
+      const mates = others.filter(x => x !== el && !el.contains(x) && overlap(R(x), r) > r.height / 2);
+      if (!mates.length && others.some(x => overlap(R(x), r) <= 0) && r.width < room / 2)
+        bad.push(`a button alone on its line: "${el.textContent.trim()}"`);
+    }
+  }
   for (const el of buttons)
     if (lineCount(words(el)) > 1 || el.scrollWidth > el.clientWidth + 1) bad.push(`button text broken: "${el.textContent.trim()}"`);
+
+  // The first line starts where the others do, at the bar's padding: nothing
+  // unseen (a sticky bar's 0-wide ::before accent line) takes a gap before it.
+  if (bar.matches('.fb-fit')) {
+    const first = [...bar.children].find(el => shown(el) && !['absolute', 'fixed'].includes(getComputedStyle(el).position));
+    const bs = getComputedStyle(bar), b = R(bar), f = R(first);
+    const inset = dir === 'rtl' ? b.right - parseFloat(bs.borderRightWidth) - parseFloat(bs.paddingRight) - f.right
+                                : f.left - b.left - parseFloat(bs.borderLeftWidth) - parseFloat(bs.paddingLeft);
+    if (inset > 1) bad.push(`first line starts ${Math.round(inset)}px in`);
+  }
 
   // Arabic reads from the right: the bar's first item starts at its right.
   if (dir === 'rtl') {
@@ -283,12 +310,16 @@ class FilterBarFitBrowserTests(StaticLiveServerTestCase):
                             problems[where] = ["expected folded behind its toggle"]
                         page.context.close()
                         continue
-                    found = page.evaluate(FIT, bar)
-                    if width == 1440:
-                        for theme in ("light", "dark"):
-                            page.evaluate(
-                                f"document.documentElement.setAttribute('data-theme', '{theme}')"
-                            )
+                    # Light as it loads, then dark on the same page: dark has
+                    # rules of its own on these capsules, so it is checked
+                    # whole, not only for its ring.
+                    found = []
+                    for theme in ("light", "dark"):
+                        page.evaluate(
+                            f"document.documentElement.setAttribute('data-theme', '{theme}')"
+                        )
+                        found += [f"{theme}: {problem}" for problem in page.evaluate(FIT, bar)]
+                        if width == 1440:
                             found += [
                                 f"{theme}: focus ring {ratio}:1 on {field}"
                                 for field, ratio in page.evaluate(RING, bar)
