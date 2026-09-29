@@ -804,6 +804,17 @@ def test_the_lock_report_lists_each_cell_and_every_problem_inside_it():
         "courses": ["A", "B"],
         "student_count": 2,
     }
+    # The page reads these fields: the seats saved in the room, and the room's
+    # exam seats today (named room_capacity, as every exam room row is).
+    over = next(issue for issue in report["issues"] if issue["kind"] == "room_over_capacity")
+    assert over == {
+        "kind": "room_over_capacity",
+        "day": over["day"],
+        "period": over["period"],
+        "room_code": "RM-A",
+        "seated": 12,
+        "room_capacity": 10,
+    }
     assert report["issue_count"] == 8
 
 
