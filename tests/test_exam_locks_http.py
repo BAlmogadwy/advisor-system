@@ -304,6 +304,83 @@ def test_a_build_with_an_added_course_rebuilds_only_around_the_locked_cells(clie
     assert stored["exam_locks"] == locks
 
 
+def _lock_the_cell_of(client_, built, code) -> tuple[dict, list[dict]]:
+    """Check and Save ``built`` with the one cell holding ``code`` locked."""
+    entry = next(entry for entry in built["schedule"] if entry["course_code"] == code)
+    locks = [{"day": entry["day"], "period": entry["period"]}]
+    return _save(client_, built, exam_locks=locks), locks
+
+
+def _by_identity(result, locks) -> dict[str, tuple]:
+    """``_held`` keyed by course identity: a renumbered code is the same exam."""
+    cells = _locked_cells(locks)
+    return {
+        entry["course_identity"]: (
+            entry["day"],
+            entry["period"],
+            json.dumps(entry["rooms"], ensure_ascii=False),
+        )
+        for entry in result["schedule"]
+        if (entry["day"], entry["period"]) in cells
+    }
+
+
+@pytest.mark.parametrize("change", ["loses-an-identity", "gains-an-identity"])
+def test_a_registrar_code_renumbered_since_the_save_keeps_its_locked_cell(
+    client_, population, change
+):
+    """A code is shown as "X" with one study-plan name and "X (1)"/"X (2)"
+    with two. Registrations that add or remove a name renumber the locked
+    exam's code; the exam is the same (its identity), so a Build keeps its
+    cell, its rooms and its staff, under the code it has now."""
+    if change == "loses-an-identity":
+        # Every period is taken, so LX200 (1) is pinned to be placed at all;
+        # the pin goes before the lock, which alone keeps the cell.
+        pin = {"course_code": "LX200 (1)", "day": DAYS[1], "period": PERIODS[1]}
+        built = {**_build(client_, pinned=[pin]), "pinned": []}
+        by_code = {entry["course_code"]: entry for entry in built["schedule"]}
+        kept, gone = by_code["LX200 (1)"], by_code["LX200 (2)"]
+        assert (gone["day"], gone["period"]) != (kept["day"], kept["period"])
+        saved, locks = _lock_the_cell_of(client_, built, "LX200 (1)")
+        # Every student of the other study plan drops LX200: one name is left.
+        leaving = Student.objects.filter(program__in=gone["programs"]).values_list(
+            "student_id", flat=True
+        )
+        assert StudentTermSection.objects.filter(
+            term_section__course_key="LX200", student_id__in=list(leaving)
+        ).delete()[0]
+        renamed = {kept["course_identity"]: "LX200"}
+    else:
+        built = _build(client_)
+        kept = next(
+            entry
+            for entry in sorted(built["schedule"], key=lambda entry: entry["course_code"])
+            if entry["course_code"] != "LX109"  # online
+            and entry["day"] != "OVERFLOW"
+            and set(entry["programs"]) == {"AI", "CS"}
+        )
+        saved, locks = _lock_the_cell_of(client_, built, kept["course_code"])
+        # The CS plan renames the course: its CS students now sit another exam.
+        models.ProgrammeRequirement.objects.filter(
+            program="CS", course_code=kept["course_code"]
+        ).update(course_name="Renamed in CS")
+        renamed = {kept["course_identity"]: f"{kept['course_code']} (1)"}
+    before = _by_identity(saved, locks)
+    rebuilt = _build(client_, previous_run_id=saved["run_id"])
+    assert rebuilt["exam_locks"] == locks
+    assert _by_identity(rebuilt, locks) == before
+    assert _staff(rebuilt, locks) == _staff(saved, locks)
+    codes = {entry["course_identity"]: entry["course_code"] for entry in rebuilt["schedule"]}
+    for identity, code in renamed.items():
+        assert codes[identity] == code, "the locked exam carries its code of today"
+    # The renumbered run reads as it saved: a Check of it is no input drift.
+    checked = _loaded(client_, rebuilt)
+    assert checked["source_inputs_changed"] is False
+    assert _by_identity(checked, locks) == before
+    # And the next Build keeps it again.
+    assert _by_identity(_build(client_, previous_run_id=rebuilt["run_id"]), locks) == before
+
+
 def test_a_build_sent_no_locks_is_unlocked(client_, locked):
     built, saved, locks = locked
     rebuilt = _build(client_, previous_run_id=saved["run_id"], exam_locks=[])

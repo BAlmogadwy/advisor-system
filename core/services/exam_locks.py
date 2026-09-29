@@ -41,7 +41,6 @@ SOURCE_INCOMPLETE = "exam_locks_source_incomplete"
 SCOPE_CHANGED = "exam_locks_scope_changed"
 TERM_CHANGED = "exam_locks_term_changed"
 COURSE_NOT_SELECTED = "exam_locks_course_not_selected"
-COURSE_RENAMED = "exam_locks_course_renamed"
 LINK_OUTSIDE = "exam_locks_link_outside"
 LINK_ROOM_SHARED = "exam_locks_link_room_shared"
 PINNED_ELSEWHERE = "exam_locks_pinned_elsewhere"
@@ -388,16 +387,24 @@ def _require_complete_source_course(
     *,
     field_name: str,
     cell: dict[str, str],
+    shown_as: str | None = None,
 ) -> tuple[list, list, list]:
-    """A locked course's saved rooms, section rows and operations rows, all consistent."""
+    """A locked course's saved rooms, section rows and operations rows, all consistent.
+
+    ``code`` is the course's code in the source; ``shown_as`` its code today,
+    which a refusal names.
+    """
+    named = shown_as or code
 
     def incomplete() -> ExamLocksError:
+        # A fixed-time Check and Save rebuilds the rooms and section rows at
+        # the same exam times; a Build would place every exam again.
         return ExamLocksError(
-            f"{code} in {_where(cell['day'], cell.get('period'))} has no complete saved rooms. "
-            "Rebuild and save this timetable before locking it.",
+            f"{named} in {_where(cell['day'], cell.get('period'))} has no complete saved rooms. "
+            "Check and save this timetable with rooms, then lock it.",
             code=SOURCE_INCOMPLETE,
             field=field_name,
-            courses=[code],
+            courses=[named],
             cell=cell,
         )
 
@@ -441,6 +448,24 @@ def _require_complete_source_course(
     return rooms, rows, sections
 
 
+def _renumbered_partners(rooms: list, current_of: Mapping[str, str | None]) -> list:
+    """Saved room rows with each sharing partner under its code of today.
+
+    A copy: the source run is never changed. Rows no renumbering touches keep
+    their saved bytes exactly; a renumbered list is sorted again, as the
+    allocator writes it and the department files check it.
+    """
+    copied = json.loads(_dumps(rooms))
+    for room in copied:
+        partners = room.get("room_shared_with") if isinstance(room, dict) else None
+        if not isinstance(partners, list):
+            continue
+        now = [current_of.get(str(partner)) or str(partner) for partner in partners]
+        if now != partners:
+            room["room_shared_with"] = sorted(now)
+    return copied
+
+
 def resolve_exam_locks(
     raw: Any,
     *,
@@ -458,7 +483,10 @@ def resolve_exam_locks(
     """Validate a request's locks against its header, courses, pins, links and source.
 
     ``courses`` maps each selected display code to its metadata (or schedule
-    entry): a locked exam is matched by ``course_identity``. ``source`` is the
+    entry): a locked exam is matched by ``course_identity``, and is locked
+    under its code in ``courses`` even when that code was renumbered since
+    the save (its saved rooms name each sharing partner by its code of
+    today). Only an identity that is gone is refused. ``source`` is the
     normalised saved run the request came from: it defines what each locked
     cell holds, with its rooms. ``pinned`` must be validated pins.
 
@@ -527,7 +555,17 @@ def resolve_exam_locks(
         for entry in source.get("schedule") or []
         if isinstance(entry, dict) and entry.get("day") != OVERFLOW
     ]
-    held: list[tuple[str, dict, tuple[str, str], int]] = []
+    # A locked exam is its course identity. Its display code is renumbered
+    # whenever the scope gains or loses another study-plan name for the same
+    # registrar code ("X" <-> "X (1)"/"X (2)"); the exam, its cell and its
+    # rooms stay what they are, under the code it has now - as a link does.
+    code_by_saved_code = {
+        str(entry.get("course_code", "")): code_by_identity.get(
+            _identity_of(str(entry.get("course_code", "")), entry)
+        )
+        for entry in source_entries
+    }
+    held: list[tuple[str, str, dict, tuple[str, str], int]] = []
     for entry in sorted(
         source_entries,
         key=lambda entry: (int(entry.get("slot_index", 0) or 0), str(entry.get("course_code"))),
@@ -547,7 +585,7 @@ def resolve_exam_locks(
                 courses=[saved_code],
                 cell=_cell(day, period),
             )
-        code = code_by_identity.get(_identity_of(saved_code, entry))
+        code = code_by_saved_code.get(saved_code)
         if code is None:
             raise ExamLocksError(
                 f"{saved_code} is in locked {_where(day, period)} but not selected for this "
@@ -557,16 +595,7 @@ def resolve_exam_locks(
                 courses=[saved_code],
                 cell=_cell(day, period),
             )
-        if code != saved_code:
-            raise ExamLocksError(
-                f"{saved_code} in locked {_where(day, period)} is now {code}. "
-                "Unlock the cell, then lock it again.",
-                code=COURSE_RENAMED,
-                field=where,
-                courses=[saved_code, code],
-                cell=_cell(day, period),
-            )
-        held.append((code, entry, (day, period), index))
+        held.append((code, saved_code, entry, (day, period), index))
 
     rooms_text: dict[str, str] = {}
     sections_text: dict[str, str] = {}
@@ -575,33 +604,34 @@ def resolve_exam_locks(
     identities: dict[str, str] = {}
     if held:
         if source.get("assign_rooms") is not True:
-            code, _, (day, period), index = held[0]
+            code, _, _, (day, period), index = held[0]
             raise ExamLocksError(
-                "This timetable was saved without rooms. Build it with rooms and save it "
-                "before locking it.",
+                "This timetable was saved without rooms. "
+                "Check and save it with rooms, then lock it.",
                 code=SOURCE_INCOMPLETE,
                 field=f"exam_locks[{index}]",
                 courses=[code],
                 cell=_cell(day, period),
             )
-        for code, entry, (day, period), index in held:
+        for code, saved_code, entry, (day, period), index in held:
             rooms, rows, sections = _require_complete_source_course(
-                code,
+                saved_code,
                 entry,
                 source,
                 field_name=f"exam_locks[{index}]",
                 cell=_cell(day, period),
+                shown_as=code,
             )
-            rooms_text[code] = _dumps(rooms)
+            rooms_text[code] = _dumps(_renumbered_partners(rooms, code_by_saved_code))
             sections_text[code] = _dumps(rows)
             operations_text[code] = _dumps(sections)
             placements[code] = (day, period)
-            identities[code] = _identity_of(code, entry)
+            identities[code] = _identity_of(saved_code, entry)
         if _roster_refusal(source) is not None:
-            code, _, (day, period), index = held[0]
+            code, _, _, (day, period), index = held[0]
             raise ExamLocksError(
                 "This saved timetable cannot be read by the Student lists. "
-                "Rebuild and save it before locking it.",
+                "Check and save it with rooms, then lock it.",
                 code=SOURCE_INCOMPLETE,
                 field=f"exam_locks[{index}]",
                 courses=[code],
@@ -613,7 +643,7 @@ def resolve_exam_locks(
             for row in json.loads(sections_text[code])
         }
         if current_term is None or terms != {(str(current_term[0]), str(current_term[1]))}:
-            code, _, (day, period), index = held[0]
+            code, _, _, (day, period), index = held[0]
             raise ExamLocksError(
                 "The locked exams were saved for another academic term. "
                 "Unlock them to rebuild the timetable for this term.",
@@ -644,24 +674,21 @@ def resolve_exam_locks(
                 cell=_cell(day, period),
             )
     # A room linked courses share in a locked cell stays shared: unlinking them
-    # would leave that saved room double booked.
-    code_by_saved_code = {
-        str(entry.get("course_code", "")): code_by_identity.get(
-            _identity_of(str(entry.get("course_code", "")), entry)
-        )
-        for entry in source_entries
-    }
+    # would leave that saved room double booked. Read from the saved rows,
+    # where each partner still has the code it was saved under.
+    saved_rooms = {code: entry.get("rooms") or [] for code, _, entry, _, _ in held}
     for code, (day, period) in sorted(placements.items()):
-        for room in json.loads(rooms_text[code]):
+        for room in saved_rooms[code]:
             for partner in room.get("room_shared_with") or []:
                 current = code_by_saved_code.get(str(partner))
                 if current is None or links.unit(current) != links.unit(code):
+                    named = current or str(partner)
                     raise ExamLocksError(
-                        f"{code} and {partner} share a room in locked {_where(day, period)}. "
+                        f"{code} and {named} share a room in locked {_where(day, period)}. "
                         "Unlock the cell before unlinking them.",
                         code=LINK_ROOM_SHARED,
                         field="linked_exams",
-                        courses=[code, str(partner)],
+                        courses=[code, named],
                         cell=_cell(day, period),
                     )
 

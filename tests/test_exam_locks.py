@@ -266,15 +266,77 @@ def test_a_locked_exam_that_is_not_selected_is_refused():
     )
 
 
-def test_a_locked_exam_whose_code_was_renumbered_is_refused():
-    run = _run()
+def test_a_locked_exam_whose_code_was_renumbered_keeps_its_lock_under_the_new_code():
+    """The code "A" became "A (1)" when another study plan named it differently: the
+    same exam (identity), so the lock holds it, with its saved rows, under "A (1)"."""
+    run = _run(exam_locks=[{"day": SUN}])
     courses = courses_of(run)
     courses["A (1)"] = courses.pop("A")
-    error = refused([{"day": SUN}], run, courses=courses, board=None)
-    assert _shape(error) == (
-        "exam_locks_course_renamed",
+    locks = resolve([{"day": SUN}], run, courses=courses, board=None)
+    assert dict(locks.placements) == {"A (1)": (SUN, P1), "B": (SUN, P2)}
+    assert locks.identities["A (1)"] == _entry(run, "A")["course_identity"]
+    saved = _entry(run, "A")
+    assert locks.rooms_text["A (1)"] == json.dumps(saved["rooms"], ensure_ascii=False)
+    assert locks.sections_text["A (1)"] == json.dumps(
+        run["section_enrollment"]["A"], ensure_ascii=False
+    )
+    assert locks.operations_text["A (1)"] == json.dumps(
+        run["operations_snapshot"]["courses"]["A"]["sections"], ensure_ascii=False
+    )
+    assert locks.pins() == [
+        {"course_code": "A (1)", "day": SUN, "period": P1},
+        {"course_code": "B", "day": SUN, "period": P2},
+    ]
+
+
+def test_codes_swapped_between_two_locked_exams_follow_their_identities():
+    run = _run(exam_locks=[{"day": SUN}])
+    courses = courses_of(run)
+    courses["A"], courses["B"] = courses["B"], courses["A"]
+    locks = resolve([{"day": SUN}], run, courses=courses, board=None)
+    # B's exam is shown as "A" now: it keeps B's cell and B's rooms.
+    assert dict(locks.placements) == {"A": (SUN, P2), "B": (SUN, P1)}
+    assert locks.rooms_text["A"] == json.dumps(_entry(run, "B")["rooms"], ensure_ascii=False)
+
+
+def test_a_renumbered_partner_of_a_shared_locked_room_is_named_by_its_new_code():
+    """The saved rows name the other course in a shared room by its saved code;
+    restored under the new code, as the department files check them. A room
+    no renumbering touches keeps its saved bytes."""
+    run = _sharing()
+    run["exam_locks"] = [{"day": SUN}]
+    courses = courses_of(run)
+    courses["B (2)"] = courses.pop("B")
+    links = resolve_linked_exams(
+        [
+            {
+                "members": [
+                    {"course_identity": courses[code]["course_identity"]} for code in ("A", "B (2)")
+                ]
+            }
+        ],
+        courses,
+    )
+    assert links.unit("A") == links.unit("B (2)") is not None
+    locks = resolve([{"day": SUN}], run, courses=courses, links=links, board=None)
+    rooms_a = json.loads(locks.rooms_text["A"])
+    assert {tuple(room["room_shared_with"]) for room in rooms_a} == {("B (2)",)}
+    assert locks.rooms_text["B (2)"] == json.dumps(_entry(run, "B")["rooms"], ensure_ascii=False)
+    # The source run is never changed.
+    assert {tuple(room["room_shared_with"]) for room in _entry(run, "A")["rooms"]} == {("B",)}
+    # Unlinked, the renumbered partner is named by the code it has now.
+    error = refused([{"day": SUN}], run, courses=courses, links=NO_LINKS, board=None)
+    assert (error.code, error.courses) == ("exam_locks_link_room_shared", ["A", "B (2)"])
+
+
+def test_a_locked_exam_whose_identity_is_gone_is_refused():
+    run = _run(exam_locks=[{"day": SUN}])
+    courses = courses_of(run)
+    courses["A"] = {**courses["A"], "course_identity": "A::another plan name"}
+    assert _shape(refused([{"day": SUN}], run, courses=courses, board=None)) == (
+        "exam_locks_course_not_selected",
         "exam_locks[0]",
-        ["A", "A (1)"],
+        ["A"],
         {"day": SUN, "period": P1},
     )
 
@@ -807,7 +869,6 @@ def test_the_module_reports_every_code_it_defines():
         "exam_locks_scope_changed",
         "exam_locks_term_changed",
         "exam_locks_course_not_selected",
-        "exam_locks_course_renamed",
         "exam_locks_link_outside",
         "exam_locks_link_room_shared",
         "exam_locks_pinned_elsewhere",
