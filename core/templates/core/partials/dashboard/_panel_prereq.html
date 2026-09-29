@@ -1,12 +1,13 @@
     <div id="prereq" class="panel" role="region">
-      <div class="filter-bar mb-14">
-        <div class="fb-search" style="max-width:200px"><span class="i i-sm flex-shrink-0"><svg viewBox="0 0 24 24"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg></span><input id="preProgram" list="programs" placeholder="{% if LANGUAGE_CODE == 'ar' %}البرنامج مثال CS{% else %}Program  e.g. CS{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}البرنامج مثال CS{% else %}Program{% endif %}"></div>
-        <div class="fb-search" style="max-width:220px"><input id="preCourse" placeholder="{% if LANGUAGE_CODE == 'ar' %}رمز المقرر (اختياري){% else %}Course code (optional){% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}رمز المقرر (اختياري){% else %}Course code{% endif %}"></div>
-        <div class="fb-spacer"></div>
-        <button id="loadPre" class="btn btn-primary">
-          <span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 12h14M12 5l7 7-7 7"/></svg></span>Load
-        </button>
-        <a id="preXlsx" class="fb-dd d-none text-teal" href="#"><span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></span>XLSX</a>
+      <div class="filter-bar fb-fit mb-14">
+        <div class="fb-search"><span class="i i-sm flex-shrink-0"><svg viewBox="0 0 24 24"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg></span><input id="preProgram" class="fb-w-16ch" list="programs" placeholder="{% if LANGUAGE_CODE == 'ar' %}البرنامج مثال CS{% else %}Program  e.g. CS{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}البرنامج مثال CS{% else %}Program{% endif %}"></div>
+        <div class="fb-search"><input id="preCourse" class="fb-w-20ch" placeholder="{% if LANGUAGE_CODE == 'ar' %}رمز المقرر (اختياري){% else %}Course code (optional){% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}رمز المقرر (اختياري){% else %}Course code{% endif %}"></div>
+        <div class="fb-actions">
+          <button id="loadPre" class="btn btn-primary">
+            <span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 12h14M12 5l7 7-7 7"/></svg></span>Load
+          </button>
+          <a id="preXlsx" class="fb-dd d-none text-teal" href="#"><span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></span>XLSX</a>
+        </div>
       </div>
       <!-- Metrics -->
       <div id="preMetrics" class="d-none metrics-row-14 mb-16">
