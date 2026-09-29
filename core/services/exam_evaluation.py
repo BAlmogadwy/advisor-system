@@ -16,6 +16,14 @@ from __future__ import annotations
 from core.models import Student
 from core.services.course_identity import planner_course_key
 from core.services.exam_input_fingerprint import fingerprint_exam_inputs
+from core.services.exam_locks import (
+    NO_LOCKS,
+    ExamLocks,
+    current_exam_term,
+    exam_locks_qa,
+    mark_locked_rows,
+    resolve_exam_locks,
+)
 from core.services.exam_operations_snapshot import build_exam_operations_snapshot
 from core.services.exam_progress import current as current_progress
 from core.services.exam_review import build_exam_review
@@ -154,9 +162,13 @@ def _rooms_with_metadata() -> list[dict]:
     return exam_room_inventory(order_by=("room_code",))
 
 
-def _attach_room_metadata(schedule_entries: list[dict], rooms_list: list[dict]) -> None:
+def _attach_room_metadata(
+    schedule_entries: list[dict], rooms_list: list[dict], locks: ExamLocks = NO_LOCKS
+) -> None:
     room_meta_by_code = {str(room.get("room_code", "")): room for room in rooms_list}
     for entry in schedule_entries:
+        if locks and locks.holds(entry):
+            continue  # a locked exam's saved rows, verbatim
         for room_row in entry.get("rooms") or []:
             if not isinstance(room_row, dict):
                 continue
@@ -182,6 +194,8 @@ def evaluate_exam_schedule(
     pinned: list[dict] | None = None,
     rebalance_invigilators: bool = False,
     linked_exams: list[dict] | None = None,
+    exam_locks: list[dict] | None = None,
+    lock_source: dict | None = None,
 ) -> dict:
     """Evaluate exact exam placements without scheduling or persisting a run.
 
@@ -190,6 +204,11 @@ def evaluate_exam_schedule(
 
     ``linked_exams`` are the timetable's links. A board that splits one is
     refused rather than repaired: moving an exam is the registrar's decision.
+
+    ``exam_locks`` are its locked days and cells, read against ``lock_source``,
+    the saved run the board was loaded from. A board that moves an exam into
+    or out of a locked cell is refused; the locked exams keep their saved rooms,
+    and a problem inside a locked cell is reported, never fixed.
 
     Deliberately not one transaction. It only reads, and on PostgreSQL's READ
     COMMITTED a transaction gives the reads no common snapshot anyway; on
@@ -212,11 +231,16 @@ def evaluate_exam_schedule(
         for index, (day, period) in enumerate((day, period) for day in days for period in periods)
     ]
     pinned = validate_exam_pins(pinned, course_list, slots, schedule_entries=schedule_entries)
-    links = resolve_linked_exams(
+    links, locks = resolve_links_and_locks(
         linked_exams,
+        exam_locks,
+        lock_source,
         {entry["course_code"]: entry for entry in schedule_entries},
         pinned=pinned,
-        schedule_entries=schedule_entries,
+        board=schedule_entries,
+        days=days,
+        periods=periods,
+        assign_rooms=assign_rooms,
     )
     enrolled_sets, course_meta = _build_loaded_course_enrollments(
         schedule_entries, programs, sections
@@ -261,6 +285,8 @@ def evaluate_exam_schedule(
         program_by_student={row["student_id"]: row["program"] for row in student_attribution},
         operations_sections=operations_sections,
     )
+    # A locked exam keeps the section rows its saved rooms were sized for.
+    lock_drift = locks.freeze_sections(section_enrollment, operations_sections) if locks else []
     rooms_list: list[dict] = []
     room_feasibility: list[dict] = []
     rebalance_moves = 0
@@ -272,7 +298,7 @@ def evaluate_exam_schedule(
         # One shared, size-sized deadline across the pack and every trial repack
         # the post-pass performs, exactly as build_exam_timetable arms it.
         allocation_context = RoomAllocationContext.for_periods(
-            period_cohort_count(schedule_entries, section_enrollment, links)
+            period_cohort_count(schedule_entries, section_enrollment, links, locks)
         )
         progress.stage("assign_rooms")
         assign_rooms_to_schedule(
@@ -283,6 +309,7 @@ def evaluate_exam_schedule(
             allocation_context=allocation_context,
             on_period=progress.counter("assign_rooms"),
             links=links,
+            locks=locks,
         )
         if rebalance_invigilators and rooms_list and len(days) > 1:
             progress.stage("balance_invigilators")
@@ -302,12 +329,15 @@ def evaluate_exam_schedule(
                 caller="optimise",
                 on_trial=progress.counter("balance_invigilators"),
                 links=links,
+                locks=locks,
             )
             # The post-pass moves exams between days; a pin may not be one of
-            # them, and a link may only have moved whole.
+            # them, a link may only have moved whole, and nothing may have
+            # entered or left a locked cell.
             validate_exam_pins(pinned, course_list, slots, schedule_entries=schedule_entries)
             links.require_together(schedule_entries)
-        _attach_room_metadata(schedule_entries, rooms_list)
+            locks.require_board(schedule_entries)
+        _attach_room_metadata(schedule_entries, rooms_list, locks)
 
     # QA is computed over the FINAL board. When the post-pass ran, the placements
     # it produced are the ones that get persisted, reported and exported.
@@ -356,6 +386,9 @@ def evaluate_exam_schedule(
         synthetic_all_sections_count=0,
     )
     qa["section_mapping"] = summarize_exam_section_mapping(section_enrollment, course_meta)
+    if locks:
+        mark_locked_rows(qa, locks)
+        qa["exam_locks"] = exam_locks_qa(locks, schedule_entries, qa, rooms_list, lock_drift)
 
     draft = {
         "status": "ok",
@@ -384,6 +417,9 @@ def evaluate_exam_schedule(
         "assign_rooms": assign_rooms,
         "rebuild_mode": rebuild_mode,
     }
+    if locks:
+        # Only a run with locks carries the key: every other run is master's.
+        draft["exam_locks"] = locks.saved()
     primary_status, status_flags = derive_status_surface(draft)
     draft["primary_status"] = primary_status
     draft["status_flags"] = status_flags
@@ -400,5 +436,46 @@ def evaluate_exam_schedule(
         periods=periods,
         max_per_day=max_per_day,
         thin_conflict_threshold=thin_conflict_threshold,
+        exam_locks=locks.fingerprint_block() if locks else None,
     )
     return result
+
+
+def resolve_links_and_locks(
+    linked_exams: list[dict] | None,
+    exam_locks: list[dict] | None,
+    lock_source: dict | None,
+    courses: dict[str, dict],
+    *,
+    pinned: list[dict[str, str]],
+    board: list[dict],
+    days: list[str],
+    periods: list[str],
+    assign_rooms: bool,
+) -> tuple:
+    """A loaded board's links and locks, checked in the order that names the right rule.
+
+    Without locks this is exactly the links check every loaded action always
+    ran. With them, a link reaching into a locked cell must be refused as a
+    lock breach (unlock or unlink), not as "move them together": so the links
+    are read first, the locks are checked against the board, and only then is
+    the board checked for split links.
+    """
+    if exam_locks is None or exam_locks == []:
+        links = resolve_linked_exams(linked_exams, courses, pinned=pinned, schedule_entries=board)
+        return links, NO_LOCKS
+    links = resolve_linked_exams(linked_exams, courses, pinned=pinned)
+    locks = resolve_exam_locks(
+        exam_locks,
+        days=days,
+        periods=periods,
+        courses=courses,
+        source=lock_source,
+        pinned=pinned,
+        links=links,
+        board=board,
+        assign_rooms=assign_rooms,
+        current_term=current_exam_term(),
+    )
+    links.require_together(board)
+    return links, locks

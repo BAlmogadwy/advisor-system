@@ -144,8 +144,12 @@ def _build_model(
     periods_per_day: int,
     *,
     allow_unseated: bool,
+    closed_slots: frozenset[int] = frozenset(),
 ) -> _Model:
     """The repair over ``movable``; every other exam is a constant.
+
+    A slot in ``closed_slots`` (a locked cell) gets no literal at all, exactly
+    like a slot a frozen neighbour rules out: no exam may move into it.
 
     A frozen exam never appears as a constraint: the slots and days it rules
     out are left out of each movable exam's domain before the model is built.
@@ -178,7 +182,11 @@ def _build_model(
         }
         choices = []
         for slot in range(slot_count):
-            if slot not in taken and _day_of(slot, periods_per_day) not in held_days:
+            if (
+                slot not in taken
+                and slot not in closed_slots
+                and _day_of(slot, periods_per_day) not in held_days
+            ):
                 y[course, slot] = model.new_bool_var(f"y_{course}_{slot}")
                 choices.append(y[course, slot])
         if allow_unseated:
@@ -528,6 +536,7 @@ def repair_minimum_change(
     plan_term_buckets: Buckets | None = None,
     protected: set[str] | None = None,
     weights: Weights | None = None,
+    closed_slots: frozenset[int] = frozenset(),
 ) -> MinChangeResult:
     """Move the fewest exams that makes ``placements`` legal.
 
@@ -538,6 +547,10 @@ def repair_minimum_change(
 
     ``weights`` counts an exam as that many courses (a linked exam), on every
     level: unseated, moved and distance. An exam it does not name weighs one.
+
+    ``closed_slots`` are locked cells: no exam moves into one. The exams in
+    them are the caller's to protect; a breach among them alone stays, and is
+    the caller's to report.
     """
     if slot_count <= 0 or periods_per_day <= 0:
         raise ValueError("A repair needs at least one slot and one period per day.")
@@ -602,6 +615,7 @@ def repair_minimum_change(
             slot_count,
             periods_per_day,
             allow_unseated=allow_unseated,
+            closed_slots=frozenset(closed_slots),
         )
         if allow_unseated:
             _hint_escape(built, scope, damaged, placements, adj, plan_term_buckets, periods_per_day)

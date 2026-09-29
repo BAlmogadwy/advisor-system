@@ -594,6 +594,50 @@ test('a refused Check names the split link in the builder and at the board', asy
   assert.equal(banner.querySelector('button').textContent, AR ? 'مراجعة الاختبارات المرتبطة' : 'Review linked exams');
 });
 
+test('a refused lock is worded by the page, with the period and the exam the server named', async t => {
+  const ui = await loaded(t, { onRequest: async url => (url === '/ops/exam-timetable/draft-impact/'
+    ? reply({ ok: false, code: 'exam_locks_moved_out', field: 'exam_locks[0]', courses: ['CS111 (1)'], cell: { day: 'Wed', period: '08:00-10:00' }, error: 'CS111 (1) is in locked Wed 08:00-10:00. Unlock it to move the exam.' }, 400)
+    : undefined) });
+  drop(ui, 'CS111 (1)', 'Thu', '08:00-10:00');
+  ui.$('checkDraftBtn').click();
+  await settled();
+  const banner = ui.$('examEditorRequestError');
+  assert.equal(banner.hidden, false);
+  const text = banner.textContent.replace(/[\u2066-\u2069]/g, '');
+  assert.equal(text, AR
+    ? 'هذا الاختبار في فترة مقفلة. ألغِ القفل لنقل الاختبار. (Wed 08:00-10:00، CS111 (1))'
+    : 'This exam is in a locked period. Unlock it to move the exam. (Wed 08:00-10:00; CS111 (1))');
+  assert.equal(banner.dataset.errorKind, 'exam-locks');
+  assert.doesNotMatch(banner.textContent, /exam_locks/, 'The page words the refusal itself');
+});
+
+test('a lock refused for an incomplete saved timetable says Check and Save, never Build', async t => {
+  const ui = await loaded(t, { onRequest: async url => (url === '/ops/exam-timetable/draft-impact/'
+    ? reply({ ok: false, code: 'exam_locks_source_incomplete', field: 'exam_locks[0]', courses: ['CS111 (1)'], cell: { day: 'Wed', period: '08:00-10:00' }, error: 'Raw server text' }, 400)
+    : undefined) });
+  drop(ui, 'CS111 (1)', 'Thu', '08:00-10:00');
+  ui.$('checkDraftBtn').click();
+  await settled();
+  const text = ui.$('examEditorRequestError').textContent;
+  assert.ok(text.startsWith(AR
+    ? 'لا تتوفر في هذا الجدول المحفوظ قاعات كاملة للاختبارات المقفلة. افحص التغييرات ثم احفظها لإعادة توزيع قاعاته، ثم اقفله.'
+    : 'This saved timetable has no complete rooms for its locked exams. Check changes, then Save Changes, to assign its rooms again. Then lock it.'), text);
+  // A Build would place every exam of a saved timetable again.
+  assert.doesNotMatch(text, AR ? /بناء/ : /[Bb]uild/);
+});
+
+test('an unknown lock refusal still reads as a lock refusal', async t => {
+  const ui = await loaded(t, { onRequest: async url => (url === '/ops/exam-timetable/draft-impact/'
+    ? reply({ ok: false, code: 'exam_locks_something_new', field: 'exam_locks', error: 'Raw server text' }, 400)
+    : undefined) });
+  drop(ui, 'CS111 (1)', 'Thu', '08:00-10:00');
+  ui.$('checkDraftBtn').click();
+  await settled();
+  assert.equal(ui.$('examEditorRequestError').textContent, AR
+    ? 'تعذرت قراءة هذا القفل. ألغِ القفل ثم اقفل اليوم أو الفترة من جديد.'
+    : 'This lock could not be read. Unlock it, then lock the day or period again.');
+});
+
 test('a refusal that names no link is said in the section itself', async t => {
   const ui = await page(t, { onRequest: async url => (url === '/ops/exam-timetable/build/'
     ? reply({ ok: false, code: 'linked_exams_pins_disagree', field: 'pinned', error: 'Linked courses AI212, AI225 are pinned to different times.' }, 400)

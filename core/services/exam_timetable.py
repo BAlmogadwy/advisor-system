@@ -46,6 +46,13 @@ from core.models import (
 )
 from core.services.course_identity import display_course_label, planner_course_key
 from core.services.exam_input_fingerprint import fingerprint_exam_inputs
+from core.services.exam_locks import (
+    NO_LOCKS,
+    ExamLocks,
+    exam_locks_qa,
+    mark_locked_rows,
+    resolve_exam_locks,
+)
 from core.services.exam_operations_snapshot import build_exam_operations_snapshot
 from core.services.exam_progress import Counter
 from core.services.exam_progress import current as current_progress
@@ -582,20 +589,28 @@ def check_bucket_feasibility(
     buckets: dict[tuple[str, int], set[str]],
     num_days: int,
     pinned: list[dict[str, str]] | None = None,
+    open_days: set[str] | None = None,
 ) -> list[dict]:
     """Return buckets that need more days after honoring deliberate pin overrides.
 
     Each violation: {program, programme_term, bucket_size, num_days, courses}
     Empty list means all buckets are feasible.
+
+    ``open_days`` are the days a new exam may still take when some are
+    locked (every period closed); ``pinned`` then holds the locked exams too.
+    Each exam that is not fixed needs a day of its own that is open and holds
+    no fixed bucket-mate. Without it every day is open: master's count.
     """
     violations: list[dict] = []
     pinned_days = {pin["course_code"]: pin["day"] for pin in pinned or []}
     for (program, term), courses in sorted(buckets.items()):
         fixed_courses = courses & pinned_days.keys()
-        required_days = len(courses - fixed_courses) + len(
-            {pinned_days[course] for course in fixed_courses}
-        )
-        if required_days > num_days:
+        fixed_days = {pinned_days[course] for course in fixed_courses}
+        if open_days is None:
+            infeasible = len(courses - fixed_courses) + len(fixed_days) > num_days
+        else:
+            infeasible = len(courses - fixed_courses) > len(open_days - fixed_days)
+        if infeasible:
             violations.append(
                 {
                     "program": program,
@@ -613,18 +628,22 @@ def check_linked_bucket_feasibility(
     num_days: int,
     pinned: list[dict[str, str]] | None = None,
     links: LinkedExams = NO_LINKS,
+    open_days: set[str] | None = None,
 ) -> list[dict]:
     """``check_bucket_feasibility`` over units: a link needs one day, not one per member.
 
     ``bucket_size`` counts the exams that each need a day of their own; the
     ``courses`` listed are still the real courses, members of a link included.
     """
+    extra = {} if open_days is None else {"open_days": open_days}
     if not links:
-        return check_bucket_feasibility(buckets, num_days, pinned=pinned)
+        return check_bucket_feasibility(buckets, num_days, pinned=pinned, **extra)
     unit_buckets, _ = links.buckets(buckets, None)
     return [
         {**row, "courses": links.expand_codes(row["courses"])}
-        for row in check_bucket_feasibility(unit_buckets, num_days, pinned=links.pins(pinned))
+        for row in check_bucket_feasibility(
+            unit_buckets, num_days, pinned=links.pins(pinned), **extra
+        )
     ]
 
 
@@ -703,6 +722,8 @@ def schedule(
     seed: int | None = None,
     on_placed: Counter | None = None,
     student_credits: dict[str, dict[int, int]] | None = None,
+    locked: list[dict] | None = None,
+    closed_slots: frozenset[int] = frozenset(),
 ) -> list[dict]:
     """
     Greedy graph-coloring with day-spread soft constraint.
@@ -744,11 +765,27 @@ def schedule(
         student_credits    – {course_code: {student_id: credit_hours}} where a
                              student sits a different credit than credit_map
                              says: a linked unit whose members' credits differ
+        locked             – {course_code, day, period} of the exams in locked
+                             cells: fixed exactly as pins are, so they count
+                             for their students in every rule applied to
+                             every later placement (a course is never both)
+        closed_slots       – slot indices of locked cells: no other course
+                             may take one
 
     Returns:
         list of {course_code, slot_index, day, period}
     """
     pinned = validate_exam_pins(pinned, courses, slots)
+    if locked:
+        locked = validate_exam_pins(locked, courses, slots)
+        both = sorted(
+            {pin["course_code"] for pin in pinned} & {pin["course_code"] for pin in locked}
+        )
+        if both:
+            raise ValueError(f"Course {both[0]} is both pinned and locked.")
+        fixed = [*pinned, *locked]
+    else:
+        fixed = pinned
 
     # ── Preparation: build lookup tables ──
     max_slot_idx = max((s["index"] for s in slots), default=-1)
@@ -844,10 +881,11 @@ def schedule(
 
     course_assigned_day: dict[str, str] = {}
 
-    # Pre-assign pinned courses (user overrides — bypass constraints)
-    if pinned:
+    # Pre-assign pinned courses (user overrides — bypass constraints) and the
+    # exams of locked cells, which are placed exactly the same way.
+    if fixed:
         dp_to_slot = {(s["day"], s["period"]): s["index"] for s in slots}
-        for pin in pinned:
+        for pin in fixed:
             cc = pin.get("course_code", "")
             p_day = pin.get("day", "")
             p_period = pin.get("period", "")
@@ -880,8 +918,11 @@ def schedule(
         neighbours = adj.get(course, {})
         used_slots = {assignment[n] for n in neighbours if n in assignment}
 
-        # Conflict-free candidates: every slot NOT used by a neighbour
-        candidates = [si for si in range(max_slot_idx + 1) if si not in used_slots]
+        # Conflict-free candidates: every slot NOT used by a neighbour, nor
+        # closed by a lock. With nothing closed this is the same list.
+        candidates = [
+            si for si in range(max_slot_idx + 1) if si not in used_slots and si not in closed_slots
+        ]
 
         # Hard constraint B: no two courses from the same (program, term)
         # bucket on the same day.  Remove candidates whose day already
@@ -1064,6 +1105,8 @@ def schedule_linked(
     preferred_slots: dict[str, int] | None = None,
     seed: int | None = None,
     on_placed: Counter | None = None,
+    locked: list[dict] | None = None,
+    closed_slots: frozenset[int] = frozenset(),
 ) -> list[dict]:
     """``schedule`` with every link placed as one exam.
 
@@ -1074,7 +1117,13 @@ def schedule_linked(
 
     ``on_placed`` still counts real courses. The scheduler counts units, so the
     count is scaled: exact at the start and at the end, proportional between.
+
+    ``locked`` and ``closed_slots`` are the locked cells' exams and slots (see
+    ``schedule``); a link with a locked member is locked whole, in one cell.
     """
+    lock_args: dict = {}
+    if locked or closed_slots:
+        lock_args = {"locked": links.pins(locked), "closed_slots": closed_slots}
     if not links:
         return schedule(
             courses,
@@ -1089,6 +1138,7 @@ def schedule_linked(
             preferred_slots=preferred_slots,
             seed=seed,
             on_placed=on_placed,
+            **lock_args,
         )
     pinned = validate_exam_pins(pinned, courses, slots)
     outside = sorted(set(links.unit_of) - set(courses))
@@ -1116,6 +1166,7 @@ def schedule_linked(
         seed=seed,
         on_placed=counted,
         student_credits=links.student_credits(credit_map, enrolled_sets, default=_CREDIT_DEFAULT),
+        **lock_args,
     )
     return links.expand_entries(placed)
 
@@ -1741,15 +1792,21 @@ def period_cohort_count(
     schedule_entries: list[dict],
     section_enrollment: dict[str, list[dict]],
     links: LinkedExams = NO_LINKS,
+    locks: ExamLocks = NO_LOCKS,
 ) -> int:
     """Upper bound on the allocations one full pack performs.
 
     Rooming solves a separate allocation per scheduled slot per student cohort,
     so this — not the course count — is what a wall budget has to be sized by.
     A slot holding a linked exam is allocated twice - its linked courses in
-    rooms of their own, and sharing - so it counts twice.
+    rooms of their own, and sharing - so it counts twice. A locked cell keeps
+    its saved rooms and is never allocated, so it is not counted.
     """
-    placed = [entry for entry in schedule_entries if entry.get("day") != "OVERFLOW"]
+    placed = [
+        entry
+        for entry in schedule_entries
+        if entry.get("day") != "OVERFLOW" and not locks.holds(entry)
+    ]
     slots = {entry["slot_index"] for entry in placed}
     linked = {entry["slot_index"] for entry in placed if entry["course_code"] in links.unit_of}
     genders = {
@@ -1769,6 +1826,7 @@ def assign_rooms_to_schedule(
     allocation_context: RoomAllocationContext | None = None,
     on_period: Counter | None = None,
     links: LinkedExams = NO_LINKS,
+    locks: ExamLocks = NO_LOCKS,
 ) -> list[dict]:
     """Room original sections across each period without changing exam times.
 
@@ -1786,15 +1844,27 @@ def assign_rooms_to_schedule(
 
     ``on_period(done, total)`` counts the (period, gender) packs, the unit the
     solver works in, for a job that reports its progress.
+
+    An exam in a locked cell (``locks``) gets its saved room rows back,
+    verbatim, and never enters a pack: no allocation, no CP-SAT, no cache. A
+    locked cell is a whole slot and a pack is one slot's, so no re-solved room
+    can double-book a restored one.
     """
     inventory = normalized_rooms(rooms)
     entries_by_slot: dict[int, list[dict]] = defaultdict(list)
     for entry in schedule_entries:
+        if locks and locks.holds(entry):
+            locks.restore_rooms(entry)
+            continue
         entry["rooms"] = []
         if entry.get("day") != "OVERFLOW":
+            if locks and locks.in_locked_cell(entry):
+                # Packed alone it could double-book a restored room before any
+                # later check saw it.
+                raise RuntimeError(f"Exam {entry['course_code']} is in a locked cell.")
             entries_by_slot[entry["slot_index"]].append(entry)
     context = allocation_context or RoomAllocationContext.for_periods(
-        period_cohort_count(schedule_entries, section_enrollment, links)
+        period_cohort_count(schedule_entries, section_enrollment, links, locks)
     )
     packs: list[tuple[dict[str, dict], str, list[dict]]] = []
     for _, entries in sorted(entries_by_slot.items()):
@@ -1865,7 +1935,11 @@ def assign_rooms_to_schedule(
             by_course[code]["rooms"].append(room)
     if on_period is not None:
         on_period(len(packs), len(packs))
-    annotate_exam_room_groups(schedule_entries)
+    annotate_exam_room_groups(
+        [entry for entry in schedule_entries if not locks.holds(entry)]
+        if locks
+        else schedule_entries
+    )
     return schedule_entries
 
 
@@ -1983,9 +2057,15 @@ def _rebalance_invigilators_pass(
     caller: str = "unknown",
     on_trial: Counter | None = None,
     links: LinkedExams = NO_LINKS,
+    locks: ExamLocks = NO_LOCKS,
 ) -> int:
     """Final post-pass that moves courses between days to flatten the
     per-day invigilator demand.
+
+    Exams in locked cells (``locks``) never move and keep their saved rooms;
+    no exam moves into a locked cell. They still count in every day's load,
+    every student's day and every safety check. A locked busiest day cannot be
+    flattened: that is what a lock costs.
 
     A link moves as one exam: every member goes, or none does, and a link is
     pinned if any member is. Clashes and bucket days are judged between units;
@@ -2027,9 +2107,11 @@ def _rebalance_invigilators_pass(
     links.require_together(schedule_entries)
     unit_adj = links.adjacency(adj)
     unit_plan_term_buckets, unit_course_buckets = links.buckets(plan_term_buckets, course_buckets)
-    pinned_units = links.units_of(pinned_courses)
+    pinned_units = links.units_of(
+        pinned_courses | set(locks.placements) if locks else pinned_courses
+    )
     allocation_context = allocation_context or RoomAllocationContext.for_periods(
-        period_cohort_count(schedule_entries, section_enrollment, links)
+        period_cohort_count(schedule_entries, section_enrollment, links, locks)
     )
 
     # Slot lookup helpers
@@ -2048,6 +2130,7 @@ def _rebalance_invigilators_pass(
             seed=None,
             allocation_context=allocation_context,
             links=links,
+            locks=locks,
         )
 
     def _per_day_invigilators() -> dict[str, dict[str, int]]:
@@ -2242,6 +2325,8 @@ def _rebalance_invigilators_pass(
 
             for target_slot in slots_by_day.get(coldest_day, []):
                 tsi = target_slot["index"]
+                if locks and (target_slot["day"], target_slot["period"]) in locks.cells:
+                    continue  # closed: no exam moves in, and it costs no trial
                 if tsi == old_slot_idx:
                     continue
                 if _causes_conflict(cc, tsi, current_slot_of):
@@ -2507,6 +2592,8 @@ def build_exam_timetable(
     persist: bool = True,
     selected_course_entries: list[dict] | None = None,
     linked_exams: list[dict] | None = None,
+    exam_locks: list[dict] | None = None,
+    lock_source: dict | None = None,
 ) -> dict:
     """
     End-to-end pipeline: build enrolled sets → conflict graph →
@@ -2551,6 +2638,12 @@ def build_exam_timetable(
                            ``{"members": [{"course_identity": ...}, ...]}``
                            and sits as one exam (see
                            ``core.services.linked_exams``). Saved with the run.
+        exam_locks       – the locked days and cells (see
+                           ``core.services.exam_locks``); ``lock_source`` is
+                           the saved run they were locked in. Their exams
+                           keep their cells, rooms and invigilators; every
+                           other exam is built again around them and never
+                           enters a locked cell. Saved with the run.
     """
     progress = current_progress()
     progress.stage("enrolments")
@@ -2590,6 +2683,26 @@ def build_exam_timetable(
     ]
     pinned = validate_exam_pins(pinned, course_list, slots)
     links = resolve_linked_exams(linked_exams, course_meta, pinned=pinned)
+    locks = NO_LOCKS
+    if exam_locks:
+        locks = resolve_exam_locks(
+            exam_locks,
+            days=days,
+            periods=periods,
+            courses=course_meta,
+            source=lock_source,
+            pinned=pinned,
+            links=links,
+            scope=(programs, sections),
+            assign_rooms=assign_rooms,
+            current_term=next(
+                (
+                    (str(meta.get("academic_year", "")), str(meta.get("term", "")))
+                    for meta in course_meta.values()
+                ),
+                None,
+            ),
+        )
 
     # 1c. Build credit map for credit-weighted scoring
     credit_map = build_credit_map(course_list)
@@ -2610,8 +2723,19 @@ def build_exam_timetable(
     # 3. Programme-plan term buckets
     ptb, cb = build_plan_term_buckets(set(course_list), course_meta=course_meta, programs=programs)
 
-    # 4. Feasibility pre-check (a link needs one day, not one per member)
-    violations = check_linked_bucket_feasibility(ptb, len(days), pinned=pinned, links=links)
+    # 4. Feasibility pre-check (a link needs one day, not one per member; a
+    # locked exam holds its day, and a fully locked day takes no new exam)
+    violations = (
+        check_linked_bucket_feasibility(
+            ptb,
+            len(days),
+            pinned=[*pinned, *locks.pins()],
+            links=links,
+            open_days=locks.open_days(days, periods),
+        )
+        if locks
+        else check_linked_bucket_feasibility(ptb, len(days), pinned=pinned, links=links)
+    )
     if violations:
         return stamp_schema_version(
             {
@@ -2631,6 +2755,9 @@ def build_exam_timetable(
 
     # 6. Schedule (with day-spread + bucket + credit-pair constraints)
     progress.stage("place_exams")
+    lock_args: dict[str, Any] = (
+        {"locked": locks.pins(), "closed_slots": locks.closed_slots(slots)} if locks else {}
+    )
     schedule_entries = schedule_linked(
         course_list,
         adj,
@@ -2640,10 +2767,14 @@ def build_exam_timetable(
         max_per_day=max_per_day,
         plan_term_buckets=ptb,
         course_buckets=cb,
-        pinned=pinned,
+        # A pin of a locked exam at its own cell says nothing the lock does not.
+        pinned=[pin for pin in pinned if pin["course_code"] not in locks.placements]
+        if locks
+        else pinned,
         credit_map=credit_map,
         seed=seed,
         on_placed=progress.counter("place_exams"),
+        **lock_args,
     )
     for entry in schedule_entries:
         meta = course_meta.get(entry["course_code"], {})
@@ -2683,6 +2814,8 @@ def build_exam_timetable(
         program_by_student={row["student_id"]: row["program"] for row in student_attribution},
         operations_sections=operations_sections,
     )
+    # A locked exam keeps the section rows its saved rooms were sized for.
+    lock_drift = locks.freeze_sections(section_enrollment, operations_sections) if locks else []
     rooms_list: list[dict] = []
     room_feasibility: list[dict] = []
     room_qa: dict = {}
@@ -2695,7 +2828,7 @@ def build_exam_timetable(
         # scan are not solver work, and on a networked database they were
         # spending a budget meant for the search.
         allocation_context = RoomAllocationContext.for_periods(
-            period_cohort_count(schedule_entries, section_enrollment, links)
+            period_cohort_count(schedule_entries, section_enrollment, links, locks)
         )
         progress.stage("assign_rooms")
         assign_rooms_to_schedule(
@@ -2706,6 +2839,7 @@ def build_exam_timetable(
             allocation_context=allocation_context,
             on_period=progress.counter("assign_rooms"),
             links=links,
+            locks=locks,
         )
 
         # 7c. Final optimisation — flatten per-day invigilator load by
@@ -2732,6 +2866,7 @@ def build_exam_timetable(
                 caller="build",
                 on_trial=progress.counter("balance_invigilators"),
                 links=links,
+                locks=locks,
             )
 
         room_qa = _build_room_qa(schedule_entries, rooms_list, links=links)
@@ -2753,6 +2888,7 @@ def build_exam_timetable(
     # and the linked-exam one beside it: no pass may have split a link.
     validate_exam_pins(pinned, course_list, slots, schedule_entries=schedule_entries)
     links.require_together(schedule_entries)
+    locks.require_board(schedule_entries)
     attach_exam_relaxation_qa(
         qa,
         enrolled_sets,
@@ -2787,6 +2923,8 @@ def build_exam_timetable(
     if rooms_list:
         room_meta_by_code: dict[str, dict] = {str(r.get("room_code", "")): r for r in rooms_list}
         for entry in schedule_entries:
+            if locks and locks.holds(entry):
+                continue  # saved rows, verbatim
             for r in entry.get("rooms") or []:
                 if not isinstance(r, dict):
                     continue
@@ -2816,6 +2954,9 @@ def build_exam_timetable(
         synthetic_all_sections_count=0,
     )
     qa["section_mapping"] = summarize_exam_section_mapping(section_enrollment, course_meta)
+    if locks:
+        mark_locked_rows(qa, locks)
+        qa["exam_locks"] = exam_locks_qa(locks, schedule_entries, qa, rooms_list, lock_drift)
 
     # ── Assemble result dict ──
     # This dict is: (a) returned to the frontend as JSON, (b) persisted
@@ -2851,6 +2992,9 @@ def build_exam_timetable(
         "rooms_count": len(rooms_list),
         "assign_rooms": assign_rooms,
     }
+    if locks:
+        # Only a run with locks carries the key: every other run is master's.
+        _draft["exam_locks"] = locks.saved()
     # Compute the registrar status surface from the assembled draft
     # so the headline + flags reflect the real run state.
     primary_status, status_flags = derive_status_surface(_draft)
@@ -2868,6 +3012,7 @@ def build_exam_timetable(
         periods=periods,
         max_per_day=max_per_day,
         thin_conflict_threshold=thin_conflict_threshold,
+        exam_locks=locks.fingerprint_block() if locks else None,
     )
 
     # Persist (skipped in multi-start exploration mode where we evaluate

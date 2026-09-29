@@ -23,6 +23,7 @@ import pytest
 from core import exam_views, models
 from core.services import exam_input_fingerprint, exam_min_change, exam_multistart, exam_timetable
 from core.services.exam_evaluation import evaluate_exam_schedule
+from core.services.exam_locks import NO_LOCKS
 from core.services.exam_multistart import CandidateMetrics, report_to_dict, run_multistart
 from core.services.exam_room_allocation import RoomAllocationContext
 from core.services.linked_exams import NO_LINKS
@@ -196,13 +197,26 @@ def _graphs():
         yield board, adj, thin
 
 
+#: What a solver is handed when nothing is locked (see ``core.services.exam_locks``).
+NO_LOCK_ARGS = {"locked": None, "closed_slots": frozenset()}
+
+
 @pytest.mark.parametrize(
     "scheduler",
     [
         exam_timetable.schedule,
         functools.partial(exam_timetable.schedule_linked, links=NO_LINKS),
+        functools.partial(exam_timetable.schedule, **NO_LOCK_ARGS),
+        functools.partial(exam_timetable.schedule_linked, links=NO_LINKS, **NO_LOCK_ARGS),
+        functools.partial(exam_timetable.schedule, locked=[], closed_slots=frozenset()),
     ],
-    ids=["schedule", "schedule_linked"],
+    ids=[
+        "schedule",
+        "schedule_linked",
+        "schedule-no-locks",
+        "schedule_linked-no-locks",
+        "empty-locks",
+    ],
 )
 def test_the_scheduler_matches_master_without_links(scheduler):
     """Placements, Extra-n numbering and every progress call: seeds, pins,
@@ -228,18 +242,24 @@ def test_the_qa_matches_master_without_links(explicit):
     )
 
 
-@pytest.mark.parametrize("explicit", [False, True], ids=["default", "no-links"])
-def test_the_invigilator_pass_matches_master_without_links(explicit):
+@pytest.mark.parametrize(
+    "extra",
+    [{}, {"links": NO_LINKS}, {"links": NO_LINKS, "locks": NO_LOCKS}],
+    ids=["default", "no-links", "no-locks"],
+)
+def test_the_invigilator_pass_matches_master_without_links(extra):
     """Accepted moves, final placements and rooms, and every trial counted."""
-    rebalance = functools.partial(
-        exam_timetable._rebalance_invigilators_pass, **({"links": NO_LINKS} if explicit else {})
+    rebalance = functools.partial(exam_timetable._rebalance_invigilators_pass, **extra)
+    assign = functools.partial(
+        exam_timetable.assign_rooms_to_schedule,
+        **({"locks": extra["locks"]} if "locks" in extra else {}),
     )
     _assert_master(
         "post_pass",
         [
             corpus.run_post_pass(
                 board,
-                exam_timetable.assign_rooms_to_schedule,
+                assign,
                 rebalance,
                 RoomAllocationContext.for_periods,
                 adj,
@@ -249,13 +269,17 @@ def test_the_invigilator_pass_matches_master_without_links(explicit):
     )
 
 
-@pytest.mark.parametrize("weights", [None, {}], ids=["default", "no-weights"])
-def test_fewest_moves_matches_master_without_links(weights):
+@pytest.mark.parametrize(
+    "extra",
+    [None, {"weights": {}}, {"weights": {}, "closed_slots": frozenset()}],
+    ids=["default", "no-weights", "no-locks"],
+)
+def test_fewest_moves_matches_master_without_links(extra):
     """The PR #112 brute-force corpora, then boards that widen and overflow."""
     repair = (
         exam_min_change.repair_minimum_change
-        if weights is None
-        else functools.partial(exam_min_change.repair_minimum_change, weights=weights)
+        if extra is None
+        else functools.partial(exam_min_change.repair_minimum_change, **extra)
     )
     _assert_master(
         "repair",
@@ -266,7 +290,11 @@ def test_fewest_moves_matches_master_without_links(weights):
     )
 
 
-@pytest.mark.parametrize("extra", [None, {"linked_exams": []}], ids=["default", "no-links"])
+@pytest.mark.parametrize(
+    "extra",
+    [None, {"linked_exams": []}, {"linked_exams": [], "exam_locks": [], "lock_source": None}],
+    ids=["default", "no-links", "no-locks"],
+)
 def test_the_fix_view_matches_master_without_links(monkeypatch, extra):
     """Edited boards, pins, carried protection and exams already in OVERFLOW:
     the repaired board, the report, and what is handed to the save."""
@@ -278,7 +306,11 @@ def test_the_fix_view_matches_master_without_links(monkeypatch, extra):
 
 
 @pytest.mark.django_db
-@pytest.mark.parametrize("extra", [None, {"linked_exams": []}], ids=["default", "no-links"])
+@pytest.mark.parametrize(
+    "extra",
+    [None, {"linked_exams": []}, {"linked_exams": [], "exam_locks": [], "lock_source": None}],
+    ids=["default", "no-links", "no-locks"],
+)
 def test_build_check_optimise_fix_and_multistart_match_master_without_links(
     extra, masters_room_policy
 ):

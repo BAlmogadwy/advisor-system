@@ -182,6 +182,7 @@ function examResponseError(data) {
   }
   if (typeof code === 'string' && code.startsWith('job_')) return new Error(JOB_TEXT.noResult);
   if (typeof code === 'string' && code.startsWith('linked_exams')) return linkedExamsRefusal(code, data.field);
+  if (typeof code === 'string' && code.startsWith('exam_locks')) return examLocksRefusal(data);
   if (code !== 'courses_unavailable') return new Error(data.error || T.reqFailed);
   const unavailable = Array.isArray(data.unavailable_courses) ? data.unavailable_courses.map(String).join(', ') : '';
   const error = new Error((IS_AR
@@ -5335,6 +5336,41 @@ const LINK_REFUSALS = {
   linked_exams_pins_disagree: ['Linked courses are pinned to different times. Pin them to one time, or unpin them.', 'المقررات المرتبطة مثبتة في مواعيد مختلفة. ثبّتها في موعد واحد أو ألغِ تثبيتها.'],
   linked_exams_split: ['Linked courses must sit at the same day and period. Move them together, then check again.', 'يجب أن تُعقد المقررات المرتبطة في اليوم والفترة نفسيهما. انقلها معاً ثم تحقق مجدداً.'],
 };
+
+// Why the server refused a locked day or period: the page words every refusal
+// itself, then names the cell and the exams the server named. The lock buttons
+// come next; until then only a refusal of a request can mention a lock.
+const LOCK_REFUSALS = {
+  exam_locks_invalid: ['This lock could not be read. Unlock it, then lock the day or period again.', 'تعذرت قراءة هذا القفل. ألغِ القفل ثم اقفل اليوم أو الفترة من جديد.'],
+  exam_locks_outside_timetable: ['A locked day or period is not in this timetable any more. Unlock it, or add the day and period back.', 'يوم أو فترة مقفلة لم تعد في هذا الجدول. ألغِ القفل، أو أعد إضافة اليوم والفترة.'],
+  exam_locks_repeated: ['This day or period is locked twice.', 'هذا اليوم أو هذه الفترة مقفلة مرتين.'],
+  exam_locks_source_required: ['A lock keeps a saved timetable as it is. Load the saved timetable, then lock it.', 'يُبقي القفل الجدول المحفوظ كما هو. حمّل الجدول المحفوظ ثم اقفله.'],
+  exam_locks_source_incomplete: ['This saved timetable has no complete rooms for its locked exams. Check changes, then Save Changes, to assign its rooms again. Then lock it.', 'لا تتوفر في هذا الجدول المحفوظ قاعات كاملة للاختبارات المقفلة. افحص التغييرات ثم احفظها لإعادة توزيع قاعاته، ثم اقفله.'],
+  exam_locks_scope_changed: ['The locked days were saved for other programs or sections. Choose the saved programs and sections, or unlock the days.', 'حُفظت الأيام المقفلة لبرامج أو شعب أخرى. اختر البرامج والشعب المحفوظة، أو ألغِ قفل الأيام.'],
+  exam_locks_term_changed: ['The locked exams were saved for another academic term. Unlock them to rebuild the timetable for this term.', 'حُفظت الاختبارات المقفلة لفصل دراسي آخر. ألغِ قفلها لإعادة بناء الجدول لهذا الفصل.'],
+  exam_locks_course_not_selected: ['An exam of a locked day or period is not selected for this timetable. Select it again, or unlock it.', 'اختبار في يوم أو فترة مقفلة غير محدد لهذا الجدول. أعد تحديده، أو ألغِ القفل.'],
+  exam_locks_link_outside: ['A locked exam is linked to an exam outside its locked period. Unlock it, or unlink the courses.', 'اختبار مقفل مرتبط باختبار خارج فترته المقفلة. ألغِ القفل، أو ألغِ ربط المقررات.'],
+  exam_locks_link_room_shared: ['These linked courses share a room in a locked period. Unlock it before unlinking them.', 'تتشارك هذه المقررات المرتبطة قاعة في فترة مقفلة. ألغِ القفل قبل إلغاء ربطها.'],
+  exam_locks_pinned_elsewhere: ['This exam is in a locked period. Unlock it to pin the exam elsewhere.', 'هذا الاختبار في فترة مقفلة. ألغِ القفل لتثبيته في موعد آخر.'],
+  exam_locks_pin_in_locked_cell: ['An exam cannot be pinned to a locked period. Unlock it first.', 'لا يمكن تثبيت اختبار في فترة مقفلة. ألغِ القفل أولاً.'],
+  exam_locks_moved_out: ['This exam is in a locked period. Unlock it to move the exam.', 'هذا الاختبار في فترة مقفلة. ألغِ القفل لنقل الاختبار.'],
+  exam_locks_moved_in: ['An exam cannot be placed in a locked period. Unlock it first.', 'لا يمكن وضع اختبار في فترة مقفلة. ألغِ القفل أولاً.'],
+  exam_locks_cell_unsaved: ['This day or period has unsaved changes. Save the timetable, then lock it.', 'في هذا اليوم أو هذه الفترة تغييرات غير محفوظة. احفظ الجدول ثم اقفله.'],
+};
+
+function examLocksRefusal(data) {
+  const message = (LOCK_REFUSALS[data.code] || LOCK_REFUSALS.exam_locks_invalid)[IS_AR ? 1 : 0];
+  const cell = data.cell && typeof data.cell === 'object'
+    ? [data.cell.day, data.cell.period].filter(part => typeof part === 'string' && part).join(' ')
+    : '';
+  const courses = Array.isArray(data.courses) ? data.courses.map(String).filter(Boolean).join(', ') : '';
+  // Day labels, periods and course codes read left to right inside Arabic.
+  const named = [cell, courses].filter(Boolean).map(text => (IS_AR ? isolateLtr(text) : text));
+  const error = new Error(named.length ? `${message} (${named.join(IS_AR ? '، ' : '; ')})` : message);
+  error.examRequestKind = 'exam-locks';
+  error.examLockCode = data.code;
+  return error;
+}
 
 // Order-free: the server saves links in code order, the page in the order made.
 function linkSignatureOf(links) {

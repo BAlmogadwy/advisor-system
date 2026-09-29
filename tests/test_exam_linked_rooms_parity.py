@@ -58,6 +58,7 @@ from core.services.exam_department_export import (
     department_export_options,
     export_department_workbooks,
 )
+from core.services.exam_locks import NO_LOCKS
 from core.services.exam_roster_view import (
     build_roster_view,
     navigator_facts,
@@ -186,13 +187,17 @@ def test_one_period_is_allocated_as_master_allocated_it(master_cpsat):
     _assert_master("periods", digests)
 
 
-@pytest.mark.parametrize("explicit", [False, True], ids=["default", "no-links"])
+@pytest.mark.parametrize(
+    "explicit", [False, True, "locks"], ids=["default", "no-links", "no-locks"]
+)
 def test_rooms_invigilators_room_qa_and_footprint_match_master_without_links(
     explicit, master_cpsat
 ):
     """Rooms, the invigilator pass, room QA (seats, staff, double bookings) and
     the building footprint, on boards with rooms to spare and on tight ones."""
     extra = {"links": NO_LINKS} if explicit else {}
+    # The room QA takes no locks: a lock only restores rows it then reads.
+    lock_extra = {"locks": NO_LOCKS} if explicit == "locks" else {}
     digests = []
     with master_cpsat.workload("room_reports"):
         for board, rooms in corpus.room_boards():
@@ -205,8 +210,12 @@ def test_rooms_invigilators_room_qa_and_footprint_match_master_without_links(
                 corpus.run_room_reports(
                     board,
                     rooms,
-                    functools.partial(exam_timetable.assign_rooms_to_schedule, **extra),
-                    functools.partial(exam_timetable._rebalance_invigilators_pass, **extra),
+                    functools.partial(
+                        exam_timetable.assign_rooms_to_schedule, **extra, **lock_extra
+                    ),
+                    functools.partial(
+                        exam_timetable._rebalance_invigilators_pass, **extra, **lock_extra
+                    ),
                     exam_room_allocation.RoomAllocationContext.for_periods,
                     functools.partial(exam_timetable._build_room_qa, **extra),
                     exam_run_schema.derive_building_footprint,
@@ -236,7 +245,11 @@ def _api():
 
 
 @pytest.mark.django_db
-@pytest.mark.parametrize("extra", [None, {"linked_exams": []}], ids=["default", "no-links"])
+@pytest.mark.parametrize(
+    "extra",
+    [None, {"linked_exams": []}, {"linked_exams": [], "exam_locks": [], "lock_source": None}],
+    ids=["default", "no-links", "no-locks"],
+)
 def test_every_export_matches_master_without_links(extra, monkeypatch, master_cpsat):
     """A saved build with rooms and the invigilator pass: its result, the master
     Excel, the Department files and the student-data export in English and

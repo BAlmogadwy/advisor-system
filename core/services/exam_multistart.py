@@ -345,12 +345,18 @@ def select_pareto_candidates(
 # ---------------------------------------------------------------------------
 
 
-def _baseline_placements(previous_run_id: int) -> dict[str, tuple[str, int]] | None:
+def _baseline_placements(
+    previous_run_id: int, *, by_time: bool = False
+) -> dict[str, tuple[str, Any]] | None:
     """Load the previous run's ``course_code -> (day, slot_index)`` map.
 
     Returns ``None`` if the previous run can't be loaded or its payload
     is non-OK; movement-count metadata is then omitted from candidates,
     not faked. Defensive — never raises.
+
+    ``by_time`` keys each placement by ``(day, period)`` instead: a build
+    with locks may change the header, and a slot number would then report
+    every locked exam after a new period as moved.
     """
     try:
         previous_run = ExamTimetableRun.objects.get(id=previous_run_id)
@@ -363,7 +369,7 @@ def _baseline_placements(previous_run_id: int) -> dict[str, tuple[str, int]] | N
 
     schedule = previous_payload.get("schedule", []) or []
     return {
-        e["course_code"]: (e["day"], int(e["slot_index"]))
+        e["course_code"]: (e["day"], str(e.get("period", "")) if by_time else int(e["slot_index"]))
         for e in schedule
         if e.get("course_code") and "day" in e and "slot_index" in e
     }
@@ -371,7 +377,9 @@ def _baseline_placements(previous_run_id: int) -> dict[str, tuple[str, int]] | N
 
 def _movement_vs_baseline(
     candidate_payload: dict[str, Any],
-    baseline: dict[str, tuple[str, int]],
+    baseline: dict[str, tuple[str, Any]],
+    *,
+    by_time: bool = False,
 ) -> tuple[int, list[str]]:
     """Count placements that differ from the baseline.
 
@@ -380,8 +388,8 @@ def _movement_vs_baseline(
     Sorted alphabetically for deterministic output.
     """
     schedule = candidate_payload.get("schedule") or []
-    current: dict[str, tuple[str, int]] = {
-        e["course_code"]: (e["day"], int(e["slot_index"]))
+    current: dict[str, tuple[str, Any]] = {
+        e["course_code"]: (e["day"], str(e.get("period", "")) if by_time else int(e["slot_index"]))
         for e in schedule
         if e.get("course_code") and "day" in e and "slot_index" in e
     }
@@ -426,6 +434,8 @@ def run_multistart(
     rebalance_invigilators: bool = True,
     thin_conflict_threshold: int = 0,
     previous_run_id: int | None = None,
+    exam_locks: list[dict] | None = None,
+    lock_source: dict | None = None,
 ) -> MultistartReport:
     """Run multiple seeded builds, pick 4 Pareto candidates, persist them.
 
@@ -440,6 +450,8 @@ def run_multistart(
     - ``previous_run_id``: when set, each persisted candidate's payload
       gains ``multistart.movement_count`` and ``multistart.courses_moved``
       vs the previous run — the cheap pin-and-rebuild signal.
+    - ``exam_locks`` / ``lock_source``: every seed's build honours them, so
+      every candidate keeps the locked cells as the source saved them.
 
     Returns a ``MultistartReport``. Persists 1-4 ``ExamTimetableRun``
     rows (one per unique winning seed). Explored-but-not-selected runs
@@ -493,6 +505,8 @@ def run_multistart(
             thin_conflict_threshold=thin_conflict_threshold,
             persist=False,
             linked_exams=linked_exams,
+            exam_locks=exam_locks,
+            lock_source=lock_source,
         )
 
         completed_seeds.append(seed)
@@ -530,7 +544,12 @@ def run_multistart(
         winners_by_seed[seed].sort(key=ALL_CANDIDATE_ROLES.index)
 
     # Pin-and-rebuild baseline (loaded once, reused for every candidate).
-    baseline = _baseline_placements(previous_run_id) if previous_run_id is not None else None
+    by_time = bool(exam_locks)
+    baseline = (
+        _baseline_placements(previous_run_id, by_time=by_time)
+        if previous_run_id is not None
+        else None
+    )
 
     # Stable rank for the "candidate_rank" annotation: 0 = recommended,
     # 1 = lowest_overflow, 2 = lowest_overload, 3 = best_room_feasibility.
@@ -551,7 +570,9 @@ def run_multistart(
         movement_count: int | None = None
         courses_moved: list[str] = []
         if baseline is not None:
-            movement_count, courses_moved = _movement_vs_baseline(candidate.payload, baseline)
+            movement_count, courses_moved = _movement_vs_baseline(
+                candidate.payload, baseline, by_time=by_time
+            )
 
         annotated["multistart"] = {
             "schema_version": EXAM_RUN_SCHEMA_VERSION,
