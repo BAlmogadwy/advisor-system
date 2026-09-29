@@ -105,6 +105,13 @@
     <div id="examLinkTable" class="d-none"><table class="table table-sm align-middle et-link-table"><thead><tr><th>{% if LANGUAGE_CODE == 'ar' %}المقررات المرتبطة{% else %}Linked courses{% endif %}</th><th>{% if LANGUAGE_CODE == 'ar' %}الموعد{% else %}Time{% endif %}</th><th><span class="visually-hidden">{% if LANGUAGE_CODE == 'ar' %}الإجراءات{% else %}Actions{% endif %}</span></th></tr></thead><tbody id="examLinkRows"></tbody></table></div>
   </section>
 
+  {# Days and periods a saved timetable keeps exactly as saved, rooms included: nothing moves in or out. A Build keeps them and rebuilds everything else around them. #}
+  <section id="examLockEditor" class="et-locked-cells et-section d-none" aria-labelledby="examLockHeading">
+    <div class="et-section-heading"><span class="et-step" aria-hidden="true">06</span><div><h2 id="examLockHeading">{% if LANGUAGE_CODE == 'ar' %}الأيام والفترات المقفلة{% else %}Locked days and periods{% endif %} <span id="examLockCount"></span></h2><p id="examLockIntro"></p></div></div>
+    <p id="examLockNotice" role="status" aria-live="polite"></p>
+    <div id="examLockTable" class="d-none"><table class="table table-sm align-middle et-lock-table"><thead><tr><th>{% if LANGUAGE_CODE == 'ar' %}المقفل{% else %}Locked{% endif %}</th><th>{% if LANGUAGE_CODE == 'ar' %}الاختبارات{% else %}Exams{% endif %}</th><th><span class="visually-hidden">{% if LANGUAGE_CODE == 'ar' %}الإجراءات{% else %}Actions{% endif %}</span></th></tr></thead><tbody id="examLockRows"></tbody></table></div>
+  </section>
+
   <details class="et-options"><summary>{% if LANGUAGE_CODE == 'ar' %}خيارات الجدولة المتقدمة{% else %}Advanced scheduling options{% endif %}</summary><div class="et-options-fields">
     <label><input id="etRandomize" type="checkbox" checked><span><strong>{% if LANGUAGE_CODE == 'ar' %}تنويع الجدول{% else %}Shuffle{% endif %}</strong><small>{% if LANGUAGE_CODE == 'ar' %}إنشاء توزيع مختلف في كل عملية بناء.{% else %}Generate a different arrangement with each build.{% endif %}</small></span></label>
     <label><input id="etRelaxThin" type="checkbox"><span><strong>{% if LANGUAGE_CODE == 'ar' %}السماح بتعارضات المقررات الصغيرة{% else %}Allow tiny-course clashes{% endif %}</strong><small>{% if LANGUAGE_CODE == 'ar' %}يسمح باختبارات متزامنة للمقررات ضمن العتبة، ويُظهر التعارضات في التقرير.{% else %}Allow simultaneous exams below the enrollment threshold; report the conflicts.{% endif %}</small></span></label>
