@@ -1255,13 +1255,19 @@ html[data-theme="dark"] #matrixPanel .et-matrix .cm-1 { color: #f5cf85; }
 
 /* Add courses: every course of a saved timetable's scope, its own marked. */
 main.exam-builder-page .et-add-dialog { width: min(760px, calc(100vw - 32px)); }
-/* A column whose list takes what is left, so the buttons stay in the window.
-   A window too short even for that (a laptop at 125%, a phone on its side)
-   scrolls the dialog, never cuts it: its buttons stay pinned to its foot. */
-main.exam-builder-page .et-add-dialog[open] { display: flex; flex-direction: column; overflow: hidden auto; }
-main.exam-builder-page .et-add-dialog > * { flex: 0 0 auto; }
-main.exam-builder-page .et-add-dialog > .et-add-list { flex: 1 1 auto; min-height: min(140px, 22vh); }
-main.exam-builder-page .et-add-dialog > .et-move-actions { position: sticky; bottom: 0; z-index: 1; background: var(--et-surface); }
+/* A body over a foot. The body is a column whose list takes what is left, so
+   everything fits the window. A window too short even for that (a laptop at
+   125%, a phone on its side) scrolls the body, never cuts it; the foot - the
+   refusal and the buttons - sits below it and never over it, so neither a
+   focused field nor the error that names it is ever hidden (WCAG 2.4.11).
+   The body's 4px inset keeps focus outlines inside what it clips. */
+main.exam-builder-page .et-add-dialog[open] { display: flex; flex-direction: column; overflow: hidden; }
+main.exam-builder-page .et-add-body { flex: 1 1 auto; min-height: 0; margin: -4px; padding: 4px; display: flex; flex-direction: column; overflow: hidden auto; }
+main.exam-builder-page .et-add-body > * { flex: 0 0 auto; }
+main.exam-builder-page .et-add-body > .et-add-list { flex: 1 1 auto; min-height: min(140px, 22vh); }
+main.exam-builder-page .et-add-foot { flex: 0 0 auto; margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--et-border); }
+main.exam-builder-page .et-add-foot > .et-move-error { margin: 0 0 12px; }
+main.exam-builder-page .et-add-foot > .et-move-actions { margin: 0; padding: 0; border: 0; }
 main.exam-builder-page .et-add-scope { margin: -12px 0 14px; color: var(--et-muted); font-size: .8125rem; line-height: 1.5; overflow-wrap: anywhere; }
 main.exam-builder-page .et-add-fields { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); gap: 12px; align-items: end; }
 main.exam-builder-page .et-add-count { margin: 12px 0 6px; color: var(--et-muted); font-size: .8125rem; }

@@ -230,6 +230,80 @@ def test_a_new_exam_left_out_by_a_stopped_search_says_the_search_stopped(monkeyp
     assert result.widened and result.search_stopped and not result.proven_minimal
 
 
+@pytest.mark.parametrize("work", [12.0, 32.0])
+def test_when_every_solve_needs_all_its_work_the_wide_solve_splits_it_as_promised(
+    monkeypatch, work
+):
+    """A tight board, where every solve spends all the work it is allowed.
+
+    Every board the other tests use is solved long before its limit, so how
+    the work is shared never shows there. Here each solve is charged its whole
+    allowance, as on the tight boards built from real scopes, and the wide
+    solve must share it as its docstring says:
+
+    - placing gets at least half of what the lower levels leave, and never
+      less than one solve's usual limit;
+    - the moves get everything but the reserve - more than one solve's usual
+      limit. Held to that limit they moved 13 -> 19 and 31 -> 44 exams on two
+      of those boards, placing as many;
+    - the reserve is left for the levels below (seats, the day limit, the
+      load). Moves that ate it left the day limit worse (128 -> 133 and
+      172 -> 202 students over it), or never reached it.
+    """
+    models: dict[int, tuple[object, frozenset[str]]] = {}
+    real_build = engine._build_model
+
+    def build(scope, *args, **kwargs):
+        built = real_build(scope, *args, **kwargs)
+        # The model is kept alive, so no later model can take its id.
+        models[id(built.model)] = (built.model, frozenset(scope))
+        return built
+
+    real_solve = engine._solve
+    calls: list[tuple[frozenset[str], float, float]] = []
+
+    def takes_all_it_is_given(model, objective, budget, *, cap=None, keep=0.0):
+        before = budget.remaining
+        allowed = budget.limit(cap, keep)
+        status, solver = real_solve(model, objective, budget, cap=cap, keep=keep)
+        if solver is not None:
+            budget.spend(max(0.0, allowed - solver.deterministic_time))
+        calls.append((models.get(id(model), (None, frozenset()))[1], before, allowed))
+        return status, solver
+
+    monkeypatch.setattr(engine, "_build_model", build)
+    monkeypatch.setattr(engine, "_solve", takes_all_it_is_given)
+    placements = {"A": 0, "B": 1, "C": 2, "D": 3, "E": 4, "Z": 5}
+    adj = _clash(*[("N", x) for x in "ABCDEZ"], ("E", "Z"))
+    result = _add(
+        placements,
+        ["N"],
+        adj,
+        work_budget=work,
+        # One level below the moves: students over the daily limit on day one.
+        day_cost=lambda course, day: 1 if day == 0 else 0,
+    )
+    _assert_invariants(result, placements, ["N"], adj)
+    assert result.unplaced_new == [] and len(result.moved) == 1
+    assert result.widened
+
+    reserve = engine._ADD_LOWER_RESERVE
+    one_solve = engine._DETERMINISTIC_LIMIT
+    # The wide solve's model holds the existing exams: placing, the moves,
+    # how far, then the levels below, in that order.
+    wide = [(before, allowed) for scope, before, allowed in calls if "A" in scope]
+    assert len(wide) >= 4, calls
+    (at_placing, placing), (at_moves, moves), (at_distance, _), (_, below) = wide[:4]
+    spare = at_placing - reserve
+    assert spare / 2 > one_solve, "enough work for the split to matter"
+    assert placing >= spare / 2 - 1e-9
+    assert at_placing - placing >= reserve - 1e-9
+    assert moves > one_solve
+    assert moves == pytest.approx(at_moves - reserve)
+    assert at_distance >= reserve - 1e-9
+    assert below > 0, "the reserve reached the level below the moves"
+
+
 def test_a_protected_blocker_never_moves_even_when_it_is_the_cheapest():
     # "ZZ" sorts last on purpose: a protection that held only by code order
     # would pass with a first-named exam.

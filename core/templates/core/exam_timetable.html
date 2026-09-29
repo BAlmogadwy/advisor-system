@@ -299,7 +299,9 @@
 
   {% if can_edit_exam_timetable %}
   {# Adding courses to the saved timetable on the board: every course of its scope, its own marked; only new ones can be ticked. #}
+  {# A body that scrolls on a short window, and a foot below it that never covers it: the focused field and the refusal stay in sight (WCAG 2.4.11). #}
   <dialog id="examAddCoursesDialog" class="et-move-dialog et-add-dialog" aria-labelledby="examAddCoursesTitle" aria-describedby="examAddCoursesHelp">
+    <div class="et-add-body">
     <h2 id="examAddCoursesTitle">{% if LANGUAGE_CODE == 'ar' %}إضافة مقررات إلى هذا الجدول{% else %}Add courses to this timetable{% endif %}</h2>
     <p id="examAddCoursesHelp" class="et-dialog-help">{% if LANGUAGE_CODE == 'ar' %}تُعرض جميع مقررات برامج هذا الجدول وشعبه. المقررات الموجودة في الجدول معلَّمة وتبقى كما هي. حدّد فقط المقررات التي تريد إضافتها.{% else %}All courses of this timetable's programmes and sections are listed. Courses already in the timetable are marked and stay as they are. Tick only the courses you want to add.{% endif %}</p>
     <p id="examAddCoursesScope" class="et-add-scope"></p>
@@ -311,8 +313,11 @@
     <p id="examAddCoursesCount" class="et-add-count" role="status" aria-live="polite"></p>
     <div id="examAddCoursesList" class="et-add-list" role="group" aria-labelledby="examAddCoursesTitle" aria-busy="false"></div>
     <div class="et-add-name"><label class="form-label" for="examAddCoursesName">{% if LANGUAGE_CODE == 'ar' %}اسم الجدول الجديد{% else %}New timetable name{% endif %}</label><input id="examAddCoursesName" class="form-control" maxlength="120" autocomplete="off" aria-describedby="examAddCoursesNameHelp"><small id="examAddCoursesNameHelp" class="et-field-help">{% if LANGUAGE_CODE == 'ar' %}تُحفظ النتيجة جدولاً جديداً؛ يبقى هذا الجدول كما هو.{% else %}The result is saved as a new timetable; this one stays as it is.{% endif %}</small></div>
+    </div>
+    <div class="et-add-foot">
     <p id="examAddCoursesError" class="et-move-error" role="alert" hidden></p>
     <div class="et-move-actions"><button id="cancelAddCourses" type="button" class="btn btn-outline-secondary">{% if LANGUAGE_CODE == 'ar' %}إلغاء{% else %}Cancel{% endif %}</button><button id="retryAddCourses" type="button" class="btn btn-outline-secondary" hidden>{% if LANGUAGE_CODE == 'ar' %}إعادة المحاولة{% else %}Retry{% endif %}</button><button id="confirmAddCourses" type="button" class="btn btn-primary">{% if LANGUAGE_CODE == 'ar' %}إضافة المقررات{% else %}Add courses{% endif %}</button></div>
+    </div>
   </dialog>
   {% endif %}
 

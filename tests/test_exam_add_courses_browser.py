@@ -41,10 +41,12 @@ PERIODS = corpus.POPULATION_PERIODS
 SCOPE = {"programs": ["AI", "CS"], "sections": ["F", "M"]}
 ISOLATES = {code: None for code in range(0x2066, 0x206A)}
 
-# Everything in the dialog inside it, the dialog inside the window, and how far
-# the page scrolls sideways.
+# Everything in the dialog inside it, the dialog inside the window, how far
+# the page scrolls sideways, how far the dialog's body scrolls, and the list's
+# height beside the floor it gives its height up to on a short window.
 FITS = """() => {
   const dialog = document.getElementById('examAddCoursesDialog');
+  const body = dialog.querySelector('.et-add-body');
   const box = dialog.getBoundingClientRect();
   const shown = node => { const r = node.getBoundingClientRect(); return r.width > 1 && r.height > 1; };
   return {
@@ -53,8 +55,10 @@ FITS = """() => {
       const r = node.getBoundingClientRect(); return r.left < box.left - 1 || r.right > box.right + 1; })
       .map(node => node.id || node.className || node.tagName),
     page: document.documentElement.scrollWidth - window.innerWidth,
-    // The list scrolls; the dialog around it never does, so its buttons stay put.
-    overflow: dialog.scrollHeight - dialog.clientHeight,
+    // The list scrolls; on a tall window the body around it never does.
+    overflow: body.scrollHeight - body.clientHeight,
+    list: document.getElementById('examAddCoursesList').getBoundingClientRect().height,
+    floor: Math.min(140, innerHeight * 0.22),
   };
 }"""
 
@@ -75,6 +79,22 @@ REACHABLE = """() => {
       hit: document.elementFromPoint(x, y) === button,
     };
   });
+}"""
+
+# A control or message in sight: the element under its own centre is itself,
+# so nothing - the buttons included - is drawn over it (WCAG 2.4.11); and
+# whether it has focus.
+IN_VIEW = """(id) => {
+  const node = document.getElementById(id);
+  const r = node.getBoundingClientRect();
+  const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+  return {
+    id,
+    shown: r.width > 1 && r.height > 1,
+    hit: hit === node,
+    under: hit ? hit.id || String(hit.className) || hit.tagName : null,
+    focused: document.activeElement === node,
+  };
 }"""
 
 
@@ -185,7 +205,7 @@ class ExamAddCoursesBrowserTests(StaticLiveServerTestCase):
         self.assertTrue(facts["inWindow"], f"{where}: the list leaves the window")
         self.assertEqual(facts["outside"], [], f"{where}: something spills out of the list")
         self.assertLessEqual(facts["page"], 0, f"{where}: the page scrolls sideways")
-        self.assertLessEqual(facts["overflow"], 1, f"{where}: the list pushes the buttons away")
+        self.assertLessEqual(facts["overflow"], 1, f"{where}: the list pushes the name away")
         expect(page.locator("#confirmAddCourses")).to_be_in_viewport()
         # Search, then tick two new courses.
         new = self.codes[6:8]
@@ -216,8 +236,24 @@ class ExamAddCoursesBrowserTests(StaticLiveServerTestCase):
         for language in ("en", "ar"):
             self._add_two(language, 390)
 
+    def _buttons_in_reach(self, page, where: str) -> None:
+        for button in page.evaluate(REACHABLE):
+            self.assertTrue(all(button.values()), f"{where}: {button}")
+
+    def _in_view(self, page, element: str, where: str, *, focused: bool) -> None:
+        facts = page.evaluate(IN_VIEW, element)
+        self.assertTrue(facts["shown"] and facts["hit"], f"{where}: {facts}")
+        self.assertEqual(facts["focused"], focused, f"{where}: {facts}")
+
     def test_on_short_windows_the_buttons_stay_in_reach(self) -> None:
-        """A laptop at 125% scaling, a short window, and phones either way up."""
+        """A laptop at 125% scaling, a short window, and phones either way up.
+
+        Cancel and Add stay in reach whatever has focus. By keyboard, the
+        search, the show filter and the name are each in sight when Tab
+        reaches them - never under the buttons (WCAG 2.4.11) - and so are the
+        refusal of an empty name and the field it focuses. By mouse or finger,
+        the dialog scrolls to the name. The list gives up its height first.
+        """
         for width, height in ((1280, 560), (1093, 525), (360, 640), (390, 600), (844, 390)):
             for language in ("en", "ar"):
                 where = f"{language} {width}x{height}"
@@ -230,12 +266,45 @@ class ExamAddCoursesBrowserTests(StaticLiveServerTestCase):
                 facts = page.evaluate(FITS)
                 self.assertTrue(facts["inWindow"], f"{where}: the list leaves the window")
                 self.assertLessEqual(facts["page"], 0, f"{where}: the page scrolls sideways")
-                for button in page.evaluate(REACHABLE):
-                    self.assertTrue(all(button.values()), f"{where}: {button}")
+                # Too short for everything, so the body scrolls - and the list
+                # has already given up its height, down to 22% of the window:
+                # each row it kept is more to scroll between the search and the
+                # name, and a finger on the list scrolls the list, never the
+                # dialog.
+                self.assertGreater(facts["overflow"], 1, f"{where}: {facts}")
+                self.assertLessEqual(facts["list"], facts["floor"] + 1, f"{where}: {facts}")
+                self._buttons_in_reach(page, where)
+                # Keyboard: the search has focus on open; Tab reaches the filter.
+                self._in_view(page, "examAddCoursesSearch", where, focused=True)
+                page.keyboard.press("Tab")
+                self._in_view(page, "examAddCoursesShow", where, focused=True)
+                # Mouse or finger: a wheel over the dialog's text scrolls it to the name.
+                text = page.locator("#examAddCoursesHelp").bounding_box()
+                assert text is not None
+                page.mouse.move(text["x"] + text["width"] / 2, text["y"] + text["height"] / 2)
+                page.mouse.wheel(0, 2000)
+                try:
+                    page.wait_for_function(
+                        f"(id) => ({IN_VIEW})(id).hit", arg="examAddCoursesName", timeout=3000
+                    )
+                except playwright_api.TimeoutError:
+                    name = page.evaluate(IN_VIEW, "examAddCoursesName")
+                    self.fail(f"{where}: the wheel never brought the name into sight: {name}")
                 # A tick scrolls the list, and the dialog with it: still in reach.
                 page.locator("#examAddCoursesList input[type=checkbox]").last.check()
-                for button in page.evaluate(REACHABLE):
-                    self.assertTrue(all(button.values()), f"{where} after a tick: {button}")
+                self._buttons_in_reach(page, f"{where} after a tick")
+                # Tab from the last course reaches the name.
+                page.keyboard.press("Tab")
+                self._in_view(page, "examAddCoursesName", where, focused=True)
+                # Back up at the search, the name emptied and out of sight: Add
+                # refuses, and the refusal and the field it focuses are in sight.
+                page.locator("#examAddCoursesName").fill("")
+                page.locator("#examAddCoursesSearch").focus()
+                page.locator("#confirmAddCourses").click()
+                expect(page.locator("#examAddCoursesError")).to_be_visible()
+                self._in_view(page, "examAddCoursesName", f"{where} refused", focused=True)
+                self._in_view(page, "examAddCoursesError", f"{where} refused", focused=False)
+                self._buttons_in_reach(page, f"{where} refused")
                 page.close()
 
     def test_the_setup_of_a_saved_timetable_finds_a_course_not_in_it(self) -> None:
