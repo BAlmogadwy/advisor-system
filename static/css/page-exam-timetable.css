@@ -454,7 +454,7 @@ main.exam-builder-page .et-repair-report .et-repair-linked { color: var(--et-war
 /* Locked days and periods. A locked cell is closed: a calm tint with fine
    stripes, a lock badge that says so in words, and cards that neither drag
    nor pin. The lock toggles are native buttons with aria-pressed. */
-main.exam-builder-page #schedGrid .et-grid :is(td, tbody th).et-locked {
+main.exam-builder-page #schedGrid .et-grid :is(td, tbody th, thead th).et-locked {
   background-color: var(--et-lock-soft);
   background-image: repeating-linear-gradient(135deg, transparent 0 10px, var(--et-lock-stripe) 10px 12px);
 }
@@ -526,7 +526,7 @@ main.exam-builder-page .et-lock-problem { display: block; margin-top: 4px; color
 }
 @media (forced-colors: active) {
   /* Tints and stripes are dropped in High Contrast: a dashed frame says "locked". */
-  main.exam-builder-page #schedGrid .et-grid :is(td, tbody th).et-locked { background-image: none; outline: 2px dashed CanvasText; outline-offset: -4px; }
+  main.exam-builder-page #schedGrid .et-grid :is(td, tbody th, thead th).et-locked { background-image: none; outline: 2px dashed CanvasText; outline-offset: -4px; }
   main.exam-builder-page :is(.et-lock-badge, .et-lock-kind, .et-lock-line) { border-color: CanvasText; }
   main.exam-builder-page .et-lock-toggle { border-color: ButtonText; }
   main.exam-builder-page .et-lock-toggle[aria-pressed="true"] { border-color: Highlight; background: Highlight; color: HighlightText; forced-color-adjust: none; }
