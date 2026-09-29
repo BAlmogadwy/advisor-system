@@ -66,6 +66,25 @@ def _assert_locks_held(entries, locks: ExamLocks) -> None:
     assert not intruders, f"{intruders} entered a locked cell"
 
 
+def _assert_bucket_days_held(entries, locks: ExamLocks, buckets, fixed: set[str]) -> int:
+    """I4: an exam placed around the locks (not locked, not pinned, not in
+    OVERFLOW) never shares a day with a locked exam of its study-plan term.
+    Returns how many such exams had a locked mate, so a test can say it
+    checked something."""
+    where = _where(entries)
+    checked = 0
+    for members in buckets.values():
+        locked_days = {locks.placements[code][0] for code in members if code in locks.placements}
+        if not locked_days:
+            continue
+        for code in sorted(members):
+            if code in locks.placements or code in fixed or where[code][0] == "OVERFLOW":
+                continue
+            checked += 1
+            assert where[code][0] not in locked_days, f"{code} is on a locked mate's day"
+    return checked
+
+
 # ── the greedy scheduler (Build, Optimise, multistart) ──────────────────────
 
 
@@ -106,7 +125,7 @@ def _scheduler_cases():
 
 
 def test_the_scheduler_keeps_every_lock_on_every_corpus_board():
-    checked = 0
+    checked = mates = 0
     for _number, board, adj, first, cells, _rng in _scheduler_cases():
         locks = _locks(first, cells, board["days"], board["periods"])
         pins = [
@@ -135,12 +154,16 @@ def test_the_scheduler_keeps_every_lock_on_every_corpus_board():
         where = _where(entries)
         for pin in pins:
             assert where[pin["course_code"]] == (pin["day"], pin["period"])
+        mates += _assert_bucket_days_held(
+            entries, locks, board["plan_term_buckets"], {pin["course_code"] for pin in pins}
+        )
         checked += bool(locks.placements)
     assert checked >= 30, "the corpus hardly locked anything"
+    assert mates >= 30, "hardly any exam was placed beside a locked study-plan mate"
 
 
 def test_the_linked_scheduler_keeps_every_lock_and_every_link():
-    checked = 0
+    checked = mates = 0
     for _number, board, adj, first, cells, rng in _scheduler_cases():
         locks = _locks(first, cells, board["days"], board["periods"])
         # Links inside one locked cell, or wholly outside every lock.
@@ -180,8 +203,12 @@ def test_the_linked_scheduler_keeps_every_lock_and_every_link():
         )
         _assert_locks_held(entries, locks)
         assert links.together(entries)
+        mates += _assert_bucket_days_held(
+            entries, locks, board["plan_term_buckets"], {pin["course_code"] for pin in pins}
+        )
         checked += bool(links) and bool(locks.placements)
     assert checked >= 20
+    assert mates >= 30, "hardly any exam was placed beside a locked study-plan mate"
 
 
 def test_the_scheduler_refuses_a_course_both_pinned_and_locked():
@@ -218,6 +245,107 @@ def test_a_locked_exam_counts_for_its_students_when_the_rest_is_placed():
     )
     where = _where(entries)
     assert where["A"] == ("D1", "P1")
+    assert where["B"][0] == "D2"
+
+
+def _place_around_a(kind: str, slots, a_at: dict, *, pins=(), **kwargs) -> dict:
+    """Schedule with A fixed as a lock (its cell closed) or, to compare, as a pin."""
+    if kind == "locked":
+        closed = frozenset(
+            slot["index"]
+            for slot in slots
+            if (slot["day"], slot["period"]) == (a_at["day"], a_at["period"])
+        )
+        fixed = {"pinned": list(pins), "locked": [a_at], "closed_slots": closed}
+    else:
+        fixed = {"pinned": [*pins, a_at]}
+    return _where(exam_timetable.schedule(slots=slots, **kwargs, **fixed))
+
+
+FIXED_KINDS = pytest.mark.parametrize("kind", ["locked", "pinned"])
+
+
+@FIXED_KINDS
+def test_a_same_term_exam_never_takes_a_locked_exams_day(kind):
+    """Rule 3 and the hard study-plan rule. D1's free period is the lighter
+    day by load and as near A as D2 is, so only A holding its bucket's day
+    keeps B, of A's own study-plan term, off D1."""
+    slots = corpus._slots(["D1", "D2"], ["P1", "P2"])
+    where = _place_around_a(
+        kind,
+        slots,
+        {"course_code": "A", "day": "D1", "period": "P1"},
+        pins=[
+            {"course_code": "X", "day": "D2", "period": "P1"},
+            {"course_code": "Y", "day": "D2", "period": "P2"},
+        ],
+        courses=["A", "B", "X", "Y"],
+        adj={},
+        enrolled_sets={"A": {60}, "B": {50}, "X": {70}, "Y": {71}},
+        max_per_day=2,
+        plan_term_buckets={("CS", 1): {"A", "B"}},
+        course_buckets={"A": [("CS", 1)], "B": [("CS", 1)]},
+    )
+    assert where["A"] == ("D1", "P1")
+    assert where["B"][0] == "D2"
+
+
+@FIXED_KINDS
+def test_a_locked_exam_counts_in_its_days_load(kind):
+    """Rule 3, day load. Nothing but load tells D1's free period from D2's:
+    A, locked on D1, makes D1 the busier day, so B goes to D2."""
+    slots = corpus._slots(["D1", "D2"], ["P1", "P2"])
+    where = _place_around_a(
+        kind,
+        slots,
+        {"course_code": "A", "day": "D1", "period": "P1"},
+        courses=["A", "B"],
+        adj={},
+        enrolled_sets={"A": {1}, "B": {2}},
+        max_per_day=2,
+    )
+    assert where["B"][0] == "D2"
+
+
+@FIXED_KINDS
+def test_a_same_term_exam_is_spaced_away_from_a_locked_one(kind):
+    """Rule 3, spacing. Every open day is equally loaded; only the distance
+    from A, its locked study-plan mate on D1, sends B to the farthest day."""
+    slots = corpus._slots(["D1", "D2", "D3", "D4"], ["P1"])
+    where = _place_around_a(
+        kind,
+        slots,
+        {"course_code": "A", "day": "D1", "period": "P1"},
+        courses=["A", "B"],
+        adj={},
+        enrolled_sets={"A": {1}, "B": {2}},
+        max_per_day=2,
+        plan_term_buckets={("CS", 1): {"A", "B"}},
+        course_buckets={"A": [("CS", 1)], "B": [("CS", 1)]},
+    )
+    assert where["B"] == ("D4", "P1")
+
+
+@FIXED_KINDS
+def test_a_locked_exam_counts_in_its_students_credit_pairs(kind):
+    """Rule 3, credit pairs. Student 1 sits A (4 credits), locked on D1, and
+    B (4 credits). D1 is the lighter day, and two exams a day are allowed; only
+    the 4+4 pairing A would make sends B to D2."""
+    slots = corpus._slots(["D1", "D2"], ["P1", "P2"])
+    where = _place_around_a(
+        kind,
+        slots,
+        {"course_code": "A", "day": "D1", "period": "P1"},
+        pins=[
+            {"course_code": "X", "day": "D2", "period": "P1"},
+            {"course_code": "Y", "day": "D2", "period": "P2"},
+        ],
+        courses=["A", "B", "X", "Y"],
+        adj={"A": {"B": 1}, "B": {"A": 1}},
+        enrolled_sets={"A": {1}, "B": {1}, "X": {10}, "Y": {11}},
+        max_per_day=2,
+        credit_map={"A": 4, "B": 4, "X": 2, "Y": 2},
+    )
     assert where["B"][0] == "D2"
 
 
