@@ -183,6 +183,28 @@ one/two/few/many/other), and the real dialog's Enter on Keep editing. The
 endpoint, its audit rows and its roles are covered by
 `tests/test_db_admin_programme_limits.py`.
 
+The `exam-add-courses.test.cjs` suite covers adding courses to the saved
+timetable on the board, in English and in Arabic. Add courses asks for the
+run's own scope list by itself - never Load Courses, never on opening the run -
+every time it opens; the list is searchable by code, name and programme, the
+timetable's own courses are marked "In timetable" with where they sit and carry
+no checkbox, nothing is ticked on open, and the button counts what is ticked.
+A submit with nothing ticked, with run courses that lost their registrations,
+or for a timetable of another term is refused in the list and sends nothing;
+otherwise the request carries the saved board unchanged, only the ticked
+identities, no locks, and a name of its own. Unsaved board edits (not the name)
+refuse it with the reason and focus Save. The setup section of a saved
+timetable - opened by the registrar, or searched - lists the scope's other
+courses without checkboxes, found by the same search, while the board, its
+signature and Save stay as they were; selection presets never reach them, Load
+Courses still starts a new timetable, and after a Build the setup list is the
+built timetable's. The report (placed with Find, moved with why, not placed
+with each reason, "fewest possible" only when proven) never throws on a bad
+report; refusals are worded by the page; the job panel names the action; the
+dialog is named and described, and Cancel and Escape give focus back. A viewer
+who may not save sees no way to add. Chromium at 1440px and 390px, in both
+languages, is covered by `tests/test_exam_add_courses_browser.py`.
+
 Network behavior is tested with deterministic responses. These tests do not
 create real saved runs, delete database rows, execute the optimizer, or inspect
 downloaded workbooks; backend and export suites cover those contracts separately.
