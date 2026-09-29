@@ -19,6 +19,9 @@
  */
 const IS_AR = LANGUAGE_CODE === 'ar';
 const CAN_DELETE_EXAM_TIMETABLE = document.querySelector('[data-exam-builder]')?.dataset.canDeleteExamTimetable === 'true';
+// Lock and unlock buttons are for whoever may Save a timetable; anyone else
+// sees which days and periods are locked, and no buttons.
+const CAN_EDIT_EXAM_TIMETABLE = document.querySelector('[data-exam-builder]')?.dataset.canEditExamTimetable === 'true';
 const T = {
   ready:      IS_AR ? 'جاهز. حدد الفلاتر ثم انقر تحميل المقررات.' : 'Ready. Select filters then click Load Courses.',
   building:   IS_AR ? 'جارٍ بناء الجدول...' : 'Building timetable...',
@@ -904,6 +907,18 @@ $('buildBtn').addEventListener('click', async () => {
   const randomize = $('etRandomize').checked;
   const thinThreshold = readThinThresholdForPost();
   if (thinThreshold === null) return;
+  // A Build from a saved run with locks keeps them, and says so first. There
+  // is no Build that drops them: a lock ends only when it is unlocked.
+  const locks = validatedBuildLocks(header, scope);
+  if (!locks) return;
+  if (locks.keep && !await dlg.confirm({
+    title: LOCK_TEXT.buildTitle,
+    body: `<p>${escapeAttr(LOCK_TEXT.buildKeeps(locks.cells, locks.exams))}</p><p>${escapeAttr(LOCK_TEXT.buildHow)}</p>`,
+    icon: 'info',
+    confirmLabel: LOCK_TEXT.buildConfirm,
+    cancelLabel: LOCK_TEXT.cancel,
+  })) return;
+  if (_builderBusy) return;
 
   $('buildBtn').disabled = true;
   clearJobNotice();
@@ -941,7 +956,10 @@ $('buildBtn').addEventListener('click', async () => {
       linked_exams: linkedExams,
       randomize,
       thin_conflict_threshold: thinThreshold,
-      previous_run_id: _currentResultData?.run_id,
+      // The saved run the locks are kept from: sent alone, its locks are
+      // inherited; after an explicit unlock, the locks still kept are sent.
+      previous_run_id: locks.keep ? locks.runId : _currentResultData?.run_id,
+      ...(locks.keep && !locks.inherit ? { exam_locks: locks.locks } : {}),
       base_schedule: baseSchedule && baseSchedule.length ? baseSchedule : undefined,
     };
     const { res, data, refusal } = await submitExamAction(payload, 'build', $('buildBtn'));
@@ -1004,6 +1022,11 @@ function readThinThresholdForPost() {
 
 function collectLoadedRunPayload(mode) {
   if (needsExamSourceRebuild()) return null;
+  // Optimize and Fix keep the saved locks - they send none, and the server
+  // keeps the loaded run's. A lock change is saved first: Check, then Save.
+  if (['optimize_loaded', 'minimum_change_repair'].includes(mode) && lockChangesSinceSave().length) {
+    return refuseLockedEdit(LOCK_TEXT.saveLocksFirst(actionLabel(mode === 'optimize_loaded' ? $('optimizeLoadedBtn') : $('minChangeBtn'))));
+  }
   const selectedCourses = getCheckedValues('courseList');
   if (!selectedCourses.length) {
     $('etStatus').textContent = T.noSelected;
@@ -1022,12 +1045,17 @@ function collectLoadedRunPayload(mode) {
     || !periods.includes(entry.period)
     || examDayIdentity(entry.day, loadedStartDay) !== examDayIdentity(entry.day)
   ))) return inputError(T.pinSettingsChanged, $('loadCoursesBtn'));
+  const lockProblem = lockHeaderProblem(header);
+  if (lockProblem) return refuseLockedEdit(lockProblem);
   const pinned = validatedPinPayload(header);
   if (!pinned) return null;
   const linkedExams = validatedLinkPayload();
   if (!linkedExams) return null;
   const thinThreshold = readThinThresholdForPost();
   if (thinThreshold === null) return null;
+  // Check and Save carry the page's locks whenever there are any, or were
+  // ([] unlocks them all); otherwise nothing is sent, as before locks existed.
+  const sendsLocks = ['check_draft', 'save_loaded_changes'].includes(mode) && (_examLocks.length > 0 || savedLocks().length > 0);
   const baseSchedule = loadedBaseSchedule(selectedCourses);
   if (!baseSchedule) {
     $('etStatus').textContent = T.loadedRunAction;
@@ -1046,10 +1074,12 @@ function collectLoadedRunPayload(mode) {
     pinned,
     // Always sent: the page holds the links, and [] means "none".
     linked_exams: linkedExams,
+    ...(sendsLocks ? { exam_locks: lockPayload() } : {}),
     randomize: $('etRandomize').checked,
     thin_conflict_threshold: thinThreshold,
     previous_run_id: _currentResultData?.run_id,
-    assign_rooms: _currentResultData?.assign_rooms ?? true,
+    // A run saved without rooms gets them once a lock is asked for.
+    assign_rooms: _roomsForLocks ? true : (_currentResultData?.assign_rooms ?? true),
     update_run_id: mode === 'optimize_loaded' && _currentResultData?.rebuild_mode === 'optimized_from_loaded'
       ? _currentResultData.run_id
       : undefined,
@@ -2473,7 +2503,7 @@ async function runLoadedRunAction(mode, button, busyText, successText) {
       }
       if (!_reviewedInputFingerprint || _currentResultData.input_fingerprint !== _reviewedInputFingerprint) {
         _checkState = 'review';
-        throw new Error(IS_AR ? 'تغيّرت بيانات المصدر أو لم يتم التحقق منها. انقر «تحقق من التغييرات» لمراجعتها قبل الحفظ.' : 'Source data changed or has not been reviewed. Click Check changes to review it before saving.');
+        throw new Error(lockChangesSinceSave().length ? LOCK_TEXT.reviewBeforeSave : IS_AR ? 'تغيّرت بيانات المصدر أو لم يتم التحقق منها. انقر «تحقق من التغييرات» لمراجعتها قبل الحفظ.' : 'Source data changed or has not been reviewed. Click Check changes to review it before saving.');
       }
       payload = collectLoadedRunPayload(mode);
       if (!payload) return;
@@ -2567,6 +2597,18 @@ let _linkError = null;         // the server's refusal, while the links it judge
 let _linkNotice = null;        // { text, error, key } said after a link action, while `key` holds
 let _linkDialog = null;        // { identities, options } while the time is chosen
 
+/* ── Locked days and periods: editor state, saved with the timetable like pins and links. ── */
+// Each lock is { day, period?, day_identity }: a whole day, or one period of
+// it, by the header's own labels. A lock keeps what the SAVED run holds there -
+// exams, rooms, invigilators - so a new or changed lock needs a Check, then a Save.
+let _examLocks = [];
+// After Load Courses from a saved run with locks, the run a Build keeps them
+// from: { runId, run } - the saved run, whose cells and exams the Build keeps.
+let _lockSource = null;
+// A lock keeps saved rooms: a run saved without rooms gets them on its next
+// Check and Save first.
+let _roomsForLocks = false;
+
 /* ── Current run ID (for export) ── */
 let _currentRunId = null;
 
@@ -2604,6 +2646,9 @@ let _redoCommands = [];
 let _moveCourseCode = null;
 let _foundExamIdentity = null;
 let _drillCourseMetadata = new Map();
+// The exams the last checked report keeps in locked cells, by code: a report
+// row made only of them gets a lock mark.
+let _drillLockedCodes = new Set();
 let _departmentContext = null;
 let _departmentRequestToken = 0;
 let _departmentBusy = false;
@@ -2624,6 +2669,8 @@ function editorSignature() {
   const pins = Object.values(_pinnedCourses).map(pin => [pin.course_identity, pin.day, pin.period]).sort();
   // A link edit is a timetable edit: it needs a Check before Save.
   const links = linkSignature();
+  // So is a lock: by day and period, never by course code.
+  const locks = lockSignatureOf(_examLocks);
   const placements = (_currentResultData?.schedule || []).map(entry =>
     [entry.course_identity || entry.course_code, entry.day, entry.period]).sort();
   return JSON.stringify({
@@ -2633,7 +2680,9 @@ function editorSignature() {
     programs: getCheckedValues('progList').sort(), sections: getCheckedValues('secList').sort(),
     relaxThin: $('etRelaxThin').checked,
     thinThreshold: $('etRelaxThin').checked ? $('etThinThreshold').value.trim() : '',
-    randomize: $('etRandomize').checked, courses, pins, links, placements,
+    randomize: $('etRandomize').checked, courses, pins, links, locks, placements,
+    // Rooms asked for, so that the run can be locked: a change to Save.
+    ...(_roomsForLocks ? { rooms: 'assign' } : {}),
   });
 }
 
@@ -3031,7 +3080,8 @@ function updateBuildSummary() {
     ? (IS_AR ? 'حمّل المقررات للمتابعة.' : 'Load courses to continue.')
     : (IS_AR ? `${selected} مقرر · ${days} أيام · ${periods} فترات يومياً · ${pins} مثبت`
       : `${selected} courses · ${days} days · ${periods} periods/day · ${pins} fixed`)
-      + (links ? (IS_AR ? ` · ${links} مرتبط` : ` · ${links} linked`) : '');
+      + (links ? (IS_AR ? ` · ${links} مرتبط` : ` · ${links} linked`) : '')
+      + (_examLocks.length ? LOCK_TEXT.summary(_examLocks.length) : '');
 }
 
 function updateLoadedRunActions() {
@@ -3096,6 +3146,16 @@ function enterFreshBuildMode() {
   clearExamCourseSourceError();
   clearJobNotice();
   cancelDraftChecks();
+  clearLockRefusal();
+  // Leaving a saved run for a new Build: its SAVED locks are what a Build can
+  // keep (the draft was discarded), so they come along, with the run they are
+  // kept from. Leaving no saved run keeps what the builder already holds.
+  if (_savedResultData) {
+    const saved = savedLocks();
+    _lockSource = saved.length ? { runId: _currentRunId ?? _savedResultData.run_id, run: _savedResultData } : null;
+    restoreLocksFromRun(saved.length ? _savedResultData : null);
+  }
+  _roomsForLocks = false;
   _currentResultData = null;
   _loadedRunForRebuild = false;
   _scheduleHasDraftMoves = false;
@@ -3191,7 +3251,10 @@ function metricComparison(metric, fresh) {
   const baseline = _savedResultData?.input_fingerprint;
   const current = _currentResultData?.input_fingerprint;
   if (!baseline || !current) return { text: IS_AR ? 'تحقق واحفظ لبدء المقارنات' : 'Check and save to start comparisons', modifier: 'is-neutral' };
-  if (baseline !== current) return { text: IS_AR ? 'المقارنة متوقفة: تغيّرت بيانات الجدول' : 'Comparison paused: timetable data changed', modifier: 'is-neutral' };
+  if (baseline !== current) {
+    const text = lockChangesSinceSave().length ? LOCK_TEXT.comparisonPaused : IS_AR ? 'المقارنة متوقفة: تغيّرت بيانات الجدول' : 'Comparison paused: timetable data changed';
+    return { text, modifier: 'is-neutral' };
+  }
   const suffix = metric.suffix || '';
   const saved = metric.value(_savedResultData);
   const checked = metric.value(_currentResultData);
@@ -3327,6 +3390,9 @@ function describeMinimumChange(report, { saved = true } = {}) {
   const alreadyOverflow = Number(report?.already_overflow) || 0;
   // Students in two linked courses: a clash no repair may separate.
   const linkedClash = Number(report?.linked_clash_students) || 0;
+  // Exams in locked cells, never moved, and breaches among them alone.
+  const lockedCount = Number(report?.locked_count) || 0;
+  const lockedViolations = Math.min(remaining, Number(report?.locked_violations) || 0);
   const solved = ['OPTIMAL', 'FEASIBLE'].includes(report?.status);
 
   if (!solved) {
@@ -3351,7 +3417,9 @@ function describeMinimumChange(report, { saved = true } = {}) {
     const codes = unseated.map(code => `<bdi dir="ltr">${escapeAttr(code)}</bdi>`).join(IS_AR ? '، ' : ', ');
     parts.push(`<p>${escapeAttr(REPAIR_TEXT.unseated(unseated.length))} ${codes}.</p>`);
   }
-  if (remaining) parts.push(`<p>${escapeAttr(REPAIR_TEXT.remaining(remaining))}</p>`);
+  if (remaining - lockedViolations) parts.push(`<p>${escapeAttr(REPAIR_TEXT.remaining(remaining - lockedViolations))}</p>`);
+  if (lockedViolations) parts.push(`<p class="et-repair-locked">${escapeAttr(LOCK_TEXT.fixLockedRemain(lockedViolations))}</p>`);
+  if (lockedCount) parts.push(`<p class="et-repair-locked">${escapeAttr(LOCK_TEXT.fixKept(lockedCount))}</p>`);
   if (linkedClash) parts.push(`<p class="et-repair-linked">${escapeAttr(REPAIR_TEXT.linkedClash(linkedClash))}</p>`);
   if (saved) parts.push(`<p>${escapeAttr(REPAIR_TEXT.saved())}</p>`);
   return { html: parts.join(''), clean: !remaining && !unseated.length && !alreadyOverflow && !linkedClash };
@@ -3419,9 +3487,12 @@ function updateChangeReview() {
     return (!before !== !after) || (before && after && (before.day !== after.day || before.period !== after.period));
   });
   const linkChanges = linkChangesSinceSave();
+  const lockChanges = lockChangesSinceSave();
   $('examChangeCount').textContent = (IS_AR ? `${moved.length} منقول · ${pinChanges.length} تغيير تثبيت` : `${moved.length} moved · ${pinChanges.length} pin changes`)
-    + (linkChanges.length ? (IS_AR ? ` · ${linkChanges.length} تغيير ربط` : ` · ${linkChanges.length} link changes`) : '');
-  $('examChangesSummary').textContent = IS_AR ? `مراجعة التغييرات (${moved.length + pinChanges.length + linkChanges.length})` : `Review changes (${moved.length + pinChanges.length + linkChanges.length})`;
+    + (linkChanges.length ? (IS_AR ? ` · ${linkChanges.length} تغيير ربط` : ` · ${linkChanges.length} link changes`) : '')
+    + (lockChanges.length ? LOCK_TEXT.changeCount(lockChanges.length) : '');
+  const changeTotal = moved.length + pinChanges.length + linkChanges.length + lockChanges.length;
+  $('examChangesSummary').textContent = IS_AR ? `مراجعة التغييرات (${changeTotal})` : `Review changes (${changeTotal})`;
   const row = (entry, before, after, kind) => `<li class="et-change-item" data-change-identity="${escapeAttr(entry.course_identity || entry.course_code)}" data-change-kind="${kind}"><span class="et-change-course"><strong>${escapeAttr(entry.course_code)}</strong><small class="et-course-name">${escapeAttr(entry.course_name || '')}</small></span><span class="et-change-times"><span>${IS_AR ? 'المحفوظ: ' : 'Saved: '}<bdi dir="ltr">${escapeAttr(examLocation(before))}</bdi></span><span aria-hidden="true"> ${IS_AR ? '←' : '→'} </span><span>${IS_AR ? 'الحالي: ' : 'Current: '}<bdi dir="ltr">${escapeAttr(examLocation(after))}</bdi></span></span>${examActionMarkup(entry, { allowStaleMove: true })}</li>`;
   const movedRows = moved.map(entry => row(entry, baseline.get(entry.course_identity || entry.course_code), entry, 'placement')).join('');
   const pinRows = pinChanges.map(identity => {
@@ -3437,11 +3508,19 @@ function updateChangeReview() {
     const actions = examActionMarkup(first, { allowStaleMove: true, courseLabel: change.saved ? '' : change.members.map(member => member.course_code).join(' + ') });
     return `<li class="et-change-item" data-change-identity="${escapeAttr(change.members[0].course_identity)}" data-change-kind="link" data-change-link="${escapeAttr(change.key)}"><span class="et-change-course"><strong>${codes}</strong><small class="et-course-name">${escapeAttr(names)}</small></span><span class="et-change-times"><span>${IS_AR ? 'المحفوظ: ' : 'Saved: '}${state(change.saved)}</span><span aria-hidden="true"> ${IS_AR ? '←' : '→'} </span><span>${IS_AR ? 'الحالي: ' : 'Current: '}${state(!change.saved)}</span></span>${actions}</li>`;
   }).join('');
+  // A lock is a day or a period of it: listed by where it is, never by course.
+  const lockRows = lockChanges.map(change => {
+    const where = change.period
+      ? `<bdi dir="ltr">${escapeAttr(`${change.day} · ${change.period}`)}</bdi>`
+      : `<bdi dir="ltr">${escapeAttr(change.day)}</bdi> <small>${escapeAttr(LOCK_TEXT.wholeDay)}</small>`;
+    return `<li class="et-change-item et-change-lock" data-change-kind="lock" data-change-lock="${escapeAttr(lockItemKey(change))}"><span class="et-change-course"><strong class="et-lock-where">${lockIcon(!change.saved)}${where}</strong></span><span class="et-change-times"><span>${IS_AR ? 'المحفوظ: ' : 'Saved: '}${LOCK_TEXT.lockedState(change.saved)}</span><span aria-hidden="true"> ${IS_AR ? '←' : '→'} </span><span>${IS_AR ? 'الحالي: ' : 'Current: '}${LOCK_TEXT.lockedState(!change.saved)}</span></span></li>`;
+  }).join('');
   const anyLinks = _linkedExams.length || (_savedResultData.linked_exams || []).length;
   $('examChangesContent').innerHTML = (movedRows ? `<section class="et-change-group"><h4>${IS_AR ? 'مواعيد الاختبارات' : 'Exam placements'}</h4><ul class="et-change-list">${movedRows}</ul></section>` : '')
     + (pinRows ? `<section class="et-change-group"><h4>${IS_AR ? 'تغييرات التثبيت' : 'Pin changes'}</h4><ul class="et-change-list">${pinRows}</ul></section>` : '')
     + (linkRows ? `<section class="et-change-group" data-change-group="links"><h4>${IS_AR ? 'الاختبارات المرتبطة' : 'Linked exams'}</h4><ul class="et-change-list">${linkRows}</ul></section>` : '')
-    + (!movedRows && !pinRows && !linkRows ? `<p class="et-change-empty">${anyLinks
+    + (lockRows ? `<section class="et-change-group" data-change-group="locks"><h4>${escapeAttr(LOCK_TEXT.changesGroup)}</h4><ul class="et-change-list">${lockRows}</ul></section>` : '')
+    + (!movedRows && !pinRows && !linkRows && !lockRows ? `<p class="et-change-empty">${anyLinks
       ? (IS_AR ? 'لم تتغير مواعيد الاختبارات أو تثبيتاتها أو روابطها عن الجدول المحفوظ.' : 'Exam placements, pins and linked exams match the saved timetable.')
       : (IS_AR ? 'لم تتغير مواعيد الاختبارات أو تثبيتاتها عن الجدول المحفوظ.' : 'Exam placements and pins match the saved timetable.')}</p>` : '');
   if (focusedAction) [...$('examChangesContent').querySelectorAll(`[${focusedAction}]`)].find(button => button.getAttribute(focusedAction) === focusedIdentity && button.closest('[data-change-kind]')?.dataset.changeKind === focusedKind)?.focus({ preventScroll: true });
@@ -3471,6 +3550,10 @@ function updateEditingStatus() {
     review: IS_AR ? 'بيانات المصدر تحتاج مراجعة' : 'Source data needs review',
     source: IS_AR ? 'مراجعة مصدر المقررات مطلوبة' : 'Course source review required',
   };
+  // A lock change moves the input fingerprint on purpose (the locks are part
+  // of what Save keeps): that review is worded as the lock change it is.
+  const lockReview = _currentResultData && lockChangesSinceSave().length > 0;
+  if (lockReview) labels.review = LOCK_TEXT.reviewLabel;
   const checkStatus = $('examCheckStatus');
   const checkText = hasSchedule ? (labels[state] || labels.stale) + dirtyLabel : '';
   if (checkStatus && checkStatus.textContent !== checkText) checkStatus.textContent = checkText;
@@ -3482,7 +3565,7 @@ function updateEditingStatus() {
   if (banner) {
     banner.classList.toggle('d-none', !hasSchedule || sourceRebuild || (fresh && state !== 'review'));
     const bannerText = state === 'review'
-      ? (IS_AR ? 'انقر «تحقق من التغييرات» لمراجعة بيانات المصدر المحدثة قبل الحفظ.' : 'Click Check changes to review the updated source data before saving.')
+      ? (lockReview ? LOCK_TEXT.reviewBanner : IS_AR ? 'انقر «تحقق من التغييرات» لمراجعة بيانات المصدر المحدثة قبل الحفظ.' : 'Click Check changes to review the updated source data before saving.')
       : (state === 'error' || state === 'waiting') && _checkError ? _checkError : (IS_AR
       ? 'الأرقام والتفاصيل المعروضة تخص آخر تحقق. تحقق من التغييرات لتحديثها؛ لن يتم نقل أي اختبار.'
       : 'Cards and details show the last checked arrangement. Check changes to update them; no exam will be moved.');
@@ -3513,6 +3596,8 @@ function updateEditingStatus() {
   window.ExamRosterDrawer?.paintLinks();
   renderLinkWarnings();
   updateLinkBar();
+  renderLockLine();
+  renderLockBar();
 }
 
 function cancelDraftChecks() {
@@ -3852,7 +3937,9 @@ function updateDrillActionAvailability() {
     if (_builderBusy) reason = IS_AR ? 'انتظر اكتمال العملية الحالية.' : 'Wait for the current request to finish.';
     else if (!selectable) reason = IS_AR ? 'المقرر غير متاح ضمن التحديد الحالي.' : 'Course is unavailable in the current selection.';
     else if (button.hasAttribute('data-move-exam')) {
-      if (groupPin(entry.course_code)) reason = IS_AR ? 'ألغِ التثبيت للنقل.' : 'Unpin to move.';
+      const locked = lockedPlaceOf(entry.course_code);
+      if (locked) reason = LOCK_TEXT.lockedOut(entry.course_code, locked.day, locked.period);
+      else if (groupPin(entry.course_code)) reason = IS_AR ? 'ألغِ التثبيت للنقل.' : 'Unpin to move.';
       else if (needsExamSourceRebuild() && !button.hasAttribute('data-allow-unchecked')) reason = IS_AR ? 'راجع مصدر المقررات وأعد البناء قبل النقل من هذه التفاصيل السابقة.' : 'Review the course source and rebuild before moving from these previous details.';
       else if (!fresh && !button.hasAttribute('data-allow-unchecked')) reason = IS_AR ? 'تحقق من التغييرات قبل النقل من هذه التفاصيل السابقة.' : 'Check changes before moving from these previous details.';
     }
@@ -3929,7 +4016,7 @@ const _drillRenderers = {
     return {
       title: IS_AR ? 'مجموعات دون قاعة' : 'Unassigned room groups',
       head: `<tr><th>${IS_AR ? 'المقرر' : 'Course'}</th><th>${IS_AR ? 'الموعد' : 'Time'}</th><th>${IS_AR ? 'الشعبة ومجموعة القاعة' : 'Teaching section and room group'}</th><th>${IS_AR ? 'فئة الطلاب' : 'Student group'}</th><th>${IS_AR ? 'الطلاب' : 'Students'}</th></tr>`,
-      body: rows.map(row => `<tr><td>${drillCourseMarkup(row)}</td><td><bdi dir="ltr">${escapeAttr(`${row.day || ''} · ${row.period || ''}`)}</bdi></td><td>${roomSectionsMarkup(row)}</td><td>${escapeAttr(studentGroupLabel(row.gender))}</td><td>${escapeAttr(row.student_count ?? 0)}</td></tr>`).join(''),
+      body: rows.map(row => `<tr><td>${rowLockMark(row)}${drillCourseMarkup(row)}</td><td><bdi dir="ltr">${escapeAttr(`${row.day || ''} · ${row.period || ''}`)}</bdi></td><td>${roomSectionsMarkup(row)}</td><td>${escapeAttr(studentGroupLabel(row.gender))}</td><td>${escapeAttr(row.student_count ?? 0)}</td></tr>`).join(''),
       colspan: 5,
     };
   },
@@ -3939,7 +4026,7 @@ const _drillRenderers = {
       head: `<tr><th>${IS_AR ? 'القاعة' : 'Room'}</th><th>${IS_AR ? 'الموعد' : 'Time'}</th><th>${IS_AR ? 'المقررات' : 'Courses'}</th></tr>`,
       body: rows.map(row => {
         const slot = _slotsByIndex[row.slot_index];
-        return `<tr><td>${escapeAttr(row.room_code || '')}</td><td>${escapeAttr(slot ? `${slot.day} · ${slot.period}` : `#${row.slot_index}`)}</td><td>${drillCourseListMarkup(row.courses)}</td></tr>`;
+        return `<tr><td>${rowLockMark(row, row.courses)}${escapeAttr(row.room_code || '')}</td><td>${escapeAttr(slot ? `${slot.day} · ${slot.period}` : `#${row.slot_index}`)}</td><td>${drillCourseListMarkup(row.courses)}</td></tr>`;
       }).join(''),
       colspan: 3,
     };
@@ -3975,7 +4062,7 @@ const _drillRenderers = {
         const when = isBucket ? (r.day || '') : slotLabel(r.slot_index);
         const courses = drillCourseListMarkup(r.courses);
         return `<tr>
-          <td>${typeBadge}</td>
+          <td>${rowLockMark(r, r.courses)}${typeBadge}</td>
           <td>${who}</td>
           <td>${when}</td>
           <td>${courses}</td>
@@ -4085,7 +4172,7 @@ const _drillRenderers = {
           ? `<span class="badge bg-warning text-dark">${IS_AR ? 'غير مكتمل' : 'Incomplete'}</span>`
           : `<span class="badge bg-success">${IS_AR ? 'مكتمل' : 'Complete'}</span>`;
         return `<tr>
-          <td>${drillCourseMarkup(r.course_identity || r.course_code)}</td>
+          <td>${rowLockMark(r, [r.course_code])}${drillCourseMarkup(r.course_identity || r.course_code)}</td>
           <td>${examSectionMarkup(r, { showGender: true })}</td>
           <td>${r.enrolment || 0}</td>
           <td>${r.max_room_cap || 0}</td>
@@ -4096,6 +4183,22 @@ const _drillRenderers = {
         </tr>`;
       }).join(''),
       colspan: 8,
+    };
+  },
+  // What the report found inside locked cells, grouped by kind: reported, never moved.
+  'exam-locks'(rows) {
+    const capacity = rows.some(row => row.kind === 'room_over_capacity');
+    return {
+      title: LOCK_TEXT.drillTitle,
+      note: [LOCK_TEXT.drillNote, capacity ? LOCK_TEXT.capacityNote : ''].filter(Boolean).join(' '),
+      head: `<tr>${LOCK_TEXT.drillHead.map(text => `<th>${escapeAttr(text)}</th>`).join('')}</tr>`,
+      body: rows.map(issue => {
+        const kind = LOCK_ISSUE[issue.kind];
+        const where = issue.period ? `${issue.day || ''} · ${issue.period}` : String(issue.day || '');
+        return `<tr class="et-lock-issue" data-lock-issue="${escapeAttr(issue.kind)}"><td><span class="et-lock-kind">${escapeAttr(kind?.label || String(issue.kind || ''))}</span></td><td><bdi dir="ltr">${escapeAttr(where)}</bdi></td><td>${escapeAttr(kind ? kind.detail(issue) : '')}</td></tr>`;
+      }).join(''),
+      colspan: 3,
+      empty: Array.isArray(_drillData['exam-locks']) ? LOCK_TEXT.drillEmpty : LOCK_TEXT.barUnchecked,
     };
   },
   'thin-clash'(rows) {
@@ -4226,7 +4329,7 @@ function renderResults(data, { evaluation = false, preserveViewport = true } = {
     _currentResultData = { ..._currentResultData, ...cloneData(data), schedule: placements,
       run_id: _currentRunId, rebuild_mode: _currentResultData.rebuild_mode,
       pinned: Object.values(_pinnedCourses).map(pin => ({ ...pin })),
-      linked_exams: linkPayload() };
+      linked_exams: linkPayload(), exam_locks: lockPayload() };
     data = _currentResultData;
   } else {
     cancelDraftChecks();
@@ -4234,6 +4337,11 @@ function renderResults(data, { evaluation = false, preserveViewport = true } = {
     // Before the saved signature is taken below: restored later, the page
     // would send no links, and the first Check would say the inputs changed.
     restoreLinksFromRun(data);
+    // The same for the saved locks. A new board is its own source of locks.
+    restoreLocksFromRun(data);
+    _lockSource = null;
+    _roomsForLocks = false;
+    clearLockRefusal();
     _currentResultData = cloneData(data);
     _undoCommands = [];
     _redoCommands = [];
@@ -4423,6 +4531,9 @@ function renderResults(data, { evaluation = false, preserveViewport = true } = {
     _drillCourseMetadata.set(entry.course_code, { ...entry });
     _drillCourseMetadata.set(entry.course_identity || entry.course_code, { ...entry });
   }
+  // The exams this report says its locked cells keep.
+  _drillLockedCodes = new Set((data.qa?.exam_locks?.cells || []).flatMap(cell => (cell?.courses || [])
+    .map(course => (typeof course === 'string' ? course : course?.course_code)).filter(Boolean)));
   // Store drilldown data + close any open panel
   // The server says which clashes are inside a link (linked_same_slot).
   const linkedClashes = new Set((data.qa?.manual_override_details ?? [])
@@ -4441,6 +4552,8 @@ function renderResults(data, { evaluation = false, preserveViewport = true } = {
     'section-mapping': data.qa?.section_mapping?.details ?? [],
     'room-unassigned': data.qa?.rooms?.unassigned_room_sections ?? [],
     'room-double': data.qa?.rooms?.room_double_bookings ?? [],
+    // What the report found inside locked cells; null before any report.
+    'exam-locks': Array.isArray(data.qa?.exam_locks?.issues) ? lockIssueRows(data.qa.exam_locks.issues) : null,
   };
   closeDrill();
   hideLegacyQaWarnings();
@@ -4507,13 +4620,14 @@ function examCourseIcon(name) {
   return `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">${paths[name] || ''}</svg>`;
 }
 
-function examCourseCardMarkup(course, { classes, attributes = '', actions = '', extra = '', pinned = false }) {
+function examCourseCardMarkup(course, { classes, attributes = '', actions = '', extra = '', pinned = false, note = '' }) {
   const code = String(course?.course_code || '');
   const fullName = String(course?.course_name || '').trim();
   const shortName = compactExamCourseName(fullName);
-  const label = `${code} — ${fullName || code}`;
+  // `note`: a state the card's name carries, as "locked" in a locked cell.
+  const label = `${code} — ${fullName || code}${note ? ` (${note})` : ''}`;
   const onlineLabel = IS_AR ? 'مقرر عن بُعد' : 'Online course';
-  return `<span class="et-course-card ${classes}" role="group" tabindex="-1" aria-label="${escapeAttr(label)}" title="${escapeAttr(label)}" ${attributes}><strong class="et-course-code">${pinned ? `<span class="et-pin-lock" aria-hidden="true">${examCourseIcon('lock')}</span> ` : ''}${escapeAttr(code)}${course?.is_online ? ` <span class="et-course-online" role="img" aria-label="${onlineLabel}" title="${onlineLabel}">${examCourseIcon('online')}</span>` : ''}</strong>${shortName ? `<span class="et-course-short-name">${escapeAttr(shortName)}</span><span class="et-course-full-name" aria-hidden="true">${escapeAttr(fullName)}</span>` : ''}${actions}${extra}<span class="et-review-badges"></span></span>`;
+  return `<span class="et-course-card ${classes}" role="group" tabindex="-1" aria-label="${escapeAttr(label)}" title="${escapeAttr(label)}"${note ? ` data-exam-note="${escapeAttr(note)}"` : ''} ${attributes}><strong class="et-course-code">${pinned ? `<span class="et-pin-lock" aria-hidden="true">${examCourseIcon('lock')}</span> ` : ''}${escapeAttr(code)}${course?.is_online ? ` <span class="et-course-online" role="img" aria-label="${onlineLabel}" title="${onlineLabel}">${examCourseIcon('online')}</span>` : ''}</strong>${shortName ? `<span class="et-course-short-name">${escapeAttr(shortName)}</span><span class="et-course-full-name" aria-hidden="true">${escapeAttr(fullName)}</span>` : ''}${actions}${extra}<span class="et-review-badges"></span></span>`;
 }
 
 /* ── Render schedule as day×period grid ── */
@@ -4527,12 +4641,18 @@ function renderScheduleGrid(schedule, slots) {
   const active = document.activeElement;
   const focusedCourse = active?.closest?.('.et-course')?.dataset.course;
   const focusedAction = active?.matches?.('[data-exam-pin]') ? 'data-exam-pin' : active?.matches?.('[data-exam-move]') ? 'data-exam-move' : active?.matches?.('[data-exam-related]') ? 'data-exam-related' : null;
+  // A lock button is found again by its day and period after the re-render.
+  const focusedLock = active?.matches?.('[data-lock-day]') ? [active.dataset.lockDay, active.dataset.lockPeriod || ''] : null;
   const scrollLeft = container.scrollLeft;
   const coursesByCode = new Map(schedule.map(entry => [entry.course_code, entry]));
   const linkByCode = linkedCodeIndex();
+  const locks = lockSets();
   const courseChip = code => {
     const pinned = Boolean(groupPin(code));
     const course = coursesByCode.get(code);
+    // In a locked cell nothing moves or pins in or out: the card says so.
+    const locked = Boolean(course && course.day !== 'OVERFLOW' && isCellLocked(course.day, course.period, locks));
+    const lockedHint = locked ? LOCK_TEXT.lockedOut(code, course.day, course.period) : '';
     const fullName = String(course?.course_name || '').trim();
     const label = `${code} — ${fullName || code}`;
     const link = linkByCode.get(code);
@@ -4543,10 +4663,13 @@ function renderScheduleGrid(schedule, slots) {
     const moveLabel = link ? (IS_AR ? 'نقل الاختبارات المرتبطة' : 'Move linked exams') : (IS_AR ? 'نقل' : 'Move');
     const lockHint = IS_AR ? 'ألغِ التثبيت للنقل' : 'Unpin to move';
     const relatedLabel = IS_AR ? 'عرض الطلاب المشتركين' : 'Show shared students';
+    // Locked, Pin and Move stay reachable and say why they do nothing.
+    const refused = locked ? ` aria-disabled="true" data-locked-hint="${escapeAttr(lockedHint)}"` : '';
     return examCourseCardMarkup(course, {
-      classes: `et-course${pinned ? ' et-pinned' : ''}`, pinned,
-      attributes: `data-course="${escapeAttr(code)}" draggable="${!pinned}"`,
-      actions: `<span class="et-schedule-course-actions et-course-card-actions"><button type="button" data-exam-pin="${escapeAttr(code)}" aria-pressed="${pinned}" aria-label="${escapeAttr(`${pinLabel}: ${label}`)}" title="${escapeAttr(`${pinLabel}: ${label}`)}" ${course?.day === 'OVERFLOW' ? 'disabled' : ''}>${examCourseIcon('pin')}</button><button type="button" data-exam-move="${escapeAttr(code)}" aria-label="${escapeAttr(`${moveLabel}: ${label}`)}" title="${escapeAttr(`${pinned ? lockHint : moveLabel}: ${label}`)}" ${pinned ? 'disabled' : ''}>${examCourseIcon('move')}</button></span>`,
+      classes: `et-course${pinned ? ' et-pinned' : ''}${locked ? ' et-in-locked' : ''}`, pinned,
+      note: locked ? LOCK_TEXT.locked : '',
+      attributes: `data-course="${escapeAttr(code)}" draggable="${!pinned && !locked}"${locked ? ' data-locked="true"' : ''}`,
+      actions: `<span class="et-schedule-course-actions et-course-card-actions"><button type="button" data-exam-pin="${escapeAttr(code)}" aria-pressed="${pinned}" aria-label="${escapeAttr(`${pinLabel}: ${label}`)}" title="${escapeAttr(locked ? lockedHint : `${pinLabel}: ${label}`)}" ${course?.day === 'OVERFLOW' ? 'disabled' : ''}${refused}>${examCourseIcon('pin')}</button><button type="button" data-exam-move="${escapeAttr(code)}" aria-label="${escapeAttr(`${moveLabel}: ${label}`)}" title="${escapeAttr(locked ? lockedHint : `${pinned ? lockHint : moveLabel}: ${label}`)}" ${pinned && !locked ? 'disabled' : ''}${refused}>${examCourseIcon('move')}</button></span>`,
       extra: `<button type="button" class="et-related-action" data-exam-related="${escapeAttr(course?.course_identity || code)}" aria-label="${escapeAttr(`${relatedLabel}: ${label}`)}" title="${escapeAttr(`${relatedLabel}: ${label}`)}">${examCourseIcon('related')}</button>`
         + (link ? linkLabelMarkup(link.filter(other => other !== code)) : ''),
     });
@@ -4619,14 +4742,19 @@ function renderScheduleGrid(schedule, slots) {
   // Body: one row per day
   html += '<tbody>';
   for (const day of dayOrder) {
-    html += '<tr>';
-    html += `<th scope="row"><span class="et-grid-day-label"><bdi dir="ltr">${escapeAttr(day)}</bdi></span></th>`;
+    const dayLocked = locks.days.has(day);
+    html += dayLocked ? '<tr class="et-locked-day">' : '<tr>';
+    html += `<th scope="row"${dayLocked ? ' class="et-locked"' : ''}><span class="et-grid-day-label"><bdi dir="ltr">${escapeAttr(day)}</bdi></span>${dayLockMarkup(day, dayLocked)}</th>`;
     for (const period of periodOrder) {
       const courses = (grid[day] && grid[day][period]) ? grid[day][period] : [];
+      const locked = isCellLocked(day, period, locks);
+      const lockClass = locked ? ' et-locked' : '';
+      const lockAttributes = locked ? ' data-locked="true"' : '';
+      const lockBar = cellLockMarkup(day, period, locked, dayLocked);
       if (courses.length === 0) {
-        html += `<td class="et-empty" data-day="${escapeAttr(day)}" data-period="${escapeAttr(period)}">—</td>`;
+        html += `<td class="et-empty${lockClass}" data-day="${escapeAttr(day)}" data-period="${escapeAttr(period)}"${lockAttributes}>${lockBar}—</td>`;
       } else {
-        html += `<td data-day="${escapeAttr(day)}" data-period="${escapeAttr(period)}"><div class="et-slot-courses">${cellChips(courses)}</div></td>`;
+        html += `<td${locked ? ' class="et-locked"' : ''} data-day="${escapeAttr(day)}" data-period="${escapeAttr(period)}"${lockAttributes}>${lockBar}<div class="et-slot-courses">${cellChips(courses)}</div></td>`;
       }
     }
     html += '</tr>';
@@ -4651,6 +4779,10 @@ function renderScheduleGrid(schedule, slots) {
   if (focusedCourse) {
     const chip = [...container.querySelectorAll('.et-course')].find(item => item.dataset.course === focusedCourse);
     (focusedAction ? chip?.querySelector(`[${focusedAction}]`) : chip)?.focus({ preventScroll: true });
+  }
+  if (focusedLock) {
+    [...container.querySelectorAll('[data-lock-day]')].find(button => button.dataset.lockDay === focusedLock[0]
+      && (button.dataset.lockPeriod || '') === focusedLock[1])?.focus({ preventScroll: true });
   }
   $('schedFilter').dispatchEvent(new Event('input'));
   updateEditingStatus();
@@ -4761,7 +4893,7 @@ function pinProblem(pin, context) {
   if (!context.selected.has(pin.course_code)) return T.pinNotSelected;
   if (!context.days.some(day => day === pin.day && examDayIdentity(day) === pin.day_identity)
     || !context.periods.includes(pin.period)) return T.pinSlotUnavailable;
-  return '';
+  return lockPinProblem(pin.course_code, pin.day, pin.period);
 }
 
 function pinOptions(id, choices, placeholder) {
@@ -4988,8 +5120,10 @@ function renderPinEditor() {
     ? (!selectedCourse ? T.choosePinCourse : !selectedDay ? T.choosePinDay : !selectedPeriod ? T.choosePinPeriod : '') : '';
   $('examPinNotice').textContent = context.error || (invalid ? T.pinNeedsReview : selectionHint || (pins.length ? T.pinsReady : T.pinsEmpty));
   $('examPinNotice').className = `small mt-2 mb-0 ${invalid || context.error ? 'text-danger' : 'text-secondary'}`;
-  // Pins, days, periods and the selection all shape the linked exams too.
+  // Pins, days, periods and the selection all shape the linked exams too,
+  // and whether each lock can be kept.
   renderLinkEditor();
+  renderLockEditor();
 }
 
 function validatedPinPayload(header) {
@@ -5002,9 +5136,10 @@ function validatedPinPayload(header) {
 }
 
 function manualSnapshot() {
-  return { pins: cloneData(_pinnedCourses), links: cloneData(_linkedExams), placements: (_currentResultData?.schedule || []).map(entry => ({
-    identity: entry.course_identity || entry.course_code, day: entry.day, period: entry.period, slot_index: entry.slot_index,
-  })) };
+  return { pins: cloneData(_pinnedCourses), links: cloneData(_linkedExams), locks: cloneData(_examLocks), rooms: _roomsForLocks,
+    placements: (_currentResultData?.schedule || []).map(entry => ({
+      identity: entry.course_identity || entry.course_code, day: entry.day, period: entry.period, slot_index: entry.slot_index,
+    })) };
 }
 
 function refreshManualEditor() {
@@ -5024,6 +5159,8 @@ function runManualCommand(mutate) {
     if (_undoCommands.length > 100) _undoCommands.shift();
     _redoCommands = [];
   }
+  // An edit that went through: a refusal said before it no longer applies.
+  clearLockRefusal();
   refreshManualEditor();
   restoreExamWorkspaceAnchor(workspaceAnchor);
   return true;
@@ -5033,6 +5170,9 @@ function restoreManualSnapshot(snapshot) {
   const workspaceAnchor = captureExamWorkspaceAnchor();
   _pinnedCourses = cloneData(snapshot.pins);
   _linkedExams = cloneData(snapshot.links || []);
+  _examLocks = cloneData(snapshot.locks || []);
+  _roomsForLocks = Boolean(snapshot.rooms);
+  clearLockRefusal();
   const placements = new Map(snapshot.placements.map(entry => [entry.identity, entry]));
   for (const entry of _currentResultData?.schedule || []) {
     const placement = placements.get(entry.course_identity || entry.course_code);
@@ -5059,6 +5199,9 @@ function redoManualEdit() {
 function setCoursePin(code, day, period) {
   const course = _courseMetadata[code];
   if (!course) return false;
+  // Never into or out of a locked cell (rule 6).
+  const locked = lockPinProblem(code, day, period);
+  if (locked) return refuseLockedEdit(locked);
   // A linked course is pinned with its link: every member, at one time.
   const codes = linkedCodes(code).filter(member => _courseMetadata[member]);
   return runManualCommand(() => {
@@ -5084,6 +5227,9 @@ function moveExamCourse(code, day, period) {
   const entry = _currentResultData?.schedule?.find(item => item.course_code === code);
   const members = linkedCodes(code).map(member => _currentResultData?.schedule?.find(item => item.course_code === member)).filter(Boolean);
   if (!entry || members.every(item => item.day === day && item.period === period)) return false;
+  // Nothing moves into or out of a locked cell (rule 6), before any request.
+  const locked = lockMoveProblem(code, day, period);
+  if (locked) return refuseLockedEdit(locked);
   if (groupPin(code)) return inputError(IS_AR ? 'ألغِ تثبيت الاختبار قبل نقله، أو عدّل موعده في المواعيد المثبتة.' : 'Unpin to move, or deliberately change its time in Fixed exam times.');
   if (!_currentResultData.slots.some(slot => slot.day === day && slot.period === period)) return false;
   return runManualCommand(() => members.forEach(item => updateCurrentScheduleMove(item.course_code, day, period)));
@@ -5092,6 +5238,9 @@ function moveExamCourse(code, day, period) {
 function toggleExamPin(code) {
   const entry = _currentResultData?.schedule?.find(item => item.course_code === code);
   if (!entry || entry.day === 'OVERFLOW' || _builderBusy) return;
+  // A card in a locked cell is closed to pins too, until the cell is unlocked.
+  const place = lockedPlaceOf(code);
+  if (place) { refuseLockedEdit(LOCK_TEXT.lockedOut(code, place.day, place.period)); return; }
   const pin = groupPin(code);
   if (pin) removeCoursePin(pin.course_identity);
   else setCoursePin(code, entry.day, entry.period);
@@ -5186,7 +5335,7 @@ function updatePinBar() {
 
 $('schedGrid').addEventListener('dragstart', event => {
   const chip = event.target.closest('.et-course');
-  if (!chip || event.target.closest('button') || _builderBusy || groupPin(chip.dataset.course)) {
+  if (!chip || event.target.closest('button') || _builderBusy || groupPin(chip.dataset.course) || chip.dataset.locked === 'true') {
     event.preventDefault();
     return;
   }
@@ -5196,18 +5345,24 @@ $('schedGrid').addEventListener('dragstart', event => {
 $('schedGrid').addEventListener('dragover', event => {
   const cell = event.target.closest('td[data-day]');
   if (!cell || _builderBusy) return;
+  // A locked cell takes no drop: the browser shows it cannot, and so does the cell.
+  if (cell.dataset.locked === 'true') {
+    $('schedGrid').querySelectorAll('.et-drag-over').forEach(item => item.classList.remove('et-drag-over'));
+    cell.classList.add('et-drag-refused');
+    return;
+  }
   event.preventDefault();
   event.dataTransfer.dropEffect = 'move';
   $('schedGrid').querySelectorAll('.et-drag-over').forEach(item => item.classList.remove('et-drag-over'));
   cell.classList.add('et-drag-over');
 });
-$('schedGrid').addEventListener('dragleave', event => event.target.closest('td')?.classList.remove('et-drag-over'));
+$('schedGrid').addEventListener('dragleave', event => event.target.closest('td')?.classList.remove('et-drag-over', 'et-drag-refused'));
 $('schedGrid').addEventListener('dragend', () => {
-  $('schedGrid').querySelectorAll('.et-drag-over').forEach(item => item.classList.remove('et-drag-over'));
+  $('schedGrid').querySelectorAll('.et-drag-over, .et-drag-refused').forEach(item => item.classList.remove('et-drag-over', 'et-drag-refused'));
 });
 $('schedGrid').addEventListener('drop', event => {
   event.preventDefault();
-  $('schedGrid').querySelectorAll('.et-drag-over').forEach(item => item.classList.remove('et-drag-over'));
+  $('schedGrid').querySelectorAll('.et-drag-over, .et-drag-refused').forEach(item => item.classList.remove('et-drag-over', 'et-drag-refused'));
   const cell = event.target.closest('td[data-day]');
   if (!cell) return;
   moveExamCourse(event.dataTransfer.getData('text/plain'), cell.dataset.day, cell.dataset.period);
@@ -5218,16 +5373,24 @@ $('schedGrid').addEventListener('dblclick', event => {
   if (chip) toggleExamPin(chip.dataset.course);
 });
 $('schedGrid').addEventListener('click', event => {
+  const lock = event.target.closest('[data-lock-day]');
+  if (lock) { toggleLock(lock.dataset.lockDay, lock.dataset.lockPeriod); return; }
   const pin = event.target.closest('[data-exam-pin]');
   if (pin) { toggleExamPin(pin.dataset.examPin); return; }
   const move = event.target.closest('[data-exam-move]');
-  if (!move || _builderBusy || groupPin(move.dataset.examMove)) return;
+  if (!move || _builderBusy) return;
+  // Locked: the button stays reachable, and a press says why it does nothing.
+  if (move.dataset.lockedHint) { refuseLockedEdit(move.dataset.lockedHint); return; }
+  if (groupPin(move.dataset.examMove)) return;
   openExamMoveDialog(move.dataset.examMove);
 });
 function openExamMoveDialog(code) {
   const entry = _currentResultData?.schedule?.find(item => item.course_code === code);
   if (!entry || _builderBusy || groupPin(code) || !currentExamIsSelected(entry)) return;
+  const place = lockedPlaceOf(code);
+  if (place) { refuseLockedEdit(LOCK_TEXT.lockedOut(code, place.day, place.period)); return; }
   _moveCourseCode = entry.course_code;
+  showMoveError('');
   const members = linkedCodes(code);
   const help = $('examMoveHelp');
   help.dataset.defaultText ??= help.textContent;
@@ -5256,11 +5419,25 @@ function closeExamMoveDialog({ reveal = false } = {}) {
   if (reveal && chip) revealExamChip(chip);
   _moveCourseCode = null;
 }
+// A choice the dialog cannot make is said inside it, which stays open.
+function showMoveError(message) {
+  const error = $('examMoveError');
+  if (!error) return;
+  error.textContent = message;
+  error.hidden = !message;
+}
+['examMoveDay', 'examMovePeriod'].forEach(id => $(id)?.addEventListener('change', () => showMoveError('')));
 $('confirmExamMove')?.addEventListener('click', () => {
   const day = $('examMoveDay').value;
   const period = $('examMovePeriod').value;
   if (!day || !period) {
     (!day ? $('examMoveDay') : $('examMovePeriod')).focus();
+    return;
+  }
+  const locked = lockMoveProblem(_moveCourseCode, day, period);
+  if (locked) {
+    showMoveError(locked);
+    $('examMoveDay').focus();
     return;
   }
   const moved = moveExamCourse(_moveCourseCode, day, period);
@@ -5820,6 +5997,17 @@ $('applyExamLink').addEventListener('click', () => {
   const identities = [..._pendingLinkMembers];
   if (!_coursesLoaded || identities.length < 2) return inputError(LINK_TEXT.addAnother, $('examLinkCourse'));
   const plan = linkAlignment(identities);
+  const lockedMember = identities.map(identity => courseForIdentity(identity)?.course_code).filter(Boolean)
+    .map(code => [code, lockedPlaceOf(code)]).find(([, place]) => place);
+  if (!plan.error && lockedMember) {
+    const [code, place] = lockedMember;
+    const together = identities.every(identity => {
+      const entry = currentExamByIdentity(identity);
+      return entry && entry.day === place.day && entry.period === place.period;
+    });
+    // Two courses already in one locked cell may link: nothing moves.
+    if (!together) plan.error = LOCK_TEXT.linkLocked(code, place.day, place.period);
+  }
   if (plan.error) {
     // Said beside the button, which keeps focus: focusing the course search
     // would open its list over the reason.
@@ -5838,12 +6026,31 @@ $('examLinkRows').addEventListener('click', event => {
   const link = _linkedExams[index];
   if (!link) return;
   const codes = link.members.map(member => member.course_code);
+  if (linkSharesLockedRoom(link)) {
+    sayLinkNotice(LOCK_REFUSALS.exam_locks_link_room_shared[IS_AR ? 1 : 0], true);
+    renderLinkEditor();
+    remove.focus({ preventScroll: true });
+    return;
+  }
   if (!runManualCommand(() => { _linkedExams.splice(index, 1); })) return;
   sayLinkNotice(LINK_TEXT.unlinked(codes));
   renderLinkEditor();
   const buttons = [...$('examLinkRows').querySelectorAll('[data-link-remove]')];
   (buttons[Math.min(index, buttons.length - 1)] || $('examLinkCourseSearch')).focus({ preventScroll: true });
 });
+// Linked courses whose saved room is shared inside a locked cell: unlinking
+// them would leave that saved room double booked (the server refuses it too).
+function linkSharesLockedRoom(link) {
+  if (!_savedResultData || !_examLocks.length) return false;
+  const saved = new Map((_savedResultData.schedule || []).map(entry => [entry.course_identity || entry.course_code, entry]));
+  const savedCodes = new Set(link.members.map(member => saved.get(member.course_identity)?.course_code).filter(Boolean));
+  return link.members.some(member => {
+    const entry = saved.get(member.course_identity);
+    if (!entry || !lockedPlaceOf(member.course_code)) return false;
+    return (entry.rooms || []).some(room => (room?.room_shared_with || []).some(partner => savedCodes.has(String(partner)) && String(partner) !== entry.course_code));
+  });
+}
+
 $('confirmExamLink')?.addEventListener('click', () => {
   if (!_linkDialog || _builderBusy) return;
   const chosen = $('examLinkOptions').querySelector('input:checked');
@@ -5858,6 +6065,587 @@ $('confirmExamLink')?.addEventListener('click', () => {
 });
 $('cancelExamLink')?.addEventListener('click', () => closeLinkDialog({ restoreFocus: true }));
 $('examLinkDialog')?.addEventListener('cancel', event => { event.preventDefault(); closeLinkDialog({ restoreFocus: true }); });
+
+/* ── Locked days and periods: the board's lock buttons, the rules they keep, the report ── */
+// A locked day or period is closed: no exam moves into or out of it, its rooms
+// and invigilators stay exactly as saved, and its exams still count for their
+// students. The server keeps every one of those rules; the page refuses what
+// it can see before sending anything, and says why. Lock state is placed by
+// day and period, never by course code: codes renumber when the population does.
+const AR_LOCK_CHANGES = {
+  one: 'تغيير واحد في الأقفال لم يُحفظ',
+  two: 'تغييران في الأقفال لم يُحفظا',
+  few: '{n} تغييرات في الأقفال لم تُحفظ',
+  many: '{n} تغييراً في الأقفال لم يُحفظ',
+  other: '{n} تغيير في الأقفال لم يُحفظ',
+};
+const AR_LOCKED_CELLS = { one: 'فترة مقفلة واحدة', two: 'فترتان مقفلتان', few: '{n} فترات مقفلة', many: '{n} فترةً مقفلة', other: '{n} فترة مقفلة' };
+// The same, as the object of a verb: "يُبقي البناء فترتين مقفلتين".
+const AR_LOCKED_CELLS_KEPT = { one: 'فترة مقفلة واحدة', two: 'فترتين مقفلتين', few: '{n} فترات مقفلة', many: '{n} فترةً مقفلة', other: '{n} فترة مقفلة' };
+const AR_LOCK_ISSUES = { one: 'مشكلة واحدة', two: 'مشكلتان', few: '{n} مشكلات', many: '{n} مشكلةً', other: '{n} مشكلة' };
+const AR_STUDENTS_SIT = { one: 'طالب واحد يؤدي', two: 'طالبان يؤديان', few: '{n} طلاب يؤدون', many: '{n} طالباً يؤدون', other: '{n} طالب يؤدون' };
+const AR_STUDENT_COUNT = { one: 'طالب واحد', two: 'طالبان', few: '{n} طلاب', many: '{n} طالباً', other: '{n} طالب' };
+
+// A day and period as text: left to right inside Arabic.
+function lockWhereText(day, period) {
+  const text = period ? `${day} ${period}` : String(day);
+  return IS_AR ? isolateLtr(text) : text;
+}
+function lockCode(code) { return IS_AR ? isolateLtr(String(code)) : String(code); }
+function lockCodes(codes) { return (codes || []).map(lockCode).join(IS_AR ? '، ' : ', '); }
+function lockPlural(count, one, many) { return `${count} ${count === 1 ? one : many}`; }
+
+const LOCK_TEXT = {
+  locked: IS_AR ? 'مقفل' : 'Locked',
+  lockDayName: day => (IS_AR ? `قفل اليوم ${lockWhereText(day)}` : `Lock day ${day}`),
+  lockPeriodName: (day, period) => (IS_AR ? `قفل الفترة ${lockWhereText(day, period)}` : `Lock period ${day} ${period}`),
+  unlockDayHint: day => (IS_AR ? `${lockWhereText(day)} مقفل. انقر لإلغاء قفله.` : `${day} is locked. Press to unlock it.`),
+  unlockPeriodHint: (day, period) => (IS_AR ? `${lockWhereText(day, period)} مقفلة. انقر لإلغاء قفلها.` : `${day} ${period} is locked. Press to unlock it.`),
+  unlockPeriodOfDayHint: (day, period) => (IS_AR
+    ? `${lockWhereText(day, period)} مقفلة مع يومها. انقر لإلغاء قفل هذه الفترة وحدها؛ تبقى بقية فترات ${lockWhereText(day)} مقفلة.`
+    : `${day} ${period} is locked with its day. Press to unlock this period only; the rest of ${day} stays locked.`),
+  dayLocked: day => (IS_AR ? `${lockWhereText(day)} مقفل` : `${day} is locked`),
+  lockedIn: (day, period) => (IS_AR ? `${lockWhereText(day, period)} مقفلة — ألغِ قفلها أولاً.` : `${day} ${period} is locked — unlock it first.`),
+  lockedOut: (code, day, period) => (IS_AR
+    ? `${lockCode(code)} في ${lockWhereText(day, period)} المقفلة — ألغِ قفلها أولاً.`
+    : `${code} is in locked ${day} ${period} — unlock it first.`),
+  unsaved: (day, period) => (IS_AR
+    ? `احفظ تغييراتك أولاً: في ${lockWhereText(day, period)} تغييرات لم تُحفظ بعد. احفظ الجدول ثم اقفلها.`
+    : `Save your changes first: ${day} ${period} has changes that are not saved yet. Save the timetable, then lock it.`),
+  noRooms: IS_AR
+    ? 'حُفظ هذا الجدول دون قاعات، والقفل يُبقي القاعات المحفوظة. ستُوزَّع القاعات عند «فحص التغييرات» ثم «حفظ التغييرات»؛ اقفل بعد ذلك.'
+    : 'This timetable was saved without rooms, and a lock keeps the saved rooms. Rooms will be assigned when you Check changes, then Save Changes; lock it after that.',
+  roomsPending: IS_AR
+    ? 'ستُوزَّع القاعات عند «فحص التغييرات» ثم «حفظ التغييرات»، ثم يمكنك قفل الأيام والفترات.'
+    : 'Rooms will be assigned when you Check changes, then Save Changes. Lock days and periods after that.',
+  unsavedChanges: count => (IS_AR
+    ? `${arabicCount(count, AR_LOCK_CHANGES)} — انقر «فحص التغييرات» ثم «حفظ التغييرات».`
+    : `${lockPlural(count, 'lock change', 'lock changes')} not saved — Check changes, then Save Changes.`),
+  saveLocksFirst: action => (IS_AR
+    ? `تغييرات الأقفال لم تُحفظ بعد. انقر «فحص التغييرات» ثم «حفظ التغييرات»، ثم استخدم «${action}».`
+    : `Lock changes are not saved yet. Check changes, then Save Changes, then use ${action}.`),
+  reviewBeforeSave: IS_AR
+    ? 'افحص تغييرات الأقفال قبل الحفظ: انقر «فحص التغييرات» ثم «حفظ التغييرات».'
+    : 'Review the lock changes before saving: Check changes, then Save Changes.',
+  reviewLabel: IS_AR ? 'تغييرات الأقفال تحتاج فحصاً' : 'Lock changes need a Check',
+  reviewBanner: IS_AR
+    ? 'تغيّر ما يُبقيه الحفظ. انقر «فحص التغييرات» لمراجعة الفترات المقفلة، ثم «حفظ التغييرات».'
+    : 'Locks change what Save keeps. Click Check changes to review the locked cells, then Save Changes.',
+  comparisonPaused: IS_AR ? 'المقارنة متوقفة: تغيّرت الأقفال' : 'Comparison paused: locks changed',
+  outside: (day, period) => (IS_AR
+    ? `${lockWhereText(day, period)} لم يعد ضمن إعدادات الجدول. ألغِ القفل، أو أعد الإعدادات.`
+    : `${period ? `${day} ${period}` : day} is not in the timetable settings any more. Unlock it, or change the settings back.`),
+  notSelected: (code, day, period) => (IS_AR
+    ? `${lockCode(code)} في ${lockWhereText(day, period)} المقفلة غير محدد لهذا الجدول. أعد تحديده، أو ألغِ القفل.`
+    : `${code} in locked ${day} ${period} is not selected for this timetable. Select it again, or unlock it.`),
+  wholeDay: IS_AR ? 'اليوم كاملاً' : 'whole day',
+  introLoaded: IS_AR
+    ? 'لا يدخل أي اختبار إلى يوم أو فترة مقفلة ولا يخرج منها، وتبقى قاعاتها ومراقبوها كما حُفظت. يعمل البناء والتحسين والإصلاح حولها.'
+    : 'Nothing moves into or out of a locked day or period, and its rooms and invigilators stay as saved. Build, Optimize and Fix work around it.',
+  introBuild: label => (IS_AR
+    ? `يُبقي البناء هذه كما حُفظت في «${isolate(label)}» بقاعاتها، ويعيد بناء ما عداها حولها. ألغِ قفل أيٍّ منها ليتمكن البناء من تغييره.`
+    : `Build keeps these exactly as saved in “${label}”, rooms included, and rebuilds everything else around them. Unlock one to let Build change it.`),
+  unlock: IS_AR ? 'إلغاء القفل' : 'Unlock',
+  unlockName: (day, period) => (IS_AR ? `إلغاء قفل ${lockWhereText(day, period)}` : `Unlock ${period ? `${day} ${period}` : day}`),
+  exams: count => (IS_AR ? arabicCount(count, AR_EXAMS) : lockPlural(count, 'exam', 'exams')),
+  needsReview: IS_AR ? 'راجع الأقفال المعلّمة قبل المتابعة.' : 'Resolve the highlighted locks before continuing.',
+  buildKeeps: (cells, exams) => (IS_AR
+    ? `يُبقي البناء ${arabicCount(cells, AR_LOCKED_CELLS_KEPT)} (تضم ${arabicCount(exams, AR_EXAMS)}) ويعيد بناء كل ما عداها حولها.`
+    : `Build keeps ${lockPlural(cells, 'locked cell', 'locked cells')} (${lockPlural(exams, 'exam', 'exams')}) and rebuilds everything else around them.`),
+  buildTitle: IS_AR ? 'البناء حول الفترات المقفلة؟' : 'Build around the locked cells?',
+  buildHow: IS_AR
+    ? 'لتسمح للبناء بتغيير فترة مقفلة، ألغِ قفلها أولاً في «الأيام والفترات المقفلة».'
+    : 'To let Build change a locked cell, unlock it first under Locked days and periods.',
+  buildConfirm: IS_AR ? 'بناء' : 'Build',
+  cancel: IS_AR ? 'إلغاء' : 'Cancel',
+  barCount: (cells, exams) => (IS_AR
+    ? `${arabicCount(cells, AR_LOCKED_CELLS)} · ${arabicCount(exams, AR_EXAMS)}`
+    : `${lockPlural(cells, 'locked cell', 'locked cells')} · ${lockPlural(exams, 'exam', 'exams')}`),
+  barIssues: count => (IS_AR
+    ? (count ? `${arabicCount(count, AR_LOCK_ISSUES)} في الفترات المقفلة` : 'لا مشكلات في الفترات المقفلة')
+    : (count ? `${lockPlural(count, 'issue', 'issues')} in locked cells` : 'No issues in locked cells')),
+  barUnchecked: IS_AR ? 'افحص التغييرات لمعرفة حال الفترات المقفلة.' : 'Check changes to report on the locked cells.',
+  lastChecked: IS_AR ? 'آخر تحقق: ' : 'Last checked: ',
+  drillTitle: IS_AR ? 'الفترات المقفلة' : 'Locked cells',
+  drillNote: IS_AR ? 'مقفل — لم يُنقل؛ ألغِ القفل للإصلاح.' : 'Locked — not moved; unlock to fix.',
+  capacityNote: IS_AR
+    ? 'المقاعد المحفوظة تتجاوز سعة الاختبار الحالية: وُزِّعت قاعات هذا الجدول قبل أن تعتمد القاعات سعة الاختبار. تبقى كما حُفظت ما دامت مقفلة.'
+    : "Saved seats exceed today's exam capacity: this timetable was roomed before rooms used their exam capacity. They stay as saved while locked.",
+  drillEmpty: IS_AR ? 'لا مشكلات في الفترات المقفلة.' : 'No issues in the locked cells.',
+  drillHead: IS_AR ? ['المشكلة', 'الموعد', 'التفاصيل'] : ['Issue', 'Time', 'Details'],
+  rowLock: IS_AR ? 'مقفل — لم يُنقل؛ ألغِ القفل للإصلاح' : 'Locked — not moved; unlock to fix',
+  fixKept: count => (IS_AR
+    ? `بقيت الاختبارات في الفترات المقفلة في مواضعها (${arabicCount(count, AR_EXAMS)}).`
+    : `${lockPlural(count, 'exam', 'exams')} in locked cells ${count === 1 ? 'was' : 'were'} not moved.`),
+  fixLockedRemain: count => (IS_AR
+    ? `${arabicCount(count, AR_REMAINING)} بين اختبارات مقفلة فقط: مقفلة — لم تُنقل؛ ألغِ القفل لإصلاحها.`
+    : `${lockPlural(count, 'rule break is', 'rule breaks are')} among locked exams only: locked — not moved; unlock to fix.`),
+  linkLocked: (code, day, period) => (IS_AR
+    ? `${lockCode(code)} في ${lockWhereText(day, period)} المقفلة، فلا يُنقل أي مقرر إليها أو منها لربطه. ألغِ القفل أولاً.`
+    : `${code} is in locked ${day} ${period}: no course can move into or out of it to link. Unlock it first.`),
+  changesGroup: IS_AR ? 'الأيام والفترات المقفلة' : 'Locked days and periods',
+  changeCount: count => (IS_AR ? ` · ${count} تغيير قفل` : ` · ${lockPlural(count, 'lock change', 'lock changes')}`),
+  lockedState: locked => (locked ? (IS_AR ? 'مقفل' : 'Locked') : (IS_AR ? 'غير مقفل' : 'Not locked')),
+  summary: count => (IS_AR ? ` · ${count} مقفل` : ` · ${count} locked`),
+};
+
+// Each kind the server reports inside a locked cell: its name and its sentence.
+const LOCK_ISSUE_ORDER = ['clash', 'bucket_day', 'registrations_changed', 'unassigned', 'room_unavailable', 'room_over_capacity', 'room_cohort_changed', 'double_booking'];
+const LOCK_ISSUE = {
+  clash: {
+    label: IS_AR ? 'تعارض طلاب' : 'Student clash',
+    detail: issue => {
+      const count = Number(issue.student_count) || 0;
+      return IS_AR
+        ? `${arabicCount(count, AR_STUDENTS_SIT)} ${lockCodes(issue.courses)} في الوقت نفسه.`
+        : `${lockPlural(count, 'student sits', 'students sit')} ${lockCodes(issue.courses)} at the same time.`;
+    },
+  },
+  bucket_day: {
+    label: IS_AR ? 'فصل دراسي واحد في يوم واحد' : 'Same study term, same day',
+    detail: issue => (IS_AR
+      ? `${lockCode(issue.program || '')}، الفصل الدراسي ${issue.programme_term ?? ''}: ${lockCodes(issue.courses)} في اليوم نفسه.`
+      : `${issue.program || ''}, study term ${issue.programme_term ?? ''}: ${lockCodes(issue.courses)} on the same day.`),
+  },
+  registrations_changed: {
+    label: IS_AR ? 'تغيّرت التسجيلات' : 'Registrations changed',
+    detail: issue => {
+      const who = `${lockCode(issue.course_code || '')} ${lockCode(issue.section || '')} (${studentGroupLabel(issue.gender)})`;
+      const saved = Number(issue.saved_count) || 0;
+      const live = Number(issue.live_count) || 0;
+      const change = issue.change;
+      if (IS_AR) {
+        if (change === 'new') return `${who}: مجموعة جديدة منذ الحفظ (${arabicCount(live, AR_STUDENT_COUNT)}) دون قاعة محفوظة.`;
+        if (change === 'gone') return `${who}: لم تعد موجودة منذ الحفظ، وتبقى مقاعدها المحفوظة (${saved}) محجوزة.`;
+        if (change === 'swapped') return `${who}: العدد نفسه (${live}) بطلاب مختلفين.`;
+        return `${who}: تغيّر عدد الطلاب من ${saved} إلى ${live}${live > saved ? '؛ لا مقاعد محفوظة للطلاب الجدد' : ''}.`;
+      }
+      if (change === 'new') return `${who}: a new group since the save (${lockPlural(live, 'student', 'students')}), with no saved room.`;
+      if (change === 'gone') return `${who}: gone since the save; its ${saved} saved seats stay booked.`;
+      if (change === 'swapped') return `${who}: the same ${live} seats, different students.`;
+      return `${who}: ${saved} → ${live} students${live > saved ? '; the new students have no saved seat' : ''}.`;
+    },
+  },
+  unassigned: {
+    label: IS_AR ? 'طلاب دون قاعة' : 'Students without a room',
+    detail: issue => {
+      const count = Number(issue.student_count) || 0;
+      return IS_AR
+        ? `${lockCode(issue.course_code || '')} ${lockCode(issue.section || '')}: ${arabicCount(count, AR_STUDENT_COUNT)} دون قاعة.`
+        : `${issue.course_code || ''} ${issue.section || ''}: ${lockPlural(count, 'student', 'students')} without a room.`;
+    },
+  },
+  room_unavailable: {
+    label: IS_AR ? 'قاعة لم تعد متاحة' : 'Room no longer available',
+    detail: issue => (IS_AR
+      ? `${lockCode(issue.room_code || '')} لم تعد ضمن قاعات الاختبار الحالية (${lockCodes(issue.courses)}).`
+      : `${issue.room_code || ''} is not among today's exam rooms (${lockCodes(issue.courses)}).`),
+  },
+  room_over_capacity: {
+    label: IS_AR ? 'تجاوز سعة الاختبار' : 'Over exam capacity',
+    detail: issue => (IS_AR
+      ? `${lockCode(issue.room_code || '')}: المقاعد المحفوظة ${Number(issue.seated) || 0}، وسعة الاختبار الحالية ${Number(issue.exam_capacity) || 0}. المقاعد المحفوظة تتجاوز سعة الاختبار الحالية.`
+      : `${issue.room_code || ''}: ${Number(issue.seated) || 0} saved seats, today's exam capacity ${Number(issue.exam_capacity) || 0}. The saved seats exceed today's exam capacity.`),
+  },
+  room_cohort_changed: {
+    label: IS_AR ? 'تغيّرت فئة طلاب القاعة' : 'Room student group changed',
+    detail: issue => (IS_AR
+      ? `حُفظت ${lockCode(issue.room_code || '')} لـ${studentGroupLabel(issue.saved_gender)}، وهي الآن لـ${studentGroupLabel(issue.gender)}.`
+      : `${issue.room_code || ''} was saved for ${studentGroupLabel(issue.saved_gender)}; it now serves ${studentGroupLabel(issue.gender)}.`),
+  },
+  double_booking: {
+    label: IS_AR ? 'قاعة محجوزة مرتين' : 'Room double booked',
+    detail: issue => (IS_AR
+      ? `${lockCode(issue.room_code || '')} محجوزة لـ${lockCodes(issue.courses)} في الوقت نفسه.`
+      : `${issue.room_code || ''} holds ${lockCodes(issue.courses)} at the same time.`),
+  },
+};
+
+function lockIcon(locked) {
+  // The design system's icon: a closed or an open padlock.
+  const shackle = locked ? 'M8 10V7a4 4 0 0 1 8 0v3' : 'M8 10V7a4 4 0 0 1 7.6-1.8';
+  return `<span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24" focusable="false"><rect x="5" y="10" width="14" height="11" rx="2"/><path d="${shackle}"/></svg></span>`;
+}
+
+function lockCellKey(day, period) { return JSON.stringify([String(day), String(period)]); }
+function lockItemKey(item) { return JSON.stringify([String(item.day), item.period ? String(item.period) : '']); }
+
+// A saved or sent list, read leniently: a day, or a day and one period.
+function lockItems(raw) {
+  return (Array.isArray(raw) ? raw : []).filter(item => item && typeof item.day === 'string' && item.day)
+    .map(item => (typeof item.period === 'string' && item.period ? { day: item.day, period: item.period } : { day: item.day }));
+}
+
+function lockSignatureOf(items) {
+  return JSON.stringify(lockItems(items).map(lockItemKey).sort());
+}
+
+function savedLocks() {
+  return lockItems(_savedResultData?.exam_locks);
+}
+
+function restoreLocksFromRun(data) {
+  const startDay = data?.slots?.[0]?.day || $('etStartDay').value;
+  _examLocks = lockItems(data?.exam_locks).map(item => ({ ...item, day_identity: examDayIdentity(item.day, startDay) }));
+}
+
+// The days and periods of the board on screen, in its own order.
+function boardDays() { return uniqueByOrder((_currentResultData?.slots || []).map(slot => slot.day)); }
+function boardPeriods() { return uniqueByOrder((_currentResultData?.slots || []).map(slot => slot.period)); }
+
+// In header order: a whole day before its periods, as the server saves them.
+function sortLocks(items, days, periods) {
+  const at = (list, value) => { const index = list.indexOf(value); return index < 0 ? list.length : index; };
+  return [...items].sort((a, b) => (at(days, a.day) - at(days, b.day))
+    || ((a.period ? at(periods, a.period) : -1) - (b.period ? at(periods, b.period) : -1)));
+}
+
+function lockPayload() {
+  const days = _currentResultData ? boardDays() : generateDayLabels();
+  const periods = _currentResultData ? boardPeriods() : readExamPeriods().periods;
+  return sortLocks(_examLocks, days, periods).map(item => (item.period ? { day: item.day, period: item.period } : { day: item.day }));
+}
+
+function lockSets(items = _examLocks) {
+  const days = new Set();
+  const cells = new Set();
+  for (const item of items) {
+    if (item.period) cells.add(lockCellKey(item.day, item.period));
+    else days.add(item.day);
+  }
+  return { days, cells };
+}
+
+function isCellLocked(day, period, sets = lockSets()) {
+  return sets.days.has(day) || sets.cells.has(lockCellKey(day, period));
+}
+
+// Where a locked exam sits: on the board, or - before a Build - where the saved
+// run it is kept from has it. Null for an exam in no locked cell.
+function lockedPlaceOf(code, sets = lockSets()) {
+  if (!_examLocks.length) return null;
+  if (_currentResultData) {
+    const entry = scheduleEntryFor(code);
+    return entry && entry.day !== 'OVERFLOW' && isCellLocked(entry.day, entry.period, sets) ? entry : null;
+  }
+  const identity = identityOfCode(code);
+  const entry = (_lockSource?.run?.schedule || []).find(item => (item.course_identity || item.course_code) === identity);
+  return entry && entry.day !== 'OVERFLOW' && isCellLocked(entry.day, entry.period, sets) ? entry : null;
+}
+
+// Locks added or taken away since the save, each once: `saved` says it was the
+// saved run's and is undone now.
+function lockChangesSinceSave() {
+  if (!_savedResultData) return [];
+  const saved = new Map(savedLocks().map(item => [lockItemKey(item), item]));
+  const current = new Map(_examLocks.map(item => [lockItemKey(item), item]));
+  const changes = [
+    ...[...current].filter(([key]) => !saved.has(key)).map(([, item]) => ({ day: item.day, period: item.period, saved: false })),
+    ...[...saved].filter(([key]) => !current.has(key)).map(([, item]) => ({ day: item.day, period: item.period, saved: true })),
+  ];
+  return sortLocks(changes, boardDays(), boardPeriods());
+}
+
+// The exams in one cell of a schedule, by identity: what a lock would keep.
+function cellIdentities(schedule, day, period) {
+  return (schedule || []).filter(entry => entry.day === day && entry.period === period)
+    .map(entry => entry.course_identity || entry.course_code).sort();
+}
+
+// Why a lock cannot be added here now, or ''. A lock keeps what the SAVED run
+// holds, so a cell must match it; the server says the same (exam_locks_cell_unsaved).
+function newLockProblem(day, period) {
+  if (!_currentResultData || !_savedResultData) return LOCK_REFUSALS.exam_locks_source_required[IS_AR ? 1 : 0];
+  for (const each of period ? [period] : boardPeriods()) {
+    const now = cellIdentities(_currentResultData.schedule, day, each);
+    const before = cellIdentities(_savedResultData.schedule, day, each);
+    if (JSON.stringify(now) !== JSON.stringify(before)) return LOCK_TEXT.unsaved(day, each);
+  }
+  return '';
+}
+
+// Why moving `code` (with its link) to (day, period) would break a lock, or ''.
+function lockMoveProblem(code, day, period) {
+  if (!_examLocks.length) return '';
+  const sets = lockSets();
+  for (const member of linkedCodes(code)) {
+    const place = lockedPlaceOf(member, sets);
+    if (place) return LOCK_TEXT.lockedOut(member, place.day, place.period);
+  }
+  return isCellLocked(day, period, sets) ? LOCK_TEXT.lockedIn(day, period) : '';
+}
+
+// Why pinning `code` to (day, period) would pin into or out of a locked cell, or ''.
+function lockPinProblem(code, day, period) {
+  if (!_examLocks.length) return '';
+  const sets = lockSets();
+  let inside = true;
+  for (const member of linkedCodes(code)) {
+    const place = lockedPlaceOf(member, sets);
+    if (place && (place.day !== day || place.period !== period)) return LOCK_TEXT.lockedOut(member, place.day, place.period);
+    if (!place) inside = false;
+  }
+  return !inside && isCellLocked(day, period, sets) ? LOCK_TEXT.lockedIn(day, period) : '';
+}
+
+// A lock whose day or period the settings no longer have, by label and by day
+// identity (a changed start day relabels the days), or ''.
+function lockHeaderProblem(header) {
+  for (const item of _examLocks) {
+    const dayKept = header.days.some(day => day === item.day && examDayIdentity(day) === item.day_identity);
+    if (!dayKept || (item.period && !header.periods.includes(item.period))) return LOCK_TEXT.outside(item.day, item.period);
+  }
+  return '';
+}
+
+// Said at the board, and in the setup's status line: a refusal made before any request.
+function refuseLockedEdit(message) {
+  const alert = $('examLockRefusal');
+  if (alert && !$('etResults').classList.contains('d-none')) {
+    alert.textContent = message;
+    alert.hidden = false;
+  }
+  $('etStatus').textContent = message;
+  $('etStatus').className = 'alert alert-warning mt-2 py-2 mb-0';
+  return null;
+}
+
+function clearLockRefusal() {
+  const alert = $('examLockRefusal');
+  if (alert && !alert.hidden) {
+    alert.hidden = true;
+    alert.textContent = '';
+  }
+}
+
+// Lock or unlock a whole day (no period) or one period. Locking one period of
+// a locked day is not offered: its button unlocks just that period, and the
+// day's other periods stay locked one by one.
+function toggleLock(day, period) {
+  if (_builderBusy || !CAN_EDIT_EXAM_TIMETABLE || !_currentResultData) return false;
+  const sets = lockSets();
+  const locking = period ? !isCellLocked(day, period, sets) : !sets.days.has(day);
+  if (locking) {
+    if (_savedResultData && _savedResultData.assign_rooms !== true) {
+      // A lock keeps saved rooms; this run has none yet. Its next Check and
+      // Save assign them - one Undo step - and the lock comes after that.
+      runManualCommand(() => { _roomsForLocks = true; });
+      refuseLockedEdit(LOCK_TEXT.noRooms);
+      return false;
+    }
+    const problem = newLockProblem(day, period);
+    if (problem) {
+      refuseLockedEdit(problem);
+      return false;
+    }
+  }
+  const startDay = _currentResultData.slots?.[0]?.day;
+  const identity = examDayIdentity(day, startDay);
+  return runManualCommand(() => {
+    if (!period) {
+      _examLocks = _examLocks.filter(item => item.day !== day);
+      if (locking) _examLocks.push({ day, day_identity: identity });
+    } else if (locking) {
+      _examLocks.push({ day, period, day_identity: identity });
+    } else if (sets.days.has(day)) {
+      _examLocks = _examLocks.filter(item => item.day !== day);
+      for (const other of boardPeriods()) if (other !== period) _examLocks.push({ day, period: other, day_identity: identity });
+    } else {
+      _examLocks = _examLocks.filter(item => item.day !== day || item.period !== period);
+    }
+    _examLocks = sortLocks(_examLocks, boardDays(), boardPeriods());
+  });
+}
+
+// What the board shows as locked: cells and the exams in them.
+function boardLockFacts() {
+  const sets = lockSets();
+  let cells = 0;
+  for (const day of boardDays()) for (const period of boardPeriods()) if (isCellLocked(day, period, sets)) cells += 1;
+  const selected = _coursesLoaded ? new Set(getCheckedValues('courseList')) : null;
+  const exams = (_currentResultData?.schedule || []).filter(entry => entry.day !== 'OVERFLOW'
+    && (!selected || selected.has(entry.course_code)) && isCellLocked(entry.day, entry.period, sets)).length;
+  return { cells, exams };
+}
+
+// Markup for a day's lock control in its row header, and a period's in its cell.
+function dayLockMarkup(day, locked) {
+  if (!CAN_EDIT_EXAM_TIMETABLE) {
+    return locked ? `<span class="et-lock-mark" role="img" aria-label="${escapeAttr(LOCK_TEXT.dayLocked(day))}" title="${escapeAttr(LOCK_TEXT.dayLocked(day))}">${lockIcon(true)}</span>` : '';
+  }
+  const name = LOCK_TEXT.lockDayName(day);
+  return `<button type="button" class="et-lock-toggle et-lock-day" data-lock-day="${escapeAttr(day)}" aria-pressed="${locked}" aria-label="${escapeAttr(name)}" title="${escapeAttr(locked ? LOCK_TEXT.unlockDayHint(day) : name)}">${lockIcon(locked)}</button>`;
+}
+
+function cellLockMarkup(day, period, locked, dayLocked) {
+  if (!CAN_EDIT_EXAM_TIMETABLE && !locked) return '';
+  const badge = locked ? `<span class="et-lock-badge">${lockIcon(true)}<span>${escapeAttr(LOCK_TEXT.locked)}</span></span>` : '';
+  let button = '';
+  if (CAN_EDIT_EXAM_TIMETABLE) {
+    const name = LOCK_TEXT.lockPeriodName(day, period);
+    const hint = !locked ? name : dayLocked ? LOCK_TEXT.unlockPeriodOfDayHint(day, period) : LOCK_TEXT.unlockPeriodHint(day, period);
+    button = `<button type="button" class="et-lock-toggle et-lock-period" data-lock-day="${escapeAttr(day)}" data-lock-period="${escapeAttr(period)}" aria-pressed="${locked}" aria-label="${escapeAttr(name)}" title="${escapeAttr(hint)}">${lockIcon(locked)}</button>`;
+  }
+  return `<div class="et-cell-lockbar">${badge}${button}</div>`;
+}
+
+// "N lock changes not saved", or that rooms come first.
+function renderLockLine() {
+  const line = $('examLockLine');
+  if (!line) return;
+  const changes = _currentResultData ? lockChangesSinceSave().length : 0;
+  const text = changes ? LOCK_TEXT.unsavedChanges(changes) : (_roomsForLocks && _currentResultData ? LOCK_TEXT.roomsPending : '');
+  if (line.textContent !== text) line.textContent = text;
+  line.hidden = !text;
+}
+
+// The board's lock summary, with the last check's issue count and the way to them.
+function renderLockBar() {
+  const bar = $('lockBar');
+  if (!bar) return;
+  const shown = Boolean(_currentResultData && _examLocks.length);
+  bar.classList.toggle('d-none', !shown);
+  if (!shown) return;
+  const { cells, exams } = boardLockFacts();
+  const count = LOCK_TEXT.barCount(cells, exams);
+  if ($('lockCount').textContent !== count) $('lockCount').textContent = count;
+  const report = _currentResultData.qa?.exam_locks;
+  const unchecked = !report || lockChangesSinceSave().length > 0 && !hasCurrentEvaluation();
+  const issues = unchecked ? LOCK_TEXT.barUnchecked
+    : `${hasCurrentEvaluation() ? '' : LOCK_TEXT.lastChecked}${LOCK_TEXT.barIssues(Number(report.issue_count) || (report.issues || []).length)}`;
+  if ($('lockBarIssues').textContent !== issues) $('lockBarIssues').textContent = issues;
+  const review = $('lockBarReview');
+  review.hidden = !report;
+  review.disabled = _builderBusy;
+}
+
+// The builder's list of locks: on a loaded board, and - after Load Courses -
+// what a Build keeps, each with the reason it cannot be kept, if any.
+function lockListProblem(item) {
+  if (_currentResultData) return '';
+  const header = { days: generateDayLabels(), periods: readExamPeriods().periods };
+  const outside = () => LOCK_TEXT.outside(item.day, item.period);
+  if (!header.days.some(day => day === item.day && examDayIdentity(day) === item.day_identity)) return outside();
+  if (item.period && !header.periods.includes(item.period)) return outside();
+  const selected = _coursesLoaded ? new Set(getCheckedCourseEntries().map(entry => entry.course_identity || entry.course_code)) : null;
+  for (const entry of lockSourceEntries(item)) {
+    if (!header.periods.includes(entry.period)) return LOCK_TEXT.outside(entry.day, entry.period);
+    if (selected && !selected.has(entry.course_identity || entry.course_code)) return LOCK_TEXT.notSelected(entry.course_code, entry.day, entry.period);
+  }
+  return '';
+}
+
+function lockSourceEntries(item) {
+  return (_lockSource?.run?.schedule || []).filter(entry => entry.day === item.day && entry.day !== 'OVERFLOW'
+    && (!item.period || entry.period === item.period));
+}
+
+function lockItemExamCount(item) {
+  if (_currentResultData) {
+    return (_currentResultData.schedule || []).filter(entry => entry.day === item.day && entry.day !== 'OVERFLOW' && (!item.period || entry.period === item.period)).length;
+  }
+  return lockSourceEntries(item).length;
+}
+
+let _lockRowsMarkup = '';
+function renderLockEditor() {
+  const editor = $('examLockEditor');
+  if (!editor) return;
+  editor.classList.toggle('d-none', !_examLocks.length);
+  if (!_examLocks.length && !_lockRowsMarkup) return;
+  $('examLockCount').textContent = _examLocks.length ? `(${_examLocks.length})` : '';
+  $('examLockTable').classList.toggle('d-none', !_examLocks.length);
+  const intro = _currentResultData ? LOCK_TEXT.introLoaded : _lockSource ? LOCK_TEXT.introBuild(_lockSource.run?.label || '') : '';
+  if ($('examLockIntro').textContent !== intro) $('examLockIntro').textContent = intro;
+  let invalid = false;
+  const rows = _examLocks.map(item => {
+    const problem = lockListProblem(item);
+    invalid ||= Boolean(problem);
+    const where = item.period
+      ? `<bdi dir="ltr">${escapeAttr(`${item.day} · ${item.period}`)}</bdi>`
+      : `<bdi dir="ltr">${escapeAttr(item.day)}</bdi> <small>${escapeAttr(LOCK_TEXT.wholeDay)}</small>`;
+    const unlock = CAN_EDIT_EXAM_TIMETABLE
+      ? `<button type="button" class="btn btn-sm btn-outline-secondary" data-lock-remove="${escapeAttr(lockItemKey(item))}" aria-label="${escapeAttr(LOCK_TEXT.unlockName(item.day, item.period))}">${escapeAttr(LOCK_TEXT.unlock)}</button>`
+      : '';
+    return `<tr class="${problem ? 'et-lock-invalid' : ''}" data-lock-item="${escapeAttr(lockItemKey(item))}"><td><span class="et-lock-where">${lockIcon(true)}${where}</span>${problem ? `<small class="et-lock-problem">${escapeAttr(problem)}</small>` : ''}</td><td>${escapeAttr(LOCK_TEXT.exams(lockItemExamCount(item)))}</td><td>${unlock}</td></tr>`;
+  }).join('');
+  if (rows !== _lockRowsMarkup) {
+    // Rebuilt only when it changed, so a focused Unlock is not dropped.
+    const focused = document.activeElement?.closest?.('[data-lock-remove]')?.dataset.lockRemove;
+    $('examLockRows').innerHTML = rows;
+    _lockRowsMarkup = rows;
+    if (focused) [...$('examLockRows').querySelectorAll('[data-lock-remove]')].find(button => button.dataset.lockRemove === focused)?.focus({ preventScroll: true });
+  }
+  let text = '';
+  if (invalid) text = LOCK_TEXT.needsReview;
+  else if (!_currentResultData && _lockSource && _examLocks.length) {
+    const facts = buildLockFacts({ days: generateDayLabels(), periods: readExamPeriods().periods });
+    text = LOCK_TEXT.buildKeeps(facts.cells, facts.exams);
+  }
+  if ($('examLockNotice').textContent !== text) $('examLockNotice').textContent = text;
+  $('examLockNotice').className = `small mt-2 mb-0 ${invalid ? 'text-danger' : 'text-secondary'}`;
+}
+
+// A Build's locks: the cells it keeps in this header and the saved exams in them.
+function buildLockFacts(header) {
+  const sets = lockSets();
+  let cells = 0;
+  for (const day of header.days) for (const period of header.periods) if (isCellLocked(day, period, sets)) cells += 1;
+  const exams = (_lockSource?.run?.schedule || []).filter(entry => entry.day !== 'OVERFLOW' && isCellLocked(entry.day, entry.period, sets)).length;
+  return { cells, exams };
+}
+
+// What a Build sends for its locks, or null (refused, with the reason said).
+// None kept: exactly the Build without locks.
+function validatedBuildLocks(header, scope) {
+  if (!_examLocks.length || !_lockSource) return { keep: false };
+  const saved = _lockSource.run?.enrollment_scope || {};
+  const same = (a, b) => JSON.stringify([...(a || [])].map(String).sort()) === JSON.stringify([...(b || [])].map(String).sort());
+  if (!same(scope.programs, saved.programs) || !same(scope.sections, saved.sections)) {
+    renderLockEditor();
+    return refuseLockedEdit(LOCK_REFUSALS.exam_locks_scope_changed[IS_AR ? 1 : 0]);
+  }
+  for (const item of _examLocks) {
+    const problem = lockListProblem(item);
+    if (problem) {
+      renderLockEditor();
+      if ($('examSetupDetails')) $('examSetupDetails').open = true;
+      return refuseLockedEdit(problem);
+    }
+  }
+  const facts = buildLockFacts(header);
+  // All the saved locks kept: the server inherits them from the saved run.
+  const inherit = lockSignatureOf(_examLocks) === lockSignatureOf(_lockSource.run?.exam_locks);
+  return { keep: true, runId: _lockSource.runId, inherit, locks: lockPayload(), ...facts };
+}
+
+// The review list's rows: the report kept inside locked cells, by kind.
+function lockIssueRows(issues) {
+  const rank = kind => { const index = LOCK_ISSUE_ORDER.indexOf(kind); return index < 0 ? LOCK_ISSUE_ORDER.length : index; };
+  return [...(issues || [])].filter(issue => issue && typeof issue === 'object')
+    .map((issue, index) => ({ issue, index }))
+    .sort((a, b) => (rank(a.issue.kind) - rank(b.issue.kind)) || (a.index - b.index))
+    .map(({ issue }) => issue);
+}
+
+// A small lock on a report row the server says sits inside locked cells.
+function rowLockMark(row, codes = []) {
+  const all = Array.isArray(codes) ? codes.map(code => (typeof code === 'string' ? code : code?.course_code || code?.code)).filter(Boolean) : [];
+  const locked = row?.locked === true || (_drillLockedCodes.size > 0 && all.length > 0 && all.every(code => _drillLockedCodes.has(code)));
+  return locked ? `<span class="et-row-lock" role="img" aria-label="${escapeAttr(LOCK_TEXT.rowLock)}" title="${escapeAttr(LOCK_TEXT.rowLock)}">${lockIcon(true)}</span>` : '';
+}
+
+$('examLockRows')?.addEventListener('click', event => {
+  const remove = event.target.closest('[data-lock-remove]');
+  if (!remove || _builderBusy || !CAN_EDIT_EXAM_TIMETABLE) return;
+  const item = _examLocks.find(lock => lockItemKey(lock) === remove.dataset.lockRemove);
+  if (!item) return;
+  const index = _examLocks.indexOf(item);
+  if (_currentResultData) toggleLock(item.day, item.period);
+  else runManualCommand(() => { _examLocks = _examLocks.filter(lock => lock !== item); });
+  const buttons = [...$('examLockRows').querySelectorAll('[data-lock-remove]')];
+  (buttons[Math.min(index, buttons.length - 1)] || $('examLockHeading')).focus({ preventScroll: true });
+});
 
 /* ── Conflict Matrix ── */
 // Renders an N×N heatmap of shared students between every course pair.
@@ -6193,6 +6981,12 @@ async function deleteRun(runId, label) {
       $('etStatus').className = 'alert alert-info mt-2 py-2 mb-0';
       const exportBtn = $('exportXlsx');
       if (exportBtn) { exportBtn.classList.add('d-none'); exportBtn.removeAttribute('href'); }
+    }
+    // A deleted run can no longer be where a Build keeps its locks from.
+    if (_lockSource && String(_lockSource.runId) === String(runId)) {
+      _lockSource = null;
+      _examLocks = [];
+      updatePinBar();
     }
 
     loadHistory();

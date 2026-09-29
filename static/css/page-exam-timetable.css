@@ -27,6 +27,11 @@ main.exam-builder-page,
   --et-warning-soft: #fff8e6;
   --et-related: #3f719d;
   --et-related-soft: #eef4f9;
+  /* Locked days and periods: a calm indigo, apart from pins (amber) and links (teal). */
+  --et-lock: #454a86;
+  --et-lock-soft: #f0f1f9;
+  --et-lock-stripe: rgb(69 74 134 / 8%);
+  --et-lock-border: #9a9fd0;
   background: var(--et-bg);
   color: var(--et-text);
   font-size: .875rem;
@@ -59,6 +64,10 @@ html[data-theme="dark"] #matrixPanel {
   --et-warning-soft: #372c18;
   --et-related: #9bbfe1;
   --et-related-soft: #203348;
+  --et-lock: #b9bdf2;
+  --et-lock-soft: #1e2440;
+  --et-lock-stripe: rgb(185 189 242 / 9%);
+  --et-lock-border: #5b619e;
   color-scheme: dark;
 }
 
@@ -441,6 +450,70 @@ main.exam-builder-page .et-link-option small { display: block; margin-top: 2px; 
 main.exam-builder-page .et-link-bar { flex-wrap: wrap; }
 main.exam-builder-page .et-link-bar-warnings { color: var(--et-warning); overflow-wrap: anywhere; }
 main.exam-builder-page .et-repair-report .et-repair-linked { color: var(--et-warning); }
+
+/* Locked days and periods. A locked cell is closed: a calm tint with fine
+   stripes, a lock badge that says so in words, and cards that neither drag
+   nor pin. The lock toggles are native buttons with aria-pressed. */
+main.exam-builder-page #schedGrid .et-grid :is(td, tbody th).et-locked {
+  background-color: var(--et-lock-soft);
+  background-image: repeating-linear-gradient(135deg, transparent 0 10px, var(--et-lock-stripe) 10px 12px);
+}
+main.exam-builder-page .et-cell-lockbar { display: flex; align-items: center; justify-content: space-between; gap: 6px; min-height: 26px; margin: -2px -2px 4px; }
+main.exam-builder-page .et-lock-badge { display: inline-flex; align-items: center; gap: 4px; min-width: 0; padding: 1px 7px; border: 1px solid var(--et-lock-border); border-radius: 4px; background: var(--et-surface); color: var(--et-lock); font-size: .6875rem; font-weight: 650; line-height: 1.5; }
+main.exam-builder-page .et-lock-toggle { display: inline-flex; flex: 0 0 auto; align-items: center; justify-content: center; width: 28px; height: 28px; margin: 0 0 0 auto; padding: 0; border: 1px solid transparent; border-radius: 5px; background: transparent; color: var(--et-icon); font: inherit; line-height: 1; cursor: pointer; }
+html[dir="rtl"] main.exam-builder-page .et-lock-toggle { margin: 0 auto 0 0; }
+main.exam-builder-page .et-lock-toggle:hover { border-color: var(--et-lock-border); background: var(--et-surface); color: var(--et-lock); }
+main.exam-builder-page .et-lock-toggle[aria-pressed="true"] { border-color: var(--et-lock-border); background: var(--et-surface); color: var(--et-lock); }
+main.exam-builder-page .et-lock-toggle[aria-pressed="true"] svg { stroke-width: 2.4; }
+main.exam-builder-page .et-lock-toggle:focus-visible { outline: 2px solid var(--et-focus); outline-offset: 1px; }
+main.exam-builder-page #schedGrid .et-grid tbody th .et-lock-day,
+main.exam-builder-page #schedGrid .et-grid tbody th .et-lock-mark { display: flex; margin: 6px 0 0; }
+main.exam-builder-page .et-lock-mark { color: var(--et-lock); }
+main.exam-builder-page #schedGrid .et-course.et-in-locked { cursor: not-allowed; }
+main.exam-builder-page #schedGrid .et-course.et-in-locked .et-course-card-actions button[aria-disabled="true"] { opacity: .5; cursor: not-allowed; }
+main.exam-builder-page #schedGrid .et-grid td.et-drag-refused { outline: 2px dashed var(--et-danger); outline-offset: -2px; cursor: no-drop; }
+main.exam-builder-page .et-lock-line { padding: 3px 7px; border: 1px solid var(--et-lock-border); border-radius: 5px; background: var(--et-lock-soft); color: var(--et-lock); font-size: .6875rem; font-weight: 600; line-height: 1.4; }
+main.exam-builder-page .et-lock-refusal { border-color: var(--et-warning); background: var(--et-warning-soft); color: var(--et-warning); }
+main.exam-builder-page .et-lock-bar { flex-wrap: wrap; }
+main.exam-builder-page .et-lock-bar-icon { display: inline-flex; color: var(--et-lock); }
+main.exam-builder-page .et-lock-bar-issues { color: var(--et-muted); overflow-wrap: anywhere; }
+main.exam-builder-page #lockBarReview { min-height: 32px; padding: 4px 9px !important; font-size: .75rem !important; }
+main.exam-builder-page .et-row-lock { display: inline-flex; vertical-align: middle; margin-inline-end: 5px; color: var(--et-lock); }
+main.exam-builder-page .et-lock-kind { display: inline-block; padding: 1px 7px; border: 1px solid var(--et-lock-border); border-radius: 4px; color: var(--et-lock); font-size: .75rem; font-weight: 650; line-height: 1.5; }
+main.exam-builder-page .et-lock-issue td { overflow-wrap: anywhere; }
+main.exam-builder-page .et-move-error { margin: -8px 0 16px; padding: 8px 10px; border: 1px solid var(--et-warning); border-radius: 5px; background: var(--et-warning-soft); color: var(--et-warning); font-size: .8125rem; line-height: 1.5; }
+main.exam-builder-page .et-repair-report .et-repair-locked { color: var(--et-lock); }
+main.exam-builder-page .et-lock-where { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 4px 6px; min-width: 0; }
+main.exam-builder-page .et-lock-where > .i { color: var(--et-lock); }
+main.exam-builder-page .et-lock-where small { color: var(--et-muted); font-weight: 400; }
+main.exam-builder-page #examLockIntro:empty { display: none; }
+main.exam-builder-page #examLockNotice { margin-top: 12px !important; font-size: .8125rem; line-height: 1.5; color: var(--et-muted); }
+main.exam-builder-page #examLockNotice:empty { display: none; }
+main.exam-builder-page .et-lock-table { width: 100%; margin: 10px 0 0; table-layout: fixed; }
+main.exam-builder-page .et-lock-table :is(th, td):nth-child(2) { width: 30%; }
+main.exam-builder-page .et-lock-table :is(th, td):nth-child(3) { width: 8.5rem; text-align: end; }
+main.exam-builder-page .et-lock-table td { overflow-wrap: anywhere; }
+main.exam-builder-page .et-lock-invalid > td { background: var(--et-danger-soft) !important; }
+main.exam-builder-page .et-lock-problem { display: block; margin-top: 4px; color: var(--et-danger); font-size: .75rem; line-height: 1.45; }
+@media (max-width: 600px) {
+  /* Each lock a block of its own: where, its exams, then Unlock. */
+  main.exam-builder-page :is(.et-lock-table, .et-lock-table tbody, .et-lock-table tr, .et-lock-table td) { display: block; width: 100% !important; }
+  main.exam-builder-page .et-lock-table thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  main.exam-builder-page .et-lock-table tr { padding-block: 10px; border-bottom: 1px solid var(--et-border); }
+  main.exam-builder-page .et-lock-table td { padding: 2px 8px !important; border: 0 !important; text-align: start !important; }
+}
+@media (pointer: coarse) {
+  main.exam-builder-page .et-lock-toggle { width: 40px; height: 40px; }
+  main.exam-builder-page #lockBarReview { min-height: 44px; }
+}
+@media (forced-colors: active) {
+  /* Tints and stripes are dropped in High Contrast: a dashed frame says "locked". */
+  main.exam-builder-page #schedGrid .et-grid :is(td, tbody th).et-locked { background-image: none; outline: 2px dashed CanvasText; outline-offset: -4px; }
+  main.exam-builder-page :is(.et-lock-badge, .et-lock-kind, .et-lock-line) { border-color: CanvasText; }
+  main.exam-builder-page .et-lock-toggle { border-color: ButtonText; }
+  main.exam-builder-page .et-lock-toggle[aria-pressed="true"] { border-color: Highlight; background: Highlight; color: HighlightText; forced-color-adjust: none; }
+  main.exam-builder-page .et-lock-toggle:focus-visible { outline-color: CanvasText; }
+}
 main.exam-builder-page .et-options { margin-bottom: 20px; border: 1px solid var(--et-border); border-radius: 8px; background: var(--et-surface); }
 main.exam-builder-page .et-options > summary,
 main.exam-builder-page .et-history-panel > summary { padding: 16px 20px; color: var(--et-text); cursor: pointer; font-size: .875rem; font-weight: 600; }

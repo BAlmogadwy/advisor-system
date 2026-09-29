@@ -162,6 +162,8 @@
       card.dataset.examBaseLabel ||= card.getAttribute('aria-label') || card.title || '';
       let label = course ? `${course.course_code} — ${String(course.course_name || '').trim() || course.course_code}` : card.dataset.examBaseLabel;
       if (course) card.dataset.examBaseLabel = label;
+      // A state the board gives the card - "Locked" in a locked cell - stays in its name.
+      if (course && card.dataset.examNote) label += ` (${card.dataset.examNote})`;
       if (state.mode === 'size' && course) {
         const size = model.enrollmentCountsAvailable ? enrollmentSize(course) : 'unknown';
         card.dataset.examSize = size;
