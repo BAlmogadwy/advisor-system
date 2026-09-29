@@ -229,6 +229,29 @@ def test_a_save_reviewed_under_other_locks_is_refused(client_, locked):
     assert body["error_code"] == "inputs_changed"
 
 
+def _times(result) -> dict[str, tuple[str, str]]:
+    return {entry["course_code"]: (entry["day"], entry["period"]) for entry in result["schedule"]}
+
+
+def test_a_timetable_saved_without_rooms_is_locked_after_a_check_and_save_with_rooms(
+    client_, population
+):
+    """The refusal says what repairs it without moving an exam: a fixed-time
+    Check and Save with rooms. A Build would place every exam again."""
+    bare = _build(client_, assign_rooms=False)
+    locks = _choose_locks(bare)
+    body = _loaded(client_, bare, status=400, exam_locks=locks, assign_rooms=True)
+    assert body["code"] == "exam_locks_source_incomplete"
+    assert "Check and save" in body["error"]
+    assert "uild" not in body["error"], "never Build or Rebuild a saved timetable"
+    roomed = _save(client_, bare, assign_rooms=True)
+    assert roomed["assign_rooms"] is True
+    assert _times(roomed) == _times(bare)
+    saved = _save(client_, roomed, exam_locks=locks)
+    assert saved["exam_locks"] == locks
+    assert _times(saved) == _times(bare)
+
+
 # ── Optimise and Fix ─────────────────────────────────────────────────────────
 
 
@@ -379,6 +402,132 @@ def test_a_registrar_code_renumbered_since_the_save_keeps_its_locked_cell(
     assert _by_identity(checked, locks) == before
     # And the next Build keeps it again.
     assert _by_identity(_build(client_, previous_run_id=rebuilt["run_id"]), locks) == before
+
+
+def test_a_build_with_most_days_locked_is_feasible_and_keeps_them(client_, population):
+    """Locked exams hold their days as fixed placements do: a Build that
+    counted them as exams still to place would find their terms infeasible."""
+    built = _build(client_)
+    locks = [{"day": day} for day in DAYS[:3]]
+    saved = _save(client_, built, exam_locks=locks)
+    rebuilt = _build(client_, previous_run_id=saved["run_id"])
+    assert "feasibility_error" not in rebuilt
+    assert rebuilt["exam_locks"] == locks
+    _assert_kept(saved, rebuilt, locks)
+
+
+def test_a_build_whose_study_plan_term_has_too_few_open_days_is_infeasible(client_, population):
+    """A fully locked day takes no new exam. Adding a study-plan term's three
+    courses when only one day is open is refused as infeasible, never placed
+    and sent to OVERFLOW."""
+    term = {"LX101", "LX105", "LX109"}  # AI term 1 and CS term 2
+    everything = sorted(_build(client_)["courses"])
+    first = _build(client_, selected_courses=[code for code in everything if code not in term])
+    locks = [{"day": day} for day in DAYS[:3]]
+    saved = _save(client_, first, exam_locks=locks)
+    runs = ExamTimetableRun.objects.count()
+    body = _build(client_, status=400, selected_courses=everything, previous_run_id=saved["run_id"])
+    assert body["feasibility_error"] is True
+    assert any(set(row["courses"]) >= term - {"LX109"} for row in body["violations"])
+    assert ExamTimetableRun.objects.count() == runs
+    # Unlocked, the same Build fits: the locked days were the only reason.
+    assert "feasibility_error" not in _build(
+        client_, selected_courses=everything, previous_run_id=saved["run_id"], exam_locks=[]
+    )
+
+
+def _pin_at_its_locked_cell(result, locks) -> dict:
+    code = sorted(_held(result, locks))[0]
+    day, period = _held(result, locks)[code][:2]
+    return {"course_code": code, "day": day, "period": period}
+
+
+@pytest.mark.parametrize("action", ["optimise", "build", "multistart"])
+def test_a_locked_exam_pinned_at_its_own_cell_can_still_be_optimised_and_built(
+    client_, population, settings, action
+):
+    """Pinned, saved, then its day locked: the pin says nothing the lock does
+    not, and must never make a solver refuse the exam as both."""
+    settings.TIMETABLE_EXAM_MULTISTART_ENABLED = True
+    built = _build(client_)
+    locks = _choose_locks(built)
+    pin = _pin_at_its_locked_cell(built, locks)
+    saved = _save(client_, {**built, "pinned": [pin]}, exam_locks=locks)
+    assert saved["pinned"] == [pin]
+    if action == "optimise":
+        results = [_loaded(client_, saved, mode="optimize_loaded")]
+    elif action == "build":
+        results = [_build(client_, previous_run_id=saved["run_id"], pinned=[pin])]
+    else:
+        body = _build(
+            client_,
+            previous_run_id=saved["run_id"],
+            pinned=[pin],
+            multistart=True,
+            n_runs=2,
+            time_budget_s=60,
+            randomize=True,
+        )
+        results = [candidate["payload"] for candidate in body["multistart"]["candidates"].values()]
+    assert results
+    for result in results:
+        assert result["exam_locks"] == locks
+        _assert_kept(saved, result, locks)
+
+
+def test_a_build_from_a_locked_clash_reads_as_a_check_of_it_does(client_, population):
+    """What a Build writes about its locks - the input fingerprint's lock
+    block, the lock report, the rows marked locked - is what a fixed-time
+    Check of the saved Build writes: no input drift, the same QA."""
+    built = _build(client_)
+    board, dragged = _unlocked_clash(built, [])
+    clashing = _save(client_, built, board)
+    where = {entry["course_code"]: entry for entry in clashing["schedule"]}
+    cell = {"day": where[dragged]["day"], "period": where[dragged]["period"]}
+    saved = _save(client_, clashing, exam_locks=[cell])
+    rebuilt = _build(client_, previous_run_id=saved["run_id"])
+    assert rebuilt["exam_locks"] == [cell]
+    report = rebuilt["qa"]["exam_locks"]
+    assert [issue for issue in report["issues"] if issue["kind"] == "clash"]
+    assert [row for row in rebuilt["qa"]["manual_override_details"] if row.get("locked")]
+    checked = _loaded(client_, rebuilt)
+    assert checked["source_inputs_changed"] is False
+    assert checked["input_fingerprint"] == rebuilt["input_fingerprint"]
+    assert _qa(checked) == _qa(rebuilt)
+
+
+def test_inherited_locks_bring_the_links_they_were_saved_with(client_, population):
+    """A Build that sends neither key keeps the saved locks AND the saved
+    links: locks are never validated without the links they were saved with."""
+    plain = _build(client_)
+    clashing = {frozenset((row["course_a"], row["course_b"])) for row in plain["conflicts"]}
+    codes = sorted(entry["course_code"] for entry in plain["schedule"])
+    pair = next((a, b) for a in codes for b in codes if a < b and frozenset((a, b)) not in clashing)
+    by_code = {entry["course_code"]: entry for entry in plain["schedule"]}
+    link = {
+        "members": [
+            {"course_identity": by_code[code]["course_identity"], "course_code": code}
+            for code in pair
+        ]
+    }
+    linked = _build(client_, linked_exams=[link])
+    where = _times(linked)
+    assert where[pair[0]] == where[pair[1]] and where[pair[0]][0] != "OVERFLOW"
+    shared = {
+        tuple(room["room_shared_with"])
+        for entry in linked["schedule"]
+        if entry["course_code"] in pair
+        for room in entry["rooms"]
+        if room.get("room_shared_with")
+    }
+    assert shared, "the linked pair shares a room"
+    locks = [{"day": where[pair[0]][0]}]
+    saved = _save(client_, linked, exam_locks=locks)
+    assert saved["linked_exams"] and saved["exam_locks"] == locks
+    rebuilt = _build(client_, previous_run_id=saved["run_id"])
+    assert rebuilt["exam_locks"] == locks
+    assert rebuilt["linked_exams"] == saved["linked_exams"]
+    _assert_kept(saved, rebuilt, locks)
 
 
 def test_a_build_sent_no_locks_is_unlocked(client_, locked):
@@ -577,6 +726,47 @@ def test_a_link_reaching_out_of_a_locked_cell_is_refused(client_, locked):
     body = _loaded(client_, saved, status=400, linked_exams=[link])
     assert _code(body) == ("exam_locks_link_outside", "linked_exams[0]")
     assert body["courses"] == sorted([inside, outsider["course_code"]])
+
+
+@pytest.mark.parametrize(
+    "mode", [None, "save_loaded_changes", "optimize_loaded", "minimum_change_repair"]
+)
+def test_a_split_link_of_unlocked_exams_is_refused_with_locks_as_without(client_, locked, mode):
+    """With locks the links are checked in another order (a link into a
+    locked cell is a lock refusal); a link of two unlocked exams at different
+    times is still refused exactly as master refuses it, and nothing is saved."""
+    built, saved, locks = locked
+    cells = _locked_cells(locks)
+    free = [
+        entry
+        for entry in saved["schedule"]
+        if (entry["day"], entry["period"]) not in cells and entry["day"] != "OVERFLOW"
+    ]
+    first = free[0]
+    second = next(
+        entry
+        for entry in free
+        if (entry["day"], entry["period"]) != (first["day"], first["period"])
+    )
+    link = {
+        "members": [
+            {"course_identity": entry["course_identity"], "course_code": entry["course_code"]}
+            for entry in (first, second)
+        ]
+    }
+    extra = (
+        {"expected_input_fingerprint": saved["input_fingerprint"]}
+        if mode == "save_loaded_changes"
+        else {}
+    )
+    runs = ExamTimetableRun.objects.count()
+    master = _loaded(
+        client_, saved, mode=mode, status=400, linked_exams=[link], exam_locks=[], **extra
+    )
+    assert master["code"] == "linked_exams_split"
+    body = _loaded(client_, saved, mode=mode, status=400, linked_exams=[link], **extra)
+    assert _code(body) == _code(master)
+    assert ExamTimetableRun.objects.count() == runs
 
 
 def test_locking_over_unsaved_changes_is_refused(client_, population):
