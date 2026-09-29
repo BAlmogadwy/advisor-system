@@ -310,14 +310,55 @@ def test_a_build_sent_no_locks_is_unlocked(client_, locked):
     assert "exam_locks" not in rebuilt
 
 
-@pytest.mark.parametrize("previous", ["deleted", "garbage", True, None], ids=str)
+@pytest.mark.parametrize(
+    "previous", ["deleted", "garbage", True, None, "unreadable", "not-ok"], ids=str
+)
 def test_a_build_whose_previous_run_is_not_readable_is_masters_build(client_, locked, previous):
+    """Master's Build never read ``previous_run_id``: a run that cannot be read
+    - gone, not a number, not JSON, not an ``ok`` run (even one naming locks) -
+    gives exactly the Build a request without it gives."""
     built, saved, locks = locked
+    plain = _build(client_)
+    runs = ExamTimetableRun.objects.filter(pk=saved["run_id"])
     if previous == "deleted":
-        ExamTimetableRun.objects.filter(pk=saved["run_id"]).delete()
+        runs.delete()
+        previous = saved["run_id"]
+    elif previous == "unreadable":
+        runs.update(result_json="{not json")
+        previous = saved["run_id"]
+    elif previous == "not-ok":
+        runs.update(
+            result_json=json.dumps(
+                {"schema_version": 6, "status": "feasibility_error", "exam_locks": locks}
+            )
+        )
         previous = saved["run_id"]
     rebuilt = _build(client_, previous_run_id=previous)
     assert "exam_locks" not in rebuilt
+    assert corpus.comparable(rebuilt) == corpus.comparable(plain)
+
+
+def test_a_build_from_a_saved_run_without_locks_keeps_masters_links_default(client_, population):
+    """Links are inherited only WITH the locks they were checked with. A Build
+    from a run that has links but no locks, sending no ``linked_exams``, links
+    nothing - master's default - and is exactly the Build without the run."""
+    plain = _build(client_)
+    clashing = {frozenset((row["course_a"], row["course_b"])) for row in plain["conflicts"]}
+    codes = sorted(entry["course_code"] for entry in plain["schedule"])
+    pair = next((a, b) for a in codes for b in codes if a < b and frozenset((a, b)) not in clashing)
+    by_code = {entry["course_code"]: entry for entry in plain["schedule"]}
+    link = {
+        "members": [
+            {"course_identity": by_code[code]["course_identity"], "course_code": code}
+            for code in pair
+        ]
+    }
+    linked = _build(client_, linked_exams=[link])
+    assert linked["linked_exams"], "the saved run has a link"
+    rebuilt = _build(client_, previous_run_id=linked["run_id"])
+    assert not rebuilt.get("linked_exams")
+    assert "exam_locks" not in rebuilt
+    assert corpus.comparable(rebuilt) == corpus.comparable(plain)
 
 
 def test_a_build_with_locks_and_no_saved_run_is_refused(client_, locked):
