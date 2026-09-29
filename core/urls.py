@@ -83,6 +83,7 @@ from .exam_views import (
     exam_timetable_list_view,
     exam_timetable_page,
     exam_timetable_preview_courses_view,
+    exam_timetable_scope_courses_view,
 )
 from .group_availability_views import (
     group_availability_compute_view,
@@ -772,6 +773,12 @@ urlpatterns = [
         "ops/exam-timetable/list/",
         login_required(exam_timetable_list_view),
         name="exam_timetable_list",
+    ),
+    # Read-only: every live course of a saved run's scope, its own marked.
+    path(
+        "ops/exam-timetable/<int:run_id>/scope-courses/",
+        login_required(exam_timetable_scope_courses_view),
+        name="exam_timetable_scope_courses",
     ),
     path(
         "ops/exam-timetable/<int:run_id>/export.xlsx",

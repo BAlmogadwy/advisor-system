@@ -850,11 +850,13 @@ class ExamTimetableJob(models.Model):
     KIND_OPTIMIZE = "optimize_loaded"
     KIND_REPAIR = "minimum_change_repair"
     KIND_SAVE = "save_loaded_changes"
+    KIND_ADD = "add_courses"
     KIND_CHOICES = (
         (KIND_BUILD, "Build"),
         (KIND_OPTIMIZE, "Optimize current timetable"),
         (KIND_REPAIR, "Fix with fewest moves"),
         (KIND_SAVE, "Save changes"),
+        (KIND_ADD, "Add courses"),
     )
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)

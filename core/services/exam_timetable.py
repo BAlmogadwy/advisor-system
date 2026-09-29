@@ -16,6 +16,7 @@ Pipeline sections (section numbers match ``# ── N.`` markers below):
 
 from __future__ import annotations
 
+import copy
 import itertools
 import json
 import logging
@@ -36,7 +37,7 @@ from collections import defaultdict
 from collections.abc import Iterable
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, Protocol
 
 from core.models import (
     Course,
@@ -95,6 +96,17 @@ from core.services.student_sections import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+class SeatScorer(Protocol):
+    """Adding courses to a saved timetable: seats a course would take past its
+    slot's capacity, for the greedy to score first (see ``exam_add_courses``)."""
+
+    def cost(self, course: str, slot: int) -> int: ...
+
+    def take(self, course: str, slot: int) -> None: ...
+
+
 _DEPARTMENT_PREFIXES: set[str] = {"CS", "IS", "COE", "CYB", "AI", "DS"}
 _EXTERNAL_PREFIXES: set[str] = {"GS", "EDCT", "GSE", "ENV", "MATH", "STAT", "PHYS"}
 
@@ -724,6 +736,7 @@ def schedule(
     student_credits: dict[str, dict[int, int]] | None = None,
     locked: list[dict] | None = None,
     closed_slots: frozenset[int] = frozenset(),
+    seats: SeatScorer | None = None,
 ) -> list[dict]:
     """
     Greedy graph-coloring with day-spread soft constraint.
@@ -771,6 +784,11 @@ def schedule(
                              every later placement (a course is never both)
         closed_slots       – slot indices of locked cells: no other course
                              may take one
+        seats              – adding courses only: seats over each slot's
+                             capacity (``cost(course, slot)``), scored ahead
+                             of every other soft level and told each
+                             placement (``take``). None - every Build - leaves
+                             the scoring exactly as it was.
 
     Returns:
         list of {course_code, slot_index, day, period}
@@ -984,6 +1002,8 @@ def schedule(
                 float("inf"),
                 float("inf"),
             )
+            if seats is not None:
+                best_score = (float("inf"), *best_score)
             # Reservoir sampling counter for ties when seed is provided.
             ties_seen = 0
 
@@ -1038,6 +1058,8 @@ def schedule(
                     day_load[day],
                     slot_load[si],
                 )
+                if seats is not None:
+                    score = (seats.cost(course, si), *score)
                 if score < best_score:
                     best_score = score
                     best_slot = si
@@ -1053,10 +1075,14 @@ def schedule(
         else:
             # No enrolled data available — fall back to least-loaded slot
             chosen = min(
-                candidates, key=lambda si: (0 if _pref.get(course) == si else 1, slot_load[si])
+                candidates,
+                key=lambda si: ((seats.cost(course, si),) if seats is not None else ())
+                + (0 if _pref.get(course) == si else 1, slot_load[si]),
             )
 
         assignment[course] = chosen
+        if seats is not None:
+            seats.take(course, chosen)
         slot_load[chosen] += 1
         chosen_day = slot_by_index[chosen]["day"]
         day_load[chosen_day] += 1
@@ -1827,6 +1853,7 @@ def assign_rooms_to_schedule(
     on_period: Counter | None = None,
     links: LinkedExams = NO_LINKS,
     locks: ExamLocks = NO_LOCKS,
+    kept: dict[tuple[int, str], dict[str, list[dict]]] | None = None,
 ) -> list[dict]:
     """Room original sections across each period without changing exam times.
 
@@ -1849,6 +1876,11 @@ def assign_rooms_to_schedule(
     verbatim, and never enters a pack: no allocation, no CP-SAT, no cache. A
     locked cell is a whole slot and a pack is one slot's, so no re-solved room
     can double-book a restored one.
+
+    ``kept`` (adding courses only) maps a (slot, cohort) pack to saved room
+    rows it keeps verbatim, course by course (``exam_kept_rooms``): written
+    where the allocator would write that pack's rows, never allocated. Rooms
+    belong to one cohort, so no allocated pack can share a room with it.
     """
     inventory = normalized_rooms(rooms)
     entries_by_slot: dict[int, list[dict]] = defaultdict(list)
@@ -1897,6 +1929,11 @@ def assign_rooms_to_schedule(
     for done, (by_course, gender, demands) in enumerate(packs):
         if on_period is not None:
             on_period(done, len(packs))
+        slot_index = next(iter(by_course.values()))["slot_index"]
+        if kept and (slot_index, gender) in kept:
+            for code, saved_rows in sorted(kept[(slot_index, gender)].items()):
+                by_course[code]["rooms"].extend(copy.deepcopy(saved_rows))
+            continue
         period_rooms = [room for room in inventory if room["section"] == gender]
         rows = allocate_period(demands, period_rooms, context, room_staff=_room_invigilators_needed)
         # Who sits in each room of this period, for the rows of a shared one.

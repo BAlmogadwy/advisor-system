@@ -9,6 +9,7 @@ Endpoints:
     GET  exam_timetable_filters_view  – return programs/sections for filter dropdowns
     POST exam_timetable_preview_courses_view – return running courses matching filters
     POST exam_timetable_build_view    – build (or rebuild) the exam timetable
+    GET  exam_timetable_scope_courses_view – every live course of a saved run's scope
     GET  exam_timetable_list_view     – paginated list of saved runs
     GET  exam_timetable_detail_view   – load a specific saved run
     GET  exam_timetable_export_view   – download a run as .xlsx
@@ -21,10 +22,12 @@ from __future__ import annotations
 import json
 import logging
 import re
+from collections import Counter
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import time
 from io import BytesIO
+from time import monotonic
 from typing import Any
 
 from django.conf import settings
@@ -36,8 +39,10 @@ from django.views.decorators.http import require_GET, require_POST
 
 from core.authz import throttle
 from core.models import ExamTimetableRun, Student
+from core.services import exam_add_courses as adding
 from core.services import exam_jobs
 from core.services.audit import log_audit_event
+from core.services.exam_add_courses import AddCoursesError
 from core.services.exam_evaluation import (
     _build_loaded_course_enrollments,
     _course_identity_for_entry,
@@ -48,10 +53,15 @@ from core.services.exam_evaluation import (
 from core.services.exam_locks import (
     ExamLocks,
     ExamLocksError,
+    current_exam_term,
     require_lock_list,
     settle_build_request,
 )
-from core.services.exam_min_change import find_violations, repair_minimum_change
+from core.services.exam_min_change import (
+    find_violations,
+    place_added_exams,
+    repair_minimum_change,
+)
 from core.services.exam_multistart import (
     is_multistart_enabled,
     report_to_dict,
@@ -59,11 +69,14 @@ from core.services.exam_multistart import (
 )
 from core.services.exam_progress import JobCancelled
 from core.services.exam_progress import current as current_progress
+from core.services.exam_room_allocation import normalized_rooms
+from core.services.exam_room_inventory import exam_room_inventory
 from core.services.exam_run_schema import (
     load_normalised_run,
 )
 from core.services.exam_timetable import (
     ExamCoursesUnavailable,
+    _build_section_enrollment_from_enrolled_sets,
     _source_code_for_display,
     apply_thin_conflict_policy,
     build_conflict_graph,
@@ -241,6 +254,12 @@ def exam_timetable_preview_courses_view(request: HttpRequest) -> JsonResponse:
     except ValueError as exc:
         return _exam_validation_error(exc)
 
+    # The same rows the Add courses list shows for a saved run's scope.
+    return JsonResponse({"ok": True, "courses": _scope_course_rows(programs, sections)})
+
+
+def _scope_course_rows(programs: list[str] | None, sections: list[str] | None) -> list[dict]:
+    """Every live course of a scope, as Load Courses and the Add courses list show it."""
     enrolled_sets, course_meta = build_enrolled_sets_with_meta(
         programs=programs,
         sections=sections,
@@ -250,7 +269,7 @@ def exam_timetable_preview_courses_view(request: HttpRequest) -> JsonResponse:
     course_codes = list(enrolled_sets.keys())
     credit_map = build_credit_map(course_codes)
 
-    courses = sorted(
+    return sorted(
         [
             {
                 "course_code": cc,
@@ -263,7 +282,66 @@ def exam_timetable_preview_courses_view(request: HttpRequest) -> JsonResponse:
         key=lambda c: str(c["course_code"]),
     )
 
-    return JsonResponse({"ok": True, "courses": courses})
+
+def _saved_scope(source: dict) -> tuple[list[str], list[str]] | None:
+    scope = source.get("enrollment_scope")
+    if not isinstance(scope, dict) or any(
+        not isinstance(scope.get(key), list)
+        or any(not isinstance(value, str) for value in scope[key])
+        for key in ("programs", "sections")
+    ):
+        return None
+    return scope["programs"], scope["sections"]
+
+
+@never_cache
+@require_GET
+def exam_timetable_scope_courses_view(request: HttpRequest, run_id: int) -> JsonResponse:
+    """Every live course of a saved run's programmes and sections, the run's own marked.
+
+    Read-only: what the Add courses list and the setup list show on a loaded
+    timetable, so neither needs Load Courses (which starts a new timetable).
+    The scope is the run's saved one, never the page's filter chips.
+    """
+    deny = _require_exam_access(request)
+    if deny:
+        return deny
+    try:
+        run = ExamTimetableRun.objects.get(pk=run_id)
+    except ExamTimetableRun.DoesNotExist:
+        return JsonResponse(
+            {"ok": False, "code": "run_not_found", "error": "Run not found"}, status=404
+        )
+    source = dict(load_normalised_run(run))
+    if source.get("status") != "ok":
+        return JsonResponse(
+            {
+                "ok": False,
+                "code": "run_not_readable",
+                "error": "This saved timetable cannot be opened by this application version.",
+            },
+            status=400,
+        )
+    if _saved_scope(source) is None:
+        return JsonResponse(
+            {
+                "ok": False,
+                "code": "scope_invalid",
+                "error": "The timetable's enrollment scope is invalid. Build a new timetable.",
+            },
+            status=400,
+        )
+    return JsonResponse(
+        {
+            "ok": True,
+            "run_id": run.pk,
+            **adding.scope_courses(
+                source,
+                rows=_scope_course_rows(*_saved_scope(source)),
+                current_term=current_exam_term(),
+            ),
+        }
+    )
 
 
 # Throttle for the synchronous path: looser in development for fast tuning,
@@ -380,6 +458,11 @@ def _validation_error(exc: ValueError) -> tuple[int, dict]:
             body["courses"] = exc.courses
         if exc.cell is not None:
             body["cell"] = exc.cell
+    elif isinstance(exc, AddCoursesError):
+        # Which course to add, and why it cannot be.
+        body.update(code=exc.code, field=exc.field)
+        if exc.courses is not None:
+            body["courses"] = exc.courses
     return 400, body
 
 
@@ -455,6 +538,10 @@ def execute_exam_action(payload: dict, *, save: RunSaver = _save_run) -> tuple[i
     if "base_schedule" in payload:
         try:
             current_progress().stage("read_board")
+            if mode == adding.MODE:
+                # Before anything else is read: "Reload the saved timetable"
+                # names no source, and adding needs one.
+                _require_add_source(payload)
             context = _loaded_request_context(payload, base_schedule_raw)
             provenance = _split_provenance(context)
             source_fingerprint = provenance["source_input_fingerprint"]
@@ -466,6 +553,15 @@ def execute_exam_action(payload: dict, *, save: RunSaver = _save_run) -> tuple[i
                     label=label,
                     source_placements=provenance["source_placements"],
                     carried_protection=provenance["source_repair_protected"],
+                    save=save,
+                    **context,
+                )
+            elif mode == adding.MODE:
+                result = _add_courses_schedule(
+                    label=label,
+                    added_courses=payload.get("added_courses"),
+                    carried_protection=provenance["source_repair_protected"],
+                    source_run_id=int(payload["previous_run_id"]),
                     save=save,
                     **context,
                 )
@@ -500,6 +596,11 @@ def execute_exam_action(payload: dict, *, save: RunSaver = _save_run) -> tuple[i
             raise
         except Exception:
             return _server_error("loaded timetable action", mode)
+
+    if mode == adding.MODE:
+        # Routed by the board, not by the mode: without one, adding courses
+        # would fall through to a Build and save a new timetable.
+        return _validation_error(_add_source_required())
 
     try:
         programs, sections = _selected_enrollment_scope(payload)
@@ -764,6 +865,7 @@ def _rebuild_loaded_schedule(
     expected_input_fingerprint: str | None = None,
     rebalance_invigilators: bool = False,
     extra: dict | None = None,
+    described: Callable[[dict], dict] | None = None,
     save: RunSaver = _save_run,
     **kwargs,
 ) -> dict:
@@ -782,8 +884,11 @@ def _rebuild_loaded_schedule(
     # Provenance a mode wants remembered with the run, merged before it is
     # saved so a reload from history carries it too. Top-level only: qa is
     # compared between Build and Check, and nothing a Check cannot reproduce
-    # may live there.
+    # may live there. ``described`` is given the evaluated result, for a report
+    # about the rooms the evaluation chose.
     result.update(extra or {})
+    if described is not None:
+        result.update(described(result))
     result["run_id"] = save(label, result)
     return result
 
@@ -813,6 +918,8 @@ class _LoadedSolverInputs:
     course_buckets: dict[str, list[tuple[str, int]]]
     credit_map: dict[str, int]
     slots: list[dict]
+    #: The live metadata of each course, as the evaluation reads it.
+    course_meta: dict[str, dict] = field(default_factory=dict)
 
 
 def _loaded_solver_inputs(
@@ -857,6 +964,7 @@ def _loaded_solver_inputs(
         course_buckets=course_buckets,
         credit_map=credit_map,
         slots=slots,
+        course_meta=course_meta,
     )
 
 
@@ -1206,6 +1314,375 @@ def _minimum_change_schedule(
             # carried: they travel with the pin list, and unpinning must free them.
             "minimum_change_protected": sorted(hand_placed),
         },
+    )
+
+
+def _add_source_required() -> AddCoursesError:
+    return AddCoursesError(
+        "Open the saved timetable, then add courses to it.",
+        code=adding.SOURCE_REQUIRED,
+        field="previous_run_id",
+    )
+
+
+def _require_add_source(payload: dict) -> None:
+    """Adding courses extends a saved run: it must exist and be readable."""
+    run_id = payload.get("previous_run_id")
+    if isinstance(run_id, bool):
+        raise _add_source_required()
+    try:
+        run = ExamTimetableRun.objects.get(pk=int(run_id))
+    except (TypeError, ValueError, ExamTimetableRun.DoesNotExist) as exc:
+        raise _add_source_required() from exc
+    if load_normalised_run(run).get("status") != "ok":
+        raise _add_source_required()
+
+
+def _seat_rows(inputs: _LoadedSolverInputs) -> dict[str, list[dict]]:
+    """The section rows the rooming will seat, for the seats the greedy counts."""
+    students = sorted({student for members in inputs.enrolled_sets.values() for student in members})
+    attribution = list(
+        Student.objects.filter(student_id__in=students).values("student_id", "program", "section")
+    )
+    return _build_section_enrollment_from_enrolled_sets(
+        inputs.enrolled_sets,
+        course_meta=inputs.course_meta,
+        section_by_student={
+            row["student_id"]: str(row["section"] or "").strip() for row in attribution
+        },
+        program_by_student={row["student_id"]: row["program"] for row in attribution},
+    )
+
+
+def _add_courses_schedule(
+    *,
+    label: str,
+    added_courses: Any,
+    carried_protection: list[str] | None,
+    source_run_id: int | None,
+    days: list[str],
+    periods: list[str],
+    max_per_day: int,
+    schedule_raw: list,
+    selected_courses: list[str] | None,
+    pinned: list[dict[str, str]] | None,
+    assign_rooms: bool,
+    seed: int | None,
+    thin_conflict_threshold: int,
+    programs: list[str] | None = None,
+    sections: list[str] | None = None,
+    linked_exams: list[dict] | None = None,
+    exam_locks: list[dict] | None = None,
+    lock_source: dict | None = None,
+    save: RunSaver = _save_run,
+) -> dict:
+    """Add courses of the run's own scope to a saved timetable, moving the fewest exams.
+
+    Build answers "place everything"; this answers "place these, and leave
+    what I perfected alone". The board must be the saved one - the saved run is
+    what locks keep, what rooms are kept from, and what "moved" is measured
+    against. Build's greedy places what fits with every existing exam fixed;
+    the minimum-change solver makes room for the rest, never moving a pinned
+    or locked exam, one an earlier Fix protected, or one in a rule break the
+    saved board already had. A course nothing can seat stays in OVERFLOW with
+    the reason. The result is saved as a new run; the source is never changed.
+    """
+    started = monotonic()
+    source = lock_source or {}
+    progress = current_progress()
+    identities = adding.parse_added_courses(added_courses)
+    base_entries = _normalise_loaded_schedule_entries(schedule_raw, days, periods, selected_courses)
+    adding.require_clean_board(
+        source=source,
+        entries=base_entries,
+        pinned=pinned,
+        linked_exams=linked_exams,
+        exam_locks=exam_locks,
+        days=days,
+        periods=periods,
+        max_per_day=max_per_day,
+        thin_conflict_threshold=thin_conflict_threshold,
+        assign_rooms=assign_rooms,
+    )
+    adding.require_same_term(source, current_exam_term())
+    added = adding.resolve_added_courses(
+        identities, source=source, programs=programs, sections=sections
+    )
+    slot_count = len(days) * len(periods)
+    overflow_index = max(
+        [slot_count - 1]
+        + [
+            int(entry["slot_index"])
+            for entry in base_entries
+            if entry.get("day") == adding.OVERFLOW and isinstance(entry.get("slot_index"), int)
+        ]
+    )
+    # For the inputs only: every new exam starts unplaced.
+    waiting = [
+        {**entry, "day": adding.OVERFLOW, "period": f"Extra-{number}", "slot_index": number}
+        for number, entry in enumerate(added, start=overflow_index + 1)
+    ]
+    inputs = _loaded_solver_inputs(
+        base_entries + waiting, days, periods, programs, sections, thin_conflict_threshold
+    )
+    pins = validate_exam_pins(
+        pinned, inputs.course_list, inputs.slots, schedule_entries=base_entries
+    )
+    links, locks = _loaded_links_and_locks(
+        linked_exams, exam_locks, lock_source, inputs, pins, base_entries, assign_rooms
+    )
+    existing = {
+        entry["course_code"]: int(entry["slot_index"])
+        for entry in base_entries
+        if entry.get("day") != adding.OVERFLOW
+    }
+    new_codes = [entry["course_code"] for entry in added]
+    closed = locks.closed_slots(inputs.slots) if locks else frozenset()
+    capacity: dict[str, int] = {}
+    demand: dict[str, dict[str, int]] = {}
+    if assign_rooms:
+        capacity = adding.seat_capacity(
+            normalized_rooms(exam_room_inventory(order_by=("room_code",)))
+        )
+        demand = adding.seat_demand(_seat_rows(inputs))
+
+    # Phase 1: Build's greedy around the saved board. Nothing moves.
+    progress.stage("place_exams")
+    greedy = adding.place_with_greedy(
+        existing=existing,
+        new_codes=new_codes,
+        adj=inputs.adj,
+        slots=inputs.slots,
+        enrolled_sets=inputs.enrolled_sets,
+        max_per_day=max_per_day,
+        plan_term_buckets=inputs.plan_term_buckets,
+        course_buckets=inputs.course_buckets,
+        credit_map=inputs.credit_map,
+        locked=locks.pins() if locks else [],
+        closed_slots=closed,
+        seats=adding.SeatLedger(demand, capacity, existing) if capacity else None,
+        on_placed=progress.counter("place_exams"),
+    )
+    greedy_seconds = monotonic() - started
+
+    # Phase 2, in units: a link is one exam that weighs its courses.
+    unit_adj = links.adjacency(inputs.adj)
+    unit_buckets, _ = links.buckets(inputs.plan_term_buckets, None)
+    unit_home = links.placements(existing)
+    # A rule break the saved board already has is not Add's to fix: its exams stay.
+    breaking, untouched = find_violations(unit_home, unit_adj, unit_buckets, len(periods))
+    carried = {code for code in carried_protection or [] if code in existing}
+    fixed_codes = {pin["course_code"] for pin in pins} | carried
+    if locks:
+        fixed_codes |= set(locks.placements)
+    protected = set(links.units_of(fixed_codes)) | set(breaking)
+    unit_students = links.enrolled(inputs.enrolled_sets)
+    first_board = {**unit_home, **greedy}
+    unit_demand: dict[str, dict[str, int]] = {}
+    for code, seats in demand.items():
+        per = unit_demand.setdefault(links.unit(code), {})
+        for gender, count in seats.items():
+            per[gender] = per.get(gender, 0) + count
+    if len(greedy) < len(new_codes):
+        progress.stage("fewest_moves")
+    engine = place_added_exams(
+        placements=unit_home,
+        new_units=new_codes,
+        greedy=greedy,
+        adj=unit_adj,
+        slot_count=slot_count,
+        periods_per_day=len(periods),
+        plan_term_buckets=unit_buckets,
+        protected=protected,
+        weights=links.weights or None,
+        closed_slots=closed,
+        day_cost=adding.day_cost_function(first_board, unit_students, max_per_day, len(periods)),
+        day_load=Counter(slot // len(periods) for slot in unit_home.values()),
+        seat_demand=unit_demand,
+        seat_capacity=capacity,
+        check_cancelled=progress.check_cancelled,
+    )
+
+    placed = {
+        code: slot for unit, slot in engine.placements.items() for code in links.members_of(unit)
+    }
+    moved = links.expand_codes(engine.moved)
+    slot_by_index = {slot["index"]: slot for slot in inputs.slots}
+    final_entries: list[dict] = []
+    for entry in base_entries:
+        code = entry["course_code"]
+        if entry.get("day") != adding.OVERFLOW and placed.get(code) != entry["slot_index"]:
+            if code not in placed:
+                raise RuntimeError(f"Existing exam {code} was left off the board.")
+            slot = slot_by_index[placed[code]]
+            entry = {
+                **entry,
+                "slot_index": slot["index"],
+                "day": slot["day"],
+                "period": slot["period"],
+            }
+        final_entries.append(entry)
+    for entry in added:
+        code = entry["course_code"]
+        if code in placed:
+            slot = slot_by_index[placed[code]]
+            final_entries.append(
+                {**entry, "slot_index": slot["index"], "day": slot["day"], "period": slot["period"]}
+            )
+        else:
+            overflow_index += 1
+            final_entries.append(
+                {
+                    **entry,
+                    "day": adding.OVERFLOW,
+                    "period": f"Extra-{overflow_index}",
+                    "slot_index": overflow_index,
+                }
+            )
+    # An engine error must never read as the registrar's: before the evaluator
+    # judges the board, what this action promised is checked here, as a bug.
+    at = {entry["course_code"]: (entry["day"], entry["period"]) for entry in final_entries}
+    if locks:
+        locks.require_board(final_entries)
+    for pin in pins:
+        if at.get(pin["course_code"]) != (pin["day"], pin["period"]):
+            raise RuntimeError(f"Pinned exam {pin['course_code']} moved while adding courses.")
+    if links.split_units(final_entries):
+        raise RuntimeError("A linked exam was split while adding courses.")
+    unit_final = {unit: slot for unit, slot in engine.placements.items()}
+    _, after = find_violations(unit_final, unit_adj, unit_buckets, len(periods))
+    if after != untouched:
+        raise RuntimeError("Adding courses broke a timetable rule.")
+
+    names = {entry["course_code"]: entry.get("course_name", "") for entry in base_entries + added}
+
+    def where(slot_index: int) -> dict[str, str]:
+        slot = slot_by_index[slot_index]
+        return {"day": slot["day"], "period": slot["period"]}
+
+    mates = {
+        code: {mate for members in unit_buckets.values() if code in members for mate in members}
+        - {code}
+        for code in {links.unit(code) for code in moved}
+    }
+
+    def made_room_for(code: str) -> list[str]:
+        unit, home = links.unit(code), existing[code]
+        return sorted(
+            new
+            for new in new_codes
+            if new in placed
+            and (
+                (new in unit_adj.get(unit, {}) and placed[new] == home)
+                or (new in mates[unit] and placed[new] // len(periods) == home // len(periods))
+            )
+        )
+
+    report: dict[str, Any] = {
+        "source_run_id": source_run_id,
+        "added": [
+            {
+                "course_code": entry["course_code"],
+                "course_identity": entry["course_identity"],
+                "course_name": entry["course_name"],
+                "placed": where(placed[entry["course_code"]])
+                if entry["course_code"] in placed
+                else None,
+            }
+            for entry in added
+        ],
+        "requested_count": len(added),
+        "placed_count": len(engine.placed_new),
+        "moves": [
+            {
+                "course_code": code,
+                "course_name": names.get(code, ""),
+                "from": where(existing[code]),
+                "to": where(placed[code]),
+                "made_room_for": made_room_for(code),
+            }
+            for code in moved
+        ],
+        "not_placed": [
+            {
+                "course_code": entry["course_code"],
+                "course_identity": entry["course_identity"],
+                "course_name": entry["course_name"],
+                **adding.explain_unplaced(
+                    entry["course_code"],
+                    board=engine.placements,
+                    adj=unit_adj,
+                    plan_term_buckets=unit_buckets,
+                    protected=protected,
+                    closed_slots=closed,
+                    slot_count=slot_count,
+                    periods_per_day=len(periods),
+                    search_stopped=engine.search_stopped,
+                    members_of=links.members_of,
+                ),
+            }
+            for entry in added
+            if entry["course_code"] not in placed
+        ],
+        "moved_weight": sum(links.weight(unit) for unit in engine.moved),
+        "protected_count": len({code for unit in protected for code in links.members_of(unit)}),
+        "locked_count": len(locks.placements) if locks else 0,
+        "untouched_violations": untouched,
+        "violations_after": after,
+        "rings": engine.rings,
+        "widened": engine.widened,
+        "proven_minimal": engine.proven_minimal,
+        "status": engine.status,
+    }
+    if links:
+        report["linked_clash_students"] = linked_exams_qa(
+            links, inputs.enrolled_sets, inputs.credit_map, inputs.meta_by_course
+        )["students_in_two_linked_courses"]
+    logger.info(
+        "exam add: %s of %s placed, %s moved, %s ring(s), %s attempt(s), work %.2f, "
+        "greedy %.2fs, placing %.2fs",
+        report["placed_count"],
+        report["requested_count"],
+        len(moved),
+        engine.rings,
+        engine.attempts,
+        engine.work,
+        greedy_seconds,
+        monotonic() - started,
+    )
+
+    def with_report(result: dict) -> dict:
+        # Measured on the evaluated run: the rooms the evaluation chose.
+        report["rooms_changed"] = adding.rooms_changed(source, result, inputs.slots)
+        report["sections_changed"] = adding.sections_changed(source, result)
+        report["unassigned_added"] = adding.unassigned_added(result, set(new_codes))
+        extra: dict[str, Any] = {"add_courses": report}
+        if carried:
+            # Still the registrar's: drag, Fix, drag, Fix keeps the first drag.
+            extra["minimum_change_protected"] = sorted(carried)
+        return extra
+
+    return _rebuild_loaded_schedule(
+        label=label,
+        # Never the invigilator post-pass: it moves exams between days.
+        rebalance_invigilators=False,
+        days=days,
+        periods=periods,
+        max_per_day=max_per_day,
+        schedule_raw=final_entries,
+        programs=programs,
+        sections=sections,
+        selected_courses=[entry["course_code"] for entry in final_entries],
+        assign_rooms=assign_rooms,
+        seed=seed,
+        thin_conflict_threshold=thin_conflict_threshold,
+        rebuild_mode=adding.REBUILD_MODE,
+        pinned=pins,
+        linked_exams=links.saved(),
+        save=save,
+        keep_rooms_from=source,
+        described=with_report,
+        **_lock_kwargs(locks, lock_source),
     )
 
 

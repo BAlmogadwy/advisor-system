@@ -143,3 +143,58 @@ def test_two_submits_racing_each_other_start_exactly_one_job(
 
     assert statuses == [202, 409]
     assert Job.objects.filter(status__in=Job.ACTIVE_STATUSES).count() == 1
+
+
+def test_an_add_courses_job_saves_its_new_run_from_its_own_thread(settings, django_user_model):
+    """Adding courses as a real job: placed, evaluated and saved beside the source."""
+    from core import models
+    from core.services.exam_timetable import build_enrolled_sets_with_meta
+    from tests import exam_linked_parity_corpus as corpus
+
+    corpus.create_population(models)
+    settings.EXAM_JOBS_ENABLED = True
+    settings.EXAM_JOBS_RUN_INLINE = False
+    scope = {"programs": ["AI", "CS"], "sections": ["F", "M"]}
+    _, metadata = build_enrolled_sets_with_meta(**scope)
+    codes = sorted(metadata)
+    built = build_exam_timetable(
+        "Part",
+        corpus.POPULATION_DAYS,
+        corpus.POPULATION_PERIODS,
+        **scope,
+        selected_courses=codes[:6],
+        selected_course_entries=[{"course_code": c, **metadata[c]} for c in codes[:6]],
+        assign_rooms=True,
+        persist=True,
+    )
+    source_text = ExamTimetableRun.objects.get(pk=built["run_id"]).result_json
+    user = django_user_model.objects.create_superuser(username="adding-admin")
+    status, body = exam_jobs.submit(
+        {
+            "label": "Part + rest",
+            "days": corpus.POPULATION_DAYS,
+            "periods": corpus.POPULATION_PERIODS,
+            "max_per_day": 2,
+            **scope,
+            "mode": "add_courses",
+            "previous_run_id": built["run_id"],
+            "base_schedule": built["schedule"],
+            "pinned": [],
+            "linked_exams": [],
+            "added_courses": [
+                {"course_identity": metadata[c]["course_identity"]} for c in codes[6:]
+            ],
+        },
+        user=user,
+    )
+    assert status == 202, body
+    job_id = body["job"]["id"]
+    assert body["job"]["kind"] == Job.KIND_ADD
+    assert _wait_for(lambda: Job.objects.get(pk=job_id).status == Job.STATUS_SUCCEEDED, 60), (
+        Job.objects.get(pk=job_id).status
+    )
+    status, body = exam_jobs.result(job_id, user=user)
+    assert status == 200, body
+    assert body["add_courses"]["requested_count"] == len(codes) - 6
+    assert Job.objects.get(pk=job_id).result_run_id == body["run_id"]
+    assert ExamTimetableRun.objects.get(pk=built["run_id"]).result_json == source_text

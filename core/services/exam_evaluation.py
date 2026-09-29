@@ -16,6 +16,7 @@ from __future__ import annotations
 from core.models import Student
 from core.services.course_identity import planner_course_key
 from core.services.exam_input_fingerprint import fingerprint_exam_inputs
+from core.services.exam_kept_rooms import kept_room_packs
 from core.services.exam_locks import (
     NO_LOCKS,
     ExamLocks,
@@ -196,6 +197,7 @@ def evaluate_exam_schedule(
     linked_exams: list[dict] | None = None,
     exam_locks: list[dict] | None = None,
     lock_source: dict | None = None,
+    keep_rooms_from: dict | None = None,
 ) -> dict:
     """Evaluate exact exam placements without scheduling or persisting a run.
 
@@ -209,6 +211,11 @@ def evaluate_exam_schedule(
     the saved run the board was loaded from. A board that moves an exam into
     or out of a locked cell is refused; the locked exams keep their saved rooms,
     and a problem inside a locked cell is reported, never fixed.
+
+    ``keep_rooms_from`` (adding courses only) is the saved run the board was
+    extended from: a (slot, cohort) pack whose exams, section rows and rooms
+    are unchanged keeps that run's rooms verbatim (``exam_kept_rooms``). Every
+    other caller leaves it out, and every pack is allocated as before.
 
     Deliberately not one transaction. It only reads, and on PostgreSQL's READ
     COMMITTED a transaction gives the reads no common snapshot anyway; on
@@ -301,6 +308,17 @@ def evaluate_exam_schedule(
             period_cohort_count(schedule_entries, section_enrollment, links, locks)
         )
         progress.stage("assign_rooms")
+        kept = (
+            kept_room_packs(
+                source=keep_rooms_from,
+                schedule_entries=schedule_entries,
+                section_enrollment=section_enrollment,
+                rooms=rooms_list,
+                locks=locks,
+            )
+            if keep_rooms_from is not None
+            else None
+        )
         assign_rooms_to_schedule(
             schedule_entries,
             section_enrollment,
@@ -310,6 +328,7 @@ def evaluate_exam_schedule(
             on_period=progress.counter("assign_rooms"),
             links=links,
             locks=locks,
+            **({"kept": kept} if kept else {}),
         )
         if rebalance_invigilators and rooms_list and len(days) > 1:
             progress.stage("balance_invigilators")

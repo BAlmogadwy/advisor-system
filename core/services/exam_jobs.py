@@ -126,8 +126,17 @@ STAGES: dict[str, tuple[str, ...]] = {
     ),
     Job.KIND_REPAIR: ("read_board", "fewest_moves", "check_rules", "assign_rooms", "save"),
     Job.KIND_SAVE: ("read_board", "check_rules", "assign_rooms", "save"),
+    # "fewest_moves" is skipped when the greedy seated every new exam.
+    Job.KIND_ADD: (
+        "read_board",
+        "place_exams",
+        "fewest_moves",
+        "check_rules",
+        "assign_rooms",
+        "save",
+    ),
 }
-_LOADED_KINDS = {Job.KIND_OPTIMIZE, Job.KIND_REPAIR, Job.KIND_SAVE}
+_LOADED_KINDS = {Job.KIND_OPTIMIZE, Job.KIND_REPAIR, Job.KIND_SAVE, Job.KIND_ADD}
 
 
 def jobs_enabled() -> bool:
@@ -346,6 +355,14 @@ def submit(payload: dict, *, user, is_superadmin: bool = False) -> tuple[int, di
         if kind is None:
             # The same answer the synchronous path gives, before anything is stored.
             return 400, {"ok": False, "error": f"Unknown timetable action: {mode or 'none'}."}
+    elif mode == Job.KIND_ADD:
+        # Without a board it would be stored as a Build and save a new timetable.
+        return 400, {
+            "ok": False,
+            "error": "Open the saved timetable, then add courses to it.",
+            "code": "add_courses_source_required",
+            "field": "previous_run_id",
+        }
     else:
         kind = Job.KIND_BUILD
     if not str(payload.get("label", "")).strip():

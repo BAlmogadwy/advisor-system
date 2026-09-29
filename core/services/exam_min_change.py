@@ -24,7 +24,7 @@ it costs the registrar - one course each. Members never share a literal.
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 
 from ortools.sat.python import cp_model
@@ -143,13 +143,17 @@ def _build_model(
     slot_count: int,
     periods_per_day: int,
     *,
-    allow_unseated: bool,
+    allow_unseated: bool | frozenset[str],
     closed_slots: frozenset[int] = frozenset(),
 ) -> _Model:
     """The repair over ``movable``; every other exam is a constant.
 
     A slot in ``closed_slots`` (a locked cell) gets no literal at all, exactly
     like a slot a frozen neighbour rules out: no exam may move into it.
+
+    ``allow_unseated`` gives every movable exam an OVERFLOW literal when it is
+    ``True``, none when ``False``, and - as a set - only the exams it names:
+    adding courses may leave a NEW exam in OVERFLOW, never an existing one.
 
     A frozen exam never appears as a constraint: the slots and days it rules
     out are left out of each movable exam's domain before the model is built.
@@ -189,7 +193,9 @@ def _build_model(
             ):
                 y[course, slot] = model.new_bool_var(f"y_{course}_{slot}")
                 choices.append(y[course, slot])
-        if allow_unseated:
+        if allow_unseated is True or (
+            isinstance(allow_unseated, frozenset) and course in allow_unseated
+        ):
             unseated[course] = model.new_bool_var(f"ovf_{course}")
             choices.append(unseated[course])
         # With no legal slot and no escape this is empty, and an empty
@@ -681,4 +687,540 @@ def repair_minimum_change(
     result.status = "OPTIMAL" if result.proven_minimal else "FEASIBLE"
     result.widened = rings > 0
     _, result.violations_after = find_violations(repaired, adj, plan_term_buckets, periods_per_day)
+    return result
+
+
+# ── adding courses to a saved timetable ──────────────────────────────────────
+#
+# The registrar built a timetable from part of the courses, perfected it, and
+# now adds the rest. Build's greedy places what fits around the saved board
+# first, moving nothing (``core.services.exam_add_courses``). Only what it
+# could not place reaches the solver below: the new exams start in OVERFLOW,
+# and an existing exam moves only if that is the one way to seat one more.
+
+#: Deterministic work for one Add, across every attempt, every level and the
+#: sweep, sized by how many new exams the greedy left unplaced. The repair's
+#: rule stands: several times the heaviest real board, so what it stops is a
+#: pathological board, never the registrar's (numbers in the PR).
+_ADD_WORK_BUDGET = 8.0
+_ADD_WORK_PER_UNPLACED = 1.0
+_ADD_WORK_CAP = 32.0
+#: A ring is not started with less work than this left: it could spend it all
+#: on placing and leave its moves unminimised.
+_ADD_RING_RESERVE = 1.0
+
+
+def add_work_budget(unplaced: int) -> float:
+    """The work an Add may spend on ``unplaced`` exams the greedy could not seat."""
+    return min(_ADD_WORK_CAP, _ADD_WORK_BUDGET + _ADD_WORK_PER_UNPLACED * max(0, unplaced))
+
+
+@dataclass
+class AddedExamsResult:
+    """Where the new exams went, and which existing exams moved to make room.
+
+    ``placements`` holds every existing exam that was placed and every new
+    exam that found a slot. ``moved`` names existing exams only: placing a new
+    exam is what was asked for, never a move.
+    """
+
+    placements: dict[str, int]
+    placed_new: list[str] = field(default_factory=list)
+    unplaced_new: list[str] = field(default_factory=list)
+    moved: list[str] = field(default_factory=list)
+    rings: int = 0
+    widened: bool = False
+    status: str = "OPTIMAL"
+    proven_minimal: bool = True
+    #: The work ran out while a new exam was still unplaced and rings were left.
+    search_stopped: bool = False
+    attempts: int = 0
+    work: float = 0.0
+    #: Moves the final pass undid because a stopped solve had left them in.
+    moved_back: int = 0
+
+
+def _bucket_mates(plan_term_buckets: Buckets | None) -> dict[str, set[str]]:
+    mates: dict[str, set[str]] = {}
+    for members in (plan_term_buckets or {}).values():
+        for course in members:
+            mates.setdefault(course, set()).update(members - {course})
+    return mates
+
+
+def _legal_at(
+    course: str,
+    slot: int,
+    board: Mapping[str, int],
+    adj: ConflictGraph,
+    mates: Mapping[str, set[str]],
+    closed_slots: frozenset[int],
+    periods_per_day: int,
+) -> bool:
+    """``course`` may sit at ``slot`` beside ``board`` (which must not hold it)."""
+    if slot in closed_slots:
+        return False
+    if any(board.get(mate) == slot for mate in adj.get(course, {})):
+        return False
+    day = _day_of(slot, periods_per_day)
+    return not any(
+        mate in board and _day_of(board[mate], periods_per_day) == day
+        for mate in mates.get(course, ())
+    )
+
+
+def _added_move_floor(
+    new_units: Iterable[str],
+    placements: Mapping[str, int],
+    adj: ConflictGraph,
+    mates: Mapping[str, set[str]],
+    protected: set[str],
+    closed_slots: frozenset[int],
+    slot_count: int,
+    periods_per_day: int,
+    weights: Weights | None = None,
+) -> int:
+    """A floor no Add can go below: the proof behind "the fewest possible".
+
+    A new exam is blocked when no open slot is free of it with every existing
+    exam at home. Placing it moves at least one of its unprotected blockers:
+    the slot it finally takes had a blocker at home, and that blocker has left
+    it, so it moved - and a protected one never moves. Blocked exams whose
+    blocker sets do not overlap cannot share a move, so their demands add up:
+    the same disjoint packing the repair's floor uses.
+
+    New exams competing with one another for one free slot are not counted,
+    so a board where they do is correctly left unproven.
+    """
+    weight = (weights or {}).get
+    demands: list[frozenset[str]] = []
+    for course in sorted(new_units):
+        blockers: set[str] = set()
+        free = False
+        for slot in range(slot_count):
+            if slot in closed_slots:
+                continue
+            day = _day_of(slot, periods_per_day)
+            here = {mate for mate in adj.get(course, {}) if placements.get(mate) == slot} | {
+                mate
+                for mate in mates.get(course, ())
+                if mate in placements and _day_of(placements[mate], periods_per_day) == day
+            }
+            if not here:
+                free = True
+                break
+            blockers |= here
+        if not free:
+            movable = frozenset(blocker for blocker in blockers if blocker not in protected)
+            if movable:
+                demands.append(movable)
+    used: set[str] = set()
+    floor = 0
+    for movable in sorted(demands, key=lambda item: (len(item), sorted(item))):
+        if used.isdisjoint(movable):
+            used |= movable
+            floor += min(weight(course, 1) for course in movable)
+    return floor
+
+
+@dataclass
+class _Levels:
+    """A lexicographic solve of every level, and how far it got."""
+
+    status: cp_model.CpSolverStatus
+    solver: cp_model.CpSolver | None
+    proven: bool
+    complete: bool
+
+
+def _solve_levels(built: _Model, levels: Iterable, budget: _Budget) -> _Levels:
+    """``_lexicographic``, also saying whether every level was solved.
+
+    Only a board solved on every level is swept to its canonical form: the
+    sweep keeps the levels already frozen, and one a stopped solve never froze
+    could get worse under it.
+    """
+    best: cp_model.CpSolver | None = None
+    best_status = cp_model.UNKNOWN
+    proven = True
+    for objective in levels:
+        if best is not None:
+            _hint_from(built, best)
+        status, solver = _solve(built.model, objective, budget)
+        if solver is None or status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+            return _Levels(cp_model.FEASIBLE if best else status, best, False, False)
+        proven = proven and status == cp_model.OPTIMAL
+        built.model.add(objective == int(solver.value(objective)))
+        best, best_status = solver, status
+    return _Levels(best_status, best, proven, True)
+
+
+def _hint_board(built: _Model, board: Mapping[str, int]) -> None:
+    """Start from ``board``, legal by construction: an exam it lacks is in OVERFLOW."""
+    built.model.clear_hints()
+    for (course, slot), var in built.y.items():
+        built.model.add_hint(var, board.get(course) == slot)
+    for course, var in built.unseated.items():
+        built.model.add_hint(var, course not in board)
+
+
+def _seat_demand_of(
+    seat_demand: Mapping[str, Mapping[str, int]] | None, course: str, gender: str
+) -> int:
+    return int(((seat_demand or {}).get(course) or {}).get(gender, 0) or 0)
+
+
+def _seat_slacks(
+    built: _Model,
+    scope: list[str],
+    home: Mapping[str, int],
+    seat_demand: Mapping[str, Mapping[str, int]] | None,
+    seat_capacity: Mapping[str, int] | None,
+) -> list:
+    """Seats over each (slot, cohort)'s capacity, as slack variables to minimise.
+
+    Aggregate seats only - a necessary condition, never the rooming itself,
+    which still decides. A slot the saved board already filled past capacity
+    has that load as its limit: the solver is not rewarded for "fixing" what
+    it was not asked to fix, and is charged for adding to it.
+    """
+    if not seat_demand or not seat_capacity:
+        return []
+    in_scope = set(scope)
+    base: dict[tuple[int, str], int] = {}
+    fixed: dict[tuple[int, str], int] = {}
+    for course, slot in home.items():
+        for gender in seat_capacity:
+            seats = _seat_demand_of(seat_demand, course, gender)
+            if not seats:
+                continue
+            base[slot, gender] = base.get((slot, gender), 0) + seats
+            if course not in in_scope:
+                fixed[slot, gender] = fixed.get((slot, gender), 0) + seats
+    slacks = []
+    for slot in range(built.slot_count):
+        for gender in sorted(seat_capacity):
+            terms = [
+                (_seat_demand_of(seat_demand, course, gender), built.y[course, slot])
+                for course in scope
+                if (course, slot) in built.y and _seat_demand_of(seat_demand, course, gender)
+            ]
+            if not terms:
+                continue
+            limit = max(int(seat_capacity[gender]), base.get((slot, gender), 0)) - fixed.get(
+                (slot, gender), 0
+            )
+            most = sum(seats for seats, _ in terms)
+            if most <= limit:
+                continue
+            slack = built.model.new_int_var(0, most - limit, f"seats_{slot}_{gender}")
+            built.model.add(sum(seats * var for seats, var in terms) - limit <= slack)
+            slacks.append(slack)
+    return slacks
+
+
+def place_added_exams(
+    *,
+    placements: dict[str, int],
+    new_units: Iterable[str],
+    greedy: Mapping[str, int],
+    adj: ConflictGraph,
+    slot_count: int,
+    periods_per_day: int,
+    plan_term_buckets: Buckets | None = None,
+    protected: set[str] | None = None,
+    weights: Weights | None = None,
+    closed_slots: frozenset[int] = frozenset(),
+    day_cost: Callable[[str, int], int] | None = None,
+    day_load: Mapping[int, int] | None = None,
+    seat_demand: Mapping[str, Mapping[str, int]] | None = None,
+    seat_capacity: Mapping[str, int] | None = None,
+    check_cancelled: Callable[[], None] | None = None,
+    work_budget: float | None = None,
+) -> AddedExamsResult:
+    """Seat the new exams the greedy could not, moving as few existing exams as possible.
+
+    ``placements`` is the saved board: every existing exam that has a slot,
+    each at home. ``greedy`` holds the new exams Build's greedy already placed
+    around it without moving anything; every other new exam starts in
+    OVERFLOW. Existing exams never go to OVERFLOW: only a new exam may stay
+    there, and only when no legal board found seats it.
+
+    What is minimised, in order: new exams left unplaced; new exams the greedy
+    had placed that would lose their slot (so one is never traded for
+    another); existing exams moved, then how far (a linked exam weighs its
+    courses); seats over capacity; new exams moved off the greedy's slot;
+    students over the daily limit (``day_cost(exam, day)``); and the day's
+    load - ``day_load`` holds the existing exams each day has, and the new
+    ones are counted as they are placed - so exams without a home do not pile
+    onto day one: first the busiest day, then the load each one lands on.
+
+    ``protected`` exams never move, and nothing moves into ``closed_slots``.
+    Attempt 0 moves no existing exam; each ring after it frees the unprotected
+    neighbours and study-plan mates of what is still unplaced, and of the new
+    exams beside it (a new exam holding the only slot can step aside only if
+    its own neighbour does). One work budget covers every solve; what runs out
+    keeps the best legal board found - the greedy's, at worst - and never
+    fails the Add.
+    """
+    if slot_count <= 0 or periods_per_day <= 0:
+        raise ValueError("Adding courses needs at least one slot and one period per day.")
+    new = sorted(set(new_units))
+    new_set = set(new)
+    already = sorted(new_set & set(placements))
+    if already:
+        raise ValueError(f"Course {already[0]} is already in the timetable.")
+    closed = frozenset(closed_slots)
+    wrong = sorted(
+        course
+        for course, slot in greedy.items()
+        if course not in new_set or not 0 <= slot < slot_count or slot in closed
+    )
+    if wrong:
+        raise ValueError(f"Course {wrong[0]} has no legal greedy placement.")
+    home = dict(placements)
+    protected = set(protected or ()) - new_set
+    weight = (weights or {}).get
+    mates = _bucket_mates(plan_term_buckets)
+
+    def cancelled() -> None:
+        if check_cancelled is not None:
+            check_cancelled()
+
+    def key(board: Mapping[str, int]) -> tuple[int, int, int, int]:
+        moved = [course for course in home if board.get(course) != home[course]]
+        return (
+            sum(1 for course in new if course not in board),
+            sum(1 for course in greedy if course not in board),
+            sum(weight(course, 1) for course in moved),
+            sum(weight(course, 1) * abs(board[course] - home[course]) for course in moved),
+        )
+
+    board: dict[str, int] = {**home, **greedy}
+    result = AddedExamsResult(placements=dict(board))
+    if all(course in board for course in new):
+        result.placed_new = sorted(greedy)
+        return result
+
+    budget = _Budget(
+        work_budget
+        if work_budget is not None
+        else add_work_budget(sum(1 for course in new if course not in board))
+    )
+    work_at_start = budget.remaining
+
+    def levels(built: _Model, scope: list[str], scope_existing: set[str]) -> list:
+        y, ovf = built.y, built.unseated
+        out: list = [sum(ovf[course] for course in new if course in ovf)]
+        dropped = [ovf[course] for course in sorted(greedy) if course in ovf]
+        if dropped:
+            out.append(sum(dropped))
+        if scope_existing:
+            out.append(
+                sum(
+                    _weighted(weight(course, 1), 1 - y[course, home[course]])
+                    if (course, home[course]) in y
+                    else weight(course, 1)
+                    for course in sorted(scope_existing)
+                )
+            )
+            out.append(
+                sum(
+                    _weighted(weight(course, 1), abs(slot - home[course])) * var
+                    for (course, slot), var in y.items()
+                    if course in scope_existing and slot != home[course]
+                )
+            )
+        seats = _seat_slacks(built, scope, home, seat_demand, seat_capacity)
+        if seats:
+            out.append(sum(seats))
+        keep = [
+            abs(slot - greedy[course]) * var
+            for (course, slot), var in y.items()
+            if course in greedy and slot != greedy[course]
+        ]
+        if keep:
+            out.append(sum(keep))
+        if day_cost is not None:
+            over = [
+                cost * var
+                for (course, slot), var in y.items()
+                if (cost := day_cost(course, _day_of(slot, periods_per_day)))
+            ]
+            if over:
+                out.append(sum(over))
+        if day_load is not None:
+            # The busiest day, new exams counted as they are placed: without it
+            # the sweep would put every new exam without a home on day one.
+            days = -(-slot_count // periods_per_day)
+            on_day: dict[int, list] = {}
+            for (course, slot), var in y.items():
+                if course in new_set:
+                    on_day.setdefault(_day_of(slot, periods_per_day), []).append(var)
+            if on_day:
+                peak = built.model.new_int_var(
+                    0, max(day_load.values(), default=0) + len(new), "busiest_day"
+                )
+                for day in range(days):
+                    built.model.add(peak >= int(day_load.get(day, 0)) + sum(on_day.get(day, [])))
+                out.append(peak)
+            load = [
+                count * var
+                for (course, slot), var in y.items()
+                if course in new_set
+                and (count := int(day_load.get(_day_of(slot, periods_per_day), 0)))
+            ]
+            if load:
+                out.append(sum(load))
+        return [level for level in out if not isinstance(level, int)]
+
+    def attempt(scope_existing: set[str], start: Mapping[str, int]):
+        cancelled()
+        scope = sorted(new_set | scope_existing)
+        built = _build_model(
+            scope,
+            home,
+            adj,
+            plan_term_buckets,
+            slot_count,
+            periods_per_day,
+            allow_unseated=frozenset(new),
+            closed_slots=closed,
+        )
+        _hint_board(built, start)
+        outcome = _solve_levels(built, levels(built, scope, scope_existing), budget)
+        if outcome.solver is not None and not outcome.proven:
+            logger.info("exam add stopped unproven over %s exams (%s new)", len(scope), len(new))
+        return built, scope, outcome
+
+    def board_of(built: _Model, scope: list[str], solver: cp_model.CpSolver) -> dict[str, int]:
+        out = {course: slot for course, slot in home.items() if course not in scope}
+        for course in scope:
+            slot = built.slot_of(solver, course)
+            if slot < slot_count:
+                out[course] = slot
+        return out
+
+    scope_existing: set[str] = set()
+    best: tuple | None = None
+    exhausted = False
+    found_any = False
+    rings = 0
+    while True:
+        built, scope, outcome = attempt(scope_existing, board)
+        result.attempts += 1
+        if outcome.solver is not None and outcome.status in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+            found_any = True
+            solved = board_of(built, scope, outcome.solver)
+            if key(solved) <= key(board):
+                board, best = solved, (built, scope, outcome)
+        else:
+            exhausted = True
+        if all(course in board for course in new) or rings >= _MAX_RINGS:
+            break
+        if budget.remaining < _ADD_RING_RESERVE:
+            exhausted = True
+            break
+        still = {course for course in new if course not in board}
+        beside = {
+            course
+            for course in new
+            if course in board
+            and any(mate in still for mate in (*adj.get(course, {}), *mates.get(course, ())))
+        }
+        ring = (
+            _neighbourhood(
+                still | scope_existing | beside,
+                home,
+                adj,
+                plan_term_buckets,
+                protected | new_set,
+            )
+            - scope_existing
+        )
+        if not ring:
+            break
+        scope_existing |= ring
+        rings += 1
+
+    if best is not None and best[2].complete:
+        cancelled()
+        built, scope, outcome = best
+        swept = board_of(built, scope, _canonical(built, scope, outcome.solver, budget))
+        if key(swept) <= key(board):
+            board = swept
+
+    # A stopped solve can leave out a new exam that fits without moving
+    # anything, or leave an existing exam away from a home that is free again.
+    # Both are settled here, in code order, without the solver.
+    def seat_excess(course: str, slot: int) -> int:
+        if not seat_demand or not seat_capacity:
+            return 0
+        total = 0
+        for gender in sorted(seat_capacity):
+            seats = _seat_demand_of(seat_demand, course, gender)
+            if not seats:
+                continue
+            base = sum(
+                _seat_demand_of(seat_demand, other, gender)
+                for other, at in home.items()
+                if at == slot
+            )
+            now = sum(
+                _seat_demand_of(seat_demand, other, gender)
+                for other, at in board.items()
+                if at == slot
+            )
+            limit = max(int(seat_capacity[gender]), base)
+            total += max(0, now + seats - limit) - max(0, now - limit)
+        return total
+
+    for course in new:
+        if course in board:
+            continue
+        choices = [
+            slot
+            for slot in range(slot_count)
+            if _legal_at(course, slot, board, adj, mates, closed, periods_per_day)
+        ]
+        if choices:
+            board[course] = min(
+                choices,
+                key=lambda slot, course=course: (
+                    seat_excess(course, slot),
+                    day_cost(course, _day_of(slot, periods_per_day)) if day_cost else 0,
+                    int((day_load or {}).get(_day_of(slot, periods_per_day), 0)),
+                    slot,
+                ),
+            )
+    changed = True
+    while changed:
+        changed = False
+        for course in sorted(course for course in home if board[course] != home[course]):
+            rest = {other: slot for other, slot in board.items() if other != course}
+            if _legal_at(course, home[course], rest, adj, mates, closed, periods_per_day):
+                board[course] = home[course]
+                result.moved_back += 1
+                changed = True
+
+    result.placements = board
+    result.placed_new = sorted(course for course in new if course in board)
+    result.unplaced_new = sorted(course for course in new if course not in board)
+    result.moved = sorted(course for course in home if board[course] != home[course])
+    result.rings = rings
+    result.widened = rings > 0
+    result.search_stopped = bool(result.unplaced_new) and exhausted
+    result.proven_minimal = not result.unplaced_new and sum(
+        weight(course, 1) for course in result.moved
+    ) == _added_move_floor(
+        new, home, adj, mates, protected, closed, slot_count, periods_per_day, weights
+    )
+    result.status = "OPTIMAL" if result.proven_minimal else "FEASIBLE" if found_any else "UNKNOWN"
+    result.work = round(work_at_start - budget.remaining, 4)
+    if exhausted and result.unplaced_new:
+        logger.warning(
+            "exam add ran out of work: %s new exam(s) unplaced after %s ring(s)",
+            len(result.unplaced_new),
+            rings,
+        )
     return result
