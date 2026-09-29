@@ -772,7 +772,7 @@ test('lock state stays with its day and period when a course code is renumbered'
 
 const ALL_ISSUES = [
   { kind: 'double_booking', day: 'Sun', period: P1, room_code: 'B1-101', courses: ['AI212', 'AI225'] },
-  { kind: 'room_over_capacity', day: 'Sun', period: P1, room_code: 'B1-101', seated: 40, exam_capacity: 35 },
+  { kind: 'room_over_capacity', day: 'Sun', period: P1, room_code: 'B1-101', seated: 40, room_capacity: 35 },
   { kind: 'clash', day: 'Sun', period: P1, courses: ['AI212', 'AI225'], student_count: 2 },
   { kind: 'bucket_day', day: 'Sun', program: 'AI', programme_term: 3, courses: ['AI212', 'AI225'] },
   { kind: 'registrations_changed', day: 'Tue', period: P2, course_code: 'CS111 (1)', section: 'M3', section_key: 'term-section:1', gender: 'M', saved_count: 30, live_count: 32, change: 'grew' },

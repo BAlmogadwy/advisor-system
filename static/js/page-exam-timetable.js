@@ -6269,8 +6269,8 @@ const LOCK_ISSUE = {
   room_over_capacity: {
     label: IS_AR ? 'تجاوز سعة الاختبار' : 'Over exam capacity',
     detail: issue => (IS_AR
-      ? `${lockCode(issue.room_code || '')}: المقاعد المحفوظة ${Number(issue.seated) || 0}، وسعة الاختبار الحالية ${Number(issue.exam_capacity) || 0}. المقاعد المحفوظة تتجاوز سعة الاختبار الحالية.`
-      : `${issue.room_code || ''}: ${Number(issue.seated) || 0} saved seats, today's exam capacity ${Number(issue.exam_capacity) || 0}. The saved seats exceed today's exam capacity.`),
+      ? `${lockCode(issue.room_code || '')}: المقاعد المحفوظة ${Number(issue.seated) || 0}، وسعة الاختبار الحالية ${Number(issue.room_capacity) || 0}. المقاعد المحفوظة تتجاوز سعة الاختبار الحالية.`
+      : `${issue.room_code || ''}: ${Number(issue.seated) || 0} saved seats, today's exam capacity ${Number(issue.room_capacity) || 0}. The saved seats exceed today's exam capacity.`),
   },
   room_cohort_changed: {
     label: IS_AR ? 'تغيّرت فئة طلاب القاعة' : 'Room student group changed',
