@@ -5258,6 +5258,7 @@ function renderScheduleGrid(schedule, slots) {
   const focusedAction = active?.matches?.('[data-exam-pin]') ? 'data-exam-pin' : active?.matches?.('[data-exam-move]') ? 'data-exam-move' : active?.matches?.('[data-exam-related]') ? 'data-exam-related' : null;
   // A lock button is found again by its day and period after the re-render.
   const focusedLock = active?.matches?.('[data-lock-day]') ? [active.dataset.lockDay, active.dataset.lockPeriod || ''] : null;
+  const focusedColumn = active?.matches?.('[data-lock-column]') ? active.dataset.lockColumn : null;
   const scrollLeft = container.scrollLeft;
   const coursesByCode = new Map(schedule.map(entry => [entry.course_code, entry]));
   const linkByCode = linkedCodeIndex();
@@ -5350,7 +5351,8 @@ function renderScheduleGrid(schedule, slots) {
   html += '<thead><tr>';
   html += `<th scope="col">${IS_AR ? 'اليوم' : 'Day'}</th>`;
   for (const p of periodOrder) {
-    html += `<th scope="col"><bdi dir="ltr">${escapeAttr(p)}</bdi></th>`;
+    const columnLocked = isColumnLocked(p, locks);
+    html += `<th scope="col"${columnLocked ? ' class="et-locked"' : ''}><span class="et-grid-period-label"><bdi dir="ltr">${escapeAttr(p)}</bdi></span>${columnLockMarkup(p, columnLocked)}</th>`;
   }
   html += '</tr></thead>';
 
@@ -5398,6 +5400,9 @@ function renderScheduleGrid(schedule, slots) {
   if (focusedLock) {
     [...container.querySelectorAll('[data-lock-day]')].find(button => button.dataset.lockDay === focusedLock[0]
       && (button.dataset.lockPeriod || '') === focusedLock[1])?.focus({ preventScroll: true });
+  }
+  if (focusedColumn !== null) {
+    [...container.querySelectorAll('[data-lock-column]')].find(button => button.dataset.lockColumn === focusedColumn)?.focus({ preventScroll: true });
   }
   $('schedFilter').dispatchEvent(new Event('input'));
   updateEditingStatus();
@@ -6008,6 +6013,8 @@ $('schedGrid').addEventListener('dblclick', event => {
   if (chip) toggleExamPin(chip.dataset.course);
 });
 $('schedGrid').addEventListener('click', event => {
+  const column = event.target.closest('[data-lock-column]');
+  if (column) { toggleColumnLock(column.dataset.lockColumn); return; }
   const lock = event.target.closest('[data-lock-day]');
   if (lock) { toggleLock(lock.dataset.lockDay, lock.dataset.lockPeriod); return; }
   const pin = event.target.closest('[data-exam-pin]');
@@ -6734,6 +6741,9 @@ const LOCK_TEXT = {
   locked: IS_AR ? 'مقفل' : 'Locked',
   lockDayName: day => (IS_AR ? `قفل اليوم ${lockWhereText(day)}` : `Lock day ${day}`),
   lockPeriodName: (day, period) => (IS_AR ? `قفل الفترة ${lockWhereText(day, period)}` : `Lock period ${day} ${period}`),
+  lockColumnName: period => (IS_AR ? `قفل الفترة ${lockWhereText(period)} في كل الأيام` : `Lock period ${period} on every day`),
+  unlockColumnHint: period => (IS_AR ? `${lockWhereText(period)} مقفلة في كل الأيام. انقر لإلغاء قفلها في كل الأيام.` : `${period} is locked on every day. Press to unlock it on every day.`),
+  columnLocked: period => (IS_AR ? `${lockWhereText(period)} مقفلة في كل الأيام` : `${period} is locked on every day`),
   unlockDayHint: day => (IS_AR ? `${lockWhereText(day)} مقفل. انقر لإلغاء قفله.` : `${day} is locked. Press to unlock it.`),
   unlockPeriodHint: (day, period) => (IS_AR ? `${lockWhereText(day, period)} مقفلة. انقر لإلغاء قفلها.` : `${day} ${period} is locked. Press to unlock it.`),
   unlockPeriodOfDayHint: (day, period) => (IS_AR
@@ -7107,6 +7117,55 @@ function toggleLock(day, period) {
   });
 }
 
+// A period is locked on every day when each of the board's days holds it
+// locked, by its day's lock or its own.
+function isColumnLocked(period, sets = lockSets()) {
+  const days = boardDays();
+  return days.length > 0 && days.every(day => isCellLocked(day, period, sets));
+}
+
+// Lock or unlock one period on every day, as one Undo step. Locking adds the
+// period lock of each day not yet locked there, and needs each of those cells
+// to match the saved run: one unsaved cell refuses the whole column, so a
+// column is never half locked. Unlocking takes the period out of every day,
+// keeping the other periods of a locked day locked (as toggleLock does).
+function toggleColumnLock(period) {
+  if (_builderBusy || !CAN_EDIT_EXAM_TIMETABLE || !_currentResultData) return false;
+  const sets = lockSets();
+  const days = boardDays();
+  const locking = !isColumnLocked(period, sets);
+  if (locking) {
+    if (_savedResultData && _savedResultData.assign_rooms !== true) {
+      runManualCommand(() => { _roomsForLocks = true; });
+      refuseLockedEdit(LOCK_TEXT.noRooms);
+      return false;
+    }
+    for (const day of days) {
+      if (isCellLocked(day, period, sets)) continue;
+      const problem = newLockProblem(day, period);
+      if (problem) {
+        refuseLockedEdit(problem);
+        return false;
+      }
+    }
+  }
+  const startDay = _currentResultData.slots?.[0]?.day;
+  return runManualCommand(() => {
+    for (const day of days) {
+      const identity = examDayIdentity(day, startDay);
+      if (locking) {
+        if (!isCellLocked(day, period, sets)) _examLocks.push({ day, period, day_identity: identity });
+      } else if (sets.days.has(day)) {
+        _examLocks = _examLocks.filter(item => item.day !== day);
+        for (const other of boardPeriods()) if (other !== period) _examLocks.push({ day, period: other, day_identity: identity });
+      } else {
+        _examLocks = _examLocks.filter(item => item.day !== day || item.period !== period);
+      }
+    }
+    _examLocks = sortLocks(_examLocks, boardDays(), boardPeriods());
+  });
+}
+
 // What the board shows as locked: cells and the exams in them.
 function boardLockFacts() {
   const sets = lockSets();
@@ -7137,6 +7196,15 @@ function cellLockMarkup(day, period, locked, dayLocked) {
     button = `<button type="button" class="et-lock-toggle et-lock-period" data-lock-day="${escapeAttr(day)}" data-lock-period="${escapeAttr(period)}" aria-pressed="${locked}" aria-label="${escapeAttr(name)}" title="${escapeAttr(hint)}">${lockIcon(locked)}</button>`;
   }
   return `<div class="et-cell-lockbar">${badge}${button}</div>`;
+}
+
+// A period's control in its column header: locks it on every day.
+function columnLockMarkup(period, locked) {
+  if (!CAN_EDIT_EXAM_TIMETABLE) {
+    return locked ? `<span class="et-lock-mark" role="img" aria-label="${escapeAttr(LOCK_TEXT.columnLocked(period))}" title="${escapeAttr(LOCK_TEXT.columnLocked(period))}">${lockIcon(true)}</span>` : '';
+  }
+  const name = LOCK_TEXT.lockColumnName(period);
+  return `<button type="button" class="et-lock-toggle et-lock-column" data-lock-column="${escapeAttr(period)}" aria-pressed="${locked}" aria-label="${escapeAttr(name)}" title="${escapeAttr(locked ? LOCK_TEXT.unlockColumnHint(period) : name)}">${lockIcon(locked)}</button>`;
 }
 
 // "N lock changes not saved", or that rooms come first.
