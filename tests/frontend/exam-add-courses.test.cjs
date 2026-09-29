@@ -96,7 +96,7 @@ function addedRun(body, { report = {} } = {}) {
       source_run_id: 17,
       added: added.map(entry => ({ course_code: entry.course_code, course_identity: entry.course_identity, course_name: entry.course_name, placed: { day: entry.day, period: entry.period } })),
       requested_count: added.length, placed_count: added.length, moves: [], not_placed: [], moved_weight: 0,
-      protected_count: 0, locked_count: 0, untouched_violations: 0, violations_after: 0, rings: 0, widened: false,
+      protected_count: 0, locked_count: 0, untouched_violations: 0, violations_after: 0, widened: false,
       proven_minimal: true, status: 'OPTIMAL', rooms_changed: [], sections_changed: 0, unassigned_added: 0, ...report,
     },
   };
@@ -190,6 +190,10 @@ const TEXT = AR ? {
   bucket: /لبرنامج CS في المستوى 3 اختبار في كل يوم متاح/,
   fixed: /لا يمكن نقلها \(مثبتة أو مقفلة أو نقلتها أنت: AI212\)/,
   room: /لإفساح المجال لـ/,
+  unavailable: /لم يعد لهذا المقرر تسجيلات في الجداول الدراسية المستوردة/,
+  notAll: 'حُفظت النتيجة جدولاً جديداً، وبقي بعض المقررات المضافة دون موعد. راجع التقرير.',
+  added: 'أُضيفت المقررات وحُفظت النتيجة جدولاً جديداً.',
+  cannotSend: /^تعذّر إرسال إعدادات الجدول\. سبب مختبر\. أغلق القائمة وصحّحها في «إعدادات الجدول والمقررات والمواعيد المثبتة»\.$/,
 } : {
   button: 'Add courses…',
   inTimetable: 'In timetable',
@@ -210,7 +214,30 @@ const TEXT = AR ? {
   bucket: /CS term 3 already has an exam on every open day/,
   fixed: /cannot move \(pinned, locked or moved by you: AI212\)/,
   room: /to make room for/,
+  unavailable: /This course has no registrations in the imported student timetables any more/,
+  notAll: 'Saved as a new timetable. Not every course could be placed: see the report.',
+  added: 'Courses added. Saved as a new timetable.',
+  cannotSend: /^The timetable settings could not be sent\. سبب مختبر\. Close this list and correct them under Timetable setup, courses and fixed times\.$/,
 };
+
+const ADD_JOB = '6f1c2a4e-0000-4000-8000-00000000add2';
+const ADD_PLAN = ['read_board', 'place_exams', 'fewest_moves', 'check_rules', 'assign_rooms', 'save'];
+// An Add that ended while the page was closed, as /jobs/active/ reports it.
+const endedAdd = (extra = {}) => ({
+  id: ADD_JOB, kind: 'add_courses', status: 'succeeded', mine: true, can_cancel: false, owner: 'Registrar',
+  has_run: true, result_run_id: 18, error_code: '', cancelled_by: '', waiting_for: null, refused: false, stopping: false,
+  submitted_at: '2026-09-29T10:00:00+00:00', started_at: '2026-09-29T10:00:01+00:00', finished_at: '2026-09-29T10:00:40+00:00', now: '2026-09-29T10:05:00+00:00',
+  stages: ADD_PLAN.map(key => ({ key, state: 'done' })), current: { key: 'save', done: null, total: null }, ...extra,
+});
+const isActiveJobs = url => String(url).split('?')[0] === '/ops/exam-timetable/jobs/active/';
+async function until(ui, predicate, message) {
+  const deadline = Date.now() + 3000;
+  while (Date.now() < deadline) {
+    if (predicate()) return;
+    await pause(2);
+  }
+  assert.fail(message);
+}
 
 // ── (a) the list opens by itself with every course of the scope ─────────────
 
@@ -411,6 +438,26 @@ test('after a Build, the setup list is the timetable itself: the courses left ou
   assert.deepEqual(Array.from(ui.$('courseOutsideList').querySelectorAll('.et-course-code'), code => code.textContent).sort(), NEW.map(c => c.course_code).sort());
 });
 
+test('the setup list is filled when its search gets focus, with no click on the section', async t => {
+  const ui = await page(t);
+  // Opened by the page to point at a field - not by the registrar's click.
+  ui.$('examSetupDetails').open = true;
+  await settled();
+  assert.equal(scopeRequests(ui).length, 0, 'Opening it for them asks for nothing');
+  ui.$('courseSearch').focus();
+  await settled();
+  assert.equal(scopeRequests(ui).length, 1, 'Searching asks for the other courses');
+  const outside = Array.from(ui.$('courseOutsideList').querySelectorAll('.et-course-option'));
+  assert.deepEqual(outside.map(row => row.querySelector('.et-course-code').textContent).sort(), NEW.map(course => course.course_code).sort());
+  ui.input(ui.$('courseSearch'), 'calculus');
+  assert.deepEqual(outside.filter(row => !row.hidden).map(row => row.querySelector('.et-course-code').textContent), ['MATH101']);
+  assert.equal(ui.$('courseNoMatches').hidden, true);
+  ui.$('courseSearch').blur();
+  ui.$('courseSearch').focus();
+  await settled();
+  assert.equal(scopeRequests(ui).length, 1, 'Asked once per run');
+});
+
 // ── a board with unsaved changes ─────────────────────────────────────────────
 
 test('with unsaved edits Add courses says to save first, offers Save, and asks nothing; a new name alone is no edit', async t => {
@@ -503,6 +550,140 @@ test('a refusal names its reason and course in the page language', async t => {
   assert.match(plain(banner.textContent), /ST210/);
   assert.doesNotMatch(banner.textContent, /server words/);
   assert.equal(ui.$('etResults').classList.contains('d-none'), false, 'The saved board is still on screen');
+});
+
+test('a refusal keeps the ticks and the name for the next opening; Cancel forgets them', async t => {
+  let refuse = true;
+  const ui = await page(t, {
+    onRequest: async (url, options) => {
+      if (url !== '/ops/exam-timetable/build/' || !refuse) return undefined;
+      return reply({ ok: false, code: 'add_courses_unavailable', field: 'added_courses[0]', courses: [], error: 'server words' }, 400);
+    },
+  });
+  await openList(ui);
+  box(ui, 'MATH101').click();
+  box(ui, 'ST210').click();
+  ui.$('examAddCoursesName').value = 'Autumn with the rest';
+  ui.$('confirmAddCourses').click();
+  await settled();
+  assert.equal(ui.$('examAddCoursesDialog').open, false);
+  assert.match(plain(ui.$('examEditorRequestError').textContent), TEXT.unavailable);
+  await openList(ui);
+  const ticked = () => Array.from(ui.$('examAddCoursesList').querySelectorAll('input:checked'), item => item.value).sort();
+  assert.deepEqual(ticked(), ['math101-calc', 'st210-stats'], 'Nothing to tick again');
+  assert.equal(ui.$('examAddCoursesName').value, 'Autumn with the rest');
+  assert.equal(plain(ui.$('confirmAddCourses').textContent), TEXT.submitTwo);
+  // Sent again, it is the same two; saved, they are used up.
+  refuse = false;
+  ui.$('confirmAddCourses').click();
+  await settled();
+  const sent = builds(ui).at(-1);
+  assert.deepEqual(sent.added_courses.map(item => item.course_identity).sort(), ['math101-calc', 'st210-stats']);
+  assert.equal(sent.label, 'Autumn with the rest');
+  assert.equal(ui.window.eval('_addSent'), null);
+});
+
+test('a dismissed list forgets what a refused Add had ticked', async t => {
+  const ui = await page(t, {
+    onRequest: async url => (url === '/ops/exam-timetable/build/'
+      ? reply({ ok: false, error: 'Another exam timetable action is running.', error_code: 'job_in_progress' }, 409)
+      : undefined),
+  });
+  await openList(ui);
+  box(ui, 'ST210').click();
+  ui.$('confirmAddCourses').click();
+  await settled();
+  await openList(ui);
+  assert.equal(ui.$('examAddCoursesList').querySelectorAll('input:checked').length, 1, 'Kept after a colleague held the queue');
+  ui.$('cancelAddCourses').click();
+  await openList(ui);
+  assert.equal(ui.$('examAddCoursesList').querySelectorAll('input:checked').length, 0, 'Cancel means never mind');
+});
+
+test('an empty name in the setup does not stop Add: the list names the new timetable itself', async t => {
+  const ui = await page(t);
+  ui.input(ui.$('etLabel'), '');
+  await openList(ui);
+  box(ui, 'ST210').click();
+  ui.$('examAddCoursesName').value = 'Named in the list';
+  ui.$('confirmAddCourses').click();
+  await settled();
+  const [sent] = builds(ui);
+  assert.ok(sent, 'Sent');
+  assert.equal(sent.label, 'Named in the list');
+  assert.equal(ui.$('examAddCoursesDialog').open, false);
+});
+
+test('settings that cannot be sent are named inside the list, with where to correct them', async t => {
+  const ui = await page(t);
+  await openList(ui);
+  box(ui, 'ST210').click();
+  // Whatever the setup refuses is said on its status line; the list repeats it.
+  ui.window.eval("collectLoadedRunPayload = () => { $('etStatus').textContent = 'سبب مختبر.'; return null; }");
+  ui.$('confirmAddCourses').click();
+  await settled();
+  assert.equal(builds(ui).length, 0);
+  assert.equal(ui.$('examAddCoursesDialog').open, true, 'The ticks stay in front of the registrar');
+  assert.match(plain(ui.$('examAddCoursesError').textContent), TEXT.cannotSend);
+});
+
+test('the status line never says the courses were added when some were not', async t => {
+  for (const [placed, said] of [[0, TEXT.notAll], [1, TEXT.notAll], [2, TEXT.added]]) {
+    const ui = await page(t, {
+      onRequest: async (url, options) => {
+        if (url !== '/ops/exam-timetable/build/') return undefined;
+        const answer = addedRun(JSON.parse(options.body));
+        answer.add_courses = {
+          ...answer.add_courses, placed_count: placed,
+          not_placed: answer.add_courses.added.slice(placed).map(row => ({ course_code: row.course_code, reason: 'blocked_by_clashes' })),
+        };
+        return reply(answer);
+      },
+    });
+    await openList(ui);
+    box(ui, 'MATH101').click();
+    box(ui, 'ST210').click();
+    ui.$('confirmAddCourses').click();
+    await settled();
+    assert.equal(plain(ui.$('etStatus').textContent), said, `${placed} of 2 placed`);
+  }
+});
+
+test('an Add refused while the page was closed gives its reason in the page language', async t => {
+  const ui = await page(t, {
+    open: false,
+    onRequest: async url => {
+      if (isActiveJobs(url)) return reply({ ok: true, job: endedAdd({ has_run: false, result_run_id: null, refused: true }) });
+      if (url === `/ops/exam-timetable/jobs/${ADD_JOB}/result/`) {
+        return reply({ ok: false, code: 'add_courses_unavailable', courses: [], error: 'A course to add has no registrations in the imported student timetables any more.' }, 400);
+      }
+      if (url === `/ops/exam-timetable/jobs/${ADD_JOB}/seen/`) return reply({ ok: true, marked: true });
+      return undefined;
+    },
+  });
+  await until(ui, () => !ui.$('examJobPanel').hidden && plain(ui.$('examJobDetail').textContent).length > 0, 'The ended Add is shown');
+  const detail = plain(ui.$('examJobDetail').textContent);
+  assert.match(detail, TEXT.unavailable);
+  if (AR) assert.doesNotMatch(detail, /A course to add/, 'Never the English server words on the Arabic page');
+});
+
+test('an Add finished while the page was closed opens with its report', async t => {
+  const ui = await page(t, {
+    open: false,
+    onRequest: async url => {
+      if (isActiveJobs(url)) return reply({ ok: true, job: endedAdd() });
+      if (url === '/ops/exam-timetable/18/') {
+        return reply(addedRun({ added_courses: [{ course_identity: 'math101-calc' }, { course_identity: 'st210-stats' }], label: 'Part one + added courses', editor_revision: 0 }));
+      }
+      if (url === `/ops/exam-timetable/jobs/${ADD_JOB}/seen/`) return reply({ ok: true, marked: true });
+      return undefined;
+    },
+  });
+  await until(ui, () => !ui.$('examJobOpen').hidden, 'The saved result is offered');
+  ui.$('examJobOpen').click();
+  await until(ui, () => plain(ui.$('examRepairReport').textContent).length > 0, 'The report is shown');
+  assert.match(plain(ui.$('examRepairReport').textContent), TEXT.headline);
+  assert.ok(ui.$('examRepairReport').querySelector('[data-find-exam="st210-stats"]'));
 });
 
 test('run courses without registrations block the Add before anything is sent', async t => {

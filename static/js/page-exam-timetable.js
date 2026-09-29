@@ -84,6 +84,7 @@ const T = {
   savedChanges:   IS_AR ? 'تم حفظ التغييرات.' : 'Loaded-run changes saved.',
   addingCourses:  IS_AR ? 'جارٍ إضافة المقررات…' : 'Adding courses…',
   coursesAdded:   IS_AR ? 'أُضيفت المقررات وحُفظت النتيجة جدولاً جديداً.' : 'Courses added. Saved as a new timetable.',
+  coursesSavedNotAll: IS_AR ? 'حُفظت النتيجة جدولاً جديداً، وبقي بعض المقررات المضافة دون موعد. راجع التقرير.' : 'Saved as a new timetable. Not every course could be placed: see the report.',
   buildPinned:    IS_AR ? 'بناء ({n} مثبت)' : 'Build ({n} pinned)',
   show:           IS_AR ? 'عرض' : 'Show',
   hide:           IS_AR ? 'إخفاء' : 'Hide',
@@ -321,8 +322,10 @@ function readExamScope() {
   return { programs, sections };
 }
 
-function readExamHeader() {
-  const label = $('etLabel').value.trim();
+// ``label``: a name given elsewhere (the Add courses list names its new
+// timetable itself), in place of the setup field's.
+function readExamHeader({ label: named = null } = {}) {
+  const label = named ?? $('etLabel').value.trim();
   if (!label) return inputError(T.fillAll, $('etLabel'));
   if (positiveInteger($('etNumDays').value, 60) === null) {
     return inputError(T.invalidDays, $('etNumDays'));
@@ -1056,7 +1059,7 @@ function readThinThresholdForPost() {
   return value ?? inputError(IS_AR ? 'أدخل عتبة صحيحة من 1 إلى 10 طلاب.' : 'Enter a whole-number enrollment threshold from 1 to 10.', $('etThinThreshold'));
 }
 
-function collectLoadedRunPayload(mode) {
+function collectLoadedRunPayload(mode, { label: named = null } = {}) {
   if (needsExamSourceRebuild()) return null;
   // Optimize and Fix keep the saved locks - they send none, and the server
   // keeps the loaded run's. A lock change is saved first: Check, then Save.
@@ -1070,7 +1073,7 @@ function collectLoadedRunPayload(mode) {
     $('etStatus').className = 'alert alert-warning mt-2 py-2 mb-0';
     return null;
   }
-  const header = readExamHeader();
+  const header = readExamHeader({ label: named });
   if (!header) return null;
   const { label, days, periods, maxPerDay } = header;
   // Preserve loaded placements and their QA until a new build is requested.
@@ -1693,6 +1696,9 @@ function jobRefusalReason(data) {
   // A lock refusal in the page's language, naming the cell and courses the
   // answer names - never the page's own locks, which may have changed since.
   if (typeof code === 'string' && code.startsWith('exam_locks')) return examLocksRefusal(data).message;
+  // An Add refused while the page was closed: in the page's words, naming its
+  // courses - the server's own words are English only.
+  if (typeof code === 'string' && code.startsWith('add_courses')) return addCoursesRefusal(data).message;
   if (typeof data?.error === 'string' && data.error) return IS_AR ? isolate(data.error) : data.error;
   return '';
 }
@@ -2583,12 +2589,14 @@ async function runLoadedRunAction(mode, button, busyText, successText, prepared 
     _scheduleHasDraftMoves = false;
     updatePinBar();
     updateLoadedRunActions();
-    $('etStatus').textContent = successText;
+    $('etStatus').textContent = mode === 'add_courses' ? addCoursesStatus(data.add_courses) : successText;
     $('etStatus').className = 'alert alert-success mt-2 py-2 mb-0';
     // renderResults collapses the setup section that holds etStatus, so the
     // repair report goes to the editing area where it stays visible.
     if (data.minimum_change) showRepairReport(data.minimum_change);
     if (mode === 'add_courses') {
+      // Saved: the ticks were used.
+      _addSent = null;
       clearExamRequestError('add-courses');
       if (data.add_courses) showAddCoursesReport(data.add_courses);
     }
@@ -3556,7 +3564,11 @@ const ADD_TEXT = {
     ? `لم تعد لـ${addCodes(codes)} تسجيلات حالية. ${codes.length === 1 ? 'احذفه' : 'احذفها'} من هذا الجدول واحفظه أولاً، ثم أضف المقررات.`
     : `${codes.join(', ')} ${codes.length === 1 ? 'has' : 'have'} no current registrations. Remove ${codes.length === 1 ? 'it' : 'them'} from this timetable and save it first, then add courses.`),
   badName: IS_AR ? 'أدخل اسماً للجدول الجديد من سطر واحد، من 1 إلى 120 حرفاً.' : 'Enter a single-line name for the new timetable, 1 to 120 characters.',
-  cannotSend: IS_AR ? 'تعذّر تجهيز الطلب من إعدادات الجدول. أغلق القائمة وراجع الرسالة أسفل الجدول.' : 'The timetable settings could not be sent. Close this list and read the message under the timetable.',
+  // The reason itself, where the registrar is looking, and where to fix it:
+  // the status line that also says it sits in the setup section, behind this list.
+  cannotSend: reason => (IS_AR
+    ? `تعذّر إرسال إعدادات الجدول.${reason ? ` ${reason}` : ''} أغلق القائمة وصحّحها في «إعدادات الجدول والمقررات والمواعيد المثبتة».`
+    : `The timetable settings could not be sent.${reason ? ` ${reason}` : ''} Close this list and correct them under Timetable setup, courses and fixed times.`),
   unsaved: IS_AR
     ? 'احفظ تغييراتك، أو افتح الجدول المحفوظ مجدداً من «الجداول المحفوظة» لتجاهلها. تعمل إضافة المقررات على الجدول المحفوظ.'
     : 'Save your changes, or open the saved timetable again from Saved timetables to discard them. Adding courses works on the saved timetable.',
@@ -3705,6 +3717,11 @@ function addPlacementText(course) {
 
 let _addDialog = null;   // { runId, opener, data } while the list is open
 let _addDialogSeq = 0;
+// What was sent last from the list: { runId, identities, name }. A refusal
+// (the server's, or a colleague's job holding the queue) must not cost the
+// registrar their ticks - the re-selection the owner asked never to need. Kept
+// until a new timetable is saved, or the list is dismissed.
+let _addSent = null;
 
 function addCoursesError(message, focus = null) {
   const error = $('examAddCoursesError');
@@ -3737,7 +3754,8 @@ function openAddCoursesDialog(opener, { search = '' } = {}) {
   $('examAddCoursesScope').textContent = ADD_TEXT.scope(scope.programs || [], scope.sections || []);
   $('examAddCoursesSearch').value = search;
   $('examAddCoursesShow').value = 'all';
-  $('examAddCoursesName').value = ADD_TEXT.defaultName($('etLabel').value || _currentResultData.label || '');
+  const again = _addSent?.runId === _currentRunId ? _addSent : null;
+  $('examAddCoursesName').value = again?.name || ADD_TEXT.defaultName($('etLabel').value || _currentResultData.label || '');
   $('examAddCoursesMissing').hidden = true;
   addCoursesError('');
   if (dialog.showModal) dialog.showModal();
@@ -3806,6 +3824,11 @@ function renderAddCourses() {
     return `<label class="et-add-row" data-search="${escapeAttr(addSearchText(course))}" data-state="out"><input type="checkbox" value="${escapeAttr(course.course_identity)}" data-code="${escapeAttr(code)}" aria-label="${escapeAttr(ADD_TEXT.rowName(code, course.course_name || code))}"><span class="et-course-main"><span class="et-course-code" dir="ltr">${escapeAttr(code)}</span>${online}<span class="et-course-name">${escapeAttr(course.course_name || '')}</span>${renumbered}${shared}</span><span class="et-course-plans">${plans}</span>${students}</label>`;
   });
   list.innerHTML = rows.join('') + (addable.length ? '' : `<p class="et-add-empty">${escapeAttr(ADD_TEXT.nothingToAdd)}</p>`);
+  // Sent before and refused: ticked again - only those still addable.
+  const again = _addSent?.runId === _addDialog?.runId ? new Set(_addSent.identities) : null;
+  list.querySelectorAll('input[type=checkbox]').forEach(box => {
+    if (again?.has(box.value)) box.checked = true;
+  });
   list.querySelectorAll('input[type=checkbox]').forEach(box => box.addEventListener('change', () => {
     addCoursesError('');
     filterAddCourses();
@@ -3830,9 +3853,10 @@ function filterAddCourses() {
   $('confirmAddCourses').textContent = ADD_TEXT.submit(chosen);
 }
 
-function closeAddCoursesDialog({ restoreFocus = true } = {}) {
+function closeAddCoursesDialog({ restoreFocus = true, dismissed = false } = {}) {
   const dialog = $('examAddCoursesDialog');
   if (!dialog) return;
+  if (dismissed) _addSent = null;
   const opener = _addDialog?.opener;
   _addDialogSeq += 1;
   _addDialog = null;
@@ -3853,11 +3877,13 @@ function submitAddCourses() {
   const name = $('examAddCoursesName').value.trim();
   if (!name || name.length > 120 || [...name].some(character => character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127)) { addCoursesError(ADD_TEXT.badName, $('examAddCoursesName')); return; }
   // Built and checked before the list closes: a refusal here keeps the ticks.
-  const payload = collectLoadedRunPayload('add_courses');
-  if (!payload) { addCoursesError(ADD_TEXT.cannotSend); return; }
-  payload.label = name;
+  // The name is the list's own; the setup's name field is not asked for.
+  $('etStatus').textContent = '';
+  const payload = collectLoadedRunPayload('add_courses', { label: name });
+  if (!payload) { addCoursesError(ADD_TEXT.cannotSend($('etStatus').textContent.trim())); return; }
   // Only what was ticked: a course already in the timetable is never sent.
   payload.added_courses = ticked.map(box => ({ course_identity: box.value, course_code: box.dataset.code }));
+  _addSent = { runId: _addDialog.runId, identities: ticked.map(box => box.value), name };
   closeAddCoursesDialog({ restoreFocus: false });
   runLoadedRunAction('add_courses', $('addCoursesBtn'), T.addingCourses, T.coursesAdded, payload);
 }
@@ -3867,13 +3893,13 @@ $('courseOutsideAdd')?.addEventListener('click', event => openAddCoursesDialog(e
 $('examAddCoursesSearch')?.addEventListener('input', filterAddCourses);
 $('examAddCoursesShow')?.addEventListener('change', filterAddCourses);
 $('confirmAddCourses')?.addEventListener('click', submitAddCourses);
-$('cancelAddCourses')?.addEventListener('click', () => closeAddCoursesDialog());
+$('cancelAddCourses')?.addEventListener('click', () => closeAddCoursesDialog({ dismissed: true }));
 $('retryAddCourses')?.addEventListener('click', () => {
   if (!_addDialog) return;
   addCoursesError('');
   loadAddCourses(++_addDialogSeq);
 });
-$('examAddCoursesDialog')?.addEventListener('cancel', event => { event.preventDefault(); closeAddCoursesDialog(); });
+$('examAddCoursesDialog')?.addEventListener('cancel', event => { event.preventDefault(); closeAddCoursesDialog({ dismissed: true }); });
 
 /* The setup list of a saved timetable: its own courses, then the rest of its
    scope, found by the same search. Fetched when the registrar opens the setup
@@ -3997,6 +4023,15 @@ function describeAddCourses(report) {
   if (linkedClash) parts.push(`<p class="et-repair-linked">${escapeAttr(REPAIR_TEXT.linkedClash(linkedClash))}</p>`);
   parts.push(`<p>${escapeAttr(REPAIR_TEXT.saved())}</p>`);
   return { html: parts.join(''), clean: !notPlaced.length && !untouched && !unassigned };
+}
+
+// The status line of a finished Add: never "added" when some were not - a
+// screen reader hears it beside the report, and the two must agree.
+function addCoursesStatus(report) {
+  const requested = Number(report?.requested_count);
+  const placed = Number(report?.placed_count);
+  if (Number.isFinite(requested) && Number.isFinite(placed) && placed < requested) return T.coursesSavedNotAll;
+  return T.coursesAdded;
 }
 
 function showAddCoursesReport(report) {

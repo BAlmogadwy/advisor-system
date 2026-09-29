@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections import Counter
 from copy import deepcopy
 
 import pytest
@@ -706,6 +707,70 @@ def test_locked_cells_keep_their_exams_rooms_and_sections_verbatim(population, c
     assert added["add_courses"]["locked_count"] == len(held)
 
 
+def _lock_and_save(client, run, locks):
+    common = {
+        "days": list(dict.fromkeys(slot["day"] for slot in run["slots"])),
+        "periods": list(dict.fromkeys(slot["period"] for slot in run["slots"])),
+        "max_per_day": 2,
+        **SCOPE,
+        "previous_run_id": run["run_id"],
+        "base_schedule": _board(run),
+        "pinned": [],
+        "exam_locks": locks,
+    }
+    checked = _post(client, common, url="exam_timetable_draft_impact")
+    return _post(
+        client,
+        {
+            **common,
+            "label": "Locked where the new courses would go",
+            "mode": "save_loaded_changes",
+            "expected_input_fingerprint": checked["input_fingerprint"],
+        },
+    )
+
+
+@pytest.mark.parametrize("cell", [False, True], ids=["day", "cell"])
+def test_a_lock_where_the_new_courses_would_go_turns_them_away(population, client_, cell):
+    """Locked exactly where an unlocked Add puts its new courses.
+
+    A lock on a day nothing new wanted proves nothing: the new courses went
+    elsewhere anyway. Here the first Add, unlocked, shows where they go; that
+    day (or that one cell) is then locked and saved, and the same Add must
+    place nothing there, while every exam the lock holds keeps its place and
+    rooms.
+    """
+    codes = sorted(_live())
+    built = _build(client_, codes[:6])
+    identities = _identities(codes[6:])
+    free = _add(client_, built, identities)
+    new_codes = {row["course_code"] for row in free["add_courses"]["added"]}
+    wanted = Counter(
+        (entry["day"], entry["period"])
+        for entry in free["schedule"]
+        if entry["course_code"] in new_codes and entry["day"] != "OVERFLOW"
+    )
+    (day, period), _ = wanted.most_common(1)[0]
+    lock = {"day": day, "period": period} if cell else {"day": day}
+    locked = _lock_and_save(client_, built, [lock])
+    assert locked["exam_locks"] == [lock]
+
+    added = _add(client_, locked, identities)
+    closed = {(day, period)} if cell else {(day, p) for p in PERIODS}
+    for entry in added["schedule"]:
+        if entry["course_code"] in new_codes:
+            assert (entry["day"], entry["period"]) not in closed, entry["course_code"]
+    held = [e for e in locked["schedule"] if (e["day"], e["period"]) in closed]
+    after = {entry["course_code"]: entry for entry in added["schedule"]}
+    for entry in held:
+        code = entry["course_code"]
+        assert (after[code]["day"], after[code]["period"]) == (entry["day"], entry["period"])
+        assert json.dumps(after[code]["rooms"], ensure_ascii=False) == json.dumps(
+            entry["rooms"], ensure_ascii=False
+        )
+    assert added["add_courses"]["locked_count"] == len(held)
+
+
 def test_linked_exams_are_kept_whole_and_saved_with_the_new_run(population, client_):
     codes = sorted(_live())
     built = _build(client_, codes[:6])
@@ -815,6 +880,9 @@ def _moved(board):
             ),
             "pinned",
         ),
+        # An added day or period would be saved into the new run by Add.
+        (lambda built, p: p.update(days=[*p["days"], "Thu"]), "header"),
+        (lambda built, p: p.update(periods=[*p["periods"], "16:00-18:00"]), "header"),
         (lambda built, p: p.update(max_per_day=3), "header"),
         (lambda built, p: p.update(thin_conflict_threshold=4), "header"),
         (lambda built, p: p.update(assign_rooms=False), "header"),
@@ -874,6 +942,36 @@ def test_a_course_already_in_the_timetable_is_refused_by_name(saved_part, client
     assert body["code"] == adding.ALREADY_IN_TIMETABLE
     assert body["courses"] == [codes[0]]
     assert body["field"] == "added_courses[0]"
+
+
+def test_a_course_saved_without_an_identity_is_still_refused_as_already_there(saved_part, client_):
+    """Runs saved before identities were stored name a course by code and name.
+
+    Asking to add that course's live identity is asking for it twice: it must
+    be refused, never added again under a new code like "X (1)".
+    """
+    built, codes = saved_part
+    run = ExamTimetableRun.objects.get(pk=built["run_id"])
+    stored = json.loads(run.result_json)
+    old = stored["schedule"][0]
+    identity = old.pop("course_identity")
+    run.result_json = json.dumps(stored, ensure_ascii=False)
+    run.save(update_fields=["result_json"])
+    board = _board(built)
+    for entry in board:
+        if entry["course_code"] == old["course_code"]:
+            entry.pop("course_identity")
+    assert identity in _identities(codes)
+    runs = ExamTimetableRun.objects.count()
+    payload = _add_payload(built, [identity])
+    payload["base_schedule"] = board
+    payload["selected_course_entries"] = [
+        {key: entry[key] for key in ("course_code", "course_name")} for entry in board
+    ]
+    body = _post(client_, payload, status=400)
+    assert body["code"] == adding.ALREADY_IN_TIMETABLE
+    assert body["courses"] == [old["course_code"]]
+    assert ExamTimetableRun.objects.count() == runs
 
 
 def test_a_course_of_another_scope_is_refused_as_outside_it(population, client_):

@@ -230,7 +230,7 @@ def test_the_set_form_of_overflow_is_the_old_model_when_it_names_every_exam_or_n
 # ── the greedy counts seats ──────────────────────────────────────────────────
 
 
-def _greedy(seats):
+def _greedy(seats, closed=frozenset()):
     slots = [
         {"index": index, "day": day, "period": period}
         for index, (day, period) in enumerate(
@@ -250,7 +250,7 @@ def _greedy(seats):
         course_buckets={},
         credit_map={},
         locked=[],
-        closed_slots=frozenset(),
+        closed_slots=closed,
         seats=seats,
     )
 
@@ -263,3 +263,10 @@ def test_the_greedy_takes_the_first_slot_on_a_tie_and_seats_move_it_off_a_full_o
         {"A": {"F": 90}, "N": {"F": 40}}, {"F": 100, "M": 100}, {"A": 0, "B": 1}
     )
     assert _greedy(ledger) == {"N": 1}
+
+
+def test_the_greedy_never_takes_a_locked_cell_even_the_one_it_would_choose():
+    # Slot 0 wins every tie while it is open; locked, the next slot does.
+    assert _greedy(None) == {"N": 0}
+    assert _greedy(None, closed=frozenset({0})) == {"N": 1}
+    assert _greedy(None, closed=frozenset({0, 1, 2})) == {"N": 3}

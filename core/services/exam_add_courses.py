@@ -605,14 +605,24 @@ def explain_unplaced(
     search_stopped: bool,
     members_of,
 ) -> dict[str, Any]:
-    """Why a new exam is in OVERFLOW, judged against the final board."""
+    """Why a new exam is in OVERFLOW, judged against the final board.
+
+    A reason that states a fact of the board comes first only when that fact
+    is a proof on its own: no open period at all; ONE study term holding an
+    exam on every open day (its exams cannot share a day, so none of them can
+    make room); or every open period blocked by exams that never move - and
+    when a locked period is free beside either proof, that is what the
+    registrar can act on. Then a stopped search says so - it is never
+    presented as an impossibility - and only a finished search names what is
+    left: free periods that are locked, or clashes.
+    """
     mates = _bucket_mates(plan_term_buckets)
     clash: set[str] = set()
     fixed: set[str] = set()
     open_slots = [slot for slot in range(slot_count) if slot not in closed_slots]
+    open_days = {_day_of(slot, periods_per_day) for slot in open_slots}
     closed_free = False
     open_free = False
-    every_bucket = bool(open_slots)
     every_fixed = bool(open_slots)
     for slot in range(slot_count):
         day = _day_of(slot, periods_per_day)
@@ -628,22 +638,39 @@ def explain_unplaced(
         if not here and not same_day:
             open_free = True
         clash |= here
-        every_bucket = every_bucket and bool(same_day)
         blockers = here | same_day
         fixed |= blockers & protected
         every_fixed = every_fixed and bool(blockers & protected)
+    # The study terms whose own exams hold every open day - one term alone,
+    # never several together: two terms covering the days between them can
+    # still trade a day.
+    full_terms = {
+        key
+        for key, members in (plan_term_buckets or {}).items()
+        if unit in members
+        and open_days
+        and open_days
+        <= {
+            _day_of(board[mate], periods_per_day)
+            for mate in members
+            if mate != unit and mate in board
+        }
+    }
     if open_free:
         reason = "search_limit"
-    elif closed_free or not open_slots:
+    elif not open_slots or ((full_terms or every_fixed) and closed_free):
         reason = "only_locked_periods_free"
-    elif every_bucket:
+    elif full_terms:
         reason = "bucket_days_full"
     elif every_fixed:
         reason = "blocked_by_fixed_exams"
     elif search_stopped:
         reason = "search_limit"
+    elif closed_free:
+        reason = "only_locked_periods_free"
     else:
         reason = "blocked_by_clashes"
+    # A full term first: the page names the first one as the reason.
     buckets = [
         {
             "program": program,
@@ -655,7 +682,9 @@ def explain_unplaced(
                 for code in members_of(mate)
             )[:_NAMED],
         }
-        for (program, term), members in sorted((plan_term_buckets or {}).items())
+        for (program, term), members in sorted(
+            (plan_term_buckets or {}).items(), key=lambda item: (item[0] not in full_terms, item[0])
+        )
         if unit in members and any(mate != unit and mate in board for mate in members)
     ][:_NAMED]
     return {

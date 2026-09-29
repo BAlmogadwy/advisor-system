@@ -58,6 +58,25 @@ FITS = """() => {
   };
 }"""
 
+# On a window too short for the list, Cancel and Add are still inside the
+# dialog, inside the window, and the element under their own centre - a mouse
+# or a finger reaches them without scrolling anything.
+REACHABLE = """() => {
+  const dialog = document.getElementById('examAddCoursesDialog');
+  const box = dialog.getBoundingClientRect();
+  return ['cancelAddCourses', 'confirmAddCourses'].map(id => {
+    const button = document.getElementById(id);
+    const r = button.getBoundingClientRect();
+    const x = r.left + r.width / 2, y = r.top + r.height / 2;
+    return {
+      id,
+      inDialog: r.top >= box.top - 1 && r.bottom <= box.bottom + 1 && r.left >= box.left - 1 && r.right <= box.right + 1,
+      inWindow: r.top >= 0 && r.bottom <= innerHeight + 1,
+      hit: document.elementFromPoint(x, y) === button,
+    };
+  });
+}"""
+
 
 def _plain(text: str | None) -> str:
     return (text or "").translate(ISOLATES).strip()
@@ -106,7 +125,7 @@ class ExamAddCoursesBrowserTests(StaticLiveServerTestCase):
         assert response.status_code == 200, response.content
         self.run_id = response.json()["run_id"]
 
-    def _page(self, language: str, width: int):
+    def _page(self, language: str, width: int, height: int = 900):
         user = get_user_model().objects.create_user(
             username=f"add-{language}-{get_user_model().objects.count()}"
         )
@@ -116,7 +135,7 @@ class ExamAddCoursesBrowserTests(StaticLiveServerTestCase):
         context = self.browser.new_context(
             locale="ar" if language == "ar" else "en-US",
             extra_http_headers={"Accept-Language": language},
-            viewport={"width": width, "height": 900},
+            viewport={"width": width, "height": height},
         )
         context.add_cookies(
             [
@@ -196,6 +215,28 @@ class ExamAddCoursesBrowserTests(StaticLiveServerTestCase):
     def test_adding_two_courses_in_english_and_arabic_on_a_phone(self) -> None:
         for language in ("en", "ar"):
             self._add_two(language, 390)
+
+    def test_on_short_windows_the_buttons_stay_in_reach(self) -> None:
+        """A laptop at 125% scaling, a short window, and phones either way up."""
+        for width, height in ((1280, 560), (1093, 525), (360, 640), (390, 600), (844, 390)):
+            for language in ("en", "ar"):
+                where = f"{language} {width}x{height}"
+                page = self._page(language, width, height)
+                page.locator("#addCoursesBtn").click()
+                expect(page.locator("#examAddCoursesDialog")).to_be_visible()
+                expect(page.locator("#examAddCoursesList .et-add-row")).to_have_count(
+                    len(self.codes)
+                )
+                facts = page.evaluate(FITS)
+                self.assertTrue(facts["inWindow"], f"{where}: the list leaves the window")
+                self.assertLessEqual(facts["page"], 0, f"{where}: the page scrolls sideways")
+                for button in page.evaluate(REACHABLE):
+                    self.assertTrue(all(button.values()), f"{where}: {button}")
+                # A tick scrolls the list, and the dialog with it: still in reach.
+                page.locator("#examAddCoursesList input[type=checkbox]").last.check()
+                for button in page.evaluate(REACHABLE):
+                    self.assertTrue(all(button.values()), f"{where} after a tick: {button}")
+                page.close()
 
     def test_the_setup_of_a_saved_timetable_finds_a_course_not_in_it(self) -> None:
         for language in ("en", "ar"):

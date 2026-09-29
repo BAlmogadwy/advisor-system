@@ -1629,7 +1629,6 @@ def _add_courses_schedule(
         "locked_count": len(locks.placements) if locks else 0,
         "untouched_violations": untouched,
         "violations_after": after,
-        "rings": engine.rings,
         "widened": engine.widened,
         "proven_minimal": engine.proven_minimal,
         "status": engine.status,
@@ -1639,12 +1638,12 @@ def _add_courses_schedule(
             links, inputs.enrolled_sets, inputs.credit_map, inputs.meta_by_course
         )["students_in_two_linked_courses"]
     logger.info(
-        "exam add: %s of %s placed, %s moved, %s ring(s), %s attempt(s), work %.2f, "
+        "exam add: %s of %s placed, %s moved, widened %s, %s attempt(s), work %.2f, "
         "greedy %.2fs, placing %.2fs",
         report["placed_count"],
         report["requested_count"],
         len(moved),
-        engine.rings,
+        engine.widened,
         engine.attempts,
         engine.work,
         greedy_seconds,

@@ -24,6 +24,7 @@ from core.services.exam_min_change import (
     _added_move_floor,
     _bucket_mates,
     _build_model,
+    _legal_at,
     find_violations,
     place_added_exams,
 )
@@ -54,10 +55,11 @@ def _add(placements, new, adj, *, greedy=None, buckets=None, protected=None, **k
     )
 
 
-def _assert_invariants(result, placements, new, adj, *, buckets=None, protected=(), closed=()):
+def _assert_invariants(
+    result, placements, new, adj, *, buckets=None, protected=(), closed=(), ppd=PER_DAY
+):
     """What every Add promises, whatever the solver chose."""
     board = result.placements
-    ppd = PER_DAY
     # Existing exams are never unplaced, and only unprotected ones ever move.
     assert set(placements) <= set(board)
     for course in protected:
@@ -136,15 +138,96 @@ def test_an_exam_moves_only_when_that_is_the_one_way_to_seat_the_new_one():
     assert result.unplaced_new == []
     assert len(result.moved) == 1
     assert result.proven_minimal and result.status == "OPTIMAL"
-    assert result.widened and result.rings == 1
+    assert result.widened and not result.search_stopped
 
 
-def test_without_the_ring_the_new_exam_would_be_left_out(monkeypatch):
+def test_a_new_exam_whose_room_is_made_far_from_it_is_still_placed():
+    """Room made two steps away from the unplaced exam (reviewer's board 2836).
+
+    N1 can sit only where E0, E1 and E2 are; N0 needs E1's slot. Seating both
+    moves E0, E1 and E2 - E2 is no neighbour of N0 and was never offered to
+    move by the rings of neighbours this search replaced: they left N0 out and
+    called the board final.
+    """
+    placements = {"E0": 0, "E1": 0, "E2": 0, "E3": 2, "E4": 2, "E5": 3, "E6": 3, "E7": 2}
+    adj = _clash(
+        ("E0", "E5"),
+        ("E0", "E6"),
+        ("E0", "N0"),
+        ("E0", "N1"),
+        ("E1", "E4"),
+        ("E1", "N0"),
+        ("E1", "N1"),
+        ("E2", "E5"),
+        ("E2", "N1"),
+        ("E3", "N1"),
+        ("E4", "E6"),
+        ("E4", "N0"),
+        ("E4", "N1"),
+        ("E5", "E7"),
+        ("E7", "N1"),
+    )
+    buckets = {("P", 0): {"E3", "N0"}}
+    protected = {"E3", "E4", "E5", "E7"}
+    closed = frozenset({1})
+    weights = {"E3": 3, "E4": 2, "E5": 2}
+    result = _add(
+        placements,
+        ["N0", "N1"],
+        adj,
+        buckets=buckets,
+        protected=protected,
+        closed_slots=closed,
+        weights=weights,
+        slot_count=4,
+    )
+    _assert_invariants(
+        result, placements, ["N0", "N1"], adj, buckets=buckets, protected=protected, closed=closed
+    )
+    assert result.unplaced_new == []
+    assert sorted(result.moved) == ["E0", "E1", "E2"]
+    assert result.proven_minimal and not result.search_stopped
+
+
+def test_a_placing_solve_that_stops_unproven_is_not_the_answer(monkeypatch):
+    """Every solve at one solve's usual limit stops with nothing proven.
+
+    Attempt 0's word is not final: the solve over every exam that may move
+    gets the rest of the work for placing - more than the usual limit - and
+    seats the exam; the board is proven by the floor and nothing says the
+    search stopped.
+    """
+    real = engine._solve
+
+    def starved(model, objective, budget, *, cap=None, keep=0.0):
+        if cap is None:
+            return engine.cp_model.UNKNOWN, None
+        return real(model, objective, budget, cap=cap, keep=keep)
+
+    monkeypatch.setattr(engine, "_solve", starved)
     placements = {"A": 0, "B": 1, "C": 2, "D": 3, "E": 4, "Z": 5}
     adj = _clash(*[("N", x) for x in "ABCDEZ"], ("E", "Z"))
-    monkeypatch.setattr(engine, "_MAX_RINGS", 0)
+    result = _add(placements, ["N"], adj)
+    _assert_invariants(result, placements, ["N"], adj)
+    assert result.unplaced_new == [] and len(result.moved) == 1
+    assert result.widened and result.proven_minimal and not result.search_stopped
+
+
+def test_a_new_exam_left_out_by_a_stopped_search_says_the_search_stopped(monkeypatch):
+    """The wide solve itself stops unproven: the exam is out, and not called impossible."""
+    real = engine._solve
+
+    def stopped(model, objective, budget, *, cap=None, keep=0.0):
+        if cap is not None and cap > engine._DETERMINISTIC_LIMIT:
+            return engine.cp_model.UNKNOWN, None
+        return real(model, objective, budget, cap=cap, keep=keep)
+
+    monkeypatch.setattr(engine, "_solve", stopped)
+    placements = {"A": 0, "B": 1, "C": 2, "D": 3, "E": 4, "Z": 5}
+    adj = _clash(*[("N", x) for x in "ABCDEZ"], ("E", "Z"))
     result = _add(placements, ["N"], adj)
     assert result.unplaced_new == ["N"] and result.moved == []
+    assert result.widened and result.search_stopped and not result.proven_minimal
 
 
 def test_a_protected_blocker_never_moves_even_when_it_is_the_cheapest():
@@ -165,7 +248,8 @@ def test_when_every_blocker_is_protected_the_new_exam_stays_out_with_that_reason
     result = _add(placements, ["N"], adj, protected=protected)
     _assert_invariants(result, placements, ["N"], adj, protected=protected)
     assert result.unplaced_new == ["N"] and result.moved == []
-    assert not result.proven_minimal
+    # Nothing may move, so attempt 0 was the whole question - and it is proven.
+    assert result.proven_minimal and not result.search_stopped
     why = explain_unplaced(
         "N",
         board=result.placements,
@@ -272,6 +356,56 @@ def test_a_study_term_with_an_exam_on_every_day_is_named_as_the_reason():
     ]
 
 
+def _why(unit, board, *, adj=None, buckets=None, protected=(), closed=(), stopped=False):
+    return explain_unplaced(
+        unit,
+        board=board,
+        adj=adj or {},
+        plan_term_buckets=buckets,
+        protected=set(protected),
+        closed_slots=frozenset(closed),
+        slot_count=SLOTS,
+        periods_per_day=PER_DAY,
+        search_stopped=stopped,
+        members_of=lambda unit: (unit,),
+    )
+
+
+def test_two_study_terms_filling_the_days_only_together_are_not_called_full():
+    # AI term 1 holds days 0 and 1, CS term 2 holds day 2: neither term alone
+    # has an exam on every day, so either could still give one up.
+    board = {"A": 0, "B": 2, "C": 4}
+    buckets = {("AI", 1): {"A", "B", "N"}, ("CS", 2): {"C", "N"}}
+    assert _why("N", board, buckets=buckets)["reason"] == "blocked_by_clashes"
+    assert _why("N", board, buckets=buckets, stopped=True)["reason"] == "search_limit"
+
+
+def test_the_study_term_that_is_full_is_named_first_and_is_a_proof():
+    board = {"A": 0, "B": 2, "C": 4, "D": 1}
+    buckets = {("AI", 1): {"D", "N"}, ("CS", 2): {"A", "B", "C", "N"}}
+    # One term with an exam on every day: no search could change that.
+    why = _why("N", board, buckets=buckets, stopped=True)
+    assert why["reason"] == "bucket_days_full"
+    assert [bucket["program"] for bucket in why["blocked_by"]["bucket"]] == ["CS", "AI"]
+
+
+def test_a_stopped_search_is_never_presented_as_an_impossibility():
+    # N clashes with A to E in slots 0-4, which could move; slot 5 is locked.
+    board = {course: slot for slot, course in enumerate("ABCDE")}
+    adj = _clash(*[("N", x) for x in "ABCDE"])
+    assert _why("N", board, adj=adj, closed={5}, stopped=True)["reason"] == "search_limit"
+    assert _why("N", board, adj=adj, closed={5})["reason"] == "only_locked_periods_free"
+    # Every blocker fixed: that is a proof, and the locked period the one way in.
+    fixed = set("ABCDE")
+    assert (
+        _why("N", board, adj=adj, closed={5}, protected=fixed, stopped=True)["reason"]
+        == "only_locked_periods_free"
+    )
+    assert _why("N", board, adj=adj, protected=fixed, stopped=True)["reason"] == (
+        "search_limit"  # slot 5 is open and free: the search stopped short of it
+    )
+
+
 def test_a_study_plan_mate_steps_to_another_day_to_make_room():
     # N's term already has A on day 0 and B on day 1; day 2 is full of
     # exams N clashes with. One move - either - makes room.
@@ -327,6 +461,44 @@ def test_a_greedy_seat_is_never_traded_for_another_new_exam():
     result = _add(placements, ["N1", "N2"], adj, greedy={"N2": 5}, protected=protected)
     assert result.placements.get("N2") == 5
     assert result.unplaced_new == ["N1"]
+
+
+def test_a_saved_exam_never_moves_to_keep_the_greedys_choice_of_new_exam():
+    """Two of three new exams fit either way: the greedy's N0 and N1 need E1
+    moved, N1 and N2 need nothing moved. Placing as many, with no move, wins:
+    the greedy's seat for N0 was arbitrary, the registrar's E1 is not.
+    """
+    placements = {"E0": 0, "E1": 4, "E2": 1, "E3": 1, "E4": 2}
+    adj = _clash(
+        ("E0", "E1"),
+        ("E0", "E3"),
+        ("E1", "E3"),
+        *[(n, e) for n in ("N0", "N1") for e in ("E0", "E1", "E2", "E3", "E4")],
+        *[("N2", e) for e in ("E0", "E2", "E3", "E4")],
+        ("N0", "N1"),
+        ("N0", "N2"),
+        ("N1", "N2"),
+    )
+    buckets = {("P", 0): {"N0", "N2", "E3"}}
+    new = ["N0", "N1", "N2"]
+    closed = frozenset({5})
+    kwargs = dict(
+        buckets=buckets,
+        protected={"E0"},
+        closed_slots=closed,
+        weights={"E3": 3, "E4": 2},
+        slot_count=6,
+        periods_per_day=3,
+    )
+    result = _add(placements, new, adj, greedy={"N0": 3}, **kwargs)
+    _assert_invariants(
+        result, placements, new, adj, buckets=buckets, protected={"E0"}, closed=closed, ppd=3
+    )
+    assert len(result.placed_new) == 2
+    assert result.moved == []
+    assert result.proven_minimal
+    # Without the greedy's seat the answer is the same board: the seat bought nothing.
+    assert _add(placements, new, adj, **kwargs).placements == result.placements
 
 
 def test_seats_are_counted_so_a_big_course_goes_where_its_cohort_has_room():
@@ -402,7 +574,7 @@ def test_a_stopped_solve_never_leaves_an_existing_exam_moved_for_nothing(monkeyp
     boards = iter(
         [
             {**placements},  # attempt 0: N still out
-            {**placements, "A": 1, "C": 3, "N": 0},  # ring 1: C moved for nothing
+            {**placements, "A": 1, "C": 3, "N": 0},  # the wide solve: C moved for nothing
         ]
     )
 
@@ -419,8 +591,11 @@ def test_a_stopped_solve_never_leaves_an_existing_exam_moved_for_nothing(monkeyp
                     return int(course not in self.board)
             raise AssertionError("unknown variable")
 
-    def stopped(built, levels, budget):
-        return engine._Levels(engine.cp_model.FEASIBLE, Stopped(built, next(boards)), False, False)
+    def stopped(built, levels, budget, **kwargs):
+        board = next(boards, None)
+        if board is None:
+            return engine._Levels(engine.cp_model.UNKNOWN, None, False, False)
+        return engine._Levels(engine.cp_model.FEASIBLE, Stopped(built, board), False, False)
 
     monkeypatch.setattr(engine, "_solve_levels", stopped)
     result = _add(placements, ["N"], adj)
@@ -498,9 +673,15 @@ def test_blocked_exams_with_disjoint_blockers_add_up():
 
 
 def _oracle(placements, new, adj, buckets, protected, closed, slot_count, ppd, weights):
-    """The true lexicographic minimum of (new exams unplaced, weight moved)."""
+    """The true lexicographic minimum of (new exams unplaced, weight moved).
+
+    Legal by the engine's own rule: every moved or new exam may sit where it
+    is beside the rest of the board (``_legal_at``). A count of breaches would
+    accept a moved exam that trades one breach for another, and would call the
+    engine's correct refusal of it "not the fewest".
+    """
+    mates = _bucket_mates(buckets)
     movable = sorted(course for course in placements if course not in protected)
-    _, baseline = find_violations(dict(placements), adj, buckets, ppd)
     best = None
     choices_existing = [
         [placements[c]] + [s for s in range(slot_count) if s != placements[c] and s not in closed]
@@ -510,11 +691,8 @@ def _oracle(placements, new, adj, buckets, protected, closed, slot_count, ppd, w
     for existing in itertools.product(*choices_existing):
         board = dict(placements)
         board.update(zip(movable, existing, strict=True))
-        moved = sum(
-            (weights or {}).get(c, 1)
-            for c, s in zip(movable, existing, strict=True)
-            if s != placements[c]
-        )
+        changed = [c for c, s in zip(movable, existing, strict=True) if s != placements[c]]
+        moved = sum((weights or {}).get(c, 1) for c in changed)
         if best is not None and moved > best[1] and best[0] == 0:
             continue
         for chosen in itertools.product(*choices_new):
@@ -522,10 +700,21 @@ def _oracle(placements, new, adj, buckets, protected, closed, slot_count, ppd, w
             for course, slot in zip(new, chosen, strict=True):
                 if slot is not None:
                     full[course] = slot
-            _, breaches = find_violations(full, adj, buckets, ppd)
-            if breaches != baseline:
+            placed = [course for course, slot in zip(new, chosen, strict=True) if slot is not None]
+            if not all(
+                _legal_at(
+                    course,
+                    full[course],
+                    {other: at for other, at in full.items() if other != course},
+                    adj,
+                    mates,
+                    frozenset(closed),
+                    ppd,
+                )
+                for course in [*changed, *placed]
+            ):
                 continue
-            key = (sum(1 for slot in chosen if slot is None), moved)
+            key = (len(new) - len(placed), moved)
             if best is None or key < best:
                 best = key
     return best
@@ -571,18 +760,39 @@ def _random_board(rng):
     # Keep the brute force small: at most three exams it may move.
     free = [course for course in existing if course not in protected]
     protected.update(free[3:])
-    return placements, new, adj, buckets, protected, closed, slot_count, ppd, weights
+    # Half the boards come with Build's greedy: some new exams already seated,
+    # each legally, first fit in a random order - its choice is arbitrary.
+    greedy: dict[str, int] = {}
+    if rng.random() < 0.5:
+        mates = _bucket_mates(buckets)
+        seated = dict(placements)
+        for course in rng.sample(new, len(new)):
+            fits = [
+                slot
+                for slot in range(slot_count)
+                if _legal_at(course, slot, seated, adj, mates, closed, ppd)
+            ]
+            if fits and rng.random() < 0.8:
+                seated[course] = greedy[course] = rng.choice(fits)
+    return placements, new, adj, buckets, protected, closed, slot_count, ppd, weights, greedy
 
 
-def test_the_fewest_possible_is_never_claimed_falsely_against_a_brute_force():
-    checked = proven = needed_moves = 0
+def test_every_tiny_board_gets_the_true_fewest_against_a_brute_force():
+    """The engine's (unplaced, weight moved) is the brute force's, on every board.
+
+    Not only "never claimed falsely": a board that places fewer than possible,
+    or moves more than needed, fails - which is what an Add that stopped early,
+    or ranked the greedy's seat above the registrar's exams, did.
+    """
+    checked = needed_moves = with_greedy = 0
     for number in range(400):
         rng = random.Random(9100 + number)
-        placements, new, adj, buckets, protected, closed, slots, ppd, weights = _random_board(rng)
+        board_args = _random_board(rng)
+        placements, new, adj, buckets, protected, closed, slots, ppd, weights, greedy = board_args
         result = place_added_exams(
             placements=dict(placements),
             new_units=new,
-            greedy={},
+            greedy=dict(greedy),
             adj=adj,
             slot_count=slots,
             periods_per_day=ppd,
@@ -604,19 +814,92 @@ def test_the_fewest_possible_is_never_claimed_falsely_against_a_brute_force():
         moved_weight = sum((weights or {}).get(c, 1) for c in result.moved)
         engine_key = (len(result.unplaced_new), moved_weight)
         oracle = _oracle(placements, new, adj, buckets, protected, closed, slots, ppd, weights)
-        # Never better than what is possible - that would be an illegal board.
-        assert engine_key >= oracle, number
-        if result.proven_minimal:
-            proven += 1
-            assert engine_key == oracle, number
-        if oracle < engine_key:
-            assert not result.proven_minimal, number
+        assert not result.search_stopped, number
+        assert engine_key == oracle, (number, engine_key, oracle)
+        assert result.proven_minimal, number
         checked += 1
         needed_moves += oracle[1] > 0
+        with_greedy += bool(greedy)
     assert checked == 400
-    # Not vacuous: many boards need moves, and most are proven.
-    assert needed_moves > 80
-    assert proven > 200
+    # Not vacuous: many boards need moves, and many start from a greedy.
+    assert needed_moves > 60
+    assert with_greedy > 100
+
+
+def _medium_board(seed):
+    """Forty saved exams on three days of three periods, fourteen new ones."""
+    rng = random.Random(seed)
+    slot_count, ppd = 9, 3
+    existing = [f"E{i:02d}" for i in range(40)]
+    new = [f"N{i:02d}" for i in range(14)]
+    adj: dict[str, dict[str, int]] = {}
+    for a, b in itertools.combinations(existing + new, 2):
+        if rng.random() < (0.18 if a in existing and b in existing else 0.3):
+            adj.setdefault(a, {})[b] = 1
+            adj.setdefault(b, {})[a] = 1
+    buckets = {("P", k): set(rng.sample(existing + new, 3)) for k in range(6)}
+    mates = _bucket_mates(buckets)
+    placements: dict[str, int] = {}
+    for course in existing:
+        fits = [
+            slot
+            for slot in range(slot_count)
+            if _legal_at(course, slot, placements, adj, mates, frozenset(), ppd)
+        ]
+        placements[course] = rng.choice(fits or list(range(slot_count)))
+    damaged, _ = find_violations(placements, adj, buckets, ppd)
+    protected = set(damaged) | {course for course in existing if rng.random() < 0.1}
+    return placements, new, adj, buckets, protected, slot_count, ppd
+
+
+def _fewest(placements, new, adj, buckets, protected, slot_count, ppd):
+    """(unplaced, moved) at their proven optimum, every unprotected exam free to move."""
+    movable = sorted([c for c in placements if c not in protected] + new)
+    built = _build_model(
+        movable, placements, adj, buckets, slot_count, ppd, allow_unseated=frozenset(new)
+    )
+    levels = [
+        sum(built.unseated[c] for c in new),
+        sum(
+            1 - built.y[c, placements[c]] if (c, placements[c]) in built.y else 1
+            for c in movable
+            if c in placements
+        ),
+    ]
+    values = []
+    for objective in levels:
+        built.model.minimize(objective)
+        solver = engine.cp_model.CpSolver()
+        solver.parameters.num_workers = 8
+        solver.parameters.max_time_in_seconds = 60
+        assert solver.solve(built.model) == engine.cp_model.OPTIMAL
+        values.append(int(solver.value(objective)))
+        built.model.add(objective == values[-1])
+    return tuple(values)
+
+
+@pytest.mark.parametrize("seed", [1, 2, 3, 4, 6, 9])
+def test_boards_too_big_for_the_brute_force_get_the_proven_fewest_moves(seed):
+    """Fifty-four exams on nine slots: every new exam fits, but only if saved
+    exams make room - two to five of them. The engine's answer is the proven
+    optimum of a separate solve over every exam, and it says it is proven.
+    """
+    placements, new, adj, buckets, protected, slot_count, ppd = _medium_board(seed)
+    result = place_added_exams(
+        placements=dict(placements),
+        new_units=new,
+        greedy={},
+        adj=adj,
+        slot_count=slot_count,
+        periods_per_day=ppd,
+        plan_term_buckets=buckets,
+        protected=set(protected),
+    )
+    _assert_invariants(result, placements, new, adj, buckets=buckets, protected=protected, ppd=ppd)
+    fewest = _fewest(placements, new, adj, buckets, protected, slot_count, ppd)
+    assert fewest[1] >= 2, "a board that needs moves"
+    assert (len(result.unplaced_new), len(result.moved)) == fewest
+    assert result.proven_minimal and not result.search_stopped
 
 
 def test_a_bucket_mates_helper_lists_every_mate_once():
