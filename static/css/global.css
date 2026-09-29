@@ -2473,6 +2473,41 @@ html body .btn-neutral:focus-visible {
 }
 .fb-dd.active .fb-dd-count { background:color-mix(in srgb, var(--teal) 20%, transparent); }
 
+/* ── Filter bar that fits its fields (opt-in: .fb-fit) ─────────────────
+   Put .fb-fit on a .filter-bar, or on any row of .fb-search capsules, and
+   each capsule is as wide as what it shows instead of squeezed or capped:
+   every pre-filled value and placeholder shows whole, at every width, in
+   English and Arabic, in any font. Section Planning set the pattern
+   (.sp-page .sp-fb-*). A bar without .fb-fit is unchanged.
+   - An <input> is 12ch unless it carries a width below. Widths are in ch
+     of the field's own font, so a wider font widens the field with it.
+   - A <select> is as wide as its longest option.
+   - .fb-grow on a capsule: it takes the bar's spare room (a search box).
+   - .fb-actions: the bar's buttons (or its counts) as one unit at its
+     end; they wrap together, never one left alone on a line. */
+.fb-fit .fb-search { flex: 0 0 auto; min-width: 0; max-width: 100%; }
+.fb-fit .fb-search > .i { flex: none; }
+.fb-fit .fb-lbl { flex: none; white-space: nowrap; }
+.fb-fit .fb-search > input { flex: 0 1 auto; min-width: 0; width: 12ch; font-variant-numeric: tabular-nums; }
+.fb-fit .fb-search > select { flex: 0 1 auto; min-width: 0; width: auto; }
+.fb-fit .fb-search > .fb-w-3ch { width: 3ch; }     /* a digit or a letter: 1, M */
+.fb-fit .fb-search > .fb-w-6ch { width: 6ch; }     /* a year, a limit, "Sem" */
+.fb-fit .fb-search > .fb-w-9ch { width: 9ch; }     /* "Semester", "Section", "Program" */
+.fb-fit .fb-search > .fb-w-12ch { width: 12ch; }   /* a student ID, "Join yrs" in Arabic */
+.fb-fit .fb-search > .fb-w-16ch { width: 16ch; }   /* "Program (optional)", a few codes */
+.fb-fit .fb-search > .fb-w-20ch { width: 20ch; }   /* a search placeholder */
+.fb-fit .fb-search > .fb-w-34ch { width: 34ch; }   /* a file path */
+.fb-fit .fb-search.fb-grow { flex: 1 1 auto; max-width: 26rem; }
+.fb-fit .fb-grow > input,
+.fb-fit .fb-search-full > input { flex: 1 1 auto; }
+.fb-fit .fb-actions { display: flex; align-items: center; gap: 10px; flex: none; margin-inline-start: auto; }
+/* The capsule is the field: a keyboard user sees a full-strength ring,
+   in dark mode too (the shared dark glow is a 20% ring set !important). */
+.fb-fit .fb-search:focus-within { box-shadow: var(--shadow-neu-inset), 0 0 0 2px var(--teal); }
+html[data-theme="dark"] .fb-fit .fb-search:focus-within { box-shadow: inset 0 1px 3px rgba(0,0,0,0.2), 0 0 0 2px var(--teal) !important; }
+/* A select's arrow sits at its inline end, where its padding is: the left in Arabic. */
+html[dir="rtl"] .fb-fit .fb-search select { background-position: left 0.4rem center; }
+
 /* ============================================================
    CPANEL — Bottom Panel Cards (Recommendations, Activity)
    ============================================================ */
