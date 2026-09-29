@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import tempfile
 from pathlib import Path
 
@@ -25,17 +26,18 @@ from core.services.audit import audit_actor
 from core.services.rbac import ROLE_GENERAL_ADVISOR, get_user_role
 from core.services.section_limits import SOURCE_SECTION_PLANNING, LimitSaveContext, save_limits
 from core.services.section_plan_pipeline import (
+    PLANNING_SECTIONS,
     SizingRules,
     plan_all_programmes,
     plan_programme,
     plan_programmes,
-    summarise,
 )
 from core.services.section_planning import (
     DEFAULT_MAX_EXTERNAL,
     DEFAULT_MAX_LOCAL_4CR,
     DEFAULT_MAX_LOCAL_OTHER,
     LOCAL_DEPARTMENTS,
+    compute_plan_summary,
     get_all_courses_with_defaults,
 )
 from core.services.student_helpers import normalize_code
@@ -54,6 +56,15 @@ def _format_export_course_name(row: dict, course_names: dict[str, str]) -> str:
         program_label = ", ".join(programs)
         return f"{program_label} - {course_name}" if course_name else program_label
     return course_name
+
+
+#: How a plan names its section, in the export (the page has its own words).
+SECTION_LABELS = {"M": "Male (M)", "F": "Female (F)"}
+
+
+def _filename_part(text: str) -> str:
+    """A programme code as it may stand in a download's file name."""
+    return re.sub(r"[^A-Za-z0-9]+", "-", str(text)).strip("-") or "programme"
 
 
 def _require_general_advisor(request: HttpRequest) -> JsonResponse | None:
@@ -95,6 +106,28 @@ def _parse_payload(request: HttpRequest) -> tuple[dict | None, JsonResponse | No
     if semester not in (1, 2, 3):
         return None, JsonResponse(
             {"ok": False, "code": "invalid_term", "error": "semester must be 1, 2, or 3"},
+            status=400,
+        )
+
+    # One section per plan: the department never plans M and F together.
+    raw_section = body.get("section")
+    section = "" if raw_section is None else str(raw_section).strip().upper()
+    if not section:
+        return None, JsonResponse(
+            {
+                "ok": False,
+                "code": "section_required",
+                "error": "Choose the section to plan: M (male) or F (female).",
+            },
+            status=400,
+        )
+    if section not in PLANNING_SECTIONS:
+        return None, JsonResponse(
+            {
+                "ok": False,
+                "code": "section_invalid",
+                "error": "section must be M (male) or F (female).",
+            },
             status=400,
         )
 
@@ -145,6 +178,7 @@ def _parse_payload(request: HttpRequest) -> tuple[dict | None, JsonResponse | No
     return {
         "year": year,
         "semester": semester,
+        "section": section,
         "program": program,
         "max_local_4cr": max_local_4cr,
         "max_local_other": max_local_other,
@@ -181,11 +215,12 @@ def section_plan_page(request: HttpRequest) -> HttpResponse:
 @require_POST
 @throttle(max_calls=3, window_seconds=120)
 def section_plan_generate_view(request: HttpRequest) -> JsonResponse:
-    """Compute section demand from batch recommendations.
+    """Compute one section's demand from batch recommendations.
 
-    Male and female students are always planned apart: every row carries M, F and
-    Total (= M + F) sections, and students with no recorded gender are reported
-    under ``summary.no_gender`` instead of being pooled into either cohort.
+    ``section`` is required: ``M`` (the male section) or ``F`` (the female
+    section), trimmed and in either case. The plan is that section's alone;
+    students with no recorded section are in neither plan and are counted in
+    ``no_section``.
     """
     params, err = _parse_payload(request)
     if err:
@@ -215,20 +250,21 @@ def _rules(params: dict) -> SizingRules:
 
 
 def _plan(params: dict) -> dict:
-    """The plan for the request's scope: one programme, several, or all of them."""
+    """The plan for the request's section and scope: one programme, several, or all."""
     program = params["program"]
     rules = _rules(params)
+    year, semester, section = params["year"], params["semester"], params["section"]
     if isinstance(program, list):
         return {
             "mode": "multi",
-            **plan_programmes(params["year"], params["semester"], program, rules),
+            **plan_programmes(year, semester, program, rules, section=section),
         }
     if isinstance(program, str):
         return {
             "mode": "single",
-            **plan_programme(params["year"], params["semester"], program, rules),
+            **plan_programme(year, semester, program, rules, section=section),
         }
-    return {"mode": "combined", **plan_all_programmes(params["year"], params["semester"], rules)}
+    return {"mode": "combined", **plan_all_programmes(year, semester, rules, section=section)}
 
 
 # ── Courses list API (for advanced per-course settings) ───────
@@ -318,6 +354,7 @@ def section_plan_export_view(request: HttpRequest) -> HttpResponseBase:
     assert params is not None
 
     program = params["program"]
+    section = params["section"]
     dept_prefixes = params.get("dept_filter", [])
 
     def _filter_plan(plan: list[dict]) -> list[dict]:
@@ -329,33 +366,38 @@ def section_plan_export_view(request: HttpRequest) -> HttpResponseBase:
             if any(normalize_code(entry["course_code"]).startswith(p) for p in dept_prefixes)
         ]
 
-    def _scoped(plan: list[dict], cohorts: dict, electives: dict) -> tuple[list[dict], dict]:
+    def _scoped(plan: list[dict], result: dict) -> tuple[list[dict], dict]:
+        """The rows the department filter keeps, and the totals of exactly those."""
         rows = _filter_plan(plan)
-        summary = summarise(rows, no_gender_students=int(cohorts.get("no_gender", 0)))
-        summary["electives"] = electives
+        summary = {
+            **compute_plan_summary(rows),
+            "section": section,
+            "student_count": int(result.get("student_count") or 0),
+            "no_section": int(result.get("no_section") or 0),
+            "electives": result.get("electives") or {},
+        }
         return rows, summary
 
     try:
         result = _plan(params)
+        stem = f"section_plan_{params['year']}_{params['semester']}"
         if result["mode"] == "multi":
-            combined, combined_summary = _scoped(
-                result["combined_plan"], result["cohorts"], result["electives"]
-            )
+            combined, combined_summary = _scoped(result["combined_plan"], result)
             programs_data = []
             for entry in result["programs"]:
-                rows, summary = _scoped(entry["plan"], entry["cohorts"], entry["electives"])
+                rows, summary = _scoped(entry["plan"], entry)
                 programs_data.append(
                     {"program": entry["program"], "plan": rows, "summary": summary}
                 )
             path = _export_section_plan_xlsx(
                 combined, combined_summary, params, mode="multi", programs_data=programs_data
             )
-            filename = f"section_plan_{params['year']}_{params['semester']}_multi.xlsx"
+            filename = f"{stem}_multi_{section}.xlsx"
         else:
-            rows, summary = _scoped(result["plan"], result["cohorts"], result["electives"])
+            rows, summary = _scoped(result["plan"], result)
             path = _export_section_plan_xlsx(rows, summary, params, mode=result["mode"])
-            suffix = f"_{program}" if isinstance(program, str) else ""
-            filename = f"section_plan_{params['year']}_{params['semester']}{suffix}.xlsx"
+            scope = f"_{_filename_part(program)}" if isinstance(program, str) else ""
+            filename = f"{stem}{scope}_{section}.xlsx"
 
         return FileResponse(
             path.open("rb"),
@@ -371,10 +413,10 @@ def section_plan_export_view(request: HttpRequest) -> HttpResponseBase:
         )
 
 
-#: The Sections sheet's columns, in order. Male and female students are sized
-#: apart with the same Max/Section; Sections = Male sections + Female sections.
-#: Students with no recorded gender are listed in their own column and are in
-#: no section count.
+#: The Sections sheet's columns, in order: ONE section's plan, which the
+#: sheet's title names. Sections, Avg/Section and Fill % are formulas of
+#: Students and Max/Section, computed as the page computes them, so editing a
+#: Max/Section in Excel re-sizes its row.
 EXPORT_HEADERS = [
     "#",
     "Department",
@@ -382,21 +424,24 @@ EXPORT_HEADERS = [
     "Name",
     "Credits",
     "External",
-    "Male students",
-    "Female students",
     "Students",
     "Max/Section",
-    "Male sections",
-    "Female sections",
     "Sections",
     "Avg/Section",
     "Fill %",
     "Status",
-    "No gender recorded",
     "Limit from",
     "Fills slot",
 ]
-_STATUS_TEXT = {"full": "Full", "underfilled": "Underfilled", "no_gender": "No gender recorded"}
+_STATUS_COLUMN = EXPORT_HEADERS.index("Status") + 1
+_STATUS_TEXT = {"full": "Full", "underfilled": "Underfilled"}
+
+
+def _no_section_note(count: int) -> str:
+    """Students with no recorded section: in neither plan, and said so."""
+    if count == 1:
+        return "1 student has no recorded section and is not in this plan."
+    return f"{count} students have no recorded section and are not in this plan."
 
 
 def _limit_source_text(row: dict) -> str:
@@ -498,7 +543,8 @@ def _export_section_plan_xlsx(
         _dept_colors[dept] = fill
         return fill
 
-    col_widths = [5, 12, 14, 30, 8, 9, 9, 9, 10, 11, 9, 9, 10, 11, 9, 14, 11, 18, 10]
+    col_widths = [5, 12, 14, 30, 8, 9, 10, 11, 10, 11, 9, 14, 18, 10]
+    section_label = SECTION_LABELS.get(str((params or {}).get("section") or ""), "")
 
     def _cell(ws, r: int, c: int, value, *, font=None, align=center):
         cell = ws.cell(row=r, column=c, value=value)
@@ -508,15 +554,14 @@ def _export_section_plan_xlsx(
             cell.font = font
         return cell
 
-    def _write_sections_sheet(ws, plan_data: list[dict]) -> None:
+    def _write_sections_sheet(ws, plan_data: list[dict], no_section: int) -> None:
         """Write the sections data rows with styled formatting."""
-        # Title row
+        # Title row: the section this plan is for, and who is in neither plan.
+        title = f"Section Planning — Section: {section_label}"
+        if no_section:
+            title += f" — {_no_section_note(no_section)}"
         ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=len(headers))
-        tc = ws.cell(
-            row=1,
-            column=1,
-            value="Section Planning — male and female sections planned separately",
-        )
+        tc = ws.cell(row=1, column=1, value=title)
         tc.font = title_font
         tc.fill = title_fill
         tc.alignment = Alignment(horizontal="center", vertical="center")
@@ -554,17 +599,14 @@ def _export_section_plan_xlsx(
             c = _cell(ws, r, 6, "Yes" if is_ext else "")
             if is_ext:
                 c.font = Font(color="2980B9", bold=True)
-            _cell(ws, r, 7, int(row.get("male_students") or 0), font=num_font)
-            _cell(ws, r, 8, int(row.get("female_students") or 0), font=num_font)
-            # Students = Male + Female (no-gender students are in neither)
-            _cell(ws, r, 9, f"=G{r}+H{r}", font=Font(bold=True, size=10))
-            # Max/Section (editable — the section counts follow it)
-            _cell(ws, r, 10, row["max_per_section"], font=num_font)
-            _cell(ws, r, 11, f"=IF(G{r}>0,CEILING(G{r}/J{r},1),0)", font=num_font)
-            _cell(ws, r, 12, f"=IF(H{r}>0,CEILING(H{r}/J{r},1),0)", font=num_font)
-            _cell(ws, r, 13, f"=K{r}+L{r}", font=Font(bold=True, size=10))
-            _cell(ws, r, 14, f"=IF(M{r}>0,ROUND(I{r}/M{r},0),0)", font=num_font)
-            c = _cell(ws, r, 15, f'=IF(AND(J{r}>0,M{r}>0),ROUND(I{r}/(M{r}*J{r})*100,0)&"%","")')
+            _cell(ws, r, 7, int(row["total_students"]), font=Font(bold=True, size=10))
+            # Max/Section (editable — the section count follows it)
+            _cell(ws, r, 8, row["max_per_section"], font=num_font)
+            # As the page: sections = ceil(students / max), avg = ceil(students /
+            # sections), fill = avg / max.
+            _cell(ws, r, 9, f"=IF(G{r}>0,CEILING(G{r}/H{r},1),0)", font=Font(bold=True, size=10))
+            _cell(ws, r, 10, f"=IF(I{r}>0,CEILING(G{r}/I{r},1),0)", font=num_font)
+            c = _cell(ws, r, 11, f'=IF(AND(H{r}>0,I{r}>0),ROUND(J{r}/H{r}*100,0)&"%","")')
             # Conditional formatting via static check (formulas recalculate in Excel)
             fill_pct = row.get("fill_percent", 0)
             if fill_pct >= 90:
@@ -575,24 +617,23 @@ def _export_section_plan_xlsx(
                 c.font = num_font
 
             status = row.get("status", "")
-            c = _cell(ws, r, 16, _STATUS_TEXT.get(status, ""))
+            c = _cell(ws, r, _STATUS_COLUMN, _STATUS_TEXT.get(status, ""))
             if status == "full":
                 c.fill = full_fill
                 c.font = status_full_font
-            elif status in ("underfilled", "no_gender"):
+            elif status == "underfilled":
                 c.fill = under_fill
                 c.font = status_under_font
-            _cell(ws, r, 17, int(row.get("unknown_students") or 0) or "", font=num_font)
-            _cell(ws, r, 18, _limit_source_text(row), align=left_center)
-            _cell(ws, r, 19, ", ".join(row.get("slots") or []), font=mono)
+            _cell(ws, r, 13, _limit_source_text(row), align=left_center)
+            _cell(ws, r, 14, ", ".join(row.get("slots") or []), font=mono)
 
             # Row fill: external gets blue tint, alternating gets grey
             row_fill = ext_fill if is_ext else (alt_fill if is_alt else None)
             if row_fill:
                 for col in range(1, len(headers) + 1):
                     cell = ws.cell(row=r, column=col)
-                    # Don't override dept colour (col 2) or status colour (col 16)
-                    if col not in (2, 16):
+                    # Don't override the department's colour or the status colour
+                    if col not in (2, _STATUS_COLUMN):
                         cell.fill = row_fill
 
         # Column widths
@@ -613,10 +654,13 @@ def _export_section_plan_xlsx(
     def _write_summary_sheet(
         ws, summary_data: dict, p: dict, sec_sheet: str = "Sections", data_rows: int = 0
     ) -> None:
-        """Write summary with formulas referencing the Sections sheet."""
-        width = 7
+        """Write one section's summary, with formulas over its Sections sheet."""
+        width = 6
         ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=width)
-        title_val = f"Section Plan Summary — {p.get('year', '')}/{p.get('semester', '')}"
+        title_val = (
+            f"Section Plan Summary — {p.get('year', '')}/{p.get('semester', '')}"
+            f" — Section: {section_label}"
+        )
         dept_filter = p.get("dept_filter", [])
         if dept_filter:
             title_val += f" (filtered: {', '.join(dept_filter)})"
@@ -633,28 +677,25 @@ def _export_section_plan_xlsx(
         rng = lambda col: f"{sq}!{col}3:{col}{last_row}"  # noqa: E731
 
         kpi = Font(bold=True, size=11, color="0A8E6E")
-        # KPI rows — formulas referencing the Sections sheet
-        ws.cell(row=3, column=1, value="Total Courses").font = bold
-        ws.cell(row=3, column=2, value=f'=COUNTIF({rng("M")},">0")').font = kpi
-        ws.cell(row=3, column=3, value="Total Sections").font = bold
-        ws.cell(row=3, column=4, value=f"=SUM({rng('M')})").font = kpi
-        ws.cell(row=3, column=5, value="Total Students").font = bold
-        ws.cell(row=3, column=6, value=f"=SUM({rng('I')})").font = kpi
-        ws.cell(row=4, column=1, value="Male Sections").font = bold
-        ws.cell(row=4, column=2, value=f"=SUM({rng('K')})").font = kpi
-        ws.cell(row=4, column=3, value="Female Sections").font = bold
-        ws.cell(row=4, column=4, value=f"=SUM({rng('L')})").font = kpi
-        no_gender = (summary_data.get("no_gender") or {}).get("students", 0)
-        ws.cell(row=4, column=5, value="No gender recorded").font = bold
-        ws.cell(row=4, column=6, value=int(no_gender or 0)).font = kpi
-        ws.cell(
-            row=5,
-            column=1,
-            value=(
-                "Male and female students are never planned together: Sections = Male + "
-                "Female. Students with no recorded gender are not in any count."
-            ),
-        ).font = Font(italic=True, size=9, color="566573")
+        no_section = int(summary_data.get("no_section") or 0)
+        # KPI rows: the section and its students, then formulas over the Sections sheet
+        # (G students, I sections), the totals the page's KPIs and summary show.
+        kpis = [
+            (3, "Section", section_label),
+            (3, "Students", int(summary_data.get("student_count") or 0)),
+            (3, "No recorded section", no_section),
+            (4, "Courses", f'=COUNTIF({rng("I")},">0")'),
+            (4, "Sections", f"=SUM({rng('I')})"),
+            (4, "Seat demand", f"=SUM({rng('G')})"),
+        ]
+        for i, (r, label, value) in enumerate(kpis):
+            col = 1 + 2 * (i % 3)
+            ws.cell(row=r, column=col, value=label).font = bold
+            ws.cell(row=r, column=col + 1, value=value).font = kpi
+        note = f"{section_label} students only: the other section is planned on its own."
+        if no_section:
+            note += f" {_no_section_note(no_section)}"
+        ws.cell(row=5, column=1, value=note).font = Font(italic=True, size=9, color="566573")
         electives = summary_data.get("electives") or {}
         if electives.get("dropped_total"):
             parts = [
@@ -671,18 +712,10 @@ def _export_section_plan_xlsx(
                 ),
             ).font = Font(italic=True, size=9, color="C0392B")
 
-        # Department Summary table
+        # Department Summary table: the page's columns, in the page's order
         top = 7
         ws.cell(row=top, column=1, value="Department Summary").font = Font(bold=True, size=11)
-        dept_headers = [
-            "Department",
-            "Courses",
-            "Male sections",
-            "Female sections",
-            "Sections",
-            "Students",
-            "Total Credits",
-        ]
+        dept_headers = ["Department", "Sections", "Courses", "Seat demand", "Teaching hours"]
         for col_idx, h in enumerate(dept_headers, 1):
             cell = ws.cell(row=top + 1, column=col_idx, value=h)
             cell.font = header_font
@@ -701,12 +734,10 @@ def _export_section_plan_xlsx(
             c.border = thin_border
             c.fill = _dept_fill(dept_name)
             formulas = [
-                f'=COUNTIFS({rng("B")},"{dept_name}",{rng("M")},">0")',
-                f"=SUMPRODUCT({is_dept}*{rng('K')})",
-                f"=SUMPRODUCT({is_dept}*{rng('L')})",
-                f"=SUMPRODUCT({is_dept}*{rng('M')})",
                 f"=SUMPRODUCT({is_dept}*{rng('I')})",
-                f"=SUMPRODUCT({is_dept}*{rng('M')}*{rng('E')})",
+                f'=COUNTIFS({rng("B")},"{dept_name}",{rng("I")},">0")',
+                f"=SUMPRODUCT({is_dept}*{rng('G')})",
+                f"=SUMPRODUCT({is_dept}*{rng('I')}*{rng('E')})",
             ]
             for col, formula in enumerate(formulas, 2):
                 c = ws.cell(row=r, column=col, value=formula)
@@ -730,11 +761,14 @@ def _export_section_plan_xlsx(
         for col_idx in range(1, width + 1):
             ws.column_dimensions[get_column_letter(col_idx)].width = 18
 
+    def _no_section_of(data: dict | None) -> int:
+        return int((data or {}).get("no_section") or 0)
+
     if mode == "multi" and programs_data:
         # ── Pooled sheets first (all programmes, as the builder pools them) ──
         default_sheet = wb.active
         default_sheet.title = "Sections-All"
-        _write_sections_sheet(default_sheet, plan or [])
+        _write_sections_sheet(default_sheet, plan or [], _no_section_of(summary))
         sum_all_ws = wb.create_sheet("Summary-All")
         _write_summary_sheet(
             sum_all_ws,
@@ -749,7 +783,7 @@ def _export_section_plan_xlsx(
             prog_name = prog_entry["program"]
             sec_name = f"Sections-{prog_name}"
             sec_ws = wb.create_sheet(sec_name)
-            _write_sections_sheet(sec_ws, prog_entry["plan"])
+            _write_sections_sheet(sec_ws, prog_entry["plan"], _no_section_of(prog_entry["summary"]))
             sum_ws = wb.create_sheet(f"Summary-{prog_name}")
             _write_summary_sheet(
                 sum_ws,
@@ -761,7 +795,7 @@ def _export_section_plan_xlsx(
     else:
         ws = wb.active
         ws.title = "Sections"
-        _write_sections_sheet(ws, plan or [])
+        _write_sections_sheet(ws, plan or [], _no_section_of(summary))
         ws2 = wb.create_sheet("Summary")
         _write_summary_sheet(
             ws2,
@@ -770,7 +804,6 @@ def _export_section_plan_xlsx(
             sec_sheet="Sections",
             data_rows=len(plan or []),
         )
-
     # Save to temp file
     tmp = tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False)
     wb.save(tmp.name)

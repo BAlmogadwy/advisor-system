@@ -2,23 +2,23 @@
 core/services/section_plan_pipeline.py
 The one pipeline behind Section Planning's Generate and Export.
 
-Demand is per student (``reporting.build_planning_demand``), and every student
-belongs to a cohort. Male and female students are never planned together, so
-each course is sized once for the male cohort and once for the female cohort,
-with the same seat limit, and its sections are M + F. Students with no recorded
-gender are counted and reported on their own; they are never pooled silently
-into either cohort, and they are not in the section totals.
+The department plans ONE section (campus) at a time: the male section (``M``)
+or the female section (``F``), never both together. Demand is per student
+(``reporting.build_planning_demand``) of the chosen section only, so a student
+of the other section never changes the plan; students with no recorded section
+are in neither plan, only counted (``no_section``).
 
 Seat limits follow one order everywhere (``compute_section_plan``): a what-if
 draft, then the lowest limit a programme in scope declares
 (``lowest_declared_capacities``) or, for a resolved elective, its slot's limit
 when lower (``slot_declared_limits`` + ``fold_slot_limits``), then the
-25/40/50 rules. The timetable builder sizes a scenario with the same functions.
+25/40/50 rules. A limit belongs to the programme, not the section: both
+sections of a programme are sized by the same limits. The timetable builder
+sizes a section's scenario with the same functions.
 """
 
 from __future__ import annotations
 
-import math
 from collections import Counter, defaultdict
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
@@ -26,20 +26,30 @@ from typing import Any
 
 from core.models import ProgrammeRequirement
 from core.services.course_identity import planner_course_key
-from core.services.reporting import PlanningDemand, StudentDemand, build_planning_demand
+from core.services.reporting import (
+    PLANNING_SECTIONS,
+    PlanningDemand,
+    StudentDemand,
+    build_planning_demand,
+)
 from core.services.section_planning import (
     compute_plan_summary,
     compute_section_plan,
     fold_slot_limits,
     lowest_declared_capacities,
+    programmes_with_students,
     slot_declared_limits,
 )
 from core.services.student_helpers import normalize_code
 
-MALE = "M"
-FEMALE = "F"
-NO_GENDER = ""
-COHORTS = (MALE, FEMALE)
+__all__ = [
+    "PLANNING_SECTIONS",
+    "SizingRules",
+    "plan_all_programmes",
+    "plan_programme",
+    "plan_programmes",
+    "size_demand",
+]
 
 
 @dataclass(frozen=True)
@@ -52,12 +62,11 @@ class SizingRules:
 
 @dataclass
 class _Aggregates:
-    """Seat demand per cohort, keyed by planner course identity."""
+    """Seat demand keyed by planner course identity."""
 
-    by_cohort: dict[str, Counter[str]]
+    demand: Counter[str]
     metadata: dict[str, dict[str, object]]
     programs_of: dict[str, set[str]]
-    students: Counter[str]
 
 
 def _department(code: str) -> str:
@@ -88,13 +97,10 @@ def _requirement_metadata(programs: Iterable[str]) -> dict[tuple[str, str], dict
 def _aggregate(students: Iterable[StudentDemand]) -> _Aggregates:
     students = list(students)
     requirement_meta = _requirement_metadata(s.program for s in students)
-    by_cohort: dict[str, Counter[str]] = {c: Counter() for c in (*COHORTS, NO_GENDER)}
+    demand: Counter[str] = Counter()
     metadata: dict[str, dict[str, object]] = {}
     programs_of: dict[str, set[str]] = defaultdict(set)
-    headcount: Counter[str] = Counter()
     for student in students:
-        cohort = student.cohort if student.cohort in COHORTS else NO_GENDER
-        headcount[cohort] += 1
         for code in student.courses:
             meta = dict(requirement_meta.get((student.program, code), {}))
             if not meta:
@@ -103,101 +109,10 @@ def _aggregate(students: Iterable[StudentDemand]) -> _Aggregates:
                 meta = {"course_code": code, "department": _department(code)}
             key = planner_course_key(code, meta.get("course_name"))
             metadata.setdefault(key, meta)
-            by_cohort[cohort][key] += 1
+            demand[key] += 1
             if student.program:
                 programs_of[key].add(student.program)
-    return _Aggregates(by_cohort, metadata, programs_of, headcount)
-
-
-def _merge_cohorts(
-    sized: Mapping[str, list[dict[str, Any]]],
-    unknown: Counter[str],
-    programs_of: Mapping[str, set[str]] | None,
-) -> list[dict[str, Any]]:
-    """One row per course: M and F sized apart, Total = M + F, no-gender demand beside."""
-    by_key: dict[str, dict[str, dict[str, Any]]] = defaultdict(dict)
-    for cohort, rows in sized.items():
-        for row in rows:
-            by_key[str(row["course_key"])][cohort] = row
-
-    merged: list[dict[str, Any]] = []
-    for key in sorted(set(by_key) | set(unknown)):
-        rows = by_key.get(key, {})
-        base = rows.get(MALE) or rows.get(FEMALE) or rows.get(NO_GENDER)
-        if base is None:
-            continue
-        male = rows.get(MALE)
-        female = rows.get(FEMALE)
-        male_students = int(male["total_students"]) if male else 0
-        female_students = int(female["total_students"]) if female else 0
-        male_sections = int(male["num_sections"]) if male else 0
-        female_sections = int(female["num_sections"]) if female else 0
-        total_students = male_students + female_students
-        num_sections = male_sections + female_sections
-        max_per_section = int(base["max_per_section"])
-        if num_sections:
-            avg_per_section = math.ceil(total_students / num_sections)
-            fill_percent = round((avg_per_section / max_per_section) * 100)
-            if avg_per_section >= max_per_section:
-                status = "full"
-            elif avg_per_section < 10:
-                status = "underfilled"
-            else:
-                status = ""
-        else:
-            avg_per_section = 0
-            fill_percent = 0
-            status = "no_gender"
-        row = {
-            "department": base["department"],
-            "course_key": key,
-            "course_code": base["course_code"],
-            "course_name": base.get("course_name", ""),
-            "credit_hours": base["credit_hours"],
-            "is_external": base["is_external"],
-            "max_per_section": max_per_section,
-            "male_students": male_students,
-            "female_students": female_students,
-            "unknown_students": int(unknown.get(key, 0)),
-            "male_sections": male_sections,
-            "female_sections": female_sections,
-            "total_students": total_students,
-            "num_sections": num_sections,
-            "avg_per_section": avg_per_section,
-            "fill_percent": fill_percent,
-            "status": status,
-        }
-        if programs_of is not None:
-            row["programs"] = sorted(programs_of.get(key, set()))
-        merged.append(row)
-    merged.sort(key=lambda r: (r["department"], r["course_code"], r["course_name"]))
-    return merged
-
-
-def summarise(rows: list[dict[str, Any]], *, no_gender_students: int) -> dict[str, Any]:
-    """Totals the KPIs, the Department Summary and the export all add up to.
-
-    Only courses with male or female demand are planned; ``no_gender`` states
-    what was left out and why, instead of folding it into a cohort.
-    """
-    planned = [row for row in rows if row["num_sections"]]
-    summary = compute_plan_summary(planned)
-    summary["male_sections"] = sum(row["male_sections"] for row in planned)
-    summary["female_sections"] = sum(row["female_sections"] for row in planned)
-    by_dept: dict[str, dict[str, int]] = defaultdict(lambda: {"male": 0, "female": 0})
-    for row in planned:
-        by_dept[row["department"]]["male"] += row["male_sections"]
-        by_dept[row["department"]]["female"] += row["female_sections"]
-    for dept in summary["departments"]:
-        dept["male_sections"] = by_dept[dept["department"]]["male"]
-        dept["female_sections"] = by_dept[dept["department"]]["female"]
-    unknown_rows = [row for row in rows if row["unknown_students"]]
-    summary["no_gender"] = {
-        "students": int(no_gender_students),
-        "seat_demand": sum(row["unknown_students"] for row in unknown_rows),
-        "courses": len(unknown_rows),
-    }
-    return summary
+    return _Aggregates(demand, metadata, programs_of)
 
 
 def _dropped_report(dropped: Iterable[tuple[str, str, str, int]]) -> dict[str, Any]:
@@ -219,8 +134,12 @@ def size_demand(
     rules: SizingRules,
     with_programs: bool = False,
 ) -> dict[str, Any]:
-    """Size one scope: per-cohort plans merged into M / F / Total rows."""
+    """Size one scope of ONE section: a row per course, the summary its KPIs total."""
     demands = list(demands)
+    sections = {demand.section for demand in demands}
+    if len(sections) != 1:
+        raise ValueError(f"a plan is for one section, not {sorted(sections)}")
+    (section,) = sections
     aggregates = _aggregate(s for d in demands for s in d.students)
     capacities = lowest_declared_capacities(capacity_programs, aggregates.metadata)
     overrides = {normalize_code(k): int(v) for k, v in (rules.course_overrides or {}).items()}
@@ -231,62 +150,48 @@ def size_demand(
     slots = slot_declared_limits((p for d in demands for p in d.elective_picks), overrides)
     sources = fold_slot_limits(capacities, aggregates.metadata, slots, overrides)
 
-    def plan(aggregate: Counter[str]) -> list[dict[str, Any]]:
-        return compute_section_plan(
-            aggregate,
-            max_local_4cr=rules.max_local_4cr,
-            max_local_other=rules.max_local_other,
-            max_external=rules.max_external,
-            course_overrides=overrides,
-            programme_capacities=capacities,
-            course_metadata=aggregates.metadata,
-        )
-
-    sized = {cohort: plan(aggregates.by_cohort[cohort]) for cohort in COHORTS}
-    # Sized too, only so a course nobody else needs still shows its name and
-    # limit; its sections are never added to M or F.
-    sized[NO_GENDER] = plan(aggregates.by_cohort[NO_GENDER])
-    rows = _merge_cohorts(
-        sized,
-        aggregates.by_cohort[NO_GENDER],
-        aggregates.programs_of if with_programs else None,
+    rows = compute_section_plan(
+        aggregates.demand,
+        max_local_4cr=rules.max_local_4cr,
+        max_local_other=rules.max_local_other,
+        max_external=rules.max_external,
+        course_overrides=overrides,
+        programme_capacities=capacities,
+        course_metadata=aggregates.metadata,
     )
+    rows.sort(key=lambda r: (r["department"], r["course_code"], r["course_name"]))
     for row in rows:
         row["limit_source"] = sources.get(row["course_key"], "rule")
         slot = slots.get(row["course_code"])
         row["slots"] = sorted(slot["slots"]) if slot else []
-    headcount = aggregates.students
+        if with_programs:
+            row["programs"] = sorted(aggregates.programs_of.get(row["course_key"], set()))
     return {
-        "student_count": sum(headcount.values()),
-        "cohorts": {
-            "M": int(headcount.get(MALE, 0)),
-            "F": int(headcount.get(FEMALE, 0)),
-            "no_gender": int(headcount.get(NO_GENDER, 0)),
-        },
+        "section": section,
+        "student_count": sum(len(d.students) for d in demands),
+        "no_section": sum(d.no_section for d in demands),
         "plan": rows,
-        "summary": summarise(rows, no_gender_students=int(headcount.get(NO_GENDER, 0))),
+        "summary": compute_plan_summary(rows),
         "electives": _dropped_report(r for d in demands for r in d.dropped_slots),
     }
 
 
-def _programmes(demand: PlanningDemand) -> list[str]:
-    return sorted({s.program for s in demand.students if s.program})
-
-
-def plan_programme(year: int, semester: int, program: str, rules: SizingRules) -> dict[str, Any]:
-    """One programme, sized by its own declared limits."""
-    demand = build_planning_demand(year, semester, program)
+def plan_programme(
+    year: int, semester: int, program: str, rules: SizingRules, *, section: str
+) -> dict[str, Any]:
+    """One programme's section, sized by the programme's own declared limits."""
+    demand = build_planning_demand(year, semester, program, section=section)
     return size_demand([demand], capacity_programs=[program], rules=rules)
 
 
 def plan_programmes(
-    year: int, semester: int, programs: list[str], rules: SizingRules
+    year: int, semester: int, programs: list[str], rules: SizingRules, *, section: str
 ) -> dict[str, Any]:
-    """Several programmes: each on its own, and pooled as the builder pools them."""
+    """Several programmes' section: each on its own, and pooled as the builder pools them."""
     per_programme = []
     demands: list[PlanningDemand] = []
     for program in programs:
-        demand = build_planning_demand(year, semester, program)
+        demand = build_planning_demand(year, semester, program, section=section)
         demands.append(demand)
         per_programme.append(
             {
@@ -296,8 +201,9 @@ def plan_programmes(
         )
     combined = size_demand(demands, capacity_programs=programs, rules=rules, with_programs=True)
     return {
+        "section": combined["section"],
         "student_count": combined["student_count"],
-        "cohorts": combined["cohorts"],
+        "no_section": combined["no_section"],
         "combined_plan": combined["plan"],
         "combined_summary": combined["summary"],
         "electives": combined["electives"],
@@ -305,7 +211,14 @@ def plan_programmes(
     }
 
 
-def plan_all_programmes(year: int, semester: int, rules: SizingRules) -> dict[str, Any]:
-    """Every student, sized by the lowest limit any programme in scope declares."""
-    demand = build_planning_demand(year, semester, None)
-    return size_demand([demand], capacity_programs=_programmes(demand), rules=rules)
+def plan_all_programmes(
+    year: int, semester: int, rules: SizingRules, *, section: str
+) -> dict[str, Any]:
+    """Every student of the section, sized by the lowest limit any programme in scope declares.
+
+    The programmes in scope are those with students, whatever their section:
+    the limits panel shows the same lowest declared limit (a limit is the
+    programme's, not the section's).
+    """
+    demand = build_planning_demand(year, semester, None, section=section)
+    return size_demand([demand], capacity_programs=programmes_with_students(), rules=rules)

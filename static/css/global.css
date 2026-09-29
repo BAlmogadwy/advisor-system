@@ -8500,6 +8500,42 @@ html[data-theme="dark"] .btn-export {
        page's full-strength ring has to win there too (4.6:1 on Deep Navy). */
     html[data-theme="dark"] .sp-page .fb-search:focus-within { box-shadow: inset 0 1px 3px rgba(0,0,0,0.2), 0 0 0 2px var(--teal) !important; }
 
+    /* Section: the plan's one section, M or F. A capsule like the scope
+       fields holding two neumorphic chips over native radios (one Tab stop;
+       the arrows move the choice). The chosen chip is raised, inked and has
+       a filled dot, so the choice never rests on colour alone; the focused
+       chip has the fields' full-strength teal ring. Logical properties only,
+       so Arabic mirrors it. */
+    .sp-page .sp-seg-group { display: inline-flex; align-items: center; flex: 0 0 auto; gap: 3px; padding-block: 3px; padding-inline: 1rem 3px; border-radius: 14px; box-shadow: var(--shadow-neu-inset); }
+    .sp-page .sp-seg-group .fb-lbl { flex: none; white-space: nowrap; margin-inline-end: 3px; }
+    .sp-page .sp-seg { position: relative; display: inline-flex; align-items: center; gap: 5px; padding: .38rem .55rem; border-radius: 11px; color: var(--t3); font-size: .88rem; font-weight: 600; white-space: nowrap; cursor: pointer; user-select: none; transition: box-shadow .18s var(--ease), color .18s var(--ease), background-color .18s var(--ease); }
+    .sp-page .sp-seg:hover { color: var(--t1); }
+    /* The radio covers its chip, unseen: a click anywhere on the chip is the radio's own. */
+    .sp-page .sp-seg input { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer; }
+    .sp-page .sp-seg-dot { flex: none; width: 10px; height: 10px; border-radius: 50%; border: 2px solid var(--t4); }
+    /* Generate and Reset: one unit at the end of the bar, wrapping together. */
+    .sp-page .sp-fb-actions { display: flex; align-items: center; gap: 10px; flex: none; margin-inline-start: auto; }
+    .sp-page .sp-seg:has(input:checked) { background: var(--card); color: var(--brand-dark); font-weight: 700; box-shadow: var(--shadow-neu-sm); }
+    .sp-page .sp-seg:has(input:checked) .sp-seg-dot { border-color: var(--teal); background: var(--teal); box-shadow: inset 0 0 0 2px var(--card); }
+    /* Drawn on the chip's own edge (inset): it stays inside the capsule and
+       clear of the "Section" / "الشطر" label, whose Arabic tail overhangs its box. */
+    .sp-page .sp-seg:has(input:focus) { outline: 2px solid var(--teal); outline-offset: -2px; }
+    /* Generate with no section chosen: the capsule and the words under the bar say so. */
+    .sp-page .sp-seg-group[aria-invalid="true"] { box-shadow: var(--shadow-neu-inset), 0 0 0 2px var(--danger); }
+    /* Windows High Contrast (forced colours) drops backgrounds and shadows and
+       the native radio is transparent: the chosen chip keeps a filled
+       Highlight dot and a Highlight edge, and the error an outline. */
+    @media (forced-colors: active) {
+      .sp-page .sp-seg:has(input:checked) { outline: 1px solid Highlight; outline-offset: -1px; }
+      .sp-page .sp-seg:has(input:checked) .sp-seg-dot { forced-color-adjust: none; background: Highlight; border-color: Highlight; box-shadow: inset 0 0 0 2px Canvas; }
+      .sp-page .sp-seg:has(input:focus) { outline: 2px solid CanvasText; outline-offset: -2px; }
+      .sp-page .sp-seg-group[aria-invalid="true"] { outline: 2px solid CanvasText; outline-offset: 1px; }
+    }
+    .sp-page .sp-section-msg { margin: 8px 0 0; font-size: .85rem; font-weight: 600; color: var(--danger); }
+    .sp-page .sp-section-msg:empty { margin: 0; }
+    /* What the result on screen is for: "AI · 1448 T1 · Female (F)". */
+    .sp-page .sp-results-scope { margin: 0 0 10px; font-size: 1rem; font-weight: 700; color: var(--navy); }
+
     /* KPI cards */
     .sp-kpi { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; margin-bottom: 14px; }
     .sp-mc { padding: .65rem .85rem; }
@@ -8583,9 +8619,8 @@ html[data-theme="dark"] .btn-export {
     .sp-adv-table tr.sp-adv-invalid .sp-adv-state { color: var(--danger); }
     .sp-adv-all { display: inline-flex; align-items: center; gap: 4px; font-size: .72rem; color: var(--t3); cursor: pointer; white-space: nowrap; }
     .sp-limit-review { margin-top: 8px; }
-    /* M / F split under a total (Sections = M + F) */
-    .sp-mc-sub, .sp-cell-sub { font-size: .75rem; color: var(--t3); font-variant-numeric: tabular-nums; white-space: nowrap; }
-    .sp-no-gender { color: var(--warning); font-weight: 700; }
+    /* A line under a cell's value (where a limit comes from) */
+    .sp-cell-sub { font-size: .75rem; color: var(--t3); font-variant-numeric: tabular-nums; white-space: nowrap; }
     /* A resolved elective names the slot it fills */
     .sp-slot { font-size: .75rem; color: var(--t3); white-space: nowrap; }
     .sp-adv-table tr.sp-adv-sub td { font-size: .75rem; padding-inline-start: 24px; color: var(--t2); border-bottom-style: dashed; }
@@ -8604,13 +8639,13 @@ html[data-theme="dark"] .btn-export {
     .sp-prog-block { margin-bottom: 20px; }
     .sp-prog-block .tbl-card { margin-bottom: 8px; }
 
-    /* A results table is 13 columns: wider than the pane at 1024px, so it
-       scrolls inside its own box, never the page. */
+    /* A results table is 11 columns: when wider than the pane it scrolls
+       inside its own box, never the page. */
     .sp-page .sp-table-scroll { overflow-x: auto; }
     /* Its headers wrap between words with a narrower gutter: one-word
-       numbers under two-word headers ("Total sections", "مجموع الشعب") made
-       the table wider than the pane at 1440px in Arabic, in a wider font and
-       with every programme's tags. */
+       numbers under two-word headers ("Course Name", "الحد الأقصى") must not
+       make the table wider than the pane at 1440px in Arabic, in a wider font
+       and with every programme's tags. */
     .sp-page .sp-plan-table thead th { white-space: normal; padding-inline: 8px; vertical-align: bottom; }
     /* When it does scroll sideways (769px and up), the course code stays in
        view. It is opaque only while the box is scrolled (the page script
@@ -8636,8 +8671,8 @@ html[data-theme="dark"] .btn-export {
 
       /* A phone shows each course as a card with its numbers (the global
          rule that hides every column after the fourth is overridden for
-         these tables): code and name, then demand | max | fill, then
-         M | F | Total sections, then the status when there is one. */
+         these tables): code and name, then demand | sections | max, then
+         the fill bar across the card, then the status when there is one. */
       .sp-page .sp-plan-table.mobile-cards tbody td:not(.mc-hide) { display: flex; }
       .sp-page .sp-plan-table.mobile-cards tbody tr { grid-template-columns: repeat(3, minmax(0, 1fr)); }
       .sp-page .sp-plan-table.mobile-cards td.mc-primary { flex-direction: row; flex-wrap: wrap; align-items: baseline; gap: 2px 6px; }
@@ -8645,12 +8680,10 @@ html[data-theme="dark"] .btn-export {
       .sp-page .sp-plan-table.mobile-cards td:not([data-label])::before { content: none; }
       .sp-page .sp-plan-table.mobile-cards td[colspan] { grid-column: 1 / -1; }
       .sp-page .sp-plan-table .sp-c-demand { order: 1; }
-      .sp-page .sp-plan-table .sp-c-max { order: 2; }
-      .sp-page .sp-plan-table .sp-c-fill { order: 3; min-width: 0; }
-      .sp-page .sp-plan-table .sp-sec-m { order: 4; }
-      .sp-page .sp-plan-table .sp-sec-f { order: 5; }
-      .sp-page .sp-plan-table .sp-sec-total { order: 6; }
-      .sp-page .sp-plan-table .sp-c-status { order: 7; grid-column: 1 / -1; align-items: flex-start; }
+      .sp-page .sp-plan-table .sp-c-sections { order: 2; }
+      .sp-page .sp-plan-table .sp-c-max { order: 3; }
+      .sp-page .sp-plan-table .sp-c-fill { order: 4; min-width: 0; grid-column: 1 / -1; }
+      .sp-page .sp-plan-table .sp-c-status { order: 5; grid-column: 1 / -1; align-items: flex-start; }
       .sp-page .sp-plan-table.mobile-cards tbody td.sp-c-status:empty { display: none; }
       .sp-page .sp-sum-table { font-size: .75rem; }
       .sp-page .sp-sum-table th, .sp-page .sp-sum-table td { padding: 4px 5px; }

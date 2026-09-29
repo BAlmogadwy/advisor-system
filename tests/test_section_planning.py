@@ -378,12 +378,13 @@ def test_section_plan_generate_returns_json(client: Client) -> None:
     _login_as(client, "sp-gen-ok", ROLE_GENERAL_ADVISOR)
     r = client.post(
         "/ops/section-planning/generate/",
-        json.dumps({"year": 1447, "semester": 1}),
+        json.dumps({"year": 1447, "semester": 1, "section": "M"}),
         content_type="application/json",
     )
     assert r.status_code == 200
     data = r.json()
     assert data["ok"] is True
+    assert data["section"] == "M"
     assert "plan" in data
     assert "summary" in data
     assert data["student_count"] >= 0
@@ -394,7 +395,7 @@ def test_section_plan_generate_validates_year(client: Client) -> None:
     _login_as(client, "sp-gen-yr", ROLE_GENERAL_ADVISOR)
     r = client.post(
         "/ops/section-planning/generate/",
-        json.dumps({"year": 999, "semester": 1}),
+        json.dumps({"year": 999, "semester": 1, "section": "M"}),
         content_type="application/json",
     )
     assert r.status_code == 400
@@ -405,7 +406,7 @@ def test_section_plan_export_returns_xlsx(client: Client) -> None:
     _login_as(client, "sp-export", ROLE_GENERAL_ADVISOR)
     r = client.post(
         "/ops/section-planning/export/",
-        json.dumps({"year": 1447, "semester": 1}),
+        json.dumps({"year": 1447, "semester": 1, "section": "F"}),
         content_type="application/json",
     )
     assert r.status_code == 200
@@ -482,7 +483,7 @@ def test_section_plan_generate_multi_program(client: Client) -> None:
     _login_as(client, "sp-multi-prog", ROLE_GENERAL_ADVISOR)
     r = client.post(
         "/ops/section-planning/generate/",
-        json.dumps({"year": 1447, "semester": 1, "program": "AI,DS"}),
+        json.dumps({"year": 1447, "semester": 1, "program": "AI,DS", "section": "F"}),
         content_type="application/json",
     )
     assert r.status_code == 200
@@ -503,6 +504,7 @@ def test_section_plan_generate_with_overrides(client: Client) -> None:
             {
                 "year": 1447,
                 "semester": 1,
+                "section": "M",
                 "course_overrides": {"CS101": 15, "AI201": 30},
             }
         ),
@@ -535,8 +537,8 @@ def test_section_plan_generate_combined_splits_same_code_different_plan_names(
         course_name="FUNDAMENTALS OF PROGRAMMING",
         credit_hours=4,
     )
-    Student.objects.create(student_id=991101, registration_no="991101", program="AI")
-    Student.objects.create(student_id=992101, registration_no="992101", program="AI2")
+    Student.objects.create(student_id=991101, registration_no="991101", program="AI", section="F")
+    Student.objects.create(student_id=992101, registration_no="992101", program="AI2", section="F")
 
     monkeypatch.setattr(
         "core.services.reporting.batch_recommend_multi_program",
@@ -545,7 +547,7 @@ def test_section_plan_generate_combined_splits_same_code_different_plan_names(
 
     response = client.post(
         "/ops/section-planning/generate/",
-        json.dumps({"year": 1448, "semester": 1}),
+        json.dumps({"year": 1448, "semester": 1, "section": "F"}),
         content_type="application/json",
     )
 
