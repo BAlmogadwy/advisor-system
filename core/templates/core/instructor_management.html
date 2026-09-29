@@ -39,10 +39,10 @@
 <div class="im-tab-content im-tab-content-active" role="tabpanel" id="imTabAssignments" aria-labelledby="imTabBtnAssignments">
 
   <!-- Control bar (mirroring section_planning.html pattern) -->
-  <div class="filter-bar sticky-cta mb-0">
-    <div class="fb-search fb-w-120">
+  <div class="filter-bar fb-fit sticky-cta mb-0">
+    <div class="fb-search">
       <label class="fb-lbl" for="caProgram">{% if LANGUAGE_CODE == 'ar' %}البرنامج{% else %}Program{% endif %}</label>
-      <select id="caProgram" class="form-control form-control-compact" onchange="ca.loadCourses()">
+      <select id="caProgram" onchange="ca.loadCourses()">
         <option value="">{% if LANGUAGE_CODE == 'ar' %}اختر برنامج…{% else %}Select program…{% endif %}</option>
         <option value="AI">AI</option>
         <option value="AI2">AI2</option>
@@ -62,18 +62,19 @@
       <button type="button" class="ca-seg-btn ca-seg-active" data-sec="M" role="radio" aria-checked="true" onclick="ca.setSection('M')">M</button>
       <button type="button" class="ca-seg-btn" data-sec="F" role="radio" aria-checked="false" onclick="ca.setSection('F')">F</button>
     </div>
-    <div class="fb-search" style="min-width:200px;max-width:280px">
+    <div class="fb-search fb-grow">
       <label class="fb-lbl" for="caSearch">{% if LANGUAGE_CODE == 'ar' %}البحث{% else %}Search{% endif %}</label>
-      <input id="caSearch" class="form-control form-control-compact" placeholder="{% if LANGUAGE_CODE == 'ar' %}رمز أو اسم المقرر…{% else %}Course code or name…{% endif %}" oninput="ca.filterCourses()">
+      <input id="caSearch" class="fb-w-20ch" placeholder="{% if LANGUAGE_CODE == 'ar' %}رمز أو اسم المقرر…{% else %}Course code or name…{% endif %}" oninput="ca.filterCourses()">
     </div>
-    <div class="fb-spacer"></div>
-    <div class="ca-pill is-assigned" id="caAssigned" aria-live="polite">
-      <span class="ca-pill-count">0</span>
-      <span class="ca-pill-label">{% if LANGUAGE_CODE == 'ar' %}مُوزع{% else %}Assigned{% endif %}</span>
-    </div>
-    <div class="ca-pill is-unassigned" id="caUnassigned" aria-live="polite">
-      <span class="ca-pill-count">0</span>
-      <span class="ca-pill-label">{% if LANGUAGE_CODE == 'ar' %}غير مُوزع{% else %}Unassigned{% endif %}</span>
+    <div class="fb-actions">
+      <div class="ca-pill is-assigned" id="caAssigned" aria-live="polite">
+        <span class="ca-pill-count">0</span>
+        <span class="ca-pill-label">{% if LANGUAGE_CODE == 'ar' %}مُوزع{% else %}Assigned{% endif %}</span>
+      </div>
+      <div class="ca-pill is-unassigned" id="caUnassigned" aria-live="polite">
+        <span class="ca-pill-count">0</span>
+        <span class="ca-pill-label">{% if LANGUAGE_CODE == 'ar' %}غير مُوزع{% else %}Unassigned{% endif %}</span>
+      </div>
     </div>
   </div>
 
