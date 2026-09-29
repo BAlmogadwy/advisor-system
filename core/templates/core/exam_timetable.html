@@ -6,7 +6,7 @@
 
 {% block main_attrs %}data-exam-builder="true" data-can-delete-exam-timetable="{{ can_delete_exam_timetable|yesno:'true,false' }}" data-can-edit-exam-timetable="{{ can_edit_exam_timetable|yesno:'true,false' }}"{% endblock %}
 {% block main_padding %}p-4 exam-builder-page{% endblock %}
-{% block extra_css %}<link href="{% static 'css/page-exam-timetable.css' %}?v=28" rel="stylesheet"><link href="{% static 'css/page-exam-rosters.css' %}?v=2" rel="stylesheet">{% endblock %}
+{% block extra_css %}<link href="{% static 'css/page-exam-timetable.css' %}?v=30" rel="stylesheet"><link href="{% static 'css/page-exam-rosters.css' %}?v=2" rel="stylesheet">{% endblock %}
 
 {% block page_heading %}{% if LANGUAGE_CODE == 'ar' %}جدول الاختبارات{% else %}Exam Timetable{% endif %}{% endblock %}
 
@@ -318,7 +318,7 @@
   const djCsrfToken = "{{ csrf_token }}";
 </script>
 <script src="{% static 'js/exam-review.js' %}?v=8"></script>
-<script src="{% static 'js/page-exam-timetable.js' %}?v=34"></script>
+<script src="{% static 'js/page-exam-timetable.js' %}?v=35"></script>
 <script src="{% static 'js/exam-student-export.js' %}?v=3"></script>
 <script src="{% static 'js/exam-roster.js' %}?v=2"></script>
 <script src="{% static 'js/exam-roster-drawer.js' %}?v=2"></script>

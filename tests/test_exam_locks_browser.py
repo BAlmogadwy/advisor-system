@@ -259,8 +259,9 @@ class ExamLocksBrowserTests(StaticLiveServerTestCase):
         page = self._page(language, width, self.locked_run, **options)
         page.evaluate("async () => { await document.fonts.ready; return true; }")
         facts = page.evaluate(LAYOUT)
-        # A toggle for every day and every period cell: 4 days x 2 periods.
-        self.assertEqual(facts["toggles"], len(DAYS) * (len(PERIODS) + 1), where)
+        # A toggle for every day and every period cell (4 days x 2 periods), and
+        # one per period column in the header, each inside its own cell.
+        self.assertEqual(facts["toggles"], len(DAYS) * (len(PERIODS) + 1) + len(PERIODS), where)
         self.assertEqual(facts["outside"], [], where)
         self.assertEqual(facts["small"], [], where)
         self.assertEqual(facts["underCards"], 0, where)
@@ -318,14 +319,43 @@ class ExamLocksBrowserTests(StaticLiveServerTestCase):
         self._assert_layout("en", 1440, forced=True)
         self._assert_layout("ar", 390, forced=True)
 
+    def test_a_locked_column_header_looks_locked_like_its_cells(self) -> None:
+        # Its header takes the locked tint and stripes, and in High Contrast
+        # the same dashed frame as a locked cell.
+        look = """(period) => {
+          const header = [...document.querySelectorAll('#schedGrid thead th')].find(th => th.textContent.includes(period));
+          const c = getComputedStyle(header);
+          return { locked: header.classList.contains('et-locked'), stripes: c.backgroundImage, outline: c.outlineStyle };
+        }"""
+        for forced in (False, True):
+            page = self._page("en", 1440, self.open_run, forced=forced)
+            page.locator(f'[data-lock-column="{PERIODS[0]}"]').click()
+            expect(page.locator(f'[data-lock-column="{PERIODS[0]}"]')).to_have_attribute(
+                "aria-pressed", "true"
+            )
+            header = page.evaluate(look, PERIODS[0])
+            self.assertTrue(header["locked"], forced)
+            if forced:
+                self.assertEqual(header["outline"], "dashed")
+            else:
+                self.assertIn("repeating-linear-gradient", header["stripes"])
+            other = page.evaluate(look, PERIODS[1])
+            self.assertFalse(other["locked"])
+            self.assertEqual(other["stripes"], "none")
+
     def test_locks_work_from_the_keyboard_and_save_through_check_and_save(self) -> None:
         page = self._page("en", 1440, self.open_run)
-        # The grid region, then Tab: the first control in the timetable is Sun's lock.
+        # The grid region, then Tab: the header's column locks come first, one per
+        # period, each with a visible ring; then Sun's day lock.
         page.locator("#schedGrid").focus()
+        state = "() => [document.activeElement.getAttribute('aria-label'), document.activeElement.getAttribute('aria-pressed'), getComputedStyle(document.activeElement).outlineStyle]"
+        for period in PERIODS:
+            page.keyboard.press("Tab")
+            self.assertEqual(
+                page.evaluate(state), [f"Lock period {period} on every day", "false", "solid"]
+            )
         page.keyboard.press("Tab")
-        focused = page.evaluate(
-            "() => [document.activeElement.getAttribute('aria-label'), document.activeElement.getAttribute('aria-pressed'), getComputedStyle(document.activeElement).outlineStyle]"
-        )
+        focused = page.evaluate(state)
         self.assertEqual(focused, ["Lock day Sun", "false", "solid"])
         page.keyboard.press("Space")
         # Drawn again, the toggle keeps the keyboard, pressed now.
