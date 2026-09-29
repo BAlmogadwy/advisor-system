@@ -134,6 +134,9 @@ def exam_timetable_page(request: HttpRequest) -> HttpResponse:
         return deny
     context = get_sidebar_context(request)
     context["can_delete_exam_timetable"] = get_user_role(request.user) == ROLE_SUPER_ADMIN
+    # Who may change a saved timetable - lock or unlock a day or period among
+    # it - is who may Save: the rule every build and save endpoint applies.
+    context["can_edit_exam_timetable"] = _require_exam_access(request) is None
     return render(request, "core/exam_timetable.html", context)
 
 
