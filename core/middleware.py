@@ -40,6 +40,7 @@ class ExamCommitteeAccessMiddleware:
             "exam_timetable_draft_impact",
             "exam_timetable_list",
             "exam_timetable_detail",
+            "exam_timetable_scope_courses",
             "exam_timetable_copy",
             "exam_timetable_export",
             "exam_department_options",

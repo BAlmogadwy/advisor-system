@@ -964,6 +964,9 @@ def test_only_the_exam_committee_and_super_admins_may_add(saved_part, client, dj
     client.force_login(member)
     added = _add(client, built, _identities(codes[6:7]))
     assert added["ok"] is True
+    # The list the page opens first: a committee account may read it.
+    listed = client.get(reverse("exam_timetable_scope_courses", args=[built["run_id"]]))
+    assert listed.status_code == 200, listed.content
     other = django_user_model.objects.create_user(username="other", password="x")
     client.force_login(other)
     response = client.post(
