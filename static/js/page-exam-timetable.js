@@ -956,10 +956,12 @@ $('buildBtn').addEventListener('click', async () => {
       linked_exams: linkedExams,
       randomize,
       thin_conflict_threshold: thinThreshold,
-      // The saved run the locks are kept from: sent alone, its locks are
-      // inherited; after an explicit unlock, the locks still kept are sent.
+      // The saved run the locks are kept from, and the locks kept - always
+      // named. Left to inheritance, a saved run deleted since Load Courses
+      // (in another tab, by a colleague) would build with no locks and no
+      // word; named, it is refused (exam_locks_source_required).
       previous_run_id: locks.keep ? locks.runId : _currentResultData?.run_id,
-      ...(locks.keep && !locks.inherit ? { exam_locks: locks.locks } : {}),
+      ...(locks.keep ? { exam_locks: locks.locks } : {}),
       base_schedule: baseSchedule && baseSchedule.length ? baseSchedule : undefined,
     };
     const { res, data, refusal } = await submitExamAction(payload, 'build', $('buildBtn'));
@@ -1645,11 +1647,14 @@ function jobRefusalReason(data) {
   if (code === 'check_required') return JOB_TEXT.checkRequired;
   // Said as a reason, not as the live page's advice: the draft it would speak
   // of may be gone with the page that submitted it. (A job's result carries
-  // only these codes - execute_exam_action - or a feasibility report, or an
-  // error in words.)
+  // these codes - execute_exam_action - a lock refusal, a feasibility report,
+  // or an error in words.)
   if (code === 'courses_unavailable') {
     return JOB_TEXT.coursesUnavailable(Array.isArray(data.unavailable_courses) ? data.unavailable_courses.map(String).join(', ') : '');
   }
+  // A lock refusal in the page's language, naming the cell and courses the
+  // answer names - never the page's own locks, which may have changed since.
+  if (typeof code === 'string' && code.startsWith('exam_locks')) return examLocksRefusal(data).message;
   if (typeof data?.error === 'string' && data.error) return IS_AR ? isolate(data.error) : data.error;
   return '';
 }
@@ -4627,7 +4632,7 @@ function examCourseCardMarkup(course, { classes, attributes = '', actions = '', 
   // `note`: a state the card's name carries, as "locked" in a locked cell.
   const label = `${code} — ${fullName || code}${note ? ` (${note})` : ''}`;
   const onlineLabel = IS_AR ? 'مقرر عن بُعد' : 'Online course';
-  return `<span class="et-course-card ${classes}" role="group" tabindex="-1" aria-label="${escapeAttr(label)}" title="${escapeAttr(label)}"${note ? ` data-exam-note="${escapeAttr(note)}"` : ''} ${attributes}><strong class="et-course-code">${pinned ? `<span class="et-pin-lock" aria-hidden="true">${examCourseIcon('lock')}</span> ` : ''}${escapeAttr(code)}${course?.is_online ? ` <span class="et-course-online" role="img" aria-label="${onlineLabel}" title="${onlineLabel}">${examCourseIcon('online')}</span>` : ''}</strong>${shortName ? `<span class="et-course-short-name">${escapeAttr(shortName)}</span><span class="et-course-full-name" aria-hidden="true">${escapeAttr(fullName)}</span>` : ''}${actions}${extra}<span class="et-review-badges"></span></span>`;
+  return `<span class="et-course-card ${classes}" role="group" tabindex="-1" aria-label="${escapeAttr(label)}" title="${escapeAttr(label)}"${note ? ` data-exam-note="${escapeAttr(note)}"` : ''} ${attributes}><strong class="et-course-code">${pinned ? `<span class="et-pin-lock" aria-hidden="true">${examCourseIcon('pin')}</span> ` : ''}${escapeAttr(code)}${course?.is_online ? ` <span class="et-course-online" role="img" aria-label="${onlineLabel}" title="${onlineLabel}">${examCourseIcon('online')}</span>` : ''}</strong>${shortName ? `<span class="et-course-short-name">${escapeAttr(shortName)}</span><span class="et-course-full-name" aria-hidden="true">${escapeAttr(fullName)}</span>` : ''}${actions}${extra}<span class="et-review-badges"></span></span>`;
 }
 
 /* ── Render schedule as day×period grid ── */
@@ -5341,6 +5346,17 @@ $('schedGrid').addEventListener('dragstart', event => {
   }
   event.dataTransfer.setData('text/plain', chip.dataset.course);
   event.dataTransfer.effectAllowed = 'move';
+  _dragCode = chip.dataset.course;
+  _dragRefusedCell = null;
+});
+// A browser fires no drop on a cell that refused the drag (a locked one), so
+// the refusal is said when the drag ends there: the card being dragged, and the
+// locked cell the pointer was last over. Tracked page-wide, so a drag that
+// left the board for anywhere else ends without a word.
+let _dragCode = null;
+let _dragRefusedCell = null;
+document.addEventListener('dragover', event => {
+  if (_dragCode) _dragRefusedCell = event.target?.closest?.('#schedGrid td[data-day][data-locked="true"]') || null;
 });
 $('schedGrid').addEventListener('dragover', event => {
   const cell = event.target.closest('td[data-day]');
@@ -5359,6 +5375,15 @@ $('schedGrid').addEventListener('dragover', event => {
 $('schedGrid').addEventListener('dragleave', event => event.target.closest('td')?.classList.remove('et-drag-over', 'et-drag-refused'));
 $('schedGrid').addEventListener('dragend', () => {
   $('schedGrid').querySelectorAll('.et-drag-over, .et-drag-refused').forEach(item => item.classList.remove('et-drag-over', 'et-drag-refused'));
+  const code = _dragCode;
+  const refused = _dragRefusedCell;
+  _dragCode = null;
+  _dragRefusedCell = null;
+  // Released over a locked cell: nothing moved, and the page says why. A drag
+  // that ended anywhere else was last over something that cleared the cell.
+  if (!code || !refused?.isConnected || _builderBusy) return;
+  const { day, period } = refused.dataset;
+  refuseLockedEdit(lockMoveProblem(code, day, period) || LOCK_TEXT.lockedIn(day, period));
 });
 $('schedGrid').addEventListener('drop', event => {
   event.preventDefault();
@@ -6398,12 +6423,18 @@ function lockHeaderProblem(header) {
   return '';
 }
 
-// Said at the board, and in the setup's status line: a refusal made before any request.
+// Said at the board, and in the setup's status line: a refusal made before any
+// request. The board's alert keeps to the foot of the viewport while the board
+// is in view, so a refusal far down the board is seen where it happened.
+let _refusalReturnFocus = null;
 function refuseLockedEdit(message) {
   const alert = $('examLockRefusal');
   if (alert && !$('etResults').classList.contains('d-none')) {
-    alert.textContent = message;
+    $('examLockRefusalText').textContent = message;
     alert.hidden = false;
+    // The control that was refused, for the keyboard to return to on Close.
+    const active = document.activeElement;
+    if (active !== $('examLockRefusalClose')) _refusalReturnFocus = active && $('etResults').contains(active) ? active : null;
   }
   $('etStatus').textContent = message;
   $('etStatus').className = 'alert alert-warning mt-2 py-2 mb-0';
@@ -6414,9 +6445,18 @@ function clearLockRefusal() {
   const alert = $('examLockRefusal');
   if (alert && !alert.hidden) {
     alert.hidden = true;
-    alert.textContent = '';
+    $('examLockRefusalText').textContent = '';
   }
 }
+$('examLockRefusalClose')?.addEventListener('click', () => {
+  // Closed from the keyboard: focus goes back to the refused control, or the
+  // board - never to the top of the page.
+  const refocus = document.activeElement === $('examLockRefusalClose');
+  const back = _refusalReturnFocus?.isConnected ? _refusalReturnFocus : $('schedGrid');
+  _refusalReturnFocus = null;
+  clearLockRefusal();
+  if (refocus) back?.focus({ preventScroll: true });
+});
 
 // Lock or unlock a whole day (no period) or one period. Locking one period of
 // a locked day is not offered: its button unlocks just that period, and the
@@ -6614,9 +6654,7 @@ function validatedBuildLocks(header, scope) {
     }
   }
   const facts = buildLockFacts(header);
-  // All the saved locks kept: the server inherits them from the saved run.
-  const inherit = lockSignatureOf(_examLocks) === lockSignatureOf(_lockSource.run?.exam_locks);
-  return { keep: true, runId: _lockSource.runId, inherit, locks: lockPayload(), ...facts };
+  return { keep: true, runId: _lockSource.runId, locks: lockPayload(), ...facts };
 }
 
 // The review list's rows: the report kept inside locked cells, by kind.

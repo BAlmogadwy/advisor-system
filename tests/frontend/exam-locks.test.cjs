@@ -191,6 +191,33 @@ const drop = (ui, code, day, period) => {
   Object.defineProperty(event, 'dataTransfer', { value: { getData: () => code } });
   cell(ui, day, period).dispatchEvent(event);
 };
+// A drag as a browser runs it: a dragover on each place passed, a drop only
+// where the last dragover was cancelled, then dragend on the card that was
+// dragged - which, moved and drawn again, is no longer on the board.
+function browserDrag(ui, code, places) {
+  const source = card(ui, code);
+  const transfer = { dropEffect: 'none', effectAllowed: 'none', setData() {}, getData: () => code };
+  const fire = (target, type) => {
+    const event = new ui.window.Event(type, { bubbles: true, cancelable: true });
+    Object.defineProperty(event, 'dataTransfer', { value: transfer });
+    target.dispatchEvent(event);
+    return event;
+  };
+  if (fire(source, 'dragstart').defaultPrevented) return false;
+  let accepted = false;
+  for (const place of places) {
+    transfer.dropEffect = 'none';
+    accepted = fire(place, 'dragover').defaultPrevented;
+  }
+  if (accepted) {
+    transfer.dropEffect = 'move';
+    fire(places.at(-1), 'drop');
+  } else {
+    transfer.dropEffect = 'none';
+  }
+  fire(source, 'dragend');
+  return accepted;
+}
 const refusal = ui => (ui.$('examLockRefusal').hidden ? '' : plain(ui.$('examLockRefusal').textContent));
 const lockRows = ui => Array.from(ui.$('examLockRows').querySelectorAll('tr'));
 
@@ -289,14 +316,34 @@ test('the Exam Committee may save, so it may lock', async t => {
 test('drops and moves into or out of a locked cell are refused before any request', async t => {
   const ui = await loaded(t);
   const before = ui.requests.length;
-  drop(ui, 'CS111 (2)', 'Sun', P3);
+  // A browser fires no drop on a cell that refused the drag: the refusal is
+  // said when the drag ends over it.
+  assert.equal(browserDrag(ui, 'CS111 (2)', [cell(ui, 'Mon', P3), cell(ui, 'Sun', P3)]), false);
   assert.deepEqual(placement(ui, 'CS111 (2)'), ['Wed', P1]);
   assert.equal(refusal(ui), TEXT.lockedIn('Sun', P3));
   assert.equal(ui.$('examLockRefusal').getAttribute('role'), 'alert');
+  // Said at the foot of the board, not in the toolbar that scrolls away with it.
+  assert.equal(ui.$('examEditToolbar').contains(ui.$('examLockRefusal')), false);
+  assert.equal(ui.$('examLockRefusal').parentElement, ui.$('examScheduleWorkspace'));
+  ui.$('examLockRefusalClose').click();
+  assert.equal(refusal(ui), '');
+  // Over a locked cell and then off the board: ended elsewhere, nothing said.
+  browserDrag(ui, 'CS111 (2)', [cell(ui, 'Sun', P3), ui.window.document.body]);
+  assert.equal(refusal(ui), '');
+  // Over a locked cell and dropped on an open one: it moves, nothing said.
+  assert.equal(browserDrag(ui, 'CS111 (2)', [cell(ui, 'Sun', P3), cell(ui, 'Mon', P3)]), true);
+  assert.deepEqual(placement(ui, 'CS111 (2)'), ['Mon', P3]);
+  assert.equal(refusal(ui), '');
+  ui.$('undoExamBtn').click();
+  assert.deepEqual(placement(ui, 'CS111 (2)'), ['Wed', P1]);
+  // A synthetic drop, which a browser never sends here, meets the same rule.
+  drop(ui, 'CS111 (2)', 'Sun', P3);
+  assert.deepEqual(placement(ui, 'CS111 (2)'), ['Wed', P1]);
+  assert.equal(refusal(ui), TEXT.lockedIn('Sun', P3));
   drop(ui, 'AI212', 'Mon', P3);
   assert.deepEqual(placement(ui, 'AI212'), ['Sun', P1]);
   assert.equal(refusal(ui), TEXT.lockedOut('AI212', 'Sun', P1));
-  assert.equal(ui.$('undoExamBtn').disabled, true);
+  assert.equal(ui.$('undoExamBtn').disabled, true, 'The refused drops left no step to undo');
   // A locked card never starts a drag, and a locked cell takes none.
   const start = new ui.window.Event('dragstart', { bubbles: true, cancelable: true });
   Object.defineProperty(start, 'dataTransfer', { value: { setData() {} } });
@@ -323,9 +370,17 @@ test('drops and moves into or out of a locked cell are refused before any reques
   assert.deepEqual(placement(ui, 'CS111 (2)'), ['Mon', P2]);
   assert.equal(refusal(ui), '', 'An edit that went through clears the refusal');
   // Move on a locked card explains itself and opens nothing.
-  card(ui, 'AI212').querySelector('[data-exam-move]').click();
+  const lockedMove = card(ui, 'AI212').querySelector('[data-exam-move]');
+  lockedMove.focus();
+  lockedMove.click();
   assert.equal(ui.$('examMoveDialog').hasAttribute('open'), false);
   assert.equal(refusal(ui), TEXT.lockedOut('AI212', 'Sun', P1));
+  // Closed from the keyboard, the message hands focus back to the refused control.
+  assert.equal(plain(ui.$('examLockRefusalClose').getAttribute('aria-label')), AR ? 'إغلاق الرسالة' : 'Close message');
+  ui.$('examLockRefusalClose').focus();
+  ui.$('examLockRefusalClose').click();
+  assert.equal(refusal(ui), '');
+  assert.equal(ui.window.document.activeElement, lockedMove);
   assert.equal(ui.requests.length, before, 'Nothing was sent');
 });
 
@@ -355,6 +410,12 @@ test('pins into or out of a locked cell are refused, from the card and from the 
   ui.select('examPinPeriod', P1);
   ui.$('applyExamPin').click();
   assert.equal(ui.$('examPinRows').querySelectorAll('tr').length, 1);
+  // A pinned card is marked with the pin, never the padlock a locked cell shows.
+  const pinned = card(ui, 'CS111 (2)');
+  const mark = pinned.querySelector('.et-pin-lock svg').innerHTML;
+  assert.equal(mark, pinned.querySelector('[data-exam-pin] svg').innerHTML);
+  assert.notEqual(mark, ui.$('schedGrid').querySelector('.et-lock-badge svg').innerHTML);
+  assert.doesNotMatch(mark, /<rect/);
   assert.equal(ui.requests.length, before);
 });
 
@@ -518,7 +579,7 @@ test('a run saved without rooms is given rooms on its next Check and Save before
   assert.equal(fresh.$('saveLoadedBtn').disabled, true);
 });
 
-test('a Build from a saved run with locks says what it keeps, and inherits them', async t => {
+test('a Build from a saved run with locks says what it keeps, and names the saved run and the locks', async t => {
   const ui = await loaded(t);
   ui.$('loadCoursesBtn').click();
   await settled();
@@ -539,13 +600,14 @@ test('a Build from a saved run with locks says what it keeps, and inherits them'
   assert.ok(plain(ui.dialogs[0].body).includes(keeps), ui.dialogs[0].body);
   assert.equal(ui.dialogs[0].confirmLabel, AR ? 'بناء' : 'Build');
   assert.equal(builds(ui).length, 0);
-  // Confirmed: the saved run is named, and its locks are inherited.
+  // Confirmed: the saved run and the locks it keeps are both named - never
+  // left to inheritance, which a deleted saved run would turn into no locks.
   ui.state.confirm = true;
   ui.$('buildBtn').click();
   await settled();
   const [build] = builds(ui);
   assert.equal(build.previous_run_id, 17);
-  assert.equal('exam_locks' in build, false);
+  assert.deepEqual(build.exam_locks, LOCKS);
   assert.equal('mode' in build, false);
   // An explicit unlock is the only way to let Build change a locked cell.
   lockRows(ui)[1].querySelector('[data-lock-remove]').click();
@@ -567,6 +629,49 @@ test('a Build from a saved run with locks says what it keeps, and inherits them'
   const third = builds(ui)[2];
   assert.equal('exam_locks' in third, false);
   assert.equal('previous_run_id' in third, false, 'Exactly the Build made before locks existed');
+});
+
+// What core.services.exam_locks.settle_build_request does with a Build: locks
+// named are kept from previous_run_id, which must still exist; locks not named
+// are the saved run's - or none at all, when it is gone.
+function settledBuild(body, source) {
+  if ('exam_locks' in body) {
+    if (!body.exam_locks.length) return { locks: [] };
+    if (!source) {
+      return { refusal: { ok: false, code: 'exam_locks_source_required', field: 'previous_run_id', error: 'Locks keep a saved timetable as it is. Load the saved timetable, then lock it.' } };
+    }
+    return { locks: body.exam_locks };
+  }
+  return { locks: source?.exam_locks || [] };
+}
+
+test('a Build whose saved run was deleted meanwhile is refused, never built without its locks', async t => {
+  const run = savedRun();
+  let source = run;
+  const built = [];
+  const ui = await loaded(t, { run, onRequest: async (url, options) => {
+    const body = options.body ? JSON.parse(options.body) : null;
+    if (url !== '/ops/exam-timetable/build/' || body?.mode) return undefined;
+    const settled = settledBuild(body, source);
+    if (settled.refusal) return reply(settled.refusal, 400);
+    built.push(settled.locks);
+    return reply({ ...savedRun({ locks: settled.locks, runId: 19 }), label: body.label });
+  } });
+  ui.$('loadCoursesBtn').click();
+  await settled();
+  assert.equal(lockRows(ui).length, 2);
+  // Another tab, or a colleague, deletes the saved run the locks come from.
+  source = null;
+  ui.$('buildBtn').click();
+  await settled();
+  assert.ok(plain(ui.dialogs.at(-1).body).includes(AR ? 'يُبقي البناء 4 فترات مقفلة' : 'Build keeps 4 locked cells'));
+  const [build] = builds(ui);
+  assert.deepEqual(build.exam_locks, LOCKS);
+  assert.deepEqual(built, [], 'Nothing was built without its locks');
+  assert.equal(plain(ui.$('etStatus').textContent), `${AR ? 'خطأ' : 'Error'}: ${AR
+    ? 'يُبقي القفل الجدول المحفوظ كما هو. حمّل الجدول المحفوظ ثم اقفله.'
+    : 'A lock keeps a saved timetable as it is. Load the saved timetable, then lock it.'}`);
+  assert.equal(ui.$('etStatus').classList.contains('alert-danger'), true);
 });
 
 test('a Build with locks is refused for an unselected locked exam, a changed start day or another scope', async t => {

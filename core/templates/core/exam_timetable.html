@@ -6,7 +6,7 @@
 
 {% block main_attrs %}data-exam-builder="true" data-can-delete-exam-timetable="{{ can_delete_exam_timetable|yesno:'true,false' }}" data-can-edit-exam-timetable="{{ can_edit_exam_timetable|yesno:'true,false' }}"{% endblock %}
 {% block main_padding %}p-4 exam-builder-page{% endblock %}
-{% block extra_css %}<link href="{% static 'css/page-exam-timetable.css' %}?v=27" rel="stylesheet"><link href="{% static 'css/page-exam-rosters.css' %}?v=2" rel="stylesheet">{% endblock %}
+{% block extra_css %}<link href="{% static 'css/page-exam-timetable.css' %}?v=28" rel="stylesheet"><link href="{% static 'css/page-exam-rosters.css' %}?v=2" rel="stylesheet">{% endblock %}
 
 {% block page_heading %}{% if LANGUAGE_CODE == 'ar' %}جدول الاختبارات{% else %}Exam Timetable{% endif %}{% endblock %}
 
@@ -176,8 +176,6 @@
         </div>
         <div id="examRepairReport" class="et-repair-report" role="status" aria-live="polite"></div>
         <div id="examEditorRequestError" class="alert alert-danger et-request-error" role="alert" hidden></div>
-        {# A move, pin or lock the page refused before sending anything: said at the board. #}
-        <div id="examLockRefusal" class="alert alert-warning et-request-error et-lock-refusal" role="alert" hidden></div>
         {# News at the board, not an error: said aloud through #examJobLive. #}
         <div id="examEditorNotice" class="alert alert-info et-request-error" hidden></div>
         <section id="examSourceReviewNotice" class="et-section-mapping-notice" aria-labelledby="examSourceReviewHeading" hidden>
@@ -242,6 +240,8 @@
         <small id="lockBarIssues" class="et-lock-bar-issues"></small>
         <button id="lockBarReview" type="button" class="btn btn-sm btn-outline-secondary" data-open-drill="exam-locks" aria-controls="kpiDrill" aria-expanded="false" hidden>{% if LANGUAGE_CODE == 'ar' %}مراجعة الفترات المقفلة{% else %}Review locked cells{% endif %}</button>
       </div>
+      {# A move, pin or lock the page refused before sending anything: kept in view at the foot of the board (sticky), wherever on it the action was. #}
+      <div id="examLockRefusal" class="alert alert-warning et-lock-refusal" role="alert" hidden><span id="examLockRefusalText"></span><button id="examLockRefusalClose" type="button" class="et-lock-refusal-close" aria-label="{% if LANGUAGE_CODE == 'ar' %}إغلاق الرسالة{% else %}Close message{% endif %}"><span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></span></button></div>
     </section>
 
     <!-- Conflict Matrix (collapsed by default) -->
@@ -318,7 +318,7 @@
   const djCsrfToken = "{{ csrf_token }}";
 </script>
 <script src="{% static 'js/exam-review.js' %}?v=8"></script>
-<script src="{% static 'js/page-exam-timetable.js' %}?v=33"></script>
+<script src="{% static 'js/page-exam-timetable.js' %}?v=34"></script>
 <script src="{% static 'js/exam-student-export.js' %}?v=3"></script>
 <script src="{% static 'js/exam-roster.js' %}?v=2"></script>
 <script src="{% static 'js/exam-roster-drawer.js' %}?v=2"></script>

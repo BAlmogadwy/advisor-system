@@ -95,6 +95,44 @@ FITS = """(id) => {
       .map(node => node.textContent),
   };
 }"""
+# The refusal alert on screen, and its Close button not under anything (the
+# page's back-to-top button sits in the same corner on a phone).
+REFUSAL_SEEN = """() => {
+  const alert = document.getElementById('examLockRefusal');
+  const r = alert.getBoundingClientRect();
+  const close = document.getElementById('examLockRefusalClose').getBoundingClientRect();
+  const hit = document.elementFromPoint(close.left + close.width / 2, close.top + close.height / 2);
+  return {
+    shown: !alert.hidden && r.height > 0,
+    inView: r.bottom > 0 && r.top < innerHeight && r.left >= 0 && r.right <= innerWidth,
+    closeFree: Boolean(hit && hit.closest('#examLockRefusalClose')),
+  };
+}"""
+# Where a card is on the board: [day, period].
+PLACE = """code => {
+  const card = [...document.querySelectorAll('#schedGrid .et-course')].find(item => item.dataset.course === code);
+  const cell = card.closest('td');
+  return [cell.dataset.day, cell.dataset.period];
+}"""
+# Resolves once the page has stopped moving for ten frames: the editor scrolls
+# itself into view after a load, and a drag measured before that lands elsewhere.
+SETTLED = """async () => {
+  const at = () => JSON.stringify([scrollX, scrollY, document.documentElement.scrollHeight]);
+  let last = at();
+  for (let still = 0; still < 10;) {
+    await new Promise(resolve => requestAnimationFrame(resolve));
+    const now = at();
+    still = now === last ? still + 1 : 0;
+    last = now;
+  }
+  return true;
+}"""
+# Words the page wraps in left-to-right isolates inside Arabic, without them.
+ISOLATES = {code: None for code in range(0x2066, 0x206A)}
+
+
+def _plain(text: str | None) -> str:
+    return (text or "").translate(ISOLATES).strip()
 
 
 @override_settings(EXAM_JOBS_ENABLED=False)
@@ -164,7 +202,15 @@ class ExamLocksBrowserTests(StaticLiveServerTestCase):
         return response.json()
 
     def _page(
-        self, language: str, width: int, run: int, *, wide_font=False, theme="light", forced=False
+        self,
+        language: str,
+        width: int,
+        run: int,
+        *,
+        wide_font=False,
+        theme="light",
+        forced=False,
+        height=900,
     ):
         user = get_user_model().objects.create_user(
             username=f"locks-{language}-{get_user_model().objects.count()}"
@@ -175,7 +221,7 @@ class ExamLocksBrowserTests(StaticLiveServerTestCase):
         context = self.browser.new_context(
             locale="ar" if language == "ar" else "en-US",
             extra_http_headers={"Accept-Language": language},
-            viewport={"width": width, "height": 900},
+            viewport={"width": width, "height": height},
             forced_colors="active" if forced else "none",
         )
         context.add_cookies(
@@ -328,3 +374,115 @@ class ExamLocksBrowserTests(StaticLiveServerTestCase):
         expect(
             page.locator(f'[data-lock-day="Sun"][data-lock-period="{PERIODS[0]}"]')
         ).to_have_attribute("aria-pressed", "false")
+
+    def test_a_drag_onto_a_locked_cell_is_refused_there_in_words(self) -> None:
+        # A browser fires no drop on a cell that refused the drag: the page says
+        # why when the drag ends over it, in the page's language.
+        for language in ("en", "ar"):
+            page = self._page(language, 1440, self.locked_run)
+            source = page.locator(
+                '#schedGrid td[data-day]:not([data-locked="true"]) .et-course[draggable="true"]'
+            ).first
+            code = source.get_attribute("data-course")
+            home = page.evaluate(PLACE, code)
+            source.scroll_into_view_if_needed()
+            page.evaluate(SETTLED)
+            source.drag_to(
+                page.locator(f'#schedGrid td[data-day="Sun"][data-period="{PERIODS[1]}"]')
+            )
+            self.assertEqual(page.evaluate(PLACE, code), home, language)
+            expect(page.locator("#examLockRefusal")).to_be_visible()
+            self.assertEqual(
+                _plain(page.locator("#examLockRefusalText").text_content()),
+                f"Sun {PERIODS[1]} مقفلة — ألغِ قفلها أولاً."
+                if language == "ar"
+                else f"Sun {PERIODS[1]} is locked — unlock it first.",
+            )
+            seen = page.evaluate(REFUSAL_SEEN)
+            self.assertEqual(seen, {"shown": True, "inView": True, "closeFree": True}, language)
+
+    def test_a_refusal_is_said_in_view_wherever_on_the_board_it_happened(self) -> None:
+        # A short window, so the board is taller than it: the toolbar at the top
+        # scrolls away while the registrar works on the last day.
+        for language, width, wide_font in (("en", 1440, False), ("ar", 390, True)):
+            where = f"{language} {width}px"
+            page = self._page(language, width, self.locked_run, height=560, wide_font=wide_font)
+            last = DAYS[-1]
+            mover = page.locator(
+                f'#schedGrid td[data-day]:not([data-day="{last}"]):not([data-locked="true"]) '
+                '.et-course[draggable="true"]'
+            ).first
+            code = mover.get_attribute("data-course")
+            # Moved into the last day, a cell no longer matches the saved run:
+            # its lock is refused, and the reason is on screen.
+            mover.locator("[data-exam-move]").click()
+            page.locator("#examMoveDay").select_option(last)
+            page.locator("#examMovePeriod").select_option(PERIODS[1])
+            page.locator("#confirmExamMove").click()
+            self.assertEqual(page.evaluate(PLACE, code), [last, PERIODS[1]], where)
+            lock = page.locator(
+                f'#schedGrid [data-lock-day="{last}"][data-lock-period="{PERIODS[1]}"]'
+            )
+            lock.scroll_into_view_if_needed()
+            lock.click()
+            expect(lock).to_have_attribute("aria-pressed", "false")
+            expect(page.locator("#examLockRefusal")).to_be_visible()
+            self.assertIn(last, _plain(page.locator("#examLockRefusalText").text_content()), where)
+            self.assertEqual(
+                page.evaluate(REFUSAL_SEEN),
+                {"shown": True, "inView": True, "closeFree": True},
+                where,
+            )
+            # Closed from the keyboard: gone, and focus is back on the refused lock.
+            page.locator("#examLockRefusalClose").focus()
+            page.keyboard.press("Enter")
+            expect(page.locator("#examLockRefusal")).to_be_hidden()
+            self.assertEqual(
+                page.evaluate("() => document.activeElement.dataset.lockPeriod"), PERIODS[1], where
+            )
+            # Undone, the day matches the saved run and locks; Move on one of its
+            # cards is refused, said on screen too.
+            page.locator("#undoExamBtn").click()
+            day_lock = page.locator(f'#schedGrid [data-lock-day="{last}"]:not([data-lock-period])')
+            day_lock.scroll_into_view_if_needed()
+            day_lock.click()
+            expect(day_lock).to_have_attribute("aria-pressed", "true")
+            move = page.locator(
+                f'#schedGrid td[data-day="{last}"] .et-course [data-exam-move]'
+            ).last
+            move.focus()
+            page.keyboard.press("Enter")
+            expect(page.locator("#examMoveDialog")).not_to_have_attribute("open", "")
+            expect(page.locator("#examLockRefusal")).to_be_visible()
+            self.assertEqual(
+                page.evaluate(REFUSAL_SEEN),
+                {"shown": True, "inView": True, "closeFree": True},
+                where,
+            )
+            self.assertEqual(
+                page.evaluate(
+                    "() => document.getElementById('examEditToolbar').getBoundingClientRect().bottom > 0"
+                ),
+                False,
+                f"{where}: the toolbar scrolled away, so the check above means something",
+            )
+            # And at the top of the board, far above its foot: said in view there too.
+            page.locator("#examLockRefusalClose").click()
+            first = page.locator(
+                f'#schedGrid td[data-day="{DAYS[0]}"] .et-course [data-exam-move]'
+            ).first
+            first.focus()
+            page.keyboard.press("Enter")
+            expect(page.locator("#examLockRefusal")).to_be_visible()
+            self.assertEqual(
+                page.evaluate(REFUSAL_SEEN),
+                {"shown": True, "inView": True, "closeFree": True},
+                where,
+            )
+            self.assertGreater(
+                page.evaluate(
+                    "() => document.getElementById('examScheduleWorkspace').getBoundingClientRect().bottom - innerHeight"
+                ),
+                100,
+                f"{where}: the board's foot is below the window, so the check above means something",
+            )

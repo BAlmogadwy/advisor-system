@@ -6365,6 +6365,23 @@ test('a Build of mine turned down for courses without enrollments says so in the
   assert.doesNotMatch(ui.$('examJobDetail').textContent, /unsaved changes|تغييرات غير محفوظة/);
 });
 
+test('a Build of mine turned down by a lock rule says why in the page language, naming the cell it was sent', async t => {
+  const ui = await page(t, {
+    activeJob: { ok: true, job: finishedFrame('build', { has_run: false, result_run_id: null, refused: true }) },
+    onRequest: async url => url === `/ops/exam-timetable/jobs/${JOB_ID}/result/`
+      ? jobReply({ ok: false, code: 'exam_locks_cell_unsaved', field: 'exam_locks[1]', cell: { day: 'W2-Sun', period: '08:00-10:00' },
+        error: 'W2-Sun 08:00-10:00 is not locked in the saved timetable. Save the timetable with the lock, then build again.' }, 400)
+      : undefined,
+  });
+  await until(() => ui.$('examJobPanel').classList.contains('is-refused'));
+  const isolates = new RegExp(`[${String.fromCharCode(0x2066)}-${String.fromCharCode(0x2069)}]`, 'g');
+  const detail = ui.$('examJobDetail').textContent.replace(isolates, '');
+  assert.ok(detail.includes(language === 'ar'
+    ? 'في هذا اليوم أو هذه الفترة تغييرات غير محفوظة. احفظ الجدول ثم اقفله. (W2-Sun 08:00-10:00)'
+    : 'This day or period has unsaved changes. Save the timetable, then lock it. (W2-Sun 08:00-10:00)'), detail);
+  assert.doesNotMatch(detail, /is not locked in the saved timetable/, "Never the server's English words");
+});
+
 test('a reason that already ends its sentence gets no second full stop', async t => {
   const ui = await page(t, {
     activeJob: { ok: true, job: finishedFrame('build', { has_run: false, result_run_id: null, refused: true }) },

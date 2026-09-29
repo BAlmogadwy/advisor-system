@@ -473,7 +473,20 @@ main.exam-builder-page #schedGrid .et-course.et-in-locked { cursor: not-allowed;
 main.exam-builder-page #schedGrid .et-course.et-in-locked .et-course-card-actions button[aria-disabled="true"] { opacity: .5; cursor: not-allowed; }
 main.exam-builder-page #schedGrid .et-grid td.et-drag-refused { outline: 2px dashed var(--et-danger); outline-offset: -2px; cursor: no-drop; }
 main.exam-builder-page .et-lock-line { padding: 3px 7px; border: 1px solid var(--et-lock-border); border-radius: 5px; background: var(--et-lock-soft); color: var(--et-lock); font-size: .6875rem; font-weight: 600; line-height: 1.4; }
-main.exam-builder-page .et-lock-refusal { border-color: var(--et-warning); background: var(--et-warning-soft); color: var(--et-warning); }
+/* A refused move, pin or lock: at the foot of the board, kept in view while
+   the board is (sticky, so no transformed ancestor can strand it the way
+   position: fixed would be). It stays until closed or the next edit. */
+main.exam-builder-page .et-lock-refusal { position: sticky; bottom: 12px; z-index: 21; display: flex; align-items: flex-start; gap: 8px; width: fit-content; max-width: min(100%, 46rem); margin: 12px auto 0; padding: 8px 8px 8px 12px; border: 1px solid var(--et-warning); border-radius: 8px; background: var(--et-warning-soft); color: var(--et-warning); box-shadow: var(--shadow-lift); font-size: .8125rem; font-weight: 600; line-height: 1.5; overflow-wrap: anywhere; }
+html[dir="rtl"] main.exam-builder-page .et-lock-refusal { padding: 8px 12px 8px 8px; }
+main.exam-builder-page .et-lock-refusal[hidden] { display: none; }
+@media (max-width: 1199.98px) {
+  /* Clear of the page's back-to-top button (fixed, 2rem from the corner, 40px). */
+  main.exam-builder-page .et-lock-refusal { bottom: calc(2rem + 48px); }
+}
+main.exam-builder-page #examLockRefusalText { flex: 1 1 auto; min-width: 0; padding-block: 3px; }
+main.exam-builder-page .et-lock-refusal-close { display: inline-flex; flex: 0 0 auto; align-items: center; justify-content: center; width: 30px; height: 30px; padding: 0; border: 1px solid transparent; border-radius: 5px; background: transparent; color: inherit; cursor: pointer; }
+main.exam-builder-page .et-lock-refusal-close:hover { border-color: var(--et-warning); }
+main.exam-builder-page .et-lock-refusal-close:focus-visible { outline: 2px solid var(--et-focus); outline-offset: 1px; }
 main.exam-builder-page .et-lock-bar { flex-wrap: wrap; }
 main.exam-builder-page .et-lock-bar-icon { display: inline-flex; color: var(--et-lock); }
 main.exam-builder-page .et-lock-bar-issues { color: var(--et-muted); overflow-wrap: anywhere; }
@@ -504,6 +517,7 @@ main.exam-builder-page .et-lock-problem { display: block; margin-top: 4px; color
 }
 @media (pointer: coarse) {
   main.exam-builder-page .et-lock-toggle { width: 40px; height: 40px; }
+  main.exam-builder-page .et-lock-refusal-close { width: 40px; height: 40px; }
   main.exam-builder-page #lockBarReview { min-height: 44px; }
 }
 @media (forced-colors: active) {
@@ -513,6 +527,8 @@ main.exam-builder-page .et-lock-problem { display: block; margin-top: 4px; color
   main.exam-builder-page .et-lock-toggle { border-color: ButtonText; }
   main.exam-builder-page .et-lock-toggle[aria-pressed="true"] { border-color: Highlight; background: Highlight; color: HighlightText; forced-color-adjust: none; }
   main.exam-builder-page .et-lock-toggle:focus-visible { outline-color: CanvasText; }
+  main.exam-builder-page .et-lock-refusal { border: 2px solid CanvasText; }
+  main.exam-builder-page .et-lock-refusal-close { border-color: ButtonText; }
 }
 main.exam-builder-page .et-options { margin-bottom: 20px; border: 1px solid var(--et-border); border-radius: 8px; background: var(--et-surface); }
 main.exam-builder-page .et-options > summary,
