@@ -179,6 +179,8 @@ const checks = ui => bodies(ui, '/ops/exam-timetable/draft-impact/');
 const builds = ui => bodies(ui, '/ops/exam-timetable/build/');
 const lockButton = (ui, day, period) => Array.from(ui.$('schedGrid').querySelectorAll('[data-lock-day]'))
   .find(button => button.dataset.lockDay === day && (button.dataset.lockPeriod || '') === (period || ''));
+const columnButton = (ui, period) => Array.from(ui.$('schedGrid').querySelectorAll('[data-lock-column]'))
+  .find(button => button.dataset.lockColumn === period);
 const cell = (ui, day, period) => Array.from(ui.$('schedGrid').querySelectorAll('td[data-day]'))
   .find(item => item.dataset.day === day && item.dataset.period === period);
 const card = (ui, code) => Array.from(ui.$('schedGrid').querySelectorAll('.et-course')).find(item => item.dataset.course === code);
@@ -224,6 +226,8 @@ const lockRows = ui => Array.from(ui.$('examLockRows').querySelectorAll('tr'));
 const TEXT = {
   lockDay: day => (AR ? `قفل اليوم ${day}` : `Lock day ${day}`),
   lockPeriod: (day, period) => (AR ? `قفل الفترة ${day} ${period}` : `Lock period ${day} ${period}`),
+  lockColumn: period => (AR ? `قفل الفترة ${period} في كل الأيام` : `Lock period ${period} on every day`),
+  columnLocked: period => (AR ? `${period} مقفلة في كل الأيام` : `${period} is locked on every day`),
   locked: AR ? 'مقفل' : 'Locked',
   lockedIn: (day, period) => (AR ? `${day} ${period} مقفلة — ألغِ قفلها أولاً.` : `${day} ${period} is locked — unlock it first.`),
   lockedOut: (code, day, period) => (AR ? `${code} في ${day} ${period} المقفلة — ألغِ قفلها أولاً.` : `${code} is in locked ${day} ${period} — unlock it first.`),
@@ -308,7 +312,7 @@ test('a viewer who may not save sees the locks and no lock buttons', async t => 
 test('the Exam Committee may save, so it may lock', async t => {
   const ui = await loaded(t, { html: committeeTemplate });
   assert.equal(ui.$('main-content').dataset.canEditExamTimetable, 'true');
-  assert.equal(ui.$('schedGrid').querySelectorAll('.et-lock-toggle').length, 20);
+  assert.equal(ui.$('schedGrid').querySelectorAll('.et-lock-toggle').length, 23);
   lockButton(ui, 'Mon').click();
   assert.equal(lockButton(ui, 'Mon').getAttribute('aria-pressed'), 'true');
 });
@@ -937,4 +941,64 @@ test('a deleted saved run is no longer where a Build keeps its locks from', asyn
   const [build] = builds(ui);
   assert.equal('previous_run_id' in build, false);
   assert.equal('exam_locks' in build, false);
+});
+
+test('a column lock locks its period on every day in one step, and unlocks it on every day', async t => {
+  const ui = await loaded(t);
+  // One toggle per period, in its column header, named for every day.
+  const headers = Array.from(ui.$('schedGrid').querySelectorAll('thead th[scope="col"]')).slice(1);
+  assert.deepEqual(headers.map(header => header.querySelectorAll('button.et-lock-toggle[data-lock-column]').length), [1, 1, 1]);
+  const column = columnButton(ui, P2);
+  assert.equal(column.type, 'button');
+  assert.equal(plain(column.getAttribute('aria-label')), TEXT.lockColumn(P2));
+  assert.equal(column.getAttribute('aria-pressed'), 'false', 'Sun and Tue hold it, the other days do not');
+  column.focus();
+  column.click();
+  assert.equal(ui.window.document.activeElement, columnButton(ui, P2), 'Drawn again, the toggle keeps the keyboard');
+  assert.equal(columnButton(ui, P2).getAttribute('aria-pressed'), 'true');
+  assert.ok(columnButton(ui, P2).closest('th').classList.contains('et-locked'));
+  for (const day of DAYS) assert.equal(cell(ui, day, P2).dataset.locked, 'true', day);
+  assert.equal(cell(ui, 'Mon', P1).dataset.locked, undefined);
+  assert.equal(columnButton(ui, P1).getAttribute('aria-pressed'), 'false');
+  // Mon, Wed and Thu were added; Sun (its day) and Tue (its period) held it already.
+  assert.equal(plain(ui.$('examLockLine').textContent), TEXT.changes(3));
+  // One Undo step takes the whole column back, and Redo brings it again.
+  ui.$('undoExamBtn').click();
+  assert.equal(columnButton(ui, P2).getAttribute('aria-pressed'), 'false');
+  assert.equal(cell(ui, 'Mon', P2).dataset.locked, undefined);
+  assert.equal(ui.$('examLockLine').hidden, true);
+  ui.$('redoExamBtn').click();
+  assert.equal(columnButton(ui, P2).getAttribute('aria-pressed'), 'true');
+  ui.$('checkDraftBtn').click();
+  await settled();
+  assert.deepEqual(checks(ui)[0].exam_locks, [
+    { day: 'Sun' }, { day: 'Mon', period: P2 }, { day: 'Tue', period: P2 }, { day: 'Wed', period: P2 }, { day: 'Thu', period: P2 },
+  ]);
+  // Unlocked, the period leaves every day; locked Sun keeps its other periods.
+  columnButton(ui, P2).click();
+  assert.equal(columnButton(ui, P2).getAttribute('aria-pressed'), 'false');
+  for (const day of DAYS) assert.equal(cell(ui, day, P2).dataset.locked, undefined, day);
+  assert.deepEqual([P1, P3].map(period => lockButton(ui, 'Sun', period).getAttribute('aria-pressed')), ['true', 'true']);
+  ui.$('checkDraftBtn').click();
+  await settled();
+  assert.deepEqual(checks(ui)[1].exam_locks, [{ day: 'Sun', period: P1 }, { day: 'Sun', period: P3 }]);
+});
+
+test('a column with one unsaved cell is refused whole; a viewer sees a locked column as a mark', async t => {
+  const ui = await loaded(t);
+  drop(ui, 'CS111 (2)', 'Mon', P3);
+  const before = ui.requests.length;
+  columnButton(ui, P3).click();
+  assert.equal(refusal(ui), TEXT.unsaved('Mon', P3));
+  assert.equal(columnButton(ui, P3).getAttribute('aria-pressed'), 'false');
+  for (const day of ['Mon', 'Tue', 'Wed', 'Thu']) assert.equal(cell(ui, day, P3).dataset.locked, undefined, `${day}: never half locked`);
+  assert.equal(ui.$('examLockLine').hidden, true);
+  assert.equal(ui.requests.length, before);
+
+  const viewer = await loaded(t, { html: readOnlyTemplate, run: savedRun({ locks: DAYS.map(day => ({ day, period: P1 })) }) });
+  assert.equal(viewer.window.document.querySelectorAll('[data-lock-column]').length, 0);
+  const marks = Array.from(viewer.$('schedGrid').querySelectorAll('thead th .et-lock-mark'));
+  assert.equal(marks.length, 1);
+  assert.equal(plain(marks[0].getAttribute('aria-label')), TEXT.columnLocked(P1));
+  assert.ok(marks[0].closest('th').textContent.includes(P1));
 });

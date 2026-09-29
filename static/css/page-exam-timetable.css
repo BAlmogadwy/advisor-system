@@ -469,6 +469,10 @@ main.exam-builder-page .et-lock-toggle:focus-visible { outline: 2px solid var(--
 main.exam-builder-page #schedGrid .et-grid tbody th .et-lock-day,
 main.exam-builder-page #schedGrid .et-grid tbody th .et-lock-mark { display: flex; margin: 6px 0 0; }
 main.exam-builder-page .et-lock-mark { color: var(--et-lock); }
+/* A period's column lock sits beside its time in the header row. */
+main.exam-builder-page #schedGrid .et-grid thead th .et-lock-column,
+main.exam-builder-page #schedGrid .et-grid thead th .et-lock-mark { display: inline-flex; margin-block: 0; margin-inline: 6px 0; vertical-align: middle; }
+main.exam-builder-page #schedGrid .et-grid thead th .et-grid-period-label { vertical-align: middle; }
 main.exam-builder-page #schedGrid .et-course.et-in-locked { cursor: not-allowed; }
 main.exam-builder-page #schedGrid .et-course.et-in-locked .et-course-card-actions button[aria-disabled="true"] { opacity: .5; cursor: not-allowed; }
 main.exam-builder-page #schedGrid .et-grid td.et-drag-refused { outline: 2px dashed var(--et-danger); outline-offset: -2px; cursor: no-drop; }
