@@ -18,7 +18,15 @@ ROOT = Path(__file__).resolve().parents[1]
 
 @pytest.mark.parametrize("language", ["en", "ar"])
 @pytest.mark.parametrize(
-    "suite", ["exam-timetable", "exam-review", "exam-student-export", "exam-linked", "exam-locks"]
+    "suite",
+    [
+        "exam-timetable",
+        "exam-review",
+        "exam-student-export",
+        "exam-linked",
+        "exam-locks",
+        "exam-add-courses",
+    ],
 )
 def test_exam_page_frontend_interactions(tmp_path: Path, language: str, suite: str) -> None:
     node = shutil.which("node")

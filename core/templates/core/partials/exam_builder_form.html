@@ -34,6 +34,8 @@
       <fieldset><legend class="form-label">{% if LANGUAGE_CODE == 'ar' %}فئات الطلاب{% else %}Student groups{% endif %} <span id="secCount"></span></legend><div id="secList"><span class="et-field-help">{% if LANGUAGE_CODE == 'ar' %}جارٍ التحميل...{% else %}Loading…{% endif %}</span></div></fieldset>
       <p id="examEnrollmentSource" class="et-field-help">{% if LANGUAGE_CODE == 'ar' %}مصدر المقررات وأعداد الطلاب: التسجيلات الفعلية في الجداول الدراسية المستوردة للطلاب.{% else %}Course and student-count source: actual enrollments from imported student timetables.{% endif %}</p>
       <div class="et-scope-footer"><button id="loadCoursesBtn" type="button" class="btn btn-outline-primary">{% if LANGUAGE_CODE == 'ar' %}تحميل المقررات{% else %}Load Courses{% endif %}</button><p class="et-field-help">{% if LANGUAGE_CODE == 'ar' %}أعد التحميل بعد تغيير البرامج أو فئات الطلاب.{% else %}Reload after changing programs or student groups.{% endif %}</p></div>
+      {# Shown only while a saved timetable is on the board: its Build button is hidden then, and a tooltip on a hidden button explains nothing. #}
+      <p id="loadedRunBuildNote" class="et-loaded-note" hidden>{% if LANGUAGE_CODE == 'ar' %}أنت تعدّل جدولاً محفوظاً. لإضافة مقررات إليه استخدم «إضافة مقررات…» أعلى الجدول. أما «تحميل المقررات» فيبدأ جدولاً جديداً من البداية.{% else %}You are editing a saved timetable. To add courses to it, use Add courses… above the schedule. Load Courses starts a new timetable from scratch.{% endif %}</p>
     </section>
   </div>
 
@@ -50,6 +52,12 @@
       </div>
       <div class="et-course-table-head" aria-hidden="true"><span></span><span>{% if LANGUAGE_CODE == 'ar' %}المقرر{% else %}Course{% endif %}</span><span>{% if LANGUAGE_CODE == 'ar' %}البرامج{% else %}Programs{% endif %}</span><span>{% if LANGUAGE_CODE == 'ar' %}الساعات{% else %}Credits{% endif %}</span><span>{% if LANGUAGE_CODE == 'ar' %}الطلاب{% else %}Students{% endif %}</span></div>
       <div id="courseList" role="group" aria-labelledby="examCoursesHeading"></div>
+      {# A saved timetable on the board: the other courses of its programmes and sections, found by the same search. No checkbox: adding is Add courses…, never a Build. #}
+      <section id="courseOutsideGroup" class="et-course-outside" aria-labelledby="courseOutsideHeading" hidden>
+        <div class="et-course-outside-head"><h3 id="courseOutsideHeading"></h3>{% if can_edit_exam_timetable %}<button id="courseOutsideAdd" type="button" class="btn btn-sm btn-outline-primary" aria-haspopup="dialog" aria-controls="examAddCoursesDialog">{% if LANGUAGE_CODE == 'ar' %}إضافة مقررات…{% else %}Add courses…{% endif %}</button>{% endif %}</div>
+        <p id="courseOutsideStatus" class="et-field-help" role="status" aria-live="polite"></p>
+        <div id="courseOutsideList" role="list" aria-labelledby="courseOutsideHeading"></div>
+      </section>
       <div id="courseNoMatches" class="et-course-empty" hidden>{% if LANGUAGE_CODE == 'ar' %}لا توجد نتائج. جرّب رمزاً أو اسماً أو برنامجاً آخر.{% else %}No matching courses. Try another code, name, or program.{% endif %}</div>
     </div>
   </section>

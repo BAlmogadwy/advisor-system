@@ -74,7 +74,7 @@ const T = {
   deselectOnline: IS_AR ? 'إلغاء تحديد الإلكترونية' : 'Deselect online',
   loadFirst:      IS_AR ? 'يرجى تحميل المقررات أولاً.' : 'Please load courses first.',
   noSelected:     IS_AR ? 'يرجى اختيار مقرر واحد على الأقل.' : 'Please select at least one course.',
-  loadedRunAction: IS_AR ? 'احفظ التغييرات أو حسّن الجدول المحمّل. انقر تحميل المقررات لبناء جدول جديد.' : 'Use Save Changes or Optimize for the loaded run. Click Load Courses for a fresh build.',
+  loadedRunAction: IS_AR ? 'هذا الجدول محفوظ. استخدم «حفظ التغييرات» أو «إصلاح بأقل تغيير» أو «تحسين الجدول الحالي» أو «إضافة مقررات…» لتعديله. أما «تحميل المقررات» فيبدأ جدولاً جديداً.' : 'This timetable is saved. Use Save Changes, Fix with fewest moves, Optimize or Add courses… to change it. Load Courses starts a new timetable.',
   savingLoaded:   IS_AR ? 'جارٍ حفظ التغييرات...' : 'Saving loaded-run changes...',
   optimizing:     IS_AR ? 'جارٍ تحسين الجدول المحمّل...' : 'Optimizing from loaded run...',
   optimized:      IS_AR ? 'تم حفظ الجدول المحسّن.' : 'Optimized run saved.',
@@ -82,6 +82,9 @@ const T = {
   repaired:       IS_AR ? 'تم حفظ الجدول بعد الإصلاح.' : 'Repaired run saved.',
   repairUnchanged: IS_AR ? 'لم يُنقل أي اختبار، فلم يُحفظ شيء.' : 'No exam was moved, so nothing was saved.',
   savedChanges:   IS_AR ? 'تم حفظ التغييرات.' : 'Loaded-run changes saved.',
+  addingCourses:  IS_AR ? 'جارٍ إضافة المقررات…' : 'Adding courses…',
+  coursesAdded:   IS_AR ? 'أُضيفت المقررات وحُفظت النتيجة جدولاً جديداً.' : 'Courses added. Saved as a new timetable.',
+  coursesSavedNotAll: IS_AR ? 'حُفظت النتيجة جدولاً جديداً، وبقي بعض المقررات المضافة دون موعد. راجع التقرير.' : 'Saved as a new timetable. Not every course could be placed: see the report.',
   buildPinned:    IS_AR ? 'بناء ({n} مثبت)' : 'Build ({n} pinned)',
   show:           IS_AR ? 'عرض' : 'Show',
   hide:           IS_AR ? 'إخفاء' : 'Hide',
@@ -186,6 +189,7 @@ function examResponseError(data) {
   if (typeof code === 'string' && code.startsWith('job_')) return new Error(JOB_TEXT.noResult);
   if (typeof code === 'string' && code.startsWith('linked_exams')) return linkedExamsRefusal(code, data.field);
   if (typeof code === 'string' && code.startsWith('exam_locks')) return examLocksRefusal(data);
+  if (typeof code === 'string' && code.startsWith('add_courses')) return addCoursesRefusal(data);
   if (code !== 'courses_unavailable') return new Error(data.error || T.reqFailed);
   const unavailable = Array.isArray(data.unavailable_courses) ? data.unavailable_courses.map(String).join(', ') : '';
   const error = new Error((IS_AR
@@ -318,8 +322,10 @@ function readExamScope() {
   return { programs, sections };
 }
 
-function readExamHeader() {
-  const label = $('etLabel').value.trim();
+// ``label``: a name given elsewhere (the Add courses list names its new
+// timetable itself), in place of the setup field's.
+function readExamHeader({ label: named = null } = {}) {
+  const label = named ?? $('etLabel').value.trim();
   if (!label) return inputError(T.fillAll, $('etLabel'));
   if (positiveInteger($('etNumDays').value, 60) === null) {
     return inputError(T.invalidDays, $('etNumDays'));
@@ -586,8 +592,20 @@ async function loadFilters() {
     const data = await readExamResponse(res);
     if (!res.ok || !data.ok) throw examResponseError(data);
     clearExamRequestError('filters');
+    // A saved run opened before the chips arrived (a link straight to it)
+    // was read with none. Their arrival is not an edit: they take the run's
+    // scope, and an unedited run stays unedited.
+    const unedited = Boolean(_currentResultData && _savedEditorSignature !== null
+      && editorSignature() === _savedEditorSignature && _evaluatedEditorSignature === _savedEditorSignature);
     renderChips('progList', data.programs ?? [], 'progCount');
     renderChips('secList', data.sections ?? [], 'secCount');
+    if (_currentResultData?.enrollment_scope) applyScopeChips(_currentResultData.enrollment_scope);
+    if (unedited) {
+      _savedEditorSignature = editorSignature();
+      _observedEditorSignature = _savedEditorSignature;
+      _evaluatedEditorSignature = _savedEditorSignature;
+      updateLoadedRunActions();
+    }
   } catch (err) {
     showExamRequestError(err, 'filters');
   }
@@ -600,6 +618,7 @@ let _coursesLoaded = false;
 const COMPUTER_PREFIXES = new Set(['AI', 'DS', 'CS', 'IS', 'COE', 'CYB']);
 
 function clearCoursePreview() {
+  clearOutsideCourses();
   $('courseEmptyState').hidden = false;
   $('courseSearch').value = '';
   $('courseVisibility').value = 'all';
@@ -618,7 +637,8 @@ function clearCoursePreview() {
   renderPinEditor();
 }
 
-function renderCourseList(courses) {
+function renderCourseList(courses, { inTimetable = false } = {}) {
+  clearOutsideCourses();
   _courseMetadata = Object.fromEntries(courses.map(course => [course.course_code, course]));
   reconcilePinsWithCourses();
   reconcileLinksWithCourses();
@@ -632,9 +652,10 @@ function renderCourseList(courses) {
     const plans = c.programs || [];
     const searchable = [code, sourceCode, c.course_name || '', ...plans].join(' ').toLocaleLowerCase();
     const online = c.is_online ? `<span class="et-online-badge">${IS_AR ? 'إلكتروني' : 'Online'}</span>` : '';
+    const inRun = inTimetable ? `<span class="et-add-badge">${IS_AR ? 'في الجدول' : 'In timetable'}</span>` : '';
     return `<label class="et-chip et-course-option active" data-search="${escapeAttr(searchable)}">
       <input type="checkbox" value="${escapeAttr(code)}" checked data-online="${c.is_online ? '1' : '0'}" data-source-code="${escapeAttr(sourceCode)}" data-course-name="${escapeAttr(c.course_name || '')}" data-course-identity="${escapeAttr(c.course_identity || '')}">
-      <span class="et-course-main"><span class="et-course-code" dir="ltr">${escapeAttr(code)}</span>${online}<span class="et-course-name">${escapeAttr(c.course_name || code)}</span></span>
+      <span class="et-course-main"><span class="et-course-code" dir="ltr">${escapeAttr(code)}</span>${online}${inRun}<span class="et-course-name">${escapeAttr(c.course_name || code)}</span></span>
       <span class="et-course-plans">${escapeAttr(plans.join(' · ') || '—')}</span>
       <span class="et-course-level"><span class="et-mobile-label">${IS_AR ? 'الساعات' : 'Credits'} </span>${escapeAttr(c.credit_hours || '—')}</span>
       <span class="et-course-enrollment"><span class="et-mobile-label">${IS_AR ? 'الطلاب' : 'Students'} </span>${escapeAttr(c.enrolled_count ?? 0)}</span>
@@ -664,8 +685,19 @@ function filterCourseList() {
     row.hidden = !matchesState || !terms.every(term => row.dataset.search.includes(term));
     if (!row.hidden) { shown++; if (cb.checked) selected++; }
   });
-  $('courseSearchCount').textContent = IS_AR ? `عرض ${shown} من ${rows.length} مقرر` : `Showing ${shown} of ${rows.length} courses`;
-  $('courseNoMatches').hidden = shown > 0;
+  // The other courses of a saved timetable: shown for All, Not selected and
+  // (when online) Online; never for Selected - they are not in it.
+  const outside = [...($('courseOutsideList')?.querySelectorAll('.et-course-option') || [])];
+  let outsideShown = 0;
+  outside.forEach(row => {
+    const matchesState = visibility === 'all' || visibility === 'unselected' || (visibility === 'online' && row.dataset.online === '1');
+    row.hidden = !matchesState || !terms.every(term => row.dataset.search.includes(term));
+    if (!row.hidden) outsideShown++;
+  });
+  $('courseSearchCount').textContent = outside.length
+    ? ADD_TEXT.setupCount(shown + outsideShown, rows.length + outside.length, rows.filter(row => row.querySelector('input').checked).length)
+    : IS_AR ? `عرض ${shown} من ${rows.length} مقرر` : `Showing ${shown} of ${rows.length} courses`;
+  $('courseNoMatches').hidden = shown + outsideShown > 0;
   $('selectVisibleCourses').disabled = shown === selected;
   $('deselectVisibleCourses').disabled = selected === 0;
   if (focusedRow?.hidden) {
@@ -974,6 +1006,11 @@ $('buildBtn').addEventListener('click', async () => {
 
     clearExamRequestError('build');
     clearExamCourseSourceError();
+    // The setup list becomes the timetable's own courses, exactly as for a
+    // saved run: a course left out of the Build is found under "Other
+    // courses", and added with Add courses - never by ticking it here, which
+    // no longer matches the saved board.
+    hydrateHeaderFromRun({ ...data, label });
     renderResults(data);
     navigateToResult = true;
     _loadedRunForRebuild = data.rebuild_mode === 'loaded_schedule';
@@ -1022,12 +1059,13 @@ function readThinThresholdForPost() {
   return value ?? inputError(IS_AR ? 'أدخل عتبة صحيحة من 1 إلى 10 طلاب.' : 'Enter a whole-number enrollment threshold from 1 to 10.', $('etThinThreshold'));
 }
 
-function collectLoadedRunPayload(mode) {
+function collectLoadedRunPayload(mode, { label: named = null } = {}) {
   if (needsExamSourceRebuild()) return null;
   // Optimize and Fix keep the saved locks - they send none, and the server
   // keeps the loaded run's. A lock change is saved first: Check, then Save.
-  if (['optimize_loaded', 'minimum_change_repair'].includes(mode) && lockChangesSinceSave().length) {
-    return refuseLockedEdit(LOCK_TEXT.saveLocksFirst(actionLabel(mode === 'optimize_loaded' ? $('optimizeLoadedBtn') : $('minChangeBtn'))));
+  if (['optimize_loaded', 'minimum_change_repair', 'add_courses'].includes(mode) && lockChangesSinceSave().length) {
+    const origin = { optimize_loaded: $('optimizeLoadedBtn'), minimum_change_repair: $('minChangeBtn'), add_courses: $('addCoursesBtn') }[mode];
+    return refuseLockedEdit(LOCK_TEXT.saveLocksFirst(actionLabel(origin)));
   }
   const selectedCourses = getCheckedValues('courseList');
   if (!selectedCourses.length) {
@@ -1035,7 +1073,7 @@ function collectLoadedRunPayload(mode) {
     $('etStatus').className = 'alert alert-warning mt-2 py-2 mb-0';
     return null;
   }
-  const header = readExamHeader();
+  const header = readExamHeader({ label: named });
   if (!header) return null;
   const { label, days, periods, maxPerDay } = header;
   // Preserve loaded placements and their QA until a new build is requested.
@@ -1167,6 +1205,9 @@ const JOB_KIND = {
   save_loaded_changes: IS_AR
     ? { waiting: 'حفظ التغييرات في الانتظار', running: 'جارٍ حفظ التغييرات', finishing: 'انتهى الحفظ، جارٍ تحميل النتيجة', done: 'تم حفظ التغييرات', refused: 'لم تُحفظ التغييرات', failed: 'تعذّر الحفظ', cancelled: 'أُوقف الحفظ', lost: 'تعذّرت متابعة الحفظ' }
     : { waiting: 'Waiting to save the changes', running: 'Saving changes', finishing: 'Save finished, loading the result', done: 'Changes saved', refused: 'The changes were not saved', failed: 'Save failed', cancelled: 'Save stopped', lost: 'Lost track of the save' },
+  add_courses: IS_AR
+    ? { waiting: 'إضافة المقررات في الانتظار', running: 'جارٍ إضافة المقررات إلى الجدول', finishing: 'اكتملت الإضافة، جارٍ تحميل النتيجة', done: 'أُضيفت المقررات', refused: 'لم تُضف أي مقررات', failed: 'تعذّرت إضافة المقررات', cancelled: 'أُوقفت إضافة المقررات', lost: 'تعذّرت متابعة إضافة المقررات' }
+    : { waiting: 'Waiting to add courses', running: 'Adding courses to the timetable', finishing: 'Courses added, loading the result', done: 'Courses added', refused: 'No courses were added', failed: 'Adding courses failed', cancelled: 'Adding courses stopped', lost: 'Lost track of adding courses' },
 };
 const jobTitles = kind => JOB_KIND[kind] || JOB_KIND.build;
 const JOB_STAGE = IS_AR ? {
@@ -1655,6 +1696,9 @@ function jobRefusalReason(data) {
   // A lock refusal in the page's language, naming the cell and courses the
   // answer names - never the page's own locks, which may have changed since.
   if (typeof code === 'string' && code.startsWith('exam_locks')) return examLocksRefusal(data).message;
+  // An Add refused while the page was closed: in the page's words, naming its
+  // courses - the server's own words are English only.
+  if (typeof code === 'string' && code.startsWith('add_courses')) return addCoursesRefusal(data).message;
   if (typeof data?.error === 'string' && data.error) return IS_AR ? isolate(data.error) : data.error;
   return '';
 }
@@ -2202,7 +2246,7 @@ async function showJobEnding(job, follow) {
   // it took is only on the page that asked for it.
   const away = !follow && mine && !met ? JOB_TEXT.yoursWhileAway(clockTime(job.submitted_at), jobDay(job.submitted_at, job.now)) : '';
   const how = follow ? (follow.own ? 'own' : 'followed') : (met || 'away');
-  const lost = mine && how === 'away' && job.kind !== 'build' ? JOB_TEXT.draftGone : '';
+  const lost = mine && how === 'away' && !['build', 'add_courses'].includes(job.kind) ? JOB_TEXT.draftGone : '';
   if (job.status === 'succeeded') {
     // Ended without a new timetable. The registrar's own is told why: its
     // stored answer (fetching it also marks it seen), and what to do next.
@@ -2361,7 +2405,7 @@ $('examJobOpen')?.addEventListener('click', async () => {
     // loadRun asks before discarding a draft; if the registrar keeps it, the
     // offer stays, and nothing has been marked seen. Opened - or found deleted -
     // loadRun settles the panel.
-    await loadRun(follow.job.result_run_id);
+    await loadRun(follow.job.result_run_id, { addReport: follow.job.kind === 'add_courses' });
   } finally {
     open.setAttribute('aria-disabled', 'false');
   }
@@ -2489,11 +2533,13 @@ function clearJobNotice() {
   }
 }
 
-async function runLoadedRunAction(mode, button, busyText, successText) {
+// ``prepared``: a payload already built and checked (Add courses builds it
+// before its list closes, so a refusal keeps the registrar's ticks).
+async function runLoadedRunAction(mode, button, busyText, successText, prepared = null) {
   if (_builderBusy) return;
   clearRepairReport();
   clearJobNotice();
-  let payload = collectLoadedRunPayload(mode);
+  let payload = prepared || collectLoadedRunPayload(mode);
   if (!payload) return;
   cancelDraftChecks();
   let focusAfterAction = false;
@@ -2543,11 +2589,17 @@ async function runLoadedRunAction(mode, button, busyText, successText) {
     _scheduleHasDraftMoves = false;
     updatePinBar();
     updateLoadedRunActions();
-    $('etStatus').textContent = successText;
+    $('etStatus').textContent = mode === 'add_courses' ? addCoursesStatus(data.add_courses) : successText;
     $('etStatus').className = 'alert alert-success mt-2 py-2 mb-0';
     // renderResults collapses the setup section that holds etStatus, so the
     // repair report goes to the editing area where it stays visible.
     if (data.minimum_change) showRepairReport(data.minimum_change);
+    if (mode === 'add_courses') {
+      // Saved: the ticks were used.
+      _addSent = null;
+      clearExamRequestError('add-courses');
+      if (data.add_courses) showAddCoursesReport(data.add_courses);
+    }
     loadHistory();
   } catch (err) {
     if (err.examJobKind || err.examInfo) reportJobOutcome(err);
@@ -3135,6 +3187,19 @@ function updateLoadedRunActions() {
     minChangeBtn.classList.toggle('d-none', !hasLoadedSchedule);
     minChangeBtn.disabled = _builderBusy || laneHeld || needsExamSourceRebuild() || !hasLoadedSchedule;
   }
+  const addBtn = $('addCoursesBtn');
+  if (addBtn) {
+    addBtn.classList.toggle('d-none', !hasLoadedSchedule);
+    // Not disabled for unsaved edits: pressing it says why and offers Save.
+    addBtn.disabled = _builderBusy || laneHeld || needsExamSourceRebuild() || !hasLoadedSchedule;
+  }
+  // The hidden Build button's tooltip explains nothing: the note does.
+  const note = $('loadedRunBuildNote');
+  if (note) {
+    note.hidden = !hasLoadedSchedule;
+    if (hasLoadedSchedule) $('loadCoursesBtn').setAttribute('aria-describedby', 'loadedRunBuildNote');
+    else $('loadCoursesBtn').removeAttribute('aria-describedby');
+  }
   $('buildBtn').classList.toggle('d-none', hasLoadedSchedule);
   if (hasLoadedSchedule) {
     $('buildBtn').disabled = true;
@@ -3148,6 +3213,7 @@ function updateLoadedRunActions() {
 }
 
 function enterFreshBuildMode() {
+  clearOutsideCourses();
   clearExamCourseSourceError();
   clearJobNotice();
   cancelDraftChecks();
@@ -3445,6 +3511,545 @@ function clearRepairReport() {
   if (!region || !region.innerHTML) return;
   region.innerHTML = '';
   region.classList.remove('is-clean', 'is-partial');
+}
+
+/* ── Add courses: new courses into the saved timetable on the board ── */
+// A committee builds part of its courses, perfects the board, then adds the
+// rest to THAT board. The list shows every course of the timetable's own
+// programmes and sections - no Load Courses - with the courses already in it
+// marked and never selectable; only the new ones can be ticked. The server
+// places them, moving an existing exam only when that is the one way to seat
+// a new one, and saves a new timetable beside this one.
+const AR_COURSES_GEN = { one: 'مقرر واحد', two: 'مقررين', few: '{n} مقررات', many: '{n} مقرراً', other: '{n} مقرر' };
+const AR_ADD_N = { one: 'إضافة مقرر واحد', two: 'إضافة مقررين', few: 'إضافة {n} مقررات', many: 'إضافة {n} مقرراً', other: 'إضافة {n} مقرر' };
+const AR_ADDED_N = { one: 'أُضيف مقرر واحد', two: 'أُضيف مقرران', few: 'أُضيفت {n} مقررات', many: 'أُضيف {n} مقرراً', other: 'أُضيف {n} مقرر' };
+const AR_MOVED_N = { one: 'نُقل اختبار واحد موجود', two: 'نُقل اختباران موجودان', few: 'نُقلت {n} اختبارات موجودة', many: 'نُقل {n} اختباراً موجوداً', other: 'نُقل {n} اختبار موجود' };
+const AR_PERIODS_N = { one: 'فترة واحدة', two: 'فترتين', few: '{n} فترات', many: '{n} فترةً', other: '{n} فترة' };
+const AR_GROUPS_N = { one: 'مجموعة واحدة', two: 'مجموعتين', few: '{n} مجموعات', many: '{n} مجموعةً', other: '{n} مجموعة' };
+const AR_BREAKS_N = { one: 'مخالفة واحدة موجودة', two: 'مخالفتان موجودتان', few: '{n} مخالفات موجودة', many: '{n} مخالفةً موجودة', other: '{n} مخالفة موجودة' };
+const AR_CHOSEN_N = { one: 'مقرر واحد مختار للإضافة', two: 'مقرران مختاران للإضافة', few: '{n} مقررات مختارة للإضافة', many: '{n} مقرراً مختاراً للإضافة', other: '{n} مقرر مختار للإضافة' };
+
+// A course code, a day or a period reads left to right inside Arabic.
+const addCode = code => (IS_AR ? isolateLtr(String(code)) : String(code));
+const addCodes = codes => (codes || []).map(addCode).join(IS_AR ? '، ' : ', ');
+const plural = (count, one, many) => `${count} ${count === 1 ? one : many}`;
+
+const ADD_TEXT = {
+  scope: (programs, sections) => {
+    const all = IS_AR ? 'الكل' : 'all';
+    const p = programs.length ? programs.join(', ') : all;
+    const s = sections.length ? sections.join(', ') : all;
+    return IS_AR ? `البرامج: ${isolateLtr(p)} · الشعب: ${isolateLtr(s)}` : `Programmes: ${p} · Sections: ${s}`;
+  },
+  inTimetable: where => (IS_AR ? `في الجدول · ${isolateLtr(where)}` : `In timetable · ${where}`),
+  inTimetableOverflow: IS_AR ? `في الجدول · غير موزَّع (${T.overflow})` : `In timetable · not placed (${T.overflow})`,
+  alreadyThere: IS_AR ? 'موجود في هذا الجدول' : 'already in this timetable',
+  noRegistrations: IS_AR ? 'لا توجد تسجيلات حالية' : 'no current registrations',
+  addsAs: code => (IS_AR ? `يُضاف باسم ${isolateLtr(code)}` : `Added as ${code}`),
+  sameCode: codes => (IS_AR ? `الرمز نفسه لـ${addCodes(codes)} في هذا الجدول` : `Same code as ${codes.join(', ')} in this timetable`),
+  rowName: (code, name) => (IS_AR ? `إضافة ${isolateLtr(code)} — ${name}` : `Add ${code} — ${name}`),
+  count: (shown, total, chosen) => (IS_AR
+    ? `عرض ${shown} من ${arabicCount(total, AR_COURSES_GEN)} · ${arabicCount(chosen, AR_CHOSEN_N)}`
+    : `Showing ${shown} of ${plural(total, 'course', 'courses')} · ${chosen} chosen to add`),
+  submit: count => {
+    if (!count) return IS_AR ? 'إضافة المقررات' : 'Add courses';
+    return IS_AR ? arabicCount(count, AR_ADD_N) : `Add ${plural(count, 'course', 'courses')}`;
+  },
+  noneTicked: IS_AR ? 'حدّد مقرراً واحداً على الأقل لإضافته.' : 'Tick at least one course to add.',
+  loading: IS_AR ? 'جارٍ تحميل مقررات برامج هذا الجدول وشعبه…' : "Loading the courses of this timetable's programmes and sections…",
+  loadFailed: IS_AR ? 'تعذّر تحميل قائمة المقررات.' : 'The course list could not be loaded.',
+  nothingToAdd: IS_AR ? 'جميع مقررات هذه البرامج والشعب موجودة في الجدول بالفعل.' : 'Every course of these programmes and sections is already in this timetable.',
+  termChanged: IS_AR ? 'بُني هذا الجدول لفصل دراسي آخر. ابنِ جدولاً جديداً لهذا الفصل.' : 'This timetable was built for another academic term. Build a new timetable for this term.',
+  missing: codes => (IS_AR
+    ? `لم تعد لـ${addCodes(codes)} تسجيلات حالية. ${codes.length === 1 ? 'احذفه' : 'احذفها'} من هذا الجدول واحفظه أولاً، ثم أضف المقررات.`
+    : `${codes.join(', ')} ${codes.length === 1 ? 'has' : 'have'} no current registrations. Remove ${codes.length === 1 ? 'it' : 'them'} from this timetable and save it first, then add courses.`),
+  badName: IS_AR ? 'أدخل اسماً للجدول الجديد من سطر واحد، من 1 إلى 120 حرفاً.' : 'Enter a single-line name for the new timetable, 1 to 120 characters.',
+  // The reason itself, where the registrar is looking, and where to fix it:
+  // the status line that also says it sits in the setup section, behind this list.
+  cannotSend: reason => (IS_AR
+    ? `تعذّر إرسال إعدادات الجدول.${reason ? ` ${reason}` : ''} أغلق القائمة وصحّحها في «إعدادات الجدول والمقررات والمواعيد المثبتة».`
+    : `The timetable settings could not be sent.${reason ? ` ${reason}` : ''} Close this list and correct them under Timetable setup, courses and fixed times.`),
+  unsaved: IS_AR
+    ? 'احفظ تغييراتك، أو افتح الجدول المحفوظ مجدداً من «الجداول المحفوظة» لتجاهلها. تعمل إضافة المقررات على الجدول المحفوظ.'
+    : 'Save your changes, or open the saved timetable again from Saved timetables to discard them. Adding courses works on the saved timetable.',
+  defaultName: label => {
+    const suffix = IS_AR ? ' + مقررات مضافة' : ' + added courses';
+    let prefix = '';
+    for (const character of String(label || '').trim()) {
+      if (prefix.length + character.length > 120 - suffix.length) break;
+      prefix += character;
+    }
+    return prefix.trimEnd() + suffix;
+  },
+  setupHeading: count => (IS_AR ? `مقررات أخرى في هذه البرامج والشعب (${count})` : `Other courses in these programmes and sections (${count})`),
+  setupNone: IS_AR ? 'جميع مقررات هذه البرامج والشعب موجودة في هذا الجدول.' : 'Every course of these programmes and sections is in this timetable.',
+  setupLoading: IS_AR ? 'جارٍ تحميل بقية مقررات هذه البرامج والشعب…' : 'Loading the other courses of these programmes and sections…',
+  setupFailed: IS_AR ? 'تعذّر تحميل بقية المقررات. أغلق هذا القسم وافتحه مجدداً للمحاولة.' : 'The other courses could not be loaded. Close this section and open it again to retry.',
+  inBadge: IS_AR ? 'في الجدول' : 'In timetable',
+  outBadge: IS_AR ? 'ليس في هذا الجدول' : 'Not in this timetable',
+  setupCount: (shown, total, inRun) => (IS_AR
+    ? `عرض ${shown} من ${arabicCount(total, AR_COURSES_GEN)} · ${inRun} في هذا الجدول`
+    : `Showing ${shown} of ${plural(total, 'course', 'courses')} · ${inRun} in this timetable`),
+  // The report.
+  headline: (placed, requested, moved, proven) => {
+    if (!moved) {
+      if (placed === requested) return IS_AR ? `${arabicCount(placed, AR_ADDED_N)} دون نقل أي اختبار موجود.` : `Added ${plural(placed, 'course', 'courses')}. No existing exam moved.`;
+      return IS_AR
+        ? `أُضيف ${placed} من ${arabicCount(requested, AR_COURSES_GEN)} دون نقل أي اختبار موجود.`
+        : `Added ${placed} of ${plural(requested, 'course', 'courses')}. No existing exam moved.`;
+    }
+    const added = placed === requested
+      ? (IS_AR ? arabicCount(placed, AR_ADDED_N) : `Added ${plural(placed, 'course', 'courses')}`)
+      : (IS_AR ? `أُضيف ${placed} من ${arabicCount(requested, AR_COURSES_GEN)}` : `Added ${placed} of ${plural(requested, 'course', 'courses')}`);
+    return IS_AR
+      ? `${added}. ${arabicCount(moved, AR_MOVED_N)} لإفساح المجال، وهو ${proven ? 'أقل عدد ممكن' : 'أقل عدد وُجد'}.`
+      : `${added}. ${plural(moved, 'existing exam', 'existing exams')} moved to make room: the fewest ${proven ? 'possible' : 'found'}.`;
+  },
+  placedTitle: IS_AR ? 'مواعيد المقررات المضافة' : 'Where the new courses were placed',
+  movedTitle: IS_AR ? 'الاختبارات الموجودة التي نُقلت' : 'Existing exams moved',
+  madeRoomFor: codes => (IS_AR ? `لإفساح المجال لـ${addCodes(codes)}` : `to make room for ${codes.join(', ')}`),
+  notPlacedTitle: IS_AR ? `لم تُوزَّع (${T.overflow})` : `Not placed (${T.overflow})`,
+  showAll: count => (IS_AR ? `عرض الكل (${count})` : `Show all ${count}`),
+  reason: row => {
+    const blocked = row?.blocked_by || {};
+    switch (row?.reason) {
+      case 'bucket_days_full': {
+        const bucket = Array.isArray(blocked.bucket) ? blocked.bucket[0] : null;
+        if (bucket?.program) {
+          return IS_AR
+            ? `لبرنامج ${isolateLtr(bucket.program)} في المستوى ${bucket.programme_term} اختبار في كل يوم متاح.`
+            : `${bucket.program} term ${bucket.programme_term} already has an exam on every open day.`;
+        }
+        return IS_AR ? 'لخطته الدراسية اختبار في كل يوم متاح.' : 'Its study term already has an exam on every open day.';
+      }
+      case 'blocked_by_fixed_exams': {
+        const fixed = Array.isArray(blocked.fixed) ? blocked.fixed : [];
+        return IS_AR
+          ? `كل فترة متاحة تتعارض مع اختبارات لطلابه لا يمكن نقلها (مثبتة أو مقفلة أو نقلتها أنت${fixed.length ? `: ${addCodes(fixed)}` : ''}).`
+          : `Every open period clashes with exams its students sit that cannot move (pinned, locked or moved by you${fixed.length ? `: ${fixed.join(', ')}` : ''}).`;
+      }
+      case 'only_locked_periods_free':
+        return IS_AR ? 'الفترات الوحيدة المتاحة له مقفلة.' : 'The only periods free for it are locked.';
+      case 'search_limit':
+        return IS_AR ? 'توقف البحث عند حد العمل. استخدم «إصلاح بأقل تغيير» أو ضعه يدوياً.' : 'The search stopped at its work limit. Use Fix with fewest moves or place it by hand.';
+      default:
+        return IS_AR ? 'تعذّر إفساح مكان له دون نقل مزيد من الاختبارات. استخدم «إصلاح بأقل تغيير» أو ضعه يدوياً.' : 'No place could be made without moving more exams. Use Fix with fewest moves or place it by hand.';
+    }
+  },
+  untouched: count => (IS_AR
+    ? `تُركت ${arabicCount(count, AR_BREAKS_N)} في الجدول المحفوظ كما هي. استخدم «إصلاح بأقل تغيير» لإزالتها.`
+    : `${plural(count, 'rule break', 'rule breaks')} already in the saved timetable ${count === 1 ? 'was' : 'were'} left as ${count === 1 ? 'it was' : 'they were'}. Use Fix with fewest moves to clear ${count === 1 ? 'it' : 'them'}.`),
+  roomsChanged: count => (IS_AR
+    ? `أُعيد توزيع القاعات في ${arabicCount(count, AR_PERIODS_N)}، وبقيت بقية القاعات كما حُفظت.`
+    : `Rooms were reassigned in ${plural(count, 'period', 'periods')}; all other rooms are as saved.`),
+  sectionsChanged: count => (IS_AR
+    ? `تغيّرت التسجيلات منذ حفظ هذا الجدول في ${arabicCount(count, AR_GROUPS_N)} من شعب الاختبارات الموجودة.`
+    : `Registrations changed since this timetable was saved for ${plural(count, 'section group', 'section groups')} of existing exams.`),
+  unassigned: count => (IS_AR
+    ? `لم تُخصَّص قاعة بعد لـ${arabicCount(count, AR_GROUPS_N)} من مجموعات المقررات المضافة.`
+    : `${plural(count, 'section group', 'section groups')} of the new courses ${count === 1 ? 'has' : 'have'} no room yet.`),
+};
+
+// Why the server refused to add courses, in the page's words.
+const ADD_REFUSALS = {
+  add_courses_invalid: ['The courses to add could not be read. Close the list and open Add courses… again.', 'تعذّرت قراءة المقررات المطلوب إضافتها. أغلق القائمة وافتح «إضافة مقررات…» من جديد.'],
+  add_courses_none: ['Tick at least one course to add.', 'حدّد مقرراً واحداً على الأقل لإضافته.'],
+  add_courses_source_required: ['Open the saved timetable, then add courses to it.', 'افتح الجدول المحفوظ، ثم أضف المقررات إليه.'],
+  add_courses_unsaved_changes: [
+    'Save your changes, or open the saved timetable again from Saved timetables to discard them. Adding courses works on the saved timetable.',
+    'احفظ تغييراتك، أو افتح الجدول المحفوظ مجدداً من «الجداول المحفوظة» لتجاهلها. تعمل إضافة المقررات على الجدول المحفوظ.',
+  ],
+  add_courses_term_changed: ['This timetable was built for another academic term. Build a new timetable for this term.', 'بُني هذا الجدول لفصل دراسي آخر. ابنِ جدولاً جديداً لهذا الفصل.'],
+  add_courses_already_in_timetable: ['This course is already in the timetable.', 'هذا المقرر موجود في الجدول بالفعل.'],
+  add_courses_outside_scope: ["This course has no students in this timetable's programmes and sections.", 'لا يوجد طلاب لهذا المقرر في برامج هذا الجدول وشعبه.'],
+  add_courses_unavailable: ['This course has no registrations in the imported student timetables any more. Open Add courses… again to see the current list.', 'لم يعد لهذا المقرر تسجيلات في الجداول الدراسية المستوردة. افتح «إضافة مقررات…» مجدداً لرؤية القائمة الحالية.'],
+};
+
+function addCoursesRefusal(data) {
+  const message = (ADD_REFUSALS[data.code] || ADD_REFUSALS.add_courses_invalid)[IS_AR ? 1 : 0];
+  const courses = Array.isArray(data.courses) ? data.courses.map(String).filter(Boolean) : [];
+  const error = new Error(courses.length ? `${message} (${addCodes(courses)})` : message);
+  error.examRequestKind = 'add-courses';
+  error.examAddCode = data.code;
+  return error;
+}
+
+// Adding works on the saved board. A name or the shuffle setting is not a
+// board edit; anything else Save would save is.
+function addCoursesBlockedReason() {
+  if (!_currentResultData || _savedEditorSignature === null) return '';
+  const board = text => {
+    try {
+      const value = JSON.parse(text);
+      delete value.label;
+      delete value.randomize;
+      return JSON.stringify(value);
+    } catch (_) {
+      return text;
+    }
+  };
+  return board(editorSignature()) !== board(_savedEditorSignature) ? ADD_TEXT.unsaved : '';
+}
+
+function loadedScheduleShown() {
+  return Boolean(_loadedRunForRebuild && _currentResultData && Array.isArray(_currentResultData.schedule) && _currentResultData.schedule.length);
+}
+
+async function fetchScopeCourses(runId) {
+  const res = await fetch(`/ops/exam-timetable/${encodeURIComponent(runId)}/scope-courses/`, {
+    headers: { 'X-CSRFToken': getCsrfToken() || CSRF },
+  });
+  const data = await readExamResponse(res);
+  if (!res.ok || !data.ok) throw examResponseError(data);
+  return data;
+}
+
+function addSearchText(course) {
+  return [course.course_code, course.add_code, course.timetable_course_code, course.source_course_code, course.course_name || '', ...(course.programs || [])]
+    .filter(Boolean).join(' ').toLocaleLowerCase();
+}
+
+function addPlacementText(course) {
+  if (course.placement?.overflow) return ADD_TEXT.inTimetableOverflow;
+  const place = course.placement || {};
+  return ADD_TEXT.inTimetable([place.day, place.period].filter(Boolean).join(' '));
+}
+
+let _addDialog = null;   // { runId, opener, data } while the list is open
+let _addDialogSeq = 0;
+// What was sent last from the list: { runId, identities, name }. A refusal
+// (the server's, or a colleague's job holding the queue) must not cost the
+// registrar their ticks - the re-selection the owner asked never to need. Kept
+// until a new timetable is saved, or the list is dismissed.
+let _addSent = null;
+
+function addCoursesError(message, focus = null) {
+  const error = $('examAddCoursesError');
+  if (!error) return;
+  error.textContent = message;
+  error.hidden = !message;
+  if (message && focus) focus.focus();
+}
+
+function openAddCoursesDialog(opener, { search = '' } = {}) {
+  const dialog = $('examAddCoursesDialog');
+  // The dialog is rendered only for those who may save: no dialog, no Add.
+  if (!dialog || _builderBusy || !loadedScheduleShown() || !_currentRunId) return;
+  if (needsExamSourceRebuild()) return;
+  const blocked = addCoursesBlockedReason();
+  if (blocked) {
+    // Said where the registrar is looking, and Save offered: a disabled
+    // button would have hidden why.
+    const refusal = new Error(blocked);
+    refusal.examRequestKind = 'add-courses';
+    showExamRequestError(refusal, 'add-courses');
+    const save = $('saveLoadedBtn');
+    if (save && !save.disabled && !save.classList.contains('d-none')) save.focus();
+    return;
+  }
+  clearExamRequestError('add-courses');
+  const seq = ++_addDialogSeq;
+  _addDialog = { runId: _currentRunId, opener: opener || $('addCoursesBtn'), data: null };
+  const scope = _currentResultData.enrollment_scope || {};
+  $('examAddCoursesScope').textContent = ADD_TEXT.scope(scope.programs || [], scope.sections || []);
+  $('examAddCoursesSearch').value = search;
+  $('examAddCoursesShow').value = 'all';
+  const again = _addSent?.runId === _currentRunId ? _addSent : null;
+  $('examAddCoursesName').value = again?.name || ADD_TEXT.defaultName($('etLabel').value || _currentResultData.label || '');
+  $('examAddCoursesMissing').hidden = true;
+  addCoursesError('');
+  if (dialog.showModal) dialog.showModal();
+  else dialog.setAttribute('open', '');
+  $('examAddCoursesSearch').focus();
+  loadAddCourses(seq);
+}
+
+async function loadAddCourses(seq) {
+  const list = $('examAddCoursesList');
+  $('retryAddCourses').hidden = true;
+  list.setAttribute('aria-busy', 'true');
+  list.innerHTML = `<p class="et-add-empty">${escapeAttr(ADD_TEXT.loading)}</p>`;
+  $('examAddCoursesCount').textContent = '';
+  $('confirmAddCourses').textContent = ADD_TEXT.submit(0);
+  let data;
+  try {
+    // Asked every time the list opens: a course can gain or lose its
+    // registrations while the page stays open.
+    data = await fetchScopeCourses(_addDialog.runId);
+  } catch (err) {
+    if (seq !== _addDialogSeq) return;
+    list.setAttribute('aria-busy', 'false');
+    list.innerHTML = `<p class="et-add-empty">${escapeAttr(ADD_TEXT.loadFailed)}</p>`;
+    addCoursesError(err?.examRequestKind === 'auth' ? err.message : ADD_TEXT.loadFailed);
+    $('retryAddCourses').hidden = false;
+    return;
+  }
+  if (seq !== _addDialogSeq || !_addDialog) return;
+  _addDialog.data = data;
+  list.setAttribute('aria-busy', 'false');
+  renderAddCourses();
+}
+
+function renderAddCourses() {
+  const data = _addDialog?.data;
+  const list = $('examAddCoursesList');
+  if (!data) return;
+  const missing = (Array.isArray(data.missing) ? data.missing : []).map(row => String(row.course_code || '')).filter(Boolean);
+  $('examAddCoursesMissing').hidden = !missing.length;
+  $('examAddCoursesMissing').textContent = missing.length ? ADD_TEXT.missing(missing) : '';
+  if (data.term_changed) {
+    list.innerHTML = `<p class="et-add-empty">${escapeAttr(ADD_TEXT.termChanged)}</p>`;
+    $('examAddCoursesCount').textContent = '';
+    return;
+  }
+  const courses = [...(Array.isArray(data.courses) ? data.courses : [])]
+    .sort((a, b) => String(a.in_timetable ? a.timetable_course_code : a.add_code || a.course_code)
+      .localeCompare(String(b.in_timetable ? b.timetable_course_code : b.add_code || b.course_code), 'en', { numeric: true }));
+  const missingRows = (Array.isArray(data.missing) ? data.missing : []).map(row => ({
+    course_code: row.course_code, timetable_course_code: row.course_code, course_identity: row.course_identity, in_timetable: true, missing: true,
+  }));
+  const addable = courses.filter(course => !course.in_timetable);
+  const rows = [...courses, ...missingRows].map(course => {
+    const online = course.is_online ? `<span class="et-online-badge">${IS_AR ? 'إلكتروني' : 'Online'}</span>` : '';
+    const plans = escapeAttr((course.programs || []).join(' · ') || '—');
+    const students = `<span class="et-course-enrollment"><span class="et-mobile-label">${IS_AR ? 'الطلاب' : 'Students'} </span>${escapeAttr(course.enrolled_count ?? '—')}</span>`;
+    if (course.in_timetable) {
+      const code = course.timetable_course_code || course.course_code;
+      const badge = course.missing ? ADD_TEXT.noRegistrations : addPlacementText(course);
+      return `<div class="et-add-row is-in" data-search="${escapeAttr(addSearchText(course))}" data-state="in"><span class="et-add-mark" aria-hidden="true">✓</span><span class="et-course-main"><span class="et-course-code" dir="ltr">${escapeAttr(code)}</span>${online}<span class="et-course-name">${escapeAttr(course.course_name || '')}</span><span class="et-add-badge">${escapeAttr(badge)}</span><span class="visually-hidden">${escapeAttr(ADD_TEXT.alreadyThere)}</span></span><span class="et-course-plans">${plans}</span>${students}</div>`;
+    }
+    const code = course.add_code || course.course_code;
+    const renumbered = code !== course.course_code ? `<span class="et-add-note">${escapeAttr(ADD_TEXT.addsAs(code))}</span>` : '';
+    const shared = Array.isArray(course.same_code_as) && course.same_code_as.length ? `<span class="et-add-note">${escapeAttr(ADD_TEXT.sameCode(course.same_code_as))}</span>` : '';
+    return `<label class="et-add-row" data-search="${escapeAttr(addSearchText(course))}" data-state="out"><input type="checkbox" value="${escapeAttr(course.course_identity)}" data-code="${escapeAttr(code)}" aria-label="${escapeAttr(ADD_TEXT.rowName(code, course.course_name || code))}"><span class="et-course-main"><span class="et-course-code" dir="ltr">${escapeAttr(code)}</span>${online}<span class="et-course-name">${escapeAttr(course.course_name || '')}</span>${renumbered}${shared}</span><span class="et-course-plans">${plans}</span>${students}</label>`;
+  });
+  list.innerHTML = rows.join('') + (addable.length ? '' : `<p class="et-add-empty">${escapeAttr(ADD_TEXT.nothingToAdd)}</p>`);
+  // Sent before and refused: ticked again - only those still addable.
+  const again = _addSent?.runId === _addDialog?.runId ? new Set(_addSent.identities) : null;
+  list.querySelectorAll('input[type=checkbox]').forEach(box => {
+    if (again?.has(box.value)) box.checked = true;
+  });
+  list.querySelectorAll('input[type=checkbox]').forEach(box => box.addEventListener('change', () => {
+    addCoursesError('');
+    filterAddCourses();
+  }));
+  filterAddCourses();
+}
+
+function filterAddCourses() {
+  const list = $('examAddCoursesList');
+  const rows = [...list.querySelectorAll('.et-add-row')];
+  const terms = $('examAddCoursesSearch').value.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);
+  const show = $('examAddCoursesShow').value;
+  let shown = 0;
+  for (const row of rows) {
+    const box = row.querySelector('input[type=checkbox]');
+    const state = show === 'all' || (show === 'addable' && box) || (show === 'chosen' && box?.checked);
+    row.hidden = !state || !terms.every(term => row.dataset.search.includes(term));
+    if (!row.hidden) shown += 1;
+  }
+  const chosen = list.querySelectorAll('input[type=checkbox]:checked').length;
+  $('examAddCoursesCount').textContent = _addDialog?.data?.term_changed ? '' : ADD_TEXT.count(shown, rows.length, chosen);
+  $('confirmAddCourses').textContent = ADD_TEXT.submit(chosen);
+}
+
+function closeAddCoursesDialog({ restoreFocus = true, dismissed = false } = {}) {
+  const dialog = $('examAddCoursesDialog');
+  if (!dialog) return;
+  if (dismissed) _addSent = null;
+  const opener = _addDialog?.opener;
+  _addDialogSeq += 1;
+  _addDialog = null;
+  if (dialog.close) dialog.close();
+  else dialog.removeAttribute('open');
+  $('examAddCoursesList').innerHTML = '';
+  if (restoreFocus && opener?.isConnected) opener.focus({ preventScroll: true });
+}
+
+function submitAddCourses() {
+  const data = _addDialog?.data;
+  if (!data) return;
+  if (data.term_changed) { addCoursesError(ADD_TEXT.termChanged); return; }
+  const missing = (Array.isArray(data.missing) ? data.missing : []).map(row => String(row.course_code || '')).filter(Boolean);
+  if (missing.length) { addCoursesError(ADD_TEXT.missing(missing)); return; }
+  const ticked = [...$('examAddCoursesList').querySelectorAll('input[type=checkbox]:checked')];
+  if (!ticked.length) { addCoursesError(ADD_TEXT.noneTicked, $('examAddCoursesSearch')); return; }
+  const name = $('examAddCoursesName').value.trim();
+  if (!name || name.length > 120 || [...name].some(character => character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127)) { addCoursesError(ADD_TEXT.badName, $('examAddCoursesName')); return; }
+  // Built and checked before the list closes: a refusal here keeps the ticks.
+  // The name is the list's own; the setup's name field is not asked for.
+  $('etStatus').textContent = '';
+  const payload = collectLoadedRunPayload('add_courses', { label: name });
+  if (!payload) { addCoursesError(ADD_TEXT.cannotSend($('etStatus').textContent.trim())); return; }
+  // Only what was ticked: a course already in the timetable is never sent.
+  payload.added_courses = ticked.map(box => ({ course_identity: box.value, course_code: box.dataset.code }));
+  _addSent = { runId: _addDialog.runId, identities: ticked.map(box => box.value), name };
+  closeAddCoursesDialog({ restoreFocus: false });
+  runLoadedRunAction('add_courses', $('addCoursesBtn'), T.addingCourses, T.coursesAdded, payload);
+}
+
+$('addCoursesBtn')?.addEventListener('click', event => openAddCoursesDialog(event.currentTarget));
+$('courseOutsideAdd')?.addEventListener('click', event => openAddCoursesDialog(event.currentTarget, { search: $('courseSearch').value.trim() }));
+$('examAddCoursesSearch')?.addEventListener('input', filterAddCourses);
+$('examAddCoursesShow')?.addEventListener('change', filterAddCourses);
+$('confirmAddCourses')?.addEventListener('click', submitAddCourses);
+$('cancelAddCourses')?.addEventListener('click', () => closeAddCoursesDialog({ dismissed: true }));
+$('retryAddCourses')?.addEventListener('click', () => {
+  if (!_addDialog) return;
+  addCoursesError('');
+  loadAddCourses(++_addDialogSeq);
+});
+$('examAddCoursesDialog')?.addEventListener('cancel', event => { event.preventDefault(); closeAddCoursesDialog({ dismissed: true }); });
+
+/* The setup list of a saved timetable: its own courses, then the rest of its
+   scope, found by the same search. Fetched when the registrar opens the setup
+   section on that timetable, or searches it - never on load - and forgotten
+   when the run changes. */
+let _outsideRunId = null;
+let _outsideSeq = 0;
+
+function clearOutsideCourses() {
+  _outsideRunId = null;
+  _outsideSeq += 1;
+  const group = $('courseOutsideGroup');
+  if (!group) return;
+  group.hidden = true;
+  $('courseOutsideList').innerHTML = '';
+  $('courseOutsideStatus').textContent = '';
+  $('courseOutsideHeading').textContent = '';
+}
+
+async function ensureOutsideCourses() {
+  const group = $('courseOutsideGroup');
+  if (!group || !$('examSetupDetails')?.open) return;
+  if (!loadedScheduleShown() || !_currentRunId || _builderBusy || needsExamSourceRebuild() || _sourceCoursesRejected) return;
+  if (_outsideRunId === _currentRunId) return;
+  const runId = _currentRunId;
+  _outsideRunId = runId;
+  const seq = ++_outsideSeq;
+  group.hidden = false;
+  $('courseOutsideHeading').textContent = ADD_TEXT.setupHeading('…');
+  $('courseOutsideStatus').textContent = ADD_TEXT.setupLoading;
+  $('courseOutsideList').innerHTML = '';
+  let data;
+  try {
+    data = await fetchScopeCourses(runId);
+  } catch (_) {
+    if (seq !== _outsideSeq) return;
+    _outsideRunId = null;
+    $('courseOutsideStatus').textContent = ADD_TEXT.setupFailed;
+    return;
+  }
+  if (seq !== _outsideSeq || runId !== _currentRunId) return;
+  const outside = (Array.isArray(data.courses) ? data.courses : []).filter(course => !course.in_timetable)
+    .sort((a, b) => String(a.add_code || a.course_code).localeCompare(String(b.add_code || b.course_code), 'en', { numeric: true }));
+  $('courseOutsideHeading').textContent = ADD_TEXT.setupHeading(outside.length);
+  $('courseOutsideStatus').textContent = outside.length ? '' : ADD_TEXT.setupNone;
+  $('courseOutsideList').innerHTML = outside.map(course => {
+    const code = course.add_code || course.course_code;
+    const online = course.is_online ? `<span class="et-online-badge">${IS_AR ? 'إلكتروني' : 'Online'}</span>` : '';
+    return `<div class="et-course-option et-course-outside-row" role="listitem" data-search="${escapeAttr(addSearchText(course))}" data-online="${course.is_online ? '1' : '0'}">
+      <span class="et-add-mark" aria-hidden="true">+</span>
+      <span class="et-course-main"><span class="et-course-code" dir="ltr">${escapeAttr(code)}</span>${online}<span class="et-add-badge is-out">${escapeAttr(ADD_TEXT.outBadge)}</span><span class="et-course-name">${escapeAttr(course.course_name || code)}</span></span>
+      <span class="et-course-plans">${escapeAttr((course.programs || []).join(' · ') || '—')}</span>
+      <span class="et-course-level"><span class="et-mobile-label">${IS_AR ? 'الساعات' : 'Credits'} </span>${escapeAttr(course.credit_hours || '—')}</span>
+      <span class="et-course-enrollment"><span class="et-mobile-label">${IS_AR ? 'الطلاب' : 'Students'} </span>${escapeAttr(course.enrolled_count ?? 0)}</span>
+    </div>`;
+  }).join('');
+  filterCourseList();
+}
+
+// When the registrar opens the setup section, or searches its courses. Not
+// when the page opens it to point at a field: that is not a request to read
+// anything. The section toggles after the click, so it is read afterwards.
+$('examSetupSummary')?.addEventListener('click', () => {
+  setTimeout(() => { if ($('examSetupDetails').open) ensureOutsideCourses(); }, 0);
+});
+$('courseSearch')?.addEventListener('focus', () => ensureOutsideCourses());
+
+/* The report of an Add, where Fix's report goes. */
+function addReportItems(items, render) {
+  const shown = items.slice(0, 6).map(render).join('');
+  const rest = items.length > 6
+    ? `<details><summary>${escapeAttr(ADD_TEXT.showAll(items.length))}</summary><ul>${items.slice(6).map(render).join('')}</ul></details>`
+    : '';
+  return `<ul>${shown}</ul>${rest}`;
+}
+
+function describeAddCourses(report) {
+  const added = (Array.isArray(report?.added) ? report.added : []).filter(row => row && typeof row.course_code === 'string');
+  const moves = (Array.isArray(report?.moves) ? report.moves : []).filter(move => move && typeof move.course_code === 'string' && move.from && move.to);
+  const notPlaced = (Array.isArray(report?.not_placed) ? report.not_placed : []).filter(row => row && typeof row.course_code === 'string');
+  const requested = Number(report?.requested_count) || added.length;
+  const placed = Number.isFinite(Number(report?.placed_count)) ? Number(report.placed_count) : added.filter(row => row.placed).length;
+  const parts = [`<p><strong>${escapeAttr(ADD_TEXT.headline(placed, requested, moves.length, Boolean(report?.proven_minimal)))}</strong></p>`];
+  const onBoard = added.filter(row => row.placed);
+  if (onBoard.length) {
+    const entries = new Map((_currentResultData?.schedule || []).map(entry => [entry.course_code, entry]));
+    parts.push(`<p class="et-add-report-title">${escapeAttr(ADD_TEXT.placedTitle)}</p>`);
+    parts.push(addReportItems(onBoard, row => {
+      const entry = entries.get(row.course_code);
+      const label = `${IS_AR ? 'إظهار في الجدول' : 'Find in timetable'}: ${row.course_code} — ${entry?.course_name || ''}`;
+      const find = entry
+        ? ` <button type="button" class="et-add-find" data-find-exam="${escapeAttr(entry.course_identity || entry.course_code)}" aria-label="${escapeAttr(label)}">${IS_AR ? 'إظهار' : 'Find'}</button>`
+        : '';
+      return `<li><strong><bdi dir="ltr">${escapeAttr(row.course_code)}</bdi></strong> <bdi dir="ltr">${escapeAttr(examLocation(row.placed))}</bdi>${find}</li>`;
+    }));
+  }
+  if (moves.length) {
+    parts.push(`<p class="et-add-report-title">${escapeAttr(ADD_TEXT.movedTitle)}</p>`);
+    parts.push(addReportItems(moves, move => {
+      const why = Array.isArray(move.made_room_for) && move.made_room_for.length
+        ? ` <span class="et-add-why">${escapeAttr(ADD_TEXT.madeRoomFor(move.made_room_for))}</span>` : '';
+      return repairMoveItem(move).replace(/<\/li>$/, `${why}</li>`);
+    }));
+  }
+  if (notPlaced.length) {
+    parts.push(`<p class="et-add-report-title">${escapeAttr(ADD_TEXT.notPlacedTitle)}</p>`);
+    parts.push(addReportItems(notPlaced, row => `<li><strong><bdi dir="ltr">${escapeAttr(row.course_code)}</bdi></strong> — ${escapeAttr(ADD_TEXT.reason(row))}</li>`));
+  }
+  const untouched = Number(report?.untouched_violations) || 0;
+  if (untouched) parts.push(`<p>${escapeAttr(ADD_TEXT.untouched(untouched))}</p>`);
+  const locked = Number(report?.locked_count) || 0;
+  if (locked) parts.push(`<p class="et-repair-locked">${escapeAttr(LOCK_TEXT.fixKept(locked))}</p>`);
+  const rooms = Array.isArray(report?.rooms_changed) ? report.rooms_changed : [];
+  const periods = new Set(rooms.map(row => `${row?.day}|${row?.period}`)).size;
+  if (periods) parts.push(`<p>${escapeAttr(ADD_TEXT.roomsChanged(periods))}</p>`);
+  const sections = Number(report?.sections_changed) || 0;
+  if (sections) parts.push(`<p>${escapeAttr(ADD_TEXT.sectionsChanged(sections))}</p>`);
+  const unassigned = Number(report?.unassigned_added) || 0;
+  if (unassigned) parts.push(`<p>${escapeAttr(ADD_TEXT.unassigned(unassigned))}</p>`);
+  const linkedClash = Number(report?.linked_clash_students) || 0;
+  if (linkedClash) parts.push(`<p class="et-repair-linked">${escapeAttr(REPAIR_TEXT.linkedClash(linkedClash))}</p>`);
+  parts.push(`<p>${escapeAttr(REPAIR_TEXT.saved())}</p>`);
+  return { html: parts.join(''), clean: !notPlaced.length && !untouched && !unassigned };
+}
+
+// The status line of a finished Add: never "added" when some were not - a
+// screen reader hears it beside the report, and the two must agree.
+function addCoursesStatus(report) {
+  const requested = Number(report?.requested_count);
+  const placed = Number(report?.placed_count);
+  if (Number.isFinite(requested) && Number.isFinite(placed) && placed < requested) return T.coursesSavedNotAll;
+  return T.coursesAdded;
+}
+
+function showAddCoursesReport(report) {
+  const region = $('examRepairReport');
+  if (!region) return;
+  _repairReportRevision = _editorRevision;
+  let summary;
+  try {
+    summary = describeAddCourses(report);
+  } catch (_) {
+    // The courses are already added when this renders: a report it cannot
+    // read must never turn that into an error.
+    summary = { html: `<p>${escapeAttr(T.coursesAdded)}</p>`, clean: false };
+  }
+  region.classList.toggle('is-clean', summary.clean);
+  region.classList.toggle('is-partial', !summary.clean);
+  region.innerHTML = summary.html;
+  updateDrillActionAvailability();
 }
 
 function examLocation(entry) {
@@ -3766,15 +4371,13 @@ function uniqueByOrder(items) {
   return out;
 }
 
-function hydrateHeaderFromRun(data) {
-  restorePinsFromRun(data);
-  restoreLinksFromRun(data);
-  $('etLabel').value = data.label ?? '';
+// The programme and section chips of a saved run's scope (an empty list: all).
+function applyScopeChips(scope) {
   for (const [key, containerId, countId] of [
     ['programs', 'progList', 'progCount'],
     ['sections', 'secList', 'secCount'],
   ]) {
-    const selected = data.enrollment_scope?.[key];
+    const selected = scope?.[key];
     if (!Array.isArray(selected)) continue;
     const inputs = [...$(containerId).querySelectorAll('input')];
     for (const cb of inputs) {
@@ -3783,6 +4386,13 @@ function hydrateHeaderFromRun(data) {
     }
     updateChipCount(containerId, countId, inputs.length);
   }
+}
+
+function hydrateHeaderFromRun(data) {
+  restorePinsFromRun(data);
+  restoreLinksFromRun(data);
+  $('etLabel').value = data.label ?? '';
+  applyScopeChips(data.enrollment_scope);
 
   const slots = Array.isArray(data.slots) ? data.slots : [];
   const days = uniqueByOrder(slots.map(s => s.day).filter(Boolean));
@@ -3850,7 +4460,7 @@ function hydrateHeaderFromRun(data) {
   }
   if (courseRows.length) {
     $('coursePreview').classList.remove('d-none');
-    renderCourseList(courseRows);
+    renderCourseList(courseRows, { inTimetable: true });
   } else {
     clearCoursePreview();
   }
@@ -7203,7 +7813,9 @@ window.addEventListener('beforeunload', event => {
 
 // Resolves to 'loaded', 'gone' (deleted meanwhile), 'failed', or nothing when
 // it did not try (busy, or the registrar kept their draft).
-async function loadRun(runId) {
+// ``addReport``: an Add courses result opened from its job, whose report the
+// registrar has not seen yet.
+async function loadRun(runId, { addReport = false } = {}) {
   if (_builderBusy) return undefined;
   if (!await confirmDiscardDraft() || _builderBusy) return undefined;
   cancelDraftChecks();
@@ -7228,6 +7840,7 @@ async function loadRun(runId) {
     _loadedRunForRebuild = true;
     _scheduleHasDraftMoves = false;
     updatePinBar();
+    if (addReport && data.add_courses) showAddCoursesReport(data.add_courses);
     $('etStatus').textContent = T.done;
     $('etStatus').className = 'alert alert-success mt-2 py-2 mb-0';
 
