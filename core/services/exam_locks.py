@@ -952,7 +952,7 @@ def exam_locks_qa(
                     "period": period,
                     "room_code": room_code,
                     "seated": seated[key],
-                    "exam_capacity": capacity,
+                    "room_capacity": capacity,
                 }
             )
         cohort = str(room.get("section", "") or "")
