@@ -1,14 +1,15 @@
     <div id="eligibility" class="panel" role="region">
-      <div class="filter-bar sticky-cta mb-14">
-        <div class="fb-search" style="max-width:140px"><span class="i i-sm flex-shrink-0"><svg viewBox="0 0 24 24"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg></span><input id="elCourse" placeholder="{% if LANGUAGE_CODE == 'ar' %}رمز المقرر{% else %}Course code{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}رمز المقرر{% else %}Course code{% endif %}"></div>
-        <div class="fb-search fb-w-110"><input id="elSection" placeholder="{% if LANGUAGE_CODE == 'ar' %}الشعبة{% else %}Section{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}الشعبة{% else %}Section{% endif %}"></div>
-        <div class="fb-search fb-w-120"><input id="elProgram" placeholder="{% if LANGUAGE_CODE == 'ar' %}البرنامج{% else %}Program{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}البرنامج{% else %}Program{% endif %}"></div>
-        <div class="fb-search fb-w-110"><input id="elJoin" placeholder="{% if LANGUAGE_CODE == 'ar' %}سنوات الالتحاق{% else %}Join yrs{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}سنوات الالتحاق{% else %}Join years{% endif %}"></div>
-        <div class="fb-search" style="max-width:230px"><select id="elMode" aria-label="{% if LANGUAGE_CODE == 'ar' %}وضع التأهيل{% else %}Eligibility mode{% endif %}"><option value="strict" selected>{% if LANGUAGE_CODE == 'ar' %}صارم (مجتاز + مكتسب فقط){% else %}Strict (passed + earned only){% endif %}</option><option value="relaxed">{% if LANGUAGE_CODE == 'ar' %}مرن (+ يدرس + مسجل){% else %}Relaxed (+ studying + registered){% endif %}</option></select></div>
-        <div class="fb-spacer"></div>
-        <button id="elRun" class="btn btn-primary">
-          <span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></span>Check
-        </button>
+      <div class="filter-bar fb-fit sticky-cta mb-14">
+        <div class="fb-search"><span class="i i-sm flex-shrink-0"><svg viewBox="0 0 24 24"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg></span><input id="elCourse" class="fb-w-12ch" placeholder="{% if LANGUAGE_CODE == 'ar' %}رمز المقرر{% else %}Course code{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}رمز المقرر{% else %}Course code{% endif %}"></div>
+        <div class="fb-search"><input id="elSection" class="fb-w-9ch" placeholder="{% if LANGUAGE_CODE == 'ar' %}الشعبة{% else %}Section{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}الشعبة{% else %}Section{% endif %}"></div>
+        <div class="fb-search"><input id="elProgram" class="fb-w-9ch" placeholder="{% if LANGUAGE_CODE == 'ar' %}البرنامج{% else %}Program{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}البرنامج{% else %}Program{% endif %}"></div>
+        <div class="fb-search"><input id="elJoin" class="fb-w-12ch" placeholder="{% if LANGUAGE_CODE == 'ar' %}سنوات الالتحاق{% else %}Join yrs{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}سنوات الالتحاق{% else %}Join years{% endif %}"></div>
+        <div class="fb-search"><select id="elMode" aria-label="{% if LANGUAGE_CODE == 'ar' %}وضع التأهيل{% else %}Eligibility mode{% endif %}"><option value="strict" selected>{% if LANGUAGE_CODE == 'ar' %}صارم (مجتاز + مكتسب فقط){% else %}Strict (passed + earned only){% endif %}</option><option value="relaxed">{% if LANGUAGE_CODE == 'ar' %}مرن (+ يدرس + مسجل){% else %}Relaxed (+ studying + registered){% endif %}</option></select></div>
+        <div class="fb-actions">
+          <button id="elRun" class="btn btn-primary">
+            <span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></span>Check
+          </button>
+        </div>
       </div>
       <div class="filter-bar filter-bar-sm mb-14">
         <button id="elSavePreset" type="button" class="fb-dd"><span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg></span>Save preset</button>

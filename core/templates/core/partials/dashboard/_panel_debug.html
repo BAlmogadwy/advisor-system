@@ -1,16 +1,17 @@
     <div id="debug" class="panel" role="region">
-      <div class="filter-bar sticky-cta mb-14">
-        <div class="fb-search fb-w-110"><span class="i i-sm flex-shrink-0"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></span><input id="dbgYear" type="text" inputmode="numeric" pattern="[0-9]*" value="{{ year }}" placeholder="{% if LANGUAGE_CODE == 'ar' %}السنة{% else %}Year{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}السنة{% else %}Year{% endif %}"></div>
-        <div class="fb-search" style="max-width:90px"><input id="dbgSemester" type="text" inputmode="numeric" pattern="[0-9]*" min="0" max="1" value="{{ semester }}" placeholder="{% if LANGUAGE_CODE == 'ar' %}الفصل{% else %}Sem{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}الفصل{% else %}Semester{% endif %}"></div>
-        <div class="fb-search fb-w-110"><input id="dbgSection" placeholder="{% if LANGUAGE_CODE == 'ar' %}الشعبة{% else %}Section{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}الشعبة{% else %}Section{% endif %}"></div>
-        <div class="fb-search fb-w-120"><input id="dbgProgram" placeholder="{% if LANGUAGE_CODE == 'ar' %}البرنامج{% else %}Program{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}البرنامج{% else %}Program{% endif %}"></div>
-        <div class="fb-search fb-w-110"><input id="dbgJoin" placeholder="{% if LANGUAGE_CODE == 'ar' %}سنوات الالتحاق{% else %}Join yrs{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}سنوات الالتحاق{% else %}Join years{% endif %}"></div>
-        <div class="fb-search fb-w-100"><input id="dbgLimit" type="text" inputmode="numeric" pattern="[0-9]*" value="80" placeholder="{% if LANGUAGE_CODE == 'ar' %}الحد{% else %}Limit{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}الحد{% else %}Limit{% endif %}"></div>
-        <div class="fb-search" style="max-width:210px"><select id="dbgMode" aria-label="{% if LANGUAGE_CODE == 'ar' %}وضع المتطلبات السابقة{% else %}Prerequisite mode{% endif %}"><option value="relaxed" selected>{% if LANGUAGE_CODE == 'ar' %}مرن (مجتاز+يدرس){% else %}Relaxed (passed+studying){% endif %}</option><option value="strict">{% if LANGUAGE_CODE == 'ar' %}صارم (مجتاز فقط){% else %}Strict (passed only){% endif %}</option></select></div>
-        <div class="fb-spacer"></div>
-        <button id="dbgRun" class="btn btn-primary">
-          <span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 12h14M12 5l7 7-7 7"/></svg></span>Run
-        </button>
+      <div class="filter-bar fb-fit sticky-cta mb-14">
+        <div class="fb-search"><span class="i i-sm flex-shrink-0"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></span><input id="dbgYear" class="fb-w-6ch" type="text" inputmode="numeric" pattern="[0-9]*" value="{{ year }}" placeholder="{% if LANGUAGE_CODE == 'ar' %}السنة{% else %}Year{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}السنة{% else %}Year{% endif %}"></div>
+        <div class="fb-search"><input id="dbgSemester" class="fb-w-6ch" type="text" inputmode="numeric" pattern="[0-9]*" min="0" max="1" value="{{ semester }}" placeholder="{% if LANGUAGE_CODE == 'ar' %}الفصل{% else %}Sem{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}الفصل{% else %}Semester{% endif %}"></div>
+        <div class="fb-search"><input id="dbgSection" class="fb-w-9ch" placeholder="{% if LANGUAGE_CODE == 'ar' %}الشعبة{% else %}Section{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}الشعبة{% else %}Section{% endif %}"></div>
+        <div class="fb-search"><input id="dbgProgram" class="fb-w-9ch" placeholder="{% if LANGUAGE_CODE == 'ar' %}البرنامج{% else %}Program{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}البرنامج{% else %}Program{% endif %}"></div>
+        <div class="fb-search"><input id="dbgJoin" class="fb-w-12ch" placeholder="{% if LANGUAGE_CODE == 'ar' %}سنوات الالتحاق{% else %}Join yrs{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}سنوات الالتحاق{% else %}Join years{% endif %}"></div>
+        <div class="fb-search"><input id="dbgLimit" class="fb-w-6ch" type="text" inputmode="numeric" pattern="[0-9]*" value="80" placeholder="{% if LANGUAGE_CODE == 'ar' %}الحد{% else %}Limit{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}الحد{% else %}Limit{% endif %}"></div>
+        <div class="fb-search"><select id="dbgMode" aria-label="{% if LANGUAGE_CODE == 'ar' %}وضع المتطلبات السابقة{% else %}Prerequisite mode{% endif %}"><option value="relaxed" selected>{% if LANGUAGE_CODE == 'ar' %}مرن (مجتاز+يدرس){% else %}Relaxed (passed+studying){% endif %}</option><option value="strict">{% if LANGUAGE_CODE == 'ar' %}صارم (مجتاز فقط){% else %}Strict (passed only){% endif %}</option></select></div>
+        <div class="fb-actions">
+          <button id="dbgRun" class="btn btn-primary">
+            <span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 12h14M12 5l7 7-7 7"/></svg></span>Run
+          </button>
+        </div>
       </div>
       <div class="filter-bar filter-bar-sm mb-14">
         <button id="dbgSavePreset" type="button" class="fb-dd"><span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg></span>Save preset</button>
