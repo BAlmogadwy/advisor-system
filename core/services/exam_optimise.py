@@ -36,6 +36,15 @@ it is strictly better. When the given board already seats every exam legally,
 the spacing between a (programme, term)'s exams may not get worse either:
 sparing students a shared day must not crowd their exams onto neighbouring days.
 
+The models call a day heavy when two of its exams are a heavy pair, which is
+what the score says for credits up to four. A day holding a five-credit exam
+can differ; the score decides what is kept, so such a board is still never
+made worse, only searched a little less well.
+
+The same seed gives the same board on one machine. A solve cut off by its work
+limit, and a tie between equally good boards, are the solver's own business, so
+a run on another platform may come back with a different, equally scored board.
+
 A linked exam reaches this module already collapsed to one exam (see
 ``core.services.linked_exams``), as it reaches ``exam_min_change``. A student
 registered in two members of one link has two sittings of that exam.
@@ -290,10 +299,16 @@ class _Model:
         self.students = self._student_level(profiles, day_is_heavy)
         self.spacing = self._spacing_level(pairs)
         # Moved from where the board was given, not from the last board found.
+        # An exam given in OVERFLOW has moved once it is seated; one whose own
+        # slot is no longer open to it has moved wherever it goes.
         self.moves = sum(
             board.weight(exam) * (1 - self.y[exam, home[exam]])
             for exam in self.movable
             if (exam, home.get(exam, -1)) in self.y
+        ) + sum(
+            board.weight(exam) * self.unseated[exam].negated()
+            for exam in self.movable
+            if exam not in home
         )
 
     # ── variables ────────────────────────────────────────────────────────
@@ -724,10 +739,6 @@ class _Search:
         for level in (built.legal, built.students, steps * built.spacing + built.moves):
             if isinstance(level, int):
                 continue  # nothing free can change this level
-            if level is not built.legal and level is not built.students and found == self.best:
-                # The students are no better off here, so the board stays as
-                # it is: spacing and moves are tidied only behind a real gain.
-                break
             solver, optimal = _solve(built, level, self.seed)
             if solver is None:
                 proven = False
@@ -758,6 +769,7 @@ def optimise_board(
     ``on_round(done, total)`` is told before each solve, for a job that reports
     its progress; it may raise to stop the optimisation, and nothing is kept.
     """
+    neighbourhood = max(1, neighbourhood)
     search = _Search(board, day_is_heavy, seed)
     before = search.best_score
     result = OptimiseResult(placements=dict(board.current), before=before, after=before)

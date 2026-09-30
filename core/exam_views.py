@@ -68,6 +68,7 @@ from core.services.exam_multistart import (
     run_multistart,
 )
 from core.services.exam_optimise import DEFAULT_ROUNDS, Board, optimise_board
+from core.services.exam_optimise import score as optimise_score
 from core.services.exam_progress import JobCancelled
 from core.services.exam_progress import current as current_progress
 from core.services.exam_room_allocation import normalized_rooms
@@ -1143,6 +1144,10 @@ def _exam_staff(source: dict | None, links: LinkedExams, exams: list[str]) -> di
     it say what it will need wherever it sits. An exam the saved run gave no
     room - it was in OVERFLOW - is counted from its sections instead, one room
     each. Linked courses share rooms, so a link is counted as one exam.
+
+    An estimate: the evaluation rooms every period afresh, and a different
+    split of a section can need one invigilator more or fewer. The report
+    therefore also states the busiest day the saved board really has.
     """
     staff: dict[str, dict[str, int]] = {}
     if not source:
@@ -1161,7 +1166,7 @@ def _exam_staff(source: dict | None, links: LinkedExams, exams: list[str]) -> di
         for counts in _invigilators_per_day(_physical_exam_rooms(roomed.get(unit, []))).values():
             for kind in _STAFF_KINDS:
                 need[kind] += counts[kind]
-        if not need["total"]:
+        if not roomed.get(unit):
             for code in links.members_of(unit):
                 for row in sections.get(code) or []:
                     gender = "F" if row.get("gender") == "F" else "M"
@@ -1211,12 +1216,15 @@ def _solver_optimised_schedule(
     """Optimise by solving the whole board at once (``exam_optimise``).
 
     Pinned exams and the exams of locked cells never move, no exam enters a
-    locked cell, and a link moves as one exam. The invigilators each day stay
-    within the most the submitted board uses on any day, so the solver - not a
-    pass after it - keeps the staff level while it spares the students.
+    locked cell, and a link moves as one exam. The search holds each day's
+    invigilators to the most the submitted board uses on any day, by its
+    estimate of what each exam needs, so the search - not a pass after it -
+    keeps the staff level while it spares the students.
 
-    A board the solver cannot better is not saved again: pressing Optimise on
-    an already optimised timetable used to add a copy to the history each time.
+    A board the search cannot better is not saved again, provided the request
+    asks for nothing else: pressing Optimise on an already optimised timetable
+    used to add a copy to the history each time. A request that also changes
+    a pin, a link, a lock or a setting is saved, as it always was.
     """
     exams = list(links.units(inputs.course_list))
     slot_of = {(slot["day"], slot["period"]): slot["index"] for slot in inputs.slots}
@@ -1280,22 +1288,40 @@ def _solver_optimised_schedule(
     )
     progress.check_cancelled()
 
-    moved = links.expand_codes(found.moved)
+    # Compared with the board as it was submitted: a pin that puts its exam
+    # back in its place is a move, and may itself be the improvement.
+    before = optimise_score(board, submitted, is_heavy_credit_day)
     report = {
-        "improved": found.improved,
+        "improved": found.after < before,
         "proven": found.proven,
-        "before": found.before.as_dict(),
+        "before": before.as_dict(),
         "after": found.after.as_dict(),
-        "moved": len(moved),
+        "moved": sum(
+            links.weight(exam)
+            for exam in exams
+            if found.placements.get(exam) != submitted.get(exam)
+        ),
         "movable": sum(links.weight(exam) for exam in exams if exam not in fixed),
         "fixed": sum(links.weight(exam) for exam in fixed),
         "invigilator_day_limits": staff_limits,
     }
-    if not found.improved and current == submitted:
-        # The solver found no better board, so the board is exactly the one
-        # submitted. Saving it again would add a duplicate run to the history
-        # and, when the registrar has unsaved drags, save them without the
-        # review Save asks for. The page keeps the draft and shows the report.
+    unchanged = _asks_only_what_the_source_has(
+        lock_source,
+        days=days,
+        periods=periods,
+        max_per_day=max_per_day,
+        thin_conflict_threshold=thin_conflict_threshold,
+        assign_rooms=assign_rooms,
+        pins=valid_pins,
+        links=links,
+        locks=locks,
+    )
+    if not found.improved and current == submitted and unchanged:
+        # No better board was found, the board is exactly the one submitted,
+        # and the request changes nothing else. Saving it again would add a
+        # duplicate run to the history and, when the registrar has unsaved
+        # drags, save them without the review Save asks for. The page keeps
+        # the draft and shows the report.
         return {"saved": False, "optimisation": report}
 
     slot_by_index = {slot["index"]: slot for slot in inputs.slots}
@@ -1333,9 +1359,9 @@ def _solver_optimised_schedule(
             )
     return _rebuild_loaded_schedule(
         label=label,
-        # The solver kept the invigilators within the board's own daily peak.
-        # The pass that flattens them afterwards moves exams again and, on the
-        # real board, put 80 to 115 more students on a two-exam day.
+        # The search already held each day's invigilators to the board's own
+        # peak. The pass that flattens them afterwards moves exams again and,
+        # on the real board, put 80 to 115 more students on a two-exam day.
         rebalance_invigilators=False,
         days=days,
         periods=periods,
@@ -1353,7 +1379,72 @@ def _solver_optimised_schedule(
         save=save,
         **_lock_kwargs(locks, lock_source),
         # Top-level, never in qa: a Check cannot reproduce how a board was made.
-        extra={"optimisation": report},
+        described=lambda result: {
+            "optimisation": {
+                **report,
+                # The busiest day as the rooms really came out, beside the
+                # saved run's: the limit above is held by an estimate.
+                "invigilator_peak": {
+                    "before": _invigilator_peak(lock_source),
+                    "after": _invigilator_peak(result),
+                },
+            }
+        },
+    )
+
+
+def _invigilator_peak(run: dict | None) -> int | None:
+    """The most invigilators ``run`` needs on one day; None when it has no rooms."""
+    rooms = ((run or {}).get("qa") or {}).get("rooms") or {}
+    per_day = rooms.get("invigilators_per_day") or {}
+    totals = [
+        int(counts.get("total", 0)) for counts in per_day.values() if isinstance(counts, dict)
+    ]
+    return max(totals) if totals else None
+
+
+def _asks_only_what_the_source_has(
+    source: dict | None,
+    *,
+    days: list[str],
+    periods: list[str],
+    max_per_day: int,
+    thin_conflict_threshold: int,
+    assign_rooms: bool,
+    pins: list[dict[str, str]],
+    links: LinkedExams,
+    locks: ExamLocks,
+) -> bool:
+    """The request's pins, links, locks and settings are the saved run's own.
+
+    Placements are not compared: a drag is a draft the page keeps. Anything
+    else the request changes lives only in the request, so an Optimise that
+    saved nothing would lose it while answering that all is well.
+    """
+    if not source:
+        return False
+    slots = [slot for slot in source.get("slots") or [] if slot.get("day") != "OVERFLOW"]
+
+    def canonical(value: Any) -> str:
+        return json.dumps(value, sort_keys=True, ensure_ascii=False)
+
+    def pin_set(rows: Any) -> list[tuple[str, str, str]]:
+        return sorted(
+            (str(row.get("course_code")), str(row.get("day")), str(row.get("period")))
+            for row in rows or []
+            if isinstance(row, dict)
+        )
+
+    qa = source.get("qa") or {}
+    return (
+        list(dict.fromkeys(slot["day"] for slot in slots)) == list(days)
+        and list(dict.fromkeys(slot["period"] for slot in slots)) == list(periods)
+        and qa.get("max_per_day", 2) == max_per_day
+        and qa.get("thin_threshold", 0) == thin_conflict_threshold
+        and bool(source.get("assign_rooms", True)) == bool(assign_rooms)
+        and pin_set(source.get("pinned")) == pin_set(pins)
+        and canonical(source.get("linked_exams") or []) == canonical(links.saved())
+        and canonical(source.get("exam_locks") or []) == canonical(locks.saved() if locks else [])
     )
 
 

@@ -1026,7 +1026,21 @@ EXAM_JOBS_ENABLED = os.getenv("EXAM_JOBS_ENABLED", "true").strip().lower() == "t
 # to go back to the greedy re-colouring and its invigilator pass. The rounds
 # are how many solves one optimisation makes: more is better and slower.
 EXAM_OPTIMISE_EXACT = os.getenv("EXAM_OPTIMISE_EXACT", "true").strip().lower() == "true"
-EXAM_OPTIMISE_ROUNDS = int(_float_env("EXAM_OPTIMISE_ROUNDS", "500"))
-EXAM_OPTIMISE_SYNC_ROUNDS = int(_float_env("EXAM_OPTIMISE_SYNC_ROUNDS", "50"))
+
+
+def _rounds_env(name: str, default: int) -> int:
+    """A whole number of rounds from 1 to 5000; anything else is the default.
+
+    Like ``_float_env``, a mistyped value must never stop the site starting,
+    and zero rounds would make Optimize answer "nothing better" every time.
+    """
+    try:
+        return min(5000, max(1, int(float(os.getenv(name) or default))))
+    except (TypeError, ValueError, OverflowError):
+        return default
+
+
+EXAM_OPTIMISE_ROUNDS = _rounds_env("EXAM_OPTIMISE_ROUNDS", 500)
+EXAM_OPTIMISE_SYNC_ROUNDS = _rounds_env("EXAM_OPTIMISE_SYNC_ROUNDS", 50)
 # Tests run a job on the submitting thread instead of its own.
 EXAM_JOBS_RUN_INLINE = False

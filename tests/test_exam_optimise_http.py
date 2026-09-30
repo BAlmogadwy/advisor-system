@@ -317,14 +317,112 @@ def test_the_board_is_improvable_only_by_moving_the_exam_a_pin_will_hold(client_
 
 def test_a_pinned_exam_never_moves_even_when_moving_it_is_the_only_improvement(client_, stuck):
     built, board = stuck
+    pins = [_pin("ST1"), _pin("ST3"), _pin("ST4")]
+    saved = _save(client_, built, board, days=DAYS[:2], periods=TWO, pinned=pins)
     runs = ExamTimetableRun.objects.count()
 
-    result = _stuck_optimise(client_, built, board, pinned=[_pin("ST1"), _pin("ST3"), _pin("ST4")])
+    result = _stuck_optimise(client_, saved, saved["schedule"], pinned=pins)
 
     assert result["saved"] is False, "the only way to improve the board was to move SA"
     assert result["optimisation"]["improved"] is False
     assert result["optimisation"]["fixed"] == 3 and result["optimisation"]["movable"] == 1
     assert ExamTimetableRun.objects.count() == runs
+
+
+# ── what else the request asks for is never dropped ──────────────────────────
+
+
+def test_a_new_pin_is_saved_although_nothing_moves_and_nothing_is_better(client_, stuck):
+    """The pin lives only in the request: answering "nothing saved" would lose it."""
+    built, board = stuck
+    saved = _save(client_, built, board, days=DAYS[:2], periods=TWO, pinned=[_pin("ST3")])
+    pins = [_pin("ST1"), _pin("ST3"), _pin("ST4")]
+
+    result = _stuck_optimise(client_, saved, saved["schedule"], pinned=pins)
+
+    assert result["run_id"] != saved["run_id"]
+    report = result["optimisation"]
+    assert report["improved"] is False and report["moved"] == 0
+    assert _where(result) == _where(saved)
+    reloaded = load_normalised_run(ExamTimetableRun.objects.get(pk=result["run_id"]))
+    assert sorted(pin["course_code"] for pin in reloaded["pinned"]) == ["ST1", "ST3", "ST4"]
+
+
+def test_a_removed_pin_is_saved_too(client_, stuck):
+    built, board = stuck
+    pins = [_pin("ST1"), _pin("ST2"), _pin("ST3"), _pin("ST4")]
+    saved = _save(client_, built, board, days=DAYS[:2], periods=TWO, pinned=pins)
+
+    # ST2 freed: it still has nowhere better to go, and the pin list changed.
+    result = _stuck_optimise(client_, saved, saved["schedule"], pinned=pins[:1] + pins[2:])
+
+    assert result["run_id"] != saved["run_id"]
+    assert sorted(pin["course_code"] for pin in result["pinned"]) == ["ST1", "ST3", "ST4"]
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"max_per_day": 1},
+        {"thin_conflict_threshold": 3},
+        {"days": DAYS},
+        {"periods": PERIODS},
+        {"assign_rooms": True},
+    ],
+    ids=["daily-limit", "thin-threshold", "a-day-added", "a-period-added", "rooms-switched-on"],
+)
+def test_a_changed_setting_is_saved_although_nothing_is_better(client_, stuck, change):
+    built, board = stuck
+    pins = [_pin("ST1"), _pin("ST2"), _pin("ST3"), _pin("ST4")]
+    header = {"days": DAYS[:2], "periods": TWO}
+    saved = _save(client_, built, board, **header, pinned=pins)
+    runs = ExamTimetableRun.objects.count()
+
+    same = _optimise(client_, saved, saved["schedule"], **header, pinned=pins)
+    assert same["saved"] is False and ExamTimetableRun.objects.count() == runs
+
+    result = _optimise(client_, saved, saved["schedule"], **{**header, **change}, pinned=pins)
+
+    assert result["run_id"] != saved["run_id"], "every exam is pinned: only the setting changed"
+    assert ExamTimetableRun.objects.count() == runs + 1
+    if "max_per_day" in change:
+        assert result["qa"]["max_per_day"] == 1
+    if "thin_conflict_threshold" in change:
+        assert result["qa"]["thin_threshold"] == 3
+    if "days" in change:
+        assert len(result["slots"]) == len(DAYS) * len(TWO)
+    if "periods" in change:
+        assert len(result["slots"]) == 2 * len(PERIODS)
+    if "assign_rooms" in change:
+        assert result["assign_rooms"] is True
+
+
+@pytest.mark.parametrize(
+    ("value", "rounds"),
+    [
+        (None, 500),
+        ("", 500),
+        ("40", 40),
+        ("40.9", 40),
+        ("abc", 500),
+        ("nan", 500),
+        ("inf", 500),
+        ("1e400", 500),
+        ("0", 1),
+        ("-5", 1),
+        ("999999", 5000),
+    ],
+)
+def test_a_mistyped_rounds_setting_never_stops_the_site_and_never_means_no_search(
+    monkeypatch, value, rounds
+):
+    from config.settings import _rounds_env
+
+    if value is None:
+        monkeypatch.delenv("EXAM_OPTIMISE_ROUNDS", raising=False)
+    else:
+        monkeypatch.setenv("EXAM_OPTIMISE_ROUNDS", value)
+    assert _rounds_env("EXAM_OPTIMISE_ROUNDS", 500) == rounds
 
 
 def test_a_pin_that_moves_an_exam_is_saved_although_the_search_finds_nothing_better(client_, crowd):
@@ -339,6 +437,7 @@ def test_a_pin_that_moves_an_exam_is_saved_although_the_search_finds_nothing_bet
     result = _optimise(client_, better, better["schedule"], pinned=[pin])
 
     assert result["optimisation"]["improved"] is False
+    assert result["optimisation"]["moved"] == 1, "the pinned exam is the one move"
     assert result["run_id"], "the board differs from the submitted one, so it is saved"
     assert _where(result)["CR4"] == (day, PERIODS[0])
     assert {code: cell for code, cell in _where(result).items() if code != "CR4"} == {
@@ -645,6 +744,27 @@ def test_a_movable_exam_clashing_with_a_pin_and_with_no_other_seat_goes_to_overf
     assert ExamTimetableRun.objects.count() == runs + 1
 
 
+def test_a_pin_that_seats_an_overflow_exam_is_reported_as_the_improvement_it_is(client_):
+    """Before is the board as submitted - the exam in OVERFLOW - not after the pin."""
+    _populate(CLASH[:2], CLASH_GROUPS[:1])
+    built = _build(client_, days=DAYS[:2], periods=TWO)
+    board = _board(built, {"CL1": ("Sun", TWO[0])})
+    for entry in board:
+        if entry["course_code"] == "CL2":
+            entry.update(day="OVERFLOW", period="Extra-4", slot_index=4)
+    pins = [
+        {"course_code": "CL1", "day": "Sun", "period": TWO[0]},
+        {"course_code": "CL2", "day": "Mon", "period": TWO[0]},
+    ]
+
+    result = _optimise(client_, built, board, days=DAYS[:2], periods=TWO, pinned=pins)
+
+    report = result["optimisation"]
+    assert (report["before"]["unseated"], report["after"]["unseated"]) == (1, 0)
+    assert report["improved"] is True and report["moved"] == 1
+    assert _where(result)["CL2"] == ("Mon", TWO[0])
+
+
 # ── jobs, requests and the greedy rollback ───────────────────────────────────
 
 
@@ -717,6 +837,106 @@ def test_a_cancelled_optimise_job_saves_nothing_whether_or_not_it_would_have_imp
         job = _poll(client_, job_id)
         assert (job["status"], job["error_code"]) == ("cancelled", "cancelled")
         assert ExamTimetableRun.objects.count() == runs
+
+
+# Fourteen exams, more than one solve frees: the search runs its rounds.
+MANY = [(f"MN{index:02d}", 3) for index in range(14)]
+MANY_GROUPS = [(2, "F", [f"MN{index:02d}", f"MN{index + 1:02d}"]) for index in range(0, 14, 2)]
+
+
+@pytest.fixture
+def many(client_):
+    """Seven pairs of exams, each pair sharing two students and one day."""
+    _populate(MANY, MANY_GROUPS)
+    days = ["Sun", "Mon", "Tue", "Wed", "Thu"]
+    built = _build(client_, days=days, periods=PERIODS)
+    cells = [(day, period) for day in days for period in PERIODS]
+    board = _board(built, {code: cells[index] for index, (code, _) in enumerate(MANY)})
+    return built, board, {"days": days, "periods": PERIODS}
+
+
+def test_a_board_larger_than_one_solve_is_searched_in_rounds_that_report_progress(
+    client_, many, jobs, monkeypatch
+):
+    built, board, header = many
+    ticks = []
+    real = exam_jobs.JobProgress.counter
+
+    def counter(self, key):
+        tick = real(self, key)
+
+        def recorded(done, total):
+            ticks.append((key, done, total))
+            tick(done, total)
+
+        return recorded
+
+    monkeypatch.setattr(exam_jobs.JobProgress, "counter", counter)
+    jobs.EXAM_OPTIMISE_ROUNDS = 9
+
+    job_id = _as_job(client_, built, board, **header)
+    status, body = _result(client_, job_id)
+
+    assert status == 200
+    report = body["optimisation"]
+    assert report["improved"] is True and report["proven"] is False
+    assert 0 < report["after"]["multi_exam_day"] + 1 <= report["before"]["multi_exam_day"]
+    placed = [tick for tick in ticks if tick[0] == "place_exams"]
+    assert placed[0] == ("place_exams", 0, 9)
+    assert [done for _key, done, _total in placed] == list(range(len(placed)))
+    assert 1 < len(placed) <= 9
+
+
+def test_a_job_cancelled_between_rounds_stops_there_and_saves_nothing(
+    client_, many, jobs, monkeypatch
+):
+    from core.services import exam_optimise
+    from core.services.exam_progress import current
+
+    built, board, header = many
+    rounds = []
+    real = exam_optimise._Search.improve
+
+    def improve(self, free):
+        rounds.append(len(rounds))
+        if len(rounds) == 2:
+            current().cancelled.set()  # the person pressed Stop during the second solve
+        return real(self, free)
+
+    monkeypatch.setattr(exam_optimise._Search, "improve", improve)
+    jobs.EXAM_OPTIMISE_ROUNDS = 9
+    runs = ExamTimetableRun.objects.count()
+
+    job = _poll(client_, _as_job(client_, built, board, **header))
+
+    assert (job["status"], job["error_code"]) == ("cancelled", "cancelled")
+    assert len(rounds) == 2, "the third round never started"
+    assert ExamTimetableRun.objects.count() == runs
+
+
+def test_the_report_states_the_busiest_invigilator_day_as_the_rooms_really_came_out(client_):
+    built, board, result = _staffed(client_, assign_rooms=True)
+
+    peak = result["optimisation"]["invigilator_peak"]
+    per_day = result["qa"]["rooms"]["invigilators_per_day"]
+    assert peak["after"] == max(counts["total"] for counts in per_day.values())
+    source = built["qa"]["rooms"]["invigilators_per_day"]
+    assert peak["before"] == max(counts["total"] for counts in source.values())
+    assert exam_views._invigilator_peak({"qa": {"rooms": {}}}) is None
+    assert exam_views._invigilator_peak(None) is None
+
+
+def test_the_peak_before_is_the_saved_runs_and_the_peak_after_is_the_new_boards(
+    client_, monkeypatch
+):
+    built, board, _result = _staffed(client_, assign_rooms=True)
+    monkeypatch.setattr(
+        exam_views,
+        "_invigilator_peak",
+        lambda run: 222 if run.get("rebuild_mode") == "optimized_from_loaded" else 111,
+    )
+    result = _optimise(client_, built, board, periods=TWO, assign_rooms=True)
+    assert result["optimisation"]["invigilator_peak"] == {"before": 111, "after": 222}
 
 
 def test_the_rollback_flag_takes_the_greedy_path_and_the_default_the_solver(

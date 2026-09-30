@@ -134,7 +134,9 @@ def _random_board(
     )
 
 
-@pytest.mark.parametrize("seed", range(60))
+# 152, 565 and 976: boards where the students gain nothing and only the
+# spacing can - a solve that stopped at "no gain" left them untidied.
+@pytest.mark.parametrize("seed", [*range(60), 152, 343, 565, 976])
 def test_a_small_board_gets_the_best_board_there_is(seed):
     rng = random.Random(seed)
     board = _random_board(rng, exams=6, movable=rng.randint(1, 4), days=3, periods=2)
@@ -183,6 +185,88 @@ def test_a_large_board_is_never_worse_and_never_breaks_a_rule(seed):
         for exam in set(board.exams) - board.fixed
         if result.placements.get(exam) != given.get(exam)
     )
+
+
+def _legal_board(
+    rng: random.Random, *, exams: int, days: int, periods: int, terms: int | None = None
+) -> Board:
+    """A board that seats every exam and breaks no rule, all exams movable.
+
+    ``terms``: that many (programme, term)s of three exams each, so spacing matters.
+    """
+    while True:
+        board = _random_board(rng, exams=exams, movable=exams, days=days, periods=periods)
+        changes: dict = {"staff_limits": {}, "closed_slots": frozenset()}
+        if terms is not None:
+            changes["buckets"] = {
+                ("P", term): set(rng.sample(list(board.exams), 3)) for term in range(terms)
+            }
+        board = _board(**{**board.__dict__, **changes})
+        placements: dict[str, int] = {}
+        for exam in board.exams:
+            slots = list(range(board.slot_count))
+            rng.shuffle(slots)
+            for slot in slots:
+                placements[exam] = slot
+                if not _breaks_hard_rule(board, placements, exam):
+                    break
+                del placements[exam]
+        board = _board(**{**board.__dict__, "current": placements})
+        if len(placements) == exams and not _score(board, placements).rule_breaks:
+            return board
+
+
+@pytest.mark.parametrize("seed", range(40))
+def test_a_legal_small_board_gets_the_best_board_with_spacing_no_worse(seed):
+    board = _legal_board(random.Random(3000 + seed), exams=5, days=4, periods=1)
+    before = _score(board, board.current)
+    best, best_moves = _oracle(board)
+
+    result = _optimise(board)
+
+    assert result.proven
+    assert result.after == best
+    assert result.after.spacing <= before.spacing
+    assert sum(board.weight(exam) for exam in result.moved) == best_moves
+
+
+@pytest.mark.parametrize("seed", range(40))
+def test_the_search_never_lets_spacing_get_worse_on_a_legal_board(seed):
+    board = _legal_board(random.Random(5000 + seed), exams=18, days=6, periods=2, terms=6)
+    before = _score(board, board.current)
+
+    result = _optimise(board, rounds=40, neighbourhood=5, seed=seed)
+
+    assert result.after.spacing <= before.spacing
+    assert result.after.rule_breaks == 0 and result.after.unseated == 0
+    assert result.after <= before
+
+
+def test_every_solve_is_one_worker_seeded_and_limited_by_work_not_by_the_clock(monkeypatch):
+    solvers = []
+    real = exam_optimise.cp_model.CpSolver
+
+    def recorded():
+        solver = real()
+        solvers.append(solver)
+        return solver
+
+    monkeypatch.setattr(exam_optimise.cp_model, "CpSolver", recorded)
+    board = _random_board(random.Random(7), exams=14, movable=11, days=4, periods=3)
+    _optimise(board, rounds=4, neighbourhood=4, seed=31)
+
+    assert solvers
+    for solver in solvers:
+        assert solver.parameters.num_search_workers == 1
+        assert solver.parameters.random_seed == 31
+        assert solver.parameters.max_deterministic_time == exam_optimise._SOLVE_WORK
+        assert solver.parameters.max_time_in_seconds == float("inf")
+
+
+def test_a_neighbourhood_of_nothing_is_a_neighbourhood_of_one():
+    board = _random_board(random.Random(7), exams=8, movable=6, days=4, periods=3)
+    result = _optimise(board, rounds=3, neighbourhood=0)
+    assert result.after <= result.before
 
 
 def test_the_same_seed_gives_the_same_board_and_another_seed_may_not():
@@ -491,7 +575,43 @@ def test_a_worse_board_from_a_solve_is_never_kept(monkeypatch):
 def test_moves_are_counted_from_the_board_given_not_from_the_last_board_found():
     # X drifted to slot 2 for no gain; the next solve of X brings it home.
     board = _board(exams=["X"], current={"X": 0}, sittings={})
+    for drifted in range(1, 6):
+        search = exam_optimise._Search(board, is_heavy_credit_day, seed=0)
+        search.best = {"X": drifted}
+        search.improve(["X"])
+        assert search.best == {"X": 0}, drifted
+
+
+def test_seating_the_one_exam_is_fewer_moves_than_swapping_two():
+    # Z is in OVERFLOW and the one free slot suits it. Unseating Y to seat Z
+    # there would score the same (weights equal) and move two exams, not one.
+    board = _board(
+        exams=["F", "Y", "Z"],
+        current={"F": 0, "Y": 1},
+        fixed=frozenset({"F"}),
+        slot_count=3,
+        periods_per_day=3,
+    )
+    result = _optimise(board)
+    assert result.placements == {"F": 0, "Y": 1, "Z": 2}
+    assert result.moved == ["Z"]
+
+
+def test_the_spacing_cap_counts_the_exams_a_solve_leaves_alone():
+    # C and D, a day apart, already use the whole spacing allowance. Freeing A
+    # alone, the one way to spare its student is to sit A a day from B - and
+    # that would push the board's spacing past what it was given with.
+    board = _board(
+        exams=["A", "B", "C", "D", "S"],
+        current={"A": 0, "S": 1, "C": 4, "D": 6, "B": 10},
+        slot_count=12,
+        periods_per_day=2,
+        closed_slots=frozenset({2, 3, 5, 7, 11}),
+        buckets={("P", 1): {"A", "B"}, ("P", 2): {"C", "D"}},
+        adj={"A": {"S": 1}, "S": {"A": 1}},
+        sittings={1: [("A", 3), ("S", 3)]},
+    )
     search = exam_optimise._Search(board, is_heavy_credit_day, seed=0)
-    search.best = {"X": 2}
-    search.improve(["X"])
-    assert search.best == {"X": 0}
+    assert search.spacing_cap == spacing_penalty(1)
+    search.improve(["A"])
+    assert search.best == dict(board.current)
