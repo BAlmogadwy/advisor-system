@@ -695,6 +695,7 @@ def test_an_exam_in_overflow_with_a_legal_seat_is_seated_and_one_with_none_stays
     assert where["OL1"] == where["OL2"], "one shared Extra-n for the link"
     assert where["OL1"] == ("OVERFLOW", first["period"]), "an exam left in OVERFLOW is untouched"
     assert (report["before"]["unseated"], report["after"]["unseated"]) == (3, 2)
+    assert report["sent_to_overflow"] == 0, "the link was already there"
     assert report["improved"] is True
 
 
@@ -737,6 +738,7 @@ def test_a_movable_exam_clashing_with_a_pin_and_with_no_other_seat_goes_to_overf
     assert report["improved"] is True
     assert (report["before"]["rule_breaks"], report["after"]["rule_breaks"]) == (1, 0)
     assert (report["before"]["unseated"], report["after"]["unseated"]) == (0, 1)
+    assert report["sent_to_overflow"] == 1
     where = _where(result)
     assert where["CL1"] == ("Sun", one[0]), "the pinned exam stays"
     assert where["CL2"][0] == "OVERFLOW" and where["CL2"][1].startswith("Extra-")
@@ -914,29 +916,64 @@ def test_a_job_cancelled_between_rounds_stops_there_and_saves_nothing(
     assert ExamTimetableRun.objects.count() == runs
 
 
-def test_the_report_states_the_busiest_invigilator_day_as_the_rooms_really_came_out(client_):
-    built, board, result = _staffed(client_, assign_rooms=True)
-
-    peak = result["optimisation"]["invigilator_peak"]
+def _peak(result):
     per_day = result["qa"]["rooms"]["invigilators_per_day"]
-    assert peak["after"] == max(counts["total"] for counts in per_day.values())
-    source = built["qa"]["rooms"]["invigilators_per_day"]
-    assert peak["before"] == max(counts["total"] for counts in source.values())
+    return max(counts["total"] for counts in per_day.values())
+
+
+def test_the_report_states_the_busiest_invigilator_day_as_the_rooms_really_came_out(client_):
+    built, board, _dragged = _staffed(client_, assign_rooms=True)
+    saved = _save(client_, built, board, periods=TWO, assign_rooms=True)
+
+    result = _optimise(client_, saved, saved["schedule"], periods=TWO, assign_rooms=True)
+
+    assert result["optimisation"]["invigilator_peak"] == {
+        "before": _peak(saved),
+        "after": _peak(result),
+    }
     assert exam_views._invigilator_peak({"qa": {"rooms": {}}}) is None
     assert exam_views._invigilator_peak(None) is None
+
+
+def test_after_a_drag_the_peak_before_is_not_known_and_is_not_guessed(client_):
+    """The saved run's peak is not the dragged board's: the report leaves it out."""
+    built, _board_, result = _staffed(client_, assign_rooms=True)
+    assert result["optimisation"]["invigilator_peak"] == {"before": None, "after": _peak(result)}
 
 
 def test_the_peak_before_is_the_saved_runs_and_the_peak_after_is_the_new_boards(
     client_, monkeypatch
 ):
     built, board, _result = _staffed(client_, assign_rooms=True)
+    saved = _save(client_, built, board, periods=TWO, assign_rooms=True)
     monkeypatch.setattr(
         exam_views,
         "_invigilator_peak",
         lambda run: 222 if run.get("rebuild_mode") == "optimized_from_loaded" else 111,
     )
-    result = _optimise(client_, built, board, periods=TWO, assign_rooms=True)
+    result = _optimise(client_, saved, saved["schedule"], periods=TWO, assign_rooms=True)
     assert result["optimisation"]["invigilator_peak"] == {"before": 111, "after": 222}
+
+
+def test_an_unticked_course_is_saved_although_nothing_is_better(client_, stuck):
+    """The course list lives only in the request, like a pin."""
+    built, board = stuck
+    pins = [_pin("ST1"), _pin("ST2"), _pin("ST3"), _pin("ST4")]
+    header = {"days": DAYS[:2], "periods": TWO}
+    saved = _save(client_, built, board, **header, pinned=pins)
+    fewer = [entry for entry in saved["schedule"] if entry["course_code"] != "ST4"]
+
+    result = _optimise(
+        client_,
+        saved,
+        fewer,
+        **header,
+        pinned=pins[:3],
+        selected_courses=[entry["course_code"] for entry in fewer],
+    )
+
+    assert result["run_id"] != saved["run_id"]
+    assert sorted(_where(result)) == ["ST1", "ST2", "ST3"]
 
 
 def test_the_rollback_flag_takes_the_greedy_path_and_the_default_the_solver(

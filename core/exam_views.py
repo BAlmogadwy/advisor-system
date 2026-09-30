@@ -1303,10 +1303,18 @@ def _solver_optimised_schedule(
         ),
         "movable": sum(links.weight(exam) for exam in exams if exam not in fixed),
         "fixed": sum(links.weight(exam) for exam in fixed),
+        # Seated as submitted and now in OVERFLOW: each needs a place by hand,
+        # whatever other exam was seated in the same run.
+        "sent_to_overflow": sum(
+            links.weight(exam)
+            for exam in exams
+            if exam in submitted and exam not in found.placements
+        ),
         "invigilator_day_limits": staff_limits,
     }
     unchanged = _asks_only_what_the_source_has(
         lock_source,
+        courses=inputs.course_list,
         days=days,
         periods=periods,
         max_per_day=max_per_day,
@@ -1385,7 +1393,12 @@ def _solver_optimised_schedule(
                 # The busiest day as the rooms really came out, beside the
                 # saved run's: the limit above is held by an estimate.
                 "invigilator_peak": {
-                    "before": _invigilator_peak(lock_source),
+                    # The saved run's peak is the submitted board's only while
+                    # no exam has been dragged since; after a drag it is not
+                    # known, and a wrong "before" would be worse than none.
+                    "before": _invigilator_peak(lock_source)
+                    if _placed_as_saved(lock_source, base_entries)
+                    else None,
                     "after": _invigilator_peak(result),
                 },
             }
@@ -1403,9 +1416,27 @@ def _invigilator_peak(run: dict | None) -> int | None:
     return max(totals) if totals else None
 
 
+def _placed_as_saved(source: dict | None, entries: list[dict]) -> bool:
+    """Every exam of the submitted board sits where the saved run has it."""
+
+    def cells(rows: Any) -> dict[str, tuple[str, str]]:
+        return {
+            str(row.get("course_code")): (
+                str(row.get("day")),
+                # One OVERFLOW is like another: Extra-n numbers are not places.
+                "" if row.get("day") == "OVERFLOW" else str(row.get("period")),
+            )
+            for row in rows or []
+            if isinstance(row, dict)
+        }
+
+    return bool(source) and cells(source.get("schedule")) == cells(entries)
+
+
 def _asks_only_what_the_source_has(
     source: dict | None,
     *,
+    courses: list[str],
     days: list[str],
     periods: list[str],
     max_per_day: int,
@@ -1415,11 +1446,12 @@ def _asks_only_what_the_source_has(
     links: LinkedExams,
     locks: ExamLocks,
 ) -> bool:
-    """The request's pins, links, locks and settings are the saved run's own.
+    """The request's courses, pins, links, locks and settings are the saved run's own.
 
-    Placements are not compared: a drag is a draft the page keeps. Anything
-    else the request changes lives only in the request, so an Optimise that
-    saved nothing would lose it while answering that all is well.
+    Placements are not compared: a drag is a draft the page keeps. These other
+    changes live only in the request, so an Optimise that saved nothing would
+    lose them while answering that all is well. The label is not compared:
+    Optimise is not "save as", and the page says that nothing was saved.
     """
     if not source:
         return False
@@ -1436,8 +1468,12 @@ def _asks_only_what_the_source_has(
         )
 
     qa = source.get("qa") or {}
+    saved_courses = sorted(
+        str(row.get("course_code")) for row in source.get("schedule") or [] if isinstance(row, dict)
+    )
     return (
-        list(dict.fromkeys(slot["day"] for slot in slots)) == list(days)
+        saved_courses == sorted(courses)
+        and list(dict.fromkeys(slot["day"] for slot in slots)) == list(days)
         and list(dict.fromkeys(slot["period"] for slot in slots)) == list(periods)
         and qa.get("max_per_day", 2) == max_per_day
         and qa.get("thin_threshold", 0) == thin_conflict_threshold
