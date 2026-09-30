@@ -3551,14 +3551,14 @@ const OPTIMISE_TEXT = {
   // changed courses, pins, links, locks or settings and nothing moved.
   notBetter: moved => IS_AR
     ? (moved
-      ? `لم يجد التحسين جدولاً أفضل. طُبّقت التثبيتات والأقفال، ف${arabicCount(moved, AR_MOVED_BY_PINS)}؛ وحُفظ الجدول.`
+      ? `لم يجد التحسين جدولاً أفضل. طُبّقت التثبيتات والأقفال، ف${arabicCount(moved, AR_MOVED_BY_PINS)}، وحُفظ الجدول.`
       : 'لم يجد التحسين جدولاً أفضل. لم يُنقل أي اختبار، وحُفظ الجدول بالمقررات والتثبيتات والروابط والأقفال والإعدادات الحالية.')
     : (moved
       ? `Optimize found no better timetable. Your pins and locks were applied, which moved ${moved} exam${moved === 1 ? '' : 's'}; the timetable was saved.`
       : 'Optimize found no better timetable. No exam was moved; the timetable was saved with your current courses, pins, links, locks and settings.'),
   // Exams of one programme and term spread over more days (the only gain).
   spreadOut: () => IS_AR
-    ? 'صارت اختبارات البرنامج والفصل الدراسي الواحد متباعدة بأيام أكثر.'
+    ? 'زادت الأيام الفاصلة بين اختبارات البرنامج الواحد في الفصل الدراسي نفسه.'
     : 'Exams of the same programme and term now have more days between them.',
   // The sentence a job panel has already said; the report then starts here.
   screenStays: () => IS_AR
@@ -3647,16 +3647,16 @@ function describeOptimisation(report, { saved = true, panelShown = false } = {})
     parts.push(`<p>${escapeAttr(OPTIMISE_TEXT.spreadOut())}</p>`);
   }
   if (saved) {
-    if (improved) {
-      parts.push(`<p>${escapeAttr(OPTIMISE_TEXT.moved(count(report?.moved), count(report?.fixed)))}</p>`);
-      // Rule breaks come first, even at the price of an exam in the Overflow.
-      // The server counts exams seated before and now in the Overflow; older
-      // saved runs lack it, so the net rise stands in.
-      const sent = report?.sent_to_overflow === undefined
-        ? count(after.unseated) - count(before.unseated)
-        : count(report.sent_to_overflow);
-      if (sent > 0) parts.push(`<p>${escapeAttr(OPTIMISE_TEXT.sentToOverflow(sent, count(before.rule_breaks) > count(after.rule_breaks)))}</p>`);
-    }
+    if (improved) parts.push(`<p>${escapeAttr(OPTIMISE_TEXT.moved(count(report?.moved), count(report?.fixed)))}</p>`);
+    // Rule breaks come first, even at the price of an exam in the Overflow,
+    // and a pin may push another exam there on a timetable that is no better:
+    // either way the exam needs a place by hand, and the report must say so.
+    // The server counts exams seated before and now in the Overflow; older
+    // saved runs lack it, so the net rise stands in.
+    const sent = report?.sent_to_overflow === undefined
+      ? count(after.unseated) - count(before.unseated)
+      : count(report.sent_to_overflow);
+    if (sent > 0) parts.push(`<p>${escapeAttr(OPTIMISE_TEXT.sentToOverflow(sent, improved && count(before.rule_breaks) > count(after.rule_breaks)))}</p>`);
     parts.push(`<p>${escapeAttr(REPAIR_TEXT.saved())}</p>`);
   }
   // Clean only when the server gave the numbers of the board and none is left.

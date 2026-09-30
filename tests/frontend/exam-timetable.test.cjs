@@ -7856,9 +7856,9 @@ const OPT = language === 'ar' ? {
   over: 'طلاب تجاوزوا الحد اليومي للاختبارات',
   heavy: 'طلاب لديهم يوم اختبارات مرتفع الساعات المعتمدة',
   unseated: 'اختبارات في «فترة إضافية (تجاوز)»',
-  notBetterMoved: n => `لم يجد التحسين جدولاً أفضل. طُبّقت التثبيتات والأقفال، ف${({ 1: 'نُقل اختبار واحد', 2: 'نُقل اختباران', 3: 'نُقلت 3 اختبارات', 4: 'نُقلت 4 اختبارات', 9: 'نُقلت 9 اختبارات', 11: 'نُقل 11 اختباراً', 100: 'نُقل 100 اختبار' })[n]}؛ وحُفظ الجدول.`,
+  notBetterMoved: n => `لم يجد التحسين جدولاً أفضل. طُبّقت التثبيتات والأقفال، ف${({ 1: 'نُقل اختبار واحد', 2: 'نُقل اختباران', 3: 'نُقلت 3 اختبارات', 4: 'نُقلت 4 اختبارات', 9: 'نُقلت 9 اختبارات', 11: 'نُقل 11 اختباراً', 100: 'نُقل 100 اختبار' })[n]}، وحُفظ الجدول.`,
   notBetterSettings: 'لم يجد التحسين جدولاً أفضل. لم يُنقل أي اختبار، وحُفظ الجدول بالمقررات والتثبيتات والروابط والأقفال والإعدادات الحالية.',
-  spread: 'صارت اختبارات البرنامج والفصل الدراسي الواحد متباعدة بأيام أكثر.',
+  spread: 'زادت الأيام الفاصلة بين اختبارات البرنامج الواحد في الفصل الدراسي نفسه.',
   overflowNoClause: 'نُقل اختبار واحد إلى «فترة إضافية (تجاوز)». حدّد موعده يدوياً.',
   timetableSaved: 'تم حفظ الجدول.',
   peak: 'أكبر عدد مراقبين في يوم واحد',
@@ -8336,6 +8336,19 @@ test('the Overflow note uses the server count of exams sent there, and drops the
     const notes = show({ before: { ...OPTIMISATION.before, rule_breaks: was, unseated: 0 }, after: { ...OPTIMISATION.after, rule_breaks: now, unseated: 1 }, sent_to_overflow: 1 });
     assert.deepEqual(notes, [OPT.overflowNoClause], `${was} to ${now}`);
   }
+});
+
+test('a timetable that is no better still says when a pin pushed an exam to the Overflow slot', async t => {
+  const ui = await page(t, {});
+  const show = report => {
+    ui.window.eval(`showOptimisationReport(${asJs({ ...OPTIMISATION, improved: false, moved: 2, ...report })})`);
+    return reportParagraphs(ui);
+  };
+  const pushed = { before: { ...OPTIMISATION.before, rule_breaks: 3, unseated: 0 }, after: { ...OPTIMISATION.after, rule_breaks: 0, unseated: 1 } };
+  // Not better, so no rule-break reason is claimed even though rule breaks fell.
+  assert.deepEqual(show({ ...pushed, sent_to_overflow: 1 }), [OPT.notBetterMoved(2), OPT.overflowNoClause, OPT.saved]);
+  assert.equal(ui.$('examRepairReport').classList.contains('is-partial'), true);
+  assert.deepEqual(show({ ...pushed, after: { ...pushed.after, unseated: 0 }, sent_to_overflow: 0 }), [OPT.notBetterMoved(2), OPT.saved]);
 });
 
 test('when the only gain is spacing the report says so in one plain line, and otherwise stays silent about it', async t => {
