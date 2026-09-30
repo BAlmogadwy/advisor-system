@@ -188,6 +188,8 @@ def test_scraped_sections_without_student_courses_use_same_plan_name_identity(co
     assert enrolled[_entry(meta, PROGRAMMING)["course_code"]] == {3, 5}
 
 
+# Pins the greedy path (the rollback); the solver path is test_exam_optimise_http.py.
+@pytest.mark.usefixtures("greedy_optimise")
 def test_build_draft_save_optimize_and_reload_keep_single_variant_and_scope(courses, admin_client):
     _, meta = build_enrolled_sets_with_meta()
     selected = _entry(meta, PROGRAMMING)

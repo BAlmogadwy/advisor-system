@@ -746,6 +746,8 @@ def _recording(ticks):
     return recording
 
 
+# Pins the greedy path (the rollback); the solver path is test_exam_optimise_http.py.
+@pytest.mark.usefixtures("greedy_optimise")
 def test_an_optimise_with_rooms_reports_its_counted_stages(
     export_client,  # noqa: F811
     clashing_pair,  # noqa: F811

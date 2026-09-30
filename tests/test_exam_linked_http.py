@@ -381,6 +381,8 @@ def test_a_build_whose_post_pass_splits_a_link_is_refused(client_, population, m
     assert not ExamTimetableRun.objects.exists()
 
 
+# Pins the greedy path (the rollback); the solver path is test_exam_optimise_http.py.
+@pytest.mark.usefixtures("greedy_optimise")
 def test_an_optimise_whose_post_pass_splits_a_link_is_refused(client_, population, monkeypatch):
     built = _build(client_)
     monkeypatch.setattr(
@@ -607,6 +609,8 @@ def test_every_action_accepts_a_link_in_overflow_the_page_renumbered(client_, po
         }, "Check and Save keep the submitted placements"
 
 
+# Pins the greedy path (the rollback); the solver path is test_exam_optimise_http.py.
+@pytest.mark.usefixtures("greedy_optimise")
 def test_optimise_keeps_links_together_and_saves_them(client_, population):
     built = _build(client_)
     optimised = _loaded(client_, built, built["schedule"], mode="optimize_loaded")
@@ -724,6 +728,8 @@ def test_a_run_saved_before_links_existed_has_none():
 # ── randomised: real builds never split a link ───────────────────────────────
 
 
+# Pins the greedy path (the rollback); the solver path is test_exam_optimise_http.py.
+@pytest.mark.usefixtures("greedy_optimise")
 @pytest.mark.parametrize("seed", range(8))
 def test_no_real_build_optimise_fix_or_multistart_splits_a_link(seed):
     """The parity population, with random links and pins, through every solver."""
@@ -852,6 +858,8 @@ def _one_place(schedule, group) -> bool:
 TIGHT_SEEDS = range(8)
 
 
+# Pins the greedy path (the rollback); the solver path is test_exam_optimise_http.py.
+@pytest.mark.usefixtures("greedy_optimise")
 @pytest.mark.parametrize("seed", TIGHT_SEEDS)
 def test_no_overflowing_build_check_optimise_fix_or_multistart_splits_a_link(seed):
     rng, groups, links, common, built = _tight_build(seed)

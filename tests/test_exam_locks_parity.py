@@ -148,6 +148,8 @@ def run_page_flow(client, *, jobs: bool) -> dict[str, str]:
     return digests
 
 
+# Pins the greedy path (the rollback); the solver path is test_exam_optimise_http.py.
+@pytest.mark.usefixtures("greedy_optimise")
 @pytest.mark.parametrize("jobs", [False, True], ids=["now", "jobs"])
 def test_the_pages_requests_without_locks_return_what_master_returned(client_, settings, jobs):
     if jobs:

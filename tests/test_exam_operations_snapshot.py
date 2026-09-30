@@ -178,6 +178,8 @@ def test_saved_snapshot_survives_source_edits_without_live_queries(
     assert loaded["operations_snapshot"] == result["operations_snapshot"]
 
 
+# Pins the greedy path (the rollback); the solver path is test_exam_optimise_http.py.
+@pytest.mark.usefixtures("greedy_optimise")
 @pytest.mark.parametrize("legacy", [False, True])
 def test_check_save_and_loaded_optimize_capture_same_snapshot(population, export_client, legacy):
     source = _build()

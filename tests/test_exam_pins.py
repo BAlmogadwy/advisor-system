@@ -153,6 +153,8 @@ def test_feasibility_reserves_days_for_the_remaining_unpinned_courses():
     assert check_bucket_feasibility(buckets, 2, pinned=distinct_days)
 
 
+# Pins the greedy path (the rollback); the solver path is test_exam_optimise_http.py.
+@pytest.mark.usefixtures("greedy_optimise")
 def test_save_optimize_and_reload_retain_fixed_times(exam_client):
     response = _post(exam_client)
     assert response.status_code == 200

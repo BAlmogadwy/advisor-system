@@ -7,13 +7,15 @@ then a pass that moved exams again to flatten the invigilators. On the real
 411 to 510 students with two exams on one day. This module improves the board
 it is given instead, and minimises, in this order:
 
-  1. exams left in OVERFLOW;
-  2. invigilators over the daily limit, summed over days;
-  3. students over the exams-per-day limit;
-  4. students with a heavy-credit day;
-  5. students with two or more exams on one day;
-  6. the spacing penalty between exams of one (programme, term);
-  7. exams moved from where they were.
+  1. hard rules a movable exam breaks (a student's two exams in one period,
+     two exams of one (programme, term) on one day, an exam in a locked cell);
+  2. exams left in OVERFLOW;
+  3. invigilators over the daily limit, summed over days;
+  4. students over the exams-per-day limit;
+  5. students with a heavy-credit day;
+  6. students with two or more exams on one day;
+  7. the spacing penalty between exams of one (programme, term);
+  8. exams moved from where they were.
 
 How: a few exams at a time are freed - the ones in the students' way, the exams
 that share students with them, whole days at a time, and some at random - and
@@ -84,6 +86,7 @@ def spacing_penalty(gap: int) -> int:
 class Score:
     """How good a board is; a lower tuple is a better board, level by level."""
 
+    rule_breaks: int = 0
     unseated: int = 0
     staff_excess: int = 0
     over_limit: int = 0
@@ -93,6 +96,7 @@ class Score:
 
     def as_dict(self) -> dict[str, int]:
         return {
+            "rule_breaks": self.rule_breaks,
             "unseated": self.unseated,
             "staff_excess": self.staff_excess,
             "over_limit": self.over_limit,
@@ -202,6 +206,7 @@ def score(
     _pairs_of: list[tuple[str, str, int]] | None = None,
 ) -> Score:
     """The exact score of ``placements``, counted the way the QA report counts."""
+    rule_breaks = len(_rule_breaks(board, placements))
     unseated = sum(board.weight(exam) for exam in board.exams if exam not in placements)
 
     staff_excess = 0
@@ -228,30 +233,35 @@ def score(
 
     pairs = _bucket_pairs(board) if _pairs_of is None else _pairs_of
     spacing = _pair_spacing(board, placements, pairs)
-    return Score(unseated, staff_excess, over_limit, heavy_day, multi_exam_day, spacing)
+    return Score(
+        rule_breaks, unseated, staff_excess, over_limit, heavy_day, multi_exam_day, spacing
+    )
 
 
-def _legal(board: Board, placements: Mapping[str, int], movable: Sequence[str]) -> bool:
-    """Every movable exam is seated, and none of them breaks a hard rule.
+def _rule_breaks(board: Board, placements: Mapping[str, int]) -> list[tuple[str, ...]]:
+    """Every hard rule a movable exam breaks, as the exams involved.
 
-    Two fixed exams may clash or share a day - that was decided by hand - but a
-    movable exam may do neither, with a fixed exam or with another movable one.
+    Two fixed exams may clash or share a day - that was decided by hand, and no
+    board can change it - but a movable exam may do neither, with a fixed exam
+    or with another movable one, and may not sit in a closed slot.
     """
-    moving = set(movable)
-    if any(exam not in placements or placements[exam] in board.closed_slots for exam in movable):
-        return False
+    breaks: list[tuple[str, ...]] = []
+    movable = sorted(exam for exam in board.exams if exam not in board.fixed and exam in placements)
     for exam in movable:
-        for mate in board.adj.get(exam, {}):
-            if placements.get(mate) == placements[exam]:
-                return False
-    for members in board.buckets.values():
+        if placements[exam] in board.closed_slots:
+            breaks.append((exam,))
+        for mate in sorted(board.adj.get(exam, {})):
+            if placements.get(mate) == placements[exam] and (mate in board.fixed or mate > exam):
+                breaks.append((exam, mate))
+    for _key, members in sorted(board.buckets.items()):
         on_day: dict[int, list[str]] = defaultdict(list)
-        for exam in members:
+        for exam in sorted(members):
             if exam in placements:
                 on_day[board.day_of(placements[exam])].append(exam)
-        if any(len(sat) > 1 and moving.intersection(sat) for sat in on_day.values()):
-            return False
-    return True
+        for _day, sat in sorted(on_day.items()):
+            if len(sat) > 1 and any(exam not in board.fixed for exam in sat):
+                breaks.append(tuple(sat))
+    return breaks
 
 
 class _Model:
@@ -605,7 +615,7 @@ class _Search:
         #: get worse than this.
         self.spacing_cap: int | None = None
         if (
-            _legal(board, self.best, self.movable)
+            self.best_score.rule_breaks == 0
             and self.best_score.unseated == 0
             and self.best_score.staff_excess == 0
         ):
@@ -628,9 +638,15 @@ class _Search:
         )
 
     def heat(self) -> dict[str, int]:
-        """How many students each movable exam gives a day of two or more exams."""
+        """How many students each movable exam gives a day of two or more exams;
+        an exam that breaks a hard rule outweighs them all."""
         heat: dict[str, int] = defaultdict(int)
         moving = set(self.movable)
+        urgent = 1 + sum(students for _sits, students in self.profiles)
+        for broken in _rule_breaks(self.board, self.best):
+            for exam in broken:
+                if exam in moving:
+                    heat[exam] += urgent
         for sits, students in self.profiles:
             for sat in _crowded_days(self.board, self.best, sits):
                 for exam in sorted({exam for exam, _credit in sat}):

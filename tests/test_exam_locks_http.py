@@ -1103,6 +1103,8 @@ def test_an_empty_locked_day_stays_empty_through_every_action(client_, populatio
     assert on_friday(unlocked), "without the lock the Build uses Friday"
 
 
+# Pins the greedy path (the rollback); the solver path is test_exam_optimise_http.py.
+@pytest.mark.usefixtures("greedy_optimise")
 @pytest.mark.parametrize(
     "mode, target",
     [
@@ -1159,6 +1161,8 @@ def _lock_breaking_pass(held_code):
     return breaking
 
 
+# Pins the greedy path (the rollback); the solver path is test_exam_optimise_http.py.
+@pytest.mark.usefixtures("greedy_optimise")
 @pytest.mark.parametrize("where", ["build", "optimise"])
 def test_a_post_pass_that_breaks_a_lock_is_a_server_error_that_saves_nothing(
     client_, locked, monkeypatch, where
