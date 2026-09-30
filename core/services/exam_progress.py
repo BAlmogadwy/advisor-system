@@ -35,6 +35,10 @@ class JobCancelled(Exception):
 class ExamProgress:
     """The reporter every pipeline sees when nobody is watching: it does nothing."""
 
+    #: True for a background job's reporter. An action that runs inside its
+    #: request must answer before the web server gives up on the request.
+    background = False
+
     def stage(self, key: str) -> None:
         """The action has moved on to stage ``key``."""
 

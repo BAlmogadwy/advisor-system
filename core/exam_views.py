@@ -67,6 +67,8 @@ from core.services.exam_multistart import (
     report_to_dict,
     run_multistart,
 )
+from core.services.exam_optimise import DEFAULT_ROUNDS, Board, optimise_board
+from core.services.exam_optimise import score as optimise_score
 from core.services.exam_progress import JobCancelled
 from core.services.exam_progress import current as current_progress
 from core.services.exam_room_allocation import normalized_rooms
@@ -77,6 +79,9 @@ from core.services.exam_run_schema import (
 from core.services.exam_timetable import (
     ExamCoursesUnavailable,
     _build_section_enrollment_from_enrolled_sets,
+    _invigilators_needed,
+    _invigilators_per_day,
+    _physical_exam_rooms,
     _source_code_for_display,
     apply_thin_conflict_policy,
     build_conflict_graph,
@@ -85,6 +90,7 @@ from core.services.exam_timetable import (
     build_exam_timetable,
     build_plan_term_buckets,
     export_exam_timetable_xlsx,
+    is_heavy_credit_day,
     schedule_linked,
     validate_exam_pins,
 )
@@ -1039,11 +1045,32 @@ def _optimise_loaded_schedule(
     links, locks = _loaded_links_and_locks(
         linked_exams, exam_locks, lock_source, inputs, valid_pins, base_entries, assign_rooms
     )
+    progress = current_progress()
+    progress.stage("place_exams")
+    if getattr(settings, "EXAM_OPTIMISE_EXACT", True):
+        return _solver_optimised_schedule(
+            label=label,
+            base_entries=base_entries,
+            inputs=inputs,
+            valid_pins=valid_pins,
+            links=links,
+            locks=locks,
+            lock_source=lock_source,
+            seed=seed,
+            save=save,
+            days=days,
+            periods=periods,
+            max_per_day=max_per_day,
+            programs=programs,
+            sections=sections,
+            selected_courses=selected_courses,
+            assign_rooms=assign_rooms,
+            thin_conflict_threshold=thin_conflict_threshold,
+            pinned=pinned,
+        )
     preferred_slots = {
         entry["course_code"]: int(entry.get("slot_index", 0) or 0) for entry in base_entries
     }
-    progress = current_progress()
-    progress.stage("place_exams")
     lock_args: dict[str, Any] = (
         {"locked": locks.pins(), "closed_slots": locks.closed_slots(inputs.slots)} if locks else {}
     )
@@ -1098,6 +1125,362 @@ def _optimise_loaded_schedule(
         linked_exams=links.saved(),
         save=save,
         **_lock_kwargs(locks, lock_source),
+    )
+
+
+#: Rounds of the optimiser for an action that runs inside its request: about a
+#: tenth of a job's, which on the real board already takes 443 students with
+#: two exams on one day down to about 180.
+_SYNC_OPTIMISE_ROUNDS = 50
+
+#: The kinds of invigilator a day is limited in: men, women, and both together.
+_STAFF_KINDS = ("M", "F", "total")
+
+
+def _exam_staff(source: dict | None, links: LinkedExams, exams: list[str]) -> dict[str, dict]:
+    """What each exam needs of each kind of invigilator, as the saved run roomed it.
+
+    An exam's rooms barely depend on its period, so the rooms the saved run gave
+    it say what it will need wherever it sits. An exam the saved run gave no
+    room - it was in OVERFLOW - is counted from its sections instead, one room
+    each. Linked courses share rooms, so a link is counted as one exam.
+
+    An estimate: the evaluation rooms every period afresh, and a different
+    split of a section can need one invigilator more or fewer. The report
+    therefore also states the busiest day the saved board really has.
+    """
+    staff: dict[str, dict[str, int]] = {}
+    if not source:
+        return staff
+    known = set(exams)
+    roomed: dict[str, list[tuple[dict, dict]]] = {}
+    for entry in source.get("schedule") or []:
+        unit = links.unit(str(entry.get("course_code", "")))
+        if unit in known:
+            roomed.setdefault(unit, []).extend(
+                (entry, room) for room in entry.get("rooms") or [] if isinstance(room, dict)
+            )
+    sections = source.get("section_enrollment") or {}
+    for unit in exams:
+        need = dict.fromkeys(_STAFF_KINDS, 0)
+        for counts in _invigilators_per_day(_physical_exam_rooms(roomed.get(unit, []))).values():
+            for kind in _STAFF_KINDS:
+                need[kind] += counts[kind]
+        if not roomed.get(unit):
+            for code in links.members_of(unit):
+                for row in sections.get(code) or []:
+                    gender = "F" if row.get("gender") == "F" else "M"
+                    invigilators = _invigilators_needed(code, int(row.get("student_count") or 0))
+                    need[gender] += invigilators
+                    need["total"] += invigilators
+        staff[unit] = need
+    return staff
+
+
+def _staff_peak(
+    staff: dict[str, dict], placements: dict[str, int], periods_per_day: int
+) -> dict[str, int]:
+    """The most of each kind of invigilator the board uses on one day."""
+    load: dict[tuple[int, str], int] = {}
+    for exam, slot in placements.items():
+        for kind, need in staff.get(exam, {}).items():
+            key = (slot // periods_per_day, kind)
+            load[key] = load.get(key, 0) + need
+    return {
+        kind: max((used for (_, k), used in load.items() if k == kind), default=0)
+        for kind in _STAFF_KINDS
+    }
+
+
+def _solver_optimised_schedule(
+    *,
+    label: str,
+    base_entries: list[dict],
+    inputs: _LoadedSolverInputs,
+    valid_pins: list[dict[str, str]],
+    links: LinkedExams,
+    locks: ExamLocks,
+    lock_source: dict | None,
+    seed: int | None,
+    save: RunSaver,
+    days: list[str],
+    periods: list[str],
+    max_per_day: int,
+    programs: list[str] | None,
+    sections: list[str] | None,
+    selected_courses: list[str] | None,
+    assign_rooms: bool,
+    thin_conflict_threshold: int,
+    pinned: list[dict[str, str]] | None,
+) -> dict:
+    """Optimise by solving the whole board at once (``exam_optimise``).
+
+    Pinned exams and the exams of locked cells never move, no exam enters a
+    locked cell, and a link moves as one exam. The search holds each day's
+    invigilators to the most the submitted board uses on any day, by its
+    estimate of what each exam needs, so the search - not a pass after it -
+    keeps the staff level while it spares the students.
+
+    A board the search cannot better is not saved again, provided the request
+    asks for nothing else: pressing Optimise on an already optimised timetable
+    used to add a copy to the history each time. A request that also changes
+    a pin, a link, a lock or a setting is saved, as it always was.
+    """
+    exams = list(links.units(inputs.course_list))
+    slot_of = {(slot["day"], slot["period"]): slot["index"] for slot in inputs.slots}
+    submitted = links.placements(
+        {
+            entry["course_code"]: int(entry["slot_index"])
+            for entry in base_entries
+            if entry.get("day") != "OVERFLOW"
+        }
+    )
+    current = dict(submitted)
+    # A pin says where its exam sits, whatever the submitted board shows; a
+    # locked exam sits in its cell. Both are placed first, as the greedy did.
+    fixed_at = links.pins(
+        [pin for pin in valid_pins if not locks or pin["course_code"] not in locks.placements]
+        + (locks.pins() if locks else [])
+    )
+    for pin in fixed_at or []:
+        current[pin["course_code"]] = slot_of[pin["day"], pin["period"]]
+    fixed = frozenset(pin["course_code"] for pin in fixed_at or [])
+
+    sittings: dict[int, list[tuple[str, int]]] = {}
+    for code in inputs.course_list:
+        credit = inputs.credit_map.get(code, 3)
+        for student in inputs.enrolled_sets.get(code, ()):
+            sittings.setdefault(student, []).append((links.unit(code), credit))
+    unit_buckets, _ = links.buckets(inputs.plan_term_buckets, None)
+    staff = _exam_staff(lock_source, links, exams) if assign_rooms else {}
+    staff_limits = {
+        kind: peak for kind, peak in _staff_peak(staff, current, len(periods)).items() if peak
+    }
+    board = Board(
+        exams=exams,
+        current=current,
+        fixed=fixed,
+        adj=links.adjacency(inputs.adj),
+        buckets=unit_buckets or {},
+        slot_count=len(inputs.slots),
+        periods_per_day=len(periods),
+        sittings=sittings,
+        max_per_day=max_per_day,
+        closed_slots=locks.closed_slots(inputs.slots) if locks else frozenset(),
+        weights=dict(links.weights),
+        staff=staff,
+        staff_limits=staff_limits,
+    )
+    progress = current_progress()
+    # A background job may take its minutes; an action answering inside its
+    # request has the web server's timeout to beat, so it searches far less.
+    rounds = (
+        int(getattr(settings, "EXAM_OPTIMISE_ROUNDS", DEFAULT_ROUNDS))
+        if progress.background
+        else int(getattr(settings, "EXAM_OPTIMISE_SYNC_ROUNDS", _SYNC_OPTIMISE_ROUNDS))
+    )
+    found = optimise_board(
+        board,
+        day_is_heavy=is_heavy_credit_day,
+        rounds=rounds,
+        seed=(seed or 0) % 2_000_000_000,
+        on_round=progress.counter("place_exams"),
+    )
+    progress.check_cancelled()
+
+    # Compared with the board as it was submitted: a pin that puts its exam
+    # back in its place is a move, and may itself be the improvement.
+    before = optimise_score(board, submitted, is_heavy_credit_day)
+    report = {
+        "improved": found.after < before,
+        "proven": found.proven,
+        "before": before.as_dict(),
+        "after": found.after.as_dict(),
+        "moved": sum(
+            links.weight(exam)
+            for exam in exams
+            if found.placements.get(exam) != submitted.get(exam)
+        ),
+        "movable": sum(links.weight(exam) for exam in exams if exam not in fixed),
+        "fixed": sum(links.weight(exam) for exam in fixed),
+        # Seated as submitted and now in OVERFLOW: each needs a place by hand,
+        # whatever other exam was seated in the same run.
+        "sent_to_overflow": sum(
+            links.weight(exam)
+            for exam in exams
+            if exam in submitted and exam not in found.placements
+        ),
+        "invigilator_day_limits": staff_limits,
+    }
+    unchanged = _asks_only_what_the_source_has(
+        lock_source,
+        courses=inputs.course_list,
+        days=days,
+        periods=periods,
+        max_per_day=max_per_day,
+        thin_conflict_threshold=thin_conflict_threshold,
+        assign_rooms=assign_rooms,
+        pins=valid_pins,
+        links=links,
+        locks=locks,
+    )
+    if not found.improved and current == submitted and unchanged:
+        # No better board was found, the board is exactly the one submitted,
+        # and the request changes nothing else. Saving it again would add a
+        # duplicate run to the history and, when the registrar has unsaved
+        # drags, save them without the review Save asks for. The page keeps
+        # the draft and shows the report.
+        return {"saved": False, "optimisation": report}
+
+    slot_by_index = {slot["index"]: slot for slot in inputs.slots}
+    overflow_index = max(
+        [len(inputs.slots) - 1]
+        + [
+            int(entry["slot_index"])
+            for entry in base_entries
+            if entry.get("day") == "OVERFLOW" and isinstance(entry.get("slot_index"), int)
+        ]
+    )
+    # One Extra-n per unseated exam: a link leaves the board as one exam.
+    shared_overflow: dict[str, int] = {}
+    optimised_entries: list[dict] = []
+    for entry in base_entries:
+        unit = links.unit(entry["course_code"])
+        if unit in found.placements:
+            slot = slot_by_index[found.placements[unit]]
+            optimised_entries.append(
+                {**entry, "slot_index": slot["index"], "day": slot["day"], "period": slot["period"]}
+            )
+        elif entry.get("day") == "OVERFLOW":
+            optimised_entries.append(entry)
+        else:
+            if unit not in shared_overflow:
+                overflow_index += 1
+                shared_overflow[unit] = overflow_index
+            optimised_entries.append(
+                {
+                    **entry,
+                    "day": "OVERFLOW",
+                    "period": f"Extra-{shared_overflow[unit]}",
+                    "slot_index": shared_overflow[unit],
+                }
+            )
+    return _rebuild_loaded_schedule(
+        label=label,
+        # The search already held each day's invigilators to the board's own
+        # peak. The pass that flattens them afterwards moves exams again and,
+        # on the real board, put 80 to 115 more students on a two-exam day.
+        rebalance_invigilators=False,
+        days=days,
+        periods=periods,
+        max_per_day=max_per_day,
+        schedule_raw=optimised_entries,
+        programs=programs,
+        sections=sections,
+        selected_courses=selected_courses,
+        assign_rooms=assign_rooms,
+        seed=seed,
+        thin_conflict_threshold=thin_conflict_threshold,
+        rebuild_mode="optimized_from_loaded",
+        pinned=pinned,
+        linked_exams=links.saved(),
+        save=save,
+        **_lock_kwargs(locks, lock_source),
+        # Top-level, never in qa: a Check cannot reproduce how a board was made.
+        described=lambda result: {
+            "optimisation": {
+                **report,
+                # The busiest day as the rooms really came out, beside the
+                # saved run's: the limit above is held by an estimate.
+                "invigilator_peak": {
+                    # The saved run's peak is the submitted board's only while
+                    # no exam has been dragged since; after a drag it is not
+                    # known, and a wrong "before" would be worse than none.
+                    "before": _invigilator_peak(lock_source)
+                    if _placed_as_saved(lock_source, base_entries)
+                    else None,
+                    "after": _invigilator_peak(result),
+                },
+            }
+        },
+    )
+
+
+def _invigilator_peak(run: dict | None) -> int | None:
+    """The most invigilators ``run`` needs on one day; None when it has no rooms."""
+    rooms = ((run or {}).get("qa") or {}).get("rooms") or {}
+    per_day = rooms.get("invigilators_per_day") or {}
+    totals = [
+        int(counts.get("total", 0)) for counts in per_day.values() if isinstance(counts, dict)
+    ]
+    return max(totals) if totals else None
+
+
+def _placed_as_saved(source: dict | None, entries: list[dict]) -> bool:
+    """Every exam of the submitted board sits where the saved run has it."""
+
+    def cells(rows: Any) -> dict[str, tuple[str, str]]:
+        return {
+            str(row.get("course_code")): (
+                str(row.get("day")),
+                # One OVERFLOW is like another: Extra-n numbers are not places.
+                "" if row.get("day") == "OVERFLOW" else str(row.get("period")),
+            )
+            for row in rows or []
+            if isinstance(row, dict)
+        }
+
+    return bool(source) and cells(source.get("schedule")) == cells(entries)
+
+
+def _asks_only_what_the_source_has(
+    source: dict | None,
+    *,
+    courses: list[str],
+    days: list[str],
+    periods: list[str],
+    max_per_day: int,
+    thin_conflict_threshold: int,
+    assign_rooms: bool,
+    pins: list[dict[str, str]],
+    links: LinkedExams,
+    locks: ExamLocks,
+) -> bool:
+    """The request's courses, pins, links, locks and settings are the saved run's own.
+
+    Placements are not compared: a drag is a draft the page keeps. These other
+    changes live only in the request, so an Optimise that saved nothing would
+    lose them while answering that all is well. The label is not compared:
+    Optimise is not "save as", and the page says that nothing was saved.
+    """
+    if not source:
+        return False
+    slots = [slot for slot in source.get("slots") or [] if slot.get("day") != "OVERFLOW"]
+
+    def canonical(value: Any) -> str:
+        return json.dumps(value, sort_keys=True, ensure_ascii=False)
+
+    def pin_set(rows: Any) -> list[tuple[str, str, str]]:
+        return sorted(
+            (str(row.get("course_code")), str(row.get("day")), str(row.get("period")))
+            for row in rows or []
+            if isinstance(row, dict)
+        )
+
+    qa = source.get("qa") or {}
+    saved_courses = sorted(
+        str(row.get("course_code")) for row in source.get("schedule") or [] if isinstance(row, dict)
+    )
+    return (
+        saved_courses == sorted(courses)
+        and list(dict.fromkeys(slot["day"] for slot in slots)) == list(days)
+        and list(dict.fromkeys(slot["period"] for slot in slots)) == list(periods)
+        and qa.get("max_per_day", 2) == max_per_day
+        and qa.get("thin_threshold", 0) == thin_conflict_threshold
+        and bool(source.get("assign_rooms", True)) == bool(assign_rooms)
+        and pin_set(source.get("pinned")) == pin_set(pins)
+        and canonical(source.get("linked_exams") or []) == canonical(links.saved())
+        and canonical(source.get("exam_locks") or []) == canonical(locks.saved() if locks else [])
     )
 
 

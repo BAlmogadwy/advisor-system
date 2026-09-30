@@ -191,6 +191,8 @@ def test_old_snapshots_are_unavailable_and_new_snapshots_keep_review_measurement
     assert normalized["exam_review"] == built["exam_review"]
 
 
+# Pins the greedy path (the rollback); the solver path is test_exam_optimise_http.py.
+@pytest.mark.usefixtures("greedy_optimise")
 @pytest.mark.parametrize("mode", ["save", "optimize"])
 def test_saved_and_optimized_review_preserves_scope_identity_and_pins(mode):
     from core.exam_views import _optimise_loaded_schedule, _rebuild_loaded_schedule

@@ -113,6 +113,8 @@ def test_duplicate_code_variants_keep_separate_gender_demand_without_available_r
         )
 
 
+# Pins the greedy path (the rollback); the solver path is test_exam_optimise_http.py.
+@pytest.mark.usefixtures("greedy_optimise")
 @pytest.mark.parametrize("assign_rooms", [False, True])
 def test_missing_inventory_is_a_room_problem_only_when_allocation_was_requested(
     export_courses, export_client, assign_rooms
@@ -174,6 +176,8 @@ def test_missing_inventory_is_a_room_problem_only_when_allocation_was_requested(
             assert result["primary_status"] == "clean"
 
 
+# Pins the greedy path (the rollback); the solver path is test_exam_optimise_http.py.
+@pytest.mark.usefixtures("greedy_optimise")
 @pytest.mark.parametrize("sections,expected", [(["F"], {"F": 2}), (["M"], {"M": 1})])
 def test_scope_and_selected_identity_snapshot_survives_build_save_optimize(
     export_courses, export_client, sections, expected
@@ -255,6 +259,8 @@ def test_multistart_candidates_persist_enrollment_without_rooms(export_courses):
         )
 
 
+# Pins the greedy path (the rollback); the solver path is test_exam_optimise_http.py.
+@pytest.mark.usefixtures("greedy_optimise")
 def test_bucket_override_without_student_slot_clash_is_honest_through_saved_workflows(
     export_courses, export_client
 ):

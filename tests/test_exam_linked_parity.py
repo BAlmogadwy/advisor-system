@@ -305,6 +305,8 @@ def test_the_fix_view_matches_master_without_links(monkeypatch, extra):
     )
 
 
+# Pins the greedy path (the rollback); the solver path is test_exam_optimise_http.py.
+@pytest.mark.usefixtures("greedy_optimise")
 @pytest.mark.django_db
 @pytest.mark.parametrize(
     "extra",
@@ -327,6 +329,8 @@ def test_build_check_optimise_fix_and_multistart_match_master_without_links(
     assert corpus.run_population(api, extra) == POPULATION
 
 
+# Pins the greedy path (the rollback); the solver path is test_exam_optimise_http.py.
+@pytest.mark.usefixtures("greedy_optimise")
 @pytest.mark.django_db
 @pytest.mark.parametrize(
     "teaching", corpus.TEACHING_APART.values(), ids=list(corpus.TEACHING_APART)
@@ -349,6 +353,8 @@ def test_every_exam_path_seats_by_exam_seats_whatever_the_teaching_capacity(
     assert corpus.run_population(api) == POPULATION
 
 
+# Pins the greedy path (the rollback); the solver path is test_exam_optimise_http.py.
+@pytest.mark.usefixtures("greedy_optimise")
 @pytest.mark.django_db
 def test_multistart_differs_from_master_only_by_its_room_metrics(monkeypatch, masters_room_policy):
     """Put master's metric reader back and the whole population is master's."""

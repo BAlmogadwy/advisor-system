@@ -181,3 +181,14 @@ def forbid_headless_browser(monkeypatch) -> None:  # noqa: PT004
             return [self.render(u) for u in urls]
 
     monkeypatch.setattr(rendering, "_RENDERER", _Refuse(), raising=False)
+
+
+@pytest.fixture
+def greedy_optimise(settings) -> None:  # noqa: PT004
+    """Optimize on the greedy path (EXAM_OPTIMISE_EXACT off), the documented rollback.
+
+    Tests that pin the greedy path (parity with master, its post-pass, its
+    stages) or that need an Optimize that always saves use this; the solver
+    path is tested in tests/test_exam_optimise_http.py.
+    """
+    settings.EXAM_OPTIMISE_EXACT = False

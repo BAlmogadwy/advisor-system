@@ -86,9 +86,12 @@ def test_exam_page_frontend_interactions(tmp_path: Path, language: str, suite: s
         capture_output=True,
         text=True,
         encoding="utf-8",
-        # A guard against a hung run, not a budget: the suite takes ~40 s here
-        # and 1.4-1.8x that on a CI runner, and it only grows.
-        timeout=240,
+        # A guard against a hung run, not a budget: the exam-timetable suite
+        # (the largest) takes 97-121 s here (measured, per language), and
+        # 1.4-1.8x that on a CI runner (~170-220 s), and it only grows. 360 s
+        # keeps ~1.65x headroom over the slowest CI estimate; the other suites
+        # take under 10 s each.
+        timeout=360,
         check=False,
     )
     assert result.returncode == 0, result.stdout + result.stderr
