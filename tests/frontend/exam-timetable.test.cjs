@@ -42,6 +42,21 @@ function isActive(url) {
   return String(url).split('?')[0] === '/ops/exam-timetable/jobs/active/';
 }
 
+// node:test keeps every finished test's hooks alive until the run ends. A hook
+// that closed over the page's scope kept every window, request log and fixture
+// of all ~400 tests reachable (~9 MB each), so the suite died at the default
+// 4 GB heap. This hook holds the window only until it has closed it.
+function disposer(dom, errors) {
+  const held = { dom, errors };
+  return () => {
+    const { dom: window, errors: seen } = held;
+    held.dom = null;
+    held.errors = null;
+    window.window.close();
+    assert.deepEqual(seen.map(error => error.message), []);
+  };
+}
+
 async function page(t, { history = [], initialCourses = courses, run = null, loadCourses = true, onRequest = null, liveUpdate = true, realDialogs = false, committee = false, activeJob = { ok: true, job: null }, poll = {}, browserFocus = false } = {}) {
   const errors = [];
   const console = new VirtualConsole();
@@ -49,7 +64,7 @@ async function page(t, { history = [], initialCourses = courses, run = null, loa
   const dom = new JSDOM(committee ? committeeTemplate : template, { url: 'http://exam.test/exam-timetable/', runScripts: 'outside-only', virtualConsole: console });
   const { window } = dom;
   window.localStorage.setItem('exam-timetable-live-update', liveUpdate ? 'on' : 'off');
-  t.after(() => { dom.window.close(); assert.deepEqual(errors.map(error => error.message), []); });
+  t.after(disposer(dom, errors));
   const requests = [];
   const dialogs = [];
   const prompts = [];
@@ -7819,4 +7834,339 @@ test('my own Build turned down while the keyboard is on Stop gives it back to Bu
   await until(() => ui.$('examJobPanel').hidden && /alert-danger/.test(ui.$('etStatus').className), 'Turned down: reported where it always was');
   await pause(20);
   assert.equal(ui.window.document.activeElement, ui.$('buildBtn'));
+});
+
+// ── Optimize: the report of what the search changed ──
+
+const OPTIMISATION = {
+  improved: true, proven: false,
+  before: { unseated: 0, staff_excess: 0, over_limit: 1, heavy_day: 13, multi_exam_day: 443, spacing: 3550 },
+  after: { unseated: 0, staff_excess: 0, over_limit: 0, heavy_day: 13, multi_exam_day: 85, spacing: 3480 },
+  moved: 44, movable: 87, fixed: 35,
+  invigilator_day_limits: { M: 19, F: 28, total: 42 },
+};
+const NO_BETTER = { ...OPTIMISATION, improved: false, moved: 0, before: OPTIMISATION.before, after: OPTIMISATION.before };
+const OPT = language === 'ar' ? {
+  found: 'وجد التحسين جدولاً أفضل.',
+  noBetter: 'لم يُعثر على جدول أفضل، فلم يُحفظ شيء. يبقى الجدول المعروض، بما فيه تغييراتك غير المحفوظة، كما هو.',
+  statusNoBetter: 'لم يُعثر على جدول أفضل، فلم يُحفظ شيء.',
+  rule: 'مخالفات القواعد بين الاختبارات القابلة للنقل',
+  overflowNote: 'لإزالة المخالفات نُقلت بعض الاختبارات إلى «فترة إضافية (تجاوز)». حدّد لها مواعيد يدوياً.',
+  multi: 'طلاب لديهم اختباران أو أكثر في يوم واحد',
+  over: 'طلاب تجاوزوا الحد اليومي للاختبارات',
+  heavy: 'طلاب لديهم يوم بمقررات كثيرة الساعات المعتمدة',
+  unseated: 'اختبارات لم يُحدَّد لها موعد',
+  moved: 'تم نقل 44 اختباراً، وبقي 35 اختباراً مثبّتاً أو مقفلاً في موعده.',
+  moved3: 'تم نقل 3 اختبارات.',
+  kept: 'أُبقي عدد المراقبين في حدود 42 في اليوم.',
+  exceeded: 'تجاوز عدد المراقبين الحد اليومي (42) بمقدار 2.',
+  saved: 'حُفظت النتيجة جدولاً جديداً في «الجداول المحفوظة».',
+  optimized: 'تم حفظ الجدول المحسّن.',
+  jobNoBetter: /لم يُعثر على جدول أفضل، فلم يُحفظ شيء\. تجد التفاصيل في التقرير أسفل شريط أدوات التعديل/,
+  notFix: /لم يُنقل أي اختبار/,
+} : {
+  found: 'Optimize found a better timetable.',
+  noBetter: 'No better timetable was found, so nothing was saved. The timetable on screen, including any changes you have not saved, stays as it is.',
+  statusNoBetter: 'No better timetable was found, so nothing was saved.',
+  rule: 'Rule breaks among movable exams',
+  overflowNote: 'To clear rule breaks, some exams were sent to the Overflow slot. Place them by hand.',
+  multi: 'Students with 2+ exams in a day',
+  over: 'Students over the daily exam limit',
+  heavy: 'Students with a heavy-credit day',
+  unseated: 'Exams not placed',
+  moved: '44 exams moved; 35 pinned or locked exams stayed where they were.',
+  moved3: '3 exams moved.',
+  kept: 'Invigilators were kept within 42 a day.',
+  exceeded: 'Invigilators exceeded the daily limit of 42 by 2.',
+  saved: 'Saved as a new timetable in Saved timetables.',
+  optimized: 'Optimized run saved.',
+  jobNoBetter: /No better timetable was found, so nothing was saved\. The report under the editing toolbar has the details/,
+  notFix: /No exam was moved/,
+};
+const BIDI_ISOLATES = new RegExp(`[${String.fromCharCode(0x2066)}-${String.fromCharCode(0x2069)}]`, 'g');
+const reportLines = ui => Array.from(ui.$('examRepairReport').querySelectorAll('li'), item => ({
+  label: item.firstChild.textContent.replace(/:\s*$/, ''),
+  values: Array.from(item.querySelectorAll('bdi'), bdi => bdi.textContent),
+}));
+const reportParagraphs = ui => Array.from(ui.$('examRepairReport').querySelectorAll('p'), p => p.textContent.replace(BIDI_ISOLATES, '').trim());
+
+async function runOptimize(t, optimisation, extra = {}) {
+  let ui;
+  ui = await loadedEditor(t, {
+    onRequest: async url => url === '/ops/exam-timetable/build/'
+      ? response({ ...evaluatedRun(JSON.parse(buildRequests(ui)[0].body)), run_id: 91, ...(optimisation === undefined ? {} : { optimisation }), ...extra })
+      : undefined,
+  });
+  dropExam(ui, 'Wed');
+  ui.$('optimizeLoadedBtn').click();
+  await settle();
+  return ui;
+}
+
+test('a saved Optimize reports before and after in plain words, only for numbers that matter', async t => {
+  const ui = await runOptimize(t, OPTIMISATION);
+  const report = ui.$('examRepairReport');
+  assertVisible(ui, report);
+  assert.equal(report.closest('#examSetupDetails'), null);
+  assert.equal(ui.$('etStatus').textContent, OPT.optimized);
+  assert.deepEqual(reportLines(ui), [
+    { label: OPT.multi, values: ['443', '85'] },
+    { label: OPT.over, values: ['1', '0'] },
+    { label: OPT.heavy, values: ['13', '13'] },
+  ]);
+  assert.deepEqual(reportParagraphs(ui), [OPT.found, OPT.moved, OPT.kept, OPT.saved]);
+  assert.equal(report.classList.contains('is-clean'), true);
+  assert.equal(report.classList.contains('is-partial'), false);
+  // The internal penalty is never shown, and no solver words leak.
+  assert.doesNotMatch(report.textContent, /3550|3480|spacing|penalty|solver|search|objective/i);
+  // The number pairs stay left to right inside Arabic text; the arrow is not read.
+  for (const bdi of report.querySelectorAll('bdi')) assert.equal(bdi.getAttribute('dir'), 'ltr');
+  assert.equal(report.querySelector('li [aria-hidden="true"]').textContent, language === 'ar' ? '←' : '→');
+  assert.equal(report.querySelector('li .visually-hidden').textContent.trim(), language === 'ar' ? 'إلى' : 'to');
+  assert.equal(report.getAttribute('role'), 'status');
+  assert.equal(report.getAttribute('aria-live'), 'polite');
+});
+
+test('an Optimize report leaves out lines that are zero on both sides and the pinned half when nothing was pinned', async t => {
+  const ui = await runOptimize(t, {
+    ...OPTIMISATION, moved: 3, fixed: 0, invigilator_day_limits: undefined,
+    before: { ...OPTIMISATION.before, over_limit: 0, heavy_day: 0 },
+    after: { ...OPTIMISATION.after, over_limit: 0, heavy_day: 0 },
+  });
+  assert.deepEqual(reportLines(ui).map(line => line.label), [OPT.multi]);
+  assert.deepEqual(reportParagraphs(ui), [OPT.found, OPT.moved3, OPT.saved], 'No invigilator sentence without a limit');
+});
+
+test('an Optimize that leaves exams unplaced or exceeds the invigilator limit is not reported as clean', async t => {
+  const ui = await runOptimize(t, {
+    ...OPTIMISATION,
+    before: { ...OPTIMISATION.before, unseated: 4 },
+    after: { ...OPTIMISATION.after, unseated: 1, staff_excess: 2 },
+  });
+  const report = ui.$('examRepairReport');
+  assert.deepEqual(reportLines(ui).map(line => line.label), [OPT.multi, OPT.over, OPT.heavy, OPT.unseated]);
+  assert.deepEqual(reportLines(ui).at(-1).values, ['4', '1']);
+  assert.ok(reportParagraphs(ui).includes(OPT.exceeded), reportParagraphs(ui).join('|'));
+  assert.doesNotMatch(reportParagraphs(ui).join('|'), language === 'ar' ? /أُبقي عدد المراقبين/ : /were kept within/);
+  assert.equal(report.classList.contains('is-partial'), true);
+  assert.equal(report.classList.contains('is-clean'), false);
+});
+
+test('an Optimize report clears as soon as the board is edited again', async t => {
+  const ui = await runOptimize(t, OPTIMISATION);
+  assert.ok(ui.$('examRepairReport').textContent.trim());
+  dropExam(ui, 'Thu');
+  await settle();
+  assert.equal(ui.$('examRepairReport').textContent, '');
+});
+
+test('the greedy answer without an optimisation key behaves as before', async t => {
+  const ui = await runOptimize(t, undefined);
+  assert.equal(ui.$('etStatus').textContent, OPT.optimized);
+  assert.equal(ui.$('etStatus').classList.contains('alert-success'), true);
+  assert.equal(ui.$('examRepairReport').textContent, '');
+  assert.equal(ui.$('examRepairReport').classList.contains('is-clean'), false);
+  assert.equal(ui.$('examRepairReport').classList.contains('is-partial'), false);
+  assert.equal(historyLoads(ui) > 0, true, 'The saved run is listed');
+});
+
+test('a malformed optimisation still shows the saved run without an error', async t => {
+  for (const junk of [{}, 'junk', { before: 5, after: null, moved: 'x', invigilator_day_limits: 'y' }]) {
+    const ui = await runOptimize(t, junk);
+    assert.doesNotMatch(ui.$('etStatus').className, /alert-danger/);
+    assert.equal(ui.$('etStatus').textContent, OPT.optimized);
+    assert.equal(reportParagraphs(ui)[0], OPT.found);
+    assert.doesNotMatch(ui.$('examRepairReport').textContent, /NaN|undefined|null/);
+  }
+});
+
+test('nothing the server sends can become markup in the Optimize report', async t => {
+  const payload = '<img src=x onerror=alert(1)>';
+  const ui = await runOptimize(t, {
+    ...OPTIMISATION, moved: payload, fixed: payload,
+    before: { ...OPTIMISATION.before, multi_exam_day: payload },
+    after: { ...OPTIMISATION.after, multi_exam_day: payload, staff_excess: payload },
+    invigilator_day_limits: { total: payload },
+  });
+  assert.equal(ui.$('examRepairReport').querySelector('img'), null);
+  assert.doesNotMatch(ui.$('examRepairReport').innerHTML, /<img|onerror/);
+  assert.doesNotMatch(ui.$('examRepairReport').textContent, /<img|NaN/);
+});
+
+test('an Optimize that finds nothing better saves nothing and keeps the draft on screen', async t => {
+  let ui;
+  ui = await loadedEditor(t, {
+    onRequest: async url => url === '/ops/exam-timetable/build/'
+      ? response({ ok: true, saved: false, optimisation: NO_BETTER, editor_revision: 1 })
+      : undefined,
+  });
+  dropExam(ui, 'Wed');
+  const dragged = courses[1].course_code;
+  const cellHolds = () => Array.from(ui.$('schedGrid').querySelectorAll('td[data-day="Wed"][data-period="08:00-10:00"]'))
+    .some(cell => cell.textContent.includes(dragged));
+  assert.ok(cellHolds(), 'The drag landed');
+  const before = historyLoads(ui);
+  assert.equal(ui.$('saveLoadedBtn').disabled, false, 'There is a draft to save');
+
+  ui.$('optimizeLoadedBtn').click();
+  await settle();
+
+  const report = ui.$('examRepairReport');
+  assertVisible(ui, report);
+  assert.equal(ui.$('etStatus').textContent, OPT.statusNoBetter);
+  assert.doesNotMatch(ui.$('etStatus').textContent, OPT.notFix, 'Optimize has its own sentence');
+  assert.doesNotMatch(ui.$('etStatus').className, /alert-success|alert-danger/);
+  assert.deepEqual(reportParagraphs(ui), [OPT.noBetter]);
+  assert.doesNotMatch(report.textContent, new RegExp(OPT.saved.slice(0, 12)));
+  // The board is what the registrar has: the numbers are still worth showing.
+  assert.deepEqual(reportLines(ui).map(line => [line.label, line.values]), [
+    [OPT.multi, ['443']], [OPT.over, ['1']], [OPT.heavy, ['13']],
+  ]);
+  assert.ok(cellHolds(), "The registrar's unsaved drag was thrown away");
+  assert.equal(historyLoads(ui), before, 'Nothing was saved, so the history has nothing new to show');
+  assert.equal(ui.$('saveLoadedBtn').disabled, false, 'Save is still there for the draft');
+  assert.equal(ui.$('optimizeLoadedBtn').disabled, false);
+});
+
+test('an Optimize that finds nothing better, run as a job, ends as done with its own sentence', async t => {
+  const { ui, server } = await optimiseAsJob(t, [OPTIMISED[0], finishedFrame('optimize_loaded', { has_run: false, result_run_id: null })], {
+    serverOptions: { result: { ok: true, saved: false, optimisation: NO_BETTER, editor_revision: 1 } },
+  });
+  await until(() => stageStates(ui).includes('running'));
+  server.advance();
+  await until(() => server.results === 1);
+  await until(() => OPT.jobNoBetter.test(ui.$('examJobDetail').textContent));
+  assert.doesNotMatch(ui.$('examJobDetail').textContent, OPT.notFix);
+  assert.equal(ui.$('examJobPanel').classList.contains('is-refused'), false);
+  assert.equal(ui.$('examJobPanel').classList.contains('is-failed'), false);
+  assert.equal(ui.$('examJobTitle').textContent, TEXT.optimized);
+  assert.equal(ui.$('examJobPanel').hidden, false);
+  assert.deepEqual(reportParagraphs(ui), [OPT.noBetter]);
+  await until(() => ui.window.document.activeElement === ui.$('examEditHeading'), 'Back to the board, where the report is');
+});
+
+test('an Optimize that found nothing better, never shown as a panel, is reported in the status line', async t => {
+  const { ui, server } = await optimiseAsJob(t, [finishedFrame('optimize_loaded', { has_run: false, result_run_id: null })], {
+    poll: { reveal: 500, stall: 1000 },
+    serverOptions: { result: { ok: true, saved: false, optimisation: NO_BETTER, editor_revision: 1 } },
+  });
+  await until(() => server.results === 1);
+  await until(() => ui.$('etStatus').textContent === OPT.statusNoBetter);
+  assert.equal(ui.$('examJobPanel').hidden, true);
+  assert.doesNotMatch(ui.$('etStatus').className, /alert-danger/);
+});
+
+test("a colleague's Optimize that found nothing better is a finished job, not a refusal", async t => {
+  const frames = [
+    jobFrame('optimize_loaded', 'running', { read_board: 'done', place_exams: 'running' }, { key: 'place_exams', done: 1, total: 10 }, { mine: false, can_cancel: false, owner: 'Huda' }),
+    finishedFrame('optimize_loaded', { mine: false, can_cancel: false, owner: 'Huda', has_run: false, result_run_id: null }),
+  ];
+  let index = 0;
+  const ui = await page(t, {
+    activeJob: { ok: true, job: frames[0] },
+    onRequest: async url => url === pollUrl(JOB_ID) ? jobReply({ ok: true, job: frames[index] }) : undefined,
+  });
+  await until(() => !ui.$('examJobPanel').hidden);
+  index = 1;
+  await until(() => !ui.$('examJobClose').hidden);
+  assert.equal(ui.$('examJobTitle').textContent, TEXT.optimized);
+  assert.equal(ui.$('examJobPanel').classList.contains('is-refused'), false);
+  assert.ok(ui.$('examJobDetail').textContent.startsWith(OPT.statusNoBetter), ui.$('examJobDetail').textContent);
+  assert.doesNotMatch(ui.$('examJobDetail').textContent, OPT.notFix);
+});
+
+test('an Optimize the action turned down is still a refusal', async t => {
+  const frames = [
+    jobFrame('optimize_loaded', 'running', { read_board: 'done', place_exams: 'running' }, { key: 'place_exams', done: 1, total: 10 }, { mine: false, can_cancel: false, owner: 'Huda' }),
+    finishedFrame('optimize_loaded', { mine: false, can_cancel: false, owner: 'Huda', has_run: false, result_run_id: null, refused: true }),
+  ];
+  let index = 0;
+  const ui = await page(t, {
+    activeJob: { ok: true, job: frames[0] },
+    onRequest: async url => url === pollUrl(JOB_ID) ? jobReply({ ok: true, job: frames[index] }) : undefined,
+  });
+  await until(() => !ui.$('examJobPanel').hidden);
+  index = 1;
+  await until(() => ui.$('examJobPanel').classList.contains('is-refused'));
+  assert.doesNotMatch(ui.$('examJobDetail').textContent, new RegExp(OPT.statusNoBetter.slice(0, 14)));
+});
+
+test('an Optimize result opened from its job shows its report; one opened from history does not', async t => {
+  const saved = { ...savedRun(), run_id: 77, optimisation: OPTIMISATION };
+  const answer = url => (url === '/ops/exam-timetable/77/' ? response(saved) : undefined);
+  const viaJob = await page(t, {
+    activeJob: { ok: true, job: finishedFrame('optimize_loaded', { result_run_id: 77 }) },
+    onRequest: async url => (url === seenUrl(JOB_ID) ? jobReply({ ok: true, marked: true }) : answer(url)),
+  });
+  await until(() => !viaJob.$('examJobOpen').hidden);
+  viaJob.$('examJobOpen').click();
+  await until(() => viaJob.$('examJobPanel').hidden);
+  await settle();
+  assertVisible(viaJob, viaJob.$('examRepairReport'));
+  assert.deepEqual(reportLines(viaJob).map(line => line.values), [['443', '85'], ['1', '0'], ['13', '13']]);
+  assert.deepEqual(reportParagraphs(viaJob), [OPT.found, OPT.moved, OPT.kept, OPT.saved]);
+
+  // As a repair's report is, it is the answer to the action, not part of the run.
+  const viaHistory = await loadedEditor(t, { run: { ...saved, run_id: 17 }, history: [{ id: 17, label: 'Saved' }] });
+  assert.equal(viaHistory.$('examRepairReport').textContent, '');
+});
+
+test('a build job that saved a run does not show an Optimize report', async t => {
+  const ui = await page(t, {
+    activeJob: { ok: true, job: finishedFrame('build', { result_run_id: 77 }) },
+    onRequest: async url => {
+      if (url === '/ops/exam-timetable/77/') return response({ ...savedRun(), run_id: 77, optimisation: OPTIMISATION });
+      if (url === seenUrl(JOB_ID)) return jobReply({ ok: true, marked: true });
+      return undefined;
+    },
+  });
+  await until(() => !ui.$('examJobOpen').hidden);
+  ui.$('examJobOpen').click();
+  await until(() => ui.$('examJobPanel').hidden);
+  assert.equal(ui.$('examRepairReport').textContent, '');
+});
+
+test('the rule-break line comes first, only when a side is above zero', async t => {
+  const shown = await runOptimize(t, {
+    ...OPTIMISATION,
+    before: { ...OPTIMISATION.before, rule_breaks: 2 },
+    after: { ...OPTIMISATION.after, rule_breaks: 0 },
+  });
+  assert.deepEqual(reportLines(shown).map(line => [line.label, line.values]), [
+    [OPT.rule, ['2', '0']], [OPT.multi, ['443', '85']], [OPT.over, ['1', '0']], [OPT.heavy, ['13', '13']],
+  ]);
+  assert.equal(shown.$('examRepairReport').classList.contains('is-clean'), true, 'None remain');
+  assert.doesNotMatch(reportParagraphs(shown).join('|'), new RegExp(OPT.overflowNote.slice(0, 12)));
+
+  const zero = await runOptimize(t, { ...OPTIMISATION, before: { ...OPTIMISATION.before, rule_breaks: 0 }, after: { ...OPTIMISATION.after, rule_breaks: 0 } });
+  assert.equal(reportLines(zero).some(line => line.label === OPT.rule), false, 'Zero on both sides is left out');
+  const missing = await runOptimize(t, OPTIMISATION);
+  assert.equal(reportLines(missing).some(line => line.label === OPT.rule), false, 'A server without the key is tolerated');
+
+  const remaining = await runOptimize(t, { ...OPTIMISATION, before: { ...OPTIMISATION.before, rule_breaks: 3 }, after: { ...OPTIMISATION.after, rule_breaks: 1 } });
+  assert.equal(remaining.$('examRepairReport').classList.contains('is-partial'), true, 'A rule break that remains is not clean');
+});
+
+test('exams sent to the Overflow to clear rule breaks read as 0 to 1 and say why', async t => {
+  const ui = await runOptimize(t, {
+    ...OPTIMISATION,
+    before: { ...OPTIMISATION.before, rule_breaks: 2, unseated: 0 },
+    after: { ...OPTIMISATION.after, rule_breaks: 0, unseated: 1 },
+  });
+  const lines = reportLines(ui);
+  assert.deepEqual(lines.find(line => line.label === OPT.unseated).values, ['0', '1']);
+  assert.ok(reportParagraphs(ui).includes(OPT.overflowNote), reportParagraphs(ui).join('|'));
+  assert.equal(ui.$('examRepairReport').classList.contains('is-partial'), true, 'An exam without a slot is not a finished board');
+});
+
+test('when nothing better is found the rule-break count is the board as it is', async t => {
+  const ui = await loadedEditor(t, {
+    onRequest: async url => url === '/ops/exam-timetable/build/'
+      ? response({ ok: true, saved: false, optimisation: { ...NO_BETTER, before: { ...NO_BETTER.before, rule_breaks: 2 }, after: { ...NO_BETTER.after, rule_breaks: 2 } }, editor_revision: 1 })
+      : undefined,
+  });
+  ui.$('optimizeLoadedBtn').click();
+  await settle();
+  assert.deepEqual(reportLines(ui)[0], { label: OPT.rule, values: ['2'] });
+  assert.equal(ui.$('examRepairReport').classList.contains('is-partial'), true);
 });

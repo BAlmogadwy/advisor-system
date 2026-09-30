@@ -80,6 +80,7 @@ const T = {
   optimized:      IS_AR ? 'تم حفظ الجدول المحسّن.' : 'Optimized run saved.',
   repairing:      IS_AR ? 'جارٍ إصلاح الجدول بأقل تغيير...' : 'Repairing with the fewest moves...',
   repaired:       IS_AR ? 'تم حفظ الجدول بعد الإصلاح.' : 'Repaired run saved.',
+  optimizeNoBetter: IS_AR ? 'لم يُعثر على جدول أفضل، فلم يُحفظ شيء.' : 'No better timetable was found, so nothing was saved.',
   repairUnchanged: IS_AR ? 'لم يُنقل أي اختبار، فلم يُحفظ شيء.' : 'No exam was moved, so nothing was saved.',
   savedChanges:   IS_AR ? 'تم حفظ التغييرات.' : 'Loaded-run changes saved.',
   addingCourses:  IS_AR ? 'جارٍ إضافة المقررات…' : 'Adding courses…',
@@ -1361,6 +1362,10 @@ const JOB_TEXT = {
   noMoves: IS_AR
     ? 'لم يُنقل أي اختبار، فلم يُحفظ شيء. يوضّح التقرير أسفل شريط أدوات التعديل السبب.'
     : 'No exam was moved, so nothing was saved. The report under the editing toolbar says why.',
+  // Optimize found nothing better: the same "finished, saved nothing" ending as a Fix that moved nothing.
+  optimiseNoBetter: IS_AR
+    ? 'لم يُعثر على جدول أفضل، فلم يُحفظ شيء. تجد التفاصيل في التقرير أسفل شريط أدوات التعديل.'
+    : 'No better timetable was found, so nothing was saved. The report under the editing toolbar has the details.',
   // A Fix seen from elsewhere: the report belongs to the page that asked for it.
   movedNothing: IS_AR ? 'لم يُنقل أي اختبار، فلم يُحفظ شيء.' : 'No exam was moved, so nothing was saved.',
   notSaved: reason => {
@@ -2104,7 +2109,7 @@ async function followOwnJob(job, kind, origin) {
   const { res, data } = fetched;
   if (res.ok && data.ok && data.run_id) finishFollow(follow, final, 'done', JOB_TEXT.savedOwn, { quiet: true });
   // A Fix with nothing it could move saves nothing; the report says why.
-  else if (res.ok && data.ok && data.saved === false && revealed) finishFollow(follow, final, 'done', JOB_TEXT.noMoves);
+  else if (res.ok && data.ok && data.saved === false && revealed) finishFollow(follow, final, 'done', final.kind === 'optimize_loaded' ? JOB_TEXT.optimiseNoBetter : JOB_TEXT.noMoves);
   // Any other answer - inputs the action refused - is reported as it always was.
   else hideJobPanel(follow);
   return { ...fetched, revealed };
@@ -2112,7 +2117,8 @@ async function followOwnJob(job, kind, origin) {
 
 // A success that saved no run: a Fix with nothing to move finished; anything
 // else was the action turning the request down.
-const noRunOutcome = job => (job.kind === 'minimum_change_repair' && !job.refused ? 'done' : 'refused');
+// Optimize ends the same way when it finds nothing better than the board.
+const noRunOutcome = job => (['minimum_change_repair', 'optimize_loaded'].includes(job.kind) && !job.refused ? 'done' : 'refused');
 
 // On page load, on a Check the solver turned away, or refused because a job is
 // running: follow the job that holds the lane without taking the builder, or
@@ -2251,7 +2257,7 @@ async function showJobEnding(job, follow) {
     // Ended without a new timetable. The registrar's own is told why: its
     // stored answer (fetching it also marks it seen), and what to do next.
     const outcome = noRunOutcome(job);
-    let message = outcome === 'done' ? JOB_TEXT.movedNothing : JOB_TEXT.notSaved('');
+    let message = outcome === 'done' ? (job.kind === 'optimize_loaded' ? T.optimizeNoBetter : JOB_TEXT.movedNothing) : JOB_TEXT.notSaved('');
     let next = '';
     if (mine) {
       const fetched = await fetchJobResult(job.id);
@@ -2405,7 +2411,7 @@ $('examJobOpen')?.addEventListener('click', async () => {
     // loadRun asks before discarding a draft; if the registrar keeps it, the
     // offer stays, and nothing has been marked seen. Opened - or found deleted -
     // loadRun settles the panel.
-    await loadRun(follow.job.result_run_id, { addReport: follow.job.kind === 'add_courses' });
+    await loadRun(follow.job.result_run_id, { addReport: follow.job.kind === 'add_courses', optimiseReport: follow.job.kind === 'optimize_loaded' });
   } finally {
     open.setAttribute('aria-disabled', 'false');
   }
@@ -2578,9 +2584,10 @@ async function runLoadedRunAction(mode, button, busyText, successText, prepared 
     if (data.saved === false) {
       // The repair moved nothing, so the server saved nothing: the board on
       // screen - and any unsaved drags on it - is still the registrar's draft.
-      $('etStatus').textContent = T.repairUnchanged;
+      $('etStatus').textContent = mode === 'optimize_loaded' ? T.optimizeNoBetter : T.repairUnchanged;
       $('etStatus').className = 'alert alert-info mt-2 py-2 mb-0';
       if (data.minimum_change) showRepairReport(data.minimum_change, { saved: false });
+      if (data.optimisation) showOptimisationReport(data.optimisation, { saved: false });
       return;
     }
     hydrateHeaderFromRun({ ...data, label: payload.label });
@@ -2594,6 +2601,7 @@ async function runLoadedRunAction(mode, button, busyText, successText, prepared 
     // renderResults collapses the setup section that holds etStatus, so the
     // repair report goes to the editing area where it stays visible.
     if (data.minimum_change) showRepairReport(data.minimum_change);
+    if (mode === 'optimize_loaded' && data.optimisation) showOptimisationReport(data.optimisation);
     if (mode === 'add_courses') {
       // Saved: the ticks were used.
       _addSent = null;
@@ -3501,6 +3509,96 @@ function showRepairReport(report, options) {
   if (!region) return;
   _repairReportRevision = _editorRevision;
   const summary = describeMinimumChange(report, options);
+  region.classList.toggle('is-clean', summary.clean);
+  region.classList.toggle('is-partial', !summary.clean);
+  region.innerHTML = summary.html;
+}
+
+/* ── Optimize: what the search changed on the board ── */
+// Optimize looks for a better timetable starting from the one on screen. It
+// saves one only when it finds it; the numbers below are the server's, said in
+// the registrar's words. The internal spacing score is never shown.
+const AR_FIXED_KEPT = {
+  one: 'بقي اختبار واحد مثبّت أو مقفل في موعده',
+  two: 'بقي اختباران مثبّتان أو مقفلان في موعديهما',
+  few: 'بقيت {n} اختبارات مثبّتة أو مقفلة في مواعيدها',
+  many: 'بقي {n} اختباراً مثبّتاً أو مقفلاً في موعده',
+  other: 'بقي {n} اختبار مثبّت أو مقفل في موعده',
+};
+const OPTIMISE_TEXT = {
+  found: () => IS_AR ? 'وجد التحسين جدولاً أفضل.' : 'Optimize found a better timetable.',
+  noBetter: () => IS_AR
+    ? 'لم يُعثر على جدول أفضل، فلم يُحفظ شيء. يبقى الجدول المعروض، بما فيه تغييراتك غير المحفوظة، كما هو.'
+    : 'No better timetable was found, so nothing was saved. The timetable on screen, including any changes you have not saved, stays as it is.',
+  ruleBreaks: () => IS_AR ? 'مخالفات القواعد بين الاختبارات القابلة للنقل' : 'Rule breaks among movable exams',
+  sentToOverflow: () => IS_AR
+    ? `لإزالة المخالفات نُقلت بعض الاختبارات إلى «${T.overflow}». حدّد لها مواعيد يدوياً.`
+    : `To clear rule breaks, some exams were sent to the ${T.overflow}. Place them by hand.`,
+  multiExamDay: () => IS_AR ? 'طلاب لديهم اختباران أو أكثر في يوم واحد' : 'Students with 2+ exams in a day',
+  overLimit: () => IS_AR ? 'طلاب تجاوزوا الحد اليومي للاختبارات' : 'Students over the daily exam limit',
+  heavyDay: () => IS_AR ? 'طلاب لديهم يوم بمقررات كثيرة الساعات المعتمدة' : 'Students with a heavy-credit day',
+  unseated: () => IS_AR ? 'اختبارات لم يُحدَّد لها موعد' : 'Exams not placed',
+  moved: (moved, fixed) => IS_AR
+    ? `تم نقل ${arabicCount(moved, AR_EXAMS)}${fixed ? `، و${arabicCount(fixed, AR_FIXED_KEPT)}` : ''}.`
+    : `${moved} exam${moved === 1 ? '' : 's'} moved${fixed ? `; ${fixed} pinned or locked exam${fixed === 1 ? '' : 's'} stayed where ${fixed === 1 ? 'it was' : 'they were'}` : ''}.`,
+  keptWithin: limit => IS_AR
+    ? `أُبقي عدد المراقبين في حدود ${isolateLtr(String(limit))} في اليوم.`
+    : `Invigilators were kept within ${limit} a day.`,
+  exceeded: (excess, limit) => IS_AR
+    ? `تجاوز عدد المراقبين الحد اليومي${limit ? ` (${isolateLtr(String(limit))})` : ''} بمقدار ${isolateLtr(String(excess))}.`
+    : `Invigilators exceeded the daily limit${limit ? ` of ${limit}` : ''} by ${excess}.`,
+};
+
+function describeOptimisation(report, { saved = true } = {}) {
+  // Absent or malformed numbers count as none: the save is already done.
+  const count = value => Math.max(0, Math.round(Number(value))) || 0;
+  const before = report?.before || {};
+  const after = report?.after || {};
+  const arrow = IS_AR ? '←' : '→';
+  // Before then after, as the language reads; the arrow is decorative and the
+  // hidden word is what a screen reader hears.
+  const pair = (from, to) => `<bdi dir="ltr">${escapeAttr(from)}</bdi> <span aria-hidden="true">${arrow}</span>`
+    + `<span class="visually-hidden">${IS_AR ? ' إلى ' : ' to '}</span> <bdi dir="ltr">${escapeAttr(to)}</bdi>`;
+  const items = [];
+  const line = (label, key) => {
+    const was = count(before[key]);
+    const now = count(after[key]);
+    if (!was && !now) return;
+    items.push(`<li>${escapeAttr(label)}: ${saved ? pair(was, now) : `<bdi dir="ltr">${escapeAttr(now)}</bdi>`}</li>`);
+  };
+  line(OPTIMISE_TEXT.ruleBreaks(), 'rule_breaks');
+  line(OPTIMISE_TEXT.multiExamDay(), 'multi_exam_day');
+  line(OPTIMISE_TEXT.overLimit(), 'over_limit');
+  line(OPTIMISE_TEXT.heavyDay(), 'heavy_day');
+  line(OPTIMISE_TEXT.unseated(), 'unseated');
+  const parts = [`<p>${escapeAttr(saved ? OPTIMISE_TEXT.found() : OPTIMISE_TEXT.noBetter())}</p>`];
+  if (items.length) parts.push(`<ul>${items.join('')}</ul>`);
+  if (saved) {
+    parts.push(`<p>${escapeAttr(OPTIMISE_TEXT.moved(count(report?.moved), count(report?.fixed)))}</p>`);
+    // Rule breaks come first, even at the price of an exam in the Overflow.
+    if (count(after.unseated) > count(before.unseated)) parts.push(`<p>${escapeAttr(OPTIMISE_TEXT.sentToOverflow())}</p>`);
+    const limit = count(report?.invigilator_day_limits?.total);
+    const excess = count(after.staff_excess);
+    if (excess) parts.push(`<p class="et-repair-linked">${escapeAttr(OPTIMISE_TEXT.exceeded(excess, limit))}</p>`);
+    else if (limit) parts.push(`<p>${escapeAttr(OPTIMISE_TEXT.keptWithin(limit))}</p>`);
+    parts.push(`<p>${escapeAttr(REPAIR_TEXT.saved())}</p>`);
+  }
+  const clean = !count(after.rule_breaks) && !count(after.unseated) && !count(after.over_limit) && !count(after.staff_excess);
+  return { html: parts.join(''), clean };
+}
+
+function showOptimisationReport(report, options) {
+  const region = $('examRepairReport');
+  if (!region) return;
+  _repairReportRevision = _editorRevision;
+  let summary;
+  try {
+    summary = describeOptimisation(report, options);
+  } catch (_) {
+    // The answer is already applied when this renders: a report it cannot
+    // read must never turn that into an error.
+    summary = { html: `<p>${escapeAttr(options?.saved === false ? T.optimizeNoBetter : T.optimized)}</p>`, clean: false };
+  }
   region.classList.toggle('is-clean', summary.clean);
   region.classList.toggle('is-partial', !summary.clean);
   region.innerHTML = summary.html;
@@ -7815,7 +7913,8 @@ window.addEventListener('beforeunload', event => {
 // it did not try (busy, or the registrar kept their draft).
 // ``addReport``: an Add courses result opened from its job, whose report the
 // registrar has not seen yet.
-async function loadRun(runId, { addReport = false } = {}) {
+// ``optimiseReport``: the same for an Optimize result.
+async function loadRun(runId, { addReport = false, optimiseReport = false } = {}) {
   if (_builderBusy) return undefined;
   if (!await confirmDiscardDraft() || _builderBusy) return undefined;
   cancelDraftChecks();
@@ -7841,6 +7940,7 @@ async function loadRun(runId, { addReport = false } = {}) {
     _scheduleHasDraftMoves = false;
     updatePinBar();
     if (addReport && data.add_courses) showAddCoursesReport(data.add_courses);
+    if (optimiseReport && data.optimisation) showOptimisationReport(data.optimisation);
     $('etStatus').textContent = T.done;
     $('etStatus').className = 'alert alert-success mt-2 py-2 mb-0';
 
