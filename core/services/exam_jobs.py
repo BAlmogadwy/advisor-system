@@ -182,6 +182,8 @@ class JobProgress(ExamProgress):
     Every call is also a cancellation point.
     """
 
+    background = True
+
     def __init__(self, plan: tuple[str, ...]) -> None:
         self._lock = threading.Lock()
         self._plan = plan

@@ -267,6 +267,16 @@ def _credit_pair_penalty(credits_on_day: list[int]) -> int:
     return _CREDIT_PAIR_WEIGHTS.get(pair, _CREDIT_PAIR_FALLBACK)
 
 
+#: A day is "heavy" from this pair penalty up: (4,4) and (4,3), never the
+#: mild pairs such as (3,3) or (3,2).
+_HEAVY_DAY_PENALTY = 30
+
+
+def is_heavy_credit_day(credits_on_day: list[int]) -> bool:
+    """One student's exams on one day are a heavy-credit day."""
+    return _credit_pair_penalty(credits_on_day) >= _HEAVY_DAY_PENALTY
+
+
 # ── 1. Enrolled sets ────────────────────────────────────────────
 
 
@@ -1505,7 +1515,7 @@ def _build_qa(
                 pair_penalty = _credit_pair_penalty(day_credits)
                 # "Heavy day" threshold: penalty ≥ 30 catches (4,4)→100 and
                 # (4,3)→30, but NOT mild combos like (3,3)→5 or (3,2)→5.
-                if pair_penalty >= 30:
+                if pair_penalty >= _HEAVY_DAY_PENALTY:
                     has_heavy_day = True
                     heavy_day_details.append(
                         {

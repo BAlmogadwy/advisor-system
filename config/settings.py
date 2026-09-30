@@ -1021,5 +1021,12 @@ EXAM_ROOM_MAX_SEARCH_SECONDS = _float_env("EXAM_ROOM_MAX_SEARCH_SECONDS", "60")
 # and the same action runs inside the request and answers with the same status
 # and body - the rollback, which the page handles without a change.
 EXAM_JOBS_ENABLED = os.getenv("EXAM_JOBS_ENABLED", "true").strip().lower() == "true"
+# "Optimize current timetable" improves the board with a search over small
+# CP-SAT solves (core/services/exam_optimise.py). Set EXAM_OPTIMISE_EXACT=false
+# to go back to the greedy re-colouring and its invigilator pass. The rounds
+# are how many solves one optimisation makes: more is better and slower.
+EXAM_OPTIMISE_EXACT = os.getenv("EXAM_OPTIMISE_EXACT", "true").strip().lower() == "true"
+EXAM_OPTIMISE_ROUNDS = int(_float_env("EXAM_OPTIMISE_ROUNDS", "500"))
+EXAM_OPTIMISE_SYNC_ROUNDS = int(_float_env("EXAM_OPTIMISE_SYNC_ROUNDS", "50"))
 # Tests run a job on the submitting thread instead of its own.
 EXAM_JOBS_RUN_INLINE = False
