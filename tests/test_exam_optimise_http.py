@@ -1034,3 +1034,230 @@ def test_the_invigilator_stage_is_reported_skipped_never_left_pending_in_a_finis
     assert states["balance_invigilators"] == "skipped", states
     assert states["place_exams"] == "done" and states["save"] == "skipped", states
     assert set(states.values()) <= {"done", "skipped"}, states
+
+
+# ── a link or a lock alone is a reason to save ───────────────────────────────
+
+ALL_LINKED_PINS = [
+    {"course_code": code, "day": day, "period": period}
+    for code, (day, period) in LINKED_BOARD.items()
+]
+
+
+def _link(*codes):
+    _, meta = build_enrolled_sets_with_meta(**SCOPE)
+    return {
+        "members": [
+            {"course_identity": meta[code]["course_identity"], "course_code": code}
+            for code in codes
+        ]
+    }
+
+
+def _linked_saved(client, *, linked):
+    """LINKED with every exam pinned where it sits, so the search has nothing to move."""
+    _populate(LINKED, LINKED_GROUPS)
+    links = [_link("LP1", "LQ1")] if linked else []
+    built = _build(client, linked_exams=links, pinned=ALL_LINKED_PINS)
+    return _save(
+        client,
+        built,
+        _board(built, LINKED_BOARD),
+        linked_exams=links,
+        pinned=ALL_LINKED_PINS,
+    )
+
+
+def test_a_removed_link_is_saved_without_it_and_pressing_again_saves_nothing(client_):
+    saved = _linked_saved(client_, linked=True)
+    assert len(saved["linked_exams"]) == 1
+    runs = ExamTimetableRun.objects.count()
+    same = _optimise(client_, saved, saved["schedule"])
+    assert same["saved"] is False and ExamTimetableRun.objects.count() == runs
+
+    result = _optimise(client_, saved, saved["schedule"], linked_exams=[])
+
+    assert result["optimisation"]["improved"] is False and result["optimisation"]["moved"] == 0
+    assert result["run_id"] != saved["run_id"]
+    assert result["linked_exams"] == []
+    assert _where(result) == _where(saved)
+    assert ExamTimetableRun.objects.count() == runs + 1
+    again = _optimise(client_, result, result["schedule"])
+    assert again["saved"] is False
+    assert ExamTimetableRun.objects.count() == runs + 1
+
+
+def test_an_added_link_is_saved_with_it_and_pressing_again_saves_nothing(client_):
+    saved = _linked_saved(client_, linked=False)
+    assert saved["linked_exams"] == []
+    assert _where(saved)["LP1"] == _where(saved)["LQ1"], "the members already sit together"
+    runs = ExamTimetableRun.objects.count()
+    same = _optimise(client_, saved, saved["schedule"])
+    assert same["saved"] is False and ExamTimetableRun.objects.count() == runs
+
+    result = _optimise(client_, saved, saved["schedule"], linked_exams=[_link("LP1", "LQ1")])
+
+    assert result["optimisation"]["improved"] is False and result["optimisation"]["moved"] == 0
+    assert result["run_id"] != saved["run_id"]
+    assert len(result["linked_exams"]) == 1
+    assert ExamTimetableRun.objects.count() == runs + 1
+    again = _optimise(client_, result, result["schedule"])
+    assert again["saved"] is False
+    assert ExamTimetableRun.objects.count() == runs + 1
+
+
+LOCKS = [{"day": "Tue"}, {"day": "Sun", "period": TWO[0]}]
+ALL_STUCK_PINS = [_pin(code) for code in STUCK_BOARD]
+ROOMED = {"days": DAYS, "periods": TWO, "assign_rooms": True, "pinned": ALL_STUCK_PINS}
+
+
+def _roomed_saved(client, locks=None):
+    """STUCK with rooms and every exam pinned: whatever the locks, nothing can move."""
+    _populate(STUCK, STUCK_GROUPS)
+    _rooms()
+    built = _build(client, **ROOMED)
+    board = _board(built, STUCK_BOARD)
+    if locks:
+        return _locked_run(client, built, board, locks, **ROOMED)
+    return _save(client, built, board, **ROOMED)
+
+
+def test_a_lock_added_with_the_request_is_saved_and_pressing_again_saves_nothing(client_):
+    saved = _roomed_saved(client_)
+    assert not saved.get("exam_locks")
+    runs = ExamTimetableRun.objects.count()
+    same = _optimise(client_, saved, saved["schedule"], **ROOMED)
+    assert same["saved"] is False and ExamTimetableRun.objects.count() == runs
+
+    result = _optimise(client_, saved, saved["schedule"], **ROOMED, exam_locks=LOCKS)
+
+    assert result["optimisation"]["improved"] is False and result["optimisation"]["moved"] == 0
+    assert result["run_id"] != saved["run_id"]
+    assert sorted(result["exam_locks"], key=json.dumps) == sorted(LOCKS, key=json.dumps)
+    assert ExamTimetableRun.objects.count() == runs + 1
+    # Without exam_locks the server falls back to the run's own: the same request.
+    again = _optimise(client_, result, result["schedule"], **ROOMED)
+    assert again["saved"] is False
+    # The same locks in another order are the same locks.
+    reordered = _optimise(
+        client_, result, result["schedule"], **ROOMED, exam_locks=list(reversed(LOCKS))
+    )
+    assert reordered["saved"] is False
+    assert ExamTimetableRun.objects.count() == runs + 1
+
+
+def test_lifted_locks_are_saved_although_nothing_else_can_improve(client_):
+    saved = _roomed_saved(client_, LOCKS)
+    assert sorted(saved["exam_locks"], key=json.dumps) == sorted(LOCKS, key=json.dumps)
+    runs = ExamTimetableRun.objects.count()
+    same = _optimise(client_, saved, saved["schedule"], **ROOMED)
+    assert same["saved"] is False and ExamTimetableRun.objects.count() == runs
+
+    result = _optimise(client_, saved, saved["schedule"], **ROOMED, exam_locks=[])
+
+    assert result["optimisation"]["improved"] is False, "every exam is pinned"
+    assert result["run_id"] != saved["run_id"]
+    assert not result.get("exam_locks")
+    assert ExamTimetableRun.objects.count() == runs + 1
+    again = _optimise(client_, result, result["schedule"], **ROOMED)
+    assert again["saved"] is False
+
+
+def test_pressing_optimise_twice_on_a_run_with_links_locks_and_pins_saves_nothing(client_):
+    """A canonical-form mismatch would make every press add a duplicate to the history."""
+    _populate(LINKED, LINKED_GROUPS)
+    _rooms()
+    link = _link("LP1", "LQ1")
+    changes = {
+        "days": DAYS,
+        "periods": TWO,
+        "assign_rooms": True,
+        "linked_exams": [link],
+        "pinned": ALL_LINKED_PINS[:1] + ALL_LINKED_PINS[2:3],
+    }
+    built = _build(client_, **changes)
+    locks = [{"day": "Tue"}, {"day": "Mon", "period": TWO[1]}]
+    board = _board(built, {code: cell for code, cell in LINKED_BOARD.items() if code != "LS1"})
+    saved = _locked_run(client_, built, board, locks, **changes)
+    assert saved["linked_exams"] and saved["exam_locks"] and saved["pinned"]
+    runs = ExamTimetableRun.objects.count()
+
+    first = _optimise(client_, saved, saved["schedule"], **changes)
+    second = _optimise(client_, saved, saved["schedule"], **changes)
+
+    assert first["saved"] is False and second["saved"] is False
+    assert ExamTimetableRun.objects.count() == runs
+
+
+def test_exams_in_overflow_are_placed_as_saved_whatever_their_extra_numbers():
+    saved = {
+        "schedule": [
+            {"course_code": "A", "day": "OVERFLOW", "period": "Extra-9"},
+            {"course_code": "B", "day": "OVERFLOW", "period": "Extra-10"},
+            {"course_code": "C", "day": "Sun", "period": TWO[0]},
+        ]
+    }
+    renumbered = [
+        {"course_code": "A", "day": "OVERFLOW", "period": "Extra-4"},
+        {"course_code": "B", "day": "OVERFLOW", "period": "Extra-3"},
+        {"course_code": "C", "day": "Sun", "period": TWO[0]},
+    ]
+    assert exam_views._placed_as_saved(saved, renumbered) is True
+    dragged = [{**renumbered[0], "day": "Mon", "period": TWO[0]}, *renumbered[1:]]
+    assert exam_views._placed_as_saved(saved, dragged) is False
+    swapped = [renumbered[0], {**renumbered[1], "day": "Sun", "period": TWO[1]}, renumbered[2]]
+    assert exam_views._placed_as_saved(saved, swapped) is False
+    assert exam_views._placed_as_saved(None, renumbered) is False
+
+
+def test_the_peak_before_stays_known_when_only_the_overflow_numbers_differ(client_):
+    built, board, _ = _staffed(client_, assign_rooms=True)
+    saved = _save(
+        client_,
+        built,
+        _board(built, {**STAFFED_BOARD, "SF6": None}),
+        periods=TWO,
+        assign_rooms=True,
+    )
+    seated = deepcopy(saved["schedule"])
+    assert [e["course_code"] for e in seated if e["day"] == "OVERFLOW"] == ["SF6"]
+    renumbered = deepcopy(seated)
+    for entry in renumbered:
+        if entry["day"] == "OVERFLOW":
+            entry.update(period="Extra-99", slot_index=99)
+
+    kept = _optimise(client_, saved, renumbered, periods=TWO, assign_rooms=True)
+    assert kept["optimisation"]["invigilator_peak"]["before"] == _peak(saved)
+
+    dragged = deepcopy(renumbered)
+    for entry in dragged:
+        if entry["course_code"] == "SF1":
+            entry.update(day="Tue", period=TWO[1])
+    moved = _optimise(client_, saved, dragged, periods=TWO, assign_rooms=True)
+    assert moved["optimisation"]["invigilator_peak"]["before"] is None
+
+
+def test_an_unticked_course_alone_is_a_reason_to_save(client_, stuck):
+    """Only the course list differs: the pins are the same three, and nothing is better."""
+    built, board = stuck
+    pins = [_pin("ST1"), _pin("ST2"), _pin("ST3")]
+    header = {"days": DAYS[:2], "periods": TWO}
+    saved = _save(client_, built, board, **header, pinned=pins)
+    runs = ExamTimetableRun.objects.count()
+    same = _optimise(client_, saved, saved["schedule"], **header, pinned=pins)
+    assert same["saved"] is False and ExamTimetableRun.objects.count() == runs
+    fewer = [entry for entry in saved["schedule"] if entry["course_code"] != "ST4"]
+
+    result = _optimise(
+        client_,
+        saved,
+        fewer,
+        **header,
+        pinned=pins,
+        selected_courses=[entry["course_code"] for entry in fewer],
+    )
+
+    assert result["optimisation"]["improved"] is False
+    assert result["run_id"] != saved["run_id"]
+    assert sorted(_where(result)) == ["ST1", "ST2", "ST3"]
+    assert ExamTimetableRun.objects.count() == runs + 1

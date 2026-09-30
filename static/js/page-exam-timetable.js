@@ -78,6 +78,7 @@ const T = {
   savingLoaded:   IS_AR ? 'جارٍ حفظ التغييرات...' : 'Saving loaded-run changes...',
   optimizing:     IS_AR ? 'جارٍ تحسين الجدول المحمّل...' : 'Optimizing from loaded run...',
   optimized:      IS_AR ? 'تم حفظ الجدول المحسّن.' : 'Optimized run saved.',
+  timetableSaved: IS_AR ? 'تم حفظ الجدول.' : 'Timetable saved.',
   repairing:      IS_AR ? 'جارٍ إصلاح الجدول بأقل تغيير...' : 'Repairing with the fewest moves...',
   repaired:       IS_AR ? 'تم حفظ الجدول بعد الإصلاح.' : 'Repaired run saved.',
   optimizeNoBetter: IS_AR ? 'لم يُعثر على جدول أفضل، فلم يُحفظ شيء.' : 'No better timetable was found, so nothing was saved.',
@@ -2596,7 +2597,10 @@ async function runLoadedRunAction(mode, button, busyText, successText, prepared 
     _scheduleHasDraftMoves = false;
     updatePinBar();
     updateLoadedRunActions();
-    $('etStatus').textContent = mode === 'add_courses' ? addCoursesStatus(data.add_courses) : successText;
+    // Optimize saved something other than a better timetable (pins, locks,
+    // links, settings or courses changed): never call that an optimised run.
+    const notOptimised = mode === 'optimize_loaded' && isPlainObject(data.optimisation) && data.optimisation.improved !== true;
+    $('etStatus').textContent = mode === 'add_courses' ? addCoursesStatus(data.add_courses) : (notOptimised ? T.timetableSaved : successText);
     $('etStatus').className = 'alert alert-success mt-2 py-2 mb-0';
     // renderResults collapses the setup section that holds etStatus, so the
     // repair report goes to the editing area where it stays visible.
@@ -3532,28 +3536,42 @@ const AR_SENT_TO_OVERFLOW = {
   many: 'نُقل {n} اختباراً',
   other: 'نُقل {n} اختبار',
 };
+const AR_MOVED_BY_PINS = {
+  one: 'نُقل اختبار واحد',
+  two: 'نُقل اختباران',
+  few: 'نُقلت {n} اختبارات',
+  many: 'نُقل {n} اختباراً',
+  other: 'نُقل {n} اختبار',
+};
 const AR_PLACE_BY_HAND = { one: 'حدّد موعده يدوياً.', two: 'حدّد موعديهما يدوياً.', other: 'حدّد مواعيدها يدوياً.' };
 const OPTIMISE_TEXT = {
   found: () => IS_AR ? 'وجد التحسين جدولاً أفضل.' : 'Optimize found a better timetable.',
-  // Saved although no better timetable was found: a pin or lock put an exam
-  // back in its place (moved > 0), or the request changed pins, links, locks or
-  // settings and those were saved with nothing moved.
+  // Saved although no better timetable was found: pins or locks were applied
+  // (moved > 0, possibly moving unpinned exams to make room), or the request
+  // changed courses, pins, links, locks or settings and nothing moved.
   notBetter: moved => IS_AR
     ? (moved
-      ? 'لم يجد التحسين جدولاً أفضل. أُعيدت الاختبارات المثبّتة أو المقفلة إلى مواعيدها، وحُفظ الجدول.'
-      : 'لم يجد التحسين جدولاً أفضل. لم يُنقل أي اختبار، وحُفظ الجدول بالتثبيتات والروابط والأقفال والإعدادات الحالية.')
+      ? `لم يجد التحسين جدولاً أفضل. طُبّقت التثبيتات والأقفال، ف${arabicCount(moved, AR_MOVED_BY_PINS)}؛ وحُفظ الجدول.`
+      : 'لم يجد التحسين جدولاً أفضل. لم يُنقل أي اختبار، وحُفظ الجدول بالمقررات والتثبيتات والروابط والأقفال والإعدادات الحالية.')
     : (moved
-      ? 'Optimize found no better timetable. Pinned or locked exams were put back in their places, and the timetable was saved.'
-      : 'Optimize found no better timetable. No exam was moved; the timetable was saved with your current pins, links, locks and settings.'),
+      ? `Optimize found no better timetable. Your pins and locks were applied, which moved ${moved} exam${moved === 1 ? '' : 's'}; the timetable was saved.`
+      : 'Optimize found no better timetable. No exam was moved; the timetable was saved with your current courses, pins, links, locks and settings.'),
+  // Exams of one programme and term spread over more days (the only gain).
+  spreadOut: () => IS_AR
+    ? 'صارت اختبارات البرنامج والفصل الدراسي الواحد متباعدة بأيام أكثر.'
+    : 'Exams of the same programme and term now have more days between them.',
   // The sentence a job panel has already said; the report then starts here.
   screenStays: () => IS_AR
     ? 'يبقى الجدول المعروض، بما فيه تغييراتك غير المحفوظة، كما هو.'
     : 'The timetable on screen, including any changes you have not saved, stays as it is.',
   noBetter: () => `${T.optimizeNoBetter} ${OPTIMISE_TEXT.screenStays()}`,
   ruleBreaks: () => IS_AR ? 'مخالفات القواعد بين الاختبارات القابلة للنقل' : 'Rule breaks among movable exams',
-  sentToOverflow: count => IS_AR
-    ? `لإزالة المخالفات ${arabicCount(count, AR_SENT_TO_OVERFLOW)} إلى «${T.overflow}». ${arabicCount(count, AR_PLACE_BY_HAND)}`
-    : `To clear rule breaks, ${count} exam${count === 1 ? ' was' : 's were'} sent to the ${T.overflow}. Place ${count === 1 ? 'it' : 'them'} by hand.`,
+  // The "to clear rule breaks" reason is only certain when rule breaks fell.
+  sentToOverflow: (count, clearedBreaks) => {
+    if (IS_AR) return `${clearedBreaks ? 'لإزالة المخالفات ' : ''}${arabicCount(count, AR_SENT_TO_OVERFLOW)} إلى «${T.overflow}». ${arabicCount(count, AR_PLACE_BY_HAND)}`;
+    const sentence = `${count} exam${count === 1 ? ' was' : 's were'} sent to the ${T.overflow}.`;
+    return `${clearedBreaks ? `To clear rule breaks, ${sentence}` : sentence} Place ${count === 1 ? 'it' : 'them'} by hand.`;
+  },
   multiExamDay: () => IS_AR ? 'طلاب لديهم اختباران أو أكثر في يوم واحد' : 'Students with 2+ exams in a day',
   overLimit: () => IS_AR ? 'طلاب تجاوزوا الحد اليومي للاختبارات' : 'Students over the daily exam limit',
   heavyDay: () => IS_AR ? 'طلاب لديهم يوم اختبارات مرتفع الساعات المعتمدة' : 'Students with a heavy-credit day',
@@ -3621,12 +3639,23 @@ function describeOptimisation(report, { saved = true, panelShown = false } = {})
     parts.push(`<p>${escapeAttr(improved ? OPTIMISE_TEXT.found() : OPTIMISE_TEXT.notBetter(count(report?.moved)))}</p>`);
   }
   if (items.length) parts.push(`<ul>${items.join('')}</ul>`);
+  // A gain that no shown number carries: say it plainly, without the score.
+  const spacing = value => (typeof value === 'number' && Number.isFinite(value) ? value : null);
+  const spacingBefore = spacing(before.spacing);
+  const spacingAfter = spacing(after.spacing);
+  if (saved && improved && spacingBefore !== null && spacingAfter !== null && spacingAfter < spacingBefore) {
+    parts.push(`<p>${escapeAttr(OPTIMISE_TEXT.spreadOut())}</p>`);
+  }
   if (saved) {
     if (improved) {
       parts.push(`<p>${escapeAttr(OPTIMISE_TEXT.moved(count(report?.moved), count(report?.fixed)))}</p>`);
       // Rule breaks come first, even at the price of an exam in the Overflow.
-      const sent = count(after.unseated) - count(before.unseated);
-      if (sent > 0) parts.push(`<p>${escapeAttr(OPTIMISE_TEXT.sentToOverflow(sent))}</p>`);
+      // The server counts exams seated before and now in the Overflow; older
+      // saved runs lack it, so the net rise stands in.
+      const sent = report?.sent_to_overflow === undefined
+        ? count(after.unseated) - count(before.unseated)
+        : count(report.sent_to_overflow);
+      if (sent > 0) parts.push(`<p>${escapeAttr(OPTIMISE_TEXT.sentToOverflow(sent, count(before.rule_breaks) > count(after.rule_breaks)))}</p>`);
     }
     parts.push(`<p>${escapeAttr(REPAIR_TEXT.saved())}</p>`);
   }
