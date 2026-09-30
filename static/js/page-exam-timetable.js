@@ -1197,8 +1197,8 @@ const JOB_KIND = {
     ? { waiting: 'بناء الجدول في الانتظار', running: 'جارٍ بناء الجدول', finishing: 'انتهى البناء، جارٍ تحميل النتيجة', done: 'تم بناء الجدول', refused: 'لم يُبنَ جدول', failed: 'تعذّر بناء الجدول', cancelled: 'أُوقف بناء الجدول', lost: 'تعذّرت متابعة بناء الجدول' }
     : { waiting: 'Waiting to build the timetable', running: 'Building the timetable', finishing: 'Build finished, loading the result', done: 'Timetable built', refused: 'No timetable was built', failed: 'Build failed', cancelled: 'Build stopped', lost: 'Lost track of the build' },
   optimize_loaded: IS_AR
-    ? { waiting: 'تحسين الجدول في الانتظار', running: 'جارٍ تحسين الجدول الحالي', finishing: 'انتهى تحسين الجدول، جارٍ تحميل النتيجة', done: 'تم تحسين الجدول', refused: 'لم يُحسَّن الجدول', failed: 'تعذّر تحسين الجدول', cancelled: 'أُوقف تحسين الجدول', lost: 'تعذّرت متابعة تحسين الجدول' }
-    : { waiting: 'Waiting to optimize the timetable', running: 'Optimizing the current timetable', finishing: 'Optimization finished, loading the result', done: 'Timetable optimized', refused: 'The timetable was not optimized', failed: 'Optimization failed', cancelled: 'Optimization stopped', lost: 'Lost track of the optimization' },
+    ? { waiting: 'تحسين الجدول في الانتظار', running: 'جارٍ تحسين الجدول الحالي', finishing: 'انتهى تحسين الجدول، جارٍ تحميل النتيجة', done: 'اكتمل تحسين الجدول', refused: 'لم يُحسَّن الجدول', failed: 'تعذّر تحسين الجدول', cancelled: 'أُوقف تحسين الجدول', lost: 'تعذّرت متابعة تحسين الجدول' }
+    : { waiting: 'Waiting to optimize the timetable', running: 'Optimizing the current timetable', finishing: 'Optimization finished, loading the result', done: 'Optimization finished', refused: 'The timetable was not optimized', failed: 'Optimization failed', cancelled: 'Optimization stopped', lost: 'Lost track of the optimization' },
   // "Finished", not "fixed": a repair can leave rule breaks it could not clear.
   minimum_change_repair: IS_AR
     ? { waiting: 'الإصلاح بأقل تغيير في الانتظار', running: 'جارٍ الإصلاح بأقل تغيير', finishing: 'انتهى الإصلاح، جارٍ تحميل النتيجة', done: 'اكتمل الإصلاح', refused: 'لم يُطبَّق الإصلاح', failed: 'تعذّر الإصلاح', cancelled: 'أُوقف الإصلاح', lost: 'تعذّرت متابعة الإصلاح' }
@@ -2109,7 +2109,7 @@ async function followOwnJob(job, kind, origin) {
   const { res, data } = fetched;
   if (res.ok && data.ok && data.run_id) finishFollow(follow, final, 'done', JOB_TEXT.savedOwn, { quiet: true });
   // A Fix with nothing it could move saves nothing; the report says why.
-  else if (res.ok && data.ok && data.saved === false && revealed) finishFollow(follow, final, 'done', final.kind === 'optimize_loaded' ? JOB_TEXT.optimiseNoBetter : JOB_TEXT.noMoves);
+  else if (res.ok && data.ok && data.saved === false && revealed) finishFollow(follow, final, 'done', final.kind === 'optimize_loaded' ? (isPlainObject(data.optimisation) || isPlainObject(data.minimum_change) ? JOB_TEXT.optimiseNoBetter : T.optimizeNoBetter) : JOB_TEXT.noMoves);
   // Any other answer - inputs the action refused - is reported as it always was.
   else hideJobPanel(follow);
   return { ...fetched, revealed };
@@ -2587,7 +2587,7 @@ async function runLoadedRunAction(mode, button, busyText, successText, prepared 
       $('etStatus').textContent = mode === 'optimize_loaded' ? T.optimizeNoBetter : T.repairUnchanged;
       $('etStatus').className = 'alert alert-info mt-2 py-2 mb-0';
       if (data.minimum_change) showRepairReport(data.minimum_change, { saved: false });
-      if (data.optimisation) showOptimisationReport(data.optimisation, { saved: false });
+      if (data.optimisation) showOptimisationReport(data.optimisation, { saved: false, panelShown: Boolean(revealed) });
       return;
     }
     hydrateHeaderFromRun({ ...data, label: payload.label });
@@ -3525,40 +3525,70 @@ const AR_FIXED_KEPT = {
   many: 'بقي {n} اختباراً مثبّتاً أو مقفلاً في موعده',
   other: 'بقي {n} اختبار مثبّت أو مقفل في موعده',
 };
+const AR_SENT_TO_OVERFLOW = {
+  one: 'نُقل اختبار واحد',
+  two: 'نُقل اختباران',
+  few: 'نُقلت {n} اختبارات',
+  many: 'نُقل {n} اختباراً',
+  other: 'نُقل {n} اختبار',
+};
+const AR_PLACE_BY_HAND = { one: 'حدّد موعده يدوياً.', two: 'حدّد موعديهما يدوياً.', other: 'حدّد مواعيدها يدوياً.' };
 const OPTIMISE_TEXT = {
   found: () => IS_AR ? 'وجد التحسين جدولاً أفضل.' : 'Optimize found a better timetable.',
-  noBetter: () => IS_AR
-    ? 'لم يُعثر على جدول أفضل، فلم يُحفظ شيء. يبقى الجدول المعروض، بما فيه تغييراتك غير المحفوظة، كما هو.'
-    : 'No better timetable was found, so nothing was saved. The timetable on screen, including any changes you have not saved, stays as it is.',
+  // Saved although no better timetable was found: a pin or lock put an exam
+  // back in its place (moved > 0), or the request changed pins, links, locks or
+  // settings and those were saved with nothing moved.
+  notBetter: moved => IS_AR
+    ? (moved
+      ? 'لم يجد التحسين جدولاً أفضل. أُعيدت الاختبارات المثبّتة أو المقفلة إلى مواعيدها، وحُفظ الجدول.'
+      : 'لم يجد التحسين جدولاً أفضل. لم يُنقل أي اختبار، وحُفظ الجدول بالتثبيتات والروابط والأقفال والإعدادات الحالية.')
+    : (moved
+      ? 'Optimize found no better timetable. Pinned or locked exams were put back in their places, and the timetable was saved.'
+      : 'Optimize found no better timetable. No exam was moved; the timetable was saved with your current pins, links, locks and settings.'),
+  // The sentence a job panel has already said; the report then starts here.
+  screenStays: () => IS_AR
+    ? 'يبقى الجدول المعروض، بما فيه تغييراتك غير المحفوظة، كما هو.'
+    : 'The timetable on screen, including any changes you have not saved, stays as it is.',
+  noBetter: () => `${T.optimizeNoBetter} ${OPTIMISE_TEXT.screenStays()}`,
   ruleBreaks: () => IS_AR ? 'مخالفات القواعد بين الاختبارات القابلة للنقل' : 'Rule breaks among movable exams',
-  sentToOverflow: () => IS_AR
-    ? `لإزالة المخالفات نُقلت بعض الاختبارات إلى «${T.overflow}». حدّد لها مواعيد يدوياً.`
-    : `To clear rule breaks, some exams were sent to the ${T.overflow}. Place them by hand.`,
+  sentToOverflow: count => IS_AR
+    ? `لإزالة المخالفات ${arabicCount(count, AR_SENT_TO_OVERFLOW)} إلى «${T.overflow}». ${arabicCount(count, AR_PLACE_BY_HAND)}`
+    : `To clear rule breaks, ${count} exam${count === 1 ? ' was' : 's were'} sent to the ${T.overflow}. Place ${count === 1 ? 'it' : 'them'} by hand.`,
   multiExamDay: () => IS_AR ? 'طلاب لديهم اختباران أو أكثر في يوم واحد' : 'Students with 2+ exams in a day',
   overLimit: () => IS_AR ? 'طلاب تجاوزوا الحد اليومي للاختبارات' : 'Students over the daily exam limit',
-  heavyDay: () => IS_AR ? 'طلاب لديهم يوم بمقررات كثيرة الساعات المعتمدة' : 'Students with a heavy-credit day',
-  unseated: () => IS_AR ? 'اختبارات لم يُحدَّد لها موعد' : 'Exams not placed',
-  moved: (moved, fixed) => IS_AR
-    ? `تم نقل ${arabicCount(moved, AR_EXAMS)}${fixed ? `، و${arabicCount(fixed, AR_FIXED_KEPT)}` : ''}.`
-    : `${moved} exam${moved === 1 ? '' : 's'} moved${fixed ? `; ${fixed} pinned or locked exam${fixed === 1 ? '' : 's'} stayed where ${fixed === 1 ? 'it was' : 'they were'}` : ''}.`,
-  keptWithin: limit => IS_AR
-    ? `أُبقي عدد المراقبين في حدود ${isolateLtr(String(limit))} في اليوم.`
-    : `Invigilators were kept within ${limit} a day.`,
-  exceeded: (excess, limit) => IS_AR
-    ? `تجاوز عدد المراقبين الحد اليومي${limit ? ` (${isolateLtr(String(limit))})` : ''} بمقدار ${isolateLtr(String(excess))}.`
-    : `Invigilators exceeded the daily limit${limit ? ` of ${limit}` : ''} by ${excess}.`,
+  heavyDay: () => IS_AR ? 'طلاب لديهم يوم اختبارات مرتفع الساعات المعتمدة' : 'Students with a heavy-credit day',
+  unseated: () => IS_AR ? `اختبارات في «${T.overflow}»` : `Exams in the ${T.overflow}`,
+  // The busiest day's invigilator total as the rooms really came out.
+  invigilatorPeak: () => IS_AR ? 'أكبر عدد مراقبين في يوم واحد' : 'Most invigilators needed in one day',
+  moved: (moved, fixed) => {
+    if (IS_AR) {
+      const kept = fixed ? `، و${arabicCount(fixed, AR_FIXED_KEPT)}` : '';
+      return moved ? `تم نقل ${arabicCount(moved, AR_EXAMS)}${kept}.` : `لم يُنقل أي اختبار${kept}.`;
+    }
+    const kept = fixed ? `${fixed} pinned or locked exam${fixed === 1 ? '' : 's'} stayed where ${fixed === 1 ? 'it was' : 'they were'}` : '';
+    if (moved) return `${moved} exam${moved === 1 ? '' : 's'} moved${kept ? `; ${kept}` : ''}.`;
+    return kept ? `No exam was moved; ${kept}.` : 'No exam was moved.';
+  },
 };
 
-function describeOptimisation(report, { saved = true } = {}) {
-  // Absent or malformed numbers count as none: the save is already done.
-  const count = value => Math.max(0, Math.round(Number(value))) || 0;
-  const before = report?.before || {};
-  const after = report?.after || {};
+const isPlainObject = value => value !== null && typeof value === 'object' && !Array.isArray(value);
+
+function describeOptimisation(report, { saved = true, panelShown = false } = {}) {
+  // Absent or malformed numbers count as none: the save is already done. A
+  // number that is not finite, or absurdly large, is not a count either.
+  const count = value => {
+    const n = Math.max(0, Math.round(Number(value))) || 0;
+    return Number.isFinite(n) ? Math.min(n, 999999) : 0;
+  };
+  const before = isPlainObject(report?.before) ? report.before : {};
+  const known = isPlainObject(report?.after) && Object.keys(report.after).length > 0;
+  const after = known ? report.after : {};
+  const improved = report?.improved === true;
   const arrow = IS_AR ? '←' : '→';
   // Before then after, as the language reads; the arrow is decorative and the
-  // hidden word is what a screen reader hears.
-  const pair = (from, to) => `<bdi dir="ltr">${escapeAttr(from)}</bdi> <span aria-hidden="true">${arrow}</span>`
-    + `<span class="visually-hidden">${IS_AR ? ' إلى ' : ' to '}</span> <bdi dir="ltr">${escapeAttr(to)}</bdi>`;
+  // hidden words are what a screen reader hears: "from 443 to 85".
+  const pair = (from, to) => `<span class="visually-hidden">${IS_AR ? 'من ' : 'from '}</span><bdi dir="ltr">${escapeAttr(from)}</bdi> `
+    + `<span aria-hidden="true">${arrow}</span><span class="visually-hidden">${IS_AR ? ' إلى ' : ' to '}</span> <bdi dir="ltr">${escapeAttr(to)}</bdi>`;
   const items = [];
   const line = (label, key) => {
     const was = count(before[key]);
@@ -3566,28 +3596,49 @@ function describeOptimisation(report, { saved = true } = {}) {
     if (!was && !now) return;
     items.push(`<li>${escapeAttr(label)}: ${saved ? pair(was, now) : `<bdi dir="ltr">${escapeAttr(now)}</bdi>`}</li>`);
   };
-  line(OPTIMISE_TEXT.ruleBreaks(), 'rule_breaks');
-  line(OPTIMISE_TEXT.multiExamDay(), 'multi_exam_day');
-  line(OPTIMISE_TEXT.overLimit(), 'over_limit');
-  line(OPTIMISE_TEXT.heavyDay(), 'heavy_day');
-  line(OPTIMISE_TEXT.unseated(), 'unseated');
-  const parts = [`<p>${escapeAttr(saved ? OPTIMISE_TEXT.found() : OPTIMISE_TEXT.noBetter())}</p>`];
+  // A saved timetable that is not better has no student numbers to compare:
+  // its "before" is the board as submitted, not a worse timetable.
+  if (!saved || improved) {
+    line(OPTIMISE_TEXT.ruleBreaks(), 'rule_breaks');
+    line(OPTIMISE_TEXT.multiExamDay(), 'multi_exam_day');
+    line(OPTIMISE_TEXT.overLimit(), 'over_limit');
+    line(OPTIMISE_TEXT.heavyDay(), 'heavy_day');
+    line(OPTIMISE_TEXT.unseated(), 'unseated');
+  }
+  // The invigilator peak: only when the server measured both timetables. Shown
+  // even when equal, and a rise is a caution.
+  const peakNumber = value => (typeof value === 'number' && Number.isFinite(value) && value >= 0 ? Math.min(Math.round(value), 999999) : null);
+  const peak = saved && isPlainObject(report?.invigilator_peak) ? report.invigilator_peak : {};
+  const peakBefore = peakNumber(peak.before);
+  const peakAfter = peakNumber(peak.after);
+  const peakShown = peakBefore !== null && peakAfter !== null;
+  if (peakShown) items.push(`<li>${escapeAttr(OPTIMISE_TEXT.invigilatorPeak())}: ${pair(peakBefore, peakAfter)}</li>`);
+  const parts = [];
+  if (!saved) {
+    // A job panel has already said the first sentence; a screen reader must not hear it twice.
+    parts.push(`<p>${escapeAttr(panelShown ? OPTIMISE_TEXT.screenStays() : OPTIMISE_TEXT.noBetter())}</p>`);
+  } else {
+    parts.push(`<p>${escapeAttr(improved ? OPTIMISE_TEXT.found() : OPTIMISE_TEXT.notBetter(count(report?.moved)))}</p>`);
+  }
   if (items.length) parts.push(`<ul>${items.join('')}</ul>`);
   if (saved) {
-    parts.push(`<p>${escapeAttr(OPTIMISE_TEXT.moved(count(report?.moved), count(report?.fixed)))}</p>`);
-    // Rule breaks come first, even at the price of an exam in the Overflow.
-    if (count(after.unseated) > count(before.unseated)) parts.push(`<p>${escapeAttr(OPTIMISE_TEXT.sentToOverflow())}</p>`);
-    const limit = count(report?.invigilator_day_limits?.total);
-    const excess = count(after.staff_excess);
-    if (excess) parts.push(`<p class="et-repair-linked">${escapeAttr(OPTIMISE_TEXT.exceeded(excess, limit))}</p>`);
-    else if (limit) parts.push(`<p>${escapeAttr(OPTIMISE_TEXT.keptWithin(limit))}</p>`);
+    if (improved) {
+      parts.push(`<p>${escapeAttr(OPTIMISE_TEXT.moved(count(report?.moved), count(report?.fixed)))}</p>`);
+      // Rule breaks come first, even at the price of an exam in the Overflow.
+      const sent = count(after.unseated) - count(before.unseated);
+      if (sent > 0) parts.push(`<p>${escapeAttr(OPTIMISE_TEXT.sentToOverflow(sent))}</p>`);
+    }
     parts.push(`<p>${escapeAttr(REPAIR_TEXT.saved())}</p>`);
   }
-  const clean = !count(after.rule_breaks) && !count(after.unseated) && !count(after.over_limit) && !count(after.staff_excess);
+  // Clean only when the server gave the numbers of the board and none is left.
+  const clean = known && !count(after.rule_breaks) && !count(after.unseated) && !count(after.over_limit) && !count(after.staff_excess)
+    && !(peakShown && peakAfter > peakBefore);
   return { html: parts.join(''), clean };
 }
 
 function showOptimisationReport(report, options) {
+  // No report to read (the flag is off, or the answer is not an object): say nothing.
+  if (!isPlainObject(report)) return;
   const region = $('examRepairReport');
   if (!region) return;
   _repairReportRevision = _editorRevision;
